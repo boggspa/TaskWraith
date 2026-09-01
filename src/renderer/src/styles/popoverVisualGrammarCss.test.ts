@@ -54,7 +54,6 @@ describe('popover visual grammar inventory', () => {
       'components/ComposerVoiceInput.tsx',
       'components/ContextMeterPopover.tsx',
       'components/CopyTranscriptButton.tsx',
-      'components/EnsembleModePicker.tsx',
       'components/EnsembleOrchestrationRow.tsx',
       'components/EnsembleParticipantsAboveRow.tsx',
       'components/EnsembleRosterPresetPicker.tsx',

@@ -128,24 +128,19 @@ describe('Multiview pane Composer context parity', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
     const contexts = paneComposerContextKeys(source)
     const paneOwnedKeys = [
-      'activeEnsembleConcurrentMode',
       'activeEnsembleFanoutPolicy',
-      'activeEnsembleOrchestrationMode',
       'applyEnsemblePermissionsToAllParticipants',
       'applyEnsembleRosterPreset',
       'currentComposerMentionParticipants',
       'currentDiscordContextSelection',
       'currentEnsembleActiveGoalStatus',
-      'currentEnsembleConcurrentMode',
       'currentEnsembleContinuationHops',
       'currentEnsembleFanoutPolicy',
       'currentEnsembleMaxContinuationHops',
-      'currentEnsembleOrchestrationMode',
       'currentEnsembleRoundStatus',
       'effectiveSelectedParticipantId',
       'ensembleBlendStyle',
       'ensembleEnabledParticipantsForCurrent',
-      'ensembleOllamaContextWarning',
       'handleAttachWindow',
       'handleClearDiscordContext',
       'handleCollapseEnsembleToSolo',
@@ -167,12 +162,9 @@ describe('Multiview pane Composer context parity', () => {
       'selectedParticipant',
       'setActiveEnsembleRosterPresetId',
       'steerIndicatorMessage',
-      'updateCurrentEnsembleConcurrentMode',
-      'updateCurrentEnsembleContextChars',
       'updateCurrentEnsembleFanoutIsolation',
       'updateCurrentEnsembleFanoutPolicy',
       'updateCurrentEnsembleMaxContinuationHops',
-      'updateCurrentEnsembleOrchestrationMode',
       'updateSelectedParticipant'
     ]
 
@@ -312,9 +304,6 @@ describe('Multiview pane Composer context parity', () => {
       source.indexOf('const updateSelectedParticipant =')
     )
     expect(liveRoundConfig).toContain('.updateLiveEnsembleRoundConfig({ chatId, ...patch })')
-    expect(liveRoundConfig).toContain(
-      'requestLiveEnsembleRoundConfigUpdate(chatId, { orchestrationMode: mode })'
-    )
     expect(liveRoundConfig).toContain(
       'requestLiveEnsembleRoundConfigUpdate(chatId, { fanoutPolicy: nextPolicy })'
     )

@@ -212,7 +212,6 @@ import type {
   PermissionPresetId,
   EnsembleFanoutIsolationPolicy,
   EnsembleFanoutPolicy,
-  EnsembleOrchestrationMode,
   PinnedMessageGroup,
   AuditRunRecord,
   ActiveGoal,
@@ -631,10 +630,6 @@ import {
   clampContextTurns,
   resolveContextBudget
 } from '../../main/PromptComposition'
-import {
-  estimateWorstOllamaEnsembleUiPressure,
-  ollamaContextPressureMessage
-} from '../../main/ollama/OllamaEnsembleContext'
 import { resolveRuntimeProfileIdForChat } from '../../main/RuntimeProfileResolution'
 import { compactPromptPreview } from './lib/RunLanes'
 import {
@@ -4012,8 +4007,7 @@ function App(): React.JSX.Element {
       .sort((a, b) => a.order - b.order)
       .map((participant) => `${participant.role || participant.provider}/${participant.provider}`)
       .join(', ')
-    const mode = ensemble.orchestrationMode || 'turn'
-    return `${enabled.length} participants · ${mode} · ${labels}`
+    return `${enabled.length} participants · ${labels}`
   }, [currentChat?.ensemble])
   const hasWorkspaceContext = Boolean(
     (currentChatWorkspace || currentWorkspacePath || currentWorkspace) &&
@@ -21650,17 +21644,10 @@ function App(): React.JSX.Element {
   currentProviderRuntimeProfiles = runtimeProfilesForProviderAndCurrentScope(
     runtimePickerScope.provider
   )
-  const currentEnsembleOrchestrationMode: EnsembleOrchestrationMode =
-    currentChat?.ensemble?.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
-  const activeEnsembleOrchestrationMode: EnsembleOrchestrationMode =
-    currentEnsembleRound?.orchestrationMode === 'continuous'
-      ? 'continuous'
-      : currentEnsembleOrchestrationMode
   const currentEnsembleFanoutPolicy = normalizeEnsembleFanoutPolicy(
     currentChat?.ensemble?.fanoutPolicy,
     currentChat?.ensemble?.concurrentModeEnabled
   )
-  const currentEnsembleConcurrentMode = ensembleFanoutPolicyEnabled(currentEnsembleFanoutPolicy)
   const activeEnsembleFanoutPolicy =
     currentEnsembleRound?.fanoutPolicy !== undefined ||
     currentEnsembleRound?.concurrentMode !== undefined
@@ -21669,59 +21656,6 @@ function App(): React.JSX.Element {
           currentEnsembleRound?.concurrentMode
         )
       : currentEnsembleFanoutPolicy
-  const activeEnsembleConcurrentMode = ensembleFanoutPolicyEnabled(activeEnsembleFanoutPolicy)
-  const ensembleOllamaContextWarning = useMemo(() => {
-    if (!isCurrentEnsembleChat || !currentChat?.ensemble) return null
-    const ollamaParticipants = currentChat.ensemble.participants.filter(
-      (participant) => participant.enabled && participant.provider === 'ollama'
-    )
-    if (ollamaParticipants.length === 0) return null
-    const installedOllamaModels = Array.isArray(agentStatusByProvider.ollama?.models)
-      ? agentStatusByProvider.ollama.models
-      : []
-    const explicitOllamaContextLengths = ollamaParticipants
-      .map(
-        (participant) =>
-          installedOllamaModels.find(
-            (model: { id?: string; contextLength?: number }) =>
-              model.id && isOllamaModelInstalled(participant.model || '', [model.id])
-          )?.contextLength
-      )
-      .filter(
-        (contextLength): contextLength is number =>
-          typeof contextLength === 'number' &&
-          Number.isFinite(contextLength) &&
-          contextLength >= 2048
-      )
-    const pressure = estimateWorstOllamaEnsembleUiPressure({
-      configuredContextChars: currentChat.ensemble.ensembleContextChars,
-      participantCount: currentChat.ensemble.participants.filter(
-        (participant) => participant.enabled
-      ).length,
-      ollamaParticipants: ollamaParticipants.map((participant) => ({
-        modelId: participant.model,
-        ollamaContextLength: installedOllamaModels.find(
-          (model: { id?: string; contextLength?: number }) =>
-            model.id && isOllamaModelInstalled(participant.model || '', [model.id])
-        )?.contextLength
-      })),
-      toolsEnabled: currentChat.scope !== 'global'
-    })
-    if (!pressure) return null
-    return {
-      severity: pressure.severity,
-      message: ollamaContextPressureMessage(pressure),
-      suggestedChars: pressure.effectiveTranscriptChars,
-      clampContextChars: explicitOllamaContextLengths.some(
-        (contextLength) => contextLength < 128 * 1024
-      )
-    }
-  }, [
-    isCurrentEnsembleChat,
-    currentChat?.ensemble,
-    currentChat?.scope,
-    agentStatusByProvider.ollama?.models
-  ])
   const currentEnsembleContinuationHops = currentEnsembleRound?.continuationHops || 0
   // Prefer chat-level cap so the hops meter updates as soon as the user
   // saves — an in-flight round still carries its own snapshot, but the
@@ -22065,14 +21999,13 @@ function App(): React.JSX.Element {
     (
       chatId: string,
       patch: {
-        orchestrationMode?: EnsembleOrchestrationMode
         fanoutPolicy?: EnsembleFanoutPolicy
         maxContinuationHops?: number
         previousMaxContinuationHops?: number
       }
     ): void => {
       const source = chatByIdRef.current.get(chatId)
-      // Mode/fan-out retain their live-round-only behavior. A hop-limit edit
+      // Fan-out retains its live-round-only behavior. A hop-limit edit
       // also applies while idle because its durable transcript event is born
       // through this authoritative main-process path.
       if (
@@ -22096,41 +22029,6 @@ function App(): React.JSX.Element {
         })
     },
     [refreshSingleChat]
-  )
-  const updateEnsembleOrchestrationModeForChat = useCallback(
-    (chatId: string, mode: EnsembleOrchestrationMode): void => {
-      updateChatById(chatId, (source) => {
-        if (!source.ensemble) return source
-        const activeRound = source.ensemble.activeRound
-        const patched: ChatRecord = {
-          ...source,
-          ensemble: {
-            ...source.ensemble,
-            orchestrationMode: mode,
-            ...(activeRound && isEnsembleActiveRoundDispatchLive(activeRound)
-              ? {
-                  activeRound: {
-                    ...activeRound,
-                    orchestrationMode: mode
-                  }
-                }
-              : {}),
-            maxParticipants:
-              Number.isFinite(source.ensemble.maxParticipants) &&
-              source.ensemble.maxParticipants >= 2 &&
-              source.ensemble.maxParticipants <= MAX_ROSTER_PRESET_PARTICIPANTS
-                ? source.ensemble.maxParticipants
-                : MAX_ROSTER_PRESET_PARTICIPANTS,
-            maxContinuationHops: source.ensemble.maxContinuationHops || 6,
-            updatedAt: new Date().toISOString()
-          },
-          updatedAt: Date.now()
-        }
-        return withSessionActivityLedger(source, patched)
-      })
-      requestLiveEnsembleRoundConfigUpdate(chatId, { orchestrationMode: mode })
-    },
-    [requestLiveEnsembleRoundConfigUpdate, updateChatById]
   )
   const updateEnsembleFanoutPolicyForChat = useCallback(
     (chatId: string, policy: EnsembleFanoutPolicy): void => {
@@ -22174,26 +22072,6 @@ function App(): React.JSX.Element {
           ensemble: {
             ...source.ensemble,
             fanoutIsolation: nextIsolation,
-            updatedAt: new Date().toISOString()
-          },
-          updatedAt: Date.now()
-        }
-        return withSessionActivityLedger(source, patched)
-      })
-    },
-    [updateChatById]
-  )
-  const updateEnsembleContextCharsForChat = useCallback(
-    (chatId: string, nextChars: number): void => {
-      const safeChars = Math.max(5_000, Math.min(256_000, Math.round(Number(nextChars) || 0)))
-      if (!Number.isFinite(safeChars) || safeChars <= 0) return
-      updateChatById(chatId, (source) => {
-        if (!source.ensemble) return source
-        const patched: ChatRecord = {
-          ...source,
-          ensemble: {
-            ...source.ensemble,
-            ensembleContextChars: safeChars,
             updatedAt: new Date().toISOString()
           },
           updatedAt: Date.now()
@@ -22286,18 +22164,6 @@ function App(): React.JSX.Element {
     selectedParticipant,
     currentChat
   ])
-  const updateCurrentEnsembleOrchestrationMode = useCallback(
-    (mode: EnsembleOrchestrationMode) => {
-      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
-      updateEnsembleOrchestrationModeForChat(currentChat.appChatId, mode)
-    },
-    [
-      isCurrentEnsembleChat,
-      currentChat?.appChatId,
-      currentChat?.ensemble,
-      updateEnsembleOrchestrationModeForChat
-    ]
-  )
   const updateCurrentEnsembleFanoutPolicy = useCallback(
     (policy: EnsembleFanoutPolicy) => {
       if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
@@ -22309,12 +22175,6 @@ function App(): React.JSX.Element {
       currentChat?.ensemble,
       updateEnsembleFanoutPolicyForChat
     ]
-  )
-  const updateCurrentEnsembleConcurrentMode = useCallback(
-    (enabled: boolean) => {
-      updateCurrentEnsembleFanoutPolicy(enabled ? 'read_only' : 'off')
-    },
-    [updateCurrentEnsembleFanoutPolicy]
   )
   const updateCurrentEnsembleFanoutIsolation = useCallback(
     (isolation: EnsembleFanoutIsolationPolicy) => {
@@ -22329,21 +22189,6 @@ function App(): React.JSX.Element {
     ]
   )
 
-  // D — persist the user-set shared-transcript char budget (5K–256K) onto
-  // chat.ensemble.ensembleContextChars. Drives buildTaggedTranscript's budget
-  // for the NEXT round; clamped here so a malformed value never lands.
-  const updateCurrentEnsembleContextChars = useCallback(
-    (nextChars: number) => {
-      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
-      updateEnsembleContextCharsForChat(currentChat.appChatId, nextChars)
-    },
-    [
-      isCurrentEnsembleChat,
-      currentChat?.appChatId,
-      currentChat?.ensemble,
-      updateEnsembleContextCharsForChat
-    ]
-  )
 
   // 1.0.6 — persist the user-set max handoff turns for continuous rounds onto
   // chat.ensemble.maxContinuationHops. Range-clamped at the call site
@@ -30337,11 +30182,9 @@ function App(): React.JSX.Element {
     patchEnsembleParticipantForChat,
     selectEnsembleParticipantForChat,
     setActiveEnsembleRosterPresetIdForChat,
-    updateEnsembleContextCharsForChat,
     updateEnsembleFanoutIsolationForChat,
     updateEnsembleFanoutPolicyForChat,
-    updateEnsembleMaxContinuationHopsForChat,
-    updateEnsembleOrchestrationModeForChat
+    updateEnsembleMaxContinuationHopsForChat
   }
   const paneCtxHelperImplsRef = useRef(paneCtxHelperImpls)
   paneCtxHelperImplsRef.current = paneCtxHelperImpls
@@ -30377,9 +30220,7 @@ function App(): React.JSX.Element {
         : undefined,
       PLAN_IMPORT_RISK_LABELS,
       acknowledgedElevationDefaults,
-      activeEnsembleConcurrentMode,
       activeEnsembleFanoutPolicy,
-      activeEnsembleOrchestrationMode,
       addImageAttachmentsToChat,
       agentModelsByProvider,
       agentStatusByProvider,
@@ -30406,11 +30247,9 @@ function App(): React.JSX.Element {
       currentChatIdRef,
       currentComposerMentionParticipants,
       currentDiscordContextSelection,
-      currentEnsembleConcurrentMode,
       currentEnsembleFanoutPolicy,
       currentEnsembleContinuationHops,
       currentEnsembleMaxContinuationHops,
-      currentEnsembleOrchestrationMode,
       currentGoalModeLabel,
       currentProviderCapabilityWarning,
       configuredProviderSnapshot,
@@ -30422,7 +30261,6 @@ function App(): React.JSX.Element {
       ensembleConcurrentLanesAvailable,
       ensembleConcurrentWriteLanesAvailable,
       ensembleEnabledParticipantsForCurrent,
-      ensembleOllamaContextWarning,
       externalGitSnapshots: currentExternalWorkspaceState.externalGitSnapshots,
       onExternalGitSnapshotRefresh: handleExternalGitSnapshotRefresh,
       externalPrByPath: currentExternalWorkspaceState.externalPrByPath,
@@ -30493,12 +30331,9 @@ function App(): React.JSX.Element {
       threadTokenTallyTooltip,
       trustResult,
       trustSelectValue,
-      updateCurrentEnsembleConcurrentMode,
       updateCurrentEnsembleFanoutPolicy,
       updateCurrentEnsembleFanoutIsolation,
-      updateCurrentEnsembleContextChars,
       updateCurrentEnsembleMaxContinuationHops,
-      updateCurrentEnsembleOrchestrationMode,
       updateSelectedParticipant,
       visibleScheduledTasks,
       workflowDraft,
@@ -30510,9 +30345,7 @@ function App(): React.JSX.Element {
       composerHandlers,
       isChatPopoutWindow,
       acknowledgedElevationDefaults,
-      activeEnsembleConcurrentMode,
       activeEnsembleFanoutPolicy,
-      activeEnsembleOrchestrationMode,
       addImageAttachmentsToChat,
       agentModelsByProvider,
       agentStatusByProvider,
@@ -30540,11 +30373,9 @@ function App(): React.JSX.Element {
       currentChatIdRef,
       currentComposerMentionParticipants,
       currentDiscordContextSelection,
-      currentEnsembleConcurrentMode,
       currentEnsembleFanoutPolicy,
       currentEnsembleContinuationHops,
       currentEnsembleMaxContinuationHops,
-      currentEnsembleOrchestrationMode,
       currentGoalModeLabel,
       currentProviderCapabilityWarning,
       configuredProviderSnapshot,
@@ -30556,7 +30387,6 @@ function App(): React.JSX.Element {
       ensembleConcurrentLanesAvailable,
       ensembleConcurrentWriteLanesAvailable,
       ensembleEnabledParticipantsForCurrent,
-      ensembleOllamaContextWarning,
       currentExternalWorkspaceState,
       geminiTrustWriteBusy,
       geminiTrustWriteError,
@@ -30616,12 +30446,9 @@ function App(): React.JSX.Element {
       threadTokenTallyTooltip,
       trustResult,
       trustSelectValue,
-      updateCurrentEnsembleConcurrentMode,
       updateCurrentEnsembleFanoutPolicy,
       updateCurrentEnsembleFanoutIsolation,
-      updateCurrentEnsembleContextChars,
       updateCurrentEnsembleMaxContinuationHops,
-      updateCurrentEnsembleOrchestrationMode,
       updateSelectedParticipant,
       visibleScheduledTasks,
       workflowDraft,
@@ -30661,9 +30488,6 @@ function App(): React.JSX.Element {
       )
       const viewerEnsembleProjection = buildMultiviewEnsembleComposerProjection(
         viewerChat,
-        Array.isArray(agentStatusByProvider.ollama?.models)
-          ? agentStatusByProvider.ollama.models
-          : [],
         viewerSelectedParticipantId,
         pendingEnsembleSeatSelections[viewerChatId]
       )
@@ -31031,18 +30855,13 @@ function App(): React.JSX.Element {
         currentComposerMentionParticipants: viewerEnsembleProjection.participants,
         ensembleEnabledParticipantsForCurrent: viewerEnsembleProjection.enabledParticipants,
         ensembleBlendStyle: viewerEnsembleProjection.providerBlendStyle as CSSProperties,
-        currentEnsembleOrchestrationMode: viewerEnsembleProjection.currentOrchestrationMode,
-        activeEnsembleOrchestrationMode: viewerEnsembleProjection.activeOrchestrationMode,
         currentEnsembleFanoutPolicy: viewerEnsembleProjection.currentFanoutPolicy,
         activeEnsembleFanoutPolicy: viewerEnsembleProjection.activeFanoutPolicy,
-        currentEnsembleConcurrentMode: viewerEnsembleProjection.currentConcurrentMode,
-        activeEnsembleConcurrentMode: viewerEnsembleProjection.activeConcurrentMode,
         currentEnsembleContinuationHops: viewerEnsembleProjection.continuationHops,
         currentEnsembleMaxContinuationHops: viewerEnsembleProjection.maxContinuationHops,
         isCurrentEnsembleRoundRunning: viewerEnsembleProjection.isRoundRunning,
         currentEnsembleRoundStatus: viewerEnsembleProjection.roundStatus,
         currentEnsembleActiveGoalStatus: viewerEnsembleProjection.activeGoalStatus,
-        ensembleOllamaContextWarning: viewerEnsembleProjection.ollamaContextWarning,
         applyEnsembleRosterPreset: (preset: EnsembleRosterPreset) =>
           paneCtxHelpers.applyEnsembleRosterPresetToChat(viewerChatId, preset),
         setActiveEnsembleRosterPresetId: (presetId: string | null) =>
@@ -31054,19 +30873,10 @@ function App(): React.JSX.Element {
             paneSlashParticipant.id
           )
         },
-        updateCurrentEnsembleOrchestrationMode: (mode: EnsembleOrchestrationMode) =>
-          paneCtxHelpers.updateEnsembleOrchestrationModeForChat(viewerChatId, mode),
         updateCurrentEnsembleFanoutPolicy: (policy: EnsembleFanoutPolicy) =>
           paneCtxHelpers.updateEnsembleFanoutPolicyForChat(viewerChatId, policy),
         updateCurrentEnsembleFanoutIsolation: (isolation: EnsembleFanoutIsolationPolicy) =>
           paneCtxHelpers.updateEnsembleFanoutIsolationForChat(viewerChatId, isolation),
-        updateCurrentEnsembleConcurrentMode: (enabled: boolean) =>
-          paneCtxHelpers.updateEnsembleFanoutPolicyForChat(
-            viewerChatId,
-            enabled ? 'read_only' : 'off'
-          ),
-        updateCurrentEnsembleContextChars: (nextChars: number) =>
-          paneCtxHelpers.updateEnsembleContextCharsForChat(viewerChatId, nextChars),
         updateCurrentEnsembleMaxContinuationHops: (nextMax: number) =>
           paneCtxHelpers.updateEnsembleMaxContinuationHopsForChat(viewerChatId, nextMax),
         queuedMessagesAboveRowEntries: paneQueuedMessagesAboveRowEntries,

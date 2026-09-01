@@ -751,13 +751,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   const sideEnabledParticipants = sideParticipants
     .filter((participant: any) => participant.enabled !== false)
     .sort((a: any, b: any) => a.order - b.order)
-  const sideCurrentOrchestrationMode =
-    sideChat?.ensemble?.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
   const sideActiveRound = activeEnsembleRoundForComposer(sideChat?.ensemble?.activeRound)
-  const sideActiveOrchestrationMode =
-    sideActiveRound?.orchestrationMode === 'continuous'
-      ? 'continuous'
-      : sideCurrentOrchestrationMode
   const sideCurrentFanoutPolicy = normalizeEnsembleFanoutPolicy(
     sideChat?.ensemble?.fanoutPolicy,
     sideChat?.ensemble?.concurrentModeEnabled
@@ -1008,17 +1002,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         effectiveSelectedParticipantId: sideSelectedParticipant?.id || null,
         ensembleEnabledParticipantsForCurrent: sideEnabledParticipants,
         ensembleBlendStyle: buildEnsembleProviderBlendStyle(sideEnabledParticipants),
-        currentEnsembleOrchestrationMode: sideCurrentOrchestrationMode,
-        activeEnsembleOrchestrationMode: sideActiveOrchestrationMode,
         currentEnsembleFanoutPolicy: sideCurrentFanoutPolicy,
         activeEnsembleFanoutPolicy: sideActiveFanoutPolicy,
-        currentEnsembleConcurrentMode: ensembleFanoutPolicyEnabled(sideCurrentFanoutPolicy),
-        activeEnsembleConcurrentMode: ensembleFanoutPolicyEnabled(sideActiveFanoutPolicy),
         currentEnsembleContinuationHops: sideActiveRound?.continuationHops || 0,
         currentEnsembleMaxContinuationHops: sideChat.ensemble?.maxContinuationHops || 6,
         currentEnsembleRoundStatus: sideActiveRound?.status,
         currentEnsembleActiveGoalStatus: sideChat.activeGoal?.status || null,
-        ensembleOllamaContextWarning: null,
         selectedModelType: sideComposerSelectedModel,
         selectedComposerModelType: sideComposerSelectedModel,
         lastNonCustomModelType:
@@ -1189,8 +1178,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
           if (sideSelectedParticipant) patchSideParticipant(sideSelectedParticipant.id, patch)
         },
         patchEnsembleParticipantById: patchSideParticipant,
-        updateCurrentEnsembleOrchestrationMode: (mode: string) =>
-          patchSideEnsemble({ orchestrationMode: mode }),
         updateCurrentEnsembleFanoutPolicy: (policy: any) => {
           const normalized = normalizeEnsembleFanoutPolicy(policy)
           patchSideEnsemble({
@@ -1201,20 +1188,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         updateCurrentEnsembleFanoutIsolation: (isolation: any) =>
           patchSideEnsemble({
             fanoutIsolation: resolveEnsembleFanoutIsolationPolicy(isolation)
-          }),
-        updateCurrentEnsembleConcurrentMode: (enabled: boolean) => {
-          const policy = enabled ? 'read_only' : 'off'
-          patchSideEnsemble({
-            fanoutPolicy: policy,
-            concurrentModeEnabled: enabled
-          })
-        },
-        updateCurrentEnsembleContextChars: (value: number) =>
-          patchSideEnsemble({
-            ensembleContextChars: Math.max(
-              5_000,
-              Math.min(256_000, Math.round(Number(value) || 0))
-            )
           }),
         updateCurrentEnsembleMaxContinuationHops: updateSideMaxContinuationHops,
         setCurrentChat: (next: any) => {

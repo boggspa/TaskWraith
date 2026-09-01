@@ -232,9 +232,7 @@ export interface ComposerProps {
   prompt: string
   PLAN_IMPORT_RISK_LABELS: any
   acknowledgedElevationDefaults: any
-  activeEnsembleConcurrentMode: any
   activeEnsembleFanoutPolicy: EnsembleFanoutPolicy
-  activeEnsembleOrchestrationMode: any
   /** Run id whose live authoritative usage snapshot drives the footer tally. */
   activeRunId: string | null
   addImageAttachmentsToChat: (
@@ -313,13 +311,11 @@ export interface ComposerProps {
   /** Explicit Project references selected for this chat's next solo send. */
   hasProjectReferenceContext?: boolean
   discordContextUnavailableReason?: string
-  currentEnsembleConcurrentMode: any
   currentEnsembleFanoutPolicy: EnsembleFanoutPolicy
   currentEnsembleContinuationHops: any
   currentEnsembleMaxContinuationHops: any
   currentEnsembleRoundStatus?: ContinuousHopsRoundStatus
   currentEnsembleActiveGoalStatus?: ContinuousHopsGoalStatus | null
-  currentEnsembleOrchestrationMode: any
   currentGoalButtonTitle: any
   currentGoalModeLabel: any
   currentGoalStatus: any
@@ -343,7 +339,6 @@ export interface ComposerProps {
   ensembleConcurrentLanesAvailable: any
   ensembleConcurrentWriteLanesAvailable: any
   ensembleEnabledParticipantsForCurrent: any
-  ensembleOllamaContextWarning: any
   externalGitSnapshots: any
   onExternalGitSnapshotRefresh: any
   externalPrByPath: any
@@ -565,12 +560,9 @@ export interface ComposerProps {
   /** Main-owned authority controls stay visible-but-disabled in chat popouts. */
   trustedSessionMutationDisabledReason?: string
   workspaceTrustMutationDisabledReason?: string
-  updateCurrentEnsembleConcurrentMode: any
   updateCurrentEnsembleFanoutPolicy: (policy: EnsembleFanoutPolicy) => void
   updateCurrentEnsembleFanoutIsolation: (isolation: EnsembleFanoutIsolationPolicy) => void
-  updateCurrentEnsembleContextChars: any
   updateCurrentEnsembleMaxContinuationHops: any
-  updateCurrentEnsembleOrchestrationMode: any
   updateCurrentGoalStatus: any
   updateSelectedParticipant: any
   visibleScheduledTasks: any

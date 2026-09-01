@@ -57,7 +57,6 @@ describe('sideChatComposer', () => {
     const syncParentGeminiModel = vi.fn()
     const respondToParentApproval = vi.fn()
     const updateParentFanoutIsolation = vi.fn()
-    const updateParentConcurrentMode = vi.fn()
     const setParentGoalDraft = vi.fn()
     const setParentGoalEditing = vi.fn()
     const parentExternalTextareaRef = { current: { id: 'parent-textarea' } }
@@ -96,7 +95,6 @@ describe('sideChatComposer', () => {
       setGoalDraft: setParentGoalDraft,
       setGoalEditing: setParentGoalEditing,
       updateCurrentEnsembleFanoutIsolation: updateParentFanoutIsolation,
-      updateCurrentEnsembleConcurrentMode: updateParentConcurrentMode,
       sessionYoloMode: { enabled: true },
       externalPathGrants: [{ id: 'parent-path' }],
       visibleScheduledTasks: [{ id: 'parent-schedule' }],
@@ -258,7 +256,6 @@ describe('sideChatComposer', () => {
     )
     expect(layoutSource).toContain("approvalMode: sideComposerSelection?.approvalMode || 'default'")
     expect(layoutSource).toContain('updateCurrentEnsembleFanoutIsolation: (isolation: any) =>')
-    expect(layoutSource).toContain('updateCurrentEnsembleConcurrentMode: (enabled: boolean) =>')
   })
 
   it('gives the linked surface its own hydration and residency lifecycle', () => {
