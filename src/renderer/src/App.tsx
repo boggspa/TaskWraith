@@ -20015,21 +20015,25 @@ function App(): React.JSX.Element {
   // transcript: the store's loaded window on a paged shell, the canonical
   // arrays otherwise. Whole-transcript (Class W) features escalate below.
   const currentChatTranscript = useCurrentChatTranscriptWindow(currentChat)
-  // Class W read paths (thread search, pins, the ambient context meter,
-  // compaction, mention-menu children) must never compute from a paged
-  // shell's empty arrays — and never from the bounded page either. The
-  // context meter lives in the always-mounted composer footer, so a paged
-  // current chat is always in demand: escalate to full hydration in the
-  // background (deduped by the hydration request pool). The tail page painted
-  // instantly on open; these surfaces compute on the hydrated record exactly
-  // as they did before Stage 1b. TODO(main-side search/pins/context IPC):
-  // serve these canonically from main instead of hydrating.
+  // Class W read paths (thread search, pins) escalate ON DEMAND only — a paged thread STAYS PAGED on plain open; plain
+  // opens never background-hydrate a paged chat. Compaction, closeout repair, and the mention menu carry
+  // their own on-demand triggers (below / in their own modules); mutations auto-escalate through
+  // updateChatById's summary queue. TODO(main-side search/pins IPC): serve canonically from main.
   useEffect(() => {
     if (!currentChatTranscript.paged) return
     const chatId = currentChat?.appChatId
     if (!chatId) return
+    if (!threadSearchOpen && !isPinnedMessagesPanelOpen) return
+    // A Class W surface (search invoked, pins panel opened) is demanding the whole transcript —
+    // full-hydrate, once per open (request-pool dedupes concurrent/ repeat triggers).
     void refreshSingleChat(chatId)
-  }, [currentChatTranscript.paged, currentChat?.appChatId, refreshSingleChat])
+  }, [
+    currentChatTranscript.paged,
+    currentChat?.appChatId,
+    threadSearchOpen,
+    isPinnedMessagesPanelOpen,
+    refreshSingleChat
+  ])
   const latestSideChatRunResultSeed = useMemo(() => {
     const chatRuns = currentChatTranscript.runs
     if (!chatRuns.length) return null
@@ -23257,10 +23261,13 @@ function App(): React.JSX.Element {
   // sums every run and over-counts — see contextMeter.ts). cumulativeChatTokens
   // stays for the cost tally + plan-import estimate, which legitimately want
   // lifetime totals.
-  const currentContextUsageSnapshot = currentContextUsage(currentChat?.runs || [], {
+  const currentContextUsageSnapshot = currentContextUsage(currentChatTranscript.runs, {
     liveOutputTokens: liveRunOutputTokens,
     isRunning: isCurrentChatRunning,
-    messages: currentChat?.messages || []
+    // Read-path rule: a paged thread's ambient meter derives from run stats
+    // alone — the window's messages would make compaction evidence partial,
+    // so treat that part as unknown rather than page-fed or a misleading 0.
+    messages: currentChatTranscript.paged ? undefined : currentChatTranscript.messages
   })
   const currentContextUsedTokens = currentContextUsageSnapshot?.contextTokens || 0
   const activeContextPercent = contextPercent(currentContextUsedTokens, contextWindowSize)
