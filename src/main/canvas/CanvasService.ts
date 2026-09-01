@@ -1162,9 +1162,9 @@ export class CanvasService
     }
   }
 
-  /** Summary of a LIVE session, enriched with browser-chrome state when available. */
+  /** Summary of a LIVE session, enriched with live driver state when available. */
   private liveSummary(session: LiveSession): CanvasSessionSummary {
-    const summary = toSummary(session.record)
+    const summary: CanvasSessionSummary = toSummary(session.record)
     if (session.presentation) summary.presentation = session.presentation
     if (session.record.driver === 'web') {
       try {
@@ -1185,6 +1185,13 @@ export class CanvasService
       } catch {
         // Driver may be tearing down; omit document rather than fail list/status.
       }
+    }
+    if (session.record.driver === 'emulator') {
+      // Live-only: the cached atomic observation carries the page-reported
+      // human play flag and is refreshed on observe/step and on human-takeover
+      // interruptions. Omit the field until an observation exists.
+      const cached = session.emulatorObservation
+      if (cached) summary.humanActive = cached.humanActive
     }
     return summary
   }

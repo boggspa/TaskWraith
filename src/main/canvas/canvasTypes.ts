@@ -690,6 +690,11 @@ export interface CanvasSessionSummary {
   isLoading?: boolean
   canGoBack?: boolean
   canGoForward?: boolean
+  /**
+   * Live-only human-play flag (emulator driver). Present once a page
+   * observation exists; never present for persisted history.
+   */
+  humanActive?: boolean
 }
 
 /** Persisted session record (audit / history). */
