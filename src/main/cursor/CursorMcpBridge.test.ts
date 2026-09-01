@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawn } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -547,4 +547,167 @@ describe('CURSOR_WEB_FETCH_MCP_SERVER_SOURCE', () => {
       rmSync(dir, { force: true, recursive: true })
     }
   })
+
+  it('declares run_shell_command + write_file', () => {
+    expect(CURSOR_WEB_FETCH_MCP_SERVER_SOURCE).toContain("name: 'run_shell_command'")
+    expect(CURSOR_WEB_FETCH_MCP_SERVER_SOURCE).toContain("name: 'write_file'")
+  })
+
+  it('declares read_file + list_directory', () => {
+    expect(CURSOR_WEB_FETCH_MCP_SERVER_SOURCE).toContain("name: 'read_file'")
+    expect(CURSOR_WEB_FETCH_MCP_SERVER_SOURCE).toContain("name: 'list_directory'")
+  })
+
+  it('lists and executes workspace shell + write tools over stdio JSON-RPC', async () => {
+    const listed = await callCursorWebFetchMcp({ method: 'tools/list' })
+    const listedResult = listed.result as { tools?: Array<{ name?: string }> } | undefined
+    const names = (listedResult?.tools ?? []).map((tool) => tool.name)
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'web_fetch',
+        'web_search',
+        'run_shell_command',
+        'write_file',
+        'read_file',
+        'list_directory'
+      ])
+    )
+
+    const ws = mkdtempSync(join(tmpdir(), 'taskwraith-mcp-ws-'))
+    try {
+      const shell = await callCursorWebFetchMcp({
+        method: 'tools/call',
+        params: {
+          name: 'run_shell_command',
+          arguments: { command: 'printf hello-mcp-shell' }
+        },
+        cwd: ws
+      })
+      const shellText = mcpText(shell)
+      expect(shellText).toContain('hello-mcp-shell')
+      expect(shellText).toContain('exit 0')
+      expect(shell.isError).not.toBe(true)
+
+      const wrote = await callCursorWebFetchMcp({
+        method: 'tools/call',
+        params: {
+          name: 'write_file',
+          arguments: { path: 'note.txt', content: 'from-web-mcp' }
+        },
+        cwd: ws
+      })
+      expect(mcpText(wrote)).toContain('note.txt')
+      expect(wrote.isError).not.toBe(true)
+      expect(readFileSync(join(ws, 'note.txt'), 'utf8')).toBe('from-web-mcp')
+
+      const escaped = await callCursorWebFetchMcp({
+        method: 'tools/call',
+        params: {
+          name: 'write_file',
+          arguments: { path: '../outside.txt', content: 'nope' }
+        },
+        cwd: ws
+      })
+      expect(mcpText(escaped)).toMatch(/workspace|inside/i)
+      expect(escaped.result && (escaped.result as { isError?: boolean }).isError).toBe(true)
+
+      const listedDir = await callCursorWebFetchMcp({
+        method: 'tools/call',
+        params: { name: 'list_directory', arguments: { path: '.' } },
+        cwd: ws
+      })
+      expect(mcpText(listedDir)).toContain('note.txt')
+      expect(listedDir.isError).not.toBe(true)
+
+      const readBack = await callCursorWebFetchMcp({
+        method: 'tools/call',
+        params: { name: 'read_file', arguments: { path: 'note.txt' } },
+        cwd: ws
+      })
+      expect(mcpText(readBack)).toBe('from-web-mcp')
+      expect(readBack.isError).not.toBe(true)
+
+      const readEscaped = await callCursorWebFetchMcp({
+        method: 'tools/call',
+        params: { name: 'read_file', arguments: { path: '../secret.txt' } },
+        cwd: ws
+      })
+      expect(mcpText(readEscaped)).toMatch(/workspace|inside/i)
+      expect(readEscaped.result && (readEscaped.result as { isError?: boolean }).isError).toBe(
+        true
+      )
+    } finally {
+      rmSync(ws, { force: true, recursive: true })
+    }
+  })
 })
+
+function mcpText(msg: Record<string, unknown>): string {
+  const result = msg.result as
+    | { content?: Array<{ text?: string }>; isError?: boolean }
+    | undefined
+  return result?.content?.[0]?.text ?? JSON.stringify(msg)
+}
+
+async function callCursorWebFetchMcp(input: {
+  method: string
+  params?: Record<string, unknown>
+  cwd?: string
+}): Promise<Record<string, unknown>> {
+  const dir = mkdtempSync(join(tmpdir(), 'taskwraith-mcp-rpc-'))
+  const file = join(dir, 'server.cjs')
+  writeFileSync(file, CURSOR_WEB_FETCH_MCP_SERVER_SOURCE)
+  const cwd = input.cwd ?? dir
+  try {
+    return await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [file], {
+        cwd,
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+      let stdout = ''
+      let stderr = ''
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL')
+        reject(new Error('MCP rpc timeout. stderr=' + stderr))
+      }, 8000)
+      const finish = (value: Record<string, unknown>): void => {
+        clearTimeout(timer)
+        child.kill('SIGKILL')
+        resolve(value)
+      }
+      child.stdout.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString('utf8')
+        const lines = stdout.split('\n')
+        stdout = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.trim()) continue
+          let msg: Record<string, unknown>
+          try {
+            msg = JSON.parse(line) as Record<string, unknown>
+          } catch {
+            continue
+          }
+          if (msg.id !== 1) continue
+          finish(msg)
+        }
+      })
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf8')
+      })
+      child.on('error', (err) => {
+        clearTimeout(timer)
+        reject(err)
+      })
+      child.stdin.write(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: input.method,
+          params: input.params ?? {}
+        }) + '\n'
+      )
+    })
+  } finally {
+    rmSync(dir, { force: true, recursive: true })
+  }
+}
