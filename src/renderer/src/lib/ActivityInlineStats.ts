@@ -1,7 +1,9 @@
 import type { ToolActivity, ToolActivityStatus, ToolDiffSummary } from '../../../main/store/types'
 import {
+  deriveShellCommandDiffSummary,
   deriveToolDiffSummary,
   estimateLineChanges,
+  getToolCategory,
   isErroredToolStatus,
   mayDeriveToolDiffStats
 } from './ToolParser'
@@ -134,6 +136,22 @@ const ESTIMATOR_ONLY_SOURCES: ReadonlySet<ToolDiffSummary['source']> = new Set([
   'patch_preview'
 ])
 
+/** Sources a SHELL row may display from a provided summary: workspace-measured
+ * churn and provider-declared change counts. Everything else on a shell row is
+ * result-derived guesswork (`result_diff` = the result text merely contained
+ * diff markers, e.g. `git diff` output) — the command text is the only honest
+ * evidence, and `deriveShellCommandDiffSummary` reads exactly that. */
+const SHELL_TRUSTED_SOURCES: ReadonlySet<ToolDiffSummary['source']> = new Set([
+  'git_numstat',
+  'codex_changes'
+])
+
+function isShellStatRow(toolName: string, category?: ToolActivity['category']): boolean {
+  const nameCategory = getToolCategory(toolName)
+  if (nameCategory === 'shell') return true
+  return nameCategory === 'unknown' && category === 'shell'
+}
+
 export function computeInlineStats(inputs: InlineStatInputs): InlineStatResult {
   // A denied/errored edit (read-only seat auto-deny, tool error, …) changed
   // nothing on disk — never paint a "+N −M" pill for it, even though the
@@ -150,6 +168,31 @@ export function computeInlineStats(inputs: InlineStatInputs): InlineStatResult {
   const editLike =
     looksWriteLike(inputs.toolName) ||
     mayDeriveToolDiffStats(inputs.toolName, parameters, inputs.category)
+  // Shell rows take a dedicated path: a measured/declared provided summary
+  // renders as-is, otherwise the odometer comes from the COMMAND TEXT alone
+  // (heredoc writes, inline patches — how shell-only model families edit).
+  // The generic estimators below never run for them; merged result output on
+  // a shell row is arbitrary and counting it invents a diff.
+  if (!editLike && isShellStatRow(inputs.toolName, inputs.category)) {
+    const trusted =
+      inputs.diffSummary && SHELL_TRUSTED_SOURCES.has(inputs.diffSummary.source)
+        ? inputs.diffSummary
+        : undefined
+    const shellSummary = trusted || deriveShellCommandDiffSummary(parameters)
+    const additions = shellSummary?.additions
+    const deletions = shellSummary?.deletions
+    const anyDefined = additions !== undefined || deletions !== undefined
+    const bothZero = (additions || 0) === 0 && (deletions || 0) === 0
+    if (!anyDefined || bothZero) {
+      return { visible: false, additions: 0, deletions: 0, confidence: shellSummary?.confidence }
+    }
+    return {
+      visible: true,
+      additions: additions || 0,
+      deletions: deletions || 0,
+      confidence: shellSummary?.confidence
+    }
+  }
   const providedSummary =
     inputs.diffSummary && (editLike || !ESTIMATOR_ONLY_SOURCES.has(inputs.diffSummary.source))
       ? inputs.diffSummary

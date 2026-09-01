@@ -13,6 +13,10 @@ import {
   isCatalogFileEditTool
 } from '../../../shared/canonicalToolCoalesce'
 import {
+  shellCommandTextFromInput,
+  shellWriteEvidenceDiffSummary
+} from '../../../shared/shellCommandEditEvidence'
+import {
   canonicalImageViewToolName,
   IMAGE_VIEW_DISPLAY_NAME,
   IMAGE_VIEW_TOOL_NAME,
@@ -1193,6 +1197,23 @@ function getPatchPreview(parameters?: Record<string, unknown>, resultText?: stri
   )
 }
 
+/**
+ * Diff stats for a SHELL row, from the command text alone. Shell-only model
+ * families (pi-hosted Xiaomi/MiMo) edit files through `run_shell_command`
+ * heredocs and inline patches instead of the dedicated file tools, so their
+ * rows carried no ± odometer. The command string is the one honest evidence
+ * source on a shell row — result text is arbitrary output (a `git diff`
+ * transcript contains diff markers without editing anything; counting it is
+ * the phantom-badge class), so this deliberately never reads it.
+ */
+export function deriveShellCommandDiffSummary(
+  parameters?: Record<string, unknown>
+): ToolDiffSummary | undefined {
+  const command = shellCommandTextFromInput(parameters || {})
+  if (!command) return undefined
+  return shellWriteEvidenceDiffSummary(command, (body) => parseUnifiedDiffSummary(body))
+}
+
 export function deriveToolDiffSummary(
   toolName: string,
   parameters?: Record<string, unknown>,
@@ -1206,6 +1227,13 @@ export function deriveToolDiffSummary(
   if (isReasoningToolName(lowerTool)) return undefined
   if (typeof parameters?.kind === 'string' && parameters.kind.toLowerCase() === 'reasoning') {
     return undefined
+  }
+  // Shell rows take a dedicated command-text path and never fall through to
+  // the generic estimators: result-merged parameters and result text on a
+  // shell row are arbitrary output, not edit evidence.
+  const nameCategory = getToolCategory(toolName)
+  if (nameCategory === 'shell' || (nameCategory === 'unknown' && options?.category === 'shell')) {
+    return deriveShellCommandDiffSummary(parameters)
   }
   // Estimation is for edits. Result-merged parameters and result text carry
   // arbitrary tool output (a read's file body under `content`, a shell

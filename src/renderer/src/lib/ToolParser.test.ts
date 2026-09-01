@@ -1222,3 +1222,71 @@ describe('ToolParser', () => {
     })
   })
 })
+
+describe('shell-command edit evidence (shell-only model families)', () => {
+  const heredocWrite = "cat > src/app.py << 'HEREDOC'\nline1\nline2\nline3\nHEREDOC"
+
+  it('derives an estimated content summary from a heredoc write command', () => {
+    expect(deriveToolDiffSummary('run_shell_command', { command: heredocWrite })).toEqual({
+      additions: 3,
+      deletions: 0,
+      files: [{ path: 'src/app.py', status: 'modified', additions: 3, deletions: 0 }],
+      source: 'content',
+      confidence: 'estimated'
+    })
+  })
+
+  it('derives patch counts from a git apply heredoc', () => {
+    const command = [
+      "git apply <<'PATCH'",
+      'diff --git a/a.ts b/a.ts',
+      '--- a/a.ts',
+      '+++ b/a.ts',
+      '@@ -1,2 +1,3 @@',
+      ' line',
+      '-old',
+      '+new',
+      '+more',
+      'PATCH'
+    ].join('\n')
+    expect(deriveToolDiffSummary('run_shell_command', { command })).toMatchObject({
+      additions: 2,
+      deletions: 1,
+      source: 'patch_preview',
+      confidence: 'estimated'
+    })
+  })
+
+  it('ignores result text on shell rows even when the command carries evidence', () => {
+    const gitDiffOutput = [
+      'diff --git a/z.ts b/z.ts',
+      '--- a/z.ts',
+      '+++ b/z.ts',
+      '@@ -1,9 +1,9 @@',
+      '-a',
+      '-b',
+      '-c',
+      '+d',
+      '+e',
+      '+f',
+      '+g'
+    ].join('\n')
+    expect(
+      deriveToolDiffSummary('run_shell_command', { command: heredocWrite }, gitDiffOutput)
+    ).toMatchObject({ additions: 3, deletions: 0, source: 'content' })
+  })
+
+  it('honours execute-kind rows whose names cannot be resolved', () => {
+    expect(
+      deriveToolDiffSummary('Executed command', { command: heredocWrite }, undefined, {
+        category: 'shell'
+      })
+    ).toMatchObject({ additions: 3, deletions: 0, confidence: 'estimated' })
+  })
+
+  it('stays silent for shell commands whose only evidence is uncounted', () => {
+    expect(
+      deriveToolDiffSummary('run_shell_command', { command: 'sort data.txt > sorted.txt' })
+    ).toBeUndefined()
+  })
+})

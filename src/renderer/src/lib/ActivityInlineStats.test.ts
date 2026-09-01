@@ -423,3 +423,82 @@ describe('ActivityInlineStats', () => {
     })
   })
 })
+
+describe('shell-command edit rows (pi-hosted shell-only wire shape)', () => {
+  const heredocWrite = "cat > src/app.py << 'HEREDOC'\nline1\nline2\nline3\nHEREDOC"
+
+  it('lights the odometer for a broker heredoc write', () => {
+    const result = inlineStatsForActivity({
+      id: 'shell-1',
+      toolName: 'run_shell_command',
+      displayName: 'Shell command',
+      category: 'shell',
+      status: 'success',
+      parameters: { command: heredocWrite, cwd: '/repo' }
+    })
+    expect(result.visible).toBe(true)
+    expect(result.additions).toBe(3)
+    expect(result.deletions).toBe(0)
+    expect(result.confidence).toBe('estimated')
+  })
+
+  it('keeps read-only shell rows silent', () => {
+    const result = computeInlineStats({
+      toolName: 'run_shell_command',
+      status: 'success',
+      category: 'shell',
+      parameters: { command: 'git diff HEAD~1' }
+    })
+    expect(result.visible).toBe(false)
+  })
+
+  it('suppresses a phantom result_diff summary on a shell row', () => {
+    // A shell result that merely CONTAINED diff markers (`git diff` output)
+    // must not paint a chip — the command itself carries no write evidence.
+    const result = computeInlineStats({
+      toolName: 'run_shell_command',
+      status: 'success',
+      category: 'shell',
+      parameters: { command: 'git diff' },
+      diffSummary: { additions: 5, deletions: 2, source: 'result_diff', confidence: 'estimated' }
+    })
+    expect(result.visible).toBe(false)
+  })
+
+  it('keeps declared codex_changes summaries visible on shell rows', () => {
+    const result = computeInlineStats({
+      toolName: 'run_shell_command',
+      status: 'success',
+      category: 'shell',
+      parameters: { command: 'scripts/apply.sh' },
+      diffSummary: { additions: 4, deletions: 1, source: 'codex_changes', confidence: 'exact' }
+    })
+    expect(result.visible).toBe(true)
+    expect(result.additions).toBe(4)
+    expect(result.deletions).toBe(1)
+  })
+
+  it('suppresses chips for denied or errored shell writes', () => {
+    const result = computeInlineStats({
+      toolName: 'run_shell_command',
+      status: 'error',
+      category: 'shell',
+      parameters: { command: heredocWrite }
+    })
+    expect(result.visible).toBe(false)
+  })
+
+  it('sums shell heredoc rows into group totals', () => {
+    const totals = sumActivityDiffTotals([
+      {
+        id: 'shell-2',
+        toolName: 'run_shell_command',
+        displayName: 'Shell command',
+        category: 'shell',
+        status: 'success',
+        parameters: { command: heredocWrite }
+      }
+    ])
+    expect(totals).toEqual({ additions: 3, deletions: 0, estimated: true })
+  })
+})
