@@ -663,6 +663,60 @@ function metaSnapshot(
   }
 }
 
+/**
+ * The Muse Code subscription meters imported from dev.meta.ai/usage: the
+ * "Current usage" and "Weekly limit" percent windows, with the weekly reset
+ * and the plan name from the page. Pay-as-you-go spend stays on the `meta`
+ * lane — the subscription is a separate pool with its own ceiling.
+ */
+function museSubscriptionSnapshot(
+  reading: UsageWebSessionReading,
+  now: number
+): QuotaSnapshotHookSnapshot {
+  const capturedAt = Date.parse(reading.capturedAt)
+  const windows: QuotaSnapshotHookWindow[] = []
+  if (reading.currentUsedPercent !== undefined) {
+    const remainingPercent = Math.max(0, Math.min(100, 100 - reading.currentUsedPercent))
+    windows.push({
+      id: 'muse-subscription-current',
+      label: 'Current usage',
+      usedPercent: reading.currentUsedPercent,
+      remainingPercent,
+      limitLabel: `${remainingPercent}% remaining · imported browser session`
+    })
+  }
+  if (reading.weeklyUsedPercent !== undefined) {
+    const remainingPercent = Math.max(0, Math.min(100, 100 - reading.weeklyUsedPercent))
+    windows.push({
+      id: 'muse-subscription-weekly',
+      label: 'Weekly limit',
+      usedPercent: reading.weeklyUsedPercent,
+      remainingPercent,
+      limitLabel: `${remainingPercent}% remaining · imported browser session`,
+      ...(reading.resetAt ? { resetAt: reading.resetAt } : {}),
+      limitWindowSeconds: 7 * 24 * 60 * 60
+    })
+  }
+  if (windows.length === 0) {
+    return emptySnapshot(
+      'muse',
+      now,
+      true,
+      'Muse subscription session imported, but no usage meters were captured. Re-import after the usage page finishes loading.'
+    )
+  }
+  return {
+    provider: 'muse',
+    source: 'taskwraith-native',
+    configured: true,
+    fetchedAt: reading.capturedAt,
+    stale: !Number.isFinite(capturedAt) || now - capturedAt > QUOTA_SNAPSHOT_HOOK_STALE_AFTER_MS,
+    planType: reading.planName ?? 'Muse Code subscription',
+    windows,
+    balances: []
+  }
+}
+
 function tokenPlanSnapshot(
   provider: 'qwen' | 'mimo',
   reading: UsageWebSessionReading | null,
@@ -918,30 +972,32 @@ export function createTaskWraithQuotaSnapshotHook(
     activeDeepSeekKey = deepSeekKey || null
     if (!deepSeekKey) deepSeekCache = null
 
-    const [deepSeek, museConfigured, [cerebrasWeb, metaWeb, qwenWeb, mimoWeb]] = await Promise.all([
-      deepSeekKey
-        ? readDeepSeek(deepSeekKey, apiUsageBilling.deepseek, readAt)
-        : Promise.resolve(
-            emptySnapshot(
-              'deepseek',
-              readAt,
-              hasApiUsageBillingProvider(apiUsageBilling, 'deepseek'),
-              hasApiUsageBillingProvider(apiUsageBilling, 'deepseek')
-                ? 'Store a DeepSeek key in the Pi provider card to read the official balance.'
-                : undefined
-            )
-          ),
-      Promise.resolve()
-        .then(() => dependencies.getMuseConfigured())
-        .then(Boolean)
-        .catch(() => false),
-      Promise.all([
-        readWebSession('cerebras').catch(() => null),
-        readWebSession('meta').catch(() => null),
-        readWebSession('qwen').catch(() => null),
-        readWebSession('mimo').catch(() => null)
+    const [deepSeek, museConfigured, [cerebrasWeb, metaWeb, museWeb, qwenWeb, mimoWeb]] =
+      await Promise.all([
+        deepSeekKey
+          ? readDeepSeek(deepSeekKey, apiUsageBilling.deepseek, readAt)
+          : Promise.resolve(
+              emptySnapshot(
+                'deepseek',
+                readAt,
+                hasApiUsageBillingProvider(apiUsageBilling, 'deepseek'),
+                hasApiUsageBillingProvider(apiUsageBilling, 'deepseek')
+                  ? 'Store a DeepSeek key in the Pi provider card to read the official balance.'
+                  : undefined
+              )
+            ),
+        Promise.resolve()
+          .then(() => dependencies.getMuseConfigured())
+          .then(Boolean)
+          .catch(() => false),
+        Promise.all([
+          readWebSession('cerebras').catch(() => null),
+          readWebSession('meta').catch(() => null),
+          readWebSession('muse').catch(() => null),
+          readWebSession('qwen').catch(() => null),
+          readWebSession('mimo').catch(() => null)
+        ])
       ])
-    ])
 
     const metaAnchorValue = metaWeb?.capturedAt ?? apiUsageBilling.meta?.anchorUpdatedAt
     const metaAnchorMs = metaAnchorValue ? Date.parse(metaAnchorValue) : null
@@ -967,6 +1023,7 @@ export function createTaskWraithQuotaSnapshotHook(
       hasApiUsageBillingProvider(apiUsageBilling, 'meta')
         ? metaSnapshot(apiUsageBilling.meta, metaWeb, metaSpendSinceAnchorUsd, fxRates, readAt)
         : emptySnapshot('meta', readAt, false),
+      ...(museWeb ? [museSubscriptionSnapshot(museWeb, readAt)] : []),
       ...(mimoWeb ? [tokenPlanSnapshot('mimo', mimoWeb, readAt)] : []),
       ...(qwenWeb ? [tokenPlanSnapshot('qwen', qwenWeb, readAt)] : [])
     ]

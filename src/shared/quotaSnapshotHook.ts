@@ -9,6 +9,7 @@ export const QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS = [
   'deepseek',
   'cerebras',
   'meta',
+  'muse',
   'mimo',
   'qwen'
 ] as const

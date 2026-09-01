@@ -436,7 +436,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
     })
 
     const snapshots = await read()
-    expect(readUsageWebSession).toHaveBeenCalledTimes(4)
+    expect(readUsageWebSession).toHaveBeenCalledTimes(5)
     expect(snapshots).toEqual([
       expect.objectContaining({ provider: 'deepseek', configured: false }),
       expect.objectContaining({
@@ -476,6 +476,99 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         windows: [expect.objectContaining({ label: '7-Day Quota', usedPercent: 0 })]
       })
     ])
+  })
+
+  it('projects the imported Muse Code subscription meters as their own lane', async () => {
+    const capturedAt = new Date(NOW - 60_000).toISOString()
+    const readUsageWebSession = vi.fn(async (provider: string) =>
+      provider === 'muse'
+        ? {
+            currentUsedPercent: 37,
+            weeklyUsedPercent: 82,
+            planName: 'Muse Code High Usage',
+            resetAt: '2026-09-07T00:00:00.000Z',
+            capturedAt
+          }
+        : null
+    )
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1 } }),
+      getApiUsageBilling: () => ({}),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readUsageWebSession,
+      now: () => NOW
+    })
+
+    const snapshots = await read()
+    const muse = snapshots.find((snapshot) => snapshot.provider === 'muse')
+    expect(muse).toEqual(
+      expect.objectContaining({
+        provider: 'muse',
+        configured: true,
+        fetchedAt: capturedAt,
+        stale: false,
+        planType: 'Muse Code High Usage',
+        windows: [
+          expect.objectContaining({
+            id: 'muse-subscription-current',
+            label: 'Current usage',
+            usedPercent: 37,
+            remainingPercent: 63
+          }),
+          expect.objectContaining({
+            id: 'muse-subscription-weekly',
+            label: 'Weekly limit',
+            usedPercent: 82,
+            remainingPercent: 18,
+            resetAt: '2026-09-07T00:00:00.000Z',
+            limitWindowSeconds: 7 * 24 * 60 * 60
+          })
+        ]
+      })
+    )
+  })
+
+  it('omits the Muse subscription lane without an import and flags an aged reading stale', async () => {
+    const withoutImport = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({}),
+      getApiUsageBilling: () => ({}),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readUsageWebSession: vi.fn(async () => null),
+      now: () => NOW
+    })
+    expect((await withoutImport()).some((snapshot) => snapshot.provider === 'muse')).toBe(false)
+
+    const agedCapturedAt = new Date(NOW - 45 * 60 * 1000).toISOString()
+    const withAgedImport = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({}),
+      getApiUsageBilling: () => ({}),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readUsageWebSession: vi.fn(async (provider: string) =>
+        provider === 'muse' ? { weeklyUsedPercent: 5, capturedAt: agedCapturedAt } : null
+      ),
+      now: () => NOW
+    })
+    const muse = (await withAgedImport()).find((snapshot) => snapshot.provider === 'muse')
+    expect(muse).toEqual(
+      expect.objectContaining({
+        provider: 'muse',
+        stale: true,
+        planType: 'Muse Code subscription',
+        windows: [expect.objectContaining({ label: 'Weekly limit', usedPercent: 5 })]
+      })
+    )
   })
 
   it('fills DeepSeek credit usage against its soft budget when no top-up anchor exists', async () => {
