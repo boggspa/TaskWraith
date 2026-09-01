@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'util'
 import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { adoptSupersededMaxWaveAgents } from './maxWaveAgentsDefault'
 import { attachChatUpdateProducerEnvelope } from '../../shared/chatUpdateTransport'
+import { assertAuthoritativeChatForSave } from './assertAuthoritativeChatForSave'
 import {
   APPROVAL_TIMEOUT_DEFAULTS_VERSION,
   DEFAULT_APPROVAL_TIMEOUTS_MS,
@@ -7630,7 +7631,7 @@ export class AppStore {
           { operation: 'save-chat', pathFamily: 'chats' },
           (writerAdmission) => this.saveChatAdmitted(titledChat, options, writerAdmission)
         )
-      : this.saveChatThroughHost(titledChat)
+      : this.saveChatThroughHost(titledChat, options)
     chat.persistenceRevision = saved.persistenceRevision
     chat.updatedAt = saved.updatedAt
     observeComposerContinuationPersisted(saved.appChatId)
@@ -7682,7 +7683,7 @@ export class AppStore {
    * this accumulated Desktop intent onto that newer source within a strict
    * retry bound.
    */
-  private static saveChatThroughHost(chat: ChatRecord): ChatRecord {
+  private static saveChatThroughHost(chat: ChatRecord, options: ChatSaveOptions = {}): ChatRecord {
     this.assertHistoryMutationAllowed({
       operation: 'Chat persistence',
       chatIds: [chat.appChatId, chat.parentChatId],
@@ -7696,6 +7697,10 @@ export class AppStore {
     }
     const chatPath = chatPathForId(chatsDir, chat.appChatId)
     const previousChatForFeedback = this.readChatForFeedbackBaseline(chat.appChatId, chatPath)
+    // Stage 1a: this path skips the admitted path's stale-revision merge, so it
+    // is the live truncation hole — a windowed TranscriptPage passed as a whole
+    // record would persist over the durable prefix. Fail loudly instead.
+    assertAuthoritativeChatForSave(chat, previousChatForFeedback, options)
     // Same main-owned-field protection as the admitted path: renderer-owned
     // records can lag main's async patchers, and a lean chat-list ensemble row
     // must never erase the stored roster.
@@ -7785,6 +7790,10 @@ export class AppStore {
 
     const chatPath = chatPathForId(chatsDir, chat.appChatId)
     const previousChatForFeedback = this.readChatForFeedbackBaseline(chat.appChatId, chatPath)
+    // Stage 1a: same windowed-page fence as the Host path. The stale-revision
+    // merge below only fills missing rows when the incoming revision is STALE;
+    // a current-revision page would otherwise overwrite the durable prefix.
+    assertAuthoritativeChatForSave(chat, previousChatForFeedback, options)
     // These fields are written only by main-owned async patchers. Renderer
     // chat records can lag those writes, so a later whole-record save must not
     // erase a durable isolated-worktree binding, an explicit PR watch, or the
