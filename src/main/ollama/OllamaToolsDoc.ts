@@ -118,6 +118,11 @@ function accessLabel(def: TaskWraithMcpToolDefinition): string {
   if (def.name === 'request_tool_permission') {
     return 'permission elicitation — callable under Ask/Plan; the exact target runs only after one-shot user approval and all non-grantable guards still apply'
   }
+  // Screenshot-like pixel egress is host-state access. It remains on the
+  // normal mcpTools approval path even though it does not mutate a surface.
+  if (def.name === 'canvas_screenshot' || def.name === 'emulator_observe') {
+    return 'pixel egress — governed by your run permission role; capture is not auto-allowed merely because it is read-only'
+  }
   if (def.name.startsWith('mesh_scene_') || def.name.startsWith('mesh_topology_')) {
     return 'Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied'
   }

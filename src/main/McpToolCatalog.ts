@@ -4888,6 +4888,13 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       },
       inputSchema: {
         type: 'object',
+        examples: [
+          {
+            canvasId: 'canvas-demo-1',
+            expectedObservationId: 'observation-1',
+            segments: [{ buttons: ['right'], frames: 1 }]
+          }
+        ],
         properties: {
           canvasId: {
             type: 'string',

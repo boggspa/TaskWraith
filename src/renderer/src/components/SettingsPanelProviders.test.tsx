@@ -803,7 +803,16 @@ describe('SettingsPanel provider cards', () => {
 
   it('groups recent MCP tool families under their product headers', () => {
     const html = renderToStaticMarkup(
-      <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'mcp',
+          agenticServices: {
+            ...DEFAULT_AGENTIC_SERVICES,
+            mcpTools: 'allow',
+            canvasInteraction: 'deny'
+          }
+        })}
+      />
     )
     const groupSlice = (label: string, nextLabel: string) => {
       const start = html.indexOf(`<strong>${label}</strong>`)
@@ -816,6 +825,27 @@ describe('SettingsPanel provider cards', () => {
     expect(groupSlice('Canvas and launches', 'Ensemble and collaboration')).toContain(
       '<strong>Canvas Sketch Get</strong>'
     )
+    const canvasGroup = groupSlice('Canvas and launches', 'Ensemble and collaboration')
+    expect(canvasGroup).toContain('<strong>Open homebrew emulator</strong>')
+    expect(canvasGroup).toContain('<strong>Observe homebrew emulator</strong>')
+    expect(canvasGroup).toContain('<strong>Step homebrew emulator</strong>')
+    expect(canvasGroup).toContain('no URL, ROM, or game override exists')
+    expect(canvasGroup).toContain('raw emulator memory is never exposed')
+    const toolSlice = (label: string) => {
+      const start = html.indexOf(`<strong>${label}</strong>`)
+      const end = html.indexOf('</article>', start)
+      expect(start).toBeGreaterThanOrEqual(0)
+      expect(end).toBeGreaterThan(start)
+      return html.slice(start, end)
+    }
+    for (const label of [
+      'Redeem permission opportunity',
+      'Open homebrew emulator',
+      'Observe homebrew emulator'
+    ]) {
+      expect(toolSlice(label)).toContain('Policy<code>Always allow</code>')
+    }
+    expect(toolSlice('Step homebrew emulator')).toContain('Policy<code>Block</code>')
     expect(groupSlice('Ensemble and collaboration', 'Goals and evidence')).toContain(
       '<strong>Ensemble Fanout</strong>'
     )
@@ -826,6 +856,7 @@ describe('SettingsPanel provider cards', () => {
       '<strong>Tw Recall Find</strong>'
     )
     expect(groupSlice('Media tools', 'Creative apps')).toContain('<strong>Audio Mix</strong>')
+    expect(html).toContain('Redeem permission opportunity')
   })
 
   it('shows Codex TaskWraith bridge tools separately from app-server MCP inventory', () => {
@@ -1116,6 +1147,9 @@ describe('SettingsPanel provider cards', () => {
     )
     expect(html).toMatch(
       /<label class="settings-service-row"><span>Network access<\/span><select class="settings-select" disabled="">/
+    )
+    expect(html).toContain(
+      'click and fill elements in a Canvas preview or advance a reviewed fixed emulator surface'
     )
   })
 

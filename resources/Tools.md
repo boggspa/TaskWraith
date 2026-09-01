@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 218 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 222 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -887,7 +887,7 @@ In Ensemble Mode, the configured Boss or Captain fans out EVERY tagged reader-in
 
 ## ensemble_await
 
-Wait (bounded) for fan-out lanes, sub-threads, or waves to settle — the JOIN step of an agent-programmed workflow. In Ensemble Mode, omit parameters to await every other lane in the current round. Pass laneIds, subThreadIds, or waveIds to await specific targets. Returns per-target status either way: status=settled means every awaited target is terminal; status=timeout returns the partial picture (settled vs pending counts) so you can re-invoke to keep waiting or proceed with what settled. Read settled lanes with ensemble_lane_result. Timeout is clamped to 600 seconds (10 minutes) per call.
+Wait (bounded) for fan-out lanes, sub-threads, waves, or owned durable executions to settle — the JOIN step of an agent-programmed workflow. In Ensemble Mode, omit parameters to await every other lane in the current round. Pass laneIds, subThreadIds, waveIds, or executionIds (from ultra_task) to await specific targets. Execution status distinguishes proposed, queued, provider-running, needs-action, and settled stages; a terminal execution settles only when its durable result is available inline as untrusted graph output. status=timeout returns the partial picture so you can check in, continue other work, or re-invoke. Read settled fan-out lanes with ensemble_lane_result. The implicit check-in is 45 seconds; explicit timeout is clamped to 5–600 seconds.
 
 - Access: read-only (no approval needed)
 - Required args: none
@@ -1009,6 +1009,14 @@ After a TaskWraith tool or native tool fails because of an apparent permission, 
 - Required args: toolName, arguments, failure
 - Optional args: rationale
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"request_tool_permission","arguments":{"toolName":"text","arguments":{},"failure":"text"}}}}`
+
+## redeem_permission_opportunity
+
+Redeem one opaque permission opportunity issued by TaskWraith after a host-observed eligible boundary. Pass only the exact opportunity id returned by TaskWraith; do not add target tool names, arguments, failure text, or rationale. The host retains and revalidates the canonical target before any approval or execution. The id is single-use, run-bound, and expires quickly.
+
+- Access: governed by your run permission role
+- Required args: permissionOpportunityId
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"redeem_permission_opportunity","arguments":{"permissionOpportunityId":"text"}}}}`
 
 ## goal_read
 
@@ -1284,7 +1292,7 @@ Return the Canvas as a structured element tree with stable refs (e.g. ref "e7"),
 
 Capture the Canvas as a PNG (image content block) plus dimensions. Use as a VISUAL SUPPLEMENT to canvas_snapshot — e.g. to check layout/spacing/colour you cannot read from the tree. Gated (pixel egress). Credential fields are painted over before capture, so a password or one-time code is never in the returned pixels; `secretsRedacted` reports how many were covered. Capture fails closed if the credential-field probe cannot verify the page and is refused while a credential field owns focus; ask the user to finish entering the secret and move focus before retrying.
 
-- Access: read-only (no approval needed)
+- Access: pixel egress — governed by your run permission role; capture is not auto-allowed merely because it is read-only
 - Required args: canvasId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_screenshot","arguments":{"canvasId":"text"}}}}`
 
@@ -1402,6 +1410,31 @@ Run agent-supplied JavaScript inside the Canvas preview page and return its size
 - Access: surface-window gated — denied under Plan; first permitted eval on each live Canvas surface requires exact desktop review, then same-surface evals auto-approve for 12 hours across navigation and later turns
 - Required args: canvasId, script
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_eval","arguments":{"canvasId":"text","script":"text"}}}}`
+
+## emulator_open
+
+Open the fixed TaskWraith homebrew emulator demo in the active chat Canvas dock. This accepts NO game, ROM, URL, or browser override: it always opens the reviewed packaged homebrew demo. Returns only the chat-owned canvasId, title, and dock presentation; use emulator_observe for the safe mapped state and PNG frame.
+
+- Access: governed by your run permission role
+- Required args: none
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"emulator_open","arguments":{}}}}`
+
+## emulator_observe
+
+Capture one atomic observation of a chat-owned packaged emulator surface: safe mapped state plus exactly one PNG image. The result never exposes ROM bytes, raw emulator RAM, internal URLs, or base64 pixels in structured data. Gated like canvas_screenshot because it exports pixels.
+
+- Access: pixel egress — governed by your run permission role; capture is not auto-allowed merely because it is read-only
+- Required args: canvasId
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"emulator_observe","arguments":{"canvasId":"text"}}}}`
+
+## emulator_step
+
+Advance a chat-owned packaged emulator from one observed token through bounded controller segments. Provide canvasId, expectedObservationId, and 1–12 segments; each segment holds zero or more non-opposing buttons for 1–120 frames, with at most 240 total frames. This is exact-surface AppDrive control: approval/grants bind only the reviewed emulator canvas. Returns the final safe observation and one PNG image; check outcome, executed, partial, and framesCompleted before assuming every requested frame ran.
+
+- Access: governed by your run permission role
+- Required args: canvasId, expectedObservationId, segments
+- Optional args: requireIndependentVerifier
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"emulator_step","arguments":{"canvasId":"canvas-demo-1","expectedObservationId":"observation-1","segments":[{"buttons":["right"],"frames":1}]}}}}`
 
 ## canvas_navigate
 

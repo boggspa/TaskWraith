@@ -2341,6 +2341,42 @@ const MCP_TOOL_OVERRIDES: Partial<
     policyKey: 'mcpTools',
     description:
       'Lists Project reference catalogue metadata for the active chat without fetching, statting, or probing locators.'
+  },
+  redeem_permission_opportunity: {
+    label: 'Redeem permission opportunity',
+    transcript: 'Redeemed permission opportunity',
+    group: 'runtime',
+    iconRef: 'tool:auth',
+    policyKey: 'mcpTools',
+    description:
+      'Redeems one host-issued, run-bound permission opportunity; it never accepts model-authored target arguments.'
+  },
+  emulator_open: {
+    label: 'Open homebrew emulator',
+    transcript: 'Opened homebrew emulator',
+    group: 'canvas',
+    iconRef: 'tool:canvas',
+    policyKey: 'mcpTools',
+    description:
+      'Opens only the fixed reviewed homebrew demo in the Canvas dock; no URL, ROM, or game override exists.'
+  },
+  emulator_observe: {
+    label: 'Observe homebrew emulator',
+    transcript: 'Observed homebrew emulator',
+    group: 'canvas',
+    iconRef: 'tool:canvas',
+    policyKey: 'mcpTools',
+    description:
+      'Returns one governed PNG plus verified mapped state from the fixed demo; raw emulator memory is never exposed.'
+  },
+  emulator_step: {
+    label: 'Step homebrew emulator',
+    transcript: 'Stepped homebrew emulator',
+    group: 'canvas',
+    iconRef: 'tool:canvas',
+    policyKey: 'canvasInteraction',
+    description:
+      'Advances the reviewed emulator surface through bounded input frames under its exact Canvas interaction/AppDrive grant.'
   }
 }
 
@@ -2401,6 +2437,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'run_timeline',
     'raw_provider_events',
     'request_tool_permission',
+    'redeem_permission_opportunity',
     // Appearance of TaskWraith itself — an agent-accessed capability rather
     // than a workspace or canvas one, so it groups with the other tools that
     // act on the running app.
@@ -2457,6 +2494,9 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'canvas_wait_for',
     'canvas_annotate',
     'canvas_eval',
+    'emulator_open',
+    'emulator_observe',
+    'emulator_step',
     'canvas_navigate',
     'canvas_close',
     'web_login_list',
@@ -7768,9 +7808,10 @@ export function SettingsPanel({
                     <span>
                       Canvas interaction
                       <small>
-                        Whether agents can click and fill elements in a Canvas preview. Default
-                        &apos;ask&apos; prompts before each interaction; &apos;Always allow&apos;
-                        lets agents drive the preview without prompting. Denied under read-only.
+                        Whether agents can click and fill elements in a Canvas preview or advance a
+                        reviewed fixed emulator surface. Default &apos;ask&apos; prompts before each
+                        interaction; &apos;Always allow&apos; lets agents drive that exact surface
+                        without prompting. Denied under read-only.
                       </small>
                     </span>
                     <select
