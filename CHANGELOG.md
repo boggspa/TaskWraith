@@ -8,11 +8,21 @@ context needed to answer.
 
 ## 1.9.7 - Unreleased
 
-> **Source-ahead refresh — 2026-09-01.** This refresh audits the source-ahead
-> state through `982fc7eaf`, 1055 commits after the shipped v1.9.6 boundary. The
+> **Source-ahead refresh — 2026-09-02.** This refresh audits the source-ahead
+> state through `a090668f9`, 1136 commits after the shipped v1.9.6 boundary. The
 > highlights below describe that source-ahead work only; they are not a release
 > or artifact claim. The Emulator Canvas highlight below describes source-ahead
 > code, not a shipped or packaged-artifact feature.
+
+### New Models and Provider Seats
+
+- **Devin Integration Complete.** The Devin provider seat is now fully active for new runs. It authenticates through `WINDSURF_API_KEY` / `DEVIN_API_KEY` or the credentials file, providing access to SWE-1.6 Slow by default.
+- **Claude Fable 5.1.** Added to the Claude picker, with the previous Fable 5 relabeled as Legacy.
+- **GLM-5.2 (Mistral Hosted).** Added as a subscription seat model with full thinking ladder support and 1M context via Mistral.
+
+### Ensemble Orchestration
+
+- **Continuous-only Orchestration.** The mode picker and chars slider have been retired in favor of continuous-only orchestration and an On/Off fan-out row. Ingest budgets are now window-derived per-seat.
 
 ### Provider setup and run control
 
