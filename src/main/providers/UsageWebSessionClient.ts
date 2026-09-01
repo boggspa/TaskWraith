@@ -335,27 +335,39 @@ export function parseUsageWebSessionReading(
     : parseTokenPlanReading(text, capturedAt)
 }
 
-/**
- * Refresh server-rendered Meta billing, Muse subscription, and Cerebras
- * billing pages with the encrypted session. Qwen/MiMo are client-rendered, so
- * their validated import-time reading remains authoritative until the user
- * re-imports.
- */
-export async function readUsageWebSessionReading(
-  provider: UsageWebSessionProviderId,
-  dependencies: { fetchImpl?: FetchLike; now?: () => number } = {}
-): Promise<UsageWebSessionReading | null> {
-  const store = usageWebSessionStore(provider)
-  const stored = store?.loadSession()
-  if (!stored) return null
-  if (provider === 'qwen' || provider === 'mimo') return stored.reading
+/** Cadence guards for the server refresh below. The quota poll that drives it
+ * can fire every ~30 seconds, and Meta hosts two lanes (billing + Muse
+ * subscription) on one dev.meta.ai origin — being rate-limited or blocked
+ * there would take both meters out at once, so the readings refresh at a
+ * console-friendly pace instead of the poll's. */
+const REFRESH_SUCCESS_TTL_MS = 15 * 60 * 1000
+const REFRESH_FAILURE_RETRY_MS = 5 * 60 * 1000
+const REFRESH_BLOCKED_RETRY_MS = 60 * 60 * 1000
 
+interface UsageWebSessionRefreshGate {
+  cookieHeader: string
+  nextAttemptAtMs: number
+}
+
+const refreshGates = new Map<UsageWebSessionProviderId, UsageWebSessionRefreshGate>()
+const refreshInFlight = new Map<UsageWebSessionProviderId, Promise<UsageWebSessionReading | null>>()
+
+async function refreshStoredUsageWebSessionReading(
+  provider: UsageWebSessionProviderId,
+  stored: { cookieHeader: string; reading: UsageWebSessionReading },
+  gate: UsageWebSessionRefreshGate,
+  dependencies: { fetchImpl?: FetchLike; now?: () => number }
+): Promise<UsageWebSessionReading | null> {
+  const now = () => dependencies.now?.() ?? Date.now()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   timer.unref?.()
   try {
     const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch
-    if (typeof fetchImpl !== 'function') return stored.reading
+    if (typeof fetchImpl !== 'function') {
+      gate.nextAttemptAtMs = now() + REFRESH_FAILURE_RETRY_MS
+      return stored.reading
+    }
     const response = await fetchImpl(USAGE_WEB_SESSION_SPECS[provider].startUrl, {
       method: 'GET',
       headers: {
@@ -367,21 +379,89 @@ export async function readUsageWebSessionReading(
       redirect: 'error',
       signal: controller.signal
     })
-    if (!response.ok) return stored.reading
+    if (!response.ok) {
+      // An explicit rate limit or refusal earns the long back-off; anything
+      // else retries on the shorter window. Either way the stored reading
+      // keeps serving, and staleness surfaces through its own capture age.
+      gate.nextAttemptAtMs =
+        now() +
+        (response.status === 429 || response.status === 403
+          ? REFRESH_BLOCKED_RETRY_MS
+          : REFRESH_FAILURE_RETRY_MS)
+      return stored.reading
+    }
     const declaredLength = Number(response.headers.get('content-length'))
     if (Number.isFinite(declaredLength) && declaredLength > RESPONSE_MAX_BYTES) {
+      gate.nextAttemptAtMs = now() + REFRESH_FAILURE_RETRY_MS
       return stored.reading
     }
     const text = await response.text()
-    if (Buffer.byteLength(text, 'utf8') > RESPONSE_MAX_BYTES) return stored.reading
-    const capturedAt = new Date(dependencies.now?.() ?? Date.now()).toISOString()
+    if (Buffer.byteLength(text, 'utf8') > RESPONSE_MAX_BYTES) {
+      gate.nextAttemptAtMs = now() + REFRESH_FAILURE_RETRY_MS
+      return stored.reading
+    }
+    const capturedAt = new Date(now()).toISOString()
     const reading = parseUsageWebSessionReading(provider, text, capturedAt)
-    if (!reading) return stored.reading
-    store?.setSession({ cookieHeader: stored.cookieHeader, reading })
+    if (!reading) {
+      gate.nextAttemptAtMs = now() + REFRESH_FAILURE_RETRY_MS
+      return stored.reading
+    }
+    usageWebSessionStore(provider)?.setSession({ cookieHeader: stored.cookieHeader, reading })
+    gate.nextAttemptAtMs = now() + REFRESH_SUCCESS_TTL_MS
     return reading
   } catch {
+    gate.nextAttemptAtMs = now() + REFRESH_FAILURE_RETRY_MS
     return stored.reading
   } finally {
     clearTimeout(timer)
   }
+}
+
+/**
+ * Refresh server-rendered Meta billing, Muse subscription, and Cerebras
+ * billing pages with the encrypted session. Qwen/MiMo are client-rendered, so
+ * their validated import-time reading remains authoritative until the user
+ * re-imports.
+ *
+ * Network refreshes are throttled per provider: a success holds for
+ * `REFRESH_SUCCESS_TTL_MS` (anchored to the reading's own capture time, so a
+ * fresh import starts quiet and an app restart does not re-fetch early), a
+ * failure retries no sooner than `REFRESH_FAILURE_RETRY_MS`, and an explicit
+ * 429/403 backs off for `REFRESH_BLOCKED_RETRY_MS`. Concurrent callers share
+ * one in-flight request. Inside a gate window the stored reading serves as-is.
+ */
+export async function readUsageWebSessionReading(
+  provider: UsageWebSessionProviderId,
+  dependencies: { fetchImpl?: FetchLike; now?: () => number } = {}
+): Promise<UsageWebSessionReading | null> {
+  const store = usageWebSessionStore(provider)
+  const stored = store?.loadSession()
+  if (!stored) {
+    refreshGates.delete(provider)
+    return null
+  }
+  if (provider === 'qwen' || provider === 'mimo') return stored.reading
+
+  const readAt = dependencies.now?.() ?? Date.now()
+  let gate = refreshGates.get(provider)
+  if (!gate || gate.cookieHeader !== stored.cookieHeader) {
+    const capturedAtMs = Date.parse(stored.reading.capturedAt)
+    gate = {
+      cookieHeader: stored.cookieHeader,
+      nextAttemptAtMs: Number.isFinite(capturedAtMs)
+        ? capturedAtMs + REFRESH_SUCCESS_TTL_MS
+        : readAt
+    }
+    refreshGates.set(provider, gate)
+  }
+  if (readAt < gate.nextAttemptAtMs) return stored.reading
+
+  const inFlight = refreshInFlight.get(provider)
+  if (inFlight) return inFlight
+  const request = refreshStoredUsageWebSessionReading(provider, stored, gate, dependencies)
+  refreshInFlight.set(provider, request)
+  void request.finally(() => {
+    if (refreshInFlight.get(provider) === request) refreshInFlight.delete(provider)
+  })
+  return request
 }

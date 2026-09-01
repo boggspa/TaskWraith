@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest'
-import { parseUsageWebSessionReading } from './UsageWebSessionClient'
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
+import { parseUsageWebSessionReading, readUsageWebSessionReading } from './UsageWebSessionClient'
+import { configureUsageWebSessionStores, usageWebSessionStore } from './UsageWebSessionStore'
 
 const CAPTURED_AT = '2026-08-25T20:00:00.000Z'
 
@@ -144,5 +148,95 @@ describe('parseUsageWebSessionReading', () => {
         CAPTURED_AT
       )
     ).toBeNull()
+  })
+})
+
+const NOW = Date.parse('2026-09-01T12:00:00.000Z')
+const FRESH_MUSE_PAGE =
+  'Muse Code High Usage subscription\nCurrent usage\n41% used\nWeekly limit\n77% used\nResets 7 Sep at 01:00'
+
+function htmlResponse(body: string, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get: (name: string) => (name.toLowerCase() === 'content-length' ? `${body.length}` : null)
+    },
+    text: async () => body
+  } as unknown as Response
+}
+
+/** Each case seeds a distinct cookie so the module-level refresh gate resets. */
+async function seedMuseSession(cookieHeader: string, capturedAt: string): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'taskwraith-usage-web-'))
+  configureUsageWebSessionStores({
+    userDataPath: root,
+    safeStorage: {
+      isEncryptionAvailable: () => true,
+      encryptString: (value) => Buffer.from(value, 'utf8'),
+      decryptString: (value) => value.toString('utf8')
+    }
+  })
+  const result = usageWebSessionStore('muse')?.setSession({
+    cookieHeader,
+    reading: { currentUsedPercent: 10, weeklyUsedPercent: 20, capturedAt }
+  })
+  expect(result?.ok).toBe(true)
+}
+
+describe('readUsageWebSessionReading refresh throttle', () => {
+  it('refreshes an aged Muse session once, then serves the cached reading inside the TTL', async () => {
+    await seedMuseSession('muse=throttle-aged', new Date(NOW - 60 * 60 * 1000).toISOString())
+    const fetchImpl = vi.fn(async () => htmlResponse(FRESH_MUSE_PAGE))
+    const first = await readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW })
+    expect(first).toMatchObject({ currentUsedPercent: 41, weeklyUsedPercent: 77 })
+    const second = await readUsageWebSessionReading('muse', {
+      fetchImpl,
+      now: () => NOW + 60_000
+    })
+    expect(second).toMatchObject({ currentUsedPercent: 41 })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    await readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW + 16 * 60 * 1000 })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves a freshly imported session alone until its TTL elapses', async () => {
+    await seedMuseSession('muse=throttle-fresh', new Date(NOW).toISOString())
+    const fetchImpl = vi.fn()
+    const reading = await readUsageWebSessionReading('muse', {
+      fetchImpl: fetchImpl as never,
+      now: () => NOW + 60_000
+    })
+    expect(reading).toMatchObject({ currentUsedPercent: 10, weeklyUsedPercent: 20 })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('backs off for an hour after a 429 without dropping the stored reading', async () => {
+    await seedMuseSession('muse=throttle-blocked', new Date(NOW - 60 * 60 * 1000).toISOString())
+    const fetchImpl = vi.fn(async () => htmlResponse('Too many requests', 429))
+    const first = await readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW })
+    expect(first).toMatchObject({ currentUsedPercent: 10 })
+    await readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW + 30 * 60 * 1000 })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    await readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW + 61 * 60 * 1000 })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('shares one in-flight refresh between concurrent callers', async () => {
+    await seedMuseSession('muse=throttle-flight', new Date(NOW - 60 * 60 * 1000).toISOString())
+    let release: ((value: Response) => void) | undefined
+    const fetchImpl = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve
+        })
+    )
+    const firstCall = readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW })
+    const secondCall = readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW })
+    release?.(htmlResponse(FRESH_MUSE_PAGE))
+    const [first, second] = await Promise.all([firstCall, secondCall])
+    expect(first).toMatchObject({ currentUsedPercent: 41 })
+    expect(second).toMatchObject({ currentUsedPercent: 41 })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 })
