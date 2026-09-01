@@ -1543,7 +1543,7 @@ export function buildEnsembleParticipantPromptProjection(
       input.chat.messages || [],
       ollamaTranscriptBudget?.contextTurns ?? input.chatContextTurns ?? 6,
       participantTokens,
-      ollamaTranscriptBudget?.contextChars ?? input.config.ensembleContextChars,
+      ollamaTranscriptBudget?.contextChars ?? seatIngest.chars,
       dupProviderModelLabels,
       input.participant.id,
       excludeCurrentRoundUserPrompt

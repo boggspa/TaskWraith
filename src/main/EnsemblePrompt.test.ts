@@ -4076,6 +4076,48 @@ describe('slim resumed-turn prompt shape', () => {
     expect(projection.transcriptAttribution.freshTranscriptMessageChars).toBeGreaterThan(0)
   })
 
+  it('budgets the slim delta from the seat ingest, not the retired chat-wide chars field', () => {
+    const base = chat()
+    const filler = 'delta filler line '.repeat(24)
+    base.messages = [
+      {
+        id: 'own-1',
+        role: 'assistant',
+        content: 'My earlier turn.',
+        timestamp: '2026-05-24T00:00:01.000Z',
+        metadata: { ensembleProvider: 'claude', ensembleParticipantId: 'claude' }
+      },
+      {
+        id: 'delta-oldest',
+        role: 'assistant',
+        content: 'OLDEST-DELTA-ROW would fall to a 5K budget.',
+        timestamp: '2026-05-24T00:00:02.000Z',
+        metadata: { ensembleProvider: 'codex', ensembleParticipantId: 'codex' }
+      },
+      ...Array.from({ length: 30 }, (_, index) => ({
+        id: `delta-fill-${index}`,
+        role: 'assistant' as const,
+        content: `delta row ${index}: ${filler}`,
+        timestamp: `2026-05-24T00:01:${String(index).padStart(2, '0')}.000Z`,
+        metadata: { ensembleProvider: 'codex', ensembleParticipantId: 'codex' }
+      }))
+    ]
+    const projection = buildEnsembleParticipantPromptProjection({
+      chat: base,
+      // The retired chat-wide field must not squeeze a capable seat's delta —
+      // slim turns budget from the same window-derived seat ingest as full
+      // briefings.
+      config: { ...ensemble, ensembleContextChars: 5_000 },
+      participant: ensemble.participants.find((entry) => entry.id === 'claude')!,
+      currentPrompt: 'Continue.',
+      roundId: 'round-slim',
+      chatContextTurns: 60,
+      slimTurn: true
+    })
+    expect(projection.suppliedMessageIds).toContain('delta-oldest')
+    expect(projection.prompt).toContain('OLDEST-DELTA-ROW')
+  })
+
   it('separates replayed rows from new-to-seat rows in a full briefing', () => {
     const base = chat()
     base.messages = [
