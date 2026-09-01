@@ -34,7 +34,7 @@ describe('orchestration row control text', () => {
     expect(active).toMatch(/color:\s*var\(--accent-color\)/)
   })
 
-  it('shows the admitted round fan-out policy while a round is running', () => {
+  it('shows the admitted round fan-out policy while a round is running, collapsed to On/Off', () => {
     const source = readFileSync(new URL('./EnsembleOrchestrationRow.tsx', import.meta.url), 'utf8')
     expect(source).toContain(
       'const displayedFanoutPolicy = isRoundRunning ? activeFanoutPolicy : fanoutPolicy'
@@ -44,9 +44,11 @@ describe('orchestration row control text', () => {
     expect(selectionStart).toBeGreaterThan(-1)
     expect(selectionEnd).toBeGreaterThan(selectionStart)
     const selection = source.slice(selectionStart, selectionEnd)
-    expect(selection).toContain("displayedFanoutPolicy === 'all'")
-    expect(selection).toContain("displayedFanoutPolicy === 'locked_writers_with_boss'")
-    expect(selection).not.toContain("fanoutPolicy === 'all'")
+    // On/Off collapse: any legacy graded level a persisted round still
+    // carries must display as On, never resurrect a Read/Write pill.
+    expect(selection).toContain("displayedFanoutPolicy === 'off' ? 'off' : 'all'")
+    expect(source).not.toContain("'read_only'")
+    expect(source).not.toContain('locked_writers_with_boss')
   })
 
   it('opens the Isolate popover through the shared picker chrome with all three policies', () => {

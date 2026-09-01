@@ -39,4 +39,42 @@ describe('ContextMeterPopover accordion', () => {
     expect(labelledBy).toBe(`${controls}-toggle`)
     expect(html).toContain(`id="${labelledBy}"`)
   })
+
+  it('renders the per-model ingest slider only for override-eligible models', () => {
+    const base = {
+      id: 'participant-a',
+      primary: 'Scout',
+      detail: 'Ollama · Qwen3 4B',
+      providerClass: 'ollama',
+      usedTokens: 5_000,
+      windowTokens: 262_144,
+      percent: 2
+    }
+    const eligible = renderToStaticMarkup(
+      <MeterRow
+        row={{ ...base, provider: 'ollama', modelId: 'qwen3:4b' }}
+        expanded
+        onToggleExpanded={() => {}}
+      />
+    )
+    expect(eligible).toContain('data-testid="ensemble-ingest-override"')
+
+    const ineligible = renderToStaticMarkup(
+      <MeterRow
+        row={{ ...base, provider: 'claude', providerClass: 'claude', modelId: 'claude-sonnet-5' }}
+        expanded
+        onToggleExpanded={() => {}}
+      />
+    )
+    expect(ineligible).not.toContain('data-testid="ensemble-ingest-override"')
+    // Ineligible models size ingest automatically — no slider, no dead space.
+    const sparkEligible = renderToStaticMarkup(
+      <MeterRow
+        row={{ ...base, provider: 'codex', providerClass: 'codex', modelId: 'gpt-5.3-codex-spark' }}
+        expanded
+        onToggleExpanded={() => {}}
+      />
+    )
+    expect(sparkEligible).toContain('data-testid="ensemble-ingest-override"')
+  })
 })

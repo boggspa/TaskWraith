@@ -27575,24 +27575,30 @@ function App(): React.JSX.Element {
     ctx: SlashCommandRunContext,
     arg: string,
     current: EnsembleFanoutPolicy,
-    hasBossman: boolean,
     usage: string
   ): EnsembleFanoutPolicy | null => {
     const token = firstSlashArgToken(arg)
     if (!token || token === 'toggle') {
-      return current === 'off' ? 'read_only' : 'off'
+      return current === 'off' ? 'all' : 'off'
     }
     if (token === 'off') return 'off'
-    if (token === 'on' || token === 'read' || token === 'read-only' || token === 'readonly') {
-      return 'read_only'
-    }
-    if (token === 'all') return 'all'
-    if (token === 'write' || token === 'writers' || token === 'writer') {
-      return hasBossman ? 'locked_writers_with_boss' : 'locked_writers_user_preflight'
-    }
-    if (token === 'boss' || token === 'bossman') return 'locked_writers_with_boss'
-    if (token === 'preflight' || token === 'user-preflight') {
-      return 'locked_writers_user_preflight'
+    // Fan-out is On/Off now; the retired graded tokens stay accepted as
+    // aliases for On so muscle-memory commands keep working.
+    if (
+      token === 'on' ||
+      token === 'all' ||
+      token === 'read' ||
+      token === 'read-only' ||
+      token === 'readonly' ||
+      token === 'write' ||
+      token === 'writers' ||
+      token === 'writer' ||
+      token === 'boss' ||
+      token === 'bossman' ||
+      token === 'preflight' ||
+      token === 'user-preflight'
+    ) {
+      return 'all'
     }
     rejectSlashCommandWithDraft(ctx, usage)
     return null
@@ -28044,52 +28050,10 @@ function App(): React.JSX.Element {
           },
           {
             kind: 'action' as const,
-            id: 'taskwraith-ensemble-turn',
-            command: '/ensemble-turn',
-            label: 'Ensemble turn mode',
-            description: 'Switch this ensemble to one-pass turn-bound orchestration.',
-            group: 'Custom' as const,
-            run: (ctx: SlashCommandRunContext) => {
-              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
-                rejectSlashCommandWithDraft(ctx, 'Open an ensemble chat to use /ensemble-turn.')
-                return
-              }
-              patchScopedEnsembleConfig(chat, (ensemble) => ({
-                ...ensemble,
-                orchestrationMode: 'turn_bound',
-                maxContinuationHops: ensemble.maxContinuationHops || 6
-              }))
-            }
-          },
-          {
-            kind: 'action' as const,
-            id: 'taskwraith-ensemble-continuous',
-            command: '/ensemble-continuous',
-            label: 'Ensemble continuous mode',
-            description: 'Switch this ensemble to continuous handoff orchestration.',
-            group: 'Custom' as const,
-            run: (ctx: SlashCommandRunContext) => {
-              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
-                rejectSlashCommandWithDraft(
-                  ctx,
-                  'Open an ensemble chat to use /ensemble-continuous.'
-                )
-                return
-              }
-              patchScopedEnsembleConfig(chat, (ensemble) => ({
-                ...ensemble,
-                orchestrationMode: 'continuous',
-                maxContinuationHops: ensemble.maxContinuationHops || 6
-              }))
-            }
-          },
-          {
-            kind: 'action' as const,
             id: 'taskwraith-ensemble-fanout',
             command: '/ensemble-fanout',
             label: 'Set safe fanout',
-            description:
-              'Toggle or set safe concurrent fanout. Usage: /ensemble-fanout off|read|write|all|boss|preflight.',
+            description: 'Toggle or set parallel fan-out. Usage: /ensemble-fanout on|off.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
@@ -28104,41 +28068,13 @@ function App(): React.JSX.Element {
                   chat.ensemble.fanoutPolicy,
                   chat.ensemble.concurrentModeEnabled
                 ),
-                Boolean(chat.ensemble.bossmanParticipantId),
-                'Usage: /ensemble-fanout off|read|write|all|boss|preflight.'
+                'Usage: /ensemble-fanout on|off.'
               )
               if (next === null) return
               patchScopedEnsembleConfig(chat, (ensemble) => ({
                 ...ensemble,
                 fanoutPolicy: next,
                 concurrentModeEnabled: ensembleFanoutPolicyEnabled(next)
-              }))
-            }
-          },
-          {
-            kind: 'action' as const,
-            id: 'taskwraith-ensemble-context',
-            command: '/ensemble-context',
-            label: 'Set ensemble context budget',
-            description:
-              'Set shared transcript budget in characters. Usage: /ensemble-context 120000.',
-            group: 'Custom' as const,
-            run: (ctx: SlashCommandRunContext) => {
-              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
-                rejectSlashCommandWithDraft(ctx, 'Open an ensemble chat to use /ensemble-context.')
-                return
-              }
-              const arg = slashActionRemainder(ctx, /^\/ensemble-context\b/i)
-              const next = parseScopedPositiveIntSlashArg(ctx, arg, {
-                min: 5_000,
-                max: 256_000,
-                fallback: chat.ensemble.ensembleContextChars || 120_000,
-                usage: 'Usage: /ensemble-context 120000. Valid range: 5000-256000.'
-              })
-              if (next === null) return
-              patchScopedEnsembleConfig(chat, (ensemble) => ({
-                ...ensemble,
-                ensembleContextChars: next
               }))
             }
           },

@@ -653,7 +653,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     PLAN_IMPORT_RISK_LABELS,
     acknowledgedElevationDefaults,
     activeEnsembleFanoutPolicy,
-    activeEnsembleOrchestrationMode,
     addImageAttachmentsToChat,
     agentModelsByProvider,
     appearance,
@@ -712,7 +711,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     currentEnsembleMaxContinuationHops,
     currentEnsembleRoundStatus,
     currentEnsembleActiveGoalStatus,
-    currentEnsembleOrchestrationMode,
     currentGoalButtonTitle,
     currentGoalModeLabel,
     currentGoalStatus,
@@ -732,7 +730,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     ensembleConcurrentLanesAvailable,
     ensembleConcurrentWriteLanesAvailable,
     ensembleEnabledParticipantsForCurrent,
-    ensembleOllamaContextWarning,
     externalGitSnapshots,
     onExternalGitSnapshotRefresh,
     externalPrByPath,
@@ -923,9 +920,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     workspaceTrustMutationDisabledReason,
     updateCurrentEnsembleFanoutPolicy,
     updateCurrentEnsembleFanoutIsolation,
-    updateCurrentEnsembleContextChars,
     updateCurrentEnsembleMaxContinuationHops,
-    updateCurrentEnsembleOrchestrationMode,
     updateCurrentGoalStatus,
     updateSelectedParticipant,
     visibleScheduledTasks,
@@ -1349,9 +1344,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const hasVisibleScheduledCountdown =
     Array.isArray(visibleScheduledTasks) &&
     visibleScheduledTasks.some((task: any) => task?.status === 'pending' || task?.status === 'due')
-  const writerFanoutPolicy: EnsembleFanoutPolicy = currentChat?.ensemble?.bossmanParticipantId
-    ? 'locked_writers_with_boss'
-    : 'locked_writers_user_preflight'
   const goalControlDisabled = !currentChat || Boolean(goalControlDisabledReason)
   const goalControlTitle = goalControlDisabledReason || currentGoalButtonTitle
   const hasGoalRuntimeTicker =
@@ -1369,38 +1361,28 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     currentChat?.updatedAt
   )
 
-  // Second row of the roster-presets above-row section — Orchestration /
-  // Fan-Out / Shared History Budget / Turn Budget. These controls used to
-  // crowd the composer's bottom action row (especially with Continuous
-  // enabled); they now get a full row of their own. Built once here because
-  // BOTH roster-preset picker call sites embed it via `secondRow` (the
-  // ensemble welcome hero and the compact in-thread above-row) and the two
-  // must never drift.
+  // Second row of the roster-presets above-row section — Fan-Out / Isolate /
+  // Turn Budget. These controls used to crowd the composer's bottom action
+  // row; they now get a full row of their own. Built once here because BOTH
+  // roster-preset picker call sites embed it via `secondRow` (the ensemble
+  // welcome hero and the compact in-thread above-row) and the two must never
+  // drift. The Turn/Continuous picker and the shared-history Chars slider
+  // are retired (Continuous-only; per-model ingest budgets — see
+  // shared/ensembleSeatIngest.ts).
   const renderEnsembleOrchestrationRow = (): React.JSX.Element | null => {
     if (!isCurrentEnsembleChat || !currentChat?.ensemble) return null
     return (
       <EnsembleOrchestrationRow
-        orchestrationMode={
-          currentEnsembleOrchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
-        }
-        activeOrchestrationMode={
-          activeEnsembleOrchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
-        }
         activeFanoutPolicy={activeEnsembleFanoutPolicy}
         isRoundRunning={isCurrentEnsembleRoundRunning}
         composerStyle={appearance.composerStyle}
-        onSelectMode={(nextMode) => updateCurrentEnsembleOrchestrationMode(nextMode)}
         fanoutPolicy={currentEnsembleFanoutPolicy}
-        writerFanoutPolicy={writerFanoutPolicy}
         onFanoutPolicyChange={updateCurrentEnsembleFanoutPolicy}
         fanoutIsolation={resolveEnsembleFanoutIsolationPolicy(currentChat.ensemble.fanoutIsolation)}
         onFanoutIsolationChange={updateCurrentEnsembleFanoutIsolation}
         concurrentLanesAvailable={ensembleConcurrentLanesAvailable}
         concurrentWriteLanesAvailable={ensembleConcurrentWriteLanesAvailable}
         bossmanAssigned={Boolean(currentChat.ensemble.bossmanParticipantId)}
-        contextChars={currentChat.ensemble.ensembleContextChars}
-        onContextCharsChange={updateCurrentEnsembleContextChars}
-        ollamaContextWarning={ensembleOllamaContextWarning}
         continuationHops={currentEnsembleContinuationHops}
         maxContinuationHops={currentEnsembleMaxContinuationHops}
         roundStatus={currentEnsembleRoundStatus}

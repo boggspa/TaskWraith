@@ -74,7 +74,9 @@ describe('EnsembleRosterPresetPicker', () => {
     const message = rosterPresetMenuMeta(preset(3))
 
     expect(message).toContain('3 participants')
-    expect(message).toContain('Turn')
+    // Continuous-only: the retired Turn/Continuous suffix is gone.
+    expect(message).not.toContain('Turn')
+    expect(message).not.toContain('Continuous')
   })
 
   it('uses the singular participant label in the picker menu', () => {

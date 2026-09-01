@@ -4826,6 +4826,30 @@
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
+/* Per-model shared-history ingest slider — only on override-eligible rows
+ * (Codex Spark, 4B–12B Ollama locals) inside the expanded detail region. */
+.context-meter-ingest-override {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 22px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.context-meter-ingest-override-label {
+  white-space: nowrap;
+}
+.context-meter-ingest-override-slider {
+  flex: 1 1 auto;
+  min-width: 60px;
+  accent-color: var(--context-meter-row-accent, var(--accent));
+}
+.context-meter-ingest-override-value {
+  min-width: 34px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
 .context-meter-foot {
   font-size: 10px;
   color: var(--text-tertiary);

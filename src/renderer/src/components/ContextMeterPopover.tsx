@@ -24,6 +24,8 @@ import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderName } from './Sidebar'
 import { ContextWheel, ContextCompactionIcon } from './AppChromeSymbols'
 import { ContextMeterDetails } from './ContextMeterDetails'
+import { ensembleIngestOverrideEligible } from '../../../shared/ensembleSeatIngest'
+import { EnsembleIngestOverrideControl } from './EnsembleIngestOverrideControl'
 
 // Extremity ramp for the per-row compaction icon. A healthy seat reads in its
 // provider hue; as pressure builds the glyph warms to a bright, saturated
@@ -85,6 +87,8 @@ interface RowView {
   primary: string
   detail: string
   provider: ProviderId
+  /** Seat model id — gates the per-model ingest override slider. */
+  modelId?: string
   providerClass: string
   usedTokens: number
   windowTokens: number
@@ -118,6 +122,7 @@ function toRowView(row: ContextMeterRow, isParticipant: boolean): RowView {
     primary,
     detail,
     provider: row.provider,
+    modelId: row.modelId,
     providerClass: contextMeterRowHueClass(row),
     usedTokens: row.usedTokens,
     windowTokens: row.windowTokens,
@@ -281,6 +286,10 @@ export function MeterRow({
             usage={row.usage}
             activity={row.activity}
           />
+          {row.modelId &&
+            ensembleIngestOverrideEligible({ provider: row.provider, modelId: row.modelId }) && (
+              <EnsembleIngestOverrideControl provider={row.provider} modelId={row.modelId} />
+            )}
         </div>
       )}
     </div>

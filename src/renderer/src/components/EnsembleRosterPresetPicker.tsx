@@ -94,11 +94,17 @@ function rosterPresetComparableKey(preset: EnsembleRosterPreset): string {
     // policy. Agent-applied presets materialize that projection even when the
     // saved portable preset omitted it, so comparing both fields reports a
     // false edit immediately after load.
-    fanoutPolicy: preset.fanoutPolicy ?? (preset.concurrentModeEnabled ? 'read_only' : 'off'),
+    // Collapse to the live On/Off + Continuous-only vocabulary so a preset
+    // saved before the retirement (read_only / turn_bound) still compares
+    // equal to the normalized capture of the same roster.
+    fanoutPolicy:
+      (preset.fanoutPolicy ?? (preset.concurrentModeEnabled ? 'all' : 'off')) === 'off'
+        ? 'off'
+        : 'all',
     maxContinuationHops:
       typeof preset.maxContinuationHops === 'number' ? preset.maxContinuationHops : null,
     maxParticipants: preset.maxParticipants,
-    orchestrationMode: preset.orchestrationMode,
+    orchestrationMode: 'continuous',
     participants: [...preset.participants]
       .sort((a, b) => a.order - b.order)
       .map(rosterParticipantComparable)
@@ -156,9 +162,7 @@ export function rosterPresetTriggerLabel(name: string | null | undefined): strin
 export function rosterPresetMenuMeta(preset: EnsembleRosterPreset): string {
   const count = preset.participants.length
   const participantLabel = count === 1 ? 'participant' : 'participants'
-  return `${count} ${participantLabel} · ${
-    preset.orchestrationMode === 'continuous' ? 'Continuous' : 'Turn'
-  }`
+  return `${count} ${participantLabel}`
 }
 
 export function rosterPresetInteractionState(
