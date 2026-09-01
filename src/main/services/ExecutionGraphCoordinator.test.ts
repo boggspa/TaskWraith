@@ -1950,3 +1950,156 @@ describe('ExecutionGraphCoordinator structured graph scheduling', () => {
     ).toThrow(/unenforced budgets/i)
   })
 })
+
+/* The owning turn is an anchor-less graph's lease on life: `ultra_task` tells
+ * the parent to hold its turn open and synthesize, so a graph must never
+ * outlive the run that started it. Anchored Stacks are excluded — there the
+ * initiating run is a trigger whose completion STARTS the graph. */
+describe('ExecutionGraphCoordinator owning-run tether', () => {
+  const owner = {
+    threadId: 'chat-one',
+    initiatingRunId: 'run-parent-one',
+    seatId: 'antigravity:gemini-3.1-pro'
+  }
+
+  function startTethered(h: Harness, executionId: string): ExecutionRunProjection {
+    return h.coordinator.startExecutionGraph({
+      executionId,
+      title: 'Tethered execution',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+  }
+
+  /* Joins the tether's in-flight cancellation (cancelExecution dedupes on the
+   * live operation, and no-ops on a terminal graph). The reason assertions stay
+   * pinned to the tether's own copy, so this flush cannot green a missing
+   * tether: without one, the flush cancels with this sentinel reason instead. */
+  async function settleCancellation(h: Harness, executionId: string): Promise<void> {
+    await h.coordinator.cancelExecution(executionId, 'Test flush must never be recorded.')
+  }
+
+  it('cancels a live tethered graph when its owning run completes', async () => {
+    const h = harness()
+    const started = startTethered(h, 'tether-owner-completed')
+    expect(started.state).toBe('running')
+    expect(h.jobs.size).toBe(2)
+
+    expect(h.coordinator.onRunSessionChange(terminalEvent('run-parent-one', 'completed'))).toBe(
+      'accepted'
+    )
+    await settleCancellation(h, 'tether-owner-completed')
+
+    const projection = h.coordinator.getExecution('tether-owner-completed')!
+    expect(projection.state).toBe('cancelled')
+    const activations = Object.values(projection.activations)
+    expect(activations).toHaveLength(4)
+    expect(activations.map((activation) => activation.state)).toEqual([
+      'cancelled',
+      'cancelled',
+      'cancelled',
+      'cancelled'
+    ])
+    expect(new Set(activations.map((activation) => activation.reason))).toEqual(
+      new Set(['The owning run ended before this execution settled.'])
+    )
+    expect([...h.jobs.values()].map((job) => job.status)).toEqual(['cancelled', 'cancelled'])
+  })
+
+  it('cancels a live tethered graph when its owning run fails', async () => {
+    const h = harness()
+    startTethered(h, 'tether-owner-failed')
+
+    expect(h.coordinator.onRunSessionChange(terminalEvent('run-parent-one', 'failed'))).toBe(
+      'accepted'
+    )
+    await settleCancellation(h, 'tether-owner-failed')
+
+    const projection = h.coordinator.getExecution('tether-owner-failed')!
+    expect(projection.state).toBe('cancelled')
+    expect(
+      Object.values(projection.activations).map((activation) => activation.reason)
+    ).toEqual(new Array(4).fill('The owning run failed before this execution settled.'))
+  })
+
+  it('cancels a live tethered graph when its owning run is cancelled', async () => {
+    const h = harness()
+    startTethered(h, 'tether-owner-cancelled')
+
+    expect(h.coordinator.onRunSessionChange(terminalEvent('run-parent-one', 'cancelled'))).toBe(
+      'accepted'
+    )
+    await settleCancellation(h, 'tether-owner-cancelled')
+
+    const projection = h.coordinator.getExecution('tether-owner-cancelled')!
+    expect(projection.state).toBe('cancelled')
+    expect(
+      Object.values(projection.activations).map((activation) => activation.reason)
+    ).toEqual(new Array(4).fill('Cancelled with the owning parent run.'))
+  })
+
+  it('ignores unrelated run terminals and non-terminal owner updates', () => {
+    const h = harness()
+    startTethered(h, 'tether-untouched')
+
+    expect(h.coordinator.onRunSessionChange(terminalEvent('run-unrelated', 'completed'))).toBe(
+      'unclaimed'
+    )
+    expect(h.coordinator.onRunSessionChange(runningEvent('run-parent-one'))).toBe('unclaimed')
+
+    expect(h.coordinator.getExecution('tether-untouched')?.state).toBe('running')
+  })
+
+  it('pauses instead of cancelling when the owner terminal event names another thread', () => {
+    const h = harness()
+    startTethered(h, 'tether-thread-mismatch')
+
+    expect(
+      h.coordinator.onRunSessionChange(
+        terminalEvent('run-parent-one', 'completed', { appChatId: 'chat-two' })
+      )
+    ).toBe('rejected')
+
+    const projection = h.coordinator.getExecution('tether-thread-mismatch')!
+    expect(projection.state).toBe('requires_action')
+  })
+
+  it('closes a tethered graph on startup recovery because no owning turn survives a restart', async () => {
+    const h = harness()
+    startTethered(h, 'tether-restart')
+
+    h.coordinator.recover()
+    await settleCancellation(h, 'tether-restart')
+
+    const projection = h.coordinator.getExecution('tether-restart')!
+    expect(projection.state).toBe('cancelled')
+    expect(
+      Object.values(projection.activations).map((activation) => activation.reason)
+    ).toEqual(new Array(4).fill('The owning run did not survive the restart.'))
+    expect([...h.jobs.values()].map((job) => job.status)).toEqual(['cancelled', 'cancelled'])
+  })
+
+  it('recovery leaves a thread-owned Stack in flight', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+
+    h.coordinator.recover()
+
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('running')
+  })
+
+  it('recovery keeps waiting on a nonterminal Stack anchor instead of tethering to it', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
+    expect(started.state).toBe('waiting')
+    h.anchorStatuses.set('anchor-run', 'nonterminal')
+
+    h.coordinator.recover()
+
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('waiting')
+  })
+})

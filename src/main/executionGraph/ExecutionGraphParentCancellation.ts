@@ -31,7 +31,10 @@ function exact(value: string, label: string): string {
 /**
  * Cancel every nonterminal graph launched by one exact parent run before the
  * parent transport is stopped. Natural parent completion does not call this
- * path: it is exclusively the explicit run-cancel cascade.
+ * path: it is exclusively the explicit run-cancel cascade. Natural terminals
+ * are observed by the coordinator's owning-run tether in
+ * `ExecutionGraphCoordinator.onRunSessionChange`, which closes anchor-less
+ * run-initiated graphs when their owning run ends for any reason.
  */
 export async function cancelExecutionGraphsInitiatedByParentRun(
   input: {

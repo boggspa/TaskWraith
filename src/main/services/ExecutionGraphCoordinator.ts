@@ -170,8 +170,9 @@ export interface ExecutionGraphCoordinatorDeps {
    * Main-owned truth for whether a graph's accountable thread/seat is still
    * present and able to receive its result. `missing` means the graph has
    * nobody to answer for it and must pause rather than dispatch further work.
-   * The initiating RUN terminalizing is normal and is not an owner loss — the
-   * thread outlives the turn, and delivery re-wakes it.
+   * This checks the THREAD only. For an anchor-less run-initiated graph the
+   * initiating run terminalizing is handled separately by the owning-run
+   * tether, which cancels the graph outright rather than pausing it.
    */
   resolveOwnerStatus: (owner: ExecutionOwnerRef) => ExecutionGraphOwnerStatus
   cancelActiveRun: (runId: string) => Promise<boolean> | boolean
@@ -367,6 +368,24 @@ function latestAttemptForActivation(
 
 function terminalSession(status: RunSessionStatus): status is 'completed' | 'failed' | 'cancelled' {
   return status === 'completed' || status === 'failed' || status === 'cancelled'
+}
+
+function owningRunTerminalReason(status: 'completed' | 'failed' | 'cancelled'): string {
+  if (status === 'completed') return 'The owning run ended before this execution settled.'
+  if (status === 'failed') return 'The owning run failed before this execution settled.'
+  return 'Cancelled with the owning parent run.'
+}
+
+/**
+ * Whether an execution's life is tethered to the run that started it. Only
+ * anchor-less run-initiated graphs qualify: `ultra_task` instructs the parent
+ * to hold its turn open (`ensemble_await`) and synthesize, so the graph must
+ * never outlive that turn. An anchored Stack's initiating run is a trigger
+ * whose completion STARTS the graph, and a user-authored Stack has no
+ * initiating run at all — both stay owned by their thread instead.
+ */
+function tetheredOwningRunId(projection: ExecutionRunProjection): string | undefined {
+  return projection.anchorRunRef ? undefined : projection.owner?.initiatingRunId
 }
 
 /**
@@ -874,6 +893,30 @@ export class ExecutionGraphCoordinator {
         if (disposition !== 'rejected') disposition = 'accepted'
         continue
       }
+      if (
+        tetheredOwningRunId(projection) === runId &&
+        projection.owner &&
+        terminalSession(event.session.status)
+      ) {
+        // The owning turn is this graph's lease on life. Whatever ended it —
+        // natural completion, failure, or cancel — the graph goes down with it
+        // rather than keep agents working for a parent that can no longer
+        // receive, steer, or stop them.
+        if (event.session.appChatId !== projection.owner.threadId) {
+          this.requireExecutionAction(
+            projection,
+            'The owning run terminal event did not match the durable owner thread.'
+          )
+          disposition = 'rejected'
+          continue
+        }
+        this.cancelWithOwningRun(
+          projection.executionId,
+          owningRunTerminalReason(event.session.status)
+        )
+        if (disposition !== 'rejected') disposition = 'accepted'
+        continue
+      }
       const attempt = Object.values(projection.attempts).find(
         (candidate) => candidate.providerRunRef === runId
       )
@@ -924,6 +967,25 @@ export class ExecutionGraphCoordinator {
     })
     this.cancellationOperations.set(executionId, operation)
     return operation
+  }
+
+  /**
+   * Fire the owning-run tether from a synchronous observation path. Cleanup
+   * failures inside the cancellation park attempts on their own; this catch
+   * only covers the ledger refusing the operation outright, where pausing
+   * loudly beats losing the tether silently.
+   */
+  private cancelWithOwningRun(executionId: string, reason: string): void {
+    this.cancelExecution(executionId, reason).catch((error) => {
+      try {
+        this.requireExecutionAction(
+          this.requireExecution(executionId),
+          `Cancellation with the owning run failed: ${error instanceof Error ? error.message : String(error)}`
+        )
+      } catch {
+        // The ledger refused both writes; startup recovery reconciles later.
+      }
+    })
   }
 
   /**
@@ -1240,6 +1302,17 @@ export class ExecutionGraphCoordinator {
 
   private recoverExecution(projection: ExecutionRunProjection): void {
     if (projection.integrity !== 'valid' || projection.baseRevisionMissing) return
+
+    // No provider turn survives a restart, so a graph tethered to its owning
+    // run has necessarily lost it: close the graph instead of resuming
+    // dispatch for a parent that no longer exists to receive the result.
+    if (tetheredOwningRunId(projection)) {
+      this.cancelWithOwningRun(
+        projection.executionId,
+        'The owning run did not survive the restart.'
+      )
+      return
+    }
 
     // Restart is the moment an orphaned graph would otherwise resume dispatching
     // into a thread that no longer exists. Check accountability before anything
