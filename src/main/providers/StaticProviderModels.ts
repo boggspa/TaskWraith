@@ -1035,7 +1035,10 @@ const MISTRAL_STATIC_MODELS = [
     label: 'GLM-5.2 (Mistral Hosted)',
     description: '1M context - $1.40/$4.40 per Mtok',
     supportedReasoningEfforts: [...MISTRAL_REASONING_EFFORTS],
-    defaultReasoningEffort: MISTRAL_DEFAULT_REASONING_EFFORT,
+    // GLM-5.2's Vibe-native default is `high` (not the shared `medium`), so
+    // default to it. Every effort in the ladder above maps 1:1 onto Vibe's
+    // `thinking` config option via normalizeMistralThinkingLevel.
+    defaultReasoningEffort: 'high',
     ultraTaskSupported: true
   },
   {

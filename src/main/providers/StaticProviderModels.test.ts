@@ -23,6 +23,7 @@ import {
   concreteModelForPreviewPlaceholder,
   isPreviewCatalogModelId
 } from '../../shared/previewModelCatalog'
+import { normalizeMistralThinkingLevel } from '../mistral/MistralCliArgs'
 
 describe('codexModelContextConfig', () => {
   const longContextConfig = {
@@ -48,6 +49,29 @@ describe('codexModelContextConfig', () => {
   it('does not override short-context Codex models', () => {
     expect(codexModelContextConfig('gpt-5.4-mini')).toBeNull()
     expect(codexModelContextConfig('gpt-5.3-codex-spark')).toBeNull()
+  })
+})
+
+describe('getStaticProviderModels (Mistral hosted GLM-5.2 thinking correlation)', () => {
+  const glm = getStaticProviderModels('mistral').find((model) => model.id === 'glm-5-2') as
+    | { defaultReasoningEffort?: string; supportedReasoningEfforts?: { reasoningEffort: string }[] }
+    | undefined
+
+  it('defaults the hosted GLM-5.2 to high, matching its Vibe-native default', () => {
+    expect(glm?.defaultReasoningEffort).toBe('high')
+  })
+
+  it('maps every offered effort 1:1 onto the Vibe thinking ladder (no silent downgrade)', () => {
+    // The seat sends `set_config_option { thinking }` computed by
+    // normalizeMistralThinkingLevel(reasoningEffort); a null there is OMITTED,
+    // silently leaving the run on the model default. So every effort TaskWraith
+    // offers for this model (and its default) must map to a real Vibe level.
+    const efforts = (glm?.supportedReasoningEfforts ?? []).map((effort) => effort.reasoningEffort)
+    expect(efforts).toEqual(['off', 'low', 'medium', 'high', 'max'])
+    for (const effort of efforts) {
+      expect(normalizeMistralThinkingLevel(effort)).toBe(effort)
+    }
+    expect(normalizeMistralThinkingLevel(glm?.defaultReasoningEffort)).toBe('high')
   })
 })
 
