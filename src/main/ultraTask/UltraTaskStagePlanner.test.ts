@@ -174,19 +174,9 @@ describe('buildUltraTaskStageGraph', () => {
     })
   })
 
-  it('documents the exact generic-kernel capabilities the bound V1 executor still lacks', () => {
+  it('is fully admitted by the bound executor after concurrent structured UltraTask support', () => {
     const result = buildUltraTaskStageGraph(input())
     if (!result.ok) throw new Error(JSON.stringify(result.issues))
-    const codes = validateExecutionGraphV1RuntimeAdmission(result.revision).map(
-      (entry) => entry.code
-    )
-    expect(codes).toEqual(
-      expect.arrayContaining([
-        'runtime_concurrency_unsupported',
-        'runtime_data_edge_unsupported',
-        'runtime_parallel_topology_unsupported',
-        'runtime_step_kind_unsupported'
-      ])
-    )
+    expect(validateExecutionGraphV1RuntimeAdmission(result.revision)).toEqual([])
   })
 })
