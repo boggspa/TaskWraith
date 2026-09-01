@@ -40,6 +40,7 @@ public enum ContextWindows {
         "gpt-5.3-codex-spark": 200_000,
         "gpt-5.2": 400_000,
         // Claude
+        "claude-fable-5-1": 1_000_000,
         "claude-fable-5": 1_000_000,
         "claude-fable-5-1m": 1_000_000,
         "claude-mythos-5": 1_000_000,
@@ -264,6 +265,8 @@ public enum ContextWindows {
         "mistral": 262_144,
         // Muse opaque CLI seat — conservative fallback until a measured window lands.
         "muse": 200_000,
+        // Devin publishes no per-model window; conservative fallback, parity with mistral.
+        "devin": 262_144,
     ]
 
     /// Resolve the context-window size for a thread, mirroring the desktop's

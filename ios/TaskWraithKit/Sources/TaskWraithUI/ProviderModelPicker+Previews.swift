@@ -42,8 +42,8 @@ enum ProviderModelPickerPreviewData {
                     supportedReasoningEfforts: claudeEfforts,
                     defaultReasoningEffort: "medium"),
                 .init(
-                    id: "claude-fable-5",
-                    label: "Fable 5",
+                    id: "claude-fable-5-1",
+                    label: "Fable 5.1",
                     supportedReasoningEfforts: claudeEfforts,
                     defaultReasoningEffort: "high"),
                 .init(
@@ -56,6 +56,11 @@ enum ProviderModelPickerPreviewData {
                         .init(reasoningEffort: "xhigh"),
                     ],
                     defaultReasoningEffort: "medium"),
+                .init(
+                    id: "claude-fable-5",
+                    label: "Fable 5 Legacy",
+                    supportedReasoningEfforts: claudeEfforts,
+                    defaultReasoningEffort: "high"),
                 .init(
                     id: "claude-sonnet-4-6",
                     label: "Sonnet 4.6 Legacy",

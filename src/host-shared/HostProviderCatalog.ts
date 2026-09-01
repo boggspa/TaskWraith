@@ -224,8 +224,9 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       shortCode: 'CL',
       models: [
         model('claude-opus-5', 'Opus 5', CLAUDE_REASONING, true),
-        model('claude-fable-5', 'Fable 5', CLAUDE_REASONING),
+        model('claude-fable-5-1', 'Fable 5.1', CLAUDE_REASONING),
         model('claude-sonnet-5', 'Sonnet 5', CLAUDE_REASONING),
+        model('claude-fable-5', 'Fable 5 Legacy', CLAUDE_REASONING),
         model('claude-sonnet-4-6', 'Sonnet 4.6 Legacy', CLAUDE_REASONING),
         model('claude-opus-4-8-1m', 'Opus 4.8 1M Legacy', CLAUDE_REASONING),
         model('claude-opus-4-7-1m', 'Opus 4.7 1M Legacy', CLAUDE_REASONING),
@@ -360,6 +361,27 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
         }
       ],
       authFlows: [{ flowId: 'muse:login', kind: 'manual', label: 'Sign in', available: true }]
+    },
+    devin: {
+      displayProvider: 'Devin',
+      shortCode: 'DEVIN',
+      models: [
+        {
+          ...model('cli-default', 'Devin (CLI default)', [], true),
+          detail:
+            'Devin exposes no enumerable model catalogue over `devin acp`; the CLI runs its own default model unless `--model <id>` overrides it per run.'
+        }
+      ],
+      authFlows: [
+        {
+          flowId: 'devin:login',
+          kind: 'manual',
+          label: 'Sign in',
+          available: true,
+          detail:
+            'Interactive `devin auth login`, or set WINDSURF_API_KEY / DEVIN_API_KEY in the Host environment.'
+        }
+      ]
     }
   }
 

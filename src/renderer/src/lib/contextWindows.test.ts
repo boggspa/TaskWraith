@@ -23,6 +23,7 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('codex', 'gpt-5.4')).toBe(1_050_000)
     expect(resolveContextWindow('codex', 'gpt-5.4-mini')).toBe(400_000)
     expect(resolveContextWindow('claude', 'claude-opus-4-8-1m')).toBe(1_000_000)
+    expect(resolveContextWindow('claude', 'claude-fable-5-1')).toBe(1_000_000)
     expect(resolveContextWindow('claude', 'claude-fable-5')).toBe(1_000_000)
     expect(resolveContextWindow('claude', 'claude-fable-5-1m')).toBe(1_000_000)
     expect(resolveContextWindow('claude', 'claude-mythos-5')).toBe(1_000_000)
@@ -117,7 +118,9 @@ describe('resolveContextWindow', () => {
       // Both Vibe seat models sit at 262_144 — NOT Pi's 1_000_000, despite the
       // shared brand word. The two `mistral` identities are different providers.
       mistral: 262_144,
-      muse: 200_000
+      muse: 200_000,
+      // Devin publishes no per-model window; conservative fallback, parity with mistral.
+      devin: 262_144
     }
 
     for (const [provider, limit] of Object.entries(expected) as Array<

@@ -272,8 +272,9 @@ const CLAUDE_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   // Labels omit the "Claude " prefix (provider header/chip already carries
   // it); Legacy cluster below the current models — mirrors the main catalog.
   { id: 'claude-opus-5', label: 'Opus 5' },
-  { id: 'claude-fable-5', label: 'Fable 5' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
+  { id: 'claude-fable-5', label: 'Fable 5 Legacy' },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 Legacy' },
   { id: 'claude-opus-4-8-1m', label: 'Opus 4.8 1M Legacy' },
   { id: 'claude-opus-4-7-1m', label: 'Opus 4.7 1M Legacy' },
@@ -522,8 +523,9 @@ const CODEX_FAST_CAPABLE = new Set<string>([
   'gpt-5.6-terra',
   'gpt-5.6-luna'
 ])
-// Claude Fast mode is limited to supported Opus models. Fable 5 deliberately
-// keeps its full reasoning ladder but does not expose the paid Fast toggle.
+// Claude Fast mode is limited to supported Opus models. Fable 5 / 5.1
+// deliberately keep their full reasoning ladder but do not expose the paid
+// Fast toggle.
 const CLAUDE_FAST_CAPABLE = new Set<string>([
   'claude-opus-5',
   'claude-opus-4-8-1m',

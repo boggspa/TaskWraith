@@ -568,8 +568,8 @@ const CLAUDE_STATIC_MODELS = [
     ultraTaskSupported: true
   },
   {
-    id: 'claude-fable-5',
-    label: 'Fable 5',
+    id: 'claude-fable-5-1',
+    label: 'Fable 5.1',
     description: '1M context window — adaptive thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
@@ -580,6 +580,14 @@ const CLAUDE_STATIC_MODELS = [
     label: 'Sonnet 5',
     description: '1M context window — extended thinking',
     isDefault: true,
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    ultraTaskSupported: true
+  },
+  {
+    id: 'claude-fable-5',
+    label: 'Fable 5 Legacy',
+    description: '1M context window — legacy Fable',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
     ultraTaskSupported: true
@@ -1123,6 +1131,20 @@ const MUSE_STATIC_MODELS = [
     ultraTaskSupported: true
   }
 ]
+// Devin exposes no enumerable model catalogue over `devin acp`: the CLI runs
+// its own default model unless `--model <id>` overrides it per run. One honest
+// cli-default row keeps the picker usable without inventing model ids we
+// cannot verify. The id must stay byte-identical to DEVIN_DEFAULT_MODELS in
+// the renderer's providerModelDefaults.ts — providerFallthroughGuards compares
+// the two sides and a divergence means the picker and the run disagree.
+const DEVIN_STATIC_MODELS = [
+  {
+    id: 'cli-default',
+    label: 'Devin (CLI default)',
+    description: 'Runs the Devin CLI default model; override per run with a custom model id',
+    isDefault: true
+  }
+]
 const CURSOR_STATIC_MODELS = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true, ultraTaskSupported: true },
   { id: 'composer-2.5', label: 'Composer 2.5', ultraTaskSupported: true },
@@ -1260,6 +1282,8 @@ function staticRowsForProvider(provider: ProviderId, options: StaticProviderMode
       return MISTRAL_STATIC_MODELS
     case 'muse':
       return MUSE_STATIC_MODELS
+    case 'devin':
+      return DEVIN_STATIC_MODELS
     case 'pi':
       return piStaticModelRows(options.now)
     case 'antigravity':
@@ -1375,7 +1399,9 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
     // `preview:anthropic:claude-sonnet-5` from before Sonnet 5 went GA) maps
     // to the concrete default — it is never a valid CLI/SDK model name.
     if (lowered.startsWith('preview:')) return CLAUDE_DEFAULT_MODEL
-    if (lowered === 'fable') return 'claude-fable-5'
+    // Bare `fable` follows the current Fable release; the previous release
+    // stays reachable by its concrete id (claude-fable-5, Legacy row).
+    if (lowered === 'fable') return 'claude-fable-5-1'
     if (lowered === 'mythos') return 'claude-mythos-5'
     if (['sonnet', 'opus', 'haiku'].includes(lowered)) return lowered
     if (trimmed.startsWith('claude-')) {
@@ -1388,6 +1414,17 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
       // base model, not a distinct model id).
       return trimmed.endsWith('-1m') ? trimmed.slice(0, -'-1m'.length) : trimmed
     }
+  }
+  if (provider === 'devin') {
+    // No static catalogue to clamp against: 'cli-default' (and the usual
+    // default sentinels) mean "no --model override", anything else passes
+    // through verbatim so a custom id reaches `devin acp --model <id>`
+    // exactly as typed. An unknown id fails visibly at the CLI rather than
+    // being silently substituted here.
+    if (!trimmed || lowered === 'cli-default' || lowered === 'default' || lowered === 'auto') {
+      return 'cli-default'
+    }
+    return trimmed
   }
   if (!trimmed || trimmed === 'cli-default' || trimmed === 'custom' || trimmed === 'best')
     return 'default'

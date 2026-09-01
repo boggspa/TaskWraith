@@ -129,6 +129,7 @@ describe('Claude provider model defaults', () => {
   it('exposes Sonnet 5 and Fable 5 as real rows while keeping Mythos out of the picker', () => {
     const ids = CLAUDE_DEFAULT_MODELS.map((model) => model.id)
     expect(ids).not.toContain('default')
+    expect(ids).toContain('claude-fable-5-1')
     expect(ids).toContain('claude-fable-5')
     expect(ids).not.toContain('claude-mythos-5')
     expect(ids).not.toContain('claude-fable-5-1m')
@@ -152,6 +153,7 @@ describe('Claude provider model defaults', () => {
     expect(isClaudeModelId('fable')).toBe(true)
     expect(isClaudeModelId('mythos')).toBe(true)
     expect(isClaudeModelId('claude-sonnet-5')).toBe(true)
+    expect(isClaudeModelId('claude-fable-5-1')).toBe(true)
     expect(isClaudeModelId('claude-fable-5')).toBe(true)
     expect(isClaudeModelId('claude-fable-5-1m')).toBe(true)
     expect(isClaudeModelId('claude-mythos-5')).toBe(true)
@@ -182,6 +184,26 @@ describe('Claude provider model defaults', () => {
     expect(byId.get('claude-opus-4-8-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-7-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-fable-5')?.additionalSpeedTiers ?? []).not.toContain('fast')
+    expect(byId.get('claude-fable-5-1')?.additionalSpeedTiers ?? []).not.toContain('fast')
+  })
+
+  it('offers Fable 5.1 as the current Fable row and relabels Fable 5 as Legacy', () => {
+    const byId = new Map(CLAUDE_DEFAULT_MODELS.map((model) => [model.id, model]))
+    expect(byId.get('claude-fable-5-1')).toMatchObject({ label: 'Fable 5.1' })
+    expect(byId.get('claude-fable-5')).toMatchObject({
+      label: 'Fable 5 Legacy',
+      description: '1M context window — legacy Fable'
+    })
+    expect(CLAUDE_DEFAULT_MODELS.map((model) => model.id)).toEqual([
+      'claude-opus-5',
+      'claude-fable-5-1',
+      'claude-sonnet-5',
+      'claude-fable-5',
+      'claude-sonnet-4-6',
+      'claude-opus-4-8-1m',
+      'claude-opus-4-7-1m',
+      'claude-haiku-4-5'
+    ])
   })
 
   it('resolves family-specific Claude reasoning defaults', () => {

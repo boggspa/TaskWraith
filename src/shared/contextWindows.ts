@@ -15,6 +15,7 @@ export type ContextWindowProviderId =
   | 'pi'
   | 'mistral'
   | 'muse'
+  | 'devin'
 
 const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // Gemini
@@ -123,6 +124,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'gpt-5.3-codex-spark': 200_000,
   'gpt-5.2': 400_000,
   // Claude
+  'claude-fable-5-1': 1_000_000,
   'claude-fable-5': 1_000_000,
   'claude-fable-5-1m': 1_000_000,
   'claude-mythos-5': 1_000_000,
@@ -288,7 +290,9 @@ const PROVIDER_FALLBACK_WINDOW: Record<ContextWindowProviderId, number> = {
   // `mistral-medium-3.5` / `devstral-small` rows above.
   mistral: 262_144,
   // Muse opaque CLI seat — conservative fallback until a measured window lands.
-  muse: 200_000
+  muse: 200_000,
+  // Devin publishes no per-model window; conservative fallback, parity with mistral.
+  devin: 262_144
 }
 
 const CONTEXT_WINDOW_PROVIDER_IDS: ReadonlySet<string> = new Set(

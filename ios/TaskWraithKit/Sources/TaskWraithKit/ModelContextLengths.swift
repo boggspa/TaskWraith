@@ -73,8 +73,9 @@ public enum ModelContextLengths {
                 // below the current models — VERBATIM mirror of the TS picker
                 // (StaticProviderModels.ts CLAUDE_STATIC_MODELS).
                 (id: "claude-opus-5",       label: "Opus 5"),
-                (id: "claude-fable-5",      label: "Fable 5"),
+                (id: "claude-fable-5-1",    label: "Fable 5.1"),
                 (id: "claude-sonnet-5",     label: "Sonnet 5"),
+                (id: "claude-fable-5",      label: "Fable 5 Legacy"),
                 (id: "claude-sonnet-4-6",   label: "Sonnet 4.6 Legacy"),
                 (id: "claude-opus-4-8-1m",  label: "Opus 4.8 1M Legacy"),
                 (id: "claude-opus-4-7-1m",  label: "Opus 4.7 1M Legacy"),

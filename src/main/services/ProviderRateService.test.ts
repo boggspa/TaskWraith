@@ -339,6 +339,14 @@ describe('BAKED_IN_RATES', () => {
         }
       )
     }
+    // Fable 5.1: same per-token rate as Fable 5, cache reads a quarter of it.
+    expect(
+      BAKED_IN_RATES.claude.models.find((model) => model.modelId === 'claude-fable-5-1')
+    ).toMatchObject({
+      inputUsdPerMillion: 10,
+      cachedInputUsdPerMillion: 0.25,
+      outputUsdPerMillion: 50
+    })
     expect(
       BAKED_IN_RATES.gemini.models.find((model) => model.modelId === 'gemini-3.1-pro-preview')
     ).toMatchObject({

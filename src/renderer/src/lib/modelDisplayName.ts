@@ -79,6 +79,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   // ── Claude ────────────────────────────────────────────────
   'claude-sonnet-5': 'Claude Sonnet 5',
   'preview:anthropic:claude-sonnet-5': 'Claude Sonnet 5',
+  'claude-fable-5-1': 'Claude Fable 5.1',
   'claude-fable-5': 'Claude Fable 5',
   'claude-fable-5-1m': 'Claude Fable 5 (1M)',
   'claude-mythos-5': 'Claude Mythos 5',

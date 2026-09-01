@@ -207,8 +207,8 @@ const CLAUDE_DEFAULT_MODEL_ROWS = [
     additionalSpeedTiers: ['fast']
   },
   {
-    id: 'claude-fable-5',
-    label: 'Fable 5',
+    id: 'claude-fable-5-1',
+    label: 'Fable 5.1',
     description: '1M context window — adaptive thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
@@ -218,6 +218,13 @@ const CLAUDE_DEFAULT_MODEL_ROWS = [
     label: 'Sonnet 5',
     description: '1M context window — extended thinking',
     isDefault: true,
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium'
+  },
+  {
+    id: 'claude-fable-5',
+    label: 'Fable 5 Legacy',
+    description: '1M context window — legacy Fable',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
   },
@@ -798,6 +805,7 @@ const CLAUDE_MODEL_IDS = new Set([
   'custom',
   'claude-opus-5',
   'claude-opus-4-8-1m',
+  'claude-fable-5-1',
   'claude-fable-5',
   'claude-fable-5-1m',
   'claude-mythos-5',

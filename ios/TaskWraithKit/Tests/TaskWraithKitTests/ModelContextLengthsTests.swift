@@ -62,13 +62,24 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "1.0M")
     }
 
-    @Test("claude-fable-5 row: 1_000_000 / 1.0M")
+    @Test("claude-fable-5-1 row: 1_000_000 / 1.0M")
+    func claudeFable51() {
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "claude" }?
+            .models.first { $0.modelId == "claude-fable-5-1" }
+        #expect(row != nil)
+        #expect(row?.label == "Fable 5.1")
+        #expect(row?.contextWindow == 1_000_000)
+        #expect(row?.formatted == "1.0M")
+    }
+
+    @Test("claude-fable-5 row: 1_000_000 / 1.0M, relabelled Legacy")
     func claudeFable5() {
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "claude" }?
             .models.first { $0.modelId == "claude-fable-5" }
         #expect(row != nil)
-        #expect(row?.label == "Fable 5")
+        #expect(row?.label == "Fable 5 Legacy")
         #expect(row?.contextWindow == 1_000_000)
         #expect(row?.formatted == "1.0M")
     }
@@ -99,11 +110,12 @@ struct ModelContextLengthsTests {
     func claudeGroupMirrorsPickerRows() {
         let groups = ModelContextLengths.buildGroups()
         let claudeModels = groups.first { $0.provider == "claude" }?.models ?? []
-        // Current models first, the Legacy cluster (4.8 1M among them) below.
+        // Current models first, the Legacy cluster (Fable 5 and 4.8 1M among them) below.
         #expect(claudeModels.map(\.modelId) == [
             "claude-opus-5",
-            "claude-fable-5",
+            "claude-fable-5-1",
             "claude-sonnet-5",
+            "claude-fable-5",
             "claude-sonnet-4-6",
             "claude-opus-4-8-1m",
             "claude-opus-4-7-1m",

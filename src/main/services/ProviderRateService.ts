@@ -372,6 +372,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes: '1M context window at standard rates — no long-context premium published.'
       },
       {
+        modelId: 'claude-fable-5-1',
+        inputUsdPerMillion: 10.0,
+        outputUsdPerMillion: 50.0,
+        cachedInputUsdPerMillion: 0.25,
+        sourceUrl: 'https://platform.claude.com/docs/en/about-claude/models/overview',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Current Fable release; successor to Fable 5 at the same $10/$50 per-token rate. Cache reads are $0.25/MTok (0.025x input — a quarter of the Fable 5 rate). 1M context is the default — no -1m variant.'
+      },
+      {
         modelId: 'claude-mythos-5',
         inputUsdPerMillion: 10.0,
         outputUsdPerMillion: 50.0,
@@ -1798,6 +1808,14 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
           'Wire-id alias for muse-spark-1.2 when a run records the seat default sentinel instead of the catalog id.'
       }
     ]
+  },
+  // Devin bills in ACUs (Agent Compute Units) on a subscription plan, not per
+  // token — there is no per-model $/Mtok rate to bake in, so the models list is
+  // intentionally empty and spend rows stay zero.
+  devin: {
+    provider: 'devin',
+    pricingUrl: 'https://devin.ai/pricing',
+    models: []
   }
 }
 
@@ -1958,7 +1976,8 @@ const providerIds = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 
 function isProviderId(value: unknown): value is ProviderId {

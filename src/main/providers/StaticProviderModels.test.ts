@@ -176,7 +176,8 @@ describe('normalizeCliProviderModel (claude)', () => {
   })
 
   it('keeps returned Fable and Mythos ids runnable', () => {
-    expect(normalizeCliProviderModel('claude', 'fable')).toBe('claude-fable-5')
+    expect(normalizeCliProviderModel('claude', 'fable')).toBe('claude-fable-5-1')
+    expect(normalizeCliProviderModel('claude', 'claude-fable-5-1')).toBe('claude-fable-5-1')
     expect(normalizeCliProviderModel('claude', 'mythos')).toBe('claude-mythos-5')
     expect(normalizeCliProviderModel('claude', 'claude-fable-5')).toBe('claude-fable-5')
     expect(normalizeCliProviderModel('claude', 'claude-fable-5-1m')).toBe('claude-fable-5')
@@ -841,6 +842,7 @@ describe('getStaticProviderModels (claude)', () => {
   it('hides Claude preview placeholders unless explicitly requested', () => {
     const ids = models.map((m) => m.id)
     expect(ids).not.toContain('default')
+    expect(ids).toContain('claude-fable-5-1')
     expect(ids).toContain('claude-fable-5')
     expect(ids).not.toContain('claude-mythos-5')
     expect(ids).not.toContain('claude-fable-5-1m')
@@ -882,11 +884,35 @@ describe('getStaticProviderModels (claude)', () => {
     })
   })
 
+  it('offers Fable 5.1 as the current Fable row and relabels Fable 5 as Legacy', () => {
+    expect(byId.get('claude-fable-5-1')).toMatchObject({
+      label: 'Fable 5.1',
+      description: '1M context window — adaptive thinking'
+    })
+    expect(byId.get('claude-fable-5')).toMatchObject({
+      label: 'Fable 5 Legacy',
+      description: '1M context window — legacy Fable'
+    })
+    // Current models first, then the Legacy cluster — Fable 5 leads it.
+    expect(models.map((m) => m.id)).toEqual([
+      'claude-opus-5',
+      'claude-fable-5-1',
+      'claude-sonnet-5',
+      'claude-fable-5',
+      'claude-sonnet-4-6',
+      'claude-opus-4-8-1m',
+      'claude-opus-4-7-1m',
+      'claude-haiku-4-5',
+      'custom'
+    ])
+  })
+
   it('keeps the paid Fast tier on supported Opus rows but not Fable 5', () => {
     expect(byId.get('claude-opus-5')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-8-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-7-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-fable-5')?.additionalSpeedTiers ?? []).not.toContain('fast')
+    expect(byId.get('claude-fable-5-1')?.additionalSpeedTiers ?? []).not.toContain('fast')
   })
 
   it('offers family-specific Claude reasoning efforts', () => {
