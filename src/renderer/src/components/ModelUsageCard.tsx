@@ -1199,11 +1199,7 @@ export function ContextLengthsView() {
                 </span>
                 <span
                   className="model-usage-context-window"
-                  title={
-                    m.maxContextWindow
-                      ? `${m.contextWindow.toLocaleString()}–${m.maxContextWindow.toLocaleString()} tokens (plan-dependent)`
-                      : `${m.contextWindow.toLocaleString()} tokens`
-                  }
+                  title={`${m.contextWindow.toLocaleString()} tokens`}
                 >
                   {m.formatted}
                 </span>

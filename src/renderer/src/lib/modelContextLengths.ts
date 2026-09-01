@@ -24,11 +24,7 @@ import {
   resolveContextWindow,
   formatContextTokens
 } from './contextWindows'
-import {
-  KIMI_256K_CONTEXT_WINDOW,
-  KIMI_K3_LONG_CONTEXT_WINDOW,
-  KIMI_K3_MODEL_ID
-} from '../../../shared/kimiModels'
+import { KIMI_256K_CONTEXT_WINDOW } from '../../../shared/kimiModels'
 
 // Catalog entries that are router/selection ALIASES, not concrete models, so
 // they have no single official context window of their own (their effective
@@ -39,9 +35,8 @@ const NON_MODEL_ALIAS_IDS = new Set<string>(['auto'])
 export interface ModelContextLengthRow {
   modelId: string          // canonical model id, e.g. 'claude-opus-4-8-1m'
   label: string            // curated catalog picker label, e.g. 'Claude Opus 4.8 1M'
-  contextWindow: number    // resolved base/default window in tokens
-  maxContextWindow?: number // plan-dependent upper bound, when different
-  formatted: string        // e.g. '1.0M', '256k', or plan-dependent '256k–1.0M'
+  contextWindow: number    // resolved official window in tokens
+  formatted: string        // e.g. '1.0M' or '256k'
 }
 
 export interface ModelContextLengthGroup {
@@ -67,10 +62,9 @@ export function buildModelContextLengthGroups(
           isContextWindowProviderId(provider) ? provider : undefined,
           opt.id
         )
-        const maxContextWindow =
-          provider === 'kimi' && opt.id === KIMI_K3_MODEL_ID
-            ? KIMI_K3_LONG_CONTEXT_WINDOW
-            : undefined
+        // The pre-split 'kimi-k3' row once rendered a plan-dependent
+        // '256k–1.0M' range here; since d19931eb8 each K3 route is its own
+        // catalog row with its own official window, so no range remains.
         const formattedContextWindow =
           provider === 'kimi' && contextWindow === KIMI_256K_CONTEXT_WINDOW
             ? '256k'
@@ -79,10 +73,7 @@ export function buildModelContextLengthGroups(
           modelId: opt.id,
           label: opt.label,
           contextWindow,
-          ...(maxContextWindow ? { maxContextWindow } : {}),
-          formatted: maxContextWindow
-            ? `${formattedContextWindow}–${formatContextTokens(maxContextWindow)}`
-            : formattedContextWindow
+          formatted: formattedContextWindow
         }
       })
     if (models.length > 0) {

@@ -712,11 +712,7 @@ export function ModelContextLengthsSettingsTable() {
                   <td className="model-usage-table-model-cell" title={m.label}>{humaniseModelIdTableCell(group.provider, m.modelId)}</td>
                   <td
                     className="model-usage-table-tokens"
-                    title={
-                      m.maxContextWindow
-                        ? `${m.contextWindow.toLocaleString()}–${m.maxContextWindow.toLocaleString()} tokens (plan-dependent)`
-                        : `${m.contextWindow.toLocaleString()} tokens`
-                    }
+                    title={`${m.contextWindow.toLocaleString()} tokens`}
                   >
                     {m.formatted}
                   </td>

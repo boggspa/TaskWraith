@@ -19,7 +19,6 @@ public struct ModelContextLengthRow: Hashable, Sendable {
     public let modelId: String
     public let label: String
     public let contextWindow: Int
-    public let maxContextWindow: Int?
     public let formatted: String
 }
 
@@ -84,10 +83,11 @@ public enum ModelContextLengths {
         case "kimi":
             return [
                 (id: "kimi-k2.7-code", label: "K2.7 Coding"),
-                // K3 (2026-07-16) — Moonshot's flagship; 256K on Moderato and
-                // up to 1M on Allegretto+, with no Highspeed tier.
+                // K3 (2026-07-16) — Moonshot's flagship, split into two
+                // concrete routes since d19931eb8: the 1M route (Allegretto+)
+                // and the fixed quota-efficient 256K one. Each carries its own
+                // official window, so no plan-range display remains.
                 (id: "kimi-k3",        label: "K3 (up to 1M)"),
-                // Same K3 generation through the fixed, quota-efficient route.
                 (id: "kimi-k3-256k",   label: "K3 256K"),
             ]
         case "pi":
@@ -231,8 +231,6 @@ public enum ModelContextLengths {
                 .filter { !aliasIds.contains($0.id) }
                 .map { opt in
                     let window = ContextWindows.resolve(provider: provider, model: opt.id)
-                    let maxWindow: Int? =
-                        provider == "kimi" && opt.id == "kimi-k3" ? 1_048_576 : nil
                     let formattedWindow =
                         provider == "kimi" && window == 262_144
                             ? "256k"
@@ -241,10 +239,7 @@ public enum ModelContextLengths {
                         modelId: opt.id,
                         label: opt.label,
                         contextWindow: window,
-                        maxContextWindow: maxWindow,
-                        formatted: maxWindow.map {
-                            "\(formattedWindow)–\(formatContextTokens($0))"
-                        } ?? formattedWindow
+                        formatted: formattedWindow
                     )
                 }
             if !rows.isEmpty {

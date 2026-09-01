@@ -409,11 +409,17 @@ describe('ModelContextLengthsSettingsTable (SSR — static data, no effects)', (
     expect(html).toContain('1.0M')
   })
 
-  it('shows K3 context as a plan-dependent 256k to 1M range', () => {
+  it('shows each K3 route as its own fixed window, with the range display retired', () => {
+    // The K3 split (d19931eb8 / f661ac2a1) made 'kimi-k3' the concrete 1M
+    // route and 'kimi-k3-256k' the fixed 256k one, so the old plan-dependent
+    // '256k–1.0M' single-row range must no longer render anywhere.
     const html = renderToStaticMarkup(<ModelContextLengthsSettingsTable />)
-    expect(html).toContain('256k–1.0M')
-    expect(html).toContain('plan-dependent')
+    expect(html).toContain('K3 (1M)')
     expect(html).toContain('K3 (256K)')
+    expect(html).toContain('>256k<')
+    expect(html).not.toContain('256k–1.0M')
+    expect(html).not.toContain('1.0M–1.0M')
+    expect(html).not.toContain('plan-dependent')
   })
 
   it('is currency-free — does not contain ~ cost badge or $ symbol', () => {

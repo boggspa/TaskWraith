@@ -90,17 +90,20 @@ describe('buildModelContextLengthGroups', () => {
     expect(row!.formatted).toBe('256k')
   })
 
-  it('shows K3 as a plan-dependent 256k to 1M range', () => {
+  it('shows the long-context K3 route as an official fixed 1.0M window', () => {
+    // Since the K3 split (d19931eb8) each route is a concrete catalog row, so
+    // the old plan-dependent '256k–1.0M' range display is retired: 'kimi-k3'
+    // IS the 1M route (f661ac2a1 moved its official window to 1_048_576).
     const groups = buildModelContextLengthGroups()
     const row = groups
       .find((group) => group.provider === 'kimi')
       ?.models.find((model) => model.modelId === 'kimi-k3')
 
     expect(row).toMatchObject({
-      contextWindow: 262_144,
-      maxContextWindow: 1_048_576,
-      formatted: '256k–1.0M'
+      contextWindow: 1_048_576,
+      formatted: '1.0M'
     })
+    expect(row && 'maxContextWindow' in row).toBe(false)
   })
 
   it('shows the quota-efficient K3 route as an exact fixed 256k window', () => {
@@ -113,7 +116,6 @@ describe('buildModelContextLengthGroups', () => {
       contextWindow: 262_144,
       formatted: '256k'
     })
-    expect(row?.maxContextWindow).toBeUndefined()
   })
 
   it('gemini flash-lite resolves to 200k', () => {

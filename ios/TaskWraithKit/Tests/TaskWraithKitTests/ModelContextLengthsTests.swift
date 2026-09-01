@@ -177,16 +177,17 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "256k")
     }
 
-    @Test("kimi kimi-k3: 256k base and plan-dependent 1M maximum")
+    @Test("kimi kimi-k3: official fixed 1M window, range display retired")
     func kimiK3() {
+        // Mirrors desktop f661ac2a1: the split routes each carry their own
+        // official window, so the old plan-dependent '256k–1.0M' is retired.
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "kimi" }?
             .models.first { $0.modelId == "kimi-k3" }
         #expect(row != nil)
         #expect(row?.label == "K3 (up to 1M)")
-        #expect(row?.contextWindow == 262_144)
-        #expect(row?.maxContextWindow == 1_048_576)
-        #expect(row?.formatted == "256k–1.0M")
+        #expect(row?.contextWindow == 1_048_576)
+        #expect(row?.formatted == "1.0M")
     }
 
     @Test("kimi fixed K3 route: exact 262_144 / displayed 256k")
@@ -196,7 +197,6 @@ struct ModelContextLengthsTests {
             .models.first { $0.modelId == "kimi-k3-256k" }
         #expect(row?.label == "K3 256K")
         #expect(row?.contextWindow == 262_144)
-        #expect(row?.maxContextWindow == nil)
         #expect(row?.formatted == "256k")
     }
 
