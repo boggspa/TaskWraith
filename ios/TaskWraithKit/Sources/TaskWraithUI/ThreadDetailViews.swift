@@ -863,6 +863,11 @@ struct ThreadDetailView: View {
             id: String, members: [TranscriptDisplayItem],
             stackRows: [RemoteThreadSnapshot.Row], systemCount: Int,
             firstSystemPreview: String, lastRow: RemoteThreadSnapshot.Row)
+        /// Two adjacent fan-out lane cards laid side by side (regular-width
+        /// iPad only; desktop `paired` lane-layout parity). Emitted by
+        /// `pairFanoutLaneItems` at the top level only, after every fold.
+        case fanoutPair(
+            id: String, lead: RemoteThreadSnapshot.Row, trail: RemoteThreadSnapshot.Row)
 
         var id: String {
             switch self {
@@ -871,6 +876,7 @@ struct ThreadDetailView: View {
             case .fanoutViewport(let group): return group.id
             case .settledStack(let id, _, _, _): return id
             case .superStack(let id, _, _, _, _, _): return id
+            case .fanoutPair(let id, _, _): return id
             }
         }
 
@@ -881,34 +887,79 @@ struct ThreadDetailView: View {
             case .fanoutViewport(let group): return group.lastRow
             case .settledStack(_, _, _, let lastRow): return lastRow
             case .superStack(_, _, _, _, _, let lastRow): return lastRow
+            case .fanoutPair(_, _, let trail): return trail
             }
         }
     }
 
     private var settledDisplayItemsBeforeLive: [TranscriptDisplayItem] {
         if !activeTranscriptFilterKeys.isEmpty {
-            return groupAdjacentToolRows(settledRowsBeforeLive)
+            return pairFanoutLaneItems(groupAdjacentToolRows(settledRowsBeforeLive))
         }
-        return toolRowGroupingCache.items(
-            segment: "before",
-            rows: settledRowsBeforeLive,
-            revision: snapshotRevisionToken,
-            liveRunId: liveRunId,
-            extraKey: "\(transcriptFilterSignature)|\(pinnedRowsKey)|\(fanoutCollapseRunSummariesKey)",
-            group: { self.foldSuperGroups(self.buildFanoutViewportDisplayItems($0)) })
+        return pairFanoutLaneItems(
+            toolRowGroupingCache.items(
+                segment: "before",
+                rows: settledRowsBeforeLive,
+                revision: snapshotRevisionToken,
+                liveRunId: liveRunId,
+                extraKey:
+                    "\(transcriptFilterSignature)|\(pinnedRowsKey)|\(fanoutCollapseRunSummariesKey)",
+                group: { self.foldSuperGroups(self.buildFanoutViewportDisplayItems($0)) }))
     }
 
     private var settledDisplayItemsAfterLive: [TranscriptDisplayItem] {
         if !activeTranscriptFilterKeys.isEmpty {
-            return groupAdjacentToolRows(settledRowsAfterLive)
+            return pairFanoutLaneItems(groupAdjacentToolRows(settledRowsAfterLive))
         }
-        return toolRowGroupingCache.items(
-            segment: "after",
-            rows: settledRowsAfterLive,
-            revision: snapshotRevisionToken,
-            liveRunId: liveRunId,
-            extraKey: "\(transcriptFilterSignature)|\(pinnedRowsKey)|\(fanoutCollapseRunSummariesKey)",
-            group: { self.foldSuperGroups(self.buildFanoutViewportDisplayItems($0)) })
+        return pairFanoutLaneItems(
+            toolRowGroupingCache.items(
+                segment: "after",
+                rows: settledRowsAfterLive,
+                revision: snapshotRevisionToken,
+                liveRunId: liveRunId,
+                extraKey:
+                    "\(transcriptFilterSignature)|\(pinnedRowsKey)|\(fanoutCollapseRunSummariesKey)",
+                group: { self.foldSuperGroups(self.buildFanoutViewportDisplayItems($0)) }))
+    }
+
+    /// Regular-width iPads lay adjacent fan-out lanes two-across (desktop
+    /// `paired` lane-layout parity). Applied OUTSIDE the grouping cache so the
+    /// cached fold shape stays layout-agnostic — rotation or a split-view
+    /// resize re-pairs a cheap O(items) walk instead of invalidating the
+    /// cache. Pairing runs after every fold; a lane the wave-collapse or a
+    /// stack already owns is no longer a top-level `.row` and never pairs.
+    private var fanoutLanePairingEnabled: Bool {
+        twFanoutLanePairingEnabled(
+            isPadInterface: isPadInterface, isRegularWidth: hSizeClass == .regular)
+    }
+
+    private func pairFanoutLaneItems(_ items: [TranscriptDisplayItem]) -> [TranscriptDisplayItem] {
+        guard fanoutLanePairingEnabled else { return items }
+        var out: [TranscriptDisplayItem] = []
+        var index = 0
+        while index < items.count {
+            guard case .row(let first) = items[index], twIsFanoutLaneRow(first) else {
+                out.append(items[index])
+                index += 1
+                continue
+            }
+            var runRows: [RemoteThreadSnapshot.Row] = [first]
+            var end = index + 1
+            while end < items.count, case .row(let next) = items[end], twIsFanoutLaneRow(next) {
+                runRows.append(next)
+                end += 1
+            }
+            for placement in twPairFanoutLaneRun(runRows) {
+                switch placement {
+                case .pair(let lead, let trail):
+                    out.append(.fanoutPair(id: placement.id, lead: lead, trail: trail))
+                case .solo(let row):
+                    out.append(.row(row))
+                }
+            }
+            index = end
+        }
+        return out
     }
 
     /// Second-level fold: consecutive one-liner items — settled stacks that
@@ -1084,6 +1135,16 @@ struct ThreadDetailView: View {
             settledRowItemView(row, itemId: item.id)
         case .toolBurst:
             stackConstituentView(item)
+        case .fanoutPair(_, let lead, let trail):
+            // Two-across lane pair (regular-width iPad). `.top` alignment so a
+            // short lane never stretches to its sibling's height; each cell
+            // takes half the column.
+            HStack(alignment: .top, spacing: 10) {
+                stackConstituentView(.row(lead))
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                stackConstituentView(.row(trail))
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
         case .fanoutViewport(let group):
             fanoutViewportItemView(group)
         case .settledStack(let id, let items, let rows, _):
@@ -1125,6 +1186,10 @@ struct ThreadDetailView: View {
             // Fan-out viewports are only emitted at the outer display level;
             // their expansion renders raw lane rows above, never a nested
             // viewport.
+            EmptyView()
+        case .fanoutPair:
+            // Pairs never join a super-group (memberKind treats them as a
+            // run-breaking item); top-level dispatch owns them.
             EmptyView()
         case .settledStack(let id, let items, let rows, _):
             settledStackItemView(id: id, items: items, rows: rows)
@@ -1191,12 +1256,36 @@ struct ThreadDetailView: View {
                 group: group,
                 expanded: expanded,
                 onToggle: { toggleFanoutViewportExpanded(group.id) })
-            if expanded {
+            if expanded, fanoutLanePairingEnabled {
+                // Restored lanes keep the same two-across layout the live wave
+                // had on a regular-width iPad.
+                ForEach(twPairFanoutLaneRun(group.laneRows)) { placement in
+                    switch placement {
+                    case .pair(let lead, let trail):
+                        HStack(alignment: .top, spacing: 10) {
+                            stackConstituentView(.row(lead))
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                            stackConstituentView(.row(trail))
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                        }
+                    case .solo(let row):
+                        stackConstituentView(.row(row))
+                    }
+                }
+            } else if expanded {
                 ForEach(group.laneRows) { row in
                     stackConstituentView(.row(row))
                 }
             }
         }
+    }
+
+    /// Fan-out lanes sitting in a six-plus adjacent run take the compact
+    /// collapsed band (desktop `classifyCompactFanoutLaneRows` parity). Walked
+    /// over `visibleRows` so adjacency matches what the reader sees; the walk
+    /// is O(rows) and only visible lazy items consult it.
+    private var compactFanoutLaneRowIds: Set<String> {
+        twCompactFanoutLaneRowIds(visibleRows)
     }
 
     private func toggleSettledStackExpanded(_ id: String) {
@@ -1236,7 +1325,8 @@ struct ThreadDetailView: View {
                 participants: transcriptParticipants,
                 isPinned: isMessagePinned(row.id),
                 linkedChildCard: linkedChildCard(for: row),
-                workingParticipantIds: workingParticipantIds
+                workingParticipantIds: workingParticipantIds,
+                fanoutCompactBand: compactFanoutLaneRowIds.contains(row.id)
             )
             .equatable()
         case .toolBurst(_, let rows, _):
@@ -1248,6 +1338,10 @@ struct ThreadDetailView: View {
             // Fan-out viewports are only emitted at the outer display level;
             // their expansion renders raw lane rows above, never a nested
             // viewport.
+            EmptyView()
+        case .fanoutPair:
+            // Pairs are likewise top-level only (pairFanoutLaneItems runs
+            // after every fold); the outer dispatch renders them.
             EmptyView()
         case .superStack:
             EmptyView()
@@ -4198,12 +4292,28 @@ struct ContextCompactionSummaryCard: View {
 /// changed.
 enum TWFanoutResultViewport {
     static let collapsedMaxHeight: CGFloat = 92
+    /// Six-plus rounds drop every lane of the run to this band — desktop
+    /// parity in DIRECTION (its 331 halves to 166 at the same threshold), not
+    /// in value: this band stays phone-sized like the full one above. 62
+    /// keeps roughly two body lines readable inside the scaled fades while a
+    /// big round fits meaningfully more lanes per screen.
+    static let compactCollapsedMaxHeight: CGFloat = 62
     /// Scaled with the band (desktop ran 60 against 331, ~18%; the fade masks
     /// BOTH edges). Holding the previous 34 on a 92pt window would have left
     /// only ~24pt at full opacity.
     static let edgeFadeHeight: CGFloat = 17
+    /// Holds the band's ~18% fade ratio (17/92) at the compact size.
+    static let compactEdgeFadeHeight: CGFloat = 11
     static let expandLabel = "Expand result"
     static let collapseLabel = "Collapse result"
+
+    static func collapsedMaxHeight(compact: Bool) -> CGFloat {
+        compact ? compactCollapsedMaxHeight : collapsedMaxHeight
+    }
+
+    static func edgeFadeHeight(compact: Bool) -> CGFloat {
+        compact ? compactEdgeFadeHeight : edgeFadeHeight
+    }
 }
 
 /// Header chrome for an ensemble fan-out lane result (desktop
@@ -4655,6 +4765,13 @@ struct ThreadRowView: View, Equatable {
     /// token), so a shimmer derived from it would never re-render on or off.
     /// The projected set only changes when a lane starts or finishes.
     var workingParticipantIds: Set<String> = []
+    /// This lane sits in a run of `twFanoutLaneCompactThreshold`-plus adjacent
+    /// fan-out lanes, so its collapsed viewport takes the compact band
+    /// (desktop `compactLaneBand` parity). Explicit input for the same reason
+    /// as `workingParticipantIds`: it must join the equality gate below, or
+    /// the retroactive flip when the sixth lane streams in never re-renders
+    /// the first five.
+    var fanoutCompactBand: Bool = false
 
     @State private var deletionPresentation: TranscriptMessageDeletionPresentation?
 
@@ -4678,6 +4795,9 @@ struct ThreadRowView: View, Equatable {
             // only at lane start/finish, and it is what turns the fan-out rim
             // shimmer on and off.
             && lhs.workingParticipantIds == rhs.workingParticipantIds
+            // Changes only when a run crosses (or falls back through) the
+            // six-lane threshold; it resizes the collapsed lane viewport.
+            && lhs.fanoutCompactBand == rhs.fanoutCompactBand
             && twParticipantsSignature(lhs.participants)
                 == twParticipantsSignature(rhs.participants)
     }
@@ -4856,8 +4976,10 @@ struct ThreadRowView: View, Equatable {
                 }
                 if hasFanoutResultCard {
                     ToolActivityViewport(
-                        maxHeight: TWFanoutResultViewport.collapsedMaxHeight,
-                        fadeHeight: TWFanoutResultViewport.edgeFadeHeight,
+                        maxHeight: TWFanoutResultViewport.collapsedMaxHeight(
+                            compact: fanoutCompactBand),
+                        fadeHeight: TWFanoutResultViewport.edgeFadeHeight(
+                            compact: fanoutCompactBand),
                         overflowSlack: 0,
                         expandLabel: TWFanoutResultViewport.expandLabel,
                         collapseLabel: TWFanoutResultViewport.collapseLabel
