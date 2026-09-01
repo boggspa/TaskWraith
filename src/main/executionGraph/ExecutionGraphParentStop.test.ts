@@ -17,7 +17,11 @@ describe('ExecutionGraphParentStop', () => {
             {
               executionId: 'graph-one',
               state: 'running',
-              owner: { threadId: 'parent-chat', initiatingRunId: 'parent-run' }
+              owner: {
+                threadId: 'parent-chat',
+                seatId: 'parent-seat',
+                initiatingRunId: 'parent-run'
+              }
             }
           ],
           cancelExecution: async () => {
@@ -47,7 +51,11 @@ describe('ExecutionGraphParentStop', () => {
             {
               executionId: 'graph-one',
               state: 'running',
-              owner: { threadId: 'parent-chat', initiatingRunId: 'parent-run' }
+              owner: {
+                threadId: 'parent-chat',
+                seatId: 'parent-seat',
+                initiatingRunId: 'parent-run'
+              }
             }
           ],
           cancelExecution: async () => {
