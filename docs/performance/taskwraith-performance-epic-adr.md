@@ -148,6 +148,8 @@ Composed of:
 
 Dual-read is mandatory until Boss declares cutover complete (see §6).
 
+> **Superseded in part — see the [2026-09-01 amendment](#amendment--2026-09-01-chat-store-v2-as-implemented).** The `chats/<chatId>/` directory layout above is **not** what landed: the Host scanner rejects any non-`*.json` entry inside `chats/`, so v2 uses a sibling versioned root. The append-oriented manifest/snapshot/segment/archive model itself is unchanged.
+
 ### 5.2 Durability classes and ACK semantics — **FROZEN**
 
 **Amendment (2026-08-06, item 6):** A utility-process durable write mitigation is landed dark behind `TASKWRAITH_UTILITY_WRITE=1` (`b745115a1`). For `normal` saves while enabled with a registered writer, the write+fsync+rename+dir-fsync tail (~40 ms of a ~70 ms large-chat save) moves off main into a long-lived queued utility process; serialize (~30 ms) stays on main by design (queue serializes the record on enqueue). Uncontended barriers remain synchronous on main; a barrier for a chat that already has a queued job routes through the queue (ordering over sync durability) and is not awaited at the seam. Today both gates are shut (flag off + zero production `registerPersistenceWriteEnqueue` callers), so every save — barrier and normal — still takes the synchronous `writeJson` path. Crash fallback drains the queue FIFO in the calling thread before killing the worker — the queue owns its own fallback; N callers never race independent fallback writes. This is a quick win that narrows the freeze window until v2 append-oriented persistence lands; it does **not** change the durability class definitions or ACK semantics below.
@@ -795,7 +797,7 @@ Captain enforces one writer per path set. Shared hubs require extracted modules 
 1. **Tests first for crash/deletion** when touching durability — copy UsageJournal crash seams.
 2. **Explicit path staging** only; no `git add -A`.
 3. **Format only new/touched files**; new ADR/file born formatted; never repo-wide Prettier.
-4. **Feature flags** for S2/S3 cutover; default off until Boss enables.
+4. **Feature flags** for S2/S3 cutover; default off until Boss enables. _Landed as `TASKWRAITH_CHAT_STORE_V2=1`, default off — see the [2026-09-01 amendment](#amendment--2026-09-01-chat-store-v2-as-implemented)._
 5. **Logging:** prefer meters/metrics over chatty main-thread logs under load.
 6. **iOS/bridge:** keep bounded projections; full export path remains full-transcript builder.
 7. **Popout:** second hydrated consumer — must respect pin rules and same IPC protocol.
@@ -960,3 +962,72 @@ Still open (do not close T3c as the frozen §5.5 shard DTO):
 - No T1/T2-backed write-byte claim.
 
 Host saturation (this same follow-up) is **not** the persistence 64-pending fallback. It is a Host-wide `composer.send` admission cap (`HOST_NODE_MAX_CONCURRENT_RUNS` / `HOST_NODE_MAX_QUEUED_STARTS`) that refuses with `host_saturated` / `host_shutting_down` / `thread_busy` and never changes provider offers or permission posture.
+
+---
+
+## Amendment — 2026-09-01: chat-store v2 as implemented
+
+Records where the landed code deviates from, or concretely fills in, §5.1 and §11.4. Every claim below was verified in the checkout on this date; paths are cited so a reader can re-check rather than trust the prose. This section **appends** — no earlier section was rewritten.
+
+### 1. Layout — sibling versioned root, not `chats/<chatId>/`
+
+§5.1 specified a per-chat directory `chats/<chatId>/manifest.json` (or equivalent). That layout is **not implementable inside `chats/`**. `HostProfileDomainStore.sweepChatRecords` (`src/host-runtime/HostProfileDomainStore.ts:1119`) walks `chats/` with `withFileTypes` and throws `Unsafe chat directory entry` for any entry that is not a recognized temp file, does not end in `.json`, or is not a regular file — a directory therefore fails the **whole** listing, not just its own entry.
+
+Landed layout (`src/main/store/SegmentedChatStore.ts:18-36`) uses a **sibling versioned root**, `<userData>/chat-store-v2/`, with flat per-chat files:
+
+| File | Role |
+| --- | --- |
+| `<chatId>.manifest.json` | `formatVersion`, authority, `persistenceRevision`, segment list with `sha256`, compaction generation, `quarantined[]`, optional `prefix` |
+| `<chatId>.snapshot.json` | atomic compact snapshot |
+| `<chatId>.segment-<n>.jsonl` | append-only framed JSON mutation batches (16 MiB / 4096-entry bounds) |
+| `<chatId>.archive-<n>.jsonl` | compacted closed segments, never on the hot rewrite path |
+| `<chatId>.quarantine-<n>.jsonl` | corrupt segments isolated on read (`quarantineSegment`, `:969`) |
+| `<chatId>.tombstone` | deletion marker |
+
+**Nothing is written inside `chats/`**, so the Host scanner is untouched by v2. The append-oriented manifest + snapshot + segment model of §5.1 is otherwise unchanged; only the on-disk *naming* moved from directories to a sibling root.
+
+### 2. Flag and dual-read (fills in §11.4)
+
+- Flag `TASKWRAITH_CHAT_STORE_V2` (`CHAT_STORE_V2_ENV_FLAG`, `SegmentedChatStore.ts:60`). `isSegmentedChatStoreEnabled` (`:81`) admits **only the exact string `'1'`** — `'true'` is off, per `SegmentedChatStore.test.ts:110-115`. Default builds are dark.
+- **v1 remains write authority.** `chats/<id>.json` via `writeJson` is still the record of truth; v2 is dark-write/verify (ADR §12 item 6, S2 posture).
+- **Dual-read** goes through the existing `readChatRecordCached` seam in `src/main/store/index.ts` — the same seam `getChat`/`getChats`/export already use, so no caller learned a new read API.
+- Flag off is **inert**: `mirrorSegmentedChatStore` returns at `src/main/store/index.ts:1307` (`if (!isSegmentedChatStoreEnabled()) return`), and mirror/checkpoint are no-ops. Tested inert.
+- Corruption handling is as §5.3 requires: torn tails trimmed, corrupt segments renamed into `quarantine-<n>.jsonl` and recorded in `manifest.quarantined`, baseline repaired on the next mirror.
+
+### 3. Stage 5 — copy-on-write fork prefixes
+
+`forkSharePrefix(parentChatId, forkRecord)` (`SegmentedChatStore.ts:899`) writes the fork a **chrome-only** snapshot and a manifest whose `prefix` (`SegmentedChatPrefixRef`, `:107`) pins the parent snapshot by `sha256` plus `throughRevision` — no transcript payload is copied.
+
+- `readFull` on a fork transplants the parent prefix, replaying parent segments **only up to `throughRevision`** (`:1023`, `:1028`), so the parent's future never leaks into the fork.
+- It **fails closed**: any divergence — pin mismatch, `throughRevision < snapshot.revision` (`:1007`), or a parent head that no longer matches (`:1017`, `:1031`) — returns `null`, and the read falls back to v1. It self-heals on the next mirror.
+- `ChatService.createForkChat` skips the defensive deep clone **only under the flag**: `copiedMessages: shareForkPrefix ? parent.messages : structuredClone(parent.messages)` (`src/main/services/ChatService.ts:646-651`), where `shareForkPrefix` comes from `canShareForkTranscript` wired to `isSegmentedChatStoreEnabled()` at `src/main/index.ts:55088`. Flag off means today's deep copy, unchanged.
+
+### 4. Precondition before the flag may be enabled
+
+The fork seam is pure but **shallow**. `transferTranscriptMediaMessagesBatch` (`src/main/services/TranscriptMediaOwnershipBatch.ts:340-350`) rebuilds each message as `{ ...message }`, replacing `metadata.mediaRefs` only for messages that carry refs. Every other nested substructure — `metadata` itself on ref-free messages, and any nested arrays/objects hanging off a message — is therefore **shared by reference with the parent record** when the deep clone is skipped.
+
+That is safe only while nothing mutates those substructures in place. **Before enabling `TASKWRAITH_CHAT_STORE_V2=1`, either confirm there is no in-place nested mutation of parent messages, or deep-copy at this seam.** This is a blocking precondition, not a cleanup item.
+
+### 5. Paging contract (`ChatRecord.messages` semantics preserved)
+
+Paging is a **presentation window**, not a change to the canonical record:
+
+- `TranscriptPage` / `TranscriptPageRequest` live in `src/shared/transcriptPage.ts`; windows default to 1,500 messages / 24 MiB (`:21-22`) and support tail / before / after / around-message-id cursors, served over the `get-chat-transcript-page` IPC channel (`src/main/ipc/chatTranscriptPageHandlers.ts:99`).
+- An **open** pages when `messageCount > 1,500` **or** `sourceChatSize > 48 MiB` (`shouldPageTranscriptOnOpen`, `:103-112`; the byte bound is `DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES * 2`). The threshold selects a render window — it never refuses a send, round, mutation or save.
+- **`ChatRecord.messages` still means the complete canonical transcript.** `src/main/store/assertAuthoritativeChatForSave.ts` rejects an unmarked windowed page on **both** save paths.
+- A **marked** summary shell now **escalates rather than rejects**: `src/main/store/escalateSummaryChatForSave.ts` merges the shell's chrome over the canonical transcript (canonical `messages`/`runs`/`persistenceRevision` retained) before either save path runs, so a shell-bearing save is no longer a fail-closed dead end. A summary **create** is still rejected — there is no canonical record to escalate onto.
+- Renderer read paths follow the `renderer-read-path-rule`: tail-sufficient features read the loaded window through `src/renderer/src/lib/currentChatTranscriptWindow.ts`; whole-transcript features (search, pins, context accounting, compaction) escalate to full hydration rather than compute from a partial array. Compaction never runs from a partial transcript.
+- Next renderer steps — accumulated infinite scroll (replacing the page-boundary cards) and narrowing the ambient escalation so a paged thread stays paged on a plain open — keep the multi-page window **store-only**; neither introduces a new main/IPC surface, and neither may weaken the save fences above.
+
+### 6. Stage 4 — background sweeps opt into shells
+
+`AppStore.getChats(workspaceId?, { listShells?: boolean })` (`src/main/store/index.ts:6768`) serves summary shells from the chat-list index via `readChatShellForSweep` (`:6747`), with mandatory `mtimeMs`/`size` stat validation and a full `readChatRecordCached` fallback whenever the index cannot vouch for the file. **The default is unchanged** — a full canonical read — and the renderer `get-chats` channel is untouched.
+
+Two constraints for anyone migrating a further call site:
+
+1. **A per-site field audit is mandatory.** `ChatListItem extends ChatRecord` (`src/main/store/types.ts:4572`), so a shell is structurally assignable to `ChatRecord` and the compiler will **not** catch a transcript read against a shell.
+2. **Discover-via-shells, then hydrate-by-id before mutate or save.** `cascadeWaveChildrenOnParentTerminal` (`src/main/index.ts`) is the reference pattern: sweep shells for discovery only, then `AppStore.getChat(shell.appChatId)` with a `continue` when absent, because a shell cannot serve the run-row fallback and must never reach a save.
+
+### Committing this file
+
+`docs/` is **gitignored-but-tracked** here: `.gitignore:45` matches `docs/`, yet this file is in the index (`git ls-files` resolves it). Two consequences for the committer — stage it by **explicit pathspec**, using `git add -f docs/performance/taskwraith-performance-epic-adr.md` (repo convention) or a private index, and note that `git check-ignore` on this path reports *not ignored* unless you pass `--no-index`, because it consults the index first. Never rely on a bulk add.
