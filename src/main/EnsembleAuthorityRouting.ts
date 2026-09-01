@@ -29,29 +29,6 @@ export type EnsembleAuthorityRoutingDecision =
   | 'rejected_handoff'
 
 /**
- * Continuous acting Boss/Captain owns queue direction whenever ordinary
- * serial seats remain. Pass 1 is included — Turn-bound keeps its full
- * first-pass preserve separately.
- */
-export function shouldAttachContinuousAuthoritySelectionCheckpoint(input: {
-  orchestrationMode: string | undefined
-  remainingParticipantCount: number
-}): boolean {
-  return input.orchestrationMode === 'continuous' && input.remainingParticipantCount > 0
-}
-
-/**
- * Turn-bound first pass always preserves every seat. Continuous lifts that
- * preserve so acting Boss/Captain can select/skip on pass 1.
- */
-export function preservesInitialPassRoster(input: {
-  orchestrationMode: string | undefined
-  continuationPass: number
-}): boolean {
-  return input.continuationPass <= 1 && input.orchestrationMode !== 'continuous'
-}
-
-/**
  * How many chances one authority seat gets to resolve its routing checkpoint
  * before the host preserves the queue for it.
  *
@@ -71,16 +48,14 @@ export function authorityRoutingCheckpointExhausted(attempts: number | undefined
   return (attempts || 0) >= MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS
 }
 
-/** Quiet Continuous authority completion with an unmet selection checkpoint. */
+/** Quiet authority completion with an unmet selection checkpoint. */
 export function shouldResummonAuthorityForUnresolvedRouting(input: {
-  orchestrationMode: string | undefined
   selectionRequired: boolean | undefined
   decision: EnsembleAuthorityRoutingDecision | undefined
   /** Bounded chances already spent; omitted keeps pre-bound caller behaviour. */
   attempts?: number
 }): boolean {
   return (
-    input.orchestrationMode === 'continuous' &&
     Boolean(input.selectionRequired) &&
     !input.decision &&
     !authorityRoutingCheckpointExhausted(input.attempts)

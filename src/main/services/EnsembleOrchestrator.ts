@@ -164,9 +164,7 @@ import {
   collectAuthorityOnlyContinuationCandidateIds,
   goalBecameTerminalDuringRound,
   MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS,
-  preservesInitialPassRoster,
   resolveAuthoritySelection,
-  shouldAttachContinuousAuthoritySelectionCheckpoint,
   shouldResummonAuthorityForUnresolvedRouting,
   type EnsembleAuthorityRoutingCheckpoint,
   type EnsembleAuthorityRoutingDecision,
@@ -443,7 +441,6 @@ type ContinuationTurnResult =
   | {
       appended: false
       reason:
-        | 'not_continuous'
         | 'outside_round_scope'
         | 'unreachable'
         | 'active_fanout'
@@ -1545,7 +1542,6 @@ export interface EnsembleBossmanControlResult {
     | 'stale_round'
     | 'stale_target'
     | 'stale_target_run'
-    | 'initial_pass_preserves_roster'
     | 'authority_checkpoint_missing'
     | 'missing_prompt'
     | 'missing_replacement'
@@ -1556,7 +1552,6 @@ export interface EnsembleBossmanControlResult {
     | 'summon_blocked_status'
     | 'summon_hop_limit'
     | 'summon_limit'
-    | 'summon_not_continuous'
     | 'summon_target_active'
     | 'summon_target_disabled'
     | 'summon_target_pending'
@@ -6642,36 +6637,34 @@ export class EnsembleOrchestrator {
       this.appendRoundStatus(runtime.chatId, runtime.roundId, statusMessage)
       return true
     }
-    if (runtime.orchestrationMode === 'continuous') {
-      const continuation = this.tryAppendContinuationTurn(
-        runtime,
-        remaining,
-        retainedParticipant,
-        statusMessage,
-        {
-          allowAnsweredParticipant: true,
-          allowYieldedParticipant: true
-        }
-      )
-      if (continuation.appended) return true
-      // Hard blocks still fail closed. Hop/budget/status refusals must not let
-      // ordinary writers race an unsettled authority-owned fan-out wave.
-      if (
-        continuation.reason === 'unreachable' ||
-        continuation.reason === 'outside_round_scope' ||
-        continuation.reason === 'active_fanout'
-      ) {
-        this.appendRoundStatus(
-          runtime.chatId,
-          runtime.roundId,
-          `${statusMessage} Could not re-summon ${participantDisplayName(retainedParticipant)}: ${this.describeContinuationDecline(continuation)}.`
-        )
-        return false
+    const continuation = this.tryAppendContinuationTurn(
+      runtime,
+      remaining,
+      retainedParticipant,
+      statusMessage,
+      {
+        allowAnsweredParticipant: true,
+        allowYieldedParticipant: true
       }
+    )
+    if (continuation.appended) return true
+    // Hard blocks still fail closed. Hop/budget/status refusals must not let
+    // ordinary writers race an unsettled authority-owned fan-out wave.
+    if (
+      continuation.reason === 'unreachable' ||
+      continuation.reason === 'outside_round_scope' ||
+      continuation.reason === 'active_fanout'
+    ) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${statusMessage} Could not re-summon ${participantDisplayName(retainedParticipant)}: ${this.describeContinuationDecline(continuation)}.`
+      )
+      return false
     }
-    // Turn-bound seats speak once by default; an active fan-out authority hold
-    // outranks that so ordinary writers cannot race unsettled lanes. The same
-    // force path covers continuous hop/budget refusals above.
+    // Hop/budget/status refusals fall through to the force path: an active
+    // fan-out authority hold outranks them so ordinary writers cannot race
+    // unsettled lanes.
     remaining.unshift(retainedParticipant)
     this.appendRoundStatus(runtime.chatId, runtime.roundId, statusMessage)
     return true
@@ -6802,25 +6795,22 @@ export class EnsembleOrchestrator {
     if (idx >= 0) {
       return { ok: true, action: 'promoted', targetParticipantId: participant.id }
     }
-    if (runtime.orchestrationMode === 'continuous') {
-      const eligibility = this.evaluateContinuationTurnEligibility(runtime, participant, {
-        allowAnsweredParticipant: true,
-        allowYieldedParticipant: true
-      })
-      if (!eligibility.appended) {
-        if (eligibility.reason === 'hop_limit') return reject('hop_limit')
-        if (eligibility.reason === 'outside_round_scope') return reject('outside_scope')
-        return reject('blocked_status')
-      }
-      this.commitContinuationTurn(
-        runtime,
-        remaining,
-        participant,
-        `Yielded back to ${participant.role || participant.provider} (${participant.provider}).`
-      )
-      return { ok: true, action: 'resummoned', targetParticipantId: participant.id }
+    const eligibility = this.evaluateContinuationTurnEligibility(runtime, participant, {
+      allowAnsweredParticipant: true,
+      allowYieldedParticipant: true
+    })
+    if (!eligibility.appended) {
+      if (eligibility.reason === 'hop_limit') return reject('hop_limit')
+      if (eligibility.reason === 'outside_round_scope') return reject('outside_scope')
+      return reject('blocked_status')
     }
-    return reject('blocked_status')
+    this.commitContinuationTurn(
+      runtime,
+      remaining,
+      participant,
+      `Yielded back to ${participant.role || participant.provider} (${participant.provider}).`
+    )
+    return { ok: true, action: 'resummoned', targetParticipantId: participant.id }
   }
 
   private applyStoredYieldRouting(
@@ -9273,22 +9263,6 @@ export class EnsembleOrchestrator {
     authorityRole: LegacyEnsembleAuthorityRole
   ): EnsembleBossmanControlResult {
     const authorityLabel = authorityRole === 'second_in_command' ? 'Captain' : 'Boss'
-    if (
-      preservesInitialPassRoster({
-        orchestrationMode: runtime.orchestrationMode,
-        continuationPass: runtime.continuationPass
-      })
-    ) {
-      return {
-        ok: false,
-        tool: 'ensemble_bossman_control',
-        action: 'select_participants',
-        roundId: runtime.roundId,
-        message:
-          'Boss/Captain selection is unavailable during the initial Turn-bound Ensemble pass; every first-pass participant keeps its turn.',
-        error: 'initial_pass_preserves_roster'
-      }
-    }
     const chat = this.deps.getChat(runtime.chatId)
     if (!chat?.ensemble) {
       return {
@@ -9313,10 +9287,10 @@ export class EnsembleOrchestrator {
       // ("no longer pending in this pass") even though the authority's intent
       // stays valid for the pass that forms next. Queue it instead — one-shot,
       // applied by `tryAutoContinueRound` exactly where a live first-act call
-      // would land — but only when another pass CAN form (Continuous), and only
-      // when every selector still resolves against the full roster (ambiguous /
-      // unknown selectors keep their immediate rejection).
-      if (selection.error === 'not_pending_selector' && runtime.orchestrationMode === 'continuous') {
+      // would land — but only when every selector still resolves against the
+      // full roster (ambiguous / unknown selectors keep their immediate
+      // rejection).
+      if (selection.error === 'not_pending_selector') {
         const resolvable = resolveAuthoritySelection({
           participantIds: input.participantIds,
           participantRoles: input.participantRoles,
@@ -9453,23 +9427,6 @@ export class EnsembleOrchestrator {
       }
     }
     if (active) {
-      if (
-        preservesInitialPassRoster({
-          orchestrationMode: runtime.orchestrationMode,
-          continuationPass: runtime.continuationPass
-        })
-      ) {
-        return {
-          ok: false,
-          tool: 'ensemble_bossman_control',
-          action: 'skip_participant',
-          roundId: runtime.roundId,
-          participantId: active.participant.id,
-          message:
-            'Boss/Captain cannot skip a participant during the initial Turn-bound Ensemble pass; every first-pass participant keeps its turn.',
-          error: 'initial_pass_preserves_roster'
-        }
-      }
       active.dispatchCancellationRequested = true
       this.finalizeRun(active, 'skipped', reason)
       if (runtime.activeRunId === active.runId) runtime.activeRunId = undefined
@@ -9508,23 +9465,6 @@ export class EnsembleOrchestrator {
         participantId: targetParticipantId,
         message: 'Boss skip rejected: target participant is no longer pending.',
         error: 'stale_target'
-      }
-    }
-    if (
-      preservesInitialPassRoster({
-        orchestrationMode: runtime.orchestrationMode,
-        continuationPass: runtime.continuationPass
-      })
-    ) {
-      return {
-        ok: false,
-        tool: 'ensemble_bossman_control',
-        action: 'skip_participant',
-        roundId: runtime.roundId,
-        participantId: targetParticipantId,
-        message:
-          'Boss/Captain cannot skip a participant during the initial Turn-bound Ensemble pass; every first-pass participant keeps its turn.',
-        error: 'initial_pass_preserves_roster'
       }
     }
     const [participant] = remaining.splice(index, 1)
@@ -9572,17 +9512,6 @@ export class EnsembleOrchestrator {
         participantId: targetParticipantId,
         message: `${authorityLabel} summon rejected: the controlling participant cannot summon itself.`,
         error: 'summon_self_target'
-      }
-    }
-    if (runtime.orchestrationMode !== 'continuous') {
-      return {
-        ok: false,
-        tool: 'ensemble_bossman_control',
-        action: 'summon_participant',
-        roundId: runtime.roundId,
-        participantId: targetParticipantId,
-        message: `${authorityLabel} summon rejected: directed continuations require Continuous mode.`,
-        error: 'summon_not_continuous'
       }
     }
     const chat = this.deps.getChat(runtime.chatId)
@@ -9675,13 +9604,11 @@ export class EnsembleOrchestrator {
         error:
           continuation.reason === 'hop_limit'
             ? 'summon_hop_limit'
-            : continuation.reason === 'not_continuous'
-              ? 'summon_not_continuous'
-              : continuation.reason === 'active_fanout'
-                ? 'summon_target_active'
-                : continuation.reason === 'budget_exhausted'
-                  ? 'budget_exhausted'
-                  : 'summon_blocked_status'
+            : continuation.reason === 'active_fanout'
+              ? 'summon_target_active'
+              : continuation.reason === 'budget_exhausted'
+                ? 'budget_exhausted'
+                : 'summon_blocked_status'
       }
     }
     runtime.bossmanSummonCountsByParticipantId.set(target.id, previousSummonCount + 1)
@@ -14270,12 +14197,9 @@ export class EnsembleOrchestrator {
       return tagged
     }
 
-    if (
-      shouldAttachContinuousAuthoritySelectionCheckpoint({
-        orchestrationMode: runtime.orchestrationMode,
-        remainingParticipantCount: runtime.remainingParticipants?.length || 0
-      })
-    ) {
+    // Continuous acting Boss/Captain owns queue direction whenever ordinary
+    // serial seats remain.
+    if ((runtime.remainingParticipants?.length || 0) > 0) {
       return {
         kind: 'later_pass',
         pass: runtime.continuationPass,
@@ -14338,8 +14262,7 @@ export class EnsembleOrchestrator {
     return {
       kind: 'tagged_intervention',
       pass: runtime.continuationPass,
-      selectionRequired:
-        runtime.orchestrationMode === 'continuous' && !this.isInitialAuthorityPass(runtime),
+      selectionRequired: !this.isInitialAuthorityPass(runtime),
       sourceParticipantLabel: participantDisplayName(sourceRun.participant)
     }
   }
@@ -16320,17 +16243,12 @@ export class EnsembleOrchestrator {
     const secondInCommandParticipantId = captainParticipantIds[0]
     const configuredSynthesizerParticipantId =
       resolveForegroundSynthesizerParticipantId(chat.ensemble)
-    const shouldCaptureRoundSynthesizer =
-      Boolean(configuredSynthesizerParticipantId) || orchestrationMode === 'continuous'
-    const roundSynthesizer =
-      shouldCaptureRoundSynthesizer
-        ? electRoundSynthesizer({
-            participants: ordered,
-            configuredParticipantId: configuredSynthesizerParticipantId,
-            bossmanParticipantId: chat.ensemble.bossmanParticipantId,
-            captainParticipantIds
-          })
-        : undefined
+    const roundSynthesizer = electRoundSynthesizer({
+      participants: ordered,
+      configuredParticipantId: configuredSynthesizerParticipantId,
+      bossmanParticipantId: chat.ensemble.bossmanParticipantId,
+      captainParticipantIds
+    })
     const round: EnsembleRoundState = {
       roundId,
       status: 'running',
@@ -17037,12 +16955,7 @@ export class EnsembleOrchestrator {
               (entry) => this.participantFanoutDispatchState(runtime, entry.id) !== 'handled'
             )
           )
-          if (
-            remaining.length === 0 &&
-            runtime.orchestrationMode === 'continuous' &&
-            !runtime.cancelled &&
-            !runtime.returnedControlToUser
-          ) {
+          if (remaining.length === 0 && !runtime.cancelled && !runtime.returnedControlToUser) {
             runtime.suppressNoProgressAfterReviewWave = true
           }
           continue
@@ -17945,7 +17858,6 @@ export class EnsembleOrchestrator {
       // routing below. Soft-note only the non-blocking tagged interventions here.
       if (
         !shouldResummonAuthorityForUnresolvedRouting({
-          orchestrationMode: runtime.orchestrationMode,
           selectionRequired: run.authorityRoutingCheckpoint?.selectionRequired,
           decision: run.authorityRoutingDecision,
           attempts: this.authorityRoutingCheckpointAttemptsFor(runtime, participant.id)
@@ -18221,58 +18133,48 @@ export class EnsembleOrchestrator {
         const extraTargets = routedMentionedParticipants.filter(
           (tagged) => !remainingTargetIds.has(tagged.id)
         )
-        if (runtime.orchestrationMode === 'continuous') {
-          for (const tagged of extraTargets.slice().reverse()) {
-            // The Boss/Captain priority authority is re-summoned even after it
-            // already spoke ('answered') OR explicitly yielded ('yielded') this
-            // round — a directed @-mention to the Boss must actually route, not
-            // just print the priority note above (mirrors summon_participant at
-            // :5194, which passes both allowAnswered + allowYielded).
-            // The hop budget still throttles it (one hop per re-summon, same as
-            // any continuation). Advisory (non-authority) participants keep the
-            // existing "no re-summon of an already-terminal participant" behavior.
-            const isPriorityAuthority = tagged.id === priorityAuthorityMatch?.participant.id
-            const continuation = this.tryAppendContinuationTurn(
-              runtime,
-              remaining,
-              tagged,
-              `@-mention: extra turn appended for ${tagged.role || tagged.provider}.`,
-              {
-                allowAnsweredParticipant: isPriorityAuthority,
-                allowYieldedParticipant: isPriorityAuthority
-              }
-            )
-            if (continuation.appended) {
-              mentionRouted = true
-              if (isPriorityAuthority) {
-                runtime.pendingAuthorityRoutingCheckpoints ??= new Map()
-                runtime.pendingAuthorityRoutingCheckpoints.set(
-                  tagged.id,
-                  this.taggedAuthorityRoutingCheckpoint(runtime, run)
-                )
-              }
-              // Spike 4 — an explicitly summoned extra turn outranks the
-              // reviewer stage gate.
-              stageGateExemptIds.add(tagged.id)
-            } else if (isPriorityAuthority) {
-              // The priority route couldn't be delivered. Report the ACTUAL
-              // reason (hop budget vs. the Boss run failed/skipped/cancelled)
-              // so the earlier "takes routing priority" note isn't left as an
-              // unfulfilled promise — and isn't misattributed to the hop budget.
-              const authorityLabel = tagged.id === bossmanParticipantId ? 'Boss' : 'active Captain'
-              this.appendRoundStatus(
-                runtime.chatId,
-                runtime.roundId,
-                `@-mention: could not re-summon ${participantDisplayName(tagged)} (${authorityLabel}) — ${this.describeContinuationDecline(continuation)}.`
+        for (const tagged of extraTargets.slice().reverse()) {
+          // The Boss/Captain priority authority is re-summoned even after it
+          // already spoke ('answered') OR explicitly yielded ('yielded') this
+          // round — a directed @-mention to the Boss must actually route, not
+          // just print the priority note above (mirrors summon_participant at
+          // :5194, which passes both allowAnswered + allowYielded).
+          // The hop budget still throttles it (one hop per re-summon, same as
+          // any continuation). Advisory (non-authority) participants keep the
+          // existing "no re-summon of an already-terminal participant" behavior.
+          const isPriorityAuthority = tagged.id === priorityAuthorityMatch?.participant.id
+          const continuation = this.tryAppendContinuationTurn(
+            runtime,
+            remaining,
+            tagged,
+            `@-mention: extra turn appended for ${tagged.role || tagged.provider}.`,
+            {
+              allowAnsweredParticipant: isPriorityAuthority,
+              allowYieldedParticipant: isPriorityAuthority
+            }
+          )
+          if (continuation.appended) {
+            mentionRouted = true
+            if (isPriorityAuthority) {
+              runtime.pendingAuthorityRoutingCheckpoints ??= new Map()
+              runtime.pendingAuthorityRoutingCheckpoints.set(
+                tagged.id,
+                this.taggedAuthorityRoutingCheckpoint(runtime, run)
               )
             }
-          }
-        } else {
-          for (const tagged of extraTargets) {
+            // Spike 4 — an explicitly summoned extra turn outranks the
+            // reviewer stage gate.
+            stageGateExemptIds.add(tagged.id)
+          } else if (isPriorityAuthority) {
+            // The priority route couldn't be delivered. Report the ACTUAL
+            // reason (hop budget vs. the Boss run failed/skipped/cancelled)
+            // so the earlier "takes routing priority" note isn't left as an
+            // unfulfilled promise — and isn't misattributed to the hop budget.
+            const authorityLabel = tagged.id === bossmanParticipantId ? 'Boss' : 'active Captain'
             this.appendRoundStatus(
               runtime.chatId,
               runtime.roundId,
-              `@-mention: ${tagged.role || tagged.provider} already spoke in this turn-bound round; no extra turn appended. Use Continuous mode for back-and-forth handoffs.`
+              `@-mention: could not re-summon ${participantDisplayName(tagged)} (${authorityLabel}) — ${this.describeContinuationDecline(continuation)}.`
             )
           }
         }
@@ -18287,7 +18189,6 @@ export class EnsembleOrchestrator {
           roundStartGoalWasTerminal: runtime.roundStartGoalWasTerminal
         }) &&
         shouldResummonAuthorityForUnresolvedRouting({
-          orchestrationMode: runtime.orchestrationMode,
           selectionRequired: run.authorityRoutingCheckpoint?.selectionRequired,
           decision: run.authorityRoutingDecision,
           attempts: this.authorityRoutingCheckpointAttemptsFor(runtime, participant.id)
@@ -20323,8 +20224,7 @@ export class EnsembleOrchestrator {
               })),
               completionDisposition: options.completionDisposition,
               hasSourceRun: Boolean(options.sourceRunId),
-              continuousReviewWave:
-                label === 'Review wave' && runtime.orchestrationMode === 'continuous'
+              continuousReviewWave: label === 'Review wave'
             })
           )
         }
@@ -20614,8 +20514,6 @@ export class EnsembleOrchestrator {
     participant: EnsembleParticipant,
     options: { allowYieldedParticipant?: boolean; allowAnsweredParticipant?: boolean } = {}
   ): ContinuationTurnResult {
-    if (runtime.orchestrationMode !== 'continuous')
-      return { appended: false, reason: 'not_continuous' }
     if (runtime.dmTargetParticipantId && participant.id !== runtime.dmTargetParticipantId) {
       return { appended: false, reason: 'outside_round_scope' }
     }
@@ -20741,18 +20639,17 @@ export class EnsembleOrchestrator {
             return 'it already completed its turn'
         }
       default:
-        return 'the round is no longer continuous'
+        return 'it cannot take an extra turn right now'
     }
   }
 
   private notifyContinuationLimitReached(runtime: ActiveRoundRuntime): void {
     if (runtime.continuationLimitNotified) return
     runtime.continuationLimitNotified = true
-    const label = runtime.orchestrationMode === 'continuous' ? 'Continuous handoff' : 'Extra turn'
     this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
-      `${label} limit reached (${runtime.continuationHops}/${runtime.maxContinuationHops}); returning control to the user.`
+      `Continuous handoff limit reached (${runtime.continuationHops}/${runtime.maxContinuationHops}); returning control to the user.`
     )
   }
 
@@ -20943,7 +20840,6 @@ export class EnsembleOrchestrator {
     // cleared. Never let a late serial/fan-out drain mutate hop counters or
     // announce a pass from that stale snapshot.
     if (!this.ownsRunningRound(runtime)) return null
-    if (runtime.orchestrationMode !== 'continuous') return null
     if (runtime.cancelled) return null
     if (runtime.returnedControlToUser) return null
     // A composer @mention opens a one-seat interaction, not a seed for an
@@ -21154,7 +21050,7 @@ export class EnsembleOrchestrator {
           admitted.add(participantId)
         }
       }
-    } else if (runtime?.orchestrationMode === 'continuous') {
+    } else if (runtime) {
       const synthesizerParticipantId =
         chat.ensemble && resolveForegroundSynthesizerParticipantId(chat.ensemble)
       const synthesizerInRoster =

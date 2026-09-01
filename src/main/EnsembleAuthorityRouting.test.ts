@@ -5,9 +5,7 @@ import {
   collectAuthorityOnlyContinuationCandidateIds,
   goalBecameTerminalDuringRound,
   MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS,
-  preservesInitialPassRoster,
   resolveAuthoritySelection,
-  shouldAttachContinuousAuthoritySelectionCheckpoint,
   shouldResummonAuthorityForUnresolvedRouting
 } from './EnsembleAuthorityRouting'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
@@ -121,58 +119,22 @@ describe('resolveAuthoritySelection', () => {
 })
 
 describe('Continuous Boss ownership helpers', () => {
-  it('attaches a Continuous selection checkpoint whenever serial seats remain', () => {
-    expect(
-      shouldAttachContinuousAuthoritySelectionCheckpoint({
-        orchestrationMode: 'continuous',
-        remainingParticipantCount: 2
-      })
-    ).toBe(true)
-    expect(
-      shouldAttachContinuousAuthoritySelectionCheckpoint({
-        orchestrationMode: 'continuous',
-        remainingParticipantCount: 0
-      })
-    ).toBe(false)
-    expect(
-      shouldAttachContinuousAuthoritySelectionCheckpoint({
-        orchestrationMode: 'turn_bound',
-        remainingParticipantCount: 2
-      })
-    ).toBe(false)
-  })
-
-  it('preserves Turn-bound first-pass roster but lifts Continuous pass 1', () => {
-    expect(
-      preservesInitialPassRoster({ orchestrationMode: 'turn_bound', continuationPass: 1 })
-    ).toBe(true)
-    expect(
-      preservesInitialPassRoster({ orchestrationMode: 'continuous', continuationPass: 1 })
-    ).toBe(false)
-    expect(
-      preservesInitialPassRoster({ orchestrationMode: 'continuous', continuationPass: 2 })
-    ).toBe(false)
-  })
-
-  it('re-summons Continuous authority only for unmet selectionRequired checkpoints', () => {
+  it('re-summons authority only for unmet selectionRequired checkpoints', () => {
     expect(
       shouldResummonAuthorityForUnresolvedRouting({
-        orchestrationMode: 'continuous',
         selectionRequired: true,
         decision: undefined
       })
     ).toBe(true)
     expect(
       shouldResummonAuthorityForUnresolvedRouting({
-        orchestrationMode: 'continuous',
         selectionRequired: true,
         decision: 'mentioned'
       })
     ).toBe(false)
     expect(
       shouldResummonAuthorityForUnresolvedRouting({
-        orchestrationMode: 'turn_bound',
-        selectionRequired: true,
+        selectionRequired: false,
         decision: undefined
       })
     ).toBe(false)
@@ -184,7 +146,6 @@ describe('Continuous Boss ownership helpers', () => {
     // transport). Re-summoning it forever burns the whole hop budget.
     expect(
       shouldResummonAuthorityForUnresolvedRouting({
-        orchestrationMode: 'continuous',
         selectionRequired: true,
         decision: undefined,
         attempts: MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS - 1
@@ -192,7 +153,6 @@ describe('Continuous Boss ownership helpers', () => {
     ).toBe(true)
     expect(
       shouldResummonAuthorityForUnresolvedRouting({
-        orchestrationMode: 'continuous',
         selectionRequired: true,
         decision: undefined,
         attempts: MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS
@@ -210,7 +170,6 @@ describe('Continuous Boss ownership helpers', () => {
     // the checkpoint, preventing indefinite re-summon loops.
     expect(
       shouldResummonAuthorityForUnresolvedRouting({
-        orchestrationMode: 'continuous',
         selectionRequired: true,
         decision: 'rejected_handoff'
       })
