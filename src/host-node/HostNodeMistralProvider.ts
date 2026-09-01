@@ -56,7 +56,8 @@ import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLaunche
 import { resolveMistralCredentialLaunch } from '../main/mistral/MistralCredentialLane'
 import {
   mistralSessionModeFallbacksForSeat,
-  mistralSessionModeForSeat
+  mistralSessionModeForSeat,
+  normalizeMistralThinkingLevel
 } from '../main/mistral/MistralCliArgs'
 import {
   createHostAcpSessionConfigApplicator,
@@ -107,6 +108,11 @@ function mistralSessionConfigSelections(
 ): HostAcpSessionConfigSelection[] {
   const readOnly = mistralReadOnlySeat(thread.posture)
   const mode = mistralSessionModeForSeat(readOnly)
+  // TaskWraith reasoning tiers Vibe has no equivalent for (xhigh/ultra) clamp
+  // onto the CLI's own thinking ladder, exactly as the desktop lane does — an
+  // untranslated value is rejected by set_config_option and would silently
+  // leave the session on whatever thinking level it last persisted.
+  const thinking = normalizeMistralThinkingLevel(thread.reasoningId)
   return [
     {
       configId: 'mode',
@@ -114,7 +120,7 @@ function mistralSessionConfigSelections(
     },
     ...hostAcpModelAndEffortSelections({
       modelValue: thread.modelId,
-      reasoningId: thread.reasoningId
+      ...(thinking ? { reasoningId: thinking } : {})
     })
   ]
 }
@@ -293,7 +299,9 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
       throw new Error(PROVIDER_DISPLAY_NAME + ' interactive terminal login is unavailable.')
     }
     // Handoff close is not authentication; getAuthStatus still probes credentials.
-    await launcher.launchForProvider(PROVIDER_ID, { argv: [binary.binaryPath, 'login'] })
+    // `--setup` is the Vibe CLI's sign-in flow; there is no `login` subcommand
+    // (a bare `login` argument would be read as an interactive prompt).
+    await launcher.launchForProvider(PROVIDER_ID, { argv: [binary.binaryPath, '--setup'] })
   }
 
   async cancelAuth(_operationId: string): Promise<boolean> {
@@ -456,7 +464,14 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
       const sessionConfig = createHostAcpSessionConfigApplicator({
         write,
         onWarning: (text) => configWarnings.push(text.slice(0, 300)),
-        onComplete: sendPrompt
+        onComplete: sendPrompt,
+        // The user's exact model selection must run or the turn must fail —
+        // never a silent fallback onto the CLI's persisted model.
+        strictConfigIds: ['model'],
+        onStrictUnapplied: (_configId, detail) => {
+          failure = detail.slice(0, 300)
+          completion.requestStop()
+        }
       })
       const publishText = (value: string): void => {
         const text = normalizeHostProviderRunPresentationText(value)

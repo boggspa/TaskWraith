@@ -1,7 +1,14 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// Pin the home directory so commonBinaryDirs cannot leak the developer's real
+// ~/.local/bin (etc.) installs into resolution assertions on any machine.
+vi.mock('node:os', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:os')>()
+  return { ...original, homedir: () => join(original.tmpdir(), 'host-provider-resources-home') }
+})
 
 import {
   createHostNodeProviderResourcePort,
@@ -34,6 +41,33 @@ describe('HostNodeProviderResources', () => {
       binaryPath: agy,
       source: 'path'
     })
+  })
+
+  it('resolves Mistral to the vibe-acp ACP entrypoint, never the interactive vibe TUI', () => {
+    const bin = mkdtempSync(join(tmpdir(), 'host-provider-resources-'))
+    paths.push(bin)
+    for (const name of ['vibe', 'vibe-acp']) {
+      const candidate = join(bin, name)
+      writeFileSync(candidate, '')
+      chmodSync(candidate, 0o700)
+    }
+    expect(resolveHostNodeProviderBinary('mistral', { PATH: bin })).toEqual({
+      binaryPath: join(bin, 'vibe-acp'),
+      source: 'path'
+    })
+  })
+
+  it('reports Mistral missing when only the interactive vibe TUI is installed', () => {
+    // The interactive `vibe` binary cannot service a managed ACP run — spawning
+    // it with piped stdio hangs the turn forever. Resolution must fail closed.
+    const bin = mkdtempSync(join(tmpdir(), 'host-provider-resources-'))
+    paths.push(bin)
+    const vibe = join(bin, 'vibe')
+    writeFileSync(vibe, '')
+    chmodSync(vibe, 0o700)
+    const resolved = resolveHostNodeProviderBinary('mistral', { PATH: bin })
+    expect(resolved.binaryPath).toBeNull()
+    expect(resolved.source).toBe('missing')
   })
 
   it('normalizes missing binary to unavailable, never omits the row', () => {

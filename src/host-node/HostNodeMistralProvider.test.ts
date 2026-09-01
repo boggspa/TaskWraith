@@ -207,6 +207,104 @@ describe('HostNodeMistralProvider', () => {
     ).toHaveLength(1)
   })
 
+  it('clamps xhigh reasoning onto the vibe thinking ladder at session config time', async () => {
+    const { instance, child } = open({ configuredThread: thread({ reasoningId: 'xhigh' }) })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-1',
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'devstral-small',
+              options: [{ value: 'devstral-small' }, { value: 'mistral-medium-3.5' }]
+            },
+            {
+              id: 'thinking',
+              currentValue: 'high',
+              options: [
+                { value: 'off' },
+                { value: 'low' },
+                { value: 'medium' },
+                { value: 'high' },
+                { value: 'max' }
+              ]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    // Vibe has no `xhigh` tier: the desktop ladder clamps it to `max` rather
+    // than letting the CLI silently keep whatever thinking level it last used.
+    await vi.waitFor(() => expect(sent.join('')).toContain('"configId":"thinking"'))
+    const configWrites = sent
+      .join('')
+      .split('\n')
+      .filter((line) => line.includes('session/set_config_option'))
+      .map((line) => JSON.parse(line) as { params: { configId: string; value: string } })
+    expect(configWrites).toEqual([
+      expect.objectContaining({
+        params: expect.objectContaining({ configId: 'thinking', value: 'max' })
+      })
+    ])
+    completePrompt(child)
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    child.emit('close', null, 'SIGTERM')
+    await expect(running).resolves.toMatchObject({ status: 'completed' })
+  })
+
+  it('fails the turn instead of running the wrong model when the CLI does not offer it', async () => {
+    const { instance, child, finishes } = open({
+      configuredThread: thread({ modelId: 'mistral-medium-3.5', reasoningId: undefined })
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-1',
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'devstral-small',
+              options: [{ value: 'devstral-small' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    expect(sent.join('')).not.toContain('"method":"session/prompt"')
+    child.emit('close', null, 'SIGTERM')
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        warningSummaries: expect.arrayContaining([expect.stringContaining('mistral-medium-3.5')])
+      })
+    ])
+  })
+
   it('does not treat a clean ACP process exit without terminal prompt evidence as completion', async () => {
     const { instance, child, finishes } = open()
     const running = instance.run({
@@ -506,9 +604,11 @@ describe('HostNodeMistralProvider', () => {
       expect.objectContaining({ flowId: 'mistral:login' })
     ])
     await expect(login.instance.beginAuth('auth-1')).resolves.toBeUndefined()
+    // `vibe`/`vibe-acp` have no `login` subcommand — a bare `login` argument is
+    // read as an interactive PROMPT. `--setup` is the CLI's real sign-in flow.
     expect(launcher.launchForProvider).toHaveBeenCalledWith(
       'mistral',
-      expect.objectContaining({ argv: ['/usr/local/bin/mistral', 'login'] })
+      expect.objectContaining({ argv: ['/usr/local/bin/mistral', '--setup'] })
     )
     await expect(login.instance.getAuthStatus()).resolves.toMatchObject({
       state: 'unauthenticated'

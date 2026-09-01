@@ -51,7 +51,11 @@ const BINARY_CANDIDATES: Readonly<Record<string, readonly string[]>> = {
   grok: ['grok'],
   ollama: ['ollama'],
   pi: ['pi'],
-  mistral: ['vibe', 'vibe-acp'],
+  // Managed Mistral runs require the ACP entrypoint. The interactive `vibe`
+  // TUI never speaks ACP on piped stdio — spawning it wedges the turn at
+  // "Working…" forever — so it is deliberately not a fallback candidate.
+  // `vibe-acp` also serves the sign-in handoff (it accepts `--setup`).
+  mistral: ['vibe-acp'],
   muse: ['muse'],
   antigravity: ['agy']
 }

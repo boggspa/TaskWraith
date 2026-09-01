@@ -98,18 +98,35 @@ export function createHostAcpSessionConfigApplicator(options: {
   onWarning: (text: string) => void
   onComplete: () => void
   firstRpcId?: number
+  /**
+   * Selections that must abort the drain (no prompt) when the advertised
+   * config surface exists but cannot honor them — running on whatever value
+   * the CLI last persisted would silently contradict the user's selection.
+   * A session that advertises no config surface at all keeps today's
+   * prompt-anyway behavior.
+   */
+  strictConfigIds?: readonly string[]
+  onStrictUnapplied?: (configId: string, detail: string) => void
 }): HostAcpSessionConfigApplicator {
   let sessionId = ''
   let queue: HostAcpSessionConfigSelection[] = []
-  let pending = new Map<number, { configId: string; value: string }>()
+  let pending = new Map<number, { configId: string; desiredId: string; value: string }>()
   let nextRpcId = options.firstRpcId ?? FIRST_CONFIG_RPC_ID
   let active = false
+  const strictIds = new Set(options.strictConfigIds ?? [])
 
   const finish = (): void => {
     active = false
     queue = []
     pending = new Map()
     options.onComplete()
+  }
+
+  const abortStrict = (configId: string, detail: string): void => {
+    active = false
+    queue = []
+    pending = new Map()
+    options.onStrictUnapplied?.(configId, detail)
   }
 
   const applyNext = (result: unknown): void => {
@@ -121,9 +138,12 @@ export function createHostAcpSessionConfigApplicator(options: {
     const desired = queue.shift()!
     const option = advertisedForSelection(advertised, desired)
     if (!option) {
-      options.onWarning(
-        `ACP session did not advertise config option "${desired.configId}"; keeping its persisted value.`
-      )
+      const detail = `ACP session did not advertise config option "${desired.configId}"; keeping its persisted value.`
+      if (strictIds.has(desired.configId)) {
+        abortStrict(desired.configId, detail)
+        return
+      }
+      options.onWarning(detail)
       applyNext(result)
       return
     }
@@ -142,14 +162,17 @@ export function createHostAcpSessionConfigApplicator(options: {
         desired.values.length === 1
           ? `"${desired.values[0]}"`
           : `any allowed value (${desired.values.map((value) => `"${value}"`).join(', ')})`
-      options.onWarning(
-        `ACP session does not offer ${requested} for config option "${option.id}"; keeping its persisted value.`
-      )
+      const detail = `ACP session does not offer ${requested} for config option "${option.id}"; keeping its persisted value.`
+      if (strictIds.has(desired.configId)) {
+        abortStrict(desired.configId, detail)
+        return
+      }
+      options.onWarning(detail)
       applyNext(result)
       return
     }
     const rpcId = nextRpcId++
-    pending.set(rpcId, { configId: option.id, value: selectedValue })
+    pending.set(rpcId, { configId: option.id, desiredId: desired.configId, value: selectedValue })
     options.write(rpcId, 'session/set_config_option', {
       sessionId,
       configId: option.id,
@@ -187,9 +210,12 @@ export function createHostAcpSessionConfigApplicator(options: {
           typeof error?.message === 'string' && error.message.trim()
             ? error.message.trim()
             : 'request error'
-        options.onWarning(
-          `ACP session config "${pendingConfig.configId}" was not applied: ${message}`
-        )
+        const detail = `ACP session config "${pendingConfig.configId}" was not applied: ${message}`
+        if (strictIds.has(pendingConfig.desiredId)) {
+          abortStrict(pendingConfig.desiredId, detail)
+          return true
+        }
+        options.onWarning(detail)
         applyNext({ configOptions: [] })
         return true
       }

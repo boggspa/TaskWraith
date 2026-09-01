@@ -193,4 +193,83 @@ describe('HostNodeAcpSessionConfig', () => {
     )
     expect(onComplete).toHaveBeenCalledOnce()
   })
+
+  it('aborts a strict selection the advertised surface cannot honor instead of warning', () => {
+    const write = vi.fn()
+    const onWarning = vi.fn()
+    const onComplete = vi.fn()
+    const onStrictUnapplied = vi.fn()
+    const applicator = createHostAcpSessionConfigApplicator({
+      write,
+      onWarning,
+      onComplete,
+      strictConfigIds: ['model'],
+      onStrictUnapplied
+    })
+    applicator.begin({
+      sessionId: 'session-1',
+      result: KIMI_ADVERTISED,
+      selections: hostAcpModelAndEffortSelections({ modelValue: 'not-a-kimi-model' })
+    })
+    expect(write).not.toHaveBeenCalled()
+    expect(onComplete).not.toHaveBeenCalled()
+    expect(onStrictUnapplied).toHaveBeenCalledWith(
+      'model',
+      expect.stringContaining('not-a-kimi-model')
+    )
+  })
+
+  it('aborts a strict selection whose set_config_option is rejected', () => {
+    const write = vi.fn()
+    const onComplete = vi.fn()
+    const onStrictUnapplied = vi.fn()
+    const applicator = createHostAcpSessionConfigApplicator({
+      write,
+      onWarning: vi.fn(),
+      onComplete,
+      strictConfigIds: ['model'],
+      onStrictUnapplied
+    })
+    applicator.begin({
+      sessionId: 'session-1',
+      result: KIMI_ADVERTISED,
+      selections: hostAcpModelAndEffortSelections({ modelValue: 'kimi-code/k3' })
+    })
+    expect(
+      applicator.acceptFrame({
+        id: 1000,
+        error: { code: -32000, message: 'unknown model' }
+      })
+    ).toBe(true)
+    expect(onComplete).not.toHaveBeenCalled()
+    expect(onStrictUnapplied).toHaveBeenCalledWith(
+      'model',
+      expect.stringContaining('unknown model')
+    )
+  })
+
+  it('aborts a strict selection when the config surface omits that option entirely', () => {
+    // A CLI that advertises config options but no model switch runs its own
+    // persisted model — the user's explicit selection cannot be honored.
+    const write = vi.fn()
+    const onComplete = vi.fn()
+    const onStrictUnapplied = vi.fn()
+    const applicator = createHostAcpSessionConfigApplicator({
+      write,
+      onWarning: vi.fn(),
+      onComplete,
+      strictConfigIds: ['model'],
+      onStrictUnapplied
+    })
+    applicator.begin({
+      sessionId: 'session-1',
+      result: {
+        sessionId: 'session-1',
+        configOptions: [{ id: 'mode', currentValue: 'default', options: [{ value: 'default' }] }]
+      },
+      selections: hostAcpModelAndEffortSelections({ modelValue: 'kimi-code/k3' })
+    })
+    expect(onComplete).not.toHaveBeenCalled()
+    expect(onStrictUnapplied).toHaveBeenCalledWith('model', expect.any(String))
+  })
 })
