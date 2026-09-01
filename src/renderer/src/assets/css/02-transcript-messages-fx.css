@@ -2765,19 +2765,40 @@
   display: none;
 }
 
+/* Filter-by-participant dock. Anchored to the BOTTOM of its own chat pane
+ * (portaled into `.app-transcript`, not <body>): one or two centred rows of
+ * seat chips sitting under the composer's timecode bar. The composer and the
+ * transcript's bottom reserve rise to make room via
+ * `--participant-filter-dock-reserve`, which the component writes onto the
+ * pane (own height + `--participant-filter-dock-bottom-gap`). */
 .transcript-participant-filter-rail {
-  position: fixed;
-  z-index: 10031;
-  display: inline-flex;
+  position: absolute;
+  left: var(--chat-side-gutter);
+  right: var(--chat-side-gutter);
+  bottom: calc(var(--participant-filter-dock-bottom-gap) + env(safe-area-inset-bottom, 0px));
+  z-index: 4;
+  display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
+  align-items: center;
+  gap: 3px;
   padding: 0;
   pointer-events: none;
   overflow: visible;
 }
 
-.transcript-participant-filter-rail.is-unmeasured {
+/* The dock climbs above the open workspace terminal exactly the way the
+ * composer does (same offsets, keyed on the same pane class). */
+.workspace-terminal-open .transcript-participant-filter-rail {
+  bottom: calc(
+    var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) +
+      var(--participant-filter-dock-bottom-gap) + env(safe-area-inset-bottom, 0px)
+  );
+}
+
+/* Welcome mode has no transcript to filter, and its centred composer anchors
+ * with `top` (ignoring the dock reserve) — hide the dock rather than float it
+ * along the bottom of an empty pane. */
+.welcome-mode .transcript-participant-filter-rail {
   display: none;
 }
 
@@ -2787,19 +2808,14 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   display: none !important;
 }
 
-.transcript-participant-filter-grid {
-  display: grid;
-  grid-auto-flow: column;
-  grid-template-rows: repeat(25, 24px);
-  grid-auto-columns: 36px;
-  column-gap: 4px;
-  row-gap: 2px;
-  pointer-events: none;
-}
-
-.transcript-participant-filter-system-row {
+.transcript-participant-filter-row {
   display: flex;
-  justify-content: flex-start;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  column-gap: 4px;
+  row-gap: 3px;
+  max-width: 100%;
   pointer-events: none;
 }
 
@@ -2831,7 +2847,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 .transcript-participant-filter-button:hover,
 .transcript-participant-filter-button:focus-visible {
-  transform: translateX(-2px) scale(1.04);
+  transform: translateY(-2px) scale(1.04);
   color: color-mix(in srgb, var(--text-primary) 88%, var(--participant-filter-accent) 12%);
   filter: drop-shadow(
     0 0 8px color-mix(in srgb, var(--participant-filter-accent) 34%, transparent)

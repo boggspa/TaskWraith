@@ -1,5 +1,5 @@
 import {
-  useCallback,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -13,16 +13,9 @@ import {
   buildTranscriptParticipantFilterItems,
   type TranscriptParticipantFilterItem
 } from '../lib/transcriptParticipantFilter'
-import { railClearBottomPx, useRailFrameRemeasure } from '../lib/useRailFrameRemeasure'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderLabel } from '../lib/providerLabels'
 import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
-
-interface RailFrame {
-  left: number
-  top: number
-  width: number
-}
 
 interface TranscriptParticipantFilterRailProps {
   currentChat?: ChatRecord | null
@@ -33,89 +26,21 @@ interface TranscriptParticipantFilterRailProps {
   onToggleFilter: (key: string) => void
 }
 
-interface ElementRect {
-  right: number
-  top: number
-  height: number
-}
+/** Hard cap per dock row — a full 50-seat roster is exactly two rows. */
+export const TRANSCRIPT_PARTICIPANT_FILTER_ITEMS_PER_ROW = 25
 
-const RAIL_GAP_PX = 8
-const RAIL_MIN_VIEWPORT_WIDTH_PX = 720
-export const TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN = 25
-const FILTER_COLUMN_WIDTH_PX = 36
-const FILTER_COLUMN_GAP_PX = 4
-const FILTER_ROW_HEIGHT_PX = 24
-const FILTER_ROW_GAP_PX = 2
-const FILTER_SYSTEM_GAP_PX = 5
-const FILTER_SYSTEM_SIZE_PX = 21
+/**
+ * Pane-scoped CSS var the dock writes onto its own `.app-transcript`: the
+ * vertical space the composer (and the transcript's bottom reserve) must give
+ * up so the dock fits under the composer timecode row. Consumed with a 0px
+ * fallback by `.composer-area`'s bottom calcs (03-composer-welcome-activity.css)
+ * and `--composer-scroll-under-padding` / the composer fade anchors
+ * (02-transcript-messages-fx.css).
+ */
+export const TRANSCRIPT_PARTICIPANT_FILTER_DOCK_RESERVE_VAR = '--participant-filter-dock-reserve'
 
-function visibleComposerChildren(composerArea: Element): HTMLElement[] {
-  const children: HTMLElement[] = []
-  for (const child of Array.from(composerArea.children)) {
-    if (!(child instanceof HTMLElement)) continue
-    const targets = child.classList.contains('composer-primary-stack')
-      ? Array.from(child.children)
-      : [child]
-    for (const target of targets) {
-      if (!(target instanceof HTMLElement)) continue
-      const style = window.getComputedStyle(target)
-      if (
-        style.display === 'none' ||
-        style.visibility === 'hidden' ||
-        style.position === 'absolute' ||
-        style.position === 'fixed'
-      ) {
-        continue
-      }
-      children.push(target)
-    }
-  }
-  return children
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
-}
-
-function composerStackBox(scroller: HTMLElement): ElementRect | null {
-  const composerArea = scroller.closest('.app-transcript')?.querySelector('.composer-area')
-  if (!composerArea) return null
-  let left = Number.POSITIVE_INFINITY
-  let top = Number.POSITIVE_INFINITY
-  let right = Number.NEGATIVE_INFINITY
-  let bottom = Number.NEGATIVE_INFINITY
-  for (const child of visibleComposerChildren(composerArea)) {
-    const rect = child.getBoundingClientRect()
-    if (rect.width <= 0 || rect.height <= 0) continue
-    left = Math.min(left, rect.left)
-    top = Math.min(top, rect.top)
-    right = Math.max(right, rect.right)
-    bottom = Math.max(bottom, rect.bottom)
-  }
-  if (!Number.isFinite(left) || !Number.isFinite(right)) return null
-  return { right, top, height: bottom - top }
-}
-
-function composerSurfaceBox(scroller: HTMLElement): ElementRect | null {
-  const surface = scroller.closest('.app-transcript')?.querySelector('.composer-surface')
-  if (!(surface instanceof HTMLElement)) return null
-  const rect = surface.getBoundingClientRect()
-  if (rect.width <= 0 || rect.height <= 0) return null
-  return { right: rect.right, top: rect.top, height: rect.height }
-}
-
-function mountedRowsRightEdgePx(scroller: HTMLElement): number | null {
-  const rows = scroller.querySelectorAll<HTMLElement>('[data-vrow-id]')
-  let right = Number.NEGATIVE_INFINITY
-  let sampled = 0
-  for (const row of rows) {
-    const rect = row.getBoundingClientRect()
-    if (rect.width <= 0 || rect.height <= 0) continue
-    right = Math.max(right, rect.right)
-    if (++sampled >= 8) break
-  }
-  return Number.isFinite(right) ? right : null
-}
+/** Fallback when `--participant-filter-dock-bottom-gap` fails to resolve. */
+const DOCK_BOTTOM_GAP_FALLBACK_PX = 10
 
 function BossmanCrownIcon(): ReactElement {
   return (
@@ -196,126 +121,113 @@ function itemAccessibleLabel(item: TranscriptParticipantFilterItem, active: bool
   return `${action} ${authority}${item.role} (${provider}, ${item.ordinal})`
 }
 
+/**
+ * Balanced row chunks: capped at `TRANSCRIPT_PARTICIPANT_FILTER_ITEMS_PER_ROW`,
+ * but an over-cap roster splits EVENLY (26 → 13 + 13, never 25 + 1) so the
+ * dock reads as a deliberate block instead of a full row with a stray tail.
+ */
+function chunkIntoBalancedRows(
+  items: readonly TranscriptParticipantFilterItem[]
+): TranscriptParticipantFilterItem[][] {
+  const rowCount = Math.max(
+    1,
+    Math.ceil(items.length / TRANSCRIPT_PARTICIPANT_FILTER_ITEMS_PER_ROW)
+  )
+  const perRow = Math.ceil(items.length / rowCount)
+  const rows: TranscriptParticipantFilterItem[][] = []
+  for (let start = 0; start < items.length; start += perRow) {
+    rows.push(items.slice(start, start + perRow))
+  }
+  return rows
+}
+
+/**
+ * Filter-by-participant dock. One (or two, for over-25 rosters) centred rows
+ * of provider chips glued to the BOTTOM of the chat pane — under the
+ * composer's timecode bar, above the workspace terminal when it is open
+ * (`.workspace-terminal-open .transcript-participant-filter-rail` re-anchors
+ * the dock the same way the composer itself lifts).
+ *
+ * The dock is portaled into its own `.app-transcript` and anchored purely in
+ * CSS, so unlike its former life as a measured right-flank rail it needs no
+ * frame math and no `useRailFrameRemeasure` belt. Its one JS layout duty is
+ * writing `--participant-filter-dock-reserve` (own height + the dock's bottom
+ * gap) onto the pane so the composer and the transcript's bottom reserve rise
+ * to make room; a ResizeObserver keeps that honest when narrow panes wrap the
+ * rows. While the dock is hidden by an overlay/sheet (`display: none`,
+ * offsetHeight 0) the last reserve is kept, so the composer never jumps
+ * behind a backdrop.
+ */
 export function TranscriptParticipantFilterRail({
   currentChat,
   items: providedItems,
   activeFilterKeys,
   scrollRef,
-  contentRef,
   onToggleFilter
 }: TranscriptParticipantFilterRailProps): ReactElement | null {
   const items = useMemo(
     () => providedItems || buildTranscriptParticipantFilterItems(currentChat),
     [currentChat, providedItems]
   )
-  const participantItems = useMemo(() => items.filter((item) => item.kind === 'participant'), [items])
-  const systemItem = useMemo(() => items.find((item) => item.kind === 'system') || null, [items])
-  const columnCount = Math.max(
-    1,
-    Math.ceil(participantItems.length / TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN)
+  const participantItems = useMemo(
+    () => items.filter((item) => item.kind === 'participant'),
+    [items]
   )
-  const [frame, setFrame] = useState<RailFrame | null>(null)
-  // Root ref for the shared re-measure hook's transitionend filter (skips
-  // transitions originating inside the rail itself).
-  const railRef = useRef<HTMLDivElement | null>(null)
+  const systemItem = useMemo(() => items.find((item) => item.kind === 'system') || null, [items])
+  const rows = useMemo(() => chunkIntoBalancedRows(participantItems), [participantItems])
+  const dockRef = useRef<HTMLDivElement | null>(null)
+  const [paneEl, setPaneEl] = useState<HTMLElement | null>(null)
 
-  const updateFrame = useCallback(() => {
-    const scroller = scrollRef.current
-    const content = contentRef.current
-    if (!scroller || !content || participantItems.length === 0) return
-    if (scroller.offsetParent === null) {
-      setFrame(null)
-      return
+  const visible =
+    !!currentChat && currentChat.chatKind === 'ensemble' && participantItems.length > 0
+
+  useLayoutEffect(() => {
+    const pane = scrollRef.current?.closest('.app-transcript')
+    setPaneEl(pane instanceof HTMLElement ? pane : null)
+  }, [scrollRef])
+
+  useLayoutEffect(() => {
+    const pane = paneEl
+    const dock = dockRef.current
+    if (!pane || !dock || !visible) return undefined
+    const apply = (): void => {
+      const height = dock.offsetHeight
+      // Hidden (overlay/sheet hide list): keep the last written reserve so the
+      // composer holds its place behind the backdrop.
+      if (height <= 0) return
+      const gapRaw = window
+        .getComputedStyle(pane)
+        .getPropertyValue('--participant-filter-dock-bottom-gap')
+      const gap = Number.parseFloat(gapRaw)
+      pane.style.setProperty(
+        TRANSCRIPT_PARTICIPANT_FILTER_DOCK_RESERVE_VAR,
+        `${Math.round(height + (Number.isFinite(gap) ? gap : DOCK_BOTTOM_GAP_FALLBACK_PX))}px`
+      )
     }
-    const scrollerRect = scroller.getBoundingClientRect()
-    if (scrollerRect.width < RAIL_MIN_VIEWPORT_WIDTH_PX) {
-      setFrame(null)
-      return
+    apply()
+    let observer: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(apply)
+      observer.observe(dock)
     }
-    const contentRect = content.getBoundingClientRect()
-    const rowsRight = mountedRowsRightEdgePx(scroller)
-    const composerRect = composerStackBox(scroller)
-    const composerSurfaceRect = composerSurfaceBox(scroller)
-    const anchorRight = Math.max(contentRect.right, rowsRight ?? 0, composerRect?.right ?? 0)
-    const left = anchorRight + RAIL_GAP_PX
-    const width =
-      columnCount * FILTER_COLUMN_WIDTH_PX + Math.max(0, columnCount - 1) * FILTER_COLUMN_GAP_PX
-    if (left + width > scrollerRect.right - 4) {
-      setFrame(null)
-      return
+    return () => {
+      observer?.disconnect()
+      pane.style.removeProperty(TRANSCRIPT_PARTICIPANT_FILTER_DOCK_RESERVE_VAR)
     }
-    const participantRows = TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN
-    const participantHeight =
-      participantRows * FILTER_ROW_HEIGHT_PX + Math.max(0, participantRows - 1) * FILTER_ROW_GAP_PX
-    const naturalHeight =
-      participantHeight + (systemItem ? FILTER_SYSTEM_GAP_PX + FILTER_SYSTEM_SIZE_PX : 0)
-    // Never run below the open workspace terminal. Tracking the composer
-    // surface already lifts the rail most of the way (the terminal pushes the
-    // composer up), but the surface CENTRE only clears the terminal when the
-    // composer is tall enough — a compact solo composer leaves the bottom of
-    // the stack inside the terminal. Clamping against the terminal's top edge
-    // closes that, and is a no-op with the terminal closed.
-    const clearBottom = railClearBottomPx(scroller, scrollerRect.bottom)
-    const centerY = composerSurfaceRect
-      ? composerSurfaceRect.top + composerSurfaceRect.height / 2
-      : clearBottom - scrollerRect.height * 0.28
-    const top = clamp(
-      centerY - naturalHeight / 2,
-      scrollerRect.top + 72,
-      Math.max(scrollerRect.top + 72, clearBottom - naturalHeight - 44)
-    )
-    setFrame((current) => {
-      if (
-        current &&
-        Math.abs(current.left - left) < 0.5 &&
-        Math.abs(current.top - top) < 0.5 &&
-        Math.abs(current.width - width) < 0.5
-      ) {
-        return current
-      }
-      return { left, top, width }
-    })
-  }, [columnCount, contentRef, participantItems.length, scrollRef, systemItem])
+  }, [paneEl, visible, rows.length, participantItems.length])
 
-  // Shared re-measure lifecycle (rAF/timeout settle belt + ResizeObserver on
-  // scroller/content/.composer-area + fonts.ready + resize + capture-scroll +
-  // filtered transitionend). This rail previously shipped with NO
-  // ResizeObserver and stayed mispositioned until an incidental scroll; the
-  // shared hook keeps it in lockstep with the sibling gutter rail.
-  useRailFrameRemeasure(updateFrame, { scrollRef, contentRef, railRef })
+  if (!visible) return null
 
-  if (!currentChat || currentChat.chatKind !== 'ensemble' || participantItems.length === 0) return null
-
-  const participantGridRowOffset =
-    participantItems.length < TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN
-      ? TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN - participantItems.length
-      : 0
-
-  const gridPlacementForIndex = (index: number): CSSProperties => ({
-    gridRowStart: String(
-      participantGridRowOffset +
-        (index % TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN) +
-        1
-    ),
-    gridColumnStart: String(
-      Math.floor(index / TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN) + 1
-    )
-  })
-
-  const renderFilterButton = (
-    item: TranscriptParticipantFilterItem,
-    gridPlacement?: CSSProperties
-  ): ReactElement => {
+  const renderFilterButton = (item: TranscriptParticipantFilterItem): ReactElement => {
     const active = activeFilterKeys.has(item.key)
     const providerHueClass = item.provider
       ? resolveProviderHueClass(item.provider, item.participant?.model)
       : null
     const buttonStyle = providerHueClass
       ? ({
-          ...(gridPlacement || {}),
           '--participant-filter-accent': `var(--provider-${providerHueClass}-color, var(--accent))`
         } as CSSProperties)
-      : gridPlacement
+      : undefined
     return (
       <button
         key={item.key}
@@ -357,30 +269,24 @@ export function TranscriptParticipantFilterRail({
 
   const rail = (
     <div
-      ref={railRef}
-      className={`transcript-participant-filter-rail${frame ? '' : ' is-unmeasured'}${
+      ref={dockRef}
+      className={`transcript-participant-filter-rail${
         activeFilterKeys.size > 0 ? ' has-active-filter' : ''
       }`}
-      style={frame ? { left: frame.left, top: frame.top, width: frame.width } : undefined}
-      data-column-count={columnCount}
+      data-row-count={rows.length}
       role="navigation"
       aria-label="Transcript participant filters"
     >
-      <div
-        className="transcript-participant-filter-grid"
-        data-row-offset={participantGridRowOffset}
-      >
-        {participantItems.map((item, index) =>
-          renderFilterButton(item, gridPlacementForIndex(index))
-        )}
-      </div>
-      {systemItem && (
-        <div className="transcript-participant-filter-system-row">
-          {renderFilterButton(systemItem)}
+      {rows.map((row, rowIndex) => (
+        <div className="transcript-participant-filter-row" key={rowIndex}>
+          {row.map((item) => renderFilterButton(item))}
+          {systemItem && rowIndex === rows.length - 1 && renderFilterButton(systemItem)}
         </div>
-      )}
+      ))}
     </div>
   )
 
-  return typeof document === 'undefined' ? rail : createPortal(rail, document.body)
+  if (typeof document === 'undefined') return rail
+  if (!paneEl) return null
+  return createPortal(rail, paneEl)
 }
