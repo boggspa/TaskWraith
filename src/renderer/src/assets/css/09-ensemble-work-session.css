@@ -8,7 +8,7 @@
   max-width: none;
   margin: 0;
   padding: 7px 14px;
-  gap: 24px;
+  gap: 48px;
   flex-wrap: nowrap;
   align-items: center;
   justify-content: center;
@@ -45,13 +45,13 @@
  * .composer-fanout-policy / .composer-ensemble-hop-meter so the
  * existing shell + theme overrides keep applying in the new home.
  *
- * 2026-09-01: inter-element spacing doubled, in two passes (stack 8 -> 24,
- * welcome hero 16 -> 40, compact 12 -> 32, squished 10 -> 24). Retiring the
- * mode picker and the Chars slider left the row with room the remaining
- * Fan-Out / Isolate / Turns pairs can spend, and the user asked for the
- * survivors to sit twice as far apart. Measured at the 620px container
- * breakpoint the widened row still fits well inside a nowrap line, which is
- * why no intermediate step-down was added.
+ * 2026-09-01: inter-element spacing widened over three passes, ending at
+ * 4x the original (stack 8 -> 48, welcome hero 16 -> 80, compact 12 -> 64).
+ * Retiring the mode picker and the Chars slider left the row with room the
+ * remaining Fan-Out / Isolate / Turns pairs can spend. The narrow-container
+ * rules below deliberately did NOT follow the last doubling: they exist to
+ * stop the nowrap row overrunning its line, so they hold the earlier values
+ * and keep the ladder monotonic as the pane tightens.
  *
  * The 6px in-cell label-to-control gap deliberately stays tight: proximity
  * is the only thing still binding each label to its own control once the
@@ -71,14 +71,14 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: center; /* welcome hero variant centers like the chips row */
-  gap: 6px 40px;
+  gap: 6px 80px;
   min-width: 0;
 }
 .ensemble-roster-preset-picker.is-compact .composer-ensemble-orchestration-row {
   flex: 0 1 auto;
   justify-content: center;
   flex-wrap: nowrap;
-  gap: 6px 32px;
+  gap: 6px 64px;
 }
 .composer-orchestration-cell {
   display: inline-flex;
@@ -247,6 +247,21 @@
  * more, since a wrapped fraction reads as a different number entirely. */
 .composer-ensemble-hop-meter-count {
   white-space: nowrap;
+}
+
+/* Mid-width step-down. The full-width gaps above put the compact row at
+ * roughly 630px including the picker padding, so between the 620px
+ * label-hiding breakpoint and ~760px it would overrun its own nowrap line.
+ * Step back to the previous pass values there; the ladder stays monotonic
+ * (64 -> 32 -> 24), which is the original narrower-means-tighter intent. */
+@container (max-width: 760px) {
+  .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
+    gap: 24px;
+  }
+
+  .ensemble-roster-preset-picker.is-compact .composer-ensemble-orchestration-row {
+    gap: 6px 32px;
+  }
 }
 
 @container (max-width: 620px) {
