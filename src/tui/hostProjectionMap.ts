@@ -256,7 +256,7 @@ function mapEnsemble(
 
   return {
     preset: 'Ensemble',
-    mode: routing?.mode ?? 'turn_bound',
+    mode: routing?.mode ?? 'continuous',
     fanout: routing?.fanout ?? 'off',
     continuationHops: routing?.continuationHops ?? 0,
     maxContinuationHops: routing?.maxContinuationHops ?? 0,

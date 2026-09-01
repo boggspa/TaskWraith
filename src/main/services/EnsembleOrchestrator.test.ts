@@ -247,7 +247,8 @@ function makeSettings(): AppSettings {
         antigravity: 120000,
         pi: 120000,
         mistral: 120000,
-        muse: 120000
+        muse: 120000,
+        devin: 120000
       },
       mainAuthorityMs: 120000
     }
@@ -4155,9 +4156,24 @@ describe('EnsembleOrchestrator', () => {
       'Worker'
     ])
 
-    completeDispatchedRun(harness, 0)
+    // Continuous-only: the Boss carries a must-route checkpoint while the
+    // Captain is pending, so route explicitly and let the final seat hand
+    // control back to the user — the natural Continuous round boundary.
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Worker should close the pass.',
+        'Worker'
+      )
+    )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    completeDispatchedRun(harness, 1)
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[1].appRunId!,
+        'Panel done; user decides next.',
+        'user'
+      )
+    )
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
 
     expect(harness.chat.ensemble).toMatchObject({
@@ -5785,10 +5801,15 @@ Next action:
       { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
       { type: 'content', text: summary }
     )
-    harness.orchestrator.handleProviderOutput(
-      'codex',
-      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'result', status: 'success' }
+    // Continuous-only: an unmarked drain would auto-continue another pass, so
+    // the synthesizer ends the round with an explicit user yield — the summary
+    // stays the terminal assistant message and the capture path is unchanged.
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[1].appRunId!,
+        'Summary recorded; returning to the user.',
+        'user'
+      )
     )
 
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
@@ -5932,10 +5953,14 @@ Next action:
 - Use it next round.`
       }
     )
-    harness.orchestrator.handleProviderOutput(
-      'codex',
-      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'result', status: 'success' }
+    // Continuous-only: close the first round with an explicit user yield so the
+    // captured summary is the terminal assistant message at the round boundary.
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[1].appRunId!,
+        'Summary recorded; returning to the user.',
+        'user'
+      )
     )
 
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
@@ -6091,7 +6116,8 @@ Next action:
     // The target belongs to this interjection, not to the live round. Persisting
     // it here would terminate the original panel scope after the handoff.
     expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBeUndefined()
-    expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('read_only')
+    // On/Off collapse: the queued-row's legacy read_only arrives as On ('all').
+    expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('all')
     expect(
       harness.chat.ensemble?.activeRound?.participants.map(
         (participant) => participant.participantId
@@ -8093,7 +8119,11 @@ Next action:
     expect(skipMessage?.metadata?.ensembleProvider).toBe('claude')
   })
 
-  it('preserves every participant during the initial pass even when Boss requests a skip', async () => {
+  it('lets Boss skip a pending participant during the initial Continuous pass', async () => {
+    // Continuous-only: pass 1 no longer preserves the roster
+    // (`preservesInitialPassRoster` is false for continuous), so a Boss
+    // skip_participant on the very first pass is accepted and the skipped seat
+    // never dispatches.
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     const harness = makeHarness({ initialChat })
@@ -8109,32 +8139,32 @@ Next action:
       targetParticipantId: 'codex',
       reason: 'Codex lacks context for this turn.'
     })
-    expect(result.ok).toBe(false)
-    expect(result.error).toBe('initial_pass_preserves_roster')
+    expect(result).toMatchObject({
+      ok: true,
+      action: 'skip_participant',
+      participantId: 'codex'
+    })
     const codexState = harness.chat.ensemble?.activeRound?.participants.find(
       (participant) => participant.participantId === 'codex'
     )
-    expect(codexState?.status).toBe('idle')
+    expect(codexState?.status).toBe('skipped')
 
-    harness.orchestrator.handleProviderOutput(
-      'claude',
-      {
-        appRunId: harness.dispatched[0].appRunId,
-        appChatId: 'ensemble-chat'
-      },
-      { type: 'result', status: 'success' }
-    )
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    expect(harness.dispatched[1].provider).toBe('codex')
-    harness.orchestrator.handleProviderOutput(
-      'codex',
-      {
-        appRunId: harness.dispatched[1].appRunId,
-        appChatId: 'ensemble-chat'
-      },
-      { type: 'result', status: 'success' }
+    // The skip already satisfied the Boss's must-route checkpoint, so an
+    // explicit user yield closes the round without ever dispatching Codex.
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Only my turn was needed.',
+        'user'
+      )
     )
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(1)
+    expect(
+      harness.chat.ensemble?.activeRound?.participants.find(
+        (participant) => participant.participantId === 'codex'
+      )?.status
+    ).toBe('skipped')
   })
 
   it('lets a later Continuous-pass Boss keep an explicit subset and skips every other pending seat', async () => {
@@ -8351,7 +8381,11 @@ Next action:
     )
   })
 
-  it('keeps the plain not-pending rejection when no further pass can form', async () => {
+  it('drops a queued not-pending selection when the round ends before another pass forms', async () => {
+    // Continuous-only: a keep-list naming only already-dispatched seats no
+    // longer dead-ends with invalid_target — another pass can always form, so
+    // it queues. This pins the other half of that contract: the queue is
+    // runtime-only and dies unapplied when the round ends first.
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     const harness = makeHarness({ initialChat })
@@ -8380,8 +8414,30 @@ Next action:
       }
     )
 
-    expect(selection).toMatchObject({ ok: false, error: 'invalid_target' })
-    expect(selection.message).toContain('no longer pending in this pass')
+    expect(selection).toMatchObject({ ok: true, action: 'select_participants' })
+    expect(selection.message).toContain(
+      'no longer pending in this pass, so the selection was queued'
+    )
+    expect(selection.message).toContain('It is dropped if the round ends first.')
+
+    // Queueing was the Boss's routing decision; the explicit user yield ends
+    // the round before another pass forms, so the queue dies unapplied.
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Stopping here.',
+        'user'
+      )
+    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(1)
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('selection queued during pass 2 applied')
+      )
+    ).toBe(false)
   })
 
   it('inserts a tagged Boss checkpoint before a peer yield and allows an explicit opt-out', async () => {
@@ -8601,7 +8657,11 @@ Next action:
     )
   })
 
-  it('Turn-bound Boss quiet answer still advances without the Continuous must-route gate', async () => {
+  it('default-config Boss prompt carries the Continuous must-route gate and an explicit preserve advances', async () => {
+    // Continuous-only: a chat that never chose a mode (the old Turn-bound
+    // default) now runs Continuous, so the pass-1 Boss prompt carries the
+    // must-route checkpoint and a quiet answer only advances once the Boss
+    // explicitly preserves the queue.
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     initialChat.ensemble!.participants[0].role = 'Boss'
@@ -8612,9 +8672,14 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    expect(harness.dispatched[0].prompt || '').not.toContain(
+    expect(harness.dispatched[0].prompt || '').toContain(
       'Authority routing checkpoint (Continuous pass'
     )
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true, action: 'skip_intervention' })
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
@@ -8740,9 +8805,15 @@ Next action:
     expect(harness.dispatched).toHaveLength(3)
   })
 
-  it('rejects Boss summon outside Continuous mode', async () => {
+  it('accepts Boss summon on a legacy turn_bound chat (mode normalizes to Continuous)', async () => {
+    // Continuous-only: persisted 'turn_bound' values are still legal on the
+    // wire but normalize to 'continuous', so the old summon_not_continuous
+    // rejection is unreachable and a directed re-summon works exactly as it
+    // does on a chat that always said 'continuous'.
     const initialChat = makeChat()
+    initialChat.ensemble!.orchestrationMode = 'turn_bound'
     initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
     const harness = makeHarness({ initialChat })
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -8751,15 +8822,39 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Worker should take the implementation first.',
+        'Worker'
+      )
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Implemented most of it.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].provider).toBe('claude')
+
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[2].appRunId, {
       action: 'summon_participant',
       roundId: harness.chat.ensemble?.activeRound?.roundId,
       targetParticipantId: 'codex',
       reason: 'Needs another turn.'
     })
 
-    expect(result.ok).toBe(false)
-    expect(result.error).toBe('summon_not_continuous')
+    expect(result).toMatchObject({
+      ok: true,
+      action: 'summon_participant',
+      participantId: 'codex'
+    })
   })
 
   it('rejects Boss summon when the target is already pending', async () => {
@@ -9261,6 +9356,9 @@ Next action:
   it('lets Boss quarantine a pending participant so routing skips them', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
+    // Pre-completed goal disables Continuous auto-continuation so the round
+    // closes at the drain like the quarantine contract expects.
+    initialChat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
     const harness = makeHarness({ initialChat })
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -9288,6 +9386,13 @@ Next action:
     )
     expect(codexState?.status).toBe('skipped')
 
+    // Quarantine does not settle the Continuous must-route checkpoint, so the
+    // Boss explicitly preserves the (now empty) queue before ending quietly.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
@@ -9616,6 +9721,13 @@ Next action:
       options: ['A', 'B'],
       participantIds: ['kimi']
     })
+    // Continuous-only: settle the Boss must-route checkpoint so the quiet
+    // completion advances to the poll-routed voter instead of re-summoning Boss.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
@@ -9643,6 +9755,13 @@ Next action:
       targetParticipantId: 'codex',
       question: 'Are you blocked?'
     })
+    // Continuous-only: settle the Boss must-route checkpoint so the quiet
+    // completion advances to the status-request target.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
@@ -9699,6 +9818,13 @@ Next action:
       targetParticipantId: 'codex',
       question: 'Are you ready to report?'
     })
+    // Continuous-only: settle the Boss must-route checkpoint so the quiet
+    // completion advances to the status-request target.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     completeDispatchedRun(harness, 0)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
 
@@ -9848,6 +9974,13 @@ Next action:
     })
     expect(poll.ok).toBe(true)
 
+    // Continuous-only: settle the Boss must-route checkpoint so the quiet
+    // completion advances to the targeted voter.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
@@ -9896,6 +10029,13 @@ Next action:
         { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
         { type: 'content', text: 'Initial review complete; the worker can continue.' }
       )
+      // Continuous-only: settle the Boss must-route checkpoint so the quiet
+      // completion advances to the worker seat.
+      await expect(
+        harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+          action: 'skip_intervention'
+        })
+      ).resolves.toMatchObject({ ok: true })
       completeDispatchedRun(harness, 0)
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
       expect(harness.dispatched[1].ensembleRun?.participantId).toBe('codex')
@@ -10200,6 +10340,12 @@ Next action:
     })
     expect(v1.ok).toBe(true)
     expect(harness.chat.activeGoal?.status).toBe('active')
+    // Continuous-only: settle the Boss must-route checkpoint first.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     // Boss finishes → codex is dispatched and casts the final target vote.
     harness.orchestrator.handleProviderOutput(
       'claude',
@@ -10577,6 +10723,13 @@ Next action:
     expect(stale.ok).toBe(false)
     expect(stale.error).toBe('stale_round')
 
+    // Continuous-only: settle the Boss must-route checkpoint so the quiet
+    // completion advances to the non-Boss caller under test.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     harness.orchestrator.handleProviderOutput(
       'claude',
       {
@@ -10612,6 +10765,13 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    // Continuous-only: settle the Boss must-route checkpoint so the quiet
+    // completion advances to the non-Boss caller under test.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
@@ -10655,6 +10815,13 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    // Continuous-only: settle the Boss must-route checkpoint so the quiet
+    // completion advances to the non-Boss caller under test.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
@@ -10795,6 +10962,13 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    // Continuous-only: settle the Boss must-route checkpoint so the quiet
+    // completion advances to the non-Boss caller under test.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
@@ -11065,6 +11239,13 @@ Next action:
       status: 'idle'
     })
 
+    // Continuous-only: settle the Boss must-route checkpoint so the quiet
+    // completion advances to the edited pending seat.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     const activeRoute = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('claude', activeRoute, {
       type: 'content',
@@ -11163,6 +11344,13 @@ Next action:
       )
     ).toHaveLength(0)
 
+    // Continuous-only: settle the Boss must-route checkpoint so the quiet
+    // completion advances to the next serial seat at the execution boundary.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     const activeRoute = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('claude', activeRoute, {
       type: 'content',
@@ -11789,6 +11977,13 @@ Next action:
       )
     ).toMatchObject({ status: 'idle' })
 
+    // Continuous-only: settle the Boss must-route checkpoint so the quiet
+    // completion advances to the re-enabled seat.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     completeDispatchedRun(harness, 0)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].ensembleRun).toMatchObject({
@@ -13474,8 +13669,10 @@ Next action:
   })
 
   it('closes the round when a speaker explicitly yields to user', async () => {
+    // Continuous-only: a NON-authority speaker's user yield is terminal
+    // immediately. (An authority speaker with pending seats must resolve its
+    // must-route checkpoint first — pinned by the Continuous test below.)
     const harness = makeHarness()
-    harness.chat.ensemble!.bossmanParticipantId = 'claude'
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Start the work.',
@@ -14223,6 +14420,13 @@ Next action:
           event: { sender: {} as Electron.WebContents }
         })
         await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+        // Continuous-only: settle the Boss must-route checkpoint so the quiet
+        // completion advances to the non-authority worker under test.
+        await expect(
+          harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+            action: 'skip_intervention'
+          })
+        ).resolves.toMatchObject({ ok: true })
         harness.orchestrator.handleProviderOutput(
           'claude',
           { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
@@ -14269,6 +14473,13 @@ Next action:
       'Fresh user prompt that should be dropped.'
     ])
 
+    // Continuous-only: the assigned Boss resolves its must-route checkpoint
+    // explicitly, then its user yield remains the definitive close.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     expectYielded(
       harness.orchestrator.markYielded(
         harness.dispatched[0].appRunId!,
@@ -16789,8 +17000,10 @@ Next action:
   })
 
   it('rejects ambiguous same-provider yield targets with tool-visible failure', async () => {
+    // Continuous-only: keep the caller non-authority — an authority seat with
+    // pending peers hits the must-route checkpoint before target resolution,
+    // which would mask the ambiguity rejection under test.
     const harness = makeHarness()
-    harness.chat.ensemble!.bossmanParticipantId = 'ensemble-codex-main'
     harness.chat.ensemble!.participants = [
       {
         id: 'ensemble-codex-main',
@@ -16894,8 +17107,14 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
   })
 
-  it('does not append an extra turn when turn-bound @mention targets an already-spoken participant', async () => {
+  it('drops a non-authority @mention of an already-spoken participant and auto-continues a fresh pass', async () => {
+    // Continuous-only replacement for the turn-bound "no extra turn" pin: a
+    // generic @mention of an already-answered NON-authority seat still appends
+    // nothing (only the Boss/Captain priority route may re-summon a spoken
+    // seat), but the round no longer ends there — the drain forms a fresh
+    // full-roster pass, and the PASS is what consumes continuation hops.
     const harness = makeHarness()
+    harness.chat.ensemble!.maxContinuationHops = 2
     harness.chat.ensemble!.participants = [
       {
         id: 'ensemble-claude',
@@ -16923,6 +17142,11 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Plan drafted.' }
+    )
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
@@ -16941,19 +17165,32 @@ Next action:
       { type: 'result', status: 'success', stats: { total_tokens: 10 } }
     )
 
-    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
-    expect(harness.dispatched).toHaveLength(2)
-    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
+    // Pass 2 forms with the full roster (2 seats = 2 hops); the mention itself
+    // appended no extra turn and consumed nothing.
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('ensemble-claude')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(2)
     expect(
       harness.chat.messages.some(
         (message) =>
-          message.metadata?.kind === 'ensembleRoundStatus' &&
-          message.content.includes('already spoke in this turn-bound round')
+          typeof message.content === 'string' &&
+          message.content.includes('auto-continuing for pass 2')
       )
     ).toBe(true)
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('extra turn appended')
+      )
+    ).toBe(false)
   })
 
-  it('does not let yield plus @mention bypass turn-bound for an already-spoken participant', async () => {
+  it('yield plus @mention re-summons an already-spoken participant exactly once', async () => {
+    // Continuous-only replacement for the turn-bound bypass pin: an explicit
+    // targeted yield MAY re-summon an already-answered participant (one
+    // continuation hop), and the duplicate @mention in the same output must
+    // not append a second extra turn on top of it.
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [
       {
@@ -16985,6 +17222,11 @@ Next action:
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Plan drafted.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
       { type: 'result', status: 'success', stats: { total_tokens: 10 } }
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
@@ -16997,11 +17239,22 @@ Next action:
       type: 'content',
       text: '@Planner please reconcile this.'
     })
-    harness.orchestrator.markYielded(harness.dispatched[1].appRunId!, 'Passing back.', 'Planner')
+    const outcome = harness.orchestrator.markYielded(
+      harness.dispatched[1].appRunId!,
+      'Passing back.',
+      'Planner'
+    )
+    expect(outcome).toMatchObject({
+      kind: 'yielded',
+      routing: { ok: true, action: 'resummoned', targetParticipantId: 'ensemble-claude' }
+    })
 
-    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
-    expect(harness.dispatched).toHaveLength(2)
-    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('ensemble-claude')
+    // Exactly one hop: the explicit yield paid for the re-summon; the mention
+    // of the same (now pending again) participant appended nothing extra.
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
+    expect(harness.dispatched).toHaveLength(3)
   })
 
   it('does not append continuous continuations for terminal participant statuses', async () => {
@@ -19042,7 +19295,7 @@ Next action:
     expect(harness.dispatched).toHaveLength(1)
   })
 
-  it('rejects read-only ensemble_fanout while the round policy is write-only', async () => {
+  it('collapses a legacy write-only round policy to On and admits read fan-out', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'locked_writers_with_boss'
     harness.chat.ensemble!.bossmanParticipantId = 'codex'
@@ -19079,10 +19332,14 @@ Next action:
       prompt: 'Try read fan-out.'
     })
 
-    expect(result.ok).toBe(false)
-    expect(result.error).toBe('not_authorized')
-    expect(result.message).toContain('Read or All')
-    expect(harness.dispatched).toHaveLength(1)
+    // Fan-out is On/Off now: the retired locked_writers_with_boss level
+    // normalizes to 'all' at round admission, so reader-intent fan-out from
+    // the Boss is authorized instead of rejected with not_authorized.
+    expect(result.ok).toBe(true)
+    expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('all')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('claude')
+    expect(harness.dispatched[1].ensembleRun?.laneId).toBeTruthy()
   })
 
   it('targetStage=all fans out typed stage roles and excludes untyped Any roles', async () => {
@@ -20393,6 +20650,13 @@ Next action:
       { appRunId: harness.dispatched[2].appRunId, appChatId: 'ensemble-chat' },
       { type: 'content', text: 'OWNER-SYNTHESIS.' }
     )
+    // Continuous-only: the re-summoned Boss settles its must-route checkpoint
+    // so the synthesis completion advances serial routing to the next seat.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[2].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     completeDispatchedRun(harness, 2)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
     expect(harness.dispatched[3].ensembleRun?.participantId).toBe('gemini')
@@ -21343,6 +21607,13 @@ Next action:
         { appRunId: harness.dispatched[2].appRunId, appChatId: 'ensemble-chat' },
         { type: 'content', text: 'BOSS-SYNTHESIS.' }
       )
+      // Continuous-only: the re-summoned Boss settles its must-route
+      // checkpoint so the synthesis completion advances to the verifier.
+      await expect(
+        harness.orchestrator.bossmanControlForRun(harness.dispatched[2].appRunId, {
+          action: 'skip_intervention'
+        })
+      ).resolves.toMatchObject({ ok: true })
       completeDispatchedRun(harness, 2)
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4), { timeout: 1000 })
       expect(harness.dispatched[3].ensembleRun?.participantId).toBe('gemini')
@@ -21405,6 +21676,15 @@ Next action:
       })
 
       expect(result).toMatchObject({ ok: false, error: 'dispatch_failed' })
+      // Continuous-only: the Boss carries a must-route checkpoint while the
+      // released Worker is pending, and the failed lane recorded no routing
+      // decision. Preserve the queue explicitly so the quiet Boss completion
+      // advances into serial rotation instead of re-summoning the Boss.
+      await expect(
+        harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+          action: 'skip_intervention'
+        })
+      ).resolves.toMatchObject({ ok: true })
       completeDispatchedRun(harness, 0)
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
       expect(harness.dispatched[1].ensembleRun?.laneId).toBeTruthy()
@@ -21774,7 +22054,9 @@ Next action:
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
       expect(harness.dispatched.map((p) => p.provider).sort()).toEqual(['claude', 'gemini'])
       expect(harness.chat.ensemble?.activeRound?.concurrentMode).toBe(true)
-      expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('read_only')
+      // Legacy concurrentMode boolean now admits as On ('all'); the roster has
+      // only one writer, so dispatch behavior is unchanged from read fan-out.
+      expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('all')
       const initialLanes = Object.values(harness.chat.ensemble?.activeRound?.lanes || {})
       expect(initialLanes).toHaveLength(2)
       expect(initialLanes.map((lane) => lane.status).sort()).toEqual(['running', 'running'])
@@ -21927,7 +22209,7 @@ Next action:
     }
   })
 
-  it('1.0.8: legacy concurrent mode keeps writers serial even when the write-lane gate is on', async () => {
+  it('1.0.8: a single-writer roster stays serial under fan-out On even with the write-lane gate on', async () => {
     const previousConcurrent = process.env.TASKWRAITH_CONCURRENT_LANES
     const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
     process.env.TASKWRAITH_CONCURRENT_LANES = '1'
@@ -21944,7 +22226,10 @@ Next action:
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
       expect(harness.dispatched[0].provider).toBe('claude')
       expect(Object.values(harness.chat.ensemble?.activeRound?.lanes || {})).toHaveLength(0)
-      expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('read_only')
+      expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('all')
+      // Fan-out On requests writer lanes, so the single-writer roster now
+      // gets the honest "needs at least two writer-capable participants"
+      // status note while still running serially.
       expect(
         harness.chat.messages.some(
           (message) =>
@@ -21954,7 +22239,7 @@ Next action:
               'Locked writer fan-out needs at least two writer-capable participants'
             )
         )
-      ).toBe(false)
+      ).toBe(true)
 
       harness.orchestrator.handleProviderOutput(
         'claude',
@@ -21977,7 +22262,7 @@ Next action:
     }
   })
 
-  it('1.0.8: legacy concurrent mode does not run no-Boss writer preflight', async () => {
+  it('1.0.8: legacy concurrent mode now enables the no-Boss writer preflight (fan-out On)', async () => {
     const previousConcurrent = process.env.TASKWRAITH_CONCURRENT_LANES
     const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
     process.env.TASKWRAITH_CONCURRENT_LANES = '1'
@@ -22006,10 +22291,17 @@ Next action:
         concurrentMode: true
       })
 
-      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
-      expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('read_only')
-      expect(harness.dispatched[0].prompt).not.toContain('taskwraith_write_claim')
-      expect(Object.values(harness.chat.ensemble?.activeRound?.lanes || {})).toHaveLength(0)
+      // Deliberate widening (2026-09-01): the legacy concurrent boolean means
+      // fan-out On, which for a no-Boss two-writer roster engages the
+      // user-preflight write-claim path (two parallel read-only claim runs)
+      // instead of silently staying serial. The full claim → matrix-ack →
+      // writer-lane flow is pinned by the user-preflight test below.
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
+      expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('all')
+      expect(harness.dispatched[0].prompt).toContain('taskwraith_write_claim')
+      expect(harness.dispatched[1].prompt).toContain('taskwraith_write_claim')
+      expect(harness.dispatched[0].effectivePermissions?.readOnly).toBe(true)
+      expect(harness.dispatched[1].effectivePermissions?.readOnly).toBe(true)
     } finally {
       if (previousConcurrent === undefined) {
         delete process.env.TASKWRAITH_CONCURRENT_LANES
@@ -23823,6 +24115,9 @@ describe('background stage routing', () => {
     // seat's posture and derive task intent from it. Peer/yield-directed BG
     // lanes do not carry that authority and remain read-only clamped.
     const harness = makeHarness()
+    // Pre-completed goal disables Continuous auto-continuation so the round
+    // drains once the BG lane settles, isolating the lane-posture assertions.
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-bg-lane-intent'), status: 'completed' }
     harness.chat.ensemble!.participants = [
       {
         id: 'lead',
@@ -23881,6 +24176,10 @@ describe('background stage routing', () => {
 
   it('appends detached BG completion before draining into a queued round', async () => {
     const harness = makeHarness()
+    // Pre-completed goal disables Continuous auto-continuation; the queued
+    // user prompt still wins at drain (queue absorb ignores goal state), so
+    // the append-order contract this test pins is exercised unchanged.
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-bg-queued'), status: 'completed' }
     harness.chat.ensemble!.participants = [
       {
         id: 'lead',
@@ -24089,6 +24388,9 @@ describe('background stage routing', () => {
 
   it('turns an agent @BG mention into a lane without delaying the next serial seat', async () => {
     const harness = makeHarness()
+    // Pre-completed goal disables Continuous auto-continuation so the round
+    // drains after the BG lane settles, isolating the lane-vs-serial routing.
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-bg-mention'), status: 'completed' }
     harness.chat.ensemble!.bossmanParticipantId = 'lead'
     harness.chat.ensemble!.participants = [
       {
@@ -24128,6 +24430,15 @@ describe('background stage routing', () => {
         content: '@BG run the shell tests while Worker continues.'
       }
     )
+    // Continuous-only: the Boss Lead carries a must-route checkpoint while the
+    // Worker is pending, and a BG-lane mention routes no serial baton. Preserve
+    // the queue explicitly so Lead's completion advances to the Worker instead
+    // of re-summoning Lead.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     completeDispatchedRun(harness, 0)
 
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
@@ -24148,6 +24459,10 @@ describe('background stage routing', () => {
 
   it('can dispatch the same BG seat twice without duplicating either result', async () => {
     const harness = makeHarness()
+    // Pre-completed goal disables Continuous auto-continuation (and the final
+    // synthesis turn) so the round drains after the second BG lane settles,
+    // isolating the double-dispatch dedupe contract.
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-bg-twice'), status: 'completed' }
     harness.chat.ensemble!.bossmanParticipantId = 'lead'
     harness.chat.ensemble!.captainParticipantIds = ['worker']
     harness.chat.ensemble!.participants = [
@@ -24183,6 +24498,14 @@ describe('background stage routing', () => {
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
       { type: 'message', role: 'assistant', delta: true, content: '@BG run first check.' }
     )
+    // Continuous-only: settle the Boss Lead's must-route checkpoint (Worker is
+    // still pending; a BG-lane mention is not a serial routing decision) so
+    // Lead's completion advances to the Worker instead of re-summoning Lead.
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
     completeDispatchedRun(harness, 0)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     const firstBackgroundIndex = harness.dispatched.findIndex(
@@ -25175,6 +25498,19 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
     }))
   }
 
+  // Ingest budgets are window-derived now (shared/ensembleSeatIngest.ts): a
+  // kimi seat carries ~846K chars of shared history, so projection-omission
+  // evidence needs a transcript that genuinely overflows it. ~3.6K per row
+  // stays under the per-message render cap; 260 rows ≈ 936K chars.
+  function overflowingTranscriptRows(count: number): ChatMessage[] {
+    return Array.from({ length: count }, (_, index) => ({
+      id: `message-${index + 1}`,
+      role: 'user' as const,
+      content: `Transcript row ${index + 1} ${'x'.repeat(3_600)}`,
+      timestamp: `2026-05-24T00:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}.000Z`
+    }))
+  }
+
   function harness(opts: {
     participants: EnsembleParticipant[]
     runs: ChatRun[]
@@ -25281,7 +25617,7 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
       participants: [participant({ id: 'kimi', provider: 'kimi' })],
       runs: []
     })
-    h.chat.messages = transcriptRows(18)
+    h.chat.messages = overflowingTranscriptRows(260)
 
     await h.beforeDispatch(h.chat.ensemble!.participants[0])
 
@@ -25375,7 +25711,7 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
       runs: [],
       startClock: 10_000
     })
-    h.chat.messages = transcriptRows(18)
+    h.chat.messages = overflowingTranscriptRows(260)
 
     await h.beforeDispatch(h.chat.ensemble!.participants[0])
     expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
@@ -25410,7 +25746,7 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
         timestamp: '2026-05-24T00:00:00.000Z',
         metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: 'completed-round' }
       },
-      ...transcriptRows(16)
+      ...overflowingTranscriptRows(260)
     ]
 
     h.fire('completed')
@@ -25976,8 +26312,13 @@ describe('terminal-goal pre-emption of the serial queue', () => {
     expect(runtime.remainingParticipants).toHaveLength(0)
   })
 
-  it('turn_bound rounds also pre-empt remaining seats and persist skipped status', async () => {
+  it('legacy turn_bound wire mode normalizes to continuous and still pre-empts with persisted skipped status', async () => {
+    // Continuous-only: 'turn_bound' survives solely as a legacy wire/persistence
+    // value (older chats, rounds, and presets). Seed it on the chat config and
+    // pin that the round runs as 'continuous' anyway while the terminal-goal
+    // sweep and its durable skipped projection behave identically.
     const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'turn_bound'
     harness.chat.activeGoal = buildActiveGoal('goal-tb')
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -25987,7 +26328,8 @@ describe('terminal-goal pre-emption of the serial queue', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     const io = internals(harness.orchestrator)
     const runtime = io.roundsByChatId.get('ensemble-chat')!
-    expect(runtime.orchestrationMode).not.toBe('continuous')
+    expect(runtime.orchestrationMode).toBe('continuous')
+    expect(harness.chat.ensemble?.activeRound?.orchestrationMode).toBe('continuous')
     harness.chat.activeGoal = { ...harness.chat.activeGoal!, status: 'completed' }
     io.preemptRemainingForTerminalGoal.call(
       harness.orchestrator,

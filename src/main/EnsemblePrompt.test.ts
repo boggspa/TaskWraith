@@ -1300,13 +1300,23 @@ describe('Ensemble prompt composition', () => {
       }))
     ]
 
+    // Constrained via the per-model override (the chat-wide chars field is
+    // retired); a Spark seat keeps the 5K bounded-window premise intact.
+    const sparkWorker: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      model: 'gpt-5.3-codex-spark'
+    }
     const projection = buildEnsembleParticipantPromptProjection({
       chat: shared,
-      config: { ...ensemble, ensembleContextChars: 5_000 },
-      participant: ensemble.participants[1],
+      config: {
+        ...ensemble,
+        participants: [ensemble.participants[0], sparkWorker, ensemble.participants[2]]
+      },
+      participant: sparkWorker,
       currentPrompt: 'Please implement this.',
       roundId: 'round-1',
-      chatContextTurns: 20
+      chatContextTurns: 20,
+      modelIngestCharOverrides: { 'codex:gpt-5.3-codex-spark': 5_000 }
     })
 
     expect(projection.prompt).not.toContain('OLD STEER THAT MUST REMAIN UNDELIVERED')
@@ -1333,13 +1343,23 @@ describe('Ensemble prompt composition', () => {
       }))
     ]
 
+    // The external-row cap scales with the seat budget; pin the seat to the
+    // retired 24K default via a Spark override so the F8 cap math is stable.
+    const sparkWorker: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      model: 'gpt-5.3-codex-spark'
+    }
     const prompt = buildEnsembleParticipantPrompt({
       chat: shared,
-      config: ensemble,
-      participant: ensemble.participants[1],
+      config: {
+        ...ensemble,
+        participants: [ensemble.participants[0], sparkWorker, ensemble.participants[2]]
+      },
+      participant: sparkWorker,
       currentPrompt: 'Please implement this.',
       roundId: 'round-1',
-      chatContextTurns: 60
+      chatContextTurns: 60,
+      modelIngestCharOverrides: { 'codex:gpt-5.3-codex-spark': 24_000 }
     })
 
     const included = Array.from({ length: 24 }, (_, index) => `flood body number ${index}`).filter(
@@ -1889,7 +1909,9 @@ describe('Ensemble prompt composition', () => {
   // passing the baton, but nobody was scheduled after them — the
   // failed yield routed back to user as if the round had broken.
   // Now the closer knows they're last + has no yield target.
-  it('marks the last speaker with "last speaker, position N of N" and emits the scoping rule (turn_bound)', () => {
+  it('normalizes a legacy turn_bound config to continuous semantics (no last-speaker rule)', () => {
+    // Continuous-only: the retired turn-bound last-speaker marker/rule must
+    // not resurrect even when an old chat record still says 'turn_bound'.
     const prompt = buildEnsembleParticipantPrompt({
       chat: chat(),
       config: ensemble,
@@ -1899,11 +1921,11 @@ describe('Ensemble prompt composition', () => {
       currentPrompt: 'Close out the round.',
       roundId: 'round-1'
     })
-    expect(prompt).toContain('Gemini / Researcher #p3 (you — last speaker, position 3 of 3)')
-    expect(prompt).toContain('SPEAKING LAST in this turn-bound round')
-    expect(prompt).toContain('position 3 of 3')
-    expect(prompt).toContain('`ensemble_yield(target: ...)` cannot route')
-    expect(prompt).toContain('ensemble_yield(target: "user")')
+    expect(prompt).not.toContain('SPEAKING LAST')
+    expect(prompt).not.toContain('last speaker')
+    expect(prompt).toContain('Gemini / Researcher #p3 (you — position 3 of 3)')
+    expect(prompt).toContain('Round policy: Continuous.')
+    expect(prompt).not.toContain('Turn-bound round:')
     expect(prompt).toContain('Plain `@user`, `@human`, and `@you` mentions address the human')
   })
 
@@ -2725,13 +2747,26 @@ describe('since-last-turn transcript widening', () => {
   })
 
   it('keeps the default window for participants with no prior turn', () => {
+    // Window-derived budgets widen every capable seat; pin this one to the
+    // retired 24K default via a Spark override so the no-unconditional-
+    // widening turn-window mechanics stay observable.
+    const sparkWorker: EnsembleParticipant = {
+      ...ensemble.participants.find((entry) => entry.id === 'codex')!,
+      model: 'gpt-5.3-codex-spark'
+    }
     const prompt = buildEnsembleParticipantPrompt({
       chat: chatWithLongRound(),
-      config: ensemble,
-      participant: ensemble.participants.find((entry) => entry.id === 'codex')!,
+      config: {
+        ...ensemble,
+        participants: ensemble.participants.map((entry) =>
+          entry.id === 'codex' ? sparkWorker : entry
+        )
+      },
+      participant: sparkWorker,
       currentPrompt: 'Continue your work.',
       roundId: 'round-delta-2',
-      chatContextTurns: 2
+      chatContextTurns: 2,
+      modelIngestCharOverrides: { 'codex:gpt-5.3-codex-spark': 24_000 }
     })
     // Codex's own last turn (peer-9) is inside the default window already,
     // so the early claude message stays out — no unconditional widening.
@@ -4341,14 +4376,18 @@ describe('seat compaction summary injection (wave 3)', () => {
 
 describe('Kimi prompt-projection compaction evidence', () => {
   function projectionFixture() {
+    // Budget-boundary mechanics need a CONSTRAINED seat now that ingest is
+    // window-derived: an override-eligible Spark seat pinned to the retired
+    // 24K default reproduces the old turn-window behavior exactly.
     const participant: EnsembleParticipant = {
-      id: 'kimi-seat',
-      provider: 'kimi',
+      id: 'spark-seat',
+      provider: 'codex',
       enabled: true,
       role: 'Worker',
       instructions: 'Work.',
       order: 1,
-      permissionPresetId: 'read_only'
+      permissionPresetId: 'read_only',
+      model: 'gpt-5.3-codex-spark'
     }
     const config: EnsembleConfig = {
       enabled: true,
@@ -4380,7 +4419,8 @@ describe('Kimi prompt-projection compaction evidence', () => {
     return {
       participant,
       config,
-      chat: { ...base, messages, ensemble: config }
+      chat: { ...base, messages, ensemble: config },
+      modelIngestCharOverrides: { 'codex:gpt-5.3-codex-spark': 24_000 }
     }
   }
 
@@ -4723,5 +4763,102 @@ describe('ensemble user custom instructions', () => {
     expect(computeEnsemblePromptShellStamp(ensemble, { instructionsDigest: 'none' })).toBe(
       withoutInstructions
     )
+  })
+})
+
+describe('per-seat ingest budget (window-derived, replaces the chars slider)', () => {
+  const filler = (index: number): ChatMessage => ({
+    id: `filler-${index}`,
+    role: 'assistant',
+    content: `Filler analysis block ${index}. ${'x'.repeat(1_000)}`,
+    timestamp: `2026-05-24T01:${String(index % 60).padStart(2, '0')}:00.000Z`,
+    metadata: {
+      ensembleParticipantId: 'gemini',
+      ensembleProvider: 'gemini',
+      ensembleRole: 'Researcher'
+    }
+  })
+  const bigChat = (): ChatRecord => {
+    const base = chat()
+    return {
+      ...base,
+      messages: [
+        {
+          id: 'oldest',
+          role: 'assistant',
+          content: 'OLDEST_MARKER_ROW anchor for budget tests',
+          timestamp: '2026-05-24T00:30:00.000Z',
+          metadata: {
+            ensembleParticipantId: 'gemini',
+            ensembleProvider: 'gemini',
+            ensembleRole: 'Researcher'
+          }
+        },
+        ...Array.from({ length: 44 }, (_, index) => filler(index))
+      ]
+    }
+  }
+
+  it('gives capable models their full window instead of the retired 24K default', () => {
+    // ~45K chars of panel history. The retired chat-wide default (24K)
+    // dropped the oldest rows; the window-derived budget for a 200K-token
+    // model carries the whole transcript.
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: bigChat(),
+      config: ensemble,
+      participant: ensemble.participants[0],
+      currentPrompt: 'Summarize the panel history.',
+      roundId: 'round-budget-1',
+      chatContextTurns: 6
+    })
+    expect(prompt).toContain('OLDEST_MARKER_ROW')
+  })
+
+  it('defaults Codex Spark to the 50K exception budget and honors its per-model override', () => {
+    const sparkParticipant: EnsembleParticipant = {
+      id: 'spark',
+      provider: 'codex',
+      enabled: true,
+      role: 'Sparky',
+      instructions: 'Fast work.',
+      order: 4,
+      permissionPresetId: 'workspace_write',
+      model: 'gpt-5.3-codex-spark'
+    }
+    const config = { ...ensemble, participants: [...ensemble.participants, sparkParticipant] }
+    // Exception default (50K) still fits the ~45K transcript.
+    const defaulted = buildEnsembleParticipantPrompt({
+      chat: bigChat(),
+      config,
+      participant: sparkParticipant,
+      currentPrompt: 'Summarize the panel history.',
+      roundId: 'round-budget-2',
+      chatContextTurns: 6
+    })
+    expect(defaulted).toContain('OLDEST_MARKER_ROW')
+    // A per-model override (settings `ensembleModelIngestChars`) constrains it.
+    const constrained = buildEnsembleParticipantPrompt({
+      chat: bigChat(),
+      config,
+      participant: sparkParticipant,
+      currentPrompt: 'Summarize the panel history.',
+      roundId: 'round-budget-2',
+      chatContextTurns: 6,
+      modelIngestCharOverrides: { 'codex:gpt-5.3-codex-spark': 5_000 }
+    })
+    expect(constrained).not.toContain('OLDEST_MARKER_ROW')
+  })
+
+  it('ignores the retired per-chat ensembleContextChars field', () => {
+    // Legacy chats still carry the field; it must no longer constrain ingest.
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: bigChat(),
+      config: { ...ensemble, ensembleContextChars: 5_000 },
+      participant: ensemble.participants[0],
+      currentPrompt: 'Summarize the panel history.',
+      roundId: 'round-budget-3',
+      chatContextTurns: 6
+    })
+    expect(prompt).toContain('OLDEST_MARKER_ROW')
   })
 })

@@ -123,7 +123,7 @@ describe('createDefaultEnsembleConfig parity guard', () => {
     // the next cap raise (this assertion sat at 18 after the 18 → 20
     // bump for exactly that reason).
     expect(config.maxParticipants).toBe(MAX_ENSEMBLE_PARTICIPANTS)
-    expect(config.orchestrationMode).toBe('turn_bound')
+    expect(config.orchestrationMode).toBe('continuous')
     expect(config.maxContinuationHops).toBe(6)
     expect(typeof config.updatedAt).toBe('string')
     expect(Number.isNaN(Date.parse(config.updatedAt ?? ''))).toBe(false)

@@ -191,6 +191,21 @@ function makeHarness(
 
 type Harness = ReturnType<typeof makeHarness>
 
+// Continuous-only rounds auto-continue after the roster drains; a completed
+// goal is the established kill-switch that lets a drained round complete
+// (same device as EnsembleOrchestrator.test.ts).
+function seedCompletedGoal(harness: Harness): void {
+  harness.chat.activeGoal = {
+    id: 'goal-steering-complete',
+    objective: 'Already satisfied — the round may close when the roster drains.',
+    status: 'completed',
+    mode: 'taskwraith_steered',
+    provider: 'codex',
+    createdAt: '2026-07-29T03:00:00.000Z',
+    updatedAt: '2026-07-29T03:00:00.000Z'
+  }
+}
+
 function complete(harness: Harness, index: number): void {
   const payload = harness.dispatched[index]
   expect(harness.accepted[index]).toBe(true)
@@ -229,6 +244,7 @@ async function reachFinalLiveSeat(harness: Harness): Promise<string> {
 describe('EnsembleOrchestrator mid-run steering', () => {
   it('absorbs a final-hop interjection and delivers it in the same round', async () => {
     const harness = makeHarness()
+    seedCompletedGoal(harness)
     const roundId = await reachFinalLiveSeat(harness)
 
     expect(
@@ -303,6 +319,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
 
   it('tries another eligible seat when the preferred boundary dispatch is rejected', async () => {
     const harness = makeHarness({ rejectFirstBoundaryDispatch: true })
+    seedCompletedGoal(harness)
     const roundId = await reachFinalLiveSeat(harness)
 
     expect(
@@ -412,6 +429,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       participant('grok-bg', 'grok', 4, { role: 'Background', stageRole: 'background' })
     ]
     const harness = makeHarness({ participants: roster })
+    seedCompletedGoal(harness)
     const started = harness.orchestrator.startRound({
       chatId: CHAT_ID,
       prompt: 'Original round work.',
@@ -632,6 +650,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       participant('grok-bg', 'grok', 4, { role: 'Background', stageRole: 'background' })
     ]
     const harness = makeHarness({ participants: roster })
+    seedCompletedGoal(harness)
     const started = harness.orchestrator.startRound({
       chatId: CHAT_ID,
       prompt: 'Original round work.',
@@ -1337,7 +1356,8 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     ).toEqual({ status: 'steered', roundId: started.roundId })
 
     expect(harness.chat.ensemble?.activeRound?.concurrentMode).toBe(true)
-    expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('read_only')
+    // On/Off collapse: the round's admitted policy reads as On ('all').
+    expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('all')
   })
 
   it('returns to the continuous panel after a message-local handoff to a settled fan-out seat', async () => {

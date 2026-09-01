@@ -218,7 +218,7 @@ describe('EnsembleRosterPresetApply', () => {
           id: 'host-generated',
           createdAt: 1_784_316_912_899,
           updatedAt: 1_784_316_912_899,
-          orchestrationMode: 'turn_bound',
+          orchestrationMode: 'continuous',
           maxParticipants: MAX_ROSTER_PRESET_PARTICIPANTS
         }
       ]

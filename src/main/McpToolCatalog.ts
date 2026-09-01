@@ -3129,7 +3129,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           },
           preset: {
             type: 'object',
-            description: `Preferred for import_preset: one compact roster object. TaskWraith generates id, createdAt, updatedAt, and exportedAt; orchestrationMode defaults to turn_bound and maxParticipants defaults to ${MAX_ENSEMBLE_PARTICIPANTS}. Mutually exclusive with path and json.`,
+            description: `Preferred for import_preset: one compact roster object. TaskWraith generates id, createdAt, updatedAt, and exportedAt; orchestration is always continuous (a legacy turn_bound value is accepted and normalized) and maxParticipants defaults to ${MAX_ENSEMBLE_PARTICIPANTS}. Mutually exclusive with path and json.`,
             properties: {
               name: { type: 'string' },
               orchestrationMode: {

@@ -146,6 +146,8 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
     const harness = makeHarness()
     const input: EnsembleLiveRoundConfigUpdateInput = {
       chatId: 'ensemble-chat',
+      // Continuous-only: a legacy caller may still send 'turn_bound'; it is
+      // accepted on the wire and normalized to 'continuous' everywhere.
       orchestrationMode: 'turn_bound',
       fanoutPolicy: 'off',
       maxContinuationHops: 1
@@ -153,13 +155,13 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
 
     expect(harness.orchestrator.updateLiveRoundConfig(input)).toEqual({
       ok: true,
-      orchestrationMode: 'turn_bound',
+      orchestrationMode: 'continuous',
       fanoutPolicy: 'off',
       maxContinuationHops: 1,
       activeRoundUpdated: true
     })
     expect(harness.runtime).toMatchObject({
-      orchestrationMode: 'turn_bound',
+      orchestrationMode: 'continuous',
       fanoutPolicy: 'off',
       concurrentMode: undefined,
       maxContinuationHops: 1,
@@ -167,14 +169,14 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
       continuationLimitPending: false
     })
     expect(harness.chat.ensemble).toMatchObject({
-      orchestrationMode: 'turn_bound',
+      orchestrationMode: 'continuous',
       fanoutPolicy: 'off',
       concurrentModeEnabled: false,
       maxContinuationHops: 1
     })
     expect(harness.chat.ensemble?.activeRound).toMatchObject({
       roundId: 'round-1',
-      orchestrationMode: 'turn_bound',
+      orchestrationMode: 'continuous',
       fanoutPolicy: 'off',
       concurrentMode: undefined,
       maxContinuationHops: 1
@@ -190,6 +192,9 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
             before: 12,
             after: 1,
             actor: 'user',
+            // 073cc60d2 added the event discriminator to the producer; this
+            // expectation had gone stale (red at HEAD) without it.
+            event: 'limit',
             changedAt: '2026-07-29T00:00:42.000Z'
           }
         }
@@ -230,11 +235,12 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
     expect(
       harness.orchestrator.updateLiveRoundConfig({
         chatId: 'ensemble-chat',
+        // Legacy graded value on the wire — collapses to On ('all').
         fanoutPolicy: 'read_only'
       })
-    ).toMatchObject({ ok: true, fanoutPolicy: 'read_only', activeRoundUpdated: true })
+    ).toMatchObject({ ok: true, fanoutPolicy: 'all', activeRoundUpdated: true })
     expect(harness.chat.ensemble?.activeRound).toMatchObject({
-      fanoutPolicy: 'read_only',
+      fanoutPolicy: 'all',
       concurrentMode: true
     })
   })

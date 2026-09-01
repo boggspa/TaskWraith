@@ -10,6 +10,7 @@ import { MIN_INSPECTOR_PANEL_WIDTH, MAX_INSPECTOR_PANEL_WIDTH } from '../../shar
 import { normalizeDiffStatColors } from '../../shared/diffStatColors'
 import { normalizeThemeAccentColor } from '../../shared/themeAccentColor'
 import { normalizeAgentThemeTokenOverrides } from '../../shared/agentThemeTokens'
+import { clampEnsembleIngestOverrideChars } from '../../shared/ensembleSeatIngest'
 import { ACTIVITY_ARCHETYPES, sanitizeBannerTemplate } from '../../shared/bannerTemplate'
 import type { ActivityArchetype } from '../../shared/bannerTemplate'
 import type {
@@ -98,7 +99,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 const AGENTIC_WORKSPACE_GRANT_PROVIDER_IDS = new Set<AgenticWorkspaceGrantProviderId>([
   ...PROVIDER_IDS,
@@ -140,6 +142,27 @@ const GRANTABLE_AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'mediaEditing',
   'webBrowsing'
 ])
+/**
+ * Renderer-writable per-model ingest overrides (`provider:modelId` → chars).
+ * Normalize on WRITE: bounded entry count, sane keys, clamped finite values —
+ * an arbitrary object must never reach disk through the generic patch lane.
+ */
+function normalizeEnsembleModelIngestChars(value: unknown): Record<string, number> | undefined {
+  if (value === null) return undefined
+  if (typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out: Record<string, number> = {}
+  let kept = 0
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (kept >= 200) break
+    if (!/^[a-z0-9_-]+:.{1,200}$/i.test(key)) continue
+    const num = typeof raw === 'number' ? raw : Number(raw)
+    if (!Number.isFinite(num) || num <= 0) continue
+    out[key] = clampEnsembleIngestOverrideChars(num)
+    kept += 1
+  }
+  return kept > 0 ? out : undefined
+}
+
 const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'activeProvider',
   'midRunInputBehavior',
@@ -152,6 +175,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'ollamaBaseUrl',
   'ollamaDefaultModel',
   'piCerebrasMaxCompletionTokens',
+  'ensembleModelIngestChars',
   'apiUsageBilling',
   'antigravityEnabled',
   'antigravityOptInAcceptedAt',
@@ -314,7 +338,8 @@ export function availableProviderIds(): ProviderId[] {
     'antigravity',
     'pi',
     'mistral',
-    'muse'
+    'muse',
+    'devin'
   ]
 }
 
@@ -807,7 +832,8 @@ const AUDIT_PROVIDER_IDS = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 
 /** Sanitize the audit orchestration policy: drop unknown providers, clamp the
@@ -1773,6 +1799,11 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('apiUsageBilling' in sanitized) {
       sanitized.apiUsageBilling = normalizeApiUsageBillingSettings(sanitized.apiUsageBilling)
+    }
+    if ('ensembleModelIngestChars' in sanitized) {
+      sanitized.ensembleModelIngestChars = normalizeEnsembleModelIngestChars(
+        sanitized.ensembleModelIngestChars
+      )
     }
     if ('themeAppearance' in sanitized && typeof sanitized.themeAppearance === 'string') {
       sanitized.themeAppearance = normalizeSystemThemeAppearance(sanitized.themeAppearance)

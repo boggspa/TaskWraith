@@ -872,6 +872,33 @@ describe('MainSanitizers settings patches', () => {
     resetAntigravityGeminiApiKeyConfiguredProbeForTests()
   })
 
+  it('admits ensembleModelIngestChars through the patch lane, clamped and key-checked', () => {
+    const { sanitizeSettingsPatch } = makeSanitizers(makeSettings())
+    const sanitized = sanitizeSettingsPatch({
+      ensembleModelIngestChars: {
+        'codex:gpt-5.3-codex-spark': 120_000,
+        'ollama:qwen3:4b': 10_000_000,
+        'ollama:gemma4:12b': '40000',
+        'no-colon-key': 30_000,
+        'ollama:bad-value': Number.NaN
+      }
+    })
+    expect(sanitized.ensembleModelIngestChars).toEqual({
+      'codex:gpt-5.3-codex-spark': 120_000,
+      // Clamped to the override slider ceiling.
+      'ollama:qwen3:4b': 256_000,
+      // Numeric strings coerce; junk keys/values are dropped.
+      'ollama:gemma4:12b': 40_000
+    })
+    // Clearing the map serializes as absent, and junk shapes never reach disk.
+    expect(sanitizeSettingsPatch({ ensembleModelIngestChars: null }).ensembleModelIngestChars).toBe(
+      undefined
+    )
+    expect(
+      sanitizeSettingsPatch({ ensembleModelIngestChars: [1, 2, 3] }).ensembleModelIngestChars
+    ).toBe(undefined)
+  })
+
   it('preserves a wide dragged inspector width instead of re-clamping it at persistence', () => {
     const { sanitizeSettingsPatch } = makeSanitizers(makeSettings())
     // A canvas-wide dock (Mesh scenes, desktop-style Browser work) must survive

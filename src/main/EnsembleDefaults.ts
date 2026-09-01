@@ -238,7 +238,7 @@ export function createDefaultEnsembleConfig(
     // of at most 5, so even a fully-loaded participant panel
     // stays navigable in balanced rows. Hard min on the remove path is 2.
     maxParticipants: MAX_ENSEMBLE_PARTICIPANTS,
-    orchestrationMode: 'turn_bound',
+    orchestrationMode: 'continuous',
     maxContinuationHops: 6,
     participants,
     bossmanParticipantId: participants[0]?.id,

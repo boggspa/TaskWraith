@@ -262,10 +262,12 @@ function ensembleForChat(chat: ChatRecord): TaskWraithControlEnsembleSummary | u
     const status = roundById.get(participant.id)?.status
     return !status || ['idle', 'pending', 'queued'].includes(status)
   })
-  const fanout =
+  const rawFanout =
     round?.fanoutPolicy ??
     config.fanoutPolicy ??
-    (round?.concurrentMode || config.concurrentModeEnabled ? 'read_only' : 'off')
+    (round?.concurrentMode || config.concurrentModeEnabled ? 'all' : 'off')
+  // On/Off collapse: legacy graded levels project as On ('all').
+  const fanout = rawFanout === 'off' ? 'off' : 'all'
   const presetName = config.activeRosterPresetId
     ? getCachedRemoteEnsemblePresets().find((preset) => preset.id === config.activeRosterPresetId)
         ?.name
@@ -278,7 +280,7 @@ function ensembleForChat(chat: ChatRecord): TaskWraithControlEnsembleSummary | u
     .sort((a, b) => a.order - b.order)
   return {
     preset: presetName || 'Custom',
-    mode: round?.orchestrationMode ?? config.orchestrationMode ?? 'turn-bound',
+    mode: 'continuous',
     fanout,
     continuationHops: round?.continuationHops ?? 0,
     maxContinuationHops: round?.maxContinuationHops ?? config.maxContinuationHops ?? 0,

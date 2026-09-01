@@ -101,7 +101,7 @@ export function buildAgentRosterPresetExportFromDraft(
     exportedAt: new Date(metadata.now).toISOString(),
     presets: [
       {
-        orchestrationMode: 'turn_bound',
+        orchestrationMode: 'continuous',
         maxParticipants: MAX_ROSTER_PRESET_PARTICIPANTS,
         ...preset,
         id: metadata.id,
@@ -156,16 +156,18 @@ function fail(
 }
 
 function normalizedFanoutPolicy(preset: EnsembleRosterPreset): EnsembleFanoutPolicy {
+  // Fan-out collapsed to On/Off (On = the old 'all'); the retired graded
+  // levels and the legacy boolean concurrent flag normalize on apply.
+  if (preset.fanoutPolicy === 'off') return 'off'
   if (
-    preset.fanoutPolicy === 'off' ||
     preset.fanoutPolicy === 'read_only' ||
     preset.fanoutPolicy === 'all' ||
     preset.fanoutPolicy === 'locked_writers_with_boss' ||
     preset.fanoutPolicy === 'locked_writers_user_preflight'
   ) {
-    return preset.fanoutPolicy
+    return 'all'
   }
-  return preset.concurrentModeEnabled === true ? 'read_only' : 'off'
+  return preset.concurrentModeEnabled === true ? 'all' : 'off'
 }
 
 function validatePortableParticipant(
@@ -482,7 +484,8 @@ export function buildEnsembleRosterPresetApply(
         ? { secondInCommandParticipantId: captainParticipantIds[0] }
         : {}),
       orchestrationMode:
-        preset.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound',
+        // Continuous-only: legacy 'turn_bound' presets normalize on apply.
+        'continuous',
       fanoutPolicy: normalizedFanoutPolicy(preset),
       maxParticipants,
       maxContinuationHops,
@@ -631,7 +634,7 @@ export function agentRosterPresetContractGuide(activeProvider?: ProviderId): Rec
       requiredPresetFields: ['name', 'participants'],
       hostGeneratedFields: ['id', 'createdAt', 'updatedAt', 'exportedAt'],
       hostDefaults: {
-        orchestrationMode: 'turn_bound',
+        orchestrationMode: 'continuous',
         maxParticipants: MAX_ROSTER_PRESET_PARTICIPANTS
       },
       note:
@@ -647,12 +650,12 @@ export function agentRosterPresetContractGuide(activeProvider?: ProviderId): Rec
       briefField: 'instructions'
     },
     settings: {
-      orchestrationMode: ['turn_bound', 'continuous'],
+      orchestrationMode:
+        "always 'continuous' (a legacy 'turn_bound' value is accepted and normalized)",
       fanoutPolicy: {
         Off: 'off',
-        Read: 'read_only',
-        Write: 'locked_writers_with_boss',
-        All: 'all'
+        On: 'all',
+        note: "Legacy 'read_only' / 'locked_writers_*' values are accepted and normalize to 'all'."
       },
       maxContinuationHops: `1-${AGENT_ROSTER_MAX_CONTINUATION_HOPS}`,
       ensembleContextChars: `${AGENT_ROSTER_CONTEXT_MIN_CHARS}-${AGENT_ROSTER_CONTEXT_MAX_CHARS}`

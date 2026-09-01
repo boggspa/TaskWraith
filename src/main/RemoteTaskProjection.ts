@@ -1678,7 +1678,9 @@ export function buildRemoteEnsembleState(
     threadId: chat.appChatId,
     roundId: activeRound?.roundId,
     status: projectedRoundStatus,
-    orchestrationMode: activeRound?.orchestrationMode ?? ensemble.orchestrationMode,
+    // Continuous-only: legacy records may still say 'turn_bound'; the phone
+    // should never render a mode the desktop can no longer run.
+    orchestrationMode: 'continuous',
     activeParticipantId:
       projectedRoundStatus === 'running' ? activeRound?.activeParticipantId : undefined,
     ...(() => {

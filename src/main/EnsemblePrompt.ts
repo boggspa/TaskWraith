@@ -44,6 +44,11 @@ import {
   OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS,
   resolveOllamaEnsembleTranscriptCharsForBudget
 } from './ollama/OllamaEnsembleContext'
+import {
+  ENSEMBLE_SEAT_INGEST_MAX_CHARS,
+  ENSEMBLE_SEAT_INGEST_MIN_CHARS,
+  resolveEnsembleSeatIngestChars
+} from '../shared/ensembleSeatIngest'
 
 export { OLLAMA_ENSEMBLE_MAX_CONTEXT_TURNS, OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS }
 // 1.0.5-EW18 — Pull canonical alias set from the shared resolver so
@@ -132,6 +137,15 @@ export interface BuildEnsemblePromptInput {
   currentPromptMessageId?: string
   roundId: string
   chatContextTurns?: number
+  /**
+   * `AppSettings.ensembleModelIngestChars` — per-model shared-history ingest
+   * overrides (keys `provider:modelId`), honored only for the override-eligible
+   * model classes (Codex GPT-5.3 Spark, 4B–12B Ollama locals). Every other
+   * seat derives its ingest budget from its model's context window; the
+   * retired per-chat `ensembleContextChars` field is ignored. See
+   * `shared/ensembleSeatIngest.ts`.
+   */
+  modelIngestCharOverrides?: Readonly<Record<string, number>> | null
   /**
    * 1.0.4-AK6 — structured briefs recorded by participants during
    * a just-completed parallel fan-out pass. When present, the
@@ -294,7 +308,10 @@ export function computeEnsemblePromptShellStamp(
     authority.captainParticipantIds.join(','),
     config.synthesizerParticipantId || '',
     config.roundMode || 'roundtable',
-    config.orchestrationMode || 'turn_bound',
+    // Continuous-only: the mode is no longer configurable, so the digest input
+    // is a constant. Keeping the slot preserves stamp ordering; legacy
+    // 'turn_bound' chats re-brief once when they first run continuous.
+    'continuous',
     // Review F2: /discuss rounds flip the deictic rule; fan-out policy and
     // concurrent mode change the parallel-policy lines.
     config.selfReflective ? 'self-reflective' : '',
@@ -1110,8 +1127,8 @@ export function buildEnsembleParticipantPromptProjection(
       '- You may launch targeted listed fan-out, redirect with `ensemble_yield(target)`, or call `ensemble_control` with an explicit participant/role selection. If the tag was only informational, call `skip_intervention` when that control is listed, or say that you are preserving the queue; do not guess or fan out broadly.'
     ]
   })()
-  const orchestrationMode =
-    input.config.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
+  // Continuous-only: every round is Continuous; legacy 'turn_bound' records
+  // normalize away rather than resurrecting turn-bound prompt stanzas.
   const antigravityGoalLifecycleFallback = (() => {
     if (promptTransportProfile !== 'antigravity-official-agy') return undefined
     const authority = normalizeEnsembleAuthority(input.config)
@@ -1135,20 +1152,15 @@ export function buildEnsembleParticipantPromptProjection(
   )
   const maxContinuationHops = input.config.maxContinuationHops || 6
   const continuationHops = input.config.activeRound?.continuationHops || 0
-  // 1.0.4 — speaker-position awareness. First + last participants
-  // in a multi-participant turn-bound round get extra nudges so the
-  // panel doesn't lopside: the opener scopes rather than executing
-  // through (1.0.4-Y), and the closer knows there's nobody left to
-  // yield to so they should either close cleanly or deliberately yield
-  // to `user` instead of bouncing an invalid participant target off the
-  // end of the rotation (1.0.4-AJ).
-  //
-  // Continuous-mode rounds don't have a fixed "last" speaker — the round
-  // AUTO-CONTINUES (re-dispatches the roster each pass, consuming hops) until
-  // the goal/tasks are marked complete (or blocked/paused), the hop budget is
-  // exhausted, or the user stops it (see the continuous-mode round-policy line
-  // + rule below, and `tryAutoContinueRound` in EnsembleOrchestrator). So the
-  // fixed last-speaker marker is skipped in continuous mode.
+  // 1.0.4 — speaker-position awareness. The opening participant of a
+  // multi-participant round gets a scoping nudge so it frames the work
+  // instead of executing through (1.0.4-Y). Rounds are Continuous-only now:
+  // there is no fixed "last" speaker — the round AUTO-CONTINUES
+  // (re-dispatches the roster each pass, consuming hops) until the
+  // goal/tasks are marked complete (or blocked/paused), the hop budget is
+  // exhausted, or the user stops it (see the round-policy line + rule below,
+  // and `tryAutoContinueRound` in EnsembleOrchestrator) — so the retired
+  // turn-bound last-speaker marker/rule are gone with the mode picker.
   const rotationParticipants = orderedParticipants.filter(
     (participant) => participant.stageRole !== 'background'
   )
@@ -1160,23 +1172,16 @@ export function buildEnsembleParticipantPromptProjection(
   const positionOneIndexed = selfIndex >= 0 ? selfIndex + 1 : 0
   const isFirstSpeaker =
     isMultiParticipantRound && rotationParticipants[0]?.id === input.participant.id
-  const isLastSpeaker =
-    isMultiParticipantRound &&
-    orchestrationMode === 'turn_bound' &&
-    selfIndex === totalParticipants - 1
-  // 1.0.4-AJ — continuous-mode hop-budget awareness. When the round
-  // is in continuous mode and the running hop count is at-or-near
-  // the cap, the closer can choose to close even though there's no
-  // fixed final turn. Surface "X hops remaining" so the speaker can
-  // weigh another yield vs. closing to user.
-  const continuousHopsRemaining =
-    orchestrationMode === 'continuous' ? Math.max(0, maxContinuationHops - continuationHops) : null
-  const isContinuousNearCap = continuousHopsRemaining !== null && continuousHopsRemaining <= 1
+  // 1.0.4-AJ — hop-budget awareness. When the running hop count is
+  // at-or-near the cap, the speaker can choose to close even though
+  // there's no fixed final turn. Surface "X hops remaining" so the
+  // speaker can weigh another yield vs. closing to user.
+  const continuousHopsRemaining = Math.max(0, maxContinuationHops - continuationHops)
+  const isContinuousNearCap = continuousHopsRemaining <= 1
   const roster = orderedParticipants
     .map((participant) => {
       const isSelf = participant.id === input.participant.id
       const isFirstInList = participant.id === rotationParticipants[0]?.id
-      const isLastInList = participant.id === rotationParticipants[totalParticipants - 1]?.id
       // Position marker accompanies the "(you)" tag. First/last
       // markers give the model a contextual cue beyond the rule
       // lines further down — useful even when the participant
@@ -1186,8 +1191,6 @@ export function buildEnsembleParticipantPromptProjection(
       if (isSelf) {
         if (isFirstSpeaker && isFirstInList) {
           marker = ' (you — first speaker)'
-        } else if (isLastSpeaker && isLastInList) {
-          marker = ` (you — last speaker, position ${positionOneIndexed} of ${totalParticipants})`
         } else if (isMultiParticipantRound && positionOneIndexed > 0 && totalParticipants >= 3) {
           marker = ` (you — position ${positionOneIndexed} of ${totalParticipants})`
         } else {
@@ -1344,16 +1347,20 @@ export function buildEnsembleParticipantPromptProjection(
   // Threaded into the tagged-transcript builder so every
   // `[Provider / Role #pN]` header carries the same handle the
   // roster + self-label use.
+  // Window-derived per-seat ingest budget (the chat-wide Chars slider is
+  // retired). Ollama seats feed the request through their model-aware clamp
+  // below, so a window-derived or overridden request can only shrink there.
+  const seatIngest = resolveEnsembleSeatIngestChars({
+    provider: input.participant.provider,
+    modelId: input.participant.model,
+    overrides: input.modelIngestCharOverrides
+  })
   const ollamaTranscriptBudget = isOllamaParticipant
-    ? resolveOllamaEnsembleTranscriptBudget(
-        input.config.ensembleContextChars,
-        input.chatContextTurns,
-        {
-          modelId: input.participant.model,
-          promptShellChars: 5_800,
-          toolsEnabled: input.chat.scope !== 'global'
-        }
-      )
+    ? resolveOllamaEnsembleTranscriptBudget(seatIngest.chars, input.chatContextTurns, {
+        modelId: input.participant.model,
+        promptShellChars: 5_800,
+        toolsEnabled: input.chat.scope !== 'global'
+      })
     : null
   // Host-side SEAT compaction: current Kimi/Grok seats can carry a durable
   // bounded summary. Cursor Path-B is live, but is not a host-seat compaction
@@ -1369,7 +1376,7 @@ export function buildEnsembleParticipantPromptProjection(
     seatCompactionSummary?.provenance
   ) as ChatMessage[]
   const seatTranscriptChars = resolveSeatTranscriptChars(
-    ollamaTranscriptBudget?.contextChars ?? input.config.ensembleContextChars,
+    ollamaTranscriptBudget?.contextChars ?? seatIngest.chars,
     seatSummaryBlock
   )
   // A custom prompt label means the final request block is a derived or
@@ -1414,10 +1421,7 @@ export function buildEnsembleParticipantPromptProjection(
       input.scoutBriefs && input.scoutBriefs.length > 0
         ? formatScoutBriefsForPrompt(input.scoutBriefs)
         : undefined
-    const compactRoundPolicy =
-      orchestrationMode === 'continuous'
-        ? `Continuous round: follow the current assignment, then ${canCompleteRootGoal ? 'complete the root Goal only after every required assignment/gate is finished' : 'report this seat-owned contribution and hand it to the Boss/Captain; do not complete the root Goal'}; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
-        : 'Turn-bound round: answer this assignment once; route a specific remaining participant only through a listed lifecycle handoff or unique @Role/@Model mention.'
+    const compactRoundPolicy = `Continuous round: follow the current assignment, then ${canCompleteRootGoal ? 'complete the root Goal only after every required assignment/gate is finished' : 'report this seat-owned contribution and hand it to the Boss/Captain; do not complete the root Goal'}; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
     const compactParallelPolicy = activeConcurrentMode
       ? hasWriteIntentLane
         ? 'Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it.'
@@ -1479,10 +1483,7 @@ export function buildEnsembleParticipantPromptProjection(
       input.scoutBriefs && input.scoutBriefs.length > 0
         ? formatScoutBriefsForPrompt(input.scoutBriefs)
         : undefined
-    const compactRoundPolicy =
-      orchestrationMode === 'continuous'
-        ? `Continuous round: follow the current assignment, then ${canCompleteRootGoal ? 'complete the root Goal only after every required assignment/gate is finished' : 'report this seat-owned contribution and hand it to the Boss/Captain; do not complete the root Goal'}; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
-        : 'Turn-bound round: answer this assignment once; route a specific remaining participant only through a listed lifecycle handoff or unique @Role/@Model mention.'
+    const compactRoundPolicy = `Continuous round: follow the current assignment, then ${canCompleteRootGoal ? 'complete the root Goal only after every required assignment/gate is finished' : 'report this seat-owned contribution and hand it to the Boss/Captain; do not complete the root Goal'}; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
     const compactParallelPolicy = activeConcurrentMode
       ? hasWriteIntentLane
         ? 'Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it.'
@@ -1639,16 +1640,12 @@ export function buildEnsembleParticipantPromptProjection(
         ]
       : []),
     `Round id: ${input.roundId}`,
-    `Round policy: ${
-      orchestrationMode === 'continuous'
-        ? `Continuous. This round CONTINUES AUTONOMOUSLY: after every participant has spoken it re-dispatches the roster for another pass and keeps going until the goal/tasks are complete and marked complete, the handoff-hop budget is exhausted (${continuationHops}/${maxContinuationHops} used), a permission approval stalls it, or the user stops it. Steer ordering with a unique @Role/@Model mention, or with ensemble_yield(target) only when that tool is listed. ${
-            advisoryTurnBoundary
-              ? 'As an advisory seat, report your bounded result and hand off; do not end the round or complete the active goal unless the advisory fallback boundary below explicitly permits takeover.'
-              : canCompleteRootGoal
-                ? 'To END the round, finish and verify every required assignment/gate, then mark the root Goal complete when that lifecycle tool is listed — restating "done" WITHOUT completing the Goal just loops another pass.'
-                : 'Finish and verify only your seat-owned contribution, update/report its status, and hand evidence to the Boss/Captain. Do not call a root Goal lifecycle tool.'
-          }`
-        : 'Turn-bound. Each participant speaks at most once; unique @Role/@Model mentions reorder participants who have not spoken yet. Use ensemble_yield(target) only when that tool is listed.'
+    `Round policy: Continuous. This round CONTINUES AUTONOMOUSLY: after every participant has spoken it re-dispatches the roster for another pass and keeps going until the goal/tasks are complete and marked complete, the handoff-hop budget is exhausted (${continuationHops}/${maxContinuationHops} used), a permission approval stalls it, or the user stops it. Steer ordering with a unique @Role/@Model mention, or with ensemble_yield(target) only when that tool is listed. ${
+      advisoryTurnBoundary
+        ? 'As an advisory seat, report your bounded result and hand off; do not end the round or complete the active goal unless the advisory fallback boundary below explicitly permits takeover.'
+        : canCompleteRootGoal
+          ? 'To END the round, finish and verify every required assignment/gate, then mark the root Goal complete when that lifecycle tool is listed — restating "done" WITHOUT completing the Goal just loops another pass.'
+          : 'Finish and verify only your seat-owned contribution, update/report its status, and hand evidence to the Boss/Captain. Do not call a root Goal lifecycle tool.'
     }`,
     ...(authorityRoutingLines.length > 0 ? ['', ...authorityRoutingLines] : []),
     activeConcurrentMode
@@ -1851,31 +1848,10 @@ export function buildEnsembleParticipantPromptProjection(
           '- You are SPEAKING FIRST in a multi-participant round. Do not complete the whole task on the opening turn. Your default job is to frame the problem, identify ownership, do bounded recon/planning for your own role, and route peer-owned work with a unique @Role/@Model mention or with listed ensemble_yield(target). A normal coding request is not enough by itself to bypass the panel; full implementation, broad shell/file work, and large edits should wait until the relevant Lead/Boss/user direction or the appropriate worker turn unless the user explicitly asked this participant to execute immediately.'
         ]
       : []),
-    // 1.0.4-AJ — last-speaker scoping rule. Mirror of the first-
-    // speaker rule, addressing the "Gemini tries to yield to Codex
-    // on its final turn and the yield fails → bounces back to user"
-    // failure mode. Without this rule the final speaker had no way
-    // to know they were last: they'd reach for `ensemble_yield(target:
-    // ...)` thinking they were passing the baton, but in turn_bound
-    // mode there's nobody after them in the rotation and the
-    // orchestrator routes the failed yield back to the user. Now
-    // the closer knows: no more participants are scheduled — either
-    // close cleanly (final summary / observation / no extra agent
-    // work needed) or explicitly yield to `user` for a follow-up question. Risk
-    // noted: agents could theoretically abuse turn-position
-    // awareness to manipulate flow (e.g. always extending). User
-    // will monitor over time; trust-but-verify.
-    ...(isLastSpeaker
-      ? [
-          `- You are SPEAKING LAST in this turn-bound round (position ${positionOneIndexed} of ${totalParticipants}). No further participants are scheduled — a listed \`ensemble_yield(target: ...)\` cannot route to another panelist this round. Either close with a final observation / summary / decision OR, when listed, call \`ensemble_yield(target: "user")\` if you have a question the user should answer next. Otherwise ask it visibly. Avoid attempting a participant yield that has nowhere to land.`
-        ]
-      : []),
-    // 1.0.4-AJ — continuous-mode hop-budget awareness. When the
-    // hop counter is near the cap, surface the remaining-hops count
-    // so the speaker can decide whether to close gracefully vs.
-    // hand off again. Skipped in turn_bound (rotation already
-    // bounds the round) and skipped when there's plenty of budget
-    // left (no signal needed yet).
+    // 1.0.4-AJ — hop-budget awareness. When the hop counter is near
+    // the cap, surface the remaining-hops count so the speaker can
+    // decide whether to close gracefully vs. hand off again. Skipped
+    // when there's plenty of budget left (no signal needed yet).
     ...(isContinuousNearCap
       ? [
           `- Continuation-hop budget is nearly exhausted: ${continuousHopsRemaining} extra handoff${
@@ -2279,12 +2255,16 @@ function projectTaggedTranscript(
     deltaOnly?: boolean
   }
 ): TaggedTranscriptProjection {
-  // Total shared-transcript char budget — user-adjustable per ensemble
-  // (5K–256K via the Turn picker); falls back to the default cap. This is the
-  // real lever: it drives BOTH how many recent messages we walk and the hard
-  // cap, so a bigger budget genuinely surfaces more panel history rather than
-  // being silently capped by the turn-count.
-  const maxChars = Math.min(256_000, Math.max(5_000, contextChars ?? MAX_TRANSCRIPT_CHARS))
+  // Total shared-transcript char budget — window-derived per seat since the
+  // chat-wide Chars slider retired (see shared/ensembleSeatIngest.ts). This is
+  // the real lever: it drives BOTH how many recent messages we walk and the
+  // hard cap, so a bigger budget genuinely surfaces more panel history rather
+  // than being silently capped by the turn-count. The ceiling admits a fully
+  // used ~1.1M-token window (~4M chars).
+  const maxChars = Math.min(
+    ENSEMBLE_SEAT_INGEST_MAX_CHARS,
+    Math.max(ENSEMBLE_SEAT_INGEST_MIN_CHARS, contextChars ?? MAX_TRANSCRIPT_CHARS)
+  )
   // The default budget keeps the historical turn-window (contextTurns*2). A
   // raised budget widens the window enough to actually fill it (~600 chars/line
   // estimate), floored at the turn-window.
@@ -2581,6 +2561,7 @@ export function findUncoveredEnsemblePromptMessageIds(input: {
   participant: EnsembleParticipant
   chatContextTurns?: number
   excludeEnsembleRoundPromptRoundId?: string
+  modelIngestCharOverrides?: Readonly<Record<string, number>> | null
 }): string[] {
   const seatSummaryBlock = buildSeatCompactionSummaryBlock(input.participant)
   const seatTranscriptMessages = pruneContiguousCompactionPrefix(
@@ -2591,7 +2572,16 @@ export function findUncoveredEnsemblePromptMessageIds(input: {
     seatTranscriptMessages,
     input.chatContextTurns ?? 6,
     buildParticipantTokenMap(input.config.participants),
-    resolveSeatTranscriptChars(input.config.ensembleContextChars, seatSummaryBlock),
+    resolveSeatTranscriptChars(
+      // Mirror the live prompt's window-derived per-seat budget exactly, so
+      // this omission evidence cannot drift from what the seat really saw.
+      resolveEnsembleSeatIngestChars({
+        provider: input.participant.provider,
+        modelId: input.participant.model,
+        overrides: input.modelIngestCharOverrides
+      }).chars,
+      seatSummaryBlock
+    ),
     buildDupProviderModelLabels(input.config.participants),
     input.participant.id,
     input.excludeEnsembleRoundPromptRoundId

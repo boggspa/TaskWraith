@@ -2178,10 +2178,17 @@ function resolveEnsembleFanoutPolicy(
     concurrentMode?: boolean
     concurrentModeEnabled?: boolean
   }
-  if (isEnsembleFanoutPolicy(raw.fanoutPolicy)) return raw.fanoutPolicy
-  if (raw.concurrentMode === true) return 'read_only'
-  if (raw.concurrentModeEnabled === true) {
-    return 'read_only'
+  // Fan-out is On/Off now (2026-09-01): On carries the old 'all' semantics —
+  // read/review waves plus writer lanes (Boss writeScopes or user preflight,
+  // resolved at dispatch). The retired 'read_only' / 'locked_writers_*'
+  // levels and the legacy concurrent booleans all collapse to 'all'; every
+  // per-lane write gate (writeScopes admission, preflight, workspace locks)
+  // is policy-independent and unchanged.
+  if (isEnsembleFanoutPolicy(raw.fanoutPolicy)) {
+    return raw.fanoutPolicy === 'off' ? 'off' : 'all'
+  }
+  if (raw.concurrentMode === true || raw.concurrentModeEnabled === true) {
+    return 'all'
   }
   return 'off'
 }
@@ -4157,9 +4164,14 @@ export class EnsembleOrchestrator {
         ? chat.ensemble
         : { maxContinuationHops: activeRound?.maxContinuationHops }
     )
-    const orchestrationMode =
-      input.orchestrationMode ?? resolveEnsembleOrchestrationMode(chat.ensemble)
-    const fanoutPolicy = input.fanoutPolicy ?? resolveEnsembleFanoutPolicy(chat.ensemble)
+    // Continuous-only: a legacy caller may still send 'turn_bound' (validated
+    // above for wire tolerance) but the stored/runtime mode is always
+    // Continuous now.
+    const orchestrationMode = resolveEnsembleOrchestrationMode(chat.ensemble)
+    const fanoutPolicy =
+      input.fanoutPolicy !== undefined
+        ? resolveEnsembleFanoutPolicy({ fanoutPolicy: input.fanoutPolicy })
+        : resolveEnsembleFanoutPolicy(chat.ensemble)
     const maxContinuationHops =
       input.maxContinuationHops === undefined
         ? resolveMaxContinuationHops(chat.ensemble)
@@ -15090,7 +15102,9 @@ export class EnsembleOrchestrator {
       ...(legacyQueuedPrompts.length
         ? { quarantinedLegacyQueuedPrompts: legacyQueuedPrompts }
         : {}),
-      orchestrationMode: round.orchestrationMode || chat.ensemble.orchestrationMode || 'turn_bound',
+      // Continuous-only: recovered rounds re-stamp Continuous even when the
+      // interrupted round predates the Turn-mode retirement.
+      orchestrationMode: 'continuous',
       fanoutPolicy: recoveredFanoutPolicy,
       ...(fanoutPolicyEnablesConcurrent(recoveredFanoutPolicy) ? { concurrentMode: true } : {}),
       continuationHops: round.continuationHops || 0,
@@ -17311,6 +17325,7 @@ export class EnsembleOrchestrator {
         // (or undefined) skips the section entirely.
         scoutBriefs: runtime.scoutBriefs,
         slimTurn,
+        modelIngestCharOverrides: this.deps.getSettings().ensembleModelIngestChars,
         dynamicStateSnapshot,
         effectiveApprovalMode: permissions.approvalMode,
         authorityRoutingCheckpoint: run.authorityRoutingCheckpoint,
@@ -17346,6 +17361,7 @@ export class EnsembleOrchestrator {
               chatContextTurns,
               scoutBriefs: runtime.scoutBriefs,
               slimTurn: false,
+              modelIngestCharOverrides: this.deps.getSettings().ensembleModelIngestChars,
               dynamicStateSnapshot,
               effectiveApprovalMode: permissions.approvalMode,
               authorityRoutingCheckpoint: run.authorityRoutingCheckpoint,
@@ -19904,6 +19920,7 @@ export class EnsembleOrchestrator {
           : undefined,
         roundId: runtime.roundId,
         chatContextTurns,
+        modelIngestCharOverrides: this.deps.getSettings().ensembleModelIngestChars,
         dynamicStateSnapshot,
         effectiveApprovalMode: permissions.approvalMode,
         instructionContext,
@@ -23779,9 +23796,12 @@ function extractProviderSessionId(payload: any): string | undefined {
 }
 
 function resolveEnsembleOrchestrationMode(
-  config: Pick<EnsembleConfig, 'orchestrationMode'> | null | undefined
+  _config: Pick<EnsembleConfig, 'orchestrationMode'> | null | undefined
 ): EnsembleOrchestrationMode {
-  return config?.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
+  // Continuous-only (2026-09-01 product decision): the Turn/Continuous picker
+  // is gone and every round runs Continuous. Persisted 'turn_bound' values in
+  // older chats/rounds/presets are still legal on the wire and normalize here.
+  return 'continuous'
 }
 
 function resolveMaxContinuationHops(
