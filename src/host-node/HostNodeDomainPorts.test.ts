@@ -118,6 +118,12 @@ const museOffers = {
       available: true,
       default: true,
       reasoning: [{ reasoningId: 'high', label: 'High', available: true }]
+    },
+    {
+      modelId: 'muse-flow-2',
+      label: 'Muse Flow',
+      available: true,
+      reasoning: [{ reasoningId: 'low', label: 'Low', available: true }]
     }
   ],
   postures: [
@@ -127,6 +133,13 @@ const museOffers = {
       available: true,
       requiresExplicitConsent: true,
       ceiling: 'workspace_write' as const
+    },
+    {
+      postureId: 'default',
+      label: 'Default',
+      available: true,
+      requiresExplicitConsent: false,
+      ceiling: 'default' as const
     }
   ]
 }
@@ -545,6 +558,135 @@ describe('HostNodeDomainPorts', () => {
       errorCode: 'authority_denied'
     })
     expect(store.getThread(thread.appChatId)?.runs ?? []).toEqual([])
+  })
+
+  it('reconfigures and runs a composer.send model override instead of ignoring it', async () => {
+    const { domain, store, workspace, releaseRun } = open()
+    const workspaceId = (
+      (
+        await domain.executeCommand(
+          context,
+          command('workspace.register', 'cmd-override-ws', {}, { path: workspace }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { workspaceId: string }
+    ).workspaceId
+    const threadId = (
+      (
+        await domain.executeCommand(
+          context,
+          command('thread.create', 'cmd-override-thread', {}, { scope: 'workspace', workspaceId }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { threadId: string }
+    ).threadId
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'thread.configure',
+          'cmd-override-configure',
+          { threadId },
+          {
+            providerId: 'muse',
+            modelId: 'muse-spark-1.2',
+            reasoningId: 'high',
+            postureId: 'default',
+            offerRevision: 'muse-offer-1'
+          }
+        ),
+        { id: 'tui-target' }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    // An unknown model stays a hard refusal — the client picks among offers.
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-override-unknown',
+          { threadId },
+          { text: 'Go', model: 'not-an-offer' }
+        ),
+        { id: 'client' }
+      )
+    ).resolves.toEqual({ status: 'failed', errorCode: 'authority_denied' })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-override',
+          { threadId },
+          { text: 'Go', model: 'muse-flow-2', reasoningEffort: 'low' }
+        ),
+        { id: 'client' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    const configured = store.getThread(threadId)
+    const metadata = (configured?.providerMetadata ?? {}) as Record<string, unknown>
+    expect(metadata.selectedModelType).toBe('muse-flow-2')
+    expect(metadata.reasoningEffort).toBe('low')
+    expect(configured?.runs).toEqual([
+      expect.objectContaining({ runId: 'run-override', requestedModel: 'muse-flow-2' })
+    ])
+    releaseRun?.()
+  })
+
+  it('denies a composer.send model override on a consent-bound elevated posture', async () => {
+    const { domain, workspace } = open()
+    const workspaceId = (
+      (
+        await domain.executeCommand(
+          context,
+          command('workspace.register', 'cmd-elevated-ws', {}, { path: workspace }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { workspaceId: string }
+    ).workspaceId
+    const threadId = (
+      (
+        await domain.executeCommand(
+          context,
+          command('thread.create', 'cmd-elevated-thread', {}, { scope: 'workspace', workspaceId }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { threadId: string }
+    ).threadId
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'thread.configure',
+          'cmd-elevated-configure',
+          { threadId },
+          {
+            providerId: 'muse',
+            modelId: 'muse-spark-1.2',
+            reasoningId: 'high',
+            postureId: 'workspace_write',
+            offerRevision: 'muse-offer-1',
+            postureConsent: true
+          }
+        ),
+        { id: 'tui-target' }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+    // Elevated-posture consent provenance pins the exact model; switching it
+    // per-send would run write-capable turns outside the consented selection.
+    expect(
+      domain.evaluateAuthority(
+        context,
+        command(
+          'composer.send',
+          'run-elevated-override',
+          { threadId },
+          { text: 'Go', model: 'muse-flow-2' }
+        )
+      )
+    ).toEqual({ decision: 'deny', reason: 'standalone_configuration_mismatch' })
   })
 
   it('allows only the exact Desktop Host actor to mutate workspace records', async () => {
@@ -1054,9 +1196,12 @@ describe('HostNodeDomainPorts', () => {
     expect(offers.currentModel).toBe('muse-spark-1.2')
     expect(offers.currentReasoningEffort).toBe('high')
     expect(offers.currentPostureId).toBe('workspace_write')
-    expect(offers.postures?.map((posture) => posture.label)).toEqual(['Workspace write'])
+    expect(offers.postures?.map((posture) => posture.label)).toEqual([
+      'Workspace write',
+      'Default'
+    ])
     expect(offers.provider.runtimeProvider).toBe('muse')
-    expect(offers.models.map((model) => model.id)).toEqual(['muse-spark-1.2'])
+    expect(offers.models.map((model) => model.id)).toEqual(['muse-spark-1.2', 'muse-flow-2'])
     const model = offers.models[0]
     expect(model.current).toBe(true)
     expect(model.isDefault).toBe(true)

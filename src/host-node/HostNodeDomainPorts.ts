@@ -840,6 +840,19 @@ export class HostNodeDomainPorts {
       ) {
         return { decision: 'deny', reason: 'standalone_configuration_mismatch' }
       }
+      // Elevated-posture consent provenance pins the exact model. A per-send
+      // model switch would run write-capable turns outside the consented
+      // selection, so it requires an explicit reconfigure instead.
+      const elevated =
+        metadata.permissionPresetId === 'workspace_write' ||
+        metadata.permissionPresetId === 'full_access'
+      if (
+        elevated &&
+        typeof command.arguments.model === 'string' &&
+        command.arguments.model !== thread.modelId
+      ) {
+        return { decision: 'deny', reason: 'standalone_configuration_mismatch' }
+      }
     }
     return { decision: 'allow' }
   }
@@ -929,10 +942,36 @@ export class HostNodeDomainPorts {
 
     if (command.name !== 'composer.send') return failed('command_unsupported')
 
-    const thread = this.runPort.getThread(command.target.threadId)
+    let thread = this.runPort.getThread(command.target.threadId)
     if (!thread) return failed('thread_not_found')
     const provider = this.registry.getInstance(thread.providerId)
     if (!provider) return failed('provider_not_composed')
+
+    // Providers read the thread back from the run port, so an authority-passed
+    // per-send selection must be applied to the stored configuration before
+    // dispatch — otherwise the override validates and then silently never runs.
+    const overrideModel =
+      typeof command.arguments.model === 'string' && command.arguments.model !== thread.modelId
+        ? command.arguments.model
+        : undefined
+    const overrideReasoning =
+      typeof command.arguments.reasoningEffort === 'string' &&
+      command.arguments.reasoningEffort !== thread.reasoningId
+        ? command.arguments.reasoningEffort
+        : undefined
+    if (overrideModel !== undefined || overrideReasoning !== undefined) {
+      try {
+        this.configureThread({
+          threadId: command.target.threadId,
+          ...(overrideModel !== undefined ? { modelId: overrideModel } : {}),
+          ...(overrideReasoning !== undefined ? { reasoningId: overrideReasoning } : {})
+        })
+      } catch {
+        return failed('standalone_configuration_mismatch')
+      }
+      thread = this.runPort.getThread(command.target.threadId)
+      if (!thread) return failed('thread_not_found')
+    }
 
     const effectiveThread = this.effectiveThread(thread, command.arguments)
     if (!effectiveThread) return failed('standalone_configuration_mismatch')
@@ -1320,15 +1359,21 @@ export class HostNodeDomainPorts {
     }
     const modelId = args.model
     const reasoningId = args.reasoningEffort
+    // A per-send selection may name any currently offered model — the client
+    // picks among offers, it never nominates. Requiring equality with the
+    // stored thread model would make the whole staged-selection wire field
+    // dead: every real override was denied as a configuration mismatch.
     const model =
       typeof modelId === 'string'
         ? offers.models.find((m) => m.modelId === modelId && m.available)
         : undefined
     if (typeof modelId === 'string' && !model) return false
-    const effectiveModelId = typeof modelId === 'string' ? modelId : thread.modelId
-    if (effectiveModelId !== thread.modelId) return false
     if (typeof reasoningId === 'string') {
-      const reasoning = model?.reasoning.find((r) => r.reasoningId === reasoningId && r.available)
+      const effectiveModel =
+        model ?? offers.models.find((m) => m.modelId === thread.modelId && m.available)
+      const reasoning = effectiveModel?.reasoning.find(
+        (r) => r.reasoningId === reasoningId && r.available
+      )
       if (!reasoning) return false
     }
     return true
