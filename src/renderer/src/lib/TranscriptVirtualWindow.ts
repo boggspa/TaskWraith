@@ -21,6 +21,7 @@
  */
 
 import type { ChatMessage } from '../../../main/store/types'
+import { nextRowOccurrence, transcriptRowKey } from './transcriptRowKey'
 import { isGuestParticipantReplyMessage } from '../components/GuestParticipantReplyCardModel'
 import { isEnsembleFanoutResultMessage } from '../components/EnsembleFanoutResultCardModel'
 import { isSubThreadDelegationMessage } from '../components/SubThreadDelegationCardModel'
@@ -58,12 +59,13 @@ export interface VirtualRow {
    *  `rowKey` for React keys / DOM-element + measurement maps; `id` is for
    *  content/measurement-cache identity only. */
   id: string
-  /** Collision-proof row key: `${id}#${index}`. The index disambiguates
-   *  duplicate message ids so React keys, the `blockElsRef` element map, and
-   *  the `data-vrow-id` lookups can never collide — a duplicate id would
-   *  otherwise make multiple rows share one DOM node + one measurement slot,
-   *  scrambling render order and heights (the "System rows pinned to top" /
-   *  load-unload bug). Stable for a given message list. */
+  /** Collision-proof row key: `${id}#${occurrence}` (see `transcriptRowKey`).
+   *  The occurrence ordinal disambiguates duplicate message ids so React keys,
+   *  the `blockElsRef` element map, and the `data-vrow-id` lookups can never
+   *  collide — a duplicate id would otherwise make multiple rows share one DOM
+   *  node + one measurement slot, scrambling render order and heights (the
+   *  "System rows pinned to top" / load-unload bug). Unlike the list index it
+   *  replaced, it stays stable when older history is prepended above the row. */
   rowKey: string
   /** Position in the source `visibleMessages` list. */
   index: number
@@ -387,12 +389,96 @@ export function projectRows(
 ): VirtualRow[] {
   if (!Array.isArray(messages)) return []
   const rows: VirtualRow[] = []
+  const occurrences = new Map<string, number>()
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index]
-    const row = projectRow(message, index, runBoundaryIds, unboundedActivityBodies, pairFanoutLanes)
+    const row = projectRow(
+      message,
+      index,
+      runBoundaryIds,
+      unboundedActivityBodies,
+      pairFanoutLanes,
+      nextRowOccurrence(occurrences, message?.id)
+    )
     if (row) rows.push(row)
   }
   return rows
+}
+
+// Row identity lives in `./transcriptRowKey` so that every producer — this
+// projector, fan-out lane pairing, jump targets and in-chat search — mints keys
+// from one walk. Re-exported here because this module was the original home and
+// is still where most callers reach for it.
+export { buildTranscriptRowKeys, nextRowOccurrence, transcriptRowKey } from './transcriptRowKey'
+
+/**
+ * Re-project a list that shares an unchanged PREFIX with an earlier projection
+ * — the common streaming shape, where only the tail changed. Prefix rows are
+ * reused by reference so row lookup, windowing and render caching do not churn
+ * through stable transcript history.
+ *
+ * The occurrence counts of the reused prefix are carried into the tail walk.
+ * Without that, a duplicate message id whose first sighting sits in the prefix
+ * would be re-keyed as a first sighting again, and the two rows would collide
+ * on one measurement slot and one DOM element — the 1.0.7 bug, reintroduced
+ * only for lists that stream.
+ *
+ * Pure and exported because the caller is a `useRef` cache inside a hook: no
+ * server-rendered test can reach that branch, so this is where it becomes
+ * provable.
+ */
+export function projectRowsAfterSharedPrefix(
+  cachedRows: readonly VirtualRow[],
+  messages: readonly ChatMessage[],
+  sharedPrefix: number,
+  runBoundaryIds?: ReadonlySet<string> | null,
+  unboundedActivityBodies = false,
+  pairFanoutLanes = false
+): VirtualRow[] {
+  const rows = cachedRows.filter((row) => row.index < sharedPrefix)
+  const occurrences = new Map<string, number>()
+  for (const row of rows) nextRowOccurrence(occurrences, row.id)
+  for (let index = sharedPrefix; index < messages.length; index += 1) {
+    const row = projectRow(
+      messages[index],
+      index,
+      runBoundaryIds,
+      unboundedActivityBodies,
+      pairFanoutLanes,
+      nextRowOccurrence(occurrences, messages[index]?.id)
+    )
+    if (row) rows.push(row)
+  }
+  return rows
+}
+
+/**
+ * Scroll correction for an accumulated-infinite-scroll PREPEND.
+ *
+ * Older history lands ABOVE the viewport, so everything the reader was looking
+ * at is pushed down by exactly the height that was inserted. Adding that
+ * growth to `scrollTop` before paint makes the extension invisible. Returns the
+ * corrected `scrollTop`, or null when no correction is due: the window head did
+ * not move earlier (an append or a same-window update), it moved LATER (a
+ * wholesale replace / jump / return-to-latest is meant to move the reader), no
+ * height had been measured yet (first paint), or the list has not grown yet.
+ *
+ * Pure and exported for the same reason as `projectRowsAfterSharedPrefix`: the
+ * caller is a layout effect that no server-rendered test can run, so the
+ * arithmetic is proven here and only the wiring stays manual.
+ */
+export function headExtensionScrollTop(input: {
+  previousWindowStart: number
+  windowStart: number
+  previousScrollHeight: number
+  scrollHeight: number
+  scrollTop: number
+}): number | null {
+  if (input.windowStart >= input.previousWindowStart) return null
+  if (input.previousScrollHeight <= 0) return null
+  const grewBy = input.scrollHeight - input.previousScrollHeight
+  if (grewBy === 0) return null
+  return input.scrollTop + grewBy
 }
 
 export function projectRow(
@@ -405,7 +491,9 @@ export function projectRow(
    * (the generic CONTENT_SCALE_CAP_PX still bounds the estimate). */
   unboundedActivityBodies = false,
   /** True while the `paired` fan-out lane layout is active. */
-  pairFanoutLanes = false
+  pairFanoutLanes = false,
+  /** This message id's ordinal within the list — see `transcriptRowKey`. */
+  occurrence = 0
 ): VirtualRow | null {
   if (!message || typeof message.id !== 'string') return null
   const rowType = classifyRowType(message)
@@ -437,7 +525,7 @@ export function projectRow(
       : Math.max((message.content || '').length, activityEstimate)
   return {
     id: message.id,
-    rowKey: `${message.id}#${index}`,
+    rowKey: transcriptRowKey(message.id, occurrence),
     index,
     rowType,
     contentVersion: contentVersion(message),
@@ -448,8 +536,10 @@ export function projectRow(
 
 /**
  * Cache key for a row's measured height. Combines a collision-proof ROW KEY
- * (`rowKey = ${id}#${index}`, NOT the bare message id — duplicate message ids
- * would otherwise share one measurement slot), the content token, the width
+ * (`rowKey = ${id}#${occurrence}`, NOT the bare message id — duplicate message
+ * ids would otherwise share one measurement slot, and NOT the list index, which
+ * every prepend would invalidate; see `transcriptRowKey`), the content token,
+ * the width
  * bucket, and the expansion bit so a cached measurement is reused ONLY when the
  * geometry is comparable. A streamed token (new contentVersion), a width reflow
  * (new bucket), or an expand/collapse (new bit) each yields a fresh key → fresh

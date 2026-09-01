@@ -23,7 +23,7 @@ function other(id: string): ChatMessage {
 describe('buildFanoutLaneJumpTargets', () => {
   it('maps a seat to its lane card, carrying the collision-proof row key', () => {
     const targets = buildFanoutLaneJumpTargets([other('intro'), lane('m1', 'seat-a')])
-    expect(targets.get('seat-a')).toEqual({ messageId: 'm1', rowKey: 'm1#1' })
+    expect(targets.get('seat-a')).toEqual({ messageId: 'm1', rowKey: 'm1#0' })
   })
 
   it('points a seat at its LATEST lane card, not the first', () => {
@@ -35,7 +35,7 @@ describe('buildFanoutLaneJumpTargets', () => {
       other('boss'),
       lane('round2', 'seat-a')
     ])
-    expect(targets.get('seat-a')).toEqual({ messageId: 'round2', rowKey: 'round2#2' })
+    expect(targets.get('seat-a')).toEqual({ messageId: 'round2', rowKey: 'round2#0' })
   })
 
   it('does not reuse a historical card while the current lane awaits first output', () => {
@@ -60,7 +60,7 @@ describe('buildFanoutLaneJumpTargets', () => {
         [lane('previous', 'seat-a'), lane('current', 'seat-a')],
         [currentLane]
       ).get('seat-a')
-    ).toEqual({ messageId: 'current', rowKey: 'current#1' })
+    ).toEqual({ messageId: 'current', rowKey: 'current#0' })
     expect(
       buildFanoutLaneJumpTargets(
         [lane('current', 'seat-a'), lane('previous', 'seat-a')],

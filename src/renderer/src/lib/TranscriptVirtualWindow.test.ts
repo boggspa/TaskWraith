@@ -14,6 +14,8 @@ import {
   contentVersion,
   estimatedHeightFor,
   projectRows,
+  projectRowsAfterSharedPrefix,
+  headExtensionScrollTop,
   measurementKey,
   isActiveLiveRowKey,
   measurementContentVersion,
@@ -1226,5 +1228,115 @@ describe('useTranscriptVirtualization wiring (scroller box observer)', () => {
     // scroll, and forced-bottom-on-load depends on hasScrolledRef staying
     // false until the snap-to-bottom runs.
     expect(wiring).not.toContain('hasScrolledRef.current = true')
+  })
+})
+
+describe('row keys survive accumulated infinite scroll', () => {
+  const ids = (rows: VirtualRow[]): string[] => rows.map((row) => row.rowKey)
+
+  it('keys a row by message id and occurrence, not by list index', () => {
+    const rows = projectRows([msg({ id: 'a' }), msg({ id: 'b' }), msg({ id: 'c' })])
+    expect(ids(rows)).toEqual(['a#0', 'b#0', 'c#0'])
+  })
+
+  it('keeps every existing row key identical when older history is prepended', () => {
+    const before = projectRows([msg({ id: 'c' }), msg({ id: 'd' })])
+    // Exactly what a prepend produces: the same tail, now at indices 2 and 3.
+    const after = projectRows([
+      msg({ id: 'a' }),
+      msg({ id: 'b' }),
+      msg({ id: 'c' }),
+      msg({ id: 'd' })
+    ])
+
+    // Index-embedded keys would have renamed c#0/d#1 to c#2/d#3 here, orphaning
+    // the measurement slot and DOM element of every row already on screen and
+    // forcing a re-measure from coarse estimates — the visible jolt seamless
+    // scrolling exists to remove.
+    expect(ids(after).slice(2)).toEqual(ids(before))
+    expect(new Set(ids(after)).size).toBe(4)
+  })
+
+  it('keeps existing row keys identical when newer history is appended', () => {
+    const before = projectRows([msg({ id: 'a' }), msg({ id: 'b' })])
+    const after = projectRows([msg({ id: 'a' }), msg({ id: 'b' }), msg({ id: 'c' })])
+    expect(ids(after).slice(0, 2)).toEqual(ids(before))
+  })
+
+  it('still gives duplicate message ids distinct keys', () => {
+    // Duplicate ids exist in historical/imported transcripts; two rows sharing
+    // one measurement slot would mis-size both.
+    const rows = projectRows([msg({ id: 'dup' }), msg({ id: 'other' }), msg({ id: 'dup' })])
+    expect(ids(rows)).toEqual(['dup#0', 'other#0', 'dup#1'])
+    expect(new Set(ids(rows)).size).toBe(3)
+  })
+
+  it('never lets a prepended duplicate collide with the row already on screen', () => {
+    const rows = projectRows([msg({ id: 'dup' }), msg({ id: 'x' }), msg({ id: 'dup' })])
+    expect(new Set(ids(rows)).size).toBe(rows.length)
+  })
+
+  describe('projectRowsAfterSharedPrefix (streaming re-projection)', () => {
+    it('reuses prefix row objects by reference', () => {
+      const messages = [msg({ id: 'a' }), msg({ id: 'b' })]
+      const cached = projectRows(messages)
+      const next = projectRowsAfterSharedPrefix(cached, [...messages, msg({ id: 'c' })], 2)
+      expect(next[0]).toBe(cached[0])
+      expect(next[1]).toBe(cached[1])
+      expect(ids(next)).toEqual(['a#0', 'b#0', 'c#0'])
+    })
+
+    it('carries prefix occurrence counts into the streamed tail', () => {
+      // `dup` is first seen INSIDE the reused prefix. The tail walk starts with
+      // an empty counter unless the prefix counts are carried in, which would
+      // key this second row `dup#0` as well — two rows on one measurement slot
+      // and one DOM element, i.e. the 1.0.7 duplicate-id bug re-created for
+      // lists that stream.
+      const prefix = [msg({ id: 'dup' }), msg({ id: 'x' })]
+      const cached = projectRows(prefix)
+      const next = projectRowsAfterSharedPrefix(cached, [...prefix, msg({ id: 'dup' })], 2)
+      expect(ids(next)).toEqual(['dup#0', 'x#0', 'dup#1'])
+      expect(new Set(ids(next)).size).toBe(next.length)
+    })
+
+    it('drops cached rows beyond the shared prefix', () => {
+      const messages = [msg({ id: 'a' }), msg({ id: 'b' }), msg({ id: 'c' })]
+      const cached = projectRows(messages)
+      const next = projectRowsAfterSharedPrefix(cached, [msg({ id: 'a' }), msg({ id: 'z' })], 1)
+      expect(ids(next)).toEqual(['a#0', 'z#0'])
+    })
+  })
+})
+
+describe('headExtensionScrollTop (prepend scroll anchoring)', () => {
+  // 40 older rows landed above the viewport and added 1200px to the scroller.
+  const measured = {
+    previousWindowStart: 100,
+    windowStart: 60,
+    previousScrollHeight: 4000,
+    scrollHeight: 5200,
+    scrollTop: 300
+  }
+
+  it('corrects scrollTop by the measured growth when the window head extends', () => {
+    // The content the reader was looking at is now 1200px further down, so
+    // scrollTop follows it exactly and the prepend is invisible.
+    expect(headExtensionScrollTop(measured)).toBe(1500)
+  })
+
+  it('leaves an append alone: the head did not move and growth is below the viewport', () => {
+    expect(headExtensionScrollTop({ ...measured, windowStart: 100 })).toBeNull()
+  })
+
+  it('leaves a wholesale replace / jump alone: the head moved LATER', () => {
+    expect(headExtensionScrollTop({ ...measured, windowStart: 140 })).toBeNull()
+  })
+
+  it('is a no-op on first paint, before any height was measured', () => {
+    expect(headExtensionScrollTop({ ...measured, previousScrollHeight: 0 })).toBeNull()
+  })
+
+  it('is a no-op while the head extended but nothing has been laid out yet', () => {
+    expect(headExtensionScrollTop({ ...measured, scrollHeight: 4000 })).toBeNull()
   })
 })

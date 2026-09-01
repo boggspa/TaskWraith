@@ -72,7 +72,7 @@ function pagedStore(chatId: string, ids: string[], overrides: Partial<Transcript
 }
 
 describe('requestOlderTranscriptPage', () => {
-  it('fetches the page before the current oldest cursor and installs it', async () => {
+  it('fetches the page before the current oldest cursor and joins it onto the window', async () => {
     const store = pagedStore('c1', ['m-10', 'm-11'], {
       windowStart: 10,
       windowEnd: 12,
@@ -95,7 +95,18 @@ describe('requestOlderTranscriptPage', () => {
     requestOlderTranscriptPage('c1', store, fetchPage)
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(requests).toEqual([{ chatId: 'c1', beforeMessageId: 'm-10' }])
-    expect(store.get('c1')?.messages.map((m) => m.id)).toEqual(['m-7', 'm-8', 'm-9'])
+    // Accumulated infinite scroll: the older page JOINS the loaded window
+    // rather than replacing it, so the rows the reader is looking at stay
+    // mounted while history arrives above them.
+    expect(store.get('c1')?.messages.map((m) => m.id)).toEqual([
+      'm-7',
+      'm-8',
+      'm-9',
+      'm-10',
+      'm-11'
+    ])
+    expect(store.get('c1')?.windowStart).toBe(7)
+    expect(store.get('c1')?.windowEnd).toBe(12)
     expect(store.get('c1')?.hasNewer).toBe(true)
   })
 

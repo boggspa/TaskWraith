@@ -2098,7 +2098,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(blocks).toBeGreaterThan(0)
     expect(blocks).toBeLessThan(40)
     // Bottom of the list is mounted; the far top is collapsed.
-    expect(html).toContain('data-vrow-id="m119#119"')
+    expect(html).toContain('data-vrow-id="m119#0"')
     expect(html).not.toContain('data-vrow-id="m0#0"')
     // The window reaches the end → bottom spacer collapses to 0, the
     // existing `scrollTop = scrollHeight` snap still hits the true bottom.
@@ -2118,8 +2118,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     )
     expect(top.includes('data-vrow-id="m0#0"')).toBe(true)
     expect(bottom.includes('data-vrow-id="m0#0"')).toBe(false)
-    expect(top.includes('data-vrow-id="m119#119"')).toBe(false)
-    expect(bottom.includes('data-vrow-id="m119#119"')).toBe(true)
+    expect(top.includes('data-vrow-id="m119#0"')).toBe(false)
+    expect(bottom.includes('data-vrow-id="m119#0"')).toBe(true)
   })
 
   it('1.0.7 — KEEPS virtualisation ON for ensemble chats (oscillation fixed at source)', () => {

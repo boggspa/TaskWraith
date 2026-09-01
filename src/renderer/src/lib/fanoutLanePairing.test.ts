@@ -77,22 +77,22 @@ describe('classifyFanoutLaneSlots', () => {
     const slots = classifyFanoutLaneSlots([lane('a'), lane('b'), lane('c'), lane('d')], true)
     expect([...slots.entries()]).toEqual([
       ['a#0', 'lead'],
-      ['b#1', 'trail'],
-      ['c#2', 'lead'],
-      ['d#3', 'trail']
+      ['b#0', 'trail'],
+      ['c#0', 'lead'],
+      ['d#0', 'trail']
     ])
   })
 
   it('spans the odd lane at the end of a run rather than leaving a hole beside it', () => {
     const slots = classifyFanoutLaneSlots([lane('a'), lane('b'), lane('c')], true)
-    expect(slots.get('c#2')).toBe('solo')
+    expect(slots.get('c#0')).toBe('solo')
   })
 
   it('spans a lane that has no neighbour at all', () => {
     const slots = classifyFanoutLaneSlots([other('x'), lane('a'), other('y')], true)
-    expect(slots.get('a#1')).toBe('solo')
+    expect(slots.get('a#0')).toBe('solo')
     expect(slots.has('x#0')).toBe(false)
-    expect(slots.has('y#2')).toBe(false)
+    expect(slots.has('y#0')).toBe(false)
   })
 
   it('restarts pairing at the left column after a non-lane row breaks the run', () => {
@@ -102,9 +102,9 @@ describe('classifyFanoutLaneSlots', () => {
       [lane('a'), lane('b'), lane('c'), other('gap'), lane('d'), lane('e')],
       true
     )
-    expect(slots.get('c#2')).toBe('solo')
-    expect(slots.get('d#4')).toBe('lead')
-    expect(slots.get('e#5')).toBe('trail')
+    expect(slots.get('c#0')).toBe('solo')
+    expect(slots.get('d#0')).toBe('lead')
+    expect(slots.get('e#0')).toBe('trail')
   })
 
   it('keeps earlier slots stable when a lane streams in at the end of a run', () => {
@@ -113,9 +113,9 @@ describe('classifyFanoutLaneSlots', () => {
     const before = classifyFanoutLaneSlots([lane('a'), lane('b'), lane('c')], true)
     const after = classifyFanoutLaneSlots([lane('a'), lane('b'), lane('c'), lane('d')], true)
     expect(after.get('a#0')).toBe(before.get('a#0'))
-    expect(after.get('b#1')).toBe(before.get('b#1'))
-    expect(before.get('c#2')).toBe('solo')
-    expect(after.get('c#2')).toBe('lead')
+    expect(after.get('b#0')).toBe(before.get('b#0'))
+    expect(before.get('c#0')).toBe('solo')
+    expect(after.get('c#0')).toBe('lead')
   })
 
   it('tolerates an empty transcript', () => {
@@ -129,9 +129,9 @@ describe('classifyFanoutLaneSlots', () => {
     )
     expect([...slots.entries()]).toEqual([
       ['r1#0', 'lead'],
-      ['r2#1', 'trail'],
-      ['r3#2', 'lead'],
-      ['r4#3', 'trail']
+      ['r2#0', 'trail'],
+      ['r3#0', 'lead'],
+      ['r4#0', 'trail']
     ])
   })
 
@@ -141,8 +141,8 @@ describe('classifyFanoutLaneSlots', () => {
       true
     )
     expect(slots.get('r1#0')).toBe('lead')
-    expect(slots.get('r2#1')).toBe('trail')
-    expect(slots.get('r3#2')).toBe('solo')
+    expect(slots.get('r2#0')).toBe('trail')
+    expect(slots.get('r3#0')).toBe('solo')
   })
 
   it.each([
@@ -162,16 +162,16 @@ describe('classifyFanoutLaneSlots', () => {
       ],
       true
     )
-    expect(slots.get('r3#2')).toBe('solo')
-    expect(slots.get('r4#4')).toBe('lead')
-    expect(slots.get('r5#5')).toBe('trail')
-    expect(slots.has(`${breaker.id}#3`)).toBe(false)
+    expect(slots.get('r3#0')).toBe('solo')
+    expect(slots.get('r4#0')).toBe('lead')
+    expect(slots.get('r5#0')).toBe('trail')
+    expect(slots.has(`${breaker.id}#0`)).toBe(false)
   })
 
   it('does not pair a fan-out lane with an adjacent subThreadReturn', () => {
     const slots = classifyFanoutLaneSlots([lane('a'), subThreadReturn('r1')], true)
     expect(slots.get('a#0')).toBe('solo')
-    expect(slots.get('r1#1')).toBe('solo')
+    expect(slots.get('r1#0')).toBe('solo')
   })
 
   it('does not pair across a gap even when returns share a wave id', () => {
@@ -186,7 +186,7 @@ describe('classifyFanoutLaneSlots', () => {
       true
     )
     expect(slots.get('r1#0')).toBe('solo')
-    expect(slots.get('r2#2')).toBe('solo')
+    expect(slots.get('r2#0')).toBe('solo')
   })
 
   it('keeps earlier return slots stable when a fourth return streams in', () => {
@@ -199,16 +199,16 @@ describe('classifyFanoutLaneSlots', () => {
       true
     )
     expect(after.get('r1#0')).toBe(before.get('r1#0'))
-    expect(after.get('r2#1')).toBe(before.get('r2#1'))
-    expect(before.get('r3#2')).toBe('solo')
-    expect(after.get('r3#2')).toBe('lead')
-    expect(after.get('r4#3')).toBe('trail')
+    expect(after.get('r2#0')).toBe(before.get('r2#0'))
+    expect(before.get('r3#0')).toBe('solo')
+    expect(after.get('r3#0')).toBe('lead')
+    expect(after.get('r4#0')).toBe('trail')
   })
 
   it('pairs two adjacent Fleet calls from the same parent run', () => {
     const slots = classifyFanoutLaneSlots([fleet('f1', 'run-1'), fleet('f2', 'run-1')], true)
     expect(slots.get('f1#0')).toBe('lead')
-    expect(slots.get('f2#1')).toBe('trail')
+    expect(slots.get('f2#0')).toBe('trail')
   })
 
   it('never pairs adjacent Fleet cards from different runs or without run identity', () => {
@@ -217,9 +217,9 @@ describe('classifyFanoutLaneSlots', () => {
       true
     )
     expect(slots.get('f1#0')).toBe('solo')
-    expect(slots.get('f2#1')).toBe('solo')
-    expect(slots.has('legacy-1#2')).toBe(false)
-    expect(slots.has('legacy-2#3')).toBe(false)
+    expect(slots.get('f2#0')).toBe('solo')
+    expect(slots.has('legacy-1#0')).toBe(false)
+    expect(slots.has('legacy-2#0')).toBe(false)
   })
 
   it('pairs same-run Fleet calls from the start and leaves an odd third card full-width', () => {
@@ -228,8 +228,8 @@ describe('classifyFanoutLaneSlots', () => {
       true
     )
     expect(slots.get('f1#0')).toBe('lead')
-    expect(slots.get('f2#1')).toBe('trail')
-    expect(slots.get('f3#2')).toBe('solo')
+    expect(slots.get('f2#0')).toBe('trail')
+    expect(slots.get('f3#0')).toBe('solo')
   })
 })
 
@@ -252,8 +252,8 @@ describe('classifyCompactFanoutLaneRows', () => {
     const withSixth = [...messages, lane('f')]
     const compact = classifyCompactFanoutLaneRows(withSixth)
     expect(compact.size).toBe(6)
-    expect(compact.has('a#1')).toBe(true)
-    expect(compact.has('f#6')).toBe(true)
+    expect(compact.has('a#0')).toBe(true)
+    expect(compact.has('f#0')).toBe(true)
   })
 
   it('counts runs per adjacent block, so a broken run stays at the full band', () => {

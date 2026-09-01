@@ -20,6 +20,7 @@
  * broken link.
  */
 import type { ChatMessage, ConcurrentLane } from '../../../main/store/types'
+import { buildTranscriptRowKeys } from './transcriptRowKey'
 import { isEnsembleFanoutResultMessage } from '../../../shared/fanoutLaneGrouping'
 import { LIVE_ENSEMBLE_LANE_STATUSES } from '../../../shared/ensembleRoundLifecycle'
 import { ensembleFanoutParticipantId } from '../components/EnsembleFanoutResultCardModel'
@@ -27,9 +28,10 @@ import { ensembleFanoutParticipantId } from '../components/EnsembleFanoutResultC
 export type FanoutLaneJumpTarget = {
   /** Message id of the lane's result card. */
   messageId: string
-  /** Collision-proof row key (`${id}#${index}`) for the transcript's row maps.
-   * Historical/imported data can repeat message ids, so the jump carries the
-   * row key too rather than trusting the id to be unique. */
+  /** Collision-proof row key (`${id}#${occurrence}`, see `buildTranscriptRowKeys`)
+   * for the transcript's row maps. Historical/imported data can repeat message
+   * ids, so the jump carries the row key too rather than trusting the id to be
+   * unique. */
   rowKey: string
 }
 
@@ -49,6 +51,9 @@ export function buildFanoutLaneJumpTargets(
 ): ReadonlyMap<string, FanoutLaneJumpTarget> {
   const targets = new Map<string, FanoutLaneJumpTarget>()
   if (!Array.isArray(messages)) return targets
+  // Same keys the transcript renders with — a jump target that mints its own
+  // would scroll to a row key that does not exist.
+  const rowKeys = buildTranscriptRowKeys(messages)
   const currentLaneByParticipant = currentLanes
     ? currentLanes.reduce<Map<string, ConcurrentLane>>((byParticipant, lane) => {
         if (!LIVE_ENSEMBLE_LANE_STATUSES.has(lane.status)) return byParticipant
@@ -82,7 +87,7 @@ export function buildFanoutLaneJumpTargets(
     // Plain overwrite, walking forward: the last card for a seat is the live one.
     targets.set(participantId, {
       messageId: message.id,
-      rowKey: `${message.id}#${index}`
+      rowKey: rowKeys[index]
     })
   }
   return targets

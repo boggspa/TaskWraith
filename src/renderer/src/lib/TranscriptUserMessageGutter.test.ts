@@ -49,7 +49,7 @@ describe('TranscriptUserMessageGutter model', () => {
     })
     expect(markers[1]).toMatchObject({
       messageId: 'same',
-      rowKey: 'same#2',
+      rowKey: 'same#1',
       ordinal: 2,
       title: 'Second prompt'
     })
@@ -274,14 +274,14 @@ describe('findActiveGutterMarkerKey (scroll-spy join)', () => {
     expect(findActiveGutterMarkerKey(markers, 0)).toBe('u0#0')
     // Anchored on the assistant row between turns 0 and 2 → still inside turn 0.
     expect(findActiveGutterMarkerKey(markers, 1)).toBe('u0#0')
-    expect(findActiveGutterMarkerKey(markers, 2)).toBe('u2#2')
-    expect(findActiveGutterMarkerKey(markers, 3)).toBe('u2#2')
-    expect(findActiveGutterMarkerKey(markers, 4)).toBe('u4#4')
+    expect(findActiveGutterMarkerKey(markers, 2)).toBe('u2#0')
+    expect(findActiveGutterMarkerKey(markers, 3)).toBe('u2#0')
+    expect(findActiveGutterMarkerKey(markers, 4)).toBe('u4#0')
   })
 
   it('clamps below the first and beyond the last marker', () => {
     expect(findActiveGutterMarkerKey(markers, -1)).toBeNull()
-    expect(findActiveGutterMarkerKey(markers, 999)).toBe('u4#4')
+    expect(findActiveGutterMarkerKey(markers, 999)).toBe('u4#0')
   })
 
   it('is defensive against empty markers and non-finite anchors', () => {

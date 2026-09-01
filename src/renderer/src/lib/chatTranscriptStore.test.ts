@@ -338,30 +338,31 @@ describe('ChatTranscriptStore', () => {
   })
 })
 
-describe('Stage 1b paged entries (ingestPage)', () => {
-  function transcriptPage(
-    chatId: string,
-    ids: string[],
-    overrides: Partial<TranscriptPage> = {}
-  ): TranscriptPage {
-    const messages = ids.map((id) => message(id, `message ${id}`))
-    return {
-      chatId,
-      messages,
-      runs: [],
-      totalMessageCount: 20,
-      windowStart: 0,
-      windowEnd: ids.length,
-      estimatedBytes: 100,
-      hasOlder: false,
-      hasNewer: false,
-      oldestMessageId: messages[0]?.id ?? null,
-      newestMessageId: messages[messages.length - 1]?.id ?? null,
-      updatedAt: 5,
-      ...overrides
-    }
+// Helper for creating TranscriptPage objects
+function transcriptPage(
+  chatId: string,
+  ids: string[],
+  overrides: Partial<TranscriptPage> = {}
+): TranscriptPage {
+  const messages = ids.map((id) => message(id, `message ${id}`))
+  return {
+    chatId,
+    messages,
+    runs: [],
+    totalMessageCount: 20,
+    windowStart: 0,
+    windowEnd: ids.length,
+    estimatedBytes: 100,
+    hasOlder: false,
+    hasNewer: false,
+    oldestMessageId: messages[0]?.id ?? null,
+    newestMessageId: messages[messages.length - 1]?.id ?? null,
+    updatedAt: 5,
+    ...overrides
   }
+}
 
+describe('Stage 1b paged entries (ingestPage)', () => {
   it('installs a main-produced page as the entire presentation state', () => {
     const store = new ChatTranscriptStore()
     const payload = store.ingestPage(
@@ -428,5 +429,401 @@ describe('Stage 1b paged entries (ingestPage)', () => {
     expect(store.get('paged')?.messages.map((entry) => entry.id)).toEqual(['m15', 'm16', 'm17'])
     expect(store.stats().messageCount).toBe(3)
     expect(store.isPaged('paged')).toBe(true)
+  })
+
+  it('replaceWindow replaces the entire window', () => {
+    const store = new ChatTranscriptStore()
+    store.ingestPage(
+      transcriptPage('paged', ['m18', 'm19'], { windowStart: 18, windowEnd: 20, hasOlder: true })
+    )
+    const replaced = store.replaceChatTranscriptWindow(
+      transcriptPage('paged', ['m0', 'm1'], {
+        windowStart: 0,
+        windowEnd: 2,
+        hasOlder: false,
+        hasNewer: true
+      })
+    )
+    expect(replaced.messages.map((entry) => entry.id)).toEqual(['m0', 'm1'])
+    expect(replaced.hasOlder).toBe(false)
+    expect(replaced.hasNewer).toBe(true)
+  })
+})
+
+describe('ChatTranscriptStore - Accumulated Infinite Scroll', () => {
+  it('prependPage merges older messages when contiguous', () => {
+    const store = new ChatTranscriptStore()
+    // First install a page
+    store.ingestPage(
+      transcriptPage('paged', ['m10', 'm11', 'm12'], {
+        windowStart: 10,
+        windowEnd: 13,
+        hasOlder: true,
+        hasNewer: true
+      })
+    )
+
+    // Prepend an older contiguous page
+    const entry = store.byId.get('paged')!
+    const prepended = store.prependChatTranscriptPage(
+      'paged',
+      transcriptPage('paged', ['m7', 'm8', 'm9'], {
+        windowStart: 7,
+        windowEnd: 10,
+        hasOlder: true,
+        hasNewer: false // contiguous: m9.id === m10.id
+      })
+    )
+
+    expect(prepended).not.toBeNull()
+    expect(prepended!.messages.map((entry) => entry.id)).toEqual([
+      'm7',
+      'm8',
+      'm9',
+      'm10',
+      'm11',
+      'm12'
+    ])
+    expect(prepended!.hasOlder).toBe(true)
+  })
+
+  it('appendPage merges newer messages when contiguous', () => {
+    const store = new ChatTranscriptStore()
+    // First install a page
+    store.ingestPage(
+      transcriptPage('paged', ['m10', 'm11', 'm12'], {
+        windowStart: 10,
+        windowEnd: 13,
+        hasOlder: true,
+        hasNewer: true
+      })
+    )
+
+    // Append a newer contiguous page
+    const appended = store.appendChatTranscriptPage(
+      'paged',
+      transcriptPage('paged', ['m13', 'm14', 'm15'], {
+        windowStart: 13,
+        windowEnd: 16,
+        hasOlder: false, // contiguous: m13.id === m12.id
+        hasNewer: true
+      })
+    )
+
+    expect(appended).not.toBeNull()
+    expect(appended!.messages.map((entry) => entry.id)).toEqual([
+      'm10',
+      'm11',
+      'm12',
+      'm13',
+      'm14',
+      'm15'
+    ])
+    expect(appended!.hasNewer).toBe(true)
+  })
+
+  it('ingestPage still REPLACES when handed a contiguous older page', () => {
+    const store = new ChatTranscriptStore()
+    // First install a page
+    store.ingestPage(
+      transcriptPage('paged', ['m10', 'm11'], {
+        windowStart: 10,
+        windowEnd: 12,
+        hasOlder: true,
+        hasNewer: false
+      })
+    )
+
+    // Ingest a contiguous older page - should prepend
+    const result = store.ingestPage(
+      transcriptPage('paged', ['m8', 'm9'], {
+        windowStart: 8,
+        windowEnd: 10,
+        hasOlder: true,
+        hasNewer: false
+      })
+    )
+
+    // Adjacency alone must NOT be read as "extend the window": a re-open or a
+    // jump can land on a page that happens to touch the current one, and
+    // silently accumulating there would grow the render model behind the
+    // caller's back. Only an explicit prepend/append accumulates.
+    expect(result.messages.map((entry) => entry.id)).toEqual(['m8', 'm9'])
+  })
+
+  it('ingestPage still REPLACES when handed a contiguous newer page', () => {
+    const store = new ChatTranscriptStore()
+    // First install a page
+    store.ingestPage(
+      transcriptPage('paged', ['m10', 'm11'], {
+        windowStart: 10,
+        windowEnd: 12,
+        hasOlder: false,
+        hasNewer: true
+      })
+    )
+
+    // Ingest a contiguous newer page - should append
+    const result = store.ingestPage(
+      transcriptPage('paged', ['m12', 'm13'], {
+        windowStart: 12,
+        windowEnd: 14,
+        hasOlder: false,
+        hasNewer: true
+      })
+    )
+
+    expect(result.messages.map((entry) => entry.id)).toEqual(['m12', 'm13'])
+  })
+
+  it('ingestPage replaces the window for a non-contiguous page', () => {
+    const store = new ChatTranscriptStore()
+    // First install a page
+    store.ingestPage(
+      transcriptPage('paged', ['m10', 'm11'], {
+        windowStart: 10,
+        windowEnd: 12,
+        hasOlder: true,
+        hasNewer: true
+      })
+    )
+
+    // Ingest a non-contiguous page - should replace
+    const result = store.ingestPage(
+      transcriptPage('paged', ['m20', 'm21'], {
+        windowStart: 20,
+        windowEnd: 22,
+        hasOlder: true,
+        hasNewer: false
+      })
+    )
+
+    expect(result.messages.map((entry) => entry.id)).toEqual(['m20', 'm21'])
+  })
+
+  it('prependPage deduplicates messages by id', () => {
+    const store = new ChatTranscriptStore()
+    store.ingestPage(
+      transcriptPage('paged', ['m10', 'm11'], { windowStart: 10, windowEnd: 12, hasOlder: true })
+    )
+
+    // Prepend a page that overlaps with existing messages
+    const prepended = store.prependChatTranscriptPage(
+      'paged',
+      transcriptPage('paged', ['m8', 'm9', 'm10'], {
+        windowStart: 8,
+        windowEnd: 11,
+        hasOlder: true,
+        hasNewer: false
+      })
+    )
+
+    expect(prepended).not.toBeNull()
+    // m10 should not be duplicated
+    expect(prepended!.messages.map((entry) => entry.id)).toEqual(['m8', 'm9', 'm10', 'm11'])
+  })
+
+  it('accumulated window never reaches saveChat - remains paged', () => {
+    const store = new ChatTranscriptStore()
+    store.ingestPage(
+      transcriptPage('paged', ['m10', 'm11'], { windowStart: 10, windowEnd: 12, hasOlder: true })
+    )
+
+    // Prepend older messages
+    store.prependChatTranscriptPage(
+      'paged',
+      transcriptPage('paged', ['m8', 'm9'], { windowStart: 8, windowEnd: 10, hasOlder: true })
+    )
+
+    // Append newer messages
+    store.appendChatTranscriptPage(
+      'paged',
+      transcriptPage('paged', ['m12', 'm13'], { windowStart: 12, windowEnd: 14, hasNewer: true })
+    )
+
+    // The chat should still be paged (not full)
+    expect(store.isPaged('paged')).toBe(true)
+
+    // The payload should have accumulated messages
+    const payload = store.get('paged')
+    expect(payload).not.toBeNull()
+    expect(payload!.messages.map((entry) => entry.id)).toEqual([
+      'm8',
+      'm9',
+      'm10',
+      'm11',
+      'm12',
+      'm13'
+    ])
+  })
+
+  it('applyToChat refuses to write an accumulated window onto a chat record', () => {
+    const store = new ChatTranscriptStore()
+    store.ingestPage(
+      transcriptPage('paged', ['m10', 'm11'], { windowStart: 10, windowEnd: 12, hasOlder: true })
+    )
+    store.prependChatTranscriptPage(
+      'paged',
+      transcriptPage('paged', ['m8', 'm9'], { windowStart: 8, windowEnd: 10, hasOlder: true })
+    )
+    const canonical = {
+      ...chat('paged'),
+      messages: Array.from({ length: 40 }, (_, index) => message(`c${index}`, `canon ${index}`))
+    }
+    const applied = store.applyToChat(canonical)
+    // The SAME record comes back: a paged entry holds no authoritative arrays,
+    // so the 4-message accumulated window is never merged onto the record and
+    // therefore can never travel on to saveChat.
+    expect(applied).toBe(canonical)
+    expect(applied.messages).toHaveLength(40)
+  })
+
+  it('prepend evicts the newer far edge at the window cap and re-opens hasNewer', () => {
+    // maxMessagesPerPage 1 => an accumulated window of 4 (the page budget).
+    const store = new ChatTranscriptStore({ maxMessagesPerPage: 1 })
+    store.ingestPage(
+      transcriptPage('paged', ['m10', 'm11', 'm12', 'm13'], {
+        windowStart: 10,
+        windowEnd: 14,
+        hasOlder: true,
+        hasNewer: true
+      })
+    )
+    const prepended = store.prependChatTranscriptPage(
+      'paged',
+      transcriptPage('paged', ['m8', 'm9'], { windowStart: 8, windowEnd: 10, hasOlder: true })
+    )!
+    expect(prepended.messages.map((entry) => entry.id)).toEqual(['m8', 'm9', 'm10', 'm11'])
+    expect(prepended.windowStart).toBe(8)
+    expect(prepended.windowEnd).toBe(12)
+    // The evicted tail must be reported as loadable again, or scrolling back
+    // down would dead-end against a window that silently dropped it.
+    expect(prepended.hasNewer).toBe(true)
+    expect(prepended.hasOlder).toBe(true)
+  })
+
+  it('joins an OVERLAPPING older page and still evicts to the cap truthfully', () => {
+    // The pager anchors its request on the boundary message, so the page it
+    // gets back routinely re-delivers that message. Half-open windows make the
+    // edges overlap by one ([8,11) against [10,14)) rather than meet, and
+    // treating that as "not adjacent" silently replaced the window and threw
+    // away the rows the reader was looking at.
+    const store = new ChatTranscriptStore({ maxMessagesPerPage: 1 })
+    store.ingestPage(
+      transcriptPage('paged', ['m10', 'm11', 'm12', 'm13'], {
+        windowStart: 10,
+        windowEnd: 14,
+        hasOlder: true,
+        hasNewer: true
+      })
+    )
+    const prepended = store.prependChatTranscriptPage(
+      'paged',
+      transcriptPage('paged', ['m8', 'm9', 'm10'], {
+        windowStart: 8,
+        windowEnd: 11,
+        hasOlder: true
+      })
+    )!
+    expect(prepended.messages.map((entry) => entry.id)).toEqual(['m8', 'm9', 'm10', 'm11'])
+    expect(prepended.windowStart).toBe(8)
+    expect(prepended.windowEnd).toBe(12)
+    expect(prepended.hasOlder).toBe(true)
+    expect(prepended.hasNewer).toBe(true)
+  })
+
+  it('append evicts the older far edge at the window cap and re-opens hasOlder', () => {
+    const store = new ChatTranscriptStore({ maxMessagesPerPage: 1 })
+    store.ingestPage(
+      transcriptPage('paged', ['m10', 'm11', 'm12', 'm13'], {
+        windowStart: 10,
+        windowEnd: 14,
+        hasOlder: true,
+        hasNewer: true
+      })
+    )
+    const appended = store.appendChatTranscriptPage(
+      'paged',
+      transcriptPage('paged', ['m14', 'm15'], { windowStart: 14, windowEnd: 16, hasNewer: true })
+    )!
+    expect(appended.messages.map((entry) => entry.id)).toEqual(['m12', 'm13', 'm14', 'm15'])
+    expect(appended.windowStart).toBe(12)
+    expect(appended.windowEnd).toBe(16)
+    expect(appended.hasOlder).toBe(true)
+  })
+
+  it('recomputes hasOlder from absolute bounds, so reaching index 0 closes it', () => {
+    const store = new ChatTranscriptStore()
+    store.ingestPage(
+      transcriptPage('paged', ['m2', 'm3'], { windowStart: 2, windowEnd: 4, hasOlder: true })
+    )
+    // The page still advertises hasOlder: true; the window itself proves
+    // otherwise once it starts at index 0.
+    const prepended = store.prependChatTranscriptPage(
+      'paged',
+      transcriptPage('paged', ['m0', 'm1'], { windowStart: 0, windowEnd: 2, hasOlder: true })
+    )!
+    expect(prepended.windowStart).toBe(0)
+    expect(prepended.hasOlder).toBe(false)
+    expect(prepended.hasNewer).toBe(true)
+  })
+
+  it('a non-adjacent prepend replaces rather than splicing disjoint history', () => {
+    const store = new ChatTranscriptStore()
+    store.ingestPage(
+      transcriptPage('paged', ['m10', 'm11'], { windowStart: 10, windowEnd: 12, hasOlder: true })
+    )
+    const result = store.prependChatTranscriptPage(
+      'paged',
+      transcriptPage('paged', ['m0', 'm1'], { windowStart: 0, windowEnd: 2, hasNewer: true })
+    )!
+    // Joining a window that ends at 2 to one that starts at 10 would render
+    // history in an order that never existed.
+    expect(result.messages.map((entry) => entry.id)).toEqual(['m0', 'm1'])
+    expect(result.windowStart).toBe(0)
+    expect(result.windowEnd).toBe(2)
+  })
+
+  it('append keeps the copy already on screen when a page overlaps', () => {
+    const store = new ChatTranscriptStore()
+    store.ingestPage(
+      transcriptPage('paged', ['m10', 'm11'], { windowStart: 10, windowEnd: 12, hasNewer: true })
+    )
+    const appended = store.appendChatTranscriptPage(
+      'paged',
+      transcriptPage('paged', ['m11', 'm12'], { windowStart: 12, windowEnd: 14, hasNewer: true })
+    )!
+    expect(appended.messages.map((entry) => entry.id)).toEqual(['m10', 'm11', 'm12'])
+  })
+
+  it('a page that adds nothing leaves the window reference untouched', () => {
+    const store = new ChatTranscriptStore()
+    const before = store.ingestPage(
+      transcriptPage('paged', ['m10', 'm11'], { windowStart: 10, windowEnd: 12, hasOlder: true })
+    )
+    const after = store.prependChatTranscriptPage(
+      'paged',
+      transcriptPage('paged', ['m10'], { windowStart: 9, windowEnd: 10, hasOlder: true })
+    )
+    // Same reference => no generation bump and no subscriber re-render.
+    expect(after).toBe(before)
+  })
+
+  it('refuses to accumulate onto a fully hydrated chat', () => {
+    const store = new ChatTranscriptStore()
+    store.ingest({
+      ...chat('full'),
+      messages: [message('a', 'a'), message('b', 'b')]
+    })
+    expect(store.isPaged('full')).toBe(false)
+    // A hydrated chat rewindows from its own authoritative arrays; taking
+    // transcript content from an IPC page here would fork the two sources.
+    expect(
+      store.prependChatTranscriptPage('full', transcriptPage('full', ['x'], { windowEnd: 1 }))
+    ).toBeNull()
+    expect(
+      store.appendChatTranscriptPage('full', transcriptPage('full', ['x'], { windowEnd: 1 }))
+    ).toBeNull()
+    expect(store.get('full')?.messages.map((entry) => entry.id)).toEqual(['a', 'b'])
   })
 })

@@ -80,16 +80,13 @@ import {
 import {
   getChatTranscriptStore,
   revealChatTranscriptMessage,
-  showLatestChatTranscriptPage,
-  showNewerChatTranscriptPage,
-  showOlderChatTranscriptPage,
   useChatTranscript
 } from '../lib/useChatTranscript'
 import {
-  TranscriptHistoryPageBoundary,
-  buildTranscriptHistoryPageBoundaryMessages,
-  readTranscriptHistoryPageBoundary
-} from './TranscriptHistoryPageBoundary'
+  requestLatestTranscriptPage,
+  requestNewerTranscriptPage,
+  requestOlderTranscriptPage
+} from '../lib/chatTranscriptPager'
 import {
   deriveActiveEnsembleWorkingPresentation,
   deriveActiveEnsembleWorkingPresentations,
@@ -104,14 +101,16 @@ import {
   TRANSCRIPT_VIRTUALIZATION_ENABLED,
   DEFAULT_OVERSCAN_PX,
   buildHeightOffsets,
-  projectRow,
+  buildTranscriptRowKeys,
   projectRows,
+  projectRowsAfterSharedPrefix,
   selectWindow,
   selectWindowBand,
   virtualWindowBandChanged,
   computeTranscriptScrollSpy,
   decideScrollerBoxRefresh,
   findScrollAnchor,
+  headExtensionScrollTop,
   sumHeights,
   sumHeightOffsets,
   totalHeightFromOffsets,
@@ -993,7 +992,8 @@ function escapeDomSelectorValue(value: string): string {
  * Position-independent identity for a tool stack row's lifted UI state: the
  * first CONSTITUENT tool message id. A grouped tool row's merged id mutates
  * from `<id>` to `tool-group-<id>` the moment a second message joins the
- * group (remounting the row), and `rowKey` embeds the list index — both churn
+ * group (remounting the row), and `rowKey` counts repeats of the message id —
+ * both churn
  * while activity streams in. The first constituent id survives group growth,
  * remounts, and index shifts.
  */
@@ -1191,6 +1191,26 @@ function durableCloseoutCardStatus(
   return null
 }
 
+/**
+ * How close the rendered range must come to an edge of the loaded transcript
+ * window before the adjacent window is pulled in. A few rows of lead time is
+ * enough for the fetch to land while the reader is still moving, and small
+ * enough that merely opening a thread does not drag in neighbouring pages.
+ */
+const TRANSCRIPT_EDGE_PREFETCH_ROWS = 8
+
+/**
+ * Row projection for the non-virtualised path. Must assign row keys exactly the
+ * way the virtualiser's `projectRow` does, or the two render paths would
+ * disagree about which measurement slot and DOM element a row owns.
+ */
+function projectNonVirtualizedRows(
+  messages: ChatMessage[]
+): Array<{ msg: ChatMessage; rowKey: string; index: number }> {
+  const rowKeys = buildTranscriptRowKeys(messages)
+  return messages.map((msg, index) => ({ msg, rowKey: rowKeys[index], index }))
+}
+
 function useProjectedTranscriptRows(
   messages: ChatMessage[],
   runBoundaryIds: ReadonlySet<string> | null | undefined,
@@ -1232,17 +1252,14 @@ function useProjectedTranscriptRows(
       // tail. Reuse old row objects for the prefix so row lookup, windowing, and
       // render caching do not churn through stable transcript history.
       if (sharedPrefix > 0 && sharedPrefix >= minLength - 1) {
-        const rows = cached.rows.filter((row) => row.index < sharedPrefix)
-        for (let index = sharedPrefix; index < messages.length; index += 1) {
-          const row = projectRow(
-            messages[index],
-            index,
-            runBoundaryIds,
-            unboundedActivityBodies,
-            pairFanoutLanes
-          )
-          if (row) rows.push(row)
-        }
+        const rows = projectRowsAfterSharedPrefix(
+          cached.rows,
+          messages,
+          sharedPrefix,
+          runBoundaryIds,
+          unboundedActivityBodies,
+          pairFanoutLanes
+        )
         const rowByMessageIndex = new Map<number, VirtualRow>()
         for (const row of rows) rowByMessageIndex.set(row.index, row)
         cacheRef.current = {
@@ -2457,7 +2474,7 @@ function useTranscriptVirtualization(params: {
     let sawLiveGrowth = false
     for (let i = 0; i < mountedRows.length; i++) {
       const row = mountedRows[i]
-      // 1.0.7 — element + measurement maps key on `rowKey` (`${id}#${index}`),
+      // 1.0.7 — element + measurement maps key on `rowKey` (`${id}#${occurrence}`),
       // NOT the bare message id. Historical/imported data can carry duplicate
       // message ids; keying on id alone collapsed those rows to one element +
       // one measurement slot, scrambling heights + order (the load/unload,
@@ -2554,7 +2571,7 @@ function useTranscriptVirtualization(params: {
 
   const blockRef = useCallback((el: HTMLDivElement | null) => {
     if (!el) return
-    // `data-vrow-id` carries the collision-proof `rowKey` (`${id}#${index}`),
+    // `data-vrow-id` carries the collision-proof `rowKey` (`${id}#${occurrence}`),
     // so `blockElsRef` is keyed by rowKey — duplicate message ids can't share
     // an element entry.
     const rowKey = el.dataset.vrowId
@@ -3763,23 +3780,11 @@ export const TranscriptPanel = memo(
       roundCardGroupingRegroupStart,
       roundCardResetKey
     )
-    const historyPageBoundaries = useMemo(
-      () => buildTranscriptHistoryPageBoundaryMessages(storeTranscript),
-      [
-        storeTranscript.hasNewer,
-        storeTranscript.hasOlder,
-        storeTranscript.totalMessageCount,
-        storeTranscript.windowEnd,
-        storeTranscript.windowStart
-      ]
-    )
-    const displayMessages = useMemo(() => {
-      if (!storeReady || isWelcomeChat) return roundDisplayMessages
-      const next = [...roundDisplayMessages]
-      if (historyPageBoundaries.older) next.unshift(historyPageBoundaries.older)
-      if (historyPageBoundaries.newer) next.push(historyPageBoundaries.newer)
-      return next
-    }, [historyPageBoundaries, isWelcomeChat, roundDisplayMessages, storeReady])
+    // Accumulated infinite scroll: the transcript no longer carries synthetic
+    // "Load previous / next page" boundary rows. The window grows as the reader
+    // approaches either edge, so everything in this list is real history and the
+    // row indices below never straddle a fake row.
+    const displayMessages = roundDisplayMessages
     const blackboardUpdateStackProjection = useMemo(
       () => projectBlackboardUpdateStacks(displayMessages),
       [displayMessages]
@@ -4819,6 +4824,17 @@ export const TranscriptPanel = memo(
     }, [getScrollAnimator, prepareManualTranscriptJump, scrollRef, syncVirtualizerScrollPosition])
 
     const jumpToTranscriptEnd = useCallback(() => {
+      // Returning to the live tail is a WINDOW move, not merely a scroll: once
+      // the reader has accumulated far enough back, the newest messages are no
+      // longer loaded, so gliding to scrollHeight would land on the bottom of
+      // stale history. Reset the window first and let auto-follow pin the tail
+      // as it arrives.
+      if (chatId && storeTranscript.hasNewer) {
+        const store = getChatTranscriptStore()
+        if (store.isPaged(chatId)) requestLatestTranscriptPage(chatId, store)
+        else store.showLatestPage(chatId)
+        if (autoFollowRef) autoFollowRef.current = true
+      }
       if (onJumpToLatest) {
         onJumpToLatest()
         const scroller = scrollRef.current
@@ -4835,39 +4851,15 @@ export const TranscriptPanel = memo(
           if (autoFollowRef) autoFollowRef.current = true
         }
       })
-    }, [autoFollowRef, getScrollAnimator, onJumpToLatest, scrollRef, syncVirtualizerScrollPosition])
-
-    const positionAfterTranscriptPageChange = useCallback(
-      (edge: 'start' | 'end'): void => {
-        window.requestAnimationFrame(() => {
-          const scroller = scrollRef.current
-          if (!scroller) return
-          const nextScrollTop = edge === 'end' ? scroller.scrollHeight : 0
-          scroller.scrollTop = nextScrollTop
-          syncVirtualizerScrollPosition(nextScrollTop)
-        })
-      },
-      [scrollRef, syncVirtualizerScrollPosition]
-    )
-    const loadOlderTranscriptPage = useCallback(() => {
-      if (!chatId) return
-      prepareManualTranscriptJump()
-      showOlderChatTranscriptPage(chatId)
-      positionAfterTranscriptPageChange('end')
-    }, [chatId, positionAfterTranscriptPageChange, prepareManualTranscriptJump])
-    const loadNewerTranscriptPage = useCallback(() => {
-      if (!chatId) return
-      prepareManualTranscriptJump()
-      showNewerChatTranscriptPage(chatId)
-      positionAfterTranscriptPageChange('start')
-    }, [chatId, positionAfterTranscriptPageChange, prepareManualTranscriptJump])
-    const returnToLatestTranscriptPage = useCallback(() => {
-      if (!chatId) return
-      showLatestChatTranscriptPage(chatId)
-      if (autoFollowRef) autoFollowRef.current = true
-      onJumpToLatest?.()
-      positionAfterTranscriptPageChange('end')
-    }, [autoFollowRef, chatId, onJumpToLatest, positionAfterTranscriptPageChange])
+    }, [
+      autoFollowRef,
+      chatId,
+      getScrollAnimator,
+      onJumpToLatest,
+      scrollRef,
+      storeTranscript.hasNewer,
+      syncVirtualizerScrollPosition
+    ])
 
     useEffect(() => {
       const request = jumpToMessageRequest
@@ -4889,20 +4881,104 @@ export const TranscriptPanel = memo(
       }
     }, [])
 
+    // Accumulated infinite scroll — scroll anchoring across a prepend.
+    const loadedWindowStart = storeTranscript.windowStart
+    const previousWindowStartRef = useRef<number>(loadedWindowStart)
+    const previousScrollHeightRef = useRef<number>(0)
+
+    // Older messages land ABOVE the viewport, so the content the reader was
+    // looking at is pushed down by the full height of everything just inserted.
+    // Absorb that growth into scrollTop before paint and the window extension is
+    // invisible. Keyed on the window bounds and driven by the measured
+    // scrollHeight delta, so it stays correct however the fetch was triggered.
+    useLayoutEffect(() => {
+      const scroller = scrollRef.current
+      if (!scroller) return
+      const previousWindowStart = previousWindowStartRef.current
+      const previousScrollHeight = previousScrollHeightRef.current
+      previousWindowStartRef.current = loadedWindowStart
+      previousScrollHeightRef.current = scroller.scrollHeight
+      // Only a head extension needs correcting: appends grow the list below the
+      // viewport, and a wholesale replace (jump / return-to-latest) is meant to
+      // move the reader. The arithmetic lives in `headExtensionScrollTop` so it
+      // is unit-provable; this effect only wires it to the scroller.
+      const nextScrollTop = headExtensionScrollTop({
+        previousWindowStart,
+        windowStart: loadedWindowStart,
+        previousScrollHeight,
+        scrollHeight: scroller.scrollHeight,
+        scrollTop: scroller.scrollTop
+      })
+      if (nextScrollTop === null) return
+      scroller.scrollTop = nextScrollTop
+      syncVirtualizerScrollPosition(nextScrollTop)
+    }, [
+      loadedWindowStart,
+      storeTranscript.windowEnd,
+      storeTranscript.updatedAt,
+      scrollRef,
+      syncVirtualizerScrollPosition
+    ])
+
+    // Pull in the adjacent window once the rendered range comes within a few
+    // rows of either edge.
+    //
+    // This deliberately reads the virtualizer's own range instead of observing
+    // sentinel elements: a sentinel in the transcript flow contributes height
+    // the virtualizer's geometry does not account for, which would drift every
+    // spacer and scroll-position calculation downstream of it.
+    //
+    // Both transcript modes route through here — paged chats fetch the adjacent
+    // page over IPC, fully hydrated chats grow their local window — so history
+    // reads identically whether or not the thread was large enough to page. No
+    // "loading" latch is needed: the pager dedupes in-flight requests per chat
+    // and direction, and local growth stops changing the window once it has
+    // reached the end.
+    useEffect(() => {
+      if (!chatId || !storeReady || !virtualizeEnabled) return
+      const rowCount = displayMessages.length
+      if (rowCount === 0) return
+      const store = getChatTranscriptStore()
+      const paged = store.isPaged(chatId)
+      if (storeTranscript.hasOlder && virtualWindow.startIndex <= TRANSCRIPT_EDGE_PREFETCH_ROWS) {
+        if (paged) requestOlderTranscriptPage(chatId, store)
+        else store.extendOlderPage(chatId)
+      }
+      if (
+        storeTranscript.hasNewer &&
+        virtualWindow.endIndex >= rowCount - TRANSCRIPT_EDGE_PREFETCH_ROWS
+      ) {
+        if (paged) requestNewerTranscriptPage(chatId, store)
+        else store.extendNewerPage(chatId)
+      }
+    }, [
+      chatId,
+      displayMessages.length,
+      storeReady,
+      storeTranscript.hasNewer,
+      storeTranscript.hasOlder,
+      virtualWindow.endIndex,
+      virtualWindow.startIndex,
+      virtualizeEnabled
+    ])
+
     // Messages mounted this frame, each paired with its collision-proof
-    // `rowKey` (`${id}#${index}`). The window slice when virtualised, else the
-    // full list. Keying React + the element map on `rowKey` (not `msg.id`)
+    // `rowKey` (`${id}#${occurrence}`). The window slice when virtualised, else
+    // the full list. Keying React + the element map on `rowKey` (not `msg.id`)
     // means duplicate message ids — which exist in historical/imported data —
-    // can never make two rows share a DOM node / measurement slot.
-    const renderedRows: Array<{ msg: ChatMessage; rowKey: string }> = virtualizeEnabled
+    // can never make two rows share a DOM node / measurement slot, while the
+    // occurrence counter (rather than the list index it replaced) keeps that key
+    // stable when infinite scroll prepends older history above these rows. The
+    // list index travels alongside, since windowing and geometry still need it.
+    const renderedRows: Array<{ msg: ChatMessage; rowKey: string; index: number }> = virtualizeEnabled
       ? virtualRows
           .slice(virtualWindow.startIndex, virtualWindow.endIndex)
           .map((r) => {
             const msg = displayMessages[r.index]
-            return msg ? { msg, rowKey: r.rowKey } : null
+            return msg ? { msg, rowKey: r.rowKey, index: r.index } : null
           })
-          .filter((r): r is { msg: ChatMessage; rowKey: string } => Boolean(r))
-      : displayMessages.map((msg, index) => ({ msg, rowKey: `${msg.id}#${index}` }))
+          .filter((r): r is { msg: ChatMessage; rowKey: string; index: number } => Boolean(r))
+      : projectNonVirtualizedRows(displayMessages)
 
 
     useEffect(() => {
@@ -5017,26 +5093,7 @@ export const TranscriptPanel = memo(
               aria-hidden
             />
           )}
-          {renderedRows.map(({ msg, rowKey }) => {
-            const historyBoundary = readTranscriptHistoryPageBoundary(msg)
-            if (historyBoundary) {
-              return (
-                <div
-                  key={`message-block-${rowKey}`}
-                  className="transcript-message-block transcript-history-page-boundary"
-                  data-vrow-id={rowKey}
-                  data-message-id={msg.id}
-                  ref={virtualizeEnabled ? virtualBlockRef : undefined}
-                >
-                  <TranscriptHistoryPageBoundary
-                    data={historyBoundary}
-                    onOlder={loadOlderTranscriptPage}
-                    onNewer={loadNewerTranscriptPage}
-                    onLatest={returnToLatestTranscriptPage}
-                  />
-                </div>
-              )
-            }
+          {renderedRows.map(({ msg, rowKey, index }) => {
             const isDelegationCard = isSubThreadDelegationMessage(msg)
             const isFleetWaveCard = isFleetWaveMessage(msg)
             const isReturnCard = isSubThreadReturnMessage(msg)
@@ -5355,7 +5412,7 @@ export const TranscriptPanel = memo(
                 !collapseState.entering.has(liveViewportStackKey) &&
                 !prefersReducedMotionNow()
               ) {
-                const projIndex = Number(rowKey.slice(rowKey.lastIndexOf('#') + 1))
+                const projIndex = index
                 const measured = Number.isFinite(projIndex) ? virtualHeights[projIndex] : undefined
                 if (typeof measured === 'number' && measured > 72) {
                   collapseState.entering.set(liveViewportStackKey, Math.round(measured))

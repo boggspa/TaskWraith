@@ -3,6 +3,7 @@ import {
   DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES,
   DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES,
   DEFAULT_TRANSCRIPT_PAGE_MAX_RUNS,
+  estimateJsonishBytes,
   selectTranscriptPageEndingAt,
   selectTranscriptPageRuns,
   selectTranscriptPageStartingAt,
@@ -32,15 +33,44 @@ export {
  * Full arrays remain the renderer's authoritative mutation/save source whenever
  * they are present. React subscribers receive only one count-and-byte-bounded
  * page, so grouping, indexing, virtualization, and row caches cannot scale with
- * the entire historical transcript. Paging replaces the presentation page; it
- * never accumulates older pages in the render model.
+ * the entire historical transcript.
  *
  * Stage 1b: an entry can also be PAGED — ingested from a main-produced
  * TranscriptPage (ingestPage) while the chat record stays a summaryOnly shell.
  * Paged entries hold no full source arrays; their window-move methods are
  * no-ops and the pager (chatTranscriptPager.ts) fetches adjacent windows over
  * IPC instead. A full ingest() replaces a paged entry wholesale (escalation).
+ *
+ * Accumulated infinite scroll: a paged entry holds ONE CONTIGUOUS window that
+ * may span several fetched pages. The three window operations are EXPLICIT and
+ * never inferred:
+ *
+ *   - `ingestPage` / `replaceChatTranscriptWindow` — the page becomes the whole
+ *     window (initial open, reveal/jump-to-id, return-to-latest).
+ *   - `prependChatTranscriptPage` — the reader scrolled up; the page joins the
+ *     window's older edge.
+ *   - `appendChatTranscriptPage` — the reader scrolled down; the page joins the
+ *     window's newer edge.
+ *
+ * Accumulation is a caller's stated intent rather than something guessed from
+ * the incoming page's shape, because a re-open, a jump, and a scroll can all
+ * produce an adjacent page — inferring from adjacency alone silently turns a
+ * "show me this page" into "extend the window". Prepend/append still verify
+ * adjacency and fall back to replace when the page does not actually touch the
+ * loaded window, so the window can never become discontiguous. It is capped at
+ * ACCUMULATED_WINDOW_PAGE_BUDGET pages of messages and bytes with far-end
+ * eviction, and hasOlder/hasNewer are recomputed from the resulting absolute
+ * window bounds so they stay honest after an eviction.
  */
+
+/**
+ * How many page budgets one accumulated window may span before the far edge is
+ * evicted (defaults: 4 × 1,500 messages and 4 × 24 MiB). Large enough that a
+ * reader scrolling back through history keeps plenty of already-loaded context
+ * on both sides of the viewport, small enough that the render model still can
+ * not grow with the whole transcript — which is the entire point of paging.
+ */
+export const ACCUMULATED_WINDOW_PAGE_BUDGET = 4
 
 export interface ChatTranscriptPayload {
   messages: ChatMessage[]
@@ -77,6 +107,9 @@ interface ChatTranscriptEntry {
   payload: ChatTranscriptPayload
 }
 
+/** Which edge of the loaded window an incoming page joins. */
+type AccumulateDirection = 'older' | 'newer'
+
 export type ChatTranscriptStoreListener = () => void
 
 const EMPTY_MESSAGES: ChatMessage[] = []
@@ -103,6 +136,21 @@ function positiveInteger(value: number | undefined, fallback: number): number {
 function emptyPayload(updatedAt = 0): ChatTranscriptPayload {
   if (updatedAt === 0) return EMPTY_CHAT_TRANSCRIPT_PAYLOAD
   return { ...EMPTY_CHAT_TRANSCRIPT_PAYLOAD, messages: [], runs: [], updatedAt }
+}
+
+/**
+ * Union of the runs already on screen and the runs the incoming page carries,
+ * keyed by run id. The PAGE's copy wins: a run that is still streaming gets a
+ * fresher row on every fetch, and keeping the stale one would freeze its status
+ * in the accumulated window.
+ */
+function mergeRunsById(existingRuns: ChatRun[], pageRuns: ChatRun[]): ChatRun[] {
+  if (existingRuns.length === 0) return pageRuns
+  if (pageRuns.length === 0) return existingRuns
+  const byId = new Map<string, ChatRun>()
+  for (const run of existingRuns) if (run?.runId) byId.set(run.runId, run)
+  for (const run of pageRuns) if (run?.runId) byId.set(run.runId, run)
+  return Array.from(byId.values())
 }
 
 function payloadsReferentiallyEqual(
@@ -158,11 +206,13 @@ export class ChatTranscriptStore {
   /**
    * Stage 1b — install a main-produced TranscriptPage as the chat's entire
    * presentation state. No full source arrays are held; adjacent windows are
-   * fetched over IPC by the pager and REPLACE this entry (paging never
-   * accumulates in the render model).
+   * fetched over IPC by the pager.
+   *
+   * REPLACE semantics, including when the chat is already paged: see the
+   * class doc for why accumulation is never inferred here.
    */
   ingestPage(page: TranscriptPage): ChatTranscriptPayload {
-    const payload: ChatTranscriptPayload = {
+    return this.installPagedWindow(page.chatId, {
       messages: page.messages,
       runs: page.runs,
       updatedAt: page.updatedAt,
@@ -172,12 +222,149 @@ export class ChatTranscriptStore {
       windowEstimatedBytes: page.estimatedBytes,
       hasOlder: page.hasOlder,
       hasNewer: page.hasNewer
+    })
+  }
+
+  /** Replace the loaded window wholesale (open, reveal/jump, return-to-latest). */
+  replaceChatTranscriptWindow(page: TranscriptPage): ChatTranscriptPayload {
+    return this.ingestPage(page)
+  }
+
+  /**
+   * Extend the loaded window with the page immediately BEFORE it — the reader
+   * scrolled up. Returns null when the chat is not paged, because a fully
+   * hydrated chat rewindows from its own source arrays (showOlderPage) and
+   * must never take transcript content from an IPC page.
+   */
+  prependChatTranscriptPage(chatId: string, page: TranscriptPage): ChatTranscriptPayload | null {
+    const entry = this.byId.get(chatId)
+    if (!entry?.paged) return null
+    return this.accumulatePage(chatId, entry, page, 'older')
+  }
+
+  /** Extend the loaded window with the page immediately AFTER it (scrolled down). */
+  appendChatTranscriptPage(chatId: string, page: TranscriptPage): ChatTranscriptPayload | null {
+    const entry = this.byId.get(chatId)
+    if (!entry?.paged) return null
+    return this.accumulatePage(chatId, entry, page, 'newer')
+  }
+
+  /**
+   * Join an adjacent page onto one edge of the loaded window.
+   *
+   * A page that does not actually touch the window replaces it instead: a
+   * window assembled from two disjoint stretches of history would render the
+   * transcript in an order that never existed, which is far worse than losing
+   * the accumulated context.
+   */
+  private accumulatePage(
+    chatId: string,
+    entry: ChatTranscriptEntry,
+    page: TranscriptPage,
+    direction: AccumulateDirection
+  ): ChatTranscriptPayload {
+    const existing = entry.payload
+    // Windows are half-open: [windowStart, windowEnd). A page joins this edge
+    // when it REACHES the edge, which includes overlapping it — the pager
+    // anchors its request on the boundary message, so a page that re-delivers
+    // that message is the normal case, not a jump. Requiring the edges to meet
+    // exactly (`page.windowEnd === existing.windowStart`) rejected every
+    // overlapping page and silently fell through to replace, discarding the
+    // tail the reader was looking at. Only a GAP may replace.
+    const joinsEdge =
+      direction === 'older'
+        ? page.windowStart <= existing.windowStart && page.windowEnd >= existing.windowStart
+        : page.windowStart <= existing.windowEnd && page.windowEnd >= existing.windowEnd
+    if (!joinsEdge) return this.ingestPage(page)
+
+    // Overlap is normal: the boundary message, and anything appended while the
+    // fetch was in flight, arrive in both windows. Keep the copy already on
+    // screen so its React identity survives the merge.
+    const onScreen = new Set(existing.messages.map((message) => message.id))
+    const added = page.messages.filter((message) => !onScreen.has(message.id))
+    if (added.length === 0) return existing
+
+    const merged =
+      direction === 'older' ? [...added, ...existing.messages] : [...existing.messages, ...added]
+    // Absolute index of merged[0] within the canonical transcript. For an older
+    // page `added` is exactly the run of messages that sit BEFORE the current
+    // head — everything from the overlap onward was filtered out above — so
+    // moving the head back by that count stays consistent with the window
+    // bounds derived from it below.
+    const mergedStart =
+      direction === 'older' ? existing.windowStart - added.length : existing.windowStart
+
+    const kept = this.boundAccumulatedWindow(merged, direction)
+    const messages = merged.slice(kept.start, kept.end)
+    const windowStart = mergedStart + kept.start
+    const windowEnd = mergedStart + kept.end
+    // The window itself is proof of at least this many messages, so a stale
+    // count from an older page can never claim the window runs past the end.
+    const totalMessageCount = Math.max(page.totalMessageCount, windowEnd)
+
+    return this.installPagedWindow(chatId, {
+      messages: messages.length === 0 ? EMPTY_MESSAGES : messages,
+      runs: selectTranscriptPageRuns(
+        mergeRunsById(existing.runs, page.runs),
+        messages,
+        this.maxRunsPerPage * ACCUMULATED_WINDOW_PAGE_BUDGET
+      ),
+      updatedAt: Math.max(page.updatedAt, existing.updatedAt),
+      totalMessageCount,
+      windowStart,
+      windowEnd,
+      windowEstimatedBytes: kept.estimatedBytes,
+      // Recomputed from absolute bounds rather than copied from the page, so an
+      // eviction at the far edge immediately reports that direction as loadable
+      // again instead of stranding the reader at a dead end.
+      hasOlder: windowStart > 0,
+      hasNewer: windowEnd < totalMessageCount
+    })
+  }
+
+  /**
+   * Clamp the merged window to the accumulated message and byte budgets by
+   * evicting from the FAR edge — the direction the reader is moving away from —
+   * so what survives is still one contiguous run.
+   *
+   * Every message is measured exactly once and the running total is adjusted by
+   * the evicted message's own size. Re-estimating the remaining slice on each
+   * eviction would be quadratic, and this walk can span a 6,000-row window.
+   */
+  private boundAccumulatedWindow(
+    merged: ChatMessage[],
+    direction: AccumulateDirection
+  ): { start: number; end: number; estimatedBytes: number } {
+    const maxMessages = this.maxMessagesPerPage * ACCUMULATED_WINDOW_PAGE_BUDGET
+    const maxBytes = this.maxBytesPerPage * ACCUMULATED_WINDOW_PAGE_BUDGET
+    const sizes = merged.map((message) => Math.max(0, estimateJsonishBytes(message)))
+    let start = direction === 'older' ? 0 : Math.max(0, merged.length - maxMessages)
+    let end = direction === 'older' ? Math.min(merged.length, maxMessages) : merged.length
+    let estimatedBytes = 0
+    for (let index = start; index < end; index += 1) estimatedBytes += sizes[index]
+    // Always leave one message standing: an empty window would report both
+    // edges as loadable and spin.
+    while (estimatedBytes > maxBytes && end - start > 1) {
+      if (direction === 'older') {
+        end -= 1
+        estimatedBytes -= sizes[end]
+      } else {
+        estimatedBytes -= sizes[start]
+        start += 1
+      }
     }
-    return this.installEntry(page.chatId, {
+    return { start, end, estimatedBytes }
+  }
+
+  private installPagedWindow(
+    chatId: string,
+    payload: ChatTranscriptPayload
+  ): ChatTranscriptPayload {
+    return this.installEntry(chatId, {
       sourceMessages: EMPTY_MESSAGES,
       sourceRuns: EMPTY_RUNS,
-      sourceUpdatedAt: page.updatedAt,
-      followsLatest: !page.hasNewer,
+      sourceUpdatedAt: payload.updatedAt,
+      followsLatest: !payload.hasNewer,
       paged: true,
       payload
     })
@@ -296,6 +483,61 @@ export class ChatTranscriptStore {
     return this.replacePage(chatId, entry, range, true)
   }
 
+  /**
+   * Accumulated infinite scroll over LOCAL authoritative arrays — the hydrated
+   * counterpart of prependChatTranscriptPage. A chat can be fully hydrated and
+   * still windowed (T7a bounds the presentation page for every chat, not just
+   * paged ones), and those chats reach their history through the same scroll
+   * gesture, so growing the range here is what keeps the two paths behaving
+   * identically instead of only paged chats feeling seamless.
+   */
+  extendOlderPage(chatId: string): ChatTranscriptPayload | null {
+    const entry = this.byId.get(chatId)
+    if (!entry) return null
+    // Paged entries hold no source arrays; the pager fetches over IPC.
+    if (entry.paged) return entry.payload
+    if (entry.payload.windowStart <= 0) return entry.payload
+    const grown = this.backwardRange(entry.sourceMessages, entry.payload.windowStart)
+    const range = this.boundAccumulatedRange(
+      entry.sourceMessages,
+      grown.start,
+      entry.payload.windowEnd,
+      'older'
+    )
+    return this.replacePage(chatId, entry, range, range.end === entry.sourceMessages.length)
+  }
+
+  /** Grow the local window forward (scrolled down on a hydrated chat). */
+  extendNewerPage(chatId: string): ChatTranscriptPayload | null {
+    const entry = this.byId.get(chatId)
+    if (!entry) return null
+    if (entry.paged) return entry.payload
+    if (entry.payload.windowEnd >= entry.sourceMessages.length) return entry.payload
+    const grown = this.forwardRange(entry.sourceMessages, entry.payload.windowEnd)
+    const range = this.boundAccumulatedRange(
+      entry.sourceMessages,
+      entry.payload.windowStart,
+      grown.end,
+      'newer'
+    )
+    return this.replacePage(chatId, entry, range, range.end === entry.sourceMessages.length)
+  }
+
+  /** Apply the accumulated-window budget to a local [start, end) range. */
+  private boundAccumulatedRange(
+    sourceMessages: ChatMessage[],
+    start: number,
+    end: number,
+    direction: AccumulateDirection
+  ): TranscriptPageRange {
+    const kept = this.boundAccumulatedWindow(sourceMessages.slice(start, end), direction)
+    return {
+      start: start + kept.start,
+      end: start + kept.end,
+      estimatedBytes: kept.estimatedBytes
+    }
+  }
+
   revealMessage(chatId: string, messageId: string): ChatTranscriptPayload | null {
     const entry = this.byId.get(chatId)
     if (!entry || !messageId) return entry?.payload ?? null
@@ -309,11 +551,17 @@ export class ChatTranscriptStore {
     return this.replacePage(chatId, entry, range, range.end === entry.sourceMessages.length)
   }
 
-  /** Reapply full authoritative arrays; presentation pages must never be saved. */
+  /**
+   * Reapply full authoritative arrays; presentation pages must never be saved.
+   *
+   * A PAGED entry holds no source arrays, so it deliberately contributes
+   * nothing here: the accumulated window can never be written back onto a chat
+   * record, and therefore can never reach saveChat.
+   */
   applyToChat(chat: ChatRecord): ChatRecord {
     if (!chat?.appChatId || isChatSummaryRecord(chat)) return chat
     const stored = this.byId.get(chat.appChatId)
-    if (!stored) return chat
+    if (!stored || stored.paged) return chat
     if (chat.messages === stored.sourceMessages && chat.runs === stored.sourceRuns) return chat
     return { ...chat, messages: stored.sourceMessages, runs: stored.sourceRuns }
   }

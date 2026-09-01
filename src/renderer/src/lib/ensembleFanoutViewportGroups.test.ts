@@ -242,8 +242,8 @@ describe('fan-out disclosure groups', () => {
       'speaker-after-lanes'
     ])
     expect([...classifyFanoutLaneSlots(displayMessages, true).entries()]).toEqual([
-      ['orchestrator-1#2', 'lead'],
-      ['work-7#3', 'trail']
+      ['orchestrator-1#0', 'lead'],
+      ['work-7#0', 'trail']
     ])
   })
 

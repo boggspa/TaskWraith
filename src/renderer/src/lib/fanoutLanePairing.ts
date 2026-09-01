@@ -36,6 +36,7 @@
  * pair. Wave ids never reorder the transcript for pairing.
  */
 import type { ChatMessage, FanoutLaneLayout } from '../../../main/store/types'
+import { buildTranscriptRowKeys } from './transcriptRowKey'
 import { isEnsembleFanoutResultMessage } from '../../../shared/fanoutLaneGrouping'
 import { isFleetWaveMessage } from '../components/FleetWaveCardModel'
 import { isSubThreadReturnMessage } from '../components/SubThreadReturnCardModel'
@@ -79,7 +80,8 @@ export function resolveFanoutLaneLayout(value: unknown): FanoutLaneLayout {
 
 /**
  * Classify every pairable lane/Fleet row in `messages` into its two-across slot,
- * keyed by the transcript's own collision-proof row key (`${id}#${index}`) so
+ * keyed by the transcript's own collision-proof row key (`${id}#${occurrence}`,
+ * see `buildTranscriptRowKeys`) so
  * the render loop can look a row up without re-deriving its position. Rows
  * that are not pairable are absent from the map — callers stamp nothing on them
  * and they keep spanning the column.
@@ -92,8 +94,13 @@ export function classifyFanoutLaneSlots(
   enabled: boolean
 ): ReadonlyMap<string, FanoutLaneSlot> {
   const slots = new Map<string, FanoutLaneSlot>()
-  const keyAt = (index: number): string => `${messages[index].id}#${index}`
   if (!enabled || !Array.isArray(messages) || messages.length === 0) return slots
+  // Built in one forward walk, then indexed into: a row key carries how many
+  // earlier rows shared its message id, which cannot be derived for a single
+  // row in isolation. The render loop looks slots up by the SAME key, so this
+  // must stay the shared builder.
+  const rowKeys = buildTranscriptRowKeys(messages)
+  const keyAt = (index: number): string => rowKeys[index]
 
   let index = 0
   while (index < messages.length) {
@@ -134,8 +141,9 @@ export function classifyFanoutLaneSlots(
 export const FANOUT_LANE_COMPACT_THRESHOLD = 6
 
 /**
- * Row keys (`${id}#${index}`) of every fan-out result row that sits in a run
- * of `FANOUT_LANE_COMPACT_THRESHOLD`-or-more adjacent fan-out result rows.
+ * Row keys (`${id}#${occurrence}`, see `buildTranscriptRowKeys`) of every
+ * fan-out result row that sits in a run of `FANOUT_LANE_COMPACT_THRESHOLD`-or-more
+ * adjacent fan-out result rows.
  *
  * Adjacency is the same notion pairing uses: any other row kind ends the run,
  * so a "run" is exactly the block the reader sees as one round's lanes. The
@@ -151,6 +159,7 @@ export function classifyCompactFanoutLaneRows(
 ): ReadonlySet<string> {
   const compact = new Set<string>()
   if (!Array.isArray(messages) || messages.length === 0) return compact
+  const rowKeys = buildTranscriptRowKeys(messages)
   let index = 0
   while (index < messages.length) {
     if (!isEnsembleFanoutResultMessage(messages[index])) {
@@ -161,7 +170,7 @@ export function classifyCompactFanoutLaneRows(
     while (end < messages.length && isEnsembleFanoutResultMessage(messages[end])) end += 1
     if (end - index >= FANOUT_LANE_COMPACT_THRESHOLD) {
       for (let cursor = index; cursor < end; cursor += 1) {
-        compact.add(`${messages[cursor].id}#${cursor}`)
+        compact.add(rowKeys[cursor])
       }
     }
     index = end
