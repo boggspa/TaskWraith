@@ -38,6 +38,6 @@ Starter panels are ordinary saved roster JSON after creation: you can edit, dupl
 ## Tips & related
 - Keep a panel small unless the task benefits from explicit reconnaissance, parallel workstreams, or independent challenge; larger panels add coordination and token cost.
 - [Create an Ensemble Chat](create-ensemble-chat.md) — start a multi-provider chat that a roster preset can populate.
-- [Ensemble Mode Picker](../composer/ensemble-mode-picker.md) — orchestration mode settings (Turn / Continuous).
+- [Ensemble Orchestration Row](../composer/ensemble-mode-picker.md) — the fan-out, isolation, and turn-budget controls presets capture.
 - [Participant Chip Strip](participant-chip-strip.md) — the in-chat strip for adjusting participants once a chat is running.
 - [Providers tab](../settings-and-configuration/providers-tab.md) — sign in to the providers a roster preset references.

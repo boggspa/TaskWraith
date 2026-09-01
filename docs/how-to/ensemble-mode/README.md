@@ -15,4 +15,4 @@ Guides for TaskWraith's multi-provider ensemble chat feature.
 
 ## Cross-links
 
-- [Ensemble Mode Picker](../composer/ensemble-mode-picker.md) — for orchestration mode settings (Turn / Continuous).
+- [Ensemble Orchestration Row](../composer/ensemble-mode-picker.md) — the composer row holding the Fan-Out toggle, Isolate picker, and Turn Budget.

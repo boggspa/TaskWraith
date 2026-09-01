@@ -12,14 +12,15 @@ count (`n`) is read-only. The popover still labels this limit "Max handoff
 turns," but the runtime budget covers both paths.
 
 ## Where to find it
-In the labeled **Turn Budget** cell on the second row of the Roster Presets section above the composer input, next to the Turn / Continuous mode picker and Fan-Out toggle, whenever Continuous mode is active for the current round.
+In the labeled **Turn Budget** cell on the second row of the Roster Presets section above the composer input, next to the Fan-Out toggle. Ensembles always run Continuous, so the chip is always available.
 
 ![Continuous hops meter chip showing "2/6" in the Turn Budget cell](../images/ensemble-mode__continuous-hops-meter.png)
 
 ## How to use it
-1. Switch the ensemble chat's orchestration mode to **Continuous**. After the
-   initial roster drains, TaskWraith can run another pass even when nobody
-   explicitly mentions a peer or calls `ensemble_yield`.
+1. Ensembles always run Continuous: after the initial roster drains,
+   TaskWraith can run another pass even when nobody explicitly mentions a
+   peer or calls `ensemble_yield`. A low cap approximates the retired
+   turn-based mode (roughly one pass and done).
 2. Watch the **Turn Budget** chip — it shows admitted continuation turns used so
    far out of the cap, for example `2/6`. Each participant admitted into an
    autonomous follow-up pass consumes one turn.
@@ -28,6 +29,6 @@ In the labeled **Turn Budget** cell on the second row of the Roster Presets sect
 
 ## Tips & related
 - [Mention & Yield Routing](mention-yield-routing.md) — how explicit handoffs consume the same budget as autonomous passes.
-- [Create an Ensemble Chat](create-ensemble-chat.md) — start a chat that can use Continuous mode.
-- [Fan-Out Toggle](fan-out.md) — the separate parallel-lanes control that composes with orchestration mode.
+- [Create an Ensemble Chat](create-ensemble-chat.md) — start an ensemble chat.
+- [Fan-Out Toggle](fan-out.md) — the separate parallel-lanes control beside this chip.
 - [Round Cards in Transcript](round-cards.md) — see how a continuous round's handoffs appear in the transcript.

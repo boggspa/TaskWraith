@@ -44,7 +44,7 @@ Type `@` followed by a participant's role or model name in the composer during a
    `reason` to make a single explicit handoff. It uses the same aliases, but an
    unresolved or ambiguous yield target falls through to ordinary ordering;
    ambiguous text mentions instead post a warning. Yielding to `user`, `human`,
-   or `you` explicitly returns control in Continuous mode.
+   or `you` explicitly returns control to the user.
    Managed Cursor can call `ensemble_yield` when its TaskWraith tool gateway is
    active. If a turn visibly falls back to native-only operation, use
    @-mention routing from a tool-capable peer or ordinary turn order.

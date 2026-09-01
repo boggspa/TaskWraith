@@ -63,5 +63,5 @@ current iOS state matrix.
 - Composer shells are presentation-level choices. They do not grant more file,
   shell, git, remote, or workflow authority by themselves.
 - The compact composer affordances are meant to keep high-risk controls visible:
-  approval mode, turn/continuous orchestration, participant targeting, model
+  approval mode, continuation budget, participant targeting, model
   selection, run state, and workspace context remain close to the send control.

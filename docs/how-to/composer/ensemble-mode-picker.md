@@ -1,23 +1,38 @@
-# How to: Ensemble Mode Picker
+# How to: Ensemble Orchestration Row
 
 **Platform:** Electron
 
-## What it is
-The Ensemble Mode picker is the composer control that sets how participants take turns in an ensemble chat: **Turn** (each agent speaks once per round) or **Continuous** (agents can hand work back and forth across bounded continuation turns). A separate Off/Read/Write toggle labeled **Fan-Out** sits beside it for parallel work.
+> **The Turn / Continuous mode picker documented here was retired.** Ensembles
+> now always run **Continuous** — agents hand work back and forth across
+> bounded continuation turns, and the round keeps going until the goal
+> completes, someone yields to the user, or the Turn Budget runs out. Older
+> chats that still record a "Turn" setting are treated as Continuous. To get
+> the old strict one-pass feel, keep the Turn Budget low and leave Fan-Out
+> off.
 
-## Where to find it
-In an **ensemble chat**, look at the **second row of the Roster Presets section** above the composer input (below the preset chips). The row groups four labeled controls: **Orchestration** (this picker, showing "Turn" or "Continuous"), **Fan-Out** (Off/Read/Write), **Shared History Budget** (a slider), and — in Continuous mode — **Turn Budget**. It appears on both the new-ensemble welcome screen and in-thread, once a chat is in ensemble mode.
+## What the row holds now
 
-![Roster presets second row with Orchestration picker, Fan-Out toggle, Shared History Budget slider, and Turn Budget meter](../images/composer__ensemble-mode-picker.png)
+The second row of the Roster Presets section above the composer input groups
+the remaining orchestration controls:
 
-## How to use it
-1. Click the mode button (labeled with the current mode) to open the picker popover.
-2. Choose **Turn** for strict round-robin, or **Continuous** to let agents hand off mid-round via `@mentions` or `ensemble_yield`.
-3. Drag the **Shared History Budget** slider on the same row to control how many characters of recent panel history each participant receives.
-4. Use the **Fan-Out: Off / Read / Write** buttons beside the picker to enable parallel fan-out for read-only (or, where unlocked, writer) participants.
+- **Fan-Out** — an On/Off toggle for parallel lanes. On enables read/review
+  fan-out plus Boss-triggered writer lanes with explicit writeScopes (or the
+  user-preflight writer path when no Boss is assigned). See
+  [Fan-Out Toggle](../ensemble-mode/fan-out.md).
+- **Isolate** — Shared / Worktrees / Any: where fan-out lanes do their work.
+- **Turn Budget** — the `n/m` continuation-hops meter. See
+  [Continuous Hops Meter](../ensemble-mode/continuous-hops-meter.md).
+
+The chat-wide **Shared History Budget (Chars) slider is gone too**: each
+participant's transcript ingest is now sized automatically from its model's
+context window, so capable models receive the full shared history. Only Codex
+GPT-5.3 Spark and 4B–12B-parameter local Ollama models keep a hand-tunable
+budget — a per-model slider on their rows in the composer's
+**Context · per participant** panel.
 
 ## Tips & related
-- [Create an Ensemble Chat](../ensemble-mode/create-ensemble-chat.md) — start an ensemble chat before this picker becomes available.
-- [Fan-Out Toggle](../ensemble-mode/fan-out.md) — more on the Off/Read/Write toggle beside this picker.
-- [Continuous Hops Meter](../ensemble-mode/continuous-hops-meter.md) — tracks remaining handoffs when using Continuous mode.
+
+- [Create an Ensemble Chat](../ensemble-mode/create-ensemble-chat.md) — start an ensemble chat before this row becomes available.
+- [Fan-Out Toggle](../ensemble-mode/fan-out.md) — the On/Off parallel-lanes control on this row.
+- [Continuous Hops Meter](../ensemble-mode/continuous-hops-meter.md) — tracks remaining continuation turns.
 - [Participant Chip Strip](../ensemble-mode/participant-chip-strip.md) — manage who's in the round above the composer.

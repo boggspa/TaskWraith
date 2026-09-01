@@ -197,8 +197,8 @@ promoted together to the front of the remaining queue. An ambiguous alias is
 skipped with a warning, and self-mentions are filtered (you can narrate "I,
 Codex, think…" without looping yourself back to the front).
 
-In Continuous mode, mentioning an ordinary participant that already reached a
-terminal status does not re-summon it. The active authority is the exception:
+Mentioning an ordinary participant that already reached a terminal status does
+not re-summon it. The active authority is the exception:
 the Boss—or the Captain once the Boss is unavailable—may be re-summoned after
 answering or yielding, subject to the continuation budget. If that active
 authority appears alongside advisory participant mentions, only the authority
@@ -273,19 +273,23 @@ writeScopes=...)` path.
 - Normal completion waits for live/reserved BG lanes. Cancellation and failure
   preserve the terminal fast-close semantics and stop those lanes immediately.
 
-### Turn-bound vs Continuous mode
+### Continuous orchestration
 
-Each ensemble has a `orchestrationMode`:
+Ensembles are **Continuous-only**. The composer's Turn / Continuous picker was
+retired on 2026-09-01 (user decision); `orchestrationMode` survives in the
+schema only as a legacy wire/persistence value, and every read path normalizes
+`turn_bound` to `continuous`. Do not branch new behavior on it, and do not
+describe a Turn-bound mode as selectable.
 
-- **Turn-bound** (default) — each enabled participant speaks ONCE
-  per round. After everyone speaks, the round ends and the user
-  is prompted for the next user turn. Beyond this, participants tagging each other (after all participants' contributions complete or round 1 over, etc.) then offers turns (in addition to existing fan-out and yield).
-- **Continuous** — after the roster drains, TaskWraith can autonomously run
-  another pass even when nobody explicitly yielded or mentioned a peer. Every
-  admitted continuation turn consumes the `maxContinuationHops` budget
-  (default 6). The loop stops on an explicit `ensemble_yield(target: 'user')`,
-  user cancellation, goal completion/block/pause, a queued user prompt or seat
+- After the roster drains, TaskWraith can autonomously run another pass even
+  when nobody explicitly yielded or mentioned a peer. Every admitted
+  continuation turn consumes the `maxContinuationHops` budget (default 6). The
+  loop stops on an explicit `ensemble_yield(target: 'user')`, user
+  cancellation, goal completion/block/pause, a queued user prompt or seat
   change, no progress/administrative deadlock, or budget exhaustion.
+- The old single-pass ("turn-bound") shape is still reachable operationally:
+  keep the Turn Budget low and leave fan-out off, and the round ends shortly
+  after the roster drains.
 - **A bounded final synthesis turn may be inserted immediately before the loop
   actually stops** (still source-ahead — absent from every tag through v1.9.6;
   `git cat-file -e <tag>:` plus the source path named at the end of this bullet
@@ -303,9 +307,9 @@ Each ensemble has a `orchestrationMode`:
   blocker titled "Synthesis unresolved". A _configured_ synthesizer no longer
   suppresses the signal — only a _captured_ summary does.
 
-The user picks the mode via the composer's Turn / Continuous chip.
-If the round is currently running, the toggle reflects the active
-round's mode (not editable mid-round).
+The user tunes the continuation budget via the composer's Turn Budget chip
+(`n/m`); the running count is read-only, and the cap applies to an in-flight
+round immediately.
 
 ### Same-provider participants
 

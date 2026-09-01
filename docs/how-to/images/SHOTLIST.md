@@ -62,9 +62,9 @@ The current refresh uses latest-source development apps, not an installed releas
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `ensemble-mode__continuous-hops-meter.png` | Electron | Continuous hops meter chip showing "2/6" | In an ensemble chat's composer, next to the Turn / Continuous mode picker, whenever Continuous mode is active for the current round. |
+| `ensemble-mode__continuous-hops-meter.png` | Electron | Continuous hops meter chip showing "2/6" | In an ensemble chat's composer, in the Turn Budget cell of the orchestration row (always shown — ensembles are Continuous-only). |
 | `ensemble-mode__create-ensemble-chat.png` | Electron | Active new Ensemble draft with roster controls and participant chips | Create a new draft, turn **Ensemble** on before first send, and capture the active Ensemble composer plus its roster controls. |
-| `ensemble-mode__fan-out.png` | Electron | Fan-out toggle chip next to the mode picker | In an ensemble chat, it sits as a separate chip group right beside the Turn / Continuous orchestration mode picker in the composer's action row. |
+| `ensemble-mode__fan-out.png` | Electron | Fan-out On/Off toggle chip | In an ensemble chat, it sits in the Fan-Out cell of the orchestration row above the composer input. |
 | `ensemble-mode__ios-ensemble-ui.png` | iOS | iOS companion showing ensemble strip and roster sheet | Open any Ensemble chat on the companion app — the chip strip appears automatically in the composer, above the message field. |
 | `ensemble-mode__mention-yield-routing.png` | Electron | Composer showing an @-mention being typed with role autocomplete | Type `@` followed by a participant's role or model name in the composer during an ensemble chat — an autocomplete menu lists matching participants. |
 | `ensemble-mode__participant-chip-strip.png` | Electron | Participant chip strip above composer with multiple provider chips | In an ensemble chat, the strip sits in the composer's above-row stack: below the branch / files-changed / Create PR row (and any external-path rows), and above the message textarea. |
