@@ -4,6 +4,12 @@ import {
   EMPTY_CHAT_TRANSCRIPT_PAYLOAD,
   type ChatTranscriptPayload
 } from './chatTranscriptStore'
+import {
+  requestLatestTranscriptPage,
+  requestNewerTranscriptPage,
+  requestOlderTranscriptPage,
+  requestRevealTranscriptMessage
+} from './chatTranscriptPager'
 
 /**
  * T7a — React binding for the external transcript store.
@@ -44,29 +50,58 @@ export function getChatTranscriptSnapshot(
   return getChatTranscriptStore().getSnapshot(chatId)
 }
 
+// Stage 1b: when the store holds a main-produced page (no local full arrays),
+// window moves and jumps go through the pager's IPC fetch and the current
+// payload is returned until the response lands; the store notification then
+// re-renders subscribers. Fully hydrated chats keep the sync local rewindow.
+
 export function showOlderChatTranscriptPage(
   chatId: string | null | undefined
 ): ChatTranscriptPayload | null {
-  return chatId ? getChatTranscriptStore().showOlderPage(chatId) : null
+  if (!chatId) return null
+  const store = getChatTranscriptStore()
+  if (store.isPaged(chatId)) {
+    requestOlderTranscriptPage(chatId, store)
+    return store.get(chatId)
+  }
+  return store.showOlderPage(chatId)
 }
 
 export function showNewerChatTranscriptPage(
   chatId: string | null | undefined
 ): ChatTranscriptPayload | null {
-  return chatId ? getChatTranscriptStore().showNewerPage(chatId) : null
+  if (!chatId) return null
+  const store = getChatTranscriptStore()
+  if (store.isPaged(chatId)) {
+    requestNewerTranscriptPage(chatId, store)
+    return store.get(chatId)
+  }
+  return store.showNewerPage(chatId)
 }
 
 export function showLatestChatTranscriptPage(
   chatId: string | null | undefined
 ): ChatTranscriptPayload | null {
-  return chatId ? getChatTranscriptStore().showLatestPage(chatId) : null
+  if (!chatId) return null
+  const store = getChatTranscriptStore()
+  if (store.isPaged(chatId)) {
+    requestLatestTranscriptPage(chatId, store)
+    return store.get(chatId)
+  }
+  return store.showLatestPage(chatId)
 }
 
 export function revealChatTranscriptMessage(
   chatId: string | null | undefined,
   messageId: string
 ): ChatTranscriptPayload | null {
-  return chatId ? getChatTranscriptStore().revealMessage(chatId, messageId) : null
+  if (!chatId) return null
+  const store = getChatTranscriptStore()
+  if (store.isPaged(chatId)) {
+    requestRevealTranscriptMessage(chatId, messageId, store)
+    return store.get(chatId)
+  }
+  return store.revealMessage(chatId, messageId)
 }
 
 /**

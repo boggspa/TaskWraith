@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatMessage } from '../main/store/types'
+import type { ChatListItem, ChatMessage, ChatRun } from '../main/store/types'
 import {
   DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES,
   DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES,
   buildTranscriptPage,
   estimateJsonishBytes,
+  isTranscriptPagedShell,
   selectTranscriptPageEndingAt,
-  selectTranscriptPageStartingAt
+  selectTranscriptPageRuns,
+  selectTranscriptPageStartingAt,
+  shouldPageTranscriptOnOpen
 } from './transcriptPage'
 
 function message(id: string, content = `content-${id}`): ChatMessage {
@@ -166,5 +169,71 @@ describe('buildTranscriptPage', () => {
     expect(page.newestMessageId).toBeNull()
     expect(page.hasOlder).toBe(false)
     expect(page.hasNewer).toBe(false)
+  })
+
+  it('carries the runs relevant to the page window', () => {
+    const withRuns = {
+      appChatId: 'chat-1',
+      messages: messages(20),
+      runs: [
+        { runId: 'r1', startedAt: '1', promptMessageId: 'm-0' },
+        { runId: 'r2', startedAt: '2', promptMessageId: 'm-19' }
+      ] as ChatRun[],
+      updatedAt: 1
+    }
+    const page = buildTranscriptPage(withRuns, { chatId: 'chat-1', maxMessages: 3 })!
+    expect(page.messages[0].id).toBe('m-17')
+    expect(page.runs.map((run) => run.runId)).toEqual(['r1', 'r2'])
+  })
+})
+
+describe('selectTranscriptPageRuns', () => {
+  it('passes through a small run list by reference', () => {
+    const runs = [{ runId: 'r1', startedAt: '1' } as ChatRun]
+    expect(selectTranscriptPageRuns(runs, [])).toBe(runs)
+  })
+
+  it('keeps unfinished runs and runs referenced by the page when capping', () => {
+    const runs = Array.from({ length: 6 }, (_, index) => ({
+      runId: `r${index}`,
+      startedAt: `${index}`,
+      endedAt: `${index + 1}`
+    })) as ChatRun[]
+    runs.push({ runId: 'live', startedAt: '9' } as ChatRun)
+    const pageMessages = [message('m-1')]
+    pageMessages[0] = { ...pageMessages[0], runId: 'r2' } as ChatMessage
+    const selected = selectTranscriptPageRuns(runs, pageMessages, 2)
+    expect(selected.map((run) => run.runId)).toEqual(['r2', 'live'])
+  })
+})
+
+describe('isTranscriptPagedShell', () => {
+  it('recognizes only summary records stamped transcriptPaged', () => {
+    const shell = {
+      summaryOnly: true,
+      transcriptPaged: true,
+      messages: [],
+      runs: []
+    } as unknown as ChatListItem
+    expect(isTranscriptPagedShell(shell)).toBe(true)
+    expect(isTranscriptPagedShell({ ...shell, transcriptPaged: false } as ChatListItem)).toBe(false)
+    expect(isTranscriptPagedShell({ messages: [], runs: [] } as unknown as ChatListItem)).toBe(
+      false
+    )
+    expect(isTranscriptPagedShell(null)).toBe(false)
+  })
+})
+
+describe('shouldPageTranscriptOnOpen', () => {
+  it('pages only transcripts that exceed a page budget', () => {
+    expect(shouldPageTranscriptOnOpen({ messageCount: 10 })).toBe(false)
+    expect(shouldPageTranscriptOnOpen({ messageCount: 1_501 })).toBe(true)
+    expect(shouldPageTranscriptOnOpen({})).toBe(false)
+    expect(
+      shouldPageTranscriptOnOpen({ messageCount: 3, sourceChatSize: 48 * 1024 * 1024 + 1 })
+    ).toBe(true)
+    expect(shouldPageTranscriptOnOpen({ messageCount: 3, sourceChatSize: 48 * 1024 * 1024 })).toBe(
+      false
+    )
   })
 })

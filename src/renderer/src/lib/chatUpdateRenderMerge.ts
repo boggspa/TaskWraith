@@ -6,6 +6,7 @@ import type {
 } from '../../../main/store/types'
 import { CHAT_COMPOSER_SELECTION_METADATA_KEYS } from '../../../shared/chatComposerSelectionPatch'
 import { PENDING_PROVIDER_CHANGE_KEY } from '../../../shared/providerChangeQueue'
+import { isTranscriptPagedShell } from '../../../shared/transcriptPage'
 import { anchorPendingAgentQuestionMarkers } from './agentQuestionMarkerAnchor'
 import { shouldPreferLiveAssistantContent } from './chatUpdatedAssistantMerge'
 import { preserveOptimisticEnsembleQueue } from './queuedMessageRows'
@@ -449,7 +450,9 @@ export function mergeChatUpdatedForRender(
     if (!options.messagesChanged) {
       // The main patch changed metadata only. The live ref already contains
       // the renderer's newest transcript, including synthetic local rows.
-      if (liveChat.messages !== chat.messages) {
+      // A paged shell's messages are a presentation page, never the live
+      // transcript authority — keeping them would blank the delivery's arrays.
+      if (liveChat.messages !== chat.messages && !isTranscriptPagedShell(liveChat)) {
         merged = { ...chat, messages: liveChat.messages }
       }
     } else if (liveChat.messages.length > 0) {

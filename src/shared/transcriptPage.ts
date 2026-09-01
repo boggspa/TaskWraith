@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatRecord } from '../main/store/types'
+import type { ChatListItem, ChatMessage, ChatRecord, ChatRun } from '../main/store/types'
 
 /**
  * Stage 1a — explicit transcript page contract shared by main and renderer.
@@ -20,6 +20,7 @@ import type { ChatMessage, ChatRecord } from '../main/store/types'
 
 export const DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES = 1_500
 export const DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES = 24 * 1024 * 1024
+export const DEFAULT_TRANSCRIPT_PAGE_MAX_RUNS = 512
 
 /** Full-walk byte estimate shared by renderer windows and main-produced pages. */
 export function estimateJsonishBytes(value: unknown): number {
@@ -56,6 +57,9 @@ export interface TranscriptPageLimits {
  * Page request for `get-chat-transcript-page`. With no cursor the tail page
  * is returned. `aroundMessageId` anchors a page that includes the target,
  * biased older first, then extended newer with whatever budget remains.
+ * `includeShell` additionally returns the chat's full chrome (everything
+ * except the transcript arrays) so an opener can render metadata without
+ * hydrating the complete record.
  */
 export interface TranscriptPageRequest {
   chatId: string
@@ -64,6 +68,68 @@ export interface TranscriptPageRequest {
   aroundMessageId?: string
   maxMessages?: number
   maxBytes?: number
+  maxRuns?: number
+  includeShell?: boolean
+}
+
+/**
+ * Stage 1b — the renderer-facing shell of a paged chat: the complete record
+ * chrome (ensemble roster, composer selection, provider metadata, …) with the
+ * transcript arrays stripped. `summaryOnly: true` keeps every existing save
+ * fence and summary-mutation escalation working unchanged; `transcriptPaged`
+ * distinguishes "hydrated as a shell + store page" from a lean list row, so
+ * hydration triggers do not re-fetch in a loop. A shell must never reach
+ * `saveChat`: the summaryOnly fence throws first on both paths.
+ */
+export type ChatShell = ChatListItem & { transcriptPaged: true }
+
+export function isTranscriptPagedShell(chat: ChatRecord | null | undefined): chat is ChatShell {
+  return (
+    (chat as ChatListItem | null | undefined)?.summaryOnly === true &&
+    (chat as { transcriptPaged?: unknown } | null | undefined)?.transcriptPaged === true
+  )
+}
+
+/**
+ * Open-path policy (Stage 1b): small transcripts hydrate in full exactly as
+ * before — the tail page IS the whole transcript there, so paging would only
+ * add a second round trip. Only threads that exceed a page budget open as
+ * shell + tail page. `sourceChatSize` is the on-disk file size, a cheap upper
+ * proxy for in-memory transcript bytes.
+ */
+export function shouldPageTranscriptOnOpen(chat: {
+  messageCount?: number
+  sourceChatSize?: number
+}): boolean {
+  const messageCount = chat.messageCount ?? 0
+  const sourceChatSize = chat.sourceChatSize ?? 0
+  return (
+    messageCount > DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES ||
+    sourceChatSize > DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES * 2
+  )
+}
+
+/** Runs relevant to one page of messages, capped newest-first like T7c. */
+export function selectTranscriptPageRuns(
+  sourceRuns: ChatRun[],
+  pageMessages: readonly ChatMessage[],
+  maxRunsPerPage?: number
+): ChatRun[] {
+  const maxRuns = positiveInteger(maxRunsPerPage, DEFAULT_TRANSCRIPT_PAGE_MAX_RUNS)
+  if (sourceRuns.length <= maxRuns) return sourceRuns
+  const messageIds = new Set(pageMessages.map((message) => message.id))
+  const runIds = new Set(
+    pageMessages
+      .map((message) => message.runId)
+      .filter((runId): runId is string => typeof runId === 'string' && runId.length > 0)
+  )
+  const relevant = sourceRuns.filter(
+    (run) =>
+      !run.endedAt ||
+      runIds.has(run.runId) ||
+      Boolean(run.promptMessageId && messageIds.has(run.promptMessageId))
+  )
+  return relevant.length <= maxRuns ? relevant : relevant.slice(relevant.length - maxRuns)
 }
 
 /**
@@ -74,6 +140,8 @@ export interface TranscriptPageRequest {
 export interface TranscriptPage {
   chatId: string
   messages: ChatMessage[]
+  /** Runs relevant to this page (see selectTranscriptPageRuns). */
+  runs: ChatRun[]
   totalMessageCount: number
   windowStart: number
   windowEnd: number
@@ -83,6 +151,8 @@ export interface TranscriptPage {
   oldestMessageId: string | null
   newestMessageId: string | null
   updatedAt: number
+  /** Present only when the request set `includeShell`. */
+  shell?: ChatShell
 }
 
 function positiveInteger(value: number | undefined, fallback: number): number {
@@ -147,7 +217,7 @@ function messageIndexById(messages: readonly ChatMessage[], messageId: string): 
  * page is a proper window.
  */
 export function buildTranscriptPage(
-  chat: Pick<ChatRecord, 'appChatId' | 'messages' | 'updatedAt'>,
+  chat: Pick<ChatRecord, 'appChatId' | 'messages' | 'updatedAt'> & { runs?: ChatRun[] },
   request: TranscriptPageRequest
 ): TranscriptPage | null {
   const messages = Array.isArray(chat.messages) ? chat.messages : []
@@ -198,6 +268,11 @@ export function buildTranscriptPage(
   return {
     chatId: chat.appChatId,
     messages: pageMessages,
+    runs: selectTranscriptPageRuns(
+      Array.isArray(chat.runs) ? chat.runs : [],
+      pageMessages,
+      request.maxRuns
+    ),
     totalMessageCount: messages.length,
     windowStart: range.start,
     windowEnd: range.end,

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
+import type { TranscriptPage } from '../../../shared/transcriptPage'
 import {
   ChatTranscriptStore,
   DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES,
@@ -334,5 +335,98 @@ describe('ChatTranscriptStore', () => {
     expect(payload.windowEstimatedBytes).toBeLessThanOrEqual(DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES)
     expect(store.stats().messageCount).toBe(payload.messages.length)
     expect(store.applyToChat({ ...full, messages: [], runs: [] }).messages).toBe(full.messages)
+  })
+})
+
+describe('Stage 1b paged entries (ingestPage)', () => {
+  function transcriptPage(
+    chatId: string,
+    ids: string[],
+    overrides: Partial<TranscriptPage> = {}
+  ): TranscriptPage {
+    const messages = ids.map((id) => message(id, `message ${id}`))
+    return {
+      chatId,
+      messages,
+      runs: [],
+      totalMessageCount: 20,
+      windowStart: 0,
+      windowEnd: ids.length,
+      estimatedBytes: 100,
+      hasOlder: false,
+      hasNewer: false,
+      oldestMessageId: messages[0]?.id ?? null,
+      newestMessageId: messages[messages.length - 1]?.id ?? null,
+      updatedAt: 5,
+      ...overrides
+    }
+  }
+
+  it('installs a main-produced page as the entire presentation state', () => {
+    const store = new ChatTranscriptStore()
+    const payload = store.ingestPage(
+      transcriptPage('paged', ['m17', 'm18', 'm19'], {
+        windowStart: 17,
+        windowEnd: 20,
+        hasOlder: true
+      })
+    )
+    expect(store.isPaged('paged')).toBe(true)
+    expect(payload).toMatchObject({
+      totalMessageCount: 20,
+      windowStart: 17,
+      windowEnd: 20,
+      hasOlder: true,
+      hasNewer: false,
+      updatedAt: 5
+    })
+    expect(payload.messages.map((entry) => entry.id)).toEqual(['m17', 'm18', 'm19'])
+    expect(store.getSnapshot('paged').messages).toHaveLength(3)
+  })
+
+  it('makes local rewindow methods no-ops (the pager fetches over IPC)', () => {
+    const store = new ChatTranscriptStore()
+    store.ingestPage(
+      transcriptPage('paged', ['m17'], { windowStart: 17, windowEnd: 18, hasOlder: true })
+    )
+    const before = store.get('paged')
+    expect(store.showOlderPage('paged')).toBe(before)
+    expect(store.showNewerPage('paged')).toBe(before)
+    expect(store.showLatestPage('paged')).toBe(before)
+    expect(store.revealMessage('paged', 'm3')).toBe(before)
+    expect(store.get('paged')?.messages.map((entry) => entry.id)).toEqual(['m17'])
+  })
+
+  it('a full ingest replaces the paged entry wholesale (escalation)', () => {
+    const store = new ChatTranscriptStore()
+    store.ingestPage(
+      transcriptPage('paged', ['m19'], { windowStart: 19, windowEnd: 20, hasOlder: true })
+    )
+    const full = {
+      ...chat('paged'),
+      messages: Array.from({ length: 4 }, (_, index) => message(`f${index}`, `full ${index}`))
+    }
+    const payload = store.ingest(full)!
+    expect(store.isPaged('paged')).toBe(false)
+    expect(payload.totalMessageCount).toBe(4)
+    expect(payload.messages.map((entry) => entry.id)).toEqual(['f0', 'f1', 'f2', 'f3'])
+  })
+
+  it('a later page replaces the window instead of accumulating', () => {
+    const store = new ChatTranscriptStore()
+    store.ingestPage(
+      transcriptPage('paged', ['m18', 'm19'], { windowStart: 18, windowEnd: 20, hasOlder: true })
+    )
+    store.ingestPage(
+      transcriptPage('paged', ['m15', 'm16', 'm17'], {
+        windowStart: 15,
+        windowEnd: 18,
+        hasOlder: true,
+        hasNewer: true
+      })
+    )
+    expect(store.get('paged')?.messages.map((entry) => entry.id)).toEqual(['m15', 'm16', 'm17'])
+    expect(store.stats().messageCount).toBe(3)
+    expect(store.isPaged('paged')).toBe(true)
   })
 })

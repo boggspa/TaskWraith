@@ -771,9 +771,16 @@ import {
   resolveWelcomeFitStackBounds,
   type WelcomeFitLevel
 } from './lib/welcomeFit'
-import { isChatSummaryRecord, mergeChatRecord } from './lib/chatRecordMerge'
+import { isChatSummaryRecord, mergeChatRecord, mergeChatRecordValue } from './lib/chatRecordMerge'
 import { ChatUpdateHydrationQueue } from './lib/chatUpdateHydrationQueue'
 import { commitHydratedChat, resolveChatHydration } from './lib/chatHydrationMerge'
+import { hydratePagedChatShell } from './lib/chatTranscriptPager'
+import {
+  isTranscriptPagedShell,
+  shouldPageTranscriptOnOpen,
+  type ChatShell,
+  type TranscriptPage
+} from '../../shared/transcriptPage'
 import {
   getOrCreateChatHydrationRuntime,
   reconcileHydrationOptions,
@@ -6381,6 +6388,25 @@ function App(): React.JSX.Element {
     [applyHydratedChat]
   )
 
+  // Stage 1b — commit a paged open: shell chrome + the store's tail page,
+  // never the full transcript arrays. A full record that landed while the
+  // fetch was in flight (send escalation, live delivery snapshot) always wins.
+  const applyPagedHydratedChat = (shell: ChatShell, page: TranscriptPage): ChatRecord => {
+    const current =
+      chatByIdRef.current.get(shell.appChatId) ||
+      (activeRunChatSnapshotRef.current?.appChatId === shell.appChatId
+        ? activeRunChatSnapshotRef.current
+        : null)
+    if (current && !isChatSummaryRecord(current)) return current
+    const committed: ChatRecord = mergeChatRecordValue(current ?? undefined, shell)
+    chatByIdRef.current.set(committed.appChatId, committed)
+    chatHydrationRuntime.transcriptStore.ingestPage(page)
+    chatHydrationRuntime.byteLru.touch(committed.appChatId)
+    setChats((prev) => mergeChatRecord(prev, committed))
+    setCurrentChat((prev) => (prev?.appChatId === committed.appChatId ? committed : prev))
+    return committed
+  }
+
   // Visible panes own their thread residency. This deliberately does not read
   // currentChat/focus: every pane hydrates by its own chat id, concurrent reads
   // are deduplicated per id, and a failed pane cannot cancel its neighbours.
@@ -6919,8 +6945,21 @@ function App(): React.JSX.Element {
 
   const hydrateSelectedChatAfterPaint = (chat: ChatRecord) => {
     if (!isChatSummaryRecord(chat)) return
+    const transcriptStore = chatHydrationRuntime.transcriptStore
+    // Already paged-hydrated: re-selecting the same shell must not refetch.
+    if (isTranscriptPagedShell(chat) && transcriptStore.isPaged(chat.appChatId)) return
     scheduleAfterNextPaint(() => {
-      void refreshSingleChat(chat.appChatId)
+      // Stage 1b: oversized transcripts open as shell + tail page; anything
+      // smaller hydrates in full exactly as before (the tail page IS the
+      // whole transcript there). A missing page falls back to full hydration.
+      void (shouldPageTranscriptOnOpen(chat)
+        ? hydratePagedChatShell(chat.appChatId, chat).then((paged) =>
+            paged
+              ? applyPagedHydratedChat(paged.shell, paged.page)
+              : refreshSingleChat(chat.appChatId)
+          )
+        : refreshSingleChat(chat.appChatId)
+      )
         .then((resolved) => {
           if (!resolved || currentChatIdRef.current !== resolved.appChatId) return
           const provider = getChatProvider(resolved)

@@ -70,6 +70,37 @@ describe('chat record merge helpers', () => {
     })
   })
 
+  it('keeps a paged shell’s full chrome when a lean list row refreshes (Stage 1b)', () => {
+    const pagedShell = {
+      ...summary({ title: 'Paged shell' }),
+      transcriptPaged: true,
+      ensemble: {
+        enabled: true,
+        participants: [
+          {
+            id: 'seat-1',
+            provider: 'kimi' as const,
+            enabled: true,
+            role: 'Work3',
+            instructions: 'REAL seat brief — must survive list refresh',
+            order: 0
+          }
+        ]
+      }
+    } as ChatListItem
+    const leanRow = summary({ appChatId: 'chat-1', title: 'Lean row', updatedAt: 300 })
+
+    const merged = mergeChatRecordValue(pagedShell, leanRow)
+    expect(merged.title).toBe('Lean row')
+    expect(merged.updatedAt).toBe(300)
+    // Chrome the lean row does not carry survives on the shell.
+    expect((merged as unknown as { transcriptPaged?: boolean }).transcriptPaged).toBe(true)
+    expect(merged.ensemble?.participants[0]?.instructions).toBe(
+      'REAL seat brief — must survive list refresh'
+    )
+    expect(merged.messages).toEqual([])
+  })
+
   it('keeps hydrated ensemble roster when a lean summary refresh arrives', () => {
     const hydratedEnsemble = {
       enabled: true,

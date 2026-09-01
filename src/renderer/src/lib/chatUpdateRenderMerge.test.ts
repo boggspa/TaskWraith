@@ -37,6 +37,27 @@ describe('mergeChatUpdatedForRender', () => {
     expect(merged.messages).toBe(liveMessages)
   })
 
+  it('never takes a paged shell’s window as the live transcript', () => {
+    // Stage 1b: a paged shell's messages are a bounded presentation page;
+    // folding them into a metadata-only delivery would blank the full arrays.
+    const incomingMessages = [message('a', 'incoming'), message('b', 'two')]
+    const pagedShell = {
+      ...chat([message('b', 'two')]),
+      summaryOnly: true,
+      messageCount: 2,
+      runCount: 0,
+      transcriptPaged: true
+    } as unknown as ChatRecord
+    const merged = mergeChatUpdatedForRender(chat(incomingMessages), {
+      liveChat: pagedShell,
+      messagesChanged: false,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages).toBe(incomingMessages)
+  })
+
   it('keeps longer live assistant content when the incoming transcript changed', () => {
     const incomingMessages = [message('a', 'short')]
     const liveMessages = [message('a', 'longer live answer')]

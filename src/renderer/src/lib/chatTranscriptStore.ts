@@ -2,8 +2,11 @@ import type { ChatMessage, ChatRecord, ChatRun } from '../../../main/store/types
 import {
   DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES,
   DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES,
+  DEFAULT_TRANSCRIPT_PAGE_MAX_RUNS,
   selectTranscriptPageEndingAt,
+  selectTranscriptPageRuns,
   selectTranscriptPageStartingAt,
+  type TranscriptPage,
   type TranscriptPageRange
 } from '../../../shared/transcriptPage'
 import { isChatSummaryRecord } from './chatRecordMerge'
@@ -17,6 +20,7 @@ import { demoteChatToSummary } from './chatByteLru'
 export {
   DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES,
   DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES,
+  DEFAULT_TRANSCRIPT_PAGE_MAX_RUNS,
   selectTranscriptPageEndingAt,
   selectTranscriptPageStartingAt,
   type TranscriptPageRange
@@ -25,14 +29,18 @@ export {
 /**
  * T7a/T7c — per-chat external transcript store with a bounded presentation page.
  *
- * Full arrays remain the renderer's authoritative mutation/save source. React
- * subscribers receive only one count-and-byte-bounded page, so grouping,
- * indexing, virtualization, and row caches cannot scale with the entire
- * historical transcript. Paging replaces the presentation page; it never
- * accumulates older pages in the render model.
+ * Full arrays remain the renderer's authoritative mutation/save source whenever
+ * they are present. React subscribers receive only one count-and-byte-bounded
+ * page, so grouping, indexing, virtualization, and row caches cannot scale with
+ * the entire historical transcript. Paging replaces the presentation page; it
+ * never accumulates older pages in the render model.
+ *
+ * Stage 1b: an entry can also be PAGED — ingested from a main-produced
+ * TranscriptPage (ingestPage) while the chat record stays a summaryOnly shell.
+ * Paged entries hold no full source arrays; their window-move methods are
+ * no-ops and the pager (chatTranscriptPager.ts) fetches adjacent windows over
+ * IPC instead. A full ingest() replaces a paged entry wholesale (escalation).
  */
-
-export const DEFAULT_TRANSCRIPT_PAGE_MAX_RUNS = 512
 
 export interface ChatTranscriptPayload {
   messages: ChatMessage[]
@@ -64,6 +72,8 @@ interface ChatTranscriptEntry {
   sourceRuns: ChatRun[]
   sourceUpdatedAt: number
   followsLatest: boolean
+  /** Stage 1b: entry holds a main-produced page, not full source arrays. */
+  paged?: boolean
   payload: ChatTranscriptPayload
 }
 
@@ -138,6 +148,39 @@ export class ChatTranscriptStore {
 
   has(chatId: string): boolean {
     return this.byId.has(chatId)
+  }
+
+  /** Stage 1b: true when the entry holds a main-produced page, not full arrays. */
+  isPaged(chatId: string): boolean {
+    return this.byId.get(chatId)?.paged === true
+  }
+
+  /**
+   * Stage 1b — install a main-produced TranscriptPage as the chat's entire
+   * presentation state. No full source arrays are held; adjacent windows are
+   * fetched over IPC by the pager and REPLACE this entry (paging never
+   * accumulates in the render model).
+   */
+  ingestPage(page: TranscriptPage): ChatTranscriptPayload {
+    const payload: ChatTranscriptPayload = {
+      messages: page.messages,
+      runs: page.runs,
+      updatedAt: page.updatedAt,
+      totalMessageCount: page.totalMessageCount,
+      windowStart: page.windowStart,
+      windowEnd: page.windowEnd,
+      windowEstimatedBytes: page.estimatedBytes,
+      hasOlder: page.hasOlder,
+      hasNewer: page.hasNewer
+    }
+    return this.installEntry(page.chatId, {
+      sourceMessages: EMPTY_MESSAGES,
+      sourceRuns: EMPTY_RUNS,
+      sourceUpdatedAt: page.updatedAt,
+      followsLatest: !page.hasNewer,
+      paged: true,
+      payload
+    })
   }
 
   get(chatId: string): ChatTranscriptPayload | null {
@@ -228,6 +271,8 @@ export class ChatTranscriptStore {
   showOlderPage(chatId: string): ChatTranscriptPayload | null {
     const entry = this.byId.get(chatId)
     if (!entry) return null
+    // Paged entries rewindow via the pager (IPC), not local source arrays.
+    if (entry.paged) return entry.payload
     if (entry.payload.windowStart <= 0) return entry.payload
     const range = this.backwardRange(entry.sourceMessages, entry.payload.windowStart)
     return this.replacePage(chatId, entry, range, false)
@@ -236,6 +281,7 @@ export class ChatTranscriptStore {
   showNewerPage(chatId: string): ChatTranscriptPayload | null {
     const entry = this.byId.get(chatId)
     if (!entry) return null
+    if (entry.paged) return entry.payload
     if (entry.payload.windowEnd >= entry.sourceMessages.length) return entry.payload
     const range = this.forwardRange(entry.sourceMessages, entry.payload.windowEnd)
     return this.replacePage(chatId, entry, range, range.end === entry.sourceMessages.length)
@@ -244,6 +290,7 @@ export class ChatTranscriptStore {
   showLatestPage(chatId: string): ChatTranscriptPayload | null {
     const entry = this.byId.get(chatId)
     if (!entry) return null
+    if (entry.paged) return entry.payload
     const range = this.latestRange(entry.sourceMessages)
     if (entry.followsLatest && range.start === entry.payload.windowStart) return entry.payload
     return this.replacePage(chatId, entry, range, true)
@@ -252,6 +299,7 @@ export class ChatTranscriptStore {
   revealMessage(chatId: string, messageId: string): ChatTranscriptPayload | null {
     const entry = this.byId.get(chatId)
     if (!entry || !messageId) return entry?.payload ?? null
+    if (entry.paged) return entry.payload
     const existingIndex = entry.sourceMessages.findIndex((message) => message.id === messageId)
     if (existingIndex < 0) return entry.payload
     if (existingIndex >= entry.payload.windowStart && existingIndex < entry.payload.windowEnd) {
@@ -361,22 +409,7 @@ export class ChatTranscriptStore {
 
   private pageRuns(sourceRuns: ChatRun[], messages: ChatMessage[]): ChatRun[] {
     if (sourceRuns.length === 0) return EMPTY_RUNS
-    if (sourceRuns.length <= this.maxRunsPerPage) return sourceRuns
-    const messageIds = new Set(messages.map((message) => message.id))
-    const runIds = new Set(
-      messages
-        .map((message) => message.runId)
-        .filter((runId): runId is string => typeof runId === 'string' && runId.length > 0)
-    )
-    const relevant = sourceRuns.filter(
-      (run) =>
-        !run.endedAt ||
-        runIds.has(run.runId) ||
-        Boolean(run.promptMessageId && messageIds.has(run.promptMessageId))
-    )
-    return relevant.length <= this.maxRunsPerPage
-      ? relevant
-      : relevant.slice(relevant.length - this.maxRunsPerPage)
+    return selectTranscriptPageRuns(sourceRuns, messages, this.maxRunsPerPage)
   }
 
   private latestRange(messages: ChatMessage[]): TranscriptPageRange {
