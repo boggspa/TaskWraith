@@ -15491,11 +15491,14 @@ function normalizeScheduledFanoutPolicy(
   value: unknown,
   legacyEnabled?: boolean
 ): EnsembleFanoutPolicy {
-  return ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
+  const recognized = ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
     ? (value as EnsembleFanoutPolicy)
     : legacyEnabled
-      ? 'read_only'
+      ? 'all'
       : 'off'
+  // Fan-out is On/Off now: On carries the old 'all' semantics, and the
+  // retired 'read_only' / 'locked_writers_*' levels collapse into it.
+  return recognized === 'off' ? 'off' : 'all'
 }
 
 // Stage 0b-dispatch (ensemble) — apply a schedule-time ensemble snapshot onto a
@@ -47924,14 +47927,9 @@ if (isGeminiMcpBridgeProcess) {
         ensembleSettingsUpdateFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
           if (!chat?.ensemble) return { ok: false, error: 'Thread is not an Ensemble chat' }
-          const nextMode: EnsembleOrchestrationMode =
-            action.orchestrationMode === 'continuous'
-              ? 'continuous'
-              : action.orchestrationMode === 'turn_bound'
-                ? 'turn_bound'
-                : chat.ensemble.orchestrationMode === 'continuous'
-                  ? 'continuous'
-                  : 'turn_bound'
+          // Continuous-only: an older phone build may still send 'turn_bound';
+          // accept it on the wire and normalize.
+          const nextMode: EnsembleOrchestrationMode = 'continuous'
           const shouldUpdateHops = typeof action.maxContinuationHops === 'number'
           const nextMaxContinuationHops = shouldUpdateHops
             ? Math.max(1, Math.min(1200, Math.floor(action.maxContinuationHops as number)))
