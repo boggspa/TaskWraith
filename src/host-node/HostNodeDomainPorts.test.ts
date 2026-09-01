@@ -139,7 +139,7 @@ const museOffers = {
       label: 'Default',
       available: true,
       requiresExplicitConsent: false,
-      ceiling: 'default' as const
+      ceiling: 'workspace_write' as const
     }
   ]
 }
