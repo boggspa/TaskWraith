@@ -186,6 +186,31 @@ describe('CanvasEmbedController', () => {
     expect(controller.has('b')).toBe(false)
   })
 
+  it('threads the surface kind through createView so emulator embeds reach the throttling policy', () => {
+    const parent = new FakeParent()
+    const calls: Array<[string, string | undefined]> = []
+    const controller = new CanvasEmbedController({
+      getParentWindow: () => parent,
+      createView: (partition, kind) => {
+        calls.push([partition, kind])
+        return new FakeView()
+      }
+    })
+    controller.surfaceFor('c1')({
+      partition: 'canvas-c1',
+      width: 800,
+      height: 600,
+      kind: 'emulator'
+    })
+    expect(calls).toEqual([['canvas-c1', 'emulator']])
+    // A kindless surface stays backward compatible (undefined, no default kind).
+    controller.surfaceFor('c2')({ partition: 'canvas-c2', width: 800, height: 600 })
+    expect(calls).toEqual([
+      ['canvas-c1', 'emulator'],
+      ['canvas-c2', undefined]
+    ])
+  })
+
   it('surface creation throws if the main window is gone', () => {
     const parent = new FakeParent()
     parent.destroyed = true
