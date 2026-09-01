@@ -10,6 +10,10 @@
    * instead of restating both rules. */
   --workspace-terminal-inline-inset: var(--space-lg);
   --composer-bottom-gap: 12px;
+  /* Bottom inset of the participant-filter dock (the seat strip under the
+   * composer timecodes). The dock's JS reserve writer reads this token back,
+   * so CSS stays the single source of the gap. */
+  --participant-filter-dock-bottom-gap: 10px;
   --composer-reserved-height: calc(var(--composer-min-height) + (var(--space-lg) * 4));
   /*
    * 1.0.4 — bumped from 14px to 56px (4x). The clearance is the air
@@ -48,7 +52,8 @@
   --composer-above-row-clearance: 0px;
   --composer-scroll-under-padding: calc(
     var(--composer-reserved-height) + var(--composer-bottom-gap) + var(--composer-scroll-clearance) +
-      var(--composer-above-row-clearance) + env(safe-area-inset-bottom, 0px)
+      var(--composer-above-row-clearance) + var(--participant-filter-dock-reserve, 0px) +
+      env(safe-area-inset-bottom, 0px)
   );
   --composer-terminal-scroll-under-padding: calc(
     var(--composer-scroll-under-padding) + var(--workspace-terminal-height) +
@@ -2691,7 +2696,7 @@
   --transcript-composer-fade: 176px;
   --transcript-composer-fade-anchor: calc(
     var(--composer-reserved-height) + var(--composer-bottom-gap) +
-      env(safe-area-inset-bottom, 0px)
+      var(--participant-filter-dock-reserve, 0px) + env(safe-area-inset-bottom, 0px)
   );
   /* Easing stops are a FRACTION of the fade band (not fixed px), so growing
    * --transcript-composer-fade stretches the whole ease-out — broader AND
@@ -2725,7 +2730,7 @@
   --transcript-composer-fade-anchor: calc(
     var(--composer-reserved-height) + var(--composer-bottom-gap) +
       var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) +
-      env(safe-area-inset-bottom, 0px)
+      var(--participant-filter-dock-reserve, 0px) + env(safe-area-inset-bottom, 0px)
   );
 }
 

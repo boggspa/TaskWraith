@@ -21,7 +21,10 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(var(--composer-bottom-gap) + env(safe-area-inset-bottom, 0px));
+  bottom: calc(
+    var(--composer-bottom-gap) + var(--participant-filter-dock-reserve, 0px) +
+      env(safe-area-inset-bottom, 0px)
+  );
   z-index: 4;
   box-sizing: border-box;
   padding: var(--space-sm) var(--chat-side-gutter) 0;
@@ -85,7 +88,7 @@
 }
 
 .workspace-terminal-open .composer-area {
-  bottom: calc(var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) + var(--composer-bottom-gap) + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) + var(--composer-bottom-gap) + var(--participant-filter-dock-reserve, 0px) + env(safe-area-inset-bottom, 0px));
 }
 
 .welcome-mode .composer-area {
