@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
-import type { ExecutionStepDefinition } from '../../../main/executionGraph/ExecutionGraphModel'
+import type {
+  ExecutionArtifactRef,
+  ExecutionStepDefinition,
+  StepAttempt
+} from '../../../main/executionGraph/ExecutionGraphModel'
 import type {
   ExecutionGraphProjection,
   ExecutionStepProjection
@@ -42,6 +46,52 @@ function effectLabel(effect: ExecutionStepDefinition['effect']): string {
   return 'External side effect'
 }
 
+function attemptStateLabel(state: StepAttempt['state']): string {
+  switch (state) {
+    case 'created':
+      return 'Created'
+    case 'claimed':
+      return 'Claimed'
+    case 'queued':
+      return 'Queued'
+    case 'running':
+      return 'Running'
+    case 'waiting_input':
+      return 'Needs input'
+    case 'waiting_approval':
+      return 'Needs approval'
+    case 'succeeded':
+      return 'Succeeded'
+    case 'failed':
+      return 'Failed'
+    case 'cancelled':
+      return 'Cancelled'
+    case 'interrupted':
+      return 'Interrupted'
+  }
+}
+
+function artifactKindLabel(kind: ExecutionArtifactRef['kind']): string {
+  switch (kind) {
+    case 'file':
+      return 'File'
+    case 'diff':
+      return 'Diff'
+    case 'commit':
+      return 'Commit'
+    case 'report':
+      return 'Report'
+    case 'blob':
+      return 'Data'
+    case 'run':
+      return 'Run'
+    case 'project_reference':
+      return 'Project reference'
+    case 'other':
+      return 'Other'
+  }
+}
+
 function StepNode({
   step,
   selected,
@@ -78,7 +128,9 @@ function StepNode({
             ))}
           </span>
         )}
-        {step.blocker && <span className="execution-map-node-blocker">{step.blocker}</span>}
+        {step.blocker && (
+          <span className={`execution-map-node-note tone-${step.statusTone}`}>{step.blocker}</span>
+        )}
         <span className="execution-map-node-footer">
           <span className={`execution-status-token tone-${step.statusTone}`}>
             {step.statusLabel}
@@ -136,8 +188,8 @@ function StepInspector({
 
       <p className="execution-map-inspector-objective">{step.step.objective}</p>
       {step.blocker && (
-        <div className="execution-map-inspector-blocker" role="note">
-          <strong>Blocker</strong>
+        <div className={`execution-map-inspector-note tone-${step.statusTone}`} role="note">
+          <strong>{step.statusTone === 'muted' ? 'Why this ended' : 'Blocker'}</strong>
           <span>{step.blocker}</span>
         </div>
       )}
@@ -188,7 +240,7 @@ function StepInspector({
             {step.attempts.map((attempt) => (
               <li key={attempt.id}>
                 <span>Attempt {attempt.ordinal}</span>
-                <span>{attempt.state.replaceAll('_', ' ')}</span>
+                <span>{attemptStateLabel(attempt.state)}</span>
                 {attempt.error && (
                   <span className="execution-map-attempt-error">{attempt.error}</span>
                 )}
@@ -204,7 +256,7 @@ function StepInspector({
           <ul className="execution-map-inspector-list">
             {step.artifactRefs.map((artifact) => (
               <li key={artifact.id}>
-                <span>{artifact.kind.replaceAll('_', ' ')}</span>
+                <span>{artifactKindLabel(artifact.kind)}</span>
                 <code title={artifact.uri}>{artifact.uri ?? artifact.id}</code>
               </li>
             ))}

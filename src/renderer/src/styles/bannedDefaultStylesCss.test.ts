@@ -73,4 +73,15 @@ describe('banned default styles stay out of approval and menu chrome', () => {
     expect(header).not.toContain('text-transform')
     expect(header).not.toContain('letter-spacing')
   })
+
+  /* The 2026-09 Execution Map restyle: node cards and the inspector note keep
+   * their tint but never the stripe, and no label in the surface is caps-spaced. */
+  it('keeps the execution map free of edge stripes and spaced caps', () => {
+    const css = readCss('23-execution-map.css')
+
+    expect(cssBlockStartingAt(css, '.execution-map-node {')).toContain('border:')
+    expect(cssBlockStartingAt(css, '.execution-map-inspector-note {')).toContain('background:')
+    expect(css).not.toContain('border-left')
+    expect(css).not.toContain('text-transform')
+  })
 })

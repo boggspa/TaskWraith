@@ -183,9 +183,45 @@ describe('ExecutionMapView', () => {
     expect(html).toContain('authority-digest-1')
     expect(html).toContain('<h3>Attempts</h3>')
     expect(html).toContain('Attempt 1')
+    expect(html).toContain('<span>Running</span>')
     expect(html).toContain('<h3>Artifacts</h3>')
+    expect(html).toContain('<span>Diff</span>')
     expect(html).toContain('file:///workspace/taskwraith.patch')
     expect(html).toContain('Open thread')
+  })
+
+  it('labels an attention-needing step with a blocker note', () => {
+    const html = renderToStaticMarkup(
+      <ExecutionMapView projection={fixture()} selectedStepId="review" onOpenThread={noop} />
+    )
+
+    expect(html).toContain('>Blocker<')
+    expect(html).toContain('Security owner approval required')
+  })
+
+  it('explains a terminal muted step without labelling it a blocker', () => {
+    const steps: ExecutionStepDefinition[] = [
+      {
+        ...common('halted'),
+        kind: 'solo_agent',
+        agent: { provider: 'codex', session: { mode: 'fresh' } }
+      }
+    ]
+    const projection = buildExecutionGraphProjection({
+      runId: 'execution-map-2',
+      runState: 'cancelled',
+      title: 'Closed with its owner',
+      topology: { steps, edges: [] },
+      activations: [activation('halted', 'cancelled', 'Cancelled with the owning parent run.')]
+    })
+
+    const html = renderToStaticMarkup(
+      <ExecutionMapView projection={projection} selectedStepId="halted" />
+    )
+
+    expect(html).toContain('Why this ended')
+    expect(html).toContain('Cancelled with the owning parent run.')
+    expect(html).not.toContain('>Blocker<')
   })
 
   it('contains native inspection controls but no faux graph editing surface', () => {

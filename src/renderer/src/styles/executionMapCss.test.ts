@@ -44,6 +44,20 @@ describe('Execution Map CSS contract', () => {
     expect(mobile).toContain('scroll-snap-type: none')
   })
 
+  /* The original stylesheet referenced tokens that do not exist anywhere in
+   * theme.css, so every theme silently rendered the hard-coded dark fallbacks.
+   * Chrome must come from the shared surface scale. */
+  it('draws chrome from the shared theme scale instead of phantom tokens', () => {
+    const source = css()
+
+    expect(source).not.toContain('var(--surface-raised')
+    expect(source).not.toContain('var(--border-subtle')
+    expect(source).not.toContain('var(--background-primary')
+    expect(source).toContain('var(--surface-2)')
+    expect(source).toContain('var(--panel-border)')
+    expect(source).toContain('var(--app-bg)')
+  })
+
   it('keeps status, keyboard focus, and reduced-motion states visible', () => {
     const source = css()
 
