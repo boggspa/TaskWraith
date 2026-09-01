@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { UpdateStateSnapshot } from '../../../main/UpdateService'
+import { shouldApplyUpdateSnapshot } from '../lib/updateStatusRefresh'
 
 export function useUpdateStatus(): {
   snapshot: UpdateStateSnapshot | null
@@ -13,36 +14,38 @@ export function useUpdateStatus(): {
   const [snapshot, setSnapshot] = useState<UpdateStateSnapshot | null>(null)
   const [busy, setBusy] = useState(false)
 
+  const commitSnapshot = useCallback((next: UpdateStateSnapshot | null, force = false) => {
+    setSnapshot((prev) => (shouldApplyUpdateSnapshot(prev, next, { force }) ? next : prev))
+  }, [])
+
   const refresh = useCallback(async (): Promise<UpdateStateSnapshot | null> => {
     try {
       const next = await window.api.updateSnapshot()
-      setSnapshot(next)
+      commitSnapshot(next, true)
       return next
     } catch {
       return null
     }
-  }, [])
+  }, [commitSnapshot])
 
   useEffect(() => {
     void refresh()
     if (typeof window.api.onUpdateStatusChanged !== 'function') return
-    return window.api.onUpdateStatusChanged((next) => setSnapshot(next))
-  }, [refresh])
+    return window.api.onUpdateStatusChanged((next) => commitSnapshot(next))
+  }, [commitSnapshot, refresh])
 
   const runUpdateAction = useCallback(
-    async (
-      action: () => Promise<UpdateStateSnapshot>
-    ): Promise<UpdateStateSnapshot | null> => {
+    async (action: () => Promise<UpdateStateSnapshot>): Promise<UpdateStateSnapshot | null> => {
       setBusy(true)
       try {
         const next = await action()
-        setSnapshot(next)
+        commitSnapshot(next, true)
         return next
       } finally {
         setBusy(false)
       }
     },
-    []
+    [commitSnapshot]
   )
 
   const checkForUpdates = useCallback(
