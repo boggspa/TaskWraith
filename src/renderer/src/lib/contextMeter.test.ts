@@ -572,6 +572,63 @@ describe('buildParticipantContextRows — per-participant honest context', () =>
     expect(row?.windowTokens).toBe(200_000)
     expect(row?.percent).toBe(88)
   })
+
+  it('keeps usage when the provider resolves the seat model to a different dispatch id (AGY gemini-api)', () => {
+    // The gemini-api: lane strips the prefix before dispatch, so
+    // run.actualModel is the BARE Gemini id while the seat (and
+    // run.requestedModel) keep the prefixed form. The seat filter must accept
+    // any of the run's identities — otherwise every AGY gemini-api seat reads
+    // 0% forever even though its sealed stats are exact.
+    const agySeat = {
+      id: 'p3',
+      provider: 'antigravity',
+      model: 'gemini-api:gemini-3-pro',
+      enabled: true,
+      role: 'Advisor',
+      order: 2
+    } as EnsembleParticipant
+    const runs = [
+      run({
+        runId: 'p3-agy',
+        provider: 'antigravity',
+        requestedModel: 'gemini-api:gemini-3-pro',
+        actualModel: 'gemini-3-pro',
+        ensembleParticipantId: 'p3',
+        startedAt: '2026-05-30T12:30:00.000Z',
+        stats: usage(90_000, 3_000)
+      })
+    ]
+    const row = buildParticipantContextRows(runs, [agySeat]).find((r) => r.id === 'p3')
+    expect(row?.usedTokens).toBe(93_000)
+    expect(row?.percent).toBeGreaterThan(0)
+  })
+
+  it('keeps usage when the Ollama launch plan resolves a catalog id to an installed tag', () => {
+    // Seat id `rnj-1` dispatches as the installed tag `rnj-1:8b`; the sealed
+    // run must still count for the seat.
+    const ollamaSeat = {
+      id: 'p4',
+      provider: 'ollama',
+      model: 'rnj-1',
+      enabled: true,
+      role: 'Scout',
+      order: 3
+    } as EnsembleParticipant
+    const runs = [
+      run({
+        runId: 'p4-ollama',
+        provider: 'ollama',
+        requestedModel: 'rnj-1',
+        actualModel: 'rnj-1:8b',
+        ensembleParticipantId: 'p4',
+        startedAt: '2026-05-30T12:31:00.000Z',
+        stats: usage(20_000, 1_000)
+      })
+    ]
+    const row = buildParticipantContextRows(runs, [ollamaSeat]).find((r) => r.id === 'p4')
+    expect(row?.usedTokens).toBe(21_000)
+    expect(row?.percent).toBeGreaterThan(0)
+  })
 })
 
 describe('applyLiveContextTokenUsage', () => {

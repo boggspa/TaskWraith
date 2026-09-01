@@ -147,7 +147,8 @@ describe('ensembleRosterPresets — capture + materialize', () => {
     expect(preset.name).toBe('Review panel')
     expect(preset.orchestrationMode).toBe('continuous')
     expect(preset.maxContinuationHops).toBe(12)
-    expect(preset.fanoutPolicy).toBe('read_only')
+    // Fan-out collapsed to On/Off: legacy read_only captures as 'all'.
+    expect(preset.fanoutPolicy).toBe('all')
     expect(preset.concurrentModeEnabled).toBe(true)
     expect(preset.participants.map((participant) => participant.role)).toEqual(['Builder', 'Planner'])
     expect(preset.participants[0]).toMatchObject({

@@ -163,10 +163,19 @@ function normalizeSeatModel(model?: string | null): string {
   return typeof model === 'string' ? model.trim() : ''
 }
 
-function runModelForSeatMatch(run: ChatRun): string {
-  return normalizeSeatModel(
-    run.actualModel || run.requestedModel || run.ensembleSeatSnapshot?.model
-  )
+function runModelCandidatesForSeatMatch(run: ChatRun): string[] {
+  // A run carries up to three model identities: the id the provider actually
+  // dispatched (`actualModel` — often REWRITTEN by the launch path: the AGY
+  // gemini-api lane strips its `gemini-api:` prefix, the Ollama launch plan
+  // resolves catalog ids to installed tags like `rnj-1` → `rnj-1:8b`, Claude
+  // `-1m` and Cursor `grok-fast` suffixes are stripped), plus the id the seat
+  // asked for (`requestedModel`) and the seat snapshot captured at dispatch.
+  // The latter two are exact copies of the seat string as it was when the run
+  // started, so they are the honest identities for seat matching.
+  const candidates = [run.actualModel, run.requestedModel, run.ensembleSeatSnapshot?.model]
+    .map(normalizeSeatModel)
+    .filter((model) => model.length > 0)
+  return [...new Set(candidates)]
 }
 
 function runProviderForSeatMatch(run: ChatRun): ProviderId | undefined {
@@ -178,6 +187,12 @@ function runProviderForSeatMatch(run: ChatRun): ProviderId | undefined {
  * Ensemble seat changes reuse `participantId`, so prior runs remain on the
  * chat but belong to a different model/provider window. A run missing
  * model/provider cannot be proven stale and still counts.
+ *
+ * A run matches when ANY of its recorded identities equals the seat model —
+ * a provider-side dispatch rewrite (prefix strip, tag resolution) must not
+ * zero the seat's meter, while a genuine seat swap (e.g. Codex → Spark under
+ * a reused participantId) still mismatches because every identity on the old
+ * run names the old model.
  */
 export function runMatchesParticipantSeat(
   run: ChatRun,
@@ -185,9 +200,9 @@ export function runMatchesParticipantSeat(
 ): boolean {
   const runProvider = runProviderForSeatMatch(run)
   if (runProvider && runProvider !== participant.provider) return false
-  const runModel = runModelForSeatMatch(run)
+  const runModels = runModelCandidatesForSeatMatch(run)
   const seatModel = normalizeSeatModel(participant.model)
-  if (runModel && seatModel && runModel !== seatModel) return false
+  if (runModels.length > 0 && seatModel && !runModels.includes(seatModel)) return false
   return true
 }
 

@@ -89,11 +89,14 @@ function normalizeRosterFanoutPolicy(
   value: unknown,
   legacyEnabled?: boolean
 ): EnsembleFanoutPolicy {
-  return ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
+  const recognized = ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
     ? (value as EnsembleFanoutPolicy)
     : legacyEnabled
-      ? 'read_only'
+      ? 'all'
       : 'off'
+  // Fan-out is On/Off now: On carries the old 'all' semantics, and the
+  // retired 'read_only' / 'locked_writers_*' levels collapse into it.
+  return recognized === 'off' ? 'off' : 'all'
 }
 
 function writeRawPresets(presets: EnsembleRosterPreset[]): void {
@@ -275,7 +278,8 @@ export function buildEnsembleRosterPresetFromConfig(
     createdAt: now,
     updatedAt: now,
     orchestrationMode:
-      ensemble.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound',
+      // Continuous-only: presets saved from any chat record as Continuous.
+      'continuous',
     maxParticipants: Math.max(
       MIN_ROSTER_PRESET_PARTICIPANTS,
       Math.min(MAX_ROSTER_PRESET_PARTICIPANTS, ensemble.maxParticipants)
@@ -581,7 +585,7 @@ export function saveEnsembleRosterPresetFromParticipants(
     name: trimmed,
     createdAt: now,
     updatedAt: now,
-    orchestrationMode: 'turn_bound',
+    orchestrationMode: 'continuous',
     maxParticipants: Math.max(MIN_ROSTER_PRESET_PARTICIPANTS, snapshots.length),
     participants: snapshots
   }
@@ -625,7 +629,7 @@ export function createEmptyEnsembleRosterPreset(name: string): EnsembleRosterPre
     name: trimmed,
     createdAt: now,
     updatedAt: now,
-    orchestrationMode: 'turn_bound',
+    orchestrationMode: 'continuous',
     maxParticipants: DEFAULT_ROSTER_PRESET_MAX_PARTICIPANTS,
     participants: snapshotParticipantsForPreset(seeded, boss.id, [captain.id], captain.id)
   }

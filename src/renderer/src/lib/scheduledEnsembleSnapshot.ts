@@ -16,11 +16,14 @@ function normalizeFanoutPolicy(
   value: unknown,
   legacyEnabled?: boolean
 ): EnsembleFanoutPolicy {
-  return ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
+  const recognized = ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
     ? (value as EnsembleFanoutPolicy)
     : legacyEnabled
-      ? 'read_only'
+      ? 'all'
       : 'off'
+  // Fan-out is On/Off now: On carries the old 'all' semantics, and the
+  // retired 'read_only' / 'locked_writers_*' levels collapse into it.
+  return recognized === 'off' ? 'off' : 'all'
 }
 
 /**
@@ -50,7 +53,8 @@ export function buildScheduledEnsembleSnapshot(
   const now = (options.now || (() => new Date()))()
   return {
     orchestrationMode:
-      chat.ensemble.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound',
+      // Continuous-only: snapshots always capture (and re-apply) Continuous.
+      'continuous',
     fanoutPolicy: normalizeFanoutPolicy(
       chat.ensemble.fanoutPolicy,
       chat.ensemble.concurrentModeEnabled

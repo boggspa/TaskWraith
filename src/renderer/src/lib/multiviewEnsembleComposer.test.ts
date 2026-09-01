@@ -111,7 +111,8 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
     expect(first.currentFanoutPolicy).toBe('all')
     expect(first.activeFanoutPolicy).toBe('off')
     expect(second.currentFanoutPolicy).toBe('off')
-    expect(second.activeFanoutPolicy).toBe('locked_writers_with_boss')
+    // On/Off collapse: the round's stored locked_writers level projects as 'all'.
+    expect(second.activeFanoutPolicy).toBe('all')
     expect(first.currentConcurrentMode).toBe(true)
     expect(first.activeConcurrentMode).toBe(false)
     expect(second.currentConcurrentMode).toBe(false)
@@ -232,7 +233,7 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
 
     expect(projection.liveRound).toBeUndefined()
     expect(projection.activeOrchestrationMode).toBe('turn_bound')
-    expect(projection.activeFanoutPolicy).toBe('read_only')
+    expect(projection.activeFanoutPolicy).toBe('all')
     expect(projection.continuationHops).toBe(0)
     expect(projection.maxContinuationHops).toBe(4)
     expect(projection.isRoundRunning).toBe(false)
