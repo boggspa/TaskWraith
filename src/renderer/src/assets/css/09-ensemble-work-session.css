@@ -8,7 +8,7 @@
   max-width: none;
   margin: 0;
   padding: 7px 14px;
-  gap: 8px;
+  gap: 12px;
   flex-wrap: nowrap;
   align-items: center;
   justify-content: center;
@@ -43,7 +43,14 @@
  * the picker automatically wraps both rows — no per-shell additions.
  * Control chrome reuses .composer-ensemble-mode(-button) /
  * .composer-fanout-policy / .composer-ensemble-hop-meter so the
- * existing shell + theme overrides keep applying in the new home. */
+ * existing shell + theme overrides keep applying in the new home.
+ *
+ * 2026-09-01: inter-element spacing widened one notch (stack 8 -> 12, hero
+ * 16 -> 20, compact 12 -> 16, squished 10 -> 12). Retiring the mode picker
+ * and the Chars slider left the row with room the remaining Fan-Out /
+ * Isolate / Turns pairs can spend. The 6px in-cell label-to-control gap
+ * deliberately stays tight: proximity is what still binds each label to
+ * its own control once the cells sit further apart. */
 .ensemble-roster-preset-picker-second-row {
   flex-basis: 100%;
   min-width: 0;
@@ -59,14 +66,14 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: center; /* welcome hero variant centers like the chips row */
-  gap: 6px 16px;
+  gap: 6px 20px;
   min-width: 0;
 }
 .ensemble-roster-preset-picker.is-compact .composer-ensemble-orchestration-row {
   flex: 0 1 auto;
   justify-content: center;
   flex-wrap: nowrap;
-  gap: 6px 12px;
+  gap: 6px 16px;
 }
 .composer-orchestration-cell {
   display: inline-flex;
@@ -244,7 +251,7 @@
   }
 
   .ensemble-roster-preset-picker.is-compact .composer-ensemble-orchestration-row {
-    gap: 6px 10px;
+    gap: 6px 12px;
   }
 }
 
