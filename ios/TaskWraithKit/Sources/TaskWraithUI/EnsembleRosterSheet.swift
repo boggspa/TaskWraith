@@ -48,10 +48,8 @@ public struct EnsembleRosterSheet: View {
     /// "Save current roster as preset" name prompt.
     @State private var showSavePrompt = false
     @State private var presetNameDraft = ""
-    @State private var orchestrationModeDraft: String? = nil
     @State private var maxContinuationHopsDraft: Int? = nil
     @State private var fanoutPolicyDraft: String? = nil
-    @State private var ensembleContextCharsDraft: Int? = nil
     /// Optimistic thread-wide Auto Approvals overlay (cleared on Mac echo).
     @State private var autoApprovalsDraft: Bool? = nil
 
@@ -108,14 +106,6 @@ public struct EnsembleRosterSheet: View {
         )
     }
 
-    private var remoteOrchestrationMode: String {
-        state?.orchestrationMode == "continuous" ? "continuous" : "turn_bound"
-    }
-
-    private var selectedOrchestrationMode: String {
-        orchestrationModeDraft ?? remoteOrchestrationMode
-    }
-
     private var remoteMaxContinuationHops: Int {
         clampContinuationHops(state?.maxContinuationHops ?? 6)
     }
@@ -136,48 +126,20 @@ public struct EnsembleRosterSheet: View {
         fanoutPolicyDraft ?? remoteFanoutPolicy
     }
 
-    private var selectedFanoutPickerValue: String {
-        if isWriterFanoutPolicy(selectedFanoutPolicy) { return "write" }
-        return selectedFanoutPolicy == "read_only" ? "read_only" : "off"
-    }
-
-    private var writerFanoutPolicy: String {
-        (state?.bossmanParticipantId?.isEmpty == false)
-            ? "locked_writers_with_boss" : "locked_writers_user_preflight"
-    }
-
-    private var remoteEnsembleContextChars: Int {
-        clampEnsembleContextChars(state?.ensembleContextChars ?? 24_000)
-    }
-
-    private var selectedEnsembleContextChars: Int {
-        ensembleContextCharsDraft ?? remoteEnsembleContextChars
-    }
-
     private func clampContinuationHops(_ value: Int) -> Int {
         max(1, min(500, value))
     }
 
-    private func clampEnsembleContextChars(_ value: Int) -> Int {
-        max(5_000, min(500_000, value))
-    }
-
-    private func isWriterFanoutPolicy(_ value: String) -> Bool {
-        value == "locked_writers_with_boss" || value == "locked_writers_user_preflight"
-    }
-
     private func normalizeFanoutPolicy(_ value: String?) -> String {
-        guard let value else { return "off" }
+        // Fan-out is On/Off (desktop `normalizeEnsembleFanoutPolicy` parity):
+        // On carries the old 'all' semantics, the retired 'read_only' /
+        // 'locked_writers_*' levels collapse into it, unknown values fall Off.
         switch value {
-        case "read_only", "locked_writers_with_boss", "locked_writers_user_preflight":
-            return value
+        case "read_only", "all", "locked_writers_with_boss", "locked_writers_user_preflight":
+            return "all"
         default:
             return "off"
         }
-    }
-
-    private func formatCharBudget(_ value: Int) -> String {
-        value >= 1_000 ? "\(value / 1_000)K" : "\(value)"
     }
 
     private func roundStatus(for id: String) -> String? {
@@ -300,11 +262,6 @@ public struct EnsembleRosterSheet: View {
             // Retry a pending chip-tap focus once the roster has synced.
             consumeFocusIfNeeded()
         }
-        .onChange(of: state?.orchestrationMode) { _, fresh in
-            if orchestrationModeDraft == (fresh == "continuous" ? "continuous" : "turn_bound") {
-                orchestrationModeDraft = nil
-            }
-        }
         .onChange(of: state?.maxContinuationHops) { _, fresh in
             if maxContinuationHopsDraft == clampContinuationHops(fresh ?? 6) {
                 maxContinuationHopsDraft = nil
@@ -313,11 +270,6 @@ public struct EnsembleRosterSheet: View {
         .onChange(of: state?.fanoutPolicy) { _, fresh in
             if fanoutPolicyDraft == normalizeFanoutPolicy(fresh) {
                 fanoutPolicyDraft = nil
-            }
-        }
-        .onChange(of: state?.ensembleContextChars) { _, fresh in
-            if ensembleContextCharsDraft == clampEnsembleContextChars(fresh ?? 24_000) {
-                ensembleContextCharsDraft = nil
             }
         }
         .onChange(of: state?.bossmanAutoApprovalsEnabled) { _, fresh in
@@ -329,33 +281,16 @@ public struct EnsembleRosterSheet: View {
 
     private var orchestrationSection: some View {
         Section {
-            Picker(
-                "Mode",
-                selection: Binding(
-                    get: { selectedOrchestrationMode },
-                    set: { mode in
-                        let next = mode == "continuous" ? "continuous" : "turn_bound"
-                        orchestrationModeDraft = next
-                        model.updateEnsembleSettings(
-                            workspaceId: workspaceId,
-                            threadId: threadId,
-                            orchestrationMode: next)
-                    })
-            ) {
-                Text("Turn").tag("turn_bound")
-                Text("Continuous").tag("continuous")
-            }
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-
+            // Continuous-only (2026-09-01): the Turn/Continuous mode picker and
+            // the chat-wide Chars stepper are retired — ingest is per-model and
+            // window-derived on the Mac. Fan-Out is an On/Off pair (On = the
+            // old 'all'; the Mac's boss-scoped writer machinery governs writes).
             Picker(
                 "Fan-Out",
                 selection: Binding(
-                    get: { selectedFanoutPickerValue },
+                    get: { selectedFanoutPolicy },
                     set: { value in
-                        let next =
-                            value == "read_only" ? "read_only"
-                            : value == "write" ? writerFanoutPolicy : "off"
+                        let next = value == "all" ? "all" : "off"
                         fanoutPolicyDraft = next
                         model.updateEnsembleSettings(
                             workspaceId: workspaceId,
@@ -364,57 +299,32 @@ public struct EnsembleRosterSheet: View {
                     })
             ) {
                 Text("Off").tag("off")
-                Text("Read").tag("read_only")
-                Text("Write").tag("write")
+                Text("On").tag("all")
             }
             .pickerStyle(.segmented)
             .controlSize(.small)
 
             Stepper(
                 value: Binding(
-                    get: { selectedEnsembleContextChars },
+                    get: { selectedMaxContinuationHops },
                     set: { value in
-                        let next = clampEnsembleContextChars(value)
-                        ensembleContextCharsDraft = next
+                        let next = clampContinuationHops(value)
+                        maxContinuationHopsDraft = next
                         model.updateEnsembleSettings(
                             workspaceId: workspaceId,
                             threadId: threadId,
-                            ensembleContextChars: next)
+                            maxContinuationHops: next)
                     }),
-                in: 5_000...500_000,
-                step: 5_000
+                in: 1...500
             ) {
                 HStack {
-                    Label("Chars", systemImage: "text.quote")
+                    Label("Hops", systemImage: "arrow.triangle.2.circlepath")
                     Spacer()
-                    Text(formatCharBudget(selectedEnsembleContextChars))
+                    // Electron orchestration-row parity: used/max in one
+                    // glance ("TURNS 10/128") — the separate Used row is gone.
+                    Text("\(continuationHops)/\(selectedMaxContinuationHops)")
+                        .monospacedDigit()
                         .foregroundStyle(TWTheme.textSecondary)
-                }
-            }
-
-            if selectedOrchestrationMode == "continuous" {
-                Stepper(
-                    value: Binding(
-                        get: { selectedMaxContinuationHops },
-                        set: { value in
-                            let next = clampContinuationHops(value)
-                            maxContinuationHopsDraft = next
-                            model.updateEnsembleSettings(
-                                workspaceId: workspaceId,
-                                threadId: threadId,
-                                maxContinuationHops: next)
-                        }),
-                    in: 1...500
-                ) {
-                    HStack {
-                        Label("Hops", systemImage: "arrow.triangle.2.circlepath")
-                        Spacer()
-                        // Electron orchestration-row parity: used/max in one
-                        // glance ("TURNS 10/128") — the separate Used row is gone.
-                        Text("\(continuationHops)/\(selectedMaxContinuationHops)")
-                            .monospacedDigit()
-                            .foregroundStyle(TWTheme.textSecondary)
-                    }
                 }
             }
         } header: {
