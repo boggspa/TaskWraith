@@ -343,7 +343,7 @@ const GROK_DEFAULT_MODELS = withCuratedUltraTaskSupport(GROK_DEFAULT_MODEL_ROWS)
 //
 // devstral-small leads and is the default: graded head-to-head it was ~26x
 // cheaper and more accurate on lane work. Note the two are NOT equivalent —
-// only mistral-medium-3.5 has thinking + vision; the seat's provider-level
+// mistral-medium-3.5 has thinking + vision, hosted glm-5-2 adds thinking; the seat's provider-level
 // `imageAttachments` is false because the default model has none.
 const MISTRAL_DEFAULT_MODEL = 'devstral-small'
 const MISTRAL_DEFAULT_MODEL_ROWS = [
@@ -359,6 +359,11 @@ const MISTRAL_DEFAULT_MODEL_ROWS = [
     description: '256K context - flagship'
   },
   {
+    id: 'glm-5-2',
+    label: 'GLM-5.2 (Mistral Hosted)',
+    description: '1M context - coding model'
+  },
+  {
     id: 'mistral-large-2512',
     label: 'Mistral Large 3',
     description: '262K context - flagship'
@@ -366,11 +371,6 @@ const MISTRAL_DEFAULT_MODEL_ROWS = [
   {
     id: 'zai-glm-5-2',
     label: 'GLM-5.2 (via Mistral)',
-    description: '1M context - coding model'
-  },
-  {
-    id: 'glm-5-2',
-    label: 'GLM-5.2 (Mistral Hosted)',
     description: '1M context - coding model'
   },
   {

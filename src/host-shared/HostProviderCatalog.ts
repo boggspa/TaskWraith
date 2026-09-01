@@ -340,9 +340,9 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       models: [
         model('devstral-small', 'Devstral Small'),
         model('mistral-medium-3.5', 'Mistral Medium 3.5', STANDARD_REASONING, true),
+        model('glm-5-2', 'GLM-5.2 (Mistral Hosted)', STANDARD_REASONING),
         model('mistral-large-2512', 'Mistral Large 3', STANDARD_REASONING),
         model('zai-glm-5-2', 'GLM-5.2 (via Mistral)', STANDARD_REASONING),
-        model('glm-5-2', 'GLM-5.2 (Mistral Hosted)', STANDARD_REASONING),
         model('codestral-2508', 'Codestral (Aug 2025)', STANDARD_REASONING),
         model('mistral-small-2603', 'Mistral Small 4', STANDARD_REASONING),
         model('devstral-2512', 'Devstral 2', STANDARD_REASONING),

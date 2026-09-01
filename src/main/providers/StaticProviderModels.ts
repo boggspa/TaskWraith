@@ -1031,6 +1031,14 @@ const MISTRAL_STATIC_MODELS = [
     ultraTaskSupported: true
   },
   {
+    id: 'glm-5-2',
+    label: 'GLM-5.2 (Mistral Hosted)',
+    description: '1M context - $1.40/$4.40 per Mtok',
+    supportedReasoningEfforts: [...MISTRAL_REASONING_EFFORTS],
+    defaultReasoningEffort: MISTRAL_DEFAULT_REASONING_EFFORT,
+    ultraTaskSupported: true
+  },
+  {
     id: 'mistral-large-2512',
     label: 'Mistral Large 3',
     description: '262K context - flagship, $0.50/$1.50 per Mtok',
@@ -1039,12 +1047,6 @@ const MISTRAL_STATIC_MODELS = [
   {
     id: 'zai-glm-5-2',
     label: 'GLM-5.2 (via Mistral)',
-    description: '1M context - $1.40/$4.40 per Mtok',
-    ultraTaskSupported: true
-  },
-  {
-    id: 'glm-5-2',
-    label: 'GLM-5.2 (Mistral Hosted)',
     description: '1M context - $1.40/$4.40 per Mtok',
     ultraTaskSupported: true
   },

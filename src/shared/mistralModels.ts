@@ -35,6 +35,8 @@ export const MISTRAL_DEFAULT_REASONING_EFFORT = 'medium'
 export const MISTRAL_THINKING_CAPABLE_MODEL_IDS = new Set<string>([
   MISTRAL_DEVSTRAL_SMALL_MODEL_ID,
   MISTRAL_MEDIUM_35_MODEL_ID,
+  // Hosted GLM-5.2 (Vibe subscription) exposes the same off/low/medium/high/max ladder.
+  'glm-5-2',
   'devstral-small-latest',
   'mistral-vibe-cli-latest',
   'mistral-small-2603',

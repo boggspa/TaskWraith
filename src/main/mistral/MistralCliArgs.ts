@@ -165,9 +165,9 @@ export const MISTRAL_LOCAL_ALIAS_EXCLUDED = 'local'
 export const MISTRAL_SEAT_MODELS = [
   MISTRAL_MODEL_DEVSTRAL_SMALL,
   MISTRAL_MODEL_MEDIUM,
+  'glm-5-2',
   'mistral-large-2512',
   'zai-glm-5-2',
-  'glm-5-2',
   'codestral-2508',
   'mistral-small-2603',
   'devstral-2512',
