@@ -715,6 +715,47 @@ describe('ModelUsageCard', () => {
     expect(html).not.toContain('>MO</th>')
   })
 
+  it('maps the Muse subscription meters onto the 5H/WK compact rows', () => {
+    const museEntry = quotaEntry({
+      provider: 'muse',
+      quotaError: undefined,
+      windows: [
+        {
+          id: 'muse-subscription-current',
+          label: 'Current usage',
+          runs: 0,
+          totalTokens: 0,
+          limitLabel: '63% remaining · imported browser session',
+          usedPercent: 37,
+          remainingPercent: 63
+        },
+        {
+          id: 'muse-subscription-weekly',
+          label: 'Weekly limit',
+          runs: 0,
+          totalTokens: 0,
+          limitLabel: '18% remaining · imported browser session',
+          usedPercent: 82,
+          remainingPercent: 18,
+          resetAt: '2026-09-07T00:00:00.000Z'
+        }
+      ]
+    })
+    const html = renderToStaticMarkup(<CompactModelUsageGrid quotaEntries={[museEntry]} />)
+
+    expect(html).toContain('>Muse</th>')
+    const currentIndex = html.indexOf('Muse Current usage: 37%')
+    const weeklyIndex = html.indexOf('Muse Weekly limit: 82%')
+    expect(currentIndex).toBeGreaterThan(html.indexOf('>5H</th>'))
+    expect(currentIndex).toBeLessThan(html.indexOf('>WK</th>'))
+    expect(weeklyIndex).toBeGreaterThan(html.indexOf('>WK</th>'))
+    expect(weeklyIndex).toBeLessThan(html.indexOf('>X1</th>'))
+
+    // No import, no column: the Muse lane is admitted on its entry alone.
+    const withoutMuse = renderToStaticMarkup(<CompactModelUsageGrid quotaEntries={[]} />)
+    expect(withoutMuse).not.toContain('>Muse</th>')
+  })
+
   it('hides the row legend column when there are more than 8 providers', () => {
     const summary: ModelUsageAggregate[] = [
       quotaEntry({ provider: 'codex', windows: [] }),

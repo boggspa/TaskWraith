@@ -152,6 +152,7 @@ const COMPACT_QUOTA_PROVIDER_ORDER: ModelUsageProviderId[] = [
   'deepseek',
   'cerebras',
   'meta',
+  'muse',
   'pi'
 ]
 
@@ -560,6 +561,18 @@ function compactCellsForEntry(
     return cells
   }
 
+  if (provider === 'muse') {
+    // The imported dev.meta.ai/usage subscription meters: 'Current usage'
+    // rides the short-window row and 'Weekly limit' the weekly one — the same
+    // placement the Ollama Session/Weekly import uses.
+    assign(
+      'fiveHour',
+      findCompactWindow(entry, (text) => text.includes('current') || isFiveHourWindow(text))
+    )
+    assign('weekly', findCompactWindow(entry, isWeeklyWindow))
+    return cells
+  }
+
   if (provider === 'cursor') {
     assign(
       'extraOne',
@@ -730,6 +743,7 @@ export function CompactModelUsageGrid({
     ...(entriesByProvider.has('mimo') ? (['mimo'] as const) : []),
     ...(entriesByProvider.has('qwen') ? (['qwen'] as const) : []),
     ...(entriesByProvider.has('meta') ? (['meta'] as const) : []),
+    ...(entriesByProvider.has('muse') ? (['muse'] as const) : []),
     ...(entriesByProvider.has('deepseek') ? (['deepseek'] as const) : []),
     ...(entriesByProvider.has('cerebras') ? (['cerebras'] as const) : [])
   ]

@@ -220,6 +220,7 @@ export function ApiUsageQuotaCardView({
         </label>
       </div>
       <UsageWebSessionControls provider="meta" />
+      <UsageWebSessionControls provider="muse" />
 
       <div className="settings-provider-auth-divider" />
       <strong>Token plan browser imports</strong>

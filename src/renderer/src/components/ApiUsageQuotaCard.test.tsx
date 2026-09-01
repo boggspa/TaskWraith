@@ -49,6 +49,7 @@ describe('ApiUsageQuotaCardView', () => {
     expect(html).toContain('platform.xiaomimimo.com')
     expect(html).toContain('modelstudio.console.alibabacloud.com')
     expect(html).toContain('dev.meta.ai/billing')
+    expect(html).toContain('dev.meta.ai/usage')
     expect(html).toContain('cloud.cerebras.ai/platform')
     expect(html).toContain('3 API billing providers are currently anchored')
     expect(html).not.toContain('type="password"')
