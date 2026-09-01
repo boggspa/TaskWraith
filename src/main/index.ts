@@ -1951,6 +1951,7 @@ import {
 } from './ipc/hostLifecycleHandlers'
 import { createMainRuntimeContext } from './runtime/MainRuntimeContext'
 import { registerChatHandlers } from './ipc/chatHandlers'
+import { registerChatTranscriptPageHandlers } from './ipc/chatTranscriptPageHandlers'
 import { registerArchivedChatHandlers } from './ipc/archivedChatHandlers'
 import { registerExternalProviderThreadImportHandlers } from './ipc/externalProviderThreadImportHandlers'
 import { ExternalProviderThreadImportService } from './import/ExternalProviderThreadImport'
@@ -56472,6 +56473,24 @@ if (isGeminiMcpBridgeProcess) {
       assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
       assertSenderCanRebindChatWorkspace: (event) => assertMainRendererSender(event),
       assertSenderCanManageChatCollection: (event) => assertMainRendererSender(event)
+    })
+    registerChatTranscriptPageHandlers({
+      chatService,
+      // Same sender-scope authority as get-chat in registerChatHandlers above.
+      resolveSenderChatReadScope: (event) => {
+        if (isMainRendererSender(event)) return { kind: 'all' }
+        const owner = workspacePopoutOwnerForSender(event.sender.id)
+        if (owner?.kind !== 'chat' || !owner.chatId) {
+          throw new Error('Renderer has no chat read authority.')
+        }
+        const chat = AppStore.getChat(owner.chatId)
+        if (!chat) throw new Error('Renderer chat read authority could not be resolved.')
+        return {
+          kind: 'chat',
+          chatId: owner.chatId,
+          ...(chat.workspaceId ? { workspaceId: chat.workspaceId } : {})
+        }
+      }
     })
     registerArchivedChatHandlers({
       chatService,

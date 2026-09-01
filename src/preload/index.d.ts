@@ -108,6 +108,7 @@ import type { TranscriptExportScope } from '../shared/transcriptExportScope'
 import type { StartupAuthorityRecoveryState } from '../shared/startupAuthority'
 import type { ChatPopoutPresentation } from '../shared/chatPopoutPresentation'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
+import type { TranscriptPage, TranscriptPageRequest } from '../shared/transcriptPage'
 import type {
   ExternalProviderThreadImportChatSummary,
   ExternalProviderThreadImportProvider,
@@ -2422,6 +2423,7 @@ declare global {
       getChatList: (workspaceId?: string) => Promise<ChatListItem[]>
       getPinnedMessages: (workspaceId?: string) => Promise<PinnedMessageGroup[]>
       getChat: (chatId: string) => Promise<ChatRecord | null>
+      getChatTranscriptPage: (request: TranscriptPageRequest) => Promise<TranscriptPage | null>
       unarchiveChat: (
         chatId: string
       ) => Promise<

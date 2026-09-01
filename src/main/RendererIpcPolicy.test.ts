@@ -75,6 +75,7 @@ describe('RendererIpcPolicy', () => {
     'get-settings',
     'get-agent-models',
     'get-chat',
+    'get-chat-transcript-page',
     'unarchive-chat',
     'export-archived-chat',
     'save-chat',

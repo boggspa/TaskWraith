@@ -76,6 +76,7 @@ import type {
   GitSnapshotSubscribeResult
 } from '../main/services/GitSnapshotPublisher'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
+import type { TranscriptPageRequest } from '../shared/transcriptPage'
 import type {
   ExternalProviderThreadImportChatSummary,
   ExternalProviderThreadImportProvider,
@@ -2289,6 +2290,8 @@ const api = {
   getPinnedMessages: (workspaceId?: string) =>
     ipcRenderer.invoke('get-pinned-messages', workspaceId),
   getChat: (chatId: string) => ipcRenderer.invoke('get-chat', chatId),
+  getChatTranscriptPage: (request: TranscriptPageRequest) =>
+    ipcRenderer.invoke('get-chat-transcript-page', request),
   unarchiveChat: (chatId: string) => ipcRenderer.invoke('unarchive-chat', chatId),
   exportArchivedChat: (input: { chatId: string; format: ArchivedChatExportFormat }) =>
     ipcRenderer.invoke('export-archived-chat', input),
