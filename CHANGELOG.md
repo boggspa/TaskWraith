@@ -9,11 +9,10 @@ context needed to answer.
 ## 1.9.7 - Unreleased
 
 > **Source-ahead refresh — 2026-09-01.** This refresh audits the source-ahead
-> state through `d2a21424b`, 1041 commits after the shipped v1.9.6 boundary. The
+> state through `982fc7eaf`, 1055 commits after the shipped v1.9.6 boundary. The
 > highlights below describe that source-ahead work only; they are not a release
-> or artifact claim. The emulator subsystem and any work still under active
-> in-repo claims are deliberately excluded from these highlights until they ship
-> as settled features.
+> or artifact claim. The Emulator Canvas highlight below describes source-ahead
+> code, not a shipped or packaged-artifact feature.
 
 ### Provider setup and run control
 
@@ -22,6 +21,22 @@ context needed to answer.
   route as separate model choices. Both retain Low/High/Max thinking and stay
   independent of K2.7 Coding's Standard/Highspeed Fast toggle; TaskWraith reads
   the installed Kimi catalog without inspecting provider credentials.
+
+### Emulator Canvas (source-ahead)
+
+- **A fixed homebrew demo, not a ROM loader.** Canvas can now host one reviewed
+  packaged homebrew demo in the active chat. Its agent reuses an attached live
+  Canvas when present; otherwise the workflow is `open` → atomic `observe` →
+  bounded `step`. Observations return a safe mapped state and one PNG frame,
+  while steps require the current observation token and report whether every
+  requested frame completed. There is no arbitrary game or ROM input, URL
+  override, raw-RAM interface, or cheat surface.
+- **Control stays on the reviewed surface.** Agent steps require an exact-
+  surface Canvas/AppDrive approval or grant, and direct human play makes the
+  agent stand down rather than taking over the same session. Thread Home opens
+  the fixed demo as its own full pane; for an active Inspector Canvas dock
+  session, **Pop Out** and **Dock** reparent that session instead of restarting
+  it.
 
 ### Transcript, export, and review
 
@@ -65,6 +80,11 @@ context needed to answer.
 - **Shell inspection stays workspace-bound.** Prompt-free workspace inspection
   is confined to the workspace, including git reads via `-C`, so agent tooling
   cannot point shell helpers at arbitrary paths.
+- **Workspace git snapshots have a compiled, auto-running recipe.** The shell
+  recipe that captures a workspace git snapshot is now compiled into the
+  governed command path and dispatched automatically, so a snapshot lands
+  without a per-call approval card while the same workspace-only containment
+  and audit trail still apply.
 - **Detached provider sign-in windows.** The TUI opens a provider's auth flow
   in a detached window, so long sign-ins no longer block the terminal session.
 - **Kimi MCP waits survive long tool calls.** MCP timeouts use the supported

@@ -153,6 +153,41 @@ gitignored, and not published.
 | Media and image tools              | User/provider initiated.                                                                          | Transcript media, generated images, selected audio/video files, and decoded frames.                                                                                                                                                                               | Media-derived context may be sent to providers or external generation APIs you configure.                                                                                                        | Media refs use trusted channels; generated artifacts remain reviewable locally.                                                                                                                                                                                                                                                                                           |
 | Usage, observation, and diagnostics | Usage/diagnostics stay local by default. First-party product observation remains off until the user makes the affirmative first-launch or Privacy-settings choice. | Provider usage summaries, app status, crashes, and diagnostics exports. An enabled daily report contains only UTC day, app version, OS family, processor family, and release channel; volatile presence uses a random process-only lease.                          | Diagnostics leave only when exported/shared. If observation is enabled and an endpoint is configured, the fixed daily report and short-lived presence lease reach that endpoint; no work content or stable install id is sent.                                | Observation can be withdrawn without losing app functionality. The receiver exposes presence only as a current aggregate count and does not retain lease values, events, durations, or session history.                                                                                                                                                                     |
 
+## Emulator Canvas: a bounded demo surface
+
+**Source-ahead only:** this describes code in the current repository after the
+public v1.9.6 baseline. It is not a release or packaged-artifact promise.
+
+Emulator Canvas runs one reviewed, packaged homebrew demo. It is not a general
+ROM loader or browser: neither a person nor an agent supplies a game file, ROM
+path, URL, raw memory address, or cheat command. The available agent workflow
+is deliberately narrow:
+
+1. An agent reuses an attached live emulator `canvasId` when one exists;
+   otherwise `emulator_open` creates a chat-owned Canvas for that fixed demo.
+2. `emulator_observe` returns one atomic PNG frame and safe mapped state with an
+   opaque observation token. The structured result does not expose raw RAM,
+   ROM bytes, internal URLs, or base64 pixels.
+3. `emulator_step` must name that exact Canvas and the most recent observation
+   token. It can request only bounded controller segments; the result says
+   whether the requested frames completed, were refused, or were interrupted.
+
+When a live emulator Canvas is already attached, the agent reuses that
+`canvasId` and begins with observation rather than opening a duplicate session.
+
+An agent may step only with an exact-surface Canvas/AppDrive approval or grant;
+that consent does not cover every Canvas in a chat or workspace. You can play
+directly at any time. A human play loop makes agent control stand down, and the
+exact surface authority is revoked rather than transferred to another Canvas.
+Pixel observations can be sent to the active provider as visual context, so use
+the same care you would for any other Canvas screenshot.
+
+The Inspector Canvas dock and Thread Home are separate entry points for the
+same fixed demo. Thread Home uses a full Multiview pane and has no separate
+pop-out. For a session already open in the Inspector Canvas dock, **Pop Out**
+and **Dock** reparent that active dock session; they do not restart it or
+broaden its agent authority. See [Emulator Canvas](how-to/canvas-and-previews/emulator-canvas.md) for the user workflow.
+
 ## What Data Stays Local
 
 TaskWraith stores app state in Electron's `userData` directory. On macOS this is
