@@ -378,3 +378,145 @@ describe('SegmentedChatStore', () => {
     expect(store.stats().compactions).toBeGreaterThanOrEqual(1)
   })
 })
+
+describe('Stage 5 — COW fork prefixes (forkSharePrefix)', () => {
+  function forkRecordOf(parent: ChatRecord, forkChatId: string): ChatRecord {
+    return {
+      ...durableChat(
+        forkChatId,
+        0,
+        parent.messages.map((entry) => entry.id)
+      ),
+      title: `Fork of ${parent.title}`,
+      forkContext: {
+        kind: 'emulated',
+        createdAt: 1,
+        sourceChatId: parent.appChatId
+      }
+    } as ChatRecord
+  }
+
+  it('seeds a fork as chrome-only snapshot + pinned parent prefix — no transcript payload copy', () => {
+    const { store, baseDir } = makeStore()
+    let parent = durableChat('chat-parent', 1, ['m1', 'm2'])
+    store.mirrorSave(null, parent)
+    parent = nextRecord(parent, ['m3'])
+    store.mirrorSave(durableChat('chat-parent', 1, ['m1', 'm2']), parent)
+    const parentFilesBefore = chatFiles(baseDir, 'chat-parent')
+    const parentSnapshotBytes = readFileSync(join(baseDir, 'chat-parent.snapshot.json')).length
+
+    const fork = forkRecordOf(parent, 'chat-fork')
+    expect(store.forkSharePrefix('chat-parent', fork)).toEqual({ seeded: true, mutationBytes: 0 })
+
+    // The fork owns no segment files and no transcript bytes in its snapshot.
+    expect(chatFiles(baseDir, 'chat-fork')).toEqual([
+      'chat-fork.manifest.json',
+      'chat-fork.snapshot.json'
+    ])
+    const forkSnapshot = JSON.parse(readFileSync(join(baseDir, 'chat-fork.snapshot.json'), 'utf8'))
+    expect(forkSnapshot.record.messages).toEqual([])
+    expect(forkSnapshot.record.runs).toEqual([])
+    expect(forkSnapshot.record.title).toBe('Fork of Stage 3 chat')
+    expect(readFileSync(join(baseDir, 'chat-fork.snapshot.json')).length).toBeLessThan(
+      parentSnapshotBytes
+    )
+    // Parent artifacts untouched.
+    expect(chatFiles(baseDir, 'chat-parent')).toEqual(parentFilesBefore)
+    expect(store.stats().prefixForks).toBe(1)
+
+    // Full-history assembly resolves through the prefix transparently.
+    const read = store.readFull('chat-fork')
+    expect(read).not.toBeNull()
+    expect(read!.record.appChatId).toBe('chat-fork')
+    expect(read!.record.title).toBe('Fork of Stage 3 chat')
+    expect(read!.record.messages.map((entry) => entry.id)).toEqual(['m1', 'm2', 'm3'])
+    expect(store.prefersV2('chat-fork')).toBe(true)
+  })
+
+  it('keeps post-fork mutations independent in both directions', () => {
+    const { store } = makeStore()
+    let parent = durableChat('chat-p2', 1, ['m1'])
+    store.mirrorSave(null, parent)
+    parent = nextRecord(parent, ['m2'])
+    store.mirrorSave(durableChat('chat-p2', 1, ['m1']), parent)
+
+    const fork = forkRecordOf(parent, 'chat-f2')
+    store.forkSharePrefix('chat-p2', fork)
+
+    // Fork-side mutation appends on the fork's own revision domain.
+    const forkNext = nextRecord(fork, ['f1'])
+    expect(store.mirrorSave(fork, forkNext)).toMatchObject({ seeded: false })
+    const forkRead = store.readFull('chat-f2')
+    expect(forkRead!.record.messages.map((entry) => entry.id)).toEqual(['m1', 'm2', 'f1'])
+    expect(forkRead!.revision).toBe(1)
+
+    // Parent's future never leaks through the pinned prefix.
+    const parentNext = nextRecord(parent, ['m3'])
+    store.mirrorSave(parent, parentNext)
+    const forkAfter = store.readFull('chat-f2')
+    expect(forkAfter!.record.messages.map((entry) => entry.id)).toEqual(['m1', 'm2', 'f1'])
+    const parentRead = store.readFull('chat-p2')
+    expect(parentRead!.record.messages.map((entry) => entry.id)).toEqual(['m1', 'm2', 'm3'])
+  })
+
+  it('is inert while the flag is off and declines parents without a healthy baseline', () => {
+    const { store, baseDir } = makeStore({ enabledValue: false })
+    const parent = durableChat('chat-off-parent', 1, ['m1'])
+    expect(
+      store.forkSharePrefix('chat-off-parent', forkRecordOf(parent, 'chat-off-fork'))
+    ).toBeNull()
+    expect(readdirSync(baseDir)).toEqual([])
+    expect(store.stats().prefixForks).toBe(0)
+
+    const { store: onStore } = makeStore()
+    const ghost = durableChat('chat-ghost', 1, ['m1'])
+    expect(onStore.forkSharePrefix('chat-ghost', forkRecordOf(ghost, 'chat-gf'))).toBeNull()
+    // Self-share is nonsense and must be refused.
+    expect(onStore.forkSharePrefix('chat-ghost', ghost)).toBeNull()
+  })
+
+  it('fails closed when the parent compacts, then self-heals on the next fork mirror', () => {
+    const { store } = makeStore()
+    let parent = durableChat('chat-pc', 1, ['m1'])
+    store.mirrorSave(null, parent)
+    parent = nextRecord(parent, ['m2'])
+    store.mirrorSave(durableChat('chat-pc', 1, ['m1']), parent)
+
+    const fork = forkRecordOf(parent, 'chat-fc')
+    store.forkSharePrefix('chat-pc', fork)
+    expect(store.readFull('chat-fc')!.record.messages).toHaveLength(2)
+
+    // Parent compaction rewrites the pinned snapshot — the fork's pin fails.
+    expect(store.checkpoint('chat-pc')).toBe(true)
+    expect(store.readFull('chat-fc')).toBeNull()
+
+    // The next fork-side mirror re-seeds fully (prefix dropped), so the fork
+    // is healthy again without any v1-visible gap.
+    const forkNext = nextRecord(fork, ['f1'])
+    expect(store.mirrorSave(fork, forkNext)).toMatchObject({ seeded: false })
+    const healed = store.readFull('chat-fc')
+    expect(healed).not.toBeNull()
+    expect(healed!.record.messages.map((entry) => entry.id)).toEqual(['m1', 'm2', 'f1'])
+    expect(healed!.record.appChatId).toBe('chat-fc')
+  })
+
+  it('fails closed when the parent is purged (no dangling prefix read), then self-heals', () => {
+    const { store } = makeStore()
+    const parent = durableChat('chat-pp', 1, ['m1', 'm2'])
+    store.mirrorSave(null, parent)
+    const fork = forkRecordOf(parent, 'chat-fp')
+    store.forkSharePrefix('chat-pp', fork)
+    expect(store.readFull('chat-fp')!.record.messages).toHaveLength(2)
+
+    store.purge('chat-pp')
+    expect(store.readFull('chat-fp')).toBeNull()
+
+    const forkNext = nextRecord(fork, ['f1'])
+    store.mirrorSave(fork, forkNext)
+    expect(store.readFull('chat-fp')!.record.messages.map((entry) => entry.id)).toEqual([
+      'm1',
+      'm2',
+      'f1'
+    ])
+  })
+})

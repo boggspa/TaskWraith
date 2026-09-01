@@ -1305,6 +1305,23 @@ function mirrorSegmentedChatStore(
 ): void {
   if (!isSegmentedChatStoreEnabled()) return
   try {
+    // Stage 5 — COW fork prefix: a brand-new emulated fork with a known
+    // parent shares the parent's v2 immutable prefix instead of copying
+    // transcript bytes. The fork's snapshot is chrome-only (messages/runs
+    // stripped) and the manifest pins the parent's snapshot by content hash
+    // + parent head revision at fork time. Any parent lifecycle event that
+    // rewrites the pinned bytes (compaction, segment archival, purge,
+    // re-seed) fails the pin → the fork's v2 read fails CLOSED to the v1
+    // authoritative record, and the next fork-side mirrorSave re-seeds
+    // fully via the existing baselineRepair path. Subsequent fork-side
+    // mutations fall through to mirrorSave as normal.
+    if (previous === null && next.forkContext?.kind === 'emulated') {
+      const sourceChatId = next.providerMetadata?.taskwraithForkSourceChatId
+      if (typeof sourceChatId === 'string' && sourceChatId !== next.appChatId) {
+        const result = segmentedChatStore.forkSharePrefix(sourceChatId, next)
+        if (result) return
+      }
+    }
     segmentedChatStore.mirrorSave(previous, next, authoredTranscript)
   } catch (error) {
     console.error('[chat-store-v2] mirror failed', error)

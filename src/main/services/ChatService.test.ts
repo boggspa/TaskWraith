@@ -2548,6 +2548,91 @@ describe('ChatService', () => {
     expect(parent).toEqual(parentBefore)
   })
 
+  it('shares the parent transcript by reference when the v2 fork-prefix gate is on', () => {
+    const parent = makeChat({
+      appChatId: 'chat-1',
+      provider: 'codex',
+      messages: [
+        {
+          id: 'msg-1',
+          role: 'user',
+          content: 'No deep copy on the v2 prefix path',
+          timestamp: '2026-09-01T00:00:00.000Z'
+        }
+      ]
+    })
+    const sideChat = makeChat({
+      appChatId: 'side-chat-1',
+      parentChatId: parent.appChatId,
+      parentChatRelation: 'sideChat',
+      messages: []
+    })
+    const store = makeStore({
+      getChat: vi.fn((chatId) => (chatId === parent.appChatId ? parent : sideChat)),
+      createSideChat: vi.fn(() => sideChat),
+      saveChat: vi.fn((chat: ChatRecord) => chat)
+    })
+    // Mirror the production seam: transferTranscriptMediaMessagesBatch is pure
+    // and returns a fresh array of shallow-copied messages.
+    const prepareForkMessages = vi.fn(({ copiedMessages }) =>
+      (copiedMessages as ChatRecord['messages']).map((entry) => ({ ...entry }))
+    )
+    const canShareForkTranscript = vi.fn(() => true)
+    const { deps } = makeDeps({ appStore: store, prepareForkMessages, canShareForkTranscript })
+
+    const fork = new ChatService(deps).createForkChat({ parentChatId: parent.appChatId })
+
+    expect(canShareForkTranscript).toHaveBeenCalledWith(parent.appChatId)
+    // The pure preparation seam received the live parent array (no clone) and
+    // the fork still gets its own array container.
+    expect(prepareForkMessages.mock.calls[0][0].copiedMessages).toBe(parent.messages)
+    expect(fork.messages).not.toBe(parent.messages)
+    expect(fork.messages).toEqual(parent.messages)
+  })
+
+  it('keeps the defensive structuredClone when the v2 fork-prefix gate is off or absent', () => {
+    const parent = makeChat({
+      appChatId: 'chat-1',
+      provider: 'codex',
+      messages: [
+        {
+          id: 'msg-1',
+          role: 'user',
+          content: 'Clone me',
+          timestamp: '2026-09-01T00:00:00.000Z'
+        }
+      ]
+    })
+    const parentBefore = structuredClone(parent)
+    const sideChat = makeChat({
+      appChatId: 'side-chat-1',
+      parentChatId: parent.appChatId,
+      parentChatRelation: 'sideChat',
+      messages: []
+    })
+    const store = makeStore({
+      getChat: vi.fn((chatId) => (chatId === parent.appChatId ? parent : sideChat)),
+      createSideChat: vi.fn(() => sideChat),
+      saveChat: vi.fn((chat: ChatRecord) => chat)
+    })
+    const prepareForkMessages = vi.fn(({ copiedMessages }) => {
+      copiedMessages[0].content = 'Mutated copy'
+      return copiedMessages
+    })
+    const { deps } = makeDeps({
+      appStore: store,
+      prepareForkMessages,
+      canShareForkTranscript: vi.fn(() => false)
+    })
+
+    const fork = new ChatService(deps).createForkChat({ parentChatId: parent.appChatId })
+
+    expect(prepareForkMessages.mock.calls[0][0].copiedMessages).not.toBe(parent.messages)
+    expect(fork.messages[0].content).toBe('Mutated copy')
+    // The parent record is untouched by preparation-side mutation of the copy.
+    expect(parent).toEqual(parentBefore)
+  })
+
   it('leaves only the empty fork shell when transcript preparation throws', () => {
     const events: string[] = []
     const parent = makeChat({

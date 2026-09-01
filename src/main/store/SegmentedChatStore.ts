@@ -91,6 +91,23 @@ export interface SegmentedChatSegmentRef {
   sha256: string
 }
 
+/**
+ * Stage 5 — copy-on-write fork prefix. A fork's manifest pins the PARENT's
+ * snapshot by content hash plus the parent head revision at fork time. Reads
+ * assemble the prefix from the parent's snapshot + segments, replayed only up
+ * to `throughRevision`; the fork's own segments then replay on the fork's own
+ * revision domain. Any parent lifecycle event that rewrites or removes the
+ * pinned bytes (compaction snapshot rewrite, segment archival, re-seed,
+ * purge) fails the pin and the fork's v2 read fails CLOSED to the v1
+ * authoritative record — never dangling, never divergent-authoritative. The
+ * next fork-side mirror re-seeds fully (see readFull's manifestHealthy mark).
+ */
+export interface SegmentedChatPrefixRef {
+  chatId: string
+  throughRevision: number
+  snapshot: { fileName: string; revision: number; bytes: number; sha256: string }
+}
+
 export interface SegmentedChatManifest {
   format: typeof CHAT_STORE_V2_MANIFEST_FORMAT
   version: typeof CHAT_STORE_V2_MANIFEST_VERSION
@@ -107,6 +124,8 @@ export interface SegmentedChatManifest {
   segments: SegmentedChatSegmentRef[]
   archives: { fileName: string; bytes: number; sha256: string }[]
   quarantined: { fileName: string; reason: string }[]
+  /** Stage 5: present on COW forks — see SegmentedChatPrefixRef. */
+  prefix?: SegmentedChatPrefixRef
   updatedAt: string
 }
 
@@ -143,6 +162,8 @@ export interface SegmentedChatStoreStats {
   compactions: number
   purges: number
   clears: number
+  /** Stage 5: fork seeds that shared the parent's prefix instead of copying. */
+  prefixForks: number
   readAttempts: number
   readHits: number
   readMisses: number
@@ -163,6 +184,15 @@ export interface SegmentedChatStore {
     next: ChatRecord,
     authoredTranscript?: AuthoredChatTranscriptMutation
   ): SegmentedChatMirrorResult | null
+  /**
+   * Stage 5 — COW fork seed. Seeds the fork's v2 presence as a chrome-only
+   * snapshot plus a content-pinned prefix reference to the parent's
+   * transcript at the current parent head — the parent's transcript payload
+   * is never copied into fork-owned bytes. Returns null (caller falls back to
+   * a full `mirrorSave` seed) when the flag is off, the parent has no healthy
+   * v2 baseline, or parent === fork. Read semantics: SegmentedChatPrefixRef.
+   */
+  forkSharePrefix(parentChatId: string, forkRecord: ChatRecord): SegmentedChatMirrorResult | null
   /** Full-history assembly. null = v2 unavailable/unhealthy (fall back to v1). */
   readFull(chatId: string): SegmentedChatReadResult | null
   /** Cheap health probe: v2 has a loadable baseline for this chat. */
@@ -271,6 +301,20 @@ function validManifest(value: unknown, chatId: string): value is SegmentedChatMa
       typeof segment.sha256 === 'string'
     )
   }
+  const validPrefixRef = (ref: unknown): boolean => {
+    if (!ref || typeof ref !== 'object') return false
+    const prefix = ref as Partial<SegmentedChatPrefixRef>
+    return (
+      typeof prefix.chatId === 'string' &&
+      nonNegativeInteger(prefix.throughRevision) &&
+      !!prefix.snapshot &&
+      typeof prefix.snapshot === 'object' &&
+      typeof prefix.snapshot.fileName === 'string' &&
+      nonNegativeInteger(prefix.snapshot.revision) &&
+      nonNegativeInteger(prefix.snapshot.bytes) &&
+      typeof prefix.snapshot.sha256 === 'string'
+    )
+  }
   return (
     manifest.format === CHAT_STORE_V2_MANIFEST_FORMAT &&
     manifest.version === CHAT_STORE_V2_MANIFEST_VERSION &&
@@ -283,6 +327,9 @@ function validManifest(value: unknown, chatId: string): value is SegmentedChatMa
     manifest.segments.every(validSegmentRef) &&
     Array.isArray(manifest.archives) &&
     Array.isArray(manifest.quarantined) &&
+    (manifest.prefix === undefined ||
+      manifest.prefix === null ||
+      validPrefixRef(manifest.prefix)) &&
     (manifest.snapshot === null ||
       (!!manifest.snapshot &&
         typeof manifest.snapshot.fileName === 'string' &&
@@ -357,6 +404,7 @@ export function createSegmentedChatStore(
   let compactions = 0
   let purges = 0
   let clears = 0
+  let prefixForks = 0
   let readAttempts = 0
   let readHits = 0
   let readMisses = 0
@@ -848,6 +896,76 @@ export function createSegmentedChatStore(
     }
   }
 
+  const forkSharePrefix = (
+    parentChatId: string,
+    forkRecord: ChatRecord
+  ): SegmentedChatMirrorResult | null => {
+    if (!enabled()) return null
+    if (!canWrite()) throw new Error('Segmented chat store is read-only')
+    const forkChatId = forkRecord.appChatId
+    assertChatId(parentChatId)
+    assertChatId(forkChatId)
+    if (parentChatId === forkChatId) return null
+    try {
+      // The parent's true head includes its unsealed active segment; assemble
+      // it once so the pin covers exactly the transcript the fork inherits.
+      const parentRead = readFull(parentChatId)
+      if (!parentRead) return null
+      const parentManifest = readManifest(parentChatId)
+      if (!parentManifest?.snapshot) return null
+      const parentSnapshotPath = snapshotPath(parentChatId)
+      const pin = {
+        fileName: `${parentChatId}.snapshot.json`,
+        revision: parentManifest.snapshot.revision,
+        bytes: fs.statSync(parentSnapshotPath).size,
+        // Pin the CURRENT content: the parent rewrites this file on
+        // compaction/re-seed, and any such rewrite must fail the fork's pin.
+        sha256: sha256Hex(parentSnapshotPath)
+      }
+      const forkRevision = recordRevision(forkRecord)
+      // Chrome-only snapshot: the transcript bytes stay parent-owned.
+      const snapshot = writeSnapshot(
+        forkChatId,
+        { ...forkRecord, messages: [], runs: [] },
+        forkRevision
+      )
+      const manifest = freshManifest(forkChatId)
+      manifest.persistenceRevision = forkRevision
+      manifest.snapshot = snapshot
+      manifest.prefix = {
+        chatId: parentChatId,
+        throughRevision: parentRead.revision,
+        snapshot: pin
+      }
+      manifest.updatedAt = new Date(now()).toISOString()
+      writeManifest(forkChatId, manifest)
+      const generation = nextGeneration(forkChatId, manifest)
+      states.set(forkChatId, {
+        headRevision: forkRevision,
+        generation,
+        segmentPath: segmentPath(forkChatId, generation),
+        segmentStartRevision: forkRevision,
+        segmentEntries: 0,
+        segmentBytes: 0,
+        dirtySinceMs: null,
+        lastAppendAtMs: null,
+        tombstoned: false,
+        manifestHealthy: true
+      })
+      baselineVerifiedChatIds.add(forkChatId)
+      lastPersistedRevisionByChatId.set(forkChatId, forkRevision)
+      prefixForks += 1
+      seeds += 1
+      return { seeded: true, mutationBytes: 0 }
+    } catch (error) {
+      failures += 1
+      baselineVerifiedChatIds.delete(forkChatId)
+      lastPersistedRevisionByChatId.delete(forkChatId)
+      console.error('[chat-store-v2] fork prefix share failed', error)
+      throw error
+    }
+  }
+
   const quarantineSegment = (chatId: string, fileName: string, reason: string): void => {
     if (!canRepair()) return
     const source = path.join(baseDir, fileName)
@@ -873,6 +991,51 @@ export function createSegmentedChatStore(
     quarantinedSegments += 1
   }
 
+  /**
+   * Stage 5 — resolve a fork's pinned parent prefix: the parent's snapshot
+   * (content-hash pinned at fork time) plus parent segment batches replayed
+   * only up to `throughRevision`. Returns null on ANY divergence — a rewritten
+   * or compacted parent snapshot, missing/archived segments, a revision gap,
+   * or a torn prefix region — so the caller fails closed to the v1 record.
+   * Parent batches after the fork point (revision > throughRevision) are never
+   * applied: a fork must not see the parent's future.
+   */
+  const assemblePrefix = (prefix: SegmentedChatPrefixRef): ChatRecord | null => {
+    try {
+      const parentChatId = prefix.chatId
+      assertChatId(parentChatId)
+      if (prefix.throughRevision < prefix.snapshot.revision) return null
+      const parentManifest = readManifest(parentChatId)
+      if (!parentManifest?.snapshot) return null
+      const parentSnapshotPath = snapshotPath(parentChatId)
+      if (!fs.existsSync(parentSnapshotPath)) return null
+      if (sha256Hex(parentSnapshotPath) !== prefix.snapshot.sha256) return null
+      const parentSnapshot = readSnapshot(parentChatId)
+      if (!parentSnapshot) return null
+      let record = cloneRecord(parentSnapshot.record)
+      let head = parentSnapshot.revision
+      if (head !== prefix.throughRevision) {
+        const ordered = orderedSegmentFileNames(parentChatId, parentManifest)
+        for (const fileName of ordered) {
+          const parsed = parseSegment(parentChatId, path.join(baseDir, fileName))
+          for (const batch of parsed.batches) {
+            if (batch.revision <= head) continue
+            if (batch.revision > prefix.throughRevision) break
+            if (batch.baseRevision !== head) return null
+            record = applyChatRecordMutation(record, batch)
+            head = batch.revision
+          }
+          if (head >= prefix.throughRevision) break
+          if (parsed.torn) break
+        }
+        if (head !== prefix.throughRevision) return null
+      }
+      return record
+    } catch {
+      return null
+    }
+  }
+
   const readFull = (chatId: string): SegmentedChatReadResult | null => {
     if (!enabled()) return null
     assertChatId(chatId)
@@ -885,6 +1048,19 @@ export function createSegmentedChatStore(
       if (!snapshot) return miss()
       let revision = snapshot.revision
       let record = cloneRecord(snapshot.record)
+      // Stage 5: a COW fork's snapshot is chrome-only; transplant the pinned
+      // parent prefix transcript onto it before replaying the fork's own
+      // segments. A broken pin fails closed and marks the baseline unhealthy
+      // so the next fork-side mirror re-seeds fully (self-heal).
+      if (manifest.prefix) {
+        const prefixRecord = assemblePrefix(manifest.prefix)
+        if (!prefixRecord) {
+          const state = states.get(chatId)
+          if (state) state.manifestHealthy = false
+          return miss()
+        }
+        record = { ...record, messages: prefixRecord.messages, runs: prefixRecord.runs }
+      }
       let appliedBatches = 0
       let skippedDuplicateBatches = 0
       let malformedTailSkipsThisRead = 0
@@ -1137,6 +1313,7 @@ export function createSegmentedChatStore(
     compactions,
     purges,
     clears,
+    prefixForks,
     readAttempts,
     readHits,
     readMisses,
@@ -1147,6 +1324,7 @@ export function createSegmentedChatStore(
 
   return {
     mirrorSave,
+    forkSharePrefix,
     readFull,
     prefersV2,
     replaceAuthoritative,

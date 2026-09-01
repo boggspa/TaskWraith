@@ -266,6 +266,16 @@ export interface ChatServiceDeps {
   canonicalPath: (path: string) => string
   /** Main-owned authority seam; must prepare copied media before the fork is persisted. */
   prepareForkMessages: PrepareForkMessages
+  /**
+   * Stage 5 — true when the v2 segmented store is enabled AND has a healthy
+   * baseline for the parent, so the fork's v2 seed will share the parent's
+   * immutable prefix instead of copying payloads. Only then may createForkChat
+   * skip the defensive structuredClone: the injected prepareForkMessages is
+   * pure (it builds fresh message objects), the fork record gets a fresh
+   * array either way, and the v1 legacy file still carries the full copy.
+   * Absent/false → today's clone behavior, unchanged.
+   */
+  canShareForkTranscript?: (parentChatId: string) => boolean
   sanitizeChatForSave: (chat: ChatRecord) => ChatRecord
   /** Main-owned topology fence checked immediately before child persistence. */
   assertParentChatCreationAllowed?: (parentChatId: string) => void
@@ -629,10 +639,15 @@ export class ChatService {
       },
       updatedAt: now
     }
+    // Stage 5: with the parent's v2 baseline healthy, the fork's v2 seed
+    // shares the parent's immutable prefix (see the mirrorSegmentedChatStore
+    // fork hook), so skip the defensive deep copy. prepareForkMessages is
+    // pure — it rebuilds fresh message objects without mutating the source.
+    const shareForkPrefix = this.deps.canShareForkTranscript?.(parent.appChatId) === true
     const preparedMessages = this.deps.prepareForkMessages({
       sourceChat: parent,
       targetFork,
-      copiedMessages: structuredClone(parent.messages)
+      copiedMessages: shareForkPrefix ? parent.messages : structuredClone(parent.messages)
     })
     if (!Array.isArray(preparedMessages)) {
       throw new Error('Fork transcript preparation did not return a message list.')

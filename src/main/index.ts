@@ -1004,6 +1004,7 @@ import {
 import { tryFlushBridgeRunTranscript } from './BridgeRunTranscriptFlushGuard'
 import { AppStore, registerPersistenceWriteEnqueue, type ChatSaveOptions } from './store'
 import { ChatTranscriptMutationIndex } from './store/ChatTranscriptMutationAuthoring'
+import { isSegmentedChatStoreEnabled } from './store/SegmentedChatStore'
 import {
   PersistenceWriteQueue,
   createUtilityProcessChannelFactory,
@@ -55063,6 +55064,9 @@ if (isGeminiMcpBridgeProcess) {
       findRegisteredWorkspace,
       canonicalPath,
       prepareForkMessages: prepareForkMessagesWithMediaOwnership,
+      // Stage 5: with v2 dark-write on, skip the fork's defensive deep copy.
+      // prepareForkMessages is pure; the mirror hook re-verifies parent health.
+      canShareForkTranscript: () => isSegmentedChatStoreEnabled(),
       sanitizeChatForSave,
       assertParentChatCreationAllowed: assertParentChatRelationshipCreationAllowed,
       clearHistoryTransaction: clearBroadChatHistory,
