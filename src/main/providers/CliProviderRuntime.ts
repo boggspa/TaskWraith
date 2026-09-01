@@ -841,7 +841,8 @@ export async function getAgentStatusSnapshotDirect(
     provider === 'grok' ||
     provider === 'pi' ||
     provider === 'mistral' ||
-    provider === 'muse'
+    provider === 'muse' ||
+    provider === 'devin'
   ) {
     // Route live local CLIs to generic status instead of the Gemini-shaped
     // snapshot below. Muse must be named here: the final else-branch would

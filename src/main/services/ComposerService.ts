@@ -116,7 +116,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 
 export interface ComposerImageAttachment {
@@ -1722,6 +1723,11 @@ export function getDefaultModelForProvider(provider: ProviderId): string {
       return MISTRAL_DEFAULT_MODEL
     case 'muse':
       return MUSE_DEFAULT_MODEL
+    // Devin exposes no enumerable model catalogue: the CLI runs its own default
+    // unless `--model <id>` overrides it per run, so 'cli-default' is the honest
+    // sentinel (kept byte-identical to the static catalogue row).
+    case 'devin':
+      return 'cli-default'
     case 'gemini':
       return 'flash-lite'
     default: {

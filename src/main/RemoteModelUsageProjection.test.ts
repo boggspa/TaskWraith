@@ -119,6 +119,25 @@ describe('projectRemoteModelUsageExtras', () => {
     })
   })
 
+  it('keeps ACU-billed Devin records as zero-cost spend rows instead of dropping the seat', () => {
+    const extras = projectRemoteModelUsageExtras({
+      records: [record({ id: 'devin-1', provider: 'devin', model: 'cli-default' })],
+      settings: { currency: 'USD' },
+      providerRates: rates,
+      fxRates: { rates: { USD: 1 } },
+      now: NOW
+    })
+
+    // Devin bills in ACUs, so there is no USD rate row and costText stays
+    // unset — but the seat must still surface its token/run windows.
+    const devin = extras.spend?.providers.find((entry) => entry.provider === 'devin')
+    expect(devin?.windows).toEqual([
+      { id: 'day', label: 'Day', totalTokens: 2_000_000, runs: 1 },
+      { id: 'week', label: '7d', totalTokens: 2_000_000, runs: 1 },
+      { id: 'month', label: '30d', totalTokens: 2_000_000, runs: 1 }
+    ])
+  })
+
   it('keeps Cursor Grok 4.6 standard and Fast projections on distinct rate rows', () => {
     const cursorRates = {
       baseline: {

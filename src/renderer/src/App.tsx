@@ -2344,7 +2344,8 @@ function App(): React.JSX.Element {
     antigravity: [],
     pi: [],
     mistral: [],
-    muse: []
+    muse: [],
+    devin: []
   })
   // Last-known TaskWraith supplemental snapshots (DeepSeek/Cerebras/Meta).
   // The hook lane's counterpart to `lastUsageWindowsByProviderRef` above: one
@@ -6479,6 +6480,9 @@ function App(): React.JSX.Element {
     if (provider === 'muse') {
       return getProviderModelOptions('muse').some((model) => model.id === modelId)
     }
+    if (provider === 'devin') {
+      return getProviderModelOptions('devin').some((model) => model.id === modelId)
+    }
     if (provider === 'antigravity') {
       return configuredAntigravityModels.some((model) => model.id === modelId)
     }
@@ -8061,6 +8065,12 @@ function App(): React.JSX.Element {
       settingsPatch.ollamaDefaultModel = next.ollamaDefaultModel
       providersToRefresh.push('ollama')
     }
+    // Devin custom api_server_url — persist only (mirrors the cliPathDirectories
+    // pattern). The Devin launch lane reads `settings.devinApiServerUrl`
+    // main-side; the SettingsPanel field is fed by the host pass-through.
+    if (next.devinApiServerUrl !== undefined) {
+      settingsPatch.devinApiServerUrl = next.devinApiServerUrl
+    }
     if (next.auditOrchestration !== undefined) {
       settingsPatch.auditOrchestration = next.auditOrchestration
     }
@@ -9610,7 +9620,8 @@ function App(): React.JSX.Element {
       provider === 'ollama' ||
       provider === 'antigravity' ||
       provider === 'pi' ||
-      provider === 'mistral'
+      provider === 'mistral' ||
+      provider === 'devin'
 
     if (loadUsageRecords) {
       const runAggregateMap = new Map<string, ModelUsageAggregate>()
@@ -32171,6 +32182,7 @@ function App(): React.JSX.Element {
         grokProviderAvailable={grokProviderAvailable}
         mistralStatus={agentStatusByProvider.mistral}
         museStatus={agentStatusByProvider.muse}
+        devinStatus={agentStatusByProvider.devin}
         antigravityProviderOffered={configuredProviderSnapshot.providerIds.includes('antigravity')}
         ollamaProviderAvailable={
           agentStatusByProvider.ollama?.available === true &&

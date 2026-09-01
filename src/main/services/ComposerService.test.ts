@@ -110,7 +110,8 @@ function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
         antigravity: 120_000,
         pi: 120_000,
         mistral: 120_000,
-        muse: 120_000
+        muse: 120_000,
+        devin: 120_000
       },
       mainAuthorityMs: 30_000
     },

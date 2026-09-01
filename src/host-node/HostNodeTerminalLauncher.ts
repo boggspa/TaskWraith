@@ -59,6 +59,7 @@ const LOGIN_ARGV: Readonly<Record<string, readonly string[]>> = {
   antigravity: [],
   mistral: ['login'],
   muse: ['login'],
+  devin: ['auth', 'login'],
   grok: ['login']
 }
 

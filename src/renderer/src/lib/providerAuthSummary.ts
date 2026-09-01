@@ -105,6 +105,56 @@ export function summariseMuseCodeStatus(status: unknown): ProviderAuthSummary {
   }
 }
 
+/**
+ * Devin CLI status. Auth is credential-opaque: the seat admits on
+ * `windsurf-api-key` (its primary ACP auth method), a generic authenticated /
+ * api-key state, or a stored `devin auth login` credential — TaskWraith never
+ * reads or stores the key itself.
+ */
+export function summariseDevinStatus(status: unknown): ProviderAuthSummary {
+  const record = status && typeof status === 'object' ? (status as Record<string, unknown>) : null
+  if (!record) {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'Devin setup not checked yet',
+      hint: 'Set WINDSURF_API_KEY or run `devin auth login`, then return here.'
+    }
+  }
+  if (record.available === false) {
+    return {
+      variant: 'not-available',
+      statusText: 'Devin CLI not found',
+      hint: 'Install `devin` first (`curl -fsSL https://cli.devin.ai/install.sh | bash`).'
+    }
+  }
+
+  const authState = String(record.authState || '').trim().toLowerCase()
+  const credentialPresent = record.credentialPresent === true
+  if (
+    credentialPresent ||
+    ['authenticated', 'api-key', 'windsurf-api-key'].includes(authState)
+  ) {
+    return {
+      variant: 'signed-in',
+      statusText: 'Devin signed in',
+      hint: 'You can launch Devin runs from TaskWraith.'
+    }
+  }
+  if (['missing', 'unauthenticated', 'signed-out', 'signed_out'].includes(authState)) {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'Devin not signed in',
+      hint: 'Set WINDSURF_API_KEY or run `devin auth login` to complete sign-in.'
+    }
+  }
+
+  return {
+    variant: 'partial',
+    statusText: 'Devin CLI ready · sign-in status unavailable',
+    hint: 'TaskWraith could not observe the credential state. Set WINDSURF_API_KEY or run `devin auth login` if sign-in is incomplete.'
+  }
+}
+
 /** Maps a Claude/Kimi auth status to the shared onboarding/settings summary. */
 export function summariseProviderApiKeyStatus(
   status: ProviderApiKeyStatus | null,

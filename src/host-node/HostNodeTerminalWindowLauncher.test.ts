@@ -53,6 +53,13 @@ describe('HostNodeTerminalWindowLauncher', () => {
     expect(script).toContain("'/Applications/Grok CLI/grok' 'login'")
     expect(script).toContain('unset GOOGLE_API_KEY')
     expect(script).not.toContain('must-not-be-written')
+    // zsh reserves `status` as a read-only alias of `$?`; capture into
+    // `exit_code` so the handoff stays safe even if a host runs the
+    // .command/.sh through zsh.
+    expect(script).toContain('exit_code=$?')
+    expect(script).toContain('exit "$exit_code"')
+    expect(script).not.toMatch(/^status=/m)
+    expect(script).not.toContain('"$status"')
 
     child.emit('spawn')
     await expect(pending).resolves.toEqual({ providerId: 'grok', spawned: true })

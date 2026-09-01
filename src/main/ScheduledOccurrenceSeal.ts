@@ -75,7 +75,8 @@ const PROVIDER_IDS = {
   antigravity: true,
   pi: true,
   mistral: true,
-  muse: true
+  muse: true,
+  devin: true
 } as const satisfies Record<ProviderId, true>
 
 const AGENTIC_SERVICE_AUTHORITY_FIELDS = {

@@ -19,6 +19,7 @@ export type RunItemEventProvider =
   | 'pi'
   | 'mistral'
   | 'muse'
+  | 'devin'
 
 export type RunItemEventKind =
   | 'run/started'

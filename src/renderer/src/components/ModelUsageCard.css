@@ -573,6 +573,10 @@
   --compact-quota-color: var(--provider-muse-color);
 }
 
+.model-usage-compact-cell.provider-devin {
+  --compact-quota-color: var(--provider-devin-color);
+}
+
 .model-usage-compact-cell.provider-antigravity {
   --compact-quota-color: var(--provider-antigravity-color);
 }

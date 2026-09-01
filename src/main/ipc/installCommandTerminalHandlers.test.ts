@@ -82,6 +82,26 @@ describe('installCommandTerminalHandlers', () => {
     expect(deps.opened[0]).not.toContain(':')
   })
 
+  it('never assigns to the zsh read-only `status` parameter in the install script', async () => {
+    // zsh reserves `status` as a read-only alias of `$?`; `status=$?` aborts a
+    // `#!/bin/zsh` script with "read-only variable: status".
+    const deps = makeDeps()
+    registerInstallCommandTerminalHandlers(deps)
+    const result = (await handlerFor(INSTALL_COMMAND_TERMINAL_CHANNEL)(null, 'codex')) as {
+      ok: boolean
+    }
+
+    expect(result.ok).toBe(true)
+    const script = String(deps.written.get(deps.opened[0]) || '')
+    // @portability-ok: deps.getPlatform() is pinned to 'darwin', so the
+    // generated script is the zsh .command on every host runner.
+    expect(script).toContain('#!/bin/zsh')
+    expect(script).toContain('exit_code=$?')
+    expect(script).toContain('exit $exit_code')
+    expect(script).not.toMatch(/^status=/m)
+    expect(script).not.toContain('$status')
+  })
+
   it('refuses unknown ids fail-closed without touching the filesystem', async () => {
     const deps = makeDeps()
     registerInstallCommandTerminalHandlers(deps)

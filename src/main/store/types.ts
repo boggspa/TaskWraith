@@ -2260,6 +2260,7 @@ export type ProviderAdapterTransport =
   | 'pi-cli'
   | 'mistral-vibe-acp'
   | 'muse-exec-json'
+  | 'devin-acp'
 
 export type ProviderAdapterRunChannel = 'run-agent'
 
@@ -2587,6 +2588,13 @@ export interface AppSettings {
    */
   ollamaCliSignIn?: { signedIn: boolean; plan?: string; updatedAt: string }
   ollamaBaseUrl?: string
+  /**
+   * Optional custom Devin `api_server_url`. HTTPS only (plain HTTP is accepted
+   * on loopback only); an empty string leaves it unset. An explicit value
+   * overrides both the endpoint env vars and `credentials.toml`; an invalid
+   * value fails the run closed rather than silently falling back to env/TOML.
+   */
+  devinApiServerUrl?: string
   ollamaDefaultModel?: string
   /**
    * Optional, user-selected Pi/Cerebras completion ceiling. Unset retains the

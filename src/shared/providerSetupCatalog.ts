@@ -73,6 +73,14 @@ export const PROVIDER_INSTALL_COMMANDS: readonly ProviderInstallEntry[] = [
     platforms: ['darwin', 'linux']
   },
   {
+    id: 'devin',
+    label: 'Devin',
+    command: 'curl -fsSL https://cli.devin.ai/install.sh | bash',
+    source: 'Cognition',
+    platform: 'macOS / Linux',
+    platforms: ['darwin', 'linux']
+  },
+  {
     id: 'pi',
     label: 'Pi',
     command: 'npm i -g @earendil-works/pi-coding-agent',

@@ -582,8 +582,9 @@ export function midTurnSteeringCapabilityForProvider(
       return { strategy: 'pi-live-frame', live: true }
     case 'kimi':
     case 'mistral':
+    case 'devin':
     case 'grok':
-      // All three drive the shared AcpTurnClient, whose handle now exposes
+      // All four drive the shared AcpTurnClient, whose handle now exposes
       // steer(): session/cancel closes the in-flight prompt and the same
       // session is re-prompted with the steering text (AcpTurnClient).
       return { strategy: 'acp-interrupt', live: true }

@@ -119,6 +119,14 @@ const LIVE_STANDALONE: Readonly<Record<string, LiveStandaloneFacts>> = {
     envKeys: [],
     detail:
       'Interactive `muse login` via the dedicated Muse terminal handoff when a TTY is present.'
+  },
+  devin: {
+    displayProvider: 'Devin',
+    run: 'available',
+    catalogManualFlow: true,
+    envKeys: ['WINDSURF_API_KEY', 'DEVIN_API_KEY'],
+    detail:
+      'Interactive `devin auth login` when a TTY launcher is present, or set WINDSURF_API_KEY / DEVIN_API_KEY on the Host environment.'
   }
 }
 

@@ -21,7 +21,8 @@ export const PROVIDER_RUN_MANAGEMENT_IDS = [
   // (index.constants.ts), which ProviderRunManagementBinding.test compares
   // directly. Inserting mid-list silently breaks that equality.
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ] as const satisfies readonly ProviderId[]
 
 export type ProviderRunManagementId = (typeof PROVIDER_RUN_MANAGEMENT_IDS)[number]
@@ -157,6 +158,21 @@ export const PROVIDER_RUN_MANAGEMENT_DECLARATIONS = {
     // Broker calls are host-audited; native activity remains observable through
     // Muse's durable session log projection.
     brokerObservability: 'broker-and-observable-native-events',
+    binaryRuntimeProvenance: 'observed-cli-path-and-version'
+  },
+  devin: {
+    // Flipped with the intent/iOS mirrors in the same user-approved commit
+    // (scripts/provider-intent.json liveSelectionNotes.devin, 2026-09-01).
+    offerState: 'live-selectable',
+    // Same shape as Mistral: `devin acp` raises `session/request_permission`
+    // for tool execution, so every call is answered through the host approval
+    // ledger rather than a provider-native allowlist.
+    toolMediationMode: 'taskwraith-approval-gateway',
+    // Permission requests are host-answered and brokered calls host-executed,
+    // so the host is the authority for what this seat did.
+    brokerObservability: 'host-authoritative',
+    // The seat resolves a real `devin` executable path (settings override else
+    // PATH) and can read its version.
     binaryRuntimeProvenance: 'observed-cli-path-and-version'
   }
 } as const satisfies Record<ProviderRunManagementId, ProviderRunManagementDeclaration>

@@ -58,6 +58,17 @@ export const MISTRAL_SCOPED_MCP_SERVER_NAME = 'taskwraith-mistral'
 /** Tool namespace `vibe-acp` reports for the per-run TaskWraith broker. */
 export const MISTRAL_BROKER_MCP_TOOL_NAMESPACE = 'TaskWraith'
 
+/**
+ * Dedicated scoped broker server name for the Devin ACP seat. Kept distinct
+ * for the same reason as Grok's and Mistral's: a shared name would let one
+ * seat's scoped-subset qualifier vouch for another seat's call during
+ * session/request_permission evaluation.
+ */
+export const DEVIN_SCOPED_MCP_SERVER_NAME = 'taskwraith-devin'
+
+/** Tool namespace `devin acp` reports for the per-run TaskWraith broker. */
+export const DEVIN_BROKER_MCP_TOOL_NAMESPACE = 'TaskWraith'
+
 export const PROBE_TIMEOUT_MS = 1000
 
 export const KNOWN_OFF_PATH_CODEX_BINARIES = ['/Applications/Codex.app/Contents/Resources/codex']
@@ -90,5 +101,6 @@ export const RUN_MANAGER_PROVIDERS: ProviderId[] = [
   // orderings are one fact stored twice. Keep new identities at the tail of
   // BOTH.
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ]

@@ -174,6 +174,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'simulatorControlEnabled',
   'ollamaBaseUrl',
   'ollamaDefaultModel',
+  'devinApiServerUrl',
   'piCerebrasMaxCompletionTokens',
   'ensembleModelIngestChars',
   'apiUsageBilling',

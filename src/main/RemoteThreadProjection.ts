@@ -124,7 +124,8 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   antigravity: 'Antigravity',
   pi: 'Pi',
   mistral: 'Mistral',
-  muse: 'Muse'
+  muse: 'Muse',
+  devin: 'Devin'
 }
 
 const FALLBACK_FX_RATES_PER_USD: Record<RemoteDisplayCurrency, number> = {

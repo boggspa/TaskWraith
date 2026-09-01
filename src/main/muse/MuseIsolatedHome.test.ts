@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -172,6 +173,83 @@ describe('Muse isolated home', () => {
     expect(() =>
       projectMuseAuthJson(lease, JSON.stringify({ schema_version: 1, providers: {} }))
     ).toThrow(/no supported Meta credential/i)
+  })
+
+  // Subscription-era `muse login` (Muse 1.x) writes a schema-v2 locator whose
+  // OAuth secret lives in the macOS login keychain. The CLI resolves that
+  // keychain through `$HOME/Library/Keychains`, so the relocated seat HOME
+  // needs a keychain graft or the run fails with "missing meta credentials"
+  // despite a projected auth.json (confirmed against Muse Code 1.0.1).
+  const KEYCHAIN_LOCATOR_AUTH_JSON = JSON.stringify({
+    schema_version: 2,
+    providers: {
+      meta: {
+        mechanism: 'oauth',
+        storage: 'keychain',
+        obtained_via: 'device_code'
+      }
+    }
+  })
+
+  it('grafts real-keychain access for a schema-v2 keychain locator without copying a secret', () => {
+    const realKeychainsDir = join(TEMP_ROOT, 'real-keychains')
+    mkdirSync(realKeychainsDir, { recursive: true, mode: 0o700 })
+    writeFileSync(join(realKeychainsDir, 'login.keychain-db'), 'sentinel-not-a-real-keychain')
+
+    const lease = create('keychain-locator')
+    const authPath = projectMuseAuthJson(lease, KEYCHAIN_LOCATOR_AUTH_JSON, {
+      platform: 'darwin',
+      realKeychainsDir
+    })
+    expect(readFileSync(authPath, 'utf8')).toBe(KEYCHAIN_LOCATOR_AUTH_JSON)
+
+    const linkPath = join(lease.homePath, 'Library', 'Keychains')
+    expect(lstatSync(linkPath).isSymbolicLink()).toBe(true)
+    expect(readlinkSync(linkPath)).toBe(realKeychainsDir)
+    // The projection itself never reads or copies the keychain secret.
+    expect(readFileSync(authPath, 'utf8')).not.toContain('sentinel')
+
+    // Teardown removes only the symlink; the real keychain directory and its
+    // contents survive untouched.
+    expect(lease.cleanup()).toEqual({ ok: true, alreadyAbsent: false })
+    expect(existsSync(lease.path)).toBe(false)
+    expect(lstatSync(realKeychainsDir).isDirectory()).toBe(true)
+    expect(readFileSync(join(realKeychainsDir, 'login.keychain-db'), 'utf8')).toBe(
+      'sentinel-not-a-real-keychain'
+    )
+  })
+
+  it('does not graft keychain access for inline credentials or non-darwin platforms', () => {
+    const realKeychainsDir = join(TEMP_ROOT, 'real-keychains-unused')
+    mkdirSync(realKeychainsDir, { recursive: true, mode: 0o700 })
+
+    const inlineLease = create('keychain-not-needed-inline')
+    projectMuseAuthJson(
+      inlineLease,
+      JSON.stringify({
+        schema_version: 1,
+        providers: { meta: { mechanism: 'oauth', access_token: 'inline-token' } }
+      }),
+      { platform: 'darwin', realKeychainsDir }
+    )
+    expect(existsSync(join(inlineLease.homePath, 'Library'))).toBe(false)
+
+    const linuxLease = create('keychain-not-darwin')
+    projectMuseAuthJson(linuxLease, KEYCHAIN_LOCATOR_AUTH_JSON, {
+      platform: 'linux',
+      realKeychainsDir
+    })
+    expect(existsSync(join(linuxLease.homePath, 'Library'))).toBe(false)
+  })
+
+  it('skips the keychain graft when the real keychain directory is absent', () => {
+    const lease = create('keychain-absent')
+    const authPath = projectMuseAuthJson(lease, KEYCHAIN_LOCATOR_AUTH_JSON, {
+      platform: 'darwin',
+      realKeychainsDir: join(TEMP_ROOT, 'no-such-keychains-dir')
+    })
+    expect(readFileSync(authPath, 'utf8')).toBe(KEYCHAIN_LOCATOR_AUTH_JSON)
+    expect(existsSync(join(lease.homePath, 'Library'))).toBe(false)
   })
 
   it('scrubs credential and Muse auth env keys from the parent process', () => {

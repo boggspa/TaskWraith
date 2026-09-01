@@ -87,6 +87,7 @@ const baseSettings: AppSettings = {
       pi: 120_000,
       mistral: 120_000,
       muse: 120_000,
+      devin: 120_000
     },
     mainAuthorityMs: 60_000
   }

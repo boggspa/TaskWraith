@@ -211,7 +211,7 @@ export function grokTaskWraithBrokerToolRequested(
  * structured kind/raw machine identity to a declared network action.
  */
 export function structuredProviderNetworkReadRequested(
-  provider: 'grok' | 'mistral',
+  provider: 'grok' | 'mistral' | 'devin',
   request: StructuredTaskWraithToolRequest
 ): boolean {
   const resolution = resolveProviderNativeActionStrict(provider, request.toolName || '', {

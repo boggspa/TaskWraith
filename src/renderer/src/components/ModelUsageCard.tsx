@@ -178,7 +178,8 @@ export const EXPANDED_USAGE_PROVIDER_ORDER: readonly ModelUsageProviderId[] = [
   'cerebras',
   'gemini',
   'pi',
-  'muse'
+  'muse',
+  'devin'
 ]
 
 /**
@@ -203,7 +204,10 @@ export const API_SPEND_RENDER_ORDER: ProviderId[] = [
   // renders its spend section (Mistral shipped in exactly that state, the same
   // way Pi once did in the other direction).
   'mistral',
-  'muse'
+  'muse',
+  // Devin bills in ACUs, so its spend row reads zero by design; it is listed
+  // here only because the two rosters must stay in lockstep.
+  'devin'
 ]
 const SIDEBAR_USAGE_HEIGHT_STORAGE_KEY = 'taskwraith-sidebar-model-usage-height'
 const SIDEBAR_USAGE_DEFAULT_HEIGHT = 520
@@ -231,6 +235,7 @@ export const COMPACT_USAGE_PROVIDER_LABELS: Partial<Record<ModelUsageProviderId,
   antigravity: 'AGY',
   mistral: 'Mistral',
   muse: 'Muse',
+  devin: 'Devin',
   deepseek: 'DeepSeek',
   cerebras: 'Cerebras',
   meta: 'Meta',

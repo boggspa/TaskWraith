@@ -64,6 +64,7 @@ const STATIC_PROVIDER_COLORS = {
   minimax: '#C044A4',
   mistral: '#D44404',
   muse: '#1671EA',
+  devin: '#4878AE',
   cerebras: '#BB584A',
   groq: '#088482',
   openrouter: '#E02948',
@@ -99,7 +100,8 @@ const IOS_PROVIDER_CASES = [
   ['case "openbmb"', '#E22B17'],
   ['case "poolside"', '#0C8194'],
   ['case "openrouter"', '#E02948'],
-  ['case "thinkingmachines"', '#C24E68']
+  ['case "thinkingmachines"', '#C24E68'],
+  ['case "devin"', '#4878AE']
 ] as const
 
 const PROVIDER_RGB_TRIPLETS = {
@@ -245,6 +247,7 @@ describe('provider palette contrast', () => {
       'pi',
       'mistral',
       'muse',
+      'devin',
       'deepseek'
     ]) {
       expect(transcriptCss).toContain(`.participant-health-chip.provider-${provider}`)

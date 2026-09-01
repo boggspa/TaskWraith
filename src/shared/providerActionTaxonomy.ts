@@ -834,6 +834,116 @@ export const PROVIDER_ACTION_ADAPTERS = {
         action: 'network.read'
       }
     }
+  }),
+  devin: adapter({
+    // `devin acp` over stdio. Native tool executions surface as ACP
+    // session/request_permission events answered by the host approval ledger
+    // (Synara source-verified; pending live measurement — see the
+    // defaultProviderDescriptor caveat). The TaskWraith MCP broker is
+    // advertised only behind the default-OFF devinMcpAdvertiseEnabled() gate,
+    // so attachment is conditional rather than required.
+    nativeSurface: 'closed-native',
+    mcpAttachment: 'conditional',
+    nativeMediation: 'taskwraith-preflight-and-approval',
+    structuredKindMappings: {
+      read: ['read', 'list'],
+      edit: ['write', 'edit', 'patch', 'create-directory'],
+      delete: 'delete',
+      move: ['move', 'rename'],
+      search: ['find', 'search', 'web-search'],
+      execute: 'shell',
+      fetch: 'web-fetch'
+    },
+    declaredDeniedNativeActions: NO_NATIVE_ACTIONS,
+    deniedNativeActionMappings: {},
+    declaredNativeActions: [
+      'read',
+      'list',
+      'find',
+      'search',
+      'write',
+      'edit',
+      'patch',
+      'create-directory',
+      'delete',
+      'move',
+      'rename',
+      'shell',
+      'web-search',
+      'web-fetch'
+    ] as const,
+    nativeActionMappings: {
+      read: {
+        aliases: ['Read', 'Read file', 'read_file', 'Open file'],
+        catalogTool: 'read_file',
+        action: 'workspace.read'
+      },
+      list: {
+        aliases: ['LS', 'List directory', 'list_directory'],
+        catalogTool: 'list_directory',
+        action: 'workspace.read'
+      },
+      find: {
+        aliases: ['Glob', 'Find files'],
+        catalogTool: 'find_files',
+        action: 'workspace.search'
+      },
+      search: {
+        aliases: ['Grep', 'Search workspace'],
+        catalogTool: 'workspace_search',
+        action: 'workspace.search'
+      },
+      write: {
+        aliases: ['Write', 'Write file', 'Create file'],
+        catalogTool: 'write_file',
+        action: 'workspace.mutate'
+      },
+      edit: {
+        aliases: ['Edit', 'Edit file', 'Replace', 'search_replace'],
+        catalogTool: 'replace',
+        action: 'workspace.mutate'
+      },
+      patch: {
+        aliases: ['apply_patch', 'Apply patch', 'Patch'],
+        catalogTool: 'apply_patch',
+        action: 'workspace.mutate'
+      },
+      'create-directory': {
+        aliases: ['Create directory', 'Mkdir'],
+        catalogTool: 'create_directory',
+        action: 'workspace.mutate'
+      },
+      delete: {
+        aliases: ['Delete', 'Delete file', 'Delete path', 'Remove'],
+        catalogTool: 'delete_path',
+        action: 'workspace.mutate'
+      },
+      move: {
+        aliases: ['Move', 'Move file', 'Move path'],
+        catalogTool: 'move_path',
+        action: 'workspace.mutate'
+      },
+      rename: {
+        aliases: ['Rename', 'Rename file', 'Rename path'],
+        catalogTool: 'rename_path',
+        action: 'workspace.mutate'
+      },
+      shell: {
+        aliases: ['Bash', 'Shell', 'run_terminal_command', 'Run terminal command'],
+        catalogTool: 'run_shell_command',
+        action: 'shell.execute'
+      },
+      'web-search': {
+        aliases: ['WebSearch', 'web_search', 'Search web'],
+        catalogTool: 'web_search',
+        action: 'network.read'
+      },
+      'web-fetch': {
+        aliases: ['Fetch', 'WebFetch', 'web_fetch'],
+        catalogTool: 'web_fetch',
+        action: 'network.read'
+      }
+    }
   })
 } as const satisfies Record<ProviderId, ProviderActionAdapterDeclaration>
 

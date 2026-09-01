@@ -581,6 +581,7 @@ function shouldInjectTaskWraithRuntimePreamble(args: {
     args.provider === 'grok' ||
     args.provider === 'cursor' ||
     args.provider === 'mistral' ||
+    args.provider === 'devin' ||
     args.provider === 'antigravity' ||
     args.provider === 'ollama' ||
     args.provider === 'muse' ||
@@ -760,6 +761,7 @@ function providerDisplayName(provider: unknown, fallback = 'Sub-thread'): string
   if (provider === 'pi') return 'Pi'
   if (provider === 'mistral') return 'Mistral'
   if (provider === 'muse') return 'Muse'
+  if (provider === 'devin') return 'Devin'
   return fallback
 }
 
@@ -1669,6 +1671,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       provider === 'grok' ||
       provider === 'cursor' ||
       provider === 'mistral' ||
+      provider === 'devin' ||
       // Session-resuming providers get the summary only on a sessionless
       // dispatch (fresh chat after compaction, or a seat rotation that
       // dropped the session): a resumed session already contains the
@@ -1710,6 +1713,11 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   // turns, so the host must re-inject compact conversation context — same
   // class as Cursor Path-B / Mistral Vibe ACP.
   const museNeedsContextInjection = provider === 'muse'
+  // Devin ACP mirrors the Mistral lane: `devin acp` opens a fresh session each
+  // turn (devinSeatSessionsEnabled is hard-false, so there is no provider-side
+  // history to defer to) and the host must re-inject compact conversation
+  // context — same class as Mistral Vibe ACP.
+  const devinNeedsContextInjection = provider === 'devin'
   const geminiNeedsContextInjection = provider === 'gemini' && !resumeSessionId
   const codexNeedsContextInjection =
     provider === 'codex' && !resumeSessionId && !codexModelChangedAfterWork
@@ -1737,6 +1745,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     cursorNeedsContextInjection ||
     mistralNeedsContextInjection ||
     museNeedsContextInjection ||
+    devinNeedsContextInjection ||
     geminiNeedsContextInjection ||
     codexNeedsContextInjection ||
     claudeNeedsContextInjection ||
@@ -1747,6 +1756,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     cursorNeedsContextInjection ||
     mistralNeedsContextInjection ||
     museNeedsContextInjection ||
+    devinNeedsContextInjection ||
     ollamaNeedsContextInjection
   const promptSessionDeliveryMode = resolvePromptSessionDeliveryMode({
     provider,
@@ -1818,7 +1828,9 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
           ? `Context turns: ${contextTurnsApplied} (Cursor: appending compact conversation context because Path-B opens a fresh contained process each turn)`
           : mistralNeedsContextInjection
             ? `Context turns: ${contextTurnsApplied} (Mistral: appending compact conversation context because the Vibe ACP lane opens a fresh session each turn)`
-            : museNeedsContextInjection
+            : devinNeedsContextInjection
+              ? `Context turns: ${contextTurnsApplied} (Devin: appending compact conversation context because the ACP lane opens a fresh session each turn)`
+              : museNeedsContextInjection
               ? `Context turns: ${contextTurnsApplied} (Muse: appending compact conversation context because opaque muse exec opens a fresh session each turn)`
               : codexNeedsContextInjection
                 ? `Context turns: ${contextTurnsApplied} (Codex: no resumable app-server thread; sending compact context + current request)`

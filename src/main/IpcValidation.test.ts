@@ -679,6 +679,19 @@ describe('IpcValidation', () => {
     ).not.toThrow()
   })
 
+  it('accepts Devin on provider terminal login/logout/upgrade IPC', () => {
+    // Devin is a live ACP seat surfaced in the UI; its provider id must clear
+    // the IpcValidation PROVIDERS gate or the Settings auth buttons look dead.
+    expect(() => validateIpcArgs('provider:open-login-terminal', ['devin'])).not.toThrow()
+    expect(() => validateIpcArgs('provider:open-logout-terminal', ['devin'])).not.toThrow()
+    expect(() => validateIpcArgs('provider:open-upgrade-terminal', ['devin'])).not.toThrow()
+    expect(() =>
+      validateIpcArgs('run-agent', [
+        { provider: 'devin', workspace: '/tmp/workspace', prompt: 'hello' }
+      ])
+    ).not.toThrow()
+  })
+
   it('bounds host CLI tool ids and mirrors the shared catalog exactly', () => {
     for (const channel of ['host-tool:open-install-terminal', 'host-tool:status']) {
       for (const id of HOST_CLI_TOOL_IDS) {

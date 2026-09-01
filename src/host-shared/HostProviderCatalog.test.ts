@@ -58,7 +58,7 @@ describe('derived reasoning offers', () => {
 })
 
 describe('HostProviderCatalog', () => {
-  it('exposes entries for all nine live providers', () => {
+  it('exposes entries for all ten live providers', () => {
     const ids = hostProviderCatalogIds()
     expect(ids).toEqual([
       'codex',
@@ -69,7 +69,8 @@ describe('HostProviderCatalog', () => {
       'ollama',
       'pi',
       'mistral',
-      'muse'
+      'muse',
+      'devin'
     ])
     for (const id of ids) {
       expect(hasHostProviderCatalogEntry(id)).toBe(true)
@@ -332,7 +333,7 @@ describe('HostProviderCatalog', () => {
   })
 
   it('marks providers with manual login flows', () => {
-    for (const id of ['codex', 'claude', 'kimi', 'cursor', 'grok', 'mistral', 'muse']) {
+    for (const id of ['codex', 'claude', 'kimi', 'cursor', 'grok', 'mistral', 'muse', 'devin']) {
       const flows = hostProviderAuthFlows(id)
       expect(flows.length).toBe(1)
       expect(flows[0].kind).toBe('manual')

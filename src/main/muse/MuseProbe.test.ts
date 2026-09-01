@@ -3,6 +3,7 @@ import {
   isMuseBinaryResolvable,
   isMuseConfiguredForAdmission,
   isMuseCredentialPresent,
+  museAuthJsonUsesKeychainStorage,
   museCredentialFromEnv,
   parseMuseAuthJsonCredential,
   parseMuseHelp,
@@ -127,6 +128,75 @@ describe('MuseProbe', () => {
         parseMuseAuthJsonCredential(
           JSON.stringify({ providers: { meta: { mechanism: 'oauth', access_token: '' } } })
         ).present
+      ).toBe(false)
+    })
+  })
+
+  describe('museAuthJsonUsesKeychainStorage', () => {
+    it('recognizes the schema-v2 keychain locator written by subscription-era muse login', () => {
+      expect(
+        museAuthJsonUsesKeychainStorage(
+          JSON.stringify({
+            schema_version: 2,
+            providers: {
+              meta: {
+                mechanism: 'oauth',
+                storage: 'keychain',
+                obtained_via: 'device_code'
+              }
+            }
+          })
+        )
+      ).toBe(true)
+    })
+
+    it('is false for inline api_key and inline oauth token documents', () => {
+      expect(
+        museAuthJsonUsesKeychainStorage(
+          JSON.stringify({ schema_version: 1, providers: { meta: { api_key: 'k'.repeat(32) } } })
+        )
+      ).toBe(false)
+      expect(
+        museAuthJsonUsesKeychainStorage(
+          JSON.stringify({
+            schema_version: 1,
+            providers: { meta: { mechanism: 'oauth', access_token: 'inline-token' } }
+          })
+        )
+      ).toBe(false)
+      // An inline api_key wins even when keychain markers are also present,
+      // mirroring parseMuseAuthJsonCredential branch order.
+      expect(
+        museAuthJsonUsesKeychainStorage(
+          JSON.stringify({
+            schema_version: 2,
+            providers: {
+              meta: { api_key: 'k'.repeat(32), mechanism: 'oauth', storage: 'keychain' }
+            }
+          })
+        )
+      ).toBe(false)
+    })
+
+    it('is false for malformed, empty, or non-v2 documents', () => {
+      expect(museAuthJsonUsesKeychainStorage(null)).toBe(false)
+      expect(museAuthJsonUsesKeychainStorage('')).toBe(false)
+      expect(museAuthJsonUsesKeychainStorage('{')).toBe(false)
+      expect(
+        museAuthJsonUsesKeychainStorage(
+          JSON.stringify({
+            schema_version: 3,
+            providers: { meta: { mechanism: 'oauth', storage: 'keychain' } }
+          })
+        )
+      ).toBe(false)
+      expect(
+        museAuthJsonUsesKeychainStorage(
+          JSON.stringify({
+            schema_version: 2,
+            providers: { meta: { mechanism: 'oauth', storage: 'file' } }
+          })
+        )
       ).toBe(false)
     })
   })

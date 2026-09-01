@@ -134,6 +134,37 @@ export function parseMuseAuthJsonCredential(
   return { present: false, source: 'none', credentialKind: null, apiKeyLength: null }
 }
 
+/**
+ * True when auth.json is the reviewed Muse 1.x schema-v2 keychain locator:
+ * the OAuth secret lives in the OS keychain and auth.json itself carries no
+ * token. Callers use this to decide whether a seat projection of the locator
+ * also needs OS-keychain access grafted into the isolated home.
+ */
+export function museAuthJsonUsesKeychainStorage(raw: string | null | undefined): boolean {
+  if (typeof raw !== 'string' || !raw.trim()) return false
+  try {
+    const parsed = JSON.parse(raw) as {
+      schema_version?: unknown
+      providers?: {
+        meta?: {
+          api_key?: unknown
+          mechanism?: unknown
+          storage?: unknown
+        }
+      }
+    }
+    const meta = parsed?.providers?.meta
+    // Mirror parseMuseAuthJsonCredential branch order: an inline api_key wins
+    // and needs no keychain.
+    if (typeof meta?.api_key === 'string' && meta.api_key.trim().length > 0) return false
+    return (
+      parsed.schema_version === 2 && meta?.mechanism === 'oauth' && meta?.storage === 'keychain'
+    )
+  } catch {
+    return false
+  }
+}
+
 export function museCredentialFromEnv(value: string | null | undefined): MuseCredentialEvidence {
   if (typeof value === 'string' && value.trim().length > 0) {
     return {

@@ -1581,6 +1581,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               kimiBinaryPath={kimiBinaryPath}
               cliPathDirectories={settings?.cliPathDirectories ?? []}
               ollamaBaseUrl={ollamaBaseUrl}
+              devinApiServerUrl={settings?.devinApiServerUrl ?? ''}
               ollamaDefaultModel={ollamaDefaultModel}
               auditOrchestration={settings?.auditOrchestration}
               agenticServices={agenticServices}

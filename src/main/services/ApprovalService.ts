@@ -893,7 +893,8 @@ export class ApprovalService {
         antigravity: userSettings.perProviderMs.antigravity,
         pi: userSettings.perProviderMs.pi,
         mistral: userSettings.perProviderMs.mistral,
-        muse: userSettings.perProviderMs.muse
+        muse: userSettings.perProviderMs.muse,
+        devin: userSettings.perProviderMs.devin
       },
       mainTimeoutMs: userSettings.mainAuthorityMs
     })

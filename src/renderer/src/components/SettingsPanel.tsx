@@ -364,6 +364,10 @@ interface SettingsPanelProps {
   cliPathDirectories?: string[]
   ollamaBaseUrl: string
   ollamaDefaultModel: string
+  /** Custom Devin api_server_url (HTTPS only, loopback HTTP allowed). Empty
+   * = unset; the Devin launch lane then uses the WINDSURF_API_SERVER_URL
+   * environment variable or the endpoint stored by `devin auth login`. */
+  devinApiServerUrl?: string
   auditOrchestration?: AppSettings['auditOrchestration']
   agenticServices: AgenticServicesSettings
   nativeSubAgentRequests?: NativeSubAgentRequestPolicy
@@ -494,6 +498,10 @@ interface SettingsPanelProps {
     cliPathDirectories?: string[]
     ollamaBaseUrl?: string
     ollamaDefaultModel?: string
+    /** Custom Devin api_server_url. HTTPS only (HTTP allowed on loopback);
+     * empty = unset, in which case the run uses the WINDSURF_API_SERVER_URL
+     * environment variable or the endpoint stored by `devin auth login`. */
+    devinApiServerUrl?: string
     auditOrchestration?: AppSettings['auditOrchestration']
     agenticServices?: AgenticServicesSettings
     nativeSubAgentRequests?: NativeSubAgentRequestPolicy
@@ -721,7 +729,8 @@ const SETTINGS_PROVIDER_ORDER: ProviderId[] = [
   'ollama',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ]
 
 const SETTINGS_PROVIDER_LABELS: Record<ProviderId, string> = {
@@ -735,7 +744,60 @@ const SETTINGS_PROVIDER_LABELS: Record<ProviderId, string> = {
   antigravity: 'Antigravity',
   pi: 'Pi',
   mistral: 'Mistral',
-  muse: 'Muse'
+  muse: 'Muse',
+  devin: 'Devin'
+}
+
+/**
+ * Devin CLI status → the shared provider vocabulary. The Devin seat authenticates
+ * through env keys (WINDSURF_API_KEY canonical, DEVIN_API_KEY) or the stored
+ * credentials file written by `devin auth login`
+ * (~/.local/share/devin/credentials.toml); deriveAuthState reports
+ * 'windsurf-api-key' as Devin's primary authenticated state. Kept local to this
+ * panel (and mirrored in FirstLaunchSheet) so the renderer surface does not
+ * depend on the usage/analytics lane's shared summariser while the waves land.
+ */
+export function summariseDevinStatus(status: unknown): ProviderAuthSummary {
+  const record = status && typeof status === 'object' ? (status as Record<string, unknown>) : null
+  if (!record) {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'Devin setup not checked yet',
+      hint:
+        'Install the Devin CLI (`curl -fsSL https://cli.devin.ai/install.sh | bash`), then set WINDSURF_API_KEY or run `devin auth login`.'
+    }
+  }
+  if (record.available === false) {
+    return {
+      variant: 'not-available',
+      statusText: 'Devin CLI not found',
+      hint: 'Install the Devin CLI, then set WINDSURF_API_KEY or run `devin auth login` in Terminal.'
+    }
+  }
+  const authState = String(record.authState || '').trim().toLowerCase()
+  const credentialPresent = record.credentialPresent === true
+  if (
+    credentialPresent ||
+    ['authenticated', 'api-key', 'windsurf-api-key'].includes(authState)
+  ) {
+    return {
+      variant: 'signed-in',
+      statusText: 'Devin signed in',
+      hint: 'You can launch Devin runs from TaskWraith.'
+    }
+  }
+  if (['missing', 'unauthenticated', 'signed-out'].includes(authState)) {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'Devin not signed in',
+      hint: 'Set WINDSURF_API_KEY or run `devin auth login` in Terminal.'
+    }
+  }
+  return {
+    variant: 'partial',
+    statusText: 'Devin CLI ready · credential state not observed',
+    hint: 'Set WINDSURF_API_KEY or run `devin auth login` if sign-in is incomplete.'
+  }
 }
 
 export type UserMcpServerFormState = {
@@ -3980,6 +4042,7 @@ export function SettingsPanel({
   cliPathDirectories,
   ollamaBaseUrl,
   ollamaDefaultModel,
+  devinApiServerUrl,
   auditOrchestration,
   agenticServices,
   nativeSubAgentRequests = 'ask',
@@ -5127,6 +5190,7 @@ export function SettingsPanel({
   }
   const mistralAuthSummary = summariseMistralVibeStatus(providerStatusByProvider?.mistral)
   const museAuthSummary = summariseMuseCodeStatus(providerStatusByProvider?.muse)
+  const devinAuthSummary = summariseDevinStatus(providerStatusByProvider?.devin)
   const providerUpgradeState = (provider: ProviderId): ProviderCliUpgradeState =>
     providerCliUpgradeState[provider] || 'idle'
   const renderProviderUpgradeButton = (provider: ProviderId) => {
@@ -5207,6 +5271,14 @@ export function SettingsPanel({
     onRefreshProviderMcpStatus?.('muse')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  // Devin is the same fail-closed CLI seat: its credential lane lives in env or
+  // the `devin auth login` credentials.toml, so the card must be warmed once or
+  // it reads "setup not checked yet" until an unrelated refresh.
+  useEffect(() => {
+    if (providerStatusByProvider?.devin !== undefined) return
+    onRefreshProviderMcpStatus?.('devin')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const providerMcpSummaries = providerSurfaceOrder.map((provider) => {
     const contract =
       providerCapabilitiesByProvider?.[provider] ??
@@ -5223,7 +5295,7 @@ export function SettingsPanel({
     // can be conditional per run, but that must not turn their static runtime
     // status into a misleading "delegated" or policy "gated" label.
     const firstClassRuntimeProvider =
-      provider === 'pi' || provider === 'mistral' || provider === 'muse'
+      provider === 'pi' || provider === 'mistral' || provider === 'muse' || provider === 'devin'
     // AntiGravity's capability contract hard-codes an `unsupported` MCP block —
     // honest for the agy print-mode transport, which really does get no bridge —
     // but running the card off that block would pin an admitted provider to a
@@ -5337,9 +5409,13 @@ export function SettingsPanel({
             ? available
               ? 'Pi is a first-class TaskWraith provider. Its fixed Ensemble coordination extension is attached only after the per-run readiness receipt; this card reports the Pi runtime, not generic MCP injection.'
               : 'Pi is a first-class TaskWraith provider, but its local runtime is unavailable. Install Pi and configure at least one upstream API key in Settings.'
-            : available
-              ? 'Mistral is a first-class Mistral Vibe ACP provider. TaskWraith’s broker is attached per run; this card reports the Vibe runtime rather than treating Mistral as a delegated provider.'
-              : 'Mistral is a first-class Mistral Vibe ACP provider, but `vibe-acp` is unavailable. Install Mistral Vibe, then run `vibe --setup` in Terminal.'
+            : provider === 'devin'
+              ? available
+                ? 'Devin is a first-class Devin ACP provider (`devin acp`). TaskWraith’s broker is attached per run; this card reports the Devin runtime rather than treating Devin as a delegated provider.'
+                : 'Devin is a first-class Devin ACP provider, but `devin` is unavailable. Install it with `curl -fsSL https://cli.devin.ai/install.sh | bash`, then set WINDSURF_API_KEY or run `devin auth login` in Terminal.'
+              : available
+                ? 'Mistral is a first-class Mistral Vibe ACP provider. TaskWraith’s broker is attached per run; this card reports the Vibe runtime rather than treating Mistral as a delegated provider.'
+                : 'Mistral is a first-class Mistral Vibe ACP provider, but `vibe-acp` is unavailable. Install Mistral Vibe, then run `vibe --setup` in Terminal.'
           : provider === 'codex' && enabled
             ? 'TaskWraith registers the MCP bridge for Codex runs.'
             : mcp?.message ||
@@ -7624,6 +7700,47 @@ export function SettingsPanel({
                       onChange={onChange}
                     />
                     {renderProviderPauseControls('muse')}
+                  </SettingsProviderAuthCard>
+                  <SettingsProviderAuthCard
+                    provider="devin"
+                    label="Devin"
+                    summary={devinAuthSummary}
+                    description="Devin CLI over managed ACP (devin acp)."
+                    optional
+                  >
+                    <div className="settings-provider-auth-command">
+                      <code>devin acp</code>
+                      <span>
+                        Install with{' '}
+                        <code>curl -fsSL https://cli.devin.ai/install.sh | bash</code>, then set
+                        WINDSURF_API_KEY or run <code>devin auth login</code> in Terminal.
+                      </span>
+                    </div>
+                    <div className="settings-provider-auth-action-row">
+                      <PillButton
+                        size="compact"
+                        variant="primary"
+                        onClick={() => onProviderLogin?.('devin')}
+                        disabled={!onProviderLogin}
+                      >
+                        Open Terminal to sign in
+                      </PillButton>
+                      {renderProviderUpgradeButton('devin')}
+                    </div>
+                    {renderProviderUpgradeFootnote('devin')}
+                    <label className="settings-label">Custom API server URL</label>
+                    <CommittedDraftField
+                      className="settings-select"
+                      committed={devinApiServerUrl ?? ''}
+                      onCommit={(value) => onChange({ devinApiServerUrl: value })}
+                      placeholder="https://…"
+                    />
+                    <p className="settings-hint">
+                      HTTPS only, or HTTP on loopback. Leave empty to use the
+                      WINDSURF_API_SERVER_URL environment variable or the endpoint saved by{' '}
+                      <code>devin auth login</code>.
+                    </p>
+                    {renderProviderPauseControls('devin')}
                   </SettingsProviderAuthCard>
                   <PiProviderKeysCard />
                   <ApiUsageQuotaCard />

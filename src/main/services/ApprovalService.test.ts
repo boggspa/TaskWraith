@@ -116,7 +116,8 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
         antigravity: 85_000,
         pi: 85_000,
         mistral: 85_000,
-        muse: 85_000
+        muse: 85_000,
+        devin: 85_000
       },
       mainAuthorityMs: 60_000
     })),

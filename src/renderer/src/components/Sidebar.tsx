@@ -1448,6 +1448,7 @@ export function getProviderName(provider?: ProviderId) {
   if (provider === 'pi') return 'Pi'
   if (provider === 'mistral') return 'Mistral'
   if (provider === 'muse') return 'Muse'
+  if (provider === 'devin') return 'Devin'
   return 'Gemini'
 }
 

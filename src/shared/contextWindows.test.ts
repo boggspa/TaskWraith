@@ -99,6 +99,10 @@ describe('resolveContextWindow provider-specific Grok windows', () => {
     expect(resolveContextWindow('muse', 'muse-spark-1.2-contributor')).toBe(200_000)
   })
 
+  it('falls the Devin ACP seat back to its 262K provider window', () => {
+    expect(resolveContextWindow('devin', 'devin-1')).toBe(262_144)
+  })
+
   it('uses Kimi K3 long-context window for the K3 (1M) model', () => {
     expect(resolveContextWindow('kimi', 'kimi-k3')).toBe(1_048_576)
     expect(resolveContextWindow('kimi', 'kimi-k3-256k')).toBe(262_144)

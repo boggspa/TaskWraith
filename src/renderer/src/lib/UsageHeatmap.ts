@@ -39,7 +39,8 @@ export const HEATMAP_PROVIDER_COLOR_HEX: Record<ProviderId, string> = {
   antigravity: '#308713',
   pi: '#68768C',
   mistral: '#D44404',
-  muse: '#1671EA'
+  muse: '#1671EA',
+  devin: '#4878AE'
 }
 
 export interface HeatmapCell {

@@ -240,6 +240,8 @@ import {
   GROK_SCOPED_MCP_SERVER_NAME,
   MISTRAL_SCOPED_MCP_SERVER_NAME,
   MISTRAL_BROKER_MCP_TOOL_NAMESPACE,
+  DEVIN_SCOPED_MCP_SERVER_NAME,
+  DEVIN_BROKER_MCP_TOOL_NAMESPACE,
   KNOWN_OFF_PATH_CODEX_BINARIES,
   LIGHT_THEME_POPOUT_BACKDROPS,
   RUN_MANAGER_PROVIDERS
@@ -1704,6 +1706,28 @@ import {
 } from './mistral/MistralCliArgs'
 import { resolveMistralCredentialLaunch } from './mistral/MistralCredentialLane'
 import { createMistralTurnAbortController, runMistralAcpTurn } from './mistral/MistralAcpClient'
+// Devin: ACP-over-stdio seat (`devin acp`). Launch policy + credential lanes in
+// devin/DevinCliArgs + DevinCredentialLane + DevinCredentialStore, gates in
+// devin/devinGate.ts (same pure-env constraint as mistralGate), ACP hooks in
+// devin/DevinAcpClient.ts over the provider-neutral AcpTurnClient.
+import {
+  DEVIN_BINARY_NAME,
+  applyDevinPromptPreamble,
+  buildDevinAcpCliArgs,
+  devinWriteCapable
+} from './devin/DevinCliArgs'
+import { resolveDevinCredentialLaunch } from './devin/DevinCredentialLane'
+import {
+  createDevinTurnAbortController,
+  runDevinAcpTurn,
+  shouldAdvertiseTaskWraithMcpToDevin
+} from './devin/DevinAcpClient'
+import {
+  DEVIN_ACP_REQUIRED_MESSAGE,
+  devinAcpEnabled,
+  devinAmbientApiKeyEnabled,
+  devinMcpAdvertiseEnabled
+} from './devin/devinGate'
 import { estimateMistralTokenUsage } from './mistral/MistralUsage'
 import {
   createChildProcessMuseSpawn,
@@ -23388,7 +23412,7 @@ function normalizeGrokStopReason(status: string | null | undefined): 'success' |
 }
 
 function grokAcpNetworkReadRequested(
-  provider: 'grok' | 'mistral',
+  provider: 'grok' | 'mistral' | 'devin',
   request: {
     toolName?: string
     toolKind?: string
@@ -25016,6 +25040,747 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
   // operation is published above; its adapter join must cover that setup race.
   await mistralAcpHandle.closed
   await mistralTransportOperation
+}
+
+// Fallback tool-id counter for Devin tool events that arrive without an id,
+// so two id-less calls render as two cards instead of merging into one.
+let devinFallbackToolSeq = 0
+
+/**
+ * Map one normalized ACP run event onto the shared CLI run-event sink.
+ *
+ * Mirrors applyMistralRunEvent — the ACP core normalizes every ACP seat into
+ * the same NormalizedGrokRunEvent shape — minus Mistral's rate-limit
+ * re-wording: Devin bills in ACUs and has no measured throttle vocabulary to
+ * classify, so a provider warning reaches the transcript as the seat sent it.
+ */
+function applyDevinRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRunEvent) {
+  if (evt.sessionId) updateCliProviderSession(state, evt.sessionId)
+  if (evt.type === 'content' && evt.text) {
+    state.assistantText = `${state.assistantText || ''}${evt.text}`
+    reportGenericLiveEstimate(state)
+    sendAgentCompatLine(
+      state.sender,
+      'devin',
+      { type: 'content', text: evt.text, provider: 'devin' },
+      state
+    )
+  } else if (evt.type === 'thinking' && evt.text) {
+    accumulateEstimatedStreamChars(state, 'output', evt.text.length)
+    reportGenericLiveEstimate(state)
+    emitCliProviderThinkingEvent(state, evt.text)
+  } else if (evt.type === 'tool_use') {
+    const toolId = evt.toolId || `devin-tool-${++devinFallbackToolSeq}`
+    const toolName = evt.toolName || 'tool'
+    const diagnosticToolName =
+      sanitizeCanvasEvalProviderText(toolName) === toolName ? toolName : 'canvas_eval'
+    // Independent correlation lane for delayed canvas_eval diagnostics: the
+    // transcript sanitizer consumes its marker when the result is projected, so
+    // a second bounded sanitizer is what keeps the cached last-tool-error from
+    // ever holding a raw canvas_eval result. Per-state, so it is per-run.
+    grokCanvasEvalDiagnosticSanitizer(state).sanitize(
+      {
+        type: 'tool_use',
+        tool_id: toolId,
+        tool_name: diagnosticToolName,
+        parameters: evt.toolInput || {},
+        raw: evt.raw
+      },
+      undefined,
+      `devin:${state.appRunId || state.appChatId || 'unrouted'}:diagnostic`
+    )
+    accumulateEstimatedStreamChars(
+      state,
+      'output',
+      toolName.length + visiblePayloadChars(evt.toolInput)
+    )
+    reportGenericLiveEstimate(state)
+    sendAgentCompatLine(
+      state.sender,
+      'devin',
+      {
+        type: 'tool_use',
+        tool_id: toolId,
+        tool_name: toolName,
+        // Canonical ACP kind (read|edit|execute|search|…) so the renderer can
+        // resolve a category icon when tool_name is a freeform ACP title.
+        tool_kind: evt.toolKind,
+        parameters: evt.toolInput || {},
+        provider: 'devin'
+      },
+      state
+    )
+  } else if (evt.type === 'tool_result') {
+    const toolId =
+      evt.toolId || `devin-tool-${devinFallbackToolSeq || ++devinFallbackToolSeq}`
+    accumulateEstimatedStreamChars(state, 'input', visiblePayloadChars(evt.toolOutput))
+    reportGenericLiveEstimate(state)
+    const diagnosticProjection = grokCanvasEvalDiagnosticSanitizer(state).sanitize(
+      {
+        type: 'tool_result',
+        tool_id: toolId,
+        tool_name: evt.toolName,
+        tool_kind: evt.toolKind,
+        parameters: evt.toolResultInput || evt.toolInput || {},
+        status: evt.toolStatus || 'success',
+        output: evt.toolOutput || '',
+        raw: evt.raw
+      },
+      undefined,
+      `devin:${state.appRunId || state.appChatId || 'unrouted'}:diagnostic`
+    )
+    const diagnosticOutput =
+      isRecord(diagnosticProjection) && typeof diagnosticProjection.output === 'string'
+        ? diagnosticProjection.output
+        : ''
+    if (evt.toolStatus === 'error') {
+      // Named for Grok only because runStateTypes.ts named them first; they are
+      // the generic ACP tool-failure counters.
+      state.grokToolErrorCount = (state.grokToolErrorCount || 0) + 1
+      if (evt.toolOutput) state.grokLastToolError = diagnosticOutput
+    }
+    sendAgentCompatLine(
+      state.sender,
+      'devin',
+      {
+        type: 'tool_result',
+        tool_id: toolId,
+        tool_name: evt.toolName,
+        tool_kind: evt.toolKind,
+        parameters: evt.toolResultInput || evt.toolInput || {},
+        status: evt.toolStatus || 'success',
+        output: evt.toolOutput || '',
+        provider: 'devin'
+      },
+      state
+    )
+  } else if (evt.type === 'result') {
+    // Terminal ACP stop reason. The canonical result line is synthesized on
+    // close, but an abnormal reason is remembered here so close-out can report
+    // it honestly instead of rendering a blank success.
+    const stopReason = normalizeGrokStopReason(evt.status)
+    if (stopReason !== 'success') state.grokStopReason = stopReason
+  } else if (evt.type === 'provider_warning' && evt.text) {
+    sendAgentCompatError(state.sender, 'devin', evt.text, state)
+  }
+}
+
+/**
+ * Opt-in raw ACP frame capture (both directions), keyed on
+ * TASKWRAITH_DEVIN_DEBUG. Off by default; never throws. Its own flag rather
+ * than Grok's or Mistral's so a Devin trace can be captured without also
+ * flooding the terminal with the other ACP seats' frames.
+ */
+function maybeLogDevinRawAcp(direction: 'in' | 'out', message: unknown): void {
+  const flag = process.env.TASKWRAITH_DEVIN_DEBUG
+  if (flag !== '1' && flag !== 'true' && flag !== 'yes') return
+  let serialized = ''
+  try {
+    serialized = JSON.stringify(message)
+  } catch {
+    return
+  }
+  try {
+    process.stderr.write(`[devin-acp-raw] ${direction === 'out' ? '→' : '←'} ${serialized}${os.EOL}`)
+  } catch {
+    /* diagnostics only */
+  }
+}
+
+/**
+ * Whether a Devin permission request targets one exact TaskWraith broker tool.
+ *
+ * Spawn-site sibling of DevinAcpClient's devinTaskWraithBrokerToolRequested:
+ * this one also accepts the FULL server name, because a write-capable seat is
+ * handed GEMINI_MCP_SERVER_NAME rather than the scoped name below. Still fails
+ * closed on strict canonical tool resolution, and this ACP permission is not
+ * mutation approval: the broker independently applies the signed service gate
+ * and exact edit transaction before executing the call.
+ */
+function devinAcpBrokerToolRequested(request: {
+  toolName?: string
+  toolKind?: string
+  rawToolCall?: unknown
+}): boolean {
+  return Boolean(
+    resolveStructuredTaskWraithToolRequest(request, [
+      DEVIN_SCOPED_MCP_SERVER_NAME,
+      DEVIN_BROKER_MCP_TOOL_NAMESPACE,
+      GEMINI_MCP_SERVER_NAME
+    ])
+  )
+}
+
+/**
+ * Close-out copy for the "turn completed, produced nothing, and a tool failed"
+ * shape. Reported as a failure rather than a blank success, because a seat whose
+ * only tool call was refused can otherwise render as an empty successful run.
+ */
+function devinAcpEmptyToolFailureMessage(state: CliProviderStreamState): string {
+  const rawDetail = state.grokLastToolError?.trim() || ''
+  const detail = rawDetail.length > 500 ? `${rawDetail.slice(0, 497)}...` : rawDetail
+  return `Devin ended this turn without producing an assistant response after a tool failed or was rejected.${
+    detail ? ` Last tool error: ${detail}` : ''
+  }`
+}
+
+// Managed Devin runs have exactly one admissible transport: `devin acp` over
+// ACP stdio. The interactive `devin` TUI is not a headless alternative — it
+// waits on a terminal a managed run does not have — so the gate below makes
+// the seat UNAVAILABLE with a clear message instead of selecting another path.
+async function runDevinProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
+  if (!devinAcpEnabled()) {
+    const route = routeWithRunId('devin', payload)
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'devin',
+      route,
+      message: DEVIN_ACP_REQUIRED_MESSAGE,
+      setupRequired: true,
+      securityUnavailable: true,
+      fallback: false
+    })
+    return
+  }
+  await runDevinAcpProvider(event, payload)
+}
+
+async function runDevinAcpProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
+  const route = routeWithRunId('devin', payload)
+  const resolved = await resolveCliProviderBinary('devin', payload.runtimeProfile)
+  if (!providerTransportLaunchAuthorized('devin', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    return
+  }
+  if (!resolved.binaryPath) {
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'devin',
+      route,
+      message:
+        resolved.error ||
+        'Devin is not configured: the `' +
+          DEVIN_BINARY_NAME +
+          '` binary was not found. Install the Devin CLI (`curl -fsSL https://cli.devin.ai/install.sh | bash`), then sign in with `devin auth login` or set WINDSURF_API_KEY.',
+      setupRequired: true,
+      fallback: false
+    })
+    return
+  }
+  const binaryPath = resolved.binaryPath
+  const model = normalizeCliProviderModel('devin', payload.model)
+  // buildDevinInitializeParams throws on a blank clientInfo.version rather than
+  // emit one (cheap insurance against a Mistral-style clientInfo trap). This
+  // pre-check turns that throw into an honest setup failure before a run is
+  // registered; the try/catch around the spawn is the backstop.
+  const devinAppVersion = (() => {
+    try {
+      return String(app.getVersion() || '').trim()
+    } catch {
+      return ''
+    }
+  })()
+  if (!devinAppVersion) {
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'devin',
+      route,
+      message:
+        'Devin could not start: TaskWraith could not read its own application version, which the ACP handshake sends as clientInfo.version.',
+      setupRequired: true,
+      fallback: false
+    })
+    return
+  }
+
+  // Resolve the child environment BEFORE registering the run, so a missing
+  // credential fails as setup rather than halfway through an ACP turn. Devin
+  // has no TaskWraith-side key store: the lanes are the ambient
+  // WINDSURF_API_KEY / DEVIN_API_KEY (gated by devinAmbientApiKeyEnabled) and
+  // the CLI's own credentials.toml written by `devin auth login`. The explicit
+  // Settings endpoint (devinApiServerUrl) outranks both the endpoint env vars
+  // and the stored api_server_url, and an invalid one refuses to launch rather
+  // than silently sending the run to a different server.
+  const devinBaseEnv = createCliEnv(
+    {
+      FORCE_COLOR: '0',
+      NO_COLOR: '1',
+      TASKWRAITH_PARENT_PROVIDER: 'devin',
+      TASKWRAITH_RUN_ID: route.appRunId || '',
+      TASKWRAITH_CHAT_ID: route.appChatId || '',
+      TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
+    },
+    binaryPath
+  )
+  const devinCredentialLaunch = resolveDevinCredentialLaunch({
+    resolvedEnv: devinBaseEnv,
+    storedApiKeyPresent: false,
+    ambientApiKeyAllowed: devinAmbientApiKeyEnabled(),
+    settingsApiServerUrl: AppStore.getSettings().devinApiServerUrl ?? null
+  })
+  if (devinCredentialLaunch.settingsApiServerUrlRejected) {
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'devin',
+      route,
+      message:
+        'The custom Devin API server URL in Settings → Providers → Devin is not valid. Use an https:// URL (http:// only for loopback) with no embedded credentials, or clear the field to fall back to WINDSURF_API_SERVER_URL or the value stored by `devin auth login`.',
+      setupRequired: true,
+      fallback: false
+    })
+    return
+  }
+  if (devinCredentialLaunch.missingApiKey) {
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'devin',
+      route,
+      message:
+        'No Devin credential is available. Set WINDSURF_API_KEY (or DEVIN_API_KEY) in the environment, or run `devin auth login` to store one in ~/.local/share/devin/credentials.toml, then retry. If you exported a key and TASKWRAITH_DEVIN_BYOK is off, TaskWraith ignored it on purpose.',
+      setupRequired: true,
+      fallback: false
+    })
+    return
+  }
+  const devinChildEnv = devinCredentialLaunch.childEnv
+
+  const state: CliProviderStreamState = {
+    provider: 'devin',
+    sender: event.sender,
+    startedAt: Date.now(),
+    model,
+    fallback: false,
+    completed: false,
+    assistantText: '',
+    providerSessionId: payload.providerSessionId || null,
+    approvalMode: payload.approvalMode,
+    workflowMode: payload.workflowMode,
+    sessionTrust: Boolean(payload.sessionTrust),
+    externalPathGrants: payload.externalPathGrants,
+    runtimeProfileId: payload.runtimeProfileId,
+    taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
+    taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised,
+    taskWraithMcpProfileFence: payload.taskWraithMcpProfileFence,
+    effectivePermissions: payload.effectivePermissions,
+    effectivePermissionsSignature: payload.effectivePermissionsSignature,
+    ensembleRun: payload.ensembleRun,
+    ...route
+  }
+  let devinOwnedProcess: ChildProcess | null = null
+  // Seeded with the raw prompt and reassigned once the preamble is applied
+  // below, so the terminal closer can meter the PROVIDER-VISIBLE prompt without
+  // reaching forward into a `const` still in its temporal dead zone on an early
+  // failure path.
+  let devinProviderPrompt = payload.prompt
+  const registeredSession = registerRunSession(
+    'devin',
+    event.sender,
+    route,
+    payload.scope === 'global' ? undefined : payload.workspace,
+    state,
+    payload.providerSessionId || null
+  )
+  if (!registeredSession) return
+  // Publish exact settlement authority before initialization diagnostics or
+  // broker setup can project or await.
+  const devinTransportClose = createProviderTransportCloseOperation()
+  let devinTransportOperation: Promise<void>
+  try {
+    devinTransportOperation = providerTransportOperations.track(
+      route.appRunId!,
+      devinTransportClose.operation
+    )
+  } catch (error) {
+    try {
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider: 'devin',
+        route,
+        message: `Devin transport ownership could not be acquired: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        setupRequired: true,
+        fallback: false
+      })
+    } finally {
+      devinTransportClose.markTransportClosed()
+    }
+    await devinTransportClose.operation
+    return
+  }
+  const safelyProjectDevin = (projection: () => void): void => {
+    try {
+      projection()
+    } catch (error) {
+      try {
+        console.error('[devin-acp] projection failed', error)
+      } catch {
+        // Exact transport settlement remains independent of diagnostics.
+      }
+    }
+  }
+  safelyProjectDevin(() =>
+    sendAgentCompatLine(
+      event.sender,
+      'devin',
+      {
+        type: 'init',
+        session_id: state.providerSessionId || '',
+        model,
+        timestamp: new Date().toISOString(),
+        provider: 'devin',
+        fallback: false
+      },
+      state
+    )
+  )
+
+  // ── TaskWraith MCP over ACP session/new ──────────────────────────────────
+  // Default-OFF for this seat (devinMcpAdvertiseEnabled) until a live trace
+  // confirms `devin acp` raises session/request_permission for every tool
+  // execution; a signed UltraTask delegation consent is the one explicit
+  // opt-in that overrides the preference (shouldAdvertiseTaskWraithMcpToDevin).
+  // Like Vibe, `devin acp` takes stdio MCP servers directly in session/new, so
+  // nothing is written to disk and there is nothing to sweep.
+  let devinMcpServers: unknown[] = []
+  const devinWriteSeat = devinWriteCapable(payload.approvalMode)
+  const devinReadOnlySeat = !devinWriteSeat
+  const devinAdvertiseTaskWraithMcp = shouldAdvertiseTaskWraithMcpToDevin({
+    taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised === true,
+    advertiseEnabled: devinMcpAdvertiseEnabled(),
+    effectivePermissions: payload.effectivePermissions
+  })
+  if (devinAdvertiseTaskWraithMcp) {
+    try {
+      const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
+      if (!bridgeCommandStatus.available) {
+        throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
+      }
+      await mcpBridgeRuntime.startGeminiMcpBroker()
+      if (!providerTransportLaunchAuthorized('devin', payload, route)) {
+        settleDeniedProviderTransportLaunch(route)
+        devinTransportClose.markTransportClosed()
+        await devinTransportOperation
+        return
+      }
+      const safeSubset = devinReadOnlySeat
+      // A plan-preset (not read_only) seat widens the safe subset to the plan
+      // instruments, which the broker then host-gates. Only meaningful when
+      // safeSubset is set — a write-capable seat already gets the full server.
+      const devinPlanSeat = safeSubset && payload.effectivePermissions?.presetId === 'plan'
+      const devinAuditRun = Boolean(payload.auditRun)
+      const coreSubset = isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+      const gatewaySubset = isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+      const devinBridgeArgs = taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
+        safeSubset,
+        planSubset: devinPlanSeat,
+        coreSubset,
+        gatewaySubset,
+        portableEnsembleControl: isPortableEnsembleControlMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
+        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
+        soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        permissionOpportunityDirect: isPermissionOpportunityDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        )
+      })
+      devinMcpServers = [
+        {
+          // ACP McpServer is an UNTAGGED enum: the stdio variant is
+          // {name, command, args, env} with NO `type` field and env REQUIRED. A
+          // stray `type:'stdio'` matches no variant and produces a -32602 that
+          // also hangs the turn. env carries the routing identity in the ACP
+          // EnvVariable shape ({name,value}) so broker calls map to THIS run.
+          name: safeSubset ? DEVIN_SCOPED_MCP_SERVER_NAME : GEMINI_MCP_SERVER_NAME,
+          command: bridgeCommandStatus.command,
+          args: devinAuditRun ? [...devinBridgeArgs, GEMINI_MCP_AUDIT_SUBSET_ARG] : devinBridgeArgs,
+          env: [
+            { name: GEMINI_MCP_BRIDGE_ENV, value: '1' },
+            { name: 'TASKWRAITH_PARENT_PROVIDER', value: 'devin' },
+            { name: 'TASKWRAITH_RUN_ID', value: route.appRunId || '' },
+            { name: 'TASKWRAITH_CHAT_ID', value: route.appChatId || '' },
+            {
+              name: 'TASKWRAITH_WORKSPACE_PATH',
+              value: payload.scope === 'global' ? '' : payload.workspace || ''
+            },
+            ...(devinAuditRun ? [{ name: 'TASKWRAITH_MCP_AUDIT', value: '1' }] : [])
+          ]
+        }
+      ]
+    } catch (error) {
+      // Broker failed to start → no tools (safe). The turn still runs, toolless,
+      // and the prompt's tool claims are stripped so it does not promise a
+      // capability that is not attached.
+      devinMcpServers = []
+      payload.taskWraithMcpAdvertised = false
+      state.taskWraithMcpAdvertised = false
+      payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+        advertised: false,
+        coreProfile: false
+      })
+      safelyProjectDevin(() =>
+        sendAgentCompatLine(
+          event.sender,
+          'devin',
+          {
+            type: 'provider_warning',
+            provider: 'devin',
+            severity: 'warning',
+            title: 'Devin MCP bridge unavailable',
+            message: `TaskWraith could not start the MCP broker; Devin is running without TaskWraith MCP tools. ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          },
+          state
+        )
+      )
+    }
+  }
+
+  // `devin acp` takes its one knob on argv. 'cli-default' is the picker's honest
+  // "no override" row (StaticProviderModels), so it must never reach the CLI as
+  // `--model cli-default`; any other id passes through verbatim.
+  const devinAcpArgs = buildDevinAcpCliArgs(model === 'cli-default' ? null : model)
+
+  const devinSpawnAcpProcess = (): AcpChildProcess => {
+    const child = spawn(binaryPath, devinAcpArgs, {
+      cwd: payload.workspace!,
+      shell: false,
+      detached: process.platform !== 'win32',
+      // Already resolved from the credential lane. Never re-derive it here: a
+      // second createCliEnv call inside the closure would be a fresh unscrubbed
+      // object, and the seat's whole credential story is that the env the child
+      // gets is the env the lane resolution described.
+      env: devinChildEnv
+    })
+    // NOTE: do NOT end stdin — ACP keeps the stdio channel open for requests.
+    return child as unknown as AcpChildProcess
+  }
+
+  // Client-mediated tool approval. `devin acp` asks before running a tool
+  // (session/request_permission — Synara-source-verified, not yet
+  // live-measured), so like Mistral this handler is the primary gate. The ACP
+  // core turns a 'deny' into a rejected outcome, so nothing runs without an
+  // explicit allow.
+  const devinPermissionHandler = async (request: AcpPermissionRequest) => {
+    // TaskWraith broker tools are independently gated by the broker. Allowing
+    // the ACP hop here avoids a duplicate provider card; it does not bypass the
+    // signed service policy or exact mutation transaction.
+    if (devinAcpBrokerToolRequested(request)) return 'allow'
+    const networkRead = grokAcpNetworkReadRequested('devin', request)
+    if (networkRead && !grokNetworkAccessAllowed(state)) return 'deny'
+    const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
+      provider: 'devin',
+      toolName: request.toolName,
+      toolKind: request.toolKind,
+      rawToolCall: request.rawToolCall,
+      workspacePath: payload.scope === 'global' ? undefined : payload.workspace,
+      // Devin exposes a permission hook but no workspace-rooted native shell
+      // sandbox TaskWraith can attest. File tools can be path-preflighted;
+      // shell stays fail-closed.
+      runtimeSandboxed: false
+    })
+    if (nativeWorkspacePreflight.kind === 'deny') return 'deny'
+    if (networkRead) return 'allow'
+    if (nativeWorkspacePreflight.kind === 'allow' && nativeWorkspacePreflight.access === 'read') {
+      return 'allow'
+    }
+    if (grokReadOnlyShellRequestAllowed(request)) return 'allow'
+    if (devinReadOnlySeat) {
+      // Same divergence from Grok's read-only handler as Mistral: this seat has
+      // no argv deny-list, so the read-only preamble's promise ("you CAN run ls,
+      // cat, grep, find, git log/status/diff") is honoured by the read-only
+      // shell allow above, and anything it cannot prove read-only lands here.
+      return 'deny'
+    }
+    // A write-capable seat remains useful for brokered exact edits, but its
+    // opaque native mutators never bypass the transaction boundary.
+    return 'deny'
+  }
+
+  const finishDevinAcpTurn = (
+    code: number | null,
+    turnComplete: boolean,
+    terminalStatus?: string
+  ): void => {
+    // normalizeGrokStopReason is shared, not borrowed: the vocabulary it folds
+    // is the ACP core's terminal status, named for whoever needed it first.
+    const finalStopReason = normalizeGrokStopReason(terminalStatus)
+    const finalFailed =
+      !turnComplete ||
+      finalStopReason !== 'success' ||
+      (state.assistantText.trim().length === 0 && (state.grokToolErrorCount || 0) > 0)
+    const safelyProject = (projection: () => void): void => {
+      try {
+        projection()
+      } catch (error) {
+        try {
+          console.error('[devin-acp] terminal projection failed', error)
+        } catch {
+          // Terminal ownership below is independent of diagnostics.
+        }
+      }
+    }
+    try {
+      if (!state.completed) {
+        state.completed = true
+        const stopReason = finalStopReason
+        if (stopReason !== 'success') state.grokStopReason = stopReason
+        const emptyAfterToolFailure =
+          turnComplete &&
+          stopReason === 'success' &&
+          state.assistantText.trim().length === 0 &&
+          (state.grokToolErrorCount || 0) > 0
+        const failed = !turnComplete || stopReason !== 'success' || emptyAfterToolFailure
+        if (failed) {
+          const message =
+            stopReason !== 'success'
+              ? `Devin stopped before finishing this turn (stopReason: ${stopReason}). It may not have produced an answer or written files.`
+              : devinAcpEmptyToolFailureMessage(state)
+          safelyProject(() => sendAgentCompatError(event.sender, 'devin', message, state))
+        }
+        // Devin reports no token usage over ACP (it bills in ACUs), so the host
+        // projects a generic estimate the same way the Grok ACP path does —
+        // dashboard projection, never billing.
+        if (!state.tokenUsage) {
+          state.tokenUsage = estimateProjectedTokenUsage(
+            devinProviderPrompt,
+            state.assistantText,
+            (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0),
+            model
+          )
+        }
+        safelyProject(() =>
+          sendAgentCompatLine(
+            event.sender,
+            'devin',
+            {
+              type: 'result',
+              status: failed ? 'failed' : 'success',
+              stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
+              provider: 'devin',
+              providerThreadId: state.providerSessionId || undefined,
+              ...(stopReason !== 'success' ? { stopReason } : {}),
+              fallback: false
+            },
+            state
+          )
+        )
+        safelyProject(() =>
+          sendAgentCompatExit(
+            event.sender,
+            'devin',
+            failed ? 1 : turnComplete ? 0 : (code ?? 1),
+            state
+          )
+        )
+      }
+    } catch (error) {
+      try {
+        console.error('[devin-acp] terminal projection failed', error)
+      } catch {
+        // Terminal ownership below is independent of diagnostic projection.
+      }
+    } finally {
+      try {
+        deleteCliProviderProcessIfOwned(cliProviderProcesses, 'devin', devinOwnedProcess)
+        devinOwnedProcess = null
+        runManager.finish(route.appRunId!, finalFailed ? 'failed' : 'completed')
+      } finally {
+        try {
+          runManager.confirmTerminalStatus(
+            route.appRunId!,
+            runManager.getClaimedTerminalStatus(route.appRunId) ??
+              (finalFailed ? 'failed' : 'completed')
+          )
+        } finally {
+          devinTransportClose.markTransportClosed()
+        }
+      }
+    }
+  }
+
+  // Every ACP turn opens a fresh session/new — seat sessions are hard-disabled
+  // (devinSeatSessionsEnabled) — so the steer rides each turn's prompt. Read-only
+  // seats get the recon steer (answer from reads rather than attempting a write
+  // the host will refuse); write seats get the write steer.
+  devinProviderPrompt = applyDevinPromptPreamble(payload.prompt, devinWriteSeat)
+  emitWirePromptCapture({
+    appRunId: route.appRunId,
+    appChatId: route.appChatId,
+    provider: 'devin',
+    transport: 'devin-acp',
+    part: 'user',
+    text: devinProviderPrompt,
+    transforms: [devinWriteSeat ? 'devin write-mode preamble' : 'devin read-only preamble']
+  })
+  // Broker startup and prompt composition await after run registration. A
+  // destructive-history fence can terminalize that run while those awaits are
+  // pending; never spawn a fresh ACP child after its exact authority is gone.
+  if (!providerTransportLaunchAuthorized('devin', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    devinTransportClose.markTransportClosed()
+    await devinTransportOperation
+    return
+  }
+
+  let devinAcpHandle: ReturnType<typeof runDevinAcpTurn>
+  try {
+    devinAcpHandle = runDevinAcpTurn({
+      prompt: devinProviderPrompt,
+      cwd: payload.workspace!,
+      // Throws on a blank version; pre-checked above, this catch is the backstop.
+      appVersion: devinAppVersion,
+      mcpServers: devinMcpServers,
+      spawnProcess: devinSpawnAcpProcess,
+      onProcess: (child) => {
+        const proc = child as unknown as ChildProcess
+        runManager.attachProcess(route.appRunId!, proc)
+        devinOwnedProcess = proc
+        cliProviderProcesses.set('devin', proc)
+      },
+      onPermissionRequest: devinPermissionHandler,
+      onEvent: (evt) => applyDevinRunEvent(state, evt),
+      onToolBatchBoundary: () => scheduleQueuedSteerToolBoundary('devin', route.appRunId!),
+      onRawFrame: (direction, message) => maybeLogDevinRawAcp(direction, message),
+      onClose: finishDevinAcpTurn
+    })
+  } catch (error) {
+    try {
+      sendAgentCompatError(
+        event.sender,
+        'devin',
+        `Devin ACP could not start: ${error instanceof Error ? error.message : String(error)}`,
+        state
+      )
+    } catch {
+      // The settlement path below is projection-independent.
+    }
+    finishDevinAcpTurn(null, false, 'failed')
+    settleProviderRunWithoutTransport(runManager, route.appRunId!, 'failed')
+    await devinTransportOperation
+    return
+  }
+  runManager.attachAbortController(route.appRunId!, createDevinTurnAbortController(devinAcpHandle))
+  // First-class mid-turn steering: the ACP handle can interrupt its in-flight
+  // prompt and re-prompt the same session with the steer text.
+  runManager.registerLiveSteerTransport(route.appRunId!, {
+    sendSteer: (text, hooks) => devinAcpHandle.steer(text, hooks),
+    cancel: () => devinAcpHandle.cancelSteer()
+  })
+  // Keep the adapter invocation itself live from dispatch registration through
+  // the real child close. History deletion may begin before the transport
+  // operation is published above; its adapter join must cover that setup race.
+  await devinAcpHandle.closed
+  await devinTransportOperation
 }
 
 function respondToKimiWireRequest(child: ChildProcess, requestId: string | number, result: any) {
@@ -35767,6 +36532,67 @@ const mistralAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEv
   }
 ]
 
+/**
+ * Static MCP status for the Devin seat.
+ *
+ * Same honesty contract as Mistral's: whether a PARTICULAR turn attached the
+ * broker depends on that run's advertise decision, posture and UltraTask
+ * consent, which a static probe cannot see. What is stable — and what this
+ * reports — is the attachment MODE and its default-OFF gate.
+ */
+function devinMcpStatusSnapshot() {
+  const advertiseEnabled = devinMcpAdvertiseEnabled()
+  return {
+    provider: 'devin' as const,
+    available: advertiseEnabled,
+    enabled: advertiseEnabled,
+    source: 'bridge',
+    serverName: advertiseEnabled ? GEMINI_MCP_SERVER_NAME : null,
+    tools: [] as string[],
+    sections: [] as unknown[],
+    message: advertiseEnabled
+      ? 'TaskWraith attaches its MCP broker directly to each Devin ACP session (session/new), scoped to the run’s posture. Every brokered call still raises a Devin permission request that TaskWraith answers, so this status cannot report a particular run’s attachment.'
+      : 'TaskWraith MCP tools are off for Devin runs by default (TASKWRAITH_DEVIN_MCP) until a live trace confirms `devin acp` raises a permission request for every tool execution; a signed UltraTask delegation still attaches them for that run.'
+  }
+}
+
+// Devin: the `devin acp` seat. Unlike the Mistral entry above, the descriptor is
+// inherited: defaultProviderDescriptor has a real `devin` branch
+// (ProviderAdapters.ts), so label, transport, features and caveats are
+// single-sourced there and only the wiring is spelled out here.
+const devinAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
+  {
+    ...defaultProviderDescriptor('devin'),
+    run: ({ event, payload }) => runDevinProvider(event, payload),
+    cancel: (runId) => cancelProviderRun('devin', runId),
+    // Deliberately NOT getAgentStatusSnapshotDirect: its final else-branch
+    // answers with a GEMINI-shaped snapshot for any provider it does not name,
+    // and it does not name devin.
+    getStatus: () => getCliProviderStatus('devin'),
+    getMcpStatus: async () => devinMcpStatusSnapshot(),
+    getCapabilityContract: async (request = {}) => {
+      // Built here rather than via getProviderCapabilityContractDirect for the
+      // same reason as getStatus: that helper resolves its status through the
+      // Gemini else-branch above.
+      const settings = AppStore.getSettings()
+      const status = await getCliProviderStatus('devin').catch((error) => ({
+        provider: 'devin',
+        available: false,
+        setupRequired: true,
+        error: error instanceof Error ? error.message : String(error)
+      }))
+      return buildProviderCapabilityContract({
+        provider: 'devin',
+        settings,
+        workspacePath: request.workspacePath,
+        approvalMode: request.approvalMode,
+        status,
+        mcpStatus: devinMcpStatusSnapshot()
+      })
+    }
+  }
+]
+
 
 // Muse Code: opaque `muse exec --json` seat. Lifecycle in muse/MuseRun.ts;
 // IPC→spawn bridge in muse/MuseIpcBridge.ts. Keep this array in index.ts so
@@ -35992,6 +36818,7 @@ const providerAdapters = createProviderAdapterRegistry<
     ...cursorAdapters,
     ...piAdapters,
     ...mistralAdapters,
+    ...devinAdapters,
     ...museAdapters
   ],
   { requireCompleteProviderSet: true }

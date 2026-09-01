@@ -163,7 +163,8 @@ describe('resolveProviderRows (additive visibility + option order)', () => {
       'ollama',
       'pi',
       'mistral',
-      'muse'
+      'muse',
+      'devin'
     ])
 
     expect(
@@ -216,14 +217,16 @@ describe('ComposerProviderPickerRows (popover body)', () => {
     expect(html).toContain('data-provider-value="pi"')
     expect(html).toContain('data-provider-value="mistral"')
     expect(html).toContain('data-provider-value="muse"')
+    expect(html).toContain('data-provider-value="devin"')
     // ...each with the shared rich-popover row chrome + a provider icon.
     expect(html).toContain('composer-plus-picker-row')
     expect(html).toContain('composer-plus-picker-row-icon')
     expect(html).toContain('sidebar-provider-icon')
     for (const provider of LIVE_SELECTABLE_PROVIDER_IDS) {
-      if (provider === 'muse') {
-        expect(html).toContain('provider-glyph-muse')
-        expect(html).not.toContain('data-provider-logo="muse"')
+      if (provider === 'muse' || provider === 'devin') {
+        // No sourced brand logo asset — the TaskWraith glyph fallback renders.
+        expect(html).toContain(`provider-glyph-${provider}`)
+        expect(html).not.toContain(`data-provider-logo="${provider}"`)
       } else {
         expect(html).toContain(`data-provider-logo="${provider}"`)
         expect(html).not.toContain(`provider-glyph-${provider}`)

@@ -152,7 +152,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 
 function assistantProviderForMessage(message: ChatMessage): ProviderId | null {

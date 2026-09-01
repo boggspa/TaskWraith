@@ -3861,6 +3861,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   background: color-mix(in srgb, var(--provider-muse-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-muse-color) 40%, transparent);
 }
 
+.usage-heatmap-provider-filter-tab.provider-devin[data-active="true"] {
+  color: var(--provider-devin-color);
+  background: color-mix(in srgb, var(--provider-devin-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-devin-color) 40%, transparent);
+}
+
 .usage-heatmap-chips {
   display: inline-flex;
   align-items: center;
@@ -5407,6 +5412,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .message-meta.provider-muse {
   color: var(--provider-muse-color) !important;
 }
+.message-meta.provider-devin {
+  color: var(--provider-devin-color) !important;
+}
 
 .message-meta.provider-groq {
   color: var(--provider-groq-color) !important;
@@ -5521,6 +5529,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 .message-group:has(.message-meta.provider-muse) {
   --message-working-accent: var(--provider-muse-color);
+}
+.message-group:has(.message-meta.provider-devin) {
+  --message-working-accent: var(--provider-devin-color);
 }
 
 .message-group:has(.message-meta.provider-groq) {
@@ -6677,6 +6688,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 .participant-health-chip.provider-muse {
   color: var(--provider-muse-color, var(--text-primary));
+}
+.participant-health-chip.provider-devin {
+  color: var(--provider-devin-color, var(--text-primary));
 }
 
 .participant-health-chip.provider-groq {

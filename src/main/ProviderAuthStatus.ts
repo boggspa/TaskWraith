@@ -42,7 +42,10 @@ const TRANSPORT_BY_PROVIDER: Record<ProviderId, ProviderAuthTransport> = {
   // Grok/Kimi/Cursor — plan-backed sign-in happens in the CLI itself.
   mistral: 'cli',
   // Muse Code CLI (`muse exec`); credential via muse login / Meta Model API key.
-  muse: 'cli'
+  muse: 'cli',
+  // Devin CLI (`devin acp`); ACP over stdio, credential via env keys or
+  // ~/.local/share/devin/credentials.toml (written by `devin auth login`).
+  devin: 'cli'
 }
 
 const APPROVAL_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
@@ -66,7 +69,10 @@ const APPROVAL_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   // genuinely route through TaskWraith's main approval gate — same as Kimi.
   mistral: true,
   // Native Muse tools are provider-owned; no host per-tool approval cards in v1.
-  muse: false
+  muse: false,
+  // Devin's ACP runtime surfaces request_permission events for tool calls,
+  // same approval gate as Mistral/Kimi.
+  devin: true
 }
 
 const MCP_STATUS_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
@@ -92,7 +98,9 @@ const MCP_STATUS_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   // TaskWraith-managed authenticated HTTP MCP gateway the way Kimi does.
   mistral: false,
   // No TaskWraith MCP broker for Muse in v1.
-  muse: false
+  muse: false,
+  // Devin talks ACP directly; no TaskWraith-managed MCP gateway.
+  devin: false
 }
 
 export function buildProviderAuthStatusV2(input: ProviderAuthStatusV2Input): ProviderAuthStatusV2 {
@@ -278,6 +286,34 @@ function deriveAuthState(
     return {
       authState: 'not-observable',
       authReason: 'Pi upstream key state was not exposed by the status probe'
+    }
+  }
+
+  if (provider === 'devin') {
+    // Devin auth: env keys (WINDSURF_API_KEY / DEVIN_API_KEY) or stored
+    // credentials.toml (written by `devin auth login`). The ACP authenticate
+    // meta carries headless:true + api_key + api_server_url.
+    if (apiKeyConfigured) return { authState: 'authenticated' }
+    const normalized = String(rawAuthState || '')
+      .trim()
+      .toLowerCase()
+    if (
+      normalized === 'authenticated' ||
+      normalized === 'api-key' ||
+      normalized === 'windsurf-api-key'
+    ) {
+      return { authState: 'authenticated' }
+    }
+    if (normalized === 'missing' || normalized === 'unauthenticated') {
+      return {
+        authState: 'missing',
+        authReason:
+          'Devin has no configured API key. Set WINDSURF_API_KEY or run `devin auth login`.'
+      }
+    }
+    return {
+      authState: 'not-observable',
+      authReason: 'Devin credential state was not exposed by the status probe'
     }
   }
 

@@ -70,7 +70,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 const PERMISSION_PRESET_IDS = new Set<PermissionPresetId>([
   'read_only',

@@ -16,6 +16,7 @@ import {
   summariseMuseCodeStatus,
   summariseOllamaStatus,
   summariseProviderApiKeyStatus,
+  type ProviderAuthSummary,
   type ProviderAuthVariant
 } from '../lib/providerAuthSummary'
 import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
@@ -108,6 +109,11 @@ export interface FirstLaunchSheetProps {
    * state). Fail-closed like Mistral's probe — a missing status object reads
    * as "not checked yet", never as signed in. */
   museStatus?: unknown
+  /** Devin CLI status. The credential lane is env keys (WINDSURF_API_KEY /
+   * DEVIN_API_KEY) or the `devin auth login` credentials.toml; like Mistral
+   * and Muse the probe is fail-closed and a missing status object reads as
+   * "not checked yet", never as signed in. */
+  devinStatus?: unknown
   /** Whether TaskWraith can see a local Ollama runtime/service. Used only as
    * the fallback when the full `ollamaStatus` snapshot isn't wired. */
   ollamaProviderAvailable?: boolean
@@ -220,6 +226,57 @@ function worstProviderUsage(
 }
 
 /**
+ * Devin CLI status → the shared provider vocabulary. Local mirror of the
+ * SettingsPanel summariser (kept here to avoid a runtime import cycle with
+ * that 12k-line module): the Devin seat authenticates through env keys
+ * (WINDSURF_API_KEY canonical, DEVIN_API_KEY) or the stored credentials file
+ * written by `devin auth login`; deriveAuthState reports 'windsurf-api-key'
+ * as Devin's primary authenticated state.
+ */
+function summariseDevinStatus(status: unknown): ProviderAuthSummary {
+  const record = status && typeof status === 'object' ? (status as Record<string, unknown>) : null
+  if (!record) {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'Devin setup not checked yet',
+      hint:
+        'Install the Devin CLI (`curl -fsSL https://cli.devin.ai/install.sh | bash`), then set WINDSURF_API_KEY or run `devin auth login`.'
+    }
+  }
+  if (record.available === false) {
+    return {
+      variant: 'not-available',
+      statusText: 'Devin CLI not found',
+      hint: 'Install the Devin CLI, then set WINDSURF_API_KEY or run `devin auth login` in Terminal.'
+    }
+  }
+  const authState = String(record.authState || '').trim().toLowerCase()
+  const credentialPresent = record.credentialPresent === true
+  if (
+    credentialPresent ||
+    ['authenticated', 'api-key', 'windsurf-api-key'].includes(authState)
+  ) {
+    return {
+      variant: 'signed-in',
+      statusText: 'Devin signed in',
+      hint: 'You can launch Devin runs from TaskWraith.'
+    }
+  }
+  if (['missing', 'unauthenticated', 'signed-out'].includes(authState)) {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'Devin not signed in',
+      hint: 'Set WINDSURF_API_KEY or run `devin auth login` in Terminal.'
+    }
+  }
+  return {
+    variant: 'partial',
+    statusText: 'Devin CLI ready · credential state not observed',
+    hint: 'Set WINDSURF_API_KEY or run `devin auth login` if sign-in is incomplete.'
+  }
+}
+
+/**
  * Flip a signed-in provider row to the "out of usage" state when its
  * worst quota window is at ~100%. No-op for every other variant (you
  * can't be "out of usage" if you were never signed in) and when there's
@@ -275,6 +332,7 @@ export function FirstLaunchSheet({
   grokProviderAvailable = false,
   mistralStatus,
   museStatus,
+  devinStatus,
   ollamaProviderAvailable = false,
   ollamaStatus,
   antigravityProviderOffered = false,
@@ -379,6 +437,7 @@ export function FirstLaunchSheet({
   )
   const mistralSummary = summariseMistralVibeStatus(mistralStatus)
   const museSummary = summariseMuseCodeStatus(museStatus)
+  const devinSummary = summariseDevinStatus(devinStatus)
   // Hosts that only pass the reachability boolean still get a truthful
   // runtime answer; the account half simply stays "not signed in".
   const ollamaSnapshot =
@@ -487,6 +546,15 @@ export function FirstLaunchSheet({
         'Muse Code CLI over the Meta Model API. Sign in with `muse login` or a Meta Model API key; TaskWraith probes the binary and credential state fail-closed rather than guessing.',
       ...museSummary,
       optional: true
+    },
+    {
+      id: 'devin',
+      label: 'Devin',
+      description:
+        'Devin CLI coding agent over ACP (`devin acp`) on your own paid seat. Authenticate with WINDSURF_API_KEY or `devin auth login`; TaskWraith probes the binary and credential state fail-closed rather than guessing.',
+      ...devinSummary,
+      optional: true,
+      logoutUnsupported: true
     }
   ]
   // Flip any signed-in provider whose quota window is maxed to the

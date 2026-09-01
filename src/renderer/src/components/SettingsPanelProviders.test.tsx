@@ -538,6 +538,34 @@ describe('SettingsPanel provider cards', () => {
     expect(card).not.toContain('setup unverified')
   })
 
+  it('renders a windsurf-api-key Devin status as a green signed-in card', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          providerStatusByProvider: {
+            devin: {
+              available: true,
+              authState: 'windsurf-api-key',
+              credentialPresent: false
+            }
+          }
+        })}
+      />
+    )
+
+    const devinStart = html.indexOf('provider-devin')
+    expect(devinStart).toBeGreaterThanOrEqual(0)
+    const nextProviderCard = html.indexOf(
+      '<article class="settings-provider-auth-card',
+      devinStart + 'provider-devin'.length
+    )
+    const card = html.slice(devinStart, nextProviderCard === -1 ? undefined : nextProviderCard)
+    expect(card).toContain('Devin signed in')
+    expect(card).toContain('settings-provider-auth-status-dot-signed-in')
+    expect(card).toContain('Custom API server URL')
+    expect(card).not.toContain('credential state not observed')
+  })
+
   it('buries the AntiGravity risk-consent card after Ollama', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 
@@ -600,7 +628,8 @@ describe('SettingsPanel provider cards', () => {
           activeTab: 'mcp',
           providerStatusByProvider: {
             pi: { available: true },
-            mistral: { available: true }
+            mistral: { available: true },
+            devin: { available: true }
           },
           providerCapabilitiesByProvider: {
             pi: {
@@ -639,7 +668,8 @@ describe('SettingsPanel provider cards', () => {
 
     const pi = card('pi')
     const mistral = card('mistral')
-    for (const surface of [pi, mistral]) {
+    const devin = card('devin')
+    for (const surface of [pi, mistral, devin]) {
       expect(surface).toContain('<span class="settings-mcp-state-pill">available</span>')
       expect(surface).toContain('<span>first-class runtime</span>')
       expect(surface).not.toContain('>delegated</span>')
@@ -650,6 +680,8 @@ describe('SettingsPanel provider cards', () => {
     expect(pi).toContain('first-class TaskWraith provider')
     expect(mistral).toContain('Mistral Vibe ACP')
     expect(mistral).toContain('first-class Mistral Vibe ACP provider')
+    expect(devin).toContain('devin acp')
+    expect(devin).toContain('first-class Devin ACP provider')
   })
 
   it('hides the AntiGravity connected-surface card until an admission lane is live', () => {
@@ -1206,7 +1238,8 @@ describe('SettingsPanel provider cards', () => {
       'Ollama',
       'Pi',
       'Mistral',
-      'Muse'
+      'Muse',
+      'Devin'
     ]) {
       expect(html).toContain(
         `<span class="approval-timeout-field-label">${provider}</span>`

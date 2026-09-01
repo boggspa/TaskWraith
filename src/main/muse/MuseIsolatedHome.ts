@@ -7,10 +7,12 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
+import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { parseMuseAuthJsonCredential } from './MuseProbe'
+import { museAuthJsonUsesKeychainStorage, parseMuseAuthJsonCredential } from './MuseProbe'
 import { type MuseSkillPinSettings, buildMuseSkillPinSettings } from './MuseSkillPin'
 import { mergeMuseMcpSettings, serializeMuseSettings, type MuseMcpSettings } from './MuseMcpConfig'
 
@@ -274,12 +276,26 @@ export function verifyMuseIsolatedHome(lease: MuseIsolatedHomeLease): MuseIsolat
   return authority
 }
 
+export interface ProjectMuseAuthJsonOptions {
+  /** Platform override (tests). Defaults to `process.platform`. */
+  readonly platform?: NodeJS.Platform
+  /**
+   * Real user keychain directory to graft for schema-v2 keychain locators
+   * (tests). Defaults to `~/Library/Keychains` on macOS.
+   */
+  readonly realKeychainsDir?: string
+}
+
 /**
  * Project a validated Muse-owned credential into an already-issued private
  * lease. This deliberately happens inside the run lifecycle's `try/finally`,
  * so every post-write failure still removes the credential at teardown.
  */
-export function projectMuseAuthJson(lease: MuseIsolatedHomeLease, raw: string): string {
+export function projectMuseAuthJson(
+  lease: MuseIsolatedHomeLease,
+  raw: string,
+  options: ProjectMuseAuthJsonOptions = {}
+): string {
   verifyMuseIsolatedHome(lease)
   const authJsonText = validateMuseAuthJsonProjection(raw)
   const authPath = join(lease.museConfigDir, 'auth.json')
@@ -288,7 +304,45 @@ export function projectMuseAuthJson(lease: MuseIsolatedHomeLease, raw: string): 
     mode: 0o600,
     flag: 'wx'
   })
+  projectMuseKeychainAccessIfRequired(lease, authJsonText, options)
   return authPath
+}
+
+/**
+ * Muse 1.x (subscription-era) `muse login` stores the Meta OAuth secret in the
+ * macOS login keychain and leaves only a non-secret schema-v2 locator in
+ * auth.json. The CLI resolves that keychain through `$HOME/Library/Keychains`,
+ * so a locator projected into a relocated seat HOME fails with
+ * "missing meta credentials" even though auth.json is present (confirmed
+ * against Muse Code 1.0.1). Graft keychain access into the disposable home via
+ * one symlink; the secret itself is never read or copied by TaskWraith —
+ * securityd and the item ACLs still gate the actual unlock — and lease
+ * teardown removes only the symlink, never its target.
+ */
+export function projectMuseKeychainAccessIfRequired(
+  lease: MuseIsolatedHomeLease,
+  authJsonText: string,
+  options: ProjectMuseAuthJsonOptions = {}
+): string | null {
+  const platform = options.platform ?? process.platform
+  if (platform !== 'darwin') return null
+  if (!museAuthJsonUsesKeychainStorage(authJsonText)) return null
+
+  const realKeychainsDir = options.realKeychainsDir ?? join(homedir(), 'Library', 'Keychains')
+  try {
+    if (!statSync(realKeychainsDir).isDirectory()) return null
+  } catch {
+    // No user keychain directory — leave the seat untouched and let the CLI
+    // report its own credential state.
+    return null
+  }
+
+  const libraryDir = join(lease.homePath, 'Library')
+  mkdirSync(libraryDir, { recursive: true, mode: 0o700 })
+  if (process.platform !== 'win32') chmodSync(libraryDir, 0o700)
+  const linkPath = join(libraryDir, 'Keychains')
+  symlinkSync(realKeychainsDir, linkPath)
+  return linkPath
 }
 
 export interface BuildMuseIsolatedHomeEnvironmentInput {

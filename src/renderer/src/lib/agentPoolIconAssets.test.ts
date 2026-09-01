@@ -52,6 +52,7 @@ describe('agent pool icon assets', () => {
       'pi',
       'mistral',
       'muse',
+      'devin',
       'ensemble'
     ] as const
     const providerAssets = POOL_ICON_ASSETS.filter((asset) => asset.group === 'Providers')
@@ -68,7 +69,7 @@ describe('agent pool icon assets', () => {
       if (provider === 'ensemble') {
         expect(asset?.raw).toContain('<svg')
         expect(asset?.providerLogo).toBeUndefined()
-      } else if (provider === 'muse') {
+      } else if (provider === 'muse' || provider === 'devin') {
         expect(asset?.providerLogo).toBe(provider)
         expect(asset?.raw).toBeUndefined()
         expect(resolveProviderBrandLogoSource(provider)).toBeUndefined()

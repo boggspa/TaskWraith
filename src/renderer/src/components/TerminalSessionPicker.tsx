@@ -22,6 +22,7 @@ export const TERMINAL_CLI_OPTIONS: readonly TerminalCliOption[] = [
   { id: 'agy', label: 'AntiGravity (AGY) CLI' },
   { id: 'pi', label: 'Pi (Pi CLI)' },
   { id: 'muse', label: 'Muse Code CLI (Meta)' },
+  { id: 'devin', label: 'Devin CLI' },
   { id: 'github', label: 'GitHub CLI' }
 ]
 

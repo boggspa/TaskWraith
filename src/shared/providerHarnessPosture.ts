@@ -39,6 +39,7 @@ export type HarnessProviderId =
   | 'pi'
   | 'mistral'
   | 'muse'
+  | 'devin'
 
 export type ProviderHarnessPostureMap = Partial<Record<HarnessProviderId, ProviderHarnessPosture>>
 
@@ -59,7 +60,8 @@ const ALL_PROVIDER_IDS: readonly HarnessProviderId[] = [
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ]
 
 const SUPPRESS_BOTH: ProviderHarnessPosture = { skills: 'suppress', hooks: 'suppress' }
@@ -82,7 +84,8 @@ export const DEFAULT_PROVIDER_HARNESS_POSTURES: Record<HarnessProviderId, Provid
     ollama: { ...TW_ONLY_BOTH },
     antigravity: { ...TW_ONLY_BOTH },
     mistral: { ...TW_ONLY_BOTH },
-    muse: { ...TW_ONLY_BOTH }
+    muse: { ...TW_ONLY_BOTH },
+    devin: { ...TW_ONLY_BOTH }
   }
 
 /**

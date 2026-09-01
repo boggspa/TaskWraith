@@ -14,7 +14,8 @@ const PROVIDER_BY_TERMINAL_CLI: Partial<Record<TerminalCliId, ProviderId>> = {
   grok: 'grok',
   ollama: 'ollama',
   pi: 'pi',
-  muse: 'muse'
+  muse: 'muse',
+  devin: 'devin'
 }
 
 export interface ResolvedInteractiveTerminalCli {

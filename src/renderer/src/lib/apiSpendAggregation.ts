@@ -82,7 +82,11 @@ export const API_SPEND_PROVIDER_ORDER: ProviderId[] = [
   // reading zero here means the model-aware estimator in MistralUsage.ts is not
   // reaching the usage record, not that the seat is free.
   'mistral',
-  'muse'
+  'muse',
+  // Devin bills in ACUs on the plan side, so there is no per-token USD basis
+  // to project — its row here always reads zero by design, like a plan
+  // subscription seat whose estimator has nothing to estimate.
+  'devin'
 ]
 
 /** Aggregated token + cost totals for one provider over one window. */

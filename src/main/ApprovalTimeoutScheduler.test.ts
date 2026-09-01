@@ -158,7 +158,8 @@ describe('ApprovalTimeoutScheduler', () => {
         antigravity: 120_000,
         pi: 120_000,
         mistral: 120_000,
-        muse: 120_000
+        muse: 120_000,
+        devin: 120_000
       },
       mainTimeoutMs: 60_000,
       perKindOverridesMs: { 'hostCommand/rerun': 90_000 }
@@ -279,7 +280,8 @@ describe('ApprovalTimeoutScheduler', () => {
       antigravity: 240_000,
       pi: 240_000,
       mistral: 120_000,
-      muse: 240_000
+      muse: 240_000,
+      devin: 240_000
     })
     expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.mainTimeoutMs).toBe(120_000)
     expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.perKindOverridesMs?.['hostCommand/rerun']).toBe(180_000)

@@ -167,6 +167,9 @@ public enum TWTheme {
         case "antigravity", "google": return 0x308713
         case "pi": return 0x68768C
         case "muse": return 0x1671EA
+        // Devin — TaskWraith design token, not a claim about Cognition's brand:
+        // steel blue raised to this palette's AA-on-both-grounds luminance.
+        case "devin": return 0x4878AE
         case "ensemble": return 0x986781
         case "grok": return 0x757575
         // ── Ollama-backed display brands (--provider-*-color) ──────────────
@@ -248,7 +251,7 @@ public enum TWTheme {
         "google", "pi", "muse", "ensemble", "grok", "alibaba", "qwen", "deep-reinforce", "ornith",
         "ibm", "liquid", "meta", "cohere", "essential", "nvidia", "openbmb", "poolside",
         "deepseek", "zai", "minimax", "mistral", "cerebras", "groq", "openrouter", "xiaomi",
-        "thinkingmachines"
+        "thinkingmachines", "devin"
     ]
 
     /// The whole table as `provider id -> 0xRRGGBB`, for shipping to the Mac.
@@ -274,6 +277,7 @@ public enum TWTheme {
         case "antigravity": return "AntiGravity"
         case "pi": return "Pi"
         case "muse": return "Muse"
+        case "devin": return "Devin"
         case "ensemble": return "Ensemble"
         case "alibaba": return "Alibaba"
         case "deep-reinforce": return "Deep Reinforce"
@@ -331,7 +335,7 @@ public enum TWTheme {
         return retiredProviderIds.contains(provider.lowercased())
     }
 
-    /// The nine providers approved for static new-run offer by product intent.
+    /// The ten providers approved for static new-run offer by product intent.
     /// Offer membership is independent of run-management maturity: Cursor's
     /// Path-B containment/evidence can strengthen or visibly degrade without
     /// changing whether Cursor is offered, and the same rule applies to Pi and
@@ -342,6 +346,7 @@ public enum TWTheme {
     /// shipped a Cursor lockout exactly this way).
     public static let liveSelectableProviderIds: Set<String> = [
         "codex", "claude", "kimi", "cursor", "grok", "ollama", "pi", "mistral", "muse",
+        "devin",
     ]
 
     public static func isLiveSelectableProvider(_ provider: String?) -> Bool {

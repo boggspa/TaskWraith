@@ -75,7 +75,8 @@ function workspaceGrantProviderLabel(provider: ProviderId | 'agents'): string {
     antigravity: 'Antigravity',
     mistral: 'Mistral',
     pi: 'Pi',
-    muse: 'Muse'
+    muse: 'Muse',
+    devin: 'Devin'
   }
   return labels[provider] ?? provider
 }

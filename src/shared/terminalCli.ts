@@ -16,6 +16,7 @@ export const TERMINAL_CLI_IDS = [
   'agy',
   'pi',
   'muse',
+  'devin',
   'github'
 ] as const
 
@@ -34,6 +35,7 @@ const TERMINAL_CLI_COMMANDS: Partial<Record<TerminalCliId, string>> = {
   agy: 'agy',
   pi: 'pi',
   muse: 'muse',
+  devin: 'devin',
   github: 'gh'
 }
 

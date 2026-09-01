@@ -80,6 +80,7 @@ export type SettingsPanelUpdate = {
   kimiBinaryPath?: string
   ollamaBaseUrl?: string
   ollamaDefaultModel?: string
+  devinApiServerUrl?: AppSettings['devinApiServerUrl']
   auditOrchestration?: AppSettings['auditOrchestration']
   agenticServices?: AgenticServicesSettings
   nativeSubAgentRequests?: NativeSubAgentRequestPolicy

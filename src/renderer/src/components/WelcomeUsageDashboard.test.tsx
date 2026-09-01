@@ -20,6 +20,7 @@ const modelComparisonHueClasses = [
   'pi',
   'mistral',
   'muse',
+  'devin',
   ...OLLAMA_DISPLAY_BRANDS.map((brand) => brand.providerClass),
   ...Object.values(PI_UPSTREAM_BRANDS).map((brand) => brand.hueClass)
 ]
@@ -73,7 +74,7 @@ describe('WelcomeUsageDashboard', () => {
     }
   )
 
-  it.each(['antigravity', 'pi', 'mistral', 'muse'] as const)(
+  it.each(['antigravity', 'pi', 'mistral', 'muse', 'devin'] as const)(
     '%s paints its Providers-tab dot and meter fill with its provider hue',
     (provider) => {
       expect(modelComparisonCss).toMatch(

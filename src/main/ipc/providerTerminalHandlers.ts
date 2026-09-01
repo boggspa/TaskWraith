@@ -75,7 +75,10 @@ function shPrintStatusLine(value: string): string {
   const marker = '$status'
   const index = value.indexOf(marker)
   if (index < 0) return shPrintLine(value)
-  return `printf '%s%s%s\\n' ${shQuote(value.slice(0, index))} "$status" ${shQuote(
+  // The generated POSIX script captures `$?` into `exit_code`, never `status`:
+  // zsh treats `status` as a read-only alias of `$?`, so `status=$?` aborts a
+  // `#!/bin/zsh` script before its final lines run.
+  return `printf '%s%s%s\\n' ${shQuote(value.slice(0, index))} "$exit_code" ${shQuote(
     value.slice(index + marker.length)
   )}`
 }
@@ -397,7 +400,7 @@ export async function openProviderAuthTerminal(
         shPrintLine(`> ${command}`),
         'echo ""',
         command,
-        'status=$?',
+        'exit_code=$?',
         'echo ""',
         shPrintStatusLine(postscript)
       ].join('\n') + '\n'

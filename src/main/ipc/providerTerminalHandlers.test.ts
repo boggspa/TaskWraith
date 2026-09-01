@@ -516,6 +516,28 @@ describe('registerProviderTerminalHandlers', () => {
     expect(deps.openPath).toHaveBeenCalledWith(commandFile)
   })
 
+  it('never assigns to the zsh read-only `status` parameter in generated scripts', async () => {
+    // Regression: the generated `#!/bin/zsh` script used `status=$?`, and zsh
+    // reserves `status` as a read-only alias of `$?`. The assignment aborted
+    // muse-login.command with "read-only variable: status" after a successful
+    // `muse login`, so the handoff never printed its final line.
+    const { deps } = createDeps()
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-login-terminal')({}, 'muse')).resolves.toMatchObject({
+      ok: true
+    })
+
+    const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+    // @portability-ok: deps.getPlatform() is pinned to 'darwin', so the
+    // generated script is the zsh .command on every host runner.
+    expect(script).toContain('#!/bin/zsh')
+    expect(script).toContain('exit_code=$?')
+    expect(script).toContain('"$exit_code"')
+    expect(script).not.toMatch(/^status=/m)
+    expect(script).not.toContain('"$status"')
+  })
+
   it('opens muse logout to clear stored Meta credentials', async () => {
     const { deps, loginDir } = createDeps()
     registerProviderTerminalHandlers(deps)

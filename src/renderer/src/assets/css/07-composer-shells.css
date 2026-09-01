@@ -3955,6 +3955,7 @@
 .child-agent-thread[data-provider='ollama'] { --subagent-provider-color: var(--provider-ollama-color, #976c52); }
 .child-agent-thread[data-provider='mistral'] { --subagent-provider-color: var(--provider-mistral-color); }
 .child-agent-thread[data-provider='muse'] { --subagent-provider-color: var(--provider-muse-color); }
+.child-agent-thread[data-provider='devin'] { --subagent-provider-color: var(--provider-devin-color); }
 
 .child-agent-thread[data-provider='pi'] { --subagent-provider-color: var(--provider-pi-color); }
 .child-agent-thread[data-provider='antigravity'] { --subagent-provider-color: var(--provider-antigravity-color); }

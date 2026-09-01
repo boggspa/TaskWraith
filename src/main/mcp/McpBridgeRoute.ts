@@ -132,7 +132,8 @@ const VALID_MCP_BRIDGE_PARENT_PROVIDERS = new Set<ProviderId>([
   'antigravity',
   'mistral',
   'ollama',
-  'muse'
+  'muse',
+  'devin'
 ])
 
 const MAX_ROUTE_IDENTIFIER_LENGTH = 512

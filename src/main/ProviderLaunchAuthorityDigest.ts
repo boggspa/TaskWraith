@@ -23,12 +23,14 @@ const MAX_TEXT_LENGTH = 4_096
  * scheduling service — originally six providers, seven since the Mistral seat
  * joined ProviderId (codex/claude/kimi/grok/cursor/ollama/mistral). Muse joins
  * ProviderId as decode/run-management identity but stays excluded here until a
- * real SealEvidenceMuse producer exists. Keep it narrow: Pi and conditional
+ * real SealEvidenceMuse producer exists. Devin likewise joins ProviderId as a
+ * decode/run-management identity and stays excluded here until a real
+ * SealEvidenceDevin producer exists. Keep it narrow: Pi and conditional
  * AntiGravity now have strict evidence schemas, but neither is allowed to
  * become production seal-wired merely because the central digest can validate
  * its provider-local authority. Live-selectable ≠ launch-sealed.
  */
-export type LiveProviderLaunchId = Exclude<ProviderId, 'gemini' | 'antigravity' | 'pi' | 'muse'>
+export type LiveProviderLaunchId = Exclude<ProviderId, 'gemini' | 'antigravity' | 'pi' | 'muse' | 'devin'>
 
 /** Every provider with a strict central launch-authority schema/producer. */
 export type LaunchAuthorityProviderId = LiveProviderLaunchId | 'pi' | 'antigravity'

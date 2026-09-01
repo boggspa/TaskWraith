@@ -228,7 +228,7 @@ describe('classifyPreparedSoloSteerPayload', () => {
 
 describe('hasQualifiedExactFullToolBatchAccelerator', () => {
   it('pins the complete provider matrix', () => {
-    const qualified: ProviderId[] = ['claude', 'kimi', 'mistral', 'grok', 'ollama']
+    const qualified: ProviderId[] = ['claude', 'kimi', 'mistral', 'devin', 'grok', 'ollama']
     const natural: ProviderId[] = ['gemini', 'codex', 'cursor', 'antigravity', 'pi', 'muse']
 
     for (const provider of qualified) {

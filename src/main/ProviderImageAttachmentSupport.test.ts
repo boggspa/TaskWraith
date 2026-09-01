@@ -30,7 +30,7 @@ describe('providerDeliversImageAttachments', () => {
   })
 
   it('refuses every lane without one', () => {
-    for (const provider of ['cursor', 'muse']) {
+    for (const provider of ['cursor', 'muse', 'devin']) {
       expect(providerDeliversImageAttachments(provider)).toBe(false)
     }
     expect(providerDeliversImageAttachments('antigravity', 'claude-sonnet-4')).toBe(false)

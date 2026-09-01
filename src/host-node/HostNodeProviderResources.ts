@@ -57,6 +57,7 @@ const BINARY_CANDIDATES: Readonly<Record<string, readonly string[]>> = {
   // `vibe-acp` also serves the sign-in handoff (it accepts `--setup`).
   mistral: ['vibe-acp'],
   muse: ['muse'],
+  devin: ['devin'],
   antigravity: ['agy']
 }
 

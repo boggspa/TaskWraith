@@ -14,6 +14,7 @@ export type QualifiedExactFullToolBatchSteerProvider =
   | 'claude'
   | 'kimi'
   | 'mistral'
+  | 'devin'
   | 'grok'
   | 'ollama'
 
@@ -47,6 +48,7 @@ export function hasQualifiedExactFullToolBatchAccelerator(
     case 'claude':
     case 'kimi':
     case 'mistral':
+    case 'devin':
     case 'grok':
     case 'ollama':
       return true

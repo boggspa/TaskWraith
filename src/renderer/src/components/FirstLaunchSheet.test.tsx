@@ -66,6 +66,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('data-provider="codex"')
     expect(html).toContain('data-provider="claude"')
     expect(html).toContain('data-provider="muse"')
+    expect(html).toContain('data-provider="devin"')
     expect(html).not.toContain('data-provider="gemini"')
     // AntiGravity stays hidden until BOTH pieces of its conditional setup exist.
     expect(html).not.toContain('data-provider="antigravity"')
@@ -101,6 +102,28 @@ describe('FirstLaunchSheet', () => {
     expect(card).toContain('Sign in')
     expect(card).toContain('Pi’s metered Mistral API-key route')
     expect(card).not.toContain('Sign out')
+  })
+
+  it('offers the Devin CLI seat with its env/TOML credential guidance', () => {
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        onProviderLogin={() => {}}
+        codexStatus={null}
+        claudeAuthStatus={null}
+        kimiAuthStatus={null}
+        devinStatus={{ available: true, authState: 'unknown' }}
+      />
+    )
+
+    const card = providerCardMarkup(html, 'devin')
+    expect(card).toContain('Devin CLI coding agent')
+    expect(card).toContain('devin acp')
+    expect(card).toContain('WINDSURF_API_KEY')
+    expect(card).toContain('credential state not observed')
+    expect(card).toContain('Sign in')
   })
 
   it('shows no Optional/Conditional badge chip on any provider card', () => {

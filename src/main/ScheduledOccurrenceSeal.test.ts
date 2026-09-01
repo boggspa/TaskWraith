@@ -467,6 +467,11 @@ function providerLaunchPlan(provider: ProviderId): ProviderLaunchAuthorityInput 
       // Muse is identity-decode ready but not a LaunchAuthorityProviderId yet
       // (kept out of LiveProviderLaunchId). Seal fixtures stay fail-closed.
       return { ...providerLaunchPlan('pi'), provider: 'muse' } as never
+    case 'devin':
+      // Devin, like Muse, is identity-decode ready but not a
+      // LaunchAuthorityProviderId (kept out of LiveProviderLaunchId — no
+      // SealEvidenceDevin producer). Seal fixtures stay fail-closed.
+      return { ...providerLaunchPlan('pi'), provider: 'devin' } as never
     case 'antigravity':
       return {
         schemaVersion: 1,
@@ -506,7 +511,7 @@ function providerLaunchPlan(provider: ProviderId): ProviderLaunchAuthorityInput 
  * posture is structural (digest invariants + the pinned posture version).
  */
 function contradictoryPosturePlan(
-  provider: Exclude<ProviderId, 'gemini' | 'kimi' | 'antigravity' | 'pi' | 'muse'>
+  provider: Exclude<ProviderId, 'gemini' | 'kimi' | 'antigravity' | 'pi' | 'muse' | 'devin'>
 ): ProviderLaunchAuthorityInput {
   const plan = providerLaunchPlan(provider)
   switch (provider) {

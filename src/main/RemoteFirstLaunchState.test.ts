@@ -119,7 +119,8 @@ describe('buildRemoteFirstLaunchState', () => {
       'ollama',
       'pi',
       'mistral',
-      'muse'
+      'muse',
+      'devin'
     ])
     expect(state.providerCards.find((card) => card.id === 'codex')?.statusKind).toBe('outOfUsage')
     expect(state.providerCards.find((card) => card.id === 'claude')?.statusKind).toBe('needsSignIn')

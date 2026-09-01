@@ -197,6 +197,15 @@ describe('humaniseModelId', () => {
       )
       expect(canonicalModelIdForProvider('pi', 'default')).toBe('deepseek/deepseek-v4-flash')
     })
+
+    it('keeps the Devin sentinel as-is — the CLI default IS the seat default', () => {
+      // Devin exposes no enumerable catalogue over `devin acp`, so the
+      // sentinel is not remapped to a concrete id (there is none we can
+      // verify); it canonicalizes to itself and renders as the catalogue row
+      // label rather than a bare "cli-default" string.
+      expect(canonicalModelIdForProvider('devin', 'cli-default')).toBe('cli-default')
+      expect(humaniseModelId('devin', 'cli-default')).toBe('Devin (CLI default)')
+    })
   })
 
   describe('Cursor', () => {

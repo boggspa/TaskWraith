@@ -257,6 +257,7 @@ function getDefaultEnsembleModel(provider: ProviderId): string {
   if (provider === 'ollama') return 'qwen3.5:9b'
   if (provider === 'mistral') return 'devstral-small'
   if (provider === 'muse') return 'muse-spark-1.2'
+  if (provider === 'devin') return 'cli-default'
   return 'flash-lite'
 }
 

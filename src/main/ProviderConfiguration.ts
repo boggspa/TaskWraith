@@ -34,6 +34,12 @@ export interface DetectConfiguredProvidersDependencies {
    * admission. Binary alone must not admit an unauthenticated seat.
    */
   getMuseConfiguredCredentialPresent?: () => boolean
+  /**
+   * True when a Devin credential lane is present (WINDSURF_API_KEY /
+   * DEVIN_API_KEY env or ~/.local/share/devin/credentials.toml). Binary alone
+   * must not admit an unauthenticated seat.
+   */
+  getDevinConfiguredCredentialPresent?: () => boolean
   /** True when a direct Mistral API key is stored. */
   getMistralConfiguredApiKeyPresent?: () => boolean
   /** Official `agy models` probe; only called after opt-in or API-key admission. */
@@ -236,6 +242,21 @@ function configuredProviderProbes(
         configured:
           Boolean(resolved.binaryPath) &&
           Boolean(dependencies.getMuseConfiguredCredentialPresent?.())
+      }))
+  })
+  probes.push({
+    provider: 'devin',
+    // Configured = devin binary resolvable AND a credential lane (env key or
+    // stored credentials.toml) present. Binary alone would surface a picker
+    // entry that cannot run; fail-closed on unresolved probes, modelled on
+    // muse — the credentials.toml lives on the user's real home and is never
+    // read here without the injected probe.
+    includeWhenUnknown: false,
+    run: () =>
+      resolveProviderBinary('devin').then((resolved) => ({
+        configured:
+          Boolean(resolved.binaryPath) &&
+          Boolean(dependencies.getDevinConfiguredCredentialPresent?.())
       }))
   })
   let apiKeyConfigured = false

@@ -48,6 +48,9 @@ const PROVIDER_IMAGE_ATTACHMENT_DELIVERY: Record<ProviderId, boolean> = {
   pi: true,
   mistral: true,
   muse: false,
+  // Unmeasured against the live CLI — flip when a trace confirms image content
+  // blocks over `devin acp`.
+  devin: false,
   antigravity: false
 }
 

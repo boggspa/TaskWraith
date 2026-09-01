@@ -118,7 +118,8 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   antigravity: 'Antigravity CLI',
   pi: 'Pi CLI (BYOK)',
   mistral: 'Mistral Vibe CLI',
-  muse: 'Muse Code CLI'
+  muse: 'Muse Code CLI',
+  devin: 'Devin CLI'
 }
 
 /** User-facing offer-policy reason for a retired or not-yet-configured provider. */

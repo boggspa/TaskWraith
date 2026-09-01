@@ -2388,6 +2388,10 @@
   background: var(--provider-muse-color);
   box-shadow: 0 0 6px color-mix(in srgb, var(--provider-muse-color) 50%, transparent);
 }
+.welcome-usage-provider-card-dot.provider-devin {
+  background: var(--provider-devin-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-devin-color) 50%, transparent);
+}
 
 .welcome-usage-provider-card-totals {
   display: flex;
@@ -2463,6 +2467,9 @@
 }
 .welcome-usage-provider-card-fill.provider-muse {
   background: linear-gradient(90deg, color-mix(in srgb, var(--provider-muse-color) 70%, transparent), var(--provider-muse-color));
+}
+.welcome-usage-provider-card-fill.provider-devin {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-devin-color) 70%, transparent), var(--provider-devin-color));
 }
 
 
@@ -3135,6 +3142,9 @@
 .welcome-usage-model-dot.provider-muse,
 .welcome-usage-model-meter-fill.provider-muse,
 .welcome-usage-bar-segment.provider-muse { color: var(--provider-muse-color); }
+.welcome-usage-model-dot.provider-devin,
+.welcome-usage-model-meter-fill.provider-devin,
+.welcome-usage-bar-segment.provider-devin { color: var(--provider-devin-color); }
 
 .welcome-usage-model-dot.provider-groq,
 .welcome-usage-model-meter-fill.provider-groq,

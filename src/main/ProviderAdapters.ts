@@ -153,6 +153,7 @@ export function providerLabel(provider: ProviderId): string {
   if (provider === 'pi') return 'Pi'
   if (provider === 'mistral') return 'Mistral'
   if (provider === 'muse') return 'Muse'
+  if (provider === 'devin') return 'Devin'
   return 'Gemini'
 }
 
@@ -485,6 +486,54 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         perThreadMcp: false,
         assistantTextStreaming: 'token'
       }
+    }
+  }
+  if (provider === 'devin') {
+    return {
+      provider,
+      label: providerLabel(provider),
+      transport: 'devin-acp',
+      runChannel: 'run-agent',
+      capabilitySource: 'provider',
+      features: {
+        persistentSessions: false,
+        // TRUE on the Synara-verified evidence that `devin acp` surfaces every
+        // tool execution as an ACP session/request_permission event, so each
+        // call is answered by TaskWraith's approval ledger rather than a
+        // provider-side allowlist. Source-verified, not yet live-measured: if
+        // a live trace ever shows a tool executing WITHOUT a permission
+        // request, this flag, the run-management declaration, and the MCP
+        // advertise gate must change together.
+        appManagedApprovals: true,
+        workspaceGrants: true,
+        agentBenchMcpBridge: false,
+        providerManagedMcp: false,
+        nativeThreadTools: true,
+        hostCommandFallback: false
+      },
+      capabilities: {
+        approvalModes: ['default', 'plan'],
+        // `devin acp` accepts only an optional `--model`; there is no effort
+        // ladder to map TaskWraith's reasoning tiers onto.
+        reasoningEffort: false,
+        speedTiers: [],
+        imageAttachments: false,
+        contextInjection: true,
+        // Every turn opens a fresh session/new. Nothing resumes.
+        sessionResumption: false,
+        perThreadMcp: false,
+        assistantTextStreaming: 'token'
+      },
+      capabilityCaveats: [
+        {
+          id: 'devin-broker-advertise-unmeasured',
+          severity: 'info',
+          capability: 'approvalModes',
+          title: 'Devin TaskWraith MCP advertise is gated off pending live measurement',
+          message:
+            'Devin runs `devin acp` over stdio and surfaces tool executions as ACP permission requests, which TaskWraith answers through its approval ledger. Advertising TaskWraith MCP tools to the session stays default-OFF (TASKWRAITH_DEVIN_MCP) until a live trace confirms the permission-request coverage the approval-gateway declaration is predicated on.'
+        }
+      ]
     }
   }
   if (provider === 'antigravity') {

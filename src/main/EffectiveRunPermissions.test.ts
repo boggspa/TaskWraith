@@ -76,7 +76,8 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
         antigravity: 120000,
         pi: 120000,
         mistral: 120000,
-        muse: 120000
+        muse: 120000,
+        devin: 120000
       },
       mainAuthorityMs: 120000
     },

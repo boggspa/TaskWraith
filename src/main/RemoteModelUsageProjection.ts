@@ -81,7 +81,10 @@ const SPEND_PROVIDER_ORDER: ProviderId[] = [
   // billing basis. Omitting it dropped Mistral spend from the iOS/remote view
   // while the desktop card showed it.
   'mistral',
-  'muse'
+  'muse',
+  // Devin bills in ACUs on the plan side; there is no per-token USD basis to
+  // project, so its remote spend rows read zero by design.
+  'devin'
 ]
 
 const SPEND_WINDOWS: ReadonlyArray<{ id: SpendWindowId; label: string; durationMs: number }> = [

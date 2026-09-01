@@ -97,7 +97,8 @@ const OFFICIAL_PROVIDER_POOL_ASSETS: readonly {
   { providerLogo: 'antigravity', label: 'Antigravity', accent: '#308713' },
   { providerLogo: 'pi', label: 'Pi', accent: '#68768C' },
   { providerLogo: 'mistral', label: 'Mistral', accent: '#D44404' },
-  { providerLogo: 'muse', label: 'Muse', accent: '#1671EA' }
+  { providerLogo: 'muse', label: 'Muse', accent: '#1671EA' },
+  { providerLogo: 'devin', label: 'Devin', accent: '#4878AE' }
 ]
 const ACTION_RAW = globRaw(
   import.meta.glob('../../../../design-assets/workflows/icons/*.svg', {
