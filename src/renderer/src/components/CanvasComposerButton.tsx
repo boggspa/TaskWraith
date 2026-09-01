@@ -74,7 +74,9 @@ export function CanvasComposerButton({
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [busyMode, setBusyMode] = useState<'web' | 'sketch' | 'mesh' | 'simulator' | null>(null)
+  const [busyMode, setBusyMode] = useState<
+    'web' | 'sketch' | 'mesh' | 'simulator' | 'emulator' | null
+  >(null)
   const canOpenSketch = sketchBridgeAvailable()
 
   // Clear any stale error when the popover closes, so reopening starts fresh.
@@ -179,6 +181,34 @@ export function CanvasComposerButton({
       setOpen(false)
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Simulator Canvas could not be opened.')
+    } finally {
+      setBusyMode(null)
+    }
+  }
+
+  const handleOpenEmulator = async (): Promise<void> => {
+    setError(null)
+    const openEmulatorEmbedded = window.api.canvas?.openEmulatorEmbedded
+    if (!openEmulatorEmbedded) {
+      setError(
+        'Emulator Canvas needs the updated preload bridge. Restart TaskWraith and try again.'
+      )
+      return
+    }
+    if (!chatId) {
+      setError('Emulator Canvas requires an active chat.')
+      return
+    }
+    setBusyMode('emulator')
+    try {
+      const result = await openEmulatorEmbedded({ chatId, presentation: 'dock' })
+      if (result?.ok) {
+        setOpen(false)
+      } else {
+        setError(friendlyCanvasError(result?.error))
+      }
+    } catch (err) {
+      setError(friendlyCanvasError(err instanceof Error ? err.message : String(err)))
     } finally {
       setBusyMode(null)
     }
@@ -341,6 +371,28 @@ export function CanvasComposerButton({
                   disabled={busyMode !== null || !canOpenSketch}
                 >
                   Open sketch canvas
+                </PillButton>
+              </div>
+              <div
+                style={{
+                  height: 1,
+                  background: 'var(--border-subtle, rgba(127,127,127,0.22))'
+                }}
+              />
+              <div style={CANVAS_SECTION_ROW}>
+                <div style={CANVAS_SECTION_TEXT}>
+                  <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.74 }}>
+                    Homebrew Emulator
+                  </div>
+                  <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
+                    Play the built-in demo in Canvas.
+                  </div>
+                </div>
+                <PillButton
+                  onClick={() => void handleOpenEmulator()}
+                  disabled={busyMode !== null || !chatId}
+                >
+                  {busyMode === 'emulator' ? 'Opening Emulator Canvas…' : 'Open Emulator Canvas'}
                 </PillButton>
               </div>
             </div>
