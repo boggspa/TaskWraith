@@ -355,6 +355,92 @@ describe('HostNodeProfileRunPort', () => {
     })
   })
 
+  it('runs a desktop-authored thread whose permission posture is implicit default', () => {
+    // Desktop chat records with no explicit permission preset carry neither
+    // `permissionPresetId` nor `approvalMode` in providerMetadata — the desktop
+    // treats that as its standard default posture. The run port must map it the
+    // same way instead of hiding the thread (composer.send would deny it as
+    // `standalone_thread_required` even though the thread visibly exists).
+    const { store } = openStore()
+    const registered = store.listWorkspaces()[0]!
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'mistral',
+      modelId: 'mistral-medium-3.5'
+    })
+    const port = new HostNodeProfileRunPort({
+      store,
+      events: { publish: (_target, _event) => undefined }
+    })
+    expect(port.getThread(thread.appChatId)).toMatchObject({
+      providerId: 'mistral',
+      modelId: 'mistral-medium-3.5',
+      posture: {
+        postureId: 'default',
+        approvalMode: 'default',
+        requiresExplicitConsent: false,
+        explicitConsentAcknowledged: false
+      }
+    })
+  })
+
+  it('keeps failing closed when posture metadata is present but unrecognized', () => {
+    const { store } = openStore()
+    const registered = store.listWorkspaces()[0]!
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'mistral',
+      modelId: 'mistral-medium-3.5'
+    })
+    const current = store.getThread(thread.appChatId)!
+    store.persistThreadRecord({
+      threadId: thread.appChatId,
+      expectedRevision: current.persistenceRevision ?? 0,
+      record: {
+        ...current,
+        providerMetadata: {
+          ...(current.providerMetadata ?? {}),
+          approvalMode: 'yolo-unknown'
+        }
+      }
+    })
+    const port = new HostNodeProfileRunPort({
+      store,
+      events: { publish: (_target, _event) => undefined }
+    })
+    expect(port.getThread(thread.appChatId)).toBeNull()
+  })
+
+  it('falls back to the desktop provider-family reasoning key when the host key is absent', () => {
+    const { store } = openStore()
+    const registered = store.listWorkspaces()[0]!
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'mistral',
+      modelId: 'mistral-medium-3.5'
+    })
+    const current = store.getThread(thread.appChatId)!
+    store.persistThreadRecord({
+      threadId: thread.appChatId,
+      expectedRevision: current.persistenceRevision ?? 0,
+      record: {
+        ...current,
+        providerMetadata: {
+          ...(current.providerMetadata ?? {}),
+          mistralReasoningEffort: 'high'
+        }
+      }
+    })
+    const port = new HostNodeProfileRunPort({
+      store,
+      events: { publish: (_target, _event) => undefined }
+    })
+    expect(port.getThread(thread.appChatId)).toMatchObject({ reasoningId: 'high' })
+  })
+
   it('projects Full Access only after exact signed consent and live-grant verification', () => {
     const { store } = openStore()
     const registered = store.listWorkspaces()[0]!

@@ -74,6 +74,18 @@ function postureFromThread(
   const metadata = providerMetadata(thread)
   const preset = metadata?.permissionPresetId
   const approvalMode = metadata?.approvalMode
+  // Desktop-authored records with no explicit permission preset carry neither
+  // key — the desktop treats that as its standard default posture. Map absence
+  // (both keys, never a half-pair) the same way so those threads stay runnable
+  // here; any present-but-unrecognized pair still fails closed below.
+  if (preset === undefined && approvalMode === undefined) {
+    return {
+      postureId: 'default',
+      approvalMode: 'default',
+      requiresExplicitConsent: false,
+      explicitConsentAcknowledged: false
+    } as const
+  }
   const explicitConsentAcknowledged = metadata?.explicitConsentAcknowledged === true
   const offerRevision = metadata?.hostOfferRevision
   const expected: HostPermissionConsentExpectedSelection | null =
@@ -203,7 +215,14 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
       )
     const metadata = providerMetadata(thread)
     const modelId = metadata?.selectedModelType
-    const reasoningId = metadata?.reasoningEffort
+    // The Host writes the generic key; desktop-authored records carry only a
+    // provider-family key (`mistralReasoningEffort`, `geminiReasoningEffort`
+    // for AntiGravity, …). Generic wins when both exist because it is the one
+    // the Host's own reconfigure path maintains.
+    const reasoningId =
+      metadata?.reasoningEffort ??
+      metadata?.[`${thread.provider}ReasoningEffort`] ??
+      (thread.provider === 'antigravity' ? metadata?.geminiReasoningEffort : undefined)
     // A native session belongs to the model that created it. If the user
     // reconfigured the thread, starting a fresh session is safer than asking
     // the previous model's conversation to silently switch identities.
