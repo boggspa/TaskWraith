@@ -10,6 +10,7 @@ import {
   isGatewayV13DirectTaskWraithMcpProfile,
   isMeshCanvasDirectTaskWraithMcpProfile,
   isMeshTopologyDirectTaskWraithMcpProfile,
+  isPermissionOpportunityDirectTaskWraithMcpProfile,
   isPortableEnsembleControlMcpProfile,
   isSoloTaskWraithMcpProfile,
   isSketchCanvasDirectTaskWraithMcpProfile
@@ -68,6 +69,7 @@ export function buildMuseTaskWraithMcpProfile(input: {
     meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(profileId),
     sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(profileId),
     orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(profileId),
+    permissionOpportunityDirect: isPermissionOpportunityDirectTaskWraithMcpProfile(profileId),
     auditSubset: false
   }
 }

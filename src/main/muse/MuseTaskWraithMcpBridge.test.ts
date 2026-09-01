@@ -3,7 +3,8 @@ import { GEMINI_MCP_BRIDGE_ENV } from '../geminiMcpConstants'
 import { taskWraithMcpAdvertisedToolNamesForProfile } from '../mcp/McpToolProfiles'
 import {
   TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
-  TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_SOLO_V2_MCP_PROFILE_ID
 } from '../mcp/McpSessionProfileFence'
 import {
   buildMuseTaskWraithMcpProfile,
@@ -60,6 +61,21 @@ describe('Muse TaskWraith MCP bridge preparation', () => {
       portableEnsembleControl: true,
       orchestrationDirect: true
     })
+  })
+
+  it('carries the permission opportunity selector only for fresh receipts', () => {
+    expect(
+      buildMuseTaskWraithMcpProfile({
+        approvalMode: 'default',
+        taskWraithMcpProfileId: TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID
+      })
+    ).toMatchObject({ permissionOpportunityDirect: false })
+    expect(
+      buildMuseTaskWraithMcpProfile({
+        approvalMode: 'default',
+        taskWraithMcpProfileId: TASKWRAITH_GATEWAY_SOLO_V2_MCP_PROFILE_ID
+      })
+    ).toMatchObject({ permissionOpportunityDirect: true })
   })
 
   it('starts the broker and returns static argv with route authority only in child env', async () => {
