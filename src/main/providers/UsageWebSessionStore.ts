@@ -22,6 +22,12 @@ const IDENTITIES: Record<UsageWebSessionProviderId, WebSessionStoreIdentity> = {
     envelopePurpose: 'taskwraith:meta-usage-web-session-envelope:v1',
     providerLabel: 'Meta'
   },
+  muse: {
+    filename: 'muse-subscription-web-session.json',
+    secretPurpose: 'taskwraith:muse-subscription-web-session:v1',
+    envelopePurpose: 'taskwraith:muse-subscription-web-session-envelope:v1',
+    providerLabel: 'Meta Muse Code'
+  },
   cerebras: {
     filename: 'cerebras-usage-web-session.json',
     secretPurpose: 'taskwraith:cerebras-usage-web-session:v1',
@@ -54,6 +60,8 @@ function canonicalReading(value: unknown): UsageWebSessionReading | null {
   const string = (candidate: unknown): string | undefined =>
     typeof candidate === 'string' && candidate.trim() ? candidate.trim() : undefined
   const quotaUsedPercent = number(input.quotaUsedPercent)
+  const currentUsedPercent = number(input.currentUsedPercent)
+  const weeklyUsedPercent = number(input.weeklyUsedPercent)
   const remainingDays = number(input.remainingDays)
   const resetAt = string(input.resetAt)
   return {
@@ -61,6 +69,10 @@ function canonicalReading(value: unknown): UsageWebSessionReading | null {
     ...(number(input.spend) !== undefined ? { spend: number(input.spend) } : {}),
     ...(string(input.currency) ? { currency: string(input.currency) } : {}),
     ...(quotaUsedPercent !== undefined && quotaUsedPercent <= 100 ? { quotaUsedPercent } : {}),
+    ...(currentUsedPercent !== undefined && currentUsedPercent <= 100
+      ? { currentUsedPercent }
+      : {}),
+    ...(weeklyUsedPercent !== undefined && weeklyUsedPercent <= 100 ? { weeklyUsedPercent } : {}),
     ...(string(input.planName) ? { planName: string(input.planName) } : {}),
     ...(remainingDays !== undefined && Number.isInteger(remainingDays) ? { remainingDays } : {}),
     ...(resetAt && !Number.isNaN(Date.parse(resetAt))

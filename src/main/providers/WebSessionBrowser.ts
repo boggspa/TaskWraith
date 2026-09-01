@@ -286,11 +286,11 @@ export async function importOllamaWebSession(): Promise<CapturedWebSession<Ollam
 const RENDERED_BODY_CAPTURE_SCRIPT = `document.body ? document.body.innerText : ''`
 
 /**
- * Meta, Cerebras, Qwen, and MiMo expose their useful reading only after the
- * signed-in console has rendered. Poll the visible body and accept the import
- * only when the provider-specific parser finds a real billing/quota value.
- * The validated reading travels only to the main-process encrypted store; the
- * cookie never crosses IPC.
+ * Meta, Muse, Cerebras, Qwen, and MiMo expose their useful reading only after
+ * the signed-in console has rendered. Poll the visible body and accept the
+ * import only when the provider-specific parser finds a real billing/quota
+ * value. The validated reading travels only to the main-process encrypted
+ * store; the cookie never crosses IPC.
  */
 export async function importUsageWebSession(
   provider: UsageWebSessionProviderId
@@ -347,9 +347,17 @@ export async function importUsageWebSession(
           if (signature === lastAttemptedSignature) return
           lastAttemptedSignature = signature
           const reading = parseUsageWebSessionReading(provider, rawText)
+          // "Captured" means a real meter, not just a parsed page: quota plans
+          // need their percent, and the Muse subscription needs at least one of
+          // its Current/Weekly meters before the cookie is worth keeping.
           const hasRequiredReading =
             reading &&
-            ((provider !== 'qwen' && provider !== 'mimo') || reading.quotaUsedPercent !== undefined)
+            (provider === 'qwen' || provider === 'mimo'
+              ? reading.quotaUsedPercent !== undefined
+              : provider === 'muse'
+                ? reading.currentUsedPercent !== undefined ||
+                  reading.weeklyUsedPercent !== undefined
+                : true)
           if (hasRequiredReading) settle({ cookieHeader, summary: reading })
         } catch {
           // The page is still loading or has not completed sign-in; keep polling.

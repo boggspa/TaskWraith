@@ -25,6 +25,13 @@ export const USAGE_WEB_SESSION_SPECS: Record<UsageWebSessionProviderId, UsageWeb
     partition: 'websession-import:meta-usage',
     cookieDomainSuffixes: ['meta.ai', 'meta.com']
   },
+  muse: {
+    provider: 'muse',
+    windowTitle: 'Sign in to Meta Muse Code usage',
+    startUrl: 'https://dev.meta.ai/usage/',
+    partition: 'websession-import:muse-subscription',
+    cookieDomainSuffixes: ['meta.ai', 'meta.com']
+  },
   cerebras: {
     provider: 'cerebras',
     windowTitle: 'Sign in to Cerebras billing',
@@ -212,6 +219,109 @@ function parseTokenPlanReading(text: string, capturedAt: string): UsageWebSessio
   }
 }
 
+const SUBSCRIPTION_MONTHS: Record<string, number> = {
+  jan: 0,
+  feb: 1,
+  mar: 2,
+  apr: 3,
+  may: 4,
+  jun: 5,
+  jul: 6,
+  aug: 7,
+  sep: 8,
+  oct: 9,
+  nov: 10,
+  dec: 11
+}
+
+/**
+ * "Resets 7 Sep at 01:00" carries no year, so resolve it against the capture
+ * time: same local year, rolled one forward when the candidate would land more
+ * than a grace window in the past (a weekly reset is never more than 7 days
+ * out, so only a genuine Dec→Jan crossover rolls). Local time on purpose — the
+ * console renders the viewer's clock, and the refresh runs on the same machine.
+ */
+function parsedDayMonthResetAt(chunk: string, capturedAt: string): string | undefined {
+  const dayFirst = chunk.match(
+    /resets?\s+(?:on\s+)?([0-9]{1,2})\s+([A-Za-z]{3,9})\.?(?:\s+at\s+([0-9]{1,2}):([0-9]{2})\s*(am|pm)?)?/i
+  )
+  const monthFirst = dayFirst
+    ? null
+    : chunk.match(
+        /resets?\s+(?:on\s+)?([A-Za-z]{3,9})\.?\s+([0-9]{1,2})(?:\s+at\s+([0-9]{1,2}):([0-9]{2})\s*(am|pm)?)?/i
+      )
+  const match = dayFirst ?? monthFirst
+  if (!match) return undefined
+  const day = Number(dayFirst ? match[1] : match[2])
+  const monthName = String(dayFirst ? match[2] : match[1])
+    .slice(0, 3)
+    .toLowerCase()
+  const month = SUBSCRIPTION_MONTHS[monthName]
+  if (month === undefined || !Number.isInteger(day) || day < 1 || day > 31) return undefined
+  let hours = match[3] === undefined ? 0 : Number(match[3])
+  const minutes = match[4] === undefined ? 0 : Number(match[4])
+  const meridiem = match[5]?.toLowerCase()
+  if (meridiem === 'pm' && hours < 12) hours += 12
+  if (meridiem === 'am' && hours === 12) hours = 0
+  if (!Number.isInteger(hours) || hours > 23 || !Number.isInteger(minutes) || minutes > 59) {
+    return undefined
+  }
+  const capturedAtMs = Date.parse(capturedAt)
+  const base = Number.isFinite(capturedAtMs) ? new Date(capturedAtMs) : new Date()
+  const graceMs = 36 * 60 * 60 * 1000
+  let candidate = new Date(base.getFullYear(), month, day, hours, minutes)
+  if (candidate.getTime() < base.getTime() - graceMs) {
+    candidate = new Date(base.getFullYear() + 1, month, day, hours, minutes)
+  }
+  return Number.isNaN(candidate.getTime()) ? undefined : candidate.toISOString()
+}
+
+function subscriptionUsedPercent(chunk: string): number | undefined {
+  if (/limit reached/i.test(chunk)) return 100
+  const match = chunk.match(/(\d+(?:\.\d+)?)\s*%\s*used/i) ?? chunk.match(/(\d+(?:\.\d+)?)\s*%/)
+  if (!match) return undefined
+  const parsed = Number(match[1])
+  return Number.isFinite(parsed) ? Math.min(100, Math.max(0, parsed)) : undefined
+}
+
+/**
+ * dev.meta.ai/usage — the Muse Code subscription section: a "Current usage"
+ * meter, a "Weekly limit" meter with its reset, and the plan name from the
+ * "<plan> subscription" heading. The pay-as-you-go spend below it belongs to
+ * the existing `meta` billing lane and is deliberately not read here.
+ */
+function parseMuseSubscriptionReading(
+  text: string,
+  capturedAt: string
+): UsageWebSessionReading | null {
+  const lowered = text.toLowerCase()
+  const currentIndex = lowered.indexOf('current usage')
+  const weeklyIndex = lowered.indexOf('weekly limit')
+  let currentUsedPercent: number | undefined
+  if (currentIndex >= 0) {
+    const end = weeklyIndex > currentIndex ? weeklyIndex : Math.min(text.length, currentIndex + 300)
+    currentUsedPercent = subscriptionUsedPercent(text.slice(currentIndex, end))
+  }
+  let weeklyUsedPercent: number | undefined
+  let resetAt: string | undefined
+  if (weeklyIndex >= 0) {
+    const payAsYouGoIndex = lowered.indexOf('pay as you go', weeklyIndex)
+    const end = payAsYouGoIndex >= 0 ? payAsYouGoIndex : Math.min(text.length, weeklyIndex + 400)
+    const chunk = text.slice(weeklyIndex, end)
+    weeklyUsedPercent = subscriptionUsedPercent(chunk)
+    resetAt = parsedDayMonthResetAt(chunk, capturedAt) ?? parsedResetAt(chunk)
+  }
+  if (currentUsedPercent === undefined && weeklyUsedPercent === undefined) return null
+  const planName = firstMatch(text, /\b(Muse[\w .+-]{0,50}?)\s+subscription\b/i)
+  return {
+    ...(currentUsedPercent !== undefined ? { currentUsedPercent } : {}),
+    ...(weeklyUsedPercent !== undefined ? { weeklyUsedPercent } : {}),
+    ...(planName ? { planName: planName.replace(/\s+/g, ' ').trim() } : {}),
+    ...(resetAt ? { resetAt } : {}),
+    capturedAt
+  }
+}
+
 export function parseUsageWebSessionReading(
   provider: UsageWebSessionProviderId,
   pageTextOrHtml: string,
@@ -219,15 +329,17 @@ export function parseUsageWebSessionReading(
 ): UsageWebSessionReading | null {
   const text = normalizedUsagePageText(pageTextOrHtml)
   if (!text) return null
+  if (provider === 'muse') return parseMuseSubscriptionReading(text, capturedAt)
   return provider === 'meta' || provider === 'cerebras'
     ? parseBillingReading(text, capturedAt)
     : parseTokenPlanReading(text, capturedAt)
 }
 
 /**
- * Refresh server-rendered Meta/Cerebras billing pages with the encrypted
- * session. Qwen/MiMo are client-rendered, so their validated import-time
- * reading remains authoritative until the user re-imports.
+ * Refresh server-rendered Meta billing, Muse subscription, and Cerebras
+ * billing pages with the encrypted session. Qwen/MiMo are client-rendered, so
+ * their validated import-time reading remains authoritative until the user
+ * re-imports.
  */
 export async function readUsageWebSessionReading(
   provider: UsageWebSessionProviderId,

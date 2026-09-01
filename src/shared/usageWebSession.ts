@@ -1,4 +1,4 @@
-export const USAGE_WEB_SESSION_PROVIDER_IDS = ['meta', 'cerebras', 'qwen', 'mimo'] as const
+export const USAGE_WEB_SESSION_PROVIDER_IDS = ['meta', 'muse', 'cerebras', 'qwen', 'mimo'] as const
 
 export type UsageWebSessionProviderId = (typeof USAGE_WEB_SESSION_PROVIDER_IDS)[number]
 
@@ -7,6 +7,10 @@ export interface UsageWebSessionReading {
   spend?: number
   currency?: string
   quotaUsedPercent?: number
+  /** Muse Code subscription "Current usage" meter (dev.meta.ai/usage). */
+  currentUsedPercent?: number
+  /** Muse Code subscription "Weekly limit" meter; `resetAt` carries its reset. */
+  weeklyUsedPercent?: number
   planName?: string
   remainingDays?: number
   resetAt?: string

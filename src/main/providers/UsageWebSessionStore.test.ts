@@ -51,6 +51,32 @@ describe('UsageWebSessionStore', () => {
     })
   })
 
+  it('round-trips the Muse subscription meters and drops out-of-range percents', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'taskwraith-usage-session-muse-'))
+    const subject = store(root)
+    expect(
+      subject.setSession({
+        cookieHeader: 'session=secret',
+        reading: {
+          currentUsedPercent: 37,
+          weeklyUsedPercent: 182,
+          planName: 'Muse Code High Usage',
+          resetAt: '2026-09-07T00:00:00Z',
+          capturedAt: '2026-09-01T09:00:00Z'
+        }
+      }).ok
+    ).toBe(true)
+    expect(subject.loadSession()).toEqual({
+      cookieHeader: 'session=secret',
+      reading: {
+        currentUsedPercent: 37,
+        planName: 'Muse Code High Usage',
+        resetAt: '2026-09-07T00:00:00.000Z',
+        capturedAt: '2026-09-01T09:00:00.000Z'
+      }
+    })
+  })
+
   it('rejects invalid readings instead of storing an opaque session', async () => {
     const root = await mkdtemp(join(tmpdir(), 'taskwraith-usage-session-invalid-'))
     const subject = store(root)

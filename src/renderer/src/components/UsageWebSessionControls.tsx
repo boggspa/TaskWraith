@@ -7,6 +7,7 @@ import { PillButton } from './PillButton'
 
 const LABELS: Record<UsageWebSessionProviderId, string> = {
   meta: 'Meta API',
+  muse: 'Muse Code subscription',
   cerebras: 'Cerebras API',
   qwen: 'Qwen Token Plan',
   mimo: 'Xiaomi MiMo Token Plan'
@@ -14,6 +15,7 @@ const LABELS: Record<UsageWebSessionProviderId, string> = {
 
 const HOSTS: Record<UsageWebSessionProviderId, string> = {
   meta: 'dev.meta.ai/billing',
+  muse: 'dev.meta.ai/usage',
   cerebras: 'cloud.cerebras.ai/platform',
   qwen: 'modelstudio.console.alibabacloud.com',
   mimo: 'platform.xiaomimimo.com'
