@@ -24,7 +24,12 @@ import {
   unavailableMuseMeterSnapshot
 } from '../main/muse/MuseUsage'
 import { createHostNodeMuseProviderFactory } from './HostNodeMuseProvider'
-import type { HostNodeProvider, HostNodeProviderInstance } from './HostNodeProvider'
+import type {
+  HostNodeProvider,
+  HostNodeProviderInstance,
+  HostNodeProviderRunRequest
+} from './HostNodeProvider'
+import { hostProviderOffers } from '../host-shared/HostProviderCatalog'
 import { HostNodeDomainPorts } from './HostNodeDomainPorts'
 import { createHostNodeCodexProvider } from './HostNodeCodexProvider'
 
@@ -1431,6 +1436,166 @@ describe('HostNodeDomainPorts', () => {
         })
       ])
     )
+  })
+
+  it("surfaces the provider's own refusal when a run cannot start", async () => {
+    // A provider that refuses before beginRun (a key-marked model with no API
+    // key, a binary that vanished) used to collapse into a bare
+    // run_not_started with no words. The refusal is the only thing the user
+    // can act on, so it rides the receipt and lands in the transcript.
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    const refusingProvider: HostNodeProviderInstance = {
+      providerId: 'muse',
+      getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+      getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
+      run: async () => {
+        throw new Error('Muse model muse-spark-1.2 requires META_API_KEY; sign in first.')
+      },
+      cancel: () => true,
+      shutdown: async () => undefined
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUSE',
+          offers: museOffers,
+          supportsApprovals: false,
+          supportsQuestions: false,
+          create: () => refusingProvider
+        }
+      ]
+    })
+    await expect(
+      domain.executeCommand(
+        context,
+        command('composer.send', 'run-refused', { threadId: thread.appChatId }, { text: 'go' }),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({
+      status: 'failed',
+      errorCode: 'run_not_started',
+      errorMessage: 'Muse model muse-spark-1.2 requires META_API_KEY; sign in first.'
+    })
+    expect(store.getThread(thread.appChatId)?.messages).toEqual([
+      expect.objectContaining({
+        role: 'system',
+        runId: 'run-refused',
+        content: 'Run failed · Muse model muse-spark-1.2 requires META_API_KEY; sign in first.'
+      })
+    ])
+  })
+
+  it('hands Mistral a bounded transcript for cold sessions, without Host notices in it', async () => {
+    // Vibe opens a fresh process per turn. When its native session cannot be
+    // resumed the provider prompts with this bounded transcript instead, so a
+    // follow-up like "sure" still reaches a model that knows the task.
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const mistralOffers = hostProviderOffers('mistral', true)!
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'mistral',
+      modelId: 'mistral-medium-3.5',
+      postureId: 'default'
+    })
+    store.appendTranscript({ threadId: thread.appChatId, role: 'user', content: 'List the tests.' })
+    store.appendTranscript({
+      threadId: thread.appChatId,
+      role: 'assistant',
+      content: 'There are two.'
+    })
+    store.appendTranscript({
+      threadId: thread.appChatId,
+      runId: 'earlier-run',
+      role: 'system',
+      content: 'Run failed · vibe-acp exited early.'
+    })
+    const requests: HostNodeProviderRunRequest[] = []
+    const holder: { domain?: HostNodeDomainPorts } = {}
+    const recordingProvider: HostNodeProviderInstance = {
+      providerId: 'mistral',
+      getStatus: async () => ({ providerId: 'mistral', status: 'ready', label: 'Mistral' }),
+      getAuthStatus: async () => ({ providerId: 'mistral', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
+      run: async (input) => {
+        requests.push(input)
+        holder.domain!.runPort.beginRun({
+          runId: input.runId,
+          threadId: input.threadId,
+          providerId: 'mistral',
+          modelId: 'mistral-medium-3.5',
+          startedAt: '2026-08-24T05:00:00.000Z'
+        })
+        holder.domain!.runPort.appendTranscript({
+          threadId: input.threadId,
+          runId: input.runId,
+          role: 'user',
+          text: input.prompt,
+          createdAt: '2026-08-24T05:00:00.000Z'
+        })
+        await new Promise((resolveLater) => setTimeout(resolveLater, 0))
+        holder.domain!.runPort.finishRun({
+          runId: input.runId,
+          status: 'completed',
+          finishedAt: '2026-08-24T05:00:01.000Z',
+          warningSummaries: []
+        })
+        return { runId: input.runId, status: 'completed' }
+      },
+      cancel: () => true,
+      shutdown: async () => undefined
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        {
+          providerId: 'mistral',
+          displayProvider: 'Mistral',
+          shortCode: 'MST',
+          offers: mistralOffers,
+          supportsApprovals: true,
+          supportsQuestions: false,
+          create: () => recordingProvider
+        }
+      ]
+    })
+    holder.domain = domain
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-mistral',
+          { threadId: thread.appChatId },
+          { text: 'And the third?' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    const request = requests[0]
+    expect(request?.prompt).toBe('And the third?')
+    expect(request?.resumeFallbackPrompt).toContain('User: List the tests.')
+    expect(request?.resumeFallbackPrompt).toContain('assistant: There are two.')
+    expect(request?.resumeFallbackPrompt).toContain('New user message:\nAnd the third?')
+    expect(request?.resumeFallbackPrompt).not.toContain('vibe-acp exited early')
   })
 
   it('cancels an unprovable start once and keeps shutdown waiting for its tracked completion', async () => {

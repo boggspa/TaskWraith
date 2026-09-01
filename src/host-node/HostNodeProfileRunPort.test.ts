@@ -572,4 +572,60 @@ describe('HostNodeProfileRunPort', () => {
     chmodSync(workspaceFile, 0o600)
     expect(port.getThread(threadId)).toBeNull()
   })
+
+  it('writes a readable system transcript row when a run finishes failed with a reason', () => {
+    // A failed run used to leave only FAILED in the status bar; the reason
+    // sat in warningSummaries, which no client renders. The transcript is the
+    // surface the user reads, so the reason lands there as a Host notice.
+    const { store, threadId } = openStore()
+    const port = new HostNodeProfileRunPort({
+      store,
+      events: { publish: () => undefined }
+    })
+    port.beginRun({
+      runId: 'run-failed',
+      threadId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      startedAt: '2026-08-24T05:00:00.000Z'
+    })
+    port.finishRun({
+      runId: 'run-failed',
+      status: 'failed',
+      finishedAt: '2026-08-24T05:00:01.000Z',
+      warningSummaries: ['ACP session does not offer "codestral-2508" for config option "model"'],
+      errorCode: 'provider_failed'
+    })
+    expect(store.getThread(threadId)?.messages).toEqual([
+      expect.objectContaining({
+        role: 'system',
+        runId: 'run-failed',
+        content:
+          'Run failed · ACP session does not offer "codestral-2508" for config option "model"'
+      })
+    ])
+    expect(store.getThread(threadId)?.runs).toEqual([
+      expect.objectContaining({
+        runId: 'run-failed',
+        status: 'failed',
+        errorCode: 'provider_failed'
+      })
+    ])
+
+    // A clean completion adds nothing, even when it carries a non-fatal warning.
+    port.beginRun({
+      runId: 'run-ok',
+      threadId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      startedAt: '2026-08-24T05:00:02.000Z'
+    })
+    port.finishRun({
+      runId: 'run-ok',
+      status: 'completed',
+      finishedAt: '2026-08-24T05:00:03.000Z',
+      warningSummaries: ['non-fatal warning']
+    })
+    expect(store.getThread(threadId)?.messages).toHaveLength(1)
+  })
 })

@@ -13,6 +13,7 @@ import type {
 } from '../shared/hostProtocol'
 import {
   HOST_APPROVAL_DECIDE_DECISIONS,
+  HOST_PROTOCOL_MAX_WARNING,
   HOST_QUESTION_ANSWER_DECISIONS,
   TASKWRAITH_DESKTOP_HOST_ACTOR
 } from '../shared/hostProtocol'
@@ -43,6 +44,7 @@ import { buildAgentWorkState, type AgentWorkGoalFacts } from '../host-shared/Age
 import type { HostGitFileStatus } from '../host-shared/git/HostGitStatusParse'
 import type { HostGitReadResult, HostGitReadService } from '../host-shared/git/HostGitReadService'
 import { validateHostCommandArguments } from '../host-runtime/HostCommandArguments'
+import { normalizeHostProviderRunPresentationText } from '../host-runtime/HostProviderRunPort'
 import type { HostCommandExecutionResult } from '../host-runtime/HostCommandExecutionResult'
 import {
   hostAuthorityCommandActorMatchesContext,
@@ -91,7 +93,11 @@ function buildResumeFallbackPrompt(
 ): string | undefined {
   const messages = thread.messages.filter(
     (message) =>
-      (message.role === 'user' || message.role === 'assistant' || message.role === 'system') &&
+      (message.role === 'user' ||
+        message.role === 'assistant' ||
+        // Run-bound system rows are Host notices ("Run failed · …", "Muse run
+        // started."), not conversation; only free-standing system context rides.
+        (message.role === 'system' && !message.runId)) &&
       message.content.trim().length > 0
   )
   if (messages.length === 0) return undefined
@@ -997,19 +1003,33 @@ export class HostNodeDomainPorts {
         runId: command.commandId,
         threadId: command.target.threadId,
         prompt,
-        ...(thread.providerId === 'kimi' && profileThread
+        ...(profileThread && (thread.providerId === 'kimi' || thread.providerId === 'mistral')
           ? { resumeFallbackPrompt: buildResumeFallbackPrompt(profileThread, prompt) }
           : {}),
         target
       })
-    } catch {
+    } catch (error) {
       lease.release()
-      this.terminalizeRejectedStart(command.commandId, command.target.threadId)
-      return failed('run_not_started')
+      // The provider's refusal is the only actionable fact the user gets
+      // ("model X requires MISTRAL_API_KEY"); carry it on the receipt and into
+      // the transcript instead of a bare run_not_started.
+      const reason =
+        normalizeHostProviderRunPresentationText(
+          error instanceof Error ? error.message : '',
+          HOST_PROTOCOL_MAX_WARNING
+        ) ?? undefined
+      this.terminalizeRejectedStart(command.commandId, command.target.threadId, reason)
+      return failed('run_not_started', reason)
     }
+    let rejection: string | undefined
     const tracked = completion
-      .catch(() => {
-        this.terminalizeRejectedStart(command.commandId, command.target.threadId)
+      .catch((error) => {
+        rejection =
+          normalizeHostProviderRunPresentationText(
+            error instanceof Error ? error.message : '',
+            HOST_PROTOCOL_MAX_WARNING
+          ) ?? undefined
+        this.terminalizeRejectedStart(command.commandId, command.target.threadId, rejection)
       })
       .then(() => {
         this.interactions.cancelByRunId(
@@ -1032,8 +1052,8 @@ export class HostNodeDomainPorts {
         // Completion tracking/lease retention remains authoritative if cancel
         // signalling itself cannot be observed here.
       }
-      this.terminalizeRejectedStart(command.commandId, command.target.threadId)
-      return failed('run_not_started')
+      this.terminalizeRejectedStart(command.commandId, command.target.threadId, rejection)
+      return failed('run_not_started', rejection)
     }
     return { status: 'succeeded', resultSummary: 'run_started' }
   }
@@ -1317,19 +1337,41 @@ export class HostNodeDomainPorts {
     }
   }
 
-  private terminalizeRejectedStart(runId: string, threadId: string): void {
+  /** Runs whose rejected start already carries a transcript notice. */
+  private readonly rejectedStartNotices = new Set<string>()
+
+  private terminalizeRejectedStart(runId: string, threadId: string, reason?: string): void {
+    const summary = reason || 'Provider run start could not be durably acknowledged.'
     try {
       const thread = this.options.store.getThread(threadId)
       const run = thread?.runs?.find(
         (candidate) => candidate.runId === runId && candidate.provider === thread.provider
       )
+      // A refusal before beginRun leaves no run row, but the user still needs
+      // to read why nothing ran; the transcript notice does not depend on one.
+      // The rejection path and the unproven-start path can both land here for
+      // one run, so the notice is written once.
+      if (thread && !this.rejectedStartNotices.has(runId)) {
+        if (this.rejectedStartNotices.size >= 1_024) this.rejectedStartNotices.clear()
+        this.rejectedStartNotices.add(runId)
+        try {
+          this.options.store.appendTranscript({
+            threadId,
+            runId,
+            role: 'system',
+            content: `Run failed · ${summary}`
+          })
+        } catch {
+          // Best effort: the terminal run write below remains the authority.
+        }
+      }
       if (run?.status !== 'running') return
       this.options.store.updateRun({
         threadId,
         runId,
         status: 'failed',
         endedAt: new Date(this.now()).toISOString(),
-        warningSummaries: ['Provider run start could not be durably acknowledged.'],
+        warningSummaries: [summary],
         errorCode: 'provider_failed'
       })
       this.interactions.cancelByRunId(runId, 'HostNodeInteractionRegistry: provider run failed')

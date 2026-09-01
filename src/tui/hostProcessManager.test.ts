@@ -244,6 +244,76 @@ describe('TUI Host process manager', () => {
     expect(spawn).not.toHaveBeenCalled()
   })
 
+  it('replaces a standalone Host whose payload no longer matches the launchable build', async () => {
+    // `npm run tui` rebuilds out/host and then reused whatever Host was already
+    // listening, so a rebuilt fix never ran until that process died on its own.
+    const stale = authenticatedProbe(4242)
+    const staleProbe: TuiHostAuthenticatedProbe = {
+      ...stale,
+      process: { ...stale.process, payloadVersion: `sha256:${'a'.repeat(64)}` }
+    }
+    const fresh = authenticatedProbe(42)
+    const freshProbe: TuiHostAuthenticatedProbe = {
+      ...fresh,
+      process: { ...fresh.process, payloadVersion: `sha256:${'b'.repeat(64)}` }
+    }
+    const probe = vi
+      .fn<() => Promise<TuiHostAuthenticatedProbe | void>>()
+      .mockResolvedValueOnce(staleProbe)
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(freshProbe)
+    const stopProcess = vi.fn(() => true)
+    const child = new FakeChild()
+    const spawn = vi.fn().mockReturnValue(child.asChildProcess())
+    await expect(
+      ensureTuiHostAvailable({
+        userDataPath: '/profiles/stale',
+        profile: 'development',
+        probe,
+        spawn,
+        stopProcess,
+        resolveLaunchCommand: async () => command(),
+        resolvePayloadVersion: async () => `sha256:${'b'.repeat(64)}`,
+        delay: async () => undefined
+      })
+    ).resolves.toEqual({ kind: 'launched', pid: 42, replacedPid: 4242 })
+    expect(stopProcess).toHaveBeenCalledWith(4242)
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a Host whose payload matches, or that predates payload identity', async () => {
+    const spawn = vi.fn()
+    const stopProcess = vi.fn(() => true)
+    const matching = authenticatedProbe(4242)
+    await expect(
+      ensureTuiHostAvailable({
+        userDataPath: '/profiles/matching',
+        profile: 'development',
+        probe: vi.fn().mockResolvedValue({
+          ...matching,
+          process: { ...matching.process, payloadVersion: `sha256:${'b'.repeat(64)}` }
+        }),
+        spawn,
+        stopProcess,
+        resolveLaunchCommand: async () => command(),
+        resolvePayloadVersion: async () => `sha256:${'b'.repeat(64)}`
+      })
+    ).resolves.toEqual({ kind: 'existing' })
+    await expect(
+      ensureTuiHostAvailable({
+        userDataPath: '/profiles/legacy',
+        profile: 'development',
+        probe: vi.fn().mockResolvedValue(authenticatedProbe(4242)),
+        spawn,
+        stopProcess,
+        resolveLaunchCommand: async () => command(),
+        resolvePayloadVersion: async () => `sha256:${'b'.repeat(64)}`
+      })
+    ).resolves.toEqual({ kind: 'existing' })
+    expect(stopProcess).not.toHaveBeenCalled()
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
   it('serializes launch races and waits for an authenticated handshake', async () => {
     const child = new FakeChild()
     const spawn = vi.fn().mockReturnValue(child.asChildProcess())

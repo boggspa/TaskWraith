@@ -406,6 +406,49 @@ describe('HostSnapshotProjector', () => {
     expect(assertHostSnapshotFamilies(result.value).ok).toBe(true)
   })
 
+  it('carries the configured model, reasoning and permission tier onto the wire thread row', () => {
+    // The domain projection publishes these display facts and the client
+    // decoder accepts them; the wire projector between them must not drop
+    // them, or every client falls back to the provider inventory's first
+    // model and labels a thread with a model it never ran.
+    const result = projectHostSnapshot(
+      baseInput({
+        threads: [
+          {
+            id: 'thread-configured',
+            workspaceId: 'ws-1',
+            title: 'Configured',
+            chatKind: 'single',
+            archived: false,
+            pinned: false,
+            updatedAt: 1,
+            messageCount: 1,
+            providerId: 'mistral',
+            modelId: 'mistral-medium-3.5',
+            reasoningEffort: 'xhigh',
+            permissionPresetId: 'workspace_write'
+          }
+        ]
+      })
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.threads[0]).toMatchObject({
+      providerId: 'mistral',
+      modelId: 'mistral-medium-3.5',
+      reasoningEffort: 'xhigh',
+      permissionPresetId: 'workspace_write'
+    })
+    const decoded = decodeHostSnapshot(result.value)
+    expect(decoded.ok).toBe(true)
+    if (!decoded.ok) return
+    expect(decoded.value.threads[0]).toMatchObject({
+      modelId: 'mistral-medium-3.5',
+      reasoningEffort: 'xhigh',
+      permissionPresetId: 'workspace_write'
+    })
+  })
+
   it('carries the thread goal through, bounding the objective and its criteria', () => {
     const long = 'g'.repeat(HOST_PROTOCOL_MAX_GOAL_OBJECTIVE + 50)
     const result = projectHostSnapshot(

@@ -58,7 +58,12 @@ export function mapHostHistoryEntriesToTranscriptRows(
     role: entry.role,
     kind: 'host-history',
     speaker:
-      entry.label || (entry.role === 'user' ? 'You' : (provider?.displayProvider ?? 'TaskWraith')),
+      entry.label ||
+      (entry.role === 'user'
+        ? 'You'
+        : entry.role === 'system'
+          ? 'TaskWraith'
+          : (provider?.displayProvider ?? 'TaskWraith')),
     ...(entry.role === 'assistant' && provider ? { provider } : {}),
     ...(entry.role === 'assistant' && model ? { model } : {}),
     ...(entry.role === 'assistant' && thread?.reasoning ? { reasoning: thread.reasoning } : {}),
@@ -107,26 +112,22 @@ function providerPresentation(
   providerId: string | undefined,
   modelId?: string | undefined
 ): TaskWraithControlProviderPresentation {
-  const match = providerId
-    ? providers.find((provider) => provider.providerId === providerId)
-    : undefined
-  if (match) {
-    const projectedLabel = !modelId || modelId === match.modelId ? match.modelLabel : undefined
-    const base = resolveTaskWraithProviderPresentation(
-      match.providerId,
-      modelId ?? match.modelId,
-      projectedLabel
-    )
+  // The inventory lists one row per offered model, sorted by id. Only the row
+  // for the thread's own model may lend its label; a thread that names no
+  // model stays provider-only instead of wearing whichever row sorts first
+  // (which, for Mistral, put Codestral on every thread the wire left unnamed).
+  const rows = providerId ? providers.filter((provider) => provider.providerId === providerId) : []
+  const exact = modelId ? rows.find((provider) => provider.modelId === modelId) : undefined
+  const identity = exact ?? rows[0]
+  if (identity) {
+    const projectedLabel = exact?.modelLabel
+    const base = resolveTaskWraithProviderPresentation(identity.providerId, modelId, projectedLabel)
     return {
       ...base,
-      displayProvider: match.displayProvider || base.displayProvider,
-      shortCode: match.shortCode || base.shortCode,
-      ...(match.hueKey ? { hueKey: match.hueKey } : {}),
-      ...(match.modelId || modelId
-        ? { model: modelId ?? match.modelId }
-        : base.model
-          ? { model: base.model }
-          : {}),
+      displayProvider: identity.displayProvider || base.displayProvider,
+      shortCode: identity.shortCode || base.shortCode,
+      ...(identity.hueKey ? { hueKey: identity.hueKey } : {}),
+      ...(modelId ? { model: modelId } : {}),
       ...(projectedLabel || base.modelLabel
         ? { modelLabel: projectedLabel ?? base.modelLabel }
         : {})

@@ -366,6 +366,13 @@ async function main(): Promise<void> {
       : {}),
     ...(options.threadId ? { initialThreadId: options.threadId } : {}),
     ...(options.userDataPath ? { userDataPath: options.userDataPath } : {}),
+    ...(initialHostLaunch?.kind === 'launched' && initialHostLaunch.replacedPid !== undefined
+      ? {
+          startupNotice:
+            `Restarted the TaskWraith Host (pid ${initialHostLaunch.replacedPid}) ` +
+            'so it runs the current build'
+        }
+      : {}),
     ...(initialHostLaunch?.kind === 'launched' && initialHostLaunch.fullAccessPresence
       ? { fullAccessPresence: initialHostLaunch.fullAccessPresence }
       : {}),

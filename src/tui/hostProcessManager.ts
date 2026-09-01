@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { spawn as spawnChild } from 'node:child_process'
 import { access } from 'node:fs/promises'
-import { posix, resolve, win32, type PlatformPath } from 'node:path'
+import { dirname, posix, resolve, win32, type PlatformPath } from 'node:path'
 import type { Writable } from 'node:stream'
 
 import {
@@ -15,6 +15,7 @@ import {
   HOST_FULL_ACCESS_BOOTSTRAP_FD_ENV,
   hostFullAccessBootstrapFrame
 } from '../host-runtime/HostFullAccessBootstrap'
+import { resolveHostPayloadVersion } from '../host-runtime/HostPayloadIdentity'
 import type { HostBootstrapWelcome, HostCapability } from '../shared/hostProtocol'
 import {
   createTuiFullAccessPresence,
@@ -26,6 +27,8 @@ const DEFAULT_START_TIMEOUT_MS = 120_000
 const DEFAULT_POLL_MS = 250
 const DEFAULT_PROBE_TIMEOUT_MS = 1_500
 const DEFAULT_BOOTSTRAP_WRITE_TIMEOUT_MS = 2_000
+/** Provider shutdown may wait on a live turn; give a stale Host time to leave. */
+const DEFAULT_STOP_TIMEOUT_MS = 45_000
 export const TUI_STANDALONE_HOST_CAPABILITY_FLOOR: readonly HostCapability[] = [
   'commands',
   'receipts',
@@ -92,6 +95,17 @@ export interface EnsureTuiHostAvailableInput extends ResolveTuiHostLaunchCommand
   readonly createFullAccessSecret?: () => Buffer
   readonly now?: () => number
   readonly delay?: (milliseconds: number) => Promise<void>
+  /**
+   * Payload identity of the Host this launch command would start. A running
+   * standalone Host that reports a different identity is replaced: a rebuilt
+   * Host that is never restarted keeps serving the old code.
+   */
+  readonly resolvePayloadVersion?: (
+    command: TuiHostLaunchCommand
+  ) => string | null | Promise<string | null>
+  /** Stops a stale standalone Host; the default sends SIGTERM to its pid. */
+  readonly stopProcess?: (pid: number) => boolean
+  readonly stopTimeoutMs?: number
 }
 
 export type EnsureTuiHostAvailableResult =
@@ -99,6 +113,8 @@ export type EnsureTuiHostAvailableResult =
   | {
       readonly kind: 'launched'
       readonly pid: number | null
+      /** The stale Host this launch replaced, when one was stopped first. */
+      readonly replacedPid?: number
       readonly fullAccessPresence?: TuiFullAccessPresence
     }
 
@@ -402,6 +418,81 @@ function exactOwnedBinding(
   }
 }
 
+function launchPayloadVersion(command: TuiHostLaunchCommand): string | null {
+  const cli = command.args[0]
+  if (!cli) return null
+  try {
+    return resolveHostPayloadVersion(resolve(dirname(cli), '..'))
+  } catch {
+    return null
+  }
+}
+
+function defaultStopProcess(pid: number): boolean {
+  try {
+    process.kill(pid, 'SIGTERM')
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * A live standalone Host whose payload differs from what this launcher would
+ * start is stale: `npm run tui` rebuilt out/host, then reused the process
+ * already listening, so a fix never ran until that process died on its own.
+ * A Host that predates payload identity cannot be compared and is kept.
+ */
+async function stalePayloadHost(
+  input: EnsureTuiHostAvailableInput,
+  existing: TuiHostAuthenticatedProbe
+): Promise<{ readonly pid: number; readonly command: TuiHostLaunchCommand } | null> {
+  const running = existing.process.payloadVersion
+  if (!running || input.profile === 'custom') return null
+  const command = input.resolveLaunchCommand
+    ? await input.resolveLaunchCommand()
+    : await resolveTuiHostLaunchCommand(input)
+  if (!command) return null
+  let expected: string | null
+  try {
+    expected = await (input.resolvePayloadVersion ?? launchPayloadVersion)(command)
+  } catch {
+    expected = null
+  }
+  if (!expected || expected === running) return null
+  return { pid: existing.process.pid, command }
+}
+
+/** Resolves with the probe error once the stale Host stops answering. */
+async function awaitHostExit(input: {
+  readonly userDataPath: string
+  readonly pid: number
+  readonly probe: NonNullable<EnsureTuiHostAvailableInput['probe']>
+  readonly probeTimeoutMs: number
+  readonly stopTimeoutMs: number
+  readonly now: () => number
+  readonly delay: (milliseconds: number) => Promise<void>
+  readonly pollMs: number
+}): Promise<unknown> {
+  const deadline = input.now() + input.stopTimeoutMs
+  while (input.now() < deadline) {
+    await input.delay(Math.min(input.pollMs, Math.max(1, deadline - input.now())))
+    try {
+      await input.probe(
+        input.userDataPath,
+        Math.min(input.probeTimeoutMs, Math.max(1, deadline - input.now()))
+      )
+    } catch (error) {
+      if (incompatibleHost(error)) throw error
+      return error
+    }
+  }
+  throw new Error(
+    `TaskWraith Host (pid ${input.pid}) runs an older payload and did not stop; ` +
+      'stop it and start the TUI again.'
+  )
+}
+
 const inFlightStarts = new Map<string, Promise<EnsureTuiHostAvailableResult>>()
 
 async function ensureTuiHostAvailableOnce(
@@ -409,22 +500,48 @@ async function ensureTuiHostAvailableOnce(
 ): Promise<EnsureTuiHostAvailableResult> {
   const probe = input.probe ?? authenticatedProbe
   const probeTimeoutMs = input.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS
+  const now = input.now ?? (() => Date.now())
+  const delay = input.delay ?? defaultDelay
+  const pollMs = input.pollMs ?? DEFAULT_POLL_MS
   let lastProbeError: unknown
+  let probed: { readonly ok: true; readonly value: TuiHostAuthenticatedProbe | void } | null
   try {
-    await probe(input.userDataPath, probeTimeoutMs)
-    return { kind: 'existing' }
+    probed = { ok: true, value: await probe(input.userDataPath, probeTimeoutMs) }
   } catch (error) {
     if (incompatibleHost(error)) throw error
     lastProbeError = error
+    probed = null
+  }
+
+  let replacedPid: number | undefined
+  let command: TuiHostLaunchCommand | null = null
+  if (probed) {
+    const stale = probed.value ? await stalePayloadHost(input, probed.value) : null
+    if (!stale) return { kind: 'existing' }
+    if (!(input.stopProcess ?? defaultStopProcess)(stale.pid)) return { kind: 'existing' }
+    lastProbeError = await awaitHostExit({
+      userDataPath: input.userDataPath,
+      pid: stale.pid,
+      probe,
+      probeTimeoutMs,
+      stopTimeoutMs: input.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
+      now,
+      delay,
+      pollMs
+    })
+    replacedPid = stale.pid
+    command = stale.command
   }
 
   if (input.profile === 'custom') {
     throw new Error(launchUnavailableMessage(input.profile), { cause: lastProbeError })
   }
 
-  const command = input.resolveLaunchCommand
-    ? await input.resolveLaunchCommand()
-    : await resolveTuiHostLaunchCommand(input)
+  if (!command) {
+    command = input.resolveLaunchCommand
+      ? await input.resolveLaunchCommand()
+      : await resolveTuiHostLaunchCommand(input)
+  }
   if (!command) throw new Error(launchUnavailableMessage(input.profile), { cause: lastProbeError })
 
   const spawn =
@@ -473,10 +590,7 @@ async function ensureTuiHostAvailableOnce(
     : false
   child.unref()
 
-  const now = input.now ?? (() => Date.now())
-  const delay = input.delay ?? defaultDelay
   const timeoutMs = input.timeoutMs ?? DEFAULT_START_TIMEOUT_MS
-  const pollMs = input.pollMs ?? DEFAULT_POLL_MS
   const startedAt = now()
   const deadline = startedAt + timeoutMs
 
@@ -496,6 +610,7 @@ async function ensureTuiHostAvailableOnce(
         return {
           kind: 'launched',
           pid: child.pid ?? null,
+          ...(replacedPid !== undefined ? { replacedPid } : {}),
           ...(fullAccessPresence ? { fullAccessPresence } : {})
         }
       } catch (error) {

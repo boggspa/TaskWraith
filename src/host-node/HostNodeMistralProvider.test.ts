@@ -305,6 +305,257 @@ describe('HostNodeMistralProvider', () => {
     ])
   })
 
+  it('resumes the persisted Vibe session over session/load and ignores replayed history', async () => {
+    // Every turn used to open session/new, so the second prompt reached a
+    // model with no memory of the first ("I don't have a task in context
+    // yet"). Vibe advertises loadSession and replays the loaded history as
+    // session/update notifications before answering; those replays are not
+    // new output and must not be re-appended to the transcript.
+    const { instance, child, appends, finishes } = open({
+      configuredThread: thread({
+        modelId: 'mistral-medium-3.5',
+        reasoningId: undefined,
+        providerSessionId: 'session-earlier'
+      })
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-resume',
+      threadId: 'thread-1',
+      prompt: 'and the third?',
+      resumeFallbackPrompt: 'Continue the conversation.\n\nNew user message:\nand the third?',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(
+      JSON.stringify({ id: 1, result: { agentCapabilities: { loadSession: true } } }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/load"'))
+    const load = JSON.parse(sent.find((frame) => frame.includes('"method":"session/load"'))!) as {
+      id: number
+      params: Record<string, unknown>
+    }
+    expect(load.params).toEqual({
+      sessionId: 'session-earlier',
+      cwd: '/tmp/host-node-provider-test',
+      mcpServers: []
+    })
+    expect(sent.join('')).not.toContain('"method":"session/new"')
+    // Replayed history arrives before the load result.
+    child.stdout.write(
+      JSON.stringify({
+        method: 'session/update',
+        params: {
+          sessionId: 'session-earlier',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'There are two.' }
+          }
+        }
+      }) + '\n'
+    )
+    child.stdout.write(
+      JSON.stringify({
+        id: load.id,
+        result: {
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'mistral-medium-3.5',
+              options: [{ value: 'mistral-medium-3.5' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/prompt"'))
+    const prompt = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/prompt"'))!
+    ) as { params: { sessionId: string; prompt: { text: string }[] } }
+    expect(prompt.params.sessionId).toBe('session-earlier')
+    expect(prompt.params.prompt).toEqual([{ type: 'text', text: 'and the third?' }])
+    child.stdout.write(
+      JSON.stringify({
+        method: 'session/update',
+        params: {
+          sessionId: 'session-earlier',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'A third one.' }
+          }
+        }
+      }) + '\n'
+    )
+    completePrompt(child)
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({
+      status: 'completed',
+      sessionId: 'session-earlier'
+    })
+    expect(appends.filter((entry) => (entry as { role?: unknown }).role === 'assistant')).toEqual([
+      expect.objectContaining({ text: 'A third one.' })
+    ])
+    expect(finishes).toEqual([
+      expect.objectContaining({ status: 'completed', providerSessionId: 'session-earlier' })
+    ])
+  })
+
+  it('falls back to a fresh session carrying the bounded transcript when the Vibe session is gone', async () => {
+    const { instance, child, appends } = open({
+      configuredThread: thread({
+        modelId: 'mistral-medium-3.5',
+        reasoningId: undefined,
+        providerSessionId: 'session-expired'
+      })
+    })
+    const sent = frames(child)
+    const fallback =
+      'Continue the existing TaskWraith conversation using this bounded transcript context.\n\n' +
+      'User: first\n\nassistant: reply\n\nNew user message:\nsecond'
+    const running = instance.run({
+      runId: 'run-fallback',
+      threadId: 'thread-1',
+      prompt: 'second',
+      resumeFallbackPrompt: fallback,
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(
+      JSON.stringify({ id: 1, result: { agentCapabilities: { loadSession: true } } }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/load"'))
+    const load = JSON.parse(sent.find((frame) => frame.includes('"method":"session/load"'))!) as {
+      id: number
+    }
+    child.stdout.write(
+      JSON.stringify({
+        id: load.id,
+        error: { code: -32602, message: 'Session not found: session-expired' }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    const created = JSON.parse(sent.find((frame) => frame.includes('"method":"session/new"'))!) as {
+      id: number
+    }
+    child.stdout.write(
+      JSON.stringify({ id: created.id, result: { sessionId: 'session-fresh' } }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/prompt"'))
+    const prompt = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/prompt"'))!
+    ) as { params: { sessionId: string; prompt: { text: string }[] } }
+    expect(prompt.params.sessionId).toBe('session-fresh')
+    expect(prompt.params.prompt).toEqual([{ type: 'text', text: fallback }])
+    completePrompt(child)
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({
+      status: 'completed',
+      sessionId: 'session-fresh'
+    })
+    // The transcript keeps the user's own words, never the stitched fallback.
+    expect(appends.filter((entry) => (entry as { role?: unknown }).role === 'user')).toEqual([
+      expect.objectContaining({ text: 'second' })
+    ])
+  })
+
+  it('opens a fresh session with the bounded transcript when no Vibe session was persisted', async () => {
+    // A model switch starts a new native session on purpose; the thread's
+    // history still travels with the first prompt of that session.
+    const { instance, child } = open({
+      configuredThread: thread({ modelId: 'mistral-medium-3.5', reasoningId: undefined })
+    })
+    const sent = frames(child)
+    const fallback = 'Continue the existing TaskWraith conversation.\n\nNew user message:\nnext'
+    const running = instance.run({
+      runId: 'run-cold',
+      threadId: 'thread-1',
+      prompt: 'next',
+      resumeFallbackPrompt: fallback,
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(
+      JSON.stringify({ id: 1, result: { agentCapabilities: { loadSession: true } } }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    expect(sent.join('')).not.toContain('"method":"session/load"')
+    child.stdout.write(JSON.stringify({ id: 2, result: { sessionId: 'session-cold' } }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/prompt"'))
+    const prompt = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/prompt"'))!
+    ) as { params: { prompt: { text: string }[] } }
+    expect(prompt.params.prompt).toEqual([{ type: 'text', text: fallback }])
+    completePrompt(child)
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'completed' })
+  })
+
+  it('reports the protocol failure, not later stderr telemetry, when the turn fails', async () => {
+    // Vibe logs DEBUG telemetry and Sentry chatter to stderr after an error;
+    // the last stderr line used to overwrite the real reason, so a failed run
+    // was recorded as "DEBUG:vibe:telemetry …".
+    const { instance, child, finishes } = open()
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-noise',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(JSON.stringify({ id: 2, result: { sessionId: 'session-1' } }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/prompt"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 3,
+        error: { code: -32000, message: 'Rate limit exceeded for this workspace.' }
+      }) + '\n'
+    )
+    child.stderr.write(
+      "DEBUG:vibe:telemetry event=vibe.tool_call_finished properties={'agent_entrypoint': 'acp'}\n"
+    )
+    child.stderr.write(
+      'Sentry is attempting to send 2 pending events\nWaiting up to 2 seconds\nPress Ctrl-C to quit\n'
+    )
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    child.emit('close', 1)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        errorCode: 'provider_failed',
+        warningSummaries: ['Rate limit exceeded for this workspace.']
+      })
+    ])
+  })
+
+  it('keeps a meaningful stderr line as the reason when the process dies without a protocol error', async () => {
+    const { instance, child, finishes } = open()
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-crash',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stderr.write('DEBUG:vibe:telemetry event=vibe.session_started\n')
+    child.stderr.write('vibe.core.exceptions.UnauthenticatedError: Sign in with vibe --setup\n')
+    child.emit('close', 1)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        warningSummaries: ['vibe.core.exceptions.UnauthenticatedError: Sign in with vibe --setup']
+      })
+    ])
+  })
+
   it('does not treat a clean ACP process exit without terminal prompt evidence as completion', async () => {
     const { instance, child, finishes } = open()
     const running = instance.run({

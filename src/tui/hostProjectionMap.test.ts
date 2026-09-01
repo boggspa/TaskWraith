@@ -69,6 +69,112 @@ function snapshotWithThread(overrides?: Partial<HostSnapshot>): HostSnapshot {
 }
 
 describe('hostProjectionMap', () => {
+  it('never labels a thread with the provider inventory model when the thread names none', () => {
+    // The inventory lists one row per offered model, sorted by id. A thread
+    // row that carries no modelId must render as provider-only rather than
+    // borrowing whichever model sorts first (Codestral, for Mistral).
+    const snapshot = snapshotWithThread({
+      providers: [
+        {
+          providerId: 'mistral',
+          displayProvider: 'Mistral',
+          modelId: 'codestral-2508',
+          modelLabel: 'Codestral (Aug 2025)',
+          shortCode: 'MST',
+          hueKey: 'mistral',
+          available: true
+        },
+        {
+          providerId: 'mistral',
+          displayProvider: 'Mistral',
+          modelId: 'mistral-medium-3.5',
+          modelLabel: 'Mistral Medium 3.5',
+          shortCode: 'MST',
+          hueKey: 'mistral',
+          available: true
+        }
+      ],
+      threads: [
+        {
+          id: 'thread-mistral',
+          workspaceId: 'ws-1',
+          title: 'Unconfigured',
+          chatKind: 'single',
+          archived: false,
+          pinned: false,
+          updatedAt: 200,
+          messageCount: 0,
+          providerId: 'mistral'
+        }
+      ]
+    })
+    const thread = mapHostSnapshotToControlSnapshot(snapshot).threads[0]
+    expect(thread.provider.displayProvider).toBe('Mistral')
+    expect(thread.provider.model).toBeUndefined()
+    expect(thread.provider.modelLabel).toBeUndefined()
+    expect(thread.reasoning).toBeUndefined()
+  })
+
+  it('labels a thread by its own configured model even when another inventory row sorts first', () => {
+    const snapshot = snapshotWithThread({
+      providers: [
+        {
+          providerId: 'mistral',
+          displayProvider: 'Mistral',
+          modelId: 'codestral-2508',
+          modelLabel: 'Codestral (Aug 2025)',
+          shortCode: 'MST',
+          hueKey: 'mistral',
+          available: true
+        },
+        {
+          providerId: 'mistral',
+          displayProvider: 'Mistral',
+          modelId: 'mistral-medium-3.5',
+          modelLabel: 'Mistral Medium 3.5',
+          shortCode: 'MST',
+          hueKey: 'mistral',
+          available: true
+        }
+      ],
+      threads: [
+        {
+          id: 'thread-mistral',
+          workspaceId: 'ws-1',
+          title: 'Configured',
+          chatKind: 'single',
+          archived: false,
+          pinned: false,
+          updatedAt: 200,
+          messageCount: 0,
+          providerId: 'mistral',
+          modelId: 'mistral-medium-3.5',
+          reasoningEffort: 'xhigh'
+        }
+      ]
+    })
+    const thread = mapHostSnapshotToControlSnapshot(snapshot).threads[0]
+    expect(thread.provider.model).toBe('mistral-medium-3.5')
+    expect(thread.provider.modelLabel).toBe('Mistral Medium 3.5')
+    expect(thread.reasoning).toBe('xhigh')
+  })
+
+  it('attributes Host system notices to TaskWraith, not to the thread provider', () => {
+    const rows = mapHostHistoryEntriesToTranscriptRows(
+      [
+        {
+          entryId: 'notice-1',
+          role: 'system',
+          createdAt: Date.UTC(2026, 8, 1, 22, 54, 34),
+          text: 'Run failed · ACP prompt was rejected.'
+        }
+      ],
+      mapHostSnapshotToControlSnapshot(snapshotWithThread()).threads[0]
+    )
+    expect(rows[0]).toMatchObject({ role: 'system', speaker: 'TaskWraith' })
+    expect(rows[0].provider).toBeUndefined()
+  })
+
   it('maps bounded Host history entries onto existing transcript rows', () => {
     expect(
       mapHostHistoryEntriesToTranscriptRows([

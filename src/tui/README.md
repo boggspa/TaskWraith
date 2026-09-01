@@ -30,6 +30,12 @@ existing Host or starts production Node Host; `--no-start-host` is connect-only
 and never launches one. Reconnect uses ordered deltas when valid, otherwise a
 coherent snapshot. History has its own bounded cursor.
 
+A reused Host must be running the build the TUI would launch. Every standalone
+Host publishes its payload identity in its discovery record; when that differs
+from the identity of `out/host` (the usual case right after `npm run tui`
+rebuilt it), the TUI stops the stale process, starts the current build, and says
+so in its first frame. A Host that predates payload identity is kept as-is.
+
 ## Cold setup, history, and receipts
 
 Production capability negotiation provides bounded provider/model/posture and

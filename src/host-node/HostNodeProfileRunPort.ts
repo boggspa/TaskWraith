@@ -436,6 +436,33 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
   }
 
   private writeFinish(threadId: string, input: HostProviderRunFinish): void {
+    // A failed run's reason used to live only in warningSummaries, which no
+    // client renders — the TUI showed a bare FAILED. Publish it once as a Host
+    // notice on the transcript. Providers that already wrote their own notice
+    // pass no summaries and add nothing here.
+    const reason =
+      input.status === 'failed'
+        ? input.warningSummaries
+            .map((summary) => summary.trim())
+            .filter(Boolean)
+            .join(' · ')
+        : ''
+    const alreadyTerminal = (this.options.store.getThread(threadId)?.runs ?? []).some(
+      (run) => run.runId === input.runId && run.status === input.status
+    )
+    if (reason && !alreadyTerminal) {
+      try {
+        this.options.store.appendTranscript({
+          threadId,
+          runId: input.runId,
+          role: 'system',
+          content: `Run failed · ${reason}`,
+          timestamp: input.finishedAt
+        })
+      } catch {
+        // The terminal run write below is the authority; a notice never blocks it.
+      }
+    }
     this.options.store.updateRun({
       threadId,
       runId: input.runId,

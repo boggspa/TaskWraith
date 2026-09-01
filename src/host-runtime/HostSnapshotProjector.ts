@@ -597,6 +597,18 @@ function projectThread(
   if (!isOptionalId(raw.providerId)) {
     return { ok: false, error: `${label}.providerId is invalid` }
   }
+  // Display-only configured selection. The domain projection publishes it and
+  // the client decoder accepts it; dropping it here made every client fall
+  // back to the provider inventory's first model for the thread's label.
+  if (!isOptionalId(raw.modelId)) {
+    return { ok: false, error: `${label}.modelId is invalid` }
+  }
+  if (!isOptionalId(raw.reasoningEffort)) {
+    return { ok: false, error: `${label}.reasoningEffort is invalid` }
+  }
+  if (!isOptionalId(raw.permissionPresetId)) {
+    return { ok: false, error: `${label}.permissionPresetId is invalid` }
+  }
   if (
     raw.missionOutcome !== undefined &&
     (typeof raw.missionOutcome !== 'string' || !MISSION_OUTCOMES.has(raw.missionOutcome))
@@ -619,6 +631,9 @@ function projectThread(
   }
   if (raw.parentThreadId !== undefined) out.parentThreadId = raw.parentThreadId
   if (raw.providerId !== undefined) out.providerId = raw.providerId
+  if (raw.modelId !== undefined) out.modelId = raw.modelId
+  if (raw.reasoningEffort !== undefined) out.reasoningEffort = raw.reasoningEffort
+  if (raw.permissionPresetId !== undefined) out.permissionPresetId = raw.permissionPresetId
   if (raw.missionOutcome !== undefined) {
     out.missionOutcome = raw.missionOutcome as HostMissionOutcome
   }

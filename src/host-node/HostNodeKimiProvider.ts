@@ -66,6 +66,7 @@ import {
   type HostNodeAcpTurnCompletion
 } from './HostNodeAcpTurnCompletion'
 import type { HostNodeInteractionResolver } from './HostNodeInteractionRegistry'
+import { meaningfulAcpStderrLine } from './HostNodeAcpStderr'
 import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
 
 const PROVIDER_ID = 'kimi'
@@ -424,6 +425,7 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
           : undefined
       let assistantText = ''
       let failure = ''
+      let stderrTail = ''
       const configWarnings: string[] = []
       let interactionSequence = 0
       const deliveredPermissionIds = new Set<string>()
@@ -454,6 +456,7 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
             createdAt: timestamp()
           })
         }
+        const reason = failure || stderrTail
         const usageStats = estimateKimiAcpTokenUsage({
           inputChars: kimiInputChars,
           outputChars: kimiOutputChars,
@@ -469,7 +472,7 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
             inputTokens: usageStats.input_tokens,
             outputTokens: usageStats.output_tokens
           },
-          warningSummaries: [...configWarnings, ...(failure ? [failure.slice(0, 300)] : [])].slice(
+          warningSummaries: [...configWarnings, ...(reason ? [reason.slice(0, 300)] : [])].slice(
             0,
             8
           ),
@@ -481,7 +484,7 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
           threadId: thread.threadId,
           status,
           at: timestamp(),
-          ...(configWarnings.length || failure ? { warningCount: 1 } : {})
+          ...(configWarnings.length || reason ? { warningCount: 1 } : {})
         })
         resolve({ runId: request.runId, status, ...(sessionId ? { sessionId } : {}) })
       }
@@ -747,8 +750,10 @@ class HostNodeKimiProviderInstance implements HostNodeProviderInstance {
 
       child.stdout.on('data', consume)
       child.stderr.on('data', (chunk: Buffer | string) => {
-        const text = normalizeHostProviderRunPresentationText(String(chunk), 300)
-        if (text) failure = text
+        // A protocol failure outranks stderr; telemetry and Sentry chatter
+        // never become the recorded reason.
+        const line = meaningfulAcpStderrLine(String(chunk))
+        if (line) stderrTail = line
       })
       child.once('error', (error) => {
         failure = error instanceof Error ? error.message : 'ACP process failed.'

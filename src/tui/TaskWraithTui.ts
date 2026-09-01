@@ -161,6 +161,8 @@ export interface TaskWraithTuiOptions {
   reviveHost?: () => Promise<EnsureTuiHostAvailableResult>
   /** Opaque launch-bound signer; never persisted or exposed to provider code. */
   fullAccessPresence?: TuiFullAccessPresence
+  /** One-shot notice on the first frame, e.g. that a stale Host was restarted. */
+  startupNotice?: string
   /** Base reconnect delay; doubles per attempt up to RECONNECT_MAX_DELAY_MS. */
   reconnectBaseDelayMs?: number
   /** Interval between guided-setup auth status polls; sized for web sign-ins. */
@@ -504,6 +506,9 @@ export class TaskWraithTui {
     try {
       this.enterTerminal()
       this.bindInput()
+      if (this.options.startupNotice) {
+        this.setNotice(this.options.startupNotice, 'neutral', 12_000)
+      }
       if (this.options.animationEnabled && this.ansi.enabled) {
         const bannerTickStride = Math.round(
           TUI_MOTION.bannerSweepIntervalMs / ANIMATION_INTERVAL_MS

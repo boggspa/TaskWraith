@@ -52,6 +52,7 @@ import {
   type HostNodeAcpTurnCompletion
 } from './HostNodeAcpTurnCompletion'
 import type { HostNodeInteractionResolver } from './HostNodeInteractionRegistry'
+import { meaningfulAcpStderrLine } from './HostNodeAcpStderr'
 import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
 import { resolveMistralCredentialLaunch } from '../main/mistral/MistralCredentialLane'
 import {
@@ -393,11 +394,25 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
 
     return new Promise<HostNodeProviderRunResult>((resolve) => {
       let settled = false
-      let sessionId = thread.providerSessionId ?? request.runId
+      // Resume the native Vibe session the last turn on this model left behind.
+      // Vibe advertises loadSession and persists sessions on disk, so a fresh
+      // process picks the conversation up where it stopped; without this the
+      // second prompt reached a model that had never seen the first.
+      const requestedResumeSessionId = thread.providerSessionId
+      let sessionId = requestedResumeSessionId ?? request.runId
+      let sessionRpcId = 2
+      let loadAttempted = false
+      let sessionReady = false
       let carry = ''
       let promptSent = false
+      let promptText = request.prompt
+      const resumeFallbackPrompt =
+        request.resumeFallbackPrompt && validateHostProviderRunPrompt(request.resumeFallbackPrompt)
+          ? request.resumeFallbackPrompt
+          : undefined
       let assistantText = ''
       let failure = ''
+      let stderrTail = ''
       const configWarnings: string[] = []
       let interactionSequence = 0
       const deliveredPermissionIds = new Set<string>()
@@ -428,12 +443,20 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
             createdAt: timestamp()
           })
         }
+        // A protocol failure outranks stderr, and a failed turn always says
+        // why: the Host builds the transcript notice from this summary.
+        const reason =
+          failure ||
+          stderrTail ||
+          (status === 'failed' ? 'Vibe ACP exited before the turn finished.' : '')
+        // Only a session Vibe actually acknowledged may be resumed next turn.
+        const establishedSessionId = sessionReady && sessionId ? sessionId : undefined
         this.runPort.finishRun({
           runId: request.runId,
           status,
           finishedAt: timestamp(),
-          ...(sessionId ? { providerSessionId: sessionId } : {}),
-          warningSummaries: [...configWarnings, ...(failure ? [failure.slice(0, 300)] : [])].slice(
+          ...(establishedSessionId ? { providerSessionId: establishedSessionId } : {}),
+          warningSummaries: [...configWarnings, ...(reason ? [reason.slice(0, 300)] : [])].slice(
             0,
             8
           ),
@@ -445,9 +468,13 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
           threadId: thread.threadId,
           status,
           at: timestamp(),
-          ...(configWarnings.length || failure ? { warningCount: 1 } : {})
+          ...(configWarnings.length || reason ? { warningCount: 1 } : {})
         })
-        resolve({ runId: request.runId, status, ...(sessionId ? { sessionId } : {}) })
+        resolve({
+          runId: request.runId,
+          status,
+          ...(establishedSessionId ? { sessionId: establishedSessionId } : {})
+        })
       }
 
       const write = (id: number, method: string, params: Record<string, unknown>): void => {
@@ -458,7 +485,20 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
         promptSent = true
         write(3, 'session/prompt', {
           sessionId,
-          prompt: [{ type: 'text', text: request.prompt }]
+          prompt: [{ type: 'text', text: promptText }]
+        })
+      }
+      // A fresh Vibe session has no native history, so its first prompt carries
+      // the bounded Host transcript (when the thread has one) instead of
+      // pretending the new process remembers earlier turns.
+      const sendNewSession = (rpcId: number): void => {
+        loadAttempted = false
+        sessionRpcId = rpcId
+        sessionId = ''
+        promptText = resumeFallbackPrompt ?? request.prompt
+        write(rpcId, 'session/new', {
+          cwd: thread.workspace.canonicalPath,
+          mcpServers: []
         })
       }
       const sessionConfig = createHostAcpSessionConfigApplicator({
@@ -548,22 +588,41 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
           child.stdin.write(
             JSON.stringify({ jsonrpc: '2.0', method: 'initialized', params: {} }) + '\n'
           )
-          write(2, 'session/new', {
-            cwd: thread.workspace.canonicalPath,
-            mcpServers: []
-          })
+          const capabilities = readObject(readObject(frame.result)?.agentCapabilities)
+          if (requestedResumeSessionId && capabilities?.loadSession === true) {
+            loadAttempted = true
+            sessionRpcId = 2
+            write(2, 'session/load', {
+              sessionId: requestedResumeSessionId,
+              cwd: thread.workspace.canonicalPath,
+              mcpServers: []
+            })
+          } else {
+            sendNewSession(2)
+          }
           return
         }
-        if (frame.id === 2 && frame.result) {
-          const result = readObject(frame.result)
-          const session =
-            result &&
-            (typeof result.sessionId === 'string'
-              ? result.sessionId
-              : typeof readObject(result.session)?.id === 'string'
-                ? String(readObject(result.session)?.id)
-                : '')
-          if (session) sessionId = session
+        if (frame.id === sessionRpcId && frame.result) {
+          if (loadAttempted) {
+            sessionId = requestedResumeSessionId ?? ''
+            loadAttempted = false
+          } else {
+            const result = readObject(frame.result)
+            const session =
+              result &&
+              (typeof result.sessionId === 'string'
+                ? result.sessionId
+                : typeof readObject(result.session)?.id === 'string'
+                  ? String(readObject(result.session)?.id)
+                  : '')
+            if (session) sessionId = session
+          }
+          if (!sessionId) {
+            failure = 'Vibe ACP did not return a session identity.'
+            completion.requestStop()
+            return
+          }
+          sessionReady = true
           sessionConfig.begin({
             sessionId,
             result: frame.result,
@@ -573,6 +632,22 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
         }
         if (sessionConfig.acceptFrame(frame)) return
         if (completion.acceptPromptResult(frame)) return
+        if (frame.error && loadAttempted && frame.id === sessionRpcId) {
+          // The persisted session is gone (Vibe pruned it, or it belongs to
+          // another checkout). Mint a fresh one and carry the bounded Host
+          // transcript rather than failing the turn.
+          sendNewSession(4)
+          return
+        }
+        if (frame.error && frame.id === sessionRpcId) {
+          const error = readObject(frame.error)
+          failure =
+            typeof error?.message === 'string'
+              ? error.message
+              : 'Vibe ACP session setup was rejected.'
+          completion.requestStop()
+          return
+        }
         if (frame.id === 3 && frame.error) {
           const error = readObject(frame.error)
           failure = typeof error?.message === 'string' ? error.message : 'ACP prompt was rejected.'
@@ -580,6 +655,9 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
           return
         }
         if (frame.method !== 'session/update') return
+        // History replayed by session/load is not this turn's output: nothing
+        // that arrives before the session response is new.
+        if (!sessionReady) return
         const params = readObject(frame.params)
         const update = readObject(params?.update)
         if (!update) return
@@ -604,8 +682,8 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
 
       child.stdout.on('data', consume)
       child.stderr.on('data', (chunk: Buffer | string) => {
-        const text = normalizeHostProviderRunPresentationText(String(chunk), 300)
-        if (text) failure = text
+        const line = meaningfulAcpStderrLine(String(chunk))
+        if (line) stderrTail = line
       })
       child.once('error', (error) => {
         failure = error instanceof Error ? error.message : 'ACP process failed.'
@@ -666,7 +744,11 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
       runId: request.runId,
       status: 'failed',
       finishedAt: timestamp(),
-      warningSummaries: [],
+      warningSummaries: [
+        errorCode === 'provider_setup_unavailable'
+          ? 'Mistral Vibe CLI (vibe-acp) is not installed or not on PATH.'
+          : 'Mistral Vibe CLI (vibe-acp) could not be started.'
+      ],
       errorCode
     })
     this.runPort.publishRunEvent(request.target, {
