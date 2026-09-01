@@ -1,10 +1,11 @@
 /**
  * CanvasDockPanel — the right-dock "Canvas" surface: the sidebar variant of the
- * floating Canvas windows. Hosts live-embedded web previews and the sketch board
- * over the dock region (via CanvasPane bounds reporting), and lists every other
- * canvas open in the chat — including agent-opened ones (canvas_open /
- * canvas_render_html) — so agent browser activity is visible without hunting for
- * floating windows.
+ * floating Canvas windows. Hosts live-embedded web previews, the sketch board,
+ * and the packaged homebrew emulator over the dock region (via CanvasPane
+ * bounds reporting) — plus the dedicated Mesh and Simulator panels — and lists
+ * every other canvas open in the chat — including agent-opened ones
+ * (canvas_open / canvas_render_html / emulator_open) — so agent browser and
+ * emulator activity is visible without hunting for floating windows.
  *
  * Dock-opened sessions are tracked in a module store (persisted per chat in
  * localStorage) so they survive tab switches and window reloads; on mount the

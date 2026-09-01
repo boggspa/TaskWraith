@@ -1,11 +1,13 @@
 /**
- * CanvasEmulatorDriver — internal, packaged WebAssembly-emulator surface.
+ * CanvasEmulatorDriver — packaged WebAssembly-emulator surface.
  *
- * This driver is admitted only through CanvasService's internal fixed-game dock
- * path; no public MCP route is wired yet. It passes a fixed `twemu://app` entry
- * URL to an injected trusted runtime bridge and exposes internal-only atomic
- * observation plus one-frame input. Generic Canvas snapshot/eval and public
- * agent control remain intentionally out of scope.
+ * CanvasService admits this driver only for the fixed packaged game, under
+ * canonical agent or trusted renderer authority; the public MCP surface is
+ * emulator_open / emulator_observe / emulator_step. It passes a fixed
+ * `twemu://app` entry URL to an injected trusted runtime bridge and exposes
+ * atomic observation plus bounded button-input stepping. Generic Canvas
+ * snapshot/eval and arbitrary ROM/URL loading remain intentionally out of
+ * scope.
  */
 import { createHash } from 'node:crypto'
 import {

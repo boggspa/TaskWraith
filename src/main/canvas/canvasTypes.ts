@@ -70,7 +70,7 @@ export type CanvasDriverKind =
   | 'device'
   /** Structured telemetry chart — screenshot-capable; docks without WebContentsView. */
   | 'chart'
-  /** Internal packaged WebAssembly emulator surface. CanvasService admission lands separately. */
+  /** Packaged WebAssembly emulator surface, admitted by CanvasService for the fixed reviewed game. */
   | 'emulator'
 
 export type CanvasSessionStatus = 'opening' | 'active' | 'error' | 'closed'
@@ -117,9 +117,9 @@ export interface CanvasOpenInput {
   url?: string
   viewport?: CanvasViewport
   /**
-   * INTERNAL ONLY. The fixed packaged emulator game to start. CanvasService
-   * accepts it only through the main-owned embedded-dock path; public admission
-   * lands separately.
+   * INTERNAL ONLY. The fixed packaged emulator game to start. Public MCP
+   * admission goes through emulator_open, which always passes the reviewed
+   * packaged id; arbitrary game/ROM/URL input is never accepted.
    */
   gameId?: CanvasEmulatorGameId
   /**
@@ -142,7 +142,8 @@ export interface CanvasOpenInput {
    * Renderer-pane embed for a live web, sketch, or internal emulator driver:
    * host the preview as a WebContentsView inside the app window instead of a
    * standalone BrowserWindow. Renderer IPC opens web/sketch surfaces; the
-   * packaged emulator remains main-owned until its later public-admission slice.
+   * packaged emulator is admitted only through the main-owned path, under
+   * canonical agent or trusted renderer authority.
    */
   embed?: boolean
   /**
