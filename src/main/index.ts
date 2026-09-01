@@ -10229,12 +10229,21 @@ async function cascadeWaveChildrenOnParentTerminal(
   parentRunId: string,
   parentStatus: 'completed' | 'failed' | 'cancelled'
 ): Promise<void> {
-  const children = AppStore.getChats().filter(
+  // Stage 4 shell sweep for DISCOVERY only: the match reads delegationContext,
+  // which the chat-list index carries. A shell is a summaryOnly row whose
+  // messages/runs are EMPTY arrays, so it cannot serve the body below — the
+  // persisted run-row fallback reads `runs`, and the cancelled stamp spreads
+  // the record into saveAndBroadcastChat, where saveChat fails closed on
+  // summaryOnly and would abort the cascade BEFORE cancelProviderRun. Hydrate
+  // each match by id (the canonical, cached read) before touching its runs.
+  const childShells = AppStore.getChats(undefined, { listShells: true }).filter(
     (chat) =>
       chat.delegationContext?.parentAppRunId === parentRunId &&
       chat.delegationContext?.lifecycle === 'ephemeral'
   )
-  for (const child of children) {
+  for (const shell of childShells) {
+    const child = AppStore.getChat(shell.appChatId)
+    if (!child) continue
     const subThreadId = child.appChatId
     const reason = `Parent run ${parentRunId} terminalised (${parentStatus}); cancelling wave worker.`
     // Resolve the run to stop using the same precedence as the join deadline

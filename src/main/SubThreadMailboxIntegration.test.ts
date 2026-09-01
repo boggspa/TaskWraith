@@ -122,7 +122,9 @@ describe('sub-thread return main-process integration (ledger + projection, no au
     expect(finalizer).toContain('backgroundSubThreadDispatchMayStart')
     expect(finalizer).toContain('providerAdapterRunsInFlight.has(runId)')
     expect(finalizer).toContain('providerTransportOperations.get(runId)')
-    expect(indexSource.match(/backgroundSubThreadDispatchMayStart\(subThreadRunId\)/g)).toHaveLength(2)
+    expect(
+      indexSource.match(/backgroundSubThreadDispatchMayStart\(subThreadRunId\)/g)
+    ).toHaveLength(2)
     expect(exit.indexOf('finalizeBackgroundSubThreadTranscript(')).toBeGreaterThan(
       exit.indexOf('finalizeBridgeRunTranscript(')
     )
@@ -196,6 +198,37 @@ describe('sub-thread return main-process integration (ledger + projection, no au
     // The facade wrapper survives for its history-clear gate and solo-wakeup
     // cancel; only its mailbox attachment tail is gone (absence pinned above).
     expect(indexSource).toContain('createRunDispatchFacade(runDispatchFacadeDeps)')
-    expect(indexSource).toContain('return baseDispatchRunWithProviderPause(payload, event, observer)')
+    expect(indexSource).toContain(
+      'return baseDispatchRunWithProviderPause(payload, event, observer)'
+    )
+  })
+
+  it('hydrates each cascaded child from its shell before resolving a run row or saving', () => {
+    // Stage 4 regression. The cascade discovers wave children through
+    // getChats({ listShells: true }); a shell is a summaryOnly row whose
+    // messages/runs are EMPTY arrays. Fed straight into the body, the persisted
+    // run-row fallback resolved nothing and the cancelled stamp spread the shell
+    // into saveAndBroadcastChat, where saveChat's summary-only fence threw
+    // BEFORE cancelProviderRun — so no wave child was ever cancelled.
+    const cascade = sourceBetween(
+      'async function cascadeWaveChildrenOnParentTerminal(',
+      'function isChatRunLive('
+    )
+    const sweep = cascade.indexOf('AppStore.getChats(undefined, { listShells: true })')
+    const hydrate = cascade.indexOf('const child = AppStore.getChat(shell.appChatId)')
+    const runRow = cascade.indexOf('(child.runs || []).at(-1)')
+    const save = cascade.indexOf('saveAndBroadcastChat({')
+    expect(sweep).toBeGreaterThanOrEqual(0)
+    expect(hydrate).toBeGreaterThan(sweep)
+    expect(runRow).toBeGreaterThan(hydrate)
+    expect(save).toBeGreaterThan(runRow)
+    // A child deleted between the sweep and its read is skipped, never saved.
+    expect(cascade.slice(hydrate, runRow)).toContain('if (!child) continue')
+    // The shell is discovery-only: after hydration the body spreads the full
+    // record and never reads the shell again.
+    const body = cascade.slice(hydrate)
+    expect(body).toContain('...child,')
+    expect(body).not.toContain('...shell')
+    expect(body).not.toContain('shell.runs')
   })
 })
