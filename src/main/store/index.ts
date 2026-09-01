@@ -6732,14 +6732,56 @@ export class AppStore {
     }
   }
 
-  static getChats(workspaceId?: string): ChatRecord[] {
+  /**
+   * Stage 4 — serve a summary shell from the chat-list index when the index
+   * can vouch for the bytes on disk, and fall back to the full canonical read
+   * otherwise. Same index+stat idiom `getChatList` already uses: an entry
+   * vouches only when its sourceChatMtimeMs/sourceChatSize pair matches the
+   * file EXACTLY. The stat check is mandatory on every serve — a stale index
+   * entry that happens to keep its pair would silently serve wrong shell
+   * fields (title, messageCount, updatedAt). Shells are ChatListItem rows:
+   * messages/runs are empty arrays, so only consumers of list-carried fields
+   * (ids, titles, workspace, chrome, counts) may take this path.
+   */
+  private static readChatShellForSweep(
+    chatId: string,
+    chatPath: string,
+    existingIndex: Record<string, ChatListItem>
+  ): ChatRecord | null {
+    try {
+      const sourceStat = fs.statSync(chatPath)
+      const indexed = existingIndex[chatId]
+      if (
+        indexed?.summaryOnly === true &&
+        Array.isArray(indexed.runsSummary) &&
+        this.chatListItemMatchesSource(indexed, sourceStat)
+      ) {
+        return this.normalizeChatListItem(indexed)
+      }
+    } catch {
+      // Unreadable/missing file — let the canonical read resolve it.
+    }
+    return this.readChatRecordCached(chatId, chatPath)
+  }
+
+  static getChats(workspaceId?: string, options: { listShells?: boolean } = {}): ChatRecord[] {
     this.ensureOrphanSubThreadsReaped()
     if (!fs.existsSync(chatsDir)) return []
     const files = fs.readdirSync(chatsDir).filter((f) => f.endsWith('.json'))
+    // Stage 4: background id/updatedAt/workspaceId-class sweeps opt into
+    // summary shells so a whole-corpus scan no longer parses every chat's
+    // messages. The DEFAULT stays the full canonical read — ChatRecord.messages
+    // keeps its complete-transcript meaning for every content consumer, and
+    // the renderer get-chats channel is untouched.
+    const existingIndex = options.listShells ? chatListIndexStore.readAll() : null
     const chats: ChatRecord[] = []
     for (const file of files) {
       const chatId = path.basename(file, '.json')
-      const chat = this.readChatRecordCached(chatId, path.join(chatsDir, file))
+      const chatPath = path.join(chatsDir, file)
+      const chat =
+        options.listShells && existingIndex
+          ? this.readChatShellForSweep(chatId, chatPath, existingIndex)
+          : this.readChatRecordCached(chatId, chatPath)
       if (
         chat &&
         !this.orphanSubThreadReapCandidates.has(chat.appChatId) &&

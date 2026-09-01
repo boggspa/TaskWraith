@@ -6214,8 +6214,11 @@ function sweepThreadMessageWakes(): void {
 }
 
 const threadMessageToolExecutors = createThreadMessageToolExecutors({
+  // Stage 4 shell sweep: this projection reads only list-carried chrome
+  // (id/title/workspace/archived), so summary shells keep the targeting scan
+  // from parsing every transcript.
   listTargetChats: () =>
-    AppStore.getChats().map((chat) => ({
+    AppStore.getChats(undefined, { listShells: true }).map((chat) => ({
       chatId: chat.appChatId,
       title: chat.title || '',
       workspaceId: chat.workspaceId || null,
@@ -10550,7 +10553,9 @@ function recoverSubThreadControlPlane(): void {
   reconcileStaleChatRunsProjection({ minAgeMs: 0 })
   recoverSubThreadWorkerQueues()
   const joinGroups = new Set<string>()
-  for (const chat of AppStore.getChats()) {
+  // Stage 4 shell sweep: parentChatId + delegationContext join policies are
+  // list-carried chrome; no messages/runs are read here.
+  for (const chat of AppStore.getChats(undefined, { listShells: true })) {
     if (!chat.parentChatId) continue
     const policies = [
       chat.delegationContext?.joinPolicy,
@@ -48984,7 +48989,10 @@ if (isGeminiMcpBridgeProcess) {
           return { ok: true, path: result.data.repoRoot }
         },
         githubWatchPrFn: async (action) => {
-          const chat = AppStore.getChats().find((entry) => entry.appChatId === action.chatId)
+          // Stage 4 shell sweep: this path reads only existence + workspaceId.
+          const chat = AppStore.getChats(undefined, { listShells: true }).find(
+            (entry) => entry.appChatId === action.chatId
+          )
           if (!chat) {
             return { ok: false, reason: `Chat "${action.chatId}" is not registered` }
           }
@@ -52269,7 +52277,8 @@ if (isGeminiMcpBridgeProcess) {
     const broadHistoryDeletionTargets = (
       workspaceId?: string
     ): HistoryDeletionQuiescenceTarget[] => {
-      const chats = AppStore.getChats(workspaceId)
+      // Stage 4 shell sweep: id-collection only — shells suffice.
+      const chats = AppStore.getChats(workspaceId, { listShells: true })
       const chatIds = new Set(chats.map((chat) => chat.appChatId))
       const scopeIdentity = workspaceId ? `workspace:${workspaceId}` : 'global'
       const targets: HistoryDeletionQuiescenceTarget[] = []
@@ -57996,8 +58005,11 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     const watchPrPoller = createWatchPrPoller({
+      // Stage 4 shell sweep: watchedPr is list-carried chrome.
       listWatchedChats: () =>
-        AppStore.getChats().flatMap((chat) => (chat.watchedPr ? [chat.watchedPr] : [])),
+        AppStore.getChats(undefined, { listShells: true }).flatMap((chat) =>
+          chat.watchedPr ? [chat.watchedPr] : []
+        ),
       fetchCiSummary: (descriptor, options) =>
         gitService.ciStatus({
           repoPath: descriptor.workspacePath,
