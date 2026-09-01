@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
-import type { ChatMessage, ChatRecord } from '../store/types'
+import type { ChatMessage, ChatRecord, ChatRun } from '../store/types'
 import { registerChatTranscriptPageHandlers } from './chatTranscriptPageHandlers'
 import type { SenderChatReadScope } from './chatHandlers'
 
@@ -135,5 +135,64 @@ describe('registerChatTranscriptPageHandlers', () => {
     })
     const page = handlerFor('get-chat-transcript-page')(event, { chatId: 'chat-1' }) as any
     expect(page.totalMessageCount).toBe(1)
+  })
+
+  it('attaches the full-chrome shell when includeShell is requested', () => {
+    harness({
+      chats: {
+        'chat-1': {
+          ...chat('chat-1', ['a', 'b']),
+          runs: [
+            { runId: 'run-1', provider: 'codex' },
+            { runId: 'run-2', provider: 'codex' }
+          ] as ChatRun[],
+          ensemble: {
+            participants: [{ role: 'Orchestrator', instructions: 'brief-orchestrator' }]
+          } as any
+        }
+      }
+    })
+    const page = handlerFor('get-chat-transcript-page')(event, {
+      chatId: 'chat-1',
+      includeShell: true
+    }) as any
+    const shell = page.shell
+    expect(shell).toBeDefined()
+    expect(shell).toMatchObject({
+      appChatId: 'chat-1',
+      summaryOnly: true,
+      transcriptPaged: true,
+      messageCount: 2,
+      runCount: 2,
+      lastRun: { runId: 'run-2' }
+    })
+    expect(shell.messages).toEqual([])
+    expect(shell.runs).toEqual([])
+    // Full chrome: the ensemble keeps seat briefs (not a lean list projection).
+    expect(shell.ensemble.participants[0].instructions).toBe('brief-orchestrator')
+    // The page window itself is unaffected by the shell.
+    expect(page.messages.map((m: ChatMessage) => m.id)).toEqual(['a', 'b'])
+  })
+
+  it('omits the shell unless requested and honours maxRuns on page runs', () => {
+    harness({
+      chats: {
+        'chat-1': {
+          ...chat('chat-1', ['a', 'b']),
+          runs: [
+            { runId: 'run-1', provider: 'codex' },
+            { runId: 'run-2', provider: 'codex' }
+          ] as ChatRun[]
+        }
+      }
+    })
+    const bare = handlerFor('get-chat-transcript-page')(event, { chatId: 'chat-1' }) as any
+    expect(bare.shell).toBeUndefined()
+    expect(bare.runs).toHaveLength(2)
+    const limited = handlerFor('get-chat-transcript-page')(event, {
+      chatId: 'chat-1',
+      maxRuns: 1
+    }) as any
+    expect(limited.runs.map((run: ChatRun) => run.runId)).toEqual(['run-2'])
   })
 })
