@@ -272,6 +272,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
       return 'reasoning'
     case 'approval_status':
     case 'request_tool_permission':
+    case 'redeem_permission_opportunity':
       return 'approval'
     case 'provider_auth_status':
     case 'provider_usage_status':
@@ -341,6 +342,14 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'canvas_navigate':
     case 'canvas_render_chart':
     case 'canvas_close':
+      return 'canvas'
+    // The packaged emulator is a Canvas surface (CanvasService driver), not a
+    // generic MCP call — it rides the canvas family like simulator_* does. No
+    // gamepad glyph exists in the catalog, and a distinct family reusing the
+    // canvas glyph would render identically, so no new family is declared.
+    case 'emulator_open':
+    case 'emulator_observe':
+    case 'emulator_step':
       return 'canvas'
     // Saved site logins are their own family, not canvas: the row is about an
     // account the user holds, and reading it as "just another canvas verb"
@@ -418,6 +427,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
   if (normalised.startsWith('browser_')) return 'browser'
   if (normalised.startsWith('canvas_')) return 'canvas'
   if (normalised.startsWith('simulator_')) return 'canvas'
+  if (normalised.startsWith('emulator_')) return 'canvas'
   if (normalised.startsWith('tw_recall_')) return 'memory'
   if (normalised.startsWith('tw_introspection_')) return 'audit'
   if (normalised.startsWith('workspace_board_')) return 'plan'

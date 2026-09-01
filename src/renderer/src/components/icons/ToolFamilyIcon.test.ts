@@ -152,6 +152,13 @@ describe('toolNameToFamily', () => {
     expect(toolNameToFamily('canvas_eval')).toBe('canvas')
   })
 
+  it('maps emulator tools to the canvas family (it is a Canvas surface)', () => {
+    expect(toolNameToFamily('emulator_open')).toBe('canvas')
+    expect(toolNameToFamily('emulator_observe')).toBe('canvas')
+    expect(toolNameToFamily('emulator_step')).toBe('canvas')
+    expect(toolNameToFamily('mcp__TaskWraith__emulator_step')).toBe('canvas')
+  })
+
   it('coalesces viewer aliases and screenshot results to the image-view family', () => {
     expect(toolNameToFamily('image_view')).toBe('image-view')
     expect(toolNameToFamily('view_image')).toBe('image-view')
@@ -219,6 +226,8 @@ describe('toolNameToFamily', () => {
 
   it('maps approval and status tools to their semantic families', () => {
     expect(toolNameToFamily('approval_status')).toBe('approval')
+    expect(toolNameToFamily('request_tool_permission')).toBe('approval')
+    expect(toolNameToFamily('redeem_permission_opportunity')).toBe('approval')
     expect(toolNameToFamily('provider_auth_status')).toBe('status')
     expect(toolNameToFamily('provider_usage_status')).toBe('status')
     expect(toolNameToFamily('get_diagnostics')).toBe('status')
