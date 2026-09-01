@@ -104,11 +104,18 @@ struct ContextWindowsTests {
     func kimiProviderWindows() {
         #expect(ContextWindows.resolve(provider: "kimi", model: "kimi-k2.7-code") == 262_144)
         #expect(ContextWindows.resolve(provider: "kimi", model: "kimi-k3-256k") == 262_144)
-        #expect(ContextWindows.resolve(provider: "kimi", model: "kimi-k3") == 262_144)
+        // f661ac2a1 moved the long route to its true official window; mirrors
+        // contextWindows.test.ts. Each K3 route has been its own catalog row
+        // since d19931eb8, so neither carries a plan-dependent range.
+        #expect(ContextWindows.resolve(provider: "kimi", model: "kimi-k3") == 1_048_576)
+        // Probe the discovered limit with a value the static row does NOT
+        // already return -- a Moderato plan capping the 1M route at 256K.
+        // Asserting 1M here would now pass whether or not the override were
+        // honoured at all.
         #expect(
             ContextWindows.resolve(
-                provider: "kimi", model: "kimi-k3", discoveredContextWindow: 1_048_576)
-                == 1_048_576)
+                provider: "kimi", model: "kimi-k3", discoveredContextWindow: 262_144)
+                == 262_144)
     }
 
     @Test("OpenRouter Pi additions keep exact windows and catalog labels")
