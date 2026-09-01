@@ -37,16 +37,18 @@ export interface BuildUserEnsembleRosterPresetApplyPlanInput {
 }
 
 function normalizedFanoutPolicy(preset: EnsembleRosterPreset): EnsembleFanoutPolicy {
+  // Fan-out collapsed to On/Off (On = the old 'all'); the retired graded
+  // levels and the legacy boolean concurrent flag normalize on apply.
+  if (preset.fanoutPolicy === 'off') return 'off'
   if (
-    preset.fanoutPolicy === 'off' ||
     preset.fanoutPolicy === 'read_only' ||
     preset.fanoutPolicy === 'all' ||
     preset.fanoutPolicy === 'locked_writers_with_boss' ||
     preset.fanoutPolicy === 'locked_writers_user_preflight'
   ) {
-    return preset.fanoutPolicy
+    return 'all'
   }
-  return preset.concurrentModeEnabled === true ? 'read_only' : 'off'
+  return preset.concurrentModeEnabled === true ? 'all' : 'off'
 }
 
 /** Build a boundary-deferred roster change from an explicit renderer action. */
@@ -91,7 +93,8 @@ export function buildUserEnsembleRosterPresetApplyPlan(
     ...(authority.secondInCommandParticipantId
       ? { secondInCommandParticipantId: authority.secondInCommandParticipantId }
       : {}),
-    orchestrationMode: preset.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound',
+    // Continuous-only: legacy 'turn_bound' presets normalize on apply.
+    orchestrationMode: 'continuous',
     fanoutPolicy: normalizedFanoutPolicy(preset),
     maxParticipants,
     maxContinuationHops,

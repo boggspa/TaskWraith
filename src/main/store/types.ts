@@ -279,6 +279,11 @@ export type ComposerStyle =
 // the two reach different products (API models vs the agent CLI), and because a
 // one-off overlap does not create the circumvention incentive that blanket
 // second-door support would.
+// `devin` is the Devin CLI seat (`devin acp`): an ACP-over-stdio agent lane on
+// the user's own paid seat. Auth is env keys (WINDSURF_API_KEY canonical,
+// DEVIN_API_KEY, lowercase windsurf_api_key) or the stored credentials file
+// (~/.local/share/devin/credentials.toml), with an optional custom
+// api_server_url endpoint. It is live-selectable.
 export type ProviderId =
   | 'gemini'
   | 'codex'
@@ -291,6 +296,7 @@ export type ProviderId =
   | 'pi'
   | 'mistral'
   | 'muse'
+  | 'devin'
 export type ProviderRerouteReason = 'provider-paused' | 'user-failover'
 export interface ProviderRunReroute {
   from: ProviderId
@@ -900,6 +906,14 @@ export type EnsembleParticipantStatus =
    */
   | 'unreachable'
 
+/**
+ * Continuous-only since 2026-09-01: the composer's Turn/Continuous picker was
+ * retired and every round now runs 'continuous'. 'turn_bound' stays in the
+ * union ONLY as a legacy wire/persistence value (older chats, rounds, roster
+ * presets, scheduled snapshots, and remote/iOS callers may still carry it);
+ * every read path normalizes it to 'continuous'. Do not branch new behavior
+ * on it.
+ */
 export type EnsembleOrchestrationMode = 'turn_bound' | 'continuous'
 
 export type EnsembleFanoutPolicy =
@@ -2604,6 +2618,16 @@ export interface AppSettings {
    * settings write, so recording it per run would put a disk write in the hot path.
    */
   ollamaModelContextTokens?: Record<string, number>
+  /**
+   * Per-model shared-transcript ingest overrides for Ensemble seats, keyed
+   * `provider:modelId` (chars). Only the override-eligible model classes —
+   * Codex GPT-5.3 Spark and 4B–12B-param Ollama locals — read this (see
+   * `shared/ensembleSeatIngest.ts`); every other model derives its ingest
+   * budget from its context window. Written from the Context · per
+   * participant panel's per-model slider; IS in SETTINGS_PATCH_KEYS
+   * (renderer-writable), sanitized on write.
+   */
+  ensembleModelIngestChars?: Record<string, number>
   /** Opt-in AntiGravity provider (distinct from RETIRED Gemini; never a revival).
    * DISABLED by default. Becomes offer/run eligible only when this is true AND
    * `antigravityOptInAcceptedAt` is set — see `isAntigravityOptInEnabled`. */
