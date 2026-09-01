@@ -270,12 +270,15 @@
   background: var(--app-bg-sunken);
 }
 
+/* Literal spacing on purpose: this row carries the Accept/Reject decision, and
+ * agent-writable spacing tokens (theme_tokens_set, floor 0) must never be able
+ * to change its geometry — see consentSurfaceTokens.test.ts. */
 .compact-chat-approval-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   justify-content: flex-end;
-  margin-top: var(--space-sm);
+  margin-top: 8px;
 }
 
 .compact-chat-approval-actions button {
