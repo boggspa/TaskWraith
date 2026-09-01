@@ -72,6 +72,14 @@ export interface IncrementalChatAppendOptions {
 export interface IncrementalChatJournalOptions {
   /** Dynamic authority gate; false is strictly replay-only. */
   canWrite?: () => boolean
+  /**
+   * Authority for read-path torn-tail repair (load/replay side effects).
+   * Defaults to `canWrite`. Stage 2 splits the two under Host ownership:
+   * explicit mirror writes are permitted, but a torn journal tail from the
+   * legacy era must not self-heal as a side effect of merely READING a chat
+   * — the Host-owned read-only import invariant pins every profile byte.
+   */
+  canRepairOnRead?: () => boolean
   now?: () => number
   maxJournalBytes?: number
   maxJournalEntries?: number
@@ -206,6 +214,13 @@ export function createIncrementalChatJournal(
   const canWrite = (): boolean => {
     try {
       return options.canWrite?.() ?? true
+    } catch {
+      return false
+    }
+  }
+  const canRepair = (): boolean => {
+    try {
+      return options.canRepairOnRead?.() ?? canWrite()
     } catch {
       return false
     }
@@ -514,7 +529,7 @@ export function createIncrementalChatJournal(
     const parsed = tombstoned
       ? { batches: [], bytes: 0, torn: false, validContent: '' }
       : parseJournal(chatId)
-    if (canWrite()) recoverTornTail(chatId, parsed)
+    if (canRepair()) recoverTornTail(chatId, parsed)
     if (!checkpoint && parsed.batches.length > 0) {
       throw new Error(`Incremental chat journal for ${chatId} has no checkpoint baseline`)
     }
@@ -594,7 +609,7 @@ export function createIncrementalChatJournal(
       }
     }
     const parsed = parseJournal(chatId)
-    const repairedTornTail = parsed.torn && canWrite()
+    const repairedTornTail = parsed.torn && canRepair()
     if (repairedTornTail) recoverTornTail(chatId, parsed)
     let record = cloneRecord(checkpoint.record)
     let appliedBatches = 0

@@ -842,11 +842,33 @@ const saveCoalescer =
  * must expect chat-journal bytes to ADD to chat bytes here, not replace them.
  */
 const chatJournal = createChatJournal(chatJournalDir, { canWrite: legacyStoreCanWrite })
+/**
+ * Stage 2 — sideband writability for the T4 incremental journal.
+ *
+ * `chat-journal-v2` is main-owned, NOT part of the Host's `chats/` store:
+ * Host-owned erasure already retires its files directly
+ * (`purgeChatJournalArtifactsHostOwned`). The coordinator must stay writable
+ * in both durable regimes:
+ *  - gate open: the T4 dual-write mirror of the admitted legacy path;
+ *  - gate host-owned: the Stage 2 mirror for `saveChatThroughHost` mutation
+ *    saves (`persistIncrementalChatForHostSave`), which keeps ID/revision
+ *    mutation provenance durable after the Host cutover.
+ * `draining` and `closed` remain read-only: no new mirror writer may start
+ * mid-drain, and the legacy admission wrapper keeps its own stricter fence.
+ */
+function incrementalJournalSidebandWritable(): boolean {
+  return legacyStoreCanWrite() || legacyStoreWriterGate.snapshot().state === 'host-owned'
+}
 const incrementalChatPersistence = createIncrementalChatPersistence({
   journal: createIncrementalChatJournal(incrementalChatJournalDir, {
-    canWrite: legacyStoreCanWrite
+    canWrite: incrementalJournalSidebandWritable,
+    // Read-path torn-tail repair stays strictly legacy-admitted: under Host
+    // ownership a torn legacy-era tail must not self-heal as a side effect
+    // of merely reading a chat (the read-only import invariant), while the
+    // explicit Stage 2 mirror writes above remain permitted.
+    canRepairOnRead: legacyStoreCanWrite
   }),
-  canWrite: legacyStoreCanWrite
+  canWrite: incrementalJournalSidebandWritable
 })
 const chatUpdateProjectionTracker = new ChatUpdateProjectionTracker()
 const incrementalChatIdleCheckpointTimer = setInterval(() => {
@@ -1179,6 +1201,50 @@ function persistIncrementalChatAdmitted(
   } catch {
     // Coordinator already records and logs the failure. The caller must take
     // the synchronous compatibility-checkpoint fallback for this exact save.
+    return null
+  }
+}
+
+/**
+ * Stage 2 — incremental persistence re-homed onto the Host write path.
+ *
+ * Once the legacy writer gate is Host-owned, production saves route through
+ * `saveChatThroughHost`, so the legacy-admitted `persistIncrementalChat`
+ * above is never reached: ID/revision mutations would persist only as whole
+ * Host records and the T4 journal would be write-dead after the cutover.
+ * This mirror keeps the journal durable on that path. The complete record
+ * still rides the Host persist queue — the authoritative write, enqueued by
+ * the caller BEFORE this runs — and a save carrying authored ID operations
+ * also appends its mutation batch to the main-owned sideband journal.
+ * Non-mutation saves stay whole-record-only.
+ *
+ * A mirror failure never affects the Host write. The journal self-heals at
+ * the next mutation save exactly like the legacy dual-write's V2-failure
+ * fallback: `ensureBaseline` re-anchors the checkpoint on the authoritative
+ * pre-save record, so a stale head — a non-mutation Host save advanced the
+ * record, or a conflict recovery re-anchored it — is rebuilt, never replayed
+ * against the wrong base.
+ */
+function persistIncrementalChatForHostSave(
+  previous: ChatRecord | null,
+  next: ChatRecord,
+  reason: FlushReason,
+  authoredTranscript?: AuthoredChatTranscriptMutation
+): IncrementalChatPersistResult | null {
+  // The admitted path owns its own incremental persist; never double-append.
+  if (legacyStoreCanWrite()) return null
+  if (legacyStoreWriterGate.snapshot().state !== 'host-owned') return null
+  try {
+    return incrementalChatPersistence.persist(
+      previous,
+      next,
+      incrementalPersistenceBoundary(reason),
+      authoredTranscript
+    )
+  } catch {
+    // Side-band only: the authoritative whole record is already enqueued on
+    // the Host persist queue. persist() dropped its verified-baseline marker
+    // on failure, so the next mutation save re-establishes the baseline.
     return null
   }
 }
@@ -7768,6 +7834,21 @@ export class AppStore {
       record: normalizedChat,
       expectedRevision
     })
+    // Stage 2: keep the T4 incremental journal durable after the Host
+    // cutover. A save carrying authored ID/revision mutations appends its
+    // batch to the main-owned sideband journal in addition to the
+    // whole-record Host enqueue above; non-mutation saves stay
+    // whole-record-only. Best-effort by construction: the authoritative
+    // enqueue already happened, and a mirror failure repairs its baseline at
+    // the next mutation save.
+    if (options.authoredTranscript) {
+      persistIncrementalChatForHostSave(
+        previousChatForFeedback,
+        normalizedChat,
+        deriveSaveFlushReason(normalizedChat),
+        options.authoredTranscript
+      )
+    }
     return normalizedChat
   }
 

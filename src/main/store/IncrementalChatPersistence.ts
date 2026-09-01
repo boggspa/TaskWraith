@@ -69,6 +69,11 @@ function durableClone(record: ChatRecord): ChatRecord {
   return JSON.parse(JSON.stringify(record)) as ChatRecord
 }
 
+function recordRevision(record: Pick<ChatRecord, 'persistenceRevision'>): number {
+  const revision = record.persistenceRevision
+  return Number.isSafeInteger(revision) && (revision ?? -1) >= 0 ? revision! : 0
+}
+
 function carriesUserMessage(messages: readonly ChatMessage[]): boolean {
   return messages.some((message) => message.role === 'user')
 }
@@ -132,6 +137,17 @@ export function createIncrementalChatPersistence(
   }
   const logger = options.logger ?? console
   const baselineVerifiedChatIds = new Set<string>()
+  /**
+   * Last revision this coordinator durably persisted per chat (baseline,
+   * append, or recovery checkpoint). The verified marker alone cannot prove
+   * the journal head on the Stage 2 Host mirror path: non-mutation
+   * whole-record Host saves advance the authoritative record WITHOUT the
+   * journal, so a marker-cached chat can re-enter persist with a previous
+   * record newer than the journal head. Comparing against this in-memory
+   * revision re-anchors the baseline without any disk read, keeping the hot
+   * append path genuinely incremental.
+   */
+  const lastPersistedRevisionByChatId = new Map<string, number>()
   const boundaryMix: Record<IncrementalChatPersistenceBoundary, number> = {
     normal: 0,
     approval: 0,
@@ -154,6 +170,7 @@ export function createIncrementalChatPersistence(
     if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     journal.replaceAuthoritativeCheckpoint(chatId, durableClone(record))
     baselineVerifiedChatIds.add(chatId)
+    lastPersistedRevisionByChatId.set(chatId, recordRevision(record))
     baselineRepairs += 1
   }
 
@@ -183,9 +200,21 @@ export function createIncrementalChatPersistence(
     // coordinator. Returning before durableClone/initialize is what makes the
     // normal append path genuinely incremental rather than cloning the full
     // transcript just to discover that its baseline already exists.
-    if (baselineVerifiedChatIds.has(chatId)) return
+    if (baselineVerifiedChatIds.has(chatId)) {
+      // Stage 2 Host mirror: the verified marker no longer proves the journal
+      // head by itself. A non-mutation whole-record Host save (or any
+      // Host-native record write) can advance the authoritative record
+      // between two mutation saves, leaving the journal behind. Re-anchor the
+      // baseline from the authoritative pre-save record when that happens —
+      // one in-memory revision compare, no disk read, no transcript clone.
+      if (lastPersistedRevisionByChatId.get(chatId) !== recordRevision(previous)) {
+        replaceAuthoritative(chatId, previous)
+      }
+      return
+    }
     try {
       journal.initialize(chatId, durableClone(previous))
+      lastPersistedRevisionByChatId.set(chatId, recordRevision(previous))
     } catch (error) {
       if (!baselineMismatch(error)) throw error
       replaceAuthoritative(chatId, previous)
@@ -210,6 +239,7 @@ export function createIncrementalChatPersistence(
       if (!previous) {
         journal.initialize(next.appChatId, durableClone(next))
         baselineVerifiedChatIds.add(next.appChatId)
+        lastPersistedRevisionByChatId.set(next.appChatId, recordRevision(next))
         seeds += 1
         const parityVerified = boundary === 'normal' ? null : verify(next.appChatId, next, true)
         return {
@@ -234,6 +264,7 @@ export function createIncrementalChatPersistence(
       journal.append(batch, { durability })
       mutationBatchesAppended += 1
       mutationBytesAppended += mutationBytes
+      lastPersistedRevisionByChatId.set(next.appChatId, batch.revision)
 
       let checkpointed = false
       let parityVerified: boolean | null = null
@@ -254,6 +285,7 @@ export function createIncrementalChatPersistence(
       // the next save to re-establish its baseline instead of retrying forever
       // against a journal head that is now one or more revisions behind.
       baselineVerifiedChatIds.delete(next.appChatId)
+      lastPersistedRevisionByChatId.delete(next.appChatId)
       logger.error('[incremental-chat] mutation persistence failed', error)
       throw error
     }
@@ -289,12 +321,14 @@ export function createIncrementalChatPersistence(
     if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     journal.purge(chatId)
     baselineVerifiedChatIds.delete(chatId)
+    lastPersistedRevisionByChatId.delete(chatId)
   }
 
   const clear = (): void => {
     if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     journal.clear()
     baselineVerifiedChatIds.clear()
+    lastPersistedRevisionByChatId.clear()
   }
 
   const stats = (): IncrementalChatPersistenceStats => ({
