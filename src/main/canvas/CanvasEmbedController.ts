@@ -13,7 +13,11 @@
  * The WebContentsView + parent-window access are injected so the rect/lifecycle
  * bookkeeping is unit-testable without Electron.
  */
-import type { CanvasHostSurface, CanvasSurfaceOptions } from './CanvasHostSurface'
+import type {
+  CanvasHostSurface,
+  CanvasSurfaceKind,
+  CanvasSurfaceOptions
+} from './CanvasHostSurface'
 
 export interface CanvasEmbedRect {
   x: number
@@ -47,7 +51,10 @@ export interface CanvasEmbedControllerDeps {
   /** Resolve the renderer window that owns this embedded surface. Undefined is
    * the primary app window for backwards-compatible callers. */
   getParentWindow: (hostId?: number) => EmbedParentWindow | null
-  createView: (partition: string) => EmbeddedViewHandle
+  /** Create the Electron view for a surface. `kind` selects surface-specific
+   * webPreferences (the emulator disables background throttling so its WASM
+   * core keeps framing while the view is occluded or the window is hidden). */
+  createView: (partition: string, kind?: CanvasSurfaceKind) => EmbeddedViewHandle
 }
 
 interface EmbeddedEntry {
@@ -130,7 +137,7 @@ export class CanvasEmbedController {
     }
     // Replace any stale entry for this id.
     this.detach(canvasId)
-    const view = this.deps.createView(opts.partition)
+    const view = this.deps.createView(opts.partition, opts.kind)
     const entry: EmbeddedEntry = {
       view,
       parent,
