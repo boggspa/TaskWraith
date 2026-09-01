@@ -492,6 +492,66 @@ describe('runMuseProvider', () => {
     expect(outcome.status).toBe('cancelled')
   })
 
+  it('kills the spawned process when cancellation is requested mid-run', async () => {
+    const temporaryRoot = tempDir('muse-run-kill-')
+    const workspacePath = tempDir('muse-ws-kill-')
+    let cancelled = false
+    const kill = vi.fn()
+    let releaseWait: (() => void) | null = null
+    let safetyValve: ReturnType<typeof setTimeout> | null = null
+    const outcomePromise = runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: 'x',
+      runId: 'run-kill',
+      temporaryRoot,
+      sessionLogPollIntervalMs: 10,
+      shouldCancel: () => cancelled,
+      resolveSessionLog: async () => ({
+        row: null,
+        sessionLogPath: null,
+        source: 'missing'
+      }),
+      assertCron: () => ({
+        ok: true,
+        sessionId: 'run-kill',
+        sessionDir: temporaryRoot,
+        cronDbPath: join(temporaryRoot, 'cron.db'),
+        jobCount: 0,
+        schemaVersion: null
+      }),
+      spawn: () => ({
+        pid: 1,
+        kill(signal) {
+          kill(signal)
+          // A real child exits on SIGTERM; the double mirrors that.
+          if (safetyValve) clearTimeout(safetyValve)
+          releaseWait?.()
+        },
+        onStdout() {
+          // This test double does not emit stdout.
+        },
+        onStderr() {
+          // This test double does not emit stderr.
+        },
+        wait() {
+          return new Promise((resolve) => {
+            releaseWait = () => resolve({ code: null, signal: 'SIGTERM' })
+            // A child that is never killed would hang this test forever; end
+            // it late so the kill assertion below fails instead of timing out.
+            safetyValve = setTimeout(() => releaseWait?.(), 1_000)
+          })
+        }
+      })
+    })
+    // Stop is pressed while the child is still mid-turn.
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    cancelled = true
+    const outcome = await outcomePromise
+    expect(kill).toHaveBeenCalledWith('SIGTERM')
+    expect(outcome.status).toBe('cancelled')
+  })
+
   it('projects session.jsonl tool commits into onEvent before terminal', async () => {
     const temporaryRoot = tempDir('muse-run-tools-')
     const workspacePath = tempDir('muse-ws-tools-')

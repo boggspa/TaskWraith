@@ -392,9 +392,19 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
       if (text) warnings.push(`muse stderr: ${text.slice(0, 500)}`)
     })
 
-    if (input.shouldCancel?.()) {
-      handle.kill('SIGTERM')
+    // Stop must end the turn, not just relabel it. The cancel flag is polled
+    // for the life of the child (on the session-log timer below) and the first
+    // observation kills it. Before this, cancellation was consulted once at
+    // spawn and once after exit, so a stopped Muse run kept executing — and
+    // billing — to completion.
+    let killRequested = false
+    const spawnedHandle = handle
+    const killIfCancelled = (): void => {
+      if (killRequested || !input.shouldCancel?.()) return
+      killRequested = true
+      spawnedHandle.kill('SIGTERM')
     }
+    killIfCancelled()
 
     let mainSessionLogPath: string | null = null
     const pollMs = Math.max(10, input.sessionLogPollIntervalMs ?? 50)
@@ -417,6 +427,7 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
     })
 
     pollTimer = setInterval(() => {
+      killIfCancelled()
       void pollSessionLogs(mainSessionLogPath)
     }, pollMs)
 
