@@ -1668,6 +1668,10 @@ import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
 import { isIsolateSharedBranchHold } from './IsolateSharedBranchHold'
 import { shellCommandTierHold } from './ShellCommandTierPolicy'
 import { workspaceInspectionExecutionPlan } from './WorkspaceInspectionShell'
+import {
+  executeWorkspaceInspectionProgram,
+  workspaceInspectionProgramPlan
+} from './WorkspaceInspectionProgram'
 import { deleteCliProviderProcessIfOwned } from './grok/GrokProcessOwnership'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 // ── Mistral Vibe ACP seat ─────────────────────────────────────────────────
@@ -39491,6 +39495,7 @@ async function executeGeminiMcpTool(
       const command = String(args.command || '').trim()
       if (!command) throw new Error('command is required.')
       let workspaceInspectionPlan: ReturnType<typeof workspaceInspectionExecutionPlan> = null
+      let workspaceInspectionProgram: ReturnType<typeof workspaceInspectionProgramPlan> = null
       if (workspaceInspectionFastPath) {
         const liveContext = getAgentToolContext(parentProvider, effectiveRoute)
         const liveWorkspacePath =
@@ -39517,10 +39522,21 @@ async function executeGeminiMcpTool(
                 cwd: liveCwd
               })
             : null
+        workspaceInspectionProgram =
+          !workspaceInspectionPlan && liveWorkspacePath && liveCwd
+            ? workspaceInspectionProgramPlan(command, {
+                workspacePath: liveWorkspacePath,
+                cwd: liveCwd
+              })
+            : null
+        const liveInspectionWorkspaceRealPath =
+          workspaceInspectionPlan?.workspaceRealPath ||
+          workspaceInspectionProgram?.workspaceRealPath ||
+          null
         if (
-          !workspaceInspectionPlan ||
+          (!workspaceInspectionPlan && !workspaceInspectionProgram) ||
           !workspaceInspectionWorkspaceRealPath ||
-          workspaceInspectionPlan.workspaceRealPath !== workspaceInspectionWorkspaceRealPath
+          liveInspectionWorkspaceRealPath !== workspaceInspectionWorkspaceRealPath
         ) {
           throw new Error(
             'The prompt-free workspace inspection boundary changed before execution.'
@@ -39574,16 +39590,43 @@ async function executeGeminiMcpTool(
         executionEnvironment = undefined
         unsetExecutionEnvironment = undefined
       }
+      const workspaceInspectionDeadline = Date.now() + 30_000
       const result = await runWithHostCommandProjectionScope(hostCommandProjection, () =>
-        runHostCommand(executionCommand, executionCwd, {
-          ...(shellReleaseApproval ? { releaseApproval: shellReleaseApproval } : {}),
-          ...(executionEnvironment ? { environment: executionEnvironment } : {}),
-          ...(unsetExecutionEnvironment
-            ? { unsetEnvironment: unsetExecutionEnvironment }
-            : {})
-        })
+        workspaceInspectionProgram && !commandRuleMatch
+          ? executeWorkspaceInspectionProgram(
+              workspaceInspectionProgram,
+              (invocation) =>
+                runHostCommand(
+                  [invocation.executableRealPath, ...invocation.argv],
+                  invocation.cwd,
+                  {
+                    timeoutMs: Math.max(1, workspaceInspectionDeadline - Date.now()),
+                    ...(shellReleaseApproval ? { releaseApproval: shellReleaseApproval } : {}),
+                    ...(invocation.environment ? { environment: invocation.environment } : {}),
+                    ...(invocation.unsetEnvironment
+                      ? { unsetEnvironment: invocation.unsetEnvironment }
+                      : {})
+                  }
+                ),
+              () => {
+                if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) {
+                  throw new Error('Workspace inspection authority expired between program stages.')
+                }
+                workspaceExecutionContext.assertMutationStillLive?.()
+              }
+            )
+          : runHostCommand(executionCommand, executionCwd, {
+              ...(shellReleaseApproval ? { releaseApproval: shellReleaseApproval } : {}),
+              ...(executionEnvironment ? { environment: executionEnvironment } : {}),
+              ...(unsetExecutionEnvironment
+                ? { unsetEnvironment: unsetExecutionEnvironment }
+                : {})
+            })
       )
       text = formatHostCommandResult(result)
+      if (workspaceInspectionProgram && !commandRuleMatch) {
+        text = `${text}\n\nTaskWraith executed workspace_git_snapshot_v1 as direct read-only stages. Marker output is a bounded list of JSON-escaped names only; ls metadata is intentionally omitted.`
+      }
       // S3 disclosure. Extra native shell fields reached us and did nothing;
       // say so on the receipt rather than letting the caller assume otherwise.
       // Disclose only: never implement the semantics, never widen a grant.

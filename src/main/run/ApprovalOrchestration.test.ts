@@ -53,11 +53,15 @@ vi.mock('../WorkspaceInspectionShell', async () => {
     )
   }
 })
+vi.mock('../WorkspaceInspectionProgram', () => ({
+  workspaceInspectionProgramPlan: vi.fn(() => null)
+}))
 
 import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
 import { approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
 import { workspaceInspectionShellReason } from '../WorkspaceInspectionShell'
+import { workspaceInspectionProgramPlan } from '../WorkspaceInspectionProgram'
 import { promptFreeReadOnlyShellReason } from '../PromptFreeReadOnlyShell'
 
 type Resolution = {
@@ -184,6 +188,7 @@ beforeEach(() => {
   vi.mocked(approvalActionsForPolicy).mockReturnValue(['accept', 'decline', 'cancel'] as never)
   vi.mocked(isPlanInstrumentGrantHold).mockReturnValue(false)
   vi.mocked(isPostureApprovalOnlyService).mockReturnValue(false)
+  vi.mocked(workspaceInspectionProgramPlan).mockReturnValue(null)
   vi.mocked(workspaceInspectionShellReason).mockImplementation((command, context) =>
     context.workspacePath
       ? (command === 'printenv' ||
@@ -917,6 +922,68 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
       expect(order).toContain('audit:autoAllow:inspection_shell')
       expect(order).not.toContain('registerGeminiTool')
     }
+  })
+
+  it('(d3) auto-allows a typed workspace Git snapshot program', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'ask', decision: 'ask' })
+    vi.mocked(workspaceInspectionShellReason).mockReturnValueOnce(null)
+    vi.mocked(workspaceInspectionProgramPlan).mockReturnValueOnce({
+      reason: 'inspection_shell',
+      recipe: 'workspace_git_snapshot_v1'
+    } as never)
+    const command =
+      'git branch --show-current && git rev-parse HEAD && git status --porcelain && ls -la .WORK-IN-PROGRESS* 2>/dev/null; echo "---markers-end---"'
+
+    await expect(
+      createApprovalOrchestration(deps)(
+        sender,
+        'pi',
+        'shellCommands',
+        '/repo',
+        request({ preview: { command, cwd: '/repo', params: { command } } })
+      )
+    ).resolves.toBe(true)
+    expect(order).toContain('audit:autoAllow:inspection_shell')
+    expect(order).not.toContain('registerGeminiTool')
+  })
+
+  it('(d3) keeps policy-allow audit while selecting the direct Git snapshot executor', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'allow', decision: 'allow' })
+    vi.mocked(workspaceInspectionShellReason).mockReturnValueOnce(null)
+    vi.mocked(workspaceInspectionProgramPlan).mockReturnValueOnce({
+      reason: 'inspection_shell',
+      recipe: 'workspace_git_snapshot_v1'
+    } as never)
+    const onWorkspaceInspectionMatch = vi.fn()
+    const command =
+      'git branch --show-current && git rev-parse HEAD && git status --porcelain && ls -la .WORK-IN-PROGRESS* 2>/dev/null; echo "---markers-end---"'
+
+    await expect(
+      createApprovalOrchestration(deps)(
+        sender,
+        'pi',
+        'shellCommands',
+        '/repo',
+        request({
+          preview: { command, cwd: '/repo', params: { command } },
+          onWorkspaceInspectionMatch
+        })
+      )
+    ).resolves.toBe(true)
+    expect(onWorkspaceInspectionMatch).toHaveBeenCalledOnce()
+    expect(order).toContain('audit:autoAllow:policy')
+    const policyAudit = vi
+      .mocked(deps.auditService.recordAutomaticApprovalDecision)
+      .mock.calls.find((call) => call[6] === 'policy')
+    expect(policyAudit?.[8]).toMatchObject({
+      policy: 'allow',
+      executionBoundary: 'brokered-direct-inspection',
+      workspaceInspectionRecipe: 'workspace_git_snapshot_v1'
+    })
   })
 
   it('(d3) prompts for external inspection, environment dumps, and redirects', async () => {

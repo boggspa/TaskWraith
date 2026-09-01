@@ -21,6 +21,7 @@ import { shellCommandFromApprovalPreview } from '../ReadOnlyGitShellCommand'
 import { isIsolateSharedBranchHold } from '../IsolateSharedBranchHold'
 import { shellCommandTierHold } from '../ShellCommandTierPolicy'
 import { workspaceInspectionShellReason } from '../WorkspaceInspectionShell'
+import { workspaceInspectionProgramPlan } from '../WorkspaceInspectionProgram'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
 import { isRecord } from '../settings/MainSanitizers'
@@ -538,40 +539,62 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     // also carries the user's exact standing authorization for the bounded
     // maintenance/introspection commands captured in its 2026-08-13 approval
     // screenshots; no other provider or spelling inherits that exception.
-    // forcePrompt (caller-demanded human review) still prompts, and
-    // policy-'allow' resolutions keep flowing through the ordinary audited
-    // path below.
-    if (service === 'shellCommands' && !request.forcePrompt && decision !== 'allow') {
+    // forcePrompt (caller-demanded human review) still prompts. A policy-'allow'
+    // resolution keeps flowing through the ordinary audited path below, but it
+    // still receives the inspection callback so execution uses the typed direct
+    // plan rather than falling back to raw shell interpretation.
+    let workspaceInspectionAuditMetadata:
+      | {
+          executionBoundary: 'brokered-direct-inspection'
+          workspaceInspectionRecipe?: 'workspace_git_snapshot_v1'
+        }
+      | undefined
+    if (service === 'shellCommands' && !request.forcePrompt) {
       const readOnlyShellCommand = shellCommandFromApprovalPreview(request.preview)
       const previewCwd = isRecord(request.preview) ? request.preview.cwd : undefined
+      const inspectionContext = {
+        workspacePath,
+        cwd: typeof previewCwd === 'string' ? previewCwd : workspacePath
+      }
+      const workspaceInspectionProgram = workspaceInspectionProgramPlan(
+        readOnlyShellCommand,
+        inspectionContext
+      )
       const shellFastPathReason =
-        workspaceInspectionShellReason(readOnlyShellCommand, {
-          workspacePath,
-          cwd: typeof previewCwd === 'string' ? previewCwd : workspacePath
-        }) ||
+        workspaceInspectionShellReason(readOnlyShellCommand, inspectionContext) ||
+        workspaceInspectionProgram?.reason ||
         (provider === 'antigravity' && isAntigravityUserAuthorizedShellCommand(readOnlyShellCommand)
           ? 'explicit_user_request'
           : null)
       if (shellFastPathReason) {
         if (shellFastPathReason === 'readonly_shell' || shellFastPathReason === 'inspection_shell') {
           request.onWorkspaceInspectionMatch?.()
-        }
-        deps.auditService.recordAutomaticApprovalDecision(
-          provider,
-          auditRoute,
-          service,
-          workspacePath,
-          request,
-          'autoAllow',
-          shellFastPathReason,
-          'request',
-          {
-            policy,
-            command: readOnlyShellCommand,
-            ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+          workspaceInspectionAuditMetadata = {
+            executionBoundary: 'brokered-direct-inspection',
+            ...(workspaceInspectionProgram
+              ? { workspaceInspectionRecipe: workspaceInspectionProgram.recipe }
+              : {})
           }
-        )
-        return true
+        }
+        if (decision !== 'allow') {
+          deps.auditService.recordAutomaticApprovalDecision(
+            provider,
+            auditRoute,
+            service,
+            workspacePath,
+            request,
+            'autoAllow',
+            shellFastPathReason,
+            'request',
+            {
+              policy,
+              command: readOnlyShellCommand,
+              ...workspaceInspectionAuditMetadata,
+              ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+            }
+          )
+          return true
+        }
       }
     }
     const planArtifactWriteMetadata = deps.planArtifactWriteApprovalMetadata({
@@ -780,6 +803,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         {
           policy,
           yoloEnabledAt: deps.sessionYoloState.enabledAt,
+          ...workspaceInspectionAuditMetadata,
           ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
         }
       )
@@ -804,7 +828,11 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
             ? 'session_grant'
             : 'policy',
         workspaceGrantAllowed ? 'workspace' : sessionGrantAllowed ? 'session' : 'request',
-        { policy, ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}) }
+        {
+          policy,
+          ...workspaceInspectionAuditMetadata,
+          ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+        }
       )
       return true
     }

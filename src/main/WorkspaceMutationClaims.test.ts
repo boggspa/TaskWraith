@@ -732,6 +732,16 @@ describe('deriveWorkspaceMutationClaims', () => {
         args: { command: 'cat README.md' }
       })
     ).resolves.toEqual([])
+    await expect(
+      deriveWorkspaceMutationClaims({
+        workspacePath,
+        action: 'run_shell_command',
+        args: {
+          command:
+            'git branch --show-current && git rev-parse HEAD && git status --porcelain && ls -la .WORK-IN-PROGRESS* 2>/dev/null; echo "---markers-end---"'
+        }
+      })
+    ).resolves.toEqual([])
     for (const command of ['cat /etc/passwd', 'cat ../secret.txt', 'cat escaped/secret.txt']) {
       await expect(
         deriveWorkspaceMutationClaims({

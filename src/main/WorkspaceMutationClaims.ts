@@ -10,6 +10,7 @@ import {
   type ResolvedProviderAction
 } from '../shared/providerActionTaxonomy'
 import { isWorkspaceInspectionShellCommand } from './WorkspaceInspectionShell'
+import { workspaceInspectionProgramPlan } from './WorkspaceInspectionProgram'
 import type { ProviderId } from './store/types'
 import type { WorkspaceLockClaimRequest, WorkspaceLockHunk } from './workLocks/WorkspaceLockTypes'
 
@@ -771,10 +772,14 @@ export async function deriveWorkspaceMutationClaims(
           : context.worktreePath
       if (
         command !== undefined &&
-        isWorkspaceInspectionShellCommand(command, {
+        (isWorkspaceInspectionShellCommand(command, {
           workspacePath: context.worktreePath,
           cwd: inspectionCwd
-        })
+        }) ||
+          workspaceInspectionProgramPlan(command, {
+            workspacePath: context.worktreePath,
+            cwd: inspectionCwd
+          }) !== null)
       ) {
         return []
       }

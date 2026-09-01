@@ -230,4 +230,24 @@ describe('WorkspaceInspectionProgram', () => {
     const replay = await executeWorkspaceInspectionProgram(plan, runner, () => undefined)
     expect(replay.error).toMatch(/not issued/i)
   })
+
+  it('stops before every later stage when live authority expires', async () => {
+    const { workspace } = await fixture()
+    const plan = workspaceInspectionProgramPlan(capturedCommand, {
+      workspacePath: workspace,
+      cwd: workspace
+    })
+    if (!plan) throw new Error('Expected the captured inspection program to compile.')
+    const runner = vi.fn(async () => successfulResult('master\n'))
+    let authorityChecks = 0
+
+    await expect(
+      executeWorkspaceInspectionProgram(plan, runner, () => {
+        authorityChecks += 1
+        if (authorityChecks > 1) throw new Error('authority expired')
+      })
+    ).rejects.toThrow('authority expired')
+    expect(runner).toHaveBeenCalledOnce()
+    expect(authorityChecks).toBe(2)
+  })
 })
