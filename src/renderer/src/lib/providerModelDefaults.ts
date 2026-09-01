@@ -356,6 +356,11 @@ const MISTRAL_DEFAULT_MODEL_ROWS = [
     description: '1M context - coding model'
   },
   {
+    id: 'glm-5-2',
+    label: 'GLM-5.2 (Mistral Hosted)',
+    description: '1M context - coding model'
+  },
+  {
     id: 'codestral-2508',
     label: 'Codestral (Aug 2025)',
     description: '131K context - coding-tuned'

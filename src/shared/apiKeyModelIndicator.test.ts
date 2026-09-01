@@ -39,6 +39,9 @@ describe('modelRequiresApiKey', () => {
   it('marks only API models for Mistral, leaving subscription models unmarked', () => {
     expect(modelRequiresApiKey('mistral', 'mistral-large-2512')).toBe(true)
     expect(modelRequiresApiKey('mistral', 'zai-glm-5-2')).toBe(true)
+    // GLM-5.2 hosted on the Vibe subscription (alias `glm-5-2`) is NOT key-marked,
+    // unlike the API/BYOK `zai-glm-5-2` above.
+    expect(modelRequiresApiKey('mistral', 'glm-5-2')).toBe(false)
     expect(modelRequiresApiKey('mistral', 'codestral-2508')).toBe(true)
     expect(modelRequiresApiKey('mistral', 'ministral-8b-2512')).toBe(true)
     expect(modelRequiresApiKey('mistral', 'devstral-small')).toBe(false)

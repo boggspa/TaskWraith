@@ -34,8 +34,8 @@ const BYOK_ONLY_PROVIDERS: ReadonlySet<string> = new Set(['pi'])
  * Providers with BOTH lanes, where the model id decides:
  * - AntiGravity: `gemini-api:` ids run on the key via the official SDK, while every
  *   other id runs the `agy` CLI on the user's own subscription login.
- * - Mistral: `devstral-small` and `mistral-medium-3.5` run on the Vibe subscription
- *   by default, while API-only models (Mistral Large 3, GLM 5.2, Codestral, Ministral, etc.)
+ * - Mistral: `devstral-small`, `mistral-medium-3.5` and the hosted GLM-5.2 (`glm-5-2`)
+ *   run on the Vibe subscription, while API-only models (Mistral Large 3, GLM-5.2 via Mistral, Codestral, Ministral, etc.)
  *   run on the user's Mistral API key (BYOK).
  */
 const MIXED_LANE_PROVIDERS: ReadonlySet<string> = new Set(['antigravity', 'mistral'])
@@ -44,7 +44,10 @@ const MISTRAL_SUBSCRIPTION_MODELS: ReadonlySet<string> = new Set([
   'devstral-small',
   'devstral-small-latest',
   'mistral-medium-3.5',
-  'mistral-vibe-cli-latest'
+  'mistral-vibe-cli-latest',
+  // GLM-5.2 hosted on the Vibe subscription (alias `glm-5-2`), distinct from the
+  // API/BYOK `zai-glm-5-2` which stays key-marked.
+  'glm-5-2'
 ])
 
 /** Tooltip/aria text. One string so every surface says the same thing. */

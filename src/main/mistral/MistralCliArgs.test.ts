@@ -107,6 +107,12 @@ describe('normalizeMistralModel', () => {
     expect(normalizeMistralModel('ministral-3b-2512')).toBe('ministral-3b-2512')
   })
 
+  it('accepts the hosted GLM-5.2 subscription alias', () => {
+    // `glm-5-2` runs on the Vibe subscription (distinct from the API `zai-glm-5-2`).
+    // It must be in MISTRAL_SEAT_MODELS or it silently clamps to the default at launch.
+    expect(normalizeMistralModel('glm-5-2')).toBe('glm-5-2')
+  })
+
   it('never forwards a Pi upstream wire id', () => {
     // THE TWO-IDENTITIES COLLISION. ProviderId 'mistral' (this seat, plan OAuth)
     // and PiUpstreamId 'mistral' (BYOK, wire ids `mistral/<model>`) share a

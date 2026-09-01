@@ -12,7 +12,8 @@ describe('resolveMistralCredentialLaunch', () => {
     'devstral-small',
     'devstral-small-latest',
     'mistral-medium-3.5',
-    'mistral-vibe-cli-latest'
+    'mistral-vibe-cli-latest',
+    'glm-5-2'
   ])(
     'routes the Vibe model %s through the subscription and scrubs every API credential',
     (model) => {

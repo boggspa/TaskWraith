@@ -1028,6 +1028,12 @@ const MISTRAL_STATIC_MODELS = [
     ultraTaskSupported: true
   },
   {
+    id: 'glm-5-2',
+    label: 'GLM-5.2 (Mistral Hosted)',
+    description: '1M context - $1.40/$4.40 per Mtok',
+    ultraTaskSupported: true
+  },
+  {
     id: 'codestral-2508',
     label: 'Codestral (Aug 2025)',
     description: '131K context - coding-tuned, $0.30/$0.90 per Mtok',

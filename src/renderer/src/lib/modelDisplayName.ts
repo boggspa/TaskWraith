@@ -159,6 +159,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'mistral-vibe-cli-latest': 'Mistral Medium 3.5',
   'mistral-large-2512': 'Mistral Large 3',
   'zai-glm-5-2': 'GLM-5.2 (via Mistral)',
+  'glm-5-2': 'GLM-5.2 (Mistral Hosted)',
   'codestral-2508': 'Codestral (Aug 2025)',
   'mistral-small-2603': 'Mistral Small 4',
   'devstral-2512': 'Devstral 2',

@@ -1657,6 +1657,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes: 'Third-party Z.ai GLM-5.2 served by Mistral.'
       },
       {
+        modelId: 'glm-5-2',
+        inputUsdPerMillion: 1.4,
+        outputUsdPerMillion: 4.4,
+        cachedInputUsdPerMillion: 0.26,
+        sourceUrl: 'https://docs.mistral.ai/models/zai-glm-5-2',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          "GLM-5.2 hosted on the Vibe subscription (alias glm-5-2, same zai-glm-5-2 deployment as the API row above). Cached-input 0.26 read from the Vibe CLI's own bundled catalogue (vibe_cli_extra_models), authoritative over the marketing page; the API row above quotes the docs' 0.14. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing."
+      },
+      {
         modelId: 'codestral-2508',
         inputUsdPerMillion: 0.3,
         outputUsdPerMillion: 0.9,

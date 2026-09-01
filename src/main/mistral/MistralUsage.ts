@@ -42,6 +42,10 @@ const MISTRAL_MODEL_RATES: Readonly<Record<string, MistralModelRate>> = {
   [MISTRAL_MODEL_MEDIUM]: { inputUsdPerMillion: 1.5, outputUsdPerMillion: 7.5 },
   'mistral-large-2512': { inputUsdPerMillion: 0.5, outputUsdPerMillion: 1.5 },
   'zai-glm-5-2': { inputUsdPerMillion: 1.4, outputUsdPerMillion: 4.4 },
+  // Hosted GLM-5.2 on the Vibe subscription (alias `glm-5-2`). Same per-Mtok rate
+  // as the API `zai-glm-5-2` deployment; its turns ARE metered on the plan, so a
+  // missing row here would fall to the flagship rate and over-report plan burn.
+  'glm-5-2': { inputUsdPerMillion: 1.4, outputUsdPerMillion: 4.4 },
   'codestral-2508': { inputUsdPerMillion: 0.3, outputUsdPerMillion: 0.9 },
   'mistral-small-2603': { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.6 },
   'devstral-2512': { inputUsdPerMillion: 0.4, outputUsdPerMillion: 2.0 },
