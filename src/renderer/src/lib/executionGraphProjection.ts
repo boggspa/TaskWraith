@@ -111,6 +111,21 @@ const TERMINAL_ACTIVATION_STATES = new Set<StepActivationState>([
 
 const SUCCESSFUL_ACTIVATION_STATES = new Set<StepActivationState>(['succeeded'])
 
+/* States whose ledger reason describes an impediment or a terminal explanation.
+ * Healthy transitions carry reasons too ("Provider run is active."); surfacing
+ * one of those as a blocker tells the user a working graph is stuck on its own
+ * intended state, so ready/claimed/queued/running/succeeded never contribute. */
+const REASON_SURFACING_ACTIVATION_STATES = new Set<StepActivationState>([
+  'dormant',
+  'waiting_input',
+  'waiting_approval',
+  'waiting_retry',
+  'requires_action',
+  'failed',
+  'cancelled',
+  'skipped'
+])
+
 function compareStepIds(
   left: string,
   right: string,
@@ -443,7 +458,9 @@ function stepBlocker(
   activationByStep: ReadonlyMap<string, StepActivation>,
   latestAttempt: StepAttempt | null
 ): string | null {
-  if (activation?.reason?.trim()) return activation.reason.trim()
+  if (activation?.reason?.trim() && REASON_SURFACING_ACTIVATION_STATES.has(state)) {
+    return activation.reason.trim()
+  }
   if (state === 'waiting_input') return 'Waiting for user input'
   if (state === 'waiting_approval') return 'Waiting for approval'
   if (state === 'waiting_retry') {
