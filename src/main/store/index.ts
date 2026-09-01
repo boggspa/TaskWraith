@@ -54,6 +54,11 @@ import {
   type IncrementalChatPersistenceStats
 } from './IncrementalChatPersistence'
 import {
+  createSegmentedChatStore,
+  isSegmentedChatStoreEnabled,
+  type SegmentedChatStoreStats
+} from './SegmentedChatStore'
+import {
   ChatUpdateProjectionTracker,
   type ChatUpdateProjectionObservation
 } from './ChatUpdateProjectionTracker'
@@ -779,6 +784,7 @@ const chatComposerSelectionOverlayStore = new ChatComposerSelectionOverlayStore(
 const chatListIndexPath = path.join(userDataPath, 'chat-list-index.jsonl')
 const chatJournalDir = path.join(userDataPath, 'chat-journal')
 const incrementalChatJournalDir = path.join(userDataPath, 'chat-journal-v2')
+const segmentedChatStoreDir = path.join(userDataPath, 'chat-store-v2')
 const chatListIndexStore = new ChatListIndexStore(userDataPath, { canWrite: legacyStoreCanWrite })
 /** Rows already derived from the exact bytes on disk, so a chat whose index
  *  entry cannot be restamped is parsed once per process rather than once per
@@ -870,6 +876,33 @@ const incrementalChatPersistence = createIncrementalChatPersistence({
   }),
   canWrite: incrementalJournalSidebandWritable
 })
+
+/**
+ * Stage 3 — segmented dual-read chat store (ADR §5.1) on a SIBLING versioned
+ * root. The Host scanner rejects anything inside chats/ that is not a plain
+ * *.json ChatRecord (HostProfileDomainStore.sweepChatRecords), so v2 segments
+ * live in `chat-store-v2/` exactly like `chat-journal-v2`.
+ *
+ * DARK (ADR §11.4): `TASKWRAITH_CHAT_STORE_V2=1` opts in. Flag off = inert:
+ * no segment writes, no v2 reads, legacy behavior unchanged.
+ *
+ * Authority split (same discipline as the Stage 2 journal mirror): the legacy
+ * chats/*.json record stays the write authority; every admitted or Host-routed
+ * save mirrors onto the segmented store. Lifecycle ops (purge/clear/re-anchor
+ * after an erasure truncation) stay writable even with the flag off, so a
+ * later disable can never leave erased transcripts recoverable in stale v2
+ * segments (NON-NEGOTIABLE #4).
+ */
+function segmentedStoreSidebandWritable(): boolean {
+  return legacyStoreCanWrite() || legacyStoreWriterGate.snapshot().state === 'host-owned'
+}
+const segmentedChatStore = createSegmentedChatStore(segmentedChatStoreDir, {
+  enabled: isSegmentedChatStoreEnabled,
+  canWrite: segmentedStoreSidebandWritable,
+  // Quarantine renames and torn-tail trims are read-path side effects; keep
+  // them strictly legacy-admitted under the Host read-only import invariant.
+  canRepairOnRead: legacyStoreCanWrite
+})
 const chatUpdateProjectionTracker = new ChatUpdateProjectionTracker()
 const incrementalChatIdleCheckpointTimer = setInterval(() => {
   if (!legacyStoreCanWrite()) return
@@ -877,6 +910,11 @@ const incrementalChatIdleCheckpointTimer = setInterval(() => {
     incrementalChatPersistence.checkpointIdle()
   } catch (error) {
     console.error('[incremental-chat] idle checkpoint timer failed', error)
+  }
+  try {
+    segmentedChatStore.checkpointIdle()
+  } catch (error) {
+    console.error('[chat-store-v2] idle checkpoint failed', error)
   }
 }, 5_000)
 incrementalChatIdleCheckpointTimer.unref()
@@ -1105,6 +1143,11 @@ function purgeChatJournalArtifactsAdmitted(chatId: string): void {
   // cleanup below, failure must stop the deletion transaction so transcript
   // mutations cannot survive a reported successful delete.
   incrementalChatPersistence.purge(chatId)
+  // Stage 3: the segmented store is a third durable copy — its purge must
+  // also stop the deletion transaction on failure. Purge is gate-driven, not
+  // flag-driven, so segments from an earlier flag-on session die even when
+  // the flag is now off.
+  segmentedChatStore.purge(chatId)
   chatUpdateProjectionTracker.drop(chatId)
   try {
     chatJournal.delete(chatId)
@@ -1246,6 +1289,25 @@ function persistIncrementalChatForHostSave(
     // the Host persist queue. persist() dropped its verified-baseline marker
     // on failure, so the next mutation save re-establishes the baseline.
     return null
+  }
+}
+
+/**
+ * Stage 3 — segmented-store mirror. Best-effort by construction: the
+ * authoritative legacy/Host write has already happened (or is enqueued), so a
+ * mirror failure never fails the save; the next mirror re-anchors its
+ * baseline exactly like the Stage 2 journal. A no-op while the flag is off.
+ */
+function mirrorSegmentedChatStore(
+  previous: ChatRecord | null,
+  next: ChatRecord,
+  authoredTranscript?: AuthoredChatTranscriptMutation
+): void {
+  if (!isSegmentedChatStoreEnabled()) return
+  try {
+    segmentedChatStore.mirrorSave(previous, next, authoredTranscript)
+  } catch (error) {
+    console.error('[chat-store-v2] mirror failed', error)
   }
 }
 const subThreadMailboxesPath = path.join(userDataPath, 'subthread-mailboxes.json')
@@ -3094,9 +3156,11 @@ function hostOwnedReadRepairPathFamily(filePath: string): boolean {
   }
   const journalDirectory = path.join(userDataPath, 'chat-journal')
   const incrementalJournalDirectory = path.join(userDataPath, 'chat-journal-v2')
+  const segmentedChatDirectory = path.join(userDataPath, 'chat-store-v2')
   return (
     path.dirname(filePath) === journalDirectory ||
-    path.dirname(filePath) === incrementalJournalDirectory
+    path.dirname(filePath) === incrementalJournalDirectory ||
+    path.dirname(filePath) === segmentedChatDirectory
   )
 }
 
@@ -5269,6 +5333,7 @@ export class AppStore {
     chatListIndexStore.clearCache()
     chatListRebuildMemo.clear()
     incrementalChatPersistence.clear()
+    segmentedChatStore.clear()
     chatUpdateProjectionTracker.clear()
     this.orphanSubThreadsReaped = false
     this.orphanSubThreadReapCandidates.clear()
@@ -6517,8 +6582,31 @@ export class AppStore {
       cached.record = record
       return record
     }
+    // Stage 3 dual-read: assemble the v2 candidate once (flag-gated). Any v2
+    // defect — missing, corrupt, unhealthy — yields null and the legacy path
+    // below remains the fallback, so disabling the flag fully restores
+    // legacy reads (ADR rollback safety).
+    let v2Candidate: ChatRecord | null = null
+    if (isSegmentedChatStoreEnabled()) {
+      try {
+        const v2 = segmentedChatStore.readFull(chatId)
+        v2Candidate = v2 ? this.normalizeChatRecord(v2.record) : null
+      } catch (error) {
+        console.error(
+          `[chat-store-v2] read failed for ${chatId}; using the compatibility record`,
+          error
+        )
+      }
+    }
     const chat = readJson<ChatRecord | null>(chatPath, null)
-    if (!chat) return null
+    if (!chat) {
+      if (v2Candidate) {
+        const record = chatComposerSelectionOverlayStore.apply(v2Candidate)
+        this.chatRecordCache.set(chatId, { mtimeMs: stat.mtimeMs, size: stat.size, record })
+        return record
+      }
+      return null
+    }
     const legacyRecord = this.normalizeChatRecord(chat)
     let record = legacyRecord
     try {
@@ -6545,6 +6633,20 @@ export class AppStore {
         `[incremental-chat] replay failed for ${chatId}; using the compatibility checkpoint`,
         error
       )
+    }
+    // Stage 3: healthy v2 wins when it leads the compatibility record; on
+    // equal revisions the legacy+journal record stays (v1 remains the write
+    // authority). A lagging or divergent v2 never overrides legacy.
+    if (v2Candidate) {
+      const v2Revision = chatPersistenceRevision(v2Candidate)
+      if (v2Revision > chatPersistenceRevision(record)) {
+        record = v2Candidate
+      } else if (
+        v2Revision === chatPersistenceRevision(record) &&
+        isDeepStrictEqual(v2Candidate, record)
+      ) {
+        record = v2Candidate
+      }
     }
     record = chatComposerSelectionOverlayStore.apply(record)
     this.chatRecordCache.set(chatId, { mtimeMs: stat.mtimeMs, size: stat.size, record })
@@ -7849,6 +7951,10 @@ export class AppStore {
         options.authoredTranscript
       )
     }
+    // Stage 3: mirror EVERY Host-routed save (not just authored ones) so the
+    // preferred v2 read stays in sync with the authoritative record while the
+    // Host persist queue drains asynchronously. Flag-gated no-op otherwise.
+    mirrorSegmentedChatStore(previousChatForFeedback, normalizedChat, options.authoredTranscript)
     return normalizedChat
   }
 
@@ -8008,6 +8114,8 @@ export class AppStore {
       // every legacy write, including the synchronous first save.
       appendChatJournalEntry(normalizedChat.appChatId, normalizedChat)
       persistIncrementalChat(null, normalizedChat, flushReason)
+      // Stage 3: seed the segmented store with the same record.
+      mirrorSegmentedChatStore(previousChatForFeedback, normalizedChat)
       chatUpdateProjection = {
         state: chatUpdateProjectionTracker.seed(normalizedChat),
         delta: null
@@ -8047,6 +8155,10 @@ export class AppStore {
         flushReason,
         authoredTranscript
       )
+      // Stage 3: mirror the same save (with the same substituted authored
+      // ops) onto the segmented store. The authoritative legacy write is
+      // untouched on any mirror failure.
+      mirrorSegmentedChatStore(previousChatForFeedback, normalizedChat, authoredTranscript)
       chatUpdateProjection = incrementalResult?.derived
         ? chatUpdateProjectionTracker.observe(
             previousChatForFeedback!,
@@ -8438,6 +8550,7 @@ export class AppStore {
     if (legacyStoreCanWrite()) {
       saveCoalescer.flushAll()
       incrementalChatPersistence.checkpointAll()
+      segmentedChatStore.checkpointAll()
       return
     }
     await drainHostRecordPersistQueueOnShutdown(options?.hostDrainTimeoutMs)
@@ -8445,6 +8558,10 @@ export class AppStore {
 
   static getIncrementalChatPersistenceStats(): IncrementalChatPersistenceStats {
     return incrementalChatPersistence.stats()
+  }
+
+  static getSegmentedChatStoreStats(): SegmentedChatStoreStats {
+    return segmentedChatStore.stats()
   }
 
   /**
@@ -9002,6 +9119,10 @@ export class AppStore {
    */
   private static purgeChatJournalArtifactsHostOwned(chatId: string): void {
     chatUpdateProjectionTracker.drop(chatId)
+    // Stage 3: erase the segmented-store copy too — a deleted transcript must
+    // not survive in any durable copy (NON-NEGOTIABLE #4). Purge is
+    // gate-driven, so a flag-off disable cannot strand stale v2 segments.
+    segmentedChatStore.purge(chatId)
     const legacyJournalDir = path.join(userDataPath, 'chat-journal')
     for (const suffix of ['.tombstone', '.jsonl', '.snapshot.json']) {
       fs.rmSync(path.join(legacyJournalDir, `${chatId}${suffix}`), { force: true })
@@ -9059,6 +9180,9 @@ export class AppStore {
       chatComposerSelectionOverlayStore.clearCache()
       removePathStrict(path.join(userDataPath, 'chat-journal'), 'chat journal directory')
       removePathStrict(path.join(userDataPath, 'chat-journal-v2'), 'chat journal v2 directory')
+      // Stage 3: the segmented store is a durable transcript copy; a global
+      // clear must retire it (and its in-memory baselines) with the rest.
+      segmentedChatStore.clear()
     } else {
       // Discard, never flush, and tombstone the journal before the unlink —
       // same ordering guarantees as the legacy step.
@@ -9396,6 +9520,7 @@ export class AppStore {
         // reappear in the list (NON-NEGOTIABLE #4).
         saveCoalescer.discardAll()
         incrementalChatPersistence.clear()
+        segmentedChatStore.clear()
         chatUpdateProjectionTracker.clear()
         removePathStrict(chatsDir, 'chat history directory')
         chatComposerSelectionOverlayStore.clearCache()
@@ -9420,11 +9545,13 @@ export class AppStore {
         if (chatContainsTruncatableHistory(chat)) {
           writeJson(chatPath, truncated)
           incrementalChatPersistence.replaceAuthoritative(chatId, truncated)
+          segmentedChatStore.replaceAuthoritative(chatId, truncated)
         } else {
           // Idempotent recovery: a prior attempt may have committed the legacy
           // truncation and failed before replacing V2. Reassert the already-
           // truncated record so no old mutation/checkpoint survives the rerun.
           incrementalChatPersistence.replaceAuthoritative(chatId, chat)
+          segmentedChatStore.replaceAuthoritative(chatId, chat)
         }
         chatComposerSelectionOverlayStore.delete(chatId)
         this.chatRecordCache.delete(chatId)
