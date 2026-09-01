@@ -69,7 +69,7 @@ describe('agent pool icon assets', () => {
       if (provider === 'ensemble') {
         expect(asset?.raw).toContain('<svg')
         expect(asset?.providerLogo).toBeUndefined()
-      } else if (provider === 'muse' || provider === 'devin') {
+      } else if (provider === 'muse') {
         expect(asset?.providerLogo).toBe(provider)
         expect(asset?.raw).toBeUndefined()
         expect(resolveProviderBrandLogoSource(provider)).toBeUndefined()

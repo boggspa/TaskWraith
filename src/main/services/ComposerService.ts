@@ -102,6 +102,7 @@ import {
   type ComposerAttachmentKind
 } from '../../shared/composerAttachment'
 import type { PromptDeliveryReceipts } from '../../shared/PromptDeliveryReceipts'
+import { DEVIN_DEFAULT_MODEL_ID } from '../../shared/devinModelCatalog'
 
 // Known ids for historical decode. Compose/dispatch uses the shared live
 // admission predicate through `assertLiveProviderId`.
@@ -165,6 +166,7 @@ export interface ComposerInput {
   cursorFastMode?: boolean | null
   museReasoningEffort?: string | null
   mistralReasoningEffort?: string | null
+  devinReasoningEffort?: string | null
   piReasoningEffort?: string | null
   ollamaReasoningEffort?: string | null
   runtimeProfileId?: string
@@ -1422,6 +1424,7 @@ function reasoningMetadataKeyForProvider(provider: ProviderId): string | undefin
   if (provider === 'cursor') return 'cursorReasoningEffort'
   if (provider === 'ollama') return 'ollamaReasoningEffort'
   if (provider === 'mistral') return 'mistralReasoningEffort'
+  if (provider === 'devin') return 'devinReasoningEffort'
   if (provider === 'pi') return 'piReasoningEffort'
   if (provider === 'muse') return 'museReasoningEffort'
   if (provider === 'antigravity') return 'antigravityReasoningEffort'
@@ -1454,7 +1457,9 @@ function composerReasoningSelectionForProvider(
                       ? input.museReasoningEffort
                       : provider === 'antigravity'
                         ? input.antigravityReasoningEffort
-                        : undefined
+                        : provider === 'devin'
+                          ? input.devinReasoningEffort
+                          : undefined
   const metadataKey = reasoningMetadataKeyForProvider(provider)
   return (
     optionalStringOrNull(explicit) ||
@@ -1723,11 +1728,10 @@ export function getDefaultModelForProvider(provider: ProviderId): string {
       return MISTRAL_DEFAULT_MODEL
     case 'muse':
       return MUSE_DEFAULT_MODEL
-    // Devin exposes no enumerable model catalogue: the CLI runs its own default
-    // unless `--model <id>` overrides it per run, so 'cli-default' is the honest
-    // sentinel (kept byte-identical to the static catalogue row).
+    // Devin dispatches an explicit catalogue id — the shared devinModelCatalog
+    // default, byte-identical to the static catalogue's isDefault row.
     case 'devin':
-      return 'cli-default'
+      return DEVIN_DEFAULT_MODEL_ID
     case 'gemini':
       return 'flash-lite'
     default: {

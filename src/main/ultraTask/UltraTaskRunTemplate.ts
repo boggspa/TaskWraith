@@ -34,6 +34,7 @@ function reasoningPatch(seat: UltraTaskRunTemplateSeat): Partial<RunQueueRequest
   if (seat.provider === 'grok') return { grokReasoningEffort: effort }
   if (seat.provider === 'muse') return { museReasoningEffort: effort }
   if (seat.provider === 'mistral') return { mistralReasoningEffort: effort }
+  if (seat.provider === 'devin') return { devinReasoningEffort: effort }
   if (seat.provider === 'pi') return { piReasoningEffort: effort }
   if (seat.provider === 'ollama') return { ollamaReasoningEffort: effort }
   if (seat.provider === 'cursor') return { cursorReasoningEffort: effort }

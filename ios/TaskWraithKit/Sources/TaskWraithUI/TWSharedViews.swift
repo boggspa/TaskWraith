@@ -4282,7 +4282,7 @@ enum ProviderLogoAssetResolver {
         switch provider {
         case "gemini", "codex", "claude", "kimi", "antigravity", "mistral", "deepseek":
             return "provider-logo-\(provider)"
-        case "cursor", "grok", "ollama", "pi", "cerebras":
+        case "cursor", "grok", "ollama", "pi", "cerebras", "devin":
             return "provider-logo-\(provider)-on-\(darkBackground ? "dark" : "light")"
         default:
             return nil

@@ -1729,6 +1729,7 @@ import {
   devinMcpAdvertiseEnabled
 } from './devin/devinGate'
 import { probeDevinCredentialState } from './devin/DevinAuthProbe'
+import { resolveDevinVariantId } from '../shared/devinModelCatalog'
 import { estimateMistralTokenUsage } from './mistral/MistralUsage'
 import {
   createChildProcessMuseSpawn,
@@ -25555,10 +25556,12 @@ async function runDevinAcpProvider(event: Electron.IpcMainInvokeEvent, payload: 
     }
   }
 
-  // `devin acp` takes its one knob on argv. 'cli-default' is the picker's honest
-  // "no override" row (StaticProviderModels), so it must never reach the CLI as
-  // `--model cli-default`; any other id passes through verbatim.
-  const devinAcpArgs = buildDevinAcpCliArgs(model === 'cli-default' ? null : model)
+  // `devin acp` takes its one knob on argv and the seat always names an exact
+  // variant: the picker's family id plus the effort control fold into the
+  // CLI's `<family>-<level>` uid, sentinels (including a legacy 'cli-default'
+  // selection) resolve to the catalogue default, and any other id passes
+  // through verbatim so an unknown one fails visibly at the CLI.
+  const devinAcpArgs = buildDevinAcpCliArgs(resolveDevinVariantId(model, payload.reasoningEffort))
 
   const devinSpawnAcpProcess = (): AcpChildProcess => {
     const child = spawn(binaryPath, devinAcpArgs, {

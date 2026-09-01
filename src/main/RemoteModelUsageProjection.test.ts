@@ -121,15 +121,16 @@ describe('projectRemoteModelUsageExtras', () => {
 
   it('keeps ACU-billed Devin records as zero-cost spend rows instead of dropping the seat', () => {
     const extras = projectRemoteModelUsageExtras({
-      records: [record({ id: 'devin-1', provider: 'devin', model: 'cli-default' })],
+      records: [record({ id: 'devin-1', provider: 'devin', model: 'swe-1-7' })],
       settings: { currency: 'USD' },
       providerRates: rates,
       fxRates: { rates: { USD: 1 } },
       now: NOW
     })
 
-    // Devin bills in ACUs, so there is no USD rate row and costText stays
-    // unset — but the seat must still surface its token/run windows.
+    // Devin is plan-billed (ACUs on enterprise seats; no baked-in USD rate
+    // rows either way), so costText stays unset — but the seat must still
+    // surface its token/run windows.
     const devin = extras.spend?.providers.find((entry) => entry.provider === 'devin')
     expect(devin?.windows).toEqual([
       { id: 'day', label: 'Day', totalTokens: 2_000_000, runs: 1 },

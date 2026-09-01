@@ -156,7 +156,8 @@ const PROVIDER_REASONING_METADATA_KEY: Partial<Record<ProviderId, string>> = {
   antigravity: 'antigravityReasoningEffort',
   pi: 'piReasoningEffort',
   mistral: 'mistralReasoningEffort',
-  muse: 'museReasoningEffort'
+  muse: 'museReasoningEffort',
+  devin: 'devinReasoningEffort'
 }
 
 function providerNativeMetadataValue(

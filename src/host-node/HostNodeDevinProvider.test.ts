@@ -62,7 +62,7 @@ function thread(overrides: Partial<HostProviderRunThread> = {}): HostProviderRun
       canonical: true
     },
     providerId: 'devin',
-    modelId: 'cli-default',
+    modelId: 'swe-1-7',
     posture: {
       postureId: 'default',
       approvalMode: 'workspace_write',
@@ -278,7 +278,7 @@ describe('HostNodeDevinProvider', () => {
 
     await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
     expect(spawns).toHaveLength(1)
-    expect(spawns[0]).toMatchObject({ command: BINARY, args: ['acp'] })
+    expect(spawns[0]).toMatchObject({ command: BINARY, args: ['acp', '--model', 'swe-1-7'] })
     expect(spawns[0]?.env).toEqual({
       PATH: '/usr/bin',
       TERM: 'xterm',
@@ -292,16 +292,38 @@ describe('HostNodeDevinProvider', () => {
   })
 
   it('rejects a model the catalog does not offer before anything is launched', async () => {
-    // The catalog offers only `cli-default`, so a concrete Devin model id is
-    // stopped at the selectable gate today; the argv mapping below is what a
-    // future catalogued id would ride on.
+    // The catalog offers the CLI-enumerated rows (shared devinModelCatalog.ts);
+    // an id outside it is stopped at the selectable gate before any spawn.
     const { instance, spawns } = open({ configuredThread: thread({ modelId: 'devin-custom-x' }) })
     await expect(instance.run(runRequest)).rejects.toThrow(/configuration is not selectable/)
     expect(spawns).toEqual([])
   })
 
-  it('maps the catalog default to a bare `devin acp` and passes a concrete model id through verbatim', () => {
-    expect(hostNodeDevinAcpArgs('cli-default')).toEqual(['acp'])
+  it('always names an exact variant on argv: family + reasoning fold into the CLI uid', () => {
+    // Family default when no reasoning id is carried (SWE-1.7 → Max is the
+    // bare `swe-1-7` uid); an offered level picks that variant.
+    expect(hostNodeDevinAcpArgs('swe-1-7')).toEqual(['acp', '--model', 'swe-1-7'])
+    expect(hostNodeDevinAcpArgs('swe-1-7', 'medium')).toEqual(['acp', '--model', 'swe-1-7-medium'])
+    expect(hostNodeDevinAcpArgs('claude-opus-5', 'high')).toEqual([
+      'acp',
+      '--model',
+      'claude-opus-5-high'
+    ])
+    // A level the family does not offer falls back to the family default.
+    expect(hostNodeDevinAcpArgs('gemini-3-7-flash', 'max')).toEqual([
+      'acp',
+      '--model',
+      'gemini-3-7-flash-medium'
+    ])
+    // A thread recorded with the exact variant keeps it.
+    expect(hostNodeDevinAcpArgs('claude-opus-5-high')).toEqual([
+      'acp',
+      '--model',
+      'claude-opus-5-high'
+    ])
+    // A thread recorded before the catalogue existed still carries the old
+    // sentinel; it must never reach the CLI as `--model cli-default`.
+    expect(hostNodeDevinAcpArgs('cli-default')).toEqual(['acp', '--model', 'swe-1-6-slow'])
     expect(hostNodeDevinAcpArgs('devin-custom-x')).toEqual(['acp', '--model', 'devin-custom-x'])
   })
 

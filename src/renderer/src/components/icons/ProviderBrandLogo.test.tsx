@@ -9,7 +9,7 @@ import {
 } from './providerBrandLogoAssets'
 
 const STATIC_PROVIDERS = ['gemini', 'codex', 'claude', 'kimi', 'antigravity', 'mistral'] as const
-const THEMED_PROVIDERS = ['cursor', 'grok', 'ollama', 'pi'] as const
+const THEMED_PROVIDERS = ['cursor', 'grok', 'ollama', 'pi', 'devin'] as const
 const KNOWN_PROVIDERS = [...STATIC_PROVIDERS, ...THEMED_PROVIDERS] as const
 const SUPPLEMENTAL_UPSTREAM_BRANDS = ['deepseek', 'cerebras'] as const
 const KNOWN_BRAND_IDS = [...KNOWN_PROVIDERS, ...SUPPLEMENTAL_UPSTREAM_BRANDS] as const
@@ -130,6 +130,16 @@ describe('ProviderBrandLogo', () => {
         'provider-logo-pi-on-dark.png'
       ],
       ['provider-logo-mistral.png', 'provider-logo-mistral.png', 'provider-logo-mistral.png'],
+      [
+        'provider-logo-devin-on-light.png',
+        'provider-logo-devin-on-light.png',
+        'provider-logo-devin-on-light.png'
+      ],
+      [
+        'provider-logo-devin-on-dark.png',
+        'provider-logo-devin-on-dark.png',
+        'provider-logo-devin-on-dark.png'
+      ],
       ['provider-logo-deepseek.png', 'provider-logo-deepseek.png', 'provider-logo-deepseek.png'],
       [
         'provider-logo-cerebras-on-light.png',

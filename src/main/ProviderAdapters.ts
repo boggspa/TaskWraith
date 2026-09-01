@@ -513,9 +513,10 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       },
       capabilities: {
         approvalModes: ['default', 'plan'],
-        // `devin acp` accepts only an optional `--model`; there is no effort
-        // ladder to map TaskWraith's reasoning tiers onto.
-        reasoningEffort: false,
+        // The CLI encodes the reasoning level in the variant uid; TaskWraith's
+        // effort control folds into `--model <family>-<level>` at dispatch
+        // (shared devinModelCatalog.ts resolveDevinVariantId).
+        reasoningEffort: true,
         speedTiers: [],
         imageAttachments: false,
         contextInjection: true,

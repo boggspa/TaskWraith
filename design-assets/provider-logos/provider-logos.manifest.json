@@ -1,6 +1,6 @@
 {
   "catalogVersion": 3,
-  "retrievedAt": "2026-08-02",
+  "retrievedAt": "2026-09-01",
   "purpose": "provider-identity-reference-and-runtime-source",
   "runtimeIntegrated": true,
   "catalogueFilesLoadedAtRuntime": false,
@@ -15,7 +15,7 @@
     "requiresTransparentPixels": true,
     "appIconTilesExcludedByDefault": true,
     "selectionExceptions": ["kimi: requested first-party icon-only rounded-corner tile"],
-    "conversion": "none for sourced PNG assets; Pi on-dark is rasterized from the preserved official SVG and Pi on-light is its exact RGB inverse with alpha unchanged; Ollama dark is an exact RGB inverse with alpha unchanged"
+    "conversion": "none for sourced PNG assets; Pi on-dark is rasterized from the preserved official SVG and Pi on-light is its exact RGB inverse with alpha unchanged; Ollama dark is an exact RGB inverse with alpha unchanged; Devin dark is an exact RGB inverse of the official black favicon with alpha unchanged"
   },
   "providers": [
     {
@@ -33,7 +33,10 @@
           "file": "png/provider-logo-gemini.png",
           "originalFilename": "Gemini_SparkIcon_4C.original.png",
           "downloadUrl": "https://storage.googleapis.com/gweb-uniblog-publish-prod/images/Gemini_SparkIcon_4C.original.png",
-          "dimensions": { "width": 560, "height": 560 },
+          "dimensions": {
+            "width": 560,
+            "height": 560
+          },
           "bytes": 91309,
           "sha256": "86d5b2880849068ad5344132790c3496a6bb31838d93cd13ff2a26b7d11b3923",
           "alpha": {
@@ -70,7 +73,10 @@
           "file": "png/provider-logo-codex-cloud.png",
           "originalFilename": "codex-banner-icon.png",
           "downloadUrl": "https://developers.openai.com/images/codex/codex-banner-icon.png",
-          "dimensions": { "width": 262, "height": 262 },
+          "dimensions": {
+            "width": 262,
+            "height": 262
+          },
           "bytes": 44832,
           "sha256": "27e259df439669978f261b1112dd3fac80a38718917fdf2aa04d0e834f19ea08",
           "alpha": {
@@ -100,7 +106,10 @@
           "file": "png/provider-logo-claude.png",
           "originalFilename": "Claude Spark - Clay.png",
           "archiveMember": "Anthropic media resources/Anthropic logos/Claude logos/3 Claude Spark/PNG/Claude Spark - Clay.png",
-          "dimensions": { "width": 937, "height": 937 },
+          "dimensions": {
+            "width": 937,
+            "height": 937
+          },
           "bytes": 39563,
           "sha256": "c7d8415b1edba67e5337d3684b480b563826f07be9e28e10ccc14bf92037ef6d",
           "alpha": {
@@ -129,7 +138,10 @@
           "file": "png/provider-logo-kimi.png",
           "originalFilename": "kimi-icon-rounded-corner.png",
           "downloadUrl": "https://raw.githubusercontent.com/MoonshotAI/Branding-Guide/67b20b1315f96d05f3192b24050635745abd3d90/scenarios/03-icon-without-kimi/kimi-icon-rounded-corner.png",
-          "dimensions": { "width": 1024, "height": 1024 },
+          "dimensions": {
+            "width": 1024,
+            "height": 1024
+          },
           "bytes": 234859,
           "sha256": "61bc910bcb3db0995e4dbf499f5b5a883f3473c3df441963d49ecc7eaba9160d",
           "alpha": {
@@ -157,7 +169,10 @@
           "file": "png/provider-logo-antigravity.png",
           "originalFilename": "Google-Antigravity-Icon-Full-Color.png",
           "downloadUrl": "https://antigravity.google/assets/image/brand/antigravity-icon__full-color.png",
-          "dimensions": { "width": 540, "height": 540 },
+          "dimensions": {
+            "width": 540,
+            "height": 540
+          },
           "bytes": 71914,
           "sha256": "e0cd08ccd10cd8d08ccf0ba449823ee88495825c0841619618100d3ab089f51e",
           "alpha": {
@@ -187,7 +202,10 @@
           "file": "png/provider-logo-cursor-on-light.png",
           "originalFilename": "CUBE_2D_LIGHT.png",
           "archiveMember": "General Logos/Cube/PNG/CUBE_2D_LIGHT.png",
-          "dimensions": { "width": 1401, "height": 1597 },
+          "dimensions": {
+            "width": 1401,
+            "height": 1597
+          },
           "bytes": 40415,
           "sha256": "c61776321cea03d00860d5059029397a9b60e95e5c1f36f1b3bafe5a3a59c545",
           "alpha": {
@@ -203,7 +221,10 @@
           "file": "png/provider-logo-cursor-on-dark.png",
           "originalFilename": "CUBE_2D_DARK.png",
           "archiveMember": "General Logos/Cube/PNG/CUBE_2D_DARK.png",
-          "dimensions": { "width": 1401, "height": 1597 },
+          "dimensions": {
+            "width": 1401,
+            "height": 1597
+          },
           "bytes": 40047,
           "sha256": "944f2b64bcb4b9603edb8721cf669d496ddc408d91c4a8ff471b650e4fb272b5",
           "alpha": {
@@ -233,7 +254,10 @@
           "file": "png/provider-logo-grok-on-light.png",
           "originalFilename": "Grok_Logomark_Dark.png",
           "archiveMember": "SpaceXAI_Grok_Assets/Grok_Logomark_Dark.png",
-          "dimensions": { "width": 1024, "height": 1024 },
+          "dimensions": {
+            "width": 1024,
+            "height": 1024
+          },
           "bytes": 31074,
           "sha256": "37ddbcb6e2a7f2e4b3be78a7d41296a3bc7edf6926362434efc00df5a56a3586",
           "alpha": {
@@ -249,7 +273,10 @@
           "file": "png/provider-logo-grok-on-dark.png",
           "originalFilename": "Grok_Logomark_Light.png",
           "archiveMember": "SpaceXAI_Grok_Assets/Grok_Logomark_Light.png",
-          "dimensions": { "width": 1024, "height": 1024 },
+          "dimensions": {
+            "width": 1024,
+            "height": 1024
+          },
           "bytes": 25282,
           "sha256": "359056ee8983cfa0ba7e72795078c7c0ddf6c5d7a1870401ab960ed4f9df9e53",
           "alpha": {
@@ -278,7 +305,10 @@
           "file": "png/provider-logo-ollama.png",
           "originalFilename": "ollama.png",
           "downloadUrl": "https://raw.githubusercontent.com/ollama/ollama/573386c35eac76124ffce571f4b0fefa0a7fe13c/docs/ollama.png",
-          "dimensions": { "width": 181, "height": 256 },
+          "dimensions": {
+            "width": 181,
+            "height": 256
+          },
           "bytes": 7487,
           "sha256": "5c5528504c307d34af504f39bc4e7007d2f6f31ee00dab699cc91584d1af8aca",
           "alpha": {
@@ -295,7 +325,10 @@
           "derivedFrom": "png/provider-logo-ollama.png",
           "transformation": "invert RGB channels exactly (value = 255 - value); retain alpha unchanged",
           "transformationTool": "FFmpeg 8.1 negate=components=r+g+b",
-          "dimensions": { "width": 181, "height": 256 },
+          "dimensions": {
+            "width": 181,
+            "height": 256
+          },
           "bytes": 9940,
           "sha256": "e3978078eb4c3a563e381efbdc8452b000d77c5fc12de7c611a3b8ee5b77cb0c",
           "verification": {
@@ -336,7 +369,10 @@
           "derivedFrom": "svg/provider-logo-pi.svg",
           "transformation": "rasterize the unmodified official SVG at its native 800 x 800 view box on a transparent canvas",
           "transformationTool": "macOS sips-316 SVG-to-PNG",
-          "dimensions": { "width": 800, "height": 800 },
+          "dimensions": {
+            "width": 800,
+            "height": 800
+          },
           "bytes": 13367,
           "sha256": "6b9b7456e6069fcffa782034f4fd870109e32851f034d620b7885ff6a3db7375",
           "alpha": {
@@ -353,7 +389,10 @@
           "derivedFrom": "png/provider-logo-pi-on-dark.png",
           "transformation": "invert RGB channels exactly (value = 255 - value); retain alpha unchanged",
           "transformationTool": "FFmpeg 8.1 negate=components=r+g+b",
-          "dimensions": { "width": 800, "height": 800 },
+          "dimensions": {
+            "width": 800,
+            "height": 800
+          },
           "bytes": 4666,
           "sha256": "e829199449aaced842fd1386e969e1740dbc8ea75a767f8f456fbdf553455ce6",
           "verification": {
@@ -386,7 +425,10 @@
           "originalFilename": "Mistral-Icon-Gradient-RGB.png",
           "downloadUrl": "https://cms.globalaegis.net/api/documents/file/Mistral-Icon-Gradient-RGB.png",
           "retrievedVia": "https://mistral.ai/cms-media/api/documents/file/Mistral-Icon-Gradient-RGB.png",
-          "dimensions": { "width": 648, "height": 648 },
+          "dimensions": {
+            "width": 648,
+            "height": 648
+          },
           "bytes": 2659,
           "sha256": "e3426d84d7b2665ea6842aa39c62d25c11c046ce0a1ebd5faabf4683df5199ba",
           "alpha": {
@@ -395,6 +437,62 @@
             "transparentPixels": 291904,
             "partialAlphaPixels": 0,
             "opaquePixels": 128000
+          }
+        }
+      ]
+    },
+    {
+      "id": "devin",
+      "label": "Devin",
+      "owner": "Cognition AI, Inc.",
+      "status": "live",
+      "artwork": "Devin three-hexagon mark, black + recorded RGB-inverted white derivative",
+      "sourcePage": "https://docs.devin.ai/",
+      "brandGuidance": "https://cognition.com/brand",
+      "rightsNote": "Cognition's brand page lists Devin lockups but its download links return 404 (2026-09-01), so the mark is the transparent 256 px favicon Cognition's own Devin documentation site serves for both light and dark colour schemes (the two are byte-identical). Preserve the mark geometry for factual provider identification; no affiliation or endorsement is implied.",
+      "assets": [
+        {
+          "role": "on-light",
+          "file": "png/provider-logo-devin-on-light.png",
+          "originalFilename": "android-chrome-256x256.png",
+          "downloadUrl": "https://docs.devin.ai/mintlify-assets/_mintlify/favicons/cognitionai/Ycul7J1XWDV1FX48/_generated/favicon/android-chrome-256x256.png",
+          "alsoServedAs": "https://docs.devin.ai/mintlify-assets/_mintlify/favicons/cognitionai/Ycul7J1XWDV1FX48/_generated/favicon-dark/android-chrome-256x256.png (byte-identical)",
+          "dimensions": {
+            "width": 256,
+            "height": 256
+          },
+          "bytes": 2970,
+          "sha256": "d16dd82d1e0a36396761bf6e762fbfa7e9205284fbdd5309cab6191f564e15fe",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 47137,
+            "partialAlphaPixels": 979,
+            "opaquePixels": 17420
+          }
+        },
+        {
+          "role": "on-dark-derived",
+          "file": "png/provider-logo-devin-on-dark.png",
+          "derivedFrom": "png/provider-logo-devin-on-light.png",
+          "transformation": "invert RGB channels exactly (value = 255 - value); retain alpha unchanged",
+          "transformationTool": "FFmpeg 8.1 format=rgba,negate=components=r+g+b",
+          "dimensions": {
+            "width": 256,
+            "height": 256
+          },
+          "bytes": 5453,
+          "sha256": "d084e115fa75f7fa0e8be3dfbe10e01b121c9f4d991ae4bb53081fcf23c05029",
+          "verification": {
+            "alphaByteIdenticalToSource": true,
+            "rgbExactInverseOfSource": true
+          },
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 47137,
+            "partialAlphaPixels": 979,
+            "opaquePixels": 17420
           }
         }
       ]
@@ -420,7 +518,10 @@
           "file": "png/provider-logo-cerebras-on-light.png",
           "originalFilename": "Cerebras Logo Black.png",
           "archiveMember": "Cerebras Logo Black.png",
-          "dimensions": { "width": 2403, "height": 1058 },
+          "dimensions": {
+            "width": 2403,
+            "height": 1058
+          },
           "bytes": 84355,
           "sha256": "7c74d4d522af0513ac5c7eaf3bbb1c9f4ec2953d948b66bab72957266c7b1f25",
           "alpha": {
@@ -436,7 +537,10 @@
           "file": "png/provider-logo-cerebras-on-dark.png",
           "originalFilename": "Cerebras Logo White.png",
           "archiveMember": "Cerebras Logo White.png",
-          "dimensions": { "width": 2403, "height": 1058 },
+          "dimensions": {
+            "width": 2403,
+            "height": 1058
+          },
           "bytes": 65507,
           "sha256": "0e975ddbf280a49bf76901bdb9e7ee5e47a3a7178921a8f86beaf99757d22ba4",
           "alpha": {
@@ -477,7 +581,10 @@
           "derivedFrom": "svg/provider-logo-deepseek.svg",
           "transformation": "rasterize the unmodified official SVG on a transparent canvas with its aspect ratio preserved, maximum dimension 1024 px",
           "transformationTool": "macOS sips-316 SVG-to-PNG",
-          "dimensions": { "width": 1024, "height": 217 },
+          "dimensions": {
+            "width": 1024,
+            "height": 217
+          },
           "bytes": 38227,
           "sha256": "4abbb507f20a6f674ea916d3135467edbaffc534883c5c6fc8ef594d9afcb62b",
           "alpha": {

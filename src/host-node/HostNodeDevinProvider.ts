@@ -68,6 +68,7 @@ import {
   applyDevinPromptPreamble,
   buildDevinAcpCliArgs
 } from '../main/devin/DevinCliArgs'
+import { resolveDevinVariantId } from '../shared/devinModelCatalog'
 import { resolveDevinCredentialLaunch } from '../main/devin/DevinCredentialLane'
 import {
   readDevinStoredCredentials,
@@ -76,8 +77,6 @@ import {
 
 const PROVIDER_ID = 'devin'
 const PROVIDER_DISPLAY_NAME = 'Devin'
-/** The catalog's only offered model: whatever `devin acp` runs by default, with no `--model`. */
-const CLI_DEFAULT_MODEL_ID = 'cli-default'
 /**
  * ACP tool kinds that mutate the workspace or run commands. A plan / read-only
  * seat must never be asked to approve one of these, so they are refused on the
@@ -127,11 +126,14 @@ function devinReadOnlySeat(posture: HostProviderRunThread['posture']): boolean {
 }
 
 /**
- * Exact argv for one Devin ACP launch. The catalog default runs a bare
- * `devin acp`; any concrete model id passes through verbatim as `--model`.
+ * Exact argv for one Devin ACP launch. The model is always named on argv as
+ * the exact CLI variant: the thread's family id plus its reasoning id fold
+ * into `<family>-<level>`, a legacy 'cli-default' thread (or any other
+ * sentinel) resolves to the catalogue default, and an id outside the
+ * catalogue passes through verbatim.
  */
-export function hostNodeDevinAcpArgs(modelId: string): string[] {
-  return buildDevinAcpCliArgs(modelId === CLI_DEFAULT_MODEL_ID ? null : modelId)
+export function hostNodeDevinAcpArgs(modelId: string, reasoningId?: string | null): string[] {
+  return buildDevinAcpCliArgs(resolveDevinVariantId(modelId, reasoningId))
 }
 
 function credentialStoreOptions(
@@ -400,7 +402,7 @@ class HostNodeDevinProviderInstance implements HostNodeProviderInstance {
       return { runId: request.runId, status: 'failed' }
     }
 
-    const args = hostNodeDevinAcpArgs(thread.modelId)
+    const args = hostNodeDevinAcpArgs(thread.modelId, thread.reasoningId)
     let child: ChildProcessWithoutNullStreams
     try {
       child = this.options.spawn

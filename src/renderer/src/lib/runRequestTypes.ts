@@ -53,6 +53,7 @@ export interface QueuedRunRequest {
   grokReasoningEffort?: string | null
   museReasoningEffort?: string | null
   mistralReasoningEffort?: string | null
+  devinReasoningEffort?: string | null
   piReasoningEffort?: string | null
   ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null

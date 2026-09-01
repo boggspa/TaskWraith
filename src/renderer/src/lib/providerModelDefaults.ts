@@ -19,6 +19,12 @@ import {
   KIMI_K3_MODEL_LABEL,
   KIMI_K3_REASONING_EFFORTS
 } from '../../../shared/kimiModels'
+import {
+  DEVIN_DEFAULT_MODEL_ID,
+  DEVIN_MODEL_CATALOG,
+  devinModelDescription,
+  devinReasoningEfforts
+} from '../../../shared/devinModelCatalog'
 
 interface CodexModelOption {
   id: string
@@ -437,25 +443,30 @@ const MUSE_DEFAULT_MODEL_ROWS = [
   }
 ] satisfies CodexModelOption[]
 const MUSE_DEFAULT_MODELS = withCuratedUltraTaskSupport(MUSE_DEFAULT_MODEL_ROWS)
-// Devin CLI seat (`devin acp`). Devin exposes no enumerable model catalogue:
-// the CLI runs its own default model unless `--model <id>` overrides it per
-// run, so the one honest row is the 'cli-default' sentinel. The id must stay
-// byte-identical to DEVIN_STATIC_MODELS in main's StaticProviderModels.ts —
-// providerFallthroughGuards compares the two sides and a divergence means the
-// picker and the run disagree.
-const DEVIN_DEFAULT_MODEL = 'cli-default'
-const DEVIN_DEFAULT_MODEL_ROWS = [
-  {
-    id: DEVIN_DEFAULT_MODEL,
-    label: 'Devin (CLI default)',
-    description: 'Runs the Devin CLI default model; override per run with a custom model id',
-    isDefault: true,
-    // Explicit, like the Haiku row: main's isConcreteUltraTaskModelId refuses
-    // the 'cli-default' sentinel, so an UltraTask lead can never run on it.
-    // withCuratedUltraTaskSupport keeps an explicit false (the row spreads last).
-    ultraTaskSupported: false
+// Devin CLI seat (`devin acp`). One row per model family the CLI itself
+// enumerates, curated once in the shared devinModelCatalog.ts and read here,
+// by main's StaticProviderModels.ts, and by the Host catalogue —
+// providerFallthroughGuards compares main and renderer and a divergence means
+// the picker and the run disagree. The family's variant ladder is its
+// reasoning axis (the ordinary effort slider); the run folds the chosen level
+// into `--model <family>-<level>`. Every id is a real target, so the rows take
+// the curated UltraTask default exactly like Mistral's and Muse's.
+const DEVIN_DEFAULT_MODEL = DEVIN_DEFAULT_MODEL_ID
+const DEVIN_DEFAULT_MODEL_ROWS = DEVIN_MODEL_CATALOG.map((family) => {
+  const efforts = devinReasoningEfforts(family.id)
+  return {
+    id: family.id,
+    label: family.label,
+    description: devinModelDescription(family),
+    ...(family.id === DEVIN_DEFAULT_MODEL_ID ? { isDefault: true } : {}),
+    ...(efforts.length > 0
+      ? {
+          supportedReasoningEfforts: efforts.map((reasoningEffort) => ({ reasoningEffort })),
+          defaultReasoningEffort: family.defaultEffort ?? efforts[0]
+        }
+      : {})
   }
-] satisfies CodexModelOption[]
+}) satisfies CodexModelOption[]
 const DEVIN_DEFAULT_MODELS = withCuratedUltraTaskSupport(DEVIN_DEFAULT_MODEL_ROWS)
 // Cursor model catalog — backs live Path-B Cursor selection and decodes
 // stored historical selections.

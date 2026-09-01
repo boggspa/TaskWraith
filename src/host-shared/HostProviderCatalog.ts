@@ -16,6 +16,13 @@ import { isPiModelRetired } from '../shared/piModelLifecycle'
 import { resolveOllamaReasoningSupport } from '../shared/ollamaReasoning'
 import { resolvePiReasoningSupport } from '../shared/piReasoning'
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../shared/retiredProviders'
+import {
+  DEVIN_DEFAULT_MODEL_ID,
+  DEVIN_MODEL_CATALOG,
+  DEVIN_REASONING_EFFORT_LABELS,
+  devinModelDescription,
+  devinReasoningEfforts
+} from '../shared/devinModelCatalog'
 import { PI_DEFAULT_MODEL_WIRE_ID, PI_STATIC_MODELS } from './pi/PiModels'
 import {
   KIMI_K27_MODEL_ID,
@@ -365,13 +372,22 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
     devin: {
       displayProvider: 'Devin',
       shortCode: 'DEVIN',
-      models: [
-        {
-          ...model('cli-default', 'Devin (CLI default)', [], true),
-          detail:
-            'Devin exposes no enumerable model catalogue over `devin acp`; the CLI runs its own default model unless `--model <id>` overrides it per run.'
-        }
-      ],
+      // One row per CLI model family (shared devinModelCatalog.ts); the
+      // reasoning offer is the family's variant ladder, and the run folds the
+      // chosen level into `devin acp --model <family>-<level>`.
+      models: DEVIN_MODEL_CATALOG.map((family) => ({
+        ...model(
+          family.id,
+          family.label,
+          devinReasoningEfforts(family.id).map((reasoningId) => ({
+            reasoningId,
+            label: DEVIN_REASONING_EFFORT_LABELS[reasoningId],
+            available: true
+          })),
+          family.id === DEVIN_DEFAULT_MODEL_ID
+        ),
+        detail: devinModelDescription(family)
+      })),
       authFlows: [
         {
           flowId: 'devin:login',

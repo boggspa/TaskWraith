@@ -87,6 +87,8 @@ function reasoningMetadataKeys(provider: string): readonly string[] {
       return ['grokReasoningEffort', 'reasoningEffort']
     case 'mistral':
       return ['mistralReasoningEffort', 'reasoningEffort']
+    case 'devin':
+      return ['devinReasoningEffort', 'reasoningEffort']
     case 'pi':
       return ['piReasoningEffort', 'reasoningEffort']
     case 'muse':

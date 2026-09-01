@@ -198,13 +198,22 @@ describe('humaniseModelId', () => {
       expect(canonicalModelIdForProvider('pi', 'default')).toBe('deepseek/deepseek-v4-flash')
     })
 
-    it('keeps the Devin sentinel as-is — the CLI default IS the seat default', () => {
-      // Devin exposes no enumerable catalogue over `devin acp`, so the
-      // sentinel is not remapped to a concrete id (there is none we can
-      // verify); it canonicalizes to itself and renders as the catalogue row
-      // label rather than a bare "cli-default" string.
-      expect(canonicalModelIdForProvider('devin', 'cli-default')).toBe('cli-default')
-      expect(humaniseModelId('devin', 'cli-default')).toBe('Devin (CLI default)')
+    it('maps legacy Devin sentinels to the catalogue default and labels every catalogue row', () => {
+      // The 'cli-default' sentinel was an ambiguous target (whatever the CLI's
+      // own config or the enterprise default said). A stored selection that
+      // still carries it resolves to the explicit seat default, and every
+      // catalogue id renders as the CLI's own label.
+      expect(canonicalModelIdForProvider('devin', 'cli-default')).toBe('swe-1-6-slow')
+      expect(canonicalModelIdForProvider('devin', 'default')).toBe('swe-1-6-slow')
+      expect(humaniseModelId('devin', 'cli-default')).toBe('SWE-1.6 Slow')
+      expect(humaniseModelId('devin', 'swe-1-7')).toBe('SWE-1.7')
+      expect(humaniseModelId('devin', 'claude-opus-5')).toBe('Claude Opus 5')
+      expect(humaniseModelId('devin', 'adaptive')).toBe('Adaptive')
+      // A run records the exact dispatched variant; it collapses onto the
+      // family for the picker and usage rows.
+      expect(canonicalModelIdForProvider('devin', 'claude-opus-5-high')).toBe('claude-opus-5')
+      expect(humaniseModelId('devin', 'claude-opus-5-high')).toBe('Claude Opus 5')
+      expect(canonicalModelIdForProvider('devin', 'devin-custom-x')).toBe('devin-custom-x')
     })
   })
 

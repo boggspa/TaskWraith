@@ -368,6 +368,9 @@ function canonicalParticipantMetadata(
     case 'mistral':
       metadata.mistralReasoningEffort = effort
       break
+    case 'devin':
+      metadata.devinReasoningEffort = effort
+      break
     case 'pi':
       metadata.piReasoningEffort = effort
       break
@@ -1418,7 +1421,9 @@ export class HostProfileDomainStore {
                           ? 'cursorReasoningEffort'
                           : current.provider === 'antigravity'
                             ? 'antigravityReasoningEffort'
-                            : null
+                            : current.provider === 'devin'
+                              ? 'devinReasoningEffort'
+                              : null
       const reasoningEffort =
         effortKey && typeof currentMetadata[effortKey] === 'string'
           ? currentMetadata[effortKey]

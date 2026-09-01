@@ -174,13 +174,21 @@ describe('notification registry', () => {
     expect(groups.map((g) => g.provider)).not.toContain('kimi')
 
     // Claude is BACK at the top for Fable 5.1 (2026-09-01); Devin is a whole
-    // new seat with a single honest CLI-default row.
+    // new seat led by Cognition's own SWE models — never a 'CLI default'.
     const claude = groups.find((g) => g.provider === 'claude')
     expect(claude?.models.map((m) => m.name)).toEqual(['Fable 5.1'])
     expect(claude?.models[0]?.blurb).toMatch(/1M context.*adaptive thinking.*Legacy/i)
     const devin = groups.find((g) => g.provider === 'devin')
-    expect(devin?.models.map((m) => m.name)).toEqual(['Devin (CLI default)'])
-    expect(devin?.models[0]?.blurb).toMatch(/ACP.*custom model id/i)
+    expect(devin?.models.map((m) => m.name)).toEqual([
+      'SWE-1.6 Slow',
+      'SWE-1.6 · SWE-1.6 Fast',
+      'SWE-1.7 · SWE-1.7 Lightning'
+    ])
+    expect(devin?.models[0]?.blurb).toMatch(/seat default/i)
+    expect(devin?.models[2]?.blurb).toMatch(/effort slider/i)
+    for (const model of devin?.models ?? []) {
+      expect(model.name).not.toMatch(/cli default/i)
+    }
 
     const antigravity = groups.find((g) => g.provider === 'antigravity')
     expect(antigravity?.models.map((m) => m.name)).toEqual(['Gemini 3.7 Flash'])

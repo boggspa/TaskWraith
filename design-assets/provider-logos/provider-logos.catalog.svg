@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1855" viewBox="0 0 1400 1855" data-provider-logo-catalog="true">
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="2135" viewBox="0 0 1400 2135" data-provider-logo-catalog="true">
   <title>TaskWraith provider logo reference catalogue</title>
   <desc>Official or first-party provider marks reviewed on light, dark, and transparency-checker surfaces.</desc>
   <defs>
@@ -283,6 +283,25 @@
   </g>
 
   <g transform="translate(60 1620)" filter="url(#card-shadow)">
+    <rect class="card" width="620" height="248" rx="18" />
+    <text class="provider" x="24" y="34">Devin</text>
+    <text class="provider-detail" x="96" y="34">Cognition • three-hexagon mark</text>
+    <text class="status" x="596" y="34">LIVE</text>
+    <rect class="surface-light" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-dark" x="222" y="58" width="176" height="142" rx="10" />
+    <rect x="420" y="58" width="176" height="142" rx="10" fill="url(#alpha-checker)" />
+    <image href="png/provider-logo-devin-on-light.png" x="50" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-devin-on-dark.png" x="248" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-devin-on-light.png" x="446" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <rect class="surface-frame" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="222" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="420" y="58" width="176" height="142" rx="10" />
+    <text class="surface-label" x="112" y="226">LIGHT</text>
+    <text class="surface-label" x="310" y="226">DARK</text>
+    <text class="surface-label" x="508" y="226">ALPHA</text>
+  </g>
+
+  <g transform="translate(60 1900)" filter="url(#card-shadow)">
     <rect class="card" width="1280" height="150" rx="18" />
     <text class="note-title" x="28" y="38">Reference-set rules</text>
     <text class="note-key" x="28" y="72">SOURCE</text>
@@ -296,6 +315,6 @@
     <text class="note" x="870" y="117">copies identify providers without endorsement.</text>
   </g>
 
-  <text class="footer" x="60" y="1820">Ten canonical external providers • Ensemble omitted because it is TaskWraith-owned orchestration</text>
-  <text class="footer footer-end" x="1340" y="1820">Pi + Mistral added 2026-07-27</text>
+  <text class="footer" x="60" y="2100">Eleven canonical external providers • Ensemble omitted because it is TaskWraith-owned orchestration</text>
+  <text class="footer footer-end" x="1340" y="2100">Devin added 2026-09-01</text>
 </svg>

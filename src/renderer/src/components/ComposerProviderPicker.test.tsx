@@ -223,8 +223,9 @@ describe('ComposerProviderPickerRows (popover body)', () => {
     expect(html).toContain('composer-plus-picker-row-icon')
     expect(html).toContain('sidebar-provider-icon')
     for (const provider of LIVE_SELECTABLE_PROVIDER_IDS) {
-      if (provider === 'muse' || provider === 'devin') {
+      if (provider === 'muse') {
         // No sourced brand logo asset — the TaskWraith glyph fallback renders.
+        // (Devin gained its official mark on 2026-09-01 and renders the logo.)
         expect(html).toContain(`provider-glyph-${provider}`)
         expect(html).not.toContain(`data-provider-logo="${provider}"`)
       } else {

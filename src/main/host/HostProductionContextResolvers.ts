@@ -218,6 +218,7 @@ function reasoningForProvider(
     kimi: ['kimiReasoningEffort', 'reasoningEffort'],
     grok: ['grokReasoningEffort', 'reasoningEffort'],
     mistral: ['mistralReasoningEffort', 'reasoningEffort'],
+    devin: ['devinReasoningEffort', 'reasoningEffort'],
     pi: ['piReasoningEffort', 'reasoningEffort'],
     muse: ['museReasoningEffort', 'reasoningEffort'],
     ollama: ['ollamaReasoningEffort', 'reasoningEffort'],

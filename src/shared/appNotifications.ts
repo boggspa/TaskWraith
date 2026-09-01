@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-01'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-01-2'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -153,15 +153,26 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         ]
       },
       {
-        // Devin is a whole new seat (approved 2026-09-01): the CLI exposes no
-        // enumerable catalogue, so its one honest row is the CLI default.
+        // Devin is a whole new seat (approved 2026-09-01). The card leads with
+        // Cognition's own SWE models — the other families on the seat are
+        // covered elsewhere on this card — and never names a 'CLI default':
+        // the picker carries the CLI's humanised family catalogue (shared
+        // devinModelCatalog.ts) with the effort slider as the reasoning axis.
         provider: 'devin',
         label: 'Devin',
         models: [
           {
-            name: 'Devin (CLI default)',
+            name: 'SWE-1.6 Slow',
+            blurb: "The seat default — Cognition's own coding model, $0.50/$2.50 per Mtok."
+          },
+          {
+            name: 'SWE-1.6 · SWE-1.6 Fast',
+            blurb: 'The rest of the SWE-1.6 generation at the same $0.50/$2.50 per Mtok.'
+          },
+          {
+            name: 'SWE-1.7 · SWE-1.7 Lightning',
             blurb:
-              "Devin CLI over ACP on your own seat — the CLI's default model, or a custom model id per run."
+              "Cognition's newest coding models — Medium or Max on the effort slider, $0.50/$2.50 and $2.50/$12.50 per Mtok."
           }
         ]
       },

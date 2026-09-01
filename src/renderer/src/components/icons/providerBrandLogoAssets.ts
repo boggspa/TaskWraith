@@ -7,6 +7,8 @@ import codexLogo from '../../assets/provider-logos/provider-logo-codex-cloud.png
 import cursorLogoOnDark from '../../assets/provider-logos/provider-logo-cursor-on-dark.png'
 import cursorLogoOnLight from '../../assets/provider-logos/provider-logo-cursor-on-light.png'
 import deepseekLogo from '../../assets/provider-logos/provider-logo-deepseek.png'
+import devinLogoOnDark from '../../assets/provider-logos/provider-logo-devin-on-dark.png'
+import devinLogoOnLight from '../../assets/provider-logos/provider-logo-devin-on-light.png'
 import geminiLogo from '../../assets/provider-logos/provider-logo-gemini.png'
 import grokLogoOnDark from '../../assets/provider-logos/provider-logo-grok-on-dark.png'
 import grokLogoOnLight from '../../assets/provider-logos/provider-logo-grok-on-light.png'
@@ -53,6 +55,9 @@ export const PROVIDER_BRAND_LOGO_SOURCES: Readonly<
   antigravity: { light: antigravityLogo },
   pi: { light: piLogoOnLight, dark: piLogoOnDark, scale: 1.32 },
   mistral: { light: mistralLogo, scale: 1.08 },
+  // Monochrome three-hexagon mark: the official black favicon on light
+  // surfaces and its recorded RGB-inverted derivative on dark ones.
+  devin: { light: devinLogoOnLight, dark: devinLogoOnDark },
   // Pi upstream/model-usage identity only — neither widens ProviderId nor
   // grants a separate runtime seat.
   deepseek: { light: deepseekLogo },

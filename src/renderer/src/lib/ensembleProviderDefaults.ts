@@ -63,6 +63,13 @@ import {
   isKimiK3Model as isSharedKimiK3Model
 } from '../../../shared/kimiModels'
 import { activePiModelRows } from '../../../shared/piModelLifecycle'
+import {
+  DEVIN_DEFAULT_MODEL_ID,
+  DEVIN_MODEL_CATALOG,
+  DEVIN_REASONING_EFFORT_LABELS,
+  devinDefaultReasoningEffort,
+  devinReasoningEfforts
+} from '../../../shared/devinModelCatalog'
 
 export interface EnsembleModelDefaults {
   modelOptions: CombinedModelPickerModelOption[]
@@ -240,15 +247,34 @@ const MUSE_MODEL_ROWS: CombinedModelPickerModelOption[] = [
 ]
 const MUSE_MODELS = withCuratedUltraTaskSupport(MUSE_MODEL_ROWS)
 
-// Devin CLI seat (`devin acp`): no enumerable catalogue, so the single
-// 'cli-default' sentinel row is the honest offer — byte-identical to the composer
-// catalogue in providerModelDefaults.ts and main's StaticProviderModels.ts.
-// Explicitly NOT UltraTask-capable: main's isConcreteUltraTaskModelId refuses
-// the sentinel, so advertising support here would offer a lead the run rejects.
-const DEVIN_DEFAULT_MODEL_ID = 'cli-default'
-const DEVIN_MODELS: CombinedModelPickerModelOption[] = [
-  { id: DEVIN_DEFAULT_MODEL_ID, label: 'Devin (CLI default)', ultraTaskSupported: false }
-]
+// Devin CLI seat (`devin acp`): one row per model family the CLI enumerates,
+// read from the shared devinModelCatalog.ts so this list, the composer
+// catalogue in providerModelDefaults.ts, and main's StaticProviderModels.ts
+// never diverge. The family's variant ladder is its reasoning axis; the run
+// folds the chosen level into `--model <family>-<level>`.
+const DEVIN_MODEL_ROWS: CombinedModelPickerModelOption[] = DEVIN_MODEL_CATALOG.map((family) => {
+  const efforts = devinReasoningEfforts(family.id)
+  return {
+    id: family.id,
+    label: family.label,
+    ...(efforts.length > 0
+      ? {
+          supportedReasoningEfforts: efforts.map((reasoningEffort) => ({ reasoningEffort })),
+          defaultReasoningEffort: family.defaultEffort ?? efforts[0]
+        }
+      : {})
+  }
+})
+const DEVIN_MODELS = withCuratedUltraTaskSupport(DEVIN_MODEL_ROWS)
+
+function devinReasoningOptions(
+  modelId: string | null | undefined
+): CombinedModelPickerReasoningOption[] {
+  return devinReasoningEfforts(modelId).map((value) => ({
+    value,
+    label: DEVIN_REASONING_EFFORT_LABELS[value]
+  }))
+}
 
 // Muse Spark effort ladder (HANDOFF #4 / Meta `/effort`): minimal→ultra,
 // including xhigh. Never `none` — meta rejects it (maps to minimal at argv).
@@ -665,6 +691,8 @@ export function getEnsembleReasoningOptions(
       )
     case 'muse':
       return MUSE_REASONING
+    case 'devin':
+      return devinReasoningOptions(modelId)
     default:
       return []
   }
@@ -799,11 +827,14 @@ export function getDefaultEnsembleParticipantConfig(
       }
     case 'devin':
       // Must stay in lockstep with getDefaultEnsembleModel in
-      // src/main/EnsembleDefaults.ts. No reasoning control: `devin acp` takes
-      // only an optional --model.
+      // src/main/EnsembleDefaults.ts. A family with a ladder seeds its CLI
+      // default level; the default seat (SWE-1.6 Slow) has no axis.
       return {
         model: DEVIN_DEFAULT_MODEL_ID,
-        permissionPresetId: 'default'
+        permissionPresetId: 'default',
+        ...(devinDefaultReasoningEffort(DEVIN_DEFAULT_MODEL_ID)
+          ? { reasoningEffort: devinDefaultReasoningEffort(DEVIN_DEFAULT_MODEL_ID) ?? '' }
+          : {})
       }
     default:
       return {
@@ -1534,8 +1565,8 @@ export function getEnsembleModelDefaults(
     case 'devin':
       return {
         modelOptions: DEVIN_MODELS,
-        reasoningOptions: [],
-        defaultReasoning: '',
+        reasoningOptions: devinReasoningOptions(DEVIN_DEFAULT_MODEL_ID),
+        defaultReasoning: devinDefaultReasoningEffort(DEVIN_DEFAULT_MODEL_ID) ?? '',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: DEVIN_DEFAULT_MODEL_ID
       }

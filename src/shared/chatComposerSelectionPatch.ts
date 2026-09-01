@@ -14,6 +14,7 @@ export const CHAT_COMPOSER_SELECTION_PROVIDER_METADATA_KEYS = [
   'grokReasoningEffort',
   'museReasoningEffort',
   'mistralReasoningEffort',
+  'devinReasoningEffort',
   'piReasoningEffort',
   'ollamaReasoningEffort',
   'cursorReasoningEffort',

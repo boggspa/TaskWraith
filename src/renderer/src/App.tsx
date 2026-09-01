@@ -76,6 +76,7 @@ import {
   shouldPruneRunningChatIdAfterOrphanExit
 } from './lib/sealOrphanExitRun'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
+import { DEVIN_DEFAULT_MODEL_ID, devinDefaultReasoningEffort } from '../../shared/devinModelCatalog'
 import { defaultPiReasoningEffort } from '../../shared/piReasoning'
 import {
   appliedChatUpdateBaseline,
@@ -1955,6 +1956,9 @@ function App(): React.JSX.Element {
   )
   const [cursorFastMode, setCursorFastMode] = useState<boolean>(false)
   const [mistralReasoningEffort, setMistralReasoningEffort] = useState<string>('medium')
+  const [devinReasoningEffort, setDevinReasoningEffort] = useState<string>(
+    devinDefaultReasoningEffort(DEVIN_DEFAULT_MODEL_ID) || ''
+  )
   const [piReasoningEffort, setPiReasoningEffort] = useState<string>('medium')
   const [ollamaReasoningEffort, setOllamaReasoningEffort] = useState<string>('on')
   const [approvalMode, setApprovalMode] = useState<string>('default')
@@ -4626,6 +4630,12 @@ function App(): React.JSX.Element {
             mistralReasoningEffort: participant.reasoningEffort || 'medium'
           }
         : {}),
+      ...(provider === 'devin'
+        ? {
+            devinReasoningEffort:
+              participant.reasoningEffort || devinDefaultReasoningEffort(providerModel) || ''
+          }
+        : {}),
       ...(provider === 'pi'
         ? {
             piReasoningEffort:
@@ -4776,6 +4786,11 @@ function App(): React.JSX.Element {
           ...(fallbackProvider === 'mistral'
             ? typeof fallbackMetadata.mistralReasoningEffort === 'string'
               ? { mistralReasoningEffort: fallbackMetadata.mistralReasoningEffort }
+              : {}
+            : {}),
+          ...(fallbackProvider === 'devin'
+            ? typeof fallbackMetadata.devinReasoningEffort === 'string'
+              ? { devinReasoningEffort: fallbackMetadata.devinReasoningEffort }
               : {}
             : {}),
           ...(fallbackProvider === 'pi'
@@ -6737,6 +6752,13 @@ function App(): React.JSX.Element {
         providerReasoningEfforts.has(metadata.mistralReasoningEffort)
           ? metadata.mistralReasoningEffort
           : 'medium',
+      devinReasoningEffort:
+        typeof metadata.devinReasoningEffort === 'string' &&
+        providerReasoningEfforts.has(metadata.devinReasoningEffort)
+          ? metadata.devinReasoningEffort
+          : providerModelOption?.defaultReasoningEffort ||
+            devinDefaultReasoningEffort(selected) ||
+            '',
       piReasoningEffort:
         typeof metadata.piReasoningEffort === 'string' &&
         providerReasoningEfforts.has(metadata.piReasoningEffort)
@@ -6787,6 +6809,7 @@ function App(): React.JSX.Element {
     if (provider === 'grok') return selection.grokReasoningEffort
     if (provider === 'muse') return selection.museReasoningEffort
     if (provider === 'mistral') return selection.mistralReasoningEffort
+    if (provider === 'devin') return selection.devinReasoningEffort
     if (provider === 'pi') return selection.piReasoningEffort
     if (provider === 'ollama') return selection.ollamaReasoningEffort
     if (provider === 'cursor') return selection.cursorReasoningEffort
@@ -6813,6 +6836,7 @@ function App(): React.JSX.Element {
     setGrokReasoningEffort(selection.grokReasoningEffort)
     setMuseReasoningEffort(selection.museReasoningEffort)
     setMistralReasoningEffort(selection.mistralReasoningEffort)
+    setDevinReasoningEffort(selection.devinReasoningEffort)
     setPiReasoningEffort(selection.piReasoningEffort)
     setOllamaReasoningEffort(selection.ollamaReasoningEffort)
     setCursorReasoningEffort(selection.cursorReasoningEffort)
@@ -6921,6 +6945,11 @@ function App(): React.JSX.Element {
       ...(provider === 'mistral'
         ? {
             reasoningEffort: selection.mistralReasoningEffort || defaults.reasoningEffort
+          }
+        : {}),
+      ...(provider === 'devin'
+        ? {
+            reasoningEffort: selection.devinReasoningEffort || defaults.reasoningEffort
           }
         : {}),
       ...(provider === 'pi'
@@ -8417,6 +8446,10 @@ function App(): React.JSX.Element {
           provider === 'muse' ? nextReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT : undefined,
         mistralReasoningEffort:
           provider === 'mistral' ? nextReasoningEffort || 'medium' : undefined,
+        devinReasoningEffort:
+          provider === 'devin'
+            ? nextReasoningEffort || devinDefaultReasoningEffort(nextModel) || ''
+            : undefined,
         piReasoningEffort:
           provider === 'pi'
             ? nextReasoningEffort || defaultPiReasoningEffort(nextModel)
@@ -13482,6 +13515,9 @@ function App(): React.JSX.Element {
       ...(snapshot.mistralReasoningEffort !== undefined
         ? { mistralReasoningEffort: snapshot.mistralReasoningEffort }
         : {}),
+      ...(snapshot.devinReasoningEffort !== undefined
+        ? { devinReasoningEffort: snapshot.devinReasoningEffort }
+        : {}),
       ...(snapshot.piReasoningEffort !== undefined
         ? { piReasoningEffort: snapshot.piReasoningEffort }
         : {}),
@@ -13593,6 +13629,9 @@ function App(): React.JSX.Element {
       : {}),
     ...(request.mistralReasoningEffort !== undefined
       ? { mistralReasoningEffort: request.mistralReasoningEffort }
+      : {}),
+    ...(request.devinReasoningEffort !== undefined
+      ? { devinReasoningEffort: request.devinReasoningEffort }
       : {}),
     ...(request.piReasoningEffort !== undefined
       ? { piReasoningEffort: request.piReasoningEffort }
@@ -13753,6 +13792,8 @@ function App(): React.JSX.Element {
         queuedProviderSelection?.museReasoningEffort ?? request.museReasoningEffort,
       mistralReasoningEffort:
         queuedProviderSelection?.mistralReasoningEffort ?? request.mistralReasoningEffort,
+      devinReasoningEffort:
+        queuedProviderSelection?.devinReasoningEffort ?? request.devinReasoningEffort,
       piReasoningEffort: queuedProviderSelection?.piReasoningEffort ?? request.piReasoningEffort,
       antigravityReasoningEffort:
         queuedProviderSelection?.antigravityReasoningEffort ?? request.antigravityReasoningEffort,
@@ -14154,6 +14195,10 @@ function App(): React.JSX.Element {
       provider === 'mistral'
         ? composerSelection?.mistralReasoningEffort || mistralReasoningEffort
         : mistralReasoningEffort
+    const requestDevinReasoningEffort =
+      provider === 'devin'
+        ? composerSelection?.devinReasoningEffort || devinReasoningEffort
+        : devinReasoningEffort
     const requestPiReasoningEffort =
       provider === 'pi'
         ? composerSelection?.piReasoningEffort || piReasoningEffort
@@ -14261,6 +14306,7 @@ function App(): React.JSX.Element {
       grokReasoningEffort: requestGrokReasoningEffort,
       museReasoningEffort: requestMuseReasoningEffort,
       mistralReasoningEffort: requestMistralReasoningEffort,
+      devinReasoningEffort: requestDevinReasoningEffort,
       piReasoningEffort: requestPiReasoningEffort,
       ollamaReasoningEffort: requestOllamaReasoningEffort,
       cursorReasoningEffort: requestCursorReasoningEffort,
@@ -14919,6 +14965,7 @@ function App(): React.JSX.Element {
           grokReasoningEffort: request.grokReasoningEffort,
           museReasoningEffort: request.museReasoningEffort,
           mistralReasoningEffort: request.mistralReasoningEffort,
+          devinReasoningEffort: request.devinReasoningEffort,
           piReasoningEffort: request.piReasoningEffort,
           antigravityReasoningEffort: request.antigravityReasoningEffort,
           ollamaReasoningEffort: request.ollamaReasoningEffort,
@@ -15297,7 +15344,9 @@ function App(): React.JSX.Element {
                             ? request.museReasoningEffort
                             : effectiveRunProvider === 'antigravity'
                               ? request.antigravityReasoningEffort
-                              : undefined
+                              : effectiveRunProvider === 'devin'
+                                ? request.devinReasoningEffort
+                                : undefined
         return {
           assistantProvider: effectiveRunProvider,
           ...(resolvedModel ? { providerModel: resolvedModel } : {}),
@@ -18243,6 +18292,7 @@ function App(): React.JSX.Element {
       grokReasoningEffort: request.grokReasoningEffort,
       museReasoningEffort: request.museReasoningEffort,
       mistralReasoningEffort: request.mistralReasoningEffort,
+      devinReasoningEffort: request.devinReasoningEffort,
       piReasoningEffort: request.piReasoningEffort,
       antigravityReasoningEffort: request.antigravityReasoningEffort,
       ollamaReasoningEffort: request.ollamaReasoningEffort,
@@ -22372,6 +22422,8 @@ function App(): React.JSX.Element {
                   participant.provider === 'claude' ? participant.reasoningEffort : undefined,
                 mistralReasoningEffort:
                   participant.provider === 'mistral' ? participant.reasoningEffort : undefined,
+                devinReasoningEffort:
+                  participant.provider === 'devin' ? participant.reasoningEffort : undefined,
                 piReasoningEffort:
                   participant.provider === 'pi' ? participant.reasoningEffort : undefined,
                 kimiReasoningEffort:
@@ -30558,6 +30610,10 @@ function App(): React.JSX.Element {
       const viewerMuseReasoning =
         viewerSelection.museReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
       const viewerMistralReasoning = viewerSelection.mistralReasoningEffort || 'medium'
+      const viewerDevinReasoning =
+        viewerSelection.devinReasoningEffort ||
+        devinDefaultReasoningEffort(DEVIN_DEFAULT_MODEL_ID) ||
+        ''
       const viewerPiReasoning = viewerSelection.piReasoningEffort || 'medium'
       const viewerOllamaReasoning = viewerSelection.ollamaReasoningEffort || ''
       const viewerCursorReasoning =
@@ -31029,6 +31085,7 @@ function App(): React.JSX.Element {
         grokReasoningEffort: viewerGrokReasoning,
         museReasoningEffort: viewerMuseReasoning,
         mistralReasoningEffort: viewerMistralReasoning,
+        devinReasoningEffort: viewerDevinReasoning,
         piReasoningEffort: viewerPiReasoning,
         ollamaReasoningEffort: viewerOllamaReasoning,
         cursorReasoningEffort: viewerCursorReasoning,
@@ -31153,6 +31210,7 @@ function App(): React.JSX.Element {
         setKimiFastMode: paneNoopSetter,
         setKimiReasoningEffort: paneNoopSetter,
         setMistralReasoningEffort: paneNoopSetter,
+        setDevinReasoningEffort: paneNoopSetter,
         setPiReasoningEffort: paneNoopSetter,
         setOllamaReasoningEffort: paneNoopSetter,
         setKimiThinkingEnabled: paneNoopSetter,
@@ -31358,6 +31416,7 @@ function App(): React.JSX.Element {
     grokReasoningEffort,
     museReasoningEffort,
     mistralReasoningEffort,
+    devinReasoningEffort,
     piReasoningEffort,
     ollamaReasoningEffort,
     cursorReasoningEffort,
@@ -31450,6 +31509,7 @@ function App(): React.JSX.Element {
     setClaudeReasoningEffort,
     setCodexReasoningEffort,
     setMistralReasoningEffort,
+    setDevinReasoningEffort,
     setPiReasoningEffort,
     setOllamaReasoningEffort,
     setCodexServiceTier,

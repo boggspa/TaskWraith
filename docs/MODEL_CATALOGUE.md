@@ -221,17 +221,55 @@ would leave a permanently dead row for anyone without their own llama-server.
 <table>
   <tr>
     <td width="10" bgcolor="#4878AE"></td>
+    <td width="54" align="center" valign="middle">
+      <img src="../design-assets/provider-logos/png/provider-logo-devin-on-light.png" alt="Devin logo" width="34" />
+    </td>
     <td valign="middle"><strong>Devin / Cognition</strong><br /><sub>Steel-blue provider hue · active for new runs</sub></td>
   </tr>
 </table>
 
-| Model                                               | Reasoning | Fast | Notes                                                                   |
-| --------------------------------------------------- | --------- | ---- | ----------------------------------------------------------------------- |
-| **Devin (CLI default)** `cli-default` **(Default)** | —         | —    | Runs the Devin CLI's own default model; billed in ACUs on your Devin plan. |
+| Model | Vendor | Reasoning (default in bold) | List price (in / out per 1M tokens) | Notes |
+| --- | --- | --- | --- | --- |
+| **SWE-1.6 Slow** `swe-1-6-slow` **(Default)** | Cognition | — | $0.5 / $2.5 | Seat default; the model a fresh Devin CLI install pins in its own config |
+| **SWE-1.6** `swe-1-6` | Cognition | — | $0.5 / $2.5 | — |
+| **SWE-1.6 Fast** `swe-1-6-fast` | Cognition | — | $0.5 / $2.5 | — |
+| **SWE-1.7** `swe-1-7` | Cognition | Medium · **Max** | $0.5 / $2.5 | The family the CLI resolves a bare `swe-1.7` to |
+| **SWE-1.7 Lightning** `swe-1-7-lightning` | Cognition | Medium · **Max** | $2.5 / $12.5 | `swe` alias resolves here |
+| **Adaptive** `adaptive` | Cognition | — | $0.5 / $2 | Cognition's model router; enterprise admins must enable it |
+| **Claude Fable 5.1** `claude-fable-5-1` | Anthropic | Low · **Medium** · High · Extra High · Max | $10 / $50 | new |
+| **Claude Opus 5** `claude-opus-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $5 / $25 | `opus` alias resolves here |
+| **Claude Sonnet 5** `claude-sonnet-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $2 / $10 | `claude` / `sonnet` alias resolves here |
+| **GPT-5.6 Sol** `gpt-5-6-sol` | OpenAI | None · Low · **Medium** · High · Extra High · Max | $4 / $20 | — |
+| **GPT-5.6 Terra** `gpt-5-6-terra` | OpenAI | **None** · Low · Medium · High · Extra High · Max | $2 / $12 | `gpt` alias resolves here |
+| **GPT-5.6 Luna** `gpt-5-6-luna` | OpenAI | None · Low · **Medium** · High · Extra High · Max | $0.2 / $1.2 | — |
+| **GPT-5.3-Codex** `gpt-5-3-codex` | OpenAI | **Low** · Medium · High · Extra High | $1.75 / $14 | `codex` alias resolves here |
+| **Gemini 3.7 Flash** `gemini-3-7-flash` | Google | Low · **Medium** · High | $1.5 / $7.5 | `gemini` alias resolves here |
+| **Grok 4.6** `grok-4-6` | xAI | **Low** · Medium · High · Extra High | $2 / $6 | new; beta |
+| **Grok 4.5** `grok-4-5` | xAI | **Low** · Medium · High | $2 / $6 | — |
+| **Kimi K3** `kimi-k3` | Moonshot AI | Low · **High** · Max | $3 / $15 | — |
+| **GLM-5.3** `glm-5-3` | Z.ai | **Low** · High · Max | $1.4 / $4.4 | — |
+| **GLM-5.3 Flash** `glm-5-3-flash` | Z.ai | **Low** · High · Max | $0.15 / $0.5 | — |
+| **GLM-5.2** `glm-5-2` | Z.ai | None · **High** · Max | $1.4 / $4.4 | — |
+| **GLM-5.2 1M** `glm-5-2-1m` | Z.ai | None · **High** · Max | $0.7 / $2.2 | 1M-context variants of GLM-5.2 |
+| **DeepSeek V4 Pro** `deepseek-v4-pro` | DeepSeek | **Low** · High · Max | $1.32 / $3.96 | — |
+| **DeepSeek V4 Flash** `deepseek-v4-flash` | DeepSeek | **Low** · High · Max | $0.14 / $0.28 | — |
+| **Inkling** `inkling` | Thinking Machines | **None** · Low · Medium · High · Extra High · Max | $1.4 / $4.4 | — |
+| **Nemotron 3 Ultra** `nemotron-3-ultra` | NVIDIA | **None** · Medium · High | $0.6 / $2.4 | — |
 
-Devin exposes no enumerable model catalogue over `devin acp`, so the picker
-offers the CLI default only; a concrete model id supplied for a run is passed
-through verbatim as `devin acp --model <id>` and fails visibly at the CLI if
+Devin's rows are the model families the Devin CLI itself enumerates
+(`devin models list --format json`, CLI 3000.6.7, retrieved 2026-09-01), one
+picker row per family with the CLI's own label and the list price it showed for
+a self-serve seat; enterprise seats are metered in ACUs instead. A family's
+reasoning column is its variant ladder: the ordinary effort slider picks the
+level and the run folds it into the exact CLI variant as
+`devin acp --model <family>-<level>` (SWE-1.7 at Max is the bare `swe-1-7`
+uid), so "Claude Opus 5" plus "High" dispatches `claude-opus-5-high`. The
+picker carries Cognition's own families and the Adaptive router in full, plus
+the newest generation of every other vendor line without the double-price
+`-fast` / `-priority` speed tiers; the curation rule lives in
+`src/shared/devinModelCatalog.ts`. There is no "CLI default" row — a legacy
+stored `cli-default` selection resolves to SWE-1.6 Slow, and a custom id
+outside the catalogue passes through verbatim and fails visibly at the CLI if
 unknown. The seat is the Devin CLI over ACP on your own paid seat. It
 authenticates through `WINDSURF_API_KEY` / `DEVIN_API_KEY` or the credentials
 file written by `devin auth login`, and Settings → Providers → Devin can pin a

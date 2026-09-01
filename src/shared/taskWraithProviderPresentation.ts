@@ -1,6 +1,7 @@
 import { matchOllamaBrand } from './ollamaBrandTable'
 import { ollamaCloudModelDisplayName } from './ollamaModelAvailability'
 import { cursorGrokBaseModelId, isGrokReasoningModelId } from './grok45Models'
+import { DEVIN_MODEL_LABELS } from './devinModelCatalog'
 import { KIMI_K3_256K_MODEL_LABEL, KIMI_K3_MODEL_LABEL } from './kimiModels'
 import { resolvePiModelLabel, resolvePiUpstreamBrand } from './piBrandTable'
 import type { TaskWraithControlProviderPresentation } from './taskWraithControlProtocol'
@@ -146,7 +147,6 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'mistral-vibe-cli-latest': 'Mistral Medium 3.5',
   'muse-spark-1.2': 'Muse Spark 1.2',
   'muse-spark-1.2-contributor': 'Muse Contributor Spark 1.2',
-  'cli-default': 'Devin (CLI default)',
   'devstral-small': 'Devstral Small',
   'mistral-large-2512': 'Mistral Large 3',
   'zai-glm-5-2': 'GLM-5.2 (via Mistral)',
@@ -237,6 +237,13 @@ export function taskWraithModelLabel(
   }
   if (runtimeProvider === 'grok' && isGrokReasoningModelId(key)) {
     return key === 'grok-4.6' ? 'Grok 4.6 Fast' : 'Grok 4.5 Fast'
+  }
+  if (runtimeProvider === 'devin') {
+    // Devin ids can collide with other seats' ids in the flat table below
+    // (`glm-5-2` is also Mistral's hosted GLM), so they resolve first and
+    // only through their own catalogue.
+    const devinLabel = DEVIN_MODEL_LABELS[key]
+    if (devinLabel) return devinLabel
   }
   if (KNOWN_MODEL_LABELS[key]) return KNOWN_MODEL_LABELS[key]
   const claude = key

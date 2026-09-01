@@ -321,6 +321,7 @@ export interface ProviderReroutePlan {
   grokReasoningEffort?: string | null
   museReasoningEffort?: string | null
   mistralReasoningEffort?: string | null
+  devinReasoningEffort?: string | null
   piReasoningEffort?: string | null
   ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
@@ -5178,6 +5179,7 @@ export interface ScheduledTask {
   grokReasoningEffort?: string | null
   museReasoningEffort?: string | null
   mistralReasoningEffort?: string | null
+  devinReasoningEffort?: string | null
   piReasoningEffort?: string | null
   ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
@@ -5251,6 +5253,7 @@ export type WorkflowRunTemplate = Pick<
   | 'grokReasoningEffort'
   | 'museReasoningEffort'
   | 'mistralReasoningEffort'
+  | 'devinReasoningEffort'
   | 'piReasoningEffort'
   | 'ollamaReasoningEffort'
   | 'cursorReasoningEffort'
@@ -6273,6 +6276,7 @@ export interface RunQueueRequestSnapshot {
   grokReasoningEffort?: string | null
   museReasoningEffort?: string | null
   mistralReasoningEffort?: string | null
+  devinReasoningEffort?: string | null
   piReasoningEffort?: string | null
   ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
@@ -6302,6 +6306,7 @@ export interface RunQueueRequestSnapshot {
     grokReasoningEffort?: string | null
     museReasoningEffort?: string | null
     mistralReasoningEffort?: string | null
+    devinReasoningEffort?: string | null
   piReasoningEffort?: string | null
     ollamaReasoningEffort?: string | null
     cursorReasoningEffort?: string | null

@@ -1,5 +1,6 @@
 import React, { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AGENTIC_SERVICE_LABELS } from '../../../shared/agenticServiceLabels'
+import { devinDefaultReasoningEffort } from '../../../shared/devinModelCatalog'
 import { trustedSessionRuntimeProfileForRequest } from '../../../shared/trustedSessionRuntimeProfile'
 import { planTrustedSessionElevation } from '../lib/trustedSessionElevation'
 import { createWindowDragSession } from '../lib/windowDragSession'
@@ -265,6 +266,7 @@ export interface ComposerProps {
   grokReasoningEffort: any
   museReasoningEffort: any
   mistralReasoningEffort: any
+  devinReasoningEffort: any
   piReasoningEffort: any
   ollamaReasoningEffort: any
   cursorReasoningEffort: any
@@ -536,6 +538,7 @@ export interface ComposerProps {
   setKimiFastMode: any
   setKimiReasoningEffort: any
   setMistralReasoningEffort: any
+  setDevinReasoningEffort: any
   setPiReasoningEffort: any
   setOllamaReasoningEffort: any
   setKimiThinkingEnabled: any
@@ -802,6 +805,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     kimiFastMode,
     kimiReasoningEffort,
     mistralReasoningEffort,
+    devinReasoningEffort,
     piReasoningEffort,
     lastNonCustomModelType,
     liveRunOutputTokens,
@@ -887,6 +891,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setKimiFastMode,
     setKimiReasoningEffort,
     setMistralReasoningEffort,
+    setDevinReasoningEffort,
     setPiReasoningEffort,
     setOllamaReasoningEffort,
     setKimiThinkingEnabled,
@@ -3876,6 +3881,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                     'string'
                                 ? soloPendingProviderMetadata.mistralReasoningEffort
                                 : mistralReasoningEffort
+                          const effectiveDevinReasoning =
+                            ensembleResolved?.provider === 'devin'
+                              ? ensembleResolved.reasoningEffort
+                              : typeof soloPendingProviderMetadata?.devinReasoningEffort ===
+                                    'string'
+                                ? soloPendingProviderMetadata.devinReasoningEffort
+                                : devinReasoningEffort
                           const effectivePiReasoning =
                             ensembleResolved?.provider === 'pi'
                               ? ensembleResolved.reasoningEffort
@@ -4154,6 +4166,21 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 ? desiredMistralPiReasoning
                                 : combinedReasoningOptions[0]?.value ||
                                   ''
+                          } else if (effectiveProvider === 'devin') {
+                            // Devin families fold the level into the dispatched
+                            // variant (shared devinModelCatalog.ts); single-variant
+                            // families return no options so the slider stays hidden.
+                            combinedReasoningOptions = getEnsembleReasoningOptions(
+                              'devin',
+                              effectiveSelectedModel
+                            )
+                            combinedSelectedReasoning = combinedReasoningOptions.some(
+                              (option) => option.value === effectiveDevinReasoning
+                            )
+                              ? effectiveDevinReasoning
+                              : devinDefaultReasoningEffort(effectiveSelectedModel) ||
+                                combinedReasoningOptions[0]?.value ||
+                                ''
                           } else if (effectiveProvider === 'muse') {
                             // Muse Spark → minimal…ultra ladder (never none).
                             // Solo persists museReasoningEffort; default high
@@ -4331,6 +4358,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               } else {
                                 metadataPatch.mistralReasoningEffort = nextReasoning
                               }
+                            }
+                            if (effectiveProvider === 'devin') {
+                              // Each family carries its own default level (the
+                              // variant the CLI resolves the bare slug to).
+                              const nextReasoning = devinDefaultReasoningEffort(nextModel) || ''
+                              if (shouldUpdateLiveComposerState) {
+                                setDevinReasoningEffort(nextReasoning)
+                              }
+                              metadataPatch.devinReasoningEffort = nextReasoning
                             }
                             if (effectiveProvider === 'grok') {
                               if (isGrokReasoningModelId(nextModel)) {
@@ -4527,6 +4563,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   ? { piReasoningEffort: value }
                                   : { mistralReasoningEffort: value }
                               )
+                            } else if (effectiveProvider === 'devin') {
+                              if (shouldUpdateLiveComposerState) {
+                                setDevinReasoningEffort(value)
+                              }
+                              rememberCurrentChatComposerSelection({ devinReasoningEffort: value })
                             } else if (effectiveProvider === 'ollama') {
                               if (shouldUpdateLiveComposerState) {
                                 setOllamaReasoningEffort(value)

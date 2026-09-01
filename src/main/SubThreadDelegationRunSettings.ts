@@ -1,5 +1,9 @@
 import type { ChatRecord, ProviderId } from './store/types'
 import {
+  DEVIN_REASONING_EFFORT_LADDER,
+  normalizeDevinReasoningEffort
+} from '../shared/devinModelCatalog'
+import {
   getStaticProviderModels,
   isKimiK3Model,
   normalizeCliProviderModel,
@@ -111,6 +115,7 @@ function reasoningMetadataKey(provider: ProviderId): string | undefined {
   if (provider === 'kimi') return 'kimiReasoningEffort'
   if (provider === 'grok') return 'grokReasoningEffort'
   if (provider === 'mistral') return 'mistralReasoningEffort'
+  if (provider === 'devin') return 'devinReasoningEffort'
   if (provider === 'pi') return 'piReasoningEffort'
   if (provider === 'muse') return 'museReasoningEffort'
   if (provider === 'ollama') return 'ollamaReasoningEffort'
@@ -170,10 +175,10 @@ function modelHasNoReasoningAxis(
 ): boolean {
   if (provider === 'grok') return !isGrokReasoningModelId(requestedModel)
   if (provider === 'cursor') return !isCursorGrokModelId(requestedModel)
-  // `devin acp` takes only an optional --model: the seat has no effort ladder
-  // at all, so a delegated effort is dropped rather than forwarded as a flag
-  // the CLI would reject.
-  if (provider === 'devin') return true
+  // Devin families fold the effort into the dispatched variant; a catalogued
+  // family with a single variant (Adaptive, SWE-1.6 Fast / Slow) has no axis.
+  if (provider === 'devin')
+    return Boolean(model) && enabledModelReasoningEfforts(model).length === 0
   if (provider === 'mistral') {
     return Boolean(model) && !isMistralThinkingCapableModel(requestedModel)
   }
@@ -332,6 +337,19 @@ function normalizeReasoningEffort(
     return normalized ? { ok: true, value: normalized } : { ok: true }
   }
 
+  if (provider === 'devin') {
+    // Ladder tokens only; a catalogued family additionally pins the set its
+    // variants offer, and the run folds the token into `--model <variant>`.
+    const normalized = normalizeDevinReasoningEffort(raw)
+    if (!normalized || (modelEfforts.length > 0 && !modelEfforts.includes(normalized))) {
+      return invalidReasoningEffort(
+        provider,
+        raw,
+        modelEfforts.length > 0 ? modelEfforts : [...DEVIN_REASONING_EFFORT_LADDER]
+      )
+    }
+    return { ok: true, value: normalized }
+  }
   return {
     ok: false,
     message: `delegate_to_subthread: reasoningEffort is not supported for ${provider}.`

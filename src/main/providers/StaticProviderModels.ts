@@ -73,6 +73,13 @@ export {
   hasReachedCodexRetirementDate,
   isCodexModelRetired
 } from '../../shared/codexModelLifecycle'
+import {
+  DEVIN_DEFAULT_MODEL_ID,
+  DEVIN_MODEL_CATALOG,
+  devinModelDescription,
+  devinReasoningEfforts,
+  normalizeDevinModelId
+} from '../../shared/devinModelCatalog'
 
 export interface StaticProviderModelOptions {
   includePreviewModels?: boolean
@@ -1131,20 +1138,28 @@ const MUSE_STATIC_MODELS = [
     ultraTaskSupported: true
   }
 ]
-// Devin exposes no enumerable model catalogue over `devin acp`: the CLI runs
-// its own default model unless `--model <id>` overrides it per run. One honest
-// cli-default row keeps the picker usable without inventing model ids we
-// cannot verify. The id must stay byte-identical to DEVIN_DEFAULT_MODELS in
-// the renderer's providerModelDefaults.ts — providerFallthroughGuards compares
-// the two sides and a divergence means the picker and the run disagree.
-const DEVIN_STATIC_MODELS = [
-  {
-    id: 'cli-default',
-    label: 'Devin (CLI default)',
-    description: 'Runs the Devin CLI default model; override per run with a custom model id',
-    isDefault: true
+// Devin's rows are one per model family the CLI itself enumerates
+// (`devin models list --format json`), curated once in the shared
+// devinModelCatalog.ts so this side, the renderer's providerModelDefaults.ts,
+// and the Host catalogue read one list — providerFallthroughGuards compares
+// main and renderer and a divergence means the picker and the run disagree.
+// The reasoning ladder is the family's variant set; the run folds the chosen
+// level into `devin acp --model <family>-<level>` (resolveDevinVariantId).
+const DEVIN_STATIC_MODELS = DEVIN_MODEL_CATALOG.map((family) => {
+  const efforts = devinReasoningEfforts(family.id)
+  return {
+    id: family.id,
+    label: family.label,
+    description: devinModelDescription(family),
+    ...(family.id === DEVIN_DEFAULT_MODEL_ID ? { isDefault: true } : {}),
+    ...(efforts.length > 0
+      ? {
+          supportedReasoningEfforts: efforts.map((reasoningEffort) => ({ reasoningEffort })),
+          defaultReasoningEffort: family.defaultEffort ?? efforts[0]
+        }
+      : {})
   }
-]
+})
 const CURSOR_STATIC_MODELS = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true, ultraTaskSupported: true },
   { id: 'composer-2.5', label: 'Composer 2.5', ultraTaskSupported: true },
@@ -1416,15 +1431,11 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
     }
   }
   if (provider === 'devin') {
-    // No static catalogue to clamp against: 'cli-default' (and the usual
-    // default sentinels) mean "no --model override", anything else passes
-    // through verbatim so a custom id reaches `devin acp --model <id>`
-    // exactly as typed. An unknown id fails visibly at the CLI rather than
-    // being silently substituted here.
-    if (!trimmed || lowered === 'cli-default' || lowered === 'default' || lowered === 'auto') {
-      return 'cli-default'
-    }
-    return trimmed
+    // Sentinels — including a legacy 'cli-default' selection — resolve to the
+    // catalogue default and catalogue ids canonicalise; anything else passes
+    // through verbatim so a custom id reaches `devin acp --model <id>` exactly
+    // as typed and fails visibly at the CLI rather than being substituted here.
+    return normalizeDevinModelId(trimmed)
   }
   if (!trimmed || trimmed === 'cli-default' || trimmed === 'custom' || trimmed === 'best')
     return 'default'

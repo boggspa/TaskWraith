@@ -16,6 +16,7 @@ const REASONING_METADATA_KEYS: Partial<Record<ProviderId, string>> = {
   ollama: 'ollamaReasoningEffort',
   pi: 'piReasoningEffort',
   mistral: 'mistralReasoningEffort',
+  devin: 'devinReasoningEffort',
   muse: 'museReasoningEffort',
   antigravity: 'antigravityReasoningEffort'
 }

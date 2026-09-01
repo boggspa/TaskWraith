@@ -194,6 +194,7 @@ function transcriptReasoningLabel(input: {
     museReasoningEffort: provider === 'muse' ? reasoningEffort || undefined : undefined,
     mistralReasoningEffort:
       provider === 'mistral' || provider === 'pi' ? reasoningEffort || undefined : undefined,
+    devinReasoningEffort: provider === 'devin' ? reasoningEffort || undefined : undefined,
     piReasoningEffort: provider === 'pi' ? reasoningEffort || undefined : undefined,
     ollamaReasoningEffort: provider === 'ollama' ? reasoningEffort || undefined : undefined,
     antigravityReasoningEffort:

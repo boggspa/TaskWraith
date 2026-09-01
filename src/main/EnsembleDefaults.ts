@@ -5,6 +5,7 @@ import type {
   ProviderId
 } from './store/types'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
+import { DEVIN_DEFAULT_MODEL_ID } from '../shared/devinModelCatalog'
 
 /*
  * F2 (1.0.3) — the per-provider MODEL defaults below MUST stay in
@@ -257,7 +258,7 @@ function getDefaultEnsembleModel(provider: ProviderId): string {
   if (provider === 'ollama') return 'qwen3.5:9b'
   if (provider === 'mistral') return 'devstral-small'
   if (provider === 'muse') return 'muse-spark-1.2'
-  if (provider === 'devin') return 'cli-default'
+  if (provider === 'devin') return DEVIN_DEFAULT_MODEL_ID
   return 'flash-lite'
 }
 

@@ -16,6 +16,11 @@ import {
   KIMI_K3_MODEL_LABEL,
   canonicalKimiTaskWraithModelId
 } from '../../../shared/kimiModels'
+import {
+  DEVIN_DEFAULT_MODEL_ID,
+  DEVIN_MODEL_LABELS,
+  normalizeDevinModelId
+} from '../../../shared/devinModelCatalog'
 
 /**
  * 1.0.5-EW50 — Shared model-id → human-readable display name
@@ -278,9 +283,18 @@ export function canonicalModelIdForProvider(
     if (provider === 'pi') return 'deepseek/deepseek-v4-flash'
     if (provider === 'mistral') return 'devstral-small'
     if (provider === 'muse') return 'muse-spark-1.2'
+    // Devin's legacy 'cli-default' sentinel was an ambiguous target; it now
+    // resolves to the explicit catalogue default like every other sentinel.
+    if (provider === 'devin') return DEVIN_DEFAULT_MODEL_ID
   }
   if (provider === 'kimi') {
     return canonicalKimiTaskWraithModelId(key) || trimmed
+  }
+  if (provider === 'devin') {
+    // A run records the exact dispatched variant (`claude-opus-5-high`); the
+    // picker and usage rows speak the family (`claude-opus-5`), so collapse
+    // variants onto their family here. Custom ids pass through untouched.
+    return normalizeDevinModelId(trimmed)
   }
   if (provider === 'mistral') {
     // Vibe speaks aliases on the ACP surface but its own config stores the
@@ -404,11 +418,13 @@ export function humaniseModelId(
   const canonical = canonicalModelIdForProvider(provider, modelId)
   if (!canonical) return ''
   const key = canonical.trim().toLowerCase()
-  // Devin exposes no enumerable catalogue: 'cli-default' is its only row and
-  // canonicalModelIdForProvider deliberately leaves it unmapped (there is no
-  // concrete id to verify), so it takes its catalogue label here rather than
-  // rendering as a bare sentinel string.
-  if (provider === 'devin' && key === 'cli-default') return 'Devin (CLI default)'
+  // Devin rows carry the CLI's own labels (shared devinModelCatalog.ts); a
+  // custom id the catalogue does not know falls through to the generic
+  // humanisers below rather than being renamed here.
+  if (provider === 'devin') {
+    const devinLabel = DEVIN_MODEL_LABELS[key]
+    if (devinLabel) return devinLabel
+  }
   if (provider === 'ollama') {
     const cloudDisplayName = ollamaCloudModelDisplayName(canonical)
     if (cloudDisplayName) return cloudDisplayName
