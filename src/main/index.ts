@@ -61868,7 +61868,8 @@ if (isGeminiMcpBridgeProcess) {
       mainWindow,
       createDriver: createEmulatorCanvasDriver,
       isSurfaceLive: (canvasId) => canvasEmbedController.has(canvasId),
-      exit: (code) => app.exit(code)
+      exit: (code) => app.exit(code),
+      logger: console
     })
     if (packagedEmulatorSmokeHandled) return
     scheduleNextTaskTimer()

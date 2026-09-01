@@ -395,6 +395,59 @@ describe('PackagedEmulatorSmoke', () => {
     expect(memory.files.get(resultPath)).not.toContain('private wasm failure')
   })
 
+  it('logs a bounded failure line to the optional logger without widening the disk envelope', async () => {
+    const profile = '/private/tmp/taskwraith-tui-package-smoke-logged'
+    const resultPath = `${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}`
+    const temporaryPath = `${profile}/.${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}.unit.tmp`
+    const memory = memoryFileOps()
+    const exits: number[] = []
+    const error = vi.fn()
+
+    await expect(
+      startPackagedEmulatorSmoke({
+        argv: smokeArgs(profile),
+        posture: smokePosture(profile),
+        isPackaged: true,
+        mainWindow: { isDestroyed: () => false, webContents: { id: 41 } },
+        createDriver: () => {
+          throw new Error('private wasm failure: never persist this')
+        },
+        isSurfaceLive: () => false,
+        exit: (code) => exits.push(code),
+        fileOps: memory.fileOps,
+        createTemporaryPath: () => temporaryPath,
+        logger: { error }
+      })
+    ).resolves.toBe(true)
+
+    expect(exits).toEqual([1])
+    expect(error).toHaveBeenCalledOnce()
+    expect(String(error.mock.calls[0][0])).toContain('emulator smoke failed')
+    expect(String(error.mock.calls[0][0])).toContain('private wasm failure: never persist this')
+    expect(memory.files.get(resultPath)).toBe('{"ok":false,"error":"emulator_smoke_failed"}')
+    expect(memory.files.get(resultPath)).not.toContain('private wasm failure')
+  })
+
+  it('names the failing lifecycle phase on a rejected smoke step', async () => {
+    const fixture = driverFixture()
+    let released = false
+    fixture.close.mockImplementation(async () => {
+      released = true
+    })
+    fixture.driver.open = vi.fn(async () => {
+      throw new Error('wasm boot refused')
+    })
+
+    await expect(
+      runPackagedEmulatorSmoke({
+        createDriver: () => fixture.driver,
+        isSurfaceLive: () => !released,
+        surfaceHostId: 41
+      })
+    ).rejects.toThrow(/\[emulator-smoke\] phase=open: wasm boot refused/)
+    expect(fixture.close).toHaveBeenCalledOnce()
+  })
+
   it('cleans a temporary receipt when its exclusive write fails', async () => {
     const profile = '/private/tmp/taskwraith-tui-package-smoke-cleanup'
     const resultPath = `${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}`

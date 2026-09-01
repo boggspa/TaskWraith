@@ -106,6 +106,8 @@ export interface StartPackagedEmulatorSmokeInput {
   readonly fileOps?: PackagedEmulatorSmokeResultFileOps
   /** Test seam; production keeps the temporary sibling private and unpredictable. */
   readonly createTemporaryPath?: (resultPath: string) => string
+  /** Optional bounded logger for smoke diagnostics; never receives raw RAM/PNG. */
+  readonly logger?: Pick<Console, 'error'>
 }
 
 const RESULT_FILE_OPS: PackagedEmulatorSmokeResultFileOps = { unlink, writeFile, rename }
@@ -284,7 +286,14 @@ export async function startPackagedEmulatorSmoke(
     })
     await publish({ ok: true, receipt })
     input.exit(0)
-  } catch {
+  } catch (error) {
+    const message = error instanceof Error ? `: ${error.message}` : ''
+    try {
+      input.logger?.error(`[emulator-smoke] packaged emulator smoke failed${message}`)
+    } catch {
+      // A logging throw must neither escape this catch nor skip the bounded
+      // disk envelope below; the harness must still observe the failure.
+    }
     try {
       await publish({ ok: false, error: 'emulator_smoke_failed' })
     } catch {
@@ -373,6 +382,23 @@ function receiptFor(
 }
 
 /**
+ * Preserve the failing lifecycle phase on a smoke error so the composition-root
+ * logger names which step failed without persisting any raw detail to disk.
+ */
+async function withSmokePhase<T>(
+  phase: 'open' | 'observe' | 'step' | 'close',
+  operation: () => Promise<T>
+): Promise<T> {
+  try {
+    return await operation()
+  } catch (error) {
+    throw new Error(
+      `[emulator-smoke] phase=${phase}: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+}
+
+/**
  * Exercise the production factory, verified `twemu://` assets, real Electron
  * runtime bridge, and SameBoy WASM without involving renderer selectors.
  *
@@ -392,18 +418,22 @@ export async function runPackagedEmulatorSmoke(
   let operationError: unknown = null
 
   try {
-    const opened = await driver.open({
-      driver: 'emulator',
-      gameId: 'homebrew-demo',
-      embed: true,
-      presentation: 'dock'
-    })
+    const opened = await withSmokePhase('open', () =>
+      driver.open({
+        driver: 'emulator',
+        gameId: 'homebrew-demo',
+        embed: true,
+        presentation: 'dock'
+      })
+    )
     if (opened.url !== 'twemu://app/homebrew-demo/index.html') {
       throw new Error('Packaged emulator smoke opened an unexpected entry URL.')
     }
 
-    const before = await driver.observeEmulator()
-    const stepped = await driver.stepEmulator(['right'], before.observationId)
+    const before = await withSmokePhase('observe', () => driver.observeEmulator())
+    const stepped = await withSmokePhase('step', () =>
+      driver.stepEmulator(['right'], before.observationId)
+    )
     const beforeReceipt = receiptFor(before, 'before')
     const afterReceipt = receiptFor(stepped, 'after')
     if (
@@ -437,7 +467,7 @@ export async function runPackagedEmulatorSmoke(
 
   let releaseError: Error | null = null
   try {
-    await driver.close()
+    await withSmokePhase('close', () => driver.close())
   } catch (error) {
     releaseError = error instanceof Error ? error : new Error(String(error))
   }
@@ -447,7 +477,9 @@ export async function runPackagedEmulatorSmoke(
   if (operationError && releaseError) {
     throw new AggregateError(
       [operationError, releaseError],
-      'Packaged emulator smoke failed and did not cleanly release its surface.'
+      `Packaged emulator smoke failed and did not cleanly release its surface: ${
+        operationError instanceof Error ? operationError.message : String(operationError)
+      }`
     )
   }
   if (releaseError) throw releaseError

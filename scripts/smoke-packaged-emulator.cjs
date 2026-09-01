@@ -28,6 +28,7 @@ const PACKAGE_EMULATOR_SMOKE_RESULT_FILE = 'emulator-package-smoke.json'
 const DEFAULT_TIMEOUT_MS = 30_000
 const EXIT_STALE_BUNDLE = 20
 const EXIT_UNSAFE_TO_LAUNCH = 21
+const MAX_FAILURE_OUTPUT_CHARS = 4000
 
 if (require.main === module) {
   main().catch((error) => {
@@ -80,12 +81,12 @@ async function main() {
   let child = null
   try {
     child = launchPackagedApp(packageRoot, launchArgs)
-    const rawResult = await waitForResult(
+    const { result: rawResult, output } = await waitForResult(
       resultPath,
       child,
       readIntegerEnv('TASKWRAITH_EMULATOR_PACKAGE_SMOKE_TIMEOUT_MS', DEFAULT_TIMEOUT_MS)
     )
-    const receipt = validatePackagedEmulatorSmokeResult(rawResult)
+    const receipt = validatePackagedEmulatorSmokeResult(rawResult, output)
     console.log(
       'packaged emulator runtime smoke ok: ' +
         `frame ${receipt.before.frameId}->${receipt.after.frameId}, ` +
@@ -230,7 +231,7 @@ async function waitForResult(resultPath, child, timeoutMs) {
       throw new Error(`Failed to launch packaged emulator smoke: ${launchError.message}`)
     if (fs.existsSync(resultPath)) {
       try {
-        return JSON.parse(fs.readFileSync(resultPath, 'utf8'))
+        return { result: JSON.parse(fs.readFileSync(resultPath, 'utf8')), output }
       } catch {
         // The main process may be between write and rename. Poll the exact same private path.
       }
@@ -329,11 +330,19 @@ function validateObservation(value, label) {
   }
 }
 
+function appendBoundedFailureOutput(output) {
+  const bounded = String(output ?? '')
+    .trim()
+    .slice(0, MAX_FAILURE_OUTPUT_CHARS)
+  return bounded ? `\nchild output:\n${bounded}` : ''
+}
+
 /** Parse only the public, disk-safe evidence the index hook writes after close. */
-function validatePackagedEmulatorSmokeResult(value) {
+function validatePackagedEmulatorSmokeResult(value, output = '') {
   if (!isRecord(value) || value.ok !== true || !isRecord(value.receipt)) {
     const detail = isRecord(value) && typeof value.error === 'string' ? `: ${value.error}` : ''
-    throw new Error(`Packaged emulator smoke did not report success${detail}`)
+    const failureOutput = appendBoundedFailureOutput(output)
+    throw new Error(`Packaged emulator smoke did not report success${detail}${failureOutput}`)
   }
   const receipt = value.receipt
   if (

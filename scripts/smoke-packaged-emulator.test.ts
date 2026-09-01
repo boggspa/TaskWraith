@@ -17,7 +17,7 @@ const {
   EXIT_STALE_BUNDLE: number
   EXIT_UNSAFE_TO_LAUNCH: number
   smokeExitCode: (error: unknown) => number
-  validatePackagedEmulatorSmokeResult: (value: unknown) => unknown
+  validatePackagedEmulatorSmokeResult: (value: unknown, output?: string) => unknown
 } = require('./smoke-packaged-emulator.cjs')
 
 function result() {
@@ -97,5 +97,30 @@ describe('packaged emulator runtime smoke launcher', () => {
     expect(() => validatePackagedEmulatorSmokeResult(invalid)).toThrow(
       /must not persist PNG bytes/i
     )
+  })
+
+  it('appends bounded captured child output when the envelope reports a failure', () => {
+    const failure = { ok: false, error: 'emulator_smoke_failed' }
+    expect(() =>
+      validatePackagedEmulatorSmokeResult(
+        failure,
+        '[emulator-smoke] phase=observe: adapter missing\n'
+      )
+    ).toThrow(/^Packaged emulator smoke did not report success: emulator_smoke_failed/)
+    expect(() =>
+      validatePackagedEmulatorSmokeResult(failure, 'stderr-line-one\nstderr-line-two')
+    ).toThrow(/stderr-line-two/)
+  })
+
+  it('caps captured child output at the bounded diagnostic window', () => {
+    const failure = { ok: false, error: 'emulator_smoke_failed' }
+    let message = ''
+    try {
+      validatePackagedEmulatorSmokeResult(failure, 'x'.repeat(9000))
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+    expect(message).toContain('x'.repeat(100))
+    expect(message).not.toContain('x'.repeat(5000))
   })
 })
