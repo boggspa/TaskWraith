@@ -72,6 +72,7 @@ import {
   type McpBridgeProfileEnvironment,
   type McpBridgeRouteEnvironmentVariables
 } from './McpBridgeRoute'
+import { resolveCursorBrokerParentRouteFromAncestors } from '../cursor/CursorBrokerParentRouteLookup'
 import { isValidInstanceResourceEpoch } from '../InstanceResourceIdentity'
 import { PROVIDER_RUN_MANAGEMENT_IDS } from '../run/ProviderRunManagementMatrix'
 // Audit MCP tool definitions — advertised ONLY to audit role-runs (the bridge
@@ -484,6 +485,9 @@ export interface GeminiMcpBridgeProcessDeps {
   exit?: (code?: number) => void
   cwd?: () => string
   pid?: () => number
+  /** Test seam for Path-B parent-pid route lookup. Production walks OS ancestry. */
+  readParentPid?: (pid: number) => number | null
+  isPidAlive?: (pid: number) => boolean
 }
 
 // Recognition preserves the exact run identity through the broker; it does not
@@ -2267,7 +2271,12 @@ function profileEnvironmentForBridgeRoute(
 function resolveMcpBridgeProcessLaunch(
   argv: string[],
   env: NodeJS.ProcessEnv,
-  getDefaultSocketPath: () => string
+  getDefaultSocketPath: () => string,
+  parentRoute?: {
+    readonly startPid: number
+    readonly readParentPid?: (pid: number) => number | null
+    readonly isPidAlive?: (pid: number) => boolean
+  }
 ): ResolvedMcpBridgeProcessLaunch | null {
   if (argv.includes(MCP_BRIDGE_ROUTE_FROM_ENV_ARG)) {
     if (
@@ -2277,15 +2286,37 @@ function resolveMcpBridgeProcessLaunch(
       return null
     }
     const parsed = parseMcpBridgeRouteFromEnv(env)
-    if (!parsed.ok) return null
-    const { endpoint, profile } = parsed.value
     let expectedSocketPath = ''
-    try {
-      expectedSocketPath = normalizeMcpSocketPathForBridgeLog(getDefaultSocketPath())
-    } catch {
-      return null
+    const defaultSocketPath = (): string | null => {
+      if (expectedSocketPath) return expectedSocketPath
+      try {
+        expectedSocketPath = normalizeMcpSocketPathForBridgeLog(getDefaultSocketPath())
+        return expectedSocketPath
+      } catch {
+        return null
+      }
     }
-    if (endpoint.socketPath !== expectedSocketPath) return null
+    let route = parsed.ok ? parsed.value : null
+    let recordedEnv: Record<string, string> | null = null
+    if (!parsed.ok && parsed.reason === 'missing-endpoint-authority') {
+      const socketPath = defaultSocketPath()
+      if (socketPath && parentRoute) {
+        const fromParent = resolveCursorBrokerParentRouteFromAncestors({
+          startPid: parentRoute.startPid,
+          socketPath,
+          ...(parentRoute.readParentPid ? { readParentPid: parentRoute.readParentPid } : {}),
+          ...(parentRoute.isPidAlive ? { isPidAlive: parentRoute.isPidAlive } : {})
+        })
+        if (fromParent?.ok) {
+          route = fromParent.value
+          recordedEnv = fromParent.env
+        }
+      }
+    }
+    if (!route) return null
+    const { endpoint, profile } = route
+    const expected = defaultSocketPath()
+    if (!expected || endpoint.socketPath !== expected) return null
     return {
       socketPath: endpoint.socketPath,
       brokerToken: endpoint.brokerToken,
@@ -2293,6 +2324,7 @@ function resolveMcpBridgeProcessLaunch(
       bridgeLogEpoch: endpoint.bridgeLogEpoch,
       env: {
         ...env,
+        ...(recordedEnv || {}),
         [MCP_BRIDGE_ENDPOINT_ENV_KEYS.socketPath]: endpoint.socketPath,
         [MCP_BRIDGE_ENDPOINT_ENV_KEYS.brokerToken]: endpoint.brokerToken,
         [MCP_BRIDGE_ENDPOINT_ENV_KEYS.instanceEpoch]: endpoint.instanceEpoch,
@@ -2319,7 +2351,11 @@ export function startGeminiMcpBridgeProcess(deps: GeminiMcpBridgeProcessDeps): v
   const stdin = deps.stdin || process.stdin
   const stdout = deps.stdout || process.stdout
   const exit = deps.exit || ((code?: number) => process.exit(code))
-  const launch = resolveMcpBridgeProcessLaunch(argv, env, deps.getDefaultSocketPath)
+  const launch = resolveMcpBridgeProcessLaunch(argv, env, deps.getDefaultSocketPath, {
+    startPid: deps.pid?.() || process.pid,
+    ...(deps.readParentPid ? { readParentPid: deps.readParentPid } : {}),
+    ...(deps.isPidAlive ? { isPidAlive: deps.isPidAlive } : {})
+  })
   // Do not install event/stdio handlers or emit endpoint-bearing diagnostics
   // for a stale static registration. The caller gets a generic non-zero exit.
   if (!launch) {

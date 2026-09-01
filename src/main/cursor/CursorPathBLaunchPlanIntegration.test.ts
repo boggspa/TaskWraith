@@ -88,6 +88,8 @@ describe('Cursor Path-B production/evidence integration', () => {
     )
     expect(missingBinary).toContain('settleVisibleProviderSetupFailure({')
     expect(indexSource).toContain('await runCursorMcpEnable({')
+    expect(cursorRunSource).toContain('execFileCursorMcpBoundToParentRoute({')
+    expect(indexSource).toContain('attachCursorBrokerParentRouteIfNeeded({')
   })
 
   it('derives native-only seal evidence from the same launch-plan builder', () => {

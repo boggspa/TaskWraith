@@ -254,7 +254,7 @@ describe('MCP bridge packaged instance isolation', () => {
     })
 
     expect(exit).toHaveBeenCalledWith(1)
-    expect(getDefaultSocketPath).not.toHaveBeenCalled()
+    expect(getDefaultSocketPath).toHaveBeenCalled()
     expect(stdin.listenerCount('data')).toBe(0)
     expect(stdin.listenerCount('end')).toBe(0)
   })

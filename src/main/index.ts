@@ -1811,6 +1811,10 @@ import { createVerifiedCursorWorkspaceConfigTransaction } from './cursor/CursorW
 import { createCursorGlobalBrokerRegistrationTransaction } from './cursor/CursorGlobalBrokerRegistrationTransaction'
 import { runCursorMcpEnable, runCursorMcpReadyProbe } from './cursor/CursorMcpEnable'
 import {
+  attachCursorBrokerParentRouteIfNeeded,
+  execFileCursorMcpBoundToParentRoute
+} from './cursor/CursorBrokerParentRouteLookup'
+import {
   CursorWorkspaceConfigLeaseAbortedError,
   CursorWorkspaceConfigLeaseCoordinator,
   cursorWorkspaceConfigurationKey,
@@ -20312,6 +20316,12 @@ async function runCliProviderProcess(
       detached: process.platform !== 'win32',
       env: childEnv
     })
+    attachCursorBrokerParentRouteIfNeeded({
+      provider,
+      child,
+      extraEnv: 'extraEnv' in options ? options.extraEnv : undefined,
+      socketPath: geminiMcpSocketPath()
+    })
     // A returned ChildProcess may already be executing even when Node has not
     // published a PID yet. From this point setup failure is ambiguous and the
     // durable launching guardian must be retained, never exact-released.
@@ -22496,21 +22506,15 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         serverName: CURSOR_MCP_SERVER_NAME,
         signal: payload.providerSetupAbortSignal,
         launch: (callback) =>
-          execFile(
-            resolved.binaryPath!,
-            ['mcp', 'list'],
-            {
-              cwd: payload.workspace!,
-              timeout: 10000,
-              env: { ...process.env, ...cursorMcpBridgeEnv }
-            },
-            (error, stdout, stderr) =>
-              callback(
-                error instanceof Error ? error : error ? new Error(String(error)) : null,
-                String(stdout || ''),
-                String(stderr || '')
-              )
-          )
+          execFileCursorMcpBoundToParentRoute({
+            binaryPath: resolved.binaryPath!,
+            args: ['mcp', 'list'],
+            cwd: payload.workspace!,
+            routeEnv: cursorMcpBridgeEnv,
+            socketPath: geminiMcpSocketPath(),
+            timeout: 10000,
+            callback
+          })
       })
       if (!providerTransportLaunchAuthorized('cursor', payload, route)) {
         await releaseCursorConfigurationLeases()
