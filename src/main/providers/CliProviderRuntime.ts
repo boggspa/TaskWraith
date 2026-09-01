@@ -13,6 +13,8 @@ import {
   probeMistralVibeAuthStatus,
   type MistralVibeAuthProbeResult
 } from '../mistral/MistralAuthStatusProbe'
+import { probeDevinCredentialState } from '../devin/DevinAuthProbe'
+import { devinAmbientApiKeyEnabled } from '../devin/devinGate'
 import { approvalModeRank, coerceApprovalMode } from '../RunPermissionPosture'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import { buildUserMcpLaunchServers } from '../UserMcpServers'
@@ -66,6 +68,7 @@ export interface CliProviderRuntimeDependencies {
   getCodexMcpStatusSnapshot?: () => Promise<unknown>
   getKimiStatusSnapshot?: () => Promise<Record<string, unknown>>
   probeMistralAuthStatus?: typeof probeMistralVibeAuthStatus
+  probeDevinCredentialState?: typeof probeDevinCredentialState
   resolveExtensionSecretValues?: (refs: ExtensionSecretRef[]) => ExtensionSecretResolution[]
 }
 
@@ -730,6 +733,7 @@ export async function getCliProviderStatus(
     authSource?: string | null
     probeStatus?: MistralVibeAuthProbeResult['probeStatus']
   } = {}
+  let devinAuthMetadata: { credentialPresent?: boolean | null; authSource?: string | null } = {}
   if (provider === 'mistral') {
     const probeEnv = scrubMistralCredentialEnv(
       createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, resolved.binaryPath, deps)
@@ -753,6 +757,21 @@ export async function getCliProviderStatus(
       authSource: authProbe.authSource,
       probeStatus: authProbe.probeStatus
     }
+  } else if (provider === 'devin') {
+    // Devin's credential lanes — the ambient WINDSURF_API_KEY / DEVIN_API_KEY
+    // (behind devinAmbientApiKeyEnabled) or the CLI's own credentials.toml —
+    // are observable without spawning the binary, so the card reports exactly
+    // the lane a launch would use; no `devin auth status` round-trip.
+    version = await readResolvedCliVersion(resolved, deps)
+    const devinProbe = (deps?.probeDevinCredentialState || probeDevinCredentialState)({
+      env: createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, resolved.binaryPath, deps),
+      ambientApiKeyAllowed: devinAmbientApiKeyEnabled()
+    })
+    authState = devinProbe.authState
+    devinAuthMetadata = {
+      credentialPresent: devinProbe.credentialPresent,
+      authSource: devinProbe.authSource
+    }
   } else {
     version = await readResolvedCliVersion(resolved, deps)
     authState =
@@ -768,6 +787,7 @@ export async function getCliProviderStatus(
     appServer: 'sdk-or-cli',
     authState,
     ...mistralAuthMetadata,
+    ...devinAuthMetadata,
     setupRequired: false,
     binaryPath: resolved.binaryPath,
     binarySource: resolved.source,

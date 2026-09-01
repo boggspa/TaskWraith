@@ -855,6 +855,7 @@ describe('provider action taxonomy', () => {
       'mcp__taskwraith-broker__',
       'mcp__taskwraith-grok__',
       'mcp__taskwraith-mistral__',
+      'mcp__taskwraith-devin__',
       'mcp_taskwraith-broker_',
       'mcp_taskwraith-broker-',
       'mcp_taskwraith_',
@@ -867,6 +868,7 @@ describe('provider action taxonomy', () => {
       'taskwraith_broker-',
       'taskwraith-grok__',
       'taskwraith-mistral__',
+      'taskwraith-devin__',
       'taskwraith__'
     ]) {
       expect(

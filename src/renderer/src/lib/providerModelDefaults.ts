@@ -437,6 +437,26 @@ const MUSE_DEFAULT_MODEL_ROWS = [
   }
 ] satisfies CodexModelOption[]
 const MUSE_DEFAULT_MODELS = withCuratedUltraTaskSupport(MUSE_DEFAULT_MODEL_ROWS)
+// Devin CLI seat (`devin acp`). Devin exposes no enumerable model catalogue:
+// the CLI runs its own default model unless `--model <id>` overrides it per
+// run, so the one honest row is the 'cli-default' sentinel. The id must stay
+// byte-identical to DEVIN_STATIC_MODELS in main's StaticProviderModels.ts —
+// providerFallthroughGuards compares the two sides and a divergence means the
+// picker and the run disagree.
+const DEVIN_DEFAULT_MODEL = 'cli-default'
+const DEVIN_DEFAULT_MODEL_ROWS = [
+  {
+    id: DEVIN_DEFAULT_MODEL,
+    label: 'Devin (CLI default)',
+    description: 'Runs the Devin CLI default model; override per run with a custom model id',
+    isDefault: true,
+    // Explicit, like the Haiku row: main's isConcreteUltraTaskModelId refuses
+    // the 'cli-default' sentinel, so an UltraTask lead can never run on it.
+    // withCuratedUltraTaskSupport keeps an explicit false (the row spreads last).
+    ultraTaskSupported: false
+  }
+] satisfies CodexModelOption[]
+const DEVIN_DEFAULT_MODELS = withCuratedUltraTaskSupport(DEVIN_DEFAULT_MODEL_ROWS)
 // Cursor model catalog — backs live Path-B Cursor selection and decodes
 // stored historical selections.
 const CURSOR_DEFAULT_MODEL = 'composer-2.5-fast'
@@ -757,6 +777,8 @@ function getStaticProviderModelOptions(provider: StaticCatalogueProviderId): Cod
       return MISTRAL_DEFAULT_MODELS
     case 'muse':
       return MUSE_DEFAULT_MODELS
+    case 'devin':
+      return DEVIN_DEFAULT_MODELS
     default:
       // NOTE the semantics: `[]` here means "this provider has no catalogue at
       // all", which is NOT the claim Pi's `[]` makes in App.tsx ("no upstream
@@ -784,6 +806,8 @@ function getStaticProviderDefaultModel(provider: StaticCatalogueProviderId): str
       return MISTRAL_DEFAULT_MODEL
     case 'muse':
       return MUSE_DEFAULT_MODEL
+    case 'devin':
+      return DEVIN_DEFAULT_MODEL
     default:
       // '' — never another provider's id, which is the precise damage this
       // whole block exists to prevent. An empty string is falsy at every
@@ -873,6 +897,8 @@ export {
   MISTRAL_DEFAULT_MODEL,
   MISTRAL_DEFAULT_MODELS,
   MUSE_DEFAULT_MODELS,
+  DEVIN_DEFAULT_MODEL,
+  DEVIN_DEFAULT_MODELS,
   CURSOR_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODEL,

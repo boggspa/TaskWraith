@@ -178,7 +178,7 @@ describe('ParticipantPickerCluster', () => {
         { ready: true, providerIds: ['claude', 'cursor'] },
         'kimi'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse'])
+    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse', 'devin'])
   })
 
   it('uses authenticated AntiGravity models only from the configured snapshot', () => {
@@ -210,7 +210,8 @@ describe('ParticipantPickerCluster', () => {
       { provider: 'ollama' },
       { provider: 'pi' },
       { provider: 'mistral' },
-      { provider: 'muse' }
+      { provider: 'muse' },
+      { provider: 'devin' }
     ])
   })
 
@@ -246,7 +247,7 @@ describe('ParticipantPickerCluster', () => {
         { ready: false, providerIds: [] },
         'kimi'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse'])
+    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse', 'devin'])
   })
 
   it('never leaks retired or flag-gated providers through the configured snapshot', () => {
@@ -262,7 +263,7 @@ describe('ParticipantPickerCluster', () => {
         { ready: true, providerIds: ['gemini', 'grok', 'codex'] },
         'claude'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse'])
+    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse', 'devin'])
   })
 
   it('keeps an existing disconnected participant visible and editable', () => {

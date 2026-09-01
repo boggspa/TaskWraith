@@ -37,7 +37,7 @@ describe('ProviderManualSetupFlowCatalog', () => {
   })
 
   it('admits the bounded Host login/logout catalog and rejects unbounded provider flows', () => {
-    for (const provider of ['codex', 'claude', 'cursor', 'ollama', 'muse'] as const) {
+    for (const provider of ['codex', 'claude', 'cursor', 'ollama', 'muse', 'devin'] as const) {
       expect(buildProviderManualSetupFlow(provider, 'login')).toMatchObject({
         provider,
         action: 'login'

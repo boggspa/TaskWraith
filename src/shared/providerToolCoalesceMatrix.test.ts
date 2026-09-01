@@ -67,7 +67,7 @@ function expectRouteCategory(
 }
 
 describe('provider tool coalesce matrix', () => {
-  it('covers exactly the 11 declared ProviderIds', () => {
+  it('covers exactly the 12 declared ProviderIds', () => {
     expect(providers.sort()).toEqual(
       [
         'gemini',
@@ -80,7 +80,8 @@ describe('provider tool coalesce matrix', () => {
         'antigravity',
         'pi',
         'mistral',
-        'muse'
+        'muse',
+        'devin'
       ].sort()
     )
   })

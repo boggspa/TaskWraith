@@ -85,7 +85,8 @@ const PROVIDERS = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 const PERMISSION_PRESETS = new Set([
   'plan',

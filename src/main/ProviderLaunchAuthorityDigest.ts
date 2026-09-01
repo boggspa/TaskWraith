@@ -30,7 +30,10 @@ const MAX_TEXT_LENGTH = 4_096
  * become production seal-wired merely because the central digest can validate
  * its provider-local authority. Live-selectable ≠ launch-sealed.
  */
-export type LiveProviderLaunchId = Exclude<ProviderId, 'gemini' | 'antigravity' | 'pi' | 'muse' | 'devin'>
+export type LiveProviderLaunchId = Exclude<
+  ProviderId,
+  'gemini' | 'antigravity' | 'pi' | 'muse' | 'devin'
+>
 
 /** Every provider with a strict central launch-authority schema/producer. */
 export type LaunchAuthorityProviderId = LiveProviderLaunchId | 'pi' | 'antigravity'

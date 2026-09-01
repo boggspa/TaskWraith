@@ -11625,7 +11625,7 @@ struct UsagePanel: View {
 
     private static let providerOrder = [
         "gemini", "codex", "claude", "kimi", "cursor", "grok", "pi", "mistral", "muse",
-        "antigravity", "ollama", "deepseek", "cerebras",
+        "devin", "antigravity", "ollama", "deepseek", "cerebras",
     ]
 
     private enum UsagePanelView: String, CaseIterable, Identifiable {

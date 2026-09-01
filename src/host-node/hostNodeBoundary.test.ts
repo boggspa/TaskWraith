@@ -12,6 +12,7 @@ const SHARED_ROOT = resolve(REPO_ROOT, 'src/shared')
 const HOST_SHARED_ROOT = resolve(REPO_ROOT, 'src/host-shared')
 const MAIN_MUSE_ROOT = resolve(REPO_ROOT, 'src/main/muse')
 const MAIN_MISTRAL_ROOT = resolve(REPO_ROOT, 'src/main/mistral')
+const MAIN_DEVIN_ROOT = resolve(REPO_ROOT, 'src/main/devin')
 const HOST_NODE_AGY_PTY_CAPTURE = resolve(HOST_NODE_ROOT, 'HostNodeAgyPtyCapture.ts')
 const ROOT_MODULES = [
   resolve(HOST_NODE_ROOT, 'HostNodeMuseProvider.ts'),
@@ -54,9 +55,19 @@ const PURE_MISTRAL_CLOSURE = new Set([
   'MistralQuotaEstimate.ts'
 ])
 
+/** Deliberate production closure required by the Node Devin adapter: launch
+ *  policy, the three credential lanes, and the credentials.toml reader. The
+ *  ACP client and the env gates stay main-only (they pull Electron surfaces). */
+const PURE_DEVIN_CLOSURE = new Set([
+  'DevinCliArgs.ts',
+  'DevinCredentialLane.ts',
+  'DevinCredentialStore.ts'
+])
+
 const PINNED_MAIN_PROVIDER_CLOSURES = new Map<string, ReadonlySet<string>>([
   [MAIN_MUSE_ROOT, PURE_MUSE_CLOSURE],
-  [MAIN_MISTRAL_ROOT, PURE_MISTRAL_CLOSURE]
+  [MAIN_MISTRAL_ROOT, PURE_MISTRAL_CLOSURE],
+  [MAIN_DEVIN_ROOT, PURE_DEVIN_CLOSURE]
 ])
 
 const PINNED_EXTERNAL_IMPORTS = new Map<string, ReadonlySet<string>>([

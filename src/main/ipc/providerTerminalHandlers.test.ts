@@ -631,3 +631,72 @@ describe('codex upgrade targets the install it actually runs', () => {
     expect(deps.openPath).not.toHaveBeenCalled()
   })
 })
+
+describe('devin terminal setup', () => {
+  it('opens `devin auth login` for account sign-in', async () => {
+    const { deps, loginDir } = createDeps()
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-login-terminal')({}, 'devin')).resolves.toEqual({
+      ok: true,
+      scope: 'user-owned-provider-setup',
+      managedRunReady: false,
+      notice: expect.stringMatching(/devin auth login|WINDSURF_API_KEY/i)
+    })
+
+    expect(deps.resolveCliProviderBinary).toHaveBeenCalledWith('devin')
+    const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+    expect(script).toContain("'/usr/local/bin/devin' 'auth' 'login'")
+    expect(deps.openPath).toHaveBeenCalledWith(join(loginDir, 'devin-login.command'))
+  })
+
+  it('opens `devin auth logout` to clear the stored credentials file', async () => {
+    const { deps, loginDir } = createDeps()
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-logout-terminal')({}, 'devin')).resolves.toMatchObject({
+      ok: true,
+      scope: 'user-owned-provider-setup',
+      notice: expect.stringMatching(/devin auth logout/i)
+    })
+    const script = String(
+      deps.writeFileSync.mock.calls.find((call: unknown[]) =>
+        String(call[0]).endsWith('devin-logout.command')
+      )?.[1] || ''
+    )
+    expect(script).toContain("'/usr/local/bin/devin' 'auth' 'logout'")
+    expect(deps.openPath).toHaveBeenCalledWith(join(loginDir, 'devin-logout.command'))
+  })
+
+  it('upgrades through the updater of the CLI TaskWraith actually resolves', async () => {
+    const { deps } = createDeps()
+    deps.resolveCliProviderBinary.mockResolvedValueOnce(
+      createResolved('/Users/test/.local/bin/devin')
+    )
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-upgrade-terminal')({}, 'devin')).resolves.toEqual({
+      ok: true,
+      scope: 'user-owned-provider-setup',
+      managedRunReady: false,
+      notice: expect.stringMatching(/devin update/i)
+    })
+    const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+    expect(script).toContain("'/Users/test/.local/bin/devin' 'update'")
+    expect(script).not.toContain('install.sh')
+  })
+
+  it('installs a missing CLI with the official installer instead of inventing a path', async () => {
+    const { deps } = createDeps()
+    deps.resolveCliProviderBinary.mockResolvedValueOnce(createResolved(null))
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-upgrade-terminal')({}, 'devin')).resolves.toMatchObject({
+      ok: true,
+      scope: 'user-owned-provider-setup'
+    })
+    const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+    expect(script).toContain('curl -fsSL https://cli.devin.ai/install.sh | bash')
+    expect(script).not.toContain("'update'")
+  })
+})

@@ -39,10 +39,7 @@ import {
 import type { AcpPermissionRequest, AcpPermissionDecision } from '../grok/GrokAcpProtocol'
 import type { NormalizedGrokRunEvent } from '../grok/GrokAcpProtocol'
 import { resolveStructuredTaskWraithToolRequest } from '../grok/GrokMcpAdvertise'
-import {
-  DEVIN_BROKER_MCP_TOOL_NAMESPACE,
-  DEVIN_SCOPED_MCP_SERVER_NAME
-} from '../index.constants'
+import { DEVIN_BROKER_MCP_TOOL_NAMESPACE, DEVIN_SCOPED_MCP_SERVER_NAME } from '../index.constants'
 import { hasUltraTaskDelegationAutoAllow } from '../UltraTaskDelegationConsent'
 import type { EffectiveRunPermissions } from '../store/types'
 

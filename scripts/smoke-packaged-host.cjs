@@ -181,6 +181,9 @@ function validateHostPayload(hostRoot, label) {
     ].map((name) => path.join('muse', name)),
     ...['MistralCliArgs.js', 'MistralCredentialLane.js', 'MistralQuotaEstimate.js'].map((name) =>
       path.join('mistral', name)
+    ),
+    ...['DevinCliArgs.js', 'DevinCredentialLane.js', 'DevinCredentialStore.js'].map((name) =>
+      path.join('devin', name)
     )
   ])
   const mainRoot = path.join(hostRoot, 'main')
@@ -231,6 +234,7 @@ function validateHostPayload(hostRoot, label) {
     ['host-node', 'HostNodeGrokProvider.js'],
     ['host-node', 'HostNodeKimiProvider.js'],
     ['host-node', 'HostNodeMistralProvider.js'],
+    ['host-node', 'HostNodeDevinProvider.js'],
     ['host-node', 'HostNodeOllamaProvider.js'],
     ['host-node', 'HostNodePiProvider.js'],
     ['host-shared', 'HostProviderCatalog.js']

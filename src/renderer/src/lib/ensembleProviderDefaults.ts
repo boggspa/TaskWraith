@@ -240,6 +240,16 @@ const MUSE_MODEL_ROWS: CombinedModelPickerModelOption[] = [
 ]
 const MUSE_MODELS = withCuratedUltraTaskSupport(MUSE_MODEL_ROWS)
 
+// Devin CLI seat (`devin acp`): no enumerable catalogue, so the single
+// 'cli-default' sentinel row is the honest offer — byte-identical to the composer
+// catalogue in providerModelDefaults.ts and main's StaticProviderModels.ts.
+// Explicitly NOT UltraTask-capable: main's isConcreteUltraTaskModelId refuses
+// the sentinel, so advertising support here would offer a lead the run rejects.
+const DEVIN_DEFAULT_MODEL_ID = 'cli-default'
+const DEVIN_MODELS: CombinedModelPickerModelOption[] = [
+  { id: DEVIN_DEFAULT_MODEL_ID, label: 'Devin (CLI default)', ultraTaskSupported: false }
+]
+
 // Muse Spark effort ladder (HANDOFF #4 / Meta `/effort`): minimal→ultra,
 // including xhigh. Never `none` — meta rejects it (maps to minimal at argv).
 const MUSE_REASONING: CombinedModelPickerReasoningOption[] = [
@@ -787,6 +797,14 @@ export function getDefaultEnsembleParticipantConfig(
         permissionPresetId: 'default',
         reasoningEffort: 'high'
       }
+    case 'devin':
+      // Must stay in lockstep with getDefaultEnsembleModel in
+      // src/main/EnsembleDefaults.ts. No reasoning control: `devin acp` takes
+      // only an optional --model.
+      return {
+        model: DEVIN_DEFAULT_MODEL_ID,
+        permissionPresetId: 'default'
+      }
     default:
       return {
         model: 'gpt-5.5',
@@ -824,6 +842,8 @@ export function getDefaultEnsembleRoleName(provider: ProviderId): string {
       return 'Mistral'
     case 'muse':
       return 'Muse'
+    case 'devin':
+      return 'Devin'
     default:
       return 'Gemini'
   }
@@ -1510,6 +1530,14 @@ export function getEnsembleModelDefaults(
         defaultReasoning: 'high',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'muse-spark-1.2'
+      }
+    case 'devin':
+      return {
+        modelOptions: DEVIN_MODELS,
+        reasoningOptions: [],
+        defaultReasoning: '',
+        fastModeCapableModelIds: new Set<string>(),
+        defaultModelId: DEVIN_DEFAULT_MODEL_ID
       }
     default:
       return {

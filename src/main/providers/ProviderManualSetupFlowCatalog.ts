@@ -34,7 +34,10 @@ const MUSE_USER_OWNED_UPGRADE_NOTICE =
   'This invokes the resolved Muse launcher with its synchronous-update flag, so the CLI TaskWraith actually runs is updated in place. Meta owns the launcher, download, and account flow.'
 
 const DEVIN_USER_OWNED_SETUP_NOTICE =
-  'This opens the resolved Devin CLI for a user-owned `devin auth login`. TaskWraith does not write Devin credentials; managed runs read WINDSURF_API_KEY / DEVIN_API_KEY from the environment or the user-owned credentials.toml the CLI writes.'
+  'This opens the resolved Devin CLI for a user-owned `devin auth login` or credential clear (`devin auth logout`). TaskWraith does not write Devin credentials; managed runs read WINDSURF_API_KEY / DEVIN_API_KEY from the environment or the user-owned credentials.toml the CLI writes.'
+
+const DEVIN_USER_OWNED_UPGRADE_NOTICE =
+  'This runs the resolved Devin CLI’s own updater (`devin update`), or the official installer when no CLI is resolved. Cognition owns the download and account flow; TaskWraith does not repackage the update.'
 
 const OLLAMA_USER_OWNED_SETUP_NOTICE =
   'This invokes the resolved official Ollama CLI for account sign-in or sign-out. Ollama owns the browser flow and credentials; TaskWraith stores neither. The same local Ollama daemon then authenticates Ollama Cloud model requests.'
@@ -66,7 +69,9 @@ const FLOWS: Readonly<Record<string, ProviderManualSetupFlow>> = {
   'muse:login': flow('muse', 'login', MUSE_USER_OWNED_SETUP_NOTICE),
   'muse:logout': flow('muse', 'logout', MUSE_USER_OWNED_SETUP_NOTICE),
   'muse:upgrade': flow('muse', 'upgrade', MUSE_USER_OWNED_UPGRADE_NOTICE),
-  'devin:login': flow('devin', 'login', DEVIN_USER_OWNED_SETUP_NOTICE)
+  'devin:login': flow('devin', 'login', DEVIN_USER_OWNED_SETUP_NOTICE),
+  'devin:logout': flow('devin', 'logout', DEVIN_USER_OWNED_SETUP_NOTICE),
+  'devin:upgrade': flow('devin', 'upgrade', DEVIN_USER_OWNED_UPGRADE_NOTICE)
 }
 
 export function buildProviderManualSetupFlow(

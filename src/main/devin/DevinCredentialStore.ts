@@ -30,7 +30,12 @@ export function defaultDevinCredentialsPath(platform: NodeJS.Platform = process.
     const appData = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')
     return join(appData, 'devin', 'credentials.toml')
   }
-  return join(homedir(), '.local', 'share', 'devin', 'credentials.toml')
+  // `devin auth login` writes under $XDG_DATA_HOME/devin when that variable is
+  // set, falling back to ~/.local/share/devin — mirror the CLI exactly or a
+  // Linux user with a custom data home reads as "not signed in" forever.
+  const xdgDataHome = process.env.XDG_DATA_HOME?.trim()
+  const dataHome = xdgDataHome ? xdgDataHome : join(homedir(), '.local', 'share')
+  return join(dataHome, 'devin', 'credentials.toml')
 }
 
 /**

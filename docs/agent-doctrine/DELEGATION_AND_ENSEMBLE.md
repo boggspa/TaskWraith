@@ -117,7 +117,9 @@ do not loop or retry; continue the parent turn and tell the user what was
 declined.
 
 This MCP route is available only to tool-capable parent seats (Codex, Claude,
-Kimi, Cursor, Grok, Mistral Vibe, Muse, Ollama when admitted). A Path-B Cursor
+Kimi, Cursor, Grok, Mistral Vibe, Muse, Ollama when admitted, and Devin only
+while its TaskWraith MCP advertise gate is on or a signed UltraTask delegation
+attaches the broker). A Path-B Cursor
 turn receives the gateway when its TaskWraith-owned broker starts successfully
 and can then call `delegate_to_subthread`; if broker setup fails, TaskWraith
 posts a visible warning and that turn degrades to native-only operation. Any

@@ -1728,6 +1728,7 @@ import {
   devinAmbientApiKeyEnabled,
   devinMcpAdvertiseEnabled
 } from './devin/devinGate'
+import { probeDevinCredentialState } from './devin/DevinAuthProbe'
 import { estimateMistralTokenUsage } from './mistral/MistralUsage'
 import {
   createChildProcessMuseSpawn,
@@ -17412,6 +17413,15 @@ const managedRunConfiguredProviderDiscovery = createConfiguredProviderDetector({
     return { available: true, modelCount: models.length }
   },
   getMistralConfiguredApiKeyPresent: () => mistralApiKeyStore()?.getStatus().configured === true,
+  // Devin admits on a credential lane — the ambient WINDSURF_API_KEY /
+  // DEVIN_API_KEY (behind devinAmbientApiKeyEnabled) or the CLI's own
+  // credentials.toml — observed through the same predicate the status card
+  // reports, so picker admission and the sign-in card cannot disagree.
+  getDevinConfiguredCredentialPresent: () =>
+    probeDevinCredentialState({
+      env: createCliEnv({}),
+      ambientApiKeyAllowed: devinAmbientApiKeyEnabled()
+    }).credentialPresent,
   getAntigravityCombinedModels: (settings) =>
     discoverAuthenticatedAntigravityCombinedModels(settings, {
       getSecretStore: () => antigravityGeminiApiSecretStoreRef,

@@ -28,6 +28,7 @@ import { createHostNodeCodexProvider } from './HostNodeCodexProvider'
 import { createHostNodeKimiProvider } from './HostNodeKimiProvider'
 import { createHostNodeGrokProvider } from './HostNodeGrokProvider'
 import { createHostNodeMistralProvider } from './HostNodeMistralProvider'
+import { createHostNodeDevinProvider } from './HostNodeDevinProvider'
 import { createHostNodeOllamaProviderFactory } from './HostNodeOllamaProvider'
 import { hostNodeOllamaOffersFromCatalog } from './HostNodeOllamaCatalog'
 import { createHostNodeProviderResourcePort } from './HostNodeProviderResources'
@@ -228,6 +229,10 @@ export function createHostNodeProductionServer(
                 ...(launcher ? { terminalLauncher: launcher } : {})
               }),
               createHostNodeMistralProvider({
+                ...(launcher ? { terminalLauncher: launcher } : {})
+              }),
+              createHostNodeDevinProvider({
+                environment,
                 ...(launcher ? { terminalLauncher: launcher } : {})
               }),
               createHostNodeOllamaProviderFactory({

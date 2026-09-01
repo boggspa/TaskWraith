@@ -12,6 +12,7 @@ import TaskWraithKit
 // lockout in build 81. ComposerProviderAdmissionTests pins it against the live set.
 let firstLaunchFallbackProviderIds = [
     "codex", "claude", "kimi", "cursor", "grok", "ollama", "pi", "mistral", "muse",
+    "devin",
 ]
 
 struct FirstLaunchSheetView: View {
@@ -40,7 +41,7 @@ struct FirstLaunchSheetView: View {
             return ProviderDisplay(
                 id: provider,
                 label: TWTheme.providerLabel(provider),
-                optional: ["kimi", "cursor", "grok", "ollama", "pi", "mistral", "muse"]
+                optional: ["kimi", "cursor", "grok", "ollama", "pi", "mistral", "muse", "devin"]
                     .contains(provider),
                 statusKind: model.providerModels[provider]?.isEmpty == false
                     ? "notObservable" : "notLoaded",

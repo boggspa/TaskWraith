@@ -2985,7 +2985,8 @@ const STRICT_TASKWRAITH_MCP_SERVER_NAMES = new Set([
   'taskwraith',
   'taskwraith-broker',
   'taskwraith-grok',
-  'taskwraith-mistral'
+  'taskwraith-mistral',
+  'taskwraith-devin'
 ])
 
 const STRICT_TASKWRAITH_FLAT_PREFIXES = [
@@ -3003,6 +3004,7 @@ const STRICT_TASKWRAITH_FLAT_PREFIXES = [
   'taskwraith_broker-',
   'taskwraith-grok__',
   'taskwraith-mistral__',
+  'taskwraith-devin__',
   'taskwraith__'
 ] as const
 

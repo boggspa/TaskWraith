@@ -377,13 +377,29 @@ describe('validateHostNodeProviderComposition', () => {
         'ollama',
         'pi',
         'mistral',
-        'muse'
+        'muse',
+        'devin'
       ])
     ).not.toThrow()
   })
 
   it('fails for subsets, supersets, or reordered sets', () => {
     expect(() => validateHostNodeProviderComposition(['muse'])).toThrow()
+    // The pre-Devin nine-provider roster is now a strict subset: a Host that
+    // forgets the Devin adapter must fail composition, never compose short.
+    expect(() =>
+      validateHostNodeProviderComposition([
+        'codex',
+        'claude',
+        'kimi',
+        'cursor',
+        'grok',
+        'ollama',
+        'pi',
+        'mistral',
+        'muse'
+      ])
+    ).toThrow()
     expect(() =>
       validateHostNodeProviderComposition([
         'codex',
@@ -395,6 +411,7 @@ describe('validateHostNodeProviderComposition', () => {
         'pi',
         'mistral',
         'muse',
+        'devin',
         'extra'
       ])
     ).toThrow()

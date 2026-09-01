@@ -303,13 +303,32 @@ describe('buildProviderApiRateGroups', () => {
  * it anyway.
  */
 describe('offered-model rate coverage', () => {
+  // A provider whose baked-in table has NO models is plan-billed (Devin bills in
+  // ACUs, not per token): there is no `models[0]` for resolveModelRate to price
+  // a stray model off, so the coverage guard has nothing to protect and would
+  // only ever demand an invented rate row. That exemption is pinned below so a
+  // future provider cannot dodge the guard by shipping an empty table.
+  const PLAN_BILLED_PROVIDERS: ProviderId[] = MODEL_USAGE_PROVIDER_ORDER.filter(
+    (provider) => !isRetiredProvider(provider) && BAKED_IN_RATES[provider].models.length === 0
+  )
   const PRICED_PROVIDERS: ProviderId[] = MODEL_USAGE_PROVIDER_ORDER.filter(
-    (provider) => !isRetiredProvider(provider)
+    (provider) => !isRetiredProvider(provider) && !PLAN_BILLED_PROVIDERS.includes(provider)
   ).concat('ollama')
 
   const rates = normalizeProviderRates({
     rateTableVersion: RATE_TABLE_VERSION,
     baseline: BAKED_IN_RATES
+  })
+
+  it('exempts exactly the plan-billed providers, and never prices their picker rows off another model', () => {
+    expect(PLAN_BILLED_PROVIDERS).toEqual(['devin'])
+    for (const provider of PLAN_BILLED_PROVIDERS) {
+      const offered = getEnsembleModelDefaults(provider).modelOptions.map((option) => option.id)
+      expect(offered.length).toBeGreaterThan(0)
+      for (const modelId of offered) {
+        expect(resolveModelRate(rates, provider, modelId), `${provider}/${modelId}`).toBeNull()
+      }
+    }
   })
 
   for (const provider of PRICED_PROVIDERS) {

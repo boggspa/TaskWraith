@@ -83,7 +83,7 @@ User-facing detail: [`SESSION_AND_WORKSPACE.md`](../SESSION_AND_WORKSPACE.md).
 
 TaskWraith exposes a bundled MCP server (`TaskWraith`) to provider runtimes that
 support brokered tools. Current tool-capable run providers are Codex, Claude,
-Kimi, Cursor, Grok, Mistral Vibe, Muse, and local Ollama when their
+Kimi, Cursor, Grok, Mistral Vibe, Muse, Devin, and local Ollama when their
 runtime-specific admission and broker setup succeeds. The conditional
 AntiGravity Gemini API-key lane advertises the TaskWraith tool catalog as Gemini function declarations and
 executes those calls in-process; the official agy print-mode lane attaches no
@@ -99,6 +99,11 @@ receive its readiness receipt before the prompt names those tools; otherwise Pi
 uses unique @Role/@Model mention routing. This extension is never a shell/file
 or generic MCP proxy, requires no user-installed Pi/MCP configuration, and the
 host independently enforces its fixed allowlist.
+Devin runs `devin acp` over stdio and surfaces native tool executions as ACP
+permission requests that TaskWraith answers through its approval ledger.
+Advertising TaskWraith's MCP tools to a Devin session is default-OFF
+(`TASKWRAITH_DEVIN_MCP`) until a live trace confirms that permission-request
+coverage; a signed UltraTask delegation still attaches the broker for that run.
 The current embedded Kimi qualification roster is empty, so Kimi admission
 runs in explicitly labelled `unattested-development` mode — structural
 identity/probe/posture checks, always enabled, packaged builds included — and

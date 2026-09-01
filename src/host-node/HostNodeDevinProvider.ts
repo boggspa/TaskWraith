@@ -1,0 +1,743 @@
+/**
+ * Pure-Node Devin ACP provider adapter.
+ *
+ * Adapted from ./HostNodeMistralProvider.ts (ACP launch/stream lifecycle). The
+ * Devin launch policy is reused from the pure src/main/devin modules
+ * (DevinCliArgs, DevinCredentialLane, DevinCredentialStore) rather than
+ * duplicated; those import nothing Electron-specific. This module itself
+ * imports only Node builtins, host-runtime/host-shared/shared, sibling Host
+ * modules, and that pure Devin closure.
+ *
+ * Where Devin differs from the Mistral archetype:
+ * - `devin acp` takes its one knob (`--model <id>`) on argv. There is no
+ *   session/set_config_option surface, so session/prompt follows session/new
+ *   directly and model selection is argv-only.
+ * - There is no permission-mode flag. Read-only posture is enforced on the
+ *   Host side: the wire prompt carries the Devin prompt preamble for the seat's
+ *   write capability, and a plan seat refuses session/request_permission for a
+ *   mutating tool kind without registering an interaction.
+ * - Credentials come from WINDSURF_API_KEY / DEVIN_API_KEY on the Host
+ *   environment or the CLI's own credentials.toml written by `devin auth login`.
+ */
+
+import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+
+import type {
+  HostProviderRunPort,
+  HostProviderRunThread
+} from '../host-runtime/HostProviderRunPort'
+import {
+  normalizeHostProviderRunPresentationText,
+  normalizeHostProviderRunThread,
+  validateHostProviderRunPrompt
+} from '../host-runtime/HostProviderRunPort'
+import {
+  hostProviderAuthFlows,
+  hostProviderCatalogEntry,
+  hostProviderOffers
+} from '../host-shared/HostProviderCatalog'
+import type {
+  HostProviderAuthFlowProjection,
+  HostProviderAuthStatusProjection,
+  HostProviderOffersProjection,
+  HostProviderStatusProjection
+} from '../shared/hostSetupProtocol'
+import {
+  createHostNodeProviderResourcePort,
+  hostNodeProviderAuthFlows,
+  hostNodeProviderAuthStatus,
+  normalizeHostNodeProviderStatus,
+  type HostNodeProviderResourcePort,
+  type HostNodeProviderRuntimeStatus
+} from './HostNodeProviderResources'
+import type {
+  HostNodeProvider,
+  HostNodeProviderCreateInput,
+  HostNodeProviderInstance,
+  HostNodeProviderRunRequest,
+  HostNodeProviderRunResult
+} from './HostNodeProvider'
+import {
+  createHostNodeAcpTurnCompletion,
+  type HostNodeAcpTurnCompletion
+} from './HostNodeAcpTurnCompletion'
+import type { HostNodeInteractionResolver } from './HostNodeInteractionRegistry'
+import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
+import {
+  DEVIN_CREDENTIAL_ENV_VARS,
+  applyDevinPromptPreamble,
+  buildDevinAcpCliArgs
+} from '../main/devin/DevinCliArgs'
+import { resolveDevinCredentialLaunch } from '../main/devin/DevinCredentialLane'
+import {
+  readDevinStoredCredentials,
+  type DevinCredentialStoreOptions
+} from '../main/devin/DevinCredentialStore'
+
+const PROVIDER_ID = 'devin'
+const PROVIDER_DISPLAY_NAME = 'Devin'
+/** The catalog's only offered model: whatever `devin acp` runs by default, with no `--model`. */
+const CLI_DEFAULT_MODEL_ID = 'cli-default'
+/**
+ * ACP tool kinds that mutate the workspace or run commands. A plan / read-only
+ * seat must never be asked to approve one of these, so they are refused on the
+ * Host side before any interaction is registered (see handlePermissionRequest).
+ */
+const MUTATING_TOOL_KINDS: ReadonlySet<string> = new Set(['edit', 'delete', 'move', 'execute'])
+
+type AcpSpawn = (
+  command: string,
+  args: string[],
+  options: {
+    cwd: string
+    env: NodeJS.ProcessEnv
+    shell: false
+    stdio: 'pipe'
+  }
+) => ChildProcessWithoutNullStreams
+
+interface ActiveRun {
+  readonly completion: HostNodeAcpTurnCompletion
+  cancelled: boolean
+}
+
+export interface HostNodeDevinProviderOptions {
+  readonly resources?: HostNodeProviderResourcePort
+  readonly spawn?: AcpSpawn
+  readonly terminalLauncher?: HostNodeProviderTerminalLauncher
+  /** Non-secret configured-state probe; explicit resource auth wins when known. */
+  readonly isConfigured?: () => boolean | Promise<boolean>
+  /** Dependency-injected launch environment; production inherits process.env. */
+  readonly environment?: NodeJS.ProcessEnv
+  /**
+   * Override for the CLI's credentials.toml location. Production reads the
+   * platform default written by `devin auth login`; tests inject a scratch
+   * path so the real home directory is never read.
+   */
+  readonly credentialsPath?: string
+}
+
+function devinReadOnlySeat(posture: HostProviderRunThread['posture']): boolean {
+  return (
+    posture.postureId === 'plan' ||
+    posture.postureId === 'read_only' ||
+    posture.approvalMode === 'read' ||
+    posture.approvalMode === 'plan'
+  )
+}
+
+/**
+ * Exact argv for one Devin ACP launch. The catalog default runs a bare
+ * `devin acp`; any concrete model id passes through verbatim as `--model`.
+ */
+export function hostNodeDevinAcpArgs(modelId: string): string[] {
+  return buildDevinAcpCliArgs(modelId === CLI_DEFAULT_MODEL_ID ? null : modelId)
+}
+
+function credentialStoreOptions(
+  options: HostNodeDevinProviderOptions
+): DevinCredentialStoreOptions | undefined {
+  return options.credentialsPath ? { credentialsPath: options.credentialsPath } : undefined
+}
+
+/** Non-secret configured-state probe: an env key or the CLI's stored credential. */
+function hasConfiguredDevinCredential(
+  environment: NodeJS.ProcessEnv,
+  storeOptions: DevinCredentialStoreOptions | undefined
+): boolean {
+  if (DEVIN_CREDENTIAL_ENV_VARS.some((name) => Boolean(environment[name]?.trim()))) return true
+  return readDevinStoredCredentials(storeOptions).apiKey !== null
+}
+
+function timestamp(): string {
+  return new Date().toISOString()
+}
+
+function safeOperationId(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 512 &&
+    value.trim() === value &&
+    // eslint-disable-next-line no-control-regex -- Host identifiers reject C0 controls.
+    !/[\u0000-\u001f\u007f]/.test(value)
+  )
+}
+
+function readObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function updateText(value: unknown): string {
+  if (typeof value === 'string') return value
+  const record = readObject(value)
+  if (!record) return ''
+  if (typeof record.text === 'string') return record.text
+  if (Array.isArray(record.content)) {
+    return record.content
+      .map((part) => {
+        const item = readObject(part)
+        return item && typeof item.text === 'string' ? item.text : ''
+      })
+      .join('')
+  }
+  return ''
+}
+
+function providerModelIsSelectable(
+  offers: HostProviderOffersProjection,
+  thread: HostProviderRunThread
+): boolean {
+  const model = offers.models.find((candidate) => candidate.modelId === thread.modelId)
+  return Boolean(
+    model &&
+    model.available &&
+    (thread.reasoningId === undefined ||
+      model.reasoning.some(
+        (candidate) => candidate.reasoningId === thread.reasoningId && candidate.available
+      ))
+  )
+}
+
+function permissionOption(
+  options: readonly { readonly optionId: string; readonly kind: string }[],
+  decision: 'allow' | 'deny' | 'cancel'
+): string | null {
+  if (decision === 'cancel') return null
+  const prefix = decision === 'allow' ? 'allow' : 'reject'
+  const preferred = decision === 'allow' ? 'allow_once' : 'reject_once'
+  return (
+    options.find((option) => option.kind === preferred)?.optionId ??
+    options.find((option) => option.kind.startsWith(prefix))?.optionId ??
+    null
+  )
+}
+
+function acpPermissionResponse(
+  rpcId: string | number,
+  options: readonly { readonly optionId: string; readonly kind: string }[],
+  decision: 'allow' | 'deny' | 'cancel'
+): Record<string, unknown> {
+  const optionId = permissionOption(options, decision)
+  return {
+    jsonrpc: '2.0',
+    id: rpcId,
+    result:
+      decision !== 'cancel' && optionId
+        ? { outcome: 'selected', optionId }
+        : { outcome: 'cancelled' }
+  }
+}
+
+function interactionDecision(decision: string): 'allow' | 'deny' | 'cancel' {
+  if (
+    decision === 'accept' ||
+    decision === 'acceptForSession' ||
+    decision === 'acceptForWorkspace'
+  ) {
+    return 'allow'
+  }
+  return decision === 'decline' ? 'deny' : 'cancel'
+}
+
+class HostNodeDevinProviderInstance implements HostNodeProviderInstance {
+  readonly providerId = PROVIDER_ID
+  private readonly activeRuns = new Map<string, ActiveRun>()
+
+  constructor(
+    private readonly runPort: HostProviderRunPort,
+    private readonly interactions: HostNodeInteractionResolver,
+    private readonly offers: HostProviderOffersProjection,
+    private readonly options: HostNodeDevinProviderOptions
+  ) {}
+
+  private get resources(): HostNodeProviderResourcePort {
+    return (
+      this.options.resources ??
+      createHostNodeProviderResourcePort(
+        PROVIDER_ID,
+        this.options.environment ? { environment: this.options.environment } : {}
+      )
+    )
+  }
+
+  private async runtimeStatus(): Promise<HostNodeProviderRuntimeStatus> {
+    const [resolved, resourceAuthState, version] = await Promise.all([
+      this.resources.resolveBinary(),
+      this.resources.getAuthState(),
+      this.resources.getVersion()
+    ])
+    const configured =
+      resourceAuthState === 'unknown'
+        ? await (this.options.isConfigured?.() ??
+            hasConfiguredDevinCredential(
+              this.options.environment ?? process.env,
+              credentialStoreOptions(this.options)
+            ))
+        : resourceAuthState === 'authenticated'
+    const authState =
+      resourceAuthState === 'unknown'
+        ? configured
+          ? 'authenticated'
+          : 'unauthenticated'
+        : resourceAuthState
+    return {
+      providerId: PROVIDER_ID,
+      available: Boolean(resolved.binaryPath) && authState === 'authenticated',
+      binaryAvailable: Boolean(resolved.binaryPath),
+      authState,
+      ...(version ? { version } : {}),
+      ...(resolved.error ? { detail: resolved.error } : {})
+    }
+  }
+
+  async getStatus(): Promise<HostProviderStatusProjection> {
+    return normalizeHostNodeProviderStatus(PROVIDER_ID, await this.runtimeStatus())
+  }
+
+  async getAuthStatus(): Promise<HostProviderAuthStatusProjection> {
+    return hostNodeProviderAuthStatus(PROVIDER_ID, await this.runtimeStatus())
+  }
+
+  async getAuthFlows(): Promise<readonly HostProviderAuthFlowProjection[]> {
+    if (!this.options.terminalLauncher) return []
+    return hostNodeProviderAuthFlows(PROVIDER_ID, await this.runtimeStatus())
+  }
+
+  async beginAuth(operationId: string): Promise<void> {
+    if (!safeOperationId(operationId))
+      throw new Error(PROVIDER_DISPLAY_NAME + ' auth operation is invalid.')
+    const status = await this.runtimeStatus()
+    if (!status.binaryAvailable || status.authState !== 'unauthenticated') {
+      throw new Error(PROVIDER_DISPLAY_NAME + ' sign-in is not currently available.')
+    }
+    if (hostProviderAuthFlows(PROVIDER_ID).length === 0) {
+      throw new Error(PROVIDER_DISPLAY_NAME + ' has no manual sign-in flow.')
+    }
+    const binary = await this.resources.resolveBinary()
+    if (!binary.binaryPath) throw new Error(PROVIDER_DISPLAY_NAME + ' CLI is unavailable.')
+    const launcher = this.options.terminalLauncher
+    if (!launcher) {
+      throw new Error(PROVIDER_DISPLAY_NAME + ' interactive terminal login is unavailable.')
+    }
+    // Handoff close is not authentication; getAuthStatus still probes credentials.
+    // `devin auth login` is the CLI's interactive sign-in and writes credentials.toml.
+    await launcher.launchForProvider(PROVIDER_ID, {
+      argv: [binary.binaryPath, 'auth', 'login']
+    })
+  }
+
+  async cancelAuth(_operationId: string): Promise<boolean> {
+    return false
+  }
+
+  async run(request: HostNodeProviderRunRequest): Promise<HostNodeProviderRunResult> {
+    if (!safeOperationId(request.runId) || !safeOperationId(request.threadId)) {
+      throw new Error(PROVIDER_DISPLAY_NAME + ' run identity is invalid.')
+    }
+    if (!validateHostProviderRunPrompt(request.prompt)) {
+      throw new Error(PROVIDER_DISPLAY_NAME + ' prompt must be bounded and control-free.')
+    }
+    const thread = normalizeHostProviderRunThread(this.runPort.getThread(request.threadId))
+    if (
+      !thread ||
+      thread.providerId !== PROVIDER_ID ||
+      !providerModelIsSelectable(this.offers, thread)
+    ) {
+      throw new Error(PROVIDER_DISPLAY_NAME + ' thread configuration is not selectable.')
+    }
+    if (this.activeRuns.has(request.runId)) {
+      throw new Error(PROVIDER_DISPLAY_NAME + ' run already exists.')
+    }
+    const readOnly = devinReadOnlySeat(thread.posture)
+
+    const storeOptions = credentialStoreOptions(this.options)
+    const credentialLaunch = resolveDevinCredentialLaunch({
+      resolvedEnv: {
+        ...(this.options.environment ?? process.env),
+        FORCE_COLOR: '0',
+        NO_COLOR: '1'
+      },
+      storedApiKeyPresent: false,
+      // On a paired host the configured process environment is the explicit
+      // BYOK source; there is no desktop encrypted-key store to consult. The
+      // CLI's own credentials.toml remains the second lane.
+      ambientApiKeyAllowed: true,
+      settingsApiServerUrl: null,
+      ...(storeOptions ? { credentialStoreOptions: storeOptions } : {})
+    })
+    if (credentialLaunch.missingApiKey) {
+      throw new Error(
+        PROVIDER_DISPLAY_NAME +
+          ' requires WINDSURF_API_KEY or DEVIN_API_KEY in the Host environment, or a stored credential from `devin auth login`.'
+      )
+    }
+
+    const startedAt = timestamp()
+    if (
+      this.runPort.beginRun({
+        runId: request.runId,
+        threadId: thread.threadId,
+        providerId: PROVIDER_ID,
+        modelId: thread.modelId,
+        startedAt
+      }).kind !== 'started'
+    ) {
+      throw new Error(PROVIDER_DISPLAY_NAME + ' run already exists.')
+    }
+    this.runPort.appendTranscript({
+      threadId: thread.threadId,
+      runId: request.runId,
+      role: 'user',
+      text: request.prompt,
+      createdAt: startedAt
+    })
+
+    const resolved = await this.resources.resolveBinary()
+    if (!resolved.binaryPath) {
+      this.finishWithoutProcess(request, thread, 'provider_setup_unavailable')
+      return { runId: request.runId, status: 'failed' }
+    }
+
+    const args = hostNodeDevinAcpArgs(thread.modelId)
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = this.options.spawn
+        ? this.options.spawn(resolved.binaryPath, args, {
+            cwd: thread.workspace.canonicalPath,
+            env: credentialLaunch.childEnv,
+            shell: false,
+            stdio: 'pipe'
+          })
+        : nodeSpawn(resolved.binaryPath, args, {
+            cwd: thread.workspace.canonicalPath,
+            env: credentialLaunch.childEnv,
+            shell: false,
+            stdio: 'pipe'
+          })
+    } catch {
+      this.finishWithoutProcess(request, thread, 'provider_launch_failed')
+      return { runId: request.runId, status: 'failed' }
+    }
+
+    return new Promise<HostNodeProviderRunResult>((resolve) => {
+      let settled = false
+      let sessionId = thread.providerSessionId ?? request.runId
+      let carry = ''
+      let promptSent = false
+      let assistantText = ''
+      let failure = ''
+      let interactionSequence = 0
+      const deliveredPermissionIds = new Set<string>()
+      const completion = createHostNodeAcpTurnCompletion(child)
+      const active: ActiveRun = { completion, cancelled: false }
+      this.activeRuns.set(request.runId, active)
+
+      const finish = (
+        status: HostNodeProviderRunResult['status'],
+        errorCode?: 'provider_setup_unavailable' | 'provider_launch_failed' | 'provider_failed'
+      ): void => {
+        if (settled) return
+        settled = true
+        completion.dispose()
+        this.activeRuns.delete(request.runId)
+        try {
+          this.runPort.clearCancel(request.runId)
+        } catch {
+          failure = failure || 'Provider cancellation cleanup failed.'
+        }
+        const normalizedText = normalizeHostProviderRunPresentationText(assistantText)
+        if (normalizedText) {
+          this.runPort.appendTranscript({
+            threadId: thread.threadId,
+            runId: request.runId,
+            role: 'assistant',
+            text: normalizedText,
+            createdAt: timestamp()
+          })
+        }
+        this.runPort.finishRun({
+          runId: request.runId,
+          status,
+          finishedAt: timestamp(),
+          ...(sessionId ? { providerSessionId: sessionId } : {}),
+          warningSummaries: failure ? [failure.slice(0, 300)] : [],
+          ...(errorCode ? { errorCode } : {})
+        })
+        this.runPort.publishRunEvent(request.target, {
+          type: 'run.status',
+          runId: request.runId,
+          threadId: thread.threadId,
+          status,
+          at: timestamp(),
+          ...(failure ? { warningCount: 1 } : {})
+        })
+        resolve({ runId: request.runId, status, ...(sessionId ? { sessionId } : {}) })
+      }
+
+      const write = (id: number, method: string, params: Record<string, unknown>): void => {
+        child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
+      }
+      const sendPrompt = (): void => {
+        if (promptSent) return
+        promptSent = true
+        // Devin has no permission-mode flag, so the seat's posture rides on the
+        // wire prompt as the Devin preamble. The user-visible transcript entry
+        // above keeps the raw prompt; only this frame carries the preamble.
+        write(3, 'session/prompt', {
+          sessionId,
+          prompt: [{ type: 'text', text: applyDevinPromptPreamble(request.prompt, !readOnly) }]
+        })
+      }
+      const publishText = (value: string): void => {
+        const text = normalizeHostProviderRunPresentationText(value)
+        if (!text) return
+        assistantText += text
+        this.runPort.updateRun({ runId: request.runId, phase: 'streaming', updatedAt: timestamp() })
+        this.runPort.publishRunEvent(request.target, {
+          type: 'run.content',
+          runId: request.runId,
+          threadId: thread.threadId,
+          text,
+          at: timestamp()
+        })
+      }
+      const handlePermissionRequest = (frame: Record<string, unknown>): void => {
+        const rpcId = frame.id
+        if (typeof rpcId !== 'string' && typeof rpcId !== 'number') return
+        const params = readObject(frame.params)
+        const toolCall = readObject(params?.toolCall)
+        const kind = typeof toolCall?.kind === 'string' ? toolCall.kind.trim().toLowerCase() : ''
+        const title =
+          (typeof toolCall?.title === 'string' && toolCall.title.trim().slice(0, 200)) ||
+          (kind && kind.slice(0, 200)) ||
+          'Provider tool permission'
+        const options = Array.isArray(params?.options)
+          ? params.options
+              .map((entry) => readObject(entry))
+              .flatMap((entry) => {
+                const optionId = typeof entry?.optionId === 'string' ? entry.optionId : ''
+                const optionKind = typeof entry?.kind === 'string' ? entry.kind : ''
+                return safeOperationId(optionId) && safeOperationId(optionKind)
+                  ? [{ optionId, kind: optionKind }]
+                  : []
+              })
+              .slice(0, 16)
+          : []
+        const respond = (decision: 'allow' | 'deny' | 'cancel'): void => {
+          if (settled) return
+          try {
+            child.stdin.write(
+              JSON.stringify(acpPermissionResponse(rpcId, options, decision)) + '\n'
+            )
+          } catch {
+            failure = failure || 'ACP permission response could not be delivered.'
+          }
+        }
+        // Posture enforcement for a CLI with no permission-mode flag: a plan /
+        // read-only seat refuses every mutating tool kind outright instead of
+        // asking the user to approve a mutation the seat already forbids. Read
+        // kinds (read, search, fetch, think, other) still go through the
+        // ordinary approval interaction exactly as on a write seat.
+        if (readOnly && MUTATING_TOOL_KINDS.has(kind)) {
+          respond('deny')
+          return
+        }
+        const interactionId =
+          PROVIDER_ID + ':' + request.runId + ':approval:' + ++interactionSequence
+        const deliver = (decision: 'allow' | 'deny' | 'cancel'): void => {
+          if (deliveredPermissionIds.has(interactionId)) return
+          deliveredPermissionIds.add(interactionId)
+          respond(decision)
+        }
+        void this.interactions
+          .register({
+            id: interactionId,
+            kind: 'approval',
+            providerId: PROVIDER_ID,
+            runId: request.runId,
+            threadId: thread.threadId,
+            ...(typeof toolCall?.id === 'string' && safeOperationId(toolCall.id)
+              ? { toolId: toolCall.id }
+              : {}),
+            title,
+            summary: 'Provider requested permission for ' + title + '.',
+            options: options.map((option) => option.optionId),
+            createdAt: timestamp()
+          })
+          .then((settlement) => deliver(interactionDecision(settlement.decision)))
+          .catch(() => deliver('cancel'))
+      }
+
+      const handleFrame = (frame: Record<string, unknown>): void => {
+        if (frame.method === 'session/request_permission') {
+          handlePermissionRequest(frame)
+          return
+        }
+        if (frame.id === 1 && frame.result) {
+          child.stdin.write(
+            JSON.stringify({ jsonrpc: '2.0', method: 'initialized', params: {} }) + '\n'
+          )
+          // No broker is attached for this seat in v1, so the ACP McpServer
+          // list stays empty; its untagged enum must never receive a `type` field.
+          write(2, 'session/new', {
+            cwd: thread.workspace.canonicalPath,
+            mcpServers: []
+          })
+          return
+        }
+        if (frame.id === 2 && frame.result) {
+          const result = readObject(frame.result)
+          const session =
+            result &&
+            (typeof result.sessionId === 'string'
+              ? result.sessionId
+              : typeof readObject(result.session)?.id === 'string'
+                ? String(readObject(result.session)?.id)
+                : '')
+          if (session) sessionId = session
+          // Devin advertises no session config surface; prompt immediately.
+          sendPrompt()
+          return
+        }
+        if (completion.acceptPromptResult(frame)) return
+        if (frame.id === 3 && frame.error) {
+          const error = readObject(frame.error)
+          failure = typeof error?.message === 'string' ? error.message : 'ACP prompt was rejected.'
+          completion.requestStop()
+          return
+        }
+        if (frame.method !== 'session/update') return
+        const params = readObject(frame.params)
+        const update = readObject(params?.update)
+        if (!update) return
+        const kind = String(update.sessionUpdate ?? update.type ?? '')
+        if (/agent_message|assistant_message/i.test(kind))
+          publishText(updateText(update.content ?? update))
+      }
+      const consume = (chunk: Buffer | string): void => {
+        carry += String(chunk)
+        const lines = carry.split(/\r?\n/)
+        carry = lines.pop() ?? ''
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line)
+            const frame = readObject(parsed)
+            if (frame) handleFrame(frame)
+          } catch {
+            // ACP is JSON-RPC over NDJSON; ordinary stderr remains non-authoritative.
+          }
+        }
+      }
+
+      child.stdout.on('data', consume)
+      child.stderr.on('data', (chunk: Buffer | string) => {
+        const text = normalizeHostProviderRunPresentationText(String(chunk), 300)
+        if (text) failure = text
+      })
+      child.once('error', (error) => {
+        failure = error instanceof Error ? error.message : 'ACP process failed.'
+        completion.requestStop()
+      })
+      child.once('close', () => {
+        const status = active.cancelled
+          ? 'cancelled'
+          : (completion.promptOutcome()?.status ?? 'failed')
+        finish(status, status === 'failed' ? 'provider_failed' : undefined)
+      })
+
+      const registration = this.runPort.registerCancel(request.runId, () => {
+        active.cancelled = true
+        this.runPort.updateRun({
+          runId: request.runId,
+          phase: 'cancelling',
+          updatedAt: timestamp()
+        })
+        completion.requestStop()
+      })
+      if (registration.kind !== 'registered') {
+        failure = 'Host could not register exact cancellation.'
+        completion.requestStop()
+        return
+      }
+
+      this.runPort.publishRunEvent(request.target, {
+        type: 'run.started',
+        runId: request.runId,
+        threadId: thread.threadId,
+        providerId: PROVIDER_ID,
+        sessionId,
+        at: timestamp()
+      })
+      this.runPort.publishRunEvent(request.target, {
+        type: 'run.status',
+        runId: request.runId,
+        threadId: thread.threadId,
+        status: 'running',
+        at: timestamp()
+      })
+      this.runPort.updateRun({ runId: request.runId, phase: 'starting', updatedAt: timestamp() })
+      write(1, 'initialize', {
+        protocolVersion: 1,
+        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+        clientInfo: { name: 'taskwraith-host', version: 'node-host-v1' }
+      })
+    })
+  }
+
+  private finishWithoutProcess(
+    request: HostNodeProviderRunRequest,
+    thread: HostProviderRunThread,
+    errorCode: 'provider_setup_unavailable' | 'provider_launch_failed'
+  ): void {
+    this.runPort.finishRun({
+      runId: request.runId,
+      status: 'failed',
+      finishedAt: timestamp(),
+      warningSummaries: [],
+      errorCode
+    })
+    this.runPort.publishRunEvent(request.target, {
+      type: 'run.status',
+      runId: request.runId,
+      threadId: thread.threadId,
+      status: 'failed',
+      at: timestamp()
+    })
+  }
+
+  cancel(runId: string): boolean {
+    const active = this.activeRuns.get(runId)
+    if (!active) return false
+    active.cancelled = true
+    active.completion.requestStop()
+    return true
+  }
+
+  async shutdown(): Promise<void> {
+    for (const [runId] of this.activeRuns) this.cancel(runId)
+  }
+}
+
+export function createHostNodeDevinProvider(
+  options: HostNodeDevinProviderOptions = {}
+): HostNodeProvider {
+  const entry = hostProviderCatalogEntry(PROVIDER_ID)
+  const offers = hostProviderOffers(PROVIDER_ID, true)
+  if (!entry || !offers) throw new Error(PROVIDER_DISPLAY_NAME + ' catalog is unavailable.')
+  return {
+    providerId: PROVIDER_ID,
+    displayProvider: entry.displayProvider,
+    shortCode: entry.shortCode,
+    offers,
+    supportsApprovals: true,
+    // Keep false: `devin acp` raises tool approvals as session/request_permission
+    // only, and Host initialize does not advertise clientCapabilities.elicitation,
+    // which ACP requires before any agent-to-client question method.
+    supportsQuestions: false,
+    create(input: HostNodeProviderCreateInput): HostNodeProviderInstance {
+      return new HostNodeDevinProviderInstance(input.runPort, input.interactions, offers, options)
+    }
+  }
+}

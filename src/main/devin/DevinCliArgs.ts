@@ -137,8 +137,6 @@ export const DEVIN_WRITE_MODE_PROMPT_PREAMBLE =
   'and answer in prose.'
 
 export function applyDevinPromptPreamble(prompt: string, writeCapable: boolean): string {
-  const preamble = writeCapable
-    ? DEVIN_WRITE_MODE_PROMPT_PREAMBLE
-    : DEVIN_READ_ONLY_PROMPT_PREAMBLE
+  const preamble = writeCapable ? DEVIN_WRITE_MODE_PROMPT_PREAMBLE : DEVIN_READ_ONLY_PROMPT_PREAMBLE
   return `${preamble}\n\n${prompt}`
 }

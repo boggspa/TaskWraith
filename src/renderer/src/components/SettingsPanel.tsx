@@ -7711,9 +7711,9 @@ export function SettingsPanel({
                     <div className="settings-provider-auth-command">
                       <code>devin acp</code>
                       <span>
-                        Install with{' '}
-                        <code>curl -fsSL https://cli.devin.ai/install.sh | bash</code>, then set
-                        WINDSURF_API_KEY or run <code>devin auth login</code> in Terminal.
+                        Sign in below with devin auth login, or export WINDSURF_API_KEY before
+                        launching TaskWraith. The install command is under Need to install a CLI?
+                        above.
                       </span>
                     </div>
                     <div className="settings-provider-auth-action-row">

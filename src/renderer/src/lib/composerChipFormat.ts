@@ -94,6 +94,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (provider === 'ollama') return 'Qwen 3 (4B Param)'
     if (provider === 'gemini') return 'Flash Lite'
     if (provider === 'muse') return 'Spark 1.2'
+    // Devin has no concrete default id to substitute: the CLI default IS the
+    // seat's model, so the badge says exactly that.
+    if (provider === 'devin') return 'CLI default'
     return label
   }
 

@@ -290,6 +290,26 @@ export async function openProviderAuthTerminal(
         const resolved = await deps.resolveCliProviderBinary('muse')
         commandParts = [resolved.binaryPath || 'muse', action === 'logout' ? 'logout' : 'login']
       }
+    } else if (provider === 'devin') {
+      label = 'Devin'
+      setupNotice = buildProviderManualSetupFlow('devin', action)?.notice || null
+      const resolved = await deps.resolveCliProviderBinary('devin')
+      if (action === 'upgrade') {
+        // `devin update` is the CLI's own updater. Resolve the same executable
+        // managed runs launch so a second PATH install cannot report a
+        // successful upgrade while TaskWraith keeps running stale bytes; with
+        // no binary at all the official installer is the only path.
+        if (resolved.binaryPath) {
+          commandParts = [resolved.binaryPath, 'update']
+        } else {
+          rawCommand = 'curl -fsSL https://cli.devin.ai/install.sh | bash'
+        }
+      } else {
+        // `devin auth login` opens the account sign-in; `devin auth logout`
+        // removes the CLI's stored credentials.toml (it never touches a
+        // WINDSURF_API_KEY / DEVIN_API_KEY in the environment).
+        commandParts = [resolved.binaryPath || 'devin', 'auth', action]
+      }
     } else {
       return { ok: false, error: `No terminal ${action} for ${provider}.` }
     }

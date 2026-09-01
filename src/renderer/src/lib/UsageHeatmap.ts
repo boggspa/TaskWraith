@@ -110,7 +110,8 @@ export const HEATMAP_PROVIDER_ORDER: ProviderId[] = [
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ]
 
 /** Filter tabs for the usage surfaces: "All" plus every provider, labelled

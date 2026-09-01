@@ -1811,10 +1811,13 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
   },
   // Devin bills in ACUs (Agent Compute Units) on a subscription plan, not per
   // token — there is no per-model $/Mtok rate to bake in, so the models list is
-  // intentionally empty and spend rows stay zero.
+  // intentionally empty and spend rows stay zero. The pricingUrl is empty on
+  // purpose: an empty models list is the "no published per-token rates" signal
+  // (it also keeps probeAllProviderRates from fetching) and the rate-table
+  // invariant pairs it with an empty URL. Plan pricing: https://devin.ai/pricing
   devin: {
     provider: 'devin',
-    pricingUrl: 'https://devin.ai/pricing',
+    pricingUrl: '',
     models: []
   }
 }

@@ -105,7 +105,8 @@ const TOOL_ACTIVITY_PROVIDER_IDS = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 
 function extractToolProvider(event: any): ProviderId | undefined {

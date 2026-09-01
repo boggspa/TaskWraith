@@ -170,6 +170,10 @@ function modelHasNoReasoningAxis(
 ): boolean {
   if (provider === 'grok') return !isGrokReasoningModelId(requestedModel)
   if (provider === 'cursor') return !isCursorGrokModelId(requestedModel)
+  // `devin acp` takes only an optional --model: the seat has no effort ladder
+  // at all, so a delegated effort is dropped rather than forwarded as a flag
+  // the CLI would reject.
+  if (provider === 'devin') return true
   if (provider === 'mistral') {
     return Boolean(model) && !isMistralThinkingCapableModel(requestedModel)
   }

@@ -220,6 +220,25 @@ would leave a permanently dead row for anyone without their own llama-server.
 
 <table>
   <tr>
+    <td width="10" bgcolor="#4878AE"></td>
+    <td valign="middle"><strong>Devin / Cognition</strong><br /><sub>Steel-blue provider hue · active for new runs</sub></td>
+  </tr>
+</table>
+
+| Model                                               | Reasoning | Fast | Notes                                                                   |
+| --------------------------------------------------- | --------- | ---- | ----------------------------------------------------------------------- |
+| **Devin (CLI default)** `cli-default` **(Default)** | —         | —    | Runs the Devin CLI's own default model; billed in ACUs on your Devin plan. |
+
+Devin exposes no enumerable model catalogue over `devin acp`, so the picker
+offers the CLI default only; a concrete model id supplied for a run is passed
+through verbatim as `devin acp --model <id>` and fails visibly at the CLI if
+unknown. The seat is the Devin CLI over ACP on your own paid seat. It
+authenticates through `WINDSURF_API_KEY` / `DEVIN_API_KEY` or the credentials
+file written by `devin auth login`, and Settings → Providers → Devin can pin a
+custom API server URL (HTTPS only; HTTP on loopback).
+
+<table>
+  <tr>
     <td width="10" bgcolor="#68768C"></td>
     <td width="54" align="center" valign="middle">
       <img src="../design-assets/provider-logos/png/provider-logo-pi-on-light.png" alt="Pi logo" width="34" />

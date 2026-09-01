@@ -31,6 +31,7 @@ describe('packaged production Host smoke', () => {
     expect(smoke).toContain('legacyChatsPath')
     expect(smoke).toContain('must tighten a legacy chats directory to owner-only')
     expect(smoke).toContain('MistralCredentialLane.js')
+    expect(smoke).toContain('DevinCredentialLane.js')
     expect(smoke).toContain('conditionalOnlyStatuses')
     expect(smoke).toContain('discovery.payloadVersion')
     expect(smoke).toContain('must identify the exact static payload')
@@ -44,6 +45,7 @@ describe('packaged production Host smoke', () => {
       'Claude',
       'Codex',
       'Cursor',
+      'Devin',
       'Grok',
       'Kimi',
       'Mistral',

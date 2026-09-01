@@ -57,13 +57,13 @@ Rules, in priority order:
    one short-circuits its condition and silently deletes the wall.
 
 5. **Run management is additive assurance, never provider admission.** Measure
-   lifecycle and signed-posture coverage across all eleven stable `ProviderId`
+   lifecycle and signed-posture coverage across all twelve stable `ProviderId`
    identities, independently of whether a provider is live, conditional, or
    retired. Missing broker mediation, launch-seal evidence, provenance, or
    another stronger management layer must produce an honest per-run
    warning/receipt and the safest compatible mode; it must not hide, retire,
-   disable, or otherwise punish the provider. Keep improving toward 11/11 —
-   full coverage of that eleven-identity set — without deriving
+   disable, or otherwise punish the provider. Keep improving toward 12/12 —
+   full coverage of that twelve-identity set — without deriving
    `LIVE_SELECTABLE_PROVIDER_IDS` from management maturity.
 6. **Doctrine is executable.** Future sessions obey what this file, the
    README, the ledger, and the positioning docs assert. Never write "X is

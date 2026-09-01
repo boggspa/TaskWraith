@@ -28,7 +28,8 @@ function metadataProvider(value: unknown): ProviderId | null {
     value === 'cursor' ||
     value === 'ollama' ||
     value === 'mistral' ||
-    value === 'muse'
+    value === 'muse' ||
+    value === 'devin'
   ) {
     return value
   }

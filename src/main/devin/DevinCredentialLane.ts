@@ -47,9 +47,7 @@ export interface DevinCredentialLaunchResolution {
 /**
  * Find the first non-empty Devin API key from the environment.
  */
-function findEnvApiKey(
-  env: Readonly<Record<string, string | undefined>>
-): string | null {
+function findEnvApiKey(env: Readonly<Record<string, string | undefined>>): string | null {
   for (const key of DEVIN_CREDENTIAL_ENV_VARS) {
     const value = env[key]
     if (typeof value === 'string' && value.trim().length > 0) return value.trim()
@@ -60,9 +58,7 @@ function findEnvApiKey(
 /**
  * Find the first non-empty Devin API server URL from the environment.
  */
-function findEnvApiServerUrl(
-  env: Readonly<Record<string, string | undefined>>
-): string | null {
+function findEnvApiServerUrl(env: Readonly<Record<string, string | undefined>>): string | null {
   for (const key of [DEVIN_API_SERVER_URL_ENV, DEVIN_API_SERVER_URL_ENV_ALT]) {
     const value = env[key]
     if (typeof value === 'string' && value.trim().length > 0) return value.trim()
@@ -122,8 +118,7 @@ export function resolveDevinCredentialLaunch(
   const explicitUrl = settingsUrl && !settingsUrl.rejected ? settingsUrl.url : null
 
   // Lane 1: env key (ambient or TaskWraith-stored)
-  const storedKeyInEnv =
-    input.storedApiKeyPresent && credentialEnvPresent
+  const storedKeyInEnv = input.storedApiKeyPresent && credentialEnvPresent
   const ambientKeyAllowed = input.ambientApiKeyAllowed && credentialEnvPresent
 
   if (storedKeyInEnv || ambientKeyAllowed) {
@@ -134,6 +129,11 @@ export function resolveDevinCredentialLaunch(
     const envUrl = findEnvApiServerUrl(input.resolvedEnv)
     if (explicitUrl) {
       injectExplicitApiServerUrl(childEnv, explicitUrl)
+    } else if (settingsApiServerUrlRejected) {
+      // The user pointed the seat at a custom server and the value is invalid:
+      // strip every other endpoint so no caller can launder a different one
+      // into the launch. The caller refuses to start on the flag.
+      for (const key of DEVIN_ENDPOINT_ENV_VARS) delete childEnv[key]
     } else if (envUrl) {
       childEnv[DEVIN_API_SERVER_URL_ENV] = envUrl
     }
@@ -142,7 +142,9 @@ export function resolveDevinCredentialLaunch(
       childEnv,
       credentialEnvPresent: true,
       missingApiKey: false,
-      apiServerUrl: explicitUrl ?? validateDevinApiServerUrl(envUrl),
+      apiServerUrl: settingsApiServerUrlRejected
+        ? null
+        : (explicitUrl ?? validateDevinApiServerUrl(envUrl)),
       settingsApiServerUrlRejected
     }
   }
@@ -154,6 +156,8 @@ export function resolveDevinCredentialLaunch(
     childEnv[DEVIN_API_KEY_ENV] = stored.apiKey
     if (explicitUrl) {
       injectExplicitApiServerUrl(childEnv, explicitUrl)
+    } else if (settingsApiServerUrlRejected) {
+      for (const key of DEVIN_ENDPOINT_ENV_VARS) delete childEnv[key]
     } else if (stored.apiServerUrl) {
       childEnv[DEVIN_API_SERVER_URL_ENV] = stored.apiServerUrl
     }
@@ -162,7 +166,9 @@ export function resolveDevinCredentialLaunch(
       childEnv,
       credentialEnvPresent: true,
       missingApiKey: false,
-      apiServerUrl: explicitUrl ?? validateDevinApiServerUrl(stored.apiServerUrl),
+      apiServerUrl: settingsApiServerUrlRejected
+        ? null
+        : (explicitUrl ?? validateDevinApiServerUrl(stored.apiServerUrl)),
       settingsApiServerUrlRejected
     }
   }

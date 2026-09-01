@@ -703,3 +703,85 @@ describe('Kimi status admission', () => {
     expect(getRuntimeProfiles).not.toHaveBeenCalled()
   })
 })
+
+describe('Devin credential status', () => {
+  it('reports the credential lane a launch would use, without spawning `devin auth status`', async () => {
+    const stat = vi.spyOn(fs, 'stat').mockImplementation(async (candidate) => {
+      if (String(candidate).endsWith('/devin')) {
+        return {
+          isFile: () => true,
+          isSymbolicLink: () => false
+        } as any
+      }
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    })
+    const probeDevinCredentialState = vi.fn(
+      ({
+        env,
+        ambientApiKeyAllowed
+      }: Parameters<
+        NonNullable<CliProviderRuntimeDependencies['probeDevinCredentialState']>
+      >[0]) => {
+        // The probe sees the same resolved CLI environment a launch would get.
+        expect(env.WINDSURF_API_KEY).toBe('sk-ambient')
+        expect(typeof ambientApiKeyAllowed).toBe('boolean')
+        return {
+          credentialPresent: true,
+          authSource: 'env-key' as const,
+          authState: 'windsurf-api-key' as const
+        }
+      }
+    )
+
+    try {
+      await expect(
+        getCliProviderStatus('devin', {
+          env: { PATH: '/fake/bin', WINDSURF_API_KEY: 'sk-ambient' },
+          getRuntimeProfiles: () => [],
+          getSettings: () => ({}) as AppSettings,
+          probeDevinCredentialState
+        })
+      ).resolves.toMatchObject({
+        provider: 'devin',
+        available: true,
+        authState: 'windsurf-api-key',
+        credentialPresent: true,
+        authSource: 'env-key'
+      })
+      expect(probeDevinCredentialState).toHaveBeenCalledOnce()
+    } finally {
+      stat.mockRestore()
+    }
+  })
+
+  it('reports a missing credential honestly instead of an unobservable state', async () => {
+    const stat = vi.spyOn(fs, 'stat').mockImplementation(async (candidate) => {
+      if (String(candidate).endsWith('/devin')) {
+        return { isFile: () => true, isSymbolicLink: () => false } as any
+      }
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    })
+    try {
+      await expect(
+        getCliProviderStatus('devin', {
+          env: { PATH: '/fake/bin' },
+          getRuntimeProfiles: () => [],
+          getSettings: () => ({}) as AppSettings,
+          probeDevinCredentialState: () => ({
+            credentialPresent: false,
+            authSource: null,
+            authState: 'missing'
+          })
+        })
+      ).resolves.toMatchObject({
+        provider: 'devin',
+        available: true,
+        authState: 'missing',
+        credentialPresent: false,
+        authSource: null
+      })
+    } finally {
+      stat.mockRestore()
+    }
+  })
+})

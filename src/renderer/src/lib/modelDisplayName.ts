@@ -404,6 +404,11 @@ export function humaniseModelId(
   const canonical = canonicalModelIdForProvider(provider, modelId)
   if (!canonical) return ''
   const key = canonical.trim().toLowerCase()
+  // Devin exposes no enumerable catalogue: 'cli-default' is its only row and
+  // canonicalModelIdForProvider deliberately leaves it unmapped (there is no
+  // concrete id to verify), so it takes its catalogue label here rather than
+  // rendering as a bare sentinel string.
+  if (provider === 'devin' && key === 'cli-default') return 'Devin (CLI default)'
   if (provider === 'ollama') {
     const cloudDisplayName = ollamaCloudModelDisplayName(canonical)
     if (cloudDisplayName) return cloudDisplayName
