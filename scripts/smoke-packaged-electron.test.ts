@@ -76,6 +76,18 @@ const DEVELOPER_ID_OUTPUT = [
 ].join('\n')
 
 describe('packaged Electron to TUI smoke handoff', () => {
+  it('keeps the real emulator runtime launch opt-in and passes the exact package root', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'scripts', 'smoke-packaged-electron.cjs'),
+      'utf8'
+    )
+
+    expect(source).toContain('runPackagedEmulatorRuntimeSmoke(packageRoot)')
+    expect(source).toContain("TASKWRAITH_RUN_EMULATOR_PACKAGE_SMOKE !== '1'")
+    expect(source).toContain("path.join(repoRoot, 'scripts/smoke-packaged-emulator.cjs')")
+    expect(source).toContain('spawnSync(process.execPath, [smokeScript, packageRoot]')
+  })
+
   it('requires and runs the production Host smoke for every packaged artifact', () => {
     const source = fs.readFileSync(
       path.join(process.cwd(), 'scripts', 'smoke-packaged-electron.cjs'),

@@ -94,6 +94,7 @@ async function main() {
   await runLaunchSmoke(packageRoot)
   runPackagedTuiSmoke(packageRoot)
   runPackagedProductionHostSmoke(packageRoot)
+  runPackagedEmulatorRuntimeSmoke(packageRoot)
 }
 
 /**
@@ -167,6 +168,38 @@ function runPackagedProductionHostSmoke(packageRoot) {
   if (result.status !== 0) {
     fail(
       `packaged production Host smoke failed with exit ${result.status ?? 'null'}${
+        result.error ? `: ${result.error.message}` : ''
+      }`
+    )
+  }
+}
+
+/**
+ * Opt-in real production emulator runtime proof. It launches a fresh private
+ * package-smoke profile and executes the fixed factory/bridge/WASM receipt;
+ * ordinary packaging checks retain their existing no-second-GUI default.
+ */
+function runPackagedEmulatorRuntimeSmoke(packageRoot) {
+  if (process.env.TASKWRAITH_RUN_EMULATOR_PACKAGE_SMOKE !== '1') {
+    console.log(
+      'packaged emulator runtime smoke skipped (set TASKWRAITH_RUN_EMULATOR_PACKAGE_SMOKE=1 to run)'
+    )
+    return
+  }
+  const smokeScript = path.join(repoRoot, 'scripts/smoke-packaged-emulator.cjs')
+  if (!fs.existsSync(smokeScript)) {
+    fail(`Missing packaged emulator runtime smoke script: ${smokeScript}`)
+  }
+  const result = spawnSync(process.execPath, [smokeScript, packageRoot], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: { ...process.env, TASKWRAITH_RUN_EMULATOR_PACKAGE_SMOKE: '1' }
+  })
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
+  if (result.status !== 0) {
+    fail(
+      `packaged emulator runtime smoke failed with exit ${result.status ?? 'null'}${
         result.error ? `: ${result.error.message}` : ''
       }`
     )
