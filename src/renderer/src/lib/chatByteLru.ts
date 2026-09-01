@@ -1,5 +1,11 @@
 import type { ChatListItem, ChatMessage, ChatRecord, ChatRun } from '../../../main/store/types'
+import { estimateJsonishBytes } from '../../../shared/transcriptPage'
 import { isChatSummaryRecord } from './chatRecordMerge'
+
+// Stage 2 dedup: the jsonish byte walker lives once in `src/shared` so the
+// renderer LRU, the renderer presentation windows, and main-produced
+// transcript pages all agree on byte counts.
+export { estimateJsonishBytes }
 
 /**
  * T7b — byte-weighted LRU for renderer-hydrated full chats.
@@ -21,25 +27,6 @@ const PIN_REASONS: readonly ChatPinReason[] = [
   'approval',
   'manual'
 ]
-
-export function estimateJsonishBytes(value: unknown): number {
-  if (value == null) return 0
-  if (typeof value === 'string') return value.length * 2
-  if (typeof value === 'number' || typeof value === 'boolean') return 8
-  if (Array.isArray(value)) {
-    let total = 16
-    for (const entry of value) total += estimateJsonishBytes(entry)
-    return total
-  }
-  if (typeof value === 'object') {
-    let total = 16
-    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      total += key.length * 2 + estimateJsonishBytes(entry)
-    }
-    return total
-  }
-  return 0
-}
 
 export function estimateChatMessageBytes(message: ChatMessage): number {
   return estimateJsonishBytes(message)

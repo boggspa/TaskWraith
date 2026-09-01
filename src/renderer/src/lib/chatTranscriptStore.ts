@@ -1,6 +1,26 @@
 import type { ChatMessage, ChatRecord, ChatRun } from '../../../main/store/types'
+import {
+  DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES,
+  DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES,
+  selectTranscriptPageEndingAt,
+  selectTranscriptPageStartingAt,
+  type TranscriptPageRange
+} from '../../../shared/transcriptPage'
 import { isChatSummaryRecord } from './chatRecordMerge'
-import { demoteChatToSummary, estimateChatMessageBytes } from './chatByteLru'
+import { demoteChatToSummary } from './chatByteLru'
+
+// Stage 2 dedup: the bounded-page selectors, their range type, and the page
+// limits live once in `src/shared/transcriptPage.ts` so the renderer's
+// presentation windows and main's `get-chat-transcript-page` producer share
+// one byte estimator (the jsonish full walk) by construction. Re-exported
+// here so the renderer's public import surface is unchanged.
+export {
+  DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES,
+  DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES,
+  selectTranscriptPageEndingAt,
+  selectTranscriptPageStartingAt,
+  type TranscriptPageRange
+}
 
 /**
  * T7a/T7c — per-chat external transcript store with a bounded presentation page.
@@ -12,8 +32,6 @@ import { demoteChatToSummary, estimateChatMessageBytes } from './chatByteLru'
  * accumulates older pages in the render model.
  */
 
-export const DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES = 1_500
-export const DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES = 24 * 1024 * 1024
 export const DEFAULT_TRANSCRIPT_PAGE_MAX_RUNS = 512
 
 export interface ChatTranscriptPayload {
@@ -39,12 +57,6 @@ export interface ChatTranscriptStoreOptions {
   maxBytesPerPage?: number
   maxRunsPerPage?: number
   now?: () => number
-}
-
-export interface TranscriptPageRange {
-  start: number
-  end: number
-  estimatedBytes: number
 }
 
 interface ChatTranscriptEntry {
@@ -99,50 +111,6 @@ function payloadsReferentiallyEqual(
     previous.hasOlder === next.hasOlder &&
     previous.hasNewer === next.hasNewer
   )
-}
-
-export function selectTranscriptPageEndingAt(
-  messages: readonly ChatMessage[],
-  endExclusive: number,
-  options?: Pick<ChatTranscriptStoreOptions, 'maxMessagesPerPage' | 'maxBytesPerPage'>
-): TranscriptPageRange {
-  const maxMessages = positiveInteger(
-    options?.maxMessagesPerPage,
-    DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES
-  )
-  const maxBytes = positiveInteger(options?.maxBytesPerPage, DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES)
-  const end = Math.max(0, Math.min(messages.length, Math.floor(endExclusive)))
-  let start = end
-  let estimatedBytes = 0
-  while (start > 0 && end - start < maxMessages) {
-    const nextBytes = Math.max(0, estimateChatMessageBytes(messages[start - 1]))
-    if (start < end && estimatedBytes + nextBytes > maxBytes) break
-    start -= 1
-    estimatedBytes += nextBytes
-  }
-  return { start, end, estimatedBytes }
-}
-
-export function selectTranscriptPageStartingAt(
-  messages: readonly ChatMessage[],
-  startInclusive: number,
-  options?: Pick<ChatTranscriptStoreOptions, 'maxMessagesPerPage' | 'maxBytesPerPage'>
-): TranscriptPageRange {
-  const maxMessages = positiveInteger(
-    options?.maxMessagesPerPage,
-    DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES
-  )
-  const maxBytes = positiveInteger(options?.maxBytesPerPage, DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES)
-  const start = Math.max(0, Math.min(messages.length, Math.floor(startInclusive)))
-  let end = start
-  let estimatedBytes = 0
-  while (end < messages.length && end - start < maxMessages) {
-    const nextBytes = Math.max(0, estimateChatMessageBytes(messages[end]))
-    if (end > start && estimatedBytes + nextBytes > maxBytes) break
-    end += 1
-    estimatedBytes += nextBytes
-  }
-  return { start, end, estimatedBytes }
 }
 
 export class ChatTranscriptStore {
