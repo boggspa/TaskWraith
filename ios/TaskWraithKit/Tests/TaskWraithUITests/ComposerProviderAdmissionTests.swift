@@ -220,7 +220,7 @@ struct ComposerProviderAdmissionTests {
         let message = try JSONDecoder().decode(
             ProviderModelsMessage.self,
             from: Data(
-                #"{"providers":[{"provider":"kimi","models":[{"id":"kimi-k3","label":"K3 1M","contextWindow":1048576},{"id":"kimi-k3-256k","label":"K3 256K","contextWindow":262144}]}]}"#.utf8
+                #"{"providers":[{"provider":"kimi","models":[{"id":"kimi-k3","label":"K3 (1M)","contextWindow":1048576},{"id":"kimi-k3-256k","label":"K3 (256K)","contextWindow":262144}]}]}"#.utf8
             ))
         let models = message.providers.first?.models ?? []
 

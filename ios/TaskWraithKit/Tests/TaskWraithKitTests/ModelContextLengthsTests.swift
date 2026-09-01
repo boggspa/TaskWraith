@@ -185,7 +185,7 @@ struct ModelContextLengthsTests {
         let row = groups.first { $0.provider == "kimi" }?
             .models.first { $0.modelId == "kimi-k3" }
         #expect(row != nil)
-        #expect(row?.label == "K3 (up to 1M)")
+        #expect(row?.label == "K3 (1M)")
         #expect(row?.contextWindow == 1_048_576)
         #expect(row?.formatted == "1.0M")
     }
@@ -195,7 +195,7 @@ struct ModelContextLengthsTests {
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "kimi" }?
             .models.first { $0.modelId == "kimi-k3-256k" }
-        #expect(row?.label == "K3 256K")
+        #expect(row?.label == "K3 (256K)")
         #expect(row?.contextWindow == 262_144)
         #expect(row?.formatted == "256k")
     }

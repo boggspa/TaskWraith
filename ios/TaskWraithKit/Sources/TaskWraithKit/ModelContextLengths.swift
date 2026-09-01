@@ -87,8 +87,9 @@ public enum ModelContextLengths {
                 // concrete routes since d19931eb8: the 1M route (Allegretto+)
                 // and the fixed quota-efficient 256K one. Each carries its own
                 // official window, so no plan-range display remains.
-                (id: "kimi-k3",        label: "K3 (up to 1M)"),
-                (id: "kimi-k3-256k",   label: "K3 256K"),
+                // Labels mirror src/shared/kimiModels.ts VERBATIM.
+                (id: "kimi-k3",        label: "K3 (1M)"),
+                (id: "kimi-k3-256k",   label: "K3 (256K)"),
             ]
         case "pi":
             // BYOK seat: the flagship row per allowed upstream. Wire ids stay
