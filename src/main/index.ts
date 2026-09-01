@@ -1398,6 +1398,7 @@ import { CanvasChartDriver } from './canvas/CanvasChartDriver'
 import { CanvasImageDriver } from './canvas/CanvasImageDriver'
 import { CanvasSketchDriver } from './canvas/CanvasSketchDriver'
 import { createEmulatorCanvasDriverFactory } from './emulator/EmulatorDriverFactory'
+import { startPackagedEmulatorSmoke } from './emulator/PackagedEmulatorSmoke'
 import { CanvasWindowDriverFactory } from './canvas/CanvasWindowDriverFactory'
 import { resolveNativeWindowCanvasOpenTarget } from './canvas/NativeWindowCanvasOpenResolver'
 import { CanvasEmbedController } from './canvas/CanvasEmbedController'
@@ -61854,6 +61855,16 @@ if (isGeminiMcpBridgeProcess) {
     // of creating a duplicate window below.
     const openedForDeferredSecondInstance = startupWindowGate.release(createWindow)
     if (!openedForDeferredSecondInstance && !tuiHeadlessHostSession.isHeadless) createWindow()
+    const packagedEmulatorSmokeHandled = await startPackagedEmulatorSmoke({
+      argv: process.argv,
+      posture: instanceLaunchPosture,
+      isPackaged: app.isPackaged,
+      mainWindow,
+      createDriver: createEmulatorCanvasDriver,
+      isSurfaceLive: (canvasId) => canvasEmbedController.has(canvasId),
+      exit: (code) => app.exit(code)
+    })
+    if (packagedEmulatorSmokeHandled) return
     scheduleNextTaskTimer()
 
     app.on('activate', function () {

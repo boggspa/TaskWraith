@@ -1,5 +1,6 @@
-import { createHash } from 'node:crypto'
-import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { rename, unlink, writeFile } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { InstanceLaunchPosture } from '../InstanceLaunchPosture'
 import type { CanvasEmulatorAtomicObservation } from '../canvas/CanvasEmulatorDriver'
 import type { CanvasSessionHandle } from '../canvas/canvasTypes'
@@ -70,6 +71,45 @@ export interface RunPackagedEmulatorSmokeInput {
   readonly surfaceHostId: number
 }
 
+/** The small main-window seam the packaged private smoke needs after startup. */
+export interface PackagedEmulatorSmokeHostWindow {
+  isDestroyed(): boolean
+  readonly webContents: { readonly id: number }
+}
+
+export interface PackagedEmulatorSmokeResultFileOps {
+  unlink(path: string): Promise<void>
+  writeFile(
+    path: string,
+    data: string,
+    options: { encoding: 'utf8'; mode: number; flag: 'wx' }
+  ): Promise<void>
+  rename(from: string, to: string): Promise<void>
+}
+
+export type PackagedEmulatorSmokeProcessResult =
+  | { readonly ok: true; readonly receipt: PackagedEmulatorSmokeReceipt }
+  | {
+      readonly ok: false
+      /** Deliberately bounded: never persist a raw Electron/runtime exception. */
+      readonly error: 'emulator_smoke_failed' | 'emulator_smoke_unavailable'
+    }
+
+export interface StartPackagedEmulatorSmokeInput {
+  readonly argv: readonly string[]
+  readonly posture: InstanceLaunchPosture
+  readonly isPackaged: boolean
+  readonly mainWindow: PackagedEmulatorSmokeHostWindow | null
+  readonly createDriver: RunPackagedEmulatorSmokeInput['createDriver']
+  readonly isSurfaceLive: RunPackagedEmulatorSmokeInput['isSurfaceLive']
+  readonly exit: (code: 0 | 1) => void
+  readonly fileOps?: PackagedEmulatorSmokeResultFileOps
+  /** Test seam; production keeps the temporary sibling private and unpredictable. */
+  readonly createTemporaryPath?: (resultPath: string) => string
+}
+
+const RESULT_FILE_OPS: PackagedEmulatorSmokeResultFileOps = { unlink, writeFile, rename }
+
 function isStrictDescendant(parent: string, candidate: string): boolean {
   const relation = relative(parent, candidate)
   return (
@@ -103,6 +143,157 @@ export function resolvePackagedEmulatorSmokeLaunch(
   if (!isStrictDescendant(profileRoot, candidate)) return null
   if (candidate !== resolve(profileRoot, PACKAGE_EMULATOR_SMOKE_RESULT_FILE)) return null
   return { resultPath: candidate }
+}
+
+function hasPackagedEmulatorSmokeIntent(argv: readonly string[]): boolean {
+  return argv.some(
+    (value) =>
+      value === PACKAGE_EMULATOR_SMOKE_ARG || value.startsWith(PACKAGE_EMULATOR_SMOKE_RESULT_ARG)
+  )
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (
+    Boolean(error) &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'ENOENT'
+  )
+}
+
+function defaultTemporaryResultPath(resultPath: string): string {
+  return join(dirname(resultPath), `.${basename(resultPath)}.${process.pid}.${randomUUID()}.tmp`)
+}
+
+function isSafeTemporaryResultPath(resultPath: string, temporaryPath: string): boolean {
+  const result = resolve(resultPath)
+  const temporary = resolve(temporaryPath)
+  const resultDirectory = dirname(result)
+  const resultName = basename(result)
+  return (
+    dirname(temporary) === resultDirectory &&
+    basename(temporary).startsWith(`.${resultName}.`) &&
+    basename(temporary).endsWith('.tmp')
+  )
+}
+
+async function removePriorResult(
+  resultPath: string,
+  fileOps: PackagedEmulatorSmokeResultFileOps
+): Promise<void> {
+  try {
+    await fileOps.unlink(resultPath)
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error
+  }
+}
+
+/**
+ * Publish only a completed, disk-safe result. The caller never observes a
+ * partially written JSON file: the temporary sibling is renamed only after a
+ * successful exclusive write, and every failed path removes that sibling.
+ */
+export async function writePackagedEmulatorSmokeResultAtomically(input: {
+  readonly resultPath: string
+  readonly result: PackagedEmulatorSmokeProcessResult
+  readonly fileOps?: PackagedEmulatorSmokeResultFileOps
+  readonly createTemporaryPath?: (resultPath: string) => string
+}): Promise<void> {
+  const fileOps = input.fileOps ?? RESULT_FILE_OPS
+  const temporaryPath = (input.createTemporaryPath ?? defaultTemporaryResultPath)(input.resultPath)
+  if (!isSafeTemporaryResultPath(input.resultPath, temporaryPath)) {
+    throw new Error('Packaged emulator smoke temporary receipt path is invalid.')
+  }
+  let published = false
+  try {
+    await fileOps.writeFile(temporaryPath, JSON.stringify(input.result), {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx'
+    })
+    await fileOps.rename(temporaryPath, input.resultPath)
+    published = true
+  } finally {
+    if (!published) {
+      try {
+        await fileOps.unlink(temporaryPath)
+      } catch {
+        // A failed private smoke must not turn cleanup noise into raw output.
+      }
+    }
+  }
+}
+
+function liveHostWindow(
+  mainWindow: PackagedEmulatorSmokeHostWindow | null
+): PackagedEmulatorSmokeHostWindow | null {
+  if (
+    !mainWindow ||
+    mainWindow.isDestroyed() ||
+    !Number.isSafeInteger(mainWindow.webContents.id) ||
+    mainWindow.webContents.id <= 0
+  ) {
+    return null
+  }
+  return mainWindow
+}
+
+/**
+ * Main-process composition seam for the opt-in packaged smoke. It is inert on
+ * normal launches, fails closed on malformed explicit smoke intent, and emits
+ * at most one atomically published private-profile result envelope.
+ */
+export async function startPackagedEmulatorSmoke(
+  input: StartPackagedEmulatorSmokeInput
+): Promise<boolean> {
+  const explicitIntent = hasPackagedEmulatorSmokeIntent(input.argv)
+  if (!explicitIntent) return false
+  if (!input.isPackaged) {
+    input.exit(1)
+    return true
+  }
+  const launch = resolvePackagedEmulatorSmokeLaunch(input.argv, input.posture)
+  if (!launch) {
+    input.exit(1)
+    return true
+  }
+
+  const fileOps = input.fileOps ?? RESULT_FILE_OPS
+  const publish = (result: PackagedEmulatorSmokeProcessResult) =>
+    writePackagedEmulatorSmokeResultAtomically({
+      resultPath: launch.resultPath,
+      result,
+      fileOps,
+      createTemporaryPath: input.createTemporaryPath
+    })
+
+  try {
+    // The external harness polls this path, so clear any stale file before a
+    // real driver can start; otherwise an old success could mask a new crash.
+    await removePriorResult(launch.resultPath, fileOps)
+    const mainWindow = liveHostWindow(input.mainWindow)
+    if (!mainWindow) {
+      await publish({ ok: false, error: 'emulator_smoke_unavailable' })
+      input.exit(1)
+      return true
+    }
+    const receipt = await runPackagedEmulatorSmoke({
+      createDriver: input.createDriver,
+      isSurfaceLive: input.isSurfaceLive,
+      surfaceHostId: mainWindow.webContents.id
+    })
+    await publish({ ok: true, receipt })
+    input.exit(0)
+  } catch {
+    try {
+      await publish({ ok: false, error: 'emulator_smoke_failed' })
+    } catch {
+      // The harness sees a bounded process failure if its private result path
+      // itself cannot be published; do not leak an Electron/runtime exception.
+    }
+    input.exit(1)
+  }
+  return true
 }
 
 function requireMappedInteger(

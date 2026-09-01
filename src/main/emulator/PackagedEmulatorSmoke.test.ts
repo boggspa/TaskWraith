@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { CanvasEmulatorAtomicObservation } from '../canvas/CanvasEmulatorDriver'
 import {
@@ -8,7 +10,10 @@ import {
   PACKAGE_EMULATOR_SMOKE_SESSION_ID,
   resolvePackagedEmulatorSmokeLaunch,
   runPackagedEmulatorSmoke,
-  type PackagedEmulatorSmokeDriver
+  startPackagedEmulatorSmoke,
+  writePackagedEmulatorSmokeResultAtomically,
+  type PackagedEmulatorSmokeDriver,
+  type PackagedEmulatorSmokeResultFileOps
 } from './PackagedEmulatorSmoke'
 
 const PNG = Buffer.from([
@@ -89,6 +94,53 @@ function driverFixture(): { driver: PackagedEmulatorSmokeDriver; close: ReturnTy
       close
     }
   }
+}
+
+function smokeArgs(profile: string): string[] {
+  return [
+    PACKAGE_EMULATOR_SMOKE_ARG,
+    `${PACKAGE_EMULATOR_SMOKE_RESULT_ARG}${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}`
+  ]
+}
+
+function smokePosture(profile: string) {
+  return {
+    kind: 'package-smoke' as const,
+    isPackaged: true as const,
+    isPrivateProfile: true as const,
+    appName: 'TaskWraith Package Smoke' as const,
+    userDataPath: profile
+  }
+}
+
+function memoryFileOps(initial: Readonly<Record<string, string>> = {}) {
+  const files = new Map(Object.entries(initial))
+  const operations: string[] = []
+  const writes: Array<{
+    path: string
+    data: string
+    options: { encoding: 'utf8'; mode: number; flag: 'wx' }
+  }> = []
+  const fileOps: PackagedEmulatorSmokeResultFileOps = {
+    unlink: vi.fn(async (filePath: string) => {
+      operations.push(`unlink:${filePath}`)
+      if (files.delete(filePath)) return
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+    }),
+    writeFile: vi.fn(async (filePath: string, data: string, options) => {
+      operations.push(`write:${filePath}`)
+      writes.push({ path: filePath, data, options })
+      files.set(filePath, data)
+    }),
+    rename: vi.fn(async (from: string, to: string) => {
+      operations.push(`rename:${from}:${to}`)
+      const data = files.get(from)
+      if (data === undefined) throw new Error('temporary result is absent')
+      files.delete(from)
+      files.set(to, data)
+    })
+  }
+  return { fileOps, files, operations, writes }
 }
 
 describe('PackagedEmulatorSmoke', () => {
@@ -189,5 +241,221 @@ describe('PackagedEmulatorSmoke', () => {
       })
     ).rejects.toThrow(/invalid atomic before observation/i)
     expect(fixture.close).toHaveBeenCalledOnce()
+  })
+
+  it('is inert with no smoke flag and fails closed for invalid smoke posture/path', async () => {
+    const profile = '/private/tmp/taskwraith-tui-package-smoke-inert'
+    const memory = memoryFileOps()
+    const exits: number[] = []
+    const createDriver = vi.fn(() => driverFixture().driver)
+    const common = {
+      isPackaged: true,
+      mainWindow: { isDestroyed: () => false, webContents: { id: 41 } },
+      createDriver,
+      isSurfaceLive: () => false,
+      exit: (code: 0 | 1) => exits.push(code),
+      fileOps: memory.fileOps,
+      createTemporaryPath: (resultPath: string) =>
+        path.join(path.dirname(resultPath), `.${path.basename(resultPath)}.unit.tmp`)
+    }
+
+    await expect(
+      startPackagedEmulatorSmoke({ ...common, argv: [], posture: smokePosture(profile) })
+    ).resolves.toBe(false)
+    await expect(
+      startPackagedEmulatorSmoke({
+        ...common,
+        argv: smokeArgs(profile),
+        posture: { kind: 'production', isPackaged: true, isPrivateProfile: false }
+      })
+    ).resolves.toBe(true)
+    await expect(
+      startPackagedEmulatorSmoke({
+        ...common,
+        argv: [PACKAGE_EMULATOR_SMOKE_ARG],
+        posture: smokePosture(profile)
+      })
+    ).resolves.toBe(true)
+    await expect(
+      startPackagedEmulatorSmoke({
+        ...common,
+        argv: [
+          PACKAGE_EMULATOR_SMOKE_ARG,
+          `${PACKAGE_EMULATOR_SMOKE_RESULT_ARG}${profile}/not-the-fixed-result.json`
+        ],
+        posture: smokePosture(profile)
+      })
+    ).resolves.toBe(true)
+    await expect(
+      startPackagedEmulatorSmoke({
+        ...common,
+        argv: smokeArgs(profile),
+        posture: smokePosture(profile),
+        isPackaged: false
+      })
+    ).resolves.toBe(true)
+
+    expect(createDriver).not.toHaveBeenCalled()
+    expect(exits).toEqual([1, 1, 1, 1])
+    expect(memory.operations).toEqual([])
+  })
+
+  it('requires a live packaged main window before it constructs the driver', async () => {
+    const profile = '/private/tmp/taskwraith-tui-package-smoke-unavailable'
+    const resultPath = `${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}`
+    const temporaryPath = `${profile}/.${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}.unit.tmp`
+    const memory = memoryFileOps()
+    const exits: number[] = []
+    const createDriver = vi.fn(() => driverFixture().driver)
+
+    await expect(
+      startPackagedEmulatorSmoke({
+        argv: smokeArgs(profile),
+        posture: smokePosture(profile),
+        isPackaged: true,
+        mainWindow: null,
+        createDriver,
+        isSurfaceLive: () => false,
+        exit: (code) => exits.push(code),
+        fileOps: memory.fileOps,
+        createTemporaryPath: () => temporaryPath
+      })
+    ).resolves.toBe(true)
+
+    expect(createDriver).not.toHaveBeenCalled()
+    expect(exits).toEqual([1])
+    expect(memory.files.get(resultPath)).toBe('{"ok":false,"error":"emulator_smoke_unavailable"}')
+  })
+
+  it('atomically publishes a safe success receipt, then exits zero', async () => {
+    const profile = '/private/tmp/taskwraith-tui-package-smoke-success'
+    const resultPath = `${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}`
+    const temporaryPath = `${profile}/.${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}.unit.tmp`
+    const memory = memoryFileOps({ [resultPath]: '{"old":true}' })
+    const fixture = driverFixture()
+    const exits: number[] = []
+
+    await expect(
+      startPackagedEmulatorSmoke({
+        argv: smokeArgs(profile),
+        posture: smokePosture(profile),
+        isPackaged: true,
+        mainWindow: { isDestroyed: () => false, webContents: { id: 41 } },
+        createDriver: vi.fn(() => fixture.driver),
+        isSurfaceLive: () => false,
+        exit: (code) => exits.push(code),
+        fileOps: memory.fileOps,
+        createTemporaryPath: () => temporaryPath
+      })
+    ).resolves.toBe(true)
+
+    expect(exits).toEqual([0])
+    expect(memory.operations).toEqual([
+      `unlink:${resultPath}`,
+      `write:${temporaryPath}`,
+      `rename:${temporaryPath}:${resultPath}`
+    ])
+    expect(memory.writes).toEqual([
+      expect.objectContaining({
+        path: temporaryPath,
+        options: { encoding: 'utf8', mode: 0o600, flag: 'wx' }
+      })
+    ])
+    expect(memory.files.has(temporaryPath)).toBe(false)
+    const result = JSON.parse(memory.files.get(resultPath) ?? '') as Record<string, unknown>
+    expect(result).toMatchObject({ ok: true, receipt: { resourceReleased: true } })
+    expect(JSON.stringify(result)).not.toContain(PNG.toString('base64'))
+  })
+
+  it('publishes a bounded failure and exits one without persisting a raw runtime error', async () => {
+    const profile = '/private/tmp/taskwraith-tui-package-smoke-failure'
+    const resultPath = `${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}`
+    const temporaryPath = `${profile}/.${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}.unit.tmp`
+    const memory = memoryFileOps()
+    const exits: number[] = []
+
+    await expect(
+      startPackagedEmulatorSmoke({
+        argv: smokeArgs(profile),
+        posture: smokePosture(profile),
+        isPackaged: true,
+        mainWindow: { isDestroyed: () => false, webContents: { id: 41 } },
+        createDriver: () => {
+          throw new Error('private wasm failure: never persist this')
+        },
+        isSurfaceLive: () => false,
+        exit: (code) => exits.push(code),
+        fileOps: memory.fileOps,
+        createTemporaryPath: () => temporaryPath
+      })
+    ).resolves.toBe(true)
+
+    expect(exits).toEqual([1])
+    expect(memory.files.get(resultPath)).toBe('{"ok":false,"error":"emulator_smoke_failed"}')
+    expect(memory.files.get(resultPath)).not.toContain('private wasm failure')
+  })
+
+  it('cleans a temporary receipt when its exclusive write fails', async () => {
+    const profile = '/private/tmp/taskwraith-tui-package-smoke-cleanup'
+    const resultPath = `${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}`
+    const temporaryPath = `${profile}/.${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}.unit.tmp`
+    const operations: string[] = []
+    const fileOps: PackagedEmulatorSmokeResultFileOps = {
+      unlink: vi.fn(async (filePath: string) => {
+        operations.push(`unlink:${filePath}`)
+      }),
+      writeFile: vi.fn(async (filePath: string) => {
+        operations.push(`write:${filePath}`)
+        throw new Error('disk full')
+      }),
+      rename: vi.fn(async () => {
+        throw new Error('must not rename after a failed write')
+      })
+    }
+
+    await expect(
+      writePackagedEmulatorSmokeResultAtomically({
+        resultPath,
+        result: { ok: false, error: 'emulator_smoke_failed' },
+        fileOps,
+        createTemporaryPath: () => temporaryPath
+      })
+    ).rejects.toThrow('disk full')
+    expect(operations).toEqual([`write:${temporaryPath}`, `unlink:${temporaryPath}`])
+  })
+
+  it('refuses a temporary receipt path outside the admitted private result directory', async () => {
+    const profile = '/private/tmp/taskwraith-tui-package-smoke-temp-path'
+    const resultPath = `${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}`
+    const memory = memoryFileOps()
+
+    await expect(
+      writePackagedEmulatorSmokeResultAtomically({
+        resultPath,
+        result: { ok: false, error: 'emulator_smoke_failed' },
+        fileOps: memory.fileOps,
+        createTemporaryPath: () => '/private/tmp/outside-emulator-smoke.tmp'
+      })
+    ).rejects.toThrow(/temporary receipt path is invalid/i)
+    expect(memory.operations).toEqual([])
+  })
+
+  it('registers the sole extracted hook after createWindow and before normal scheduling', () => {
+    const source = fs.readFileSync(path.join(process.cwd(), 'src', 'main', 'index.ts'), 'utf8')
+    const created = source.indexOf(
+      'if (!openedForDeferredSecondInstance && !tuiHeadlessHostSession.isHeadless) createWindow()'
+    )
+    const hook = source.indexOf(
+      'const packagedEmulatorSmokeHandled = await startPackagedEmulatorSmoke({'
+    )
+    const schedule = source.indexOf('scheduleNextTaskTimer()', hook)
+
+    expect(created).toBeGreaterThan(-1)
+    expect(hook).toBeGreaterThan(created)
+    expect(schedule).toBeGreaterThan(hook)
+    expect(source.match(/startPackagedEmulatorSmoke\(\{/g)).toHaveLength(1)
+    expect(source).toContain('if (packagedEmulatorSmokeHandled) return')
+    expect(source).not.toContain('resolvePackagedEmulatorSmokeLaunch')
+    expect(source).toContain('isSurfaceLive: (canvasId) => canvasEmbedController.has(canvasId)')
   })
 })
