@@ -38497,7 +38497,8 @@ async function executeGeminiMcpTool(
   let genericApprovalResolution:
     | { action: AgentApprovalAction; decisionSource: 'user' | 'system' }
     | undefined
-  let commandRuleMatch: CommandRuleMatch | null = null
+  const commandRuleMatchState: { current: CommandRuleMatch | null } = { current: null }
+  const readCommandRuleMatch = (): CommandRuleMatch | null => commandRuleMatchState.current
   let commandRuleApprovalId: string | null = null
   let workspaceInspectionFastPath = false
   let workspaceInspectionWorkspaceRealPath: string | null = null
@@ -38538,7 +38539,8 @@ async function executeGeminiMcpTool(
           resolveAction: (action, decisionSource) => {
             genericApprovalResolution = { action, decisionSource }
             if (commandRuleApprovalId && commandRuleInput && action === 'accept') {
-              commandRuleMatch = commandRuleApprovalFlowRef?.matchLive(commandRuleInput) ?? null
+              commandRuleMatchState.current =
+                commandRuleApprovalFlowRef?.matchLive(commandRuleInput) ?? null
             }
             if (commandRuleApprovalId) {
               commandRuleApprovalFlowRef?.clear(commandRuleApprovalId)
@@ -38558,7 +38560,7 @@ async function executeGeminiMcpTool(
             ? {
                 commandRuleInput,
                 onCommandRuleMatch: (match: CommandRuleMatch) => {
-                  commandRuleMatch = match
+                  commandRuleMatchState.current = match
                 },
                 createCommandRuleOffer: ({ approvalId }: { approvalId: string }) => {
                   const offer = commandRuleApprovalFlowRef?.register(approvalId, commandRuleInput)
@@ -38585,6 +38587,10 @@ async function executeGeminiMcpTool(
           externalPathDetection
         }
       )
+  // Approval callbacks run inside the awaited orchestration above. Snapshot
+  // their mutable cell through a function boundary so TypeScript does not
+  // incorrectly freeze the initial `null` value in later control-flow narrowing.
+  const commandRuleMatch = readCommandRuleMatch()
   const approvedUnscopedShell = approvedShellAuthorityAuthorizesUnscopedShell({
     toolName,
     arguments: args,
