@@ -2759,6 +2759,87 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     ).toEqual({ flowId: 'claude:login' })
   })
 
+  it('keeps polling cold-start auth beyond the old 6s budget without holding the mutation lock', async () => {
+    // A provider web sign-in routinely takes 30s–2min. The poll must survive
+    // that long AND stay detached — the old 8×750ms await inside the mutation
+    // window both gave up at ~6s and froze every other Host command meanwhile.
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-auth-poll-'))
+    let authStatusCalls = 0
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => makeHostSnapshot(),
+      capabilities: SETUP_HOST_CAPABILITIES,
+      providerStatuses: () => [{ providerId: 'claude', status: 'auth_required', label: 'Claude' }],
+      providerAuthStatus: (providerId) => {
+        authStatusCalls += 1
+        return { providerId, state: authStatusCalls > 9 ? 'authenticated' : 'unauthenticated' }
+      },
+      providerAuthFlows: () => [
+        { flowId: 'claude:login', kind: 'manual', label: 'Sign in', available: true }
+      ],
+      providerOffers: () => ({
+        providerId: 'claude',
+        offerRevision: 'claude-offers-1',
+        models: [
+          {
+            modelId: 'claude-model',
+            label: 'Claude Model',
+            available: true,
+            default: true,
+            reasoning: []
+          }
+        ],
+        postures: [
+          {
+            postureId: 'default',
+            label: 'Accept Edits',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'workspace_write'
+          }
+        ]
+      }),
+      resultRef: (command) =>
+        command.name === 'provider.auth.begin'
+          ? {
+              kind: 'provider-auth',
+              providerId: command.target.providerId,
+              operationId: command.commandId
+            }
+          : undefined
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { input, output } = makeTty()
+    const tui = new TaskWraithTui({
+      clientVersion: '0.1.0-test',
+      userDataPath,
+      colorMode: 'none',
+      animationEnabled: false,
+      authPollIntervalMs: 25,
+      input: input as unknown as ReadStream,
+      output: output as unknown as WriteStream
+    })
+    cleanup.push(() => tui.stop())
+    const internals = tui as unknown as {
+      state: { coldStart?: { kind: string } }
+      mutationInFlight: boolean
+      onKeypress: (input: string, key: Record<string, unknown>) => void
+    }
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('TaskWraith'), 'home frame')
+
+    feed(input, '/new claude\r')
+    await waitFor(() => internals.state.coldStart?.kind === 'auth', 'auth stage', 4_000)
+    internals.onKeypress('', { name: 'enter' })
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'provider.auth.begin'),
+      'auth begin submitted'
+    )
+    await waitFor(() => authStatusCalls >= 3, 'polling underway', 4_000)
+    expect(internals.mutationInFlight).toBe(false)
+    await waitFor(() => internals.state.coldStart?.kind === 'offers', 'authenticated offers', 6_000)
+  }, 15_000)
+
   it('applies Home permission to a lazy-created thread before sending its first prompt', async () => {
     const workspaces = [
       {
@@ -2927,6 +3008,137 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       (tui as unknown as { state: { homeContinuationThreadId?: string } }).state
         .homeContinuationThreadId
     ).toBeUndefined()
+  }, 12_000)
+
+  it('sends the lazy first prompt with the model the Home banner shows, not stale profile memory', async () => {
+    // The Home identity banner renders the tune-lens cursor. A cursor moved and
+    // closed with Esc must be what a home send dispatches — configuring a
+    // different remembered model silently contradicts the visible selection.
+    const workspaces = [
+      {
+        id: 'ws-remembered',
+        name: 'Remembered',
+        path: '/tmp/remembered',
+        pinned: false,
+        updatedAt: 1
+      }
+    ]
+    let configured = false
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-lazy-banner-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () =>
+        makeHostSnapshot({
+          workspaces,
+          threads: configured
+            ? [
+                {
+                  id: 'thread-banner',
+                  workspaceId: 'ws-remembered',
+                  title: 'New Chat',
+                  chatKind: 'single',
+                  archived: false,
+                  pinned: false,
+                  updatedAt: 30,
+                  messageCount: 0,
+                  providerId: 'claude',
+                  latestPreview: '',
+                  previewTruncated: false
+                }
+              ]
+            : []
+        }),
+      capabilities: SETUP_HOST_CAPABILITIES,
+      providerStatuses: () => [{ providerId: 'claude', status: 'ready', label: 'Claude' }],
+      providerOffers: () => ({
+        providerId: 'claude',
+        offerRevision: 'claude-offers-1',
+        models: [
+          { modelId: 'first-model', label: 'First', available: true, reasoning: [] },
+          {
+            modelId: 'remembered-model',
+            label: 'Remembered',
+            available: true,
+            default: true,
+            reasoning: [{ reasoningId: 'medium', label: 'Medium', available: true }]
+          }
+        ],
+        postures: [
+          {
+            postureId: 'default',
+            label: 'Accept Edits',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'workspace_write'
+          }
+        ]
+      }),
+      resultRef: (command) => {
+        if (command.name === 'thread.create') {
+          return { kind: 'thread', threadId: 'thread-banner' }
+        }
+        if (command.name === 'thread.configure') {
+          configured = true
+          return { kind: 'thread', threadId: 'thread-banner' }
+        }
+        return undefined
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { input, output } = makeTty()
+    const tui = new TaskWraithTui({
+      clientVersion: '0.1.0-test',
+      userDataPath,
+      colorMode: 'none',
+      animationEnabled: false,
+      profileSettings: {
+        workspaceId: 'ws-remembered',
+        providerId: 'claude',
+        modelId: 'remembered-model',
+        reasoningId: 'medium'
+      },
+      persistProfileSettings: () => true,
+      input: input as unknown as ReadStream,
+      output: output as unknown as WriteStream
+    })
+    cleanup.push(() => tui.stop())
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('no active run'), 'home frame')
+    await waitFor(
+      () =>
+        Boolean(
+          (tui as unknown as { state: { homeTune?: { providers: unknown[] } } }).state.homeTune
+            ?.providers.length
+        ),
+      'Home tune offers'
+    )
+    const press = (name: string, extra: Record<string, unknown> = {}): void =>
+      (
+        tui as unknown as {
+          onKeypress: (input: string, key: Record<string, unknown>) => void
+        }
+      ).onKeypress('', { name, ...extra })
+
+    press('g', { ctrl: true })
+    await waitFor(() => output.lastFrame.includes('First'), 'tune lens open')
+    press('up')
+    press('escape')
+    await waitFor(() => output.lastFrame.includes('Claude First'), 'banner shows cursor model')
+
+    feed(input, 'send with the banner model\r')
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'composer.send'),
+      'lazy banner prompt sent',
+      8_000
+    )
+    expect(host.commands.find((command) => command.name === 'thread.configure')?.arguments).toEqual(
+      {
+        providerId: 'claude',
+        modelId: 'first-model',
+        postureId: 'default',
+        offerRevision: 'claude-offers-1'
+      }
+    )
   }, 12_000)
 
   it('keeps the first draft and opens guided setup when no provider is ready', async () => {

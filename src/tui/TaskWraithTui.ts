@@ -163,6 +163,8 @@ export interface TaskWraithTuiOptions {
   fullAccessPresence?: TuiFullAccessPresence
   /** Base reconnect delay; doubles per attempt up to RECONNECT_MAX_DELAY_MS. */
   reconnectBaseDelayMs?: number
+  /** Interval between guided-setup auth status polls; sized for web sign-ins. */
+  authPollIntervalMs?: number
   /** Failed reconnects before reviveHost is invoked. */
   reviveFailureThreshold?: number
   colorMode: AnsiColorMode
@@ -1820,7 +1822,10 @@ export class TaskWraithTui {
           this.setNotice('Workspace registered · choose provider', 'good')
         }
         if (cold?.kind === 'thread') this.setNotice('Thread created · configure it', 'good')
-        if (cold?.kind === 'auth' && cold.operationId) await this.pollColdStartAuth(cold.providerId)
+        // Detached on purpose: a provider web sign-in routinely takes minutes,
+        // and this callback runs inside the mutation window — awaiting the
+        // poll here would freeze every other Host command until it settled.
+        if (cold?.kind === 'auth' && cold.operationId) void this.pollColdStartAuth(cold.providerId)
         if (cold?.kind === 'ready') {
           this.state.overlay = 'none'
           this.state.coldStartIntent = undefined
@@ -1870,14 +1875,21 @@ export class TaskWraithTui {
     this.render()
   }
 
-  /** Polls a bounded number of status reads; a handoff opening is never success. */
+  /**
+   * Polls bounded status reads; a handoff opening is never success. The window
+   * is sized for a real provider web sign-in (browser round trip, ~minutes),
+   * and every tick re-checks that the guided auth stage is still on screen so
+   * an abandoned flow stops polling immediately.
+   */
   private async pollColdStartAuth(providerId: string): Promise<void> {
-    for (let attempt = 0; attempt < 8; attempt += 1) {
+    const intervalMs = this.options.authPollIntervalMs ?? 1_500
+    for (let attempt = 0; attempt < 120; attempt += 1) {
       if (this.stopped || !this.client?.connected) return
+      if (this.state.coldStart?.kind !== 'auth') return
       await this.refreshColdStartAuth(providerId)
-      if (this.state.coldStart?.kind === 'offers') return
+      if (this.state.coldStart?.kind !== 'auth') return
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, 750)
+        const timer = setTimeout(resolve, intervalMs)
         timer.unref?.()
       })
     }
@@ -2981,11 +2993,15 @@ export class TaskWraithTui {
       }
     }
 
+    // The Home identity banner renders the tune-lens cursor whenever it is
+    // loaded. The lazy first prompt must dispatch that exact visible selection;
+    // profile memory is only the fallback when no banner selection exists.
+    const preferred = this.homeBannerPreference()
     let status: HostProviderStatusProjection | undefined
     try {
       status = resolveStartupProvider(
         await this.client.getProviderStatuses(),
-        this.profileSettings.providerId
+        preferred?.providerId ?? this.profileSettings.providerId
       )
     } catch {
       status = undefined
@@ -3002,10 +3018,11 @@ export class TaskWraithTui {
       await this.startNewSoloThread(status.providerId)
       return undefined
     }
+    const preferredForProvider = preferred?.providerId === status.providerId ? preferred : undefined
     const savedForProvider = this.profileSettings.providerId === status.providerId
     const model = resolveStartupModel(
       offers,
-      savedForProvider ? this.profileSettings.modelId : undefined
+      preferredForProvider?.modelId ?? (savedForProvider ? this.profileSettings.modelId : undefined)
     )
     const homePermission =
       this.state.homePermission?.providerId === status.providerId
@@ -3018,7 +3035,11 @@ export class TaskWraithTui {
       : resolveStartupPosture(offers)
     const reasoning = resolveStartupReasoning(
       model,
-      savedForProvider ? this.profileSettings.reasoningId : undefined
+      preferredForProvider && model && preferredForProvider.modelId === model.modelId
+        ? preferredForProvider.reasoningId
+        : savedForProvider
+          ? this.profileSettings.reasoningId
+          : undefined
     )
     if (!model || !posture) {
       if (homePermission) {
@@ -3136,6 +3157,24 @@ export class TaskWraithTui {
     if (this.state.input) return
     this.state.input = value
     this.state.inputCursor = Array.from(value).length
+  }
+
+  /** The provider/model/reasoning selection the Home identity banner shows. */
+  private homeBannerPreference():
+    | { providerId: string; modelId: string; reasoningId?: string }
+    | undefined {
+    const home = this.state.homeTune
+    if (!home || home.loading || !home.providers.length) return undefined
+    const choice = tuiModelChoices(home.providers)[home.modelIndex]
+    if (!choice) return undefined
+    const reasoning = choice.model.reasoning.filter((candidate) => candidate.available)[
+      home.reasoningIndex
+    ]
+    return {
+      providerId: choice.provider.status.providerId,
+      modelId: choice.model.modelId,
+      ...(reasoning ? { reasoningId: reasoning.reasoningId } : {})
+    }
   }
 
   private async runCommand(raw: string): Promise<void> {
