@@ -36630,6 +36630,12 @@ const museIpcBridgeDeps: MuseIpcBridgeDeps = {
     runManager.finish(appRunId, status)
     runManager.confirmTerminalStatus(appRunId, status)
   },
+  // The renderer seals a solo run only on `agent-exit` (handleProviderExit),
+  // never on the `result` compat line. The bridge publishes this before
+  // finishRun so the run's persistence authority is still held when
+  // sendAgentCompatExit checks it; after finish it would be discarded.
+  sendExit: (sender, exitCode, route) =>
+    sendAgentCompatExit(sender as Electron.WebContents, 'muse', exitCode, route),
   registerCancel: (runId, cancel) => {
     museIpcCancels.set(runId, cancel)
   },

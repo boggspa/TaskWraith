@@ -76,6 +76,18 @@ export interface MuseIpcBridgeDeps {
     status: 'completed' | 'failed' | 'cancelled'
     exitCode: number | null
   }) => void
+  /**
+   * Publish the provider-exit event for this run (`sendAgentCompatExit`).
+   *
+   * The renderer seals a solo run — clears its active-run context, unlocks the
+   * composer, applies a queued provider change, pumps the run queue — only on
+   * `agent-exit`, never on the `result` compat line. Without this every Muse
+   * turn completed on the main side while the chat stayed "running" in the UI.
+   * Called after the terminal result and BEFORE `finishRun`: RunManager.finish
+   * releases the run's persistence authority, after which the exit emitter
+   * discards the event instead of publishing it.
+   */
+  sendExit?: (sender: unknown, exitCode: number, route: MuseIpcCompatRoute) => void
   registerCancel?: (runId: string, cancel: () => void) => void
   clearCancel?: (runId: string) => void
   readAuthJsonText?: () => Promise<string | null>
@@ -256,6 +268,19 @@ function requireField(value: unknown, label: string): string {
     throw new Error(`Muse IPC bridge requires a non-empty ${label}`)
   }
   return value.trim()
+}
+
+/**
+ * Exit code projected onto the `agent-exit` lane. The renderer reads it as
+ * `exitCode === 0 ? completed : failed`; 130 mirrors the SIGINT convention the
+ * renderer already stamps on an accepted cancellation.
+ */
+export function museExitCodeForOutcome(
+  outcome: Pick<MuseRunOutcome, 'status' | 'exitCode'>
+): number {
+  if (outcome.status === 'success') return 0
+  if (outcome.status === 'cancelled') return 130
+  return typeof outcome.exitCode === 'number' && outcome.exitCode !== 0 ? outcome.exitCode : 1
 }
 
 function mapOutcomeStatus(status: MuseRunStatus): 'completed' | 'failed' | 'cancelled' {
@@ -459,6 +484,10 @@ export async function runMuseProviderFromIpc(
         route
       )
     }
+
+    // Order is load-bearing: the exit must be published while main still holds
+    // this run's persistence authority (see `MuseIpcBridgeDeps.sendExit`).
+    deps.sendExit?.(event.sender, museExitCodeForOutcome(outcome), route)
 
     deps.finishRun?.({
       appRunId: runId,

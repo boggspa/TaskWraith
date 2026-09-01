@@ -10,7 +10,7 @@ import {
   runMuseProviderFromIpc,
   type MuseIpcBridgeDeps
 } from './MuseIpcBridge'
-import type { MuseRunOutcome, MuseRunSpawnHandle } from './MuseRun'
+import type { MuseRunInput, MuseRunOutcome, MuseRunSpawnHandle } from './MuseRun'
 import { unavailableMuseMeterSnapshot, museMeterSnapshotToProviderStats } from './MuseUsage'
 
 const temps: string[] = []
@@ -375,6 +375,99 @@ describe('runMuseProviderFromIpc', () => {
     expect(finishRun).toHaveBeenCalledWith(
       expect.objectContaining({ appRunId: 'run-muse-1', status: 'completed' })
     )
+  })
+
+  it('publishes the provider exit after the terminal result and before finishRun', async () => {
+    const order: string[] = []
+    const sendCompatLine = vi.fn((_sender: unknown, payload: Record<string, unknown>) => {
+      order.push(`compat:${String(payload.type)}`)
+    })
+    const sendExit = vi.fn((_sender: unknown, exitCode: number) => {
+      order.push(`exit:${exitCode}`)
+    })
+    const finishRun = vi.fn(() => {
+      order.push('finish')
+    })
+    const runMuseProvider = vi.fn(async () => successOutcome())
+
+    await runMuseProviderFromIpc(event, basePayload(), {
+      ...baseDeps({ sendCompatLine, sendExit, finishRun, runMuseProvider })
+    })
+
+    expect(sendExit).toHaveBeenCalledTimes(1)
+    expect(sendExit).toHaveBeenCalledWith(event.sender, 0, {
+      appRunId: 'run-muse-1',
+      appChatId: 'chat-1'
+    })
+    // The exit must reach the renderer while main still holds the run's
+    // persistence authority. RunManager.finish releases that authority, after
+    // which the exit emitter discards the event and the renderer never seals
+    // the run: the chat stays "running", the composer keeps queueing, and a
+    // queued provider change never applies.
+    expect(order).toEqual(['compat:init', 'compat:result', 'exit:0', 'finish'])
+  })
+
+  it('publishes the exit once when the terminal result already rode the stdout lane', async () => {
+    const sendCompatLine = vi.fn()
+    const sendExit = vi.fn()
+    const finishRun = vi.fn()
+    const runMuseProvider = vi.fn(async (input: MuseRunInput) => {
+      input.onEvent?.({
+        type: 'content',
+        payloadType: 'run.output.delta',
+        text: 'hello',
+        raw: {}
+      })
+      input.onEvent?.({
+        type: 'terminal',
+        payloadType: 'run.terminal.completed',
+        terminal: 'completed',
+        raw: {}
+      })
+      return successOutcome()
+    })
+
+    await runMuseProviderFromIpc(event, basePayload(), {
+      ...baseDeps({ sendCompatLine, sendExit, finishRun, runMuseProvider })
+    })
+
+    const resultLines = sendCompatLine.mock.calls.filter(
+      ([, payload]) => (payload as Record<string, unknown>).type === 'result'
+    )
+    expect(resultLines).toHaveLength(1)
+    expect(sendExit).toHaveBeenCalledTimes(1)
+    expect(sendExit).toHaveBeenCalledWith(event.sender, 0, expect.anything())
+    expect(finishRun).toHaveBeenCalledTimes(1)
+    expect(sendExit.mock.invocationCallOrder[0]).toBeLessThan(finishRun.mock.invocationCallOrder[0])
+  })
+
+  it('maps failed and cancelled outcomes onto non-zero exit codes', async () => {
+    const failedExit = vi.fn()
+    await runMuseProviderFromIpc(event, basePayload(), {
+      ...baseDeps({
+        sendExit: failedExit,
+        runMuseProvider: vi.fn(async () => successOutcome({ status: 'failed', exitCode: 2 }))
+      })
+    })
+    expect(failedExit).toHaveBeenCalledWith(event.sender, 2, expect.anything())
+
+    const failedWithoutCodeExit = vi.fn()
+    await runMuseProviderFromIpc(event, basePayload(), {
+      ...baseDeps({
+        sendExit: failedWithoutCodeExit,
+        runMuseProvider: vi.fn(async () => successOutcome({ status: 'failed', exitCode: 0 }))
+      })
+    })
+    expect(failedWithoutCodeExit).toHaveBeenCalledWith(event.sender, 1, expect.anything())
+
+    const cancelledExit = vi.fn()
+    await runMuseProviderFromIpc(event, basePayload(), {
+      ...baseDeps({
+        sendExit: cancelledExit,
+        runMuseProvider: vi.fn(async () => successOutcome({ status: 'cancelled', exitCode: null }))
+      })
+    })
+    expect(cancelledExit).toHaveBeenCalledWith(event.sender, 130, expect.anything())
   })
 
   it('prepares a route-bound MCP server before launching an advertised Muse turn', async () => {
