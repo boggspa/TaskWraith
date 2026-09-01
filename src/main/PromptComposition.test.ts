@@ -18,6 +18,7 @@ import {
   buildPendingSubThreadResultContextBlock,
   composeRunPrompt,
   promptNeedsBrowserCanvasHint,
+  promptNeedsEmulatorCanvasHint,
   promptNeedsImageToolsHint,
   promptNeedsSimulatorCanvasHint,
   sanitizeTaskWraithMcpPromptClaims
@@ -25,9 +26,13 @@ import {
 import type { ResolvedInstructionContext } from '../shared/instructions/InstructionTypes'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_ID,
+  TASKWRAITH_FULL_V3_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V12_MCP_PROFILE_ID,
-  TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID
 } from './mcp/McpSessionProfileFence'
 import { resolveOllamaContextBudget } from './ollama/OllamaContextBudget'
 import type { ChatMessage } from './store/types'
@@ -1667,6 +1672,203 @@ describe('Browser Canvas handoff', () => {
       'Current user request:\nCan you see the webpage in the browser canvas?'
     )
     expect(result.contextualPrompt).not.toContain('canvas_snapshot')
+  })
+})
+
+describe('Homebrew Emulator Canvas handoff', () => {
+  it('detects fixed emulator requests without confusing a terminal emulator for the Canvas', () => {
+    for (const prompt of [
+      'Open the homebrew emulator demo.',
+      'Observe the Emulator Canvas before stepping right.',
+      'Play the Game Boy homebrew game.',
+      'Use emulator_step after an observation.'
+    ]) {
+      expect(promptNeedsEmulatorCanvasHint(prompt)).toBe(true)
+    }
+    for (const prompt of [
+      'Fix the terminal emulator keyboard shortcut.',
+      'Refactor the canvas chart serializer.',
+      'Emulate the production API response in this unit test.'
+    ]) {
+      expect(promptNeedsEmulatorCanvasHint(prompt)).toBe(false)
+    }
+  })
+
+  it('re-injects the fixed emulator gateway workflow for a live v19 surface', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'claude',
+      finalPrompt: 'Continue the current task.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      resumeSessionId: 'sess-emulator',
+      runtimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+      runtimePreambleProvider: 'claude',
+      taskWraithMcpProfileId: TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID,
+      openCanvasSessions: [
+        { canvasId: 'emulator-live-1', driver: 'emulator', status: 'active' },
+        { canvasId: 'sketch-ignored', driver: 'sketch', status: 'active' },
+        { canvasId: '-invalid-emulator-id', driver: 'emulator', status: 'active' },
+        { canvasId: 'emulator-closed', driver: 'emulator', status: 'closed' }
+      ]
+    })
+
+    expect(result.contextualPrompt).toContain(
+      'A live fixed Homebrew Emulator Canvas is attached to this chat (canvasId: "emulator-live-1")'
+    )
+    expect(result.contextualPrompt).toContain('fixed reviewed homebrew demo')
+    expect(result.contextualPrompt).toContain('capability_search')
+    expect(result.contextualPrompt).toContain('capability_invoke')
+    expect(result.contextualPrompt).toContain('emulator_observe')
+    expect(result.contextualPrompt).toContain('emulator_step')
+    expect(result.contextualPrompt).toContain(
+      'do not call emulator_open to create a duplicate session'
+    )
+    expect(result.contextualPrompt).toContain('expectedObservationId')
+    expect(result.contextualPrompt).toContain('framesCompleted')
+    expect(result.contextualPrompt).toContain(
+      'uses the exact-surface Canvas/AppDrive approval or grant and is never unconditionally auto-allowed'
+    )
+    expect(result.contextualPrompt).not.toContain('sketch-ignored')
+    expect(result.contextualPrompt).not.toContain('-invalid-emulator-id')
+    expect(result.contextualPrompt).not.toContain('emulator-closed')
+    expect(result.contextualPrompt).not.toContain('to discover and use emulator_open')
+    expect(result.contextualPrompt).not.toMatch(/\breload\b/i)
+    expect(result.contextualPrompt).not.toContain('canvas_eval')
+    expect(result.contextualPrompt).not.toContain('canvas_key')
+    expect(result.contextualPrompt).toContain(
+      'There is no arbitrary ROM, raw RAM, or cheat interface'
+    )
+    expect(result.applicationLog).toContain('Homebrew Emulator Canvas context injected')
+    expect(result.envelopeLayers).toContainEqual(
+      expect.objectContaining({ id: 'emulator_canvas_hint', state: 'applied' })
+    )
+    expect(result.envelopeLayers.map((layer) => layer.id)).toEqual(
+      expect.arrayContaining(['emulator_canvas_hint', 'current_request'])
+    )
+    expect(
+      result.envelopeLayers.findIndex((layer) => layer.id === 'emulator_canvas_hint')
+    ).toBeLessThan(result.envelopeLayers.findIndex((layer) => layer.id === 'current_request'))
+  })
+
+  it('names direct emulator tools only for the emulator-capable full profile', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'codex',
+      finalPrompt: 'Open the homebrew emulator and inspect it.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Codex',
+      taskWraithMcpProfileId: TASKWRAITH_FULL_V3_MCP_PROFILE_ID
+    })
+
+    expect(result.contextualPrompt).toContain('Use emulator_open, then emulator_observe')
+    expect(result.contextualPrompt).toContain('emulator_step')
+    expect(result.contextualPrompt).not.toContain(
+      'capability_search({ query: "homebrew emulator observe step"'
+    )
+  })
+
+  it('uses a live full-v3 canvas without reopening it', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'codex',
+      finalPrompt: 'Continue the current task.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Codex',
+      taskWraithMcpProfileId: TASKWRAITH_FULL_V3_MCP_PROFILE_ID,
+      openCanvasSessions: [
+        { canvasId: 'emulator-live-direct', driver: 'emulator', status: 'active' }
+      ]
+    })
+
+    expect(result.contextualPrompt).toContain('Use the attached canvasId above')
+    expect(result.contextualPrompt).toContain('Use emulator_observe')
+    expect(result.contextualPrompt).toContain('emulator_step')
+    expect(result.contextualPrompt).not.toContain('Use emulator_open, then')
+    expect(result.contextualPrompt).not.toMatch(/\breload\b/i)
+  })
+
+  it('reports the exact legacy or core profile limit without denying the product feature', () => {
+    for (const profileId of [
+      TASKWRAITH_CORE_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
+    ]) {
+      const result = composeRunPrompt({
+        instructionContext: null,
+        provider: 'claude',
+        finalPrompt: 'Please use the Emulator Canvas.',
+        messages: [],
+        chatContextTurns: 6,
+        codexHandoffsApplied: [],
+        isGlobalRun: false,
+        approvalMode: 'default',
+        providerLabel: 'Claude',
+        taskWraithMcpProfileId: profileId
+      })
+
+      expect(result.contextualPrompt).toContain(`TaskWraith MCP profile "${profileId}"`)
+      expect(result.contextualPrompt).toContain('does not include the governed emulator tools')
+      expect(result.contextualPrompt).toContain('Do not claim the product lacks this feature')
+      expect(result.contextualPrompt).not.toContain('homebrew emulator observe step')
+      expect(result.contextualPrompt).not.toContain('emulator_open, then emulator_observe')
+    }
+  })
+
+  it('uses the gateway discovery workflow for every emulator-capable gateway receipt', () => {
+    for (const profileId of [
+      TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID
+    ]) {
+      const result = composeRunPrompt({
+        instructionContext: null,
+        provider: 'codex',
+        finalPrompt: 'Open the homebrew emulator demo.',
+        messages: [],
+        chatContextTurns: 6,
+        codexHandoffsApplied: [],
+        isGlobalRun: false,
+        approvalMode: 'default',
+        providerLabel: 'Codex',
+        taskWraithMcpProfileId: profileId
+      })
+
+      expect(result.contextualPrompt).toContain('capability_search')
+      expect(result.contextualPrompt).toContain('capability_invoke')
+      expect(result.contextualPrompt).toContain('emulator_open')
+      expect(result.contextualPrompt).not.toContain('Use emulator_open, then emulator_observe')
+    }
+  })
+
+  it('does not promise emulator tools when the run has no TaskWraith MCP transport', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'claude',
+      finalPrompt: 'Open the homebrew emulator demo.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      taskWraithMcpAdvertised: false,
+      openCanvasSessions: [{ canvasId: 'emulator-live-1', driver: 'emulator', status: 'active' }]
+    })
+
+    expect(result.contextualPrompt).not.toContain('Homebrew Emulator Canvas')
+    expect(result.contextualPrompt).not.toContain('emulator_open')
   })
 })
 

@@ -133,6 +133,7 @@ export interface ResolvedInstructionContext {
 /** Envelope layer identifiers, in top-to-bottom composed-prompt order. */
 export type PromptEnvelopeLayerId =
   | 'simulator_canvas_hint'
+  | 'emulator_canvas_hint'
   | 'browser_canvas_hint'
   | 'runtime_preamble'
   | 'ultratask_note'

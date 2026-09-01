@@ -38,7 +38,11 @@ import { shouldUseCoreMcpProfile } from './mcp/McpToolProfiles'
 import {
   isCoreTaskWraithMcpProfile,
   isGatewayTaskWraithMcpProfile,
-  isGatewayV13DirectTaskWraithMcpProfile
+  isGatewayV13DirectTaskWraithMcpProfile,
+  TASKWRAITH_FULL_V3_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID
 } from './mcp/McpSessionProfileFence'
 import { normalizeCliProviderModel } from './providers/StaticProviderModels'
 import {
@@ -392,6 +396,17 @@ export function promptNeedsBrowserCanvasHint(prompt: string): boolean {
   return BROWSER_CANVAS_INTENT_PATTERN.test(prompt)
 }
 
+const TERMINAL_EMULATOR_INTENT_PATTERN = /\b(?:terminal|shell|iTerm)\s+emulator\b/i
+const EMULATOR_CANVAS_INTENT_PATTERN =
+  /\b(?:emulator(?:\s+(?:canvas|demo|game))?|canvas\s+emulator|homebrew(?:\s+(?:emulator|game|demo))?|game\s*boy|emulator_(?:open|observe|step))\b/i
+const CANONICAL_EMULATOR_CANVAS_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/
+
+export function promptNeedsEmulatorCanvasHint(prompt: string): boolean {
+  return (
+    !TERMINAL_EMULATOR_INTENT_PATTERN.test(prompt) && EMULATOR_CANVAS_INTENT_PATTERN.test(prompt)
+  )
+}
+
 const SIMULATOR_CANVAS_ACTION_PATTERN =
   '(?:open|boot|launch|install|load|run|test|validate|inspect|drive|tap|type|scroll|screenshot|interact)'
 const SIMULATOR_CANVAS_TARGET_PATTERN = '(?:iOS|iPhone|iPad|SwiftUI|Xcode|simulator)'
@@ -442,6 +457,81 @@ function safeOpenWebCanvasIds(sessions: readonly OpenCanvasPromptContext[]): str
     ids.add(canvasId)
   }
   return [...ids].slice(0, 4)
+}
+
+function safeOpenEmulatorCanvasIds(sessions: readonly OpenCanvasPromptContext[]): string[] {
+  const ids = new Set<string>()
+  for (const session of sessions) {
+    if (
+      session.driver !== 'emulator' ||
+      (session.status !== 'active' && session.status !== 'opening')
+    ) {
+      continue
+    }
+    const canvasId = String(session.canvasId || '').trim()
+    if (!canvasId || canvasId.length > 128 || !CANONICAL_EMULATOR_CANVAS_ID.test(canvasId)) {
+      continue
+    }
+    ids.add(canvasId)
+  }
+  return [...ids].slice(0, 4)
+}
+
+function emulatorPromptProfileRoute(
+  profileId: TaskWraithMcpProfileId | undefined
+): 'direct' | 'gateway' | 'unavailable' {
+  if (profileId === TASKWRAITH_FULL_V3_MCP_PROFILE_ID) return 'direct'
+  if (
+    profileId === TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID
+  ) {
+    return 'gateway'
+  }
+  return 'unavailable'
+}
+
+function buildEmulatorCanvasToolsHint(args: {
+  prompt: string
+  sessions: readonly OpenCanvasPromptContext[]
+  advertised: boolean
+  profileId: TaskWraithMcpProfileId | undefined
+}): string {
+  if (!args.advertised) return ''
+  const ids = safeOpenEmulatorCanvasIds(args.sessions)
+  if (ids.length === 0 && !promptNeedsEmulatorCanvasHint(args.prompt)) return ''
+
+  const liveContext =
+    ids.length === 1
+      ? `A live fixed Homebrew Emulator Canvas is attached to this chat (canvasId: ${JSON.stringify(ids[0])}).`
+      : ids.length > 1
+        ? `Live fixed Homebrew Emulator Canvases are attached to this chat (canvasIds: ${ids.map((id) => JSON.stringify(id)).join(', ')}).`
+        : 'TaskWraith has a fixed Homebrew Emulator Canvas; no live emulator surface is currently attached to this chat.'
+  const attachedSurfaceWorkflow =
+    ids.length > 0
+      ? 'Use the attached canvasId above, observe it, and do not call emulator_open to create a duplicate session.'
+      : 'No live emulator is attached, so open the fixed demo first.'
+  const workflow =
+    'It runs only the fixed reviewed homebrew demo and requires the active chat and run. There is no arbitrary ROM, raw RAM, or cheat interface. Make one atomic observation, then step only with the observation canvasId and expectedObservationId. Read outcome, executed, partial, and framesCompleted on every step result; re-observe after a refusal or interruption. emulator_step uses the exact-surface Canvas/AppDrive approval or grant and is never unconditionally auto-allowed.'
+  const route = emulatorPromptProfileRoute(args.profileId)
+  if (route === 'direct') {
+    const directRoute =
+      ids.length > 0
+        ? 'Use emulator_observe for safe mapped state plus one PNG, then emulator_step with that canvasId and expectedObservationId.'
+        : 'Use emulator_open, then emulator_observe for safe mapped state plus one PNG, then emulator_step with canvasId and expectedObservationId.'
+    return `${liveContext} ${attachedSurfaceWorkflow} ${workflow} ${directRoute}`
+  }
+  if (route === 'gateway') {
+    const discovery =
+      ids.length > 0
+        ? 'Call capability_search({ query: "homebrew emulator observe step", limit: 3 }), then capability_invoke({ name, arguments }) to discover and use emulator_observe and emulator_step for the attached canvas.'
+        : 'Call capability_search({ query: "homebrew emulator open observe step", limit: 3 }), then capability_invoke({ name, arguments }) to discover and use emulator_open, emulator_observe, and emulator_step.'
+    return `${liveContext} ${attachedSurfaceWorkflow} ${workflow} ${discovery}`
+  }
+  const profile = args.profileId
+    ? `TaskWraith MCP profile ${JSON.stringify(args.profileId)}`
+    : 'this provider session MCP profile'
+  return `${liveContext} ${profile} does not include the governed emulator tools. Do not claim the product lacks this feature; start a fresh provider session with an emulator-capable profile before attempting the fixed homebrew workflow.`
 }
 
 function buildBrowserCanvasToolsHint(args: {
@@ -1192,6 +1282,7 @@ function injectBeforeCurrentRequest(prompt: string, block: string, finalPrompt: 
  * geometry, so the canonical order is used for all providers. */
 const ENVELOPE_LAYER_ORDER: readonly PromptEnvelopeLayerId[] = [
   'simulator_canvas_hint',
+  'emulator_canvas_hint',
   'browser_canvas_hint',
   'image_tools_note',
   'recon_steer',
@@ -2123,6 +2214,23 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       label: 'Browser Canvas context',
       state: 'applied',
       content: browserCanvasToolsHint
+    })
+  }
+
+  const emulatorCanvasToolsHint = buildEmulatorCanvasToolsHint({
+    prompt: finalPrompt,
+    sessions: input.openCanvasSessions || [],
+    advertised: taskWraithMcpAdvertised,
+    profileId: input.taskWraithMcpProfileId
+  })
+  if (emulatorCanvasToolsHint) {
+    contextualPrompt = `${emulatorCanvasToolsHint}\n\n${contextualPrompt}`
+    applicationLog = `${applicationLog}; Homebrew Emulator Canvas context injected`
+    envelopeLayers.push({
+      id: 'emulator_canvas_hint',
+      label: 'Homebrew Emulator Canvas context',
+      state: 'applied',
+      content: emulatorCanvasToolsHint
     })
   }
 
