@@ -162,7 +162,6 @@ export function TranscriptParticipantFilterRail({
   currentChat,
   items: providedItems,
   activeFilterKeys,
-  scrollRef,
   onToggleFilter
 }: TranscriptParticipantFilterRailProps): ReactElement | null {
   const items = useMemo(
@@ -176,15 +175,28 @@ export function TranscriptParticipantFilterRail({
   const systemItem = useMemo(() => items.find((item) => item.kind === 'system') || null, [items])
   const rows = useMemo(() => chunkIntoBalancedRows(participantItems), [participantItems])
   const dockRef = useRef<HTMLDivElement | null>(null)
+  // In-flow anchor the pane is resolved FROM. The pane cannot be read off the
+  // panel's scrollRef here: React attaches host refs during the layout phase
+  // bottom-up, so this (deeper) component's layout effects run BEFORE the
+  // parent scroller's ref attaches — on mount `scrollRef.current` is still
+  // null exactly once, and a mount-keyed effect never sees it filled
+  // (measured live 2026-09-01: paneEl stayed null forever). The anchor is
+  // inside this component's OWN subtree, whose refs do attach first.
+  const anchorRef = useRef<HTMLSpanElement | null>(null)
   const [paneEl, setPaneEl] = useState<HTMLElement | null>(null)
 
   const visible =
     !!currentChat && currentChat.chatKind === 'ensemble' && participantItems.length > 0
 
+  const appChatId = currentChat?.appChatId
   useLayoutEffect(() => {
-    const pane = scrollRef.current?.closest('.app-transcript')
-    setPaneEl(pane instanceof HTMLElement ? pane : null)
-  }, [scrollRef])
+    // Keyed per chat, not per mount: switching chats can recreate the
+    // surrounding `.app-transcript` while this component instance survives,
+    // which would leave a mount-resolved pane pointing at a detached element.
+    const pane = anchorRef.current?.closest('.app-transcript')
+    const next = pane instanceof HTMLElement ? pane : null
+    setPaneEl((current) => (current === next ? current : next))
+  }, [appChatId, visible])
 
   useLayoutEffect(() => {
     const pane = paneEl
@@ -287,6 +299,10 @@ export function TranscriptParticipantFilterRail({
   )
 
   if (typeof document === 'undefined') return rail
-  if (!paneEl) return null
-  return createPortal(rail, paneEl)
+  return (
+    <>
+      <span ref={anchorRef} hidden data-participant-filter-anchor />
+      {paneEl ? createPortal(rail, paneEl) : null}
+    </>
+  )
 }
