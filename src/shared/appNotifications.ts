@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-30'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-01'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -138,9 +138,33 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: "OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
+    body: "Claude Fable 5.1, the Devin CLI seat, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
+      {
+        provider: 'claude',
+        label: 'Claude',
+        models: [
+          {
+            name: 'Fable 5.1',
+            blurb:
+              "Anthropic's newest Fable — 1M context, adaptive thinking, the full effort ladder. Fable 5 moves to Legacy."
+          }
+        ]
+      },
+      {
+        // Devin is a whole new seat (approved 2026-09-01): the CLI exposes no
+        // enumerable catalogue, so its one honest row is the CLI default.
+        provider: 'devin',
+        label: 'Devin',
+        models: [
+          {
+            name: 'Devin (CLI default)',
+            blurb:
+              "Devin CLI over ACP on your own seat — the CLI's default model, or a custom model id per run."
+          }
+        ]
+      },
       {
         provider: 'antigravity',
         label: 'AntiGravity',
@@ -230,6 +254,11 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
           {
             name: 'GLM-5.2 (via Mistral)',
             blurb: 'GLM-5.2 (via Mistral) introduces a 1M context lane for heavier prompts.'
+          },
+          {
+            name: 'GLM-5.2 (Mistral Hosted)',
+            blurb:
+              'GLM-5.2 on the Vibe subscription — 1M context, no API key, metered on your plan.'
           },
           {
             name: 'Codestral (Aug 2025)',

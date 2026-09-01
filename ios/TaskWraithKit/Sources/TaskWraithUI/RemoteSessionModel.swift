@@ -2807,7 +2807,13 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-08-30","kind":"addition","title":"New Additions","body":"OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-09-01","kind":"addition","title":"New Additions","body":"Claude Fable 5.1, the Devin CLI seat, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+            {"provider":"claude","label":"Claude","models":[
+              {"name":"Fable 5.1","blurb":"Anthropic's newest Fable — 1M context, adaptive thinking, the full effort ladder. Fable 5 moves to Legacy."}
+            ]},
+            {"provider":"devin","label":"Devin","models":[
+              {"name":"Devin (CLI default)","blurb":"Devin CLI over ACP on your own seat — the CLI's default model, or a custom model id per run."}
+            ]},
             {"provider":"antigravity","label":"AntiGravity","models":[
               {"name":"Gemini 3.7 Flash","blurb":"The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI."}
             ]},
@@ -2831,6 +2837,7 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Devstral 2","blurb":"A faster default path with broader instruction coverage and lower per-token cost."},
               {"name":"Leanstral 1.5 (Labs)","blurb":"Leanstral 1.5 (Labs) is a research-focused experimental reasoning update."},
               {"name":"GLM-5.2 (via Mistral)","blurb":"GLM-5.2 (via Mistral) introduces a 1M context lane for heavier prompts."},
+              {"name":"GLM-5.2 (Mistral Hosted)","blurb":"GLM-5.2 on the Vibe subscription — 1M context, no API key, metered on your plan."},
               {"name":"Codestral (Aug 2025)","blurb":"Codestral (Aug 2025) is a Mistral codespace model with updated quality and tuning."},
               {"name":"Ministral 3 (14B)","blurb":"Ministral 3 (14B) balances throughput and coding depth on the same family stack."},
               {"name":"Ministral 3 (8B)","blurb":"Ministral 3 (8B) keeps the same family strengths in a smaller profile."},

@@ -14842,6 +14842,10 @@ button.diff-file-row {
 .notification-newadditions-model.provider-muse {
   color: var(--provider-muse-color, #1671ea);
 }
+.notification-newadditions-provider.provider-devin,
+.notification-newadditions-model.provider-devin {
+  color: var(--provider-devin-color, #4878ae);
+}
 /* Ollama-backed models wear their spoofed upstream brand hue (set per-model via
  * `accentProvider`) — so a model name reads in its brand colour instead of
  * the generic Ollama seat hue. The "Ollama" group heading keeps that seat

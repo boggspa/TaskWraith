@@ -149,6 +149,8 @@ describe('notification registry', () => {
     )
     const groups = newAdditions?.groups ?? []
     expect(groups.map((g) => g.provider)).toEqual([
+      'claude',
+      'devin',
       'antigravity',
       'grok',
       'cursor',
@@ -158,6 +160,8 @@ describe('notification registry', () => {
       'pi'
     ])
     expect(groups.map((g) => g.label)).toEqual([
+      'Claude',
+      'Devin',
       'AntiGravity',
       'Grok',
       'Cursor',
@@ -167,8 +171,16 @@ describe('notification registry', () => {
       'Pi'
     ])
     // Dropped from the card once they stopped being the newest story.
-    expect(groups.map((g) => g.provider)).not.toContain('claude')
     expect(groups.map((g) => g.provider)).not.toContain('kimi')
+
+    // Claude is BACK at the top for Fable 5.1 (2026-09-01); Devin is a whole
+    // new seat with a single honest CLI-default row.
+    const claude = groups.find((g) => g.provider === 'claude')
+    expect(claude?.models.map((m) => m.name)).toEqual(['Fable 5.1'])
+    expect(claude?.models[0]?.blurb).toMatch(/1M context.*adaptive thinking.*Legacy/i)
+    const devin = groups.find((g) => g.provider === 'devin')
+    expect(devin?.models.map((m) => m.name)).toEqual(['Devin (CLI default)'])
+    expect(devin?.models[0]?.blurb).toMatch(/ACP.*custom model id/i)
 
     const antigravity = groups.find((g) => g.provider === 'antigravity')
     expect(antigravity?.models.map((m) => m.name)).toEqual(['Gemini 3.7 Flash'])
@@ -201,12 +213,16 @@ describe('notification registry', () => {
       'Devstral 2',
       'Leanstral 1.5 (Labs)',
       'GLM-5.2 (via Mistral)',
+      'GLM-5.2 (Mistral Hosted)',
       'Codestral (Aug 2025)',
       'Ministral 3 (14B)',
       'Ministral 3 (8B)',
       'Ministral 3 (3B)'
     ])
     expect(mistral?.models[0]?.blurb).toMatch(/Effort.*configurable|configurable.*Effort/i)
+    expect(mistral?.models.find((m) => m.name === 'GLM-5.2 (Mistral Hosted)')?.blurb).toMatch(
+      /Vibe subscription.*no API key/i
+    )
 
     const ollama = groups.find((g) => g.provider === 'ollama')
     // Signed-in Cloud rows lead, then the newest curated local tags. Each

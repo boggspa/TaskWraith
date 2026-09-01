@@ -413,6 +413,8 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
+      'claude',
+      'devin',
       'antigravity',
       'grok',
       'cursor',
@@ -421,6 +423,12 @@ describe('buildRemoteFirstLaunchState', () => {
       'ollama',
       'pi'
     ])
+    expect(
+      newAdditions?.groups?.find((group) => group.provider === 'claude')?.models[0]?.name
+    ).toBe('Fable 5.1')
+    expect(newAdditions?.groups?.find((group) => group.provider === 'devin')?.models[0]?.name).toBe(
+      'Devin (CLI default)'
+    )
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'antigravity')?.models[0]?.name
     ).toBe('Gemini 3.7 Flash')
