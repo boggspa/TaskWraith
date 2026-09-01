@@ -12090,6 +12090,89 @@
   gap: 12px;
 }
 
+/* Authoritative execution-plan (set_round_plan) changes share the seat row's
+ * hop-in, click target, time and indented disclosure. The summary is prose,
+ * so unlike the numeric rows there is no odometer — the row states the new
+ * plan and clicking discloses the full details (and, for later updates only,
+ * the "was" line with the replaced plan). */
+.execution-plan-change-row {
+  gap: 12px;
+}
+
+.execution-plan-change-icon svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.execution-plan-change-label {
+  flex: 0 0 auto;
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 72%, transparent);
+}
+
+/* The summary takes the row's slack so the actor + timestamp read as one
+ * right-hand trailing group, mirroring the compact mock. */
+.execution-plan-change-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(var(--font-size-xs) + 1px);
+  color: color-mix(in srgb, var(--text-primary) 58%, transparent);
+}
+
+.execution-plan-change-actor {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 52%, transparent);
+}
+
+.execution-plan-change-actor:is(.is-boss, .is-captain) {
+  color: color-mix(in srgb, var(--accent) 74%, var(--text-primary));
+}
+
+/* Disclosure: full plan text plus the labeled work-contract lines, indented
+ * to the seat-change "was" gutter (28px clears the 16px icon + row gap). */
+.execution-plan-change-details {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 0 3px 28px;
+}
+
+.execution-plan-change-full {
+  font-size: calc(var(--font-size-xs) + 1px);
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent);
+}
+
+.execution-plan-change-detail {
+  display: flex;
+  gap: 10px;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 58%, transparent);
+}
+
+.execution-plan-change-detail-label {
+  flex: 0 0 64px;
+  font-style: italic;
+  color: color-mix(in srgb, var(--text-primary) 40%, transparent);
+}
+
+.execution-plan-change-was-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 58%, transparent);
+}
+
 :root[data-reduce-motion="true"] .seat-change-message.is-fresh .seat-change-row {
   animation: none !important;
 }

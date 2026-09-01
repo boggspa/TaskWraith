@@ -20,6 +20,7 @@ import {
 import type { ContinuationHopsChangePayload } from '../shared/continuationHopsChange'
 import type { AutoApprovalsChangePayload } from '../shared/autoApprovalsChange'
 import type { BlackboardChangePayload } from '../shared/blackboardChange'
+import type { ExecutionPlanChangePayload } from '../shared/executionPlanChange'
 
 function msg(i: number, overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
@@ -1525,6 +1526,40 @@ describe('RemoteThreadProjection', () => {
       ])
 
       expect(snap.rows[0].noticeKind).toBeUndefined()
+    })
+
+    it('stamps a valid execution-plan change and rejects a malformed one', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'plan-change',
+          role: 'system',
+          content: 'Boss set the execution plan: Ship the parser first.',
+          metadata: {
+            executionPlanChange: {
+              summary: 'Ship the parser first.',
+              actor: 'boss',
+              changedAt: '2026-09-01T10:42:00.000Z'
+            }
+          }
+        }),
+        msg(2, {
+          id: 'bad-plan-change',
+          role: 'system',
+          content: 'Boss set the execution plan: Ship it.',
+          // Same contract as the desktop: what lands on disk is data, not
+          // trusted TypeScript, and a junk payload keeps the plain fallback.
+          metadata: {
+            executionPlanChange: {
+              summary: '',
+              actor: 'nobody',
+              changedAt: 'soon'
+            } as unknown as ExecutionPlanChangePayload
+          }
+        })
+      ])
+
+      expect(snap.rows[0].noticeKind).toBe('executionPlanChange')
+      expect(snap.rows[1].noticeKind).toBeUndefined()
     })
 
     it('rejects a malformed Auto Approvals change rather than stamping it', () => {

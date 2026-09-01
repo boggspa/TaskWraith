@@ -140,6 +140,7 @@ import {
   appendContinuationHopsChangeTranscriptEvent,
   buildContinuationHopsAdvanceTranscriptEvent
 } from './EnsembleContinuationHopsTranscript'
+import { buildExecutionPlanChangeTranscriptEvent } from './EnsembleExecutionPlanTranscript'
 import { appendAutoApprovalsChangeTranscriptEvent } from './EnsembleAutoApprovalsTranscript'
 import { buildEnsembleFanoutDispatchPayload } from './EnsembleFanoutDispatchTranscript'
 import { yieldTargetDisplayLabel } from '../../shared/ensembleYieldTarget'
@@ -10163,12 +10164,28 @@ export class EnsembleOrchestrator {
         updatedAt: nowIso,
         updatedByParticipantId: callerId
       }
+      const previousPlan = this.deps.getChat(runtime.chatId)?.ensemble?.bossmanControlState
+        ?.roundPlan
       this.updateBossmanControlState(runtime, (state) => ({ ...state, roundPlan: plan }))
-      this.appendRoundStatus(
-        runtime.chatId,
-        runtime.roundId,
-        `${authorityLabel} set the execution plan: ${planSummary}`
-      )
+      const planEvent = buildExecutionPlanChangeTranscriptEvent({
+        planSummary,
+        authorityRole,
+        actorParticipantId: callerId,
+        changedAt: nowIso,
+        roundId: runtime.roundId,
+        previousSummary: previousPlan?.planSummary || previousPlan?.goal,
+        phase: plan.phase,
+        ownerParticipantIds: plan.ownerParticipantIds,
+        ownerLabels: participantIds
+          .map((id) => this.findRuntimeParticipant(runtime, id))
+          .filter((participant): participant is EnsembleParticipant => Boolean(participant))
+          .map(participantDisplayName),
+        blockers: plan.blockers,
+        doneCriteria: plan.doneCriteria
+      })
+      this.appendRoundStatus(runtime.chatId, runtime.roundId, planEvent.content, {
+        metadata: planEvent.metadata
+      })
       // The `goal` field name makes this action read like the goal-setter
       // (live incident 2026-08-18: both Boss and Captain used it to "create"
       // the thread goal, saw ok:true, then read goal_read → null and concluded

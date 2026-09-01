@@ -236,6 +236,7 @@ import { agentQuestionSeatKey, composedSeatRole, seatFromChatRun } from '../lib/
 import { agentQuestionHeaderLineFor } from '../../../shared/agentQuestionTranscript'
 import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import { resolveContinuationHopsChangePayload } from '../../../shared/continuationHopsChange'
+import { resolveExecutionPlanChangePayload } from '../../../shared/executionPlanChange'
 import { isAutoApprovalsChangePayload } from '../../../shared/autoApprovalsChange'
 import { isEnsembleFanoutDispatchPayload } from '../../../shared/ensembleFanoutDispatch'
 import { isGuestParticipantReplyMessage } from './GuestParticipantReplyCardModel'
@@ -277,6 +278,7 @@ import { isRedundantEnsembleTranscriptNotice } from '../../../shared/ensembleTra
 import { ProviderRunFailureCard } from './ProviderRunFailureCard'
 import { SeatChangeRow } from './SeatChangeRow'
 import { ContinuationHopsChangeRow } from './ContinuationHopsChangeRow'
+import { ExecutionPlanChangeRow } from './ExecutionPlanChangeRow'
 import { AutoApprovalsChangeRow } from './AutoApprovalsChangeRow'
 import {
   BlackboardChangeRow,
@@ -1058,6 +1060,9 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     // Only valid structured payloads are promoted; malformed records keep the
     // carrier sentence as their plain fallback.
     !resolveContinuationHopsChangePayload(msg) &&
+    // Authoritative execution-plan changes are round-control state, not
+    // anonymous System chrome — same preserved standing as hop-limit changes.
+    !resolveExecutionPlanChangePayload(msg) &&
     // Human-owned Auto Approvals changes use the same durable before/after
     // standing as seat and hop-limit changes.
     !isAutoApprovalsChangePayload(msg.metadata?.autoApprovalsChange) &&
@@ -5069,6 +5074,7 @@ export const TranscriptPanel = memo(
             const isProviderRunFailure = msg.metadata?.kind === 'providerRunFailure'
             const isContextCompaction = msg.metadata?.kind === 'contextCompaction'
             const isContinuationHopsChange = Boolean(resolveContinuationHopsChangePayload(msg))
+            const isExecutionPlanChange = Boolean(resolveExecutionPlanChangePayload(msg))
             const isAutoApprovalsChange = isAutoApprovalsChangePayload(
               msg.metadata?.autoApprovalsChange
             )
@@ -6056,6 +6062,8 @@ export const TranscriptPanel = memo(
                   <SeatChangeRow key={msg.id} message={msg} />
                 ) : isContinuationHopsChange ? (
                   <ContinuationHopsChangeRow key={msg.id} message={msg} />
+                ) : isExecutionPlanChange ? (
+                  <ExecutionPlanChangeRow key={msg.id} message={msg} />
                 ) : isAutoApprovalsChange ? (
                   <AutoApprovalsChangeRow key={msg.id} message={msg} />
                 ) : isBlackboardChange ? (

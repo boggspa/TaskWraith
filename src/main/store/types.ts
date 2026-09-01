@@ -11,8 +11,10 @@ import type { SeatChangeLink, SeatChangeRowPayload } from '../../shared/seatChan
 import type { ContinuationHopsChangePayload } from '../../shared/continuationHopsChange'
 import type { AutoApprovalsChangePayload } from '../../shared/autoApprovalsChange'
 import type { BlackboardChangePayload } from '../../shared/blackboardChange'
+import type { ExecutionPlanChangePayload } from '../../shared/executionPlanChange'
 export type { AutoApprovalsChangePayload } from '../../shared/autoApprovalsChange'
 export type { BlackboardChangePayload } from '../../shared/blackboardChange'
+export type { ExecutionPlanChangePayload } from '../../shared/executionPlanChange'
 export type {
   ContinuationHopsChangeActor,
   ContinuationHopsChangePayload
@@ -3819,6 +3821,10 @@ export interface ChatMessage {
      * DigitOdometer transcript row. The carrier's plain `content` remains the
      * fallback for TUI, iOS, export, and older renderers. */
     continuationHopsChange?: ContinuationHopsChangePayload
+    /** Authoritative set_round_plan execution-plan change promoted to the
+     * preserved ExecutionPlanChangeRow. Same carrier/fallback contract as the
+     * hop-limit change; never `proposedPlan`, which is an approval workflow. */
+    executionPlanChange?: ExecutionPlanChangePayload
     /** Structured thread-wide Auto Approvals consent change. Desktop renders
      *  the real Auto pill transitioning before -> after; plaintext clients use
      *  the carrier message's explicit enabled/disabled sentence. */

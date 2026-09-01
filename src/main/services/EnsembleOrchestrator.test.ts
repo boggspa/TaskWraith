@@ -27172,6 +27172,57 @@ describe('locked-writer ergonomics', () => {
     expect(missing.message).toContain("Retry: { action: 'set_round_plan', planSummary: '<plan>' }")
   })
 
+  it('persists set_round_plan as a structured executionPlanChange transcript event', async () => {
+    const chat = makeChat()
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan the work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId
+
+    const first = await harness.orchestrator.bossmanControlForRun(runId, {
+      action: 'set_round_plan',
+      planSummary: 'Ship the parser first.',
+      phase: 'Implementation',
+      participantIds: ['codex'],
+      blockers: ['Waiting on the decoder audit'],
+      doneCriteria: 'Row renders before generic notices.'
+    })
+    expect(first).toMatchObject({ ok: true })
+    const planMessages = () =>
+      harness.chat.messages.filter((message) => message.metadata?.executionPlanChange)
+    expect(planMessages()).toHaveLength(1)
+    const firstMessage = planMessages()[0]
+    expect(firstMessage.content).toBe('Boss set the execution plan: Ship the parser first.')
+    expect(firstMessage.metadata?.kind).toBe('ensembleExecutionPlanChange')
+    expect(firstMessage.metadata?.executionPlanChange).toEqual({
+      summary: 'Ship the parser first.',
+      actor: 'boss',
+      actorParticipantId: 'claude',
+      changedAt: firstMessage.timestamp,
+      phase: 'Implementation',
+      ownerParticipantIds: ['codex'],
+      ownerLabels: ['Worker'],
+      blockers: ['Waiting on the decoder audit'],
+      doneCriteria: 'Row renders before generic notices.'
+    })
+
+    const second = await harness.orchestrator.bossmanControlForRun(runId, {
+      action: 'set_round_plan',
+      planSummary: 'Now verify the row live.'
+    })
+    expect(second).toMatchObject({ ok: true })
+    expect(planMessages()).toHaveLength(2)
+    expect(planMessages()[1].metadata?.executionPlanChange).toMatchObject({
+      summary: 'Now verify the row live.',
+      previousSummary: 'Ship the parser first.'
+    })
+  })
+
   it('uses writeScopes keys as the locked-writer set and demotes unkeyed peers', async () => {
     const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
     process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
