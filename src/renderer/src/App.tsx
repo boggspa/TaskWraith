@@ -775,6 +775,7 @@ import { isChatSummaryRecord, mergeChatRecord, mergeChatRecordValue } from './li
 import { ChatUpdateHydrationQueue } from './lib/chatUpdateHydrationQueue'
 import { commitHydratedChat, resolveChatHydration } from './lib/chatHydrationMerge'
 import { hydratePagedChatShell } from './lib/chatTranscriptPager'
+import { useCurrentChatTranscriptWindow } from './lib/currentChatTranscriptWindow'
 import {
   isTranscriptPagedShell,
   shouldPageTranscriptOnOpen,
@@ -6406,6 +6407,15 @@ function App(): React.JSX.Element {
     setCurrentChat((prev) => (prev?.appChatId === committed.appChatId ? committed : prev))
     return committed
   }
+
+  // Composer prop: Class W surfaces (e.g. the @-mention menu) request full
+  // hydration of a paged chat through this.
+  const onRequestFullChat = useCallback(
+    (chatId: string) => {
+      void refreshSingleChat(chatId)
+    },
+    [refreshSingleChat]
+  )
 
   // Visible panes own their thread residency. This deliberately does not read
   // currentChat/focus: every pane hydrates by its own chat id, concurrent reads
@@ -20001,16 +20011,36 @@ function App(): React.JSX.Element {
       sideChatPresentationForCurrentParent
     ]
   )
+  // Read-path rule (paged opens): ONE shared seam for the current chat's
+  // transcript: the store's loaded window on a paged shell, the canonical
+  // arrays otherwise. Whole-transcript (Class W) features escalate below.
+  const currentChatTranscript = useCurrentChatTranscriptWindow(currentChat)
+  // Class W read paths (thread search, pins, the ambient context meter,
+  // compaction, mention-menu children) must never compute from a paged
+  // shell's empty arrays — and never from the bounded page either. The
+  // context meter lives in the always-mounted composer footer, so a paged
+  // current chat is always in demand: escalate to full hydration in the
+  // background (deduped by the hydration request pool). The tail page painted
+  // instantly on open; these surfaces compute on the hydrated record exactly
+  // as they did before Stage 1b. TODO(main-side search/pins/context IPC):
+  // serve these canonically from main instead of hydrating.
+  useEffect(() => {
+    if (!currentChatTranscript.paged) return
+    const chatId = currentChat?.appChatId
+    if (!chatId) return
+    void refreshSingleChat(chatId)
+  }, [currentChatTranscript.paged, currentChat?.appChatId, refreshSingleChat])
   const latestSideChatRunResultSeed = useMemo(() => {
-    if (!currentChat?.runs?.length) return null
-    const sourceRun = [...currentChat.runs].reverse().find((run) => run.runId && run.endedAt)
+    const chatRuns = currentChatTranscript.runs
+    if (!chatRuns.length) return null
+    const sourceRun = [...chatRuns].reverse().find((run) => run.runId && run.endedAt)
     if (!sourceRun) return null
     const providerLabel = getProviderLabel(sourceRun.provider || getChatProvider(currentChat))
     return {
       runId: sourceRun.runId,
       label: `${providerLabel} run${sourceRun.status ? ` · ${sourceRun.status}` : ''}`
     }
-  }, [currentChat])
+  }, [currentChat, currentChatTranscript])
   const handleOpenSideChatFromLatestRunResult = useCallback(() => {
     if (!latestSideChatRunResultSeed?.runId) return
     handleOpenSideChatFromRunResult(latestSideChatRunResultSeed.runId)
@@ -20024,7 +20054,7 @@ function App(): React.JSX.Element {
         content: ensembleSummary
       }
     }
-    const latestAssistantMessage = [...(currentChat?.messages || [])]
+    const latestAssistantMessage = [...currentChatTranscript.messages]
       .reverse()
       .find((message) => message.role === 'assistant' && message.content.trim())
     if (!latestAssistantMessage?.content) return null
@@ -20032,7 +20062,7 @@ function App(): React.JSX.Element {
       label: 'Latest assistant response',
       content: compactPromptPreview(latestAssistantMessage.content)
     }
-  }, [currentChat])
+  }, [currentChat, currentChatTranscript])
   const handleOpenSideChatFromSummary = useCallback(() => {
     if (!canCreateSideChatFromCurrent || !currentChat || !sideChatSummarySeed?.content) return
     const seedPrompt = [
@@ -20053,8 +20083,9 @@ function App(): React.JSX.Element {
     sideChatSummarySeed
   ])
   const selectedSideChatSeedMessage =
-    sideChatSeedMessageId && currentChat?.messages
-      ? currentChat.messages.find((message) => message.id === sideChatSeedMessageId) || null
+    sideChatSeedMessageId && currentChatTranscript.messages.length > 0
+      ? currentChatTranscript.messages.find((message) => message.id === sideChatSeedMessageId) ||
+        null
       : null
   const handleMessageSelectionCandidate = useCallback((message: ChatMessage) => {
     if (!message?.id) return
@@ -23130,7 +23161,7 @@ function App(): React.JSX.Element {
   const liveRunOutputTokens = useMemo(() => {
     if (!isCurrentChatRunning || !currentChat) return 0
     const activeRunIds = new Set(
-      (currentChat.runs || [])
+      (currentChatTranscript.runs || [])
         .filter((run) => !run.endedAt || run.status === 'running' || run.status === 'queued')
         .map((run) => run.runId)
         .filter((runId): runId is string => Boolean(runId))
@@ -23144,7 +23175,7 @@ function App(): React.JSX.Element {
       ? Date.parse(currentChat.ensemble!.activeRound!.startedAt || '')
       : Number.NaN
     let liveChars = 0
-    for (const message of currentChat.messages || []) {
+    for (const message of currentChatTranscript.messages) {
       if (message.role !== 'assistant') continue
       if (message.runId && activeRunIds.has(message.runId)) {
         liveChars += message.content?.length || 0
@@ -23160,6 +23191,7 @@ function App(): React.JSX.Element {
     return estimateLiveOutputTokensFromChars(liveChars)
   }, [
     currentChat,
+    currentChatTranscript,
     currentChat?.ensemble?.activeRound?.startedAt,
     currentChat?.ensemble?.activeRound?.status,
     currentRun?.runId,
@@ -23302,12 +23334,20 @@ function App(): React.JSX.Element {
   // Claude and marked Kimi ACP seats compact via normal `/compact` runs against
   // native sessions, so the card arrives through the stream-observation lane;
   // Codex compacts via the thread/compact/start IPC,
-  // whose card is appended main-side. Refs-only body so the callback identity
-  // stays stable for the memoized composer prop bag.
+  // whose card is appended main-side. Refs-only body (plus refreshSingleChat,
+  // a stable useCallback) so the callback identity stays stable for the
+  // memoized composer prop bag.
   const compactChatContext = useCallback(
-    async (chatId: string | null, trigger: 'manual' | 'auto' = 'manual'): Promise<void> => {
-      const chat = chatId ? chatByIdRef.current.get(chatId) : null
-      if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
+      async (chatId: string | null, trigger: 'manual' | 'auto' = 'manual'): Promise<void> => {
+        let chat = chatId ? chatByIdRef.current.get(chatId) : null
+        // Paged shell (Stage 1b): escalate to the full canonical record before
+        // ANY compaction decision — never stamp provenance (coveredMessageIds /
+        // suppliedMessageIds) from a partial page. If hydration fails, skip
+        // this tick; the next one retries. TODO(main-side compaction IPC)
+        if (chat && isTranscriptPagedShell(chat)) {
+          chat = await refreshSingleChat(chat.appChatId)
+        }
+        if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
       const provider = getChatProvider(chat)
       // Path-B Cursor starts a fresh contained process and receives host-fed
       // context; it has no provider-native session compaction lever. This only
@@ -23499,9 +23539,16 @@ function App(): React.JSX.Element {
         })
       }
     },
-    []
+    [refreshSingleChat]
   )
   compactChatContextRef.current = compactChatContext
+  // Paged shell visibility: the shell's arrays are empty, so read the loaded
+  // window (or the knowledge that older history exists) instead of hiding the
+  // compaction lever on a >1,500-message thread.
+  const currentChatHasAssistantMessage = currentChatTranscript.paged
+    ? currentChatTranscript.hasOlder ||
+      currentChatTranscript.messages.some((m) => m.role === 'assistant')
+    : Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
   const canCompactCurrentChatContext =
     !isCurrentEnsembleChat &&
     !isCurrentChatRunning &&
@@ -23511,15 +23558,15 @@ function App(): React.JSX.Element {
         ? currentChat?.providerMetadata?.kimiAcpNativeSession === true &&
           isKimiAcpProductionPosture(currentChat.providerMetadata?.kimiAcpPostureVersion)
           ? Boolean(currentChat.linkedProviderSessionId?.startsWith('session_'))
-          : Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
+          : currentChatHasAssistantMessage
         : currentProvider === 'antigravity'
           ? Boolean(currentChat?.linkedProviderSessionId?.startsWith('api://')) &&
-            Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
+            currentChatHasAssistantMessage
           : // Mistral carries its material in-prompt (fresh ACP session every
             // turn), so like legacy Kimi it needs NO session token — the lever
             // exists as soon as there is something to summarize.
             currentProvider === 'mistral'
-            ? Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
+            ? currentChatHasAssistantMessage
             : false)
   const onCompactContext = useMemo(
     () =>
@@ -25333,14 +25380,14 @@ function App(): React.JSX.Element {
   const liveToolFileSummaryChatId = currentChat?.appChatId ?? null
   const liveToolFileSummaryRunId = currentRun?.runId ?? null
   const liveToolFileSummaryMessages = useMemo(() => {
-    const messages = currentChat?.messages || EMPTY_CHAT_MESSAGES
+    const messages = currentChatTranscript.messages
     return liveToolFileSummaryRunId
       ? selectRunEvidenceMessages(messages, {
           runIds: [liveToolFileSummaryRunId],
-          runs: currentChat?.runs
+          runs: currentChatTranscript.runs
         })
       : EMPTY_CHAT_MESSAGES
-  }, [currentChat?.messages, currentChat?.runs, liveToolFileSummaryRunId])
+  }, [currentChatTranscript, liveToolFileSummaryRunId])
   const liveToolFileSummarySignature = useMemo(
     () => buildLiveToolFileSummarySignature(liveToolFileSummaryMessages),
     [liveToolFileSummaryMessages]
@@ -25443,9 +25490,9 @@ function App(): React.JSX.Element {
     if (!runCompleteNotice) return EMPTY_DIFF_FILE_SUMMARIES
     const roundRunIds = selectCompletionRunIds(currentChat, currentRun)
     if (roundRunIds.size === 0) return EMPTY_DIFF_FILE_SUMMARIES
-    const roundMessages = selectRunEvidenceMessages(currentChat?.messages, {
+    const roundMessages = selectRunEvidenceMessages(currentChatTranscript.messages, {
       runIds: roundRunIds,
-      runs: currentChat?.runs
+      runs: currentChatTranscript.runs
     })
     if (roundMessages.length === 0) return EMPTY_DIFF_FILE_SUMMARIES
     const cacheKey = [
@@ -25465,6 +25512,7 @@ function App(): React.JSX.Element {
   }, [
     runCompleteNotice,
     currentChat,
+    currentChatTranscript,
     currentRun,
     liveToolFileSummaryChatId,
     liveToolFileSummaryWorkspacePath
@@ -25562,7 +25610,12 @@ function App(): React.JSX.Element {
   // Welcome / search still read React chat messages. Stream flushes commit the
   // empty→non-empty boundary so welcome unmounts; mid-stream churn is retained
   // and TranscriptPanel reads ChatTranscriptStore instead.
-  const transcriptMessages = currentChat?.messages || EMPTY_CHAT_MESSAGES
+  // Class W (whole-transcript): never search the bounded page. On a paged
+  // shell this stays empty and the escalation effect (above) full-hydrates;
+  // results appear on the hydrated record. TODO(main-side search IPC)
+  const transcriptMessages = currentChatTranscript.paged
+    ? EMPTY_CHAT_MESSAGES
+    : currentChat?.messages || EMPTY_CHAT_MESSAGES
   // Welcome-surface gate. Extracted into `lib/welcomeState` so the
   // predicate is independently unit-tested (see `welcomeState.test.ts`).
   // The helper centralises the rule that a chat is in welcome state iff
@@ -26087,7 +26140,7 @@ function App(): React.JSX.Element {
         (run) => run.ensembleRoundId === round.roundId
       )
       return closeoutSubagentRefreshFingerprint({
-        messages: currentChat.messages,
+        messages: currentChatTranscript.messages,
         parentRunIds: roundRuns.map((run) => run.runId),
         window: { startedAt: round.startedAt, completedAt: roundCompletedAt },
         childChats: closeoutChildChats
@@ -26098,7 +26151,7 @@ function App(): React.JSX.Element {
       : currentRun
     if (!run?.runId || !run.endedAt) return ''
     return closeoutSubagentRefreshFingerprint({
-      messages: currentChat.messages,
+      messages: currentChatTranscript.messages,
       parentRunIds: [run.runId],
       window: { startedAt: run.startedAt, completedAt },
       childChats: closeoutChildChats
@@ -26275,10 +26328,26 @@ function App(): React.JSX.Element {
     // would permanently skip the real record, so wait for a record that
     // actually carries messages before spending the one-shot.
     const summaryOnly = (chat as ChatRecord & { summaryOnly?: boolean }).summaryOnly === true
-    if (summaryOnly || !Array.isArray(chat.messages) || chat.messages.length === 0) return
+    const paged = isTranscriptPagedShell(chat)
+    // Paged shell: close-out rows live in the tail the store window already
+    // holds, so inspect the window — never the shell's empty arrays. When
+    // nothing matches but older history is still unloaded, escalate and retry
+    // on the hydrated record instead of tombstoning the one-shot on a
+    // partial view.
+    if (summaryOnly && !paged) return
+    if (!paged && (!Array.isArray(chat.messages) || chat.messages.length === 0)) return
+    if (paged && currentChatTranscript.messages.length === 0) return
     if (closeoutCommitRepairAttemptedRef.current.has(chatId)) return
+    const targets = findCloseoutCommitRepairTargets(
+      paged ? { ...chat, messages: currentChatTranscript.messages } : chat
+    )
+    if (targets.length === 0) {
+      if (paged && currentChatTranscript.hasOlder) {
+        void refreshSingleChat(chatId)
+        return
+      }
+    }
     closeoutCommitRepairAttemptedRef.current.add(chatId)
-    const targets = findCloseoutCommitRepairTargets(chat)
     if (targets.length === 0) return
     const refsByKey = new Map<string, ToolActivityDetailRef>()
     for (const target of targets) {
@@ -26304,7 +26373,7 @@ function App(): React.JSX.Element {
         // close-out as-is; the next session may retry.
         closeoutCommitRepairAttemptedRef.current.delete(chatId)
       })
-  }, [currentChat, isWelcomeChat, updateChatById])
+  }, [currentChat, currentChatTranscript, isWelcomeChat, refreshSingleChat, updateChatById])
   // Kick off the on-device AI close-out summary for a just-finished run/round.
   // Fire-and-forget with single-flight per closeout id; 'unavailable' (older
   // macOS, daemon off, Foundation Models missing) simply leaves the
@@ -30388,6 +30457,7 @@ function App(): React.JSX.Element {
       contextUsedPercent,
       onCompactContext,
       onCompactParticipant,
+      onRequestFullChat,
       compactableParticipantIds,
       speakingParticipantId,
       currentChatIdRef,
@@ -30521,6 +30591,7 @@ function App(): React.JSX.Element {
       contextUsedPercent,
       onCompactContext,
       onCompactParticipant,
+      onRequestFullChat,
       compactableParticipantIds,
       speakingParticipantId,
       currentChatIdRef,

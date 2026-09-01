@@ -295,6 +295,11 @@ export interface ComposerProps {
   /** Per-seat compaction for ensemble participant rows in the meter popover
    * (native claude/codex seats, round idle). */
   onCompactParticipant?: (participantId: string) => void
+  /**
+   * Class W escalation for paged threads (Stage 1b read-path rule): surfaces
+   * that need the whole transcript ask the host to full-hydrate the chat.
+   */
+  onRequestFullChat?: (chatId: string) => void
   compactableParticipantIds?: readonly string[]
   /** Live speaker participant id — its compaction icon is disabled. */
   speakingParticipantId?: string
@@ -689,6 +694,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     contextMeter,
     onCompactContext,
     onCompactParticipant,
+    onRequestFullChat,
     compactableParticipantIds,
     speakingParticipantId,
     contextModelId,
@@ -3463,6 +3469,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   anchorRef={composerTextareaRef}
                   query={mentionQuery}
                   triggerKind={mentionTriggerKind}
+                  onRequestFullChat={onRequestFullChat}
                   ensembleParticipants={
                     isCurrentEnsembleChat ? currentChat?.ensemble?.participants : undefined
                   }

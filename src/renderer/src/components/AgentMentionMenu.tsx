@@ -12,6 +12,7 @@ import type {
 } from '../../../main/store/types'
 import { deriveChildAgentThreads } from '../lib/ChildAgentThreads'
 import { getProviderName } from './Sidebar'
+import { isTranscriptPagedShell } from '../../../shared/transcriptPage'
 import type { ComposerMentionTriggerKind } from '../lib/ComposerMentionTrigger'
 import {
   ENSEMBLE_GROUP_MENTIONS,
@@ -79,6 +80,13 @@ interface AgentMentionMenuProps {
   onPick: (mention: ComposerMentionPick) => void
   /** Dismiss without picking. */
   onDismiss: () => void
+  /**
+   * Class W escalation for paged threads: when the chat is a transcriptPaged
+   * shell, the menu asks the host surface to full-hydrate it (child-agent
+   * threads are a whole-transcript feature and must never derive from the
+   * bounded page). Optional — without it the menu shows the shell view.
+   */
+  onRequestFullChat?: (chatId: string) => void
   /**
    * 1.0.6-EW67 — Active composer shell, mirrored onto the portal
    * root as `shell-${composerStyle}` so the theme-immune Obsidian /
@@ -171,7 +179,8 @@ export function AgentMentionMenu({
   ensembleParticipants,
   onPick,
   onDismiss,
-  composerStyle
+  composerStyle,
+  onRequestFullChat
 }: AgentMentionMenuProps): React.JSX.Element | null {
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const workspaceFileCacheRef = useRef<Map<string, WorkspaceFileEntry[]>>(new Map())
@@ -179,6 +188,15 @@ export function AgentMentionMenu({
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileEntry[]>([])
   const [highlight, setHighlight] = useState(0)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+
+  // Class W escalation: on a paged shell, child-agent threads are a
+  // whole-transcript derivation — request full hydration on open instead of
+  // reading the shell's empty arrays. The menu recomputes on the hydrated prop.
+  const chatPaged = chat ? isTranscriptPagedShell(chat) : false
+  useEffect(() => {
+    if (!open || triggerKind === 'file-mention' || !chatPaged || !chat) return
+    onRequestFullChat?.(chat.appChatId)
+  }, [open, triggerKind, chatPaged, chat, onRequestFullChat])
 
   useEffect(() => {
     let cancelled = false
@@ -236,6 +254,10 @@ export function AgentMentionMenu({
 
   const activeSubagents = useMemo<ChildAgentThread[]>(() => {
     if (!chat || !provider) return []
+    // Paged shell: never derive child threads from the shell's empty arrays or
+    // the bounded page — the escalation effect above requests full hydration
+    // and this recomputes on the hydrated record.
+    if (isTranscriptPagedShell(chat)) return []
     const all = deriveChildAgentThreads(provider, chat.appChatId, chat.messages || [], chat)
     return all.filter((thread) => thread.state === 'running' || thread.state === 'queued')
   }, [chat, provider])
