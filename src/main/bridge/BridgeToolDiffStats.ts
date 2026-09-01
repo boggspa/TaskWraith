@@ -15,7 +15,14 @@
  */
 
 import type { ToolDiffFileSummary, ToolDiffSummary } from '../store/types'
-import { isWriteLikeCatalogTool } from '../../shared/canonicalToolCoalesce'
+import {
+  catalogToolOperationCategory,
+  isWriteLikeCatalogTool
+} from '../../shared/canonicalToolCoalesce'
+import {
+  shellCommandTextFromInput,
+  shellWriteEvidenceDiffSummary
+} from '../../shared/shellCommandEditEvidence'
 
 /** Lenient non-negative integer reader for provider change entries. */
 export function bridgeNumberish(value: unknown): number | undefined {
@@ -188,6 +195,33 @@ function isCreateKind(kind: unknown): boolean {
   return value === 'add' || value === 'create' || value === 'created' || value === 'new'
 }
 
+function isShellCatalogTool(toolName: string): boolean {
+  return catalogToolOperationCategory(toolName) === 'shell'
+}
+
+/** Diff stats for a SHELL row, from the command text alone (heredoc writes,
+ * inline patches — how shell-only model families such as pi-hosted Xiaomi
+ * edit files). Mirrors the renderer's `deriveShellCommandDiffSummary`; result
+ * output on a shell row is never counted, because a `git diff` transcript
+ * contains diff markers without editing anything. */
+export function bridgeShellCommandDiffStats(
+  input: Record<string, unknown>
+): ToolDiffSummary | undefined {
+  const command = shellCommandTextFromInput(input)
+  if (!command) return undefined
+  return shellWriteEvidenceDiffSummary(command, (body) => {
+    const structural = bridgeUnifiedDiffStats(body)
+    if (!structural) return undefined
+    const files = parsePatchFileStats(body)
+    return {
+      ...structural,
+      ...(files.length > 0 ? { files } : {}),
+      source: 'patch_preview',
+      confidence: 'exact'
+    }
+  })
+}
+
 /** Per-edit diff stats derivable from the tool INPUT — what the desktop
  * shows for write tools instead of truncated result text. */
 export function bridgeToolDiffStats(
@@ -195,6 +229,11 @@ export function bridgeToolDiffStats(
   input: Record<string, unknown>,
   options: { writeLike?: boolean } = {}
 ): ToolDiffSummary | undefined {
+  // Shell rows take the dedicated command-text path and never fall through to
+  // the generic field sniffing below.
+  if (isShellCatalogTool(toolName)) {
+    return bridgeShellCommandDiffStats(input)
+  }
   const explicitAdditions =
     bridgeNumberish(
       input.additions ?? input.added ?? input.linesAdded ?? input.lines_added ?? input.insertions
@@ -364,6 +403,11 @@ export function bridgeResultDiffStats(args: {
   kind?: unknown
 }): ToolDiffSummary | undefined {
   if (/reasoning|thinking|plan/i.test(args.toolName)) return undefined
+  // Shell results are arbitrary output — a `git diff` run CONTAINS diff
+  // structure without editing anything, and counting it painted phantom ±
+  // chips on remote clients. Shell rows derive from the command text at
+  // tool-use time (`bridgeShellCommandDiffStats`) instead.
+  if (isShellCatalogTool(args.toolName)) return undefined
   const flat = changesFlatStats(args.changes)
   if (flat) return flat
   const structural = bridgeUnifiedDiffStats(args.summary)

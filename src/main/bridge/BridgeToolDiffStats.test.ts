@@ -241,3 +241,59 @@ describe('bridgeResultDiffStats (result-side derivation)', () => {
     ).toBeUndefined()
   })
 })
+
+describe('shell-command edit evidence (bridge lane)', () => {
+  const heredocWrite = "cat > src/app.py << 'HEREDOC'\nline1\nline2\nline3\nHEREDOC"
+
+  it('derives an estimated content summary for run_shell_command heredoc writes', () => {
+    expect(bridgeToolDiffStats('run_shell_command', { command: heredocWrite })).toEqual({
+      additions: 3,
+      deletions: 0,
+      files: [{ path: 'src/app.py', status: 'modified', additions: 3, deletions: 0 }],
+      source: 'content',
+      confidence: 'estimated'
+    })
+  })
+
+  it('derives patch counts with per-file evidence from a git apply heredoc', () => {
+    const command = [
+      "git apply <<'PATCH'",
+      'diff --git a/a.ts b/a.ts',
+      '--- a/a.ts',
+      '+++ b/a.ts',
+      '@@ -1,2 +1,3 @@',
+      ' line',
+      '-old',
+      '+new',
+      '+more',
+      'PATCH'
+    ].join('\n')
+    expect(bridgeToolDiffStats('run_shell_command', { command })).toMatchObject({
+      additions: 2,
+      deletions: 1,
+      files: [{ path: 'a.ts', additions: 2, deletions: 1 }],
+      source: 'patch_preview',
+      confidence: 'estimated'
+    })
+  })
+
+  it('stays silent for read-only shell commands', () => {
+    expect(bridgeToolDiffStats('run_shell_command', { command: 'git diff HEAD~1' })).toBeUndefined()
+  })
+
+  it('coalesces provider shell aliases into the same command derivation', () => {
+    expect(bridgeToolDiffStats('Shell', { command: heredocWrite })).toMatchObject({
+      additions: 3,
+      deletions: 0
+    })
+  })
+
+  it('never counts shell RESULT text as a diff', () => {
+    expect(
+      bridgeResultDiffStats({
+        toolName: 'run_shell_command',
+        summary: 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1,2 @@\n-x\n+y\n+z'
+      })
+    ).toBeUndefined()
+  })
+})
