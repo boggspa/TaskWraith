@@ -11,9 +11,11 @@
  * its complete-transcript meaning.
  *
  * The last test is the load-bearing one for callers: a shell is a summaryOnly
- * row whose messages/runs are EMPTY arrays and saveChat fails closed on it, so
- * a sweep that resolves run rows or saves must hydrate the record by id first
- * (cascadeWaveChildrenOnParentTerminal was the first caller to get that wrong).
+ * row whose messages/runs are EMPTY arrays. A sweep that resolves run rows
+ * must hydrate the record by id first (cascadeWaveChildrenOnParentTerminal was
+ * the first caller to get that wrong), and a shell that does reach saveChat is
+ * escalated onto the canonical record (Stage 6) — the transcript is preserved
+ * and only the chrome lands, so nothing the shell never carried can be lost.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
@@ -204,19 +206,35 @@ describe('getChats({ listShells: true }) background sweep', () => {
     expect(rows.some((chat) => chat.appChatId === other.appChatId)).toBe(false)
   })
 
-  it('refuses to persist a shell, so run-row consumers must hydrate by id first', () => {
+  it('escalates a shell save onto the canonical record; run-row consumers still hydrate by id', () => {
     const saved = persistChat('ws-1', {})
     const shell = findRow(shellSweep(), saved.appChatId)
 
     // Exactly the shape the wave cascade used to build from a shell: spread the
-    // row, restamp a run, save. The fence throws before anything lands.
-    expect(() =>
-      AppStore.saveChat({
+    // row, restamp a run, save. The shell's `runs` is EMPTY, so the restamp is
+    // a no-op — and the save must not fail closed: it escalates onto the
+    // canonical record, keeping every message and run row and landing only
+    // the chrome (Stage 6 escalate-not-reject).
+    let escalated: ChatRecord | undefined
+    expect(() => {
+      escalated = AppStore.saveChat({
         ...shell,
+        title: 'Renamed through a shell',
         runs: shell.runs.map((row) => ({ ...row, status: 'cancelled', cancelled: true })),
         updatedAt: Date.now()
       } as ChatRecord)
-    ).toThrow(/summary-only/)
+    }).not.toThrow()
+    expect(escalated?.title).toBe('Renamed through a shell')
+    expect(escalated?.messages.map((message) => message.id)).toEqual(['m-1', 'm-2'])
+    expect(escalated?.runs.map((row) => [row.runId, row.status])).toEqual([
+      ['run-1', 'completed'],
+      ['run-2', 'running']
+    ])
+    expect(isShell(escalated as ChatRecord)).toBe(false)
+    const reread = AppStore.getChat(shell.appChatId)
+    expect(reread?.title).toBe('Renamed through a shell')
+    expect(reread?.messages).toHaveLength(2)
+    expect(reread?.runs.at(-1)?.status).toBe('running')
 
     // Hydrated by id, the same mutation lands on the persisted run row.
     const hydrated = AppStore.getChat(shell.appChatId)

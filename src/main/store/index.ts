@@ -6,6 +6,7 @@ import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { adoptSupersededMaxWaveAgents } from './maxWaveAgentsDefault'
 import { attachChatUpdateProducerEnvelope } from '../../shared/chatUpdateTransport'
 import { assertAuthoritativeChatForSave } from './assertAuthoritativeChatForSave'
+import { escalateSummaryChatForSave } from './escalateSummaryChatForSave'
 import {
   APPROVAL_TIMEOUT_DEFAULTS_VERSION,
   DEFAULT_APPROVAL_TIMEOUTS_MS,
@@ -7840,7 +7841,19 @@ export class AppStore {
   }
 
   static saveChat(chat: ChatRecord, options: ChatSaveOptions = {}): ChatRecord {
-    const titledChat = applyThreadTitlePolicy(chat, this.getChat(chat.appChatId))
+    const previous = this.getChat(chat.appChatId)
+    // Stage 6 — escalate-not-reject. A marked summary shell (a paged open, an
+    // LRU demotion, a sidebar row) reaching a whole-record save is rebuilt
+    // onto the canonical transcript HERE, before either fence below, so every
+    // caller degrades to a correct chrome-only write instead of a failed user
+    // action: on a >1,500-message thread the open record is a shell for the
+    // whole session. A summary CREATE (no canonical record), a marked record
+    // that still carries rows, and any UNMARKED windowed page keep failing
+    // closed — the fences and the Stage 1a guard are untouched and still run
+    // on the escalated record. The caller's object is still the one stamped
+    // below: a non-shell input passes through by reference.
+    const authoritativeChat = escalateSummaryChatForSave(chat, () => previous)
+    const titledChat = applyThreadTitlePolicy(authoritativeChat, previous)
     // Several main-owned callers broadcast the input object they passed rather
     // than the returned normalized record. Mirror the atomic title pair just
     // like the persistence revision stamp below so resumed-title repair is

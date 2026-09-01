@@ -10232,10 +10232,11 @@ async function cascadeWaveChildrenOnParentTerminal(
   // Stage 4 shell sweep for DISCOVERY only: the match reads delegationContext,
   // which the chat-list index carries. A shell is a summaryOnly row whose
   // messages/runs are EMPTY arrays, so it cannot serve the body below — the
-  // persisted run-row fallback reads `runs`, and the cancelled stamp spreads
-  // the record into saveAndBroadcastChat, where saveChat fails closed on
-  // summaryOnly and would abort the cascade BEFORE cancelProviderRun. Hydrate
-  // each match by id (the canonical, cached read) before touching its runs.
+  // persisted run-row fallback reads `runs` and would resolve nothing, and the
+  // cancelled stamp maps over an empty array. (saveChat itself would escalate
+  // a marked shell onto the canonical record since Stage 6 — the hydrate is
+  // for the run rows, not the save.) Hydrate each match by id (the canonical,
+  // cached read) before touching its runs.
   const childShells = AppStore.getChats(undefined, { listShells: true }).filter(
     (chat) =>
       chat.delegationContext?.parentAppRunId === parentRunId &&

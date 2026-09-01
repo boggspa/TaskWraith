@@ -78,8 +78,11 @@ export interface TranscriptPageRequest {
  * transcript arrays stripped. `summaryOnly: true` keeps every existing save
  * fence and summary-mutation escalation working unchanged; `transcriptPaged`
  * distinguishes "hydrated as a shell + store page" from a lean list row, so
- * hydration triggers do not re-fetch in a loop. A shell must never reach
- * `saveChat`: the summaryOnly fence throws first on both paths.
+ * hydration triggers do not re-fetch in a loop. Save contract (Stage 6): a
+ * MARKED shell that reaches `saveChat` is escalated onto the canonical record
+ * (`escalateSummaryChatForSave` — the shell's chrome merged over the
+ * canonical transcript) on both save paths; an UNMARKED windowed page is
+ * rejected by `assertAuthoritativeChatForSave`.
  */
 export type ChatShell = ChatListItem & { transcriptPaged: true }
 
