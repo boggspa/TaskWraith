@@ -987,7 +987,9 @@ export class ElectronEmulatorRuntimeBridge implements CanvasEmulatorObservationR
         )
         return validateEmulatorStableReady(value)
       } catch (error) {
-        if (error instanceof EmulatorOperationTimeout) throw error
+        // A per-attempt operation timeout is retryable: a cold packaged page can
+        // exceed one probe window before its __twemu facade becomes scriptable.
+        // Only the overall stable-ready deadline below fails the boot.
         lastError = error
       }
       await this.sleep(READY_POLL_MS)

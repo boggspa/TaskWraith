@@ -1262,6 +1262,65 @@ describe('ElectronEmulatorRuntimeBridge', () => {
     expect(fakeSession.session.protocol.unhandle).toHaveBeenCalledTimes(1)
   })
 
+  it('retries the ready probe after a transient per-attempt timeout and boots once the page is scriptable', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const hung = deferred<unknown>()
+    fakeContents.contents.executeJavaScript.mockImplementationOnce(() => hung.promise)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    let now = 0
+    const bridge = new ElectronEmulatorRuntimeBridge({
+      registry,
+      readyTimeoutMs: 1_000,
+      operationTimeoutMs: 100,
+      now: () => now,
+      delay: async () => {
+        now += 50
+      }
+    })
+
+    await expect(
+      bridge.boot({
+        gameId: 'homebrew-demo',
+        url: emulatorEntryUrl('homebrew-demo'),
+        surface: fakeSurface.surface
+      })
+    ).resolves.toBeUndefined()
+    expect(fakeContents.contents.executeJavaScript).toHaveBeenCalledTimes(2)
+    expect(fakeSurface.surface.isDestroyed()).toBe(false)
+    expect(fakeSession.session.protocol.unhandle).not.toHaveBeenCalled()
+  })
+
+  it('keeps retrying timed-out probes until the overall stable-ready deadline and then fails with the timeout', async () => {
+    const fakeSession = makeFakeSession()
+    const fakeContents = makeFakeContents(fakeSession.session)
+    const hung = deferred<unknown>()
+    fakeContents.contents.executeJavaScript.mockImplementation(() => hung.promise)
+    const fakeSurface = makeFakeSurface(fakeContents.contents, fakeContents.destroy)
+    let now = 0
+    const bridge = new ElectronEmulatorRuntimeBridge({
+      registry,
+      readyTimeoutMs: 300,
+      operationTimeoutMs: 100,
+      now: () => now,
+      delay: async () => {
+        now += 100
+      }
+    })
+
+    await expect(
+      bridge.boot({
+        gameId: 'homebrew-demo',
+        url: emulatorEntryUrl('homebrew-demo'),
+        surface: fakeSurface.surface
+      })
+    ).rejects.toThrow(/did not reach stable ready state.*ready probe timed out/s)
+    expect(fakeContents.contents.executeJavaScript.mock.calls.length).toBeGreaterThan(2)
+    expect(fakeSurface.surface.isDestroyed()).toBe(true)
+    expect(fakeContents.contents.isDestroyed()).toBe(true)
+    expect(fakeSession.session.protocol.unhandle).toHaveBeenCalledTimes(1)
+  })
+
   it('times out a hung loadURL, destroys the surface, and releases its session handler', async () => {
     const fakeSession = makeFakeSession()
     const fakeContents = makeFakeContents(fakeSession.session)
