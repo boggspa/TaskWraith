@@ -111,8 +111,9 @@ describe('HostProviderCatalog', () => {
     expect(muse!.providerId).toBe('muse')
     expect(typeof muse!.offerRevision).toBe('string')
     expect(muse!.offerRevision.length).toBe(64)
-    expect(muse!.models[0].modelId).toBe('muse-spark-1.2')
-    expect(muse!.models[0].default).toBe(true)
+    expect(muse!.models[0].modelId).toBe('muse-spark-1.3')
+    expect(muse!.models[0].default).toBeUndefined()
+    expect(muse!.models.find((model) => model.default === true)?.modelId).toBe('muse-spark-1.2')
     expect(muse!.models[0].available).toBe(true)
     expect(muse!.models[0].reasoning.length).toBe(6)
     expect(muse!.postures.slice(0, 4).every((p) => p.available)).toBe(true)
@@ -204,6 +205,12 @@ describe('HostProviderCatalog', () => {
         isDefault: Boolean(isDefault)
       }))
     ).toEqual([
+      { modelId: 'muse-spark-1.3', label: 'Muse Spark 1.3', isDefault: false },
+      {
+        modelId: 'muse-spark-1.3-contributor',
+        label: 'Muse Contributor Spark 1.3',
+        isDefault: false
+      },
       { modelId: 'muse-spark-1.2', label: 'Muse Spark 1.2', isDefault: true },
       {
         modelId: 'muse-spark-1.2-contributor',
@@ -211,7 +218,10 @@ describe('HostProviderCatalog', () => {
         isDefault: false
       }
     ])
+    expect(entry!.models[0]?.detail).toBeUndefined()
     expect(entry!.models[1]?.detail).toMatch(/content.*product improvement/i)
+    expect(entry!.models[2]?.detail).toBeUndefined()
+    expect(entry!.models[3]?.detail).toMatch(/content.*product improvement/i)
     for (const model of entry!.models) {
       expect(model.reasoning.map((r) => r.reasoningId)).toEqual([
         'minimal',

@@ -359,7 +359,15 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
     muse: {
       displayProvider: 'Muse',
       shortCode: 'MUSE',
+      // Newest first, mirroring the CLI's own picker; Spark 1.2 stays the
+      // default (the on-disk catalogue still flags it `is_current`).
       models: [
+        model('muse-spark-1.3', 'Muse Spark 1.3', MUSE_REASONING),
+        {
+          ...model('muse-spark-1.3-contributor', 'Muse Contributor Spark 1.3', MUSE_REASONING),
+          detail:
+            'Discounted tokens; content, including inter-session messages, may be used for product improvement.'
+        },
         model('muse-spark-1.2', 'Muse Spark 1.2', MUSE_REASONING, true),
         {
           ...model('muse-spark-1.2-contributor', 'Muse Contributor Spark 1.2', MUSE_REASONING),
