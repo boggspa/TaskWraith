@@ -588,7 +588,8 @@ function assertDescriptor(
 }
 
 function assertRegularFile(stat: HostThreadRecordTransferFileStat, label: string): void {
-  if (!stat.isFile() || stat.isSymbolicLink() || (stat.nlink !== undefined && stat.nlink !== 1)) {
+  const nlink = typeof stat.nlink === 'bigint' ? Number(stat.nlink) : stat.nlink
+  if (!stat.isFile() || stat.isSymbolicLink() || (nlink !== undefined && nlink !== 1)) {
     throw new HostThreadRecordTransferIntegrityError(`${label} is not a private regular file.`)
   }
 }
