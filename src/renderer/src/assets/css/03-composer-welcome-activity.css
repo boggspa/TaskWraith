@@ -5263,6 +5263,36 @@
   order: 3;
   justify-content: flex-end;
 }
+
+/* ── Welcome-screen branch / worktree picker ────────────────────────────────
+ * The right zone's tenant is the token / cost / RAM tally, which does not exist
+ * on the welcome screen (nothing has run, so there is nothing to estimate). The
+ * branch picker borrows the vacant slot there, giving a new thread a way to
+ * pick its branch or an isolated worktree BEFORE the first turn — previously
+ * only reachable from the workspace above-row, which the welcome state hides.
+ * Placement is decided in `shouldShowComposerWelcomeBranchPicker`, so this only
+ * has to match the tally's alignment: same zone, same right edge, and the same
+ * `max-width` ceiling so a long branch name truncates instead of shoving the
+ * centre icon cluster off true centre. */
+.composer-welcome-branch-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: min(360px, 48vw);
+}
+.composer-welcome-branch-picker svg {
+  flex: 0 0 auto;
+  opacity: 0.78;
+}
+/* The popover trigger carries the branch label; keep it on one truncating line
+ * so the zone can never outgrow the ceiling above. */
+.composer-welcome-branch-picker .composer-branch-trigger {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* The workspace pill is alone in its zone — keep it hard-left there even if a
  * shell override tried to re-apply an auto margin. */
 .composer-telemetry-side--left .composer-workspace-button {

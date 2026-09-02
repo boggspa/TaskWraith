@@ -70,6 +70,8 @@ import { GhostCompanion } from '../components/FxLayers'
 import { NotificationZone } from '../components/NotificationZone'
 import { GitCommitControls } from '../components/GitCommitControls'
 import { ComposerBranchWorktreePopover } from '../components/ComposerBranchWorktreePopover'
+import { ComposerWelcomeBranchPicker } from '../components/ComposerWelcomeBranchPicker'
+import { shouldShowComposerWelcomeBranchPicker } from '../lib/composerWelcomeBranchPicker'
 import { GitMergeBadge, GitSyncChip } from '../components/GitStatusChips'
 import { GitHubSatelliteRow } from '../components/GitHubSatelliteRow'
 import { WorkspaceLockPill } from '../components/WorkspaceLockPill'
@@ -5737,6 +5739,30 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 )}
                 </div>
                 <div className="composer-telemetry-side composer-telemetry-side--right">
+                {/* Welcome screen: no run has happened, so the tally below has
+                    nothing to show and this zone would render empty. Lend the
+                    slot to the branch/worktree picker — otherwise a new thread
+                    cannot be pointed at a branch or an isolated worktree until
+                    after its first turn, because the workspace above-row that
+                    normally carries the picker is hidden in the welcome state. */}
+                {shouldShowComposerWelcomeBranchPicker({
+                  isWelcomeChat: Boolean(isWelcomeChat),
+                  showWorkspaceGitAboveRows: Boolean(showWorkspaceGitAboveRows),
+                  hasThreadTokenTally: Boolean(threadTokenTallyHasValue),
+                  isGlobalChat: Boolean(isCurrentGlobalChat),
+                  workspacePath: composerGitActionBasePath
+                }) && (
+                  <ComposerWelcomeBranchPicker
+                    workspacePath={composerGitActionBasePath}
+                    gitSnapshot={primaryGitSnapshot}
+                    fallbackBranch={currentWorkspace?.branch}
+                    detached={primaryGitSnapshot?.detached ?? false}
+                    composerStyle={appearance.composerStyle}
+                    composerWorktreeSelection={composerWorktreeSelection}
+                    onSnapshotRefresh={setPrimaryGitSnapshot}
+                    onWorktreeSelectionChange={onComposerWorktreeChange}
+                  />
+                )}
                 {threadTokenTallyHasValue && (
                   <LiveThreadTokenTally
                     baseTally={composerTokenTally}
