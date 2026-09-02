@@ -143,7 +143,11 @@ enum TranscriptScrollViewSearch {
             }
         }
 
-        final class Coordinator: NSObject {
+        // Main-actor isolated: UIKit gesture targets are main-actor, and Swift 6.3
+        // (Xcode 26.3) rejects sending a non-Sendable coordinator into addTarget
+        // as a data race; every caller (makeCoordinator, didMoveToWindow, the
+        //  selector) already runs on the main actor.
+        @MainActor final class Coordinator: NSObject {
             var onScroll: () -> Void
             private weak var attachedTo: UIScrollView?
 
