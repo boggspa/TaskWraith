@@ -18,6 +18,12 @@ context needed to answer.
   exact variants under one picker row, retains them in the consent-gated
   fallback, makes the family the standalone Host's default AntiGravity row,
   and leads New Additions with it.
+- **Muse Spark 1.3 and Muse Contributor Spark 1.3.** Meta's newest Spark joins
+  the Muse seat in every picker — provider/model/reasoning, Ensemble add
+  participant, the standalone Host, TUI, and iOS offers — with the full
+  Minimal-to-Ultra ladder and 1.2's pricing ($1.25/$4.25 per Mtok; Contributor
+  $0.10/$0.20 with the product-improvement data-use notice). Muse Spark 1.2
+  stays the seat default, and New Additions leads Muse with 1.3.
 
 ## 1.9.7 - 2026-09-02
 

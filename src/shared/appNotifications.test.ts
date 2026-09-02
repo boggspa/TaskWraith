@@ -204,7 +204,12 @@ describe('notification registry', () => {
     expect(cursor?.models[0]?.blurb).toMatch(/256K.*Extra High.*Standard\/Fast/i)
 
     const muse = groups.find((g) => g.provider === 'muse')
-    expect(muse?.models.map((m) => m.name)).toEqual(['Muse Spark 1.2'])
+    expect(muse?.models.map((m) => m.name)).toEqual([
+      'Muse Spark 1.3',
+      'Muse Contributor Spark 1.3'
+    ])
+    expect(muse?.models[0]?.blurb).toMatch(/newest Spark.*1M context.*\$1\.25\/\$4\.25/)
+    expect(muse?.models[1]?.blurb).toMatch(/\$0\.10\/\$0\.20.*product improvement/i)
     for (const model of muse?.models ?? []) {
       expect(model.accentProvider).toBeUndefined()
     }

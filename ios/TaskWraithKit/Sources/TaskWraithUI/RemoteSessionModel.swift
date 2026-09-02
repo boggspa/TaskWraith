@@ -2807,7 +2807,7 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-09-02","kind":"addition","title":"New Additions","body":"Claude Fable 5.1, the Devin CLI seat, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-09-02-2","kind":"addition","title":"New Additions","body":"Claude Fable 5.1, the Devin CLI seat, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"claude","label":"Claude","models":[
               {"name":"Fable 5.1","blurb":"Anthropic's newest Fable — 1M context, adaptive thinking, the full effort ladder. Fable 5 moves to Legacy."}
             ]},
@@ -2826,7 +2826,8 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Grok 4.6","blurb":"A 256K Cursor model with Low through Extra High reasoning and Standard/Fast modes."}
             ]},
             {"provider":"muse","label":"Muse","models":[
-              {"name":"Muse Spark 1.2","blurb":"Muse Code CLI over Meta Model API — 1M context at $1.25/$4.25 per Mtok."}
+              {"name":"Muse Spark 1.3","blurb":"Meta's newest Spark in Muse Code and the Meta Model API — 1M context at $1.25/$4.25 per Mtok."},
+              {"name":"Muse Contributor Spark 1.3","blurb":"The discounted route at $0.10/$0.20 per Mtok; content may be used for product improvement."}
             ]},
             {"provider":"mistral","label":"Mistral","models":[
               {"name":"Devstral Small","blurb":"New configurable Effort options for a faster, lower-cost default or deeper reasoning."},

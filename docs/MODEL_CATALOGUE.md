@@ -172,13 +172,17 @@ the upstream API lifecycle.
   </tr>
 </table>
 
-| Model                                             | Reasoning                                       | Fast | Notes                              |
-| ------------------------------------------------- | ----------------------------------------------- | ---- | ---------------------------------- |
-| **Muse Spark 1.2** `muse-spark-1.2` **(Default)** | Light · Medium · High · Extra · Ultracode | —    | 200K context · $1.25/$4.25 per Mtok. |
+| Model                                                       | Reasoning                                 | Fast | Notes                                                                             |
+| ----------------------------------------------------------- | ----------------------------------------- | ---- | --------------------------------------------------------------------------------- |
+| **Muse Spark 1.3** `muse-spark-1.3`                         | Light · Medium · High · Extra · Ultracode | —    | 1M context · $1.25/$4.25 per Mtok. Meta's newest Spark, released 2 September 2026. |
+| **Muse Contributor Spark 1.3** `muse-spark-1.3-contributor` | Light · Medium · High · Extra · Ultracode | —    | 1M context · $0.10/$0.20 per Mtok. Content may be used for product improvement.   |
+| **Muse Spark 1.2** `muse-spark-1.2` **(Default)**           | Light · Medium · High · Extra · Ultracode | —    | 1M context · $1.25/$4.25 per Mtok.                                                |
+| **Muse Contributor Spark 1.2** `muse-spark-1.2-contributor` | Light · Medium · High · Extra · Ultracode | —    | 1M context · $0.10/$0.20 per Mtok. Content may be used for product improvement.   |
 
 Muse's model lifecycle is provider-published from the local Muse CLI catalogue,
-so the live picker follows the CLI's own current-model set; the row above is
-TaskWraith's curated fallback. Muse's own picker labels its stops **Minimal ·
+so the live picker follows the CLI's own current-model set; the rows above are
+TaskWraith's curated fallback, and Spark 1.2 stays the seat default until the
+catalogue promotes 1.3. Muse's own picker labels its stops **Minimal ·
 Low · Medium · High · Extra High · Ultra**; the Reasoning column above maps
 them onto the shared ladder vocabulary.
 
