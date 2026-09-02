@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
@@ -27,7 +28,9 @@ describe('HostStoreRuntime', () => {
     const installed = configureHostStoreRuntime(runtime)
 
     expect(installed).toMatchObject({
-      profilePath: '/tmp/taskwraith-host-store-runtime',
+      // The runtime normalizes the profile with resolve(): expect the
+      // platform-canonical result, not a POSIX literal.
+      profilePath: resolve('/tmp/taskwraith-host-store-runtime'),
       secureStorage
     })
     expect(configureHostStoreRuntime(runtime)).toBe(installed)

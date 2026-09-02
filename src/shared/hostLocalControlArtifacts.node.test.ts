@@ -42,8 +42,11 @@ describe('host local-control artifacts', () => {
     expect(() => readPrivateLocalControlArtifact(artifact, 128)).toThrow('unsafe')
     rmSync(artifact)
     writeFileSync(artifact, 'token\n', { mode: 0o644 })
-    chmodSync(artifact, 0o644)
-    expect(() => readPrivateLocalControlArtifact(artifact, 128)).toThrow('owner-only')
+    // @portability-ok: octal modes are POSIX-only — NTFS reports fixed modes and owner-only is ACL-enforced
+    if (process.platform !== 'win32') {
+      chmodSync(artifact, 0o644)
+      expect(() => readPrivateLocalControlArtifact(artifact, 128)).toThrow('owner-only')
+    }
     chmodSync(artifact, 0o600)
     writeFileSync(artifact, 'x'.repeat(129), { mode: 0o600 })
     expect(() => readPrivateLocalControlArtifact(artifact, 128)).toThrow('size')

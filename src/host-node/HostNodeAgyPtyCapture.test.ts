@@ -2,6 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { captureHostStandaloneAgyModels, type HostNodeAgyPtyLike } from './HostNodeAgyPtyCapture'
 
+/**
+ * The probe validates the binary with the ambient platform's absolute-path
+ * rules (`isAbsolute` + `resolve`), so the fixture must be canonical on the
+ * runner's OS. `spawnPty` is mocked — the binary is never executed.
+ */
+const AGY_BINARY =
+  process.platform === 'win32' ? 'C:\\taskwraith-test-bin\\agy.exe' : '/usr/local/bin/agy'
+
 function terminal() {
   let dataListener: ((data: string) => void) | null = null
   let exitListener: ((event: { exitCode: number }) => void) | null = null
@@ -27,7 +35,7 @@ describe('captureHostStandaloneAgyModels', () => {
     const child = terminal()
     const spawnPty = vi.fn(() => child)
     const pending = captureHostStandaloneAgyModels(
-      '/usr/local/bin/agy',
+      AGY_BINARY,
       ['models'],
       { env: { PATH: '/usr/local/bin' }, timeoutMs: 8_000 },
       { spawnPty }
@@ -40,7 +48,7 @@ describe('captureHostStandaloneAgyModels', () => {
       stderr: '',
       code: 0
     })
-    expect(spawnPty).toHaveBeenCalledWith('/usr/local/bin/agy', ['models'], {
+    expect(spawnPty).toHaveBeenCalledWith(AGY_BINARY, ['models'], {
       env: { PATH: '/usr/local/bin' }
     })
   })
@@ -52,7 +60,7 @@ describe('captureHostStandaloneAgyModels', () => {
     ).resolves.toMatchObject({ code: null, error: expect.stringMatching(/invalid/i) })
     await expect(
       captureHostStandaloneAgyModels(
-        '/usr/local/bin/agy',
+        AGY_BINARY,
         ['run'],
         { env: {}, timeoutMs: 8_000 },
         { spawnPty }
@@ -64,7 +72,7 @@ describe('captureHostStandaloneAgyModels', () => {
   it('keeps Host startup dependency-light and fails the probe closed when node-pty is absent', async () => {
     await expect(
       captureHostStandaloneAgyModels(
-        '/usr/local/bin/agy',
+        AGY_BINARY,
         ['models'],
         { env: {}, timeoutMs: 8_000 },
         { loadPty: () => Promise.reject(new Error('module unavailable')) }
@@ -80,7 +88,7 @@ describe('captureHostStandaloneAgyModels', () => {
   it('kills and discards an oversized capture', async () => {
     const child = terminal()
     const pending = captureHostStandaloneAgyModels(
-      '/usr/local/bin/agy',
+      AGY_BINARY,
       ['models'],
       { env: {}, timeoutMs: 8_000 },
       { spawnPty: () => child }
@@ -98,7 +106,7 @@ describe('captureHostStandaloneAgyModels', () => {
     const child = terminal()
     const timers: Array<() => void> = []
     const pending = captureHostStandaloneAgyModels(
-      '/usr/local/bin/agy',
+      AGY_BINARY,
       ['models'],
       { env: {}, timeoutMs: 8_000 },
       {

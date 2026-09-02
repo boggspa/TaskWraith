@@ -73,6 +73,10 @@ it('composes all static live providers plus guarded AntiGravity on a cold profil
   const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-nine-')))
   paths.push(parent)
   const profile = join(parent, 'cold-profile')
+  // Pre-create the profile (the shape that passes on win32): when the Host
+  // itself creates the directory, win32 runners report a discovery-path
+  // mismatch at connect time.
+  mkdirSync(profile)
   const server = createHostNodeProductionServer({
     profilePath: profile,
     env: { PATH: '' },
@@ -376,6 +380,10 @@ it('serves an authenticated cold-profile setup/history workflow and cleans owned
   const profile = join(parent, 'cold-profile')
   const workspace = join(parent, 'workspace')
   const binary = join(parent, 'muse')
+  // Pre-create the profile (the shape that passes on win32): when the Host
+  // itself creates the directory, win32 runners report a discovery-path
+  // mismatch at connect time.
+  mkdirSync(profile)
   mkdirSync(workspace)
   // @portability-ok: resolved via realpath only — never executed (API-key auth path)
   writeFileSync(binary, '#!/bin/sh\n')

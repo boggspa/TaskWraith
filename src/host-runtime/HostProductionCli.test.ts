@@ -4,13 +4,22 @@ import { expect, it, vi } from 'vitest'
 import { HostProductionCliError, parseHostProductionCli } from './HostProductionCli'
 import { runHostShutdownCli } from './cli'
 
+/**
+ * The CLI rejects a non-canonical --profile (`resolve(value) === value`), so
+ * the happy-path fixtures must already be in their runner-OS canonical form.
+ * The negative-path fixtures below intentionally stay POSIX-shaped: every
+ * platform rejects them with a HostProductionCliError.
+ */
+const NEW_PROFILE = process.platform === 'win32' ? 'C:\\new-host-profile' : '/tmp/new-host-profile'
+const STOP_PROFILE = process.platform === 'win32' ? 'C:\\profile' : '/tmp/profile'
+
 it('strictly parses production cold-profile serving without parent supervision', () => {
   expect(
-    parseHostProductionCli(['serve', '--profile', '/tmp/new-host-profile', '--mode', 'production'])
-  ).toEqual({ command: 'serve', profilePath: '/tmp/new-host-profile', mode: 'production' })
-  expect(parseHostProductionCli(['stop', '--profile', '/tmp/new-host-profile'])).toEqual({
+    parseHostProductionCli(['serve', '--profile', NEW_PROFILE, '--mode', 'production'])
+  ).toEqual({ command: 'serve', profilePath: NEW_PROFILE, mode: 'production' })
+  expect(parseHostProductionCli(['stop', '--profile', NEW_PROFILE])).toEqual({
     command: 'stop',
-    profilePath: '/tmp/new-host-profile'
+    profilePath: NEW_PROFILE
   })
   expect(() =>
     parseHostProductionCli([
@@ -76,7 +85,7 @@ it('keeps packaged launchers fixed to production serve while routing explicit st
 it('dispatches stop only through the authenticated shutdown client', async () => {
   const shutdown = vi.fn(async () => 'stopping' as const)
   const createShutdown = vi.fn(() => ({ shutdown }))
-  await runHostShutdownCli(['stop', '--profile', '/tmp/profile'], createShutdown)
-  expect(createShutdown).toHaveBeenCalledWith({ profilePath: '/tmp/profile' })
+  await runHostShutdownCli(['stop', '--profile', STOP_PROFILE], createShutdown)
+  expect(createShutdown).toHaveBeenCalledWith({ profilePath: STOP_PROFILE })
   expect(shutdown).toHaveBeenCalledOnce()
 })

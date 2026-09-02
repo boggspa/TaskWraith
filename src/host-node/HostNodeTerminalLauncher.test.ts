@@ -1,6 +1,17 @@
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { createHostNodeTerminalLauncher } from './HostNodeTerminalLauncher'
+
+/**
+ * The launcher validates argv[0] with the ambient platform's absolute-path
+ * rules (`isAbsolute` + `resolve`), so fixture binaries must be canonical on
+ * the runner's OS. Spawn is mocked throughout — no binary is ever executed.
+ */
+const TEST_BIN_DIR = process.platform === 'win32' ? 'C:\\taskwraith-test-bin' : '/usr/local/bin'
+function testBinary(name: string): string {
+  return join(TEST_BIN_DIR, process.platform === 'win32' ? `${name}.exe` : name)
+}
 
 function emitableChild() {
   const listeners = new Map<string, ((...args: unknown[]) => void)[]>()
@@ -36,9 +47,9 @@ describe('HostNodeTerminalLauncher', () => {
     const spawn = fakeSpawn()
     const launcher = createHostNodeTerminalLauncher({ spawn })
     const handoff = await launcher.launchForProvider('muse', {
-      argv: ['/usr/local/bin/muse', 'login']
+      argv: [testBinary('muse'), 'login']
     })
-    expect(spawn).toHaveBeenCalledWith('/usr/local/bin/muse', ['login'], {
+    expect(spawn).toHaveBeenCalledWith(testBinary('muse'), ['login'], {
       shell: false,
       stdio: 'inherit'
     })
@@ -51,8 +62,8 @@ describe('HostNodeTerminalLauncher', () => {
   it('launches Claude login with catalogued [binary, auth, login] argv', async () => {
     const spawn = fakeSpawn()
     const launcher = createHostNodeTerminalLauncher({ spawn })
-    await launcher.launchForProvider('claude', { argv: ['/usr/local/bin/claude', 'auth', 'login'] })
-    expect(spawn).toHaveBeenCalledWith('/usr/local/bin/claude', ['auth', 'login'], {
+    await launcher.launchForProvider('claude', { argv: [testBinary('claude'), 'auth', 'login'] })
+    expect(spawn).toHaveBeenCalledWith(testBinary('claude'), ['auth', 'login'], {
       shell: false,
       stdio: 'inherit'
     })
@@ -62,9 +73,9 @@ describe('HostNodeTerminalLauncher', () => {
     const spawn = fakeSpawn()
     const launcher = createHostNodeTerminalLauncher({ spawn })
     await expect(
-      launcher.launchForProvider('grok', { argv: ['/usr/local/bin/grok', 'login'] })
+      launcher.launchForProvider('grok', { argv: [testBinary('grok'), 'login'] })
     ).resolves.toEqual({ providerId: 'grok', spawned: true })
-    expect(spawn).toHaveBeenCalledWith('/usr/local/bin/grok', ['login'], {
+    expect(spawn).toHaveBeenCalledWith(testBinary('grok'), ['login'], {
       shell: false,
       stdio: 'inherit'
     })
@@ -74,21 +85,21 @@ describe('HostNodeTerminalLauncher', () => {
     const spawn = fakeSpawn()
     const launcher = createHostNodeTerminalLauncher({ spawn })
     await expect(
-      launcher.launchForProvider('ollama', { argv: ['/usr/local/bin/ollama', 'signin'] })
+      launcher.launchForProvider('ollama', { argv: [testBinary('ollama'), 'signin'] })
     ).resolves.toEqual({ providerId: 'ollama', spawned: true })
-    expect(spawn).toHaveBeenCalledWith('/usr/local/bin/ollama', ['signin'], {
+    expect(spawn).toHaveBeenCalledWith(testBinary('ollama'), ['signin'], {
       shell: false,
       stdio: 'inherit'
     })
     await expect(
-      launcher.launchForProvider('ollama', { argv: ['/usr/local/bin/ollama', 'login'] })
+      launcher.launchForProvider('ollama', { argv: [testBinary('ollama'), 'login'] })
     ).rejects.toThrow('Terminal launcher requires an exact login command.')
   })
 
   it('rejects Pi because it has no catalogued terminal login', async () => {
     const launcher = createHostNodeTerminalLauncher()
     await expect(
-      launcher.launchForProvider('pi', { argv: ['/usr/local/bin/pi', 'login'] })
+      launcher.launchForProvider('pi', { argv: [testBinary('pi'), 'login'] })
     ).rejects.toThrow('Provider pi has no catalogued login flow.')
   })
 
@@ -96,7 +107,7 @@ describe('HostNodeTerminalLauncher', () => {
     const spawn = fakeSpawn()
     const launcher = createHostNodeTerminalLauncher({ spawn })
     await expect(
-      launcher.launchForProvider('claude', { argv: ['/usr/local/bin/claude', 'login'] })
+      launcher.launchForProvider('claude', { argv: [testBinary('claude'), 'login'] })
     ).rejects.toThrow('Terminal launcher requires an exact login command.')
     expect(spawn).not.toHaveBeenCalled()
   })
@@ -106,17 +117,17 @@ describe('HostNodeTerminalLauncher', () => {
     const launcher = createHostNodeTerminalLauncher({ spawn })
     await expect(
       launcher.launchForProvider('antigravity', {
-        argv: ['/usr/local/bin/agy'],
+        argv: [testBinary('agy')],
         env: { PATH: '/usr/local/bin', FORCE_COLOR: '0' }
       })
     ).resolves.toEqual({ providerId: 'antigravity', spawned: true })
-    expect(spawn).toHaveBeenCalledWith('/usr/local/bin/agy', [], {
+    expect(spawn).toHaveBeenCalledWith(testBinary('agy'), [], {
       shell: false,
       stdio: 'inherit',
       env: { PATH: '/usr/local/bin', FORCE_COLOR: '0' }
     })
     await expect(
-      launcher.launchForProvider('antigravity', { argv: ['/usr/local/bin/agy', 'login'] })
+      launcher.launchForProvider('antigravity', { argv: [testBinary('agy'), 'login'] })
     ).rejects.toThrow('Terminal launcher requires an exact login command.')
   })
 
@@ -133,7 +144,7 @@ describe('HostNodeTerminalLauncher', () => {
     const launcher = createHostNodeTerminalLauncher({ spawn })
     let resolved: unknown = 'pending'
     const pending = launcher
-      .launchForProvider('codex', { argv: ['/usr/local/bin/codex', 'login'] })
+      .launchForProvider('codex', { argv: [testBinary('codex'), 'login'] })
       .then((handoff) => {
         resolved = handoff
         return handoff
@@ -153,7 +164,7 @@ describe('HostNodeTerminalLauncher', () => {
     const spawn = vi.fn(() => child as never)
     const launcher = createHostNodeTerminalLauncher({ spawn })
     const pending = launcher.launchForProvider('kimi', {
-      argv: ['/usr/local/bin/kimi', 'login']
+      argv: [testBinary('kimi'), 'login']
     })
     child.emit('spawn')
     const handoff = await pending
@@ -167,19 +178,19 @@ describe('HostNodeTerminalLauncher', () => {
     const child = emitableChild()
     const spawn = vi.fn(() => child as never)
     const launcher = createHostNodeTerminalLauncher({ spawn })
-    const first = launcher.launch({ argv: ['/usr/local/bin/muse', 'login'] })
-    await expect(launcher.launch({ argv: ['/usr/local/bin/muse', 'login'] })).rejects.toThrow(
+    const first = launcher.launch({ argv: [testBinary('muse'), 'login'] })
+    await expect(launcher.launch({ argv: [testBinary('muse'), 'login'] })).rejects.toThrow(
       'muse login terminal handoff is already pending.'
     )
     child.emit('spawn')
     await first
-    await expect(launcher.launch({ argv: ['/usr/local/bin/muse', 'login'] })).rejects.toThrow(
+    await expect(launcher.launch({ argv: [testBinary('muse'), 'login'] })).rejects.toThrow(
       'muse login terminal handoff is already pending.'
     )
     child.emit('close', 0)
     const retryChild = emitableChild()
     spawn.mockImplementationOnce(() => retryChild as never)
-    const retry = launcher.launch({ argv: ['/usr/local/bin/muse', 'login'] })
+    const retry = launcher.launch({ argv: [testBinary('muse'), 'login'] })
     retryChild.emit('spawn')
     await expect(retry).resolves.toBeUndefined()
   })
@@ -189,7 +200,7 @@ describe('HostNodeTerminalLauncher', () => {
     const spawn = vi.fn(() => failing as never)
     const launcher = createHostNodeTerminalLauncher({ spawn })
     const first = launcher.launchForProvider('codex', {
-      argv: ['/usr/local/bin/codex', 'login']
+      argv: [testBinary('codex'), 'login']
     })
     failing.emit('error')
     await expect(first).rejects.toThrow('codex login terminal handoff failed.')
@@ -197,7 +208,7 @@ describe('HostNodeTerminalLauncher', () => {
     const retryChild = emitableChild()
     spawn.mockImplementationOnce(() => retryChild as never)
     const retry = launcher.launchForProvider('codex', {
-      argv: ['/usr/local/bin/codex', 'login']
+      argv: [testBinary('codex'), 'login']
     })
     retryChild.emit('spawn')
     await expect(retry).resolves.toEqual({ providerId: 'codex', spawned: true })
@@ -208,7 +219,7 @@ describe('HostNodeTerminalLauncher', () => {
     const spawn = vi.fn(() => child as never)
     const launcher = createHostNodeTerminalLauncher({ spawn })
     const first = launcher.launchForProvider('claude', {
-      argv: ['/usr/local/bin/claude', 'auth', 'login']
+      argv: [testBinary('claude'), 'auth', 'login']
     })
     child.emit('spawn')
     await expect(first).resolves.toEqual({ providerId: 'claude', spawned: true })
@@ -218,7 +229,7 @@ describe('HostNodeTerminalLauncher', () => {
     const retryChild = emitableChild()
     spawn.mockImplementationOnce(() => retryChild as never)
     const retry = launcher.launchForProvider('claude', {
-      argv: ['/usr/local/bin/claude', 'auth', 'login']
+      argv: [testBinary('claude'), 'auth', 'login']
     })
     retryChild.emit('spawn')
     await expect(retry).resolves.toEqual({ providerId: 'claude', spawned: true })

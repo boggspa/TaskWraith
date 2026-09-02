@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { join } from 'node:path'
 
 import {
   formatHostAgySessionId,
@@ -19,11 +20,12 @@ describe('HostAgyConversationReceipt', () => {
   })
 
   it('uses the same Gemini home overrides as the agy process', () => {
+    // Expect join() output: the derivation uses the platform separator.
     expect(hostAgyConversationReceiptPath({ GEMINI_HOME: '/private/gemini' }, '/home')).toBe(
-      '/private/gemini/antigravity-cli/cache/last_conversations.json'
+      join('/private/gemini', 'antigravity-cli', 'cache', 'last_conversations.json')
     )
     expect(hostAgyConversationReceiptPath({ GEMINI_CLI_HOME: '~/custom' }, '/home')).toBe(
-      '/home/custom/.gemini/antigravity-cli/cache/last_conversations.json'
+      join('/home', 'custom', '.gemini', 'antigravity-cli', 'cache', 'last_conversations.json')
     )
   })
 

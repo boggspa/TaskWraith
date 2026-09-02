@@ -13,6 +13,14 @@ import {
 
 const paths: string[] = []
 
+/**
+ * Admission validates the resolved binary with the ambient platform's
+ * absolute-path rules, so the fixture must be canonical on the runner's OS.
+ * Nothing executes it.
+ */
+const AGY_BINARY =
+  process.platform === 'win32' ? 'C:\\taskwraith-test-bin\\agy.exe' : '/usr/local/bin/agy'
+
 afterEach(() => {
   while (paths.length > 0) rmSync(paths.pop()!, { recursive: true, force: true })
 })
@@ -80,7 +88,7 @@ describe('readHostStandaloneAntigravityConsent', () => {
 
 describe('discoverHostStandaloneAntigravity', () => {
   it('does no binary or process work before consent', async () => {
-    const resolveBinary = vi.fn(async () => ({ binaryPath: '/usr/local/bin/agy' }))
+    const resolveBinary = vi.fn(async () => ({ binaryPath: AGY_BINARY }))
     const capture = vi.fn()
 
     await expect(
@@ -109,7 +117,7 @@ describe('discoverHostStandaloneAntigravity', () => {
     await expect(
       discoverHostStandaloneAntigravity({
         profilePath: consentedProfile,
-        resolveBinary: async () => ({ binaryPath: '/usr/local/bin/agy' }),
+        resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
         capture
       })
     ).resolves.toMatchObject({ status: 'auth_required', admission: null })
@@ -131,7 +139,7 @@ describe('discoverHostStandaloneAntigravity', () => {
     }))
     const result = await discoverHostStandaloneAntigravity({
       profilePath: profile(acceptedSettings()),
-      resolveBinary: async () => ({ binaryPath: '/usr/local/bin/agy' }),
+      resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
       capture,
       env: {
         PATH: '/usr/local/bin',
@@ -185,7 +193,7 @@ describe('discoverHostStandaloneAntigravity', () => {
     }))
     const input = {
       profilePath: path,
-      resolveBinary: async () => ({ binaryPath: '/usr/local/bin/agy' }),
+      resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
       capture
     }
     await expect(discoverHostStandaloneAntigravity(input)).resolves.toMatchObject({
@@ -207,7 +215,7 @@ describe('discoverHostStandaloneAntigravity', () => {
     await expect(
       discoverHostStandaloneAntigravity({
         profilePath: profile(acceptedSettings()),
-        resolveBinary: async () => ({ binaryPath: '/usr/local/bin/agy' }),
+        resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
         capture: async () => ({
           stdout: `gemini-3.7-flash-high\n${'x'.repeat(256 * 1024)}`,
           stderr: '',

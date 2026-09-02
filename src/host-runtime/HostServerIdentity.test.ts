@@ -48,10 +48,13 @@ it('creates once after authority, preserves a valid existing hostId, and rejects
   expect(assertions).toBeGreaterThanOrEqual(2)
   const path = join(profile, 'host-runtime', HOST_SERVER_IDENTITY_FILENAME)
   expect(JSON.parse(readFileSync(path, 'utf8')).hostId).toBe('desktop-host-id')
-  if (process.platform !== 'win32') chmodSync(path, 0o644)
-  expect(() => loadOrCreateHostServerIdentity({ profilePath: profile, authority })).toThrow(
-    'Unsafe'
-  )
+  // @portability-ok: octal modes are POSIX-only — NTFS reports fixed modes and owner-only is ACL-enforced
+  if (process.platform !== 'win32') {
+    chmodSync(path, 0o644)
+    expect(() => loadOrCreateHostServerIdentity({ profilePath: profile, authority })).toThrow(
+      'Unsafe'
+    )
+  }
 })
 
 it('fails closed on a symlink identity and only creates after authority proof', () => {

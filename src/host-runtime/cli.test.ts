@@ -4,12 +4,18 @@ import { runHostProductionCli, runHostShutdownCli } from './cli'
 const PAYLOAD_VERSION = `sha256:${'a'.repeat(64)}`
 const resolvePayloadVersion = () => PAYLOAD_VERSION
 
+/**
+ * The CLI rejects a non-canonical --profile (`resolve(value) === value`), so
+ * the fixture must already be in its runner-OS canonical form.
+ */
+const CLI_PROFILE = process.platform === 'win32' ? 'C:\\host-cli-profile' : '/tmp/host-cli-profile'
+
 it('dispatches a parsed production server through an injected factory', async () => {
   const start = vi.fn(async () => {})
   const waitForShutdown = vi.fn(async () => {})
   const factory = vi.fn(() => ({ start, waitForShutdown }))
   await runHostProductionCli(
-    ['serve', '--profile', '/tmp/host-cli-profile', '--mode', 'production'],
+    ['serve', '--profile', CLI_PROFILE, '--mode', 'production'],
     factory as never,
     {
       createTerminalWindowLauncher: () => undefined,
@@ -18,7 +24,7 @@ it('dispatches a parsed production server through an injected factory', async ()
     }
   )
   expect(factory).toHaveBeenCalledWith({
-    profilePath: '/tmp/host-cli-profile',
+    profilePath: CLI_PROFILE,
     payloadVersion: PAYLOAD_VERSION
   })
   expect(start).toHaveBeenCalledOnce()
@@ -33,7 +39,7 @@ it('passes a terminal launcher only when every standard stream is an interactive
   const createTerminalLauncher = vi.fn(() => terminalLauncher)
 
   await runHostProductionCli(
-    ['serve', '--profile', '/tmp/host-cli-profile', '--mode', 'production'],
+    ['serve', '--profile', CLI_PROFILE, '--mode', 'production'],
     factory as never,
     {
       stdio: {
@@ -49,7 +55,7 @@ it('passes a terminal launcher only when every standard stream is an interactive
 
   expect(createTerminalLauncher).toHaveBeenCalledOnce()
   expect(factory).toHaveBeenCalledWith({
-    profilePath: '/tmp/host-cli-profile',
+    profilePath: CLI_PROFILE,
     payloadVersion: PAYLOAD_VERSION,
     terminalLauncher
   })
@@ -64,7 +70,7 @@ it('uses a separate terminal-window handoff for background or detached stdio', a
   const createTerminalWindowLauncher = vi.fn(() => terminalWindowLauncher)
 
   await runHostProductionCli(
-    ['serve', '--profile', '/tmp/host-cli-profile', '--mode', 'production'],
+    ['serve', '--profile', CLI_PROFILE, '--mode', 'production'],
     factory as never,
     {
       stdio: {
@@ -82,7 +88,7 @@ it('uses a separate terminal-window handoff for background or detached stdio', a
   expect(createTerminalLauncher).not.toHaveBeenCalled()
   expect(createTerminalWindowLauncher).toHaveBeenCalledOnce()
   expect(factory).toHaveBeenCalledWith({
-    profilePath: '/tmp/host-cli-profile',
+    profilePath: CLI_PROFILE,
     payloadVersion: PAYLOAD_VERSION,
     terminalLauncher: terminalWindowLauncher
   })
@@ -95,7 +101,7 @@ it('keeps auth flows unavailable when a headless Host has no terminal-window han
   const createTerminalWindowLauncher = vi.fn(() => undefined)
 
   await runHostProductionCli(
-    ['serve', '--profile', '/tmp/host-cli-profile', '--mode', 'production'],
+    ['serve', '--profile', CLI_PROFILE, '--mode', 'production'],
     factory as never,
     {
       stdio: { stdin: {}, stdout: {}, stderr: {} },
@@ -107,7 +113,7 @@ it('keeps auth flows unavailable when a headless Host has no terminal-window han
 
   expect(createTerminalWindowLauncher).toHaveBeenCalledOnce()
   expect(factory).toHaveBeenCalledWith({
-    profilePath: '/tmp/host-cli-profile',
+    profilePath: CLI_PROFILE,
     payloadVersion: PAYLOAD_VERSION
   })
 })
@@ -121,7 +127,7 @@ it('forwards an inherited-fd Full Access secret once and zeroes the source buffe
   })
 
   await runHostProductionCli(
-    ['serve', '--profile', '/tmp/host-cli-profile', '--mode', 'production'],
+    ['serve', '--profile', CLI_PROFILE, '--mode', 'production'],
     factory as never,
     {
       createTerminalWindowLauncher: () => undefined,
@@ -136,6 +142,6 @@ it('forwards an inherited-fd Full Access secret once and zeroes the source buffe
 
 it('dispatches stop through an injected authenticated shutdown client', async () => {
   const shutdown = vi.fn(async () => 'stopping' as const)
-  await runHostShutdownCli(['stop', '--profile', '/tmp/host-cli-profile'], () => ({ shutdown }))
+  await runHostShutdownCli(['stop', '--profile', CLI_PROFILE], () => ({ shutdown }))
   expect(shutdown).toHaveBeenCalledOnce()
 })

@@ -26,7 +26,8 @@ it('resolves an explicit real binary and reads only bounded owner-safe auth text
     temporaryParent: root
   })
   await expect(resources.resolveBinary()).resolves.toMatchObject({
-    binaryPath: expect.stringMatching(/\/muse$/),
+    // Separator-agnostic: realpath returns backslashes on win32.
+    binaryPath: expect.stringMatching(/[\\/]muse$/),
     source: 'explicit'
   })
   await expect(resources.readAuthJsonText()).resolves.toContain('providers')
@@ -47,8 +48,11 @@ it('rejects symlinked, loose-mode, or oversized auth artifacts without reading s
   await expect(resources.readAuthJsonText()).rejects.toThrow('Unsafe')
   rmSync(auth)
   writeFileSync(auth, '{}')
-  if (process.platform !== 'win32') chmodSync(auth, 0o644)
-  await expect(resources.readAuthJsonText()).rejects.toThrow()
+  // @portability-ok: octal modes are POSIX-only — NTFS reports fixed modes and owner-only is ACL-enforced
+  if (process.platform !== 'win32') {
+    chmodSync(auth, 0o644)
+    await expect(resources.readAuthJsonText()).rejects.toThrow()
+  }
   writeFileSync(auth, 'x'.repeat(1024 * 1024 + 1))
   chmodSync(auth, 0o600)
   await expect(resources.readAuthJsonText()).rejects.toThrow('Unsafe')

@@ -23,6 +23,16 @@ function emitableChild() {
 describe('HostNodeTerminalWindowLauncher', () => {
   const paths: string[] = []
 
+  // The exact-argv gate validates argv[0] with the AMBIENT platform's
+  // absolute-path rules even when the launcher's window strategy is injected,
+  // so fixture binaries must be canonical on the runner's OS. Spawn is mocked.
+  const grokBinary =
+    process.platform === 'win32'
+      ? 'C:\\Applications\\Grok CLI\\grok.exe'
+      : '/Applications/Grok CLI/grok'
+  const kimiBinary =
+    process.platform === 'win32' ? 'C:\\taskwraith-test-bin\\kimi.exe' : '/usr/local/bin/kimi'
+
   afterEach(() => {
     for (const path of paths.splice(0)) rmSync(path, { recursive: true, force: true })
   })
@@ -41,7 +51,7 @@ describe('HostNodeTerminalWindowLauncher', () => {
     })!
 
     const pending = launcher.launchForProvider('grok', {
-      argv: ['/Applications/Grok CLI/grok', 'login'],
+      argv: [grokBinary, 'login'],
       env: { PATH: '/usr/bin' }
     })
     expect(spawn).toHaveBeenCalledWith(
@@ -50,7 +60,7 @@ describe('HostNodeTerminalWindowLauncher', () => {
       { shell: false, stdio: 'ignore' }
     )
     const script = readFileSync(join(directory, 'provider-login-mac-login.command'), 'utf8')
-    expect(script).toContain("'/Applications/Grok CLI/grok' 'login'")
+    expect(script).toContain(`'${grokBinary}' 'login'`)
     expect(script).toContain('unset GOOGLE_API_KEY')
     expect(script).not.toContain('must-not-be-written')
     // zsh reserves `status` as a read-only alias of `$?`; capture into
@@ -110,7 +120,7 @@ describe('HostNodeTerminalWindowLauncher', () => {
     })!
 
     const pending = launcher.launchForProvider('kimi', {
-      argv: ['/usr/local/bin/kimi', 'login']
+      argv: [kimiBinary, 'login']
     })
     expect(spawn).toHaveBeenCalledWith(
       '/usr/bin/gnome-terminal',

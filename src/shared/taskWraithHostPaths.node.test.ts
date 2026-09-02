@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalize } from 'node:path'
+import { join, normalize } from 'node:path'
 import {
   decodeTaskWraithHostDiscovery,
   TASKWRAITH_HOST_AUTHORITY_LEASE_FILE,
@@ -36,8 +36,9 @@ describe('TaskWraith Host v2 paths', () => {
 
   it('derives the profile authority lease beside discovery and token', () => {
     expect(TASKWRAITH_HOST_AUTHORITY_LEASE_FILE).toBe('taskwraith-host-authority-v1.json')
+    // join(): the derivation uses the platform separator.
     expect(taskWraithHostAuthorityLeasePath('/profile')).toBe(
-      '/profile/taskwraith-host-authority-v1.json'
+      join('/profile', TASKWRAITH_HOST_AUTHORITY_LEASE_FILE)
     )
   })
 

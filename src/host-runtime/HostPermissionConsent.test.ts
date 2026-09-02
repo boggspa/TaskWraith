@@ -9,6 +9,16 @@ import {
 
 const ACKNOWLEDGED_AT = '2026-08-29T23:30:00.000Z'
 
+/**
+ * The authority validates the binding's workspace path with the ambient
+ * platform's absolute-path rules, so the fixture must be canonical on the
+ * runner's OS.
+ */
+const WORKSPACE_PATH =
+  process.platform === 'win32'
+    ? 'C:\\taskwraith-consent-workspace'
+    : '/tmp/taskwraith-consent-workspace'
+
 function binding(overrides: Partial<HostPermissionConsentIssueInput> = {}) {
   return {
     commandId: '11111111-1111-4111-8111-111111111111',
@@ -17,7 +27,7 @@ function binding(overrides: Partial<HostPermissionConsentIssueInput> = {}) {
     threadId: 'thread-1',
     providerId: 'codex',
     workspaceId: 'workspace-1',
-    workspacePath: '/tmp/taskwraith-consent-workspace',
+    workspacePath: WORKSPACE_PATH,
     modelId: 'gpt-5.6-terra',
     postureId: 'full_access' as const,
     offerRevision: 'offer-revision-1',

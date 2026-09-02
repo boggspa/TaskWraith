@@ -661,22 +661,23 @@ async function callCursorWebFetchMcp(input: {
   let child: ChildProcess | undefined
   try {
     return await new Promise((resolve, reject) => {
-      child = spawn(process.execPath, [file], {
+      const proc = spawn(process.execPath, [file], {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe']
       })
+      child = proc
       let stdout = ''
       let stderr = ''
       const timer = setTimeout(() => {
-        child.kill('SIGKILL')
+        proc.kill('SIGKILL')
         reject(new Error('MCP rpc timeout. stderr=' + stderr))
       }, 8000)
       const finish = (value: Record<string, unknown>): void => {
         clearTimeout(timer)
-        child.kill('SIGKILL')
+        proc.kill('SIGKILL')
         resolve(value)
       }
-      child.stdout.on('data', (chunk: Buffer) => {
+      proc.stdout.on('data', (chunk: Buffer) => {
         stdout += chunk.toString('utf8')
         const lines = stdout.split('\n')
         stdout = lines.pop() ?? ''
@@ -692,14 +693,14 @@ async function callCursorWebFetchMcp(input: {
           finish(msg)
         }
       })
-      child.stderr.on('data', (chunk: Buffer) => {
+      proc.stderr.on('data', (chunk: Buffer) => {
         stderr += chunk.toString('utf8')
       })
-      child.on('error', (err) => {
+      proc.on('error', (err) => {
         clearTimeout(timer)
         reject(err)
       })
-      child.stdin.write(
+      proc.stdin.write(
         JSON.stringify({
           jsonrpc: '2.0',
           id: 1,

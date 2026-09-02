@@ -50,9 +50,17 @@ const MODELS = [
   { id: 'gemini-3.7-flash-low', label: 'gemini-3.7-flash-low' }
 ]
 
+/**
+ * The admission/status paths validate the resolved binary with the ambient
+ * platform's absolute-path rules, so the fixture must be canonical on the
+ * runner's OS. Nothing executes it.
+ */
+const AGY_BINARY =
+  process.platform === 'win32' ? 'C:\\taskwraith-test-bin\\agy.exe' : '/usr/local/bin/agy'
+
 function resources(): HostNodeProviderResourcePort {
   return {
-    resolveBinary: async () => ({ binaryPath: '/usr/local/bin/agy', source: 'path' }),
+    resolveBinary: async () => ({ binaryPath: AGY_BINARY, source: 'path' }),
     getAuthState: async () => 'unknown',
     getVersion: async () => null
   }
@@ -74,7 +82,11 @@ function thread(overrides: Partial<HostProviderRunThread> = {}): HostProviderRun
     providerId: 'antigravity',
     modelId: 'gemini-3.7-flash-high',
     reasoningId: 'low',
-    workspace: { workspaceId: 'ws', canonicalPath: '/tmp/work', canonical: true },
+    workspace: {
+      workspaceId: 'ws',
+      canonicalPath: process.platform === 'win32' ? 'C:\\work' : '/tmp/work',
+      canonical: true
+    },
     posture: {
       postureId: 'plan',
       approvalMode: 'plan',
@@ -190,7 +202,7 @@ describe('HostNodeAntigravityProvider admission and auth', () => {
     ])
     await provider.beginAuth('auth-1')
     expect(launchForProvider).toHaveBeenCalledWith('antigravity', {
-      argv: ['/usr/local/bin/agy'],
+      argv: [AGY_BINARY],
       env: expect.objectContaining({ PATH: '/usr/local/bin', FORCE_COLOR: '0' })
     })
     const launch = launchForProvider.mock.calls[0]?.[1]
@@ -259,8 +271,8 @@ describe('HostNodeAntigravityProvider run path', () => {
       sessionId: 'agy-project-v1:0e81528b-aa70-4678-b9ce-d3005b829583'
     })
     expect(spawnInput).toMatchObject({
-      binaryPath: '/usr/local/bin/agy',
-      cwd: '/tmp/work'
+      binaryPath: AGY_BINARY,
+      cwd: process.platform === 'win32' ? 'C:\\work' : '/tmp/work'
     })
     expect((spawnInput as HostNodeAntigravitySpawnInput | null)?.args).toEqual([
       '--sandbox',

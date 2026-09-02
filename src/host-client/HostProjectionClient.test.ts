@@ -1,11 +1,12 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { buildHostBootstrapWelcome, type HostCapability } from '../shared/hostProtocol'
+import { taskWraithHostSocketPath } from '../shared/taskWraithHostPaths.node'
 import { HOST_LOCAL_TRANSPORT_VERSION } from '../shared/hostProtocolTransport'
 import { HostProjectionClient } from './HostProjectionClient'
 
@@ -39,11 +40,14 @@ function startFakeHost(options: {
   hostOffer: readonly HostCapability[]
   respond?: (kind: string, params: unknown) => unknown
 }): Promise<FakeHost> {
-  // Short socket path: unix domain sockets cap around 104 bytes, and macOS
-  // tmpdir() is long enough to overflow it.
-  const unique = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`
-  const socketPath = `/tmp/tw-git-${unique}.sock`
   const dir = mkdtempSync(join(tmpdir(), 'tw-git-client-'))
+  // Derive the socket the production way: a named pipe on win32 (no file, no
+  // parent directory), and a short `twh2-…` temp path on POSIX so the overall
+  // length stays under the ~104-byte sockaddr_un limit on macOS.
+  const socketPath = taskWraithHostSocketPath(dir)
+  if (process.platform !== 'win32') {
+    mkdirSync(dirname(socketPath), { recursive: true })
+  }
   const tokenPath = join(dir, 'token')
   const discoveryPath = join(dir, 'discovery.json')
   const requests: Array<{ kind: string; params: unknown }> = []
@@ -66,7 +70,11 @@ function startFakeHost(options: {
 
   cleanups.push(() => {
     rmSync(dir, { recursive: true, force: true })
-    rmSync(socketPath, { force: true })
+    // Named pipes have no socket file; only POSIX leaves one beside its short
+    // twh2 parent directory.
+    if (process.platform !== 'win32') {
+      rmSync(dirname(socketPath), { recursive: true, force: true })
+    }
   })
 
   const server = createServer((socket: Socket) => {

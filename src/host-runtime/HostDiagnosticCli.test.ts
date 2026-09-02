@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -23,7 +23,8 @@ describe('parseHostDiagnosticCli', () => {
       ])
     ).toEqual({
       command: 'serve',
-      profilePath: '/tmp/taskwraith-diagnostic-profile',
+      // The diagnostic CLI canonicalizes --profile with resolve().
+      profilePath: resolve('/tmp/taskwraith-diagnostic-profile'),
       mode: 'diagnostic',
       parentPid: 123
     })

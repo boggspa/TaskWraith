@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -17,7 +17,11 @@ const profiles: string[] = []
 const children: ChildProcess[] = []
 
 function createProfile(): string {
-  const profile = mkdtempSync(join(tmpdir(), 'taskwraith-diagnostic-host-subprocess-'))
+  // Canonicalize the fixture root: win32 temp roots carry 8.3 short-name
+  // segments that the Host and the client must agree on byte-for-byte.
+  const profile = realpathSync(
+    mkdtempSync(join(tmpdir(), 'taskwraith-diagnostic-host-subprocess-'))
+  )
   profiles.push(profile)
   return profile
 }

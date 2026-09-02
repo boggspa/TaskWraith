@@ -10,7 +10,9 @@ import {
   type HostGitSpawnResult
 } from './HostGitReadService'
 
-const WORKSPACE = '/workspace/project'
+// Canonical on the runner's OS: the service resolve()s the workspace, so a
+// POSIX literal would come back drive-prefixed on win32.
+const WORKSPACE = process.platform === 'win32' ? 'C:\\workspace\\project' : '/workspace/project'
 
 interface SpawnCall {
   command: string

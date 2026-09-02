@@ -1,5 +1,5 @@
 import { readdir, readFile } from 'node:fs/promises'
-import { dirname, relative, resolve } from 'node:path'
+import { basename, dirname, relative, resolve } from 'node:path'
 
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
@@ -175,7 +175,9 @@ describe('standalone Host runtime boundary', () => {
 
   it('owns the durable journal and command-validation closure rather than compatibility copies', async () => {
     const files = await productionHostRuntimeFiles(HOST_RUNTIME_ROOT)
-    const names = files.map((file) => file.slice(file.lastIndexOf('/') + 1))
+    // basename(): the file list carries platform separators (backslashes on
+    // win32), so a '/'-only slice would keep whole absolute paths there.
+    const names = files.map((file) => basename(file))
     expect(names).toEqual(expect.arrayContaining([...REQUIRED_RUNTIME_MODULES]))
 
     const legacyStillPresent = (

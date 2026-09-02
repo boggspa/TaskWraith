@@ -5,6 +5,7 @@ import {
   linkSync,
   mkdtempSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -12,7 +13,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -81,8 +82,10 @@ function publishFixture(
 describe('hostThreadRecordTransferPath', () => {
   it('derives a direct child of the transfer directory', () => {
     const path = hostThreadRecordTransferPath('/tmp/profile', 'transfer-1')
+    // The derivation canonicalizes the profile with resolve(), so expect the
+    // platform-canonical join (drive letter on win32), not a POSIX literal.
     expect(path).toBe(
-      join('/tmp/profile', HOST_THREAD_RECORD_TRANSFER_DIRECTORY, 'transfer-1.record.json')
+      resolve('/tmp/profile', HOST_THREAD_RECORD_TRANSFER_DIRECTORY, 'transfer-1.record.json')
     )
   })
 
@@ -255,25 +258,33 @@ describe('consumeHostThreadRecordTransfer', () => {
     expect(nodeFs.existsSync(decoy)).toBe(true)
   })
 
-  it('refuses an artifact whose permissions are not owner-only', () => {
-    const profile = createProfile()
-    const descriptor = publishFixture(profile)
-    chmodSync(hostThreadRecordTransferPath(profile, 'transfer-1'), 0o644)
+  // @portability-ok: octal modes are POSIX-only — NTFS reports fixed modes and owner-only is ACL-enforced
+  it.skipIf(process.platform === 'win32')(
+    'refuses an artifact whose permissions are not owner-only',
+    () => {
+      const profile = createProfile()
+      const descriptor = publishFixture(profile)
+      chmodSync(hostThreadRecordTransferPath(profile, 'transfer-1'), 0o644)
 
-    expect(() => consumeHostThreadRecordTransfer({ profilePath: profile, descriptor })).toThrow(
-      /lacks owner-only permissions/
-    )
-  })
+      expect(() => consumeHostThreadRecordTransfer({ profilePath: profile, descriptor })).toThrow(
+        /lacks owner-only permissions/
+      )
+    }
+  )
 
-  it('refuses a transfer directory whose permissions are not owner-only', () => {
-    const profile = createProfile()
-    const descriptor = publishFixture(profile)
-    chmodSync(hostThreadRecordTransferDirectory(profile), 0o755)
+  // @portability-ok: octal modes are POSIX-only — NTFS reports fixed modes and owner-only is ACL-enforced
+  it.skipIf(process.platform === 'win32')(
+    'refuses a transfer directory whose permissions are not owner-only',
+    () => {
+      const profile = createProfile()
+      const descriptor = publishFixture(profile)
+      chmodSync(hostThreadRecordTransferDirectory(profile), 0o755)
 
-    expect(() => consumeHostThreadRecordTransfer({ profilePath: profile, descriptor })).toThrow(
-      /lacks owner-only permissions/
-    )
-  })
+      expect(() => consumeHostThreadRecordTransfer({ profilePath: profile, descriptor })).toThrow(
+        /lacks owner-only permissions/
+      )
+    }
+  )
 
   it('refuses a hard-linked artifact, so no second name can observe or outlive it', () => {
     const profile = createProfile()
@@ -398,9 +409,14 @@ describe('replacement-safe cleanup', () => {
         if (swapped) return
         swapped = true
         // The verified inode disappears and a different file takes the name,
-        // exactly as a racing attacker would arrange it.
+        // exactly as a racing attacker would arrange it. Stage the successor
+        // under its own name FIRST: unlink-then-create can hand the new file
+        // the same freshly-freed inode on some Linux filesystems, which would
+        // make the identities collide and defeat what this test proves.
+        const successor = join(profile, 'successor.json')
+        writeFileSync(successor, JSON.stringify({ id: 'successor' }), { mode: 0o600 })
         unlinkSync(path)
-        writeFileSync(path, JSON.stringify({ id: 'successor' }), { mode: 0o600 })
+        renameSync(successor, path)
       }
     })
 
