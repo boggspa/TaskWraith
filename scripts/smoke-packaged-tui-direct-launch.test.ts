@@ -3,12 +3,15 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('packaged TUI direct production Host launch', () => {
-  const source = fs.readFileSync(path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'), 'utf8')
+  const source = fs.readFileSync(
+    path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),
+    'utf8'
+  )
 
   it('spawns the packaged production Host launcher directly with a disposable profile', () => {
     expect(source).toContain("path.join(resourcesDir, 'host-bin')")
     expect(source).toContain("'taskwraith-host.cmd'")
-    expect(source).toContain("const hostArgs = [")
+    expect(source).toContain('const hostArgs = [')
     expect(source).toContain("'--profile',")
     expect(source).not.toContain("const hostArgs = ['serve'")
     expect(source).toContain("'--muse-binary'")
@@ -23,6 +26,18 @@ describe('packaged TUI direct production Host launch', () => {
     expect(source).not.toContain('TASKWRAITH_TUI_APP_EXECUTABLE')
     expect(source).not.toContain('--taskwraith-headless-host')
     expect(source).not.toContain('--taskwraith-headless-parent')
+  })
+
+  it('skips the live control smoke for a package this host cannot execute, failing closed only on demand', () => {
+    // 1.9.7 recovery run 33638521120: the win32-arm64 sibling packaged on the
+    // x64 runner failed this smoke outright, where the launcher/help smokes and
+    // 1.9.6 skipped it. The static checks already validated that payload.
+    expect(source).toContain('if (!canLikelyExecPackage(packageTarget)) {')
+    expect(source).toContain('console.log(`packaged TUI live control smoke skipped: ${reason}`)')
+    expect(source).toMatch(
+      /if \(!canLikelyExecPackage\(packageTarget\)\) \{[\s\S]*?TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST === '1'[\s\S]*?fail\([\s\S]*?console\.log\(`packaged TUI live control smoke skipped: \$\{reason\}`\)\s*return\s*\}/
+    )
+    expect(source).not.toContain('fail(`packaged TUI live control smoke cannot execute')
   })
 
   it('requires exact child shutdown and Host artifact cleanup while retaining identity', () => {

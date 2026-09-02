@@ -414,7 +414,18 @@ async function runLiveControlRoundTrip(packageRoot, packageTarget) {
     return
   }
   if (!canLikelyExecPackage(packageTarget)) {
-    fail(`packaged TUI live control smoke cannot execute ${packageTarget.platform}-${packageTarget.arch} on ${process.platform}-${process.arch}`)
+    // A cross-architecture sibling in the same dist (win32-arm64 packaged on
+    // the x64 runner) cannot be executed at all; its static checks already
+    // validated the payload, and the launcher/help smokes skip the same way.
+    // Failing here turned every dual-arch Windows build red once the x64 pass
+    // stopped wedging (1.9.7 recovery run 33638521120). Fail closed only when
+    // the caller insists on a live packaged Host.
+    const reason = `cannot execute ${packageTarget.platform}-${packageTarget.arch} on ${process.platform}-${process.arch}`
+    if (process.env.TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST === '1') {
+      fail(`packaged TUI live control smoke ${reason} (TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST=1)`)
+    }
+    console.log(`packaged TUI live control smoke skipped: ${reason}`)
+    return
   }
   const resourcesDir = resolveResourcesDir(packageRoot)
   const launcher = resolvePackagedLauncher(packageRoot, packageTarget)
