@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest'
 import { isDesktopExternalHostEnabled } from './DesktopExternalHostPolicy'
 
 const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+const updateRestartBarrier = readFileSync(
+  join(process.cwd(), 'src/main/UpdateRestartHostBarrier.ts'),
+  'utf8'
+)
 const bootstrap = readFileSync(join(process.cwd(), 'src/main/bootstrap.ts'), 'utf8')
 const inProcessWriter = readFileSync(
   join(process.cwd(), 'src/main/host/LegacyInProcessHostWriter.ts'),
@@ -55,11 +59,26 @@ describe('Desktop external Host cutover', () => {
     expect(source).toContain('hostLifecycle.stopSync()')
   })
 
-  it('defers update shutdown for active or TUI-owned Hosts and stops only a Desktop launch', () => {
-    expect(source).toContain('beforeRestart: async (): Promise<boolean> => {')
-    expect(source).toContain("preparedExternalHost.result.kind !== 'launched'")
-    expect(source).toContain("run.providerOutcome === 'running'")
-    expect(source).toContain('return (await hostLifecycle.stop()).ok')
+  it('waits for running Host work, never stops a TUI-owned Host, and stops only a Desktop launch', () => {
+    expect(source).toContain(
+      "import { createUpdateRestartHostBarrier } from './UpdateRestartHostBarrier'"
+    )
+    expect(source).toContain('beforeRestart: createUpdateRestartHostBarrier({')
+    const wiring = source.slice(source.indexOf('beforeRestart: createUpdateRestartHostBarrier({'))
+    for (const dep of ['preparedExternalHost,', 'hostLifecycle,', 'desktopHostBroker,']) {
+      expect(wiring.slice(0, 400)).toContain(dep)
+    }
+    expect(updateRestartBarrier).toContain(
+      "const owned = deps.preparedExternalHost.result.kind === 'launched'"
+    )
+    expect(updateRestartBarrier).toContain("run.providerOutcome === 'running'")
+    // A Host this app only adopted is never stopped on its behalf: the owned
+    // check returns before the only stop call.
+    const adoptedExit = updateRestartBarrier.indexOf('if (!owned) {\n      log(')
+    const stopCall = updateRestartBarrier.indexOf('const stopped = await deps.hostLifecycle.stop()')
+    expect(adoptedExit).toBeGreaterThan(0)
+    expect(stopCall).toBeGreaterThan(adoptedExit)
+    expect(updateRestartBarrier.split('hostLifecycle.stop()').length).toBe(2)
   })
 
   it('acquires the shared authority lease for in-process Desktop and releases it on shutdown', () => {
