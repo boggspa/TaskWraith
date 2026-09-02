@@ -369,7 +369,7 @@ describe('SegmentedChatStore', () => {
 
   it('does not compact idle chats inside the idle window, then compacts after it', () => {
     const { store } = makeStore()
-    let prev = durableChat('chat-idle', 1, ['m1'])
+    const prev = durableChat('chat-idle', 1, ['m1'])
     store.mirrorSave(null, prev)
     const next = nextRecord(prev, ['m2'])
     store.mirrorSave(prev, next)

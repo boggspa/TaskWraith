@@ -59,7 +59,9 @@ class FakeRunPort implements HostProviderRunPort {
     this.begins.push(input)
     return { kind: 'started' as const }
   }
-  updateRun(_input: HostProviderRunUpdate): void {}
+  updateRun(_input: HostProviderRunUpdate): void {
+    /* noop */
+  }
   finishRun(input: HostProviderRunFinish): void {
     this.finish = input
   }
@@ -67,7 +69,9 @@ class FakeRunPort implements HostProviderRunPort {
     this.registered.push(runId)
     return { kind: 'registered' as const }
   }
-  clearCancel(): void {}
+  clearCancel(): void {
+    /* noop */
+  }
   publishRunEvent(_target: HostRunEventTarget, event: HostProviderRunEvent): void {
     this.events.push(event)
   }

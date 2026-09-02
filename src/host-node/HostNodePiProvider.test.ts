@@ -504,7 +504,7 @@ describe('HostNodePiProvider run', () => {
     const runPort = new FakeRunPort()
     const killed: string[] = []
     const commands: string[] = []
-    let provider: HostNodePiProvider | undefined
+    let provider: HostNodePiProvider | undefined = undefined
     const spawn: HostNodePiSpawn = () => ({
       writeCommand(line) {
         commands.push(line)

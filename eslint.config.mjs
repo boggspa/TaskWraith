@@ -8,6 +8,8 @@ import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 export default defineConfig(
   {
     ignores: [
+      // Pinned Emscripten output; hash is part of the reviewed emulator receipt (mirrors .prettierignore)
+      'resources/emulator/**/twgb.mjs',
       '**/node_modules',
       '**/dist',
       '**/dist-debug',
@@ -22,7 +24,12 @@ export default defineConfig(
       // .local-only at all. A gate that is red for things you cannot ship is a gate
       // people stop reading.
       '.local-only/**',
-      'website/**'
+      'website/**',
+      // Gitignored fan-out lane worktrees: flat config does NOT read .gitignore,
+      // so without this eslint grades stale nested checkouts as if they were
+      // source — a red that can only ever exist locally. vitest's exclude list
+      // keeps the same copies out of the test suite for the same reason.
+      '.taskwraith-worktrees/**'
     ]
   },
   tseslint.configs.recommended,
@@ -47,6 +54,7 @@ export default defineConfig(
       'react-hooks/set-state-in-effect': 'warn',
       'react-hooks/refs': 'warn',
       'react-hooks/preserve-manual-memoization': 'warn',
+      'react-hooks/purity': 'warn',
       'react-refresh/only-export-components': [
         'warn',
         {

@@ -17,7 +17,8 @@ const SYSTEM_CONFIDENTIAL_INSPECTION_HEADS = new Set([
   'id',
   'groups'
 ])
-const STANDARD_EXECUTABLE_PREFIX = /^(?:\/usr\/bin\/|\/bin\/|\/usr\/local\/bin\/|\/opt\/homebrew\/bin\/)/
+const STANDARD_EXECUTABLE_PREFIX =
+  /^(?:\/usr\/bin\/|\/bin\/|\/usr\/local\/bin\/|\/opt\/homebrew\/bin\/)/
 const WORKSPACE_INSPECTION_HEADS = new Set([
   'pwd',
   'ls',
@@ -273,16 +274,12 @@ function gitCommandWithoutWorkspaceC(command: string): string | null {
 
 function hasSymlinkFollowingFlags(head: string, args: readonly string[]): boolean {
   if (head === 'grep' || head === 'egrep' || head === 'fgrep') {
-    return args.some(
-      (token) => /^-[^-]*R/.test(token) || token.startsWith('--d')
-    )
+    return args.some((token) => /^-[^-]*R/.test(token) || token.startsWith('--d'))
   }
   if (head === 'rg' || head === 'fd') {
     return args.some(
       (token) =>
-        /^-[^-]*[Lz]/.test(token) ||
-        token.startsWith('--fol') ||
-        token.startsWith('--search-z')
+        /^-[^-]*[Lz]/.test(token) || token.startsWith('--fol') || token.startsWith('--search-z')
     )
   }
   if (head === 'find') return args.includes('-L') || args.includes('-follow')
@@ -290,9 +287,7 @@ function hasSymlinkFollowingFlags(head: string, args: readonly string[]): boolea
     return args.some((token) => /^-[^-]*l/.test(token) || token === '--follow-links')
   }
   if (head === 'ls') {
-    return args.some(
-      (token) => /^-[^-]*L/.test(token) || token.startsWith('--d')
-    )
+    return args.some((token) => /^-[^-]*L/.test(token) || token.startsWith('--d'))
   }
   if (head === 'du') return args.some((token) => /^-[^-]*[HL]/.test(token))
   return false
@@ -301,8 +296,7 @@ function hasSymlinkFollowingFlags(head: string, args: readonly string[]): boolea
 function exposesProcessEnvironment(head: string, args: readonly string[]): boolean {
   if (head !== 'jq') return false
   return args.some(
-    (token) =>
-      /\$ENV\b/.test(token) || /(^|[^A-Za-z0-9_$])env(?=$|[^A-Za-z0-9_])/.test(token)
+    (token) => /\$ENV\b/.test(token) || /(^|[^A-Za-z0-9_$])env(?=$|[^A-Za-z0-9_])/.test(token)
   )
 }
 
@@ -323,10 +317,7 @@ function jqLoadsCodeOrExternalFilter(args: readonly string[]): boolean {
 function isLongLivedFollowMode(head: string, args: readonly string[]): boolean {
   if (head !== 'tail') return false
   return args.some(
-    (token) =>
-      /^-[^-]*[fF]/.test(token) ||
-      token.startsWith('--f') ||
-      token.startsWith('--r')
+    (token) => /^-[^-]*[fF]/.test(token) || token.startsWith('--f') || token.startsWith('--r')
   )
 }
 
@@ -359,10 +350,7 @@ function usesFileLoadingOption(head: string, args: readonly string[]): boolean {
   return false
 }
 
-function resolveTrustedExecutable(
-  requested: string,
-  workspaceRealPath: string
-): string | null {
+function resolveTrustedExecutable(requested: string, workspaceRealPath: string): string | null {
   const candidates = requested.includes('/')
     ? [path.resolve(requested)]
     : TRUSTED_EXECUTABLE_DIRECTORIES.map((directory) => path.join(directory, requested))
@@ -475,7 +463,7 @@ function attachedPathOptionValue(head: string, token: string): string | null {
 }
 
 function existingGlobPrefix(value: string): string {
-  const wildcard = value.search(/[?*\[]/)
+  const wildcard = value.search(/[?*[]/)
   if (wildcard < 0) return value
   const prefix = value.slice(0, wildcard)
   const separator = prefix.lastIndexOf('/')

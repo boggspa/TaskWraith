@@ -103,6 +103,7 @@ function buildResumeFallbackPrompt(
   if (messages.length === 0) return undefined
 
   const clean = (value: string): string =>
+    // eslint-disable-next-line no-control-regex -- strips terminal control sequences
     value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').trim()
   const history = messages
     .slice(-32)

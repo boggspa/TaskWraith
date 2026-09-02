@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
-import type { ChatListItem, ChatMessage, ChatRecord, ChatRun } from '../../../main/store/types'
+import type { ChatMessage, ChatRecord, ChatRun } from '../../../main/store/types'
 import {
   resolveCurrentChatTranscriptWindow,
   useCurrentChatTranscriptWindow

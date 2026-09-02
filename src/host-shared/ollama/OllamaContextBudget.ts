@@ -115,7 +115,7 @@ export function compressOllamaMessagesWithWorkingMemory(input: {
 }): OllamaChatMessage[] {
   const maxChars = input.maxChars ?? 12_000
   const messages = [...input.messages]
-  let total = messages.reduce((sum, message) => sum + message.content.length, 0)
+  const total = messages.reduce((sum, message) => sum + message.content.length, 0)
   if (total <= maxChars) return messages
 
   // Keep system prompt and the last few turns; compress the middle.

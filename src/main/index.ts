@@ -152,10 +152,7 @@ import {
   KimiMeshApprovalRelay,
   kimiMeshArgumentsFromAcpToolCall
 } from './kimi/KimiMeshApprovalRelay'
-import {
-  estimateKimiAcpTokenUsage,
-  kimiAcpVisiblePayloadChars
-} from '../host-shared/KimiAcpUsage'
+import { estimateKimiAcpTokenUsage, kimiAcpVisiblePayloadChars } from '../host-shared/KimiAcpUsage'
 import { createAcpTurnAbortController, type AcpSessionConfigSelection } from './acp/AcpTurnClient'
 import type {
   CodexRunState,
@@ -502,10 +499,7 @@ import {
 import { chatGrantWorkspaceBindingFromChat } from '../shared/externalPathGrantBinding'
 import { resolveDaemonShouldRun } from './BridgeDaemonSettings'
 import { BridgeActionRouter, approvalModeFromPayload } from './BridgeActionRouter'
-import {
-  ReasoningLedgerCoalescer,
-  coalescedReasoningInput
-} from './ReasoningLedgerCoalescer'
+import { ReasoningLedgerCoalescer, coalescedReasoningInput } from './ReasoningLedgerCoalescer'
 import { buildRunQueueDispatchReceipt } from './RunQueueDispatchReceipt'
 import type {
   BridgeActionAuthorizationResolver,
@@ -1369,14 +1363,8 @@ import {
 import { AuditOrchestrator } from './audit/AuditOrchestrator'
 import { AuditRunTracker } from './audit/AuditRunTracker'
 import { createAuditGatesRunner } from './audit/AuditGatesRunner'
-import {
-  createDesktopToolExecutors,
-  isDesktopMcpToolName
-} from './mcp/DesktopToolExecutors'
-import {
-  createAppshotsToolExecutors,
-  isAppshotsMcpToolName
-} from './mcp/AppshotsToolExecutors'
+import { createDesktopToolExecutors, isDesktopMcpToolName } from './mcp/DesktopToolExecutors'
+import { createAppshotsToolExecutors, isAppshotsMcpToolName } from './mcp/AppshotsToolExecutors'
 import { shouldAutoAllowAppshotsCapture } from './AppshotsCaptureAutoAllow'
 import { resolveAppshotsTargetOwnership } from './AppshotsTargetOwnership'
 import { CanvasService, type CanvasHistoryAuthority } from './canvas/CanvasService'
@@ -1391,10 +1379,7 @@ import { createSignInBrowserWindow } from './webLogin/WebLoginSignInWindowElectr
 import { WebLoginService } from './webLogin/WebLoginService'
 import { createElectronWebSiteLivenessProbe } from './webLogin/WebSiteLivenessProbeElectron'
 import { registerWebLoginHandlers } from './ipc/webLoginHandlers'
-import {
-  createWebLoginToolExecutors,
-  isWebLoginMcpToolName
-} from './mcp/WebLoginToolExecutors'
+import { createWebLoginToolExecutors, isWebLoginMcpToolName } from './mcp/WebLoginToolExecutors'
 import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
 import { CanvasRenderDriver } from './canvas/CanvasRenderDriver'
 import { CanvasChartDriver } from './canvas/CanvasChartDriver'
@@ -1407,9 +1392,7 @@ import { resolveNativeWindowCanvasOpenTarget } from './canvas/NativeWindowCanvas
 import { CanvasEmbedController } from './canvas/CanvasEmbedController'
 import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
 import { registerCanvasPopoutIpc } from './canvas/CanvasPopoutIpc'
-import {
-  CanvasPopoutWindowManager,
-} from './canvas/CanvasPopoutWindowManager'
+import { CanvasPopoutWindowManager } from './canvas/CanvasPopoutWindowManager'
 import { createCanvasPopoutElectronWindowDeps } from './canvas/CanvasPopoutElectronWindow'
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
 import type {
@@ -1444,10 +1427,7 @@ import {
 import { createCanvasToolExecutors, isCanvasMcpToolName } from './mcp/CanvasToolExecutors'
 import { createEmulatorToolExecutors, isEmulatorMcpToolName } from './mcp/EmulatorToolExecutors'
 import { createMeshToolExecutors, isMeshMcpToolName } from './mcp/MeshToolExecutors'
-import {
-  createSimulatorToolExecutors,
-  isSimulatorMcpToolName
-} from './mcp/SimulatorToolExecutors'
+import { createSimulatorToolExecutors, isSimulatorMcpToolName } from './mcp/SimulatorToolExecutors'
 import { MeshAssetStore } from './mesh/MeshAssetStore'
 import { registerMeshAssetProtocol } from './mesh/MeshAssetProtocol'
 import { MeshSceneService, type MeshSceneEvent } from './mesh/MeshSceneService'
@@ -1538,15 +1518,15 @@ import {
   executeSkillTool,
   isSkillMcpToolName
 } from './mcp/SkillToolExecutors'
-import { createSkillsHooksSubsystem, getSkillsHooksSubsystem } from './skillsHooks/registerSkillsHooksSubsystem'
+import {
+  createSkillsHooksSubsystem,
+  getSkillsHooksSubsystem
+} from './skillsHooks/registerSkillsHooksSubsystem'
 import {
   createInstructionsSubsystem,
   getInstructionsSubsystem
 } from './instructions/registerInstructionsSubsystem'
-import {
-  configureWirePromptCapture,
-  emitWirePromptCapture
-} from './run/WirePromptEvents'
+import { configureWirePromptCapture, emitWirePromptCapture } from './run/WirePromptEvents'
 import {
   resolveRunSkillHookContext,
   setRunSkillHookHostDepsBuilder
@@ -1763,10 +1743,7 @@ import {
 } from './ollama/OllamaWebSessionStore'
 import { createMistralWebUsageLane } from './mistral/MistralWebUsage'
 import { createOllamaWebUsageFetcher } from './ollama/OllamaWebUsage'
-import {
-  configureKimiWebSessionStore,
-  kimiWebSessionStore
-} from './kimi/KimiWebSessionStore'
+import { configureKimiWebSessionStore, kimiWebSessionStore } from './kimi/KimiWebSessionStore'
 import { configureUsageWebSessionStores } from './providers/UsageWebSessionStore'
 import { createKimiWebUsageFetcher } from './kimi/KimiWebUsage'
 import { registerMistralApiKeyHandlers } from './ipc/mistralApiKeyHandlers'
@@ -1923,10 +1900,7 @@ import { AgyBrainTranscriptMonitor } from './antigravity/AntigravityBrainTranscr
 import { planAntigravityFailedExitFinalRecovery } from './antigravity/AntigravityFailedExitFinalRecovery'
 import type { AgyCompletedFinalResponse } from './antigravity/AntigravityFinalResponseLiveness'
 import { createAntigravityQuotaClient } from './antigravity/AntigravityQuotaClient'
-import {
-  fetchAuthenticatedAgyQuotaSnapshot,
-  type AgyPtyLike
-} from './antigravity/AntigravityUsage'
+import { fetchAuthenticatedAgyQuotaSnapshot, type AgyPtyLike } from './antigravity/AntigravityUsage'
 import { fetchAntigravityCliQuotaSummary } from './antigravity/AntigravityQuotaSummary'
 import {
   createProviderCapabilityProbe,
@@ -2393,11 +2367,7 @@ import { evaluateBossmanAutoApproval } from './BossmanAutoApproval'
 import { configuredEnsembleCaptainParticipantIds } from './EnsembleAuthorityResolution'
 import { resolveRosterUpdateBossmanAssignment } from './EnsembleRosterUpdate'
 import { buildEnsembleYieldToolResult } from './EnsembleYieldToolResult'
-import {
-  handleScoutBrief,
-  type ScoutBriefConfidence,
-  type ScoutBriefRecord
-} from './ScoutBrief'
+import { handleScoutBrief, type ScoutBriefConfidence, type ScoutBriefRecord } from './ScoutBrief'
 import {
   formatBlackboardCapacityNotice,
   makeBlackboardEntry,
@@ -3691,10 +3661,7 @@ async function cancelHostCommandsForRun(appRunId: unknown, reason: string): Prom
   try {
     const cancellation = hostCommandOperations.beginRunCancellation(appRunId.trim(), reason)
     await cancellation.completion
-    if (
-      cancellation.operationIds.length > 0 &&
-      !(await cancellation.processTreeStopped)
-    ) {
+    if (cancellation.operationIds.length > 0 && !(await cancellation.processTreeStopped)) {
       await new Promise<void>(() => undefined)
     }
   } catch (error) {
@@ -4247,8 +4214,7 @@ async function triggerProviderAutoFailover(
         availableProviders: () => selectableProviderIds(),
         isPaused: (candidate) => isProviderPaused(AppStore.getSettings(), candidate),
         signPosture: (mode, eff, ctx) => signRunPosture(mode, eff, ctx),
-        verifyPosture: (mode, eff, signature, ctx) =>
-          verifyRunPosture(mode, eff, signature, ctx),
+        verifyPosture: (mode, eff, signature, ctx) => verifyRunPosture(mode, eff, signature, ctx),
         makeRunId: (candidate) => createFallbackRunId(candidate),
         dispatch: (payload) => dispatchRef(payload, { sender }),
         notify: (notice) => emitAutoFailoverNotice(notice)
@@ -4946,9 +4912,7 @@ const canvasService = new CanvasService({
           runId: opts.appRunId,
           provider: opts.provider,
           target: opts.deviceTarget,
-          ...(opts.ownerParticipantId
-            ? { ownerParticipantId: opts.ownerParticipantId }
-            : {}),
+          ...(opts.ownerParticipantId ? { ownerParticipantId: opts.ownerParticipantId } : {}),
           run: defaultSimctlRunner
         })
       })
@@ -8816,9 +8780,8 @@ let runQueueServiceRef: RunQueueService | null = null
 let runLifecycleCoordinatorRef: RunLifecycleCoordinator | null = null
 let executionGraphRepositoryRef: ExecutionGraphRepository | null = null
 let executionGraphCoordinatorRef: ExecutionGraphCoordinator | null = null
-let startUltraTaskGraphRef:
-  | ((input: StartUltraTaskGraphInput) => StartedUltraTaskWorkflow)
-  | null = null
+let startUltraTaskGraphRef: ((input: StartUltraTaskGraphInput) => StartedUltraTaskWorkflow) | null =
+  null
 let listUltraTaskModelsRef: ((provider: ProviderId) => Promise<unknown[]>) | null = null
 let executionGraphRecoveryDiagnostics: readonly ExecutionGraphRecoveryDiagnostic[] = []
 let executionGraphServiceDiagnostics: readonly ExecutionGraphServiceDiagnostic[] = []
@@ -9029,8 +8992,7 @@ const projectStudio = bootstrapProjectStudio({
   userDataPath: app.getPath('userData'),
   getActiveExtract: (projectId, referenceId) =>
     projectReferenceExtracts.extractLoader.getActiveExtract(projectId, referenceId),
-  readExtractText: (extractId) =>
-    projectReferenceExtracts.extractLoader.readExtractText(extractId),
+  readExtractText: (extractId) => projectReferenceExtracts.extractLoader.readExtractText(extractId),
   applyReferenceOp: (op) => AppStore.applyProjectReferenceOp(op)
 })
 
@@ -9896,7 +9858,6 @@ async function maybePropagateLinkedChildResult(
   refreshFleetWaveDoorbell(parent.appChatId)
 }
 
-
 /**
  * Rewrite the one-slot fleet doorbell on the parent's Blackboard.
  *
@@ -10362,7 +10323,9 @@ function isChatRunLive(runId: string | undefined | null): boolean {
   if (bridgeState && bridgeTranscriptActivityIsLive(bridgeState.lastActivityAt, Date.now())) {
     return true
   }
-  const bgState = backgroundSubThreadTranscripts.get(id) || [...backgroundSubThreadTranscripts.values()].find((state) => state.runId === id)
+  const bgState =
+    backgroundSubThreadTranscripts.get(id) ||
+    [...backgroundSubThreadTranscripts.values()].find((state) => state.runId === id)
   if (bgState) {
     if (bgState.status !== 'running') return false
     return bridgeTranscriptActivityIsLive(bgState.lastActivityAt, Date.now())
@@ -11421,10 +11384,7 @@ function broadcastChatPopoutUpdate(chat: ChatRecord): void {
   broadcastChatPopoutUpdateExcept(chat)
 }
 
-function broadcastChatPopoutUpdateExcept(
-  chat: ChatRecord,
-  excludedSenderId?: number
-): void {
+function broadcastChatPopoutUpdateExcept(chat: ChatRecord, excludedSenderId?: number): void {
   if (!chat?.appChatId || workspacePopoutWindows.size === 0) return
   const key = `chat:${chat.appChatId}`
   const win = workspacePopoutWindows.get(key)
@@ -11673,7 +11633,10 @@ async function composeDelegatedProviderPrompts(args: {
     nativeSubAgentRequests: settings.nativeSubAgentRequests,
     taskWraithMcpAdvertised,
     taskWraithMcpProfileId: taskWraithMcpProfile.profileId,
-    reasoningEffort: typeof args.providerMetadataPatch?.reasoningEffort === 'string' ? args.providerMetadataPatch.reasoningEffort : null,
+    reasoningEffort:
+      typeof args.providerMetadataPatch?.reasoningEffort === 'string'
+        ? args.providerMetadataPatch.reasoningEffort
+        : null,
     openCanvasSessions: canvasService.list({ chatId: args.subThread.appChatId }),
     instructionContext: needsHostTranscriptInjection ? delegatedInstructionContext : null,
     ...(kimiNativeSessionResume ? { nativeSessionResume: true } : {}),
@@ -13481,9 +13444,7 @@ function ingestBridgeRunToolResult(state: BridgeRunTranscriptState, payload: any
           kind: payload.kind
         })
       : undefined
-  const stats = resultStats
-    ? mergeToolDiffSummary(resultInputStats, resultStats)
-    : resultInputStats
+  const stats = resultStats ? mergeToolDiffSummary(resultInputStats, resultStats) : resultInputStats
   if (stats) {
     // Precedence lives in `mergeToolDiffSummary` so it is unit-tested rather
     // than asserted only by how the odometer looks. Larger-wins is preserved
@@ -16225,7 +16186,7 @@ async function dispatchDueScheduledLoopHeadless(
       // resolves any verified elevation internally) but is deliberately NOT re-added
       // to the output payload below — so the chokepoint skips the per-iteration
       // solo/budget bookkeeping (Option A). appRunId = input.runId bridges completion.
-      composed = await composer.composeRun({
+      composed = (await composer.composeRun({
         chatId: task.chatId,
         appRunId: input.runId,
         provider: composeProvider,
@@ -16263,7 +16224,7 @@ async function dispatchDueScheduledLoopHeadless(
         imageAttachments: task.imageAttachments,
         externalPathGrants: task.externalPathGrants,
         scheduledTaskId: task.id
-      }) as AgentRunPayload
+      })) as AgentRunPayload
     } catch (error) {
       return { failed: true, error: error instanceof Error ? error.message : String(error) }
     }
@@ -16456,41 +16417,44 @@ const liveSteeringCoordinator = new LiveSteeringCoordinator({
   },
   markAdmissionPending: ({ runId, ownerToken, activeRunId, strategy }) => {
     const fenced = runQueueServiceRef?.markPromotedSteerAdmissionPending({
-        runId,
-        ownerToken,
-        activeRunId,
-        strategy
-      })
-    return fenced?.status === 'steer_promoting' && fenced.steerDeliveryPhase === 'provider_admission_pending'
+      runId,
+      ownerToken,
+      activeRunId,
+      strategy
+    })
+    return (
+      fenced?.status === 'steer_promoting' &&
+      fenced.steerDeliveryPhase === 'provider_admission_pending'
+    )
   },
   releaseDefinitelyRejectedQueuedRun: ({ runId, ownerToken, reason }) => {
     const released = runQueueServiceRef?.releasePromotedSteerAfterDefiniteNonAdmission({
-        runId,
-        ownerToken,
-        reason
-      })
+      runId,
+      ownerToken,
+      reason
+    })
     return released?.status === 'queued'
   },
   completeQueuedRun: (runId, reason) => {
     const completed = runQueueServiceRef?.transitionJob(runId, 'completed', {
-        statusReason: reason
-      })
+      statusReason: reason
+    })
     return completed?.status === 'completed'
   },
   failQueuedRun: (runId, reason) => {
     const failed = runQueueServiceRef?.transitionJob(runId, 'failed', {
-        statusReason: reason,
-        lastError: reason
-      })
+      statusReason: reason,
+      lastError: reason
+    })
     return failed?.status === 'failed'
   },
   fallbackQueuedRun: ({ runId, ownerToken, reason }) => {
     const fallback = runQueueServiceRef?.fallbackPromotedSteerJob({
-        runId,
-        ownerToken,
-        reason,
-        fallbackStatus: 'queued'
-      })
+      runId,
+      ownerToken,
+      reason,
+      fallbackStatus: 'queued'
+    })
     return fallback?.status === 'queued'
   }
 })
@@ -16601,7 +16565,9 @@ function appendEnsembleSteerIntoLiveRound(
       content: text,
       timestampIso: nowIso,
       author: HOST_MIDRUN_STEERING_AUTHOR,
-      ...(chat.ensemble?.activeRound?.roundId ? { ensembleRoundId: chat.ensemble.activeRound.roundId } : {}),
+      ...(chat.ensemble?.activeRound?.roundId
+        ? { ensembleRoundId: chat.ensemble.activeRound.roundId }
+        : {}),
       ...(imageAttachments.length > 0 ? { imageAttachments } : {}),
       ...(imageThumbnails.length > 0 ? { imageThumbnails } : {})
     })
@@ -20650,11 +20616,7 @@ async function runCliProviderProcess(
             const recoveredText = recovery
               ? sanitizeCanvasEvalProviderText(recovery.text).trim()
               : ''
-            if (
-              recovery &&
-              recoveredText &&
-              !runManager.getClaimedTerminalStatus(route.appRunId)
-            ) {
+            if (recovery && recoveredText && !runManager.getClaimedTerminalStatus(route.appRunId)) {
               sendAgentCompatLine(
                 event.sender,
                 provider,
@@ -21162,8 +21124,7 @@ async function canUseClaudeSdkTool(
   if (approvalIdentity.kind === 'provider-native') {
     // Host Pre/Post for provider-native tools only — TaskWraith MCP already
     // fires hooks inside executeGeminiMcpTool; wiring both would double-fire.
-    const claudeNativeWorkspace =
-      payload.scope === 'global' ? undefined : payload.workspace
+    const claudeNativeWorkspace = payload.scope === 'global' ? undefined : payload.workspace
     const claudeHooksStore = getSkillsHooksSubsystem()?.hooksStore
     const hookedNative = await withHostToolHooks<
       | { behavior: 'allow'; updatedInput: Record<string, unknown> }
@@ -21243,10 +21204,7 @@ async function canUseClaudeSdkTool(
       },
       outcomeFromResult: (decision) => (decision.behavior === 'allow' ? 'ok' : 'deny'),
       onHookError: (phase, error) => {
-        console.warn(
-          `[hooks] ${phase === 'pre' ? 'Pre' : 'Post'}ToolUse failed:`,
-          error
-        )
+        console.warn(`[hooks] ${phase === 'pre' ? 'Pre' : 'Post'}ToolUse failed:`, error)
       }
     })
     if (hookedNative.blocked) {
@@ -22743,8 +22701,7 @@ function schedulePiCerebrasRateRetry(state: CliProviderStreamState): void {
     !isVerifiedFailoverSnapshotSource(
       snapshot,
       { failedRunId, failedProvider: 'pi', appChatId },
-      (mode, effective, signature, context) =>
-        verifyRunPosture(mode, effective, signature, context)
+      (mode, effective, signature, context) => verifyRunPosture(mode, effective, signature, context)
     )
   ) {
     return
@@ -22887,8 +22844,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
       `[pi-rpc] delivering ${piImages.length} image attachment(s) as prompt content blocks for run=${route.appRunId}`
     )
   }
-  const piPromptLine = (message: string): string =>
-    piPromptCommand(message, undefined, piImages)
+  const piPromptLine = (message: string): string => piPromptCommand(message, undefined, piImages)
 
   // Reuse the opt-in Kimi compatibility pass for the Pi upstreams that need
   // it. The resolver is deliberately allowlisted: Qwen, MiniMax, Mistral,
@@ -23210,9 +23166,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   if (!preparedTaskWraithTools) {
     // No readiness gate on this path — the stdin line below is the wire text.
     const piNoBrokerText =
-      managedToolsExpected || ephemeralSession
-        ? managedToolsFallbackPrompt
-        : payload.prompt
+      managedToolsExpected || ephemeralSession ? managedToolsFallbackPrompt : payload.prompt
     emitWirePromptCapture({
       appRunId: route.appRunId,
       appChatId: route.appChatId,
@@ -23686,9 +23640,7 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
           payload.taskWraithMcpProfileId
         ),
         sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
-          payload.taskWraithMcpProfileId
-        ),
+        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         permissionOpportunityDirect: isPermissionOpportunityDirectTaskWraithMcpProfile(
           payload.taskWraithMcpProfileId
@@ -23979,7 +23931,7 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
     grokSeatParticipantId &&
     grokReadOnlySeat &&
     grokMcpServers.length === 0 &&
-    !(payload.imagePaths?.length)
+    !payload.imagePaths?.length
   ) {
     try {
       const seatKey = `${route.appChatId || 'chat'}:${grokSeatParticipantId}`
@@ -24046,8 +23998,7 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
       },
       onPermissionRequest: grokPermissionHandler,
       onEvent: (evt) => applyGrokRunEvent(state, evt),
-      onToolBatchBoundary: () =>
-        scheduleQueuedSteerToolBoundary('grok', route.appRunId!),
+      onToolBatchBoundary: () => scheduleQueuedSteerToolBoundary('grok', route.appRunId!),
       onRawFrame: (direction, message) => maybeLogGrokRawAcp(direction, message),
       onClose: finishGrokAcpTurn
     })
@@ -24632,9 +24583,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
           payload.taskWraithMcpProfileId
         ),
         sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
-          payload.taskWraithMcpProfileId
-        ),
+        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         permissionOpportunityDirect: isPermissionOpportunityDirectTaskWraithMcpProfile(
           payload.taskWraithMcpProfileId
@@ -24981,9 +24930,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
     transport: 'mistral-vibe-acp',
     part: 'user',
     text: mistralProviderPrompt,
-    transforms: [
-      mistralWriteSeat ? 'mistral write-mode preamble' : 'mistral read-only preamble'
-    ]
+    transforms: [mistralWriteSeat ? 'mistral write-mode preamble' : 'mistral read-only preamble']
   })
   // Broker startup and prompt composition await after run registration. A
   // destructive-history fence can terminalize that run while those awaits are
@@ -25015,8 +24962,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
       },
       onPermissionRequest: mistralPermissionHandler,
       onEvent: (evt) => applyMistralRunEvent(state, evt),
-      onToolBatchBoundary: () =>
-        scheduleQueuedSteerToolBoundary('mistral', route.appRunId!),
+      onToolBatchBoundary: () => scheduleQueuedSteerToolBoundary('mistral', route.appRunId!),
       onRawFrame: (direction, message) => maybeLogMistralRawAcp(direction, message),
       onClose: finishMistralAcpTurn
     })
@@ -25122,8 +25068,7 @@ function applyDevinRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRu
       state
     )
   } else if (evt.type === 'tool_result') {
-    const toolId =
-      evt.toolId || `devin-tool-${devinFallbackToolSeq || ++devinFallbackToolSeq}`
+    const toolId = evt.toolId || `devin-tool-${devinFallbackToolSeq || ++devinFallbackToolSeq}`
     accumulateEstimatedStreamChars(state, 'input', visiblePayloadChars(evt.toolOutput))
     reportGenericLiveEstimate(state)
     const diagnosticProjection = grokCanvasEvalDiagnosticSanitizer(state).sanitize(
@@ -25192,7 +25137,9 @@ function maybeLogDevinRawAcp(direction: 'in' | 'out', message: unknown): void {
     return
   }
   try {
-    process.stderr.write(`[devin-acp-raw] ${direction === 'out' ? '→' : '←'} ${serialized}${os.EOL}`)
+    process.stderr.write(
+      `[devin-acp-raw] ${direction === 'out' ? '→' : '←'} ${serialized}${os.EOL}`
+    )
   } catch {
     /* diagnostics only */
   }
@@ -25495,9 +25442,7 @@ async function runDevinAcpProvider(event: Electron.IpcMainInvokeEvent, payload: 
           payload.taskWraithMcpProfileId
         ),
         sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
-          payload.taskWraithMcpProfileId
-        ),
+        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         permissionOpportunityDirect: isPermissionOpportunityDirectTaskWraithMcpProfile(
           payload.taskWraithMcpProfileId
@@ -26460,8 +26405,7 @@ async function runKimiAcpProvider(
             },
             onPermissionRequest: kimiPermissionHandler,
             onEvent: (evt) => applyKimiAcpRunEvent(state, evt as NormalizedGrokRunEvent),
-            onToolBatchBoundary: () =>
-              scheduleQueuedSteerToolBoundary('kimi', route.appRunId!),
+            onToolBatchBoundary: () => scheduleQueuedSteerToolBoundary('kimi', route.appRunId!),
             onRawFrame: (direction, message) => {
               const flag = String(process.env.TASKWRAITH_KIMI_ACP_DEBUG || '').toLowerCase()
               if (flag === '1' || flag === 'true' || flag === 'yes') {
@@ -32462,9 +32406,7 @@ async function settleCodexNativeApprovalRequest(
       externalPathDetection,
       ...(codexCanvasEvalWindowSurface ? { surfaceId: codexCanvasEvalWindowSurface } : {}),
       // Deferred PostToolUse: skip Post at registration; resolve fires ok/deny.
-      ...(isCodexProviderNativeHostHook && hostHookToolName
-        ? { hostHookToolName }
-        : {})
+      ...(isCodexProviderNativeHostHook && hostHookToolName ? { hostHookToolName } : {})
     })
     if (registered !== true) {
       respondingClient.reject(message.id, 'TaskWraith is not accepting new approval requests.')
@@ -32555,17 +32497,11 @@ async function settleCodexNativeApprovalRequest(
     run: settleApprovalDecision,
     outcomeFromResult: (outcome) => (outcome === 'deferred' ? null : outcome),
     onHookError: (phase, error) => {
-      console.warn(
-        `[hooks] ${phase === 'pre' ? 'Pre' : 'Post'}ToolUse failed:`,
-        error
-      )
+      console.warn(`[hooks] ${phase === 'pre' ? 'Pre' : 'Post'}ToolUse failed:`, error)
     }
   })
   if (hooked.blocked) {
-    respondingClient.reject(
-      message.id,
-      hooked.reason || 'Blocked by TaskWraith PreToolUse hook.'
-    )
+    respondingClient.reject(message.id, hooked.reason || 'Blocked by TaskWraith PreToolUse hook.')
     sendAgentCompatError(
       state.sender,
       'codex',
@@ -32574,7 +32510,6 @@ async function settleCodexNativeApprovalRequest(
     )
   }
 }
-
 
 function maybeRequestCodexHostRerun(
   state: CodexRunState,
@@ -34793,11 +34728,7 @@ function geminiApiProviderDeps() {
       channelAgentRunIsolationRegistry.isRunIsolated(route.appRunId)
         ? null
         : AppStore.getChat(chatId),
-    saveChatLinkedSessionId: (
-      chatId: string,
-      sessionId: string,
-      route: AgentRunRoute
-    ) => {
+    saveChatLinkedSessionId: (chatId: string, sessionId: string, route: AgentRunRoute) => {
       if (channelAgentRunIsolationRegistry.isRunIsolated(route.appRunId)) return
       const existing = AppStore.getChat(chatId)
       if (!existing) return
@@ -34810,11 +34741,7 @@ function geminiApiProviderDeps() {
       AppStore.saveChat(existing)
     },
     recordUsage: recordProviderRunUsage,
-    appendChatSystemMessage: (
-      chatId: string,
-      message: ChatMessage,
-      route: AgentRunRoute
-    ) => {
+    appendChatSystemMessage: (chatId: string, message: ChatMessage, route: AgentRunRoute) => {
       if (channelAgentRunIsolationRegistry.isRunIsolated(route.appRunId)) return
       const existing = AppStore.getChat(chatId)
       if (!existing) return
@@ -35072,9 +34999,7 @@ async function runGeminiProvider(
           payload.taskWraithMcpProfileId
         ),
         sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
-          payload.taskWraithMcpProfileId
-        ),
+        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         auditSubset: Boolean(payload.auditRun)
       },
       isolatedInstanceId:
@@ -36016,7 +35941,7 @@ async function runAntigravityAgyProvider(
           return {
             decision: 'deny',
             reason:
-              'This tool claims TaskWraith\'s reserved MCP namespace but is not a declared catalog action. It was denied rather than treated as a native tool.'
+              "This tool claims TaskWraith's reserved MCP namespace but is not a declared catalog action. It was denied rather than treated as a native tool."
           }
         }
         if (kind === 'shell') {
@@ -36178,7 +36103,7 @@ async function runAntigravityAgyProvider(
       releaseHookBridgeRun?.()
       releaseHookBridgeRun = undefined
       hookOverlay = undefined
-      
+
       // If the hook bridge failed to stand up, agy's native confirmation MUST
       // not be skipped. The flag might have been provisionally added on the
       // assumption the hook would route those confirmations to TaskWraith.
@@ -36605,7 +36530,6 @@ const devinAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEven
     }
   }
 ]
-
 
 // Muse Code: opaque `muse exec --json` seat. Lifecycle in muse/MuseRun.ts;
 // IPC→spawn bridge in muse/MuseIpcBridge.ts. Keep this array in index.ts so
@@ -37540,7 +37464,9 @@ function unsupportedNativeMcpToolResult(
   const capabilities = getNativeCapabilitySnapshot()
   const feature = toolName.startsWith('attached_window_')
     ? capabilities.screenWatch
-    : toolName.startsWith('appwatch_') || toolName === 'appshots' || toolName.startsWith('appshots_')
+    : toolName.startsWith('appwatch_') ||
+        toolName === 'appshots' ||
+        toolName.startsWith('appshots_')
       ? capabilities.appwatch
       : toolName === 'creative_applescript_dispatch'
         ? capabilities.appleEvents
@@ -38403,7 +38329,8 @@ function permissionOpportunityBindingFor(
   const primaryWorkspacePath = workspaceRun ? chat.workspacePath : null
   const effectiveWorkspacePath = workspaceRun ? context.workspacePath : null
   const workspaceId = workspaceRun ? chat.workspaceId : null
-  if (workspaceRun && (!workspaceId || !primaryWorkspacePath || !effectiveWorkspacePath)) return null
+  if (workspaceRun && (!workspaceId || !primaryWorkspacePath || !effectiveWorkspacePath))
+    return null
   const postureFingerprint =
     context.effectivePermissionsSignature ||
     (context.effectivePermissions
@@ -39189,10 +39116,7 @@ async function executeGeminiMcpTool(
           ...mcpStructuredJsonResult({
             ok: false,
             tool: toolName,
-            error:
-              error instanceof Error
-                ? error.message
-                : 'PreToolUse hook failed closed.'
+            error: error instanceof Error ? error.message : 'PreToolUse hook failed closed.'
           }),
           isError: true
         }
@@ -39599,18 +39523,18 @@ async function executeGeminiMcpTool(
       : staleExternalPathGrantBinding
         ? `TaskWraith cancelled the ${toolName} approval because the chat workspace changed while the grant prompt was open. Re-request access from the current workspace if still needed.`
         : networkBlockedTool
-        ? networkAccessBlockedMessage(networkBlockedTool)
-        : mediaToolDenied
-          ? `Media tool ${toolName} was denied: it is gated as File changes and needs a write-capable permission preset (not read-only/plan)${
-              toolName === 'image_generate'
-                ? ', and image generation must be enabled with an API key in TaskWraith Settings'
-                : ''
-            }.`
-          : `${AGENTIC_SERVICE_LABELS[approvalPreview.service]} denied by TaskWraith.${
-              genericApprovalResolution?.decisionSource === 'system'
-                ? ' The approval timed out or was cancelled by the system.'
-                : ''
-            }`
+          ? networkAccessBlockedMessage(networkBlockedTool)
+          : mediaToolDenied
+            ? `Media tool ${toolName} was denied: it is gated as File changes and needs a write-capable permission preset (not read-only/plan)${
+                toolName === 'image_generate'
+                  ? ', and image generation must be enabled with an API key in TaskWraith Settings'
+                  : ''
+              }.`
+            : `${AGENTIC_SERVICE_LABELS[approvalPreview.service]} denied by TaskWraith.${
+                genericApprovalResolution?.decisionSource === 'system'
+                  ? ' The approval timed out or was cancelled by the system.'
+                  : ''
+              }`
     const permissionRepair =
       explicitlyDeclinedByUser ||
       networkBlockedTool ||
@@ -39754,19 +39678,19 @@ async function executeGeminiMcpTool(
       Boolean(workspaceMutationAdmission.laneId) && !isUnscopedProcessAuthorityTool(toolName)
     const permissionRepair =
       exactOneOffPermissionRetry || retryGuardError || nonRetriableLaneBoundary
-      ? {}
-      : permissionRepairForDeniedInvocation({
-          context,
-          parentProvider,
-          callerContext,
-          toolName,
-          arguments: args,
-          failure: workspaceMutationAdmission.reason,
-          boundaryCode: isUnscopedProcessAuthorityTool(toolName)
-            ? 'unscoped_process'
-            : 'workspace_lock_denied',
-          userDeclined: false
-        })
+        ? {}
+        : permissionRepairForDeniedInvocation({
+            context,
+            parentProvider,
+            callerContext,
+            toolName,
+            arguments: args,
+            failure: workspaceMutationAdmission.reason,
+            boundaryCode: isUnscopedProcessAuthorityTool(toolName)
+              ? 'unscoped_process'
+              : 'workspace_lock_denied',
+            userDeclined: false
+          })
     const admissionDeniedPayload = {
       ok: false,
       tool: toolName,
@@ -40415,9 +40339,7 @@ async function executeGeminiMcpTool(
           !workspaceInspectionWorkspaceRealPath ||
           liveInspectionWorkspaceRealPath !== workspaceInspectionWorkspaceRealPath
         ) {
-          throw new Error(
-            'The prompt-free workspace inspection boundary changed before execution.'
-          )
+          throw new Error('The prompt-free workspace inspection boundary changed before execution.')
         }
       }
       hostCommandProjection = createHostCommandProjectionScope({
@@ -40451,7 +40373,7 @@ async function executeGeminiMcpTool(
       }
       if (commandRuleMatch) {
         const liveMatch = commandRuleInput
-          ? commandRuleApprovalFlowRef?.matchLive(commandRuleInput) ?? null
+          ? (commandRuleApprovalFlowRef?.matchLive(commandRuleInput) ?? null)
           : null
         if (
           !liveMatch ||
@@ -40495,9 +40417,7 @@ async function executeGeminiMcpTool(
           : runHostCommand(executionCommand, executionCwd, {
               ...(shellReleaseApproval ? { releaseApproval: shellReleaseApproval } : {}),
               ...(executionEnvironment ? { environment: executionEnvironment } : {}),
-              ...(unsetExecutionEnvironment
-                ? { unsetEnvironment: unsetExecutionEnvironment }
-                : {})
+              ...(unsetExecutionEnvironment ? { unsetEnvironment: unsetExecutionEnvironment } : {})
             })
       )
       text = formatHostCommandResult(result)
@@ -40701,12 +40621,7 @@ async function executeGeminiMcpTool(
     } else if (isSimulatorMcpToolName(toolName)) {
       markDispatchHandled('simulator-canvas')
       applyRichResult(
-        await simulatorToolExecutors.executeSimulatorTool(
-          toolName,
-          args,
-          context,
-          parentProvider
-        )
+        await simulatorToolExecutors.executeSimulatorTool(toolName, args, context, parentProvider)
       )
     } else if (isLaunchMcpToolName(toolName)) {
       markDispatchHandled('launch-control')
@@ -40882,9 +40797,7 @@ async function executeGeminiMcpTool(
       if (!appshotsToolExecutors) {
         throw new Error('AppShots tools are not available yet (app still initializing).')
       }
-      applyRichResult(
-        await appshotsToolExecutors.executeAppshotsTool(toolName, args, context)
-      )
+      applyRichResult(await appshotsToolExecutors.executeAppshotsTool(toolName, args, context))
     } else if (isDesktopMcpToolName(toolName)) {
       markDispatchHandled(
         'window-capture',
@@ -40995,26 +40908,26 @@ async function executeGeminiMcpTool(
             const session = runManager.get(runId)
             return Boolean(
               session &&
-                session.appChatId === parentChatId &&
-                isActiveRunSessionStatus(session.status) &&
-                !runManager.getClaimedTerminalStatus(runId)
+              session.appChatId === parentChatId &&
+              isActiveRunSessionStatus(session.status) &&
+              !runManager.getClaimedTerminalStatus(runId)
             )
           },
           // Ownership, not mere association, is the authorization boundary here:
           // a seat may await only the graphs its own thread answers for.
           getOwnedExecutions: (parentChatId) =>
-            (executionGraphCoordinatorRef
-              ?.listExecutions({ includeTerminal: true })
-              .filter((projection) => projection.owner?.threadId === parentChatId) ?? []).map(
-              (projection) => ({
-                executionId: projection.executionId,
-                state: projection.state,
-                ...(projection.title ? { title: projection.title } : {}),
-                ...(projection.updatedAt ? { updatedAt: projection.updatedAt } : {}),
-                topology: projection.topology,
-                activations: projection.activations
-              })
-            ),
+            (
+              executionGraphCoordinatorRef
+                ?.listExecutions({ includeTerminal: true })
+                .filter((projection) => projection.owner?.threadId === parentChatId) ?? []
+            ).map((projection) => ({
+              executionId: projection.executionId,
+              state: projection.state,
+              ...(projection.title ? { title: projection.title } : {}),
+              ...(projection.updatedAt ? { updatedAt: projection.updatedAt } : {}),
+              topology: projection.topology,
+              activations: projection.activations
+            })),
           clampTimeoutSeconds: clampAwaitTimeoutSeconds
         }
       )
@@ -41811,9 +41724,7 @@ async function executeGeminiMcpTool(
               released.code === 'not_held'
                 ? `No live claim on wave ${waveId}.`
                 : `Wave ${waveId} is claimed by ${released.holder.participantId}; only the holder can release it. Re-claim with takeover=true to take it over instead.`,
-            ...(released.code === 'not_holder'
-              ? { holder: released.holder.participantId }
-              : {})
+            ...(released.code === 'not_holder' ? { holder: released.holder.participantId } : {})
           })
         }
       } else if (action === 'claim') {
@@ -41957,16 +41868,14 @@ async function executeGeminiMcpTool(
         })
       } else if (!chat || !goal) {
         const isFirstTurn = (chat?.messages || []).length === 1
-        if (
-          chat &&
-          isFirstTurn &&
-          (toolName === 'goal_update' || toolName === 'update_goal')
-        ) {
+        if (chat && isFirstTurn && (toolName === 'goal_update' || toolName === 'update_goal')) {
           const objective = String(
-            args.objective || args.description || chat.messages[0]?.content || 'Auto-created objective'
+            args.objective ||
+              args.description ||
+              chat.messages[0]?.content ||
+              'Auto-created objective'
           )
-          const { createActiveGoal } = require('./GoalState')
-          const newGoal = createActiveGoal(chat.provider, objective, {
+          const newGoal = createActiveGoal(chat.provider!, objective, {
             objectiveSource: 'user'
           })
           const updatedChat = { ...chat, activeGoal: newGoal, updatedAt: Date.now() }
@@ -42624,8 +42533,7 @@ async function executeGeminiMcpTool(
           joinPolicy,
           // Panel attribution. Empty on a solo chat — there is no seat to
           // name, and createSubThread drops a blank rather than storing one.
-          spawnedBy:
-            ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || undefined
+          spawnedBy: ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || undefined
         })
       const readOnlyPermissions = resolveEffectiveRunPermissions({
         provider: providerArg,
@@ -43132,9 +43040,7 @@ async function executeGeminiMcpTool(
       // Batch spawn-only wave. Business logic lives in SubThreadDelegateWave;
       // this branch is composition-root wiring (context, approval, spawn ports).
       if (parentProvider === 'ollama') {
-        throw new Error(
-          `Ollama local mode cannot use TaskWraith sub-thread tools (${toolName}).`
-        )
+        throw new Error(`Ollama local mode cannot use TaskWraith sub-thread tools (${toolName}).`)
       }
       const parentChatId = context.appChatId
       if (!parentChatId) {
@@ -43152,8 +43058,7 @@ async function executeGeminiMcpTool(
       // Panel seat that called the wave. Drives both `delegationContext.spawnedBy`
       // on each worker and the auto-claim below. Empty on a solo chat, where
       // there is no panel and a claim would coordinate nothing.
-      const waveSpawnedBy =
-        ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || ''
+      const waveSpawnedBy = ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || ''
       const parentChatRelation = (parentChatForWave as { parentChatRelation?: unknown })
         .parentChatRelation
       if (
@@ -43175,8 +43080,11 @@ async function executeGeminiMcpTool(
       const callerParticipantId =
         context.ensembleRun?.participantId ||
         (context.appRunId
-          ? ((runManager.get(context.appRunId)?.state as { ensembleRun?: { participantId?: string } })
-              ?.ensembleRun?.participantId ??
+          ? ((
+              runManager.get(context.appRunId)?.state as {
+                ensembleRun?: { participantId?: string }
+              }
+            )?.ensembleRun?.participantId ??
             (parentChatForWave.runs || []).find((run) => run.runId === context.appRunId)
               ?.ensembleParticipantId)
           : undefined)
@@ -43217,9 +43125,7 @@ async function executeGeminiMcpTool(
         // join deadline has passed no longer blocks, the reaper fails it).
         findLiveEphemeralFleet: () => {
           const parentChat = AppStore.getChat(parentChatId)
-          const parentLive = parentChat
-            ? hasActiveProviderRunForChat(parentChat.appChatId)
-            : false
+          const parentLive = parentChat ? hasActiveProviderRunForChat(parentChat.appChatId) : false
           return findLiveEphemeralFleetWave({
             children: AppStore.getChildChats(parentChatId),
             nowMs: Date.now(),
@@ -43264,7 +43170,9 @@ async function executeGeminiMcpTool(
             isTerminalRunSessionStatus(runAfterApproval.status) ||
             historyClearAdmissionBlocked(context.appRunId, context.workspacePath, parentChatId)
           ) {
-            throw new Error('Sub-thread wave delegation was cancelled because the parent chat changed.')
+            throw new Error(
+              'Sub-thread wave delegation was cancelled because the parent chat changed.'
+            )
           }
           assertParentChatRelationshipCreationAllowed(parentChatId)
         },
@@ -43863,10 +43771,7 @@ async function executeGeminiMcpTool(
             publicFinalRichResult?.trustedMediaRefs ?? []
           )
         : []
-      const visibleMediaRefs = mergeTranscriptMediaRefs(
-        toolResultImageRefs,
-        ownedProducerMediaRefs
-      )
+      const visibleMediaRefs = mergeTranscriptMediaRefs(toolResultImageRefs, ownedProducerMediaRefs)
       deliverTrustedRunMediaRefs({
         appChatId: context.appChatId,
         appRunId: context.appRunId,
@@ -44800,11 +44705,7 @@ async function openWorkspacePopout(
   const existing = workspacePopoutWindows.get(key)
   if (existing && !existing.isDestroyed()) {
     const existingOwner = workspacePopoutOwners.get(key)
-    if (
-      kind === 'chat' &&
-      existingOwner &&
-      existingOwner.presentation !== presentation
-    ) {
+    if (kind === 'chat' && existingOwner && existingOwner.presentation !== presentation) {
       existingOwner.presentation = presentation
       applyChatPopoutWindowPresentation(existing, presentation)
       applyNativeGlassToWindow(existing, AppStore.getSettings())
@@ -45090,7 +44991,9 @@ if (isGeminiMcpBridgeProcess) {
         // queue is provably untouched; otherwise the state says "restart".
         workspaceLockStartupRecoveryBlockedReason = null
         if (
-          scheduledOccurrenceRecoveryBlockedReason?.startsWith('Workspace-lock recovery is required:')
+          scheduledOccurrenceRecoveryBlockedReason?.startsWith(
+            'Workspace-lock recovery is required:'
+          )
         ) {
           scheduledOccurrenceRecoveryBlockedReason = null
         }
@@ -46005,10 +45908,7 @@ if (isGeminiMcpBridgeProcess) {
               broadcastChatUpdated(updated)
             },
             isOwnerTurnActive: (threadId) =>
-              hasNonGraphThreadTurn(
-                AppStore.getRunQueueJobs({ includeTerminal: false }),
-                threadId
-              ),
+              hasNonGraphThreadTurn(AppStore.getRunQueueJobs({ includeTerminal: false }), threadId),
             requestOwnerWake: (request) => {
               const thread = AppStore.getChat(request.threadId)
               if (!thread) return
@@ -46300,9 +46200,7 @@ if (isGeminiMcpBridgeProcess) {
           saveRevision: (revision) => executionGraphRepository.saveRevision(revision),
           startExecutionGraph: (request) => executionGraphCoordinator.startExecutionGraph(request),
           createId: (kind) =>
-            kind === 'workflow'
-              ? `ultratask-${randomUUID()}`
-              : `ultratask-graph-${randomUUID()}`,
+            kind === 'workflow' ? `ultratask-${randomUUID()}` : `ultratask-graph-${randomUUID()}`,
           now: () => new Date().toISOString()
         })
     } catch (error) {
@@ -46375,7 +46273,11 @@ if (isGeminiMcpBridgeProcess) {
     })
     const fetchKimiWebUsageSnapshot = createKimiWebUsageFetcher({
       loadCookie: () => kimiWebSessionStore()?.loadCookie() ?? { status: 'missing' },
-      persistCookie: (value: string) => kimiWebSessionStore()?.setCookie(value) ?? { ok: false, status: { configured: false, encryptionAvailable: false } }
+      persistCookie: (value: string) =>
+        kimiWebSessionStore()?.setCookie(value) ?? {
+          ok: false,
+          status: { configured: false, encryptionAvailable: false }
+        }
     })
     const mistralApiKeyStoreInst = configureMistralApiKeyStore({
       userDataPath: app.getPath('userData'),
@@ -46928,9 +46830,7 @@ if (isGeminiMcpBridgeProcess) {
         remoteComposerInternalDispatches.set(action, {
           appRunId: dispatch.appRunId,
           queueRunId: dispatch.queueRunId,
-          ...(leased.request?.prompt
-            ? { providerPrompt: leased.request.prompt }
-            : {}),
+          ...(leased.request?.prompt ? { providerPrompt: leased.request.prompt } : {}),
           ...(leased.runtimeProfileId ? { runtimeProfileId: leased.runtimeProfileId } : {}),
           ...(leased.request?.remoteComposer?.imagePaths?.length
             ? {
@@ -47345,9 +47245,7 @@ if (isGeminiMcpBridgeProcess) {
             ? (action.grokReasoningEffort ?? action.reasoningEffort)
             : undefined
         const queueMuseReasoning =
-          provider === 'muse'
-            ? (action.museReasoningEffort ?? action.reasoningEffort)
-            : undefined
+          provider === 'muse' ? (action.museReasoningEffort ?? action.reasoningEffort) : undefined
         const queueOllamaReasoning =
           provider === 'ollama'
             ? (action.ollamaReasoningEffort ?? action.reasoningEffort)
@@ -47669,8 +47567,7 @@ if (isGeminiMcpBridgeProcess) {
               // gateway this Mac will trigger. Send the configured base URL
               // only through this authenticated bridge ack; absent means the
               // ordinary direct-APNs path remains the whole push topology.
-              pushGatewayUrl:
-                (process.env.TASKWRAITH_PUSH_GATEWAY_URL || '').trim() || undefined
+              pushGatewayUrl: (process.env.TASKWRAITH_PUSH_GATEWAY_URL || '').trim() || undefined
             }
           } catch (err) {
             return {
@@ -47867,7 +47764,9 @@ if (isGeminiMcpBridgeProcess) {
           if (AppStore.legacyStoreWritesOpen()) {
             AppStore.addOrUpdateWorkspace(workspaceRecord.path, { pinned: action.pinned })
           } else {
-            await AppStore.addOrUpdateWorkspaceViaHost(workspaceRecord.path, { pinned: action.pinned })
+            await AppStore.addOrUpdateWorkspaceViaHost(workspaceRecord.path, {
+              pinned: action.pinned
+            })
           }
           broadcastWorkspaceUpdate(action.workspaceId)
           broadcastWorkspaceList()
@@ -48933,10 +48832,7 @@ if (isGeminiMcpBridgeProcess) {
               steerImageThumbnails = []
             }
           }
-          const steerProviderPrompt = appendRemoteImageMarkupToPrompt(
-            text,
-            steerMarkupPromptText
-          )
+          const steerProviderPrompt = appendRemoteImageMarkupToPrompt(text, steerMarkupPromptText)
           // Desktop parity: MAIN resolves phone-supplied text through the same
           // authoritative matcher used by run-ensemble-round. The remote path
           // has no renderer advisory id, so only an exact structured link or a
@@ -49707,13 +49603,18 @@ if (isGeminiMcpBridgeProcess) {
           if (!result.ok) return { ok: false, reason: result.error }
           return { ok: true, pr: compactGitPrForBridge(result.data) }
         },
-        requestGithubMergePrApprovalFn: (injectedRequestGithubMergePrApprovalFn = async (action) => {
+        requestGithubMergePrApprovalFn: (injectedRequestGithubMergePrApprovalFn = async (
+          action
+        ) => {
           const path = bridgeGitWorkspacePath(action.workspaceId)
           if (!path) return false
           return requestAgenticServiceApproval(null, 'gemini', 'shellCommands', path, {
             method: 'github/merge-pr',
             title: 'Approve paired-device pull request merge',
-            body: [path, 'Merge the current branch GitHub pull request (from a paired device)'].join('\n'),
+            body: [
+              path,
+              'Merge the current branch GitHub pull request (from a paired device)'
+            ].join('\n'),
             preview: { kind: 'githubMergePr', workspacePath: path }
           })
         }),
@@ -50396,13 +50297,13 @@ if (isGeminiMcpBridgeProcess) {
                         action.reasoningEffort ||
                         metadataOllamaReasoningEffort ||
                         undefined
-                    : provider === 'cursor' &&
-                        isCursorGrokModelId(inheritedReasoningCapabilityModel)
-                      ? action.cursorReasoningEffort ||
-                        action.reasoningEffort ||
-                        metadataCursorReasoningEffort ||
-                        undefined
-                      : undefined
+                      : provider === 'cursor' &&
+                          isCursorGrokModelId(inheritedReasoningCapabilityModel)
+                        ? action.cursorReasoningEffort ||
+                          action.reasoningEffort ||
+                          metadataCursorReasoningEffort ||
+                          undefined
+                        : undefined
           const inheritedClaudeReasoningEffort =
             action.claudeReasoningEffort || metadataClaudeReasoningEffort || undefined
           const inheritedCursorFastMode =
@@ -51076,8 +50977,15 @@ if (isGeminiMcpBridgeProcess) {
         pin: capabilities.has('pin'),
         yolo: capabilities.has('yolo'),
         deleteMessage: capabilities.has('deleteMessage'),
-        createSubThread: projectCreateSubThreadCapability(injectedCreateSubThreadFn, capabilities.has('startTurn')),
-        githubMergePr: projectGithubMergePrCapability(injectedGithubMergePrFn, injectedRequestGithubMergePrApprovalFn, capabilities.has('externalPublish')),
+        createSubThread: projectCreateSubThreadCapability(
+          injectedCreateSubThreadFn,
+          capabilities.has('startTurn')
+        ),
+        githubMergePr: projectGithubMergePrCapability(
+          injectedGithubMergePrFn,
+          injectedRequestGithubMergePrApprovalFn,
+          capabilities.has('externalPublish')
+        ),
         cancelRound: capabilities.has('cancel'),
         skipActiveParticipant: capabilities.has('steer'),
         wakeNow: capabilities.has('steer'),
@@ -52926,7 +52834,7 @@ if (isGeminiMcpBridgeProcess) {
           createChannelProductionBootstrap({
             ...channelProductionBootstrapOptions,
             migratedAdmissionAuthority,
-            migrationHandoff,
+            migrationHandoff
           })
       })
       channelMigrationLegacyWriteGate = channelMigrationStartup.legacyWriteGate
@@ -54141,9 +54049,8 @@ if (isGeminiMcpBridgeProcess) {
         contextSources: {
           getChat: (threadId) => AppStore.getChat(threadId),
           getApproval: (approvalId) =>
-            approvalService
-              ?.listProjectionCards()
-              .find((card) => card.toolCallId === approvalId) ?? null,
+            approvalService?.listProjectionCards().find((card) => card.toolCallId === approvalId) ??
+            null,
           getQuestion: (questionId) => remoteQuestionRegistry.get(questionId)
         },
         setup: {
@@ -54156,8 +54063,7 @@ if (isGeminiMcpBridgeProcess) {
               (await hostSetupChatServiceReady).createSingleThread(input),
             configureThread: async (input) =>
               (await hostSetupChatServiceReady).configureThread(input),
-            archiveThread: async (input) =>
-              (await hostSetupChatServiceReady).archiveThread(input)
+            archiveThread: async (input) => (await hostSetupChatServiceReady).archiveThread(input)
           },
           terminal: {
             begin: (input) => hostProviderTerminalSetup.begin(input),
@@ -54351,14 +54257,14 @@ if (isGeminiMcpBridgeProcess) {
                     ? { modelId: participant.model }
                     : {}),
                   ...(typeof participant.reasoningEffort === 'string' &&
-                    participant.reasoningEffort.length > 0
+                  participant.reasoningEffort.length > 0
                     ? { reasoningEffort: participant.reasoningEffort }
                     : {}),
                   ...(typeof participant.thinkingEnabled === 'boolean'
                     ? { thinkingEnabled: participant.thinkingEnabled }
                     : {}),
                   ...(typeof participant.permissionPresetId === 'string' &&
-                    participant.permissionPresetId.length > 0
+                  participant.permissionPresetId.length > 0
                     ? { permissionPresetId: participant.permissionPresetId }
                     : {}),
                   ...(typeof participant.stageRole === 'string'
@@ -54449,8 +54355,7 @@ if (isGeminiMcpBridgeProcess) {
     const quitPersistence = createQuitPersistenceCoordinator({
       flush: () => AppStore.flushAllChatSaves(),
       requestQuit: () => app.quit(),
-      onDrainError: (error) =>
-        console.error('Failed to flush pending chat saves on quit', error)
+      onDrainError: (error) => console.error('Failed to flush pending chat saves on quit', error)
     })
     app.on('will-quit', quitPersistence.handle)
 
@@ -54927,9 +54832,7 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     const gitService = new GitService()
-    const gitSnapshotWorker = new GitSnapshotWorkerClient(
-      join(__dirname, 'gitSnapshotWorker.js')
-    )
+    const gitSnapshotWorker = new GitSnapshotWorkerClient(join(__dirname, 'gitSnapshotWorker.js'))
     const workProvenanceWorkerPath = [
       join(__dirname, 'workProvenanceWorker.js'),
       resolve(__dirname, '..', 'workProvenanceWorker.js')
@@ -55101,9 +55004,7 @@ if (isGeminiMcpBridgeProcess) {
               if (hostLifecycle.getSnapshot().phase === 'stopped') return true
               const projected = await desktopHostBroker.snapshot()
               if (!projected.ok) return false
-              if (
-                projected.snapshot.runs.some((run) => run.providerOutcome === 'running')
-              ) {
+              if (projected.snapshot.runs.some((run) => run.providerOutcome === 'running')) {
                 return false
               }
               return (await hostLifecycle.stop()).ok
@@ -55815,7 +55716,10 @@ if (isGeminiMcpBridgeProcess) {
       let userInput: string
       if (dataEdges.length > 0) {
         const dataInputs = Object.fromEntries(
-          dataEdges.map((edge) => [edge.to.port, verifiedPredecessorResult(edge.from.stepId).result])
+          dataEdges.map((edge) => [
+            edge.to.port,
+            verifiedPredecessorResult(edge.from.stepId).result
+          ])
         )
         if (!isRecord(template.content.request)) {
           throw new Error('Execution graph template request is unavailable for data binding.')
@@ -55825,8 +55729,7 @@ if (isGeminiMcpBridgeProcess) {
           dataInputs
         )
         if (
-          stableExecutionGraphStringify(expectedRequest) !==
-          stableExecutionGraphStringify(request)
+          stableExecutionGraphStringify(expectedRequest) !== stableExecutionGraphStringify(request)
         ) {
           throw new Error('Execution graph bound input prompt changed before composition.')
         }
@@ -58587,8 +58490,7 @@ if (isGeminiMcpBridgeProcess) {
         })
         return { models: record.models as unknown[], updatedAtMs: record.updatedAtMs }
       },
-      fetchAuthenticatedQuota: async (_settings, force) =>
-        readAntigravityQuota({ force })
+      fetchAuthenticatedQuota: async (_settings, force) => readAntigravityQuota({ force })
     })
     antigravityUsageSnapshotFetcherRef = getAntigravityRateLimits
 
@@ -58606,10 +58508,7 @@ if (isGeminiMcpBridgeProcess) {
             fetchKimiWebUsageSnapshot({ force })
           ])
           // Merge windows from both sources
-          const mergedWindows = [
-            ...(apiKeySnapshot.windows || []),
-            ...(webSnapshot.windows || [])
-          ]
+          const mergedWindows = [...(apiKeySnapshot.windows || []), ...(webSnapshot.windows || [])]
           return {
             ...apiKeySnapshot,
             windows: mergedWindows,
@@ -59587,9 +59486,8 @@ if (isGeminiMcpBridgeProcess) {
       }
       if (provider === 'antigravity') {
         const settings = AppStore.getSettings()
-        const liveModels = (
+        const liveModels =
           managedRunConfiguredProviderDiscovery.modelsSnapshot(settings).get('antigravity') ?? []
-        )
         return publishLiveModels(liveModels)
       }
       if (provider === 'pi') {
@@ -60434,8 +60332,7 @@ if (isGeminiMcpBridgeProcess) {
       },
       externalContributionQueue,
       signRunPermissionPosture: signRunPosture,
-      allocateFanoutLaneWorktree: (input) =>
-        requireFanoutCandidateService().allocateForLane(input),
+      allocateFanoutLaneWorktree: (input) => requireFanoutCandidateService().allocateForLane(input),
       settleFanoutLaneWorktree: (input) => {
         if (!fanoutCandidateService) return
         void fanoutCandidateService.settleLane(input).catch((error) => {
@@ -61110,12 +61007,10 @@ if (isGeminiMcpBridgeProcess) {
           throw new Error('Project reference context selection is invalid.')
         }
         // P1 F6 — reference-only Use-next sends are valid for ensemble rounds.
-        if (
-          !prompt.trim() &&
-          imageAttachments.length === 0 &&
-          !projectReferenceContextSelection
-        ) {
-          throw new Error('Ensemble prompt, attachment, or Project reference selection is required.')
+        if (!prompt.trim() && imageAttachments.length === 0 && !projectReferenceContextSelection) {
+          throw new Error(
+            'Ensemble prompt, attachment, or Project reference selection is required.'
+          )
         }
         const folderAttachments = imageAttachments.filter(isDirectoryComposerAttachment)
         const fileAttachments = imageAttachments.filter(
@@ -61218,11 +61113,12 @@ if (isGeminiMcpBridgeProcess) {
           ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
           ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
           ...(externalPathGrants.length > 0 ? { externalPathGrants } : {}),
-          ...(projectReferenceContextSelection
-            ? { projectReferenceContextSelection }
-            : {})
+          ...(projectReferenceContextSelection ? { projectReferenceContextSelection } : {})
         })
-        if (ensembleStartResult?.status === 'started' || ensembleStartResult?.status === 'steered') {
+        if (
+          ensembleStartResult?.status === 'started' ||
+          ensembleStartResult?.status === 'steered'
+        ) {
           // Durability barrier: the round-started record must be persisted
           // through the Host before this handler reports success.
           await AppStore.awaitChatRecordPersisted(chatId)
@@ -61230,7 +61126,6 @@ if (isGeminiMcpBridgeProcess) {
         return ensembleStartResult
       }
     )
-
 
     // ── First-class mid-turn steering (SteeringOrchestrator) ────────────────
     // steering:inject takes ownership of the renderer's already-persisted,
@@ -61299,9 +61194,7 @@ if (isGeminiMcpBridgeProcess) {
         const payloadDecision = classifyPreparedSoloSteerPayload({
           provider: authority.job.provider,
           request,
-          ...(verifiedSteerImages.ok
-            ? { verifiedImagePaths: verifiedSteerImages.imagePaths }
-            : {})
+          ...(verifiedSteerImages.ok ? { verifiedImagePaths: verifiedSteerImages.imagePaths } : {})
         })
         const nowIso = new Date().toISOString()
         const entry = midRunSteeringRegistry.register({
@@ -61313,10 +61206,7 @@ if (isGeminiMcpBridgeProcess) {
           createdAtIso: nowIso
         })
         const session = runManager.get(activeRunId)
-        if (
-          !session &&
-          authority.job.provider === 'codex'
-        ) {
+        if (!session && authority.job.provider === 'codex') {
           return liveSteeringCoordinator.start({
             chatId,
             activeRunId,
@@ -61955,15 +61845,12 @@ if (isGeminiMcpBridgeProcess) {
       return ensembleOrchestratorRef?.skipReadFanout(canonicalChatId)
     })
 
-    ipcMain.handle(
-      'skip-ensemble-fanout-lane',
-      async (event, chatId?: string, laneId?: string) => {
-        const canonicalChatId = requireNonEmptyString(chatId, 'Ensemble chat id')
-        const canonicalLaneId = requireNonEmptyString(laneId, 'Fan-out lane id')
-        assertRendererChatScope(event, canonicalChatId)
-        return ensembleOrchestratorRef?.skipFanoutLane(canonicalChatId, canonicalLaneId)
-      }
-    )
+    ipcMain.handle('skip-ensemble-fanout-lane', async (event, chatId?: string, laneId?: string) => {
+      const canonicalChatId = requireNonEmptyString(chatId, 'Ensemble chat id')
+      const canonicalLaneId = requireNonEmptyString(laneId, 'Fan-out lane id')
+      assertRendererChatScope(event, canonicalChatId)
+      return ensembleOrchestratorRef?.skipFanoutLane(canonicalChatId, canonicalLaneId)
+    })
 
     registerCheckpointHandlers({
       getSessionCheckpointStore: () => mainRuntimeContext.getSessionCheckpoints(),

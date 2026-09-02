@@ -464,7 +464,6 @@ describe('ChatTranscriptStore - Accumulated Infinite Scroll', () => {
     )
 
     // Prepend an older contiguous page
-    const entry = store.byId.get('paged')!
     const prepended = store.prependChatTranscriptPage(
       'paged',
       transcriptPage('paged', ['m7', 'm8', 'm9'], {

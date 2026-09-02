@@ -102,6 +102,7 @@ function safeOperationId(value: string): boolean {
     value.length > 0 &&
     value.length <= 512 &&
     value.trim() === value &&
+    // eslint-disable-next-line no-control-regex -- run ids and tool ids reject C0 controls.
     !/[\u0000-\u001f\u007f]/.test(value)
   )
 }

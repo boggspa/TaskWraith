@@ -24,6 +24,7 @@ function columnTones(rendered: string): (string | undefined)[] {
   let current: string | undefined
   let index = 0
   while (index < rendered.length) {
+    // eslint-disable-next-line no-control-regex -- parses ANSI SGR escapes from rendered TUI rows
     const escape = /^\u001b\[([0-9;]*)m/.exec(rendered.slice(index))
     if (escape) {
       const code = escape[1]
