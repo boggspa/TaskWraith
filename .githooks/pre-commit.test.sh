@@ -570,7 +570,7 @@ expect_block 'a short lease needs no started to hold' "$repo"
 repo="$(new_repo lease-seat-capped)"
 stage_file "$repo" src/manual.ts
 write_owner_id_marker "$repo" seat-owner-1 src/manual.ts
-set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 20)"
+set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 25)"
 expect_allow 'a seat claim decays at the ceiling like any other' "$repo" seat-owner-2
 
 # A RUNTIME lease is NOT capped: durable lock authority owns its lifetime, and
