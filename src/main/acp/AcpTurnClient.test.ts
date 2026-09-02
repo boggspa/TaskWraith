@@ -111,27 +111,33 @@ describe('ACP descriptor-owned image reads', () => {
     }
   })
 
-  it('never reads replacement-path bytes when the pathname swaps after open', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'taskwraith-acp-image-'))
-    try {
-      const imagePath = join(directory, 'image.png')
-      const replacementPath = join(directory, 'replacement.png')
-      const original = Buffer.from('descriptor-owned-original')
-      const replacement = Buffer.from('replacement-must-not-ship')
-      writeFileSync(imagePath, original)
-      writeFileSync(replacementPath, replacement)
+  // @portability-ok rename-over-open swap: Windows file locking makes renaming
+  // over an open descriptor impossible (EPERM), so the descriptor-ownership
+  // defence this test proves is inherently POSIX.
+  it.skipIf(process.platform === 'win32')(
+    'never reads replacement-path bytes when the pathname swaps after open',
+    () => {
+      const directory = mkdtempSync(join(tmpdir(), 'taskwraith-acp-image-'))
+      try {
+        const imagePath = join(directory, 'image.png')
+        const replacementPath = join(directory, 'replacement.png')
+        const original = Buffer.from('descriptor-owned-original')
+        const replacement = Buffer.from('replacement-must-not-ship')
+        writeFileSync(imagePath, original)
+        writeFileSync(replacementPath, replacement)
 
-      const bytes = readMainAuthorizedAcpImageFile(imagePath, {
-        afterOpen: () => renameSync(replacementPath, imagePath)
-      })
+        const bytes = readMainAuthorizedAcpImageFile(imagePath, {
+          afterOpen: () => renameSync(replacementPath, imagePath)
+        })
 
-      expect(readFileSync(imagePath)).toEqual(replacement)
-      expect(bytes).toEqual(original)
-      expect(bytes).not.toEqual(replacement)
-    } finally {
-      rmSync(directory, { recursive: true, force: true })
+        expect(readFileSync(imagePath)).toEqual(replacement)
+        expect(bytes).toEqual(original)
+        expect(bytes).not.toEqual(replacement)
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
     }
-  })
+  )
 })
 
 describe('runAcpTurn — neutral core', () => {

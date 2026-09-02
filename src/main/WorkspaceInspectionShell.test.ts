@@ -17,6 +17,20 @@ afterEach(async () => {
   await Promise.all(tempPaths.splice(0).map((entry) => rm(entry, { recursive: true, force: true })))
 })
 
+// @portability-ok The shell resolves trusted executables only from fixed POSIX
+// directories; on win32 nothing resolves and every plan fails closed, so the
+// prompt-free and execution-plan tests are inherently POSIX.
+const isPosixHost = process.platform !== 'win32'
+
+// @portability-ok Presence gate mirroring the shell's trusted-directory
+// resolution: CI runners usually lack ripgrep, and a missing rg must produce a
+// SKIP, never a silent pass or a false rejection.
+const rgAvailable =
+  isPosixHost &&
+  ['/usr/bin', '/bin', '/usr/sbin', '/sbin', '/usr/local/bin', '/opt/homebrew/bin'].some(
+    (directory) => existsSync(join(directory, 'rg'))
+  )
+
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'taskwraith-inspection-shell-'))
   tempPaths.push(root)
@@ -38,27 +52,51 @@ async function fixture() {
 }
 
 describe('WorkspaceInspectionShell', () => {
-  it('keeps ordinary brokered workspace discovery and source inspection prompt-free', async () => {
-    const { workspace } = await fixture()
-    for (const command of [
-      'cat README.md',
-      'rg -n "permission" src',
-      "grep -rIn 'permission' src --include='*.ts'",
-      "find src -type f -name '*.ts' -print",
-      "jq '.scripts' package.json",
-      'git status --short',
-      'git diff --stat',
-      'git diff -- README.md',
-      `git -C ${workspace} status --short`,
-      'git -C . diff --stat',
-      'wc -l src/main.ts'
-    ]) {
-      expect(
-        workspaceInspectionShellReason(command, { workspacePath: workspace, cwd: workspace }),
-        command
-      ).not.toBeNull()
+  it.skipIf(!isPosixHost)(
+    'keeps ordinary brokered workspace discovery and source inspection prompt-free',
+    async () => {
+      const { workspace } = await fixture()
+      // `rg -n "permission" src` is covered by the ripgrep-gated test below:
+      // GitHub runners do not install ripgrep, and the reason fails closed
+      // when the executable cannot be resolved.
+      for (const command of [
+        'cat README.md',
+        "grep -rIn 'permission' src --include='*.ts'",
+        "find src -type f -name '*.ts' -print",
+        "jq '.scripts' package.json",
+        'git status --short',
+        'git diff --stat',
+        'git diff -- README.md',
+        `git -C ${workspace} status --short`,
+        'git -C . diff --stat',
+        'wc -l src/main.ts'
+      ]) {
+        expect(
+          workspaceInspectionShellReason(command, { workspacePath: workspace, cwd: workspace }),
+          command
+        ).not.toBeNull()
+      }
     }
-  })
+  )
+
+  // Ripgrep is absent on GitHub runners; skip visibly rather than silently.
+  it.skipIf(!rgAvailable)(
+    'keeps ripgrep inspection prompt-free and plans its hardened environment when rg is installed',
+    async () => {
+      const { workspace } = await fixture()
+      expect(
+        workspaceInspectionShellReason('rg -n "permission" src', {
+          workspacePath: workspace,
+          cwd: workspace
+        })
+      ).not.toBeNull()
+      const rgPlan = workspaceInspectionExecutionPlan('rg permission src', {
+        workspacePath: workspace,
+        cwd: workspace
+      })
+      expect(rgPlan?.unsetEnvironment).toContain('RIPGREP_CONFIG_PATH')
+    }
+  )
 
   it('rejects external, parent, environment, system-process, and redirect inspection', async () => {
     const { workspace, external, inwardLink } = await fixture()
@@ -171,7 +209,7 @@ describe('WorkspaceInspectionShell', () => {
     ).toBe(false)
   })
 
-  it('builds a direct executable plan and hardens Git helpers', async () => {
+  it.skipIf(!isPosixHost)('builds a direct executable plan and hardens Git helpers', async () => {
     const { workspace } = await fixture()
     const catPlan = workspaceInspectionExecutionPlan('cat README.md', {
       workspacePath: workspace,
@@ -202,11 +240,8 @@ describe('WorkspaceInspectionShell', () => {
       ])
     )
 
-    const rgPlan = workspaceInspectionExecutionPlan('rg permission src', {
-      workspacePath: workspace,
-      cwd: workspace
-    })
-    expect(rgPlan?.unsetEnvironment).toContain('RIPGREP_CONFIG_PATH')
+    // The rg plan's hardened environment is asserted by the ripgrep-gated test
+    // above, because GitHub runners do not install ripgrep.
 
     const gitCPlan = workspaceInspectionExecutionPlan(`git -C ${workspace} status --short`, {
       workspacePath: workspace,
@@ -215,27 +250,30 @@ describe('WorkspaceInspectionShell', () => {
     expect(gitCPlan?.argv).toEqual(['-C', workspace, 'status', '--short'])
   })
 
-  it('prevents repository-configured fsmonitor execution in a prompt-free Git plan', async () => {
-    const { workspace, external } = await fixture()
-    const marker = join(external, 'fsmonitor-ran')
-    const helper = join(external, 'fsmonitor.sh')
-    // @portability-ok: helper content only — the test asserts git never executes it
-    await writeFile(helper, `#!/bin/sh\ntouch '${marker}'\nexit 0\n`)
-    await chmod(helper, 0o700)
-    const git = workspaceInspectionExecutionPlan('git status --short', {
-      workspacePath: workspace,
-      cwd: workspace
-    })
-    if (!git) throw new Error('Expected a trusted Git inspection plan.')
-    expect(spawnSync(git.executableRealPath, ['init'], { cwd: workspace }).status).toBe(0)
-    expect(
-      spawnSync(git.executableRealPath, ['config', 'core.fsmonitor', helper], { cwd: workspace })
-        .status
-    ).toBe(0)
-    const env = { ...process.env }
-    for (const key of git.unsetEnvironment || []) delete env[key]
-    Object.assign(env, git.environment || {})
-    expect(spawnSync(git.executableRealPath, git.argv, { cwd: git.cwd, env }).status).toBe(0)
-    expect(existsSync(marker)).toBe(false)
-  })
+  it.skipIf(!isPosixHost)(
+    'prevents repository-configured fsmonitor execution in a prompt-free Git plan',
+    async () => {
+      const { workspace, external } = await fixture()
+      const marker = join(external, 'fsmonitor-ran')
+      const helper = join(external, 'fsmonitor.sh')
+      // @portability-ok: helper content only — the test asserts git never executes it
+      await writeFile(helper, `#!/bin/sh\ntouch '${marker}'\nexit 0\n`)
+      await chmod(helper, 0o700)
+      const git = workspaceInspectionExecutionPlan('git status --short', {
+        workspacePath: workspace,
+        cwd: workspace
+      })
+      if (!git) throw new Error('Expected a trusted Git inspection plan.')
+      expect(spawnSync(git.executableRealPath, ['init'], { cwd: workspace }).status).toBe(0)
+      expect(
+        spawnSync(git.executableRealPath, ['config', 'core.fsmonitor', helper], { cwd: workspace })
+          .status
+      ).toBe(0)
+      const env = { ...process.env }
+      for (const key of git.unsetEnvironment || []) delete env[key]
+      Object.assign(env, git.environment || {})
+      expect(spawnSync(git.executableRealPath, git.argv, { cwd: git.cwd, env }).status).toBe(0)
+      expect(existsSync(marker)).toBe(false)
+    }
+  )
 })

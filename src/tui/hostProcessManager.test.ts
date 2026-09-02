@@ -1,7 +1,5 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcess } from 'node:child_process'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -211,7 +209,11 @@ describe('TUI Host process manager', () => {
   it('uses the same direct Node Host invocation for an isolated package-smoke profile', async () => {
     const executable = '/tmp/TaskWraith-smoke.app/Contents/Resources/tui-runtime/darwin-arm64/node'
     const cli = '/tmp/TaskWraith-smoke.app/Contents/Resources/host/host-runtime/cli.js'
-    const userDataPath = join(tmpdir(), 'taskwraith-tui-package-smoke-resolver')
+    // The platform is injected as darwin below, so the profile path must use
+    // POSIX semantics too: the runner's own temp dir is not an absolute path to
+    // posix.isAbsolute() and would be rejected on non-POSIX runners. Nothing in
+    // this test touches the filesystem for the profile path.
+    const userDataPath = '/tmp/taskwraith-tui-package-smoke-resolver'
     const result = await resolveTuiHostLaunchCommand({
       profile: 'package-smoke',
       userDataPath,

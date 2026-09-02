@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -658,9 +658,10 @@ async function callCursorWebFetchMcp(input: {
   const file = join(dir, 'server.cjs')
   writeFileSync(file, CURSOR_WEB_FETCH_MCP_SERVER_SOURCE)
   const cwd = input.cwd ?? dir
+  let child: ChildProcess | undefined
   try {
     return await new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, [file], {
+      child = spawn(process.execPath, [file], {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe']
       })
@@ -708,6 +709,19 @@ async function callCursorWebFetchMcp(input: {
       )
     })
   } finally {
-    rmSync(dir, { force: true, recursive: true })
+    // @portability-ok On Windows a freshly-killed child still holds handles on
+    // its cwd, so rmdir races it with EBUSY; wait for exit, then retry removal.
+    const spawned = child
+    if (spawned && spawned.exitCode === null) {
+      await new Promise<void>((resolveExit) => {
+        const timer = setTimeout(resolveExit, 2000)
+        spawned.once('close', () => {
+          clearTimeout(timer)
+          resolveExit()
+        })
+        spawned.kill('SIGKILL')
+      })
+    }
+    rmSync(dir, { force: true, recursive: true, maxRetries: 5, retryDelay: 50 })
   }
 }

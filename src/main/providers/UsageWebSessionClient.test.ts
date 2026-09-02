@@ -174,7 +174,11 @@ async function seedMuseSession(cookieHeader: string, capturedAt: string): Promis
     safeStorage: {
       isEncryptionAvailable: () => true,
       encryptString: (value) => Buffer.from(value, 'utf8'),
-      decryptString: (value) => value.toString('utf8')
+      decryptString: (value) => value.toString('utf8'),
+      // On Linux the store demands an ENCRYPTED safeStorage backend and fails
+      // closed otherwise; name one so the seed asserts the class, not the
+      // runner's keyring.
+      getSelectedStorageBackend: () => 'gnome_libsecret'
     }
   })
   const result = usageWebSessionStore('muse')?.setSession({

@@ -6,6 +6,12 @@ import { describe, expect, it } from 'vitest'
 
 const repoRoot = process.cwd()
 
+// @portability-ok The source-launcher smoke executes the bundled tui-runtime
+// Node binary, a locally-prepared gitignored artifact (`prepare:tui-runtime`)
+// that CI runners never prepare. Gate on its presence at collect time so an
+// absent runtime produces a SKIP, never a silent pass.
+const hasLocalTuiRuntime = fs.existsSync(path.join(repoRoot, 'build', 'tui-runtime'))
+
 describe('packaged production Host smoke', () => {
   it('keeps launcher, resource, and sidecar mode contracts explicit', () => {
     const smoke = fs.readFileSync(path.join(repoRoot, 'scripts', 'smoke-packaged-host.cjs'), 'utf8')
@@ -65,21 +71,27 @@ describe('packaged production Host smoke', () => {
     expect(cmd).not.toContain('if not defined NODE_BIN if exist "%RUNTIME_ROOT%\\win32-arm64')
   })
 
-  it('executes the source launcher through bundled tui-runtime Node on this platform', () => {
-    execFileSync('npm', ['run', 'host:build', '--silent'], { cwd: repoRoot, stdio: 'pipe' })
-    const result = spawnSync(
-      process.execPath,
-      ['scripts/smoke-packaged-host.cjs', '--source-launcher'],
-      {
-        cwd: repoRoot,
-        encoding: 'utf8',
-        timeout: 20_000
-      }
-    )
-    expect(result.error).toBeUndefined()
-    expect(result.status).toBe(0)
-    expect(`${result.stdout || ''}${result.stderr || ''}`).toContain(
-      'packaged production Host source launcher smoke ok'
-    )
-  }, 30_000)
+  it.skipIf(!hasLocalTuiRuntime)(
+    'executes the source launcher through bundled tui-runtime Node on this platform',
+    () => {
+      // @portability-ok Windows resolves the npm launcher as npm.cmd.
+      const npmBinary = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+      execFileSync(npmBinary, ['run', 'host:build', '--silent'], { cwd: repoRoot, stdio: 'pipe' })
+      const result = spawnSync(
+        process.execPath,
+        ['scripts/smoke-packaged-host.cjs', '--source-launcher'],
+        {
+          cwd: repoRoot,
+          encoding: 'utf8',
+          timeout: 20_000
+        }
+      )
+      expect(result.error).toBeUndefined()
+      expect(result.status).toBe(0)
+      expect(`${result.stdout || ''}${result.stderr || ''}`).toContain(
+        'packaged production Host source launcher smoke ok'
+      )
+    },
+    30_000
+  )
 })

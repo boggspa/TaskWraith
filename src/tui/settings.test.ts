@@ -16,8 +16,14 @@ function scratch(): string {
 
 describe('TaskWraith TUI settings', () => {
   it('resolves an XDG path, and lets the environment override it outright', () => {
-    expect(tuiSettingsPath({ XDG_CONFIG_HOME: '/xdg' })).toBe('/xdg/taskwraith/tui.json')
-    expect(tuiSettingsPath({ HOME: '/home/x' })).toBe('/home/x/.config/taskwraith/tui.json')
+    // path.join semantics: the separator is platform-specific, so the expected
+    // values are built the same way the implementation builds them.
+    expect(tuiSettingsPath({ XDG_CONFIG_HOME: '/xdg' })).toBe(
+      join('/xdg', 'taskwraith', 'tui.json')
+    )
+    expect(tuiSettingsPath({ HOME: '/home/x' })).toBe(
+      join('/home/x', '.config', 'taskwraith', 'tui.json')
+    )
     expect(tuiSettingsPath({ TASKWRAITH_TUI_CONFIG: '/tmp/o.json', XDG_CONFIG_HOME: '/xdg' })).toBe(
       '/tmp/o.json'
     )

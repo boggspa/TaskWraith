@@ -707,7 +707,11 @@ describe('Kimi status admission', () => {
 describe('Devin credential status', () => {
   it('reports the credential lane a launch would use, without spawning `devin auth status`', async () => {
     const stat = vi.spyOn(fs, 'stat').mockImplementation(async (candidate) => {
-      if (String(candidate).endsWith('/devin')) {
+      // Platform-correct binary match: Windows searches PATH with backslash
+      // separators and PATHEXT variants (devin.exe, devin.cmd, ...), so match
+      // the basename rather than a '/devin' suffix.
+      const candidateName = String(candidate).split(/[\\/]/).pop() ?? ''
+      if (/^devin(\.[a-z0-9]+)?$/i.test(candidateName)) {
         return {
           isFile: () => true,
           isSymbolicLink: () => false
@@ -756,7 +760,11 @@ describe('Devin credential status', () => {
 
   it('reports a missing credential honestly instead of an unobservable state', async () => {
     const stat = vi.spyOn(fs, 'stat').mockImplementation(async (candidate) => {
-      if (String(candidate).endsWith('/devin')) {
+      // Platform-correct binary match: Windows searches PATH with backslash
+      // separators and PATHEXT variants (devin.exe, devin.cmd, ...), so match
+      // the basename rather than a '/devin' suffix.
+      const candidateName = String(candidate).split(/[\\/]/).pop() ?? ''
+      if (/^devin(\.[a-z0-9]+)?$/i.test(candidateName)) {
         return { isFile: () => true, isSymbolicLink: () => false } as any
       }
       throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })

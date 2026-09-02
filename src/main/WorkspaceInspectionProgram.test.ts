@@ -41,43 +41,50 @@ function successfulResult(stdout = ''): HostCommandResult {
   return { stdout, stderr: '', exitCode: 0, timedOut: false, durationMs: 1 }
 }
 
+// @portability-ok Compiling a program resolves every command step through the
+// POSIX inspection shell (fixed /usr/bin-family trusted directories); on win32
+// nothing resolves and the plan fails closed, so compile-dependent tests are
+// inherently POSIX. The rejection tests below stay live on every platform.
 describe('WorkspaceInspectionProgram', () => {
-  it('compiles the captured Pi marker inspection into typed direct stages', async () => {
-    const { workspace, workspaceRealPath } = await fixture()
-    const plan = workspaceInspectionProgramPlan(capturedCommand, {
-      workspacePath: workspace,
-      cwd: workspace
-    })
+  it.skipIf(process.platform === 'win32')(
+    'compiles the captured Pi marker inspection into typed direct stages',
+    async () => {
+      const { workspace, workspaceRealPath } = await fixture()
+      const plan = workspaceInspectionProgramPlan(capturedCommand, {
+        workspacePath: workspace,
+        cwd: workspace
+      })
 
-    expect(plan).toMatchObject({
-      reason: 'inspection_shell',
-      recipe: 'workspace_git_snapshot_v1',
-      workspaceRealPath,
-      steps: [
-        { kind: 'command', condition: 'always' },
-        { kind: 'command', condition: 'previous_succeeded' },
-        { kind: 'command', condition: 'previous_succeeded' },
-        {
-          kind: 'marker_list',
-          condition: 'previous_succeeded',
-          discardStderr: true,
-          prefix: '.WORK-IN-PROGRESS'
-        },
-        { kind: 'literal', condition: 'always', stdout: '---markers-end---\n' }
-      ]
-    })
-    const commandSteps = plan?.steps.filter((step) => step.kind === 'command') || []
-    expect(commandSteps.map((step) => step.plan.argv)).toEqual([
-      ['branch', '--show-current'],
-      ['rev-parse', 'HEAD'],
-      ['status', '--porcelain']
-    ])
-    for (const step of commandSteps) {
-      expect(step.plan.executableRealPath).toMatch(/\/git$/)
-      expect(step.plan.environment).toMatchObject({ GIT_OPTIONAL_LOCKS: '0' })
-      expect(step.plan.unsetEnvironment).toContain('GIT_EXTERNAL_DIFF')
+      expect(plan).toMatchObject({
+        reason: 'inspection_shell',
+        recipe: 'workspace_git_snapshot_v1',
+        workspaceRealPath,
+        steps: [
+          { kind: 'command', condition: 'always' },
+          { kind: 'command', condition: 'previous_succeeded' },
+          { kind: 'command', condition: 'previous_succeeded' },
+          {
+            kind: 'marker_list',
+            condition: 'previous_succeeded',
+            discardStderr: true,
+            prefix: '.WORK-IN-PROGRESS'
+          },
+          { kind: 'literal', condition: 'always', stdout: '---markers-end---\n' }
+        ]
+      })
+      const commandSteps = plan?.steps.filter((step) => step.kind === 'command') || []
+      expect(commandSteps.map((step) => step.plan.argv)).toEqual([
+        ['branch', '--show-current'],
+        ['rev-parse', 'HEAD'],
+        ['status', '--porcelain']
+      ])
+      for (const step of commandSteps) {
+        expect(step.plan.executableRealPath).toMatch(/\/git$/)
+        expect(step.plan.environment).toMatchObject({ GIT_OPTIONAL_LOCKS: '0' })
+        expect(step.plan.unsetEnvironment).toContain('GIT_EXTERNAL_DIFF')
+      }
     }
-  })
+  )
 
   it('rejects other sequences, shell composition, and mixed effects', async () => {
     const { workspace, external } = await fixture()
@@ -105,81 +112,90 @@ describe('WorkspaceInspectionProgram', () => {
     }
   })
 
-  it('executes direct stages, enumerates markers without a shell, and appends the terminator', async () => {
-    const { workspace } = await fixture()
-    await writeFile(join(workspace, '.WORK-IN-PROGRESS-zeta.md'), 'zeta\n')
-    await writeFile(join(workspace, '.WORK-IN-PROGRESS-alpha.md'), 'alpha\n')
-    const plan = workspaceInspectionProgramPlan(capturedCommand, {
-      workspacePath: workspace,
-      cwd: workspace
-    })
-    if (!plan) throw new Error('Expected the captured inspection program to compile.')
-    const invocations: WorkspaceInspectionProgramCommandInvocation[] = []
-    const outputs = ['master\n', 'deadbeef\n', ' M file.ts\n']
-    const assertAuthorityStillLive = vi.fn()
-    const result = await executeWorkspaceInspectionProgram(
-      plan,
-      async (invocation) => {
-        invocations.push(invocation)
-        return successfulResult(outputs[invocations.length - 1])
-      },
-      assertAuthorityStillLive
-    )
-
-    expect(invocations.map((invocation) => invocation.argv)).toEqual([
-      ['branch', '--show-current'],
-      ['rev-parse', 'HEAD'],
-      ['status', '--porcelain']
-    ])
-    expect(result).toMatchObject({ exitCode: 0, timedOut: false })
-    expect(result.error).toBeUndefined()
-    expect(assertAuthorityStillLive).toHaveBeenCalledTimes(5)
-    expect(result.stdout).toBe(
-      'master\ndeadbeef\n M file.ts\n".WORK-IN-PROGRESS-alpha.md"\n".WORK-IN-PROGRESS-zeta.md"\n---markers-end---\n'
-    )
-  })
-
-  it('treats no marker matches as a successful empty listing', async () => {
-    const { workspace } = await fixture()
-    const plan = workspaceInspectionProgramPlan(capturedCommand, {
-      workspacePath: workspace,
-      cwd: workspace
-    })
-    if (!plan) throw new Error('Expected the captured inspection program to compile.')
-    const result = await executeWorkspaceInspectionProgram(
-      plan,
-      async () => successfulResult(),
-      () => undefined
-    )
-    expect(result).toMatchObject({ exitCode: 0 })
-    expect(result.error).toBeUndefined()
-    expect(result.stdout).toBe('---markers-end---\n')
-  })
-
-  it('stops an && chain, still emits the unconditional terminator, and preserves failure', async () => {
-    const { workspace } = await fixture()
-    const plan = workspaceInspectionProgramPlan(capturedCommand, {
-      workspacePath: workspace,
-      cwd: workspace
-    })
-    if (!plan) throw new Error('Expected the captured inspection program to compile.')
-    const runner = vi.fn(
-      async (): Promise<HostCommandResult> => ({
-        stdout: '',
-        stderr: 'not a repository\n',
-        exitCode: 128,
-        error: 'git failed',
-        timedOut: false,
-        durationMs: 1
+  it.skipIf(process.platform === 'win32')(
+    'executes direct stages, enumerates markers without a shell, and appends the terminator',
+    async () => {
+      const { workspace } = await fixture()
+      await writeFile(join(workspace, '.WORK-IN-PROGRESS-zeta.md'), 'zeta\n')
+      await writeFile(join(workspace, '.WORK-IN-PROGRESS-alpha.md'), 'alpha\n')
+      const plan = workspaceInspectionProgramPlan(capturedCommand, {
+        workspacePath: workspace,
+        cwd: workspace
       })
-    )
-    const result = await executeWorkspaceInspectionProgram(plan, runner, () => undefined)
+      if (!plan) throw new Error('Expected the captured inspection program to compile.')
+      const invocations: WorkspaceInspectionProgramCommandInvocation[] = []
+      const outputs = ['master\n', 'deadbeef\n', ' M file.ts\n']
+      const assertAuthorityStillLive = vi.fn()
+      const result = await executeWorkspaceInspectionProgram(
+        plan,
+        async (invocation) => {
+          invocations.push(invocation)
+          return successfulResult(outputs[invocations.length - 1])
+        },
+        assertAuthorityStillLive
+      )
 
-    expect(runner).toHaveBeenCalledTimes(1)
-    expect(result).toMatchObject({ exitCode: 128, error: 'git failed' })
-    expect(result.stderr).toBe('not a repository\n')
-    expect(result.stdout).toBe('---markers-end---\n')
-  })
+      expect(invocations.map((invocation) => invocation.argv)).toEqual([
+        ['branch', '--show-current'],
+        ['rev-parse', 'HEAD'],
+        ['status', '--porcelain']
+      ])
+      expect(result).toMatchObject({ exitCode: 0, timedOut: false })
+      expect(result.error).toBeUndefined()
+      expect(assertAuthorityStillLive).toHaveBeenCalledTimes(5)
+      expect(result.stdout).toBe(
+        'master\ndeadbeef\n M file.ts\n".WORK-IN-PROGRESS-alpha.md"\n".WORK-IN-PROGRESS-zeta.md"\n---markers-end---\n'
+      )
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'treats no marker matches as a successful empty listing',
+    async () => {
+      const { workspace } = await fixture()
+      const plan = workspaceInspectionProgramPlan(capturedCommand, {
+        workspacePath: workspace,
+        cwd: workspace
+      })
+      if (!plan) throw new Error('Expected the captured inspection program to compile.')
+      const result = await executeWorkspaceInspectionProgram(
+        plan,
+        async () => successfulResult(),
+        () => undefined
+      )
+      expect(result).toMatchObject({ exitCode: 0 })
+      expect(result.error).toBeUndefined()
+      expect(result.stdout).toBe('---markers-end---\n')
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'stops an && chain, still emits the unconditional terminator, and preserves failure',
+    async () => {
+      const { workspace } = await fixture()
+      const plan = workspaceInspectionProgramPlan(capturedCommand, {
+        workspacePath: workspace,
+        cwd: workspace
+      })
+      if (!plan) throw new Error('Expected the captured inspection program to compile.')
+      const runner = vi.fn(
+        async (): Promise<HostCommandResult> => ({
+          stdout: '',
+          stderr: 'not a repository\n',
+          exitCode: 128,
+          error: 'git failed',
+          timedOut: false,
+          durationMs: 1
+        })
+      )
+      const result = await executeWorkspaceInspectionProgram(plan, runner, () => undefined)
+
+      expect(runner).toHaveBeenCalledTimes(1)
+      expect(result).toMatchObject({ exitCode: 128, error: 'git failed' })
+      expect(result.stderr).toBe('not a repository\n')
+      expect(result.stdout).toBe('---markers-end---\n')
+    }
+  )
 
   it('rechecks the marker-list workspace before reading it', async () => {
     const { workspace, external } = await fixture()
@@ -193,61 +209,70 @@ describe('WorkspaceInspectionProgram', () => {
     ).toBeNull()
   })
 
-  it('escapes marker names so they cannot forge the output sentinel', async () => {
-    const { workspace } = await fixture()
-    await writeFile(join(workspace, '.WORK-IN-PROGRESS-bad\n---markers-end---\u001b[31m'), 'x')
-    const plan = workspaceInspectionProgramPlan(capturedCommand, {
-      workspacePath: workspace,
-      cwd: workspace
-    })
-    if (!plan) throw new Error('Expected the captured inspection program to compile.')
-    const result = await executeWorkspaceInspectionProgram(
-      plan,
-      async () => successfulResult(),
-      () => undefined
-    )
-    expect(result.stdout).toContain(
-      '".WORK-IN-PROGRESS-bad\\n---markers-end---\\u001b[31m"\n---markers-end---\n'
-    )
-    expect(result.stdout).not.toContain('\u001b[31m')
-  })
-
-  it('rejects forged plans and consumes a valid plan exactly once', async () => {
-    const { workspace } = await fixture()
-    const plan = workspaceInspectionProgramPlan(capturedCommand, {
-      workspacePath: workspace,
-      cwd: workspace
-    })
-    if (!plan) throw new Error('Expected the captured inspection program to compile.')
-    const runner = vi.fn(async () => successfulResult())
-    const forged = { ...plan }
-    const forgedResult = await executeWorkspaceInspectionProgram(forged, runner, () => undefined)
-    expect(forgedResult.error).toMatch(/not issued/i)
-    expect(runner).not.toHaveBeenCalled()
-
-    const first = await executeWorkspaceInspectionProgram(plan, runner, () => undefined)
-    expect(first.error).toBeUndefined()
-    const replay = await executeWorkspaceInspectionProgram(plan, runner, () => undefined)
-    expect(replay.error).toMatch(/not issued/i)
-  })
-
-  it('stops before every later stage when live authority expires', async () => {
-    const { workspace } = await fixture()
-    const plan = workspaceInspectionProgramPlan(capturedCommand, {
-      workspacePath: workspace,
-      cwd: workspace
-    })
-    if (!plan) throw new Error('Expected the captured inspection program to compile.')
-    const runner = vi.fn(async () => successfulResult('master\n'))
-    let authorityChecks = 0
-
-    await expect(
-      executeWorkspaceInspectionProgram(plan, runner, () => {
-        authorityChecks += 1
-        if (authorityChecks > 1) throw new Error('authority expired')
+  it.skipIf(process.platform === 'win32')(
+    'escapes marker names so they cannot forge the output sentinel',
+    async () => {
+      const { workspace } = await fixture()
+      await writeFile(join(workspace, '.WORK-IN-PROGRESS-bad\n---markers-end---\u001b[31m'), 'x')
+      const plan = workspaceInspectionProgramPlan(capturedCommand, {
+        workspacePath: workspace,
+        cwd: workspace
       })
-    ).rejects.toThrow('authority expired')
-    expect(runner).toHaveBeenCalledOnce()
-    expect(authorityChecks).toBe(2)
-  })
+      if (!plan) throw new Error('Expected the captured inspection program to compile.')
+      const result = await executeWorkspaceInspectionProgram(
+        plan,
+        async () => successfulResult(),
+        () => undefined
+      )
+      expect(result.stdout).toContain(
+        '".WORK-IN-PROGRESS-bad\\n---markers-end---\\u001b[31m"\n---markers-end---\n'
+      )
+      expect(result.stdout).not.toContain('\u001b[31m')
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects forged plans and consumes a valid plan exactly once',
+    async () => {
+      const { workspace } = await fixture()
+      const plan = workspaceInspectionProgramPlan(capturedCommand, {
+        workspacePath: workspace,
+        cwd: workspace
+      })
+      if (!plan) throw new Error('Expected the captured inspection program to compile.')
+      const runner = vi.fn(async () => successfulResult())
+      const forged = { ...plan }
+      const forgedResult = await executeWorkspaceInspectionProgram(forged, runner, () => undefined)
+      expect(forgedResult.error).toMatch(/not issued/i)
+      expect(runner).not.toHaveBeenCalled()
+
+      const first = await executeWorkspaceInspectionProgram(plan, runner, () => undefined)
+      expect(first.error).toBeUndefined()
+      const replay = await executeWorkspaceInspectionProgram(plan, runner, () => undefined)
+      expect(replay.error).toMatch(/not issued/i)
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'stops before every later stage when live authority expires',
+    async () => {
+      const { workspace } = await fixture()
+      const plan = workspaceInspectionProgramPlan(capturedCommand, {
+        workspacePath: workspace,
+        cwd: workspace
+      })
+      if (!plan) throw new Error('Expected the captured inspection program to compile.')
+      const runner = vi.fn(async () => successfulResult('master\n'))
+      let authorityChecks = 0
+
+      await expect(
+        executeWorkspaceInspectionProgram(plan, runner, () => {
+          authorityChecks += 1
+          if (authorityChecks > 1) throw new Error('authority expired')
+        })
+      ).rejects.toThrow('authority expired')
+      expect(runner).toHaveBeenCalledOnce()
+      expect(authorityChecks).toBe(2)
+    }
+  )
 })

@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { getStaticProviderModels } from '../providers/StaticProviderModels'
@@ -145,7 +146,9 @@ max_context_size = 262144
     await expect(
       discoverKimiManagedModelRows('/tmp/kimi-home', fallbackRows(), readFile)
     ).resolves.toHaveLength(3)
-    expect(readFile).toHaveBeenCalledWith('/tmp/kimi-home/config.toml')
+    // The catalog joins the config filename onto the home with path.join, whose
+    // separator is platform-specific; build the expectation the same way.
+    expect(readFile).toHaveBeenCalledWith(join('/tmp/kimi-home', 'config.toml'))
 
     await expect(
       discoverKimiManagedModelRows('/tmp/kimi-home', fallbackRows(), async () => {

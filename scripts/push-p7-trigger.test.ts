@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -83,8 +84,10 @@ describe('push P7 trigger harness', () => {
       /explicit bounded/
     )
     expect(() => triggerHarness.explicitUserDataPath('/')).toThrow(/explicit bounded/)
+    // explicitUserDataPath returns path.resolve(raw): on Windows a drive-relative
+    // root is produced, so expect the resolved form rather than the raw literal.
     expect(triggerHarness.explicitUserDataPath('/tmp/taskwraith-p7-sender')).toBe(
-      '/tmp/taskwraith-p7-sender'
+      resolve('/tmp/taskwraith-p7-sender')
     )
   })
 

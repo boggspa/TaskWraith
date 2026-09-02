@@ -19,8 +19,13 @@ afterEach(async () => {
 })
 
 async function workspaceFixture() {
-  const root = await mkdtemp(join(tmpdir(), 'taskwraith-permission-binding-'))
-  tempPaths.push(root)
+  const rawRoot = await mkdtemp(join(tmpdir(), 'taskwraith-permission-binding-'))
+  tempPaths.push(rawRoot)
+  // Windows runners hand out 8.3 short-name temp paths (RUNNER~1); realpath
+  // normalisation can then diverge between caller and subject. Canonicalise the
+  // root once so every derived path — and every realpath both sides take —
+  // agrees on the long form.
+  const root = await realpath(rawRoot)
   const workspace = join(root, 'workspace')
   const worktree = join(root, 'worktree')
   await Promise.all([mkdir(workspace), mkdir(worktree)])

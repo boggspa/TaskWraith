@@ -50,7 +50,10 @@ async function fixture() {
   return { workspace, executable, settings, service, input }
 }
 
-describe('CommandRuleApprovalFlow', () => {
+// @portability-ok The exact-argv rule grammar is POSIX shell syntax: unquoted
+// backslashes fail closed (parseStaticShellArgv), so a Windows-path fixture
+// executable can never register an offer on win32 — inherently POSIX surface.
+describe.skipIf(process.platform === 'win32')('CommandRuleApprovalFlow', () => {
   it('offers, revalidates, signs, matches, and commits one exact direct argv rule', async () => {
     const { service, settings, input } = await fixture()
     let liveInput = { ...input }

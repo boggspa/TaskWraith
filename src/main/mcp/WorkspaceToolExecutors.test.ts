@@ -1,4 +1,4 @@
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -361,7 +361,9 @@ describe('executeGitCommit slices', () => {
       '-q',
       'HEAD',
       '--',
-      expect.stringContaining('taskwraith-git-commit/src/a.ts')
+      // The reset path is joined with path.join, whose separator is
+      // platform-specific; build the expected fragment the same way.
+      expect.stringContaining(join('taskwraith-git-commit', 'src', 'a.ts'))
     ])
     expect(reset?.options).toBe(30_000)
     expect(result).toMatchObject({

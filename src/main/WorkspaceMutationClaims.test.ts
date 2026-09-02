@@ -718,41 +718,48 @@ describe('deriveWorkspaceMutationClaims', () => {
     })
   })
 
-  it('returns no claims only for workspace-confined shell inspection', async () => {
-    const workspacePath = await temporaryWorkspace()
-    const externalPath = await temporaryWorkspace()
-    await writeFile(join(workspacePath, 'README.md'), 'workspace')
-    await writeFile(join(externalPath, 'secret.txt'), 'secret')
-    await symlink(externalPath, join(workspacePath, 'escaped'))
+  // @portability-ok Workspace-confined shell inspection resolves `cat`/`git`
+  // through the POSIX inspection shell (fixed /usr/bin-family trusted
+  // directories); on win32 those commands are opaque and fail closed, which the
+  // neighbouring opaque-process test already covers.
+  it.skipIf(process.platform === 'win32')(
+    'returns no claims only for workspace-confined shell inspection',
+    async () => {
+      const workspacePath = await temporaryWorkspace()
+      const externalPath = await temporaryWorkspace()
+      await writeFile(join(workspacePath, 'README.md'), 'workspace')
+      await writeFile(join(externalPath, 'secret.txt'), 'secret')
+      await symlink(externalPath, join(workspacePath, 'escaped'))
 
-    await expect(
-      deriveWorkspaceMutationClaims({
-        workspacePath,
-        action: 'run_shell_command',
-        args: { command: 'cat README.md' }
-      })
-    ).resolves.toEqual([])
-    await expect(
-      deriveWorkspaceMutationClaims({
-        workspacePath,
-        action: 'run_shell_command',
-        args: {
-          command:
-            'git branch --show-current && git rev-parse HEAD && git status --porcelain && ls -la .WORK-IN-PROGRESS* 2>/dev/null; echo "---markers-end---"'
-        }
-      })
-    ).resolves.toEqual([])
-    for (const command of ['cat /etc/passwd', 'cat ../secret.txt', 'cat escaped/secret.txt']) {
       await expect(
         deriveWorkspaceMutationClaims({
           workspacePath,
           action: 'run_shell_command',
-          args: { command }
-        }),
-        command
-      ).rejects.toMatchObject({ code: 'invalid-call' })
+          args: { command: 'cat README.md' }
+        })
+      ).resolves.toEqual([])
+      await expect(
+        deriveWorkspaceMutationClaims({
+          workspacePath,
+          action: 'run_shell_command',
+          args: {
+            command:
+              'git branch --show-current && git rev-parse HEAD && git status --porcelain && ls -la .WORK-IN-PROGRESS* 2>/dev/null; echo "---markers-end---"'
+          }
+        })
+      ).resolves.toEqual([])
+      for (const command of ['cat /etc/passwd', 'cat ../secret.txt', 'cat escaped/secret.txt']) {
+        await expect(
+          deriveWorkspaceMutationClaims({
+            workspacePath,
+            action: 'run_shell_command',
+            args: { command }
+          }),
+          command
+        ).rejects.toMatchObject({ code: 'invalid-call' })
+      }
     }
-  })
+  )
 
   it('keeps refusing to invent claims for an opaque background process', async () => {
     // The async-access ladder lives in admission, NOT here. This pure derivation
