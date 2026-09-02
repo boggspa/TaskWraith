@@ -8,9 +8,18 @@ const repoRoot = process.cwd()
 
 // @portability-ok The source-launcher smoke executes the bundled tui-runtime
 // Node binary, a locally-prepared gitignored artifact (`prepare:tui-runtime`)
-// that CI runners never prepare. Gate on its presence at collect time so an
-// absent runtime produces a SKIP, never a silent pass.
-const hasLocalTuiRuntime = fs.existsSync(path.join(repoRoot, 'build', 'tui-runtime'))
+// that CI runners never prepare. The directory itself always exists — its
+// README is tracked — so gate on this platform's prepared binary, resolved the
+// way the smoke resolves it, at collect time: an absent runtime produces a
+// SKIP, never a silent pass and never a guaranteed failure.
+const localTuiRuntimeNode = path.join(
+  repoRoot,
+  'build',
+  'tui-runtime',
+  `${process.platform}-${process.arch === 'arm64' ? 'arm64' : 'x64'}`,
+  process.platform === 'win32' ? 'node.exe' : 'node'
+)
+const hasLocalTuiRuntime = fs.existsSync(localTuiRuntimeNode)
 
 describe('packaged production Host smoke', () => {
   it('keeps launcher, resource, and sidecar mode contracts explicit', () => {
