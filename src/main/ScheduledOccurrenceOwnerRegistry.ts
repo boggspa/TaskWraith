@@ -1,4 +1,8 @@
-import type { ProviderId, ScheduledOccurrenceRootOwner, ScheduledTask } from './store/types'
+import type {
+  ProviderId,
+  ScheduledOccurrenceRootOwner,
+  ScheduledTask
+} from './store/types'
 
 const PROVIDER_IDS: ReadonlySet<string> = new Set([
   'gemini',
@@ -13,7 +17,11 @@ const PROVIDER_IDS: ReadonlySet<string> = new Set([
   'mistral'
 ])
 
-const ROOT_OWNERS: ReadonlySet<string> = new Set(['solo', 'loop-root', 'ensemble-root'])
+const ROOT_OWNERS: ReadonlySet<string> = new Set([
+  'solo',
+  'loop-root',
+  'ensemble-root'
+])
 
 export interface ScheduledWorkflowOccurrence {
   readonly workflowId: string
@@ -153,7 +161,10 @@ export function createScheduledOccurrenceOwner(
 
   const isEnsemble = task.kind === 'ensemble'
   if ((rootOwner === 'ensemble-root') !== isEnsemble) {
-    fail('owner-kind-mismatch', 'The scheduled task kind does not match its requested root owner.')
+    fail(
+      'owner-kind-mismatch',
+      'The scheduled task kind does not match its requested root owner.'
+    )
   }
 
   return snapshotOwner({
@@ -192,7 +203,10 @@ export class ScheduledOccurrenceOwnerRegistry {
     string,
     Set<OrdinaryChatDispatchReservation>
   >()
-  private readonly exclusiveDispatchByChatId = new Map<string, ExclusiveChatDispatchReservation>()
+  private readonly exclusiveDispatchByChatId = new Map<
+    string,
+    ExclusiveChatDispatchReservation
+  >()
   private readonly graphDispatchByChatId = new Map<
     string,
     Set<ConcurrentGraphChatDispatchReservation>
@@ -220,7 +234,10 @@ export class ScheduledOccurrenceOwnerRegistry {
     if (this.byTaskId.has(owner.taskId)) {
       fail('duplicate-task', `Scheduled task ${owner.taskId} already has a live owner.`)
     }
-    if (this.byOwnerRunId.has(owner.ownerRunId) || this.observedChildRunIds.has(owner.ownerRunId)) {
+    if (
+      this.byOwnerRunId.has(owner.ownerRunId) ||
+      this.observedChildRunIds.has(owner.ownerRunId)
+    ) {
       fail('duplicate-run', `Scheduled run ${owner.ownerRunId} already has a live owner.`)
     }
     this.byTaskId.set(owner.taskId, owner)
@@ -412,7 +429,9 @@ export class ScheduledOccurrenceOwnerRegistry {
   ): ScheduledOccurrenceOwner | undefined {
     if (!isExactNonEmptyString(childRunId) || !isProviderId(provider)) return undefined
     const binding = this.byChildRunId.get(childRunId)
-    return binding?.kind === 'loop' && binding.provider === provider ? binding.owner : undefined
+    return binding?.kind === 'loop' && binding.provider === provider
+      ? binding.owner
+      : undefined
   }
 
   /** Bind one provider child run to its exact reserved ensemble round. */
@@ -441,7 +460,9 @@ export class ScheduledOccurrenceOwnerRegistry {
   ): ScheduledOccurrenceOwner | undefined {
     if (!isExactNonEmptyString(childRunId) || !isProviderId(provider)) return undefined
     const binding = this.byChildRunId.get(childRunId)
-    return binding?.kind === 'ensemble' && binding.provider === provider ? binding.owner : undefined
+    return binding?.kind === 'ensemble' && binding.provider === provider
+      ? binding.owner
+      : undefined
   }
 
   wasChildRunIdObserved(childRunId: string): boolean {
@@ -576,10 +597,10 @@ function snapshotWorkflowOccurrence(
 function isSoloExitIdentity(input: ScheduledSoloExitIdentity): boolean {
   return Boolean(
     input &&
-    typeof input === 'object' &&
-    isExactNonEmptyString(input.appRunId) &&
-    isProviderId(input.provider) &&
-    isExactNonEmptyString(input.chatId)
+      typeof input === 'object' &&
+      isExactNonEmptyString(input.appRunId) &&
+      isProviderId(input.provider) &&
+      isExactNonEmptyString(input.chatId)
   )
 }
 

@@ -185,11 +185,12 @@ export function DiffDetail({
   const pathDisplay = diffDetailPathDisplay(summary.path)
   const actionClass = 'segmented-control-action segmented-control-action--compact'
   const usesDiffLines =
-    Boolean(summary.diffText) &&
-    (previewKind === 'synthetic_new_file' || previewKind === 'git_diff')
+    Boolean(summary.diffText) && (previewKind === 'synthetic_new_file' || previewKind === 'git_diff')
   const parsedDiff = useMemo(
     () =>
-      summary.diffText ? parseUnifiedDiff(summary.diffText, { maxLines: renderLineLimit }) : null,
+      summary.diffText
+        ? parseUnifiedDiff(summary.diffText, { maxLines: renderLineLimit })
+        : null,
     [renderLineLimit, summary.diffText]
   )
   const textPreview = useMemo(

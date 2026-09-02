@@ -1549,14 +1549,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         properties: {
           waveId: {
             type: 'string',
-            description:
-              'Wave to claim, from list_subthreads({waveId}) or the delegate_wave result.'
+            description: 'Wave to claim, from list_subthreads({waveId}) or the delegate_wave result.'
           },
           action: {
             type: 'string',
             enum: ['claim', 'release', 'status'],
-            description:
-              'Default claim. release requires you to be the holder; status never mutates.'
+            description: 'Default claim. release requires you to be the holder; status never mutates.'
           },
           takeover: {
             type: 'boolean',
@@ -2686,12 +2684,14 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           subThreadIds: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Optional sub-thread ids (from delegate_to_subthread) to wait for.'
+            description:
+              'Optional sub-thread ids (from delegate_to_subthread) to wait for.'
           },
           waveIds: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Optional wave ids (from delegate_wave) to wait for.'
+            description:
+              'Optional wave ids (from delegate_wave) to wait for.'
           },
           executionIds: {
             type: 'array',
@@ -3613,7 +3613,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         'Each todo needs a stable `id`, human-readable `content`, and `status` (`pending`, `in_progress`, `completed`, or `cancelled`). ' +
         'Keep exactly one item `in_progress` when actively working. ' +
         'When follow-up work appears after earlier steps complete, call this again with `merge: true` and add new `pending`/`in_progress` items instead of leaving the checklist all-complete. ' +
-        "TaskWraith binds each item to the current root Goal and, in an Ensemble, the caller's current assignment. Completing every item completes only that plan/assignment contribution; it never completes or blocks the root Goal. " +
+        'TaskWraith binds each item to the current root Goal and, in an Ensemble, the caller\'s current assignment. Completing every item completes only that plan/assignment contribution; it never completes or blocks the root Goal. ' +
         'Set `merge: true` to patch existing steps by `id`; omit or set `merge: false` to replace the whole list. ' +
         'Prefer this over prose bullet lists when executing a plan with 3+ steps.',
       annotations: {
@@ -3889,7 +3889,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'scout_brief',
       description:
-        "Share structured findings from a parallel fan-out lane with the next serial writer/synthesizer and upsert this scout's session Blackboard brief. Confidence is evidence quality: high = directly verified, medium = partly verified, low = tentative or incomplete. Returns an error outside an active fan-out lane.",
+        'Share structured findings from a parallel fan-out lane with the next serial writer/synthesizer and upsert this scout\'s session Blackboard brief. Confidence is evidence quality: high = directly verified, medium = partly verified, low = tentative or incomplete. Returns an error outside an active fan-out lane.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

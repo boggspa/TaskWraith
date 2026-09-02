@@ -110,7 +110,8 @@ function modelBadgeForParticipant(participant: ParticipantModelDisplay): string 
       participant.provider === 'ollama' ? participant.reasoningEffort : undefined,
     antigravityReasoningEffort:
       participant.provider === 'antigravity' ? participant.reasoningEffort : undefined,
-    kimiReasoningEffort: participant.provider === 'kimi' ? participant.reasoningEffort : undefined,
+    kimiReasoningEffort:
+      participant.provider === 'kimi' ? participant.reasoningEffort : undefined,
     kimiThinkingEnabled: participant.provider === 'kimi' ? participant.thinkingEnabled : undefined
   })
   const brand =

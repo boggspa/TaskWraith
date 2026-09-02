@@ -114,12 +114,16 @@ describe('getStaticProviderModels (Pi lifecycle)', () => {
       now: new Date(2026, 7, 17, 0, 0)
     })
     expect(cerebrasRetired.some((model) => model.id === 'cerebras/zai-glm-4.7')).toBe(false)
-    expect(cerebrasRetired.some((model) => model.id === 'openrouter/stealth/ox-alpha')).toBe(true)
+    expect(cerebrasRetired.some((model) => model.id === 'openrouter/stealth/ox-alpha')).toBe(
+      true
+    )
 
     const oxAlphaRetired = getStaticProviderModels('pi', {
       now: new Date(2026, 7, 28, 0, 0)
     })
-    expect(oxAlphaRetired.some((model) => model.id === 'openrouter/stealth/ox-alpha')).toBe(false)
+    expect(oxAlphaRetired.some((model) => model.id === 'openrouter/stealth/ox-alpha')).toBe(
+      false
+    )
     expect(oxAlphaRetired.some((model) => model.id === 'zai/glm-4.7')).toBe(true)
     expect(oxAlphaRetired.some((model) => model.id === 'cerebras/gpt-oss-120b')).toBe(true)
     expect(oxAlphaRetired.some((model) => model.id === 'openrouter/z-ai/glm-5.2')).toBe(true)
@@ -741,14 +745,18 @@ describe('normalizeCliProviderModel (kimi)', () => {
   })
 
   it('preserves the managed Kimi CLI Standard and HighSpeed aliases', () => {
-    expect(normalizeCliProviderModel('kimi', KIMI_STANDARD_CLI_MODEL)).toBe(KIMI_STANDARD_CLI_MODEL)
+    expect(normalizeCliProviderModel('kimi', KIMI_STANDARD_CLI_MODEL)).toBe(
+      KIMI_STANDARD_CLI_MODEL
+    )
     expect(normalizeCliProviderModel('kimi', KIMI_HIGHSPEED_CLI_MODEL)).toBe(
       KIMI_HIGHSPEED_CLI_MODEL
     )
   })
 
   it('maps raw Kimi Code API ids onto the managed CLI aliases', () => {
-    expect(normalizeCliProviderModel('kimi', 'kimi-for-coding')).toBe(KIMI_STANDARD_CLI_MODEL)
+    expect(normalizeCliProviderModel('kimi', 'kimi-for-coding')).toBe(
+      KIMI_STANDARD_CLI_MODEL
+    )
     expect(normalizeCliProviderModel('kimi', 'kimi-for-coding-highspeed')).toBe(
       KIMI_HIGHSPEED_CLI_MODEL
     )

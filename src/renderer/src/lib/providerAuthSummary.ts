@@ -32,13 +32,12 @@ export function summariseMistralVibeStatus(status: unknown): ProviderAuthSummary
     return {
       variant: 'not-available',
       statusText: 'Mistral Vibe CLI not found',
-      hint: 'Install Mistral Vibe first, then use `vibe --setup` to finish the Mistral plan or API-key setup.'
+      hint:
+        'Install Mistral Vibe first, then use `vibe --setup` to finish the Mistral plan or API-key setup.'
     }
   }
 
-  const authState = String(record.authState || '')
-    .trim()
-    .toLowerCase()
+  const authState = String(record.authState || '').trim().toLowerCase()
   const credentialPresent = record.credentialPresent
   if (credentialPresent === true || ['authenticated', 'api-key', 'oauth'].includes(authState)) {
     return {
@@ -76,7 +75,8 @@ export function summariseMuseCodeStatus(status: unknown): ProviderAuthSummary {
     return {
       variant: 'not-signed-in',
       statusText: 'Muse setup not checked yet',
-      hint: 'Install the Muse Code CLI and complete Meta Model API login / key setup. TaskWraith probes the binary fail-closed and does not invent auth state.'
+      hint:
+        'Install the Muse Code CLI and complete Meta Model API login / key setup. TaskWraith probes the binary fail-closed and does not invent auth state.'
     }
   }
   if (record.available === false) {
@@ -87,9 +87,7 @@ export function summariseMuseCodeStatus(status: unknown): ProviderAuthSummary {
     }
   }
 
-  const authState = String(record.authState || '')
-    .trim()
-    .toLowerCase()
+  const authState = String(record.authState || '').trim().toLowerCase()
   const credentialPresent = record.credentialPresent === true
   if (credentialPresent || ['authenticated', 'api-key', 'oauth'].includes(authState)) {
     return {
@@ -102,7 +100,8 @@ export function summariseMuseCodeStatus(status: unknown): ProviderAuthSummary {
   return {
     variant: 'partial',
     statusText: 'Muse CLI ready · setup unverified',
-    hint: 'Complete Muse / Meta Model API login so the fail-closed probe can admit the seat. TaskWraith does not store the Meta API key in this card.'
+    hint:
+      'Complete Muse / Meta Model API login so the fail-closed probe can admit the seat. TaskWraith does not store the Meta API key in this card.'
   }
 }
 
@@ -129,11 +128,12 @@ export function summariseDevinStatus(status: unknown): ProviderAuthSummary {
     }
   }
 
-  const authState = String(record.authState || '')
-    .trim()
-    .toLowerCase()
+  const authState = String(record.authState || '').trim().toLowerCase()
   const credentialPresent = record.credentialPresent === true
-  if (credentialPresent || ['authenticated', 'api-key', 'windsurf-api-key'].includes(authState)) {
+  if (
+    credentialPresent ||
+    ['authenticated', 'api-key', 'windsurf-api-key'].includes(authState)
+  ) {
     return {
       variant: 'signed-in',
       statusText: 'Devin signed in',
@@ -172,7 +172,8 @@ export function summariseProviderApiKeyStatus(
       return {
         variant: 'not-available',
         statusText: 'Managed runtime unavailable',
-        hint: 'Kimi Code is installed, but its stable identity, bounded startup, or ACP compatibility checks failed. Structural ACP admission is always enabled; credentials do not bypass these checks. Admitted unreviewed runtimes are labelled unattested-development.'
+        hint:
+          'Kimi Code is installed, but its stable identity, bounded startup, or ACP compatibility checks failed. Structural ACP admission is always enabled; credentials do not bypass these checks. Admitted unreviewed runtimes are labelled unattested-development.'
       }
     }
     return {
@@ -314,7 +315,8 @@ export function summariseCodexStatus(status: any): ProviderAuthSummary {
     return {
       variant: 'partial',
       statusText: 'Usage session available',
-      hint: 'Usage telemetry does not sign the private TaskWraith Codex runtime in. Use the Codex sign-in action in Settings.'
+      hint:
+        'Usage telemetry does not sign the private TaskWraith Codex runtime in. Use the Codex sign-in action in Settings.'
     }
   }
   if (usage && usage.error) {

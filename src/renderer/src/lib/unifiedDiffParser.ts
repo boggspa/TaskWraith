@@ -110,7 +110,10 @@ const stripDiffMarker = (text: string, marker: string): string => {
 }
 
 /** Strip the unified-diff marker so a line can render as editor source. */
-export const diffLineDisplayText = (line: ParsedDiffLine, side?: 'old' | 'new'): string => {
+export const diffLineDisplayText = (
+  line: ParsedDiffLine,
+  side?: 'old' | 'new'
+): string => {
   if (side === 'old' && line.kind === 'add') return ''
   if (side === 'new' && line.kind === 'del') return ''
   if (line.kind === 'add') return stripDiffMarker(line.text, '+')

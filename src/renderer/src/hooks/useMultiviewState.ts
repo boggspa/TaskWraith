@@ -312,7 +312,12 @@ export function applySetPaneMedia(
   // No-op when clearing an already-media-less pane, or setting the very same ref
   // onto an already-cleaned (chat-null + canvas-absent) media pane.
   if (mediaRef === null && !pane.mediaRef) return state
-  if (mediaRef !== null && pane.mediaRef === mediaRef && pane.chatId === null && !pane.canvasId) {
+  if (
+    mediaRef !== null &&
+    pane.mediaRef === mediaRef &&
+    pane.chatId === null &&
+    !pane.canvasId
+  ) {
     return state
   }
   const next = state.panes.slice()
@@ -427,7 +432,10 @@ export function applySetLayout(
       const kept = seededPanes.slice(0, Math.max(0, nextPaneCount - 1))
       seededPanes = focusedPane ? [...kept, focusedPane] : kept
       const keptIds = new Set(seededPanes.map((pane) => pane.id))
-      parkedPanes = [...state.panes.filter((pane) => !keptIds.has(pane.id)), ...state.parkedPanes]
+      parkedPanes = [
+        ...state.panes.filter((pane) => !keptIds.has(pane.id)),
+        ...state.parkedPanes
+      ]
       focusedPaneIndex = Math.max(0, seededPanes.length - 1)
     } else {
       parkedPanes = [...seededPanes.slice(nextPaneCount), ...state.parkedPanes]
@@ -491,8 +499,8 @@ export function applyFocusEmptyPane(
   const outgoingPane = state.panes[state.focusedPaneIndex]
   const outgoingChatAlreadyOwned = Boolean(
     outgoingVisibleChatId &&
-    (state.panes.some((pane) => pane.chatId === outgoingVisibleChatId) ||
-      state.parkedPanes.some((pane) => pane.chatId === outgoingVisibleChatId))
+      (state.panes.some((pane) => pane.chatId === outgoingVisibleChatId) ||
+        state.parkedPanes.some((pane) => pane.chatId === outgoingVisibleChatId))
   )
   const seededState =
     outgoingVisibleChatId && !outgoingChatAlreadyOwned && isPaneEmpty(outgoingPane)
@@ -584,12 +592,16 @@ export function applyOpenInNewPane(
   let next = outgoingFocusedChatId
     ? applySetPaneChat(state, state.focusedPaneIndex, outgoingFocusedChatId)
     : state
-  let hasSpare = next.panes.some((pane, i) => i !== next.focusedPaneIndex && pane.chatId == null)
+  let hasSpare = next.panes.some(
+    (pane, i) => i !== next.focusedPaneIndex && pane.chatId == null
+  )
   while (!hasSpare) {
     const grown = UPGRADE_LAYOUT[next.layout]
     if (grown === next.layout) break
     next = applySetLayout(next, grown)
-    hasSpare = next.panes.some((pane, i) => i !== next.focusedPaneIndex && pane.chatId == null)
+    hasSpare = next.panes.some(
+      (pane, i) => i !== next.focusedPaneIndex && pane.chatId == null
+    )
   }
   let target = next.panes.findIndex((pane, i) => i !== next.focusedPaneIndex && pane.chatId == null)
   if (target < 0) target = next.panes.findIndex((_, i) => i !== next.focusedPaneIndex)
@@ -614,12 +626,16 @@ export function applyOpenMediaInNewPane(
   const isEmpty = (pane: MultiviewPaneRecord): boolean =>
     pane.chatId == null && !pane.canvasId && !pane.mediaRef
   let next = state
-  let hasSpare = next.panes.some((pane, i) => i !== next.focusedPaneIndex && isEmpty(pane))
+  let hasSpare = next.panes.some(
+    (pane, i) => i !== next.focusedPaneIndex && isEmpty(pane)
+  )
   while (!hasSpare) {
     const grown = UPGRADE_LAYOUT[next.layout]
     if (grown === next.layout) break
     next = applySetLayout(next, grown)
-    hasSpare = next.panes.some((pane, i) => i !== next.focusedPaneIndex && isEmpty(pane))
+    hasSpare = next.panes.some(
+      (pane, i) => i !== next.focusedPaneIndex && isEmpty(pane)
+    )
   }
   let target = next.panes.findIndex((pane, i) => i !== next.focusedPaneIndex && isEmpty(pane))
   if (target < 0) target = next.panes.findIndex((_, i) => i !== next.focusedPaneIndex)
@@ -937,17 +953,14 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
   // skip setState. Structural transitions mirror it back into React state.
   const stateRef = useRef(state)
   const focusStoreRef = useRef(createMultiviewFocusStore(state.focusedPaneIndex))
-  const commitState = useCallback(
-    (transition: (current: MultiviewCoreState) => MultiviewCoreState) => {
-      const previous = stateRef.current
-      const next = transition(previous)
-      if (next === previous) return
-      stateRef.current = next
-      focusStoreRef.current.set(next.focusedPaneIndex)
-      if (!isMultiviewFocusOnlyChange(previous, next)) setState(next)
-    },
-    []
-  )
+  const commitState = useCallback((transition: (current: MultiviewCoreState) => MultiviewCoreState) => {
+    const previous = stateRef.current
+    const next = transition(previous)
+    if (next === previous) return
+    stateRef.current = next
+    focusStoreRef.current.set(next.focusedPaneIndex)
+    if (!isMultiviewFocusOnlyChange(previous, next)) setState(next)
+  }, [])
 
   const paneRefsByIdRef = useRef(new Map<string, MultiviewPaneRefs>())
   const paneRefs = useMemo(
@@ -955,21 +968,19 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     [state.panes]
   )
   useLayoutEffect(() => {
-    const livePaneIds = new Set([...state.panes, ...state.parkedPanes].map((pane) => pane.id))
+    const livePaneIds = new Set(
+      [...state.panes, ...state.parkedPanes].map((pane) => pane.id)
+    )
     for (const paneId of paneRefsByIdRef.current.keys()) {
       if (!livePaneIds.has(paneId)) paneRefsByIdRef.current.delete(paneId)
     }
   }, [state.panes, state.parkedPanes])
 
-  const setLayout = useCallback(
-    (next: MultiviewLayout, seedChatId: string | null = null) => {
-      commitState((s) => applySetLayout(s, next, { seedChatId }))
-    },
-    [commitState]
-  )
+  const setLayout = useCallback((next: MultiviewLayout, seedChatId: string | null = null) => {
+    commitState((s) => applySetLayout(s, next, { seedChatId }))
+  }, [commitState])
   const setPaneChat = useCallback(
-    (index: number, chatId: string | null) =>
-      commitState((s) => applySetPaneChat(s, index, chatId)),
+    (index: number, chatId: string | null) => commitState((s) => applySetPaneChat(s, index, chatId)),
     [commitState]
   )
   const setPaneCanvas = useCallback(
@@ -1001,36 +1012,24 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
       commitState((s) => applyDismissPane(s, index, primaryChatId)),
     [commitState]
   )
-  const assignToFocusedPane = useCallback(
-    (chatId: string) => {
-      commitState((s) => applyAssignToFocusedPane(s, chatId).state)
-    },
-    [commitState]
-  )
+  const assignToFocusedPane = useCallback((chatId: string) => {
+    commitState((s) => applyAssignToFocusedPane(s, chatId).state)
+  }, [commitState])
   const openInNewPane = useCallback(
     (chatId: string, outgoingFocusedChatId: string | null = null) => {
       commitState((s) => applyOpenInNewPane(s, chatId, outgoingFocusedChatId))
     },
     [commitState]
   )
-  const openMediaInNewPane = useCallback(
-    (mediaRef: MultiviewPaneMediaRef) => {
-      commitState((s) => applyOpenMediaInNewPane(s, mediaRef))
-    },
-    [commitState]
-  )
-  const resizeTrack = useCallback(
-    (args: ApplyResizeTrackArgs) => {
-      commitState((s) => applyResizeTrack(s, args))
-    },
-    [commitState]
-  )
-  const resetTrackSizes = useCallback(
-    (layout?: MultiviewLayout) => {
-      commitState((s) => applyResetTrackSizes(s, layout ?? s.layout))
-    },
-    [commitState]
-  )
+  const openMediaInNewPane = useCallback((mediaRef: MultiviewPaneMediaRef) => {
+    commitState((s) => applyOpenMediaInNewPane(s, mediaRef))
+  }, [commitState])
+  const resizeTrack = useCallback((args: ApplyResizeTrackArgs) => {
+    commitState((s) => applyResizeTrack(s, args))
+  }, [commitState])
+  const resetTrackSizes = useCallback((layout?: MultiviewLayout) => {
+    commitState((s) => applyResetTrackSizes(s, layout ?? s.layout))
+  }, [commitState])
   const setPaneFxFlag = useCallback(
     (paneIndex: number, flag: MultiviewPaneFxFlag, value: boolean) => {
       commitState((s) => {

@@ -495,25 +495,19 @@ describe('PermissionService', () => {
     expect(withSession.sessionGrantAllowed).toBe(true)
     expect(withSession.decision).toBe('allow')
 
-    const withWorkspace = service.resolvePermission(
-      'codex',
-      'externalPublish',
-      '/repo',
-      undefined,
-      {
-        ...settings,
-        agenticWorkspaceGrants: [
-          {
-            id: 'grant-publish',
-            provider: 'codex',
-            service: 'externalPublish',
-            workspacePath: '/repo',
-            createdAt: '2026-05-08T00:00:00.000Z',
-            updatedAt: '2026-05-08T00:00:00.000Z'
-          }
-        ]
-      }
-    )
+    const withWorkspace = service.resolvePermission('codex', 'externalPublish', '/repo', undefined, {
+      ...settings,
+      agenticWorkspaceGrants: [
+        {
+          id: 'grant-publish',
+          provider: 'codex',
+          service: 'externalPublish',
+          workspacePath: '/repo',
+          createdAt: '2026-05-08T00:00:00.000Z',
+          updatedAt: '2026-05-08T00:00:00.000Z'
+        }
+      ]
+    })
     expect(withWorkspace.workspaceGrantAllowed).toBe(true)
     expect(withWorkspace.decision).toBe('allow')
   })
@@ -746,7 +740,7 @@ describe('PermissionService', () => {
       ).toBe('ask')
     })
 
-    it('Claude-initiated workspace grant auto-allows all providers in that workspace', () => {
+    it("Claude-initiated workspace grant auto-allows all providers in that workspace", () => {
       const service = new PermissionService({
         runManager: new RunManager(),
         sessionGrants: new Set()
@@ -818,7 +812,7 @@ describe('PermissionService', () => {
       ).toBe('ask')
     })
 
-    it('Kimi-initiated workspace grant auto-allows all providers in that workspace', () => {
+    it("Kimi-initiated workspace grant auto-allows all providers in that workspace", () => {
       const service = new PermissionService({
         runManager: new RunManager(),
         sessionGrants: new Set()
@@ -891,22 +885,12 @@ describe('PermissionService', () => {
       expect(persistedSettings.agenticWorkspaceGrants).toHaveLength(1)
       expect(persistedSettings.agenticWorkspaceGrants[0].provider).toBe('agents')
       expect(
-        service.resolvePermission(
-          'gemini',
-          'subThreadDelegation',
-          '/repo',
-          undefined,
-          persistedSettings
-        ).decision
+        service.resolvePermission('gemini', 'subThreadDelegation', '/repo', undefined, persistedSettings)
+          .decision
       ).toBe('allow')
       expect(
-        service.resolvePermission(
-          'codex',
-          'subThreadDelegation',
-          '/repo',
-          undefined,
-          persistedSettings
-        ).decision
+        service.resolvePermission('codex', 'subThreadDelegation', '/repo', undefined, persistedSettings)
+          .decision
       ).toBe('allow')
     })
   })

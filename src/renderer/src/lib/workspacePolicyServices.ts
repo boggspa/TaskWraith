@@ -62,14 +62,16 @@ export const WORKSPACE_POLICY_SERVICE_HELP: Record<AgenticServiceId, string> = {
     'Edit structured shapes and text in chat-owned Sketch Canvases without asking again.',
   meshCanvas:
     'Create, import, edit, and present chat-owned 3D scenes using workspace-local mesh assets without asking again.',
-  simulatorCanvas: 'Control iOS / watchOS Simulator Canvas surfaces without asking again.',
+  simulatorCanvas:
+    'Control iOS / watchOS Simulator Canvas surfaces without asking again.',
   canvasEval:
     'The first eval on a live Canvas surface asks on desktop; accepting opens a 12-hour same-surface window across navigation and later turns.',
   crossThreadRead:
     'Read how far past runs on other threads got. Same-workspace reads are automatic; cross-workspace reads always ask.',
   threadMessage:
     'Send a message into another thread. Same-workspace sends are automatic; cross-workspace sends and wake requests always ask.',
-  mediaEditing: 'Transcode, encode, probe, and mix workspace audio/video without asking again.',
+  mediaEditing:
+    'Transcode, encode, probe, and mix workspace audio/video without asking again.',
   // Non-grantable: shown for completeness only; capture always re-prompts / is denied.
   mediaRecording:
     'Microphone / camera capture always asks (cannot be pre-authorised). Coming soon.',

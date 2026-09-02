@@ -47,7 +47,10 @@ import { isContentlessRemoteDraftChat, remoteDraftVariant } from './remote/Remot
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { computeMergedTodosByLane, TODO_SOLO_LANE, type TodoStatus } from './TodoList'
 import type { CanvasSessionSummary } from './canvas/canvasTypes'
-import { contextUsageFromStats, latestContextCompactionUsageEvidence } from '../shared/contextUsage'
+import {
+  contextUsageFromStats,
+  latestContextCompactionUsageEvidence
+} from '../shared/contextUsage'
 import { normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
 
 const MOBILE_DIFF_SUMMARY_FILE_LIMIT = 40
@@ -954,7 +957,10 @@ export function buildRemoteWorkspaceBoard(
   cards: ReadonlyArray<WorkspaceBoardCard>,
   options: { cardLimit?: number } = {}
 ): RemoteWorkspaceBoard {
-  const cardLimit = clampPositiveInt(options.cardLimit, DEFAULT_REMOTE_WORKSPACE_BOARD_CARD_LIMIT)
+  const cardLimit = clampPositiveInt(
+    options.cardLimit,
+    DEFAULT_REMOTE_WORKSPACE_BOARD_CARD_LIMIT
+  )
   const boardCards = cards.filter((card) => card.boardId === board.id)
   const activeCards = boardCards.filter((card) => !card.archived)
   const archivedCards = boardCards.filter((card) => card.archived)
@@ -1050,7 +1056,10 @@ export function buildRemoteShellAppearance(
 ): RemoteShellAppearance {
   const resolved = { ...DEFAULT_REMOTE_SHELL_SETTINGS, ...settings }
   const accent = settings.themeAccentColor
-    ? resolveThemeAccentColorForAppearance(settings.themeAccentColor, resolved.themeAppearance)
+    ? resolveThemeAccentColorForAppearance(
+        settings.themeAccentColor,
+        resolved.themeAppearance
+      )
     : resolved.themeAccentStyle === 'system'
       ? resolveDefaultThemeAccentColor(resolved.themeAppearance)
       : THEME_ACCENTS[resolved.themeAccentStyle] || DEFAULT_REMOTE_SHELL_COLORS.accent
@@ -1263,9 +1272,11 @@ export function buildRemoteTaskCard(
     provider: chat.provider ?? 'gemini',
     title: normalizeThreadTitle(chat.title, 'Untitled chat'),
     status,
-    completionNotificationEligible: isRemoteTaskCompletionNotificationEligible(chat, status, {
-      hasQueuedFollowup
-    }),
+    completionNotificationEligible: isRemoteTaskCompletionNotificationEligible(
+      chat,
+      status,
+      { hasQueuedFollowup }
+    ),
     preview: preview.preview,
     previewTruncated: preview.truncated,
     pendingApprovalCount,
@@ -1405,9 +1416,7 @@ export function buildRemoteQueuedComposerPrompts(
         ...(typeof remote.workspaceId === 'string' ? { workspaceId: remote.workspaceId } : {}),
         ...(typeof remote.model === 'string' ? { model: remote.model } : {}),
         ...(typeof remote.approvalMode === 'string' ? { approvalMode: remote.approvalMode } : {}),
-        ...(remote.reasoningEffort !== undefined
-          ? { reasoningEffort: remote.reasoningEffort }
-          : {}),
+        ...(remote.reasoningEffort !== undefined ? { reasoningEffort: remote.reasoningEffort } : {}),
         ...(remote.claudeReasoningEffort !== undefined
           ? { claudeReasoningEffort: remote.claudeReasoningEffort }
           : {}),
@@ -1534,7 +1543,12 @@ export function buildMobileDiffSummary(
     truncated: false
   }
   const runDiffWorkspace = run.runDiff
-    ? workspaceSummaryFromRunDiff(run.runDiff, run, context.workspaceId ?? undefined, fileBudget)
+    ? workspaceSummaryFromRunDiff(
+        run.runDiff,
+        run,
+        context.workspaceId ?? undefined,
+        fileBudget
+      )
     : undefined
   if (runDiffWorkspace) {
     workspaceSummaries.push(runDiffWorkspace)
@@ -1616,7 +1630,9 @@ function latestRunContextTokens(
     }
   }
   const compaction = latestContextCompactionUsageEvidence(messages, participantId)
-  return compaction && compaction.observedAt >= bestTime && compaction.postTokens !== undefined
+  return compaction &&
+    compaction.observedAt >= bestTime &&
+    compaction.postTokens !== undefined
     ? compaction.postTokens
     : best
 }
@@ -1741,7 +1757,9 @@ export function buildRemoteEnsembleState(
           enabled: participant.enabled,
           order: participant.order,
           ...(participant.id === authority.bossmanParticipantId ? { isBossman: true } : {}),
-          ...(captainParticipantIds.has(participant.id) ? { isSecondInCommand: true } : {}),
+          ...(captainParticipantIds.has(participant.id)
+            ? { isSecondInCommand: true }
+            : {}),
           ...(participant.model ? { model: participant.model } : {}),
           ...(contextTokens !== undefined ? { contextTokens } : {}),
           ...(participant.instructions
@@ -1844,8 +1862,9 @@ function sanitizeText(
   let cleaned = ''
   for (let i = 0; i < raw.length; i++) {
     const code = raw.charCodeAt(i)
-    cleaned +=
-      code <= 0x1f || (code >= 0x7f && code <= 0x9f) || isDisguisingCodePoint(code) ? ' ' : raw[i]
+    cleaned += code <= 0x1f || (code >= 0x7f && code <= 0x9f) || isDisguisingCodePoint(code)
+      ? ' '
+      : raw[i]
   }
   const collapsed = cleaned.replace(/\s+/g, ' ').trim()
   const limit = clampPositiveInt(maxChars, DEFAULT_PREVIEW_MAX)
@@ -2058,7 +2077,9 @@ function sumFiles(files: DiffFileSummary[], key: 'additions' | 'deletions'): num
  * `queuedPrompts` and keep `queuedPrompt` as the head for legacy readers.
  * Older records may only have `queuedPrompt`, so fall back to that single slot.
  * Index addressing for remote steerNow/remove uses this order. */
-export function combinedQueuedPrompts(activeRound: EnsembleConfig['activeRound']): string[] {
+export function combinedQueuedPrompts(
+  activeRound: EnsembleConfig['activeRound']
+): string[] {
   if (!activeRound) return []
   if (Array.isArray(activeRound.queuedPrompts) && activeRound.queuedPrompts.length > 0) {
     return activeRound.queuedPrompts

@@ -25,7 +25,9 @@ describe('ollama model availability helpers', () => {
     expect(isOllamaModelInstalled('ornith-1.5:35b', ['ornith:35b'])).toBe(false)
     expect(isOllamaModelInstalled('gemma3:4b', ['gemma3:latest'])).toBe(true)
     expect(isOllamaModelInstalled('gemma3', ['gemma3:4b'])).toBe(true)
-    expect(isOllamaModelInstalled('lfm2.5-thinking:1.2b', ['lfm2.5-thinking:latest'])).toBe(true)
+    expect(
+      isOllamaModelInstalled('lfm2.5-thinking:1.2b', ['lfm2.5-thinking:latest'])
+    ).toBe(true)
     expect(isOllamaModelInstalled('lfm2.5-thinking', ['lfm2.5-thinking:1.2b'])).toBe(true)
     expect(isOllamaModelInstalled('lfm2.5', ['lfm2.5:8b'])).toBe(true)
     expect(isOllamaModelInstalled('lfm2.5:latest', ['lfm2.5:8b'])).toBe(true)
@@ -36,17 +38,27 @@ describe('ollama model availability helpers', () => {
     )
     expect(isOllamaModelInstalled('granite4.2:8b', ['granite4.2:latest'])).toBe(true)
     expect(isOllamaModelInstalled('granite4.2:30b', ['granite4.2:latest'])).toBe(false)
-    expect(isOllamaModelInstalled('glm-4.7-flash:q4_K_M', ['glm-4.7-flash:q4_K_M'])).toBe(true)
     expect(
-      isOllamaModelInstalled('north-mini-code-1.0:q4_K_M', ['north-mini-code-1.0:q4_K_M'])
+      isOllamaModelInstalled('glm-4.7-flash:q4_K_M', ['glm-4.7-flash:q4_K_M'])
+    ).toBe(true)
+    expect(
+      isOllamaModelInstalled('north-mini-code-1.0:q4_K_M', [
+        'north-mini-code-1.0:q4_K_M'
+      ])
     ).toBe(true)
   })
 
   it('builds install-only pull commands for safe model ids', () => {
     expect(buildOllamaPullCommand('qwen3:4b-instruct')).toBe('ollama pull qwen3:4b-instruct')
-    expect(buildOllamaPullCommand('openai/gpt-oss-20b')).toBe('ollama pull openai/gpt-oss-20b')
-    expect(buildOllamaPullCommand('laguna-xs-2.1:q8_0')).toBe('ollama pull laguna-xs-2.1:q8_0')
-    expect(buildOllamaPullCommand('glm-4.7-flash:q4_K_M')).toBe('ollama pull glm-4.7-flash:q4_K_M')
+    expect(buildOllamaPullCommand('openai/gpt-oss-20b')).toBe(
+      'ollama pull openai/gpt-oss-20b'
+    )
+    expect(buildOllamaPullCommand('laguna-xs-2.1:q8_0')).toBe(
+      'ollama pull laguna-xs-2.1:q8_0'
+    )
+    expect(buildOllamaPullCommand('glm-4.7-flash:q4_K_M')).toBe(
+      'ollama pull glm-4.7-flash:q4_K_M'
+    )
     expect(buildOllamaPullCommand('north-mini-code-1.0:q4_K_M')).toBe(
       'ollama pull north-mini-code-1.0:q4_K_M'
     )

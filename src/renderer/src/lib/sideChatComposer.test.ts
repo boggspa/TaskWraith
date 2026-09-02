@@ -201,7 +201,10 @@ describe('sideChatComposer', () => {
   })
 
   it('keeps the linked-chat pane on the shared Composer instead of a bespoke form', () => {
-    const source = readFileSync(new URL('../app/views/MainAppLayout.tsx', import.meta.url), 'utf8')
+    const source = readFileSync(
+      new URL('../app/views/MainAppLayout.tsx', import.meta.url),
+      'utf8'
+    )
 
     expect(source).toContain('<Composer {...sideComposerCtx} />')
     expect(source).toContain('buildSideChatComposerProps(composerSurfaceBase, {')
@@ -241,9 +244,7 @@ describe('sideChatComposer', () => {
     )
     expect(appSource).toContain('const resolvedApprovalMode = resolveChatApprovalMode({')
     expect(layoutSource).toContain('externalComposerTextareaRef: sideComposerTextareaRef')
-    expect(layoutSource).toContain(
-      'patchSideParticipantWithSeatGate(sideChat, participantId, patch)'
-    )
+    expect(layoutSource).toContain('patchSideParticipantWithSeatGate(sideChat, participantId, patch)')
     expect(layoutSource).toContain('withSessionActivityLedger(sideChat, nextChat)')
     expect(layoutSource).toContain('persistSideChatActivity({')
     expect(layoutSource).toContain("if (activeRightDockTab !== 'chat') return")
@@ -279,7 +280,10 @@ describe('sideChatComposer', () => {
   })
 
   it('anchors the side-chat type menu to the pane instead of the narrow trigger pill', () => {
-    const css = readFileSync(new URL('../assets/css/11-side-chat.css', import.meta.url), 'utf8')
+    const css = readFileSync(
+      new URL('../assets/css/11-side-chat.css', import.meta.url),
+      'utf8'
+    )
 
     expect(css).toMatch(/\.side-chat-type-picker\s*\{[\s\S]*?position:\s*static;/)
     expect(css).toMatch(

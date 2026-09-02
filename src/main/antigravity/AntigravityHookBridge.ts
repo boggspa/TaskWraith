@@ -103,7 +103,9 @@ export function classifyAgyHookTool(name: string): AgyHookToolKind {
   // workspace, lock, and audit checks. Unknown lookalikes claiming the
   // reserved namespace fail closed rather than falling through as native.
   if (claimsTaskWraithMcpNamespace(trimmed)) {
-    return resolveCatalogActionStrict(trimmed).ok ? 'taskwraith-mcp' : 'invalid-taskwraith-mcp'
+    return resolveCatalogActionStrict(trimmed).ok
+      ? 'taskwraith-mcp'
+      : 'invalid-taskwraith-mcp'
   }
   // MCP calls are classified BEFORE the write heuristic: the inner tool name
   // rides the args, not the tool name, so `call_mcp_tool` itself never looks

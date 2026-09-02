@@ -551,16 +551,14 @@ describe('getCliProviderMcpStatus', () => {
       throw new Error('must not read settings')
     })
 
-    await expect(getAgentMcpStatusSnapshotDirect('cursor', { getSettings })).resolves.toMatchObject(
-      {
-        provider: 'cursor',
-        available: false,
-        enabled: false,
-        source: 'provider-managed',
-        serverName: null,
-        tools: []
-      }
-    )
+    await expect(getAgentMcpStatusSnapshotDirect('cursor', { getSettings })).resolves.toMatchObject({
+      provider: 'cursor',
+      available: false,
+      enabled: false,
+      source: 'provider-managed',
+      serverName: null,
+      tools: []
+    })
     expect(getSettings).not.toHaveBeenCalled()
   })
 

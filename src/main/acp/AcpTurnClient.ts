@@ -82,7 +82,9 @@ export interface AcpInboundReply {
   respondError: (code: number, message: string) => void
 }
 
-export type AcpToolRecoveryReason = 'denied-permission-cancellation' | 'failed-tool-terminal'
+export type AcpToolRecoveryReason =
+  | 'denied-permission-cancellation'
+  | 'failed-tool-terminal'
 
 export interface AcpToolRecoveryContext {
   readonly reason: AcpToolRecoveryReason
@@ -605,11 +607,7 @@ function advertisedConfigOptions(result: unknown): AcpAdvertisedConfigOption[] {
  * Only the latter is sufficient here because TaskWraith owns transcript UI and
  * must not replay provider history as fresh updates. */
 function agentSupportsSessionResume(initializeResult: unknown): boolean {
-  if (
-    !initializeResult ||
-    typeof initializeResult !== 'object' ||
-    Array.isArray(initializeResult)
-  ) {
+  if (!initializeResult || typeof initializeResult !== 'object' || Array.isArray(initializeResult)) {
     return false
   }
   const capabilities = (initializeResult as { agentCapabilities?: unknown }).agentCapabilities
@@ -1425,7 +1423,11 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         endProcess()
         continue
       }
-      if (message.error && typeof message.id === 'number' && pendingConfigRpcs.has(message.id)) {
+      if (
+        message.error &&
+        typeof message.id === 'number' &&
+        pendingConfigRpcs.has(message.id)
+      ) {
         const config = pendingConfigRpcs.get(message.id)!
         pendingConfigRpcs.delete(message.id)
         const rpcError = message.error as { message?: string }
@@ -1524,7 +1526,11 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
           )
         continue
       }
-      if (typeof message.id === 'number' && message.result && pendingConfigRpcs.has(message.id)) {
+      if (
+        typeof message.id === 'number' &&
+        message.result &&
+        pendingConfigRpcs.has(message.id)
+      ) {
         pendingConfigRpcs.delete(message.id)
         applyNextSessionConfig(message.result)
         continue
@@ -1584,13 +1590,20 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         }
         if (event.type === 'result') {
           const responsePromptRpcId =
-            typeof message.id === 'number' && message.id === activePromptRpcId ? message.id : null
+            typeof message.id === 'number' && message.id === activePromptRpcId
+              ? message.id
+              : null
           if (responsePromptRpcId === null) continue
           const status = event.status || terminalStatus
           const recovery = options.deniedToolRecovery
           // A steering interrupt owns the follow-up slot: never spend the
           // denied-tool one-shot recovery on a prompt WE cancelled on purpose.
-          if (recovery && !cancelRequested && !deniedToolRecoveryAttempted && !pendingSteer) {
+          if (
+            recovery &&
+            !cancelRequested &&
+            !deniedToolRecoveryAttempted &&
+            !pendingSteer
+          ) {
             let deniedCancellation = false
             try {
               deniedCancellation =
@@ -1704,9 +1717,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     // transport can otherwise emit no useful exit on provider wrappers and
     // leave the run open indefinitely.
     processError = err
-    const text = options.formatProcessError
-      ? options.formatProcessError(err)
-      : err.message || String(err)
+    const text = options.formatProcessError ? options.formatProcessError(err) : err.message || String(err)
     try {
       options.onEvent({ type: 'provider_warning', text })
     } catch {

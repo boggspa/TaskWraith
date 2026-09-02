@@ -3977,7 +3977,9 @@ describe('normalizeOllamaModels', () => {
     expect(humanizeOllamaModelId('mistral-medium-3.5:latest')).toBe(
       'Mistral Medium 3.5 (128B Param)'
     )
-    expect(humanizeOllamaModelId('mistral-medium-3.5:128b')).toBe('Mistral Medium 3.5 (128B Param)')
+    expect(humanizeOllamaModelId('mistral-medium-3.5:128b')).toBe(
+      'Mistral Medium 3.5 (128B Param)'
+    )
     for (const [modelId, label] of [
       ['ministral-3:3b', 'Ministral 3 (3B Param)'],
       ['granite4:3b', 'Granite 4.0 (3B Param)'],
@@ -4507,10 +4509,7 @@ describe('parseOllamaToolRequest', () => {
   })
 
   it('adds example arguments when a required field is missing', () => {
-    const missingContent = validateOllamaToolArguments('write_file', {
-      path: 'a.ts',
-      intent: 'write'
-    })
+    const missingContent = validateOllamaToolArguments('write_file', { path: 'a.ts', intent: 'write' })
     expect(missingContent.ok).toBe(false)
     if (!missingContent.ok) {
       expect(missingContent.message).toContain('missing required argument: content')

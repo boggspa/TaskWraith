@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import type { MultiviewPaneMediaRef, MultiviewPaneRecord } from '../../../shared/multiviewLayouts'
+import type {
+  MultiviewPaneMediaRef,
+  MultiviewPaneRecord
+} from '../../../shared/multiviewLayouts'
 import {
   applyAssignToFocusedPane,
   applyClosePane,
@@ -303,11 +306,7 @@ describe('applySetPaneCanvas', () => {
   })
 
   it('assigning a chat to a canvas pane clears the canvas', () => {
-    let s = applySetPaneCanvas(
-      state({ layout: 'vertical-2', panes: panesOf([null, null]) }),
-      0,
-      'cv1'
-    )
+    let s = applySetPaneCanvas(state({ layout: 'vertical-2', panes: panesOf([null, null]) }), 0, 'cv1')
     expect(s.panes[0].canvasId).toBe('cv1')
     s = applySetPaneChat(s, 0, 'chat-x')
     expect(s.panes[0]).toEqual({ id: 't0', chatId: 'chat-x', canvasId: null })
@@ -338,11 +337,7 @@ describe('removedCanvasIds', () => {
     let after = applySetPaneChat(before, 0, 'chat-x')
     expect(removedCanvasIds(before.panes, after.panes)).toEqual(['cv-chat'])
 
-    before = applySetPaneCanvas(
-      state({ layout: 'vertical-2', panes: panesOf([null, null]) }),
-      0,
-      'cv-media'
-    )
+    before = applySetPaneCanvas(state({ layout: 'vertical-2', panes: panesOf([null, null]) }), 0, 'cv-media')
     after = applySetPaneMedia(before, 0, mediaRef())
     expect(removedCanvasIds(before.panes, after.panes)).toEqual(['cv-media'])
 
@@ -391,11 +386,7 @@ describe('applySetPaneMedia', () => {
   })
 
   it('setting media clears an existing canvas (mutual exclusion both ways)', () => {
-    let s = applySetPaneCanvas(
-      state({ layout: 'vertical-2', panes: panesOf([null, null]) }),
-      0,
-      'cv1'
-    )
+    let s = applySetPaneCanvas(state({ layout: 'vertical-2', panes: panesOf([null, null]) }), 0, 'cv1')
     expect(s.panes[0].canvasId).toBe('cv1')
     s = applySetPaneMedia(s, 0, m)
     expect(s.panes[0]).toEqual({ id: 't0', chatId: null, canvasId: null, mediaRef: m })

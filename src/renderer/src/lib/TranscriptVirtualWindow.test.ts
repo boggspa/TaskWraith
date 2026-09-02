@@ -936,7 +936,9 @@ describe('TranscriptVirtualWindow', () => {
       })
       expect(snap.progress).toBe(0)
       expect(snap.viewportFraction).toBe(1)
-      expect(snap.rowIndex).toBe(findScrollAnchor(999 + 400 * 0.3, heights, offsets).index)
+      expect(snap.rowIndex).toBe(
+        findScrollAnchor(999 + 400 * 0.3, heights, offsets).index
+      )
     })
   })
 

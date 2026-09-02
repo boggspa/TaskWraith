@@ -63,7 +63,6 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 ## Part C — Per-style recipe specs (verified)
 
 ### default — TaskWraith native
-
 **Essence:** Two-layer "instrument" composer and the shipped iOS baseline: a polarity-neutral liquid-glass smoked bezel wrapping a hard-cornered, opaque near-black/near-white typing panel. Flat in transcript; tinted side-glow only on the welcome surface.
 **Material:** Two materials. OUTER `.composer-surface` = translucent glass: `--native-instrument-glass-bg` = `color-mix(in srgb, var(--surface-2) 46%, transparent)` DARK / `58%` LIGHT; `backdrop-filter: blur(20px) saturate(155%)`. INNER `.composer-inner-module` = OPAQUE solid `--native-instrument-inner-bg` hardcoded **#141418** (dark) / **#f0f0f3** (light), NOT theme-tinted; gets extra `blur(6px)` on glass/theme prompt-surface variants. Solid fallbacks: outer → `--native-instrument-outer-solid` = `var(--surface-2)` (#24242a dark / #f1f1f4 light); inner → `--native-instrument-inner-bg-solid` = #141418 / #f0f0f3. Glass dropped (→solid, blur→none) under `[data-prompt-surface="solid"]`, `[data-reduce-transparency="true"]`, `@supports not backdrop-filter`, AND macOS `[data-appearance="native_glass"]`. Base un-skinned `--composer-bg` = `rgba(7,16,36,0.92)` dark / `rgba(255,255,255,0.78)` light.
 **Palette:** surfaceFill OUTER glass `color-mix(surface-2 46%/58% transparent)` (surface-2 #24242a D / #f1f1f4 L), solid fallback surface-2 · innerModuleFill **#141418 D / #f0f0f3 L** (hardcoded card-in-card) · border `--native-instrument-glass-border` = `color-mix(text-primary 11%/9% transparent)`; dividers text-primary 12%(stack)/11%(module) · focusAccent base `:focus-within` border `rgba(126,197,255,0.58)` + rings `0 0 0 1px rgba(126,197,255,0.18), 0 0 22px rgba(82,170,255,0.20), 0 0 42px rgba(82,170,255,0.12)` (gemini-provider variant border `rgba(105,157,255,0.56)`) · textPrimary `var(--text-primary)` = `rgba(255,255,255,0.92)` D / `rgba(18,21,27,0.92)` L · placeholder `color-mix(text-secondary 60%, transparent)`; **text-secondary = rgba(255,255,255,0.55) D / rgba(18,21,27,0.62) L** [corrected: light is 0.62, not 0.55] · rimOrGlow OUTER `inset 0 0 0 1px outer-rim + inset 0 0 14px outer-rim-glow + inset 0 1px 0 (text-primary 8%/7%) + 0 18px 46px color-mix(#000 20%/14%)`; INNER provider rim `inset 0 0 0 1px color-mix(provider-color 13%, transparent)` (base neutral 4%)
@@ -79,7 +78,6 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Evidence:** `src/renderer/src/assets/css/03-composer-welcome-activity.css:3103-3141` (native-instrument vars dark+light), `:3145-3177` (outer glass + fallbacks), `:3188-3228` (kill vignette / re-skin above-rows), `:3240-3335` (merged :has() frame), `:3379-3497` (inner module + readability), `:3532-3554` (textarea), `:3873-3885` (running-state second row), `:6324-6398` (action-btn / run glyph 28px); `07-composer-shells.css:94-99` (control order), `:3766-3819` (inner ::after provider rim); `10-provider-shell-overrides.css:3380-3446` (merged reinforce); `theme.css:109,274,161` (text-secondary D/L, success); `App.tsx:20675-20685` (RunSymbolIcon).
 
 ### codex — Codex
-
 **Essence:** Two-surface dark "card-in-card": near-black rounded-22px shell (#212121) holding a slightly-lighter inner module (#252525) with top corners echoing the shell and tighter bottom corners. All chrome stripped to floating satellite text-tokens with ▾ carets; the hallmark is a solid light send circle with a dark up-arrow.
 **Material:** Solid, opaque — NOT glass. Outer `.composer-surface` solid **#212121** (07:26); inner `.composer-inner-module` solid **#252525** (07:40). No backdrop-filter; `[data-reduce-transparency="true"]` forces `backdrop-filter:none` (02:2963-2966). Light-theme (light/mist/sage): surface → `var(--surface-2)` bg, `var(--surface-border)`, `var(--surface-text)`, shadow `0 4px 18px rgba(0,0,0,0.08)` (08:3971-3979). Inner module carries `inset 0 -1px 0 color-mix(#ffffff 7%, transparent)` (a BOTTOM-edge inner highlight [corrected — `inset 0 -1px 0` paints the bottom edge, not the top]) + drop `0 8px 16px rgba(0,0,0,0.12)`.
 **Palette:** surfaceFill **#212121** (outer) / light `var(--surface-2)` · innerModuleFill **#252525** (distinct card-in-card) · border `1px solid transparent` (forced transparent incl :focus-within, 07:64-73); light `var(--surface-border)` · focusAccent none — focus deepens shadow to `0 6px 24px rgba(0,0,0,0.46)`, border stays transparent; light focus border `color-mix(--surface-border 44%, --surface-text 18%)` shadow `0 4px 22px rgba(0,0,0,0.12)` · textPrimary model token `color-mix(#ffffff 88%, transparent)`; telemetry `color-mix(#ffffff 58%)` · placeholder `color-mix(#ffffff 38%, transparent)`; light `var(--text-tertiary)` · rimOrGlow outer rim REMOVED; resting shadow `0 6px 24px rgba(0,0,0,0.4)`; agent-aura (on `.composer-above-bar-stack` rows, Codex purple) `0 0 0 1px rgb(160 112 242 /0.28) + 0 18px 58px /0.18` at rest, `/0.5 + 0 22px 68px /0.24` running; codex aura RGB `160 112 242`
@@ -95,7 +93,6 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Evidence:** `07-composer-shells.css:22-29` (outer #212121 r22), `:30-45` (inner #252525 r21/21/14/14 + insets), `:60-73` (focus + rim removed), `:107-118` (order), `:200-226` (ensemble Codex provider accent), `:247-268` (permission #ff7a59 + ▾), `:271-321` (model + lightning ::before), `:323-350` (send light circle 32px, glyph #0d0d0d); `App.tsx:18185-18186` (float above), `:20677-20684` (ArrowUpSendIcon); `AppChromeSymbols.tsx:439-455` (ArrowUpSendIcon); `05-polish-fx-layouts.css:2634-2637` (Codex provider aura), `:3027-3088` (codex `:not(:has(.ensemble-above-row))`); `08-theme-picker-overrides.css:3971-4047` (light derive).
 
 ### chatgpt — ChatGPT (visual-only cross of codex + cursor)
-
 **Essence:** A VISUAL-ONLY cross (NOT the ChatGPT product/runtime): the **Codex** "above-row" tucked-tab chrome worn over the **Cursor** flat-neutral-gray capsule body + bare-text bottom-control row (model / context / workspace), with the cursor capsule's inset top rim lip REMOVED so the input pill reads FLAT like the official ChatGPT composer. Context-wheel pairs with cursor.
 **Material:** = **cursor** verbatim — flat solid neutral GRAY, no glass/gradient/chroma, theme-immune. Capsule surface **#2a2a2a** D / **#f4f4f4** L (`--cursor-shell-surface`); page bg #1f1f1f/#ededed.
 **Palette:** = **cursor** — surfaceFill #2a2a2a/#f4f4f4 · innerModuleFill n/a (the filled capsule IS the module) · border `--cursor-shell-border` rgba(216,216,216,0.16)/rgba(46,46,46,0.16) · focusAccent no chroma → `--cursor-shell-rim-strong` rgba(216,216,216,0.42)/rgba(46,46,46,0.30) · textPrimary `--cursor-shell-fg` #d8d8d8/#2e2e2e · placeholder `--cursor-shell-faint` rgba(216,216,216,0.38)/rgba(46,46,46,0.4) · rimOrGlow **REMOVED** — the sole delta vs cursor: cursor's `inset 0 1px 0 --cursor-shell-rim` top lip is dropped so the pill reads flat.
@@ -103,7 +100,7 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Controls:** = **cursor** — LIFTED into the capsule (attach / model label / send-cluster), DEMOTED transparent satellite row (permission plain text / ensemble-mode segmented / provider+workspace outline pills); bottom-control rows read model / context / workspace.
 **Send glyph:** arrow-up (= cursor).
 **Typography:** System sans (= cursor). No mono/serif/italic/tabular-nums.
-**Row policy:** Pure **cursor** above-rows on iOS (FINAL SPEC — no tuck): `detachedAboveRows` with `tucksSecondaryRows` FALSE, so git/Create-PR **and** the roster/queued secondary rows all render as detached floating cards above the capsule. This is the faithful analog of live desktop, whose extracted `components/Composer.tsx:2040+` `aboveRowsFloatAboveStack` FLOATS chatgpt above-rows alongside cursor+codex; the codex _tucked-tab_ look was never reachable over a capsule body (no filled card to tuck into), so iOS renders untucked. Desktop still groups chatgpt's `.composer-above-bar` + `.composer-control-footer`/`.composer-codex-footer` with codex and `.context-wheel` with cursor. Radius: chatgpt shares cursor's 26px capsule via desktop's explicit `:is(cursor, chatgpt)` scope — no override (see `s1-chatgpt-radius-answer`).
+**Row policy:** Pure **cursor** above-rows on iOS (FINAL SPEC — no tuck): `detachedAboveRows` with `tucksSecondaryRows` FALSE, so git/Create-PR **and** the roster/queued secondary rows all render as detached floating cards above the capsule. This is the faithful analog of live desktop, whose extracted `components/Composer.tsx:2040+` `aboveRowsFloatAboveStack` FLOATS chatgpt above-rows alongside cursor+codex; the codex *tucked-tab* look was never reachable over a capsule body (no filled card to tuck into), so iOS renders untucked. Desktop still groups chatgpt's `.composer-above-bar` + `.composer-control-footer`/`.composer-codex-footer` with codex and `.context-wheel` with cursor. Radius: chatgpt shares cursor's 26px capsule via desktop's explicit `:is(cursor, chatgpt)` scope — no override (see `s1-chatgpt-radius-answer`).
 **Effects:** = cursor at rest (no rimChase/grain); the removed top-rim lip is the only visual subtraction. Cursor's activity aura on the merged stack applies as for cursor.
 **Theme behavior:** Theme-IMMUNE flat gray (inherits cursor). Desktop groups chatgpt's theme-derive with codex ONLY for the exotic alabaster/obsidian themes; the coarse iOS model keeps the vibe-correct locked gray (matches "official ChatGPT") and does not split that edge.
 **A11y fallbacks:** = cursor — reduce-transparency degrades only native-glass floating rows (capsule never blurs); reduce-motion suppresses the stack aura pulse. No chatgpt-specific rule.
@@ -112,7 +109,6 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Evidence:** `src/main/store/types.ts:115-123` (union entry + "cross of Codex + Cursor … inset rim removed" comment); `07-composer-shells.css:2100-2105` (`.context-wheel` grouped w/ cursor), `:3585-3656` (`.composer-above-bar` grouped w/ codex), `:3713-3724` (footer grouped w/ codex); `10-provider-shell-overrides.css` (alabaster/obsidian theme-derive grouped w/ codex, 183 selectors); iOS `ComposerShellResolver.swift` (`chatgptRecipe` + `composerLayout(.chatgpt)`), `ComposerShellStyle.swift` (14th `case chatgpt`).
 
 ### claude — Claude
-
 **Essence:** Whisper-quiet near-monochrome dark shell mimicking Claude Code's terminal composer — a single rounded-rect bubble (the textarea) with chrome-less floating-satellite footer controls and a matched dark header band above. Tiny squared send button with a return-arrow glyph nudged up 9px.
 **Material:** Translucent-ish dark; the bubble chrome lives on `.composer-textarea`, not the surface (composerStyle and interfaceStyle always carry the same value). Interface-style rules (07:3344-3360) STRIP the surface to transparent/no-border/no-shadow/no-blur and re-home chrome onto the textarea. **Rendered bubble = `.composer-textarea`:** background **#1e1e1e !important** [corrected — 08:7801-7804 overrides 07's #151515 by source order] (light/mist/sage **#f0f0f3**, 08:7806-7809); border **rgba(255,255,255,0.18) !important** [corrected, 08:7803] (light rgba(0,0,0,0.14)); border-radius 14px; box-shadow `0 4px 20px rgba(0,0,0,0.32)`; padding 18px 14px. `backdrop-filter` removed on surface; reduce-transparency kills any surface backdrop-filter.
 **Palette:** surfaceFill bubble **#1e1e1e** D / **#f0f0f3** L [corrected from #151515]; bare composer-style fallback `color-mix(#161616 94%, transparent)`; provider-scoped `--composer-bg: color-mix(#262626 92%, transparent)` · innerModuleFill **n/a** (footer chrome forced transparent !important) · border bubble **rgba(255,255,255,0.18)** [corrected]; chips-bar hairline (DEAD — see effects) · focusAccent **rendered focus-within textarea border rgba(255,255,255,0.30) !important; box-shadow `0 4px 22px rgba(0,0,0,0.36), 0 0 0 1px rgba(255,255,255,0.18) !important`** [corrected, 08:7811-7817 — 30% not 26%]; send-button focus ring `0 -9px 0 2px var(--focus-ring)` offset up 9px · textPrimary `color-mix(#ffffff 70%)` for model/provider/workspace/run-glyph · placeholder `color-mix(#ffffff 30%, transparent)` · rimOrGlow bubble drop `0 4px 20px rgba(0,0,0,0.32)`; surface ::before force-hidden; above-bar-stack per-row agent-aura `0 0 0 1px rgb(var(--agent-aura-rgb,87 148 255)/0.28), 0 18px 58px /0.18`, running /0.5 + /0.24 pulse 2.8s
@@ -128,7 +124,6 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Evidence:** `07-composer-shells.css:400-410, 437-444, 456-466, 521-545, 636-705` (base shell, supplanted by 08), `:1871-1873` (chips display:none), `:1874-1881` (min-height 56px), `:3322-3360` (surface→textarea chrome), `:3409-3411` (run orange tint); `08-theme-picker-overrides.css:7801-7817` (bubble fill/border/focus), `:7831-7837` (reanchor), `:7843-7860` (files/stats solid #3a3a3a + tabular-nums), `:7900-7922` (permission contained button), `:7927-7928` (context wheel cyan); `05-polish-fx-layouts.css:3011-3284` (per-row aura); `AppChromeSymbols.tsx:418-434` (ClaudeReturnSymbolIcon); `App.tsx:20675-20685`.
 
 ### gemini — Gemini
-
 **Essence:** "Single rounded pill" composer — the surface is fully transparent (flex column only); the entire visual chrome is a deep-navy gradient CAPSULE (26px) holding only the textarea. The [+], model pill, and send button are CSS-anchor-positioned onto the capsule's bottom-right edge; permission · ensemble · provider · workspace flow below as a transparent satellite row. Signature Gemini blue #5a8cff.
 **Material:** Two-surface split. OUTER `.composer-surface` fully transparent: bg/border/box-shadow/backdrop-filter all `transparent`/`none` !important, padding 0, radius 0, flex column gap 6px, overflow:visible (07:2152-2165); ::before killed (content:none). INNER capsule `.composer-textarea-wrap` SOLID gradient, NO blur: dark `linear-gradient(180deg,#141d30 0%,#0d1320 100%)`. Light (light/mist/sage AND alabaster) `linear-gradient(180deg,#ffffff 0%,#eef3ff 100%)`. Obsidian keeps dark navy (capsule surface forced transparent at 10:746-751). Opaque capsule → reduce-transparency rules inert.
 **Palette:** surfaceFill CAPSULE dark `linear-gradient(180deg,#141d30,#0d1320)`; outer surface transparent; light/alabaster `linear-gradient(180deg,#ffffff,#eef3ff)` · innerModuleFill **n/a** (capsule is the only filled surface) · border capsule `1px color-mix(#5a8cff 22%, transparent)`; light `color-mix(#5a8cff 30%, var(--surface-border))` · focusAccent **#5a8cff**; focus border `color-mix(#5a8cff 58%)`; light `60%` · textPrimary dark white (placeholder `color-mix(#ffffff 38%)`); light `var(--surface-text)` (placeholder `color-mix(#1d1d1f 42%)`); obsidian `rgba(246,249,255,0.94)`; alabaster `rgba(18,21,27,0.92)` · placeholder dark `color-mix(#ffffff 38%)` / light `color-mix(#1d1d1f 42%)` · rimOrGlow capsule `0 6px 30px rgba(0,0,0,0.42)`; focus `0 6px 34px rgba(0,0,0,0.46), 0 0 0 4px color-mix(#5a8cff 12%)`; light focus `0 4px 22px rgba(20,40,90,0.14), 0 0 0 4px color-mix(#5a8cff 14%)`. Model pill bg `color-mix(#5a8cff 18%)` text `color-mix(#b8ccff 95%)`. Send circle bg `color-mix(#ffffff 90%)` glyph **#0e1218**
@@ -138,13 +133,12 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Typography:** Sans. Textarea `var(--font-size-md)`; provider/workspace/ensemble `--font-size-xs`; model + permission `calc(--font-size-xs + 1px)`; weights permission/model/ensemble 500 (active 600). No italic placeholder, no tabular-nums, no letter-spacing.
 **Row policy:** Detached-pill family. `.composer-above-bar-stack` is gap wrapper only; aura must NOT paint at stack level — gemini explicitly in the :is() list that nulls stack box-shadow/::after and re-homes aura to EACH child row via per-row ::after. No `:has()` row-count gating for gemini (always fans per-row). Lift uses `anchor()` math; single-vs-multi-line handled by `anchor(--composer-capsule bottom)`.
 **Effects:** OUTER ::before KILLED (content:none). CAPSULE focus-within → border #5a8cff 58% + glow `0 6px 34px` black + 4px #5a8cff-12% ring (signature blue halo). Per-ROW agent-aura ::after (not on capsule) idle `0 0 0 1px rgb(.../0.28) + 0 18px 58px /0.18`; running `/0.5 + 0 22px 68px /0.24` + pulse 2.8s; approval warn `/0.5` no anim; failed danger `/0.42` no anim. Lifted controls abs-positioned via `position-anchor:--composer-capsule` (load-bearing structural effect). Send button NO inset ring / NO box-shadow (flat). Attach hover color-only (transform:none).
-**Theme behavior:** Largely THEME-IMMUNE at capsule level (locks navy by default; obsidian+alabaster gemini chrome intentionally dark navy). Dark default applies under system/dark/obsidian, base for all themes unless repainted. Flips: (1) light/mist/sage repaint capsule near-white + light focus, surface stays transparent; (2) alabaster repaints near-white + re-keys satellite chips to #23345f-on-#5a8cff-10% + above-rows var(--surface-2) #5a8cff-32% border; (3) obsidian KEEPS navy (above-rows radial+linear navy, text rgba(246,249,255,\*)). interface-style=gemini darkens app chrome (sidebar/main-pane `color-mix(#0a1020 92%/88%)`).
+**Theme behavior:** Largely THEME-IMMUNE at capsule level (locks navy by default; obsidian+alabaster gemini chrome intentionally dark navy). Dark default applies under system/dark/obsidian, base for all themes unless repainted. Flips: (1) light/mist/sage repaint capsule near-white + light focus, surface stays transparent; (2) alabaster repaints near-white + re-keys satellite chips to #23345f-on-#5a8cff-10% + above-rows var(--surface-2) #5a8cff-32% border; (3) obsidian KEEPS navy (above-rows radial+linear navy, text rgba(246,249,255,*)). interface-style=gemini darkens app chrome (sidebar/main-pane `color-mix(#0a1020 92%/88%)`).
 **A11y fallbacks:** reduce-motion → running aura pulse killed AND running rim hidden (05:3247-3284); capsule border/shadow transitions not disabled (focus glow still cross-fades). reduce-transparency → NO-OP (surface already transparent; opaque capsule has no backdrop-filter). No gemini-specific high-contrast (always-on solid capsule + opaque chips meet contrast).
 **Skeptic:** accurate=true; corrections applied = none. Minor non-material citation nits only (reduce-transparency rule scoping, App.tsx line ±, an additional 07:3505+ interface-style chrome block consistent with the spec). Send glyph arrow-up matches global facts. Confidence: high.
 **Evidence:** `07-composer-shells.css:2131-2139` (capsule tokens), `:2152-2184` (surface invisible + single-h), `:2188-2210` (capsule 26px + anchor-name + focus), `:2211-2223` (gutters 9px 224px 9px 46px), `:2276-2301` (LIFT abs+anchor), `:2330-2392` (attach/model/permission), `:2480-2545` (provider/ensemble/send); `05-polish-fx-layouts.css:3011-3284` (per-row aura); `08-theme-picker-overrides.css:4408-4425` (light capsule); `10-provider-shell-overrides.css:691-751` (obsidian), `:3249-3363` (alabaster), `:3009-3012` (chrome darken); `App.tsx:20677-20682` (ArrowUpSendIcon).
 
 ### kimi — Kimi
-
 > **Accent source of truth:** the live desktop shell keys every kimi accent off
 > `var(--provider-kimi-color)` = **#0073E6** (defined in `theme.css`; consumed
 > by the kimi rules in `07-composer-shells.css` — chip wash, `:focus-within`
@@ -163,13 +157,12 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Typography:** Sans. Textarea `var(--font-size-md)`. Placeholder NOT italic (white/36%). provider/workspace/ensemble `--font-size-xs`; model & permission `calc(--font-size-xs + 1px)`; weights 500, active ensemble 600. Model caret text glyph '▾' 9px opacity 0.6 margin-left 4px. No tabular-nums.
 **Row policy:** Shared above-bar-stack; NO tucked-tab/merged-instrument variant. Rows styled as sibling cards matching surface (18px, fill `color-mix(#0a0a0c 96%)`, 1px white/8%, `0 4px 16px rgba(0,0,0,0.5)`, ::before suppressed). Aura matrix places kimi in "stacked, aura-suppressed" group: stack box-shadow forced none, stack ::after display:none/content:none — keeps rim/edge/sidebar aura, drops stack glow + provider ::after wash. Obsidian/dark-ensemble re-assert solid fills + null ::before/::after. Suppression rule (07:2553-2556) hides top-toggles/chips/non-whitelisted left children.
 **Effects:** Surface ::before SUPPRESSED (kills blue edge-gradient). Above-bar ::before SUPPRESSED. Model ::after VISIBLE '▾' 9px opacity 0.6 (real SVG hidden). Focus ring (layered box-shadow) on :focus-within: `0 4px 16px rgba(0,0,0,0.55), 0 0 0 3px color-mix(#4da6ff 10%)` + border `color-mix(#4da6ff 50%)`; OFF at rest. Agent-aura stack ::after SUPPRESSED (05:3044-3052) + provider-kimi transcript ::after wash zeroed. Obsidian/dark-ensemble force all row ::before AND ::after none. No paper/perforation/caret/two-surface split.
-**Theme behavior:** Theme-immune at core (hardcodes #0a0a0c surface, #ffffff/8% border, #ffffff/36% placeholder, #4da6ff accent regardless of theme; no --surface-\* in dark). Flips: (1) Light family + alabaster re-key surface to surface-2/unified-soft, focus darker blue #1a8cff (42%/12%), chips blue-on-cream (#1a8cff 10-12% bg / #0a3357 text); (2) Obsidian solid dark #202124/#1f2023, white/12% borders, inverted text rgba(246,246,246,0.84), active ensemble blue #4da6ff 70% on #0a0a0c; (3) Alabaster cream remap blue chips + run-btn bg `color-mix(#1a8cff 18%, #fff)` glyph #0a3357. Signature blue across family (#4da6ff dark, #1a8cff/#70b8ff/#cfe4ff light).
+**Theme behavior:** Theme-immune at core (hardcodes #0a0a0c surface, #ffffff/8% border, #ffffff/36% placeholder, #4da6ff accent regardless of theme; no --surface-* in dark). Flips: (1) Light family + alabaster re-key surface to surface-2/unified-soft, focus darker blue #1a8cff (42%/12%), chips blue-on-cream (#1a8cff 10-12% bg / #0a3357 text); (2) Obsidian solid dark #202124/#1f2023, white/12% borders, inverted text rgba(246,246,246,0.84), active ensemble blue #4da6ff 70% on #0a0a0c; (3) Alabaster cream remap blue chips + run-btn bg `color-mix(#1a8cff 18%, #fff)` glyph #0a3357. Signature blue across family (#4da6ff dark, #1a8cff/#70b8ff/#cfe4ff light).
 **A11y fallbacks:** No kimi-specific rules (inherits global). reduce-transparency → no-op (opaque, no backdrop-filter; fill swap inert since 07 wins over 03). reduce-motion → nothing in the composer animates (focus shadow is static). forced-colors → global block hands inputs/inner-module to system colors; SwiftUI should drop blue accent + custom fills for system label/fill in high-contrast.
 **Skeptic:** accurate=true; corrections applied = none. Non-material nits only (stale "~main.css:6566" comment → actual base ::before at 03:2767; reduce-transparency fill swap inert; stop-btn not explicitly 32px in kimi). Send glyph arrow-up matches global facts. Confidence: high.
 **Evidence:** `07-composer-shells.css:2553-2556` (suppression), `:2564-2572` (above-bar), `:2574-2593` (surface 18px + focus blue), `:2614-2622` (order), `:2658-2668` (permission plain text), `:2671-2693` (model + ▾), `:2714-2738` (ensemble active blue), `:2740-2759` (send 32px), `:2416-2433` (blue wash variant); `05-polish-fx-layouts.css:2644-2683` (aura + transcript wash zeroed), `:3011-3052` (aura-suppressed group); `08-theme-picker-overrides.css:3974-4009, 4397-4400`; `10-provider-shell-overrides.css:753-938` (obsidian), `:3171-3368` (light/alabaster); `App.tsx:20681-20682` (ArrowUpSendIcon).
 
 ### cursor — Cursor (visual-only, flat gray, theme-immune)
-
 **Essence:** Deliberately chroma-free flat neutral-GRAY shell imitating Cursor's input (a rounded capsule + satellite row) with all color/glass/gradient stripped. Gemini-style merged frosted-gray above-bar stack with git/Create-PR rows floated ABOVE as detached gray pills; flat-gray textarea capsule below with [+]/model/send anchor-lifted in; permission/ensemble/provider/workspace as a transparent satellite row.
 **Material:** Flat solid gray, no glass/gradient/chroma. Tokens on `<html>` root (dark default, 10:2067-2087): `--cursor-shell-bg #1f1f1f`, `--cursor-shell-surface #2a2a2a`, `--cursor-shell-fg #d8d8d8`, `--cursor-shell-muted rgba(216,216,216,0.6)`, `--cursor-shell-faint rgba(216,216,216,0.38)`, `--cursor-shell-border rgba(216,216,216,0.16)`, `--cursor-shell-border-strong rgba(216,216,216,0.42)`, `--cursor-shell-hover rgba(216,216,216,0.09)`, `--cursor-shell-fill rgba(216,216,216,0.1)`, `--cursor-shell-rim rgba(216,216,216,0.22)`, `--cursor-shell-rim-strong rgba(216,216,216,0.42)`, `--cursor-shell-stack-header #101010`. Light/system flip: bg #ededed, surface #f4f4f4, fg #2e2e2e, muted rgba(46,46,46,0.62), faint rgba(46,46,46,0.4), border rgba(46,46,46,0.16), border-strong rgba(46,46,46,0.4), hover rgba(46,46,46,0.06), fill rgba(46,46,46,0.08), rim rgba(46,46,46,0.14), rim-strong rgba(46,46,46,0.3), stack-header transparent. CAPSULE = SOLID `var(--cursor-shell-surface)` no blur. Above-bar stack + floating rows DO use `backdrop-filter: blur(18px) saturate(140%)` over `color-mix(var(--cursor-shell-surface) 72%, transparent)` (the only translucency); `.composer-surface` transparent backdrop-filter:none. Portaled menus solid surface backdrop-filter:none.
 **Palette:** surfaceFill capsule **#2a2a2a** D / **#f4f4f4** L; stack + floating rows `color-mix(surface 72%, transparent)`; surface transparent; app pane bg #1f1f1f / #ededed · innerModuleFill **n/a** (capsule is the filled module) · border hairline `--cursor-shell-border` rgba(216,216,216,0.16)/rgba(46,46,46,0.16); capsule + stack/rows `--cursor-shell-border-strong` rgba(216,216,216,0.42)/rgba(46,46,46,0.4) · focusAccent **no chroma** — focus = capsule border-color → `--cursor-shell-rim-strong` + inset 0 1px 0 rim-strong; --accent remapped to fg in portaled menus · textPrimary `--cursor-shell-fg` #d8d8d8 / #2e2e2e · placeholder `--cursor-shell-faint` rgba(216,216,216,0.38)/rgba(46,46,46,0.4) · rimOrGlow flat top-edge lip `inset 0 1px 0 --cursor-shell-rim` on capsule (rgba(216,216,216,0.22)/rgba(46,46,46,0.14)) + on stack/rows alongside `0 4px 28px rgba(0,0,0,0.28)`. **At rest no outer glow — BUT during agent activity the merged stack DOES paint a colored aura [corrected, see Effects]**
@@ -185,7 +178,6 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Evidence:** `10-provider-shell-overrides.css:2067-2120` (token sets dark+light), `:2148-2233` (merged stack + segmentation), `:2236-2268` (cursor-lead floats + above-row ::before kill), `:2275-2341` (transparent surface + capsule), `:2374-2399` (anchor-lift), `:2443-2504` (permission/model + caret), `:2547-2579` (send 32px), `:2163-2174,2189-2196` (native_glass reduce-transparency); `App.tsx:15538-15542, 18185-18186, 18387, 20677-20682`; `05-polish-fx-layouts.css:2926, 2934-2950, 2955-2959, 3009-3010` (generic aura FIRES on cursor stack + reduce-motion).
 
 ### grok — Grok (visual-only, monochrome, theme-immune)
-
 **Essence:** Strictly monochrome black/white shell — zero chroma, zero glass, zero gradients. Copies Gemini's control ordering but renders every picker as a bare floating label (ensemble-mode is the lone outline capsule). Flat 24px-radius card with a signature bright top-edge inner rim. Above-rows use a Codex-style "tucked tab".
 **Material:** Solid + flat, NO glass anywhere. `backdrop-filter:none` + `-webkit-backdrop-filter:none` forced (!important) on the surface, above-row stack, diff-action menu, **app sidebar**, and all portaled popovers — **NOT the app transcript** [corrected — transcript is only recolored: background + ::after kill, no backdrop-filter declaration]. No translucent fills on structural chrome; all provider/theme ::before gradients killed (content:none + background:none). Surface fill dark **#111111** / light #f7f7f7. Page/above-row bg dark **#000000** / light #ffffff. Only translucency is white/black alpha tokens.
 **Palette:** surfaceFill **#111111** D / **#f7f7f7** L · innerModuleFill **n/a** (`.composer-chips` display:none; transparent textarea) · border `--grok-border-strong rgba(255,255,255,.5)` D / `rgba(0,0,0,.42)` L on surface+rows; hairline `--grok-border rgba(255,255,255,.16)` / `rgba(0,0,0,.16)` · focusAccent `--grok-rim-strong rgba(255,255,255,1)` / #ffffff — on focus-within surface border AND top rim go full-opacity white · textPrimary `--grok-fg #ffffff` D / `#000000` L · placeholder `--grok-faint rgba(255,255,255,.34)` / `rgba(0,0,0,.34)` · rimOrGlow **signature top-edge inner rim** `inset 0 1px 0 --grok-rim` = `rgba(255,255,255,.78)` D / `rgba(255,255,255,.95)` L; NO outer glow, NO colored shadow; agent-aura suppressed entirely
@@ -198,10 +190,9 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Theme behavior:** THEME-IMMUNE and bidirectional — locks monochrome regardless of provider/agent color. Tokens on `<html>` root, cascade to composer + app chrome + portaled popovers (.shell-grok). DARK = white-on-black (bg #000, surface #111, fg #fff, rim .78). LIGHT (light/mist/sage/alabaster) = black-on-white (bg #fff, surface #f7f7f7, fg #000, border-strong rgba(0,0,0,.42), rim .95). system via `@media(prefers-color-scheme:light)`. !important on color props. Send circle inverts per theme (uses --grok-fg/--grok-bg).
 **A11y fallbacks:** reduce-transparency → no grok rule needed (zero backdrop-filter); global rule strips backdrop-filter + sets --composer-bg-solid which grok overrides to --grok-surface → unchanged. reduce-motion → no shell animations (aura already suppressed); global arm sets the hidden aura ::after animation:none — no visible change. high-contrast/forced-colors → only the global block (body→Canvas/CanvasText, .composer-inner-module forced-color-adjust:auto); no grok-specific rule; SwiftUI in Increase-Contrast should raise --grok-border-strong toward full opacity and keep the rim.
 **Skeptic:** accurate=false; corrections applied = backdrop-filter:none is forced on the app SIDEBAR (10:1922-1923) but NOT the transcript (10:1949-1955 only recolors + kills ::after) — material scope correction. Send glyph arrow-up matches global facts. Confidence: high — every hex/radius/the `:has(>:nth-child(2))` switch/control order/send/caret/gradient kills/aura suppression/font tokens/theme-immunity verified; only transcript backdrop-filter overstated.
-**Evidence:** `10-provider-shell-overrides.css:1371-1415` (--grok-\* tokens dark/light/system), `:1418-1422` (hidden controls), `:1427-1520` (KEY solo-vs-merged tucked-tab), `:1531-1541` (gradient kills), `:1546-1572` (surface 24px + rim + transparent textarea), `:1584-1589` (order), `:1667-1678` (caret ::after), `:1696-1720` (ensemble capsule + inverse), `:1724-1755` (send 32px inverse), `:1922-1923` (sidebar backdrop none), `:1949-1955` (transcript recolor only); `05-polish-fx-layouts.css:3024-3284` (aura suppression); `App.tsx:20675-20685` (ArrowUpSendIcon); `theme.css:209` (--radius-lg 14px → 22.4px).
+**Evidence:** `10-provider-shell-overrides.css:1371-1415` (--grok-* tokens dark/light/system), `:1418-1422` (hidden controls), `:1427-1520` (KEY solo-vs-merged tucked-tab), `:1531-1541` (gradient kills), `:1546-1572` (surface 24px + rim + transparent textarea), `:1584-1589` (order), `:1667-1678` (caret ::after), `:1696-1720` (ensemble capsule + inverse), `:1724-1755` (send 32px inverse), `:1922-1923` (sidebar backdrop none), `:1949-1955` (transcript recolor only); `05-polish-fx-layouts.css:3024-3284` (aura suppression); `App.tsx:20675-20685` (ArrowUpSendIcon); `theme.css:209` (--radius-lg 14px → 22.4px).
 
 ### modular — Modular
-
 **Essence:** Deletes the composer container entirely — the surface goes fully transparent/borderless/shadowless and every element re-materializes as its own free-standing pill casting a soft drop shadow over the page. A constellation of independent micro-cards; no grouping wrapper.
 **Material:** Container transparent. Textarea becomes a distinct 18px-radius card; each above-bar chip + inline picker becomes a 999px capsule; send is an accent-filled 999px capsule. `backdrop-filter` / `-webkit-backdrop-filter` stripped (none !important) on surface (08:6669-6670), above-bar (08:6909-6910), and ensemble rows (09:1765-1766). Theme-derived from `--composer-bg-solid` / `--panel-border` / `--accent`. DARK/default (08:4831-4892) = composer-bg-solid 88% fills + rgba(0,0,0,.12-.22) shadows; LIGHT (light/mist/sage, 08:4894-4906) swaps pill fill → `--unified-soft-surface-bg`, border → `--unified-soft-surface-border`, shadow → `0 2px 8px rgba(0,0,0,.05)`.
 **Palette:** surfaceFill **transparent** (container forced transparent !important) · innerModuleFill **n/a** (textarea IS the inner module; fill composer-bg-solid 88%) · border none on container; each pill `1px solid color-mix(var(--panel-border) 82%, transparent)`; light `var(--unified-soft-surface-border)` (= surface-border) · focusAccent textarea focus ring `0 0 0 3px color-mix(var(--accent) 14%, transparent)` + border `color-mix(var(--accent) 48%, var(--panel-border))`; send capsule var(--accent) · textPrimary var(--text-primary) (explicit only in light; dark inherits base) · placeholder inherited from base (no modular override) · rimOrGlow per-pill drop shadow: textarea `0 4px 18px rgba(0,0,0,.18)`; above-bar pills + pickers `0 2px 10px rgba(0,0,0,.12)`; send `0 4px 14px color-mix(var(--accent) 28%, transparent)`. **Light variant: textarea shadow `0 2px 8px rgba(0,0,0,0.05)` (08:4904); light ensemble above-row + compact roster picker `0 4px 14px rgba(0,0,0,0.08)` (09:1221) + bg `color-mix(--surface-2 88%)` + border `color-mix(--surface-border 82%)`. The `0 4px 18px rgba(0,0,0,0.18)` value is DARK-only (09:1764)** [corrected — spec wrongly claimed light keeps 0 4px 18px /.18]
@@ -217,7 +208,6 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Evidence:** `08-theme-picker-overrides.css:4817-4906` (surface transparent + textarea pill + above-bar/picker capsules + send accent + light variant), `:4212-4219` (var defs), `:6631-6675` (padding-top 44 + bulletproof transparent), `:6905-6948` (above-bar transparent + light descendants), `:8899-8976` (files/diff layout); `09-ensemble-work-session.css:1215-1223` (light ensemble override), `:1759-1767` (dark ensemble mirror); `05-polish-fx-layouts.css:3011-3284` (stack aura suppressed + per-row rim + reduce-motion); `03-composer-welcome-activity.css:6324-6398` (base 40×40 r999 + run glyph success/danger); `App.tsx:20675-20685` (else → RunSymbolIcon).
 
 ### terminal — Terminal
-
 **Essence:** REPL/terminal emulator shell — near-black green-tinted surface, sharp 2px corners, monospace everything, a bright green `>` prompt caret top-left of the input, picker chips wrapped in literal `[ ]` brackets, small square green send button with an outline run-triangle. Forces its dark green look even under light app themes.
 **Material:** Solid, opaque, non-glass (NO backdrop-filter). Surface fill `color-mix(in srgb, #0a0e0a 92%, #00ff88 8%)` (08:4916) — same light/dark, light variant re-states with !important + `color-scheme:dark`. Above-bar/ensemble fill `color-mix(#0a0e0a 78%, transparent)`. Already opaque → reduce-transparency no-op.
 **Palette:** surfaceFill `color-mix(#0a0e0a 92%, #00ff88 8%)` (forced !important in light) · innerModuleFill **n/a** (inner-module/chips/footer/inline-pickers transparent; textarea on surface) · border `1px color-mix(#00ff88 24%, transparent)` (focus `color-mix(#00ff88 52%)`; above-bar `color-mix(#00ff88 18%)`) · focusAccent **#00ff88** — focus ring `0 0 0 2px color-mix(#00ff88 18%, transparent)`; prompt caret `color-mix(#00ff88 86%, #ffffff)` · textPrimary `color-mix(#ccffe4 92%, #ffffff)` pale mint (chips `color-mix(#ccffe4 84%)`) · placeholder `color-mix(#ccffe4 36%, transparent)` font-style:normal · rimOrGlow `inset 0 1px 0 color-mix(#00ff88 8%, transparent)` green top hairline + `0 6px 18px rgba(0,0,0,0.4)` drop; focus bumps inset to 12% + 2px green ring; textSecondary timecode `color-mix(#ccffe4 72%/68%)` (running #00ff88); sendButton fill `color-mix(#00ff88 24%, #0a0e0a)` border `color-mix(#00ff88 56%)` glyph #ccffe4
@@ -233,7 +223,6 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Evidence:** `08-theme-picker-overrides.css:4915-4949` (surface + textarea mono), `:4972-4988` (::before ">" caret), `:6631-6642` (padding-top 44 + caret top:50), `:4991-5036` (above-bar + chips), `:5043-5070` (ensemble toggle), `:5087-5098` (brackets), `:5100-5107` (send square green), `:5113-5226` (forced-dark light overrides); `09-ensemble-work-session.css:1876-1897`; `05-polish-fx-layouts.css:3010-3284` (shared aura); `03-composer-welcome-activity.css:6324-6373` (base btn + 28px glyph); `theme.css:235, 236-237` (font-mono + global scale); `AppChromeSymbols.tsx:398-413` (RunSymbolIcon); `App.tsx:20675-20685` (else → RunSymbolIcon).
 
 ### stub — Ticket stub
-
 **Essence:** Cinema/cloakroom ticket on cream paper — surface AND above-bar are the same opaque cream card over a faint diagonal "paper grain", warm tan border, 14px radius, with a dashed gold "perforation" line separating ticket head from body. Serif throughout, italic placeholder, gold send button.
 **Material:** Opaque PAPER, no glass. Two stacked layers: top = `repeating-linear-gradient(135deg, rgba(255,248,230,0.04) 0 2px, transparent 2px 6px)` (grain), bottom = `color-mix(#fcf6e6 14%, var(--composer-bg-solid))` (composer-bg-solid defaults var(--surface-1)). No backdrop-filter (ensemble row sets backdrop-filter:none). Light/mist/sage: grain `rgba(120,90,40,0.03)` over flat **#fbf3df**. Surface box-shadow `inset 0 1px 0 color-mix(#ffffff 6%, transparent), 0 8px 22px rgba(0,0,0,0.18)`; focus `inset 0 1px 0 #ffffff@8%, 0 10px 26px rgba(0,0,0,0.22)`. Above-bar shadow lighter `0 4px 14px rgba(0,0,0,0.14)`.
 **Palette:** surfaceFill `color-mix(#fcf6e6 14%, var(--composer-bg-solid))` over 135deg `rgba(255,248,230,0.04)` 2px/6px grain; light flat **#fbf3df** + `rgba(120,90,40,0.03)` grain · innerModuleFill **n/a** (pickers/footer forced transparent/border:0; textarea on paper) · border `1px color-mix(#d4c89a 36%, var(--panel-border))`; focus `color-mix(#d4c89a 60%, var(--panel-border))`; light `rgba(193,154,77,0.28)` · focusAccent NO glowing ring — focus = border #d4c89a 36%→60% + shadow deepen; tan/gold #d4c89a de-facto accent; gold **#c19a4d** action/send · textPrimary `color-mix(var(--text-primary) 96%, #c19a4d)` warm ink; above-bar `90%`; chips `92%`; light all **#4a3a16** cocoa · placeholder `color-mix(var(--text-secondary) 60%, #c19a4d)` font-style:italic · rimOrGlow no per-shell glow; shared agent-aura rim per above-bar row when .fx-agent-aura (idle `0 0 0 1px rgb(.../.28), 0 18px 58px /.18`; running `/.5 + 0 22px 68px /.24` + pulse; approval warn; failed danger)
@@ -249,7 +238,6 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Evidence:** `08-theme-picker-overrides.css:5284-5301` (surface fill/grain/border/shadow/focus), `:5302-5304` (::before display:none), `:5308-5321` (perforation ::after), `:5323-5334` (textarea serif + italic placeholder), `:5337-5350` (above-bar cream + tabular-nums), `:5358-5371` (cream chips r4 serif), `:5373-5381` (gold send #c19a4d r4 #2a1d05 700), `:5383-5403` (light flat #fbf3df/#4a3a16/#f6ecd1), `:6633-6648` (padding-top 44 + perforation top:90), `:6952-6965` (light above-bar !important); `07-composer-shells.css:87-99` (default-scoped order; un-ordered shells DOM order); `09-ensemble-work-session.css:1859-1871`; `05-polish-fx-layouts.css:3030,3051-3052` (stack glow disabled), `:3122-3131,3165-3168,3247-3284`; `theme.css:234` (--font-serif); `App.tsx:20675-20685` (else → RunSymbolIcon).
 
 ### satellite — Satellite
-
 **Essence:** "Everything floats" — every container (surface, textarea, above-bar, pickers, footer, combined-picker triggers, ensemble rows, roster picker) is fully transparent/borderless/shadowless/backdrop-filter-free, layout intact. Only labels/icons/text remain as raw floating tokens. The single shaped element is the send button: a 40px accent-filled circle with a colored glow.
 **Material:** Transparent/borderless on every container — NOT glass, NOT solid. Surface: bg transparent, border 0, box-shadow none, re-asserted with !important + backdrop-filter none + -webkit none to beat native_glass's (0,4,0) fill; overflow:visible. Textarea fully transparent (no border/radius/box-shadow). Above-bar transparent border 0 no backdrop-filter. ONLY material surface = send button: accent fill `color-mix(var(--accent) 92%, transparent)` + outer glow `0 4px 14px color-mix(var(--accent) 36%, transparent)`, border 0, radius 999px. Dark accent #5a8cff; light #6f93ff. No backdrop-filter anywhere.
 **Palette:** surfaceFill **transparent** · innerModuleFill **n/a** (no card-in-card) · border none/transparent everywhere · focusAccent **no focus ring/glow** — :focus-within keeps box-shadow:none + border-color:transparent on surface AND textarea; only accent = send button fill+glow `var(--accent)` = #5a8cff dark / #6f93ff light / data-accent-selectable · textPrimary `var(--text-primary)` = rgba(255,255,255,0.92) D / rgba(18,21,27,0.92) L (textarea full strength) · placeholder inherits base composer-textarea (not overridden) · rimOrGlow send-button glow only `0 4px 14px color-mix(var(--accent) 36%)`; surface/above-bar box-shadow:none; agent-aura ::after rim on above-bar rows when .fx-agent-aura `0 0 0 1px rgb(.../0.28) + 0 18px 58px /0.18` (running 0.5/0.24)
@@ -265,7 +253,6 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Evidence:** `08-theme-picker-overrides.css:5405-5491` (primary block: surface/textarea/above-bar/pickers/label tokens/send button), `:6628-6704` (padding-top 44 + bulletproof transparent !important), `:6967-6986` (light above-bar + Create-PR accent), `:8711-8733` (combined-picker triggers), `:8899-8976` (shared layout); `05-polish-fx-layouts.css:3000-3284` (aura fanned per-row + reduce-motion); `10-provider-shell-overrides.css:1861-1887` (ensemble strip); `09-ensemble-work-session.css:1769-1853` (ensemble/roster transparent + aura suppressed + save-chip dashed); `03-composer-welcome-activity.css:6324-6398` (base run-btn glyph var(--success) green 28px NOT overridden); `theme.css:108,148,161,238,273,326,1180-1186`; `App.tsx:20675-20685` (else → RunSymbolIcon); `AppChromeSymbols.tsx:398-413` (RunSymbolIcon).
 
 ### obsidian — Obsidian (charcoal rim-shimmer)
-
 **Essence:** Near-black charcoal (#181818) composer whose identity is a crisp 2px WHITE inset rim plus a slow (16s) "lighthouse" shimmer chasing the perimeter via a conic-gradient driven by `@property --obsidian-rim-angle`, masked to the border ring. Ships in a TWO-SURFACE SPLIT: surface goes transparent, and the textarea-wrap + bottom-controls each become their own separately-lit charcoal rect with its own rim-chase; send cluster lifted into the textarea rect's bottom-right.
 **Material:** Solid opaque charcoal. Fill **#181818** (`--obsidian-composer-fill`, 08:5554), `background: var(--obsidian-composer-fill) !important` + `backdrop-filter: none !important` (no glass/blur regardless of mode). In the final split form `.composer-surface` becomes `background: transparent !important` no border/shadow (08:6354-6358; **padding:0 at 08:6594-6597 [corrected — not shard 10]**) and the same #181818 fill + 1px border + rim/vignette/glow is re-applied to `.composer-textarea-wrap` AND `.composer-bottom-controls` as two independent lit rects. Above-rows solid #181818 backdrop-filter:none.
 **Palette:** surfaceFill **#181818** (`--obsidian-composer-fill`) · innerModuleFill **same #181818** (split rects same tone, separately bordered/lit) · border `rgba(255,255,255,0.10)` (`--obsidian-composer-border`) · focusAccent rim brightens to `rgba(255,255,255,0.42)` (`--obsidian-composer-rim-strong`) + border-color `rgba(255,255,255,0.18)` on :focus-within; send fill `color-mix(var(--accent) 90%, transparent)` · textPrimary `rgba(255,255,255,0.92)` (subtree base 0.86) · placeholder `rgba(255,255,255,0.32)` · rimOrGlow STATIC RIM `inset 0 2px 0 rgba(255,255,255,0.28)`; AMBIENT GLOW `0 0 28px rgba(255,255,255,0.05), 0 0 64px rgba(255,255,255,0.02)`; INNER VIGNETTE `inset 0 -14px 28px -16px rgba(0,0,0,0.85)`; EXTERNAL SHADOW `0 8px 24px -12px rgba(0,0,0,0.7)`; focus glow `0 0 36px rgba(255,255,255,0.07) + 0 0 80px rgba(255,255,255,0.03)`; textSecondary 0.66 / tertiary 0.48 / muted 0.34; controlText 0.74 → #fff hover; diff add #6dd58a, del #ff8a8a
@@ -281,7 +268,6 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Evidence:** `08-theme-picker-overrides.css:5528-5532` (@property --obsidian-rim-angle), `:5553-5572` (tokens #181818/rim/glow/16s), `:5594-5626` (theme-immune doubled-attr), `:5671-5705` (surface solid + rim + focus), `:5720-5772` (surface ::before rim-chase + keyframes), `:5808-5872` (above-rows + per-row chase), `:5927-6001` (controls flattened + roster +/−), `:6006-6015` (send capsule + rim), `:6354-6430` (TWO-SURFACE SPLIT), `:6531-6597` (control order + send lift + top-toggles hidden + surface padding 0); `03-composer-welcome-activity.css:6369-6390` (run-btn glyph 28px + var(--success)/var(--danger)); `10-provider-shell-overrides.css:804-826` (obsidian/codex :has app-theme); `App.tsx:20675-20685`.
 
 ### alabaster — Alabaster (cream, charcoal rim-shimmer)
-
 **Essence:** Polar inverse of Obsidian — warm cream (#f4f3ef) composer, no glass/blur, soft warm ambient glow, ringed by an animated CHARCOAL rim-shimmer (16s). Theme-immune (hard-locks light charcoal-on-cream). Uses the two-surface split (shared with Obsidian): surface transparent, textarea-wrap + bottom-controls each an independent lit cream rect with synced charcoal rim-chase; controls flattened to floating charcoal text; send cluster lifted into the textarea rect's bottom-right.
 **Material:** Solid opaque cream — NOT glass. Fill `var(--alabaster-composer-fill)` = **#f4f3ef !important** on every surface. `backdrop-filter` AND `-webkit-backdrop-filter` forced none !important on surface + all rows (08:6114-6115, 6200-6201, 6272-6273) → transparency-reduction no-op. `color-scheme:light`. Only translucency = soft ambient glow + inset rim hairlines (rgba over opaque cream). No separate dark fill — always renders cream LIGHT regardless of theme.
 **Palette:** surfaceFill **#f4f3ef** (`--alabaster-composer-fill`, applied !important) · innerModuleFill **same #f4f3ef** on both split rects · border `rgba(18,21,27,0.12)` (`--alabaster-composer-border`) · focusAccent border-color `rgba(18,21,27,0.22)` on :focus-within; rim hairline strengthens to `--alabaster-composer-rim-strong` = `rgba(18,21,27,0.34)` · textPrimary `rgba(18,21,27,0.92)` (subtree base color also `rgba(18,21,27,0.86)`) · placeholder `rgba(18,21,27,0.42)` · rimOrGlow charcoal inset top-rim `inset 0 2px 0 rgba(18,21,27,0.20)` (`--alabaster-composer-rim`); warm static glow `0 0 28px rgba(180,160,120,0.06), 0 0 64px rgba(180,160,120,0.03)`; warm drop `0 8px 24px -12px rgba(60,50,30,0.12)` + bottom inner-shade `inset 0 -14px 28px -16px rgba(0,0,0,0.06)`; focus adds `0 0 36px rgba(180,160,120,0.08), 0 0 80px rgba(180,160,120,0.04)`; plus the animated charcoal conic chase; textSecondary 0.62 / tertiary 0.45 / muted 0.32; controlText `rgba(18,21,27,0.74)` → #0a0a0a hover; diffAdd #2a8a4a, diffDel #c43a3a
@@ -297,47 +283,44 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Evidence:** `08-theme-picker-overrides.css:6040-6053` (tokens #f4f3ef/rim/16s), `:6056-6086` (theme-immune doubled-attr light lock), `:6111-6134` (surface cream + rim + focus), `:6140-6173` (surface rim-chase ::before + reduce-motion), `:6175-6187` (textarea + placeholder), `:6192-6250` (detached rows + per-row chase), `:6256-6314` (flatten controls + roster +/−), `:6318-6327` (send pill accent + inner highlight), `:6432-6509` (TWO-SURFACE SPLIT), `:6531-6597` (control order + send lift + top-toggles + padding 0), `:5528-5532 + 5768-5772` (shared @property + keyframes), `:8413-8435` (.shell-alabaster popover); `05-polish-fx-layouts.css:3011-3131` (per-row aura); `10-provider-shell-overrides.css:534+` (alabaster system theme, six shells); `App.tsx:15610-15613` (branch chip suppressed), `:20675-20685` (else → RunSymbolIcon).
 
 ### Cross-cutting notes
-
 - **Theme-IMMUNE styles (lock their own palette regardless of app theme):** **claude** (self-locking white-on-#1e1e1e in dark; only "+" glyph + welcome cards flip in light), **gemini** (immune at the capsule level — navy by default; explicit near-white repaints for light/mist/sage + alabaster), **kimi** (immune at core — hardcoded #0a0a0c + blue; re-keys only for light/obsidian/alabaster), **cursor** (immune BOTH directions but bidirectional gray — flips gray-on-dark vs dark-on-gray, never chroma at rest), **grok** (immune + bidirectional monochrome — white-on-black ↔ black-on-white), **terminal** (immune — forces dark green even under light themes via !important + color-scheme:dark), **obsidian** (immune — locks dark charcoal via doubled-attribute, does not flip in light), **alabaster** (immune — locks light cream via doubled-attribute, no dark variant). Theme-DERIVED (re-tint with the app theme): **default**, **codex** (hybrid — locks dark, derives in light), **modular**, **stub**, **satellite**.
-- **Two-surface split (outer surface emptied; a second inner rect carries the fill/chrome):** **default** (glass bezel + opaque inner module — the only one where the two layers are _different tones/materials_), **codex** (#212121 outer + #252525 inner card-in-card), **gemini** (transparent surface + solid navy capsule `.composer-textarea-wrap`), **cursor** (transparent surface + solid gray capsule), **obsidian** (transparent surface + textarea-wrap AND bottom-controls each a lit charcoal rect), **alabaster** (transparent surface + textarea-wrap AND bottom-controls each a lit cream rect). (claude is adjacent — surface emptied, chrome re-homed onto the _textarea_ itself, but it's a single bubble not a paired split.)
+- **Two-surface split (outer surface emptied; a second inner rect carries the fill/chrome):** **default** (glass bezel + opaque inner module — the only one where the two layers are *different tones/materials*), **codex** (#212121 outer + #252525 inner card-in-card), **gemini** (transparent surface + solid navy capsule `.composer-textarea-wrap`), **cursor** (transparent surface + solid gray capsule), **obsidian** (transparent surface + textarea-wrap AND bottom-controls each a lit charcoal rect), **alabaster** (transparent surface + textarea-wrap AND bottom-controls each a lit cream rect). (claude is adjacent — surface emptied, chrome re-homed onto the *textarea* itself, but it's a single bubble not a paired split.)
 - **Float above-rows ABOVE the stack (detached pills, not merged into the instrument):** **codex** and **cursor** only — driven by `aboveRowsFloatAboveStack = composerStyle==='cursor' || 'codex'` (App.tsx:18185-18186); the git/Create-PR primary + secondary-workspace rows render as detached pills above the merged stack. (grok merges or tucks via its own `:has()` solo-vs-merged switch; default merges via `:has()`; all others stack as independent rows.)
 - **Skeptic returned accurate=false (double-check these styles):** **default**, **codex**, **claude** (most corrections — its entire 08 last-writer layer overturns ~9 headline claims: bubble fill #1e1e1e, border 0.18, permission is a contained button with no orange, min-height 56px, chips display:none, files/stats solid #3a3a3a, tabular-nums present, focus 30%), **cursor** (materially wrong on agent-aura — the merged stack DOES glow chroma during activity), **grok** (transcript backdrop-filter overstated), **modular** (light-variant shadows), **terminal** (font-size scale `*1` not `*1.17`; no control-order block), **stub** (no control-order block → DOM order), **obsidian** (send glyph is green 28px, not white 22px; two shard-10 line-number slips). accurate=true: **gemini**, **kimi**, **satellite**, **alabaster** (alabaster's two corrections are peripheral non-shell asides).
 - **Styles requiring non-sans fonts:** **terminal** = MONOSPACE everywhere (`var(--font-mono)` = "SF Mono"/"JetBrains Mono"/"Cascadia Code"/Menlo/Monaco/"Courier New"/ui-monospace); **stub** = SERIF everywhere (`var(--font-serif)` = "New York"/"Times New Roman"/Georgia). All other 11 styles are system sans. (tabular-nums appears in **stub** (above-bar + chips) and **claude** (above-bar files/stats) — note for digit alignment even though both are otherwise font-family-specific only for stub.)
+
 
 ---
 
 ## Part D — `:has()` row-presence & pseudo-element matrix
 
 ### Row-presence (`:has()`)
-
-| Style              | Rule                                                                                                    | Effect                                                                                                                                                                                                      |
-| ------------------ | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **default**        | `.composer-area:has(.composer-above-bar-stack)` (03:3240-3303)                                          | **Merged instrument** — stack + surface fuse into one segmented frame (stack rounded top, surface squared top + 1px divider; running-pulse rim stays on the surface). No rows → standalone rounded surface. |
-| **grok**           | `.composer-above-bar-stack:not(:has(> :nth-child(2)))` vs `:has(> :nth-child(2))` (10:1427 / 1453-1516) | **Tucked-tab switch** — solo row → one tucked tab (top-only radius, narrowed, centered); ≥2 rows → merged frame w/ hairline dividers.                                                                       |
-| **cursor / codex** | `aboveRowsFloatAboveStack` (App.tsx:18185-18186)                                                        | git/Create-PR + secondary-workspace rows **float ABOVE** the stack (detached), not inside it.                                                                                                               |
-| all 13             | aura matrix (05:3020-3280)                                                                              | glow/halo on `.composer-above-bar-stack` toggled by solo vs ensemble-row presence.                                                                                                                          |
-| shell-agnostic     | `.composer-inline-pickers:has(.composer-inline-actions .stop-btn)` (03:3874-3879)                       | re-lays the picker row while a run is active.                                                                                                                                                               |
+| Style | Rule | Effect |
+|---|---|---|
+| **default** | `.composer-area:has(.composer-above-bar-stack)` (03:3240-3303) | **Merged instrument** — stack + surface fuse into one segmented frame (stack rounded top, surface squared top + 1px divider; running-pulse rim stays on the surface). No rows → standalone rounded surface. |
+| **grok** | `.composer-above-bar-stack:not(:has(> :nth-child(2)))` vs `:has(> :nth-child(2))` (10:1427 / 1453-1516) | **Tucked-tab switch** — solo row → one tucked tab (top-only radius, narrowed, centered); ≥2 rows → merged frame w/ hairline dividers. |
+| **cursor / codex** | `aboveRowsFloatAboveStack` (App.tsx:18185-18186) | git/Create-PR + secondary-workspace rows **float ABOVE** the stack (detached), not inside it. |
+| all 13 | aura matrix (05:3020-3280) | glow/halo on `.composer-above-bar-stack` toggled by solo vs ensemble-row presence. |
+| shell-agnostic | `.composer-inline-pickers:has(.composer-inline-actions .stop-btn)` (03:3874-3879) | re-lays the picker row while a run is active. |
 
 ### Pseudo-elements (visible chrome)
-
-| Style     | Pseudo                                                                                                                                                                                                 | Draws                                                           |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
-| default   | (none style-specific)                                                                                                                                                                                  | merged frame = real borders, not a pseudo                       |
-| codex     | `.composer-above-bar::before`; `[data-composer-control]::after` ×4 (07:141/177/263/316)                                                                                                                | tab edge; **dropdown carets**; lightning glyph before model     |
-| claude    | `.composer-surface::before` + `.composer-above-bar::before`                                                                                                                                            | subtle rims                                                     |
-| gemini    | `.composer-surface::before{content:none}` (07:2182); `model::after`                                                                                                                                    | cancels base edge; model caret                                  |
-| kimi      | `.composer-surface::before{display:none}` (07:2581); `model::after`                                                                                                                                    | suppresses blue edge; model caret                               |
-| grok      | `model::after` (+hover); tucked-tab rim accents                                                                                                                                                        | caret + rim                                                     |
-| cursor    | `.composer-surface::before` rim; `model::after`                                                                                                                                                        | flat-gray rim; caret                                            |
-| modular   | `.composer-surface::before{display:none}`, `.composer-above-bar::before{background:none}`                                                                                                              | strips container chrome so pills float                          |
-| terminal  | `.composer-surface::before` = **`>` caret** (08:4972-4988); chip `span::before "["` + `::after "]"` (08:5085-5098)                                                                                     | command-line caret + **bracket chips**                          |
-| stub      | `.composer-surface::after` = **dashed perforation** at `top:48px` (08:5308-5321)                                                                                                                       | ticket perforation (paper grain is on the element `background`) |
-| satellite | `::before`/`::after` mostly **suppress** chrome                                                                                                                                                        | transparency                                                    |
-| obsidian  | `.composer-surface::before` rim-chase conic (08:5720); per-row `::before` chase; post-split surface `::before{content:none}` + `.composer-textarea-wrap::before` + `.composer-bottom-controls::before` | **white rim-shimmer chase** ring per lit rect                   |
-| alabaster | charcoal mirror of obsidian (08:6140)                                                                                                                                                                  | **charcoal rim-shimmer chase**                                  |
+| Style | Pseudo | Draws |
+|---|---|---|
+| default | (none style-specific) | merged frame = real borders, not a pseudo |
+| codex | `.composer-above-bar::before`; `[data-composer-control]::after` ×4 (07:141/177/263/316) | tab edge; **dropdown carets**; lightning glyph before model |
+| claude | `.composer-surface::before` + `.composer-above-bar::before` | subtle rims |
+| gemini | `.composer-surface::before{content:none}` (07:2182); `model::after` | cancels base edge; model caret |
+| kimi | `.composer-surface::before{display:none}` (07:2581); `model::after` | suppresses blue edge; model caret |
+| grok | `model::after` (+hover); tucked-tab rim accents | caret + rim |
+| cursor | `.composer-surface::before` rim; `model::after` | flat-gray rim; caret |
+| modular | `.composer-surface::before{display:none}`, `.composer-above-bar::before{background:none}` | strips container chrome so pills float |
+| terminal | `.composer-surface::before` = **`>` caret** (08:4972-4988); chip `span::before "["` + `::after "]"` (08:5085-5098) | command-line caret + **bracket chips** |
+| stub | `.composer-surface::after` = **dashed perforation** at `top:48px` (08:5308-5321) | ticket perforation (paper grain is on the element `background`) |
+| satellite | `::before`/`::after` mostly **suppress** chrome | transparency |
+| obsidian | `.composer-surface::before` rim-chase conic (08:5720); per-row `::before` chase; post-split surface `::before{content:none}` + `.composer-textarea-wrap::before` + `.composer-bottom-controls::before` | **white rim-shimmer chase** ring per lit rect |
+| alabaster | charcoal mirror of obsidian (08:6140) | **charcoal rim-shimmer chase** |
 
 ### Two-surface split
-
 ONLY **obsidian** + **alabaster** restructure rows: `.composer-surface` → transparent; `.composer-textarea-wrap` + `.composer-bottom-controls` each become a separately-lit rect with its own animated rim-chase (`.composer-bottom-controls` flips `display:contents` → `display:flex` column). All other 11 shells keep `.composer-bottom-controls` as `display:contents`.
 
 ---
@@ -348,9 +331,7 @@ Status: implemented. This section is kept as the implementation record for the
 iOS composer-shell parity pass.
 
 ### E.1 — Zero desktop changes required
-
 The Mac **already broadcasts** `composerStyle` to iOS:
-
 - **Payload** `RemoteShellAppearance` (`RemoteTaskProjection.ts:375-390`):
   `{ schemaVersion, generatedAt, appearanceMode, visualEffectStyle, themeAppearance, themeCornerStyle, themeAccentStyle, promptSurfaceStyle, composerStyle, reduceTransparency, reduceMotion, compactDensity, preferredColorScheme, colors }`.
 - Built by `buildRemoteShellAppearance(AppStore.getSettings())` and pushed **first** in
@@ -365,13 +346,11 @@ The Mac **already broadcasts** `composerStyle` to iOS:
   so **stale-gating keys off the PAYLOAD's `generatedAt`** (`RemoteShellAppearance.generatedAt`).
 
 ### E.2 — Target split (dictated by `Package.swift`)
-
 - **`TaskWraithKit`** — pure (no SwiftUI/UIKit); the **only** target `TaskWraithKitTests` depends on → all testable logic.
 - **`TaskWraithUI`** — SwiftUI, depends on Kit; compile-checked by `swift build` (no unit tests) → views/recipes/wiring.
 - Tests = **Swift Testing** (`import Testing`, `@Suite`/`@Test`) in `ios/TaskWraithKit/Tests/TaskWraithKitTests/`. There is **no** SwiftUI preview/snapshot harness today — the fixture gallery (CS3) is the visual-QA surface.
 
 **Implemented file split:**
-
 - **Kit:** `ComposerShellStyle.swift` (`TWComposerStyle`), `RemoteShellAppearance.swift`
   (`TWRemoteShellAppearance` Codable + staleness helper), `ComposerShellPreference.swift`
   (`TWComposerShellPreference` + precedence resolver). Tests: `ComposerShellResolverTests.swift`.
@@ -381,13 +360,11 @@ The Mac **already broadcasts** `composerStyle` to iOS:
   (`TWThemeStore` preference), and the composer hosts.
 
 ### E.3 — Style model
-
 `TWComposerStyle`: 13 known cases with raw `String` values (e.g. `case defaultShell = "default"`);
 `init(raw:)` maps an unknown string to `.unknown(String)` that **preserves the raw value for
 diagnostics** but resolves to `.default` for visuals. Pure, in Kit.
 
 ### E.4 — Preference + precedence
-
 - `TWComposerShellPreference` = `.followMac` (default) | `.override(TWComposerStyle)`. Persist **only
   the mode/value** (raw string under `tw.composerShell` on `UserDefaults`, mirroring `TWThemeStore`;
   bump `revision`). **No iOS→Mac writeback. NEVER persist the effective style.**
@@ -397,7 +374,6 @@ diagnostics** but resolves to `.default` for visuals. Pure, in Kit.
   the last applied (ignore stale/equal). Pure helper, unit-tested.
 
 ### E.5 — Resolver boundary (two distinct resolvers — do not conflate)
-
 - **Kit (pure, testable):** style **precedence** → a `TWComposerStyle`.
 - **UI (SwiftUI):** visual **recipe** → `resolve(style, context) → ResolvedComposerShell`
   (palette/geometry/typography/controls/rowPolicy/effects). Context = app theme, run state, row
@@ -405,14 +381,12 @@ diagnostics** but resolves to `.default` for visuals. Pure, in Kit.
   reduce-motion, reduce-transparency, contrast, keyboard/safe-area.
 
 ### E.6 — Shared-builder refactor
-
 The shell assembly is **duplicated**: `ThreadDetailViews.composerShellStack` (`:778`) and
 `MiniThreadView.composerShell` (`TWSharedViews.swift:5682`). CS4 factors it into **one** recipe-driven
 builder so per-style logic applies to both; the mini composer gets its own **compact** recipe path
 based on measured width (not inherited main-composer geometry).
 
 ### E.7 — Surfaces needing per-style treatment
-
 Main composer (`ThreadDetailViews:778`), mini/side-chat composer (`TWSharedViews:5682`),
 empty/welcome canvas (`ThreadDetailViews:1084` / `WelcomeViews`), ensemble roster (`EnsembleViews:19`
 / `EditableRosterStrip TWSharedViews:3582`), queued rows (`TWSharedViews:4909`/`5030`), attachment
@@ -422,7 +396,6 @@ chips (`ComposerView:323-349`), telemetry rail (`TelemetryFooterRail TWSharedVie
 default recipe **must reproduce today's look 1:1** (it is signed off).
 
 ### E.8 — Slice plan & gates
-
 CS1 inventory (this doc) · CS2 plumbing · CS3 recipes + fixture · CS4 core body + shared builder ·
 CS5 rows/welcome/telemetry · CS6 mini composer + popovers + premium effects + a11y · CS7 settings
 picker · CS8 validation + docs.
@@ -433,7 +406,6 @@ gallery, and the a11y matrix. **No repo-wide formatting; do not touch dirty desk
 files** (concurrent sessions edit this tree).
 
 ### E.9 — Out of scope / keep-list
-
 - **Out:** full `data-interface-style` app chrome; deep popover styling beyond what's feasible;
   iOS→Mac writeback; persisting the effective style.
 - **Keep global:** do NOT add composer style to Composer `@State`, thread/task card models, remote
@@ -442,15 +414,13 @@ files** (concurrent sessions edit this tree).
 
 ## Part F — CS10: structural LAYOUT parity (build 11)
 
-CS1–CS8 ported per-component _styling_ (material/palette/geometry/effects) but every
-shell still shared the native _arrangement_ — switching shells changed colors, not the
+CS1–CS8 ported per-component *styling* (material/palette/geometry/effects) but every
+shell still shared the native *arrangement* — switching shells changed colors, not the
 composer layout. CS10 adds the structural layer.
 
 ### F.1 — Contract
-
 `ComposerShellLayout` (ComposerShellRecipe.swift) — 6 bool flags on `ResolvedComposerShell`,
 all-false `.standard` = the signed-off native arrangement:
-
 - `controlsBelowTextarea` — control row renders BELOW the text input (vs above + hairline).
 - `detachedAboveRows` — each above-row (changes/workspace/queued/roster) + the composer
   core become their OWN `.composerShell` card with gaps, vs one merged surface with hairlines.
@@ -462,40 +432,36 @@ all-false `.standard` = the signed-off native arrangement:
   already flat plain-text for all shells, so this is largely a no-op on iOS).
 
 ### F.2 — Resolution (central)
-
 `ComposerShellResolver.composerLayout(for:)` — one switch maps every style → its layout,
 applied in `resolve()` (`base.layout = composerLayout(for: style.renderStyle)`). Single
 source of truth; recipes no longer carry layout inline.
 
 ### F.3 — Verified flag table
-
 Derived by a 22-agent extract+adversarial-refute pass over the desktop CSS
 (`07-composer-shells.css`, `05-polish-fx-layouts.css`, `10-provider-shell-overrides.css`)
-
-- the light/dark screenshot matrix in `design-assets/TaskWraith Composer Shell Electron
++ the light/dark screenshot matrix in `design-assets/TaskWraith Composer Shell Electron
 Variants/` (zero refute-corrections, all high-confidence):
 
-| shell     | ctrlsBelow | detached | lifted | capsule | splitRects | plainText |
-| --------- | :--------: | :------: | :----: | :-----: | :--------: | :-------: |
-| default   |     ·      |    ·     |   ·    |    ·    |     ·      |     ·     |
-| codex     |     ✓      |    ✓     |   ·    |    ·    |     ·      |     ·     |
-| claude    |     ✓      |    ✓     |   ✓    |    ·    |     ·      |     ·     |
-| cursor    |     ✓      |    ✓     |   ✓    |    ✓    |     ·      |     ✓     |
-| grok      |     ✓      |    ·     |   ·    |    ·    |     ·      |     ·     |
-| gemini    |     ✓      |    ✓     |   ✓    |    ✓    |     ·      |     ·     |
-| kimi      |     ✓      |    ✓     |   ·    |    ·    |     ·      |     ·     |
-| modular   |     ✓      |    ✓     |   ·    |    ·    |     ·      |     ·     |
-| terminal  |     ✓      |    ✓     |   ·    |    ·    |     ·      |     ·     |
-| stub      |     ✓      |    ✓     |   ·    |    ·    |     ·      |     ·     |
-| satellite |     ✓      |    ✓     |   ·    |    ·    |     ·      |     ✓     |
-| obsidian  |     ✓      |    ✓     |   ✓    |    ·    |     ✓      |     ✓     |
-| alabaster |     ✓      |    ✓     |   ✓    |    ·    |     ✓      |     ✓     |
+| shell | ctrlsBelow | detached | lifted | capsule | splitRects | plainText |
+|-------|:--:|:--:|:--:|:--:|:--:|:--:|
+| default | · | · | · | · | · | · |
+| codex | ✓ | ✓ | · | · | · | · |
+| claude | ✓ | ✓ | ✓ | · | · | · |
+| cursor | ✓ | ✓ | ✓ | ✓ | · | ✓ |
+| grok | ✓ | · | · | · | · | · |
+| gemini | ✓ | ✓ | ✓ | ✓ | · | · |
+| kimi | ✓ | ✓ | · | · | · | · |
+| modular | ✓ | ✓ | · | · | · | · |
+| terminal | ✓ | ✓ | · | · | · | · |
+| stub | ✓ | ✓ | · | · | · | · |
+| satellite | ✓ | ✓ | · | · | · | ✓ |
+| obsidian | ✓ | ✓ | ✓ | · | ✓ | ✓ |
+| alabaster | ✓ | ✓ | ✓ | · | ✓ | ✓ |
 
 Two clean rules: `controlsBelowTextarea` = every non-default shell; `detachedAboveRows` =
 all but grok (grok tucks its above-rows behind the composer lip).
 
 ### F.4 — Host seams
-
 - `ComposerView.body` branches on `shell.layout.controlsBelowTextarea` (input-first vs
   controls-first; the control row stays hidden for ensembles in both branches).
 - `composerShellStack` (ThreadDetailViews) branches on `detachedAboveRows` via the
@@ -503,7 +469,6 @@ all but grok (grok tucks its above-rows behind the composer lip).
   the view untouched, so the merged/default path is byte-identical.
 
 ### F.5 — Build scope
-
 **Build 11 (CS10):** `controlsBelowTextarea` (11 shells) + `detachedAboveRows` (10 shells),
 plus the gemini surface-radius fix (its `.solid` navy capsule was drawn at radius 0 → square
 detached pills; now 26px to match the capsule). `liftedSend` + `controlsAsPlainText` are
@@ -515,7 +480,6 @@ into the core card while changes/PR pill out) + the Reduce-Transparency double-f
 byte-parity PASS, both fixes PASS.
 
 ### F.6 — Verification
-
 - `swift build` + 69 Kit tests + a full `xcodebuild` simulator app build, per slice.
 - A 15-agent adversarial review (12 per-shell parity vs the light/dark matrix + 3 skeptics)
   graded default byte-parity **PASS** (traced element-by-element + git-diff confirmed),
@@ -524,7 +488,6 @@ byte-parity PASS, both fixes PASS.
   shells: layout value correct, consumed-flag structural match **full**.
 
 ### F.7 — Done in build 12 (CS11 A+B)
-
 - **codex roster-tuck** — `tucksSecondaryRows`: codex's roster/queued rows tuck into the
   core card as merged segments while changes/PR rows pill out (desktop
   `:not(:has(.ensemble-above-row))`). `composerSecondaryRows(onOwnCards:)` keeps non-codex
@@ -534,21 +497,18 @@ byte-parity PASS, both fixes PASS.
   was already clean).
 
 ### F.8 — Done in CS12 (input-owns-surface / bottom-row parity)
-
 The bottom rows (control row + telemetry) fused into ONE container for solid shells; desktop
 frames only the input and floats the footer bare/separate. Fixed via `surfaceWrapsInputOnly`
-
-- the computed `inputOwnsSurface` (= surfaceWrapsInputOnly || surfaceIsCapsule ||
-  splitChromeRects): the shell surface wraps ONLY the input (composerInputBody.composerShellIf),
-  the core card is no longer wrapped, and the footer is bare (claude), its own rect
-  (obsidian/alabaster splitChromeRects), or under a capsule input (gemini/cursor
-  surfaceIsCapsule; cursor radius 26). codex fuses its control row into the #252525 inner
-  module; satellite/modular drop the stray divider; a 6px gap separates the framed input from
-  the bare footer. default/grok/kimi/terminal/stub stay ONE merged surface — 3-agent
-  re-verified byte-identical.
++ the computed `inputOwnsSurface` (= surfaceWrapsInputOnly || surfaceIsCapsule ||
+splitChromeRects): the shell surface wraps ONLY the input (composerInputBody.composerShellIf),
+the core card is no longer wrapped, and the footer is bare (claude), its own rect
+(obsidian/alabaster splitChromeRects), or under a capsule input (gemini/cursor
+surfaceIsCapsule; cursor radius 26). codex fuses its control row into the #252525 inner
+module; satellite/modular drop the stray divider; a 6px gap separates the framed input from
+the bare footer. default/grok/kimi/terminal/stub stay ONE merged surface — 3-agent
+re-verified byte-identical.
 
 ### F.9 — Done in CS12c
-
 - **controlsAsPlainText** (cursor/satellite/obsidian/alabaster) — the approval token now
   flattens to bare text (`controlChipFill`) on the bare footer, matching the flat model
   picker.
@@ -556,7 +516,6 @@ frames only the input and floats the footer bare/separate. Fixed via `surfaceWra
   trailing edge (= the corner); the desktop "lift" only matters for a tall growing textarea.
 
 ### F.10 — Done in CS13 (build-14 screenshot review)
-
 - **codex above-row rim** — `codexRecipe.palette.rim` = rgb(160 112 242) (ring 0.28 / glow
   0.18); the detached Create-PR / changes / secondary-workspace pills now carry the desktop
   agent-aura rim (it also rims the core, consistent with terminal/stub).
@@ -574,7 +533,6 @@ frames only the input and floats the footer bare/separate. Fixed via `surfaceWra
   desktop fidelity + the clip fix).
 
 ### F.11 — Still deferred (live visual review)
-
 - **Theme-immune footer legibility** — cursor/gemini lock a dark palette but the bare footer
   chrome (chips, telemetry) is theme-following → mismatch on a LIGHT app theme; the footer
   should adopt the shell palette for theme-immune shells. (Edge case: light app + locked-dark.)

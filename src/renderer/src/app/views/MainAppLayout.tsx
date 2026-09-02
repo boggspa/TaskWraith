@@ -15,7 +15,10 @@ import {
   NOOP_PROPOSED_PLAN_CUSTOM
 } from '../../lib/stableEmpties'
 import { guardChatCreate } from '../../lib/chatCreateFailure'
-import { buildSideChatComposerProps, SideChatComposerRuntime } from '../../lib/sideChatComposer'
+import {
+  buildSideChatComposerProps,
+  SideChatComposerRuntime
+} from '../../lib/sideChatComposer'
 import { activeEnsembleRoundForComposer } from '../../lib/chatBusyState'
 import { resolveSlashParticipantForChat } from '../../lib/resolveSlashParticipant'
 import { buildEnsembleProviderBlendStyle } from '../../lib/multiviewEnsembleComposer'
@@ -73,7 +76,10 @@ import {
 } from '../../components/AppChromeSymbols'
 import { PinnedMessagesPanel } from '../../components/PinnedMessagesPanel'
 import { WebLoginsDockPanel } from '../../components/WebLoginsDockPanel'
-import { ChatMediaDockPanel, ChatMediaPreviewOverlay } from '../../components/ChatMediaPanel'
+import {
+  ChatMediaDockPanel,
+  ChatMediaPreviewOverlay
+} from '../../components/ChatMediaPanel'
 import { FileEditorPanel } from '../../components/FileEditorPanel'
 import { CanvasDockPanel } from '../../components/CanvasDockPanel'
 import { AppDriveDockPanel } from '../../components/AppDriveDockPanel'
@@ -115,485 +121,488 @@ import { ChannelHostPanel } from '../../components/ChannelHostPanel'
 import { ChannelMemberPanel } from '../../components/ChannelMemberPanel'
 import { withSessionActivityLedger } from '../../lib/sessionActivityLedger'
 import { getProjectReferenceContextSelection } from '../../lib/projectReferenceContextSelection'
-import { buildUserEnsembleRosterPresetApplyPlan } from '../../../../shared/ensembleRosterPresetApply'
+import {
+  buildUserEnsembleRosterPresetApplyPlan
+} from '../../../../shared/ensembleRosterPresetApply'
 
 import type { MainAppLayoutProps } from './MainAppLayout.types'
 
 export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   const {
-    activateRightDockTab,
-    activateCanvasDockSurface,
-    activeDiff,
-    activeRightDockTab,
-    activeSidebarChatId,
-    activeWorkProjectId,
-    activeThreadSearchIndex,
-    activeWorkspaceBoard,
-    activeWorkspaceBoardCards,
-    activeWorkspaceBoardId,
-    activeWorkspaceBoardWorkspace,
-    activeProjectGraphProjection,
-    activeProjectGraphId,
-    projectGraphEntries,
-    onOpenProjectGraph,
-    onBackFromProjectGraph,
-    onOpenThreadFromProjectGraph,
-    onAddProjectDependency,
-    onRemoveProjectDependency,
-    advancedFxIntensity,
-    agentMcpStatusByProvider,
-    agentStatusByProvider,
-    agenticServices,
-    agenticWorkspaceGrantCount,
-    agenticWorkspaceGrants,
-    appMainStyle,
-    appTranscriptRef,
-    appVersion,
-    appearance,
-    approvalTimeouts,
-    auraProviderKey,
-    autoFollowRef,
-    markMainTranscriptProgrammaticScroll,
-    getMainTranscriptUserScrollGestureLive,
-    markSideTranscriptProgrammaticScroll,
-    getSideTranscriptUserScrollGestureLive,
-    autoUpdateEnabled,
-    auditBundleVerificationResult,
-    beginManualMainTranscriptJump,
-    beginManualSideTranscriptJump,
-    canCreateSideChatFromCurrent,
-    canOpenWorkspacePopout,
-    capabilityLedgerSnapshot,
-    chatByIdRef,
-    chatContextNotice,
-    chatContextTurns,
-    chatPopoutPresentation,
-    chatPopoutParentChat,
-    chatSplitRegionRef,
-    chatSplitStyle,
-    chats,
-    claudeAuthStatus,
-    claudeBinaryPath,
-    claudeLoginState,
-    closeRightDockPanel,
-    closeThreadSearch,
-    codexMcpStatus,
-    codexSandboxFallback,
-    codexStatus,
-    collaboratingChatIds,
-    composerCtx,
-    composerSurfaceBase,
-    composerDraftChatIds,
-    configuredProviderSnapshot,
-    executionMapProjection,
-    executionMapSelectedStepId,
-    handleBackFromExecutionMap,
-    handleSelectExecutionMapStep,
-    handleOpenExecutionThread,
-    handleSaveExecutionGraph,
-    handleCancelExecutionRun,
-    handleResumeExecutionRun,
-    handleOpenExecutionMap,
-    executionRunEntries,
-    handleOpenExecutionRunFromWork,
-    copiedId,
-    copy,
-    currentBlackboardEntries,
-    currentChat,
-    currentChatIdRef,
-    currentChatMediaRefs,
-    chatMediaPromoteTarget,
-    commitsInspectorWorkspacePath,
-    currentGeminiWorktree,
-    currentGitPresentationPath,
-    currentPinnedMessages,
-    currentPreviewMenuOpen,
-    currentPreviewTargets,
-    currentProvider,
-    currentProviderCapabilities,
-    currentProviderLabel,
-    currentRun,
-    currentWorkspace,
-    cursorProviderAvailable,
-    deleteMessageFromChat,
-    diffRefreshStatus,
-    diffView,
-    displayCurrency,
-    displayFileChangeSummaries,
-    dockChatPopoutWindow,
-    dockPresence,
-    dockTabDefs,
-    effectiveInspectorWidth,
-    effectiveIsThinking,
-    exportProductDiagnostics,
-    exportProductAuditBundle,
-    verifyProductAuditBundle,
-    fileChangeDisplayAdds,
-    fileChangeDisplayDels,
-    fileChangeShouldShowStats,
-    fileChangeSummaryText,
-    focusedPaneGhostEnabled,
-    focusedPaneLivingWorkspaceEnabled,
-    focusedPaneSkyEnabled,
-    geminiCheckpointingEnabled,
-    geminiMcpBridgeEnabled,
-    geminiTerminalEndRef,
-    geminiTerminalInput,
-    geminiTerminalStatusLabel,
-    getDefaultModelForProvider,
-    grokProviderAvailable,
-    handleAddChatToWorkspaceBoard,
-    handleAddLocalServerToWorkspaceBoard,
-    handleAddPinnedMessageToWorkspaceBoard,
-    handleActiveSidebarTabChange,
-    handleAddRunQueueJobToWorkspaceBoard,
-    geminiVersion,
-    handleAddTranscriptMessageToPrompt,
-    handleAddWorkflowToWorkspaceBoard,
-    handleAddWorkspaceBoardCard,
-    handleAgentApprovalAction,
-    handleAgentQuestionDismiss,
-    handleAgentQuestionSubmit,
-    handleArchiveWorkspaceBoard,
-    handleCancelAuditRun,
-    handleCancelWorkflowExecution,
-    handleClearClaudeApiKey,
-    handleClearCodexUsageCredential,
-    handleClearKimiApiKey,
-    handleCopyMessage,
-    handleCreateWorkspaceBoard,
-    handleDeleteAllChatHistory,
-    handleDeleteChat,
-    handleDeleteMessage,
-    handleDeleteQueuedMessage,
-    handleDeleteWorkflow,
-    handleDeleteWorkspaceBoard,
-    handleDeleteWorkspaceBoardCard,
-    handleDismissAuditRun,
-    handleDismissAuditRunNotice,
-    handleDismissOnboardingHint,
-    handleDuplicateWorkspaceBoard,
-    handleEditQueuedMessage,
-    handleEditWorkflowInterval,
-    handleRestoreWorkspaceBoard,
-    handleEndCurrentLinkedMainChat,
-    handleEndSidePanelChat,
-    handleToggleSideChatAuthorityReturn,
-    handleGeminiTerminalSubmit,
-    handleImportCodexUsageCredential,
-    handleJumpToLatest,
-    handleManualUsageRefresh,
-    handleMessageSelectionCandidate,
-    handleNavigateToWorkspace,
-    handleNewChat,
-    handleNewDefaultGlobalChat,
-    handleNewEnsemble,
-    handleOpenChangelogSheet,
-    handleOpenCockpitThread,
-    handleOpenInMultiview,
-    handleOpenLinkedChatInSidePanelById,
-    handleOpenLinkedChatInSidePanelFromSidebar,
-    handleOpenPinnedMessageFromSettings,
-    handleOpenSideChatFromMessage,
-    handleOpenSideChatFromRunResult,
-    handleOpenPluginWorkflowTemplate,
-    handleOpenProjectReferencesLibrary,
-    handleOpenWebSiteLogins,
-    workProjectHeader,
-    handleOpenWorkflowCompose,
-    handleOpenWorkspaceBoard,
-    handlePlanChoiceSubmit,
-    handlePromoteCollaboratorComment,
-    handleProposedPlanApprove,
-    handleProposedPlanCustom,
-    handleProposedPlanDismiss,
-    handleRemoveAgenticWorkspaceGrant,
-    handleRemoveWorkspace,
-    handleRenameChat,
-    handleRenameWorkspaceBoard,
-    handleReorderQueuedMessages,
-    handleReturnToSideChatParent,
-    handleRightPanelResizeKeyDown,
-    handleRunWorkflowNow,
-    handleSelectChat,
-    handleSelectSideChatTypeOption,
-    handleSelectWorkspace,
-    handleSetSideAgenticWorkspaceGrant,
-    handleSetWorkflowUnattended,
-    handleSettingsChange,
-    handleSideCancel,
-    handleSideAgentApprovalAction,
-    handleRemoveSideImageAttachment,
-    handlePickFolderForChat,
-    handleSideChatChange,
-    handleSideProviderChange,
-    handleSideRun,
-    handleSideSteer,
-    handleSidebarPrimarySurfaceSelect,
-    handleSidebarQuickUpdate,
-    handleStartProjectHome,
-    handleSelectedProjectChange,
-    handleSteerToQueuedMessage,
-    handleStoreClaudeApiKey,
-    handleStoreKimiApiKey,
-    handleToggleArchiveChat,
-    handleTogglePinChat,
-    handleSetChatHiddenFromMainList,
-    handleClearChatGitWorkflow,
-    activeChatSidebarIdentity,
-    activeChatSidebarBranch,
-    activeChatSidebarGitIndicators,
-    handleTogglePinWorkspace,
-    handleTogglePinWorkspaceBoard,
-    handleToggleWorkflowEnabled,
-    handleTriggerClaudeLogin,
-    handleUpdateWorkspaceBoardCard,
-    handleProviderLogin,
-    handleUpgradeProviderCli,
-    handleWorkspaceSidebarResizeKeyDown,
-    hasCurrentHandoffDraft,
-    hasWorkspaceContext,
-    hideSideChatPane,
-    hostWeather,
-    installGeminiMcpBridge,
-    isAdvancedFxActive,
-    isChatExpanded,
-    isOldVersion,
-    isChatMediaPanelOpen,
-    isChatPopoutWindow,
-    isCurrentEnsembleChat,
-    isCurrentGlobalChat,
-    isEnsembleModeEnabled,
-    isFxEnabled,
-    isLinkedChatPopout,
-    isMultiviewSplit,
-    isPinnedMessagesPanelOpen,
-    isWebSiteLoginsPanelOpen,
-    isProjectReferencesPanelOpen,
-    isWorkRouteReferencesPinned,
-    isSideChatProviderLocked,
-    isSideChatRunning,
-    isSideComposerLocked,
-    isSideSplitOpen,
-    isTerminalDockAvailable,
-    isWelcomeChat,
-    jumpToTranscriptMessage,
-    kimiAuthStatus,
-    kimiBinaryPath,
-    logsEndRef,
-    manualUsageRefreshInFlight,
-    managedPolicyStatus,
-    multiview,
-    ollamaBaseUrl,
-    ollamaDefaultModel,
-    openChatPopoutWindow,
-    openCompactChatCompanion,
-    openCurrentSideChatPresentation,
-    openFileChangeInWorkbench,
-    openLinkedChatAsMain,
-    openMediaPane,
-    openInspectorTab,
-    openWorkspacePopoutWindow,
-    overestimatePercent,
-    pendingAgentApproval,
-    pendingAgentApprovalByChatId,
-    pendingAgentQuestions,
-    pendingAgentQuestionsByChatId,
-    pendingApprovalQueueByChatId,
-    pendingPlanChoice,
-    pendingProposedPlan,
-    applyEnsemblePermissionsToAllParticipantsForChat,
-    patchSideParticipantWithSeatGate,
-    popOutLinkedChat,
-    popoutMenuOpen,
-    popoutMenuRef,
-    previewChatMediaRef,
-    productOperationsStatus,
-    providerCapabilitiesByProvider,
-    providerCliUpgradeState,
-    providerRates,
-    providerShellClass,
-    queuedRunQueueCount,
-    rawFilter,
-    rawLogs,
-    rawLogsEndRef,
-    refractionEnabled,
-    refreshDiff,
-    refreshGeminiMcpBridgeStatus,
-    refreshProductOperationsStatus,
-    refreshProviderMetadata,
-    dryRunAuditRetention,
-    rememberSideChatComposerSelection,
-    renderMultiviewPaneCell,
-    renderPreviewLaunchError,
-    renderPreviewTargetMenu,
-    repairProductInstall,
-    purgeAuditRetention,
-    rightDockStyle,
-    rightDockVisible,
-    rightTab,
-    roundFileChangeSummaries,
-    runCompleteDurationText,
-    runDiff,
-    runFxStatus,
-    runPreviewTargetAction,
-    runQueueJobs,
-    runningChatIds,
-    runningChatIdsArray,
-    scheduledTasks,
-    selectThreadSearchMatch,
-    selectedSideChatTypeOption,
-    setChatMediaPanelOpenPreservingTranscript,
-    setDiffView,
-    setGeminiTerminalInput,
-    setPopoutMenuOpen,
-    setPreviewChatMediaRef,
-    setPreviewMenuTarget,
-    setRawFilter,
-    setSettingsActiveTab,
-    setShowBugReportSheet,
-    setShowFirstLaunchSheet,
-    setShowGeminiTerminal,
-    setShowGhostCompanion,
-    setShowSettings,
-    setShowSkyVisualFx,
-    setShowWorkspaceSidebar,
-    setSubThreadCreatorParent,
-    setThreadRawLogs,
-    setThreadSearchActiveIndex,
-    setThreadSearchQuery,
-    settings,
-    settingsActiveTab,
-    settingsPinnedMessageGroups,
-    shouldShowWelcomeUsageDashboard,
-    showAgentAuraFx,
-    showBugReportSheet,
-    showChangelogSheet,
-    showFileEditor,
-    showOfficeSuite,
-    isCanvasDockPanelOpen,
-    isAppDriveDockPanelOpen,
-    appDriveDockStatus,
-    handleAppDrivePause,
-    handleAppDriveResume,
-    handleAppDriveTakeOver,
-    handleAppDriveStop,
-    threadHomeOpen,
-    openThreadHome,
-    officeOpenRequest,
-    onOpenOfficeDocument,
-    onRequestOfficeExternalAccess,
-    citationOpenRequest,
-    onCitationOpenRequestConsumed,
-    onOpenProjectReferenceCitation,
-    showFirstLaunchSheet,
-    showJumpToLatestPill,
-    showOnboardingHint,
-    showWorkspaceBoardCreatorSheet,
-    showRunDataVizFx,
-    showSettings,
-    showWorkspaceSidebar,
-    sideAutoFollowRef,
-    sideChat,
-    sideChatIsHydrating,
-    sideChatIsWelcome,
-    sideChatSeedMessageId,
-    sideChatTokenTally,
-    sideChatTypePickerOptions,
-    sideChatWelcomeThreadLabel,
-    sideChatWelcomeWorkspaceLabel,
-    sideClaudeReasoning,
-    sideCodexReasoning,
-    sideGrokReasoning,
-    sideMuseReasoning,
-    sideCursorReasoning,
-    sideComposerModelOptions,
-    sideComposerProvider,
-    sideComposerReasoningOptions,
-    sideComposerRunTimecodeStartedAt,
-    sideComposerSelectedModel,
-    sideComposerSelection,
-    sideComposerTextareaRef,
-    sideContextModelId,
-    sideCumulativeRunBaseMs,
-    sideDualComposerTelemetry,
-    sideKimiThinking,
-    sideImageAttachments,
-    sideLiveRunOutputTokens,
-    sideLogsEndRef,
-    sidePanelAgentIdentity,
-    sidePanelKindLabel,
-    sidePanelLayoutClass,
-    sidePanelParentChat,
-    sidePanelRelation,
-    sideChatAuthorityReturnEnabled,
-    currentChatSideChatAuthorityReturnEnabled,
-    sidePrompt,
-    sideProvider,
-    sideQueuedMessagesAboveRowEntries,
-    sideRun,
-    sideRunCompleteNotice,
-    sideSelectedPermission,
-    sideThinkingModelBadge,
-    sideThinkingProvider,
-    sideThinkingProviderClass,
-    sideThinkingProviderLabel,
-    sideThreadTokenTallyHasValue,
-    sideTranscriptContentRef,
-    sideExternalRestoreAnchorMessageId,
-    sideTranscriptScrollRef,
-    sideWorkspace,
-    sidebarPresence,
-    sidebarSearchFocusRequestId,
-    startRightPanelResize,
-    startWorkspaceSidebarResize,
-    thinkingModelBadge,
-    thinkingProvider,
-    thinkingProviderClass,
-    thinkingProviderLabel,
-    threadSearchFocusRequestId,
-    threadSearchMatches,
-    threadSearchQuery,
-    threadSearchShortcutHint,
-    threadSearchVisible,
-    toggleFeedbackMessageInChat,
-    togglePinMessageInChat,
-    toggleRightDockPanel,
-    transcriptContentRef,
-    mainExternalRestoreAnchorMessageId,
-    transcriptJumpRequest,
-    transcriptMessages,
-    transcriptScrollRef,
-    transcriptStyle,
-    unreadFromBottomCount,
-    updateChannel,
-    updatePinnedNotesForChat,
-    updateStatus,
-    usageInitialized,
-    usageRecords,
-    usageRefreshTick,
-    usageSummary,
-    visibleAuditRun,
-    visibleAuditRunNotice,
-    visibleGeminiTerminalLogs,
-    visibleRunCompleteNotice,
-    liveOwnedExecutionThreads,
-    ownedExecutionViewsByThreadId,
-    pluginWorkflowTemplates,
-    welcomeDashboardCardEnabled,
-    welcomeFitLevel,
-    welcomeDashboardRegionRef,
-    welcomeUsageDashboardData,
-    workflowDefinitions,
-    workspaceBoardApiReady,
-    workspaceBoardCards,
-    workspaceBoards,
-    setWorkspaceBoardCreatorOpen,
-    workspaceSearchShortcutHint,
-    workspaceSidebarWidth,
-    workspaces
+  activateRightDockTab,
+  activateCanvasDockSurface,
+  activeDiff,
+  activeRightDockTab,
+  activeSidebarChatId,
+  activeWorkProjectId,
+  activeThreadSearchIndex,
+  activeWorkspaceBoard,
+  activeWorkspaceBoardCards,
+  activeWorkspaceBoardId,
+  activeWorkspaceBoardWorkspace,
+  activeProjectGraphProjection,
+  activeProjectGraphId,
+  projectGraphEntries,
+  onOpenProjectGraph,
+  onBackFromProjectGraph,
+  onOpenThreadFromProjectGraph,
+  onAddProjectDependency,
+  onRemoveProjectDependency,
+  advancedFxIntensity,
+  agentMcpStatusByProvider,
+  agentStatusByProvider,
+  agenticServices,
+  agenticWorkspaceGrantCount,
+  agenticWorkspaceGrants,
+  appMainStyle,
+  appTranscriptRef,
+  appVersion,
+  appearance,
+  approvalTimeouts,
+  auraProviderKey,
+  autoFollowRef,
+  markMainTranscriptProgrammaticScroll,
+  getMainTranscriptUserScrollGestureLive,
+  markSideTranscriptProgrammaticScroll,
+  getSideTranscriptUserScrollGestureLive,
+  autoUpdateEnabled,
+  auditBundleVerificationResult,
+  beginManualMainTranscriptJump,
+  beginManualSideTranscriptJump,
+  canCreateSideChatFromCurrent,
+  canOpenWorkspacePopout,
+  capabilityLedgerSnapshot,
+  chatByIdRef,
+  chatContextNotice,
+  chatContextTurns,
+  chatPopoutPresentation,
+  chatPopoutParentChat,
+  chatSplitRegionRef,
+  chatSplitStyle,
+  chats,
+  claudeAuthStatus,
+  claudeBinaryPath,
+  claudeLoginState,
+  closeRightDockPanel,
+  closeThreadSearch,
+  codexMcpStatus,
+  codexSandboxFallback,
+  codexStatus,
+  collaboratingChatIds,
+  composerCtx,
+  composerSurfaceBase,
+  composerDraftChatIds,
+  configuredProviderSnapshot,
+  executionMapProjection,
+  executionMapSelectedStepId,
+  handleBackFromExecutionMap,
+  handleSelectExecutionMapStep,
+  handleOpenExecutionThread,
+  handleSaveExecutionGraph,
+  handleCancelExecutionRun,
+  handleResumeExecutionRun,
+  handleOpenExecutionMap,
+  executionRunEntries,
+  handleOpenExecutionRunFromWork,
+  copiedId,
+  copy,
+  currentBlackboardEntries,
+  currentChat,
+  currentChatIdRef,
+  currentChatMediaRefs,
+  chatMediaPromoteTarget,
+  commitsInspectorWorkspacePath,
+  currentGeminiWorktree,
+  currentGitPresentationPath,
+  currentPinnedMessages,
+  currentPreviewMenuOpen,
+  currentPreviewTargets,
+  currentProvider,
+  currentProviderCapabilities,
+  currentProviderLabel,
+  currentRun,
+  currentWorkspace,
+  cursorProviderAvailable,
+  deleteMessageFromChat,
+  diffRefreshStatus,
+  diffView,
+  displayCurrency,
+  displayFileChangeSummaries,
+  dockChatPopoutWindow,
+  dockPresence,
+  dockTabDefs,
+  effectiveInspectorWidth,
+  effectiveIsThinking,
+  exportProductDiagnostics,
+  exportProductAuditBundle,
+  verifyProductAuditBundle,
+  fileChangeDisplayAdds,
+  fileChangeDisplayDels,
+  fileChangeShouldShowStats,
+  fileChangeSummaryText,
+  focusedPaneGhostEnabled,
+  focusedPaneLivingWorkspaceEnabled,
+  focusedPaneSkyEnabled,
+  geminiCheckpointingEnabled,
+  geminiMcpBridgeEnabled,
+  geminiTerminalEndRef,
+  geminiTerminalInput,
+  geminiTerminalStatusLabel,
+  getDefaultModelForProvider,
+  grokProviderAvailable,
+  handleAddChatToWorkspaceBoard,
+  handleAddLocalServerToWorkspaceBoard,
+  handleAddPinnedMessageToWorkspaceBoard,
+  handleActiveSidebarTabChange,
+  handleAddRunQueueJobToWorkspaceBoard,
+  geminiVersion,
+  handleAddTranscriptMessageToPrompt,
+  handleAddWorkflowToWorkspaceBoard,
+  handleAddWorkspaceBoardCard,
+  handleAgentApprovalAction,
+  handleAgentQuestionDismiss,
+  handleAgentQuestionSubmit,
+  handleArchiveWorkspaceBoard,
+  handleCancelAuditRun,
+  handleCancelWorkflowExecution,
+  handleClearClaudeApiKey,
+  handleClearCodexUsageCredential,
+  handleClearKimiApiKey,
+  handleCopyMessage,
+  handleCreateWorkspaceBoard,
+  handleDeleteAllChatHistory,
+  handleDeleteChat,
+  handleDeleteMessage,
+  handleDeleteQueuedMessage,
+  handleDeleteWorkflow,
+  handleDeleteWorkspaceBoard,
+  handleDeleteWorkspaceBoardCard,
+  handleDismissAuditRun,
+  handleDismissAuditRunNotice,
+  handleDismissOnboardingHint,
+  handleDuplicateWorkspaceBoard,
+  handleEditQueuedMessage,
+  handleEditWorkflowInterval,
+  handleRestoreWorkspaceBoard,
+  handleEndCurrentLinkedMainChat,
+  handleEndSidePanelChat,
+  handleToggleSideChatAuthorityReturn,
+  handleGeminiTerminalSubmit,
+  handleImportCodexUsageCredential,
+  handleJumpToLatest,
+  handleManualUsageRefresh,
+  handleMessageSelectionCandidate,
+  handleNavigateToWorkspace,
+  handleNewChat,
+  handleNewDefaultGlobalChat,
+  handleNewEnsemble,
+  handleOpenChangelogSheet,
+  handleOpenCockpitThread,
+  handleOpenInMultiview,
+  handleOpenLinkedChatInSidePanelById,
+  handleOpenLinkedChatInSidePanelFromSidebar,
+  handleOpenPinnedMessageFromSettings,
+  handleOpenSideChatFromMessage,
+  handleOpenSideChatFromRunResult,
+  handleOpenPluginWorkflowTemplate,
+  handleOpenProjectReferencesLibrary,
+  handleOpenWebSiteLogins,
+  workProjectHeader,
+  handleOpenWorkflowCompose,
+  handleOpenWorkspaceBoard,
+  handlePlanChoiceSubmit,
+  handlePromoteCollaboratorComment,
+  handleProposedPlanApprove,
+  handleProposedPlanCustom,
+  handleProposedPlanDismiss,
+  handleRemoveAgenticWorkspaceGrant,
+  handleRemoveWorkspace,
+  handleRenameChat,
+  handleRenameWorkspaceBoard,
+  handleReorderQueuedMessages,
+  handleReturnToSideChatParent,
+  handleRightPanelResizeKeyDown,
+  handleRunWorkflowNow,
+  handleSelectChat,
+  handleSelectSideChatTypeOption,
+  handleSelectWorkspace,
+  handleSetSideAgenticWorkspaceGrant,
+  handleSetWorkflowUnattended,
+  handleSettingsChange,
+  handleSideCancel,
+  handleSideAgentApprovalAction,
+  handleRemoveSideImageAttachment,
+  handlePickFolderForChat,
+  handleSideChatChange,
+  handleSideProviderChange,
+  handleSideRun,
+  handleSideSteer,
+  handleSidebarPrimarySurfaceSelect,
+  handleSidebarQuickUpdate,
+  handleStartProjectHome,
+  handleSelectedProjectChange,
+  handleSteerToQueuedMessage,
+  handleStoreClaudeApiKey,
+  handleStoreKimiApiKey,
+  handleToggleArchiveChat,
+  handleTogglePinChat,
+  handleSetChatHiddenFromMainList,
+  handleClearChatGitWorkflow,
+  activeChatSidebarIdentity,
+  activeChatSidebarBranch,
+  activeChatSidebarGitIndicators,
+  handleTogglePinWorkspace,
+  handleTogglePinWorkspaceBoard,
+  handleToggleWorkflowEnabled,
+  handleTriggerClaudeLogin,
+  handleUpdateWorkspaceBoardCard,
+  handleProviderLogin,
+  handleUpgradeProviderCli,
+  handleWorkspaceSidebarResizeKeyDown,
+  hasCurrentHandoffDraft,
+  hasWorkspaceContext,
+  hideSideChatPane,
+  hostWeather,
+  installGeminiMcpBridge,
+  isAdvancedFxActive,
+  isChatExpanded,
+  isOldVersion,
+  isChatMediaPanelOpen,
+  isChatPopoutWindow,
+  isCurrentEnsembleChat,
+  isCurrentGlobalChat,
+  isEnsembleModeEnabled,
+  isFxEnabled,
+  isLinkedChatPopout,
+  isMultiviewSplit,
+  isPinnedMessagesPanelOpen,
+  isWebSiteLoginsPanelOpen,
+  isProjectReferencesPanelOpen,
+  isWorkRouteReferencesPinned,
+  isSideChatProviderLocked,
+  isSideChatRunning,
+  isSideComposerLocked,
+  isSideSplitOpen,
+  isTerminalDockAvailable,
+  isWelcomeChat,
+  jumpToTranscriptMessage,
+  kimiAuthStatus,
+  kimiBinaryPath,
+  logsEndRef,
+  manualUsageRefreshInFlight,
+  managedPolicyStatus,
+  multiview,
+  ollamaBaseUrl,
+  ollamaDefaultModel,
+  openChatPopoutWindow,
+  openCompactChatCompanion,
+  openCurrentSideChatPresentation,
+  openFileChangeInWorkbench,
+  openLinkedChatAsMain,
+  openMediaPane,
+  openInspectorTab,
+  openWorkspacePopoutWindow,
+  overestimatePercent,
+  pendingAgentApproval,
+  pendingAgentApprovalByChatId,
+  pendingAgentQuestions,
+  pendingAgentQuestionsByChatId,
+  pendingApprovalQueueByChatId,
+  pendingPlanChoice,
+  pendingProposedPlan,
+  applyEnsemblePermissionsToAllParticipantsForChat,
+  patchSideParticipantWithSeatGate,
+  popOutLinkedChat,
+  popoutMenuOpen,
+  popoutMenuRef,
+  previewChatMediaRef,
+  productOperationsStatus,
+  providerCapabilitiesByProvider,
+  providerCliUpgradeState,
+  providerRates,
+  providerShellClass,
+  queuedRunQueueCount,
+  rawFilter,
+  rawLogs,
+  rawLogsEndRef,
+  refractionEnabled,
+  refreshDiff,
+  refreshGeminiMcpBridgeStatus,
+  refreshProductOperationsStatus,
+  refreshProviderMetadata,
+  dryRunAuditRetention,
+  rememberSideChatComposerSelection,
+  renderMultiviewPaneCell,
+  renderPreviewLaunchError,
+  renderPreviewTargetMenu,
+  repairProductInstall,
+  purgeAuditRetention,
+  rightDockStyle,
+  rightDockVisible,
+  rightTab,
+  roundFileChangeSummaries,
+  runCompleteDurationText,
+  runDiff,
+  runFxStatus,
+  runPreviewTargetAction,
+  runQueueJobs,
+  runningChatIds,
+  runningChatIdsArray,
+  scheduledTasks,
+  selectThreadSearchMatch,
+  selectedSideChatTypeOption,
+  setChatMediaPanelOpenPreservingTranscript,
+  setDiffView,
+  setGeminiTerminalInput,
+  setPopoutMenuOpen,
+  setPreviewChatMediaRef,
+  setPreviewMenuTarget,
+  setRawFilter,
+  setSettingsActiveTab,
+  setShowBugReportSheet,
+  setShowFirstLaunchSheet,
+  setShowGeminiTerminal,
+  setShowGhostCompanion,
+  setShowSettings,
+  setShowSkyVisualFx,
+  setShowWorkspaceSidebar,
+  setSubThreadCreatorParent,
+  setThreadRawLogs,
+  setThreadSearchActiveIndex,
+  setThreadSearchQuery,
+  settings,
+  settingsActiveTab,
+  settingsPinnedMessageGroups,
+  shouldShowWelcomeUsageDashboard,
+  showAgentAuraFx,
+  showBugReportSheet,
+  showChangelogSheet,
+  showFileEditor,
+  showOfficeSuite,
+  isCanvasDockPanelOpen,
+  isAppDriveDockPanelOpen,
+  appDriveDockStatus,
+  handleAppDrivePause,
+  handleAppDriveResume,
+  handleAppDriveTakeOver,
+  handleAppDriveStop,
+  threadHomeOpen,
+  openThreadHome,
+  officeOpenRequest,
+  onOpenOfficeDocument,
+  onRequestOfficeExternalAccess,
+  citationOpenRequest,
+  onCitationOpenRequestConsumed,
+  onOpenProjectReferenceCitation,
+  showFirstLaunchSheet,
+  showJumpToLatestPill,
+  showOnboardingHint,
+  showWorkspaceBoardCreatorSheet,
+  showRunDataVizFx,
+  showSettings,
+  showWorkspaceSidebar,
+  sideAutoFollowRef,
+  sideChat,
+  sideChatIsHydrating,
+  sideChatIsWelcome,
+  sideChatSeedMessageId,
+  sideChatTokenTally,
+  sideChatTypePickerOptions,
+  sideChatWelcomeThreadLabel,
+  sideChatWelcomeWorkspaceLabel,
+  sideClaudeReasoning,
+  sideCodexReasoning,
+  sideGrokReasoning,
+  sideMuseReasoning,
+  sideCursorReasoning,
+  sideComposerModelOptions,
+  sideComposerProvider,
+  sideComposerReasoningOptions,
+  sideComposerRunTimecodeStartedAt,
+  sideComposerSelectedModel,
+  sideComposerSelection,
+  sideComposerTextareaRef,
+  sideContextModelId,
+  sideCumulativeRunBaseMs,
+  sideDualComposerTelemetry,
+  sideKimiThinking,
+  sideImageAttachments,
+  sideLiveRunOutputTokens,
+  sideLogsEndRef,
+  sidePanelAgentIdentity,
+  sidePanelKindLabel,
+  sidePanelLayoutClass,
+  sidePanelParentChat,
+  sidePanelRelation,
+  sideChatAuthorityReturnEnabled,
+  currentChatSideChatAuthorityReturnEnabled,
+  sidePrompt,
+  sideProvider,
+  sideQueuedMessagesAboveRowEntries,
+  sideRun,
+  sideRunCompleteNotice,
+  sideSelectedPermission,
+  sideThinkingModelBadge,
+  sideThinkingProvider,
+  sideThinkingProviderClass,
+  sideThinkingProviderLabel,
+  sideThreadTokenTallyHasValue,
+  sideTranscriptContentRef,
+  sideExternalRestoreAnchorMessageId,
+  sideTranscriptScrollRef,
+  sideWorkspace,
+  sidebarPresence,
+  sidebarSearchFocusRequestId,
+  startRightPanelResize,
+  startWorkspaceSidebarResize,
+  thinkingModelBadge,
+  thinkingProvider,
+  thinkingProviderClass,
+  thinkingProviderLabel,
+  threadSearchFocusRequestId,
+  threadSearchMatches,
+  threadSearchQuery,
+  threadSearchShortcutHint,
+  threadSearchVisible,
+  toggleFeedbackMessageInChat,
+  togglePinMessageInChat,
+  toggleRightDockPanel,
+  transcriptContentRef,
+  mainExternalRestoreAnchorMessageId,
+  transcriptJumpRequest,
+  transcriptMessages,
+  transcriptScrollRef,
+  transcriptStyle,
+  unreadFromBottomCount,
+  updateChannel,
+  updatePinnedNotesForChat,
+  updateStatus,
+  usageInitialized,
+  usageRecords,
+  usageRefreshTick,
+  usageSummary,
+  visibleAuditRun,
+  visibleAuditRunNotice,
+  visibleGeminiTerminalLogs,
+  visibleRunCompleteNotice,
+  liveOwnedExecutionThreads,
+  ownedExecutionViewsByThreadId,
+  pluginWorkflowTemplates,
+  welcomeDashboardCardEnabled,
+  welcomeFitLevel,
+  welcomeDashboardRegionRef,
+  welcomeUsageDashboardData,
+  workflowDefinitions,
+  workspaceBoardApiReady,
+  workspaceBoardCards,
+  workspaceBoards,
+  setWorkspaceBoardCreatorOpen,
+  workspaceSearchShortcutHint,
+  workspaceSidebarWidth,
+  workspaces
   } = props
-  const isCompactChatCompanion = isChatPopoutWindow && chatPopoutPresentation === 'compact'
+  const isCompactChatCompanion =
+    isChatPopoutWindow && chatPopoutPresentation === 'compact'
   const currentChatAppChatId = currentChat?.appChatId || null
   const selectThreadFromHome = useCallback(
     (chatId: string) => {
@@ -754,7 +763,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
           sideActiveRound?.concurrentMode
         )
       : sideCurrentFanoutPolicy
-  const sideComposerAttachments = Array.isArray(sideImageAttachments) ? sideImageAttachments : []
+  const sideComposerAttachments = Array.isArray(sideImageAttachments)
+    ? sideImageAttachments
+    : []
   const sideRawModelOptions = Array.isArray(sideComposerModelOptions)
     ? sideComposerModelOptions.filter((option: any) => option.id !== 'custom')
     : []
@@ -795,7 +806,11 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   }
   const updateSideMaxContinuationHops = (value: number): void => {
     if (!sideChat?.ensemble) return
-    const change = buildContinuationHopsChangeRequest(sideChat.appChatId, sideChat.ensemble, value)
+    const change = buildContinuationHopsChangeRequest(
+      sideChat.appChatId,
+      sideChat.ensemble,
+      value
+    )
     if (!change) return
     patchSideEnsemble({
       maxContinuationHops: change.maxContinuationHops,
@@ -819,7 +834,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         window.alert(error instanceof Error ? error.message : 'Ensemble turn-limit update failed.')
       })
   }
-  const patchSideParticipant = (participantId: string, patch: Record<string, unknown>): void => {
+  const patchSideParticipant = (
+    participantId: string,
+    patch: Record<string, unknown>
+  ): void => {
     if (!sideChat?.ensemble) return
     const nextChat = patchSideParticipantWithSeatGate(sideChat, participantId, patch)
     if (!nextChat) return
@@ -908,7 +926,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   }
   const applySidePermissionsToAllParticipants = (): void => {
     if (!sideChat?.ensemble || !sideSelectedParticipant) return
-    applyEnsemblePermissionsToAllParticipantsForChat(sideChat.appChatId, sideSelectedParticipant.id)
+    applyEnsemblePermissionsToAllParticipantsForChat(
+      sideChat.appChatId,
+      sideSelectedParticipant.id
+    )
   }
   const rebindSideChatWorkspace = (workspace: any): void => {
     if (!sideChat || !workspace) return
@@ -959,7 +980,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         isCurrentChatProviderLocked: isSideChatProviderLocked,
         isCurrentComposerLocked: isSideComposerLocked,
         isCurrentEnsembleChat: sideChat.chatKind === 'ensemble',
-        isCurrentEnsembleRoundRunning: sideChat.chatKind === 'ensemble' && Boolean(sideActiveRound),
+        isCurrentEnsembleRoundRunning:
+          sideChat.chatKind === 'ensemble' && Boolean(sideActiveRound),
         // Preserve the side pane's purpose-built welcome heading; only the
         // composer shell is shared, so Composer must not add a second hero.
         isWelcomeChat: false,
@@ -1057,7 +1079,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         onToggleWatchPr: undefined,
         watchPrDisabledReason: undefined,
         watchPrStatusMessage: undefined,
-        pendingAgentApproval: pendingAgentApprovalByChatId?.[sideChat.appChatId] || null,
+        pendingAgentApproval:
+          pendingAgentApprovalByChatId?.[sideChat.appChatId] || null,
         pendingApprovalQueueByChatId: pendingApprovalQueueByChatId?.[sideChat.appChatId]
           ? {
               [sideChat.appChatId]: pendingApprovalQueueByChatId[sideChat.appChatId]
@@ -1106,7 +1129,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
           window.api.copyChatMarkdownTranscript(sideChat.appChatId),
         handleSetAgenticWorkspaceGrant: (service: any, enabled: boolean) =>
           handleSetSideAgenticWorkspaceGrant(service, enabled),
-        handleEditQueuedMessage: (entryId: string) => handleEditQueuedMessage(entryId, sideChat),
+        handleEditQueuedMessage: (entryId: string) =>
+          handleEditQueuedMessage(entryId, sideChat),
         handleDeleteQueuedMessage: (entryId: string) =>
           handleDeleteQueuedMessage(entryId, sideChat),
         handleSteerToQueuedMessage: (entryId: string) =>
@@ -1238,7 +1262,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     () => mainPaneActionPillRef.current?.openWorkspaceStats(),
     []
   )
-  const canOpenMainPaneWorkspaceStats = !isChatPopoutWindow && Boolean(mainPaneWorkspaceStats)
+  const canOpenMainPaneWorkspaceStats =
+    !isChatPopoutWindow && Boolean(mainPaneWorkspaceStats)
   const mainPaneProvider = isCurrentEnsembleChat
     ? 'ensemble'
     : currentChat?.provider || currentProvider
@@ -1278,14 +1303,14 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   // singleton host cover every focus target and collapse that pane to 0×0.
   const focusedHostOverlayRequired = Boolean(
     executionMapProjection ||
-    workProjectHeader ||
-    chatContextNotice ||
-    showJumpToLatestPill ||
-    previewChatMediaRef ||
-    (currentProvider === 'gemini' && isOldVersion) ||
-    visibleAuditRunNotice ||
-    visibleAuditRun ||
-    threadSearchVisible
+      workProjectHeader ||
+      chatContextNotice ||
+      showJumpToLatestPill ||
+      previewChatMediaRef ||
+      (currentProvider === 'gemini' && isOldVersion) ||
+      visibleAuditRunNotice ||
+      visibleAuditRun ||
+      threadSearchVisible
   )
   const channelMemberControl = useMemo(
     () => (isChatPopoutWindow ? null : <ChannelMemberPanel />),
@@ -1312,17 +1337,17 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   )
 
   return (
-    <div
-      className={`app-main ${isChatExpanded ? 'chat-expanded' : ''} ${providerShellClass} ${
-        isChatPopoutWindow ? 'chat-popout-main' : ''
-      } ${isLinkedChatPopout ? 'chat-popout-linked-main' : ''} ${
-        isSideSplitOpen ? 'side-chat-open' : ''
-      } ${rightDockVisible ? 'right-dock-open' : ''}`}
-      style={appMainStyle}
-    >
-      {sidebarPresence.mounted && !isChatPopoutWindow && (
-        <>
-          {/*
+      <div
+        className={`app-main ${isChatExpanded ? 'chat-expanded' : ''} ${providerShellClass} ${
+          isChatPopoutWindow ? 'chat-popout-main' : ''
+        } ${isLinkedChatPopout ? 'chat-popout-linked-main' : ''} ${
+          isSideSplitOpen ? 'side-chat-open' : ''
+        } ${rightDockVisible ? 'right-dock-open' : ''}`}
+        style={appMainStyle}
+      >
+        {sidebarPresence.mounted && !isChatPopoutWindow && (
+          <>
+            {/*
               Sidebar swap. In Settings full-app takeover layout
               (`showSettings === true`), the workspace `Sidebar`
               is replaced by `SettingsSidebar` — the latter carries
@@ -1330,147 +1355,652 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               handle stays so the main-pane width remains consistent
               when entering / leaving Settings.
             */}
-          {showSettings ? (
-            <SettingsSidebar
+            {showSettings ? (
+              <SettingsSidebar
+                activeTab={settingsActiveTab}
+                onTabChange={setSettingsActiveTab}
+                onBackToApp={() => setShowSettings(false)}
+                appVersion={appVersion}
+                animationClassName={sidebarPresence.className}
+              />
+            ) : (
+              <Sidebar
+                animationClassName={sidebarPresence.className}
+                workspaces={workspaces}
+                currentWorkspace={currentWorkspace}
+                chats={chats}
+                currentChat={currentChat}
+                activeChatId={activeSidebarChatId}
+                focusSearchRequestId={sidebarSearchFocusRequestId}
+                searchShortcutHint={workspaceSearchShortcutHint}
+                usageSummary={usageSummary}
+                modelUsageApiSpend={{
+                  providerRates,
+                  currency: displayCurrency,
+                  overestimatePercent,
+                  view: settings?.modelUsagePanelView ?? 'plan',
+                  planAvailabilityPending: !usageInitialized,
+                  onViewChange: (nextView) =>
+                    handleSettingsChange({ modelUsagePanelView: nextView }),
+                  refreshKey: usageRefreshTick,
+                  onRefreshUsage: handleManualUsageRefresh,
+                  refreshing: manualUsageRefreshInFlight,
+                  antigravityMonthlyCapUsd:
+                    settings?.antigravityGeminiApiMonthlySpendCapUsd ?? null,
+                  museMonthlyCapUsd: resolveMuseMonthlySpendCapUsd(
+                    settings?.museMonthlySpendCapUsd
+                  )
+                }}
+                runningChatIds={runningChatIdsArray}
+                pluginWorkflowTemplates={pluginWorkflowTemplates}
+                workflows={workflowDefinitions}
+                workspaceBoards={workspaceBoardApiReady ? workspaceBoards : []}
+                workspaceBoardCards={workspaceBoardApiReady ? workspaceBoardCards : []}
+                activeWorkspaceBoardId={workspaceBoardApiReady ? activeWorkspaceBoardId : null}
+                scheduledTasks={scheduledTasks}
+                collaboratingChatIds={collaboratingChatIds}
+                composerDraftChatIds={composerDraftChatIds}
+                showOnboardingHint={showOnboardingHint}
+                onDismissOnboardingHint={handleDismissOnboardingHint}
+                onSelectWorkspace={handleNavigateToWorkspace}
+                onRemoveWorkspace={handleRemoveWorkspace}
+                onSelectWorkspaceDialog={handleSelectWorkspace}
+                onNewChat={handleSidebarNewChat}
+                onNewGlobalChat={handleNewDefaultGlobalChat}
+                onNewEnsemble={handleNewEnsemble}
+                ensembleModeEnabled={isEnsembleModeEnabled}
+                onPrimarySurfaceSelect={handleSidebarPrimarySurfaceSelect}
+                onActiveSidebarTabChange={handleActiveSidebarTabChange}
+                onSelectChat={handleSelectChat}
+                onStartProjectHome={handleStartProjectHome}
+                onSelectedProjectChange={handleSelectedProjectChange}
+                onOpenReferencesLibrary={handleOpenProjectReferencesLibrary}
+                onOpenWebSiteLogins={handleOpenWebSiteLogins}
+                onOpenThreadGraph={(projectId) => onOpenProjectGraph({ id: projectId })}
+                executionRunEntries={executionRunEntries}
+                onOpenExecutionRun={handleOpenExecutionRunFromWork}
+                projectGraphEntries={projectGraphEntries}
+                activeThreadGraphProjectId={activeProjectGraphId}
+                onOpenChatInSidePanel={(chat, presentation) =>
+                  void handleOpenLinkedChatInSidePanelFromSidebar(chat, presentation)
+                }
+                onOpenInMultiview={handleOpenInMultiview}
+                onOpenChatPopout={(chat, presentation) =>
+                  popOutLinkedChat(chat, undefined, presentation)
+                }
+                onOpenSettings={() => setShowSettings(true)}
+                updateSnapshot={updateStatus.snapshot}
+                onQuickUpdate={handleSidebarQuickUpdate}
+                onOpenChangelog={handleOpenChangelogSheet}
+                appearanceQuickSettings={{
+                  composerStyle: appearance.composerStyle,
+                  themeAppearance: appearance.themeAppearance,
+                  sidebarOpacity: appearance.sidebarOpacity,
+                  mainPaneOpacity: appearance.mainPaneOpacity
+                }}
+                onAppearanceQuickChange={handleSettingsChange}
+                canOpenWorkspacePopout={canOpenWorkspacePopout}
+                onOpenWorkspacePopout={openWorkspacePopoutWindow}
+                onQuitApp={() => {
+                  void window.api.quitApp?.()
+                }}
+                onCreateSubThread={(parent) => setSubThreadCreatorParent(parent)}
+                onTogglePinChat={handleTogglePinChat}
+                onTogglePinWorkspace={handleTogglePinWorkspace}
+                onSetChatHiddenFromMainList={handleSetChatHiddenFromMainList}
+                onClearChatGitWorkflow={handleClearChatGitWorkflow}
+                activeChatIdentityTicker={activeChatSidebarIdentity}
+                activeChatIdentityBranch={activeChatSidebarBranch}
+                activeChatIdentityGitIndicators={activeChatSidebarGitIndicators}
+                onToggleArchiveChat={handleToggleArchiveChat}
+                onDeleteChat={handleDeleteChat}
+                onRenameChat={handleRenameChat}
+                onCreateWorkflowFromPluginTemplate={handleOpenPluginWorkflowTemplate}
+                onCreateWorkflow={handleOpenWorkflowCompose}
+                onCreateWorkspaceBoard={workspaceBoardApiReady ? handleCreateWorkspaceBoard : undefined}
+                onOpenWorkspaceBoard={workspaceBoardApiReady ? handleOpenWorkspaceBoard : undefined}
+                onRenameWorkspaceBoard={workspaceBoardApiReady ? handleRenameWorkspaceBoard : undefined}
+                onDuplicateWorkspaceBoard={workspaceBoardApiReady ? handleDuplicateWorkspaceBoard : undefined}
+                onTogglePinWorkspaceBoard={workspaceBoardApiReady ? handleTogglePinWorkspaceBoard : undefined}
+                onArchiveWorkspaceBoard={workspaceBoardApiReady ? handleArchiveWorkspaceBoard : undefined}
+                onRestoreWorkspaceBoard={workspaceBoardApiReady ? handleRestoreWorkspaceBoard : undefined}
+                onDeleteWorkspaceBoard={workspaceBoardApiReady ? handleDeleteWorkspaceBoard : undefined}
+                onAddChatToWorkspaceBoard={
+                  workspaceBoardApiReady ? handleAddChatToWorkspaceBoard : undefined
+                }
+                onAddWorkflowToWorkspaceBoard={
+                  workspaceBoardApiReady ? handleAddWorkflowToWorkspaceBoard : undefined
+                }
+                onAddRunQueueJobToWorkspaceBoard={
+                  workspaceBoardApiReady ? handleAddRunQueueJobToWorkspaceBoard : undefined
+                }
+                onAddLocalServerToWorkspaceBoard={
+                  workspaceBoardApiReady ? handleAddLocalServerToWorkspaceBoard : undefined
+                }
+                onRunWorkflowNow={handleRunWorkflowNow}
+                onToggleWorkflowEnabled={handleToggleWorkflowEnabled}
+                onEditWorkflowInterval={handleEditWorkflowInterval}
+                onCancelWorkflowExecution={handleCancelWorkflowExecution}
+                onDeleteWorkflow={handleDeleteWorkflow}
+                onSetWorkflowUnattended={handleSetWorkflowUnattended}
+                onOpenSettingsTab={(tab) => {
+                  setSettingsActiveTab(tab)
+                  setShowSettings(true)
+                }}
+                pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
+                pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
+                onRespondAgentApproval={handleAgentApprovalAction}
+                pendingAgentQuestionsByChatId={pendingAgentQuestionsByChatId}
+                onAnswerAgentQuestion={handleAgentQuestionSubmit}
+                onDismissAgentQuestion={handleAgentQuestionDismiss}
+              />
+            )}
+            <div
+              className={`workspace-sidebar-resize-handle${
+                sidebarPresence.className ? ` ${sidebarPresence.className}` : ''
+              }`}
+              role="separator"
+              tabIndex={0}
+              aria-orientation="vertical"
+              aria-label="Resize workspace sidebar"
+              aria-valuemin={MIN_WORKSPACE_SIDEBAR_WIDTH}
+              aria-valuemax={MAX_WORKSPACE_SIDEBAR_WIDTH}
+              aria-valuenow={workspaceSidebarWidth}
+              onMouseDown={startWorkspaceSidebarResize}
+              onKeyDown={handleWorkspaceSidebarResizeKeyDown}
+              title="Resize workspace sidebar"
+            />
+          </>
+        )}
+
+        {/*
+          Settings full-app takeover pane. When `showSettings` is true,
+          this sibling renders the SettingsPanel inline in the main pane
+          slot — paired with the SettingsSidebar swap above. The
+          adjacent `.app-transcript` element is hidden via the
+          `transcript-hidden-for-settings` class (just `display: none`)
+          so its ref stays valid and its state survives the round-trip
+          back to the chat surface.
+        */}
+        {!isChatPopoutWindow && showSettings && (
+          <div className="app-settings-pane" role="region" aria-label="Settings">
+            <SettingsPanel
+              layout="takeover"
               activeTab={settingsActiveTab}
               onTabChange={setSettingsActiveTab}
-              onBackToApp={() => setShowSettings(false)}
-              appVersion={appVersion}
-              animationClassName={sidebarPresence.className}
-            />
-          ) : (
-            <Sidebar
-              animationClassName={sidebarPresence.className}
+              mode={appearance.mode}
+              visualEffectStyle={appearance.visualEffectStyle}
+              themeAppearance={appearance.themeAppearance}
+              themeCornerStyle={appearance.themeCornerStyle}
+              themeAccentColor={appearance.themeAccentColor}
+              diffStatColors={appearance.diffStatColors}
+              appIconVariant={appearance.appIconVariant}
+              promptSurfaceStyle={appearance.promptSurfaceStyle}
+              fanoutLaneLayout={appearance.fanoutLaneLayout}
+              composerStyle={appearance.composerStyle}
+              configuredProviderSnapshot={configuredProviderSnapshot}
+              transcriptFontFamily={appearance.transcriptFontFamily}
+              composerFontFamily={appearance.composerFontFamily}
+              persistedTranscriptFontFamily={settings?.transcriptFontFamily ?? ''}
+              persistedComposerFontFamily={settings?.composerFontFamily ?? ''}
+              onFontPreview={(partial) => appearance.applyPreview(partial)}
+              keyCommandBindings={settings?.keyCommandBindings}
+              midRunInputBehavior={settings?.midRunInputBehavior}
+              reduceTransparency={appearance.reduceTransparency}
+              reduceMotion={appearance.reduceMotion}
+              compactDensity={appearance.compactDensity}
+              liveActivityViewport={appearance.liveActivityViewport}
+              sidebarOpacity={appearance.sidebarOpacity}
+              mainPaneOpacity={appearance.mainPaneOpacity}
+              geminiCheckpointingEnabled={geminiCheckpointingEnabled}
+              chatContextTurns={chatContextTurns}
+              currency={displayCurrency}
+              currencyOverestimatePercent={overestimatePercent}
+              showRunCompleteSummary={settings?.showRunCompleteSummary}
+              closeoutAiSummaryEnabled={settings?.closeoutAiSummaryEnabled}
+              composerContinuationAiEnabled={settings?.composerContinuationAiEnabled}
+              hostAutoCompactEnabled={settings?.hostAutoCompactEnabled}
+              ensembleCollapseOlderRounds={settings?.ensembleCollapseOlderRounds}
+              maxWaveAgents={settings?.maxWaveAgents}
+              dashboardStatPrefs={settings?.dashboardStatPrefs}
+              welcomeHeatmapPrefs={settings?.welcomeHeatmapPrefs}
+              providerRunPauses={settings?.providerRunPauses}
+              kimiSanitiserEnabled={settings?.kimiSanitiserEnabled ?? false}
+              kimiSanitiserCustomKeywords={settings?.kimiSanitiserCustomKeywords ?? ''}
+              antigravityEnabled={settings?.antigravityEnabled ?? false}
+              antigravityOptInAcceptedAt={settings?.antigravityOptInAcceptedAt ?? null}
+              antigravityGeminiApiDisclosureAcceptedAt={
+                settings?.antigravityGeminiApiDisclosureAcceptedAt ?? null
+              }
+              antigravityGeminiApiMonthlySpendCapUsd={
+                settings?.antigravityGeminiApiMonthlySpendCapUsd ?? null
+              }
+              museMonthlySpendCapUsd={settings?.museMonthlySpendCapUsd}
+              userName={settings?.userName ?? ''}
+              claudeBinaryPath={claudeBinaryPath}
+              kimiBinaryPath={kimiBinaryPath}
+              cliPathDirectories={settings?.cliPathDirectories ?? []}
+              ollamaBaseUrl={ollamaBaseUrl}
+              devinApiServerUrl={settings?.devinApiServerUrl ?? ''}
+              ollamaDefaultModel={ollamaDefaultModel}
+              auditOrchestration={settings?.auditOrchestration}
+              agenticServices={agenticServices}
+              nativeSubAgentRequests={settings?.nativeSubAgentRequests ?? 'ask'}
+              agenticWorkspaceGrantCount={agenticWorkspaceGrantCount}
+              agenticWorkspaceGrants={agenticWorkspaceGrants}
+              activeProvider={currentProvider}
+              providerCapabilities={currentProviderCapabilities}
+              providerCapabilitiesByProvider={providerCapabilitiesByProvider}
+              providerStatusByProvider={agentStatusByProvider}
+              mcpStatusByProvider={{
+                codex: codexMcpStatus,
+                gemini: agentMcpStatusByProvider.gemini,
+                claude: agentMcpStatusByProvider.claude,
+                kimi: agentMcpStatusByProvider.kimi,
+                cursor: agentMcpStatusByProvider.cursor,
+                grok: agentMcpStatusByProvider.grok,
+                ollama: agentMcpStatusByProvider.ollama,
+                pi: agentMcpStatusByProvider.pi,
+                mistral: agentMcpStatusByProvider.mistral
+              }}
+              userMcpServers={settings?.userMcpServers}
+              geminiMcpBridgeEnabled={geminiMcpBridgeEnabled}
+              codexSandboxFallback={codexSandboxFallback}
+              funFxEnabled={appearance.funFxEnabled}
+              funFxMode={appearance.funFxMode}
+              advancedFx={appearance.advancedFx}
+              autoUpdateEnabled={autoUpdateEnabled}
+              updateChannel={updateChannel}
+              approvalTimeouts={approvalTimeouts}
+              auditRetention={settings?.auditRetention}
+              auditBundleExportAvailability={{
+                workspace: Boolean(currentWorkspace?.id || currentWorkspace?.path),
+                chat: Boolean(currentChat?.appChatId),
+                run: Boolean(currentRun?.runId)
+              }}
+              auditBundleVerificationResult={auditBundleVerificationResult}
+              managedPolicyStatus={managedPolicyStatus}
+              productOperationsStatus={productOperationsStatus}
+              codexStatus={codexStatus}
+              claudeAuthStatus={claudeAuthStatus}
+              kimiAuthStatus={kimiAuthStatus}
+              ollamaStatus={agentStatusByProvider.ollama}
+              cursorProviderAvailable={cursorProviderAvailable}
+              grokProviderAvailable={grokProviderAvailable}
+              claudeLoginState={claudeLoginState}
+              providerCliUpgradeState={providerCliUpgradeState}
+              onImportCodexUsageCredential={() => void handleImportCodexUsageCredential()}
+              onClearCodexUsageCredential={() => void handleClearCodexUsageCredential()}
+              onTriggerClaudeLogin={() => void handleTriggerClaudeLogin()}
+              onStoreClaudeApiKey={(key) => void handleStoreClaudeApiKey(key)}
+              onClearClaudeApiKey={() => void handleClearClaudeApiKey()}
+              onStoreKimiApiKey={(key) => void handleStoreKimiApiKey(key)}
+              onClearKimiApiKey={() => void handleClearKimiApiKey()}
+              onProviderUpgrade={(provider) => void handleUpgradeProviderCli(provider)}
+              onProviderLogin={(provider) => {
+                void handleProviderLogin(provider)
+              }}
+              onProviderLogout={(provider) => {
+                void window.api.openProviderLogoutTerminal(provider).then((r) => {
+                  if (!r?.ok) console.warn('[provider sign-out] could not open Terminal:', r?.error)
+                })
+              }}
+              onRefreshProviderStatus={(provider) =>
+                void refreshProviderAuthStatus(provider)
+              }
+              onRemoveAgenticWorkspaceGrant={(provider, workspacePath, service) =>
+                void handleRemoveAgenticWorkspaceGrant(provider, workspacePath, service)
+              }
+              onInstallGeminiMcpBridge={() => void installGeminiMcpBridge()}
+              onRefreshGeminiMcpBridgeStatus={() => void refreshGeminiMcpBridgeStatus()}
+              onRefreshProviderMcpStatus={(provider) => void refreshProviderMetadata(provider)}
+              onRefreshProductOperationsStatus={() => void refreshProductOperationsStatus()}
+              onExportProductDiagnostics={() => void exportProductDiagnostics()}
+              onExportProductAuditBundle={(scope) => void exportProductAuditBundle(scope)}
+              onVerifyProductAuditBundle={() => void verifyProductAuditBundle()}
+              onDryRunAuditRetention={() => void dryRunAuditRetention()}
+              onPurgeAuditRetention={() => void purgeAuditRetention()}
+              onRepairProductInstall={() => void repairProductInstall()}
+              onDeleteAllChatHistory={() => handleDeleteAllChatHistory()}
+              onChange={handleSettingsChange}
+              onClose={() => setShowSettings(false)}
               workspaces={workspaces}
               currentWorkspace={currentWorkspace}
-              chats={chats}
-              currentChat={currentChat}
-              activeChatId={activeSidebarChatId}
-              focusSearchRequestId={sidebarSearchFocusRequestId}
-              searchShortcutHint={workspaceSearchShortcutHint}
-              usageSummary={usageSummary}
-              modelUsageApiSpend={{
-                providerRates,
-                currency: displayCurrency,
-                overestimatePercent,
-                view: settings?.modelUsagePanelView ?? 'plan',
-                planAvailabilityPending: !usageInitialized,
-                onViewChange: (nextView) => handleSettingsChange({ modelUsagePanelView: nextView }),
-                refreshKey: usageRefreshTick,
-                onRefreshUsage: handleManualUsageRefresh,
-                refreshing: manualUsageRefreshInFlight,
-                antigravityMonthlyCapUsd: settings?.antigravityGeminiApiMonthlySpendCapUsd ?? null,
-                museMonthlyCapUsd: resolveMuseMonthlySpendCapUsd(settings?.museMonthlySpendCapUsd)
-              }}
-              runningChatIds={runningChatIdsArray}
-              pluginWorkflowTemplates={pluginWorkflowTemplates}
-              workflows={workflowDefinitions}
-              workspaceBoards={workspaceBoardApiReady ? workspaceBoards : []}
-              workspaceBoardCards={workspaceBoardApiReady ? workspaceBoardCards : []}
-              activeWorkspaceBoardId={workspaceBoardApiReady ? activeWorkspaceBoardId : null}
-              scheduledTasks={scheduledTasks}
-              collaboratingChatIds={collaboratingChatIds}
-              composerDraftChatIds={composerDraftChatIds}
-              showOnboardingHint={showOnboardingHint}
-              onDismissOnboardingHint={handleDismissOnboardingHint}
               onSelectWorkspace={handleNavigateToWorkspace}
-              onRemoveWorkspace={handleRemoveWorkspace}
               onSelectWorkspaceDialog={handleSelectWorkspace}
-              onNewChat={handleSidebarNewChat}
-              onNewGlobalChat={handleNewDefaultGlobalChat}
-              onNewEnsemble={handleNewEnsemble}
-              ensembleModeEnabled={isEnsembleModeEnabled}
-              onPrimarySurfaceSelect={handleSidebarPrimarySurfaceSelect}
-              onActiveSidebarTabChange={handleActiveSidebarTabChange}
+              onRemoveWorkspace={(workspaceId) => {
+                // SettingsPanel's Workspaces tab passes a bare id; the
+                // host `handleRemoveWorkspace` expects an event for its
+                // sidebar use case (to call stopPropagation on the row
+                // click). Synthesize a stub event so the call shape
+                // matches.
+                const stubEvent = {
+                  preventDefault: () => {},
+                  stopPropagation: () => {}
+                } as unknown as React.MouseEvent<HTMLButtonElement>
+                handleRemoveWorkspace(workspaceId, stubEvent)
+              }}
+              onTogglePinWorkspace={handleTogglePinWorkspace}
+              usageSummary={usageSummary}
+              usageRecords={usageRecords}
+              pinnedMessageGroups={settingsPinnedMessageGroups}
+              onOpenPinnedMessage={(chatId, messageId) =>
+                void handleOpenPinnedMessageFromSettings(chatId, messageId)
+              }
+            />
+          </div>
+        )}
+
+        {!isChatPopoutWindow && !showSettings && workspaceBoardApiReady && (
+          <WorkspaceBoardCreatorSheet
+            open={showWorkspaceBoardCreatorSheet}
+            workspaces={workspaces}
+            currentWorkspace={currentWorkspace}
+            onCreate={handleCreateWorkspaceBoard}
+            onDismiss={() => setWorkspaceBoardCreatorOpen(false)}
+          />
+        )}
+
+        {!isChatPopoutWindow && !showSettings && workspaceBoardApiReady && activeWorkspaceBoard && (
+          <WorkspaceBoardView
+            board={activeWorkspaceBoard}
+            workspace={activeWorkspaceBoardWorkspace}
+            cards={activeWorkspaceBoardCards}
+            chats={chats}
+            workflows={workflowDefinitions}
+            scheduledTasks={scheduledTasks}
+            runQueueJobs={runQueueJobs}
+            capabilityLedger={capabilityLedgerSnapshot}
+            runningChatIds={runningChatIds}
+            pendingApprovalsByChatId={pendingAgentApprovalByChatId}
+            pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
+            collaboratingChatIds={collaboratingChatIds}
+            onAddCard={handleAddWorkspaceBoardCard}
+            onUpdateCard={handleUpdateWorkspaceBoardCard}
+            onDeleteCard={handleDeleteWorkspaceBoardCard}
+            onOpenChat={(chat) => void handleSelectChat(chat)}
+            onOpenWorkflow={(workflow) => {
+              const workflowChat = chats.find((chat) => chat.appChatId === workflow.template.chatId)
+              if (workflowChat) void handleSelectChat(workflowChat)
+            }}
+          />
+        )}
+
+        {!isChatPopoutWindow && !showSettings && activeProjectGraphProjection && (
+          <ProjectThreadGraphView
+            projection={activeProjectGraphProjection}
+            projectName={activeProjectGraphProjection.title}
+            onBack={onBackFromProjectGraph}
+            onOpenThread={onOpenThreadFromProjectGraph}
+            onAddDependency={onAddProjectDependency}
+            onRemoveDependency={onRemoveProjectDependency}
+          />
+        )}
+
+        {isLinkedChatPopout && currentChat && (
+          <div
+            className="side-chat-floating-actions side-chat-popout-actions"
+            role="toolbar"
+            aria-label="Side chat actions"
+          >
+              {chatPopoutParentChat && (
+                <button
+                  type="button"
+                  className="side-chat-action-btn"
+                  onClick={() => void handleSelectChat(chatPopoutParentChat)}
+                  title="Open the parent chat in this popout"
+                  aria-label="Open parent chat"
+                >
+                  <BackToParentIcon />
+                </button>
+              )}
+              <button
+                type="button"
+                className="side-chat-action-btn"
+                onClick={() => dockChatPopoutWindow('split')}
+                title="Dock this linked chat into the main pane split"
+                aria-label="Dock as split"
+              >
+                <SplitChatIcon />
+              </button>
+              <button
+                type="button"
+                className="side-chat-action-btn"
+                onClick={() => dockChatPopoutWindow('drawer')}
+                title="Dock this linked chat into the side drawer"
+                aria-label="Dock as drawer"
+              >
+                <DockDrawerIcon />
+              </button>
+              {currentChat.parentChatRelation === 'sideChat' && (
+                <SideChatAuthorityReturnButton
+                  enabled={currentChatSideChatAuthorityReturnEnabled}
+                  onToggle={() => void handleToggleSideChatAuthorityReturn(currentChat.appChatId)}
+                />
+              )}
+              {currentChat.parentChatRelation === 'sideChat' && (
+                <button
+                  type="button"
+                  className="side-chat-action-btn danger"
+                  onClick={() => void handleEndCurrentLinkedMainChat()}
+                  title="End this isolated side chat, cancel queued work, and archive it"
+                  aria-label="End side chat"
+                >
+                  <EndSideChatIcon />
+                </button>
+              )}
+              <button
+                type="button"
+                className="side-chat-action-btn"
+                onClick={() => window.close()}
+                title="Close this side chat window"
+                aria-label="Close side chat window"
+              >
+                <XSymbolIcon />
+              </button>
+          </div>
+        )}
+
+        <div
+          ref={chatSplitRegionRef}
+          className={`chat-split-region ${sidePanelLayoutClass} ${
+            showSettings ||
+            (workspaceBoardApiReady && Boolean(activeWorkspaceBoard)) ||
+            Boolean(activeProjectGraphProjection)
+              ? 'chat-split-hidden-for-settings'
+              : ''
+          }`}
+          style={chatSplitStyle}
+        >
+          <div className="chat-split-main">
+            {/* The fog/mist sky warp filter — defined ONCE for the whole region
+              * (CSS references it by a fixed id, so it can't be per-instance).
+              * Present whenever FX is on so any sky (focused or pane, single or
+              * split) can reference it. */}
+            {isFxEnabled && <SkyFogFilterDefs />}
+            {/* Refractive "liquid glass" displacement filter — also defined ONCE
+              * for the whole region (CSS references #tw-glass-refract by a fixed
+              * id, so per-pane would collide on the dup-id rule). */}
+            {refractionEnabled && <RefractionFilterDefs />}
+            <MultiviewPaneGrid
+              layout={multiview.layout}
+              panes={multiview.panes}
+              focusStore={multiview.focusStore}
+              focusedPaneIndex={multiview.focusedPaneIndex}
+              resolvePaneTitle={(paneIndex, pane) => {
+                if (pane.mediaRef?.name) return pane.mediaRef.name
+                if (pane.canvasId) return 'Canvas preview'
+                if (pane.chatId) {
+                  const chat =
+                    chatByIdRef.current.get(pane.chatId) ||
+                    chats.find((candidate) => candidate.appChatId === pane.chatId)
+                  return chat?.title || `Pane ${paneIndex + 1}`
+                }
+                return 'Empty pane'
+              }}
+              columnFractions={multiview.tracks.columns}
+              rowFractions={multiview.tracks.rows}
+              onResizeTrack={multiview.resizeTrack}
+              onResetTracks={multiview.resetTrackSizes}
+              renderEmptyCell={(emptyPaneIndex) => {
+                const activateEmptyPane = () =>
+                  multiview.focusEmptyPane(emptyPaneIndex, currentChatAppChatId)
+                return (
+                  <ThreadHomeWorkspace
+                    key={multiview.panes[emptyPaneIndex]?.id || `empty-${emptyPaneIndex}`}
+                    variant="pane"
+                    chats={chats}
+                    workspaces={workspaces}
+                    runningChatIds={runningChatIdsArray}
+                    paneChatIds={multiview.paneChatIds}
+                    authorityChat={currentChat}
+                    mediaRefs={currentChatMediaRefs}
+                    multiviewLayout={multiview.layout}
+                    onSelectMultiviewLayout={composerCtx?.handleSelectMultiviewLayout}
+                    onNewChat={() => {
+                      activateEmptyPane()
+                      startNewThreadFromHome()
+                    }}
+                    onActivate={activateEmptyPane}
+                    onSelectThread={(chatId) => {
+                      activateEmptyPane()
+                      selectThreadFromHome(chatId)
+                    }}
+                    onClosePane={() => multiview.closePane(emptyPaneIndex)}
+                    onPreviewImage={setPreviewChatMediaRef}
+                    onDetachToPane={openMediaPane}
+                  />
+                )
+              }}
+              renderCanvasCell={(canvasId, paneIndex) => (
+                <CanvasPane
+                  canvasId={canvasId}
+                  onClose={() => {
+                    void window.api.canvas.close(canvasId)
+                    multiview.setPaneCanvas(paneIndex, null)
+                  }}
+                />
+              )}
+              renderMediaCell={(mediaRef, paneIndex) => (
+                <MediaPane
+                  mediaRef={mediaRef}
+                  onClose={() => multiview.setPaneMedia(paneIndex, null)}
+                />
+              )}
+              renderViewerCell={renderViewerPaneCell}
+              renderFocusedChatCell={(chatId, paneIndex) =>
+                renderMultiviewPaneCell(chatId, paneIndex, {
+                  topLeftChromeExtra:
+                    chatId === currentChatAppChatId ? focusedPaneTopLeftChrome : undefined,
+                  // Document-root keys reach every mounted transcript, so only
+                  // the focused pane acts on them — and not even that one while
+                  // the host runtime is stacked over it and owns them instead.
+                  ownsRootKeyboardScroll: !focusedHostOverlayRequired
+                })
+              }
+              showFocusedHostOverlay={focusedHostOverlayRequired}
+              hostProjectionChatId={currentChatAppChatId}
+              renderFocusedCell={() => {
+                if (executionMapProjection) {
+                  return (
+                    <ExecutionMapView
+                      projection={executionMapProjection}
+                      selectedStepId={executionMapSelectedStepId}
+                      onSelectStep={handleSelectExecutionMapStep}
+                      onBack={handleBackFromExecutionMap}
+                      onOpenThread={handleOpenExecutionThread}
+                      onSaveGraph={handleSaveExecutionGraph}
+                      onCancelRun={handleCancelExecutionRun}
+                      onResumeRun={handleResumeExecutionRun}
+                    />
+                  )
+                }
+                return (
+            <div
+              ref={appTranscriptRef}
+              className={`app-transcript provider-${currentProvider} ${isCurrentEnsembleChat ? 'chat-kind-ensemble' : ''} ${isCurrentGlobalChat ? 'chat-scope-global' : ''} ${isWelcomeChat ? 'welcome-mode' : ''} ${welcomeFitLevel >= 1 ? 'welcome-notification-hidden-by-fit' : ''} ${welcomeFitLevel >= 2 ? 'welcome-dashboard-hidden-by-fit' : ''} ${welcomeFitLevel >= 3 ? 'welcome-heatmaps-hidden-by-fit' : ''} ${isAdvancedFxActive ? `fx-labs-active fx-intensity-${advancedFxIntensity}` : ''} ${showSettings ? 'transcript-hidden-for-settings' : ''}`}
+              style={transcriptStyle}
+            >
+          {workProjectHeader && !showSettings && (
+            <ProjectHomeHeader
+              {...workProjectHeader}
+              onOpenLibrary={() =>
+                handleOpenProjectReferencesLibrary(workProjectHeader.project.id)
+              }
+            />
+          )}
+          {chatContextNotice && (
+            <div className="chat-context-application-pill" role="status">
+              <span>{chatContextNotice.message}</span>
+            </div>
+          )}
+          {!isChatPopoutWindow && (
+            <div
+              className={`chat-corner-controls chat-corner-controls-left${
+                showWorkspaceSidebar ? '' : ' chat-corner-controls-workspace-hidden'
+              }`}
+            >
+              <button
+                className="chat-corner-btn"
+                type="button"
+                onClick={() => setShowWorkspaceSidebar((current) => !current)}
+                title={`${showWorkspaceSidebar ? 'Hide' : 'Show'} workspace sidebar`}
+                aria-label="Toggle workspace sidebar"
+              >
+                <SidebarCornerIcon direction="left" isOpen={showWorkspaceSidebar} />
+              </button>
+              <div className="chat-corner-thread-context">
+                <ProviderBrandLogoIcon provider={mainPaneProvider} />
+                <span className="chat-corner-thread-title" title={mainPaneThreadTitle}>
+                  {mainPaneThreadTitle}
+                </span>
+                {mainPaneWorkspaceLabel && (
+                  <span className="chat-corner-workspace-name" title={mainPaneWorkspaceLabel}>
+                    {mainPaneWorkspaceLabel}
+                  </span>
+                )}
+              </div>
+              {/* Main-window surface — see humanCollaborationControls above for why
+                  this is left-anchored and in-flow rather than its own top-right box. */}
+              {humanCollaborationControls}
+              {channelMemberControl}
+            </div>
+          )}
+
+          {/* Popout-window surface. The left pill above is !isChatPopoutWindow, so
+              without this the button would VANISH in popouts — which is where it was
+              the only working door before. Floating top-right is safe here precisely
+              because MainPaneActionPill is also absent from popouts. */}
+          {isChatPopoutWindow && !isCompactChatCompanion && humanCollaborationControls && (
+            <div className="human-collaboration-header-floating">
+              {humanCollaborationControls}
+            </div>
+          )}
+
+          {/* Sidebar collapsed → the footer quick controls (Settings /
+              Approvals / Shares / Devices) resurface as a bottom-left
+              vertical glass pill, so collapsing the sidebar never costs
+              access to pending approvals or device state. */}
+          {!isChatPopoutWindow && !showWorkspaceSidebar && (
+            <CollapsedSidebarCornerPill
+              chats={chats}
               onSelectChat={handleSelectChat}
-              onStartProjectHome={handleStartProjectHome}
-              onSelectedProjectChange={handleSelectedProjectChange}
-              onOpenReferencesLibrary={handleOpenProjectReferencesLibrary}
-              onOpenWebSiteLogins={handleOpenWebSiteLogins}
-              onOpenThreadGraph={(projectId) => onOpenProjectGraph({ id: projectId })}
-              executionRunEntries={executionRunEntries}
-              onOpenExecutionRun={handleOpenExecutionRunFromWork}
-              projectGraphEntries={projectGraphEntries}
-              activeThreadGraphProjectId={activeProjectGraphId}
-              onOpenChatInSidePanel={(chat, presentation) =>
-                void handleOpenLinkedChatInSidePanelFromSidebar(chat, presentation)
-              }
-              onOpenInMultiview={handleOpenInMultiview}
-              onOpenChatPopout={(chat, presentation) =>
-                popOutLinkedChat(chat, undefined, presentation)
-              }
-              onOpenSettings={() => setShowSettings(true)}
-              updateSnapshot={updateStatus.snapshot}
-              onQuickUpdate={handleSidebarQuickUpdate}
-              onOpenChangelog={handleOpenChangelogSheet}
-              appearanceQuickSettings={{
+              quickSettings={{
                 composerStyle: appearance.composerStyle,
                 themeAppearance: appearance.themeAppearance,
                 sidebarOpacity: appearance.sidebarOpacity,
                 mainPaneOpacity: appearance.mainPaneOpacity
               }}
               onAppearanceQuickChange={handleSettingsChange}
-              canOpenWorkspacePopout={canOpenWorkspacePopout}
-              onOpenWorkspacePopout={openWorkspacePopoutWindow}
-              onQuitApp={() => {
-                void window.api.quitApp?.()
-              }}
-              onCreateSubThread={(parent) => setSubThreadCreatorParent(parent)}
-              onTogglePinChat={handleTogglePinChat}
-              onTogglePinWorkspace={handleTogglePinWorkspace}
-              onSetChatHiddenFromMainList={handleSetChatHiddenFromMainList}
-              onClearChatGitWorkflow={handleClearChatGitWorkflow}
-              activeChatIdentityTicker={activeChatSidebarIdentity}
-              activeChatIdentityBranch={activeChatSidebarBranch}
-              activeChatIdentityGitIndicators={activeChatSidebarGitIndicators}
-              onToggleArchiveChat={handleToggleArchiveChat}
-              onDeleteChat={handleDeleteChat}
-              onRenameChat={handleRenameChat}
-              onCreateWorkflowFromPluginTemplate={handleOpenPluginWorkflowTemplate}
-              onCreateWorkflow={handleOpenWorkflowCompose}
-              onCreateWorkspaceBoard={
-                workspaceBoardApiReady ? handleCreateWorkspaceBoard : undefined
-              }
-              onOpenWorkspaceBoard={workspaceBoardApiReady ? handleOpenWorkspaceBoard : undefined}
-              onRenameWorkspaceBoard={
-                workspaceBoardApiReady ? handleRenameWorkspaceBoard : undefined
-              }
-              onDuplicateWorkspaceBoard={
-                workspaceBoardApiReady ? handleDuplicateWorkspaceBoard : undefined
-              }
-              onTogglePinWorkspaceBoard={
-                workspaceBoardApiReady ? handleTogglePinWorkspaceBoard : undefined
-              }
-              onArchiveWorkspaceBoard={
-                workspaceBoardApiReady ? handleArchiveWorkspaceBoard : undefined
-              }
-              onRestoreWorkspaceBoard={
-                workspaceBoardApiReady ? handleRestoreWorkspaceBoard : undefined
-              }
-              onDeleteWorkspaceBoard={
-                workspaceBoardApiReady ? handleDeleteWorkspaceBoard : undefined
-              }
-              onAddChatToWorkspaceBoard={
-                workspaceBoardApiReady ? handleAddChatToWorkspaceBoard : undefined
-              }
-              onAddWorkflowToWorkspaceBoard={
-                workspaceBoardApiReady ? handleAddWorkflowToWorkspaceBoard : undefined
-              }
-              onAddRunQueueJobToWorkspaceBoard={
-                workspaceBoardApiReady ? handleAddRunQueueJobToWorkspaceBoard : undefined
-              }
-              onAddLocalServerToWorkspaceBoard={
-                workspaceBoardApiReady ? handleAddLocalServerToWorkspaceBoard : undefined
-              }
-              onRunWorkflowNow={handleRunWorkflowNow}
-              onToggleWorkflowEnabled={handleToggleWorkflowEnabled}
-              onEditWorkflowInterval={handleEditWorkflowInterval}
-              onCancelWorkflowExecution={handleCancelWorkflowExecution}
-              onDeleteWorkflow={handleDeleteWorkflow}
-              onSetWorkflowUnattended={handleSetWorkflowUnattended}
+              onOpenSettings={() => setShowSettings(true)}
               onOpenSettingsTab={(tab) => {
                 setSettingsActiveTab(tab)
                 setShowSettings(true)
+              }}
+              onOpenWorkspacePopout={openWorkspacePopoutWindow}
+              canOpenWorkspacePopout={canOpenWorkspacePopout}
+              onQuitApp={() => {
+                void window.api.quitApp?.()
               }}
               pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
               pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
@@ -1480,643 +2010,124 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onDismissAgentQuestion={handleAgentQuestionDismiss}
             />
           )}
-          <div
-            className={`workspace-sidebar-resize-handle${
-              sidebarPresence.className ? ` ${sidebarPresence.className}` : ''
-            }`}
-            role="separator"
-            tabIndex={0}
-            aria-orientation="vertical"
-            aria-label="Resize workspace sidebar"
-            aria-valuemin={MIN_WORKSPACE_SIDEBAR_WIDTH}
-            aria-valuemax={MAX_WORKSPACE_SIDEBAR_WIDTH}
-            aria-valuenow={workspaceSidebarWidth}
-            onMouseDown={startWorkspaceSidebarResize}
-            onKeyDown={handleWorkspaceSidebarResizeKeyDown}
-            title="Resize workspace sidebar"
-          />
-        </>
-      )}
 
-      {/*
-          Settings full-app takeover pane. When `showSettings` is true,
-          this sibling renders the SettingsPanel inline in the main pane
-          slot — paired with the SettingsSidebar swap above. The
-          adjacent `.app-transcript` element is hidden via the
-          `transcript-hidden-for-settings` class (just `display: none`)
-          so its ref stays valid and its state survives the round-trip
-          back to the chat surface.
-        */}
-      {!isChatPopoutWindow && showSettings && (
-        <div className="app-settings-pane" role="region" aria-label="Settings">
-          <SettingsPanel
-            layout="takeover"
-            activeTab={settingsActiveTab}
-            onTabChange={setSettingsActiveTab}
-            mode={appearance.mode}
-            visualEffectStyle={appearance.visualEffectStyle}
-            themeAppearance={appearance.themeAppearance}
-            themeCornerStyle={appearance.themeCornerStyle}
-            themeAccentColor={appearance.themeAccentColor}
-            diffStatColors={appearance.diffStatColors}
-            appIconVariant={appearance.appIconVariant}
-            promptSurfaceStyle={appearance.promptSurfaceStyle}
-            fanoutLaneLayout={appearance.fanoutLaneLayout}
-            composerStyle={appearance.composerStyle}
-            configuredProviderSnapshot={configuredProviderSnapshot}
-            transcriptFontFamily={appearance.transcriptFontFamily}
-            composerFontFamily={appearance.composerFontFamily}
-            persistedTranscriptFontFamily={settings?.transcriptFontFamily ?? ''}
-            persistedComposerFontFamily={settings?.composerFontFamily ?? ''}
-            onFontPreview={(partial) => appearance.applyPreview(partial)}
-            keyCommandBindings={settings?.keyCommandBindings}
-            midRunInputBehavior={settings?.midRunInputBehavior}
-            reduceTransparency={appearance.reduceTransparency}
-            reduceMotion={appearance.reduceMotion}
-            compactDensity={appearance.compactDensity}
-            liveActivityViewport={appearance.liveActivityViewport}
-            sidebarOpacity={appearance.sidebarOpacity}
-            mainPaneOpacity={appearance.mainPaneOpacity}
-            geminiCheckpointingEnabled={geminiCheckpointingEnabled}
-            chatContextTurns={chatContextTurns}
-            currency={displayCurrency}
-            currencyOverestimatePercent={overestimatePercent}
-            showRunCompleteSummary={settings?.showRunCompleteSummary}
-            closeoutAiSummaryEnabled={settings?.closeoutAiSummaryEnabled}
-            composerContinuationAiEnabled={settings?.composerContinuationAiEnabled}
-            hostAutoCompactEnabled={settings?.hostAutoCompactEnabled}
-            ensembleCollapseOlderRounds={settings?.ensembleCollapseOlderRounds}
-            maxWaveAgents={settings?.maxWaveAgents}
-            dashboardStatPrefs={settings?.dashboardStatPrefs}
-            welcomeHeatmapPrefs={settings?.welcomeHeatmapPrefs}
-            providerRunPauses={settings?.providerRunPauses}
-            kimiSanitiserEnabled={settings?.kimiSanitiserEnabled ?? false}
-            kimiSanitiserCustomKeywords={settings?.kimiSanitiserCustomKeywords ?? ''}
-            antigravityEnabled={settings?.antigravityEnabled ?? false}
-            antigravityOptInAcceptedAt={settings?.antigravityOptInAcceptedAt ?? null}
-            antigravityGeminiApiDisclosureAcceptedAt={
-              settings?.antigravityGeminiApiDisclosureAcceptedAt ?? null
-            }
-            antigravityGeminiApiMonthlySpendCapUsd={
-              settings?.antigravityGeminiApiMonthlySpendCapUsd ?? null
-            }
-            museMonthlySpendCapUsd={settings?.museMonthlySpendCapUsd}
-            userName={settings?.userName ?? ''}
-            claudeBinaryPath={claudeBinaryPath}
-            kimiBinaryPath={kimiBinaryPath}
-            cliPathDirectories={settings?.cliPathDirectories ?? []}
-            ollamaBaseUrl={ollamaBaseUrl}
-            devinApiServerUrl={settings?.devinApiServerUrl ?? ''}
-            ollamaDefaultModel={ollamaDefaultModel}
-            auditOrchestration={settings?.auditOrchestration}
-            agenticServices={agenticServices}
-            nativeSubAgentRequests={settings?.nativeSubAgentRequests ?? 'ask'}
-            agenticWorkspaceGrantCount={agenticWorkspaceGrantCount}
-            agenticWorkspaceGrants={agenticWorkspaceGrants}
-            activeProvider={currentProvider}
-            providerCapabilities={currentProviderCapabilities}
-            providerCapabilitiesByProvider={providerCapabilitiesByProvider}
-            providerStatusByProvider={agentStatusByProvider}
-            mcpStatusByProvider={{
-              codex: codexMcpStatus,
-              gemini: agentMcpStatusByProvider.gemini,
-              claude: agentMcpStatusByProvider.claude,
-              kimi: agentMcpStatusByProvider.kimi,
-              cursor: agentMcpStatusByProvider.cursor,
-              grok: agentMcpStatusByProvider.grok,
-              ollama: agentMcpStatusByProvider.ollama,
-              pi: agentMcpStatusByProvider.pi,
-              mistral: agentMcpStatusByProvider.mistral
-            }}
-            userMcpServers={settings?.userMcpServers}
-            geminiMcpBridgeEnabled={geminiMcpBridgeEnabled}
-            codexSandboxFallback={codexSandboxFallback}
-            funFxEnabled={appearance.funFxEnabled}
-            funFxMode={appearance.funFxMode}
-            advancedFx={appearance.advancedFx}
-            autoUpdateEnabled={autoUpdateEnabled}
-            updateChannel={updateChannel}
-            approvalTimeouts={approvalTimeouts}
-            auditRetention={settings?.auditRetention}
-            auditBundleExportAvailability={{
-              workspace: Boolean(currentWorkspace?.id || currentWorkspace?.path),
-              chat: Boolean(currentChat?.appChatId),
-              run: Boolean(currentRun?.runId)
-            }}
-            auditBundleVerificationResult={auditBundleVerificationResult}
-            managedPolicyStatus={managedPolicyStatus}
-            productOperationsStatus={productOperationsStatus}
-            codexStatus={codexStatus}
-            claudeAuthStatus={claudeAuthStatus}
-            kimiAuthStatus={kimiAuthStatus}
-            ollamaStatus={agentStatusByProvider.ollama}
-            cursorProviderAvailable={cursorProviderAvailable}
-            grokProviderAvailable={grokProviderAvailable}
-            claudeLoginState={claudeLoginState}
-            providerCliUpgradeState={providerCliUpgradeState}
-            onImportCodexUsageCredential={() => void handleImportCodexUsageCredential()}
-            onClearCodexUsageCredential={() => void handleClearCodexUsageCredential()}
-            onTriggerClaudeLogin={() => void handleTriggerClaudeLogin()}
-            onStoreClaudeApiKey={(key) => void handleStoreClaudeApiKey(key)}
-            onClearClaudeApiKey={() => void handleClearClaudeApiKey()}
-            onStoreKimiApiKey={(key) => void handleStoreKimiApiKey(key)}
-            onClearKimiApiKey={() => void handleClearKimiApiKey()}
-            onProviderUpgrade={(provider) => void handleUpgradeProviderCli(provider)}
-            onProviderLogin={(provider) => {
-              void handleProviderLogin(provider)
-            }}
-            onProviderLogout={(provider) => {
-              void window.api.openProviderLogoutTerminal(provider).then((r) => {
-                if (!r?.ok) console.warn('[provider sign-out] could not open Terminal:', r?.error)
-              })
-            }}
-            onRefreshProviderStatus={(provider) => void refreshProviderAuthStatus(provider)}
-            onRemoveAgenticWorkspaceGrant={(provider, workspacePath, service) =>
-              void handleRemoveAgenticWorkspaceGrant(provider, workspacePath, service)
-            }
-            onInstallGeminiMcpBridge={() => void installGeminiMcpBridge()}
-            onRefreshGeminiMcpBridgeStatus={() => void refreshGeminiMcpBridgeStatus()}
-            onRefreshProviderMcpStatus={(provider) => void refreshProviderMetadata(provider)}
-            onRefreshProductOperationsStatus={() => void refreshProductOperationsStatus()}
-            onExportProductDiagnostics={() => void exportProductDiagnostics()}
-            onExportProductAuditBundle={(scope) => void exportProductAuditBundle(scope)}
-            onVerifyProductAuditBundle={() => void verifyProductAuditBundle()}
-            onDryRunAuditRetention={() => void dryRunAuditRetention()}
-            onPurgeAuditRetention={() => void purgeAuditRetention()}
-            onRepairProductInstall={() => void repairProductInstall()}
-            onDeleteAllChatHistory={() => handleDeleteAllChatHistory()}
-            onChange={handleSettingsChange}
-            onClose={() => setShowSettings(false)}
-            workspaces={workspaces}
-            currentWorkspace={currentWorkspace}
-            onSelectWorkspace={handleNavigateToWorkspace}
-            onSelectWorkspaceDialog={handleSelectWorkspace}
-            onRemoveWorkspace={(workspaceId) => {
-              // SettingsPanel's Workspaces tab passes a bare id; the
-              // host `handleRemoveWorkspace` expects an event for its
-              // sidebar use case (to call stopPropagation on the row
-              // click). Synthesize a stub event so the call shape
-              // matches.
-              const stubEvent = {
-                preventDefault: () => {},
-                stopPropagation: () => {}
-              } as unknown as React.MouseEvent<HTMLButtonElement>
-              handleRemoveWorkspace(workspaceId, stubEvent)
-            }}
-            onTogglePinWorkspace={handleTogglePinWorkspace}
-            usageSummary={usageSummary}
-            usageRecords={usageRecords}
-            pinnedMessageGroups={settingsPinnedMessageGroups}
-            onOpenPinnedMessage={(chatId, messageId) =>
-              void handleOpenPinnedMessageFromSettings(chatId, messageId)
-            }
-          />
-        </div>
-      )}
-
-      {!isChatPopoutWindow && !showSettings && workspaceBoardApiReady && (
-        <WorkspaceBoardCreatorSheet
-          open={showWorkspaceBoardCreatorSheet}
-          workspaces={workspaces}
-          currentWorkspace={currentWorkspace}
-          onCreate={handleCreateWorkspaceBoard}
-          onDismiss={() => setWorkspaceBoardCreatorOpen(false)}
-        />
-      )}
-
-      {!isChatPopoutWindow && !showSettings && workspaceBoardApiReady && activeWorkspaceBoard && (
-        <WorkspaceBoardView
-          board={activeWorkspaceBoard}
-          workspace={activeWorkspaceBoardWorkspace}
-          cards={activeWorkspaceBoardCards}
-          chats={chats}
-          workflows={workflowDefinitions}
-          scheduledTasks={scheduledTasks}
-          runQueueJobs={runQueueJobs}
-          capabilityLedger={capabilityLedgerSnapshot}
-          runningChatIds={runningChatIds}
-          pendingApprovalsByChatId={pendingAgentApprovalByChatId}
-          pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
-          collaboratingChatIds={collaboratingChatIds}
-          onAddCard={handleAddWorkspaceBoardCard}
-          onUpdateCard={handleUpdateWorkspaceBoardCard}
-          onDeleteCard={handleDeleteWorkspaceBoardCard}
-          onOpenChat={(chat) => void handleSelectChat(chat)}
-          onOpenWorkflow={(workflow) => {
-            const workflowChat = chats.find((chat) => chat.appChatId === workflow.template.chatId)
-            if (workflowChat) void handleSelectChat(workflowChat)
-          }}
-        />
-      )}
-
-      {!isChatPopoutWindow && !showSettings && activeProjectGraphProjection && (
-        <ProjectThreadGraphView
-          projection={activeProjectGraphProjection}
-          projectName={activeProjectGraphProjection.title}
-          onBack={onBackFromProjectGraph}
-          onOpenThread={onOpenThreadFromProjectGraph}
-          onAddDependency={onAddProjectDependency}
-          onRemoveDependency={onRemoveProjectDependency}
-        />
-      )}
-
-      {isLinkedChatPopout && currentChat && (
-        <div
-          className="side-chat-floating-actions side-chat-popout-actions"
-          role="toolbar"
-          aria-label="Side chat actions"
-        >
-          {chatPopoutParentChat && (
-            <button
-              type="button"
-              className="side-chat-action-btn"
-              onClick={() => void handleSelectChat(chatPopoutParentChat)}
-              title="Open the parent chat in this popout"
-              aria-label="Open parent chat"
-            >
-              <BackToParentIcon />
-            </button>
-          )}
-          <button
-            type="button"
-            className="side-chat-action-btn"
-            onClick={() => dockChatPopoutWindow('split')}
-            title="Dock this linked chat into the main pane split"
-            aria-label="Dock as split"
-          >
-            <SplitChatIcon />
-          </button>
-          <button
-            type="button"
-            className="side-chat-action-btn"
-            onClick={() => dockChatPopoutWindow('drawer')}
-            title="Dock this linked chat into the side drawer"
-            aria-label="Dock as drawer"
-          >
-            <DockDrawerIcon />
-          </button>
-          {currentChat.parentChatRelation === 'sideChat' && (
-            <SideChatAuthorityReturnButton
-              enabled={currentChatSideChatAuthorityReturnEnabled}
-              onToggle={() => void handleToggleSideChatAuthorityReturn(currentChat.appChatId)}
-            />
-          )}
-          {currentChat.parentChatRelation === 'sideChat' && (
-            <button
-              type="button"
-              className="side-chat-action-btn danger"
-              onClick={() => void handleEndCurrentLinkedMainChat()}
-              title="End this isolated side chat, cancel queued work, and archive it"
-              aria-label="End side chat"
-            >
-              <EndSideChatIcon />
-            </button>
-          )}
-          <button
-            type="button"
-            className="side-chat-action-btn"
-            onClick={() => window.close()}
-            title="Close this side chat window"
-            aria-label="Close side chat window"
-          >
-            <XSymbolIcon />
-          </button>
-        </div>
-      )}
-
-      <div
-        ref={chatSplitRegionRef}
-        className={`chat-split-region ${sidePanelLayoutClass} ${
-          showSettings ||
-          (workspaceBoardApiReady && Boolean(activeWorkspaceBoard)) ||
-          Boolean(activeProjectGraphProjection)
-            ? 'chat-split-hidden-for-settings'
-            : ''
-        }`}
-        style={chatSplitStyle}
-      >
-        <div className="chat-split-main">
-          {/* The fog/mist sky warp filter — defined ONCE for the whole region
-           * (CSS references it by a fixed id, so it can't be per-instance).
-           * Present whenever FX is on so any sky (focused or pane, single or
-           * split) can reference it. */}
-          {isFxEnabled && <SkyFogFilterDefs />}
-          {/* Refractive "liquid glass" displacement filter — also defined ONCE
-           * for the whole region (CSS references #tw-glass-refract by a fixed
-           * id, so per-pane would collide on the dup-id rule). */}
-          {refractionEnabled && <RefractionFilterDefs />}
-          <MultiviewPaneGrid
-            layout={multiview.layout}
-            panes={multiview.panes}
-            focusStore={multiview.focusStore}
-            focusedPaneIndex={multiview.focusedPaneIndex}
-            resolvePaneTitle={(paneIndex, pane) => {
-              if (pane.mediaRef?.name) return pane.mediaRef.name
-              if (pane.canvasId) return 'Canvas preview'
-              if (pane.chatId) {
-                const chat =
-                  chatByIdRef.current.get(pane.chatId) ||
-                  chats.find((candidate) => candidate.appChatId === pane.chatId)
-                return chat?.title || `Pane ${paneIndex + 1}`
-              }
-              return 'Empty pane'
-            }}
-            columnFractions={multiview.tracks.columns}
-            rowFractions={multiview.tracks.rows}
-            onResizeTrack={multiview.resizeTrack}
-            onResetTracks={multiview.resetTrackSizes}
-            renderEmptyCell={(emptyPaneIndex) => {
-              const activateEmptyPane = () =>
-                multiview.focusEmptyPane(emptyPaneIndex, currentChatAppChatId)
-              return (
-                <ThreadHomeWorkspace
-                  key={multiview.panes[emptyPaneIndex]?.id || `empty-${emptyPaneIndex}`}
-                  variant="pane"
-                  chats={chats}
-                  workspaces={workspaces}
-                  runningChatIds={runningChatIdsArray}
-                  paneChatIds={multiview.paneChatIds}
-                  authorityChat={currentChat}
-                  mediaRefs={currentChatMediaRefs}
-                  multiviewLayout={multiview.layout}
-                  onSelectMultiviewLayout={composerCtx?.handleSelectMultiviewLayout}
-                  onNewChat={() => {
-                    activateEmptyPane()
-                    startNewThreadFromHome()
-                  }}
-                  onActivate={activateEmptyPane}
-                  onSelectThread={(chatId) => {
-                    activateEmptyPane()
-                    selectThreadFromHome(chatId)
-                  }}
-                  onClosePane={() => multiview.closePane(emptyPaneIndex)}
-                  onPreviewImage={setPreviewChatMediaRef}
-                  onDetachToPane={openMediaPane}
-                />
-              )
-            }}
-            renderCanvasCell={(canvasId, paneIndex) => (
-              <CanvasPane
-                canvasId={canvasId}
-                onClose={() => {
-                  void window.api.canvas.close(canvasId)
-                  multiview.setPaneCanvas(paneIndex, null)
+          {!isChatPopoutWindow && (
+            <>
+              <MainPaneActionPill
+                ref={mainPaneActionPillRef}
+                fxEnabled={isFxEnabled}
+                skyEnabled={focusedPaneSkyEnabled}
+                ghostEnabled={focusedPaneGhostEnabled}
+                weatherDescription={hostWeather?.description}
+                onToggleSky={() => {
+                  if (isMultiviewSplit) {
+                    multiview.setPaneFxFlag(
+                      multiview.focusedPaneIndex,
+                      'sky',
+                      !focusedPaneSkyEnabled
+                    )
+                  } else {
+                    setShowSkyVisualFx((current) => !current)
+                  }
                 }}
+                onToggleGhost={() => {
+                  if (isMultiviewSplit) {
+                    multiview.setPaneFxFlag(
+                      multiview.focusedPaneIndex,
+                      'ghost',
+                      !focusedPaneGhostEnabled
+                    )
+                  } else {
+                    setShowGhostCompanion((current) => !current)
+                  }
+                }}
+                changelogOpen={showChangelogSheet}
+                firstLaunchOpen={showFirstLaunchSheet}
+                bugReportOpen={showBugReportSheet}
+                onToggleChangelog={handleOpenChangelogSheet}
+                onToggleFirstLaunch={() => setShowFirstLaunchSheet((current) => !current)}
+                onToggleBugReport={() => setShowBugReportSheet((current) => !current)}
+                workspaceStats={mainPaneWorkspaceStats}
+                popoutMenuOpen={popoutMenuOpen}
+                setPopoutMenuOpen={setPopoutMenuOpen}
+                popoutMenuRef={popoutMenuRef}
+                canOpenWorkspacePopout={Boolean(canOpenWorkspacePopout)}
+                hasCurrentChat={Boolean(currentChat)}
+                onOpenWorkbench={() => {
+                  setPopoutMenuOpen(false)
+                  openWorkspacePopoutWindow('workbench')
+                }}
+                onOpenDiffStudio={() => {
+                  setPopoutMenuOpen(false)
+                  openWorkspacePopoutWindow('diff-studio')
+                }}
+                onOpenFileEditor={() => {
+                  setPopoutMenuOpen(false)
+                  openWorkspacePopoutWindow('file-editor')
+                }}
+                onOpenChatPopout={() => {
+                  setPopoutMenuOpen(false)
+                  openChatPopoutWindow()
+                }}
+                onOpenCompactCompanion={() => {
+                  setPopoutMenuOpen(false)
+                  openCompactChatCompanion()
+                }}
+                runTitle={launchPreviewActionTitle(currentPreviewTargets, hasWorkspaceContext)}
+                runMenuOpen={currentPreviewMenuOpen}
+                runHasMenu={currentPreviewTargets.length > 1}
+                runDisabled={currentPreviewTargets.length === 0}
+                runMenu={
+                  currentChat
+                    ? renderPreviewTargetMenu(
+                        currentPreviewTargets,
+                        multiview.focusedPaneId,
+                        currentChat.appChatId,
+                        currentChat
+                      )
+                    : null
+                }
+                runError={renderPreviewLaunchError(currentChat?.appChatId)}
+                onRun={() => {
+                  if (!currentChat) return
+                  if (currentPreviewTargets.length === 1) {
+                    const target = currentPreviewTargets[0]
+                    if (target) void runPreviewTargetAction(target, currentChat)
+                    return
+                  }
+                  if (currentPreviewTargets.length > 1) {
+                    const paneId = multiview.focusedPaneId
+                    if (!paneId) return
+                    setPreviewMenuTarget((current) =>
+                      current?.paneId === paneId && current.chatId === currentChat.appChatId
+                        ? null
+                        : { paneId, chatId: currentChat.appChatId }
+                    )
+                  }
+                }}
+                homeOpen={activeRightDockTab === 'home'}
+                onToggleHome={() => toggleRightDockPanel('home')}
+                onCloseThread={
+                  currentChat
+                    ? isMultiviewSplit
+                      ? dismissPrimaryMultiviewPane
+                      : threadHomeOpen
+                        ? () => mainThreadHomeWorkspaceRef.current?.closeCurrentPane()
+                        : openThreadHome
+                    : undefined
+                }
+                closeThreadLabel={
+                  isMultiviewSplit
+                    ? 'Dismiss pane to Thread Home'
+                    : threadHomeOpen
+                      ? 'Close pane'
+                      : 'Close thread view'
+                }
               />
-            )}
-            renderMediaCell={(mediaRef, paneIndex) => (
-              <MediaPane
-                mediaRef={mediaRef}
-                onClose={() => multiview.setPaneMedia(paneIndex, null)}
-              />
-            )}
-            renderViewerCell={renderViewerPaneCell}
-            renderFocusedChatCell={(chatId, paneIndex) =>
-              renderMultiviewPaneCell(chatId, paneIndex, {
-                topLeftChromeExtra:
-                  chatId === currentChatAppChatId ? focusedPaneTopLeftChrome : undefined,
-                // Document-root keys reach every mounted transcript, so only
-                // the focused pane acts on them — and not even that one while
-                // the host runtime is stacked over it and owns them instead.
-                ownsRootKeyboardScroll: !focusedHostOverlayRequired
-              })
-            }
-            showFocusedHostOverlay={focusedHostOverlayRequired}
-            hostProjectionChatId={currentChatAppChatId}
-            renderFocusedCell={() => {
-              if (executionMapProjection) {
-                return (
-                  <ExecutionMapView
-                    projection={executionMapProjection}
-                    selectedStepId={executionMapSelectedStepId}
-                    onSelectStep={handleSelectExecutionMapStep}
-                    onBack={handleBackFromExecutionMap}
-                    onOpenThread={handleOpenExecutionThread}
-                    onSaveGraph={handleSaveExecutionGraph}
-                    onCancelRun={handleCancelExecutionRun}
-                    onResumeRun={handleResumeExecutionRun}
-                  />
-                )
-              }
-              return (
-                <div
-                  ref={appTranscriptRef}
-                  className={`app-transcript provider-${currentProvider} ${isCurrentEnsembleChat ? 'chat-kind-ensemble' : ''} ${isCurrentGlobalChat ? 'chat-scope-global' : ''} ${isWelcomeChat ? 'welcome-mode' : ''} ${welcomeFitLevel >= 1 ? 'welcome-notification-hidden-by-fit' : ''} ${welcomeFitLevel >= 2 ? 'welcome-dashboard-hidden-by-fit' : ''} ${welcomeFitLevel >= 3 ? 'welcome-heatmaps-hidden-by-fit' : ''} ${isAdvancedFxActive ? `fx-labs-active fx-intensity-${advancedFxIntensity}` : ''} ${showSettings ? 'transcript-hidden-for-settings' : ''}`}
-                  style={transcriptStyle}
-                >
-                  {workProjectHeader && !showSettings && (
-                    <ProjectHomeHeader
-                      {...workProjectHeader}
-                      onOpenLibrary={() =>
-                        handleOpenProjectReferencesLibrary(workProjectHeader.project.id)
-                      }
-                    />
-                  )}
-                  {chatContextNotice && (
-                    <div className="chat-context-application-pill" role="status">
-                      <span>{chatContextNotice.message}</span>
-                    </div>
-                  )}
-                  {!isChatPopoutWindow && (
-                    <div
-                      className={`chat-corner-controls chat-corner-controls-left${
-                        showWorkspaceSidebar ? '' : ' chat-corner-controls-workspace-hidden'
-                      }`}
-                    >
-                      <button
-                        className="chat-corner-btn"
-                        type="button"
-                        onClick={() => setShowWorkspaceSidebar((current) => !current)}
-                        title={`${showWorkspaceSidebar ? 'Hide' : 'Show'} workspace sidebar`}
-                        aria-label="Toggle workspace sidebar"
-                      >
-                        <SidebarCornerIcon direction="left" isOpen={showWorkspaceSidebar} />
-                      </button>
-                      <div className="chat-corner-thread-context">
-                        <ProviderBrandLogoIcon provider={mainPaneProvider} />
-                        <span className="chat-corner-thread-title" title={mainPaneThreadTitle}>
-                          {mainPaneThreadTitle}
-                        </span>
-                        {mainPaneWorkspaceLabel && (
-                          <span
-                            className="chat-corner-workspace-name"
-                            title={mainPaneWorkspaceLabel}
-                          >
-                            {mainPaneWorkspaceLabel}
-                          </span>
-                        )}
-                      </div>
-                      {/* Main-window surface — see humanCollaborationControls above for why
-                  this is left-anchored and in-flow rather than its own top-right box. */}
-                      {humanCollaborationControls}
-                      {channelMemberControl}
-                    </div>
-                  )}
+            </>
+          )}
 
-                  {/* Popout-window surface. The left pill above is !isChatPopoutWindow, so
-              without this the button would VANISH in popouts — which is where it was
-              the only working door before. Floating top-right is safe here precisely
-              because MainPaneActionPill is also absent from popouts. */}
-                  {isChatPopoutWindow && !isCompactChatCompanion && humanCollaborationControls && (
-                    <div className="human-collaboration-header-floating">
-                      {humanCollaborationControls}
-                    </div>
-                  )}
-
-                  {/* Sidebar collapsed → the footer quick controls (Settings /
-              Approvals / Shares / Devices) resurface as a bottom-left
-              vertical glass pill, so collapsing the sidebar never costs
-              access to pending approvals or device state. */}
-                  {!isChatPopoutWindow && !showWorkspaceSidebar && (
-                    <CollapsedSidebarCornerPill
-                      chats={chats}
-                      onSelectChat={handleSelectChat}
-                      quickSettings={{
-                        composerStyle: appearance.composerStyle,
-                        themeAppearance: appearance.themeAppearance,
-                        sidebarOpacity: appearance.sidebarOpacity,
-                        mainPaneOpacity: appearance.mainPaneOpacity
-                      }}
-                      onAppearanceQuickChange={handleSettingsChange}
-                      onOpenSettings={() => setShowSettings(true)}
-                      onOpenSettingsTab={(tab) => {
-                        setSettingsActiveTab(tab)
-                        setShowSettings(true)
-                      }}
-                      onOpenWorkspacePopout={openWorkspacePopoutWindow}
-                      canOpenWorkspacePopout={canOpenWorkspacePopout}
-                      onQuitApp={() => {
-                        void window.api.quitApp?.()
-                      }}
-                      pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
-                      pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
-                      onRespondAgentApproval={handleAgentApprovalAction}
-                      pendingAgentQuestionsByChatId={pendingAgentQuestionsByChatId}
-                      onAnswerAgentQuestion={handleAgentQuestionSubmit}
-                      onDismissAgentQuestion={handleAgentQuestionDismiss}
-                    />
-                  )}
-
-                  {!isChatPopoutWindow && (
-                    <>
-                      <MainPaneActionPill
-                        ref={mainPaneActionPillRef}
-                        fxEnabled={isFxEnabled}
-                        skyEnabled={focusedPaneSkyEnabled}
-                        ghostEnabled={focusedPaneGhostEnabled}
-                        weatherDescription={hostWeather?.description}
-                        onToggleSky={() => {
-                          if (isMultiviewSplit) {
-                            multiview.setPaneFxFlag(
-                              multiview.focusedPaneIndex,
-                              'sky',
-                              !focusedPaneSkyEnabled
-                            )
-                          } else {
-                            setShowSkyVisualFx((current) => !current)
-                          }
-                        }}
-                        onToggleGhost={() => {
-                          if (isMultiviewSplit) {
-                            multiview.setPaneFxFlag(
-                              multiview.focusedPaneIndex,
-                              'ghost',
-                              !focusedPaneGhostEnabled
-                            )
-                          } else {
-                            setShowGhostCompanion((current) => !current)
-                          }
-                        }}
-                        changelogOpen={showChangelogSheet}
-                        firstLaunchOpen={showFirstLaunchSheet}
-                        bugReportOpen={showBugReportSheet}
-                        onToggleChangelog={handleOpenChangelogSheet}
-                        onToggleFirstLaunch={() => setShowFirstLaunchSheet((current) => !current)}
-                        onToggleBugReport={() => setShowBugReportSheet((current) => !current)}
-                        workspaceStats={mainPaneWorkspaceStats}
-                        popoutMenuOpen={popoutMenuOpen}
-                        setPopoutMenuOpen={setPopoutMenuOpen}
-                        popoutMenuRef={popoutMenuRef}
-                        canOpenWorkspacePopout={Boolean(canOpenWorkspacePopout)}
-                        hasCurrentChat={Boolean(currentChat)}
-                        onOpenWorkbench={() => {
-                          setPopoutMenuOpen(false)
-                          openWorkspacePopoutWindow('workbench')
-                        }}
-                        onOpenDiffStudio={() => {
-                          setPopoutMenuOpen(false)
-                          openWorkspacePopoutWindow('diff-studio')
-                        }}
-                        onOpenFileEditor={() => {
-                          setPopoutMenuOpen(false)
-                          openWorkspacePopoutWindow('file-editor')
-                        }}
-                        onOpenChatPopout={() => {
-                          setPopoutMenuOpen(false)
-                          openChatPopoutWindow()
-                        }}
-                        onOpenCompactCompanion={() => {
-                          setPopoutMenuOpen(false)
-                          openCompactChatCompanion()
-                        }}
-                        runTitle={launchPreviewActionTitle(
-                          currentPreviewTargets,
-                          hasWorkspaceContext
-                        )}
-                        runMenuOpen={currentPreviewMenuOpen}
-                        runHasMenu={currentPreviewTargets.length > 1}
-                        runDisabled={currentPreviewTargets.length === 0}
-                        runMenu={
-                          currentChat
-                            ? renderPreviewTargetMenu(
-                                currentPreviewTargets,
-                                multiview.focusedPaneId,
-                                currentChat.appChatId,
-                                currentChat
-                              )
-                            : null
-                        }
-                        runError={renderPreviewLaunchError(currentChat?.appChatId)}
-                        onRun={() => {
-                          if (!currentChat) return
-                          if (currentPreviewTargets.length === 1) {
-                            const target = currentPreviewTargets[0]
-                            if (target) void runPreviewTargetAction(target, currentChat)
-                            return
-                          }
-                          if (currentPreviewTargets.length > 1) {
-                            const paneId = multiview.focusedPaneId
-                            if (!paneId) return
-                            setPreviewMenuTarget((current) =>
-                              current?.paneId === paneId && current.chatId === currentChat.appChatId
-                                ? null
-                                : { paneId, chatId: currentChat.appChatId }
-                            )
-                          }
-                        }}
-                        homeOpen={activeRightDockTab === 'home'}
-                        onToggleHome={() => toggleRightDockPanel('home')}
-                        onCloseThread={
-                          currentChat
-                            ? isMultiviewSplit
-                              ? dismissPrimaryMultiviewPane
-                              : threadHomeOpen
-                                ? () => mainThreadHomeWorkspaceRef.current?.closeCurrentPane()
-                                : openThreadHome
-                            : undefined
-                        }
-                        closeThreadLabel={
-                          isMultiviewSplit
-                            ? 'Dismiss pane to Thread Home'
-                            : threadHomeOpen
-                              ? 'Close pane'
-                              : 'Close thread view'
-                        }
-                      />
-                    </>
-                  )}
-
-                  {/*
+          {/*
             1.0.4 — "↓ N new messages" jump-to-latest pill (Slack/
             Discord/YouTube pattern). The 1.0.4 race-window fix
             (commit ce130ed) stopped auto-scroll from fighting the
@@ -2130,239 +2141,231 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             smooth-scroll, autoFollow re-engage, and count clear stay
             in lockstep regardless of entry point.
           */}
-                  <TranscriptJumpToLatestPill
-                    visible={showJumpToLatestPill}
-                    unreadCount={unreadFromBottomCount}
-                    provider={currentProvider}
-                    onJumpToLatest={handleJumpToLatest}
-                  />
+          <TranscriptJumpToLatestPill
+            visible={showJumpToLatestPill}
+            unreadCount={unreadFromBottomCount}
+            provider={currentProvider}
+            onJumpToLatest={handleJumpToLatest}
+          />
 
-                  <ChatMediaPreviewOverlay
-                    mediaRef={previewChatMediaRef}
-                    workspacePath={currentWorkspace?.path}
-                    onClose={() => setPreviewChatMediaRef(null)}
-                    onDetachToPane={openMediaPane}
-                  />
+          <ChatMediaPreviewOverlay
+            mediaRef={previewChatMediaRef}
+            workspacePath={currentWorkspace?.path}
+            onClose={() => setPreviewChatMediaRef(null)}
+            onDetachToPane={openMediaPane}
+          />
 
-                  {/* AMBIENT FX (sky weather + living workspace) — rendered INLINE in the
-                   * focused pane, gated by the FOCUSED pane's EFFECTIVE flags (its
-                   * per-pane override, else the global). In a SPLIT every OTHER pane
-                   * paints its own sky/living inline too (via ChatViewPane), so the FX
-                   * are per-pane and show at any opacity — no shared backdrop. In single
-                   * layout `focusedPaneIndex` is the only pane and there are no overrides,
-                   * so the focused effective flags collapse to the globals. Per-pane
-                   * living-workspace follows the (effective) sky toggle. The per-chat
-                   * AgentAuraLayer + RunDataVizLayer stay inline in single-pane mode;
-                   * split panes render both from ChatViewPane using pane-owned state. */}
-                  {focusedPaneLivingWorkspaceEnabled && (
-                    <LivingWorkspaceLayer weather={hostWeather} intensity={advancedFxIntensity} />
-                  )}
-                  {showAgentAuraFx && (
-                    <AgentAuraLayer
-                      provider={auraProviderKey}
-                      status={runFxStatus}
-                      intensity={advancedFxIntensity}
-                      hasHandoff={hasCurrentHandoffDraft}
-                    />
-                  )}
-                  {showRunDataVizFx && (
-                    <RunDataVizLayer
-                      provider={currentProvider}
-                      intensity={advancedFxIntensity}
-                      queueCount={queuedRunQueueCount}
-                      rawEventCount={rawLogs.length}
-                      approvalWaiting={Boolean(pendingAgentApproval)}
-                      status={runFxStatus}
-                    />
-                  )}
-                  {focusedPaneSkyEnabled && <SkyWeatherVisual weather={hostWeather} />}
+          {/* AMBIENT FX (sky weather + living workspace) — rendered INLINE in the
+            * focused pane, gated by the FOCUSED pane's EFFECTIVE flags (its
+            * per-pane override, else the global). In a SPLIT every OTHER pane
+            * paints its own sky/living inline too (via ChatViewPane), so the FX
+            * are per-pane and show at any opacity — no shared backdrop. In single
+            * layout `focusedPaneIndex` is the only pane and there are no overrides,
+            * so the focused effective flags collapse to the globals. Per-pane
+            * living-workspace follows the (effective) sky toggle. The per-chat
+            * AgentAuraLayer + RunDataVizLayer stay inline in single-pane mode;
+            * split panes render both from ChatViewPane using pane-owned state. */}
+          {focusedPaneLivingWorkspaceEnabled && (
+            <LivingWorkspaceLayer weather={hostWeather} intensity={advancedFxIntensity} />
+          )}
+          {showAgentAuraFx && (
+            <AgentAuraLayer
+              provider={auraProviderKey}
+              status={runFxStatus}
+              intensity={advancedFxIntensity}
+              hasHandoff={hasCurrentHandoffDraft}
+            />
+          )}
+          {showRunDataVizFx && (
+            <RunDataVizLayer
+              provider={currentProvider}
+              intensity={advancedFxIntensity}
+              queueCount={queuedRunQueueCount}
+              rawEventCount={rawLogs.length}
+              approvalWaiting={Boolean(pendingAgentApproval)}
+              status={runFxStatus}
+            />
+          )}
+          {focusedPaneSkyEnabled && <SkyWeatherVisual weather={hostWeather} />}
 
-                  {currentProvider === 'gemini' && isOldVersion && (
-                    <div className="version-warning">
-                      <strong>Warning:</strong> Gemini CLI version ({geminiVersion}) appears to be
-                      older than 0.39.1. Headless workspace-trust behavior had recent security
-                      hardening. Please upgrade Gemini CLI before using this app on real
-                      repositories.
-                    </div>
-                  )}
+          {currentProvider === 'gemini' && isOldVersion && (
+            <div className="version-warning">
+              <strong>Warning:</strong> Gemini CLI version ({geminiVersion}) appears to be older
+              than 0.39.1. Headless workspace-trust behavior had recent security hardening. Please
+              upgrade Gemini CLI before using this app on real repositories.
+            </div>
+          )}
 
-                  {visibleAuditRunNotice && (
-                    <AuditRunNotice
-                      title={visibleAuditRunNotice.title}
-                      message={visibleAuditRunNotice.message}
-                      onDismiss={handleDismissAuditRunNotice}
-                    />
-                  )}
+          {visibleAuditRunNotice && (
+            <AuditRunNotice
+              title={visibleAuditRunNotice.title}
+              message={visibleAuditRunNotice.message}
+              onDismiss={handleDismissAuditRunNotice}
+            />
+          )}
 
-                  {visibleAuditRun && (
-                    <AuditRunCard
-                      run={visibleAuditRun}
-                      onCancel={handleCancelAuditRun}
-                      onDismiss={handleDismissAuditRun}
-                    />
-                  )}
+          {visibleAuditRun && (
+            <AuditRunCard
+              run={visibleAuditRun}
+              onCancel={handleCancelAuditRun}
+              onDismiss={handleDismissAuditRun}
+            />
+          )}
 
-                  {/*
-                   * Keep a hard remount only at the welcome/transcript boundary.
-                   * Keying by chat id made every thread switch discard the
-                   * transcript virtualization state and remeasure from cold, which
-                   * was visible as a beachball/lag spike on large histories.
-                   */}
-                  {threadHomeOpen && !isMultiviewSplit ? (
-                    <ThreadHomeWorkspace
-                      ref={mainThreadHomeWorkspaceRef}
-                      key={currentChatAppChatId || 'thread-home'}
-                      variant="main"
-                      chats={chats}
-                      workspaces={workspaces}
-                      runningChatIds={runningChatIdsArray}
-                      paneChatIds={[currentChatAppChatId]}
-                      authorityChat={currentChat}
-                      mediaRefs={currentChatMediaRefs}
-                      overviewSections={threadHomeOverviewSections}
-                      multiviewLayout={multiview.layout}
-                      onSelectMultiviewLayout={composerCtx?.handleSelectMultiviewLayout}
-                      onNewChat={startNewThreadFromHome}
-                      onSelectThread={selectThreadFromHome}
-                      onPreviewImage={setPreviewChatMediaRef}
-                      onDetachToPane={openMediaPane}
-                    />
-                  ) : (
-                    <>
-                      <>
-                        {/*
+          {/*
+           * Keep a hard remount only at the welcome/transcript boundary.
+           * Keying by chat id made every thread switch discard the
+           * transcript virtualization state and remeasure from cold, which
+           * was visible as a beachball/lag spike on large histories.
+           */}
+          {threadHomeOpen && !isMultiviewSplit ? (
+            <ThreadHomeWorkspace
+              ref={mainThreadHomeWorkspaceRef}
+              key={currentChatAppChatId || 'thread-home'}
+              variant="main"
+              chats={chats}
+              workspaces={workspaces}
+              runningChatIds={runningChatIdsArray}
+              paneChatIds={[currentChatAppChatId]}
+              authorityChat={currentChat}
+              mediaRefs={currentChatMediaRefs}
+              overviewSections={threadHomeOverviewSections}
+              multiviewLayout={multiview.layout}
+              onSelectMultiviewLayout={composerCtx?.handleSelectMultiviewLayout}
+              onNewChat={startNewThreadFromHome}
+              onSelectThread={selectThreadFromHome}
+              onPreviewImage={setPreviewChatMediaRef}
+              onDetachToPane={openMediaPane}
+            />
+          ) : (
+            <>
+              <>
+              {/*
                 EnsembleParticipantStrip retired in 1.0.3 — its
                 contents (per-participant status pills) merged into
                 the new EnsembleParticipantsAboveRow that sits in
                 the composer above-row stack, alongside the chip
                 flyout that replaced the EnsembleSetupSheet modal.
               */}
-                        <ThreadSearchBar
-                          open={threadSearchVisible}
-                          query={threadSearchQuery}
-                          matchCount={threadSearchMatches.length}
-                          activeMatchNumber={
-                            threadSearchMatches.length > 0 ? activeThreadSearchIndex + 1 : 0
-                          }
-                          shortcutHint={threadSearchShortcutHint}
-                          focusRequestId={threadSearchFocusRequestId}
-                          onQueryChange={(query) => {
-                            setThreadSearchQuery(query)
-                            setThreadSearchActiveIndex(0)
-                          }}
-                          onNext={() => selectThreadSearchMatch(activeThreadSearchIndex + 1)}
-                          onPrevious={() => selectThreadSearchMatch(activeThreadSearchIndex - 1)}
-                          onClose={closeThreadSearch}
-                        />
-                        <TranscriptPanel
-                          key={isWelcomeChat ? 'welcome' : 'transcript'}
-                          scrollRef={transcriptScrollRef}
-                          contentRef={transcriptContentRef}
-                          externalRestoreAnchorMessageId={mainExternalRestoreAnchorMessageId}
-                          endRef={logsEndRef}
-                          messages={transcriptMessages}
-                          isWelcomeChat={isWelcomeChat}
-                          isThinking={effectiveIsThinking}
-                          pendingPlanChoice={pendingPlanChoice}
-                          pendingAgentQuestions={pendingAgentQuestions}
-                          onAgentQuestionSubmit={handleAgentQuestionSubmit}
-                          onAgentQuestionDismiss={handleAgentQuestionDismiss}
-                          runCompleteNotice={visibleRunCompleteNotice}
-                          runCompleteDurationText={runCompleteDurationText}
-                          hasLiveOwnedExecution={liveOwnedExecutionThreads.has(
-                            currentChat?.appChatId || ''
-                          )}
-                          ownedExecutionViews={ownedExecutionViewsByThreadId.get(
-                            currentChat?.appChatId || ''
-                          )}
-                          onCancelOwnedExecution={handleCancelExecutionRun}
-                          onResumeOwnedExecution={handleResumeExecutionRun}
-                          onOpenExecutionMapForThread={handleOpenExecutionMap}
-                          currentChat={currentChat}
-                          isGlobal={isGlobalChat(currentChat)}
-                          currentRun={currentRun}
-                          currentWorkspacePath={currentWorkspace?.path}
-                          currentProviderLabel={currentProviderLabel}
-                          currentProvider={currentProvider}
-                          thinkingProviderLabel={thinkingProviderLabel}
-                          thinkingProvider={thinkingProvider}
-                          thinkingProviderClass={thinkingProviderClass}
-                          thinkingModelBadge={thinkingModelBadge}
-                          displayFileChangeSummaries={displayFileChangeSummaries}
-                          roundFileChangeSummaries={roundFileChangeSummaries}
-                          fileChangeSummaryText={fileChangeSummaryText}
-                          fileChangeShouldShowStats={fileChangeShouldShowStats}
-                          fileChangeDisplayAdds={fileChangeDisplayAdds}
-                          fileChangeDisplayDels={fileChangeDisplayDels}
-                          chats={chats}
-                          runningChatIds={runningChatIdsArray}
-                          pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
-                          pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
-                          onRespondAgentApproval={handleAgentApprovalAction}
-                          onPlanChoiceSubmit={handlePlanChoiceSubmit}
-                          pendingProposedPlan={pendingProposedPlan}
-                          onProposedPlanApprove={handleProposedPlanApprove}
-                          onProposedPlanDismiss={handleProposedPlanDismiss}
-                          onProposedPlanCustom={handleProposedPlanCustom}
-                          onOpenSubThread={handleOpenCockpitThread}
-                          onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
-                          onOpenFileChangeInWorkbench={openFileChangeInWorkbench}
-                          onOpenSideChatFromRun={
-                            canCreateSideChatFromCurrent
-                              ? handleOpenSideChatFromRunResult
-                              : undefined
-                          }
-                          compactDensity={appearance.compactDensity}
-                          liveActivityViewport={appearance.liveActivityViewport}
-                          fanoutLaneLayout={appearance.fanoutLaneLayout}
-                          onCopyMessage={handleCopyMessage}
-                          onAddMessageToPrompt={
-                            currentChatAppChatId ? handleTranscriptAddMessageToPrompt : undefined
-                          }
-                          onDeleteMessage={handleDeleteMessage}
-                          onTogglePinMessage={handleTranscriptTogglePinMessage}
-                          onMessageFeedback={handleTranscriptMessageFeedback}
-                          onPromoteCollaboratorComment={handleTranscriptPromoteCollaboratorComment}
-                          onMessageSelectionCandidate={
-                            canCreateSideChatFromCurrent
-                              ? handleMessageSelectionCandidate
-                              : undefined
-                          }
-                          onPreviewImage={setPreviewChatMediaRef}
-                          onDetachToPane={openMediaPane}
-                          onOpenProjectReferenceCitation={onOpenProjectReferenceCitation}
-                          onOpenSideChatFromMessage={
-                            canCreateSideChatFromCurrent ? handleOpenSideChatFromMessage : undefined
-                          }
-                          sideChatSeedMessageId={sideChatSeedMessageId}
-                          jumpToMessageRequest={
-                            transcriptJumpRequest?.chatId === currentChat?.appChatId
-                              ? transcriptJumpRequest
-                              : null
-                          }
-                          onManualTranscriptJump={beginManualMainTranscriptJump}
-                          onJumpToLatest={handleJumpToLatest}
-                          copiedId={copiedId}
-                          copy={copy}
-                          autoFollowRef={autoFollowRef}
-                          getUserScrollGestureLive={getMainTranscriptUserScrollGestureLive}
-                          onProgrammaticScrollWrite={markMainTranscriptProgrammaticScroll}
-                          currency={displayCurrency}
-                          currencyOverestimatePercent={overestimatePercent}
-                          showRunCompleteSummary={settings?.showRunCompleteSummary}
-                          collapseOlderRounds={settings?.ensembleCollapseOlderRounds}
-                          providerRates={providerRates}
-                        />
-                      </>
+              <ThreadSearchBar
+                open={threadSearchVisible}
+                query={threadSearchQuery}
+                matchCount={threadSearchMatches.length}
+                activeMatchNumber={
+                  threadSearchMatches.length > 0 ? activeThreadSearchIndex + 1 : 0
+                }
+                shortcutHint={threadSearchShortcutHint}
+                focusRequestId={threadSearchFocusRequestId}
+                onQueryChange={(query) => {
+                  setThreadSearchQuery(query)
+                  setThreadSearchActiveIndex(0)
+                }}
+                onNext={() => selectThreadSearchMatch(activeThreadSearchIndex + 1)}
+                onPrevious={() => selectThreadSearchMatch(activeThreadSearchIndex - 1)}
+                onClose={closeThreadSearch}
+              />
+              <TranscriptPanel
+                key={isWelcomeChat ? 'welcome' : 'transcript'}
+                scrollRef={transcriptScrollRef}
+                contentRef={transcriptContentRef}
+                externalRestoreAnchorMessageId={mainExternalRestoreAnchorMessageId}
+                endRef={logsEndRef}
+                messages={transcriptMessages}
+                isWelcomeChat={isWelcomeChat}
+                isThinking={effectiveIsThinking}
+                pendingPlanChoice={pendingPlanChoice}
+                pendingAgentQuestions={pendingAgentQuestions}
+                onAgentQuestionSubmit={handleAgentQuestionSubmit}
+                onAgentQuestionDismiss={handleAgentQuestionDismiss}
+                runCompleteNotice={visibleRunCompleteNotice}
+                runCompleteDurationText={runCompleteDurationText}
+                hasLiveOwnedExecution={liveOwnedExecutionThreads.has(
+                  currentChat?.appChatId || ''
+                )}
+                ownedExecutionViews={ownedExecutionViewsByThreadId.get(
+                  currentChat?.appChatId || ''
+                )}
+                onCancelOwnedExecution={handleCancelExecutionRun}
+                onResumeOwnedExecution={handleResumeExecutionRun}
+                onOpenExecutionMapForThread={handleOpenExecutionMap}
+                currentChat={currentChat}
+                isGlobal={isGlobalChat(currentChat)}
+                currentRun={currentRun}
+                currentWorkspacePath={currentWorkspace?.path}
+                currentProviderLabel={currentProviderLabel}
+                currentProvider={currentProvider}
+                thinkingProviderLabel={thinkingProviderLabel}
+                thinkingProvider={thinkingProvider}
+                thinkingProviderClass={thinkingProviderClass}
+                thinkingModelBadge={thinkingModelBadge}
+                displayFileChangeSummaries={displayFileChangeSummaries}
+                roundFileChangeSummaries={roundFileChangeSummaries}
+                fileChangeSummaryText={fileChangeSummaryText}
+                fileChangeShouldShowStats={fileChangeShouldShowStats}
+                fileChangeDisplayAdds={fileChangeDisplayAdds}
+                fileChangeDisplayDels={fileChangeDisplayDels}
+                chats={chats}
+                runningChatIds={runningChatIdsArray}
+                pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
+                pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
+                onRespondAgentApproval={handleAgentApprovalAction}
+                onPlanChoiceSubmit={handlePlanChoiceSubmit}
+                pendingProposedPlan={pendingProposedPlan}
+                onProposedPlanApprove={handleProposedPlanApprove}
+                onProposedPlanDismiss={handleProposedPlanDismiss}
+                onProposedPlanCustom={handleProposedPlanCustom}
+                onOpenSubThread={handleOpenCockpitThread}
+                onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
+                onOpenFileChangeInWorkbench={openFileChangeInWorkbench}
+                onOpenSideChatFromRun={
+                  canCreateSideChatFromCurrent ? handleOpenSideChatFromRunResult : undefined
+                }
+                compactDensity={appearance.compactDensity}
+                liveActivityViewport={appearance.liveActivityViewport}
+                fanoutLaneLayout={appearance.fanoutLaneLayout}
+                onCopyMessage={handleCopyMessage}
+                onAddMessageToPrompt={
+                  currentChatAppChatId ? handleTranscriptAddMessageToPrompt : undefined
+                }
+                onDeleteMessage={handleDeleteMessage}
+                onTogglePinMessage={handleTranscriptTogglePinMessage}
+                onMessageFeedback={handleTranscriptMessageFeedback}
+                onPromoteCollaboratorComment={handleTranscriptPromoteCollaboratorComment}
+                onMessageSelectionCandidate={
+                  canCreateSideChatFromCurrent ? handleMessageSelectionCandidate : undefined
+                }
+                onPreviewImage={setPreviewChatMediaRef}
+                onDetachToPane={openMediaPane}
+                onOpenProjectReferenceCitation={onOpenProjectReferenceCitation}
+                onOpenSideChatFromMessage={
+                  canCreateSideChatFromCurrent ? handleOpenSideChatFromMessage : undefined
+                }
+                sideChatSeedMessageId={sideChatSeedMessageId}
+                jumpToMessageRequest={
+                  transcriptJumpRequest?.chatId === currentChat?.appChatId
+                    ? transcriptJumpRequest
+                    : null
+                }
+                onManualTranscriptJump={beginManualMainTranscriptJump}
+                onJumpToLatest={handleJumpToLatest}
+                copiedId={copiedId}
+                copy={copy}
+                autoFollowRef={autoFollowRef}
+                getUserScrollGestureLive={getMainTranscriptUserScrollGestureLive}
+                onProgrammaticScrollWrite={markMainTranscriptProgrammaticScroll}
+                currency={displayCurrency}
+                currencyOverestimatePercent={overestimatePercent}
+                showRunCompleteSummary={settings?.showRunCompleteSummary}
+                collapseOlderRounds={settings?.ensembleCollapseOlderRounds}
+                providerRates={providerRates}
+              />
+          </>
 
-                      {shouldShowWelcomeUsageDashboard && welcomeDashboardCardEnabled && (
-                        <div
-                          className="welcome-usage-region welcome-usage-region-small"
-                          ref={welcomeDashboardRegionRef}
-                        >
-                          <WelcomeUsageDashboard
-                            data={welcomeUsageDashboardData}
-                            /*
+          {shouldShowWelcomeUsageDashboard && welcomeDashboardCardEnabled && (
+            <div className="welcome-usage-region welcome-usage-region-small" ref={welcomeDashboardRegionRef}>
+              <WelcomeUsageDashboard
+                data={welcomeUsageDashboardData}
+                /*
                   1.0.5-EW49 — Thread the user's currency + EW34
                   overestimate bias + EW49 per-stat visibility map
                   into the dashboard so the Total cost chip
@@ -2371,19 +2374,17 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   applied earlier (passed to
                   buildWelcomeUsageDashboardData above).
                 */
-                            displayCurrency={displayCurrency}
-                            overestimatePercent={overestimatePercent}
-                            dashboardStatVisibility={settings?.dashboardStatPrefs?.visibility}
-                            /*
+                displayCurrency={displayCurrency}
+                overestimatePercent={overestimatePercent}
+                dashboardStatVisibility={settings?.dashboardStatPrefs?.visibility}
+                /*
                   1.0.5-EW51 — Workspaces tab on/off + max card
                   count. Both come from
                   AppSettings.dashboardStatPrefs.
                 */
-                            workspacesTabEnabled={
-                              settings?.dashboardStatPrefs?.workspacesTabEnabled
-                            }
-                            workspacesShown={settings?.dashboardStatPrefs?.workspacesShown}
-                            /*
+                workspacesTabEnabled={settings?.dashboardStatPrefs?.workspacesTabEnabled}
+                workspacesShown={settings?.dashboardStatPrefs?.workspacesShown}
+                /*
                   1.0.5-EW52 — Providers tab on/off + auto-cycle
                   cadence (seconds; 0 disables). Both come from
                   AppSettings.dashboardStatPrefs. The dashboard
@@ -2393,75 +2394,70 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   unmounts automatically when the welcome region
                   disappears.
                 */
-                            providersTabEnabled={settings?.dashboardStatPrefs?.providersTabEnabled}
-                            autoCycleSeconds={settings?.dashboardStatPrefs?.autoCycleSeconds}
-                          />
-                        </div>
-                      )}
+                providersTabEnabled={settings?.dashboardStatPrefs?.providersTabEnabled}
+                autoCycleSeconds={settings?.dashboardStatPrefs?.autoCycleSeconds}
+              />
+            </div>
+          )}
 
-                      {/* Reserve the dashboard's fixed height during the first usage fetch
+          {/* Reserve the dashboard's fixed height during the first usage fetch
               so the greeting + composer below don't jump downward when the
               dashboard mounts a moment after launch. Only shown before the
               fetch resolves and only when the dashboard would plausibly
               render (welcome screen + card enabled). Collapses harmlessly for
               brand-new accounts that turn out to have no history. */}
-                      {isWelcomeChat &&
-                        !isCurrentGlobalChat &&
-                        welcomeDashboardCardEnabled &&
-                        !usageInitialized && (
-                          <div
-                            className="welcome-usage-region welcome-usage-region-small welcome-usage-region-reserved"
-                            ref={welcomeDashboardRegionRef}
-                            aria-hidden
-                          />
-                        )}
+          {isWelcomeChat && !isCurrentGlobalChat && welcomeDashboardCardEnabled && !usageInitialized && (
+              <div
+                className="welcome-usage-region welcome-usage-region-small welcome-usage-region-reserved"
+                ref={welcomeDashboardRegionRef}
+                aria-hidden
+              />
+            )}
 
-                      {isCompactChatCompanion ? (
-                        <CompactChatComposer
-                          prompt={composerCtx.prompt}
-                          currentComposerChatId={composerCtx.currentComposerChatId || null}
-                          currentChat={composerCtx.currentChat || null}
-                          currentWorkspace={composerCtx.currentWorkspace || null}
-                          isCurrentGlobalChat={Boolean(composerCtx.isCurrentGlobalChat)}
-                          primaryGitSnapshot={composerCtx.primaryGitSnapshot || null}
-                          composerWorktreeSelection={composerCtx.composerWorktreeSelection || null}
-                          workspaceDiffStats={composerCtx.workspaceDiffStats}
-                          composerAreaRef={composerCtx.composerAreaRef}
-                          composerAriaLabel="Message TaskWraith"
-                          composerPlaceholder="Message TaskWraith…"
-                          imageAttachments={composerCtx.imageAttachments}
-                          pendingAgentApproval={composerCtx.pendingAgentApproval}
-                          setChatPromptDraft={composerCtx.setChatPromptDraft}
-                          handlePickImages={composerCtx.handlePickImages}
-                          handleRun={composerCtx.handleRun}
-                          handleCancel={composerCtx.handleCancel}
-                          handleSteer={composerCtx.handleSteer}
-                          handleAgentApprovalAction={composerCtx.handleAgentApprovalAction}
-                          isCurrentChatRunning={Boolean(composerCtx.isCurrentChatRunning)}
-                          isCurrentChatBusyForSteer={Boolean(composerCtx.isCurrentChatBusyForSteer)}
-                          isSteerBusyForCurrentChat={Boolean(composerCtx.isSteerBusyForCurrentChat)}
-                          midRunInputBehavior={composerCtx.settings?.midRunInputBehavior}
-                        />
-                      ) : (
-                        <Composer
-                          {...composerCtx}
-                          onOpenWorkspaceStats={
-                            canOpenMainPaneWorkspaceStats
-                              ? requestMainPaneWorkspaceStats
-                              : undefined
-                          }
-                        />
-                      )}
-                    </>
-                  )}
-                </div>
-              )
-            }}
-          />
-        </div>
+              {isCompactChatCompanion ? (
+                <CompactChatComposer
+                  prompt={composerCtx.prompt}
+                  currentComposerChatId={composerCtx.currentComposerChatId || null}
+                  currentChat={composerCtx.currentChat || null}
+                  currentWorkspace={composerCtx.currentWorkspace || null}
+                  isCurrentGlobalChat={Boolean(composerCtx.isCurrentGlobalChat)}
+                  primaryGitSnapshot={composerCtx.primaryGitSnapshot || null}
+                  composerWorktreeSelection={composerCtx.composerWorktreeSelection || null}
+                  workspaceDiffStats={composerCtx.workspaceDiffStats}
+                  composerAreaRef={composerCtx.composerAreaRef}
+                  composerAriaLabel="Message TaskWraith"
+                  composerPlaceholder="Message TaskWraith…"
+                  imageAttachments={composerCtx.imageAttachments}
+                  pendingAgentApproval={composerCtx.pendingAgentApproval}
+                  setChatPromptDraft={composerCtx.setChatPromptDraft}
+                  handlePickImages={composerCtx.handlePickImages}
+                  handleRun={composerCtx.handleRun}
+                  handleCancel={composerCtx.handleCancel}
+                  handleSteer={composerCtx.handleSteer}
+                  handleAgentApprovalAction={composerCtx.handleAgentApprovalAction}
+                  isCurrentChatRunning={Boolean(composerCtx.isCurrentChatRunning)}
+                  isCurrentChatBusyForSteer={Boolean(composerCtx.isCurrentChatBusyForSteer)}
+                  isSteerBusyForCurrentChat={Boolean(composerCtx.isSteerBusyForCurrentChat)}
+                  midRunInputBehavior={composerCtx.settings?.midRunInputBehavior}
+                />
+              ) : (
+                <Composer
+                  {...composerCtx}
+                  onOpenWorkspaceStats={
+                    canOpenMainPaneWorkspaceStats ? requestMainPaneWorkspaceStats : undefined
+                  }
+                />
+              )}
+            </>
+          )}
+            </div>
+                )
+              }}
+            />
+          </div>
 
-        {dockPresence.mounted && (
-          <>
+          {dockPresence.mounted && (
+            <>
             <div
               className={`panel-resize-handle right-dock-resize-handle${
                 dockPresence.className ? ` ${dockPresence.className}` : ''
@@ -2515,247 +2511,226 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
 
                 {activeRightDockTab === 'chat' && sideChat && (
                   <div className="right-dock-side-chat">
-                    <aside
-                      ref={sidePaneRef}
-                      className={`side-chat-pane app-transcript provider-${sideProvider} ${
-                        sideChat.chatKind === 'ensemble' ? 'chat-kind-ensemble' : ''
-                      } ${sidePanelAgentIdentity ? 'has-linked-agent-identity' : ''}`}
-                      style={
-                        sidePanelAgentIdentity
-                          ? ({ '--agent-rim': sidePanelAgentIdentity.accent } as CSSProperties)
-                          : undefined
-                      }
-                      aria-label="Linked chat"
-                    >
-                      <div
-                        className="side-chat-floating-actions side-chat-pane-actions"
-                        role="toolbar"
-                        aria-label="Side chat actions"
-                      >
-                        {sidePanelParentChat && (
-                          <button
-                            type="button"
-                            className="side-chat-action-btn"
-                            onClick={handleReturnToSideChatParent}
-                            title="Close this side view and return focus to the parent chat"
-                            aria-label="Back to parent"
-                          >
-                            <BackToParentIcon />
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="side-chat-action-btn"
-                          onClick={() => popOutLinkedChat(sideChat)}
-                          title="Pop out this linked chat"
-                          aria-label="Pop out linked chat"
-                        >
-                          <ChatPopoutIcon />
-                        </button>
-                        <button
-                          type="button"
-                          className="side-chat-action-btn"
-                          onClick={() => void openLinkedChatAsMain(sideChat)}
-                          title="Open linked chat as the main thread"
-                          aria-label="Open as main"
-                        >
-                          <LinkCircleSymbolIcon />
-                        </button>
-                        {sidePanelRelation === 'sideChat' && (
-                          <SideChatAuthorityReturnButton
-                            enabled={sideChatAuthorityReturnEnabled}
-                            onToggle={() => void handleToggleSideChatAuthorityReturn()}
+              <aside
+                ref={sidePaneRef}
+                className={`side-chat-pane app-transcript provider-${sideProvider} ${
+                  sideChat.chatKind === 'ensemble' ? 'chat-kind-ensemble' : ''
+                } ${sidePanelAgentIdentity ? 'has-linked-agent-identity' : ''}`}
+                style={
+                  sidePanelAgentIdentity
+                    ? ({ '--agent-rim': sidePanelAgentIdentity.accent } as CSSProperties)
+                    : undefined
+                }
+              aria-label="Linked chat"
+              >
+            <div
+              className="side-chat-floating-actions side-chat-pane-actions"
+              role="toolbar"
+              aria-label="Side chat actions"
+            >
+                {sidePanelParentChat && (
+                  <button
+                    type="button"
+                    className="side-chat-action-btn"
+                    onClick={handleReturnToSideChatParent}
+                    title="Close this side view and return focus to the parent chat"
+                    aria-label="Back to parent"
+                  >
+                    <BackToParentIcon />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="side-chat-action-btn"
+                  onClick={() => popOutLinkedChat(sideChat)}
+                  title="Pop out this linked chat"
+                  aria-label="Pop out linked chat"
+                >
+                  <ChatPopoutIcon />
+                </button>
+                <button
+                  type="button"
+                  className="side-chat-action-btn"
+                  onClick={() => void openLinkedChatAsMain(sideChat)}
+                  title="Open linked chat as the main thread"
+                  aria-label="Open as main"
+                >
+                  <LinkCircleSymbolIcon />
+                </button>
+                {sidePanelRelation === 'sideChat' && (
+                  <SideChatAuthorityReturnButton
+                    enabled={sideChatAuthorityReturnEnabled}
+                    onToggle={() => void handleToggleSideChatAuthorityReturn()}
+                  />
+                )}
+                {sidePanelRelation === 'sideChat' && (
+                  <button
+                    type="button"
+                    className="side-chat-action-btn danger"
+                    onClick={() => void handleEndSidePanelChat()}
+                    title="End this isolated side chat, cancel queued work, and archive it"
+                    aria-label="End side chat"
+                  >
+                    <EndSideChatIcon />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="side-chat-action-btn"
+                  onClick={hideSideChatPane}
+                  title="Close side view; linked chat keeps running"
+                  aria-label="Close side view"
+                >
+                  <XSymbolIcon />
+                </button>
+            </div>
+            {sideChatIsHydrating && (
+              <div className="side-chat-welcome" role="status" aria-label="Loading linked chat">
+                <h2 className="side-chat-welcome-line">Loading linked thread…</h2>
+              </div>
+            )}
+            {sideChatIsWelcome && (
+              <div className="side-chat-welcome" aria-label="Linked chat welcome">
+                <h2 className="side-chat-welcome-line">
+                  <span>New</span>
+                  {selectedSideChatTypeOption ? (
+                    <details className="side-chat-type-picker">
+                      <summary title="Choose side chat type">
+                        {selectedSideChatTypeOption.agentIdentity && (
+                          <AgentIdentityIcon
+                            name={selectedSideChatTypeOption.agentIdentity.key}
+                            color={selectedSideChatTypeOption.agentIdentity.accent}
+                            size={18}
+                            className="linked-chat-agent-identicon"
+                            title={selectedSideChatTypeOption.agentIdentity.name}
                           />
                         )}
-                        {sidePanelRelation === 'sideChat' && (
-                          <button
-                            type="button"
-                            className="side-chat-action-btn danger"
-                            onClick={() => void handleEndSidePanelChat()}
-                            title="End this isolated side chat, cancel queued work, and archive it"
-                            aria-label="End side chat"
-                          >
-                            <EndSideChatIcon />
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="side-chat-action-btn"
-                          onClick={hideSideChatPane}
-                          title="Close side view; linked chat keeps running"
-                          aria-label="Close side view"
-                        >
-                          <XSymbolIcon />
-                        </button>
+                        <span>{selectedSideChatTypeOption.label}</span>
+                      </summary>
+                      <div className="side-chat-type-picker-menu" role="listbox">
+                        {sideChatTypePickerOptions.map((option) => {
+                          const selected = option.id === selectedSideChatTypeOption.id
+                          return (
+                            <button
+                              key={option.id}
+                              type="button"
+                              role="option"
+                              aria-selected={selected}
+                              disabled={selected}
+                              onClick={(event) => {
+                                event.currentTarget.closest('details')?.removeAttribute('open')
+                                handleSelectSideChatTypeOption(option)
+                              }}
+                            >
+                              {option.agentIdentity && (
+                                <AgentIdentityIcon
+                                  name={option.agentIdentity.key}
+                                  color={option.agentIdentity.accent}
+                                  size={20}
+                                  className="linked-chat-agent-identicon"
+                                  title={option.agentIdentity.name}
+                                />
+                              )}
+                              <span className="side-chat-type-picker-option-copy">
+                                <strong>{option.label}</strong>
+                                <small>{option.description}</small>
+                              </span>
+                            </button>
+                          )
+                        })}
                       </div>
-                      {sideChatIsHydrating && (
-                        <div
-                          className="side-chat-welcome"
-                          role="status"
-                          aria-label="Loading linked chat"
-                        >
-                          <h2 className="side-chat-welcome-line">Loading linked thread…</h2>
-                        </div>
-                      )}
-                      {sideChatIsWelcome && (
-                        <div className="side-chat-welcome" aria-label="Linked chat welcome">
-                          <h2 className="side-chat-welcome-line">
-                            <span>New</span>
-                            {selectedSideChatTypeOption ? (
-                              <details className="side-chat-type-picker">
-                                <summary title="Choose side chat type">
-                                  {selectedSideChatTypeOption.agentIdentity && (
-                                    <AgentIdentityIcon
-                                      name={selectedSideChatTypeOption.agentIdentity.key}
-                                      color={selectedSideChatTypeOption.agentIdentity.accent}
-                                      size={18}
-                                      className="linked-chat-agent-identicon"
-                                      title={selectedSideChatTypeOption.agentIdentity.name}
-                                    />
-                                  )}
-                                  <span>{selectedSideChatTypeOption.label}</span>
-                                </summary>
-                                <div className="side-chat-type-picker-menu" role="listbox">
-                                  {sideChatTypePickerOptions.map((option) => {
-                                    const selected = option.id === selectedSideChatTypeOption.id
-                                    return (
-                                      <button
-                                        key={option.id}
-                                        type="button"
-                                        role="option"
-                                        aria-selected={selected}
-                                        disabled={selected}
-                                        onClick={(event) => {
-                                          event.currentTarget
-                                            .closest('details')
-                                            ?.removeAttribute('open')
-                                          handleSelectSideChatTypeOption(option)
-                                        }}
-                                      >
-                                        {option.agentIdentity && (
-                                          <AgentIdentityIcon
-                                            name={option.agentIdentity.key}
-                                            color={option.agentIdentity.accent}
-                                            size={20}
-                                            className="linked-chat-agent-identicon"
-                                            title={option.agentIdentity.name}
-                                          />
-                                        )}
-                                        <span className="side-chat-type-picker-option-copy">
-                                          <strong>{option.label}</strong>
-                                          <small>{option.description}</small>
-                                        </span>
-                                      </button>
-                                    )
-                                  })}
-                                </div>
-                              </details>
-                            ) : (
-                              <span className="side-chat-type-picker-static">Side Chat</span>
-                            )}
-                            <span>in</span>
-                            <span
-                              className="side-chat-welcome-workspace"
-                              title={sideChatWelcomeWorkspaceLabel}
-                            >
-                              {sideChatWelcomeWorkspaceLabel}
-                            </span>
-                            <span aria-hidden>:</span>
-                            <span
-                              className="side-chat-welcome-thread"
-                              title={sideChatWelcomeThreadLabel}
-                            >
-                              {sideChatWelcomeThreadLabel}
-                            </span>
-                          </h2>
-                        </div>
-                      )}
-                      {!sideChatIsHydrating && (
-                        <TranscriptPanel
-                          key={`side-${sideChat.appChatId}`}
-                          scrollRef={sideTranscriptScrollRef}
-                          contentRef={sideTranscriptContentRef}
-                          externalRestoreAnchorMessageId={sideExternalRestoreAnchorMessageId}
-                          endRef={sideLogsEndRef}
-                          messages={sideChat.messages || EMPTY_CHAT_MESSAGES}
-                          isWelcomeChat={sideChatIsWelcome}
-                          isThinking={isSideChatRunning}
-                          pendingPlanChoice={null}
-                          pendingAgentQuestions={
-                            pendingAgentQuestionsByChatId?.[sideChat.appChatId] ||
-                            EMPTY_AGENT_QUESTION_QUEUE
-                          }
-                          onAgentQuestionSubmit={NOOP_AGENT_QUESTION_SUBMIT}
-                          onAgentQuestionDismiss={NOOP_MESSAGE_ACTION}
-                          runCompleteNotice={sideRunCompleteNotice}
-                          runCompleteDurationText={null}
-                          hasLiveOwnedExecution={liveOwnedExecutionThreads.has(sideChat.appChatId)}
-                          ownedExecutionViews={ownedExecutionViewsByThreadId.get(
-                            sideChat.appChatId
-                          )}
-                          onCancelOwnedExecution={handleCancelExecutionRun}
-                          onResumeOwnedExecution={handleResumeExecutionRun}
-                          currentChat={sideChat}
-                          isGlobal={isGlobalChat(sideChat)}
-                          currentRun={sideRun}
-                          currentWorkspacePath={sideWorkspace?.path}
-                          currentProviderLabel={getProviderLabel(sideProvider)}
-                          currentProvider={sideProvider}
-                          thinkingProviderLabel={sideThinkingProviderLabel}
-                          thinkingProvider={sideThinkingProvider}
-                          thinkingProviderClass={sideThinkingProviderClass}
-                          thinkingModelBadge={sideThinkingModelBadge}
-                          displayFileChangeSummaries={EMPTY_TRANSCRIPT_FILE_SUMMARIES}
-                          fileChangeSummaryText=""
-                          fileChangeShouldShowStats={false}
-                          fileChangeDisplayAdds={0}
-                          fileChangeDisplayDels={0}
-                          chats={chats}
-                          runningChatIds={runningChatIdsArray}
-                          pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
-                          pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
-                          onRespondAgentApproval={handleAgentApprovalAction}
-                          onPlanChoiceSubmit={NOOP_PLAN_CHOICE_SUBMIT}
-                          pendingProposedPlan={null}
-                          onProposedPlanApprove={NOOP_MESSAGE_ACTION}
-                          onProposedPlanDismiss={NOOP_MESSAGE_ACTION}
-                          onProposedPlanCustom={NOOP_PROPOSED_PLAN_CUSTOM}
-                          onOpenSubThread={handleOpenCockpitThread}
-                          onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
-                          compactDensity={appearance.compactDensity}
-                          liveActivityViewport={appearance.liveActivityViewport}
-                          fanoutLaneLayout={appearance.fanoutLaneLayout}
-                          onCopyMessage={handleCopyMessage}
-                          onAddMessageToPrompt={handleSideTranscriptAddMessageToPrompt}
-                          onDeleteMessage={handleSideTranscriptDeleteMessage}
-                          onTogglePinMessage={handleSideTranscriptTogglePinMessage}
-                          onMessageFeedback={handleSideTranscriptMessageFeedback}
-                          onPromoteCollaboratorComment={
-                            handleSideTranscriptPromoteCollaboratorComment
-                          }
-                          onPreviewImage={setPreviewChatMediaRef}
-                          onDetachToPane={openMediaPane}
-                          onOpenProjectReferenceCitation={onOpenProjectReferenceCitation}
-                          jumpToMessageRequest={
-                            transcriptJumpRequest?.chatId === sideChat.appChatId
-                              ? transcriptJumpRequest
-                              : null
-                          }
-                          onManualTranscriptJump={beginManualSideTranscriptJump}
-                          onProgrammaticScrollWrite={markSideTranscriptProgrammaticScroll}
-                          getUserScrollGestureLive={getSideTranscriptUserScrollGestureLive}
-                          copiedId={copiedId}
-                          copy={copy}
-                          autoFollowRef={sideAutoFollowRef}
-                          currency={displayCurrency}
-                          currencyOverestimatePercent={overestimatePercent}
-                          showRunCompleteSummary={settings?.showRunCompleteSummary}
-                          collapseOlderRounds={settings?.ensembleCollapseOlderRounds}
-                          providerRates={providerRates}
-                        />
-                      )}
-                      {sideComposerCtx && <Composer {...sideComposerCtx} />}
-                    </aside>
+                    </details>
+                  ) : (
+                    <span className="side-chat-type-picker-static">Side Chat</span>
+                  )}
+                  <span>in</span>
+                  <span className="side-chat-welcome-workspace" title={sideChatWelcomeWorkspaceLabel}>
+                    {sideChatWelcomeWorkspaceLabel}
+                  </span>
+                  <span aria-hidden>:</span>
+                  <span className="side-chat-welcome-thread" title={sideChatWelcomeThreadLabel}>
+                    {sideChatWelcomeThreadLabel}
+                  </span>
+                </h2>
+              </div>
+            )}
+            {!sideChatIsHydrating && <TranscriptPanel
+              key={`side-${sideChat.appChatId}`}
+              scrollRef={sideTranscriptScrollRef}
+              contentRef={sideTranscriptContentRef}
+              externalRestoreAnchorMessageId={sideExternalRestoreAnchorMessageId}
+              endRef={sideLogsEndRef}
+              messages={sideChat.messages || EMPTY_CHAT_MESSAGES}
+              isWelcomeChat={sideChatIsWelcome}
+              isThinking={isSideChatRunning}
+              pendingPlanChoice={null}
+              pendingAgentQuestions={
+                pendingAgentQuestionsByChatId?.[sideChat.appChatId] || EMPTY_AGENT_QUESTION_QUEUE
+              }
+              onAgentQuestionSubmit={NOOP_AGENT_QUESTION_SUBMIT}
+              onAgentQuestionDismiss={NOOP_MESSAGE_ACTION}
+              runCompleteNotice={sideRunCompleteNotice}
+              runCompleteDurationText={null}
+              hasLiveOwnedExecution={liveOwnedExecutionThreads.has(sideChat.appChatId)}
+              ownedExecutionViews={ownedExecutionViewsByThreadId.get(sideChat.appChatId)}
+              onCancelOwnedExecution={handleCancelExecutionRun}
+              onResumeOwnedExecution={handleResumeExecutionRun}
+              currentChat={sideChat}
+              isGlobal={isGlobalChat(sideChat)}
+              currentRun={sideRun}
+              currentWorkspacePath={sideWorkspace?.path}
+              currentProviderLabel={getProviderLabel(sideProvider)}
+              currentProvider={sideProvider}
+              thinkingProviderLabel={sideThinkingProviderLabel}
+              thinkingProvider={sideThinkingProvider}
+              thinkingProviderClass={sideThinkingProviderClass}
+              thinkingModelBadge={sideThinkingModelBadge}
+              displayFileChangeSummaries={EMPTY_TRANSCRIPT_FILE_SUMMARIES}
+              fileChangeSummaryText=""
+              fileChangeShouldShowStats={false}
+              fileChangeDisplayAdds={0}
+              fileChangeDisplayDels={0}
+              chats={chats}
+              runningChatIds={runningChatIdsArray}
+              pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
+              pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
+              onRespondAgentApproval={handleAgentApprovalAction}
+              onPlanChoiceSubmit={NOOP_PLAN_CHOICE_SUBMIT}
+              pendingProposedPlan={null}
+              onProposedPlanApprove={NOOP_MESSAGE_ACTION}
+              onProposedPlanDismiss={NOOP_MESSAGE_ACTION}
+              onProposedPlanCustom={NOOP_PROPOSED_PLAN_CUSTOM}
+              onOpenSubThread={handleOpenCockpitThread}
+              onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
+              compactDensity={appearance.compactDensity}
+              liveActivityViewport={appearance.liveActivityViewport}
+              fanoutLaneLayout={appearance.fanoutLaneLayout}
+              onCopyMessage={handleCopyMessage}
+              onAddMessageToPrompt={handleSideTranscriptAddMessageToPrompt}
+              onDeleteMessage={handleSideTranscriptDeleteMessage}
+              onTogglePinMessage={handleSideTranscriptTogglePinMessage}
+              onMessageFeedback={handleSideTranscriptMessageFeedback}
+              onPromoteCollaboratorComment={handleSideTranscriptPromoteCollaboratorComment}
+              onPreviewImage={setPreviewChatMediaRef}
+              onDetachToPane={openMediaPane}
+              onOpenProjectReferenceCitation={onOpenProjectReferenceCitation}
+              jumpToMessageRequest={
+                transcriptJumpRequest?.chatId === sideChat.appChatId ? transcriptJumpRequest : null
+              }
+              onManualTranscriptJump={beginManualSideTranscriptJump}
+              onProgrammaticScrollWrite={markSideTranscriptProgrammaticScroll}
+              getUserScrollGestureLive={getSideTranscriptUserScrollGestureLive}
+              copiedId={copiedId}
+              copy={copy}
+              autoFollowRef={sideAutoFollowRef}
+              currency={displayCurrency}
+              currencyOverestimatePercent={overestimatePercent}
+              showRunCompleteSummary={settings?.showRunCompleteSummary}
+              collapseOlderRounds={settings?.ensembleCollapseOlderRounds}
+              providerRates={providerRates}
+            />}
+            {sideComposerCtx && <Composer {...sideComposerCtx} />}
+              </aside>
                   </div>
                 )}
 
@@ -2815,9 +2790,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   />
                 )}
 
-                {activeRightDockTab === 'references' &&
-                  isProjectReferencesPanelOpen &&
-                  (activeWorkProjectId ? (
+                {activeRightDockTab === 'references' && isProjectReferencesPanelOpen && (
+                  activeWorkProjectId ? (
                     <ProjectReferencesDockPanel
                       key={activeWorkProjectId}
                       projectId={activeWorkProjectId}
@@ -2843,7 +2817,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     />
                   ) : (
                     <WorkProjectReferencesEmptyShell />
-                  ))}
+                  )
+                )}
 
                 {activeRightDockTab === 'logins' && isWebSiteLoginsPanelOpen && (
                   <WebLoginsDockPanel />
@@ -2870,11 +2845,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 )}
 
                 {activeRightDockTab === 'terminal' && isTerminalDockAvailable && (
-                  <div
-                    className="workspace-terminal-split right-dock-terminal"
-                    role="region"
-                    aria-label="Gemini terminal output"
-                  >
+                  <div className="workspace-terminal-split right-dock-terminal" role="region" aria-label="Gemini terminal output">
                     <div className="gemini-terminal-header">
                       <div className="gemini-terminal-title">
                         <AppleTerminalIcon />
@@ -2914,16 +2885,11 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                           </div>
                         ))
                       ) : (
-                        <div className="gemini-terminal-empty">
-                          Awaiting Gemini terminal output.
-                        </div>
+                        <div className="gemini-terminal-empty">Awaiting Gemini terminal output.</div>
                       )}
                       <div ref={geminiTerminalEndRef} />
                     </div>
-                    <form
-                      className="gemini-terminal-input-row"
-                      onSubmit={handleGeminiTerminalSubmit}
-                    >
+                    <form className="gemini-terminal-input-row" onSubmit={handleGeminiTerminalSubmit}>
                       <span className="gemini-terminal-prompt">$</span>
                       <input
                         value={geminiTerminalInput}
@@ -2939,46 +2905,46 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 )}
 
                 {activeRightDockTab === 'inspector' && appearance.showInspector && (
-                  <Inspector
-                    rightTab={rightTab}
-                    activeDiff={activeDiff}
-                    refreshDiff={refreshDiff}
-                    currentWorkspace={currentWorkspace}
-                    diffView={diffView}
-                    setDiffView={setDiffView}
-                    runDiff={runDiff}
-                    workspaceRunDiffByPath={currentRun?.runDiffByPath}
-                    diffRefreshStatus={diffRefreshStatus}
-                    rawLogs={rawLogs}
-                    rawFilter={rawFilter}
-                    setRawFilter={setRawFilter}
-                    setRawLogs={(logs) =>
-                      setThreadRawLogs(
-                        currentChat?.appChatId || currentChatIdRef.current,
-                        logs as RawLogEntry[]
-                      )
-                    }
-                    rawLogsEndRef={rawLogsEndRef}
-                    workspacePath={
-                      rightTab === 'commits'
-                        ? commitsInspectorWorkspacePath ||
-                          currentGitPresentationPath ||
-                          currentGeminiWorktree?.effectivePath ||
-                          currentWorkspace?.path
-                        : (activeDiff as { workspacePath?: string } | null)?.workspacePath ||
-                          currentGeminiWorktree?.effectivePath ||
-                          currentWorkspace?.path
-                    }
-                    provider={currentProvider}
-                    currentChat={currentChat}
-                    chats={chats}
-                  />
+            <Inspector
+              rightTab={rightTab}
+              activeDiff={activeDiff}
+              refreshDiff={refreshDiff}
+              currentWorkspace={currentWorkspace}
+              diffView={diffView}
+              setDiffView={setDiffView}
+              runDiff={runDiff}
+              workspaceRunDiffByPath={currentRun?.runDiffByPath}
+              diffRefreshStatus={diffRefreshStatus}
+              rawLogs={rawLogs}
+              rawFilter={rawFilter}
+              setRawFilter={setRawFilter}
+              setRawLogs={(logs) =>
+                setThreadRawLogs(
+                  currentChat?.appChatId || currentChatIdRef.current,
+                  logs as RawLogEntry[]
+                )
+              }
+              rawLogsEndRef={rawLogsEndRef}
+              workspacePath={
+                rightTab === 'commits'
+                  ? commitsInspectorWorkspacePath ||
+                    currentGitPresentationPath ||
+                    currentGeminiWorktree?.effectivePath ||
+                    currentWorkspace?.path
+                  : (activeDiff as { workspacePath?: string } | null)?.workspacePath ||
+                    currentGeminiWorktree?.effectivePath ||
+                    currentWorkspace?.path
+              }
+              provider={currentProvider}
+              currentChat={currentChat}
+              chats={chats}
+            />
                 )}
               </div>
             </aside>
-          </>
-        )}
+            </>
+          )}
+        </div>
       </div>
-    </div>
   )
 }

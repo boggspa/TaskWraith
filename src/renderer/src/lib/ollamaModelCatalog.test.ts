@@ -24,8 +24,12 @@ describe('mergeOllamaModelCatalog', () => {
       id: 'minimax-m3:cloud',
       label: 'M3'
     })
-    expect(models.find((model) => model.id === 'deepseek-v4-pro:cloud')?.label).toBe('V4 Pro')
-    expect(models.find((model) => model.id === 'deepseek-v4-flash:cloud')?.label).toBe('V4 Flash')
+    expect(models.find((model) => model.id === 'deepseek-v4-pro:cloud')?.label).toBe(
+      'V4 Pro'
+    )
+    expect(models.find((model) => model.id === 'deepseek-v4-flash:cloud')?.label).toBe(
+      'V4 Flash'
+    )
     expect(models.find((model) => model.id === 'gemma4:cloud')?.label).toBe('Gemma 4')
   })
 
@@ -37,7 +41,9 @@ describe('mergeOllamaModelCatalog', () => {
     ])
 
     expect(
-      models.filter((model) => ollamaModelCatalogKey(model.id) === 'mistral-medium-3.5:128b')
+      models.filter(
+        (model) => ollamaModelCatalogKey(model.id) === 'mistral-medium-3.5:128b'
+      )
     ).toHaveLength(1)
     expect(
       models.filter((model) => ollamaModelCatalogKey(model.id) === 'granite4.2:8b')
@@ -50,7 +56,9 @@ describe('mergeOllamaModelCatalog', () => {
   it('keeps curated human labels when live Ollama returns raw model tags', () => {
     const models = mergeOllamaModelCatalog([{ id: 'lfm2.5:8b', label: 'lfm2.5:8b' }])
 
-    expect(models.find((model) => model.id === 'lfm2.5:8b')?.label).toBe('LFM 2.5 (8B-A1B)')
+    expect(models.find((model) => model.id === 'lfm2.5:8b')?.label).toBe(
+      'LFM 2.5 (8B-A1B)'
+    )
   })
 
   it('keeps the curated Laguna label when live Ollama returns the raw Q8 tag', () => {
@@ -64,9 +72,13 @@ describe('mergeOllamaModelCatalog', () => {
   })
 
   it('keeps the curated Qwen 3.8 MLX label when live Ollama returns the raw tag', () => {
-    const models = mergeOllamaModelCatalog([{ id: 'qwen3.8:27b-mlx', label: 'qwen3.8:27b-mlx' }])
+    const models = mergeOllamaModelCatalog([
+      { id: 'qwen3.8:27b-mlx', label: 'qwen3.8:27b-mlx' }
+    ])
 
-    expect(models.find((model) => model.id === 'qwen3.8:27b-mlx')?.label).toBe('Qwen 3.8 (27B-MLX)')
+    expect(models.find((model) => model.id === 'qwen3.8:27b-mlx')?.label).toBe(
+      'Qwen 3.8 (27B-MLX)'
+    )
   })
 
   it('keeps the curated Muse Glimmer MLX label when live Ollama returns the raw tag', () => {
@@ -113,8 +125,12 @@ describe('mergeOllamaModelCatalog', () => {
       { id: 'llama3.2:3b', label: 'llama3.2:3b' }
     ])
 
-    expect(models.find((model) => model.id === 'llama3.1:8b')?.label).toBe('Llama 3.1 (8B Param)')
-    expect(models.find((model) => model.id === 'deepseek-r1:8b')?.label).toBe('R1 (8B Param)')
+    expect(models.find((model) => model.id === 'llama3.1:8b')?.label).toBe(
+      'Llama 3.1 (8B Param)'
+    )
+    expect(models.find((model) => model.id === 'deepseek-r1:8b')?.label).toBe(
+      'R1 (8B Param)'
+    )
     expect(models.filter((model) => ollamaModelCatalogKey(model.id) === 'rnj-1')).toHaveLength(1)
     expect(models.find((model) => model.id === 'glm-4.7-flash:q4_K_M')?.label).toBe(
       'GLM-4.7-Flash (30B-A3B Q4)'
@@ -122,6 +138,8 @@ describe('mergeOllamaModelCatalog', () => {
     expect(models.find((model) => model.id === 'north-mini-code-1.0:q4_K_M')?.label).toBe(
       'North Mini Code 1.0 (30B-A3B Q4)'
     )
-    expect(models.find((model) => model.id === 'llama3.2:3b')?.label).toBe('Llama 3.2 (3B Param)')
+    expect(models.find((model) => model.id === 'llama3.2:3b')?.label).toBe(
+      'Llama 3.2 (3B Param)'
+    )
   })
 })

@@ -88,11 +88,7 @@
 }
 
 .workspace-terminal-open .composer-area {
-  bottom: calc(
-    var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) +
-      var(--composer-bottom-gap) + var(--participant-filter-dock-reserve, 0px) +
-      env(safe-area-inset-bottom, 0px)
-  );
+  bottom: calc(var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) + var(--composer-bottom-gap) + var(--participant-filter-dock-reserve, 0px) + env(safe-area-inset-bottom, 0px));
 }
 
 .welcome-mode .composer-area {
@@ -405,9 +401,7 @@
   font-size: var(--font-size-xs);
   padding: 4px 12px;
   cursor: pointer;
-  transition:
-    background 0.16s ease,
-    border-color 0.16s ease;
+  transition: background 0.16s ease, border-color 0.16s ease;
 }
 .ensemble-roster-preset-picker-chip:hover:not(:disabled) {
   background: color-mix(in srgb, currentColor 8%, var(--surface-elevated, var(--background)));
@@ -718,9 +712,7 @@
   font-size: var(--font-size-xs);
   padding: 4px 12px;
   cursor: pointer;
-  transition:
-    background 0.16s ease,
-    border-color 0.16s ease;
+  transition: background 0.16s ease, border-color 0.16s ease;
 }
 .welcome-workspace-picker-chip:hover {
   background: color-mix(in srgb, currentColor 8%, var(--surface-elevated, var(--background)));
@@ -865,7 +857,7 @@
 .welcome-workspace-popover--portaled > .welcome-workspace-popover-actions {
   flex: 0 0 auto;
 }
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .welcome-workspace-popover {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .welcome-workspace-popover {
   background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
   box-shadow: var(--tw-popover-material-shadow);
@@ -1419,9 +1411,9 @@
 .welcome-ensemble-shell-count-1 {
   /* (intentionally empty — matches the count-N case) */
 }
-[data-theme='light'] .welcome-ensemble-shell,
-[data-theme='mist'] .welcome-ensemble-shell,
-[data-theme='sage'] .welcome-ensemble-shell {
+[data-theme="light"] .welcome-ensemble-shell,
+[data-theme="mist"] .welcome-ensemble-shell,
+[data-theme="sage"] .welcome-ensemble-shell {
   /* (intentionally empty — matches dark-theme satellite shape) */
 }
 
@@ -1431,10 +1423,8 @@
  * fallback provider. */
 .workspace-name-glow {
   text-shadow:
-    0 0 12px
-      color-mix(in srgb, var(--workspace-name-glow-color, var(--text-primary)) 38%, transparent),
-    0 0 24px
-      color-mix(in srgb, var(--workspace-name-glow-color, var(--text-primary)) 22%, transparent);
+    0 0 12px color-mix(in srgb, var(--workspace-name-glow-color, var(--text-primary)) 38%, transparent),
+    0 0 24px color-mix(in srgb, var(--workspace-name-glow-color, var(--text-primary)) 22%, transparent);
 }
 .workspace-name-glow.provider-codex {
   --workspace-name-glow-color: var(--provider-codex-color);
@@ -1471,16 +1461,14 @@
  * workflow, and Ensemble greetings use it for their emphasized name. Keep the
  * provider identity in the shadow instead of washing the glyph fill toward
  * white on an already-light surface. */
-:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
   .workspace-name-glow {
   color: var(--text-primary);
   text-shadow:
-    0 0 8px
-      color-mix(in srgb, var(--workspace-name-glow-color, var(--text-primary)) 30%, transparent),
-    0 0 18px
-      color-mix(in srgb, var(--workspace-name-glow-color, var(--text-primary)) 16%, transparent);
+    0 0 8px color-mix(in srgb, var(--workspace-name-glow-color, var(--text-primary)) 30%, transparent),
+    0 0 18px color-mix(in srgb, var(--workspace-name-glow-color, var(--text-primary)) 16%, transparent);
 }
-:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
   .workspace-name-glow.workspace-name-glow-ensemble {
   color: color-mix(in srgb, var(--text-primary) 94%, #ffffff 6%);
   text-shadow:
@@ -1497,7 +1485,7 @@
     0 0 16px rgba(255, 255, 255, 0.22),
     0 0 28px color-mix(in srgb, var(--text-primary) 18%, transparent);
 }
-:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
   .app-transcript.chat-kind-ensemble
   .welcome-hero
   h1
@@ -1570,25 +1558,20 @@
  * still read as dark gray cards with washed-out text. Pin to
  * the surface-token family used by other light-mode chrome so
  * the cards land as white-ish on the light backdrop. */
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .welcome-suggestion-btn {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .welcome-suggestion-btn {
   background: var(--surface-1);
   border-color: var(--surface-border);
   color: var(--surface-text-muted, rgba(29, 29, 31, 0.62));
 }
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .welcome-suggestion-btn:hover {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .welcome-suggestion-btn:hover {
   background: var(--surface-2);
-  border-color: color-mix(
-    in srgb,
-    var(--surface-text, rgba(29, 29, 31, 0.86)) 24%,
-    var(--surface-border)
-  );
+  border-color: color-mix(in srgb, var(--surface-text, rgba(29, 29, 31, 0.86)) 24%, var(--surface-border));
   color: var(--surface-text, rgba(29, 29, 31, 0.86));
 }
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .welcome-suggestion-label {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .welcome-suggestion-label {
   color: var(--surface-text, rgba(29, 29, 31, 0.86));
 }
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .welcome-suggestion-description {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .welcome-suggestion-description {
   color: var(--surface-text-muted, rgba(29, 29, 31, 0.62));
 }
 
@@ -1648,21 +1631,9 @@
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 54%, var(--text-primary) 16%);
   background:
-    radial-gradient(
-      circle at 14% 0%,
-      color-mix(in srgb, var(--accent) 18%, transparent) 0,
-      transparent 38%
-    ),
-    radial-gradient(
-      circle at 92% 18%,
-      color-mix(in srgb, var(--text-primary) 10%, transparent) 0,
-      transparent 34%
-    ),
-    linear-gradient(
-      145deg,
-      color-mix(in srgb, var(--panel-elevated-bg) 58%, transparent),
-      color-mix(in srgb, var(--panel-bg) 36%, transparent)
-    );
+    radial-gradient(circle at 14% 0%, color-mix(in srgb, var(--accent) 18%, transparent) 0, transparent 38%),
+    radial-gradient(circle at 92% 18%, color-mix(in srgb, var(--text-primary) 10%, transparent) 0, transparent 34%),
+    linear-gradient(145deg, color-mix(in srgb, var(--panel-elevated-bg) 58%, transparent), color-mix(in srgb, var(--panel-bg) 36%, transparent));
   backdrop-filter: blur(18px) saturate(1.18);
   -webkit-backdrop-filter: blur(18px) saturate(1.18);
   box-shadow:
@@ -1680,17 +1651,13 @@
 }
 
 .welcome-usage-dashboard::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 1px;
   border-radius: 11px;
   pointer-events: none;
   background:
-    linear-gradient(
-      115deg,
-      color-mix(in srgb, var(--text-primary) 12%, transparent),
-      transparent 32%
-    ),
+    linear-gradient(115deg, color-mix(in srgb, var(--text-primary) 12%, transparent), transparent 32%),
     linear-gradient(270deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 44%);
   opacity: 0.72;
   z-index: -1;
@@ -1842,17 +1809,10 @@
   line-height: 1.1;
   padding: 5px 9px;
   cursor: pointer;
-  transition:
-    background-color 140ms ease,
-    color 140ms ease,
-    box-shadow 140ms ease;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
 }
 .welcome-usage-range-btn.active {
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--text-primary) 15%, transparent),
-    color-mix(in srgb, var(--accent) 10%, transparent)
-  );
+  background: linear-gradient(180deg, color-mix(in srgb, var(--text-primary) 15%, transparent), color-mix(in srgb, var(--accent) 10%, transparent));
   color: var(--text-primary);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 22%, transparent),
@@ -1898,11 +1858,7 @@
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 42%, transparent);
   background:
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--text-primary) 8%, transparent),
-      color-mix(in srgb, var(--accent) 4%, transparent)
-    ),
+    linear-gradient(160deg, color-mix(in srgb, var(--text-primary) 8%, transparent), color-mix(in srgb, var(--accent) 4%, transparent)),
     color-mix(in srgb, var(--panel-bg) 18%, transparent);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 14%, transparent),
@@ -2000,11 +1956,7 @@
   border: 1px solid color-mix(in srgb, var(--panel-border) 38%, transparent);
   overflow: hidden; /* clip the rail to the chip's rounded corners */
   background:
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--text-primary) 12%, transparent),
-      color-mix(in srgb, var(--accent) 6%, transparent)
-    ),
+    linear-gradient(160deg, color-mix(in srgb, var(--text-primary) 12%, transparent), color-mix(in srgb, var(--accent) 6%, transparent)),
     color-mix(in srgb, var(--panel-bg) 18%, transparent);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 16%, transparent),
@@ -2021,11 +1973,7 @@
   padding: 10px 14px;
   border-radius: 10px;
   background:
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--text-primary) 18%, transparent),
-      color-mix(in srgb, var(--accent) 12%, transparent)
-    ),
+    linear-gradient(160deg, color-mix(in srgb, var(--text-primary) 18%, transparent), color-mix(in srgb, var(--accent) 12%, transparent)),
     color-mix(in srgb, var(--panel-bg) 22%, transparent);
   border-color: color-mix(in srgb, var(--panel-border) 52%, transparent);
   box-shadow:
@@ -2171,20 +2119,8 @@
   overflow-y: auto;
   /* Subtle inner shadow at top/bottom of the scrollable area so
    * the user can tell when there's more to scroll. */
-  mask-image: linear-gradient(
-    to bottom,
-    transparent,
-    black 10px,
-    black calc(100% - 10px),
-    transparent
-  );
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    transparent,
-    black 10px,
-    black calc(100% - 10px),
-    transparent
-  );
+  mask-image: linear-gradient(to bottom, transparent, black 10px, black calc(100% - 10px), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black 10px, black calc(100% - 10px), transparent);
   padding: 4px 2px;
 }
 .welcome-usage-workspace-card {
@@ -2195,15 +2131,9 @@
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 38%, transparent);
   background:
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--text-primary) 10%, transparent),
-      color-mix(in srgb, var(--accent) 5%, transparent)
-    ),
+    linear-gradient(160deg, color-mix(in srgb, var(--text-primary) 10%, transparent), color-mix(in srgb, var(--accent) 5%, transparent)),
     color-mix(in srgb, var(--panel-bg) 22%, transparent);
-  transition:
-    border-color 160ms ease,
-    background 160ms ease;
+  transition: border-color 160ms ease, background 160ms ease;
 }
 .welcome-usage-workspace-card:hover {
   border-color: color-mix(in srgb, var(--accent-color) 55%, transparent);
@@ -2354,15 +2284,9 @@
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 38%, transparent);
   background:
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--text-primary) 10%, transparent),
-      color-mix(in srgb, var(--accent) 5%, transparent)
-    ),
+    linear-gradient(160deg, color-mix(in srgb, var(--text-primary) 10%, transparent), color-mix(in srgb, var(--accent) 5%, transparent)),
     color-mix(in srgb, var(--panel-bg) 22%, transparent);
-  transition:
-    border-color 160ms ease,
-    background 160ms ease;
+  transition: border-color 160ms ease, background 160ms ease;
 }
 .welcome-usage-provider-card.provider-codex:hover {
   border-color: color-mix(in srgb, var(--provider-codex-color) 55%, transparent);
@@ -2509,96 +2433,45 @@
   );
 }
 .welcome-usage-provider-card-fill.provider-claude {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--provider-claude-color) 70%, transparent),
-    var(--provider-claude-color)
-  );
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-claude-color) 70%, transparent), var(--provider-claude-color));
 }
 .welcome-usage-provider-card-fill.provider-gemini {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--provider-gemini-color) 70%, transparent),
-    var(--provider-gemini-color)
-  );
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-gemini-color) 70%, transparent), var(--provider-gemini-color));
 }
 .welcome-usage-provider-card-fill.provider-kimi {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--provider-kimi-color) 70%, transparent),
-    var(--provider-kimi-color)
-  );
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-kimi-color) 70%, transparent), var(--provider-kimi-color));
 }
 .welcome-usage-provider-card-fill.provider-grok {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--provider-grok-color) 70%, transparent),
-    var(--provider-grok-color)
-  );
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-grok-color) 70%, transparent), var(--provider-grok-color));
 }
 .welcome-usage-provider-card-fill.provider-cursor {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--provider-cursor-color) 70%, transparent),
-    var(--provider-cursor-color)
-  );
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-cursor-color) 70%, transparent), var(--provider-cursor-color));
 }
 .welcome-usage-provider-card-fill.provider-ollama {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--provider-ollama-color) 70%, transparent),
-    var(--provider-ollama-color)
-  );
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-ollama-color) 70%, transparent), var(--provider-ollama-color));
 }
 .welcome-usage-provider-card-fill.provider-antigravity {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--provider-antigravity-color) 70%, transparent),
-    var(--provider-antigravity-color)
-  );
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-antigravity-color) 70%, transparent), var(--provider-antigravity-color));
 }
 .welcome-usage-provider-card-fill.provider-pi {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--provider-pi-color) 70%, transparent),
-    var(--provider-pi-color)
-  );
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-pi-color) 70%, transparent), var(--provider-pi-color));
 }
 .welcome-usage-provider-card-fill.provider-openrouter {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--provider-openrouter-color) 70%, transparent),
-    var(--provider-openrouter-color)
-  );
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-openrouter-color) 70%, transparent), var(--provider-openrouter-color));
 }
 .welcome-usage-provider-card-fill.provider-thinkingmachines {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--provider-thinkingmachines-color) 70%, transparent),
-    var(--provider-thinkingmachines-color)
-  );
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-thinkingmachines-color) 70%, transparent), var(--provider-thinkingmachines-color));
 }
 .welcome-usage-provider-card-fill.provider-mistral {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--provider-mistral-color) 70%, transparent),
-    var(--provider-mistral-color)
-  );
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-mistral-color) 70%, transparent), var(--provider-mistral-color));
 }
 .welcome-usage-provider-card-fill.provider-muse {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--provider-muse-color) 70%, transparent),
-    var(--provider-muse-color)
-  );
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-muse-color) 70%, transparent), var(--provider-muse-color));
 }
 .welcome-usage-provider-card-fill.provider-devin {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--provider-devin-color) 70%, transparent),
-    var(--provider-devin-color)
-  );
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-devin-color) 70%, transparent), var(--provider-devin-color));
 }
+
 
 /* Giant 24H wall-time timecode. The single dominant glyph of
  * the Providers tab — monospace tabular-nums so the digits
@@ -2614,11 +2487,7 @@
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 42%, transparent);
   background:
-    radial-gradient(
-      circle at 50% 0%,
-      color-mix(in srgb, var(--accent-color) 12%, transparent),
-      transparent 60%
-    ),
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--accent-color) 12%, transparent), transparent 60%),
     color-mix(in srgb, var(--panel-bg) 26%, transparent);
 }
 .welcome-usage-providers-timecode-label {
@@ -2703,16 +2572,8 @@
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 42%, transparent);
   background:
-    radial-gradient(
-      circle at 16% 0%,
-      color-mix(in srgb, var(--agents-champion-accent, var(--accent)) 18%, transparent),
-      transparent 62%
-    ),
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--text-primary) 10%, transparent),
-      color-mix(in srgb, var(--agents-champion-accent, var(--accent)) 5%, transparent)
-    ),
+    radial-gradient(circle at 16% 0%, color-mix(in srgb, var(--agents-champion-accent, var(--accent)) 18%, transparent), transparent 62%),
+    linear-gradient(160deg, color-mix(in srgb, var(--text-primary) 10%, transparent), color-mix(in srgb, var(--agents-champion-accent, var(--accent)) 5%, transparent)),
     color-mix(in srgb, var(--panel-bg) 22%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 16%, transparent);
 }
@@ -2736,8 +2597,7 @@
   padding: 1px 6px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--agents-champion-accent, var(--accent)) 24%, transparent);
-  box-shadow: inset 0 0 0 1px
-    color-mix(in srgb, var(--agents-champion-accent, var(--accent)) 45%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--agents-champion-accent, var(--accent)) 45%, transparent);
   color: var(--text-primary);
   font-size: var(--font-size-xs);
   font-weight: 700;
@@ -2764,11 +2624,7 @@
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 42%, transparent);
   background:
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--text-primary) 8%, transparent),
-      color-mix(in srgb, var(--accent) 4%, transparent)
-    ),
+    linear-gradient(160deg, color-mix(in srgb, var(--text-primary) 8%, transparent), color-mix(in srgb, var(--accent) 4%, transparent)),
     color-mix(in srgb, var(--panel-bg) 18%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 14%, transparent);
   overflow: hidden;
@@ -2814,11 +2670,7 @@
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 42%, transparent);
   background:
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--text-primary) 8%, transparent),
-      color-mix(in srgb, var(--accent) 4%, transparent)
-    ),
+    linear-gradient(160deg, color-mix(in srgb, var(--text-primary) 8%, transparent), color-mix(in srgb, var(--accent) 4%, transparent)),
     color-mix(in srgb, var(--panel-bg) 18%, transparent);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 14%, transparent),
@@ -2901,11 +2753,8 @@
   aspect-ratio: 1;
   min-width: 0;
   border-radius: 4px;
-  background: linear-gradient(
-    145deg,
-    color-mix(in srgb, var(--text-primary) 9%, transparent),
-    color-mix(in srgb, var(--panel-border) 24%, transparent)
-  );
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--text-primary) 9%, transparent), color-mix(in srgb, var(--panel-border) 24%, transparent));
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 16%, transparent),
     inset 0 0 0 1px color-mix(in srgb, var(--panel-border) 48%, transparent);
@@ -2913,58 +2762,26 @@
 
 .welcome-usage-cell.level-1 {
   background:
-    radial-gradient(
-      circle at 32% 24%,
-      color-mix(in srgb, var(--text-primary) 24%, transparent),
-      transparent 42%
-    ),
-    linear-gradient(
-      145deg,
-      color-mix(in srgb, var(--accent) 24%, var(--panel-bg)),
-      color-mix(in srgb, var(--accent) 14%, transparent)
-    );
+    radial-gradient(circle at 32% 24%, color-mix(in srgb, var(--text-primary) 24%, transparent), transparent 42%),
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 24%, var(--panel-bg)), color-mix(in srgb, var(--accent) 14%, transparent));
 }
 
 .welcome-usage-cell.level-2 {
   background:
-    radial-gradient(
-      circle at 30% 20%,
-      color-mix(in srgb, var(--text-primary) 30%, transparent),
-      transparent 42%
-    ),
-    linear-gradient(
-      145deg,
-      color-mix(in srgb, var(--accent) 34%, var(--panel-bg)),
-      color-mix(in srgb, var(--accent) 22%, var(--text-primary) 4%)
-    );
+    radial-gradient(circle at 30% 20%, color-mix(in srgb, var(--text-primary) 30%, transparent), transparent 42%),
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 34%, var(--panel-bg)), color-mix(in srgb, var(--accent) 22%, var(--text-primary) 4%));
 }
 
 .welcome-usage-cell.level-3 {
   background:
-    radial-gradient(
-      circle at 28% 18%,
-      color-mix(in srgb, var(--text-primary) 36%, transparent),
-      transparent 42%
-    ),
-    linear-gradient(
-      145deg,
-      color-mix(in srgb, var(--accent) 44%, var(--text-primary) 8%),
-      color-mix(in srgb, var(--accent) 32%, var(--panel-bg))
-    );
+    radial-gradient(circle at 28% 18%, color-mix(in srgb, var(--text-primary) 36%, transparent), transparent 42%),
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 44%, var(--text-primary) 8%), color-mix(in srgb, var(--accent) 32%, var(--panel-bg)));
 }
 
 .welcome-usage-cell.level-4 {
   background:
-    radial-gradient(
-      circle at 26% 16%,
-      color-mix(in srgb, var(--text-primary) 42%, transparent),
-      transparent 42%
-    ),
-    linear-gradient(
-      145deg,
-      color-mix(in srgb, var(--accent) 58%, var(--text-primary) 12%),
-      color-mix(in srgb, var(--accent) 38%, var(--panel-bg))
-    );
+    radial-gradient(circle at 26% 16%, color-mix(in srgb, var(--text-primary) 42%, transparent), transparent 42%),
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 58%, var(--text-primary) 12%), color-mix(in srgb, var(--accent) 38%, var(--panel-bg)));
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 24%, transparent),
     inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent),
@@ -3002,11 +2819,8 @@
   margin: 10px 0 0;
   border-radius: 6px;
   padding: 3px;
-  background: linear-gradient(
-    145deg,
-    color-mix(in srgb, var(--text-primary) 4%, transparent),
-    transparent
-  );
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--text-primary) 4%, transparent), transparent);
 }
 
 .welcome-usage-day-cell,
@@ -3015,11 +2829,8 @@
   width: var(--activity-cell-size);
   height: var(--activity-cell-size);
   border-radius: 3px;
-  background: linear-gradient(
-    145deg,
-    color-mix(in srgb, var(--text-primary) 6%, transparent),
-    color-mix(in srgb, var(--panel-border) 18%, transparent)
-  );
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--text-primary) 6%, transparent), color-mix(in srgb, var(--panel-border) 18%, transparent));
   box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--panel-border) 32%, transparent);
   transition: filter 120ms ease;
 }
@@ -3133,11 +2944,12 @@
    * .provider-gemini / .provider-codex / etc. class lower in the
    * file). A tiny gradient + inset highlight keeps the meter from
    * looking flat against the deep-dark dashboard background. */
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, currentColor 92%, var(--text-primary) 8%),
-    color-mix(in srgb, currentColor 70%, transparent)
-  );
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, currentColor 92%, var(--text-primary) 8%),
+      color-mix(in srgb, currentColor 70%, transparent)
+    );
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 22%, transparent);
   transition: width 220ms ease;
 }
@@ -3174,11 +2986,7 @@
   border-radius: 3px;
   color: var(--accent);
   background:
-    radial-gradient(
-      circle at 32% 24%,
-      color-mix(in srgb, var(--text-primary) 36%, transparent),
-      transparent 44%
-    ),
+    radial-gradient(circle at 32% 24%, color-mix(in srgb, var(--text-primary) 36%, transparent), transparent 44%),
     currentColor;
   box-shadow: 0 0 10px color-mix(in srgb, currentColor 34%, transparent);
 }
@@ -3242,49 +3050,31 @@
  * rule below; without it the meters fell back to the default (near-white). */
 .welcome-usage-model-dot.provider-gemini,
 .welcome-usage-model-meter-fill.provider-gemini,
-.welcome-usage-bar-segment.provider-gemini {
-  color: var(--provider-gemini-color);
-}
+.welcome-usage-bar-segment.provider-gemini { color: var(--provider-gemini-color); }
 .welcome-usage-model-dot.provider-codex,
 .welcome-usage-model-meter-fill.provider-codex,
-.welcome-usage-bar-segment.provider-codex {
-  color: var(--provider-codex-color);
-}
+.welcome-usage-bar-segment.provider-codex { color: var(--provider-codex-color); }
 .welcome-usage-model-dot.provider-claude,
 .welcome-usage-model-meter-fill.provider-claude,
-.welcome-usage-bar-segment.provider-claude {
-  color: var(--provider-claude-color);
-}
+.welcome-usage-bar-segment.provider-claude { color: var(--provider-claude-color); }
 .welcome-usage-model-dot.provider-kimi,
 .welcome-usage-model-meter-fill.provider-kimi,
-.welcome-usage-bar-segment.provider-kimi {
-  color: var(--provider-kimi-color);
-}
+.welcome-usage-bar-segment.provider-kimi { color: var(--provider-kimi-color); }
 .welcome-usage-model-dot.provider-grok,
 .welcome-usage-model-meter-fill.provider-grok,
-.welcome-usage-bar-segment.provider-grok {
-  color: var(--provider-grok-color);
-}
+.welcome-usage-bar-segment.provider-grok { color: var(--provider-grok-color); }
 .welcome-usage-model-dot.provider-cursor,
 .welcome-usage-model-meter-fill.provider-cursor,
-.welcome-usage-bar-segment.provider-cursor {
-  color: var(--provider-cursor-color);
-}
+.welcome-usage-bar-segment.provider-cursor { color: var(--provider-cursor-color); }
 .welcome-usage-model-dot.provider-ollama,
 .welcome-usage-model-meter-fill.provider-ollama,
-.welcome-usage-bar-segment.provider-ollama {
-  color: var(--provider-ollama-color);
-}
+.welcome-usage-bar-segment.provider-ollama { color: var(--provider-ollama-color); }
 .welcome-usage-model-dot.provider-antigravity,
 .welcome-usage-model-meter-fill.provider-antigravity,
-.welcome-usage-bar-segment.provider-antigravity {
-  color: var(--provider-antigravity-color);
-}
+.welcome-usage-bar-segment.provider-antigravity { color: var(--provider-antigravity-color); }
 .welcome-usage-model-dot.provider-pi,
 .welcome-usage-model-meter-fill.provider-pi,
-.welcome-usage-bar-segment.provider-pi {
-  color: var(--provider-pi-color);
-}
+.welcome-usage-bar-segment.provider-pi { color: var(--provider-pi-color); }
 
 /* Ollama-backed display brands. Runtime provider stays `ollama`, but the
  * Model Comparisons rows wear their spoofed upstream brand hue (mirrors the
@@ -3293,139 +3083,91 @@
  * generic Ollama seat hue. Brand tokens live in styles/theme.css. */
 .welcome-usage-model-dot.provider-alibaba,
 .welcome-usage-model-meter-fill.provider-alibaba,
-.welcome-usage-bar-segment.provider-alibaba {
-  color: var(--provider-alibaba-color);
-}
+.welcome-usage-bar-segment.provider-alibaba { color: var(--provider-alibaba-color); }
 .welcome-usage-model-dot.provider-deep-reinforce,
 .welcome-usage-model-meter-fill.provider-deep-reinforce,
-.welcome-usage-bar-segment.provider-deep-reinforce {
-  color: var(--provider-deep-reinforce-color);
-}
+.welcome-usage-bar-segment.provider-deep-reinforce { color: var(--provider-deep-reinforce-color); }
 .welcome-usage-model-dot.provider-google,
 .welcome-usage-model-meter-fill.provider-google,
-.welcome-usage-bar-segment.provider-google {
-  color: var(--provider-google-color);
-}
+.welcome-usage-bar-segment.provider-google { color: var(--provider-google-color); }
 .welcome-usage-model-dot.provider-ibm,
 .welcome-usage-model-meter-fill.provider-ibm,
-.welcome-usage-bar-segment.provider-ibm {
-  color: var(--provider-ibm-color);
-}
+.welcome-usage-bar-segment.provider-ibm { color: var(--provider-ibm-color); }
 .welcome-usage-model-dot.provider-liquid,
 .welcome-usage-model-meter-fill.provider-liquid,
-.welcome-usage-bar-segment.provider-liquid {
-  color: var(--provider-liquid-color);
-}
+.welcome-usage-bar-segment.provider-liquid { color: var(--provider-liquid-color); }
 .welcome-usage-model-dot.provider-meta,
 .welcome-usage-model-meter-fill.provider-meta,
-.welcome-usage-bar-segment.provider-meta {
-  color: var(--provider-meta-color);
-}
+.welcome-usage-bar-segment.provider-meta { color: var(--provider-meta-color); }
 .welcome-usage-model-dot.provider-cohere,
 .welcome-usage-model-meter-fill.provider-cohere,
-.welcome-usage-bar-segment.provider-cohere {
-  color: var(--provider-cohere-color);
-}
+.welcome-usage-bar-segment.provider-cohere { color: var(--provider-cohere-color); }
 .welcome-usage-model-dot.provider-essential,
 .welcome-usage-model-meter-fill.provider-essential,
-.welcome-usage-bar-segment.provider-essential {
-  color: var(--provider-essential-color);
-}
+.welcome-usage-bar-segment.provider-essential { color: var(--provider-essential-color); }
 .welcome-usage-model-dot.provider-nvidia,
 .welcome-usage-model-meter-fill.provider-nvidia,
-.welcome-usage-bar-segment.provider-nvidia {
-  color: var(--provider-nvidia-color);
-}
+.welcome-usage-bar-segment.provider-nvidia { color: var(--provider-nvidia-color); }
 .welcome-usage-model-dot.provider-openai,
 .welcome-usage-model-meter-fill.provider-openai,
-.welcome-usage-bar-segment.provider-openai {
-  color: var(--provider-openai-color);
-}
+.welcome-usage-bar-segment.provider-openai { color: var(--provider-openai-color); }
 .welcome-usage-model-dot.provider-openbmb,
 .welcome-usage-model-meter-fill.provider-openbmb,
-.welcome-usage-bar-segment.provider-openbmb {
-  color: var(--provider-openbmb-color);
-}
+.welcome-usage-bar-segment.provider-openbmb { color: var(--provider-openbmb-color); }
 .welcome-usage-model-dot.provider-poolside,
 .welcome-usage-model-meter-fill.provider-poolside,
-.welcome-usage-bar-segment.provider-poolside {
-  color: var(--provider-poolside-color);
-}
+.welcome-usage-bar-segment.provider-poolside { color: var(--provider-poolside-color); }
 /* Pi BYOK upstreams. */
 .welcome-usage-model-dot.provider-qwen,
 .welcome-usage-model-meter-fill.provider-qwen,
-.welcome-usage-bar-segment.provider-qwen {
-  color: var(--provider-qwen-color);
-}
+.welcome-usage-bar-segment.provider-qwen { color: var(--provider-qwen-color); }
 .welcome-usage-model-dot.provider-openrouter,
 .welcome-usage-model-meter-fill.provider-openrouter,
-.welcome-usage-bar-segment.provider-openrouter {
-  color: var(--provider-openrouter-color);
-}
+.welcome-usage-bar-segment.provider-openrouter { color: var(--provider-openrouter-color); }
 .welcome-usage-model-dot.provider-thinkingmachines,
 .welcome-usage-model-meter-fill.provider-thinkingmachines,
-.welcome-usage-bar-segment.provider-thinkingmachines {
-  color: var(--provider-thinkingmachines-color);
-}
+.welcome-usage-bar-segment.provider-thinkingmachines { color: var(--provider-thinkingmachines-color); }
 .welcome-usage-model-dot.provider-deepseek,
 .welcome-usage-model-meter-fill.provider-deepseek,
-.welcome-usage-bar-segment.provider-deepseek {
-  color: var(--provider-deepseek-color);
-}
+.welcome-usage-bar-segment.provider-deepseek { color: var(--provider-deepseek-color); }
 .welcome-usage-model-dot.provider-zai,
 .welcome-usage-model-meter-fill.provider-zai,
-.welcome-usage-bar-segment.provider-zai {
-  color: var(--provider-zai-color);
-}
+.welcome-usage-bar-segment.provider-zai { color: var(--provider-zai-color); }
 .welcome-usage-model-dot.provider-minimax,
 .welcome-usage-model-meter-fill.provider-minimax,
-.welcome-usage-bar-segment.provider-minimax {
-  color: var(--provider-minimax-color);
-}
+.welcome-usage-bar-segment.provider-minimax { color: var(--provider-minimax-color); }
 .welcome-usage-model-dot.provider-mistral,
 .welcome-usage-model-meter-fill.provider-mistral,
-.welcome-usage-bar-segment.provider-mistral {
-  color: var(--provider-mistral-color);
-}
+.welcome-usage-bar-segment.provider-mistral { color: var(--provider-mistral-color); }
 .welcome-usage-model-dot.provider-muse,
 .welcome-usage-model-meter-fill.provider-muse,
-.welcome-usage-bar-segment.provider-muse {
-  color: var(--provider-muse-color);
-}
+.welcome-usage-bar-segment.provider-muse { color: var(--provider-muse-color); }
 .welcome-usage-model-dot.provider-devin,
 .welcome-usage-model-meter-fill.provider-devin,
-.welcome-usage-bar-segment.provider-devin {
-  color: var(--provider-devin-color);
-}
+.welcome-usage-bar-segment.provider-devin { color: var(--provider-devin-color); }
 
 .welcome-usage-model-dot.provider-groq,
 .welcome-usage-model-meter-fill.provider-groq,
-.welcome-usage-bar-segment.provider-groq {
-  color: var(--provider-groq-color);
-}
+.welcome-usage-bar-segment.provider-groq { color: var(--provider-groq-color); }
 .welcome-usage-model-dot.provider-cerebras,
 .welcome-usage-model-meter-fill.provider-cerebras,
-.welcome-usage-bar-segment.provider-cerebras {
-  color: var(--provider-cerebras-color);
-}
+.welcome-usage-bar-segment.provider-cerebras { color: var(--provider-cerebras-color); }
 .welcome-usage-model-dot.provider-xiaomi,
 .welcome-usage-model-meter-fill.provider-xiaomi,
-.welcome-usage-bar-segment.provider-xiaomi {
-  color: var(--provider-xiaomi-color);
-}
+.welcome-usage-bar-segment.provider-xiaomi { color: var(--provider-xiaomi-color); }
 
-[data-reduce-transparency='true'] .welcome-usage-dashboard {
+[data-reduce-transparency="true"] .welcome-usage-dashboard {
   background: color-mix(in srgb, var(--panel-bg-solid) 86%, var(--accent) 6%);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-[data-reduce-motion='true'] .welcome-usage-dashboard > .welcome-usage-empty--range,
-[data-reduce-motion='true'] .welcome-usage-dashboard > .welcome-usage-stat-list,
-[data-reduce-motion='true'] .welcome-usage-dashboard > .welcome-usage-footnote,
-[data-reduce-motion='true'] .welcome-usage-dashboard > .welcome-usage-model-meters,
-[data-reduce-motion='true'] .welcome-usage-dashboard > .welcome-usage-workspaces,
-[data-reduce-motion='true'] .welcome-usage-dashboard > .welcome-usage-providers {
+[data-reduce-motion="true"] .welcome-usage-dashboard > .welcome-usage-empty--range,
+[data-reduce-motion="true"] .welcome-usage-dashboard > .welcome-usage-stat-list,
+[data-reduce-motion="true"] .welcome-usage-dashboard > .welcome-usage-footnote,
+[data-reduce-motion="true"] .welcome-usage-dashboard > .welcome-usage-model-meters,
+[data-reduce-motion="true"] .welcome-usage-dashboard > .welcome-usage-workspaces,
+[data-reduce-motion="true"] .welcome-usage-dashboard > .welcome-usage-providers {
   animation: none;
 }
 
@@ -3443,8 +3185,8 @@
  * still clamped inside the card — never punching through it) rather than
  * re-stacking every child. Card-sized surface ⇒ it can take the displacement
  * warp at cinematic/epic. Existing `backdrop-filter: blur(18px)` stays. */
-:root[data-advanced-fx-refraction='true'] .welcome-usage-dashboard::after {
-  content: '';
+:root[data-advanced-fx-refraction="true"] .welcome-usage-dashboard::after {
+  content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
@@ -3474,14 +3216,14 @@
 }
 /* (Displacement warp intentionally omitted — sheen + rim only on broad panes;
  * a pane-wide warp read garish + artifact-prone. Warp stays on composer + pickers.) */
-:root[data-advanced-fx-refraction='true']
-  :is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+:root[data-advanced-fx-refraction="true"]
+  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .welcome-usage-dashboard::after {
   mix-blend-mode: screen;
 }
 /* Degrade: Reduce Transparency or no backdrop-filter support → sheen off. The
  * solid fills above (lines ~2597 / ~2613) stay as the fallback bed. */
-:root[data-reduce-transparency='true'] .welcome-usage-dashboard::after {
+:root[data-reduce-transparency="true"] .welcome-usage-dashboard::after {
   display: none;
   filter: none;
 }
@@ -3629,16 +3371,15 @@
 }
 
 :is(
-    .app-transcript.provider-gemini,
-    .app-transcript.provider-codex,
-    .app-transcript.provider-claude,
-    .app-transcript.provider-kimi,
-    .app-transcript.provider-grok,
-    .app-transcript.provider-cursor,
-    .app-transcript.provider-ollama,
-    .app-transcript.provider-ensemble
-  )
-  .composer-surface:focus-within {
+  .app-transcript.provider-gemini,
+  .app-transcript.provider-codex,
+  .app-transcript.provider-claude,
+  .app-transcript.provider-kimi,
+  .app-transcript.provider-grok,
+  .app-transcript.provider-cursor,
+  .app-transcript.provider-ollama,
+  .app-transcript.provider-ensemble
+) .composer-surface:focus-within {
   border-color: color-mix(in srgb, var(--transcript-provider-color) 52%, transparent);
   box-shadow:
     var(--composer-shadow),
@@ -3648,38 +3389,27 @@
 }
 
 .composer-surface::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  background: linear-gradient(
-    90deg,
-    rgba(17, 41, 89, 0.204),
-    rgba(17, 41, 89, 0.108) 16%,
-    transparent 33%,
-    transparent 67%,
-    rgba(17, 41, 89, 0.108) 84%,
-    rgba(17, 41, 89, 0.204)
-  );
+  background: linear-gradient(90deg, rgba(17, 41, 89, 0.204), rgba(17, 41, 89, 0.108) 16%, transparent 33%, transparent 67%, rgba(17, 41, 89, 0.108) 84%, rgba(17, 41, 89, 0.204));
   opacity: 1;
-  box-shadow:
-    inset 36px 0 44px -28px rgba(17, 41, 89, 0.168),
-    inset -36px 0 44px -28px rgba(17, 41, 89, 0.168);
+  box-shadow: inset 36px 0 44px -28px rgba(17, 41, 89, 0.168), inset -36px 0 44px -28px rgba(17, 41, 89, 0.168);
   z-index: 0;
 }
 
 :is(
-    .app-transcript.provider-gemini,
-    .app-transcript.provider-codex,
-    .app-transcript.provider-claude,
-    .app-transcript.provider-kimi,
-    .app-transcript.provider-grok,
-    .app-transcript.provider-cursor,
-    .app-transcript.provider-ollama,
-    .app-transcript.provider-ensemble
-  )
-  .composer-surface::before {
+  .app-transcript.provider-gemini,
+  .app-transcript.provider-codex,
+  .app-transcript.provider-claude,
+  .app-transcript.provider-kimi,
+  .app-transcript.provider-grok,
+  .app-transcript.provider-cursor,
+  .app-transcript.provider-ollama,
+  .app-transcript.provider-ensemble
+) .composer-surface::before {
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--transcript-provider-color) 8%, rgb(0 0 0 / 32%)),
@@ -3694,31 +3424,32 @@
     inset -42px 0 52px -30px color-mix(in srgb, var(--transcript-provider-color) 32%, transparent);
 }
 
-[data-prompt-surface='liquid_glass'] .composer-surface,
-[data-prompt-surface='theme'][data-visual-effect='liquid_glass'] .composer-surface,
-[data-prompt-surface='theme'][data-visual-effect='thin_material'] .composer-surface,
-[data-prompt-surface='theme'][data-visual-effect='auto'] .composer-surface {
+[data-prompt-surface="liquid_glass"] .composer-surface,
+[data-prompt-surface="theme"][data-visual-effect="liquid_glass"] .composer-surface,
+[data-prompt-surface="theme"][data-visual-effect="thin_material"] .composer-surface,
+[data-prompt-surface="theme"][data-visual-effect="auto"] .composer-surface {
   background: var(--composer-glass-bg);
   border-color: color-mix(in srgb, var(--composer-glass-border) 86%, white 14%);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   box-shadow:
-    inset 0 -1px 0 rgba(0, 0, 0, 0.26),
-    0 22px 54px rgba(0, 0, 0, 0.42),
+    inset 0 -1px 0 rgba(0,0,0,0.26),
+    0 22px 54px rgba(0,0,0,0.42),
     0 0 0 1px rgb(var(--agent-accent-rgb) / 0.08);
 }
 
-[data-prompt-surface='classic'] .composer-surface,
-[data-prompt-surface='theme'][data-visual-effect='classic'] .composer-surface {
+[data-prompt-surface="classic"] .composer-surface,
+[data-prompt-surface="theme"][data-visual-effect="classic"] .composer-surface {
   background: var(--composer-glass-bg);
   border-color: var(--composer-glass-border);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.3);
+  box-shadow:
+    0 14px 36px rgba(0,0,0,0.30);
 }
 
-[data-prompt-surface='solid'] .composer-surface,
-[data-reduce-transparency='true'] .composer-surface {
+[data-prompt-surface="solid"] .composer-surface,
+[data-reduce-transparency="true"] .composer-surface {
   background: var(--composer-bg-solid);
   border-color: var(--composer-border);
   backdrop-filter: none;
@@ -3739,7 +3470,8 @@
  * shells (claude/codex/gemini/cursor/grok/kimi/obsidian/alabaster) have their own
  * distinct surface treatment that the lens + warp interfered with, so refraction
  * is restricted to the native composer. */
-:root[data-advanced-fx-refraction='true'][data-composer-style='default'] .composer-refraction-lens {
+:root[data-advanced-fx-refraction="true"][data-composer-style="default"]
+  .composer-refraction-lens {
   display: block;
   position: absolute;
   inset: 0;
@@ -3781,14 +3513,14 @@
  * 08) — small flat rects with no high-curvature top corner against the backdrop.
  * This also makes the live composer match the (already warp-free) Settings preview. */
 /* Light themes: screen-blend the sheen so the bright surface never blows out. */
-:root[data-advanced-fx-refraction='true'][data-composer-style='default']
-  :is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+:root[data-advanced-fx-refraction="true"][data-composer-style="default"]
+  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .composer-refraction-lens {
   mix-blend-mode: screen;
 }
 /* Degrade: Reduce Transparency or no backdrop-filter support → lens off.
  * (The attr is already false under Reduce Transparency; explicit for safety.) */
-:root[data-reduce-transparency='true'] .composer-refraction-lens {
+:root[data-reduce-transparency="true"] .composer-refraction-lens {
   display: none;
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -3898,8 +3630,8 @@
 
 /* Calm idle rim — neutral, always-on. A single faint perimeter
  * line that gives the console a defined edge without a glow. */
-[data-composer-style='default'] .composer-surface:not(.fx-agent-aura)::after {
-  content: '';
+[data-composer-style="default"] .composer-surface:not(.fx-agent-aura)::after {
+  content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
@@ -3919,7 +3651,7 @@
  * a whisper of background tint), so the native console quietly
  * signals which agent it's wired to. Kept well under the focus
  * glow's intensity so focus still reads as the louder state. */
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript.provider-gemini
   .composer-surface:not(.fx-agent-aura)::after {
   box-shadow:
@@ -3927,7 +3659,7 @@
     0 0 0 1px color-mix(in srgb, var(--provider-gemini-color) 7%, transparent);
   background: color-mix(in srgb, var(--provider-gemini-color) 4%, transparent);
 }
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript.provider-codex
   .composer-surface:not(.fx-agent-aura)::after {
   box-shadow:
@@ -3935,7 +3667,7 @@
     0 0 0 1px color-mix(in srgb, var(--provider-codex-color) 7%, transparent);
   background: color-mix(in srgb, var(--provider-codex-color) 4%, transparent);
 }
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript.provider-claude
   .composer-surface:not(.fx-agent-aura)::after {
   box-shadow:
@@ -3943,7 +3675,7 @@
     0 0 0 1px color-mix(in srgb, var(--provider-claude-color) 7%, transparent);
   background: color-mix(in srgb, var(--provider-claude-color) 4%, transparent);
 }
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript.provider-kimi
   .composer-surface:not(.fx-agent-aura)::after {
   box-shadow:
@@ -3951,7 +3683,7 @@
     0 0 0 1px color-mix(in srgb, var(--provider-kimi-color) 7%, transparent);
   background: color-mix(in srgb, var(--provider-kimi-color) 4%, transparent);
 }
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript.provider-grok
   .composer-surface:not(.fx-agent-aura)::after {
   box-shadow:
@@ -3959,7 +3691,7 @@
     0 0 0 1px color-mix(in srgb, var(--provider-grok-color) 7%, transparent);
   background: color-mix(in srgb, var(--provider-grok-color) 4%, transparent);
 }
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript.provider-cursor
   .composer-surface:not(.fx-agent-aura)::after {
   box-shadow:
@@ -3992,8 +3724,8 @@
 /* Reduce-motion: the rim itself is static (no pulse/animation),
  * but kill the colour-cross-fade transition so provider/focus
  * changes snap instead of easing. */
-[data-reduce-motion='true']
-  [data-composer-style='default']
+[data-reduce-motion="true"]
+  [data-composer-style="default"]
   .composer-surface:not(.fx-agent-aura)::after {
   transition: none;
 }
@@ -4045,21 +3777,13 @@
 /* Polarity-neutral instrument glass — NOT theme-chroma glass. Outer frame +
  * above-rows use a gray glass bezel; the inner module is a pure white (light)
  * or pure black (dark) typing surface so the two layers never compete. */
-[data-composer-style='default'] .app-transcript {
+[data-composer-style="default"] .app-transcript {
   --native-instrument-inner-bg: #141418;
   --native-instrument-inner-bg-solid: #141418;
-  --native-instrument-inner-rim: color-mix(
-    in srgb,
-    var(--text-primary) 24%,
-    rgba(255, 255, 255, 0.1)
-  );
+  --native-instrument-inner-rim: color-mix(in srgb, var(--text-primary) 24%, rgba(255, 255, 255, 0.1));
   --native-instrument-inner-rim-glow: color-mix(in srgb, var(--text-primary) 6%, transparent);
   --native-instrument-outer-solid: var(--surface-2);
-  --native-instrument-outer-rim: color-mix(
-    in srgb,
-    var(--text-primary) 22%,
-    rgba(255, 255, 255, 0.1)
-  );
+  --native-instrument-outer-rim: color-mix(in srgb, var(--text-primary) 22%, rgba(255, 255, 255, 0.1));
   --native-instrument-outer-rim-glow: color-mix(in srgb, var(--text-primary) 5%, transparent);
   --native-instrument-glass-bg: color-mix(in srgb, var(--surface-2) 46%, transparent);
   --native-instrument-glass-border: color-mix(in srgb, var(--text-primary) 11%, transparent);
@@ -4070,27 +3794,19 @@
     0 18px 46px color-mix(in srgb, #000000 20%, transparent);
 }
 :is(
-    [data-theme='light'],
-    [data-theme='citrus'],
-    [data-theme='mist'],
-    [data-theme='sage'],
-    [data-theme='alabaster']
-  )[data-composer-style='default']
+    [data-theme="light"],
+    [data-theme="citrus"],
+    [data-theme="mist"],
+    [data-theme="sage"],
+    [data-theme="alabaster"]
+  )[data-composer-style="default"]
   .app-transcript {
   --native-instrument-inner-bg: #f0f0f3;
   --native-instrument-inner-bg-solid: #f0f0f3;
-  --native-instrument-inner-rim: color-mix(
-    in srgb,
-    var(--text-primary) 20%,
-    rgba(255, 255, 255, 0.14)
-  );
+  --native-instrument-inner-rim: color-mix(in srgb, var(--text-primary) 20%, rgba(255, 255, 255, 0.14));
   --native-instrument-inner-rim-glow: color-mix(in srgb, var(--text-primary) 5%, transparent);
   --native-instrument-outer-solid: var(--surface-2);
-  --native-instrument-outer-rim: color-mix(
-    in srgb,
-    var(--text-primary) 18%,
-    rgba(255, 255, 255, 0.12)
-  );
+  --native-instrument-outer-rim: color-mix(in srgb, var(--text-primary) 18%, rgba(255, 255, 255, 0.12));
   --native-instrument-outer-rim-glow: color-mix(in srgb, var(--text-primary) 4%, transparent);
   --native-instrument-glass-bg: color-mix(in srgb, var(--surface-2) 58%, transparent);
   --native-instrument-glass-border: color-mix(in srgb, var(--text-primary) 9%, transparent);
@@ -4103,7 +3819,7 @@
 
 /* OUTER frame — native shell liquid glass. Polarity-neutral smoked /
  * frosted glass on the instrument; inner module keeps theme tone. */
-[data-composer-style='default'] .composer-surface {
+[data-composer-style="default"] .composer-surface {
   background: var(--native-instrument-glass-bg);
   border-color: var(--native-instrument-glass-border);
   backdrop-filter: blur(20px) saturate(155%);
@@ -4117,20 +3833,20 @@
 }
 /* macOS Native Glass appearance already vibrancy-blurs behind panels —
  * skip the redundant CSS backdrop pass (see shard 06). */
-[data-appearance='native_glass'][data-reduce-transparency='false']
-  [data-composer-style='default']
+[data-appearance="native_glass"][data-reduce-transparency="false"]
+  [data-composer-style="default"]
   .composer-surface {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-[data-composer-style='default'][data-prompt-surface='solid'] .composer-surface,
-[data-composer-style='default'][data-reduce-transparency='true'] .composer-surface {
+[data-composer-style="default"][data-prompt-surface="solid"] .composer-surface,
+[data-composer-style="default"][data-reduce-transparency="true"] .composer-surface {
   background: var(--native-instrument-outer-solid);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  [data-composer-style='default'] .composer-surface {
+  [data-composer-style="default"] .composer-surface {
     background: var(--native-instrument-outer-solid, var(--composer-bg-solid));
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
@@ -4146,7 +3862,7 @@
  * ::before variants without specificity gymnastics; scoped to
  * `.app-transcript` so the separately-polished welcome surface keeps its
  * own look. */
-[data-composer-style='default'] .app-transcript .composer-surface::before {
+[data-composer-style="default"] .app-transcript .composer-surface::before {
   background: none !important;
   box-shadow: none !important;
 }
@@ -4154,60 +3870,35 @@
 /* ── Console alignment: ABOVE-ROWS match the glass frame ─────────────
  * Re-skin above-rows to the same liquid-glass fill as the outer surface
  * so the stack reads as one instrument. Provider colour stays on the chips. */
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
-  :is(
-    .composer-above-bar,
-    .ensemble-above-row,
-    .queued-messages-above-row,
-    .composer-create-pr-row
-  ) {
+  :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row) {
   background: var(--native-instrument-glass-bg);
   border-color: var(--native-instrument-glass-border);
   backdrop-filter: blur(20px) saturate(155%);
   -webkit-backdrop-filter: blur(20px) saturate(155%);
   box-shadow: var(--native-instrument-outer-shadow, var(--composer-shadow));
 }
-[data-appearance='native_glass'][data-reduce-transparency='false']
-  [data-composer-style='default']
+[data-appearance="native_glass"][data-reduce-transparency="false"]
+  [data-composer-style="default"]
   .app-transcript
-  :is(
-    .composer-above-bar,
-    .ensemble-above-row,
-    .queued-messages-above-row,
-    .composer-create-pr-row
-  ) {
+  :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row) {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-[data-composer-style='default'][data-prompt-surface='solid']
+[data-composer-style="default"][data-prompt-surface="solid"]
   .app-transcript
-  :is(
-    .composer-above-bar,
-    .ensemble-above-row,
-    .queued-messages-above-row,
-    .composer-create-pr-row
-  ),
-[data-composer-style='default'][data-reduce-transparency='true']
+  :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row),
+[data-composer-style="default"][data-reduce-transparency="true"]
   .app-transcript
-  :is(
-    .composer-above-bar,
-    .ensemble-above-row,
-    .queued-messages-above-row,
-    .composer-create-pr-row
-  ) {
+  :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row) {
   background: var(--native-instrument-outer-solid);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
-  :is(
-    .composer-above-bar,
-    .ensemble-above-row,
-    .queued-messages-above-row,
-    .composer-create-pr-row
-  )::before {
+  :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row)::before {
   display: none !important;
   background: none !important;
   box-shadow: none !important;
@@ -4223,7 +3914,7 @@
  * above is now the frame tone the stack carries; the rows themselves go
  * transparent + borderless inside it (the fill above stays as the
  * fallback for a row rendered outside the stack). Native shell only. */
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack {
@@ -4236,19 +3927,19 @@
   backdrop-filter: blur(20px) saturate(155%);
   -webkit-backdrop-filter: blur(20px) saturate(155%);
 }
-[data-appearance='native_glass'][data-reduce-transparency='false']
-  [data-composer-style='default']
+[data-appearance="native_glass"][data-reduce-transparency="false"]
+  [data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-[data-composer-style='default'][data-prompt-surface='solid']
+[data-composer-style="default"][data-prompt-surface="solid"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack,
-[data-composer-style='default'][data-reduce-transparency='true']
+[data-composer-style="default"][data-reduce-transparency="true"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack {
@@ -4257,7 +3948,7 @@
   -webkit-backdrop-filter: none;
 }
 /* Each above-row → flush, chrome-less segment (inherits the frame tone). */
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack
@@ -4269,17 +3960,16 @@
   box-shadow: none;
 }
 /* Hairline divider between adjacent segments (never above the first). */
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack
-  > *
-  + * {
+  > * + * {
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
 /* Surface → rounded BOTTOM of the frame: pull flush to the stack,
  * square its top corners, divider seam to the last segment. */
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-surface {
@@ -4294,23 +3984,23 @@
  * the composer into merged-frame mode: hide it, restore the standalone
  * rounded surface, and give the outer glass frame a little extra top
  * breathing room above the textarea panel. */
-[data-composer-style='default'] .app-transcript .composer-area > .composer-above-bar-stack:empty,
-[data-composer-style='default']
+[data-composer-style="default"] .app-transcript .composer-area > .composer-above-bar-stack:empty,
+[data-composer-style="default"]
   .app-transcript
   .composer-primary-stack
   > .composer-above-bar-stack:empty {
   display: none;
 }
 
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-surface.composer-surface--native-no-above-rows,
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area
   > .composer-above-bar-stack:empty
   + .composer-surface,
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-primary-stack
   > .composer-above-bar-stack:empty
@@ -4337,7 +4027,7 @@
  * it needs no rounding (rule below stays ensemble-only). No
  * `overflow: hidden` is added to the stack — that would clip the
  * participant / queued / Create-PR popovers. */
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack
@@ -4345,12 +4035,13 @@
   border-top-left-radius: calc(var(--radius-lg) * 2.45);
   border-top-right-radius: calc(var(--radius-lg) * 2.45);
 }
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript.chat-kind-ensemble
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack
   > .ensemble-above-row:first-child::before {
-  border-radius: calc(var(--radius-lg) * 2.45) calc(var(--radius-lg) * 2.45) 0 0;
+  border-radius: calc(var(--radius-lg) * 2.45) calc(var(--radius-lg) * 2.45)
+    0 0;
 }
 
 /* Native default — merged above-bar stack stays neutral glass when
@@ -4358,19 +4049,23 @@
  * coloured running / approval / failed aura remains on
  * `.composer-surface` only so the instrument top does not inherit
  * the blue provider rim. */
-[data-composer-style='default'] .app-transcript .composer-above-bar-stack.fx-agent-aura,
-[data-composer-style='default']
+[data-composer-style="default"]
+  .app-transcript
+  .composer-above-bar-stack.fx-agent-aura,
+[data-composer-style="default"]
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura.fx-status-running,
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura.fx-status-approval,
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura.fx-status-failed {
   box-shadow: var(--composer-shadow) !important;
 }
-[data-composer-style='default'] .app-transcript .composer-above-bar-stack.fx-agent-aura::after {
+[data-composer-style="default"]
+  .app-transcript
+  .composer-above-bar-stack.fx-agent-aura::after {
   display: none !important;
   content: none !important;
   animation: none !important;
@@ -4395,7 +4090,7 @@
   display: contents;
 }
 
-[data-composer-style='default'] .composer-inner-module {
+[data-composer-style="default"] .composer-inner-module {
   position: relative;
   z-index: 2; /* above the surface ::before vignette (0) + ::after rim (1) */
   display: flex;
@@ -4421,20 +4116,15 @@
   /* Rim-highlight textarea panel — inset ring + faint inner glow
    * (transcript corner-chrome / sidebar-pill idiom). */
   box-shadow:
-    inset 0 0 0 1px
-      var(--native-instrument-inner-rim, color-mix(in srgb, var(--text-primary) 22%, transparent)),
-    inset 0 0 14px
-      var(
-        --native-instrument-inner-rim-glow,
-        color-mix(in srgb, var(--text-primary) 5%, transparent)
-      ),
+    inset 0 0 0 1px var(--native-instrument-inner-rim, color-mix(in srgb, var(--text-primary) 22%, transparent)),
+    inset 0 0 14px var(--native-instrument-inner-rim-glow, color-mix(in srgb, var(--text-primary) 5%, transparent)),
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 9%, transparent);
   padding: 10px 10px 6px;
   transition: box-shadow 160ms ease;
 }
 
-[data-composer-style='default'] .composer-inner-module::before {
-  content: '';
+[data-composer-style="default"] .composer-inner-module::before {
+  content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
@@ -4448,7 +4138,7 @@
   );
 }
 
-[data-composer-style='default'] .composer-inner-module > * {
+[data-composer-style="default"] .composer-inner-module > * {
   position: relative;
   z-index: 2;
 }
@@ -4460,30 +4150,26 @@
  * the theme `--composer-bg` is itself translucent, so nudge it
  * toward solid so the input never shows the inverted glass behind
  * it (HARD readability rule). */
-[data-composer-style='default'][data-prompt-surface='liquid_glass'] .composer-inner-module,
-[data-composer-style='default'][data-prompt-surface='theme'][data-visual-effect='liquid_glass']
-  .composer-inner-module,
-[data-composer-style='default'][data-prompt-surface='theme'][data-visual-effect='thin_material']
-  .composer-inner-module,
-[data-composer-style='default'][data-prompt-surface='theme'][data-visual-effect='auto']
-  .composer-inner-module,
-[data-composer-style='default'][data-prompt-surface='classic'] .composer-inner-module,
-[data-composer-style='default'][data-prompt-surface='theme'][data-visual-effect='classic']
-  .composer-inner-module {
+[data-composer-style="default"][data-prompt-surface="liquid_glass"] .composer-inner-module,
+[data-composer-style="default"][data-prompt-surface="theme"][data-visual-effect="liquid_glass"] .composer-inner-module,
+[data-composer-style="default"][data-prompt-surface="theme"][data-visual-effect="thin_material"] .composer-inner-module,
+[data-composer-style="default"][data-prompt-surface="theme"][data-visual-effect="auto"] .composer-inner-module,
+[data-composer-style="default"][data-prompt-surface="classic"] .composer-inner-module,
+[data-composer-style="default"][data-prompt-surface="theme"][data-visual-effect="classic"] .composer-inner-module {
   background: var(--native-instrument-inner-bg, var(--composer-bg));
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
 }
-[data-composer-style='default'][data-prompt-surface='solid'] .composer-inner-module,
-[data-composer-style='default'][data-reduce-transparency='true'] .composer-inner-module {
+[data-composer-style="default"][data-prompt-surface="solid"] .composer-inner-module,
+[data-composer-style="default"][data-reduce-transparency="true"] .composer-inner-module {
   background: var(--native-instrument-inner-bg-solid, var(--composer-bg-solid));
 }
 
 /* Welcome mode keeps the hard-cornered full-width panel; only the
  * horizontal bleed changes because the welcome surface uses a wider
  * 16px frame padding (vs 14px), so match the negative margins. */
-.welcome-mode[data-composer-style='default'] .composer-inner-module,
-[data-composer-style='default'] .welcome-mode .composer-inner-module {
+.welcome-mode[data-composer-style="default"] .composer-inner-module,
+[data-composer-style="default"] .welcome-mode .composer-inner-module {
   border-radius: 0;
   width: calc(100% + 32px); /* welcome's 2×16px frame padding */
   margin-left: -16px;
@@ -4495,23 +4181,18 @@
  * below the opaque inner module. Drop the inner module's external
  * shadow spill and the telemetry border-top so the footer reads as
  * frosted glass rather than a second opaque panel. */
-[data-composer-style='default'] .app-transcript .composer-surface {
+[data-composer-style="default"] .app-transcript .composer-surface {
   padding-bottom: 10px;
 }
-[data-composer-style='default'] .app-transcript .composer-inner-module {
+[data-composer-style="default"] .app-transcript .composer-inner-module {
   margin-bottom: 6px;
   box-shadow:
-    inset 0 0 0 1px
-      var(--native-instrument-inner-rim, color-mix(in srgb, var(--text-primary) 22%, transparent)),
-    inset 0 0 14px
-      var(
-        --native-instrument-inner-rim-glow,
-        color-mix(in srgb, var(--text-primary) 5%, transparent)
-      ),
+    inset 0 0 0 1px var(--native-instrument-inner-rim, color-mix(in srgb, var(--text-primary) 22%, transparent)),
+    inset 0 0 14px var(--native-instrument-inner-rim-glow, color-mix(in srgb, var(--text-primary) 5%, transparent)),
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 9%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 11%, transparent);
 }
-[data-composer-style='default'] .app-transcript .composer-telemetry-row {
+[data-composer-style="default"] .app-transcript .composer-telemetry-row {
   background: transparent;
   border-top: 0;
   margin: 0 6px;
@@ -4521,7 +4202,7 @@
 }
 
 /* Reduce-motion: snap the inner-module seam transition. */
-[data-reduce-motion='true'] [data-composer-style='default'] .composer-inner-module {
+[data-reduce-motion="true"] [data-composer-style="default"] .composer-inner-module {
   transition: none;
 }
 
@@ -4545,30 +4226,18 @@
   font-size: var(--font-size-xs);
   padding: 2px 8px;
   border-radius: 100px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255,255,255,0.06);
   color: var(--text-secondary);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255,255,255,0.06);
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
 
-.composer-chip.accent {
-  color: var(--accent);
-  border-color: rgba(90, 140, 255, 0.2);
-}
-.composer-chip.warning {
-  color: var(--warning);
-  border-color: rgba(245, 166, 35, 0.2);
-}
-.composer-chip.success {
-  color: var(--success);
-  border-color: rgba(76, 195, 138, 0.2);
-}
-.composer-chip.danger {
-  color: var(--danger);
-  border-color: rgba(229, 77, 77, 0.2);
-}
+.composer-chip.accent { color: var(--accent); border-color: rgba(90,140,255,0.2); }
+.composer-chip.warning { color: var(--warning); border-color: rgba(245,166,35,0.2); }
+.composer-chip.success { color: var(--success); border-color: rgba(76,195,138,0.2); }
+.composer-chip.danger { color: var(--danger); border-color: rgba(229,77,77,0.2); }
 
 .composer-textarea {
   width: 100%;
@@ -4731,9 +4400,8 @@
  * the inline colour resolves to. Simple, robust, no CSS-variable
  * juggling.
  */
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .composer-textarea-highlight
-  .composer-mention-token {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-textarea-highlight .composer-mention-token {
   filter: brightness(0.7) saturate(1.2);
   text-shadow: 0 0 0.5px currentColor;
 }
@@ -4942,7 +4610,7 @@
   min-height: 29px;
   height: 29px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255,255,255,0.04);
 }
 
 .composer-control--narrow {
@@ -4980,13 +4648,7 @@
   display: flex;
   align-items: center;
   overflow: hidden;
-  -webkit-mask-image: linear-gradient(
-    90deg,
-    transparent,
-    #000 18px,
-    #000 calc(100% - 18px),
-    transparent
-  );
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18px, #000 calc(100% - 18px), transparent);
   mask-image: linear-gradient(90deg, transparent, #000 18px, #000 calc(100% - 18px), transparent);
 }
 
@@ -5191,11 +4853,12 @@
   align-items: center;
   gap: 6px;
   color: color-mix(in srgb, var(--accent) 84%, var(--text-primary));
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--accent) 12%, transparent),
-    color-mix(in srgb, var(--surface-elevated) 70%, transparent)
-  );
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 12%, transparent),
+      color-mix(in srgb, var(--surface-elevated) 70%, transparent)
+    );
   box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent);
   font: inherit;
   font-size: var(--font-size-xs);
@@ -5206,11 +4869,12 @@
 
 .composer-human-invite-button:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--panel-border));
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--accent) 18%, transparent),
-    color-mix(in srgb, var(--surface-elevated) 76%, transparent)
-  );
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 18%, transparent),
+      color-mix(in srgb, var(--surface-elevated) 76%, transparent)
+    );
 }
 
 .composer-human-invite-button:disabled {
@@ -5238,11 +4902,12 @@
 
 .composer-human-invite-button.is-open {
   border-color: color-mix(in srgb, var(--accent) 62%, var(--panel-border));
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--accent) 22%, transparent),
-    color-mix(in srgb, var(--surface-elevated) 82%, transparent)
-  );
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 22%, transparent),
+      color-mix(in srgb, var(--surface-elevated) 82%, transparent)
+    );
 }
 
 .composer-human-invite-popover {
@@ -5439,10 +5104,10 @@
  * context meter, voice controls, and send/stop button must remain on the same
  * footer baseline in idle and running states. The left picker strip already
  * owns horizontal overflow; never key footer geometry off `.stop-btn`. */
-[data-composer-style='default'] .composer-inline-pickers {
+[data-composer-style="default"] .composer-inline-pickers {
   flex-wrap: nowrap;
 }
-[data-composer-style='default'] .composer-inline-actions {
+[data-composer-style="default"] .composer-inline-actions {
   width: auto;
   order: 0;
 }
@@ -5473,7 +5138,7 @@
  * telemetry row. Native Claude Code's composer is satellite-
  * chromed throughout; an internal rule line would fight the
  * surrounding aesthetic. */
-[data-composer-style='claude'] .composer-telemetry-row {
+[data-composer-style="claude"] .composer-telemetry-row {
   border-top: 0;
   margin: 5px 8px 0;
   padding: 0 2px;
@@ -5497,7 +5162,7 @@
  * presentation an active chat has, without changing layout when
  * the tally is present (the `margin-left: auto` on the tally
  * itself still wins inside a flex-start row). */
-.composer-telemetry-row[data-has-token-tally='false'] {
+.composer-telemetry-row[data-has-token-tally="false"] {
   justify-content: flex-start;
 }
 
@@ -5723,10 +5388,7 @@
   background: transparent;
   color: color-mix(in srgb, var(--text-secondary) 70%, transparent);
   cursor: pointer;
-  transition:
-    color 120ms ease,
-    background 120ms ease,
-    border-color 120ms ease;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
 }
 .composer-screen-watch-button:hover {
   color: var(--text-primary);
@@ -5760,13 +5422,8 @@
   animation: composer-screen-watch-pulse 1.4s ease-in-out infinite;
 }
 @keyframes composer-screen-watch-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }
 
 /* M11 (1.0.7) — sticky AppWatch resume affordance. When the current chat has a
@@ -5802,10 +5459,7 @@
   background: transparent;
   color: color-mix(in srgb, var(--text-secondary) 54%, transparent);
   cursor: pointer;
-  transition:
-    color 120ms ease,
-    background 120ms ease,
-    border-color 120ms ease,
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease,
     box-shadow 120ms ease;
 }
 
@@ -5846,10 +5500,7 @@
   background: transparent;
   color: color-mix(in srgb, var(--text-secondary) 58%, transparent);
   cursor: pointer;
-  transition:
-    color 120ms ease,
-    background 120ms ease,
-    border-color 120ms ease,
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease,
     box-shadow 120ms ease;
 }
 
@@ -5868,8 +5519,7 @@
   color: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 86%, var(--text-primary));
   background: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 12%, transparent);
   border-color: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 34%, transparent);
-  box-shadow: 0 0 12px
-    color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 18%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 18%, transparent);
 }
 
 .composer-ensemble-toggle-button .provider-glyph {
@@ -5896,10 +5546,7 @@
   background: transparent;
   color: color-mix(in srgb, var(--text-secondary) 54%, transparent);
   cursor: pointer;
-  transition:
-    color 120ms ease,
-    background 120ms ease,
-    border-color 120ms ease,
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease,
     box-shadow 120ms ease;
 }
 
@@ -5998,10 +5645,7 @@
   background: transparent;
   color: color-mix(in srgb, var(--text-secondary) 54%, transparent);
   cursor: pointer;
-  transition:
-    color 120ms ease,
-    background 120ms ease,
-    border-color 120ms ease,
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease,
     box-shadow 120ms ease;
 }
 
@@ -6057,7 +5701,7 @@
 }
 
 .composer-plan-button-check::before {
-  content: '\2713';
+  content: "\2713";
   font-size: 7px;
   line-height: 1;
 }
@@ -6079,10 +5723,7 @@
   background: transparent;
   color: color-mix(in srgb, var(--text-secondary) 58%, transparent);
   cursor: pointer;
-  transition:
-    color 120ms ease,
-    background 120ms ease,
-    border-color 120ms ease,
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease,
     box-shadow 120ms ease;
 }
 
@@ -6144,15 +5785,14 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;
   grid-template-areas:
-    'header header'
-    'body action'
-    'scope scope'
-    'feedback feedback';
+    "header header"
+    "body action"
+    "scope scope"
+    "feedback feedback";
   align-items: center;
   gap: 8px 12px;
   padding: 12px;
-  border: 1px solid
-    color-mix(in srgb, var(--panel-border, var(--border)) 88%, var(--text-primary) 12%);
+  border: 1px solid color-mix(in srgb, var(--panel-border, var(--border)) 88%, var(--text-primary) 12%);
   border-radius: 10px;
   background: var(--tw-popover-glass-bg);
   box-shadow: var(--tw-popover-material-shadow);
@@ -6433,11 +6073,11 @@
   .composer-combined-picker-popover.composer-copy-transcript-popover {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
-      'header'
-      'body'
-      'scope'
-      'action'
-      'feedback';
+      "header"
+      "body"
+      "scope"
+      "action"
+      "feedback";
   }
 
   .composer-copy-transcript-actions {
@@ -6672,7 +6312,7 @@
   color: var(--accent);
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-goal-popover {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-goal-popover {
   background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
   box-shadow: var(--tw-popover-material-shadow);
@@ -6769,8 +6409,7 @@
   flex: 0 0 auto;
   margin-top: 1px;
   padding: 3px 7px;
-  border: 1px solid
-    color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 28%, transparent);
+  border: 1px solid color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 28%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 10%, transparent);
   color: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 82%, var(--text-primary));
@@ -6836,10 +6475,7 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition:
-    border-color 140ms ease,
-    background 140ms ease,
-    opacity 140ms ease;
+  transition: border-color 140ms ease, background 140ms ease, opacity 140ms ease;
 }
 
 .composer-ensemble-roster-seat:hover,
@@ -6856,8 +6492,7 @@
 .composer-ensemble-roster-seat.is-selected {
   border-color: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 48%, transparent);
   background: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 10%, transparent);
-  box-shadow: inset 0 0 0 1px
-    color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 12%, transparent);
 }
 
 .composer-ensemble-roster-seat.is-disabled {
@@ -7015,12 +6650,10 @@
 .composer-ensemble-toggle-segmented .segmented-control-segment.is-active {
   color: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 88%, var(--text-primary));
   background: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 16%, transparent);
-  box-shadow: inset 0 0 0 1px
-    color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 28%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 28%, transparent);
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .composer-ensemble-toggle-popover {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-ensemble-toggle-popover {
   background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
   box-shadow: var(--tw-popover-material-shadow);
@@ -7144,8 +6777,7 @@
   height: 7px;
   border-radius: 999px;
   background: var(--composer-plan-lane-color, var(--accent));
-  box-shadow: 0 0 8px
-    color-mix(in srgb, var(--composer-plan-lane-color, var(--accent)) 36%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--composer-plan-lane-color, var(--accent)) 36%, transparent);
 }
 
 .composer-plan-lane-label {
@@ -7224,7 +6856,7 @@
 }
 
 .composer-plan-popover .todo-checklist-item.status-completed .todo-checklist-glyph::after {
-  content: '✓';
+  content: "✓";
   color: color-mix(in srgb, var(--success, #5ecf8f) 88%, var(--text-primary));
   font-size: 9px;
   font-weight: 700;
@@ -7243,7 +6875,7 @@
 }
 
 .composer-plan-popover .todo-checklist-item.status-cancelled .todo-checklist-glyph::after {
-  content: '–';
+  content: "–";
   color: color-mix(in srgb, var(--text-tertiary) 78%, transparent);
   font-size: 10px;
   line-height: 1;
@@ -7261,14 +6893,14 @@
   }
 }
 
-[data-reduce-motion='true']
+[data-reduce-motion="true"]
   .composer-plan-popover
   .todo-checklist-item.status-in_progress
   .todo-checklist-glyph {
   animation: none;
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-plan-popover {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-plan-popover {
   background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
   box-shadow: var(--tw-popover-material-shadow);
@@ -7293,7 +6925,7 @@
 }
 
 .composer-thread-token-tally.is-live::before {
-  content: '';
+  content: "";
   display: inline-block;
   width: 5px;
   height: 5px;
@@ -7354,7 +6986,7 @@ button.composer-run-timecode {
   opacity: 0.78;
 }
 
-.composer-run-timecode[data-running='true'] {
+.composer-run-timecode[data-running="true"] {
   color: color-mix(in srgb, var(--accent) 72%, var(--text-primary));
 }
 
@@ -7976,9 +7608,7 @@ button.composer-run-timecode.is-open {
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 76%, transparent);
   background: rgba(0, 0, 0, 0.24);
-  transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .tw-filmstrip-thumb img {
@@ -8011,11 +7641,12 @@ button.composer-run-timecode.is-open {
   padding: 8px;
   border: 1px solid color-mix(in srgb, var(--tw-frame-set-accent) 22%, var(--panel-border));
   border-radius: 12px;
-  background: linear-gradient(
-    145deg,
-    color-mix(in srgb, var(--tw-frame-set-accent) 9%, var(--app-bg-elevated)) 0%,
-    color-mix(in srgb, var(--tw-frame-set-accent) 3%, var(--app-bg-sunken)) 100%
-  );
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--tw-frame-set-accent) 9%, var(--app-bg-elevated)) 0%,
+      color-mix(in srgb, var(--tw-frame-set-accent) 3%, var(--app-bg-sunken)) 100%
+    );
   box-shadow: inset 0 0 0 1px color-mix(in srgb, white 2%, transparent);
 }
 
@@ -8085,9 +7716,7 @@ button.composer-run-timecode.is-open {
   border: 1px solid color-mix(in srgb, var(--tw-frame-set-accent) 18%, var(--panel-border));
   border-radius: 8px;
   background: color-mix(in srgb, var(--app-bg-sunken) 88%, black 12%);
-  transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .tw-frame-set-thumb img {
@@ -9096,11 +8725,7 @@ button.composer-run-timecode.is-open {
   border: 1px solid color-mix(in srgb, var(--panel-border) 76%, rgba(255, 255, 255, 0.18));
   border-radius: 20px;
   background:
-    linear-gradient(
-      150deg,
-      color-mix(in srgb, var(--provider-accent, var(--accent)) 14%, transparent),
-      transparent 42%
-    ),
+    linear-gradient(150deg, color-mix(in srgb, var(--provider-accent, var(--accent)) 14%, transparent), transparent 42%),
     color-mix(in srgb, var(--bg-primary) 88%, rgba(20, 22, 28, 0.94));
   box-shadow:
     0 24px 70px rgba(0, 0, 0, 0.38),
@@ -9207,11 +8832,7 @@ button.composer-run-timecode.is-open {
 .chat-media-image-card:hover,
 .chat-media-file-row:hover {
   border-color: color-mix(in srgb, var(--provider-accent, var(--accent)) 42%, var(--panel-border));
-  background: color-mix(
-    in srgb,
-    var(--provider-accent, var(--accent)) 8%,
-    rgba(255, 255, 255, 0.06)
-  );
+  background: color-mix(in srgb, var(--provider-accent, var(--accent)) 8%, rgba(255, 255, 255, 0.06));
 }
 
 .chat-media-image-card img,
@@ -9364,11 +8985,7 @@ button.composer-run-timecode.is-open {
   justify-content: center;
   color: var(--text-secondary);
   cursor: pointer;
-  transition:
-    color 0.15s ease,
-    border-color 0.15s ease,
-    transform 0.12s ease,
-    background-color 0.15s ease;
+  transition: color 0.15s ease, border-color 0.15s ease, transform 0.12s ease, background-color 0.15s ease;
 }
 
 .composer-image-picker-btn:hover:not(:disabled) {
@@ -9406,9 +9023,7 @@ button.composer-run-timecode.is-open {
   line-height: 1;
   max-width: 240px;
   cursor: pointer;
-  transition:
-    background-color 0.15s ease,
-    border-color 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .composer-attached-window-pill:hover {
@@ -9743,11 +9358,11 @@ button.composer-run-timecode.is-open {
   }
 }
 
-[data-reduce-motion='true'] .composer-permission-card--overlay {
+[data-reduce-motion="true"] .composer-permission-card--overlay {
   animation: none;
 }
 
-[data-reduce-motion='true'] .composer-permission-card--overlay::before {
+[data-reduce-motion="true"] .composer-permission-card--overlay::before {
   animation: none;
 }
 
@@ -9798,12 +9413,12 @@ button.composer-run-timecode.is-open {
  * (participant hue or warning fallback) is unchanged. This replaced the
  * hand-written per-provider tint rules (codex/claude/kimi): every
  * provider now tints through the pinned `--approval-accent`. */
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-permission-card {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card {
   --approval-accent-border-alpha: 44%;
   --approval-accent-wash-alpha: 26%;
 }
 
-:root[data-reduce-transparency='true'] .composer-permission-card {
+:root[data-reduce-transparency="true"] .composer-permission-card {
   background: var(--tw-glass-solid);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -10494,12 +10109,7 @@ button.composer-run-timecode.is-open {
   font-family: var(--font-sans);
   cursor: pointer;
   white-space: nowrap;
-  transition:
-    color 0.16s ease,
-    background-color 0.16s ease,
-    border-color 0.16s ease,
-    transform 0.12s ease,
-    box-shadow 0.2s ease;
+  transition: color 0.16s ease, background-color 0.16s ease, border-color 0.16s ease, transform 0.12s ease, box-shadow 0.2s ease;
   overflow: visible;
   flex-shrink: 0;
   min-width: max-content;
@@ -10612,23 +10222,23 @@ button.composer-run-timecode.is-open {
  * and the schedule/runtime rail should sit flush at the seam so the
  * outer-frame rim highlights read continuously (ensemble hides the
  * rail but kept the same padded gap). */
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack:not(:empty))
   .composer-surface,
-[data-composer-style='default'] .app-transcript .composer-surface:has(.composer-top-toggles) {
+[data-composer-style="default"] .app-transcript .composer-surface:has(.composer-top-toggles) {
   padding-top: 0;
   gap: 0;
 }
 
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-surface.composer-surface--native-no-above-rows {
   padding-top: 30px;
   gap: var(--space-sm);
 }
 
-[data-composer-style='default'] .app-transcript .composer-top-toggles {
+[data-composer-style="default"] .app-transcript .composer-top-toggles {
   position: relative;
   top: auto;
   right: auto;
@@ -10642,21 +10252,14 @@ button.composer-run-timecode.is-open {
   padding: 7px 14px;
   border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 11%, transparent);
   box-shadow:
-    inset 0 0 0 1px
-      var(--native-instrument-outer-rim, color-mix(in srgb, var(--text-primary) 22%, transparent)),
-    inset 0 0 10px
-      var(
-        --native-instrument-outer-rim-glow,
-        color-mix(in srgb, var(--text-primary) 5%, transparent)
-      ),
+    inset 0 0 0 1px var(--native-instrument-outer-rim, color-mix(in srgb, var(--text-primary) 22%, transparent)),
+    inset 0 0 10px var(--native-instrument-outer-rim-glow, color-mix(in srgb, var(--text-primary) 5%, transparent)),
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent);
-  transition:
-    box-shadow 160ms ease,
-    border-color 160ms ease;
+  transition: box-shadow 160ms ease, border-color 160ms ease;
 }
 
-[data-composer-style='default'] .app-transcript .composer-top-toggles::before {
-  content: '';
+[data-composer-style="default"] .app-transcript .composer-top-toggles::before {
+  content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
@@ -10669,13 +10272,13 @@ button.composer-run-timecode.is-open {
   );
 }
 
-[data-composer-style='default'] .app-transcript .composer-top-toggles > * {
+[data-composer-style="default"] .app-transcript .composer-top-toggles > * {
   position: relative;
   z-index: 1;
 }
 
-.welcome-mode[data-composer-style='default'] .app-transcript .composer-top-toggles,
-[data-composer-style='default'] .welcome-mode .composer-top-toggles {
+.welcome-mode[data-composer-style="default"] .app-transcript .composer-top-toggles,
+[data-composer-style="default"] .welcome-mode .composer-top-toggles {
   width: calc(100% + 32px);
   margin-left: -16px;
   margin-right: -16px;
@@ -10758,11 +10361,7 @@ button.composer-run-timecode.is-open {
   background: color-mix(in srgb, var(--panel-bg) 92%, transparent);
   min-height: 26px;
   padding: 0 9px;
-  transition:
-    color 0.16s ease,
-    border-color 0.16s ease,
-    background-color 0.16s ease,
-    transform 0.12s ease;
+  transition: color 0.16s ease, border-color 0.16s ease, background-color 0.16s ease, transform 0.12s ease;
 }
 
 .composer-picker-label:focus-within {
@@ -10949,11 +10548,11 @@ button.composer-run-timecode.is-open {
 /* Shell-specific provider chrome may still hardcode muted text; keep the
  * trigger label + glyph on the resolved provider accent (incl. Ollama
  * brand overrides via --composer-provider-accent on the button). */
-[data-composer-control='provider'].composer-provider-button {
+[data-composer-control="provider"].composer-provider-button {
   color: var(--composer-provider-accent, inherit) !important;
 }
 
-[data-composer-control='provider'].composer-provider-button:hover:not(:disabled) {
+[data-composer-control="provider"].composer-provider-button:hover:not(:disabled) {
   color: color-mix(in srgb, var(--composer-provider-accent, currentColor) 82%, white) !important;
 }
 
@@ -10990,11 +10589,7 @@ button.composer-run-timecode.is-open {
   border: 1px solid color-mix(in srgb, var(--panel-border) 78%, transparent);
   background: color-mix(in srgb, var(--panel-bg-solid) 90%, transparent);
   cursor: pointer;
-  transition:
-    transform 0.12s ease,
-    box-shadow 0.2s ease,
-    border-color 0.16s ease,
-    background-color 0.16s ease;
+  transition: transform 0.12s ease, box-shadow 0.2s ease, border-color 0.16s ease, background-color 0.16s ease;
 }
 
 .composer-action-btn:hover:not(:disabled) {
@@ -11018,9 +10613,7 @@ button.composer-run-timecode.is-open {
   width: 22px;
   height: 22px;
   stroke-width: 2.2;
-  transition:
-    transform 0.12s ease,
-    filter 0.2s ease;
+  transition: transform 0.12s ease, filter 0.2s ease;
 }
 
 /* Send glyph — 2× the default 14px SF-symbol glyph across every shell;
@@ -11099,18 +10692,11 @@ button.composer-run-timecode.is-open {
 }
 
 @keyframes composer-steer-pulse {
-  0%,
-  100% {
-    opacity: 0.35;
-    transform: scale(0.85);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.1);
-  }
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.1); }
 }
 
-[data-reduce-motion='true'] .composer-steer-indicator .composer-steer-indicator-dot {
+[data-reduce-motion="true"] .composer-steer-indicator .composer-steer-indicator-dot {
   animation: none;
 }
 
@@ -11200,20 +10786,20 @@ button.composer-run-timecode.is-open {
   overflow: hidden;
 }
 
-[data-appearance='soft_glass'] .app-file-editor,
-[data-appearance='solid'] .app-file-editor {
+[data-appearance="soft_glass"] .app-file-editor,
+[data-appearance="solid"] .app-file-editor {
   background: var(--panel-bg-solid);
 }
 
-[data-appearance='soft_glass'] .app-file-editor,
-[data-appearance='native_glass'] .app-file-editor {
+[data-appearance="soft_glass"] .app-file-editor,
+[data-appearance="native_glass"] .app-file-editor {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
 
-[data-appearance='native_glass'] .app-file-editor {
+[data-appearance="native_glass"] .app-file-editor {
   background: color-mix(in srgb, var(--panel-bg-solid) 92%, transparent);
-  border-left-color: rgba(255, 255, 255, 0.2);
+  border-left-color: rgba(255, 255, 255, 0.20);
   /* GPU: dropped — native vibrancy already blurs the desktop behind this panel,
    * a CSS backdrop-filter on top is a redundant compositor pass per frame. */
 }
@@ -11239,7 +10825,7 @@ button.composer-run-timecode.is-open {
   gap: var(--space-sm);
   border-bottom: 1px solid var(--panel-border);
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(255,255,255,0.02);
 }
 
 .file-editor-header strong {
@@ -11305,7 +10891,7 @@ button.composer-run-timecode.is-open {
   height: 28px;
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255,255,255,0.05);
   color: var(--text-primary);
   font: inherit;
   font-size: var(--font-size-sm);
@@ -11389,14 +10975,14 @@ button.composer-run-timecode.is-open {
 .file-editor-row.directory:hover:not(:disabled),
 .file-editor-row.file:hover:not(:disabled),
 .file-editor-row.active {
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(255,255,255,0.07);
   color: var(--text-primary);
 }
 
 .file-editor-row:focus-visible {
   outline: 1px solid color-mix(in srgb, var(--accent) 76%, transparent);
   outline-offset: -1px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255,255,255,0.08);
   color: var(--text-primary);
 }
 
@@ -11548,8 +11134,8 @@ button.composer-run-timecode.is-open {
 .file-editor-code-surface {
   flex: 1;
   min-height: 0;
-  background: rgba(0, 0, 0, 0.28);
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(0,0,0,0.28);
+  border-top: 1px solid rgba(255,255,255,0.04);
   overflow: hidden;
 }
 
@@ -11569,7 +11155,7 @@ button.composer-run-timecode.is-open {
  * the page with nothing to scroll, while keyboard navigation still
  * works because focus-following programmatically adjusts `scrollTop`.
  */
-.file-editor-code-surface [class^='cm-theme'],
+.file-editor-code-surface [class^="cm-theme"],
 .file-editor-code-surface .cm-editor {
   display: flex;
   flex-direction: column;
@@ -11614,8 +11200,8 @@ button.composer-run-timecode.is-open {
   overflow: hidden;
   padding: var(--space-sm) 8px var(--space-sm) 0;
   color: var(--text-muted);
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(0, 0, 0, 0.18);
+  border-right: 1px solid rgba(255,255,255,0.06);
+  background: rgba(0,0,0,0.18);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 20px;
@@ -11680,7 +11266,7 @@ button.composer-run-timecode.is-open {
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--panel-elevated-bg) 96%, var(--app-bg));
-  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.32);
+  box-shadow: 0 18px 52px rgba(0,0,0,0.32);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -11794,16 +11380,14 @@ button.composer-run-timecode.is-open {
   background: color-mix(in srgb, var(--composer-glass-bg) 84%, var(--app-bg) 16%);
   padding-top: 36px;
   border-left: 1px solid var(--sidebar-border);
-  border-left-color: rgba(255, 255, 255, 0.2);
+  border-left-color: rgba(255, 255, 255, 0.20);
   overflow: hidden;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  box-shadow:
-    -1px 0 0 rgba(255, 255, 255, 0.05),
-    inset -1px 0 0 rgba(255, 255, 255, 0.05);
+  box-shadow: -1px 0 0 rgba(255, 255, 255, 0.05), inset -1px 0 0 rgba(255, 255, 255, 0.05);
 }
 
-[data-reduce-transparency='true'] .app-inspector {
+[data-reduce-transparency="true"] .app-inspector {
   background: var(--panel-bg-solid);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -11819,8 +11403,8 @@ button.composer-run-timecode.is-open {
  * `backdrop-filter: blur(12px)` STAYS; we only add a sheen + rim on top.
  * Large pane → the displacement warp is held SUBTLE (reduced opacity) and only
  * at cinematic/epic; subtle tier = flat sheen + rim. */
-:root[data-advanced-fx-refraction='true'] .app-inspector::after {
-  content: '';
+:root[data-advanced-fx-refraction="true"] .app-inspector::after {
+  content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
@@ -11851,15 +11435,15 @@ button.composer-run-timecode.is-open {
 /* (Displacement warp intentionally omitted on the inspector — sheen + rim only;
  * a pane-wide warp read garish + artifact-prone. Warp stays on composer + pickers.) */
 /* Light themes: screen-blend the sheen so the bright surface never blows out. */
-:root[data-advanced-fx-refraction='true']
-  :is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+:root[data-advanced-fx-refraction="true"]
+  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .app-inspector::after {
   mix-blend-mode: screen;
   opacity: 0.7;
 }
 /* Degrade: Reduce Transparency or no backdrop-filter support → sheen/rim off.
  * The reduce-transparency solid fill above (line ~7402) is untouched. */
-:root[data-reduce-transparency='true'] .app-inspector::after {
+:root[data-reduce-transparency="true"] .app-inspector::after {
   display: none;
   filter: none;
 }
@@ -11873,8 +11457,8 @@ button.composer-run-timecode.is-open {
  * (::after, z-index 0). Mirrors the composer (`.composer-inner-module` z 2) and
  * the popover (raised columns). Only applied when refraction is on, so the
  * default stacking/layout is untouched otherwise. */
-:root[data-advanced-fx-refraction='true'] .app-inspector > .inspector-tabs,
-:root[data-advanced-fx-refraction='true'] .app-inspector > .inspector-body {
+:root[data-advanced-fx-refraction="true"] .app-inspector > .inspector-tabs,
+:root[data-advanced-fx-refraction="true"] .app-inspector > .inspector-body {
   position: relative;
   z-index: 1;
 }
@@ -11915,14 +11499,8 @@ button.composer-run-timecode.is-open {
   height: 14px;
 }
 
-.inspector-tab:hover {
-  color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.04);
-}
-.inspector-tab.active {
-  color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.08);
-}
+.inspector-tab:hover { color: var(--text-primary); background: rgba(255,255,255,0.04); }
+.inspector-tab.active { color: var(--text-primary); background: rgba(255,255,255,0.08); }
 
 .inspector-body {
   flex: 1 1 auto;
@@ -12043,16 +11621,16 @@ button.composer-run-timecode.is-open {
   font-variant-numeric: tabular-nums;
 }
 
-.diff-stage-count-chip[data-stage-group='unstaged'],
-.diff-stage-count-chip[data-stage-group='mixed'] {
+.diff-stage-count-chip[data-stage-group="unstaged"],
+.diff-stage-count-chip[data-stage-group="mixed"] {
   border-color: color-mix(in srgb, var(--warning) 34%, var(--panel-border));
 }
 
-.diff-stage-count-chip[data-stage-group='staged'] {
+.diff-stage-count-chip[data-stage-group="staged"] {
   border-color: color-mix(in srgb, var(--success) 34%, var(--panel-border));
 }
 
-.diff-stage-count-chip[data-stage-group='untracked'] {
+.diff-stage-count-chip[data-stage-group="untracked"] {
   border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-border));
 }
 
@@ -12135,11 +11713,7 @@ button.composer-run-timecode.is-open {
   grid-template-rows: auto minmax(0, 1fr);
   color: var(--text-primary);
   background:
-    radial-gradient(
-      circle at 16% 0%,
-      color-mix(in srgb, var(--accent) 14%, transparent),
-      transparent 32%
-    ),
+    radial-gradient(circle at 16% 0%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 32%),
     var(--app-bg);
   overflow: hidden;
 }
@@ -12190,18 +11764,18 @@ button.composer-run-timecode.is-open {
   overflow: hidden;
 }
 
-.popout-root[data-popout-family='workspace'] {
+.popout-root[data-popout-family="workspace"] {
   background: var(--app-bg);
 }
 
-.popout-root[data-popout-family='workspace'] .popout-header {
+.popout-root[data-popout-family="workspace"] .popout-header {
   background: var(--panel-bg-solid, var(--app-bg-elevated));
   box-shadow:
     inset 0 -1px 0 color-mix(in srgb, var(--panel-border) 88%, transparent),
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 
-.popout-root[data-popout-family='workspace'] .popout-body {
+.popout-root[data-popout-family="workspace"] .popout-body {
   background: var(--app-bg);
 }
 
@@ -12507,7 +12081,8 @@ button.composer-run-timecode.is-open {
 }
 
 .popout-chat-transcript .transcript-scroll {
-  padding: calc(var(--space-lg) * 2.5) var(--chat-side-gutter) calc(var(--space-lg) * 2);
+  padding: calc(var(--space-lg) * 2.5) var(--chat-side-gutter)
+    calc(var(--space-lg) * 2);
   scroll-padding-top: calc(var(--space-lg) * 2.5);
   scroll-padding-bottom: calc(var(--space-lg) * 2);
 }
@@ -12736,9 +12311,7 @@ button.composer-run-timecode.is-open {
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
-.diff-file-row:hover {
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-}
+.diff-file-row:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
 .diff-file-row.selected {
   background: color-mix(in srgb, var(--text-primary) 8%, transparent);
   /* Full-perimeter rim (not a left-edge sliver) for the selected diff row. */
@@ -12838,26 +12411,11 @@ button.diff-file-row {
   color: var(--text-muted);
 }
 
-.diff-file-badge.created {
-  background: rgba(76, 195, 138, 0.12);
-  color: var(--success);
-}
-.diff-file-badge.modified {
-  background: rgba(90, 140, 255, 0.12);
-  color: var(--accent);
-}
-.diff-file-badge.deleted {
-  background: rgba(229, 77, 77, 0.12);
-  color: var(--danger);
-}
-.diff-file-badge.untracked {
-  background: rgba(245, 166, 35, 0.12);
-  color: var(--warning);
-}
-.diff-file-badge.noise {
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
-  color: var(--text-muted);
-}
+.diff-file-badge.created { background: rgba(76,195,138,0.12); color: var(--success); }
+.diff-file-badge.modified { background: rgba(90,140,255,0.12); color: var(--accent); }
+.diff-file-badge.deleted { background: rgba(229,77,77,0.12); color: var(--danger); }
+.diff-file-badge.untracked { background: rgba(245,166,35,0.12); color: var(--warning); }
+.diff-file-badge.noise { background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-muted); }
 
 .diff-detail {
   flex: 1;
@@ -13129,20 +12687,20 @@ button.diff-file-row {
   white-space: nowrap;
 }
 
-.diff-detail-stat-badge[data-status='created'] {
+.diff-detail-stat-badge[data-status="created"] {
   color: var(--success);
 }
 
-.diff-detail-stat-badge[data-status='deleted'] {
+.diff-detail-stat-badge[data-status="deleted"] {
   color: var(--danger);
 }
 
-.diff-detail-stat-badge[data-status='modified'],
-.diff-detail-stat-badge[data-status='renamed'] {
+.diff-detail-stat-badge[data-status="modified"],
+.diff-detail-stat-badge[data-status="renamed"] {
   color: var(--accent);
 }
 
-.diff-detail-stat-badge[data-status='untracked'] {
+.diff-detail-stat-badge[data-status="untracked"] {
   color: var(--warning);
 }
 
@@ -13243,18 +12801,9 @@ button.diff-file-row {
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 
-.diff-line.add {
-  background: var(--diff-add-bg);
-  color: var(--diff-add-text);
-}
-.diff-line.del {
-  background: var(--diff-del-bg);
-  color: var(--diff-del-text);
-}
-.diff-line.hunk {
-  color: var(--diff-hunk);
-  opacity: 0.8;
-}
+.diff-line.add { background: var(--diff-add-bg); color: var(--diff-add-text); }
+.diff-line.del { background: var(--diff-del-bg); color: var(--diff-del-text); }
+.diff-line.hunk { color: var(--diff-hunk); opacity: 0.8; }
 
 /* Activity Timeline */
 .activity-timeline {
@@ -13396,10 +12945,7 @@ button.diff-file-row {
   font-weight: 500;
   letter-spacing: 0.02em;
   cursor: pointer;
-  transition:
-    color 120ms ease,
-    border-color 120ms ease,
-    background 120ms ease;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 .turn-receipt-toggle:hover {
   color: var(--text-secondary, rgba(255, 255, 255, 0.55));
@@ -13410,7 +12956,7 @@ button.diff-file-row {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
-[data-reduce-motion='true'] .turn-receipt-toggle {
+[data-reduce-motion="true"] .turn-receipt-toggle {
   transition: none;
 }
 
@@ -13440,72 +12986,44 @@ button.diff-file-row {
 .activity-gutter-dot {
   display: none !important;
 }
-.activity-row[data-status='success'] .activity-gutter-dot {
-  background: var(--tool-success);
-  opacity: 1;
-}
-.activity-row[data-status='warning'] .activity-gutter-dot {
-  background: var(--tool-warning);
-  opacity: 1;
-}
-.activity-row[data-status='error'] .activity-gutter-dot {
-  background: var(--tool-error);
-  opacity: 1;
-}
-.activity-row[data-status='running'] .activity-gutter-dot {
+.activity-row[data-status="success"]  .activity-gutter-dot { background: var(--tool-success); opacity: 1; }
+.activity-row[data-status="warning"]  .activity-gutter-dot { background: var(--tool-warning); opacity: 1; }
+.activity-row[data-status="error"]    .activity-gutter-dot { background: var(--tool-error);   opacity: 1; }
+.activity-row[data-status="running"]  .activity-gutter-dot {
   background: var(--tool-running);
   opacity: 1;
   animation: activity-dot-pulse 0.9s ease-in-out infinite alternate;
 }
-.activity-row[data-status='pending'] .activity-gutter-dot {
+.activity-row[data-status="pending"]  .activity-gutter-dot {
   background: var(--text-tertiary);
   opacity: 0.4;
 }
 @keyframes activity-dot-pulse {
-  from {
-    transform: scale(0.85);
-    opacity: 0.55;
-  }
-  to {
-    transform: scale(1.05);
-    opacity: 1;
-  }
+  from { transform: scale(0.85); opacity: 0.55; }
+  to   { transform: scale(1.05); opacity: 1; }
 }
 /* Reduce-motion: hold the dot at its final color/size without
  * the running pulse. Matches the existing pattern for stamp +
  * border-pulse animations. */
-[data-reduce-motion='true'] .activity-gutter-dot {
+[data-reduce-motion="true"] .activity-gutter-dot {
   animation: none;
 }
 
 /* Aggregate-status dot for compact-group headers. Same visuals;
  * the data-status attribute is set on the parent .activity-compact-
  * group from a small derive helper in ActivityStack. */
-.activity-compact-group[data-status='success'] .activity-gutter-dot {
-  background: var(--tool-success);
-  opacity: 1;
-}
-.activity-compact-group[data-status='warning'] .activity-gutter-dot {
-  background: var(--tool-warning);
-  opacity: 1;
-}
-.activity-compact-group[data-status='error'] .activity-gutter-dot {
-  background: var(--tool-error);
-  opacity: 1;
-}
-.activity-compact-group[data-status='running'] .activity-gutter-dot {
+.activity-compact-group[data-status="success"]  .activity-gutter-dot { background: var(--tool-success); opacity: 1; }
+.activity-compact-group[data-status="warning"]  .activity-gutter-dot { background: var(--tool-warning); opacity: 1; }
+.activity-compact-group[data-status="error"]    .activity-gutter-dot { background: var(--tool-error);   opacity: 1; }
+.activity-compact-group[data-status="running"]  .activity-gutter-dot {
   background: var(--tool-running);
   opacity: 1;
   animation: activity-dot-pulse 0.9s ease-in-out infinite alternate;
 }
 
 @keyframes activity-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
 /* Phase L3 slice 4 — stamp animation on status transition. Triggered
@@ -13515,18 +13033,9 @@ button.diff-file-row {
  * Single-shot; the class is removed by ActivityRow after the
  * animation completes. */
 @keyframes activity-stamp-land {
-  0% {
-    transform: scale(1.15);
-    opacity: 0;
-  }
-  60% {
-    transform: scale(0.96);
-    opacity: 1;
-  }
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
+  0%   { transform: scale(1.15); opacity: 0; }
+  60%  { transform: scale(0.96); opacity: 1; }
+  100% { transform: scale(1);    opacity: 1; }
 }
 .activity-status-stamping {
   display: inline-flex;
@@ -13535,7 +13044,7 @@ button.diff-file-row {
 }
 /* Reduce-motion: skip the stamp animation entirely; the icon still
  * changes appearance via the status transition, just statically. */
-[data-reduce-motion='true'] .activity-status-stamping {
+[data-reduce-motion="true"] .activity-status-stamping {
   animation: none;
 }
 
@@ -13554,7 +13063,7 @@ button.diff-file-row {
   color: var(--accent);
   opacity: 0.85;
 }
-.activity-row[data-status='error'] .activity-category-icon {
+.activity-row[data-status="error"] .activity-category-icon {
   color: var(--tool-error);
   opacity: 1;
 }
@@ -13575,10 +13084,10 @@ button.diff-file-row {
  * because its own pulse animation already conveys the running
  * state visually.
  */
-.activity-row[data-status='running'] .activity-label,
-.activity-row[data-status='running'] .activity-label-main,
-.activity-row[data-status='running'] .activity-label-main strong,
-.activity-row[data-status='running'] .activity-inline-command {
+.activity-row[data-status="running"] .activity-label,
+.activity-row[data-status="running"] .activity-label-main,
+.activity-row[data-status="running"] .activity-label-main strong,
+.activity-row[data-status="running"] .activity-inline-command {
   background: linear-gradient(
     100deg,
     color-mix(in srgb, var(--text-secondary) 70%, transparent) 0%,
@@ -13595,17 +13104,17 @@ button.diff-file-row {
   animation: text-shimmer-sweep 2.4s linear infinite;
 }
 
-[data-reduce-motion='true'] .activity-row[data-status='running'] .activity-label,
-[data-reduce-motion='true'] .activity-row[data-status='running'] .activity-label-main,
-[data-reduce-motion='true'] .activity-row[data-status='running'] .activity-label-main strong,
-[data-reduce-motion='true'] .activity-row[data-status='running'] .activity-inline-command {
+[data-reduce-motion="true"] .activity-row[data-status="running"] .activity-label,
+[data-reduce-motion="true"] .activity-row[data-status="running"] .activity-label-main,
+[data-reduce-motion="true"] .activity-row[data-status="running"] .activity-label-main strong,
+[data-reduce-motion="true"] .activity-row[data-status="running"] .activity-inline-command {
   animation: none;
   background: none;
   color: var(--text-primary);
   -webkit-text-fill-color: var(--text-primary);
 }
 
-.activity-row[data-status='running'] .activity-category-icon {
+.activity-row[data-status="running"] .activity-category-icon {
   /* Running keeps the accent but pulses gently so the user sees
    * something is in flight. No separate `--tool-running` color
    * grab — uses the same accent the icon is already on. */
@@ -13613,12 +13122,8 @@ button.diff-file-row {
   animation: activity-icon-pulse 1.4s ease-in-out infinite alternate;
 }
 @keyframes activity-icon-pulse {
-  from {
-    opacity: 0.55;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0.55; }
+  to   { opacity: 1; }
 }
 
 /*
@@ -13653,20 +13158,20 @@ button.diff-file-row {
  * Color stays at `--text-primary` so the row stays readable
  * (we're removing the loud animation, not the content).
  */
-.activity-row[data-stale='true'] .activity-label,
-.activity-row[data-stale='true'] .activity-label-main,
-.activity-row[data-stale='true'] .activity-label-main strong,
-.activity-row[data-stale='true'] .activity-inline-command {
+.activity-row[data-stale="true"] .activity-label,
+.activity-row[data-stale="true"] .activity-label-main,
+.activity-row[data-stale="true"] .activity-label-main strong,
+.activity-row[data-stale="true"] .activity-inline-command {
   animation: none;
   background: none;
   color: var(--text-primary);
   -webkit-text-fill-color: var(--text-primary);
 }
-.activity-row[data-stale='true'] .activity-category-icon {
+.activity-row[data-stale="true"] .activity-category-icon {
   animation: none;
   opacity: 0.62;
 }
-[data-reduce-motion='true'] .activity-row[data-status='running'] .activity-category-icon {
+[data-reduce-motion="true"] .activity-row[data-status="running"] .activity-category-icon {
   animation: none;
 }
 
@@ -13678,22 +13183,10 @@ button.diff-file-row {
   opacity: 0.5;
   background: var(--text-tertiary);
 }
-.activity-category-pip.category-write {
-  background: var(--accent);
-  opacity: 0.7;
-}
-.activity-category-pip.category-shell {
-  background: var(--warning);
-  opacity: 0.7;
-}
-.activity-category-pip.category-search {
-  background: var(--info);
-  opacity: 0.55;
-}
-.activity-category-pip.category-task {
-  background: var(--accent);
-  opacity: 0.7;
-}
+.activity-category-pip.category-write  { background: var(--accent); opacity: 0.7; }
+.activity-category-pip.category-shell  { background: var(--warning); opacity: 0.7; }
+.activity-category-pip.category-search { background: var(--info); opacity: 0.55; }
+.activity-category-pip.category-task   { background: var(--accent); opacity: 0.7; }
 
 /* Phase L3 slice 7 — inline-row tool-family icon. Replaces the
  * colored pip with the hand-drawn icon while preserving the
@@ -13715,7 +13208,7 @@ button.diff-file-row {
   color: var(--accent);
   opacity: 0.85;
 }
-.activity-row[data-status='error'] .activity-inline-icon {
+.activity-row[data-status="error"] .activity-inline-icon {
   color: var(--tool-error);
   opacity: 1;
 }
@@ -13944,13 +13437,11 @@ button.diff-file-row {
  * top edge that hints at a ruled notebook page without going full
  * texture. Works against light/warm themes where a deeper shadow
  * reads as physical depth. */
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .activity-row-inline
-  .activity-detail,
-[data-theme='system'] .activity-row-inline .activity-detail,
-[data-theme='citrus'] .activity-row-inline .activity-detail,
-[data-theme='yellow'] .activity-row-inline .activity-detail,
-[data-theme='orange'] .activity-row-inline .activity-detail {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .activity-row-inline .activity-detail,
+[data-theme="system"] .activity-row-inline .activity-detail,
+[data-theme="citrus"] .activity-row-inline .activity-detail,
+[data-theme="yellow"] .activity-row-inline .activity-detail,
+[data-theme="orange"] .activity-row-inline .activity-detail {
   background: color-mix(in srgb, var(--app-bg-elevated) 92%, #fff8eb 8%);
   box-shadow:
     0 1px 0 color-mix(in srgb, var(--sidebar-border) 60%, transparent) inset,
@@ -13960,9 +13451,9 @@ button.diff-file-row {
 
 /* slate — chalkboard family: slight inset shadow at the top edge
  * suggesting chalk dust, subtle outer shadow grounds the card. */
-[data-theme='dark'] .activity-row-inline .activity-detail,
-[data-theme='midnight'] .activity-row-inline .activity-detail,
-[data-theme='graphite'] .activity-row-inline .activity-detail {
+[data-theme="dark"] .activity-row-inline .activity-detail,
+[data-theme="midnight"] .activity-row-inline .activity-detail,
+[data-theme="graphite"] .activity-row-inline .activity-detail {
   background: color-mix(in srgb, var(--app-bg-elevated) 88%, #0a0a10 12%);
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.04) inset,
@@ -13974,15 +13465,15 @@ button.diff-file-row {
  * the existing `subthread-delegation-card` (which uses a stronger
  * frosted-glass treatment). Both can coexist in a single transcript;
  * the slight contrast tells them apart. */
-[data-theme='blue'] .activity-row-inline .activity-detail,
-[data-theme='purple'] .activity-row-inline .activity-detail,
-[data-theme='pink'] .activity-row-inline .activity-detail,
-[data-theme='red'] .activity-row-inline .activity-detail,
-[data-theme='green'] .activity-row-inline .activity-detail,
-[data-theme='ocean'] .activity-row-inline .activity-detail,
-[data-theme='sunset'] .activity-row-inline .activity-detail,
-[data-theme='forest'] .activity-row-inline .activity-detail,
-[data-theme='twilight'] .activity-row-inline .activity-detail {
+[data-theme="blue"] .activity-row-inline .activity-detail,
+[data-theme="purple"] .activity-row-inline .activity-detail,
+[data-theme="pink"] .activity-row-inline .activity-detail,
+[data-theme="red"] .activity-row-inline .activity-detail,
+[data-theme="green"] .activity-row-inline .activity-detail,
+[data-theme="ocean"] .activity-row-inline .activity-detail,
+[data-theme="sunset"] .activity-row-inline .activity-detail,
+[data-theme="forest"] .activity-row-inline .activity-detail,
+[data-theme="twilight"] .activity-row-inline .activity-detail {
   background: color-mix(in srgb, var(--app-bg-elevated) 78%, transparent);
   backdrop-filter: saturate(120%) blur(6px);
   -webkit-backdrop-filter: saturate(120%) blur(6px);
@@ -13994,8 +13485,8 @@ button.diff-file-row {
 /* neon — thin outer glow that hints at the cyber/rainbow aesthetic
  * without changing the card's fill. The provider-coloured left
  * border becomes the dominant accent. */
-[data-theme='cyber'] .activity-row-inline .activity-detail,
-[data-theme='rainbow'] .activity-row-inline .activity-detail {
+[data-theme="cyber"] .activity-row-inline .activity-detail,
+[data-theme="rainbow"] .activity-row-inline .activity-detail {
   background: color-mix(in srgb, var(--app-bg-elevated) 94%, transparent);
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent) inset,
@@ -14005,13 +13496,9 @@ button.diff-file-row {
 /* playful — brighter, looser. Slight outer shadow combined with a
  * warm-tinted background pull keeps it cheerful without going full
  * theme-park. */
-[data-theme='nebula'] .activity-row-inline .activity-detail,
-[data-theme='candy'] .activity-row-inline .activity-detail {
-  background: color-mix(
-    in srgb,
-    var(--app-bg-elevated) 90%,
-    color-mix(in srgb, var(--accent) 18%, transparent) 10%
-  );
+[data-theme="nebula"] .activity-row-inline .activity-detail,
+[data-theme="candy"] .activity-row-inline .activity-detail {
+  background: color-mix(in srgb, var(--app-bg-elevated) 90%, color-mix(in srgb, var(--accent) 18%, transparent) 10%);
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.08) inset,
     0 6px 14px -6px color-mix(in srgb, var(--accent) 30%, transparent);
@@ -14054,18 +13541,16 @@ button.diff-file-row {
   line-height: 1;
   color: var(--text-tertiary);
   opacity: 0.55;
-  transition:
-    transform 180ms ease,
-    opacity 140ms ease;
+  transition: transform 180ms ease, opacity 140ms ease;
 }
 .activity-row-inline:hover .activity-expand-chevron,
 .activity-row-inline.expanded .activity-expand-chevron {
   opacity: 0.9;
 }
-.activity-expand-chevron[data-expanded='true'] {
+.activity-expand-chevron[data-expanded="true"] {
   transform: rotate(90deg);
 }
-[data-reduce-motion='true'] .activity-expand-chevron {
+[data-reduce-motion="true"] .activity-expand-chevron {
   transition: none;
 }
 
@@ -14199,104 +13684,44 @@ button.diff-file-row {
   white-space: nowrap;
 }
 
-.activity-yield-target.provider-codex {
-  --provider-tint: var(--provider-codex-color);
-}
-.activity-yield-target.provider-claude {
-  --provider-tint: var(--provider-claude-color);
-}
-.activity-yield-target.provider-gemini {
-  --provider-tint: var(--provider-gemini-color);
-}
-.activity-yield-target.provider-kimi {
-  --provider-tint: var(--provider-kimi-color);
-}
-.activity-yield-target.provider-grok {
-  --provider-tint: var(--provider-grok-color);
-}
-.activity-yield-target.provider-cursor {
-  --provider-tint: var(--provider-cursor-color);
-}
-.activity-yield-target.provider-ollama {
-  --provider-tint: var(--provider-ollama-color);
-}
+.activity-yield-target.provider-codex { --provider-tint: var(--provider-codex-color); }
+.activity-yield-target.provider-claude { --provider-tint: var(--provider-claude-color); }
+.activity-yield-target.provider-gemini { --provider-tint: var(--provider-gemini-color); }
+.activity-yield-target.provider-kimi { --provider-tint: var(--provider-kimi-color); }
+.activity-yield-target.provider-grok { --provider-tint: var(--provider-grok-color); }
+.activity-yield-target.provider-cursor { --provider-tint: var(--provider-cursor-color); }
+.activity-yield-target.provider-ollama { --provider-tint: var(--provider-ollama-color); }
 /* Ollama-backed display brands — yield chip wears the spoofed brand hue
  * so "@Planner yielding to @Reviewer" reads in the brand colour, matching
  * the transcript header + @-mention chips. */
-.activity-yield-target.provider-alibaba {
-  --provider-tint: var(--provider-alibaba-color);
-}
-.activity-yield-target.provider-deep-reinforce {
-  --provider-tint: var(--provider-deep-reinforce-color);
-}
-.activity-yield-target.provider-google {
-  --provider-tint: var(--provider-google-color);
-}
-.activity-yield-target.provider-ibm {
-  --provider-tint: var(--provider-ibm-color);
-}
-.activity-yield-target.provider-liquid {
-  --provider-tint: var(--provider-liquid-color);
-}
-.activity-yield-target.provider-meta {
-  --provider-tint: var(--provider-meta-color);
-}
-.activity-yield-target.provider-cohere {
-  --provider-tint: var(--provider-cohere-color);
-}
-.activity-yield-target.provider-essential {
-  --provider-tint: var(--provider-essential-color);
-}
-.activity-yield-target.provider-nvidia {
-  --provider-tint: var(--provider-nvidia-color);
-}
-.activity-yield-target.provider-openai {
-  --provider-tint: var(--provider-openai-color);
-}
-.activity-yield-target.provider-openbmb {
-  --provider-tint: var(--provider-openbmb-color);
-}
-.activity-yield-target.provider-poolside {
-  --provider-tint: var(--provider-poolside-color);
-}
-.activity-yield-target.provider-pi {
-  --provider-tint: var(--provider-pi-color);
-}
-.activity-yield-target.provider-openrouter {
-  --provider-tint: var(--provider-openrouter-color);
-}
-.activity-yield-target.provider-thinkingmachines {
-  --provider-tint: var(--provider-thinkingmachines-color);
-}
-.activity-yield-target.provider-qwen {
-  --provider-tint: var(--provider-qwen-color);
-}
-.activity-yield-target.provider-deepseek {
-  --provider-tint: var(--provider-deepseek-color);
-}
-.activity-yield-target.provider-zai {
-  --provider-tint: var(--provider-zai-color);
-}
-.activity-yield-target.provider-minimax {
-  --provider-tint: var(--provider-minimax-color);
-}
-.activity-yield-target.provider-mistral {
-  --provider-tint: var(--provider-mistral-color);
-}
-.activity-yield-target.provider-muse {
-  --provider-tint: var(--provider-muse-color);
-}
+.activity-yield-target.provider-alibaba { --provider-tint: var(--provider-alibaba-color); }
+.activity-yield-target.provider-deep-reinforce { --provider-tint: var(--provider-deep-reinforce-color); }
+.activity-yield-target.provider-google { --provider-tint: var(--provider-google-color); }
+.activity-yield-target.provider-ibm { --provider-tint: var(--provider-ibm-color); }
+.activity-yield-target.provider-liquid { --provider-tint: var(--provider-liquid-color); }
+.activity-yield-target.provider-meta { --provider-tint: var(--provider-meta-color); }
+.activity-yield-target.provider-cohere { --provider-tint: var(--provider-cohere-color); }
+.activity-yield-target.provider-essential { --provider-tint: var(--provider-essential-color); }
+.activity-yield-target.provider-nvidia { --provider-tint: var(--provider-nvidia-color); }
+.activity-yield-target.provider-openai { --provider-tint: var(--provider-openai-color); }
+.activity-yield-target.provider-openbmb { --provider-tint: var(--provider-openbmb-color); }
+.activity-yield-target.provider-poolside { --provider-tint: var(--provider-poolside-color); }
+.activity-yield-target.provider-pi { --provider-tint: var(--provider-pi-color); }
+.activity-yield-target.provider-openrouter { --provider-tint: var(--provider-openrouter-color); }
+.activity-yield-target.provider-thinkingmachines { --provider-tint: var(--provider-thinkingmachines-color); }
+.activity-yield-target.provider-qwen { --provider-tint: var(--provider-qwen-color); }
+.activity-yield-target.provider-deepseek { --provider-tint: var(--provider-deepseek-color); }
+.activity-yield-target.provider-zai { --provider-tint: var(--provider-zai-color); }
+.activity-yield-target.provider-minimax { --provider-tint: var(--provider-minimax-color); }
+.activity-yield-target.provider-mistral { --provider-tint: var(--provider-mistral-color); }
+.activity-yield-target.provider-muse { --provider-tint: var(--provider-muse-color); }
 
-.activity-yield-target.provider-groq {
-  --provider-tint: var(--provider-groq-color);
-}
-.activity-yield-target.provider-cerebras {
-  --provider-tint: var(--provider-cerebras-color);
-}
+.activity-yield-target.provider-groq { --provider-tint: var(--provider-groq-color); }
+.activity-yield-target.provider-cerebras { --provider-tint: var(--provider-cerebras-color); }
 
 /* Light theme — keep the colour but lift saturation against the
  * lighter background so the tag stays legible. */
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .activity-yield-target {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .activity-yield-target {
   color: color-mix(in srgb, var(--provider-tint) 70%, #1d1d1f 30%);
 }
 
@@ -14326,7 +13751,7 @@ button.diff-file-row {
  * chip's text now paints over its own pill background instead of
  * through a clipped gradient.
  */
-.activity-row[data-status='running'] .activity-yield-target {
+.activity-row[data-status="running"] .activity-yield-target {
   /* Reset only the shimmer's text-clipping mechanics — no background
    * to override now that the chip is plain inline text. The
    * `-webkit-text-fill-color: currentColor` line is the critical
@@ -14340,9 +13765,8 @@ button.diff-file-row {
   animation: none;
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .activity-row[data-status='running']
-  .activity-yield-target {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .activity-row[data-status="running"] .activity-yield-target {
   color: color-mix(in srgb, var(--provider-tint) 70%, #1d1d1f 30%);
 }
 
@@ -14432,8 +13856,7 @@ button.diff-file-row {
 }
 
 /* Light-family themes: same softened treatment the composer popovers get. */
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .transcript-jump-to-latest-pill {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .transcript-jump-to-latest-pill {
   border-color: var(--surface-border);
   box-shadow:
     0 1px 0 inset rgba(255, 255, 255, 0.72),
@@ -14471,12 +13894,12 @@ button.diff-file-row {
   }
 }
 
-[data-reduce-motion='true'] .transcript-jump-to-latest-pill {
+[data-reduce-motion="true"] .transcript-jump-to-latest-pill {
   animation: none;
   transition: none;
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .transcript-jump-to-latest-pill {
   background: color-mix(in srgb, white 92%, var(--jump-pill-accent) 8%);
   color: color-mix(in srgb, var(--jump-pill-accent) 60%, #1d1d1f 40%);
@@ -14486,13 +13909,12 @@ button.diff-file-row {
     inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .transcript-jump-to-latest-pill
-  .transcript-jump-to-latest-arrow {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .transcript-jump-to-latest-pill .transcript-jump-to-latest-arrow {
   color: color-mix(in srgb, var(--jump-pill-accent) 80%, #1d1d1f 20%);
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .transcript-jump-to-latest-pill:hover {
   background: color-mix(in srgb, white 88%, var(--jump-pill-accent) 12%);
   border-color: color-mix(in srgb, var(--jump-pill-accent) 52%, transparent);
@@ -14593,20 +14015,11 @@ button.diff-file-row {
 }
 
 @keyframes activity-inline-pip-pulse {
-  0%,
-  100% {
-    opacity: 0.35;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.95;
-    transform: scale(1.25);
-  }
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50%      { opacity: 0.95; transform: scale(1.25); }
 }
 
-.activity-row:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
+.activity-row:hover { background: rgba(255,255,255,0.04); }
 
 .activity-row.activity-row-inline:hover {
   background: transparent;
@@ -14628,18 +14041,10 @@ button.diff-file-row {
   justify-content: center;
 }
 
-.activity-status.running {
-  color: var(--tool-running);
-}
-.activity-status.success {
-  color: var(--tool-success);
-}
-.activity-status.warning {
-  color: var(--tool-warning);
-}
-.activity-status.error {
-  color: var(--tool-error);
-}
+.activity-status.running { color: var(--tool-running); }
+.activity-status.success { color: var(--tool-success); }
+.activity-status.warning { color: var(--tool-warning); }
+.activity-status.error { color: var(--tool-error); }
 
 .activity-body {
   flex: 1;
@@ -14663,7 +14068,7 @@ button.diff-file-row {
 }
 
 .activity-file-type-icon {
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255,255,255,0.12);
 }
 
 .activity-file-name {
@@ -14910,7 +14315,7 @@ button.diff-file-row {
 }
 
 @property --agent-chase-angle {
-  syntax: '<angle>';
+  syntax: "<angle>";
   inherits: false;
   initial-value: 0deg;
 }
@@ -14966,7 +14371,7 @@ button.diff-file-row {
 
 .raw-log-line {
   padding: 2px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255,255,255,0.03);
 }
 
 .raw-log-meta {
@@ -15006,12 +14411,10 @@ button.diff-file-row {
   padding: var(--space-xs) 0;
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
 }
 
-.safety-row:last-child {
-  border-bottom: none;
-}
+.safety-row:last-child { border-bottom: none; }
 
 .composer-textarea-context-menu {
   z-index: 10060;
@@ -15180,8 +14583,8 @@ button.diff-file-row {
     transform: translateX(-100%);
   }
 }
-[data-reduce-motion='true'] .notification-zone-pane.is-incoming,
-[data-reduce-motion='true'] .notification-zone-pane.is-outgoing {
+[data-reduce-motion="true"] .notification-zone-pane.is-incoming,
+[data-reduce-motion="true"] .notification-zone-pane.is-outgoing {
   animation: none;
 }
 
@@ -15211,7 +14614,7 @@ button.diff-file-row {
  * card's OWN border + accent/danger-glow box-shadow are left fully intact. Net:
  * the banner ITSELF reads as glass (red glass on the red banner). Attr-gated →
  * plain card when refraction is off / Reduce Transparency is on. */
-:root[data-advanced-fx-refraction='true'] .notification-card {
+:root[data-advanced-fx-refraction="true"] .notification-card {
   position: relative;
   /* IMAGE layers only — painted over the card's existing tone colour, never
    * replacing it. Neutral white so it reads as a highlight on any tone. */
@@ -15225,8 +14628,8 @@ button.diff-file-row {
       rgba(255, 255, 255, 0.045) 100%
     );
 }
-:root[data-advanced-fx-refraction='true'] .notification-card::after {
-  content: '';
+:root[data-advanced-fx-refraction="true"] .notification-card::after {
+  content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
@@ -15254,8 +14657,7 @@ button.diff-file-row {
     var(--panel-bg, rgba(127, 127, 127, 0.06))
   );
   box-shadow:
-    inset 0 0 0 1px
-      color-mix(in srgb, var(--provider-claude-color, #b16105) 42%, var(--panel-border)),
+    inset 0 0 0 1px color-mix(in srgb, var(--provider-claude-color, #b16105) 42%, var(--panel-border)),
     inset 0 0 18px color-mix(in srgb, var(--provider-claude-color, #b16105) 14%, transparent),
     0 0 0 3px color-mix(in srgb, var(--provider-claude-color, #b16105) 9%, transparent);
 }
@@ -15281,28 +14683,21 @@ button.diff-file-row {
     var(--panel-bg, rgba(127, 127, 127, 0.06))
   );
   box-shadow:
-    inset 0 0 0 1px
-      color-mix(in srgb, var(--provider-cursor-color, #8c7508) 42%, var(--panel-border)),
+    inset 0 0 0 1px color-mix(in srgb, var(--provider-cursor-color, #8c7508) 42%, var(--panel-border)),
     inset 0 0 18px color-mix(in srgb, var(--provider-cursor-color, #8c7508) 14%, transparent),
     0 0 0 3px color-mix(in srgb, var(--provider-cursor-color, #8c7508) 9%, transparent);
 }
 .notification-card--accent-grok:not(.notification-card--danger) {
   --notification-accent: var(--provider-grok-color, var(--text-primary));
-  border-color: color-mix(
-    in srgb,
-    var(--provider-grok-color, var(--text-primary)) 38%,
-    var(--panel-border)
-  );
+  border-color: color-mix(in srgb, var(--provider-grok-color, var(--text-primary)) 38%, var(--panel-border));
   background: color-mix(
     in srgb,
     var(--provider-grok-color, var(--text-primary)) 7%,
     var(--panel-bg, rgba(127, 127, 127, 0.06))
   );
   box-shadow:
-    inset 0 0 0 1px
-      color-mix(in srgb, var(--provider-grok-color, var(--text-primary)) 34%, var(--panel-border)),
-    inset 0 0 18px
-      color-mix(in srgb, var(--provider-grok-color, var(--text-primary)) 12%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--provider-grok-color, var(--text-primary)) 34%, var(--panel-border)),
+    inset 0 0 18px color-mix(in srgb, var(--provider-grok-color, var(--text-primary)) 12%, transparent),
     0 0 0 3px color-mix(in srgb, var(--provider-grok-color, var(--text-primary)) 8%, transparent);
 }
 /* Chromeless variant — the grouped "New Additions" notice sits SATELLITE on the
@@ -15319,14 +14714,14 @@ button.diff-file-row {
  * `--notification-accent` is NOT reset: the ✦ icon still reads it, so the
  * notice keeps its hue while losing its container. */
 .notification-card.notification-card--bare,
-:root[data-advanced-fx-refraction='true'] .notification-card.notification-card--bare {
+:root[data-advanced-fx-refraction="true"] .notification-card.notification-card--bare {
   padding: 0;
   border-color: transparent;
   background: none;
   background-image: none;
   box-shadow: none;
 }
-:root[data-advanced-fx-refraction='true'] .notification-card.notification-card--bare::after {
+:root[data-advanced-fx-refraction="true"] .notification-card.notification-card--bare::after {
   content: none;
 }
 
@@ -15590,10 +14985,11 @@ button.diff-file-row {
   border-radius: 50%;
   background: transparent;
   cursor: pointer;
-  transition: transform 160ms ease;
+  transition:
+    transform 160ms ease;
 }
 .notification-zone-dot::before {
-  content: '';
+  content: "";
   display: block;
   width: 6px;
   height: 6px;

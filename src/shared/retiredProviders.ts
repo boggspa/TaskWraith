@@ -41,7 +41,9 @@ export const LIVE_SELECTABLE_PROVIDER_IDS = [
   'muse',
   'devin'
 ] as const
-const LIVE_SELECTABLE_PROVIDER_ID_SET: ReadonlySet<string> = new Set(LIVE_SELECTABLE_PROVIDER_IDS)
+const LIVE_SELECTABLE_PROVIDER_ID_SET: ReadonlySet<string> = new Set(
+  LIVE_SELECTABLE_PROVIDER_IDS
+)
 
 /**
  * The structural fallback "live" provider used wherever code previously

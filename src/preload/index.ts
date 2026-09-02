@@ -1185,7 +1185,13 @@ const api = {
     intentNote?: string,
     commandRuleOfferId?: string
   ) =>
-    ipcRenderer.invoke('respond-agent-approval', requestId, action, intentNote, commandRuleOfferId),
+    ipcRenderer.invoke(
+      'respond-agent-approval',
+      requestId,
+      action,
+      intentNote,
+      commandRuleOfferId
+    ),
   listCommandRules: (): Promise<CommandRuleListItem[]> => ipcRenderer.invoke('command-rules:list'),
   removeCommandRule: (ruleId: string): Promise<CommandRuleMutationResult> =>
     ipcRenderer.invoke('command-rules:remove', ruleId),

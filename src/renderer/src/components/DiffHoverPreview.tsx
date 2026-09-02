@@ -222,7 +222,10 @@ export function getDiffHoverPreviewLayout({
     DIFF_HOVER_PREVIEW_MARGIN,
     viewportHeight - placementHeight - DIFF_HOVER_PREVIEW_MARGIN
   )
-  const top = Math.min(Math.max(DIFF_HOVER_PREVIEW_MARGIN, unclampedTop), maxTop)
+  const top = Math.min(
+    Math.max(DIFF_HOVER_PREVIEW_MARGIN, unclampedTop),
+    maxTop
+  )
 
   return {
     left,
@@ -304,8 +307,7 @@ export function useDiffHoverPreviewDismiss<T>(
     const closePreviewOnScroll = (event: Event) => {
       const target = event.target
       if (target instanceof Element && target.closest(bubbleSelector)) return
-      if (typeof document !== 'undefined' && document.querySelector(`${bubbleSelector}:hover`))
-        return
+      if (typeof document !== 'undefined' && document.querySelector(`${bubbleSelector}:hover`)) return
       closePreview()
     }
     window.addEventListener('scroll', closePreviewOnScroll, true)
@@ -434,7 +436,9 @@ export function DiffHoverPreviewOverlay({
   const [fileListExpanded, setFileListExpanded] = useState(false)
   const preparedDiff = useMemo(
     () =>
-      preview?.summary.diffText ? prepareDiffHoverPreviewText(preview.summary.diffText) : null,
+      preview?.summary.diffText
+        ? prepareDiffHoverPreviewText(preview.summary.diffText)
+        : null,
     [preview?.summary.diffText]
   )
   const parsed = useMemo(
@@ -446,7 +450,10 @@ export function DiffHoverPreviewOverlay({
         : null,
     [preparedDiff]
   )
-  const language = useMemo(() => languageFromPath(preview?.summary.path), [preview?.summary.path])
+  const language = useMemo(
+    () => languageFromPath(preview?.summary.path),
+    [preview?.summary.path]
+  )
   const highlightSpansByLine = useMemo(() => {
     const map = new Map<ParsedDiffLine, HighlightSpan[]>()
     if (!parsed) return map
@@ -672,10 +679,10 @@ export function DiffHoverPreviewOverlay({
                   DIFF_HOVER_PREVIEW_FILE_MAX_VISIBLE
                 ).toLocaleString()} files shown`
               : parsed
-                ? `${parsed.renderedLineCount.toLocaleString()} lines shown${
-                    hiddenLineCount > 0 ? ` · ${hiddenLineCount.toLocaleString()} hidden` : ''
-                  }`
-                : preview.summary.emptyFooterLabel || 'No hunks captured'}
+              ? `${parsed.renderedLineCount.toLocaleString()} lines shown${
+                  hiddenLineCount > 0 ? ` · ${hiddenLineCount.toLocaleString()} hidden` : ''
+                }`
+              : preview.summary.emptyFooterLabel || 'No hunks captured'}
           </span>
           {preview.action && (
             <button

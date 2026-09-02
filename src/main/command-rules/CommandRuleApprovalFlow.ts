@@ -3,7 +3,10 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 
 import type { ProviderId } from '../store/types'
-import type { CommandRuleListItem, ExactCommandRuleOfferView } from '../../shared/commandRules'
+import type {
+  CommandRuleListItem,
+  ExactCommandRuleOfferView
+} from '../../shared/commandRules'
 import {
   CommandRuleService,
   type CommandRuleCandidate,
@@ -81,10 +84,10 @@ function sameIssuedIdentity(
     issued.toolName === live.toolName &&
     issued.command === live.command &&
     issued.requestedCwd === live.requestedCwd &&
-    issued.workspaceId === live.workspaceId &&
-    issued.laneId === live.laneId &&
-    issued.networkAccessDenied === live.networkAccessDenied &&
-    issued.shellCommandsDenied === live.shellCommandsDenied
+    issued.workspaceId === live.workspaceId
+    && issued.laneId === live.laneId &&
+    issued.networkAccessDenied === live.networkAccessDenied
+    && issued.shellCommandsDenied === live.shellCommandsDenied
   )
 }
 
@@ -303,9 +306,7 @@ export class CommandRuleApprovalFlow {
       }
       const recompiled = compileInput(this.options.service, live, approvalId)
       if (!recompiled.ok || recompiled.candidate.fingerprint !== offer.candidate.fingerprint) {
-        throw new Error(
-          'The command, executable, cwd, or workspace changed while the offer was open.'
-        )
+        throw new Error('The command, executable, cwd, or workspace changed while the offer was open.')
       }
       const upserted = this.options.service.upsert(recompiled.candidate)
       const match = this.match(live)

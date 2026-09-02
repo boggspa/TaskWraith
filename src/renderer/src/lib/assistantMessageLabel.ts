@@ -216,7 +216,9 @@ const pooledAgentIdentityForMessage = (
         ? record.agentId.trim()
         : ''
   const nickname =
-    typeof record.nickname === 'string' && record.nickname.trim() ? record.nickname.trim() : ''
+    typeof record.nickname === 'string' && record.nickname.trim()
+      ? record.nickname.trim()
+      : ''
   const iconKind = record.iconKind
   const hue = Number(record.hue)
   if (
@@ -284,17 +286,22 @@ const formatAssistantMessageLabel = (
       ? resolveProviderBrandLabel(guestProvider, guestModel) || getProviderLabel(guestProvider)
       : ''
     return withPooledIdentity({
-      label: guestProvider ? `${guestProviderLabel} / ${guestRole}` : `Guest / ${guestRole}`,
+      label: guestProvider
+        ? `${guestProviderLabel} / ${guestRole}`
+        : `Guest / ${guestRole}`,
       provider: guestProvider,
-      providerClass: guestProvider ? resolveProviderHueClass(guestProvider, guestModel) : null,
+      providerClass: guestProvider
+        ? resolveProviderHueClass(guestProvider, guestModel)
+        : null,
       modelBadge:
         guestProvider && guestModel ? transcriptShortModelName(guestProvider, '', guestModel) : null
     })
   }
   const snapshot = seatSnapshot(message)
-  const provider = (textValue(message.metadata?.ensembleProvider) ||
-    textValue(snapshot?.provider) ||
-    null) as ProviderId | null
+  const provider =
+    (textValue(message.metadata?.ensembleProvider) || textValue(snapshot?.provider) || null) as
+      | ProviderId
+      | null
   if (!provider) {
     const assistantProvider = assistantProviderForMessage(message)
     const soloProvider = assistantProvider || fallbackProvider
@@ -383,7 +390,7 @@ const formatAssistantMessageLabel = (
       ? message.metadata.ensembleThinkingEnabled
       : typeof snapshot?.thinkingEnabled === 'boolean'
         ? snapshot.thinkingEnabled
-        : undefined
+      : undefined
   const modelName = ensembleModel ? transcriptShortModelName(provider, '', ensembleModel) : null
   // Append a reasoning/thinking suffix when the participant carried one
   // through dispatch so the header mirrors the composer chip the user
@@ -414,8 +421,7 @@ const formatAssistantMessageLabel = (
       })
     }
   }
-  const providerLabel =
-    resolveProviderBrandLabel(provider, ensembleModel) || getProviderLabel(provider)
+  const providerLabel = resolveProviderBrandLabel(provider, ensembleModel) || getProviderLabel(provider)
   return withPooledIdentity({
     label: role ? `${providerLabel} / ${role}` : providerLabel,
     provider,

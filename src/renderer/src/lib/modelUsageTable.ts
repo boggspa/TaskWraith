@@ -885,9 +885,7 @@ export function buildModelUsageWorkspaceMatrix(
     }))
 
   const workspaceIds = new Set(workspaces.map((workspace) => workspace.workspaceId))
-  const finalizeCell = (
-    acc: UsageAccumulator & { changedFiles: number }
-  ): ModelUsageWorkspaceCell => ({
+  const finalizeCell = (acc: UsageAccumulator & { changedFiles: number }): ModelUsageWorkspaceCell => ({
     runs: acc.runs,
     changedFiles: acc.changedFiles,
     totalTokens: acc.tokensIn + acc.tokensOut,

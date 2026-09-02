@@ -257,10 +257,10 @@ export function createResolvedProviderEnv(
   // configuration. A TaskWraith parent process or runtime profile must never
   // leak an owner into an unrelated seat. Only the immediate launch caller can
   // inject the exact opaque owner issued by lock admission.
-  return withExactWorkspaceLockOwnerEnv(resolved, extra.TASKWRAITH_LOCK_OWNER_ID) as Record<
-    string,
-    string
-  >
+  return withExactWorkspaceLockOwnerEnv(
+    resolved,
+    extra.TASKWRAITH_LOCK_OWNER_ID
+  ) as Record<string, string>
 }
 
 export function createCliEnv(

@@ -125,12 +125,7 @@ export function ParticipantMention({
   const providerClass = resolveProviderHueClass(providerId, participant.model)
   const brandLabel = resolveProviderBrandLabel(providerId, participant.model)
   const tint = `var(--provider-${providerClass}-color, var(--accent))`
-  const displayName =
-    sourceText?.replace(/^@+/, '') ||
-    participant.role ||
-    brandLabel ||
-    getProviderName(providerId) ||
-    providerId
+  const displayName = (sourceText?.replace(/^@+/, '') || participant.role || brandLabel || getProviderName(providerId)) || providerId
 
   const titleParts = [brandLabel || getProviderName(providerId)]
   if (participant.role) titleParts.push(participant.role)

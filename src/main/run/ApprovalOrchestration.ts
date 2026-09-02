@@ -406,7 +406,9 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       /** Main-only exact brokered-shell authority; never reconstructed from preview text. */
       commandRuleInput?: BrokeredCommandRuleInput
       onCommandRuleMatch?: (match: CommandRuleMatch) => void
-      createCommandRuleOffer?: (receipt: ApprovalPromptReceipt) => ExactCommandRuleOfferView | null
+      createCommandRuleOffer?: (
+        receipt: ApprovalPromptReceipt
+      ) => ExactCommandRuleOfferView | null
       discardCommandRuleOffer?: (approvalId: string) => void
       onWorkspaceInspectionMatch?: () => void
     }
@@ -565,10 +567,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
           ? 'explicit_user_request'
           : null)
       if (shellFastPathReason) {
-        if (
-          shellFastPathReason === 'readonly_shell' ||
-          shellFastPathReason === 'inspection_shell'
-        ) {
+        if (shellFastPathReason === 'readonly_shell' || shellFastPathReason === 'inspection_shell') {
           request.onWorkspaceInspectionMatch?.()
           workspaceInspectionAuditMetadata = {
             executionBoundary: 'brokered-direct-inspection',

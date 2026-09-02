@@ -144,18 +144,17 @@ export function evaluateBossmanAutoApproval(
     captainParticipantIds,
     unavailableParticipantIds: unavailableCaptainParticipantIds
   })
-  const authority =
-    bossIsLive && ctx.primaryBossUnavailable !== true
+  const authority = bossIsLive && ctx.primaryBossUnavailable !== true
+    ? {
+        role: 'boss' as const,
+        participantId: bossmanParticipantId as string
+      }
+    : actingCaptainParticipantId && ctx.primaryBossUnavailable === true
       ? {
-          role: 'boss' as const,
-          participantId: bossmanParticipantId as string
+          role: 'captain' as const,
+          participantId: actingCaptainParticipantId
         }
-      : actingCaptainParticipantId && ctx.primaryBossUnavailable === true
-        ? {
-            role: 'captain' as const,
-            participantId: actingCaptainParticipantId
-          }
-        : null
+      : null
   if (!authority) return null
   // INVARIANT: an approval authority held by an EXTERNAL human collaborator
   // auto-resolves nothing, for anybody, ever.

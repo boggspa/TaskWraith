@@ -882,8 +882,7 @@ const OLLAMA_STATIC_MODELS = [
   {
     id: 'nemotron3:33b',
     label: 'Nemotron 3 Nano Omni (33B Param)',
-    description:
-      'NVIDIA Nemotron 3 Nano Omni 33B via Ollama · 131k context · vision/tools/thinking',
+    description: 'NVIDIA Nemotron 3 Nano Omni 33B via Ollama · 131k context · vision/tools/thinking',
     ultraTaskSupported: true
   },
   {
@@ -1167,12 +1166,7 @@ const DEVIN_STATIC_MODELS = DEVIN_MODEL_CATALOG.map((family) => {
   }
 })
 const CURSOR_STATIC_MODELS = [
-  {
-    id: 'composer-2.5-fast',
-    label: 'Composer 2.5 Fast',
-    isDefault: true,
-    ultraTaskSupported: true
-  },
+  { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true, ultraTaskSupported: true },
   { id: 'composer-2.5', label: 'Composer 2.5', ultraTaskSupported: true },
   {
     id: CURSOR_GROK_46_BASE_MODEL_ID,
@@ -1249,7 +1243,9 @@ export function normalizeKimiReasoningEffort(
   const normalized = String(effort || '')
     .trim()
     .toLowerCase()
-  return KIMI_K3_REASONING_EFFORTS.includes(normalized as KimiK3ReasoningEffort)
+  return KIMI_K3_REASONING_EFFORTS.includes(
+    normalized as KimiK3ReasoningEffort
+  )
     ? (normalized as KimiK3ReasoningEffort)
     : 'max'
 }

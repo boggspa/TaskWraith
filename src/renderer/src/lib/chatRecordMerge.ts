@@ -1,7 +1,9 @@
 import type { ChatListItem, ChatRecord } from '../../../main/store/types'
 import { isTranscriptPagedShell } from '../../../shared/transcriptPage'
 
-export function isChatSummaryRecord(chat: ChatRecord | null | undefined): chat is ChatListItem {
+export function isChatSummaryRecord(
+  chat: ChatRecord | null | undefined
+): chat is ChatListItem {
   return Boolean((chat as ChatListItem | null | undefined)?.summaryOnly === true)
 }
 
@@ -45,7 +47,10 @@ export function mergeChatRecord(chats: ChatRecord[], chat: ChatRecord): ChatReco
   return next.sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
-export function reconcileChatRecords(existing: ChatRecord[], incoming: ChatRecord[]): ChatRecord[] {
+export function reconcileChatRecords(
+  existing: ChatRecord[],
+  incoming: ChatRecord[]
+): ChatRecord[] {
   return incoming
     .map((chat) =>
       mergeChatRecordValue(

@@ -938,7 +938,8 @@ export function computeTranscriptScrollSpy(input: {
   const scrollTop = Number.isFinite(input.scrollTop) ? Math.max(0, input.scrollTop) : 0
   const totalHeight = totalHeightFromOffsets(input.liveHeightOffsets)
   const spyMaxScroll = Math.max(0, totalHeight - viewportHeight)
-  const progress = spyMaxScroll > 0 ? Math.max(0, Math.min(1, scrollTop / spyMaxScroll)) : 0
+  const progress =
+    spyMaxScroll > 0 ? Math.max(0, Math.min(1, scrollTop / spyMaxScroll)) : 0
   const viewportFraction =
     totalHeight > 0 ? Math.max(0, Math.min(1, viewportHeight / totalHeight)) : 0
   const rowIndex =

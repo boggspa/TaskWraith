@@ -65,7 +65,10 @@ import {
   readEnsembleFanoutTranscriptParts,
   type EnsembleFanoutTranscriptPart
 } from '../shared/fanoutLaneGrouping'
-import { matchOllamaBrand, resolveHealthEntryPresentation } from '../shared/ollamaBrandTable'
+import {
+  matchOllamaBrand,
+  resolveHealthEntryPresentation
+} from '../shared/ollamaBrandTable'
 import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../shared/taskWraithCloseout'
 import { isEnsembleParticipantAuthoredMessage } from '../shared/ensembleParticipantMessage'
@@ -175,7 +178,10 @@ const DEFAULT_RATE_MODEL_BY_PROVIDER: Partial<Record<ProviderId, string>> = {
 const DEFAULT_MODEL_SENTINELS = new Set(['', 'default', 'cli-default', 'custom', 'best'])
 const CODEX_DEFAULT_SENTINELS = new Set(['auto', 'pro', 'flash', 'flash-lite'])
 
-function canonicalRateModelId(provider: ProviderId | undefined, model: string | undefined): string {
+function canonicalRateModelId(
+  provider: ProviderId | undefined,
+  model: string | undefined
+): string {
   const trimmed = (model || '').trim()
   const key = trimmed.toLowerCase()
   const fallback = provider ? DEFAULT_RATE_MODEL_BY_PROVIDER[provider] : undefined
@@ -452,7 +458,9 @@ export function soloSpeakerForMessage(
       chatProvider
     if (!provider) return undefined
     const model =
-      (typeof metadata?.providerModel === 'string' ? metadata.providerModel : undefined) ||
+      (typeof metadata?.providerModel === 'string'
+        ? metadata.providerModel
+        : undefined) ||
       (typeof message.metadata?.ensembleModel === 'string'
         ? message.metadata.ensembleModel
         : undefined) ||
@@ -872,7 +880,9 @@ export function indexRemoteAgentQuestionAnswers(
       replyRowId: message.id
     }
     const marker =
-      typeof metadata.respondedToMessageId === 'string' ? metadata.respondedToMessageId.trim() : ''
+      typeof metadata.respondedToMessageId === 'string'
+        ? metadata.respondedToMessageId.trim()
+        : ''
     if (marker) byMarker.set(marker, entry)
     const questionId = typeof metadata.questionId === 'string' ? metadata.questionId.trim() : ''
     if (questionId) byMarker.set(`agent-question-${questionId}`, entry)
@@ -1855,10 +1865,7 @@ function fanoutToolPartStatus(
 }
 
 function normalizedToolName(toolName: string | undefined): string {
-  return (toolName || '')
-    .trim()
-    .toLowerCase()
-    .replace(/^mcp__[^_]+__/i, '')
+  return (toolName || '').trim().toLowerCase().replace(/^mcp__[^_]+__/i, '')
 }
 
 function isThinkingTraceToolName(toolName: string | undefined): boolean {
@@ -2029,7 +2036,9 @@ function subThreadReturnBody(content: string): string {
   return lines.slice(bodyStart).join('\n').trimStart()
 }
 
-function buildThreadMessage(message: ChatMessage): RemoteThreadMessageSummary | undefined {
+function buildThreadMessage(
+  message: ChatMessage
+): RemoteThreadMessageSummary | undefined {
   const metadata = message.metadata as Record<string, unknown> | undefined
   if (metadata?.kind !== 'threadMessage') return undefined
   const summary: RemoteThreadMessageSummary = {
@@ -2204,9 +2213,7 @@ function buildFanoutParts(
   if (totalParts === 0) return undefined
 
   const expanded = previewMax >= REMOTE_IOS_ROW_EXPAND_MAX
-  const tail = coalesced.slice(
-    -(expanded ? REMOTE_FANOUT_PART_EXPANDED_MAX : REMOTE_FANOUT_PART_MAX)
-  )
+  const tail = coalesced.slice(-(expanded ? REMOTE_FANOUT_PART_EXPANDED_MAX : REMOTE_FANOUT_PART_MAX))
   let contentBudget = Number.isFinite(previewMax) && previewMax > 0 ? previewMax : 0
   let toolEntryBudget = expanded
     ? REMOTE_FANOUT_TOOL_ENTRY_TOTAL_EXPANDED_MAX
@@ -2366,10 +2373,7 @@ function buildProposedPlan(message: ChatMessage): RemoteProposedPlan | undefined
   if (!status || !PROPOSED_PLAN_STATUSES.has(status)) return undefined
   const title = stringField(plan.title, 160)
   const bodyRaw = typeof plan.body === 'string' ? plan.body : ''
-  const { preview: bodyPreview, truncated } = sanitizePreview(
-    bodyRaw,
-    REMOTE_PROPOSED_PLAN_BODY_MAX
-  )
+  const { preview: bodyPreview, truncated } = sanitizePreview(bodyRaw, REMOTE_PROPOSED_PLAN_BODY_MAX)
   // Neither a usable title nor a body — nothing worth a card.
   if (!title && !bodyPreview) return undefined
   const artifactPath = stringField(plan.artifactPath, 260)
@@ -2631,7 +2635,9 @@ function buildCloseoutCommits(
   return commits.length > 0 ? commits : undefined
 }
 
-function buildCloseoutCommitFiles(raw: unknown): RemoteCloseoutCommitFile[] | undefined {
+function buildCloseoutCommitFiles(
+  raw: unknown
+): RemoteCloseoutCommitFile[] | undefined {
   if (!Array.isArray(raw) || raw.length === 0) return undefined
   const files: RemoteCloseoutCommitFile[] = []
   for (const entry of raw.slice(0, REMOTE_CLOSEOUT_FILE_CHANGES_LIMIT)) {
@@ -2957,11 +2963,16 @@ function messageProviderHueClass(
   if (isBlackboardChangePayload(metadata.blackboardChange)) {
     return metadata.blackboardChange.displayHueClass
   }
-  const provider = providerField(metadata.ensembleProvider) || providerField(metadata.guestProvider)
+  const provider =
+    providerField(metadata.ensembleProvider) || providerField(metadata.guestProvider)
   if (!provider) return undefined
-  const model = stringField(metadata.ensembleModel, 120) || stringField(metadata.guestModel, 120)
-  return resolveHealthEntryPresentation(provider, model, PROVIDER_LABELS[provider] ?? provider)
-    .displayHueClass
+  const model =
+    stringField(metadata.ensembleModel, 120) || stringField(metadata.guestModel, 120)
+  return resolveHealthEntryPresentation(
+    provider,
+    model,
+    PROVIDER_LABELS[provider] ?? provider
+  ).displayHueClass
 }
 
 function ensembleParticipantIdForMessage(message: ChatMessage): string | undefined {
@@ -3004,10 +3015,7 @@ function buildRow(
   const subThreadDelegation = buildSubThreadDelegation(message, returnedSubThreadIds)
   const guestReply = buildGuestReply(message)
   const feedback = buildMessageFeedback(message)
-  const { preview, truncated } = sanitizePreview(
-    subThreadReturn?.body ?? message.content,
-    previewMax
-  )
+  const { preview, truncated } = sanitizePreview(subThreadReturn?.body ?? message.content, previewMax)
   const row: RemoteThreadRow = {
     id: message.id,
     role: message.role,
@@ -3086,7 +3094,7 @@ function buildRow(
   }
   const pooledAgentIdentity =
     buildPooledAgentIdentity(metadata) ||
-    (message.role === 'assistant' || message.role === 'tool'
+    ((message.role === 'assistant' || message.role === 'tool')
       ? fallbackPooledAgentIdentity
       : undefined)
   if (pooledAgentIdentity) {
@@ -3437,10 +3445,7 @@ function mergeEnsembleFileChanges(
 ): RemoteRunFileChangeCounts | undefined {
   if (parts.length === 0) return undefined
   const sumKey = (key: keyof RemoteRunFileChangeCounts): number =>
-    parts.reduce(
-      (acc, part) => acc + (typeof part[key] === 'number' ? (part[key] as number) : 0),
-      0
-    )
+    parts.reduce((acc, part) => acc + (typeof part[key] === 'number' ? (part[key] as number) : 0), 0)
   const sumOptional = (key: keyof RemoteRunFileChangeCounts): number | undefined => {
     let total = 0
     let present = false
@@ -3673,7 +3678,9 @@ function mergeOptionalCount(lhs: number | undefined, rhs: number | undefined): n
 
 function mergeToolStatus(lhs: DiffFileStatus | undefined, rhs: DiffFileStatus): DiffFileStatus {
   if (!lhs) return rhs
-  return (TOOL_FILE_STATUS_PRIORITY[rhs] ?? 0) > (TOOL_FILE_STATUS_PRIORITY[lhs] ?? 0) ? rhs : lhs
+  return (TOOL_FILE_STATUS_PRIORITY[rhs] ?? 0) > (TOOL_FILE_STATUS_PRIORITY[lhs] ?? 0)
+    ? rhs
+    : lhs
 }
 
 function addToolFileChange(
@@ -3720,8 +3727,7 @@ function summarizeRunToolFileChanges(
     createdFiles: files.filter((file) => file.status === 'created' || file.status === 'untracked')
       .length,
     modifiedFiles: files.filter(
-      (file) =>
-        file.status !== 'created' && file.status !== 'untracked' && file.status !== 'deleted'
+      (file) => file.status !== 'created' && file.status !== 'untracked' && file.status !== 'deleted'
     ).length,
     deletedFiles: files.filter((file) => file.status === 'deleted').length,
     files: boundRunChangedFiles(files)

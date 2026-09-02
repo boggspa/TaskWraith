@@ -1,6 +1,9 @@
 import { app, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { ChatService, RebindChatWorkspaceInput } from '../services/ChatService'
-import { isChatGitWorkflowState, type ChatGitWorkflowInput } from '../../shared/chatGitWorkflow'
+import {
+  isChatGitWorkflowState,
+  type ChatGitWorkflowInput
+} from '../../shared/chatGitWorkflow'
 import type {
   AppSettings,
   ChatKind,
@@ -9,7 +12,10 @@ import type {
   EnsembleParticipant,
   ProviderId
 } from '../store/types'
-import type { ReapAbandonedChatsDeps, RendererReapContext } from '../AbandonedChatReaper'
+import type {
+  ReapAbandonedChatsDeps,
+  RendererReapContext
+} from '../AbandonedChatReaper'
 import { readPendingWorkspaceRebind } from '../pendingWorkspaceRebind'
 import { defaultThreadTitleRepairStatePath } from '../store/ThreadTitleRepair'
 import {
@@ -198,7 +204,10 @@ export interface ChatHandlerDeps {
    * Sender-bound authority check for moving a canonical chat between scopes.
    * Payload chat IDs are not proof that a secondary renderer owns that chat.
    */
-  assertSenderCanRebindChatWorkspace: (event: IpcMainInvokeEvent, chatId: string) => void
+  assertSenderCanRebindChatWorkspace: (
+    event: IpcMainInvokeEvent,
+    chatId: string
+  ) => void
   /**
    * Late-bound main lifecycle ownership. Implementations must inspect both
    * active provider sessions and queued/starting work for this chat.
@@ -214,7 +223,9 @@ function persistenceRevision(chat: Pick<ChatRecord, 'persistenceRevision'> | nul
   return Number.isSafeInteger(revision) && (revision ?? -1) >= 0 ? (revision as number) : 0
 }
 
-function rendererMutationNeedsMediaNormalization(operations: readonly ChatTranscriptOp[]): boolean {
+function rendererMutationNeedsMediaNormalization(
+  operations: readonly ChatTranscriptOp[]
+): boolean {
   for (const operation of operations) {
     const changedMessages =
       operation.op === 'append'
@@ -245,8 +256,8 @@ function messageClaimsExecutionGraphOwnership(
 ): boolean {
   return Boolean(
     (message.runId && ownedRunIds.has(message.runId)) ||
-    message.metadata?.kind === 'executionGraphAttempt' ||
-    message.metadata?.kind === 'executionGraphAttemptOutput'
+      message.metadata?.kind === 'executionGraphAttempt' ||
+      message.metadata?.kind === 'executionGraphAttemptOutput'
   )
 }
 
@@ -308,7 +319,10 @@ function assertReadableChat(scope: SenderChatReadScope, chatId: string): void {
   }
 }
 
-function assertReadableWorkspace(scope: SenderChatReadScope, requestedWorkspaceId?: string): void {
+function assertReadableWorkspace(
+  scope: SenderChatReadScope,
+  requestedWorkspaceId?: string
+): void {
   if (
     scope.kind === 'chat' &&
     requestedWorkspaceId !== undefined &&
@@ -477,7 +491,9 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     const list = deps.chatService.getChatList(
       scope.kind === 'chat' ? scope.workspaceId : workspaceId
     )
-    return scope.kind === 'all' ? list : list.filter((chat) => chat.appChatId === scope.chatId)
+    return scope.kind === 'all'
+      ? list
+      : list.filter((chat) => chat.appChatId === scope.chatId)
   })
   ipcMain.handle('get-pinned-messages', (event, workspaceId?: string) => {
     const scope = deps.resolveSenderChatReadScope(event)
@@ -643,9 +659,9 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     })
     const changed = Boolean(
       !before ||
-      before.scope !== rebound.scope ||
-      before.workspaceId !== rebound.workspaceId ||
-      before.workspacePath !== rebound.workspacePath
+        before.scope !== rebound.scope ||
+        before.workspaceId !== rebound.workspaceId ||
+        before.workspacePath !== rebound.workspacePath
     )
     const pendingChanged =
       JSON.stringify(readPendingWorkspaceRebind(before ?? rebound)) !==
@@ -746,9 +762,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     (event, payload: unknown): RendererChatTranscriptMutationResult => {
       const request = parseRendererChatTranscriptMutationRequest(payload)
       const requestedChatId =
-        payload &&
-        typeof payload === 'object' &&
-        typeof (payload as { chatId?: unknown }).chatId === 'string'
+        payload && typeof payload === 'object' && typeof (payload as { chatId?: unknown }).chatId === 'string'
           ? (payload as { chatId: string }).chatId
           : ''
       if (!request) {
@@ -790,7 +804,10 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       let index = rendererTranscriptIndexes.get(request.chatId)
       if (!index?.isCurrent(previous.persistenceRevision, previous.messages.length)) {
         try {
-          index = new ChatTranscriptMutationIndex(previous.messages, previous.persistenceRevision)
+          index = new ChatTranscriptMutationIndex(
+            previous.messages,
+            previous.persistenceRevision
+          )
           rendererTranscriptIndexes.set(request.chatId, index)
           if (rendererTranscriptIndexes.size > 256) {
             const oldestChatId = rendererTranscriptIndexes.keys().next().value
@@ -831,7 +848,10 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
           const messageIndex = transaction.indexOf(operation.id)
           if (messageIndex < 0) throw new Error('Transcript operation target is absent')
           if (
-            messageClaimsExecutionGraphOwnership(messages[messageIndex], graphOwnedRunIds) ||
+            messageClaimsExecutionGraphOwnership(
+              messages[messageIndex],
+              graphOwnedRunIds
+            ) ||
             (operation.op === 'update' &&
               messageClaimsExecutionGraphOwnership(operation.message, graphOwnedRunIds))
           ) {
@@ -890,7 +910,13 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         rendererTranscriptIndexes.delete(request.chatId)
       }
       observeNoHistoryChat(saved)
-      if (deps.adoptRendererChatMutation(event.sender.id, saved, request.baseRevision)) {
+      if (
+        deps.adoptRendererChatMutation(
+          event.sender.id,
+          saved,
+          request.baseRevision
+        )
+      ) {
         deps.broadcastChatUpdatedExcept(saved, event.sender.id)
       } else {
         deps.broadcastChatUpdated(saved)
@@ -907,7 +933,9 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         updatedAt: saved.updatedAt,
         messageCount: saved.messages.length,
         recordHash: contentSub.recordHash,
-        ...(envelope?.state.transcriptHash ? { transcriptHash: envelope.state.transcriptHash } : {})
+        ...(envelope?.state.transcriptHash
+          ? { transcriptHash: envelope.state.transcriptHash }
+          : {})
       }
     }
   )
@@ -957,7 +985,9 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         return {
           ok: false,
           error:
-            error instanceof Error ? error.message : "Couldn't record this thread's git workflow."
+            error instanceof Error
+              ? error.message
+              : "Couldn't record this thread's git workflow."
         }
       }
     }
@@ -1010,7 +1040,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
                   ])
                 )
               }
-            : (renderer ?? {})
+            : renderer ?? {}
         // selectCandidates() walks the whole chat corpus (AppStore.getChats())
         // to find abandoned drafts, so it is not free to call repeatedly. The
         // loop still re-validates a candidate against LIVE state immediately

@@ -91,7 +91,9 @@ describe('shortModelName', () => {
     expect(shortModelName('ollama', '', 'ornith:9b')).toBe('Ornith 1.0 (9B Param)')
     expect(shortModelName('ollama', '', 'ornith:35b')).toBe('Ornith 1.0 (35B Param)')
     expect(shortModelName('ollama', '', 'ornith-1.5:35b')).toBe('Ornith 1.5 (35B Param)')
-    expect(shortModelName('ollama', '', 'laguna-xs-2.1:q8_0')).toBe('Laguna XS 2.1 (33B-A3B Q8)')
+    expect(shortModelName('ollama', '', 'laguna-xs-2.1:q8_0')).toBe(
+      'Laguna XS 2.1 (33B-A3B Q8)'
+    )
     expect(shortModelName('ollama', '', 'gpt-oss')).toBe('GPT OSS (20B Param)')
     expect(shortModelName('ollama', '', 'gpt-oss:20b')).toBe('GPT OSS (20B Param)')
     expect(shortModelName('ollama', '', 'minicpm-v4.5:8b')).toBe('MiniCPM-V 4.5 (8B Param)')
@@ -109,11 +111,15 @@ describe('shortModelName', () => {
     expect(shortModelName('ollama', '', 'deepseek-r1:8b')).toBe('R1 (8B Param)')
     expect(shortModelName('ollama', '', 'rnj-1:latest')).toBe('Rnj-1 (8B Param)')
     expect(shortModelName('ollama', '', 'glm-5.3-flash:cloud')).toBe('GLM 5.3 Flash')
-    expect(shortModelName('ollama', '', 'glm-4.7-flash:q4_K_M')).toBe('GLM-4.7-Flash (30B-A3B Q4)')
+    expect(shortModelName('ollama', '', 'glm-4.7-flash:q4_K_M')).toBe(
+      'GLM-4.7-Flash (30B-A3B Q4)'
+    )
     expect(shortModelName('ollama', '', 'north-mini-code-1.0:q4_K_M')).toBe(
       'North Mini Code 1.0 (30B-A3B Q4)'
     )
-    expect(shortModelName('ollama', '', 'muse-glimmer:30b-mlx')).toBe('Muse Glimmer (30B-MLX)')
+    expect(shortModelName('ollama', '', 'muse-glimmer:30b-mlx')).toBe(
+      'Muse Glimmer (30B-MLX)'
+    )
     expect(shortModelName('ollama', '', 'llama3.2:3b')).toBe('Llama 3.2 (3B Param)')
     for (const [modelId, label] of [
       ['ministral-3:3b', 'Ministral 3 (3B Param)'],
@@ -469,17 +475,14 @@ describe('reasoningDisplayLabel', () => {
       modelId: 'gpt-5.6-terra',
       modelLabel: 'GPT-5.6 Terra'
     }
-    expect(reasoningDisplayLabel({ ...base, codexReasoningEffort: 'ultratask' })).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, codexReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
     expect(
       reasoningDisplayLabel({ ...base, provider: 'claude', claudeReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
     expect(
-      reasoningDisplayLabel({
-        ...base,
-        provider: 'kimi',
-        modelId: 'kimi-k3',
-        kimiReasoningEffort: 'ultratask'
-      })
+      reasoningDisplayLabel({ ...base, provider: 'kimi', modelId: 'kimi-k3', kimiReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
     expect(
       reasoningDisplayLabel({
@@ -491,35 +494,20 @@ describe('reasoningDisplayLabel', () => {
       })
     ).toBe('UltraTask')
     expect(
-      reasoningDisplayLabel({
-        ...base,
-        provider: 'grok',
-        modelId: 'grok-4.6',
-        grokReasoningEffort: 'ultratask'
-      })
+      reasoningDisplayLabel({ ...base, provider: 'grok', modelId: 'grok-4.6', grokReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
     expect(
-      reasoningDisplayLabel({
-        ...base,
-        provider: 'mistral',
-        modelId: 'devstral-small',
-        mistralReasoningEffort: 'ultratask'
-      })
+      reasoningDisplayLabel({ ...base, provider: 'mistral', modelId: 'devstral-small', mistralReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
     expect(
-      reasoningDisplayLabel({
-        ...base,
-        provider: 'cursor',
-        modelId: 'cursor-grok-4.6-low',
-        cursorReasoningEffort: 'ultratask'
-      })
+      reasoningDisplayLabel({ ...base, provider: 'cursor', modelId: 'cursor-grok-4.6-low', cursorReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
     expect(
       reasoningDisplayLabel({ ...base, provider: 'ollama', ollamaReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
-    expect(reasoningDisplayLabel({ ...base, provider: 'pi', piReasoningEffort: 'ultratask' })).toBe(
-      'UltraTask'
-    )
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'pi', piReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
     expect(
       reasoningDisplayLabel({ ...base, provider: 'muse', museReasoningEffort: 'ultratask' })
     ).toBe('UltraTask')
@@ -795,12 +783,7 @@ describe('formatComposerModelChip', () => {
 })
 
 describe('Pi reasoning display label', () => {
-  const base = {
-    provider: 'pi' as const,
-    composerStyle: 'terminal' as const,
-    modelId: 'some-model',
-    modelLabel: 'Some Model'
-  }
+  const base = { provider: 'pi' as const, composerStyle: 'terminal' as const, modelId: 'some-model', modelLabel: 'Some Model' }
 
   it('maps pi thinking levels to display labels', () => {
     expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'low' })).toBe('Low')

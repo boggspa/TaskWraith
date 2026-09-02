@@ -177,11 +177,7 @@ function unknownGlyphBody(): ReactElement {
   )
 }
 
-export function ProviderGlyph({
-  provider,
-  accentProvider,
-  className
-}: ProviderGlyphProps): ReactElement {
+export function ProviderGlyph({ provider, accentProvider, className }: ProviderGlyphProps): ReactElement {
   const providerKey = providerClass(provider)
   const accentProviderKey = providerClass(accentProvider || provider)
   const instanceId = useId().replace(/:/g, '')

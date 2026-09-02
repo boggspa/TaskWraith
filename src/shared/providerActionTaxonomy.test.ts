@@ -411,10 +411,7 @@ describe('provider action taxonomy', () => {
         parameters: { name: null }
       }
     ]) {
-      expect(
-        resolveToolDispatchContractStrict('capability_invoke', args),
-        JSON.stringify(args)
-      ).toMatchObject({
+      expect(resolveToolDispatchContractStrict('capability_invoke', args), JSON.stringify(args)).toMatchObject({
         ok: false,
         code: 'gateway_target_identity_conflict'
       })

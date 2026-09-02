@@ -252,14 +252,18 @@ export function ComposerProviderPicker({
     if (disabled && open) setOpen(false)
   }, [disabled, open])
 
-  const rows = resolveProviderRows(grokAvailable, cursorAvailable, providerRunPauses, {
-    snapshot: configuredProviderSnapshot,
-    pendingFallbackProvider: provider
-  })
+  const rows = resolveProviderRows(
+    grokAvailable,
+    cursorAvailable,
+    providerRunPauses,
+    {
+      snapshot: configuredProviderSnapshot,
+      pendingFallbackProvider: provider
+    }
+  )
   const activePauseInfo = getProviderPauseInfo(providerRunPauses, provider)
   const providerHueClass = resolveProviderHueClass(provider, activeModelId)
-  const displayLabel =
-    resolveProviderBrandLabel(provider, activeModelId) ?? getProviderName(provider)
+  const displayLabel = resolveProviderBrandLabel(provider, activeModelId) ?? getProviderName(provider)
   const triggerStyle = {
     '--composer-provider-accent': `var(--provider-${providerHueClass}-color, currentColor)`
   } as CSSProperties

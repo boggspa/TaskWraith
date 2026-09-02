@@ -130,12 +130,7 @@ describe('summarizeCollapsedActivityStack', () => {
 
   it('marks the thinking part when a reasoning step errored', () => {
     const summary = summarizeCollapsedActivityStack([
-      activity({
-        toolName: 'thinking',
-        displayName: 'Thinking',
-        durationMs: 3_000,
-        status: 'error'
-      }),
+      activity({ toolName: 'thinking', displayName: 'Thinking', durationMs: 3_000, status: 'error' }),
       activity({ category: 'shell' })
     ])
     expect(summary.parts[0]).toEqual({ text: 'Thought for 3s', verb: 'Thought', failed: true })
@@ -314,7 +309,9 @@ describe('summarizeCollapsedSuperGroup', () => {
       systemCount: 2,
       firstSystemPreview: 'Blackboard updated: fact.'
     })
-    expect(summary.label).toBe('Thought for 12s · Ran 2 commands · Read 1 file · 2 system notices')
+    expect(summary.label).toBe(
+      'Thought for 12s · Ran 2 commands · Read 1 file · 2 system notices'
+    )
     expect(summary.families).toEqual(['thinking', 'shell', 'read'])
     expect(summary.parts.map((part) => part.text).join(' · ')).toBe(summary.label)
     expect(summary.parts[summary.parts.length - 1]).toEqual({

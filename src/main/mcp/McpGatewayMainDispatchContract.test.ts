@@ -138,7 +138,9 @@ describe('main capability gateway dispatch contract', () => {
     const directArgv = canonicalDispatchSource.indexOf(
       'executionCommand = [liveMatch.executableRealPath, ...liveMatch.argv]'
     )
-    const spawn = canonicalDispatchSource.indexOf('runHostCommand(executionCommand, executionCwd')
+    const spawn = canonicalDispatchSource.indexOf(
+      'runHostCommand(executionCommand, executionCwd'
+    )
     expect(lockAdmission).toBeGreaterThan(-1)
     expect(liveRematch).toBeGreaterThan(lockAdmission)
     expect(directArgv).toBeGreaterThan(liveRematch)
@@ -146,9 +148,7 @@ describe('main capability gateway dispatch contract', () => {
   })
 
   it('wires fresh opaque opportunity issuance and redemption through main-owned authority', () => {
-    expect(indexSource).toContain(
-      'const permissionOpportunityRegistry = new PermissionOpportunityRegistry()'
-    )
+    expect(indexSource).toContain('const permissionOpportunityRegistry = new PermissionOpportunityRegistry()')
     expect(indexSource).toContain('permissionOpportunityRegistry.clearForRun(event.session.runId)')
     expect(indexSource).toContain('issueHostPermissionOpportunity({')
     expect(canonicalDispatchSource).toContain(
@@ -182,7 +182,7 @@ describe('main capability gateway dispatch contract', () => {
     expect(lockDenied).toContain('redactPermissionOpportunityIdsForDurableStorage(')
 
     const transcriptUseStart = canonicalDispatchSource.indexOf(
-      "emitMcpToolTranscriptEvent({\n    type: 'tool_use'"
+      'emitMcpToolTranscriptEvent({\n    type: \'tool_use\''
     )
     expect(transcriptUseStart).toBeGreaterThan(-1)
     const transcriptUse = canonicalDispatchSource.slice(transcriptUseStart)

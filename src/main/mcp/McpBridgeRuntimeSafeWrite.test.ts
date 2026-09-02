@@ -1970,10 +1970,7 @@ describe('MCP bridge stream writes', () => {
       { name: 'read_file' },
       { name: 'ensemble_fanout', description: longFanoutDescription },
       { name: 'scout_brief', description: 'Canonical scout_brief prose kept for non-v13 seats.' },
-      {
-        name: 'ensemble_await',
-        description: 'Canonical ensemble_await prose kept for non-v13 seats.'
-      },
+      { name: 'ensemble_await', description: 'Canonical ensemble_await prose kept for non-v13 seats.' },
       {
         name: 'ensemble_lane_result',
         description: 'Canonical ensemble_lane_result prose kept for non-v13 seats.'

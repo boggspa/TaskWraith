@@ -75,7 +75,9 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(BOSS_AUTO_APPROVAL_CONSENT_MESSAGE).toContain(
       'eligible shell/file request still opens a modal'
     )
-    expect(BOSS_AUTO_APPROVAL_CONSENT_MESSAGE).toContain('read-only Boss/Captain review turn')
+    expect(BOSS_AUTO_APPROVAL_CONSENT_MESSAGE).toContain(
+      'read-only Boss/Captain review turn'
+    )
     expect(BOSS_AUTO_APPROVAL_CONSENT_MESSAGE).toContain(
       'the first human, authority, or timeout decision wins'
     )
@@ -140,7 +142,13 @@ describe('EnsembleParticipantsAboveRow', () => {
       })
       expect(authorityRows.map((row) => row.label)).toEqual(['Boss', 'Captain', 'Agent'])
       // The divider sits between these two lists — authority first, stages second.
-      expect(stageRows.map((row) => row.label)).toEqual(['Any', 'Scout', 'Work', 'Review', 'BG'])
+      expect(stageRows.map((row) => row.label)).toEqual([
+        'Any',
+        'Scout',
+        'Work',
+        'Review',
+        'BG'
+      ])
       expect(resolveEnsembleChipStageRolePatch('worker', 'any')).toEqual({
         stageRole: undefined
       })
@@ -167,8 +175,12 @@ describe('EnsembleParticipantsAboveRow', () => {
           .filter((row) => row.value === 'boss' || row.value === 'captain')
           .map((row) => row.disabled)
       ).toEqual([true, true])
-      expect(background.authorityRows.find((row) => row.value === 'agent')?.disabled).toBe(false)
-      expect(background.stageRows.find((row) => row.value === 'background')?.disabled).toBe(false)
+      expect(background.authorityRows.find((row) => row.value === 'agent')?.disabled).toBe(
+        false
+      )
+      expect(background.stageRows.find((row) => row.value === 'background')?.disabled).toBe(
+        false
+      )
 
       const bossman = resolveEnsembleChipRolePickerRows({
         isBossman: true,
@@ -199,9 +211,11 @@ describe('EnsembleParticipantsAboveRow', () => {
         backgroundRestricted: false,
         locked: true
       })
-      expect([...locked.authorityRows, ...locked.stageRows].every((row) => row.disabled)).toBe(true)
+      expect(
+        [...locked.authorityRows, ...locked.stageRows].every((row) => row.disabled)
+      ).toBe(true)
     })
-  })
+  });
 
   describe('participant authority controls', () => {
     const autoApprovals = {
@@ -279,7 +293,12 @@ describe('EnsembleParticipantsAboveRow', () => {
         bossmanAutoApprovals: autoApprovals
       })
       expect(
-        resolveEnsembleParticipantAuthorityPatch(third, 'agent', 'captain', authorityParticipants)
+        resolveEnsembleParticipantAuthorityPatch(
+          third,
+          'agent',
+          'captain',
+          authorityParticipants
+        )
       ).toEqual(third)
     })
 
@@ -586,12 +605,18 @@ describe('EnsembleParticipantsAboveRow', () => {
       })
 
       expect(
-        createEnsembleParticipantDuplicateDraft(participant, [participant], 'agent', undefined, [
-          {
-            provider: 'claude',
-            modelOptions: [{ id: 'claude-sonnet-5', label: 'Sonnet 5' }]
-          }
-        ]).model
+        createEnsembleParticipantDuplicateDraft(
+          participant,
+          [participant],
+          'agent',
+          undefined,
+          [
+            {
+              provider: 'claude',
+              modelOptions: [{ id: 'claude-sonnet-5', label: 'Sonnet 5' }]
+            }
+          ]
+        ).model
       ).toBe('claude-sonnet-5')
     })
 
@@ -655,9 +680,7 @@ describe('EnsembleParticipantsAboveRow', () => {
 
       expect(html).toContain('data-participant-id="legacy-gemini"')
       expect(html).toContain('disabled=""')
-      expect(html).toContain(
-        'Cannot duplicate configuration from Legacy Gemini: provider unavailable'
-      )
+      expect(html).toContain('Cannot duplicate configuration from Legacy Gemini: provider unavailable')
     })
 
     it('renders every participant field in the Add-only top section', () => {
@@ -769,18 +792,7 @@ describe('EnsembleParticipantsAboveRow', () => {
         buildEnsembleAddProviderGroups(false, false, {
           snapshot: { ready: true, providerIds: ['codex', 'claude', 'kimi', 'ollama'] }
         }).map((group) => group.provider)
-      ).toEqual([
-        'codex',
-        'claude',
-        'kimi',
-        'cursor',
-        'grok',
-        'ollama',
-        'pi',
-        'mistral',
-        'muse',
-        'devin'
-      ])
+      ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse', 'devin'])
       const expanded = buildEnsembleAddProviderGroups(true, true, {
         snapshot: {
           ready: true,
@@ -962,9 +974,21 @@ describe('EnsembleParticipantsAboveRow', () => {
         }
       ]
 
-      const first = getEnsembleAddReasoningOptions('mistral', 'devstral-small', providerGroups)
-      const second = getEnsembleAddReasoningOptions('mistral', 'devstral-small', providerGroups)
-      const pi = getEnsembleAddReasoningOptions('pi', 'mistral/devstral-small', providerGroups)
+      const first = getEnsembleAddReasoningOptions(
+        'mistral',
+        'devstral-small',
+        providerGroups
+      )
+      const second = getEnsembleAddReasoningOptions(
+        'mistral',
+        'devstral-small',
+        providerGroups
+      )
+      const pi = getEnsembleAddReasoningOptions(
+        'pi',
+        'mistral/devstral-small',
+        providerGroups
+      )
 
       for (const options of [first, second, pi]) {
         expect(options.filter((option) => option.value === 'ultraTask')).toHaveLength(1)
@@ -1734,7 +1758,9 @@ describe('EnsembleParticipantsAboveRow', () => {
     )
 
     expect(html).toMatch(/class="ensemble-above-add-participant"[^>]*disabled=""/)
-    expect(html).toContain(`Ensembles support up to ${MAX_ENSEMBLE_PARTICIPANTS} participants.`)
+    expect(html).toContain(
+      `Ensembles support up to ${MAX_ENSEMBLE_PARTICIPANTS} participants.`
+    )
   })
 
   it('keeps live roster controls available while an Ensemble round is running', () => {
@@ -1758,14 +1784,14 @@ describe('EnsembleParticipantsAboveRow', () => {
       ]
     }
     const html = renderToStaticMarkup(
-      <EnsembleParticipantsAboveRow
-        chat={chat}
-        participantProjection={chat.ensemble!.participants.map((participant) =>
-          participant.id === 'ensemble-codex'
-            ? { ...participant, role: 'Pending role' }
-            : participant
-        )}
-        selectedParticipantId="ensemble-codex"
+        <EnsembleParticipantsAboveRow
+          chat={chat}
+          participantProjection={chat.ensemble!.participants.map((participant) =>
+            participant.id === 'ensemble-codex'
+              ? { ...participant, role: 'Pending role' }
+              : participant
+          )}
+          selectedParticipantId="ensemble-codex"
         onSelectParticipant={() => undefined}
         onChatChange={() => undefined}
         onPatchParticipant={() => undefined}
@@ -1955,7 +1981,11 @@ describe('EnsembleParticipantsAboveRow', () => {
       })
     ])
     chat.ensemble!.bossmanParticipantId = 'ensemble-claude'
-    chat.ensemble!.captainParticipantIds = ['ensemble-codex', 'ensemble-kimi', 'ensemble-cursor']
+    chat.ensemble!.captainParticipantIds = [
+      'ensemble-codex',
+      'ensemble-kimi',
+      'ensemble-cursor'
+    ]
     chat.ensemble!.secondInCommandParticipantId = 'ensemble-codex'
     const html = renderToStaticMarkup(
       <EnsembleParticipantsAboveRow

@@ -124,10 +124,7 @@ function stemOf(file: string): string {
 }
 
 function prettifyStem(stem: string): string {
-  const cleaned = stem
-    .replace(/^(ghost-guy-|action-|status-)/, '')
-    .replace(/[-_]+/g, ' ')
-    .trim()
+  const cleaned = stem.replace(/^(ghost-guy-|action-|status-)/, '').replace(/[-_]+/g, ' ').trim()
   if (!cleaned) return stem
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
 }
@@ -145,17 +142,14 @@ function buildPoolGroup(): PoolIconAsset[] {
     if (!entry || typeof entry !== 'object') continue
     const record = entry as Record<string, unknown>
     const slug = typeof record.slug === 'string' ? record.slug.trim() : ''
-    const file = typeof record.file === 'string' ? (record.file.split('/').pop() ?? '') : ''
+    const file = typeof record.file === 'string' ? record.file.split('/').pop() ?? '' : ''
     const raw = file ? POOL_RAW.get(file) : undefined
     if (!slug || !raw) continue
     const hue = Number(record.hue)
     out.push({
       key: `pool:${slug}`,
       group: 'Agent pool',
-      label:
-        typeof record.name === 'string' && record.name.trim()
-          ? record.name.trim()
-          : prettifyStem(slug),
+      label: typeof record.name === 'string' && record.name.trim() ? record.name.trim() : prettifyStem(slug),
       raw,
       recolor: isRecolorable(raw),
       accent: parseHex(record.accent),
@@ -303,16 +297,19 @@ function namespaceInlineSvgClasses(raw: string, key: string): string {
   // particular glyph uses only a subset (the filled Codex cloud, for example,
   // uses `.dot` but not `.line`). Scope those unused selectors too so generic
   // rules can never leak from an inline pool icon into the host document.
-  withNamespacedClassAttrs.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/g, (_match, css: string) => {
-    for (const rule of css.matchAll(/([^{}]+)\{/g)) {
-      const prelude = rule[1].trim()
-      if (prelude.startsWith('@')) continue
-      for (const selector of prelude.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) {
-        classNames.add(selector[1])
+  withNamespacedClassAttrs.replace(
+    /<style\b[^>]*>([\s\S]*?)<\/style>/g,
+    (_match, css: string) => {
+      for (const rule of css.matchAll(/([^{}]+)\{/g)) {
+        const prelude = rule[1].trim()
+        if (prelude.startsWith('@')) continue
+        for (const selector of prelude.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) {
+          classNames.add(selector[1])
+        }
       }
+      return _match
     }
-    return _match
-  })
+  )
 
   if (classNames.size === 0) return withNamespacedClassAttrs
 

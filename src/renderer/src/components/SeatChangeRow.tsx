@@ -14,17 +14,8 @@ import { resolveProviderBrandLabel } from '../lib/ollamaDisplayBrand'
 import { humaniseModelId } from '../lib/modelDisplayName'
 import { reasoningDisplayLabel } from '../lib/composerChipFormat'
 import { composerPermissionOptions } from '../lib/planModeLabels'
-import {
-  SEAT_CHANGE_COALESCE_WINDOW_MS,
-  isSeatParticipantAddedPayload,
-  isSeatRosterPayload
-} from '../../../shared/seatChange'
-import type {
-  SeatChangeLink,
-  SeatChangePayload,
-  SeatParticipantAddedPayload,
-  SeatRosterPayload
-} from '../../../shared/seatChange'
+import { SEAT_CHANGE_COALESCE_WINDOW_MS, isSeatParticipantAddedPayload, isSeatRosterPayload } from '../../../shared/seatChange'
+import type { SeatChangeLink, SeatChangePayload, SeatParticipantAddedPayload, SeatRosterPayload } from '../../../shared/seatChange'
 
 /**
  * SeatChangeRow — the authoritative seat-change transcript element (owner spec

@@ -176,7 +176,9 @@ describe('ModelUsageOllamaTableBlock (populated render)', () => {
       NOW
     )
     const html = renderToStaticMarkup(
-      <table>{group ? <ModelUsageOllamaTableBlock group={group} /> : null}</table>
+      <table>
+        {group ? <ModelUsageOllamaTableBlock group={group} /> : null}
+      </table>
     )
     expect(html).toContain('GPT OSS (20B Param)')
     expect(html).toContain('1 model')
@@ -263,7 +265,9 @@ describe('ModelUsageWorkspaceMatrixTable (populated render)', () => {
               runDiff: {
                 runId: 'run-alpha',
                 preSnapshot: { capturedAt: 't', isGitRepo: true },
-                createdFiles: [{ path: 'src/new.ts', status: 'created', previewKind: 'git_diff' }],
+                createdFiles: [
+                  { path: 'src/new.ts', status: 'created', previewKind: 'git_diff' }
+                ],
                 modifiedFiles: [
                   { path: 'src/app.ts', status: 'modified', previewKind: 'git_diff' }
                 ],

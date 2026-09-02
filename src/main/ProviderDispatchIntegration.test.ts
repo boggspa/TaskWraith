@@ -252,10 +252,12 @@ describe('provider dispatch integration', () => {
   it('clamps the composer effort through the selected Pi model ladder before argv', () => {
     const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
 
-    expect(pi).toContain('normalizePiReasoningEffortForModel(model, payload.reasoningEffort)')
+    expect(pi).toContain(
+      'normalizePiReasoningEffortForModel(model, payload.reasoningEffort)'
+    )
     expect(pi).toContain('...(piThinkingLevel ? { thinkingLevel: piThinkingLevel } : {})')
     expect(pi).not.toContain(
-      "thinkingLevel: payload.reasoningEffort as import('./pi/PiCliArgs').PiThinkingLevel"
+      'thinkingLevel: payload.reasoningEffort as import(\'./pi/PiCliArgs\').PiThinkingLevel'
     )
     expect(pi.indexOf('normalizePiReasoningEffortForModel(')).toBeLessThan(
       pi.indexOf('const args = buildPiRpcArgs({')
@@ -393,7 +395,9 @@ describe('provider dispatch integration', () => {
       kimiAcpProvider.indexOf('launchKimiProductionAcp')
     )
     expect(kimiAcpProvider).toContain('cwd: production.cwd')
-    expect(kimiAcpProvider).toContain("cwdLifetime: preserveKimiSessionState ? 'session' : 'run'")
+    expect(kimiAcpProvider).toContain(
+      "cwdLifetime: preserveKimiSessionState ? 'session' : 'run'"
+    )
     expect(kimiAcpProvider).toContain('initializeParams: production.initializeParams')
     expect(kimiAcpProvider).toContain('mcpServers: production.mcpServers')
     expect(kimiAcpProvider).not.toContain('cwd: payload.workspace')

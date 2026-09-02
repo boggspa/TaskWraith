@@ -305,7 +305,9 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
       pruned.userOverrodeSelectionRoundKeys
     )
     expect(stable.selectedParticipantIdByChatId).toBe(pruned.selectedParticipantIdByChatId)
-    expect(stable.userOverrodeSelectionRoundKeys).toBe(pruned.userOverrodeSelectionRoundKeys)
+    expect(stable.userOverrodeSelectionRoundKeys).toBe(
+      pruned.userOverrodeSelectionRoundKeys
+    )
   })
 
   it('converges across unstable summary snapshots while hydrated panes remain live', () => {
@@ -358,14 +360,18 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
       recentlyCompleted: new Map(),
       now: 1
     })
-    const firstSnapshot = buildMultiviewEnsembleSelectionPruneSnapshot(firstAuthority.values())
+    const firstSnapshot = buildMultiviewEnsembleSelectionPruneSnapshot(
+      firstAuthority.values()
+    )
     const firstPrune = pruneMultiviewEnsembleSelectionOwnership(
       firstSnapshot.chats,
       selected,
       overrides
     )
     expect(firstSnapshot.chats[0]).toBe(hydratedPane)
-    expect(isMultiviewEnsembleParticipantSelectionValid(hydratedPane, 'pane-worker')).toBe(true)
+    expect(
+      isMultiviewEnsembleParticipantSelectionValid(hydratedPane, 'pane-worker')
+    ).toBe(true)
     expect(firstPrune.selectedParticipantIdByChatId).toBe(selected)
     expect(firstPrune.userOverrodeSelectionRoundKeys).toBe(overrides)
 
@@ -409,14 +415,18 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
         }
       }
     }
-    const terminalSnapshot = buildMultiviewEnsembleSelectionPruneSnapshot([removedWorker])
+    const terminalSnapshot = buildMultiviewEnsembleSelectionPruneSnapshot([
+      removedWorker
+    ])
     const terminalPrune = pruneMultiviewEnsembleSelectionOwnership(
       terminalSnapshot.chats,
       selected,
       overrides
     )
     expect(terminalSnapshot.ownershipKey).not.toBe(firstSnapshot.ownershipKey)
-    expect(isMultiviewEnsembleParticipantSelectionValid(removedWorker, 'pane-worker')).toBe(false)
+    expect(
+      isMultiviewEnsembleParticipantSelectionValid(removedWorker, 'pane-worker')
+    ).toBe(false)
     expect(terminalPrune.selectedParticipantIdByChatId).toEqual({})
     expect(terminalPrune.userOverrodeSelectionRoundKeys.size).toBe(0)
 
@@ -431,7 +441,9 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
       recentlyCompleted: new Map(),
       now: 3
     })
-    const deletedSnapshot = buildMultiviewEnsembleSelectionPruneSnapshot(deletedAuthority.values())
+    const deletedSnapshot = buildMultiviewEnsembleSelectionPruneSnapshot(
+      deletedAuthority.values()
+    )
     const deletedPrune = pruneMultiviewEnsembleSelectionOwnership(
       deletedSnapshot.chats,
       selected,
@@ -506,20 +518,24 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
 
     // Focused and resting panes now share this projection. Switching focus
     // therefore cannot write A/C into the user-owned resting choice B.
-    expect(resolveMultiviewEnsembleParticipantSelection(liveA, 'manual-b', noOverrides)).toBe(
-      'speaker-a'
-    )
-    expect(resolveMultiviewEnsembleParticipantSelection(liveC, 'manual-b', noOverrides)).toBe(
-      'speaker-c'
-    )
-    expect(resolveMultiviewEnsembleParticipantSelection(liveC, 'manual-b', manualOverride)).toBe(
-      'manual-b'
-    )
-    expect(resolveMultiviewEnsembleParticipantSelection(terminalC, 'manual-b', noOverrides)).toBe(
-      'manual-b'
-    )
     expect(
-      resolveMultiviewEnsembleParticipantSelection(removedManualB, 'manual-b', manualOverride)
+      resolveMultiviewEnsembleParticipantSelection(liveA, 'manual-b', noOverrides)
+    ).toBe('speaker-a')
+    expect(
+      resolveMultiviewEnsembleParticipantSelection(liveC, 'manual-b', noOverrides)
+    ).toBe('speaker-c')
+    expect(
+      resolveMultiviewEnsembleParticipantSelection(liveC, 'manual-b', manualOverride)
+    ).toBe('manual-b')
+    expect(
+      resolveMultiviewEnsembleParticipantSelection(terminalC, 'manual-b', noOverrides)
+    ).toBe('manual-b')
+    expect(
+      resolveMultiviewEnsembleParticipantSelection(
+        removedManualB,
+        'manual-b',
+        manualOverride
+      )
     ).toBe('speaker-c')
     expect(
       resolveMultiviewEnsembleParticipantSelection(
@@ -556,12 +572,20 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
 
     const alreadyApplied = ['second', 'appended']
     expect(
-      mergeEnsembleQueuedPromptMutationResult(['first', 'second'], ['second'], alreadyApplied)
+      mergeEnsembleQueuedPromptMutationResult(
+        ['first', 'second'],
+        ['second'],
+        alreadyApplied
+      )
     ).toBe(alreadyApplied)
 
     const divergentLatest = ['replacement-round-prompt']
     expect(
-      mergeEnsembleQueuedPromptMutationResult(['first', 'second'], ['second'], divergentLatest)
+      mergeEnsembleQueuedPromptMutationResult(
+        ['first', 'second'],
+        ['second'],
+        divergentLatest
+      )
     ).toBe(divergentLatest)
   })
 })
@@ -571,7 +595,9 @@ describe('buildEnsembleProviderBlendStyle', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
       const model = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(model, `missing representative Pi model for ${upstream}`).toBeTruthy()
-      expect(buildEnsembleProviderBlendStyle([{ provider: 'pi', model }])).toEqual({
+      expect(
+        buildEnsembleProviderBlendStyle([{ provider: 'pi', model }])
+      ).toEqual({
         '--ensemble-provider-1': `var(--provider-${brand.hueClass}-color)`
       })
     }

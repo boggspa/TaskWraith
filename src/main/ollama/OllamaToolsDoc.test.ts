@@ -59,7 +59,9 @@ describe('resources/Tools.md', () => {
 
   it('uses a valid catalog example for enum-discriminated Boss control calls', () => {
     const section = buildOllamaToolDocSection('ensemble_bossman_control')
-    expect(section).toContain('"arguments":{"action":"set_round_plan","planSummary":"Review."}')
+    expect(section).toContain(
+      '"arguments":{"action":"set_round_plan","planSummary":"Review."}'
+    )
     expect(section).not.toContain('"action":"text"')
   })
 
@@ -110,17 +112,19 @@ describe('resources/Tools.md', () => {
     expect(validateEmulatorStepToolInput(arguments_?.arguments).ok).toBe(true)
   })
 
-  it.each(['mesh_scene_create', 'mesh_scene_list', 'mesh_topology_inspect', 'mesh_topology_edit'])(
-    'documents the five-tier Mesh Canvas approval ladder for %s',
-    (name) => {
-      const section = buildOllamaToolDocSection(name)
-      expect(section).toContain(
-        '- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied'
-      )
-      expect(section).not.toContain('denied under Plan')
-      expect(section).not.toContain('prompts under Accept Edits')
-    }
-  )
+  it.each([
+    'mesh_scene_create',
+    'mesh_scene_list',
+    'mesh_topology_inspect',
+    'mesh_topology_edit'
+  ])('documents the five-tier Mesh Canvas approval ladder for %s', (name) => {
+    const section = buildOllamaToolDocSection(name)
+    expect(section).toContain(
+      '- Access: Mesh Canvas — per-call approval under Ask and Plan; automatic under Accept Edits, Full WS Access, and Full Access unless Mesh Canvas is globally denied'
+    )
+    expect(section).not.toContain('denied under Plan')
+    expect(section).not.toContain('prompts under Accept Edits')
+  })
 
   it.each([
     'canvas_screenshot',
@@ -164,9 +168,15 @@ describe('buildOllamaToolDocSection (tool_help runtime lookup)', () => {
 
   it('keeps the retry schema hidden from gateway-v8 help and visible to gateway-v9', () => {
     const v8List = buildOllamaToolDocSection('', 'taskwraith-gateway-v8')
-    const v8Lookup = buildOllamaToolDocSection('request_tool_permission', 'taskwraith-gateway-v8')
+    const v8Lookup = buildOllamaToolDocSection(
+      'request_tool_permission',
+      'taskwraith-gateway-v8'
+    )
     const v9List = buildOllamaToolDocSection('', 'taskwraith-gateway-v9')
-    const v9Lookup = buildOllamaToolDocSection('request_tool_permission', 'taskwraith-gateway-v9')
+    const v9Lookup = buildOllamaToolDocSection(
+      'request_tool_permission',
+      'taskwraith-gateway-v9'
+    )
 
     expect(v8List).not.toContain('request_tool_permission')
     expect(v8Lookup).toContain('Unknown tool "request_tool_permission"')

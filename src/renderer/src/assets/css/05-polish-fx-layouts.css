@@ -4,10 +4,9 @@
 
 /* --- Sidebar: refined active row with gradient + soft accent rail ----- */
 .app-sidebar .sidebar-item {
-  transition:
-    background-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
-    color 140ms ease,
-    box-shadow 140ms ease;
+  transition: background-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+              color 140ms ease,
+              box-shadow 140ms ease;
 }
 
 .app-sidebar .sidebar-item.active {
@@ -53,7 +52,7 @@
 }
 
 .app-sidebar .sidebar-workspace-group .sidebar-chat-list::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 0;
   top: 4px;
@@ -120,16 +119,14 @@
  * the click target; the glyph just signals navigation, replacing the
  * timestamp that used to occupy the trailing slot. */
 .app-sidebar .sidebar-chat-item::after {
-  content: '';
+  content: "";
   flex: 0 0 auto;
   width: 10px;
   height: 10px;
   margin-left: auto;
   background: color-mix(in srgb, var(--sidebar-text) 38%, transparent);
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M4.5 2.5 8 6l-3.5 3.5' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
-    center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M4.5 2.5 8 6l-3.5 3.5' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
-    center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M4.5 2.5 8 6l-3.5 3.5' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M4.5 2.5 8 6l-3.5 3.5' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 .app-sidebar .sidebar-workspace-group .sidebar-chat-item .sidebar-chat-age {
@@ -139,9 +136,7 @@
   border: none;
   color: var(--text-muted);
   opacity: 0;
-  transition:
-    opacity 140ms ease,
-    color 140ms ease;
+  transition: opacity 140ms ease, color 140ms ease;
 }
 
 .app-sidebar .sidebar-workspace-group .sidebar-chat-item:hover .sidebar-chat-age,
@@ -170,9 +165,7 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1;
-  transition:
-    opacity 0.12s ease,
-    transform 0.12s ease;
+  transition: opacity 0.12s ease, transform 0.12s ease;
   pointer-events: none;
 }
 
@@ -191,11 +184,7 @@
   border-radius: 5px;
   width: var(--control-hit-sm);
   height: var(--control-hit-sm);
-  transition:
-    background-color 0.12s ease,
-    color 0.12s ease,
-    opacity 0.12s ease,
-    transform 0.12s ease;
+  transition: background-color 0.12s ease, color 0.12s ease, opacity 0.12s ease, transform 0.12s ease;
 }
 
 .app-sidebar .sidebar-item:hover .sidebar-item-action {
@@ -246,7 +235,7 @@
   padding: 12px 14px;
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent),
-    0 1px 3px rgba(0, 0, 0, 0.1);
+    0 1px 3px rgba(0, 0, 0, 0.10);
 }
 
 .app-sidebar .run-summary-title {
@@ -350,12 +339,12 @@
   position: relative;
   isolation: isolate;
 }
-[data-appearance='solid'] .app-sidebar .sidebar-footer {
+[data-appearance="solid"] .app-sidebar .sidebar-footer {
   background: color-mix(in srgb, var(--app-bg-elevated) 92%, transparent);
   border-top-color: color-mix(in srgb, var(--sidebar-border) 80%, transparent);
   box-shadow: inset 0 0 0 1px var(--sidebar-chrome-rim);
 }
-[data-appearance='soft_glass'] .app-sidebar .sidebar-footer {
+[data-appearance="soft_glass"] .app-sidebar .sidebar-footer {
   background: color-mix(in srgb, var(--sidebar-bg) 36%, transparent);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -370,11 +359,11 @@
     inset 0 0 0 1px var(--sidebar-chrome-rim),
     0 -4px 18px -8px rgba(0, 0, 0, 0.25);
 }
-[data-appearance='native_glass'] .app-sidebar .sidebar-footer {
+[data-appearance="native_glass"] .app-sidebar .sidebar-footer {
   background: rgba(255, 255, 255, 0.025);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  border-top-color: rgba(255, 255, 255, 0.1);
+  border-top-color: rgba(255, 255, 255, 0.10);
   box-shadow: inset 0 0 0 1px var(--sidebar-chrome-rim);
 }
 
@@ -498,12 +487,10 @@
   padding: 14px 16px;
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent),
-    0 1px 2px rgba(0, 0, 0, 0.1),
+    0 1px 2px rgba(0, 0, 0, 0.10),
     0 4px 12px rgba(0, 0, 0, 0.04);
   position: relative;
-  transition:
-    transform 0.16s ease,
-    box-shadow 0.16s ease;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
 }
 
 .app-inspector .safety-card:hover {
@@ -560,9 +547,7 @@
 .app-inspector .diff-file-row {
   padding: 8px 14px;
   font-size: var(--font-size-sm);
-  transition:
-    background-color 110ms ease,
-    border-left-color 110ms ease;
+  transition: background-color 110ms ease, border-left-color 110ms ease;
 }
 
 .app-inspector .diff-file-name {
@@ -665,10 +650,7 @@
   border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.08));
   opacity: 0;
   pointer-events: none;
-  transition:
-    opacity 120ms ease,
-    color 100ms ease,
-    background 100ms ease;
+  transition: opacity 120ms ease, color 100ms ease, background 100ms ease;
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
 }
@@ -745,10 +727,7 @@
   border: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
   color: var(--text-primary);
   font-size: var(--font-size-sm);
-  transition:
-    background-color 0.12s ease,
-    border-color 0.12s ease,
-    box-shadow 0.12s ease;
+  transition: background-color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
 .app-file-editor .file-editor-filter::placeholder {
@@ -774,10 +753,7 @@
   padding: 4px 10px;
   border-radius: 5px;
   font-size: var(--font-size-sm);
-  transition:
-    background-color 120ms ease,
-    color 120ms ease,
-    box-shadow 120ms ease;
+  transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
 .app-file-editor .file-editor-disclosure {
@@ -808,22 +784,14 @@
   color: var(--text-primary);
 }
 
-:is([data-theme='xcode-dark'], [data-theme='xcode-light'])
-  .app-file-editor
-  .file-editor-row.active {
+:is([data-theme="xcode-dark"], [data-theme="xcode-light"]) .app-file-editor .file-editor-row.active {
   background: var(--accent);
   box-shadow: none;
   color: #ffffff;
 }
 
-:is([data-theme='xcode-dark'], [data-theme='xcode-light'])
-  .app-file-editor
-  .file-editor-row.active
-  .file-editor-file-size,
-:is([data-theme='xcode-dark'], [data-theme='xcode-light'])
-  .app-file-editor
-  .file-editor-row.active
-  .file-editor-disclosure {
+:is([data-theme="xcode-dark"], [data-theme="xcode-light"]) .app-file-editor .file-editor-row.active .file-editor-file-size,
+:is([data-theme="xcode-dark"], [data-theme="xcode-light"]) .app-file-editor .file-editor-row.active .file-editor-disclosure {
   color: rgba(255, 255, 255, 0.85);
 }
 
@@ -851,9 +819,7 @@
 }
 
 .app-file-editor .file-editor-tab {
-  transition:
-    background-color 120ms ease,
-    box-shadow 120ms ease;
+  transition: background-color 120ms ease, box-shadow 120ms ease;
 }
 
 .app-file-editor .file-editor-tab:hover {
@@ -877,10 +843,7 @@
 
 .app-file-editor .file-editor-tab-close {
   opacity: 0.62;
-  transition:
-    opacity 120ms ease,
-    color 120ms ease,
-    background-color 120ms ease;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
 }
 
 .app-file-editor .file-editor-tab:hover .file-editor-tab-close,
@@ -914,18 +877,11 @@
 }
 
 @keyframes editorDirtyPulse {
-  0%,
-  100% {
-    opacity: 0.75;
-    transform: scale(0.92);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1);
-  }
+  0%, 100% { opacity: 0.75; transform: scale(0.92); }
+  50%      { opacity: 1;    transform: scale(1); }
 }
 
-[data-reduce-motion='true'] .app-file-editor .file-editor-dirty-dot {
+[data-reduce-motion="true"] .app-file-editor .file-editor-dirty-dot {
   animation: none;
 }
 
@@ -1081,8 +1037,8 @@
 /* Togglable Epic FX profile layer                                        */
 /* ====================================================================== */
 
-:root[data-fx-enabled='false'],
-:root[data-fx-mode='off'] {
+:root[data-fx-enabled="false"],
+:root[data-fx-mode="off"] {
   --fx-sidebar-aurora-opacity: 0;
   --fx-inspector-aurora-opacity: 0;
   --fx-sky-opacity: 0;
@@ -1093,7 +1049,7 @@
   --fx-sky-motion-multiplier: 0;
 }
 
-:root[data-fx-enabled='true'] {
+:root[data-fx-enabled="true"] {
   --fx-sidebar-aurora-opacity: 0.16;
   --fx-inspector-aurora-opacity: 0.14;
   --fx-sky-opacity: 1;
@@ -1104,7 +1060,7 @@
   --fx-sky-motion-multiplier: 1;
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='subtle'] {
+:root[data-fx-enabled="true"][data-fx-mode="subtle"] {
   --fx-sidebar-aurora-opacity: 0.08;
   --fx-inspector-aurora-opacity: 0.06;
   --fx-burst-multiplier: 0.5;
@@ -1113,7 +1069,7 @@
   --fx-sky-motion-multiplier: 1.45;
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='cinematic'] {
+:root[data-fx-enabled="true"][data-fx-mode="cinematic"] {
   --fx-sidebar-aurora-opacity: 0.2;
   --fx-inspector-aurora-opacity: 0.16;
   --fx-burst-multiplier: 0.82;
@@ -1122,7 +1078,7 @@
   --fx-sky-motion-multiplier: 1;
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] {
   --fx-sidebar-aurora-opacity: 0.26;
   --fx-inspector-aurora-opacity: 0.22;
   --fx-sky-opacity: 1;
@@ -1133,7 +1089,7 @@
   --fx-sky-motion-multiplier: 0.82;
 }
 
-:root[data-reduce-motion='true'] {
+:root[data-reduce-motion="true"] {
   --fx-burst-duration: 0s;
   --fx-burst-multiplier: 0;
   --fx-burst-sweep-opacity: 0;
@@ -1156,13 +1112,7 @@
   --fx-sky-subtle-glow-opacity: 0.864;
 }
 
-:is(
-  [data-theme='light'],
-  [data-theme='citrus'],
-  [data-theme='mist'],
-  [data-theme='sage'],
-  [data-theme='alabaster']
-) {
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) {
   --fx-sky-layer-opacity: 1;
   --fx-sky-blend-mode: screen;
   --fx-sky-filter: saturate(1.28) brightness(1.196);
@@ -1179,13 +1129,12 @@
   --transcript-sky-reveal-upper: rgba(255, 255, 255, 0.05);
   --transcript-sky-reveal-solid: color-mix(
     in srgb,
-    var(--main-pane-opacity-override-bg, var(--content-bg, #ffffff))
-      var(--main-pane-opacity-100, 100%),
+    var(--main-pane-opacity-override-bg, var(--content-bg, #ffffff)) var(--main-pane-opacity-100, 100%),
     transparent
   );
 }
 
-:root[data-fx-enabled='true'] .sky-visual-fx {
+:root[data-fx-enabled="true"] .sky-visual-fx {
   opacity: calc(var(--fx-sky-opacity, 1) * var(--fx-sky-layer-opacity, 1));
   /* Consumes the scene transition list from 02-transcript-messages-fx.css —
    * this rule out-specifies the base one, and a bare `opacity 220ms` here
@@ -1193,89 +1142,89 @@
   transition: var(--sky-scene-transitions, opacity 220ms ease);
 }
 
-:root[data-fx-enabled='false'] .sky-visual-fx,
-:root[data-fx-mode='off'] .sky-visual-fx {
+:root[data-fx-enabled="false"] .sky-visual-fx,
+:root[data-fx-mode="off"] .sky-visual-fx {
   opacity: 0;
 }
 
-:root[data-fx-enabled='true'] .ghost-companion {
+:root[data-fx-enabled="true"] .ghost-companion {
   opacity: var(--fx-ghost-opacity);
   transition: opacity 220ms ease;
 }
 
-:root[data-fx-enabled='false'] .ghost-companion,
-:root[data-fx-mode='off'] .ghost-companion {
+:root[data-fx-enabled="false"] .ghost-companion,
+:root[data-fx-mode="off"] .ghost-companion {
   opacity: 0;
 }
 
 /* The mode colour grade belongs to the static base gradient, not the animated
  * sky root. A full-layer CSS filter makes every moving cloud/star/weather
  * frame repaint the whole backdrop. */
-:root[data-fx-enabled='true'][data-fx-mode='subtle'] .sky-visual-fx .sky-gradient {
+:root[data-fx-enabled="true"][data-fx-mode="subtle"] .sky-visual-fx .sky-gradient {
   filter: var(--fx-sky-mode-filter-subtle, saturate(1.072) brightness(1.144));
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='subtle'] .sky-orb {
+:root[data-fx-enabled="true"][data-fx-mode="subtle"] .sky-orb {
   animation-duration: calc(28s * var(--fx-sky-motion-multiplier));
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='subtle'] .sky-glow {
+:root[data-fx-enabled="true"][data-fx-mode="subtle"] .sky-glow {
   animation-duration: calc(44s * var(--fx-sky-motion-multiplier));
   opacity: var(--fx-sky-subtle-glow-opacity, 0.864);
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='subtle'] .sky-cloud {
+:root[data-fx-enabled="true"][data-fx-mode="subtle"] .sky-cloud {
   animation-duration: calc(228s * var(--fx-sky-motion-multiplier));
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='subtle'] .sky-rainfall span,
-:root[data-fx-enabled='true'][data-fx-mode='subtle'] .sky-snowfall span {
+:root[data-fx-enabled="true"][data-fx-mode="subtle"] .sky-rainfall span,
+:root[data-fx-enabled="true"][data-fx-mode="subtle"] .sky-snowfall span {
   animation-duration: calc(3.4s * var(--fx-sky-motion-multiplier));
   opacity: calc(0.9 * var(--fx-sky-opacity));
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='cinematic'] .sky-visual-fx .sky-gradient {
+:root[data-fx-enabled="true"][data-fx-mode="cinematic"] .sky-visual-fx .sky-gradient {
   filter: var(--fx-sky-mode-filter-cinematic, saturate(1.18) brightness(1.126));
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='cinematic'] .sky-cloud {
+:root[data-fx-enabled="true"][data-fx-mode="cinematic"] .sky-cloud {
   animation-duration: calc(178s * var(--fx-sky-motion-multiplier));
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='cinematic'] .sky-rainfall span,
-:root[data-fx-enabled='true'][data-fx-mode='cinematic'] .sky-snowfall span {
+:root[data-fx-enabled="true"][data-fx-mode="cinematic"] .sky-rainfall span,
+:root[data-fx-enabled="true"][data-fx-mode="cinematic"] .sky-snowfall span {
   animation-duration: calc(3s * var(--fx-sky-motion-multiplier));
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .sky-visual-fx .sky-gradient {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .sky-visual-fx .sky-gradient {
   filter: var(--fx-sky-mode-filter-epic, saturate(1.27) brightness(1.162));
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .sky-cloud {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .sky-cloud {
   animation-duration: calc(124s * var(--fx-sky-motion-multiplier));
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .sky-rainfall span,
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .sky-snowfall span {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .sky-rainfall span,
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .sky-snowfall span {
   animation-duration: calc(2.6s * var(--fx-sky-motion-multiplier));
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .ghost-avatar {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .ghost-avatar {
   animation-duration: 58s;
   transform: translate3d(0, 0, 0) scale(1.01);
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-sidebar,
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-inspector,
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-file-editor {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-sidebar,
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-inspector,
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-file-editor {
   position: relative;
   isolation: isolate;
   overflow: hidden;
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-sidebar::before,
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-inspector::before {
-  content: '';
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-sidebar::before,
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-inspector::before {
+  content: "";
   position: absolute;
   inset: -18% 0 -8%;
   z-index: 0;
@@ -1291,8 +1240,8 @@
   animation: fxEpicAuroraSlide 10s ease-in-out infinite alternate;
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-file-editor::before {
-  content: '';
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-file-editor::before {
+  content: "";
   position: absolute;
   inset: -18% 0 -8%;
   z-index: 0;
@@ -1305,7 +1254,7 @@
   animation: fxEpicAuroraSlide 14s ease-in-out infinite alternate;
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-inspector::before {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-inspector::before {
   opacity: var(--fx-inspector-aurora-opacity);
   background:
     linear-gradient(140deg, rgba(149, 176, 255, 0.16), transparent 28%),
@@ -1314,9 +1263,9 @@
   animation-duration: 13s;
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-sidebar > *,
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-inspector > *,
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-file-editor > * {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-sidebar > * ,
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-inspector > * ,
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-file-editor > * {
   position: relative;
   z-index: 1;
 }
@@ -1332,7 +1281,7 @@
 .app-root.fx-burst-run-complete::before,
 .app-root.fx-burst-run-summary::before,
 .app-root.fx-burst-warning::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   z-index: 4;
@@ -1341,43 +1290,43 @@
   transform: scale(1.02);
 }
 
-:root[data-fx-enabled='true'] .app-root.fx-burst-run-start::before {
+:root[data-fx-enabled="true"] .app-root.fx-burst-run-start::before {
   background:
     radial-gradient(circle at 24% 22%, rgba(132, 180, 255, 0.32), transparent 44%),
     radial-gradient(circle at 76% 14%, rgba(112, 226, 255, 0.22), transparent 42%);
   animation: fxRunStartBurst var(--fx-burst-duration) ease-out forwards;
 }
 
-:root[data-fx-enabled='true'] .app-root.fx-burst-run-complete::before {
+:root[data-fx-enabled="true"] .app-root.fx-burst-run-complete::before {
   background:
     radial-gradient(circle at 50% 48%, rgba(84, 255, 163, 0.22), transparent 44%),
     radial-gradient(circle at 76% 82%, rgba(123, 178, 255, 0.2), transparent 44%);
   animation: fxRunCompleteBurst var(--fx-burst-duration) ease-out forwards;
 }
 
-:root[data-fx-enabled='true'] .app-root.fx-burst-run-summary::before {
+:root[data-fx-enabled="true"] .app-root.fx-burst-run-summary::before {
   background:
     radial-gradient(circle at 16% 70%, rgba(255, 193, 109, 0.2), transparent 52%),
     radial-gradient(circle at 80% 20%, rgba(127, 174, 255, 0.18), transparent 50%);
   animation: fxRunSummaryBurst var(--fx-burst-duration) ease-out forwards;
 }
 
-:root[data-fx-enabled='true'] .app-root.fx-burst-warning::before {
+:root[data-fx-enabled="true"] .app-root.fx-burst-warning::before {
   background:
     radial-gradient(circle at 50% 18%, rgba(255, 132, 132, 0.22), transparent 52%),
     radial-gradient(circle at 50% 74%, rgba(255, 206, 122, 0.18), transparent 55%);
   animation: fxWarningBurst var(--fx-burst-duration) ease-out forwards;
 }
 
-:root[data-fx-mode='epic'][data-fx-enabled='true'] .app-root.fx-burst-run-start::before {
+:root[data-fx-mode="epic"][data-fx-enabled="true"] .app-root.fx-burst-run-start::before {
   mix-blend-mode: screen;
 }
 
-:root[data-fx-enabled='true'] .app-root.fx-burst-run-start::after,
-:root[data-fx-enabled='true'] .app-root.fx-burst-run-complete::after,
-:root[data-fx-enabled='true'] .app-root.fx-burst-run-summary::after,
-:root[data-fx-enabled='true'] .app-root.fx-burst-warning::after {
-  content: '';
+:root[data-fx-enabled="true"] .app-root.fx-burst-run-start::after,
+:root[data-fx-enabled="true"] .app-root.fx-burst-run-complete::after,
+:root[data-fx-enabled="true"] .app-root.fx-burst-run-summary::after,
+:root[data-fx-enabled="true"] .app-root.fx-burst-warning::after {
+  content: "";
   position: absolute;
   left: 50%;
   top: 44%;
@@ -1390,21 +1339,21 @@
   opacity: 0;
 }
 
-:root[data-fx-enabled='true'] .app-root.fx-burst-run-start::after,
-:root[data-fx-enabled='true'] .app-root.fx-burst-run-complete::after,
-:root[data-fx-enabled='true'] .app-root.fx-burst-run-summary::after,
-:root[data-fx-enabled='true'] .app-root.fx-burst-warning::after {
+:root[data-fx-enabled="true"] .app-root.fx-burst-run-start::after,
+:root[data-fx-enabled="true"] .app-root.fx-burst-run-complete::after,
+:root[data-fx-enabled="true"] .app-root.fx-burst-run-summary::after,
+:root[data-fx-enabled="true"] .app-root.fx-burst-warning::after {
   animation: fxBurstSweep var(--fx-burst-duration) ease-out forwards;
 }
 
-:root[data-reduce-motion='true'] .app-root.fx-burst-run-start::before,
-:root[data-reduce-motion='true'] .app-root.fx-burst-run-complete::before,
-:root[data-reduce-motion='true'] .app-root.fx-burst-run-summary::before,
-:root[data-reduce-motion='true'] .app-root.fx-burst-warning::before,
-:root[data-reduce-motion='true'] .app-root.fx-burst-run-start::after,
-:root[data-reduce-motion='true'] .app-root.fx-burst-run-complete::after,
-:root[data-reduce-motion='true'] .app-root.fx-burst-run-summary::after,
-:root[data-reduce-motion='true'] .app-root.fx-burst-warning::after {
+:root[data-reduce-motion="true"] .app-root.fx-burst-run-start::before,
+:root[data-reduce-motion="true"] .app-root.fx-burst-run-complete::before,
+:root[data-reduce-motion="true"] .app-root.fx-burst-run-summary::before,
+:root[data-reduce-motion="true"] .app-root.fx-burst-warning::before,
+:root[data-reduce-motion="true"] .app-root.fx-burst-run-start::after,
+:root[data-reduce-motion="true"] .app-root.fx-burst-run-complete::after,
+:root[data-reduce-motion="true"] .app-root.fx-burst-run-summary::after,
+:root[data-reduce-motion="true"] .app-root.fx-burst-warning::after {
   animation: none;
   opacity: 0;
 }
@@ -1414,9 +1363,9 @@
  * across the sidebar, inspector and file-editor regardless of the
  * reduce-motion preference — defeating the user's accessibility setting
  * and burning compositor time on devices that asked for stillness. */
-:root[data-reduce-motion='true'][data-fx-mode='epic'] .app-sidebar::before,
-:root[data-reduce-motion='true'][data-fx-mode='epic'] .app-inspector::before,
-:root[data-reduce-motion='true'][data-fx-mode='epic'] .app-file-editor::before {
+:root[data-reduce-motion="true"][data-fx-mode="epic"] .app-sidebar::before,
+:root[data-reduce-motion="true"][data-fx-mode="epic"] .app-inspector::before,
+:root[data-reduce-motion="true"][data-fx-mode="epic"] .app-file-editor::before {
   animation: none;
 }
 
@@ -1499,7 +1448,7 @@
   }
 }
 
-:root[data-fx-mode='epic'][data-fx-enabled='true'] .app-root.fx-burst-run-complete::after {
+:root[data-fx-mode="epic"][data-fx-enabled="true"] .app-root.fx-burst-run-complete::after {
   top: 52%;
   width: 90vw;
   height: 160px;
@@ -1511,7 +1460,7 @@
   overflow: hidden;
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-inspector .inspector-tab.active {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-inspector .inspector-tab.active {
   border: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 6%, transparent),
@@ -1522,33 +1471,28 @@
   isolation: isolate;
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-inspector .safety-card {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-inspector .safety-card {
   /* Full-perimeter gradient rim (not a left-edge bar): border-image spans all
    * four sides when the shorthand border (not border-left) carries it. */
   border: 1.5px solid transparent;
-  border-image: linear-gradient(
-      180deg,
-      var(--accent),
-      color-mix(in srgb, var(--accent) 30%, transparent)
-    )
-    1;
+  border-image: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 30%, transparent)) 1;
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-inspector .raw-log-line {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-inspector .raw-log-line {
   border-radius: 6px;
   border: 1px solid color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-inspector .raw-log-line:nth-child(even) {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-inspector .raw-log-line:nth-child(even) {
   background: color-mix(in srgb, var(--text-primary) 2.4%, transparent);
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-inspector .raw-log-meta {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-inspector .raw-log-meta {
   border-left: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
   border-right: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
 }
 
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-sidebar {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-sidebar {
   border-left: 1px solid color-mix(in srgb, var(--sidebar-border) 52%, transparent);
   box-shadow:
     inset 1px 0 0 color-mix(in srgb, var(--text-primary) 4%, transparent),
@@ -1711,9 +1655,9 @@
 
 /* Reduce Transparency (OS setting or in-app toggle): pin the fixed chrome to
  * fully opaque, matching the app's picker/popover convention for that setting. */
-[data-reduce-transparency='true'] .app-sidebar .sidebar-top-chrome,
-[data-reduce-transparency='true'] .app-sidebar .sidebar-masthead,
-[data-reduce-transparency='true'] .app-sidebar .sidebar-footer {
+[data-reduce-transparency="true"] .app-sidebar .sidebar-top-chrome,
+[data-reduce-transparency="true"] .app-sidebar .sidebar-masthead,
+[data-reduce-transparency="true"] .app-sidebar .sidebar-footer {
   background: var(--sidebar-chrome-color) !important;
   background-image: none !important;
 }
@@ -1826,14 +1770,8 @@
   gap: 10px;
   color: var(--text-primary);
   font-family:
-    'Avenir Next',
-    Avenir,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    'SF Pro Text',
-    'Segoe UI',
-    sans-serif;
+    "Avenir Next", Avenir, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Segoe UI", sans-serif;
   font-size: 26px;
   font-weight: 700;
   letter-spacing: -0.01em;
@@ -1845,8 +1783,10 @@
  * Drop-shadow stack matches the PNG's ice-cyan rim (#78c8ff family). */
 .taskwraith-brand-ghost {
   object-fit: contain;
-  filter: drop-shadow(0 0 4px rgba(118, 200, 255, 0.52))
-    drop-shadow(0 0 10px rgba(92, 168, 255, 0.34)) drop-shadow(0 0 20px rgba(72, 140, 240, 0.18));
+  filter:
+    drop-shadow(0 0 4px rgba(118, 200, 255, 0.52))
+    drop-shadow(0 0 10px rgba(92, 168, 255, 0.34))
+    drop-shadow(0 0 20px rgba(72, 140, 240, 0.18));
 }
 
 .sidebar-product-ghost {
@@ -1937,12 +1877,8 @@
   font-size: var(--font-size-xs);
   font-weight: 600;
   cursor: pointer;
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.22),
-    0 2px 8px rgba(0, 0, 0, 0.16);
-  transition:
-    background-color 140ms ease,
-    border-color 140ms ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.16);
+  transition: background-color 140ms ease, border-color 140ms ease;
 }
 
 .sidebar-primary-action:hover {
@@ -1988,11 +1924,8 @@
   height: 36px;
   border-radius: 11px;
   padding: 0 9px;
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--text-primary) 7%, transparent),
-    color-mix(in srgb, var(--text-primary) 3%, transparent)
-  );
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text-primary) 7%, transparent), color-mix(in srgb, var(--text-primary) 3%, transparent));
 }
 
 .sidebar-search-hint {
@@ -2043,11 +1976,8 @@
 
 .app-sidebar .sidebar-workspace-scroll .sidebar-section-header {
   border-bottom: 0;
-  background: linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--app-bg) 82%, transparent),
-    color-mix(in srgb, var(--app-bg) 38%, transparent)
-  );
+  background:
+    linear-gradient(to bottom, color-mix(in srgb, var(--app-bg) 82%, transparent), color-mix(in srgb, var(--app-bg) 38%, transparent));
 }
 
 .app-sidebar .sidebar-workspace-group {
@@ -2334,11 +2264,7 @@
   border: 1px solid color-mix(in srgb, var(--sidebar-border) 76%, transparent);
   border-radius: 10px;
   background:
-    linear-gradient(
-      145deg,
-      color-mix(in srgb, var(--text-primary) 8%, transparent),
-      transparent 72%
-    ),
+    linear-gradient(145deg, color-mix(in srgb, var(--text-primary) 8%, transparent), transparent 72%),
     color-mix(in srgb, var(--sidebar-surface) 72%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 11%, transparent);
 }
@@ -2683,8 +2609,7 @@
 .sidebar-project-home-chip {
   flex: 0 0 auto;
   padding: 1px 5px;
-  border: 1px solid
-    color-mix(in srgb, var(--sidebar-accent, var(--sidebar-border)) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sidebar-accent, var(--sidebar-border)) 55%, transparent);
   border-radius: 999px;
   color: color-mix(in srgb, var(--sidebar-accent, var(--sidebar-text-secondary)) 92%, transparent);
   font-size: 9px;
@@ -2861,11 +2786,7 @@
   margin: 0 var(--space-md) var(--space-sm);
   border-radius: 14px;
   background:
-    linear-gradient(
-      145deg,
-      color-mix(in srgb, var(--text-primary) 7%, transparent),
-      transparent 72%
-    ),
+    linear-gradient(145deg, color-mix(in srgb, var(--text-primary) 7%, transparent), transparent 72%),
     color-mix(in srgb, var(--panel-elevated-bg) 58%, transparent);
 }
 
@@ -2895,7 +2816,7 @@
 }
 
 .sidebar-footer-action-row::after {
-  content: '';
+  content: "";
   position: absolute;
   left: calc(-1 * var(--space-md));
   right: calc(-1 * var(--space-md));
@@ -2928,9 +2849,7 @@
   padding: 6px 10px;
   border-radius: 10px;
   cursor: pointer;
-  transition:
-    color 0.14s,
-    background 0.14s;
+  transition: color 0.14s, background 0.14s;
   flex: 1;
   min-width: 0;
   width: auto;
@@ -2975,7 +2894,7 @@
   z-index: 10060;
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .sidebar-settings-menu {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-settings-menu {
   border-color: var(--surface-border);
   background: var(--tw-popover-glass-bg);
   color: var(--surface-text);
@@ -2985,7 +2904,7 @@
 /* These two themes invert their sidebar material. The expanded Settings menu
  * now portals to <body>, so restate the sidebar-local aliases it previously
  * inherited from `.app-sidebar`. */
-[data-theme='alabaster'] .sidebar-settings-menu--portaled {
+[data-theme="alabaster"] .sidebar-settings-menu--portaled {
   --tw-popover-glass-bg: var(--tw-neutral-material-bg-dark);
   --tw-glass-solid: var(--tw-neutral-material-solid-dark);
   --tw-popover-material-shadow: var(--tw-neutral-material-shadow-dark);
@@ -2994,7 +2913,7 @@
   color-scheme: dark;
 }
 
-[data-theme='obsidian'] .sidebar-settings-menu--portaled {
+[data-theme="obsidian"] .sidebar-settings-menu--portaled {
   --tw-popover-glass-bg: var(--tw-neutral-material-bg-light);
   --tw-glass-solid: var(--tw-neutral-material-solid-light);
   --tw-popover-material-shadow: var(--tw-neutral-material-shadow-light);
@@ -3018,9 +2937,7 @@
   text-align: left;
   padding: 7px 9px;
   cursor: pointer;
-  transition:
-    background 100ms ease,
-    color 100ms ease;
+  transition: background 100ms ease, color 100ms ease;
 }
 
 .sidebar-settings-menu-item:disabled {
@@ -3028,7 +2945,7 @@
   opacity: 0.45;
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .sidebar-settings-menu-item {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-settings-menu-item {
   color: var(--surface-text);
 }
 
@@ -3116,8 +3033,7 @@
   color: var(--text-primary);
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .sidebar-settings-menu-slider-head {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-settings-menu-slider-head {
   color: var(--surface-text);
 }
 
@@ -3188,19 +3104,12 @@
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--sidebar-border) 46%, transparent);
   border-radius: 10px;
-  background: linear-gradient(
-    145deg,
-    color-mix(in srgb, var(--text-primary) 6%, transparent),
-    transparent
-  );
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--text-primary) 6%, transparent), transparent);
   color: color-mix(in srgb, var(--sidebar-text-secondary) 88%, transparent);
   cursor: pointer;
   -webkit-app-region: no-drag;
-  transition:
-    color 0.14s,
-    background 0.14s,
-    border-color 0.14s,
-    box-shadow 0.14s;
+  transition: color 0.14s, background 0.14s, border-color 0.14s, box-shadow 0.14s;
 }
 
 .sidebar-footer-icon-btn:hover,
@@ -3333,19 +3242,19 @@
 }
 
 .app-sidebar.has-footer-popover,
-:root[data-fx-enabled='true'][data-fx-mode='epic'] .app-sidebar.has-footer-popover {
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-sidebar.has-footer-popover {
   overflow: visible;
   z-index: 160;
 }
 
 .app-sidebar.has-footer-popover .sidebar-content,
-:root[data-fx-enabled='true'][data-fx-mode='epic']
+:root[data-fx-enabled="true"][data-fx-mode="epic"]
   .app-sidebar.has-footer-popover
   .sidebar-content {
   overflow: visible;
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .sidebar-footer-popover {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-footer-popover {
   border-color: var(--surface-border);
   background: var(--tw-popover-glass-bg);
   color: var(--surface-text);
@@ -3354,7 +3263,7 @@
 
 /* Body-portaled footer popovers retain the inverse material that their
  * original `.app-sidebar` ancestry supplied in these two themes. */
-[data-theme='alabaster']
+[data-theme="alabaster"]
   .sidebar-footer-popover--portaled:not(.sidebar-footer-popover--corner-portaled) {
   --tw-popover-glass-bg: var(--tw-neutral-material-bg-dark);
   --tw-glass-solid: var(--tw-neutral-material-solid-dark);
@@ -3364,7 +3273,7 @@
   color-scheme: dark;
 }
 
-[data-theme='obsidian']
+[data-theme="obsidian"]
   .sidebar-footer-popover--portaled:not(.sidebar-footer-popover--corner-portaled) {
   --tw-popover-glass-bg: var(--tw-neutral-material-bg-light);
   --tw-glass-solid: var(--tw-neutral-material-solid-light);
@@ -3374,7 +3283,7 @@
   color-scheme: light;
 }
 
-[data-reduce-transparency='true']
+[data-reduce-transparency="true"]
   :is(.sidebar-settings-menu, .sidebar-footer-popover, .sidebar-new-menu) {
   background: var(--tw-glass-solid) !important;
   backdrop-filter: none;
@@ -4073,10 +3982,10 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   }
 }
 
-:root[data-reduce-motion='true'] .sidebar-primary-action,
-:root[data-reduce-motion='true'] .app-sidebar .sidebar-item,
-:root[data-reduce-motion='true'] .app-sidebar .sidebar-item-action,
-:root[data-reduce-motion='true'] .sidebar-tree-chevron {
+:root[data-reduce-motion="true"] .sidebar-primary-action,
+:root[data-reduce-motion="true"] .app-sidebar .sidebar-item,
+:root[data-reduce-motion="true"] .app-sidebar .sidebar-item-action,
+:root[data-reduce-motion="true"] .sidebar-tree-chevron {
   transition: none;
   animation: none;
 }
@@ -4428,8 +4337,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 }
 
 .run-data-viz-layer:not(.fx-status-running):not(.fx-status-queued):not(.fx-status-approval)
-  .run-data-viz-queue
-  span {
+  .run-data-viz-queue span {
   animation: none;
   opacity: 0.26;
 }
@@ -4469,15 +4377,10 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   will-change: opacity;
 }
 @keyframes composer-aura-rim-pulse {
-  0%,
-  100% {
-    opacity: 0;
-  }
-  50% {
-    opacity: 1;
-  }
+  0%, 100% { opacity: 0; }
+  50%      { opacity: 1; }
 }
-:root[data-reduce-motion='true']
+:root[data-reduce-motion="true"]
   :is(.composer-surface, .composer-above-bar-stack).fx-agent-aura.fx-status-running::after {
   animation: none;
   opacity: 0;
@@ -4500,19 +4403,23 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 /* Native default — merged above-bar cap stays neutral glass; coloured
  * agent-aura rim lives on `.composer-surface` only (beats the rule
  * above because this block is later in the cascade). */
-[data-composer-style='default'] .app-transcript .composer-above-bar-stack.fx-agent-aura,
-[data-composer-style='default']
+[data-composer-style="default"]
+  .app-transcript
+  .composer-above-bar-stack.fx-agent-aura,
+[data-composer-style="default"]
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura.fx-status-running,
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura.fx-status-approval,
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura.fx-status-failed {
   box-shadow: var(--composer-shadow) !important;
 }
-[data-composer-style='default'] .app-transcript .composer-above-bar-stack.fx-agent-aura::after {
+[data-composer-style="default"]
+  .app-transcript
+  .composer-above-bar-stack.fx-agent-aura::after {
   display: none !important;
   content: none !important;
   animation: none !important;
@@ -4546,20 +4453,22 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
  * adding chatgpt here.
  * ---------------------------------------------------------------- */
 :is(
-    [data-composer-style='claude'],
-    [data-composer-style='gemini'],
-    [data-composer-style='kimi'],
-    [data-composer-style='modular'],
-    [data-composer-style='satellite'],
-    [data-composer-style='stub'],
-    [data-composer-style='obsidian'],
-    [data-composer-style='alabaster'],
-    [data-composer-style='terminal']
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"],
+    [data-composer-style="modular"],
+    [data-composer-style="satellite"],
+    [data-composer-style="stub"],
+    [data-composer-style="obsidian"],
+    [data-composer-style="alabaster"],
+    [data-composer-style="terminal"]
   )
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura,
-[data-composer-style='grok'] .app-transcript .composer-above-bar-stack:not(:has(> :nth-child(2))),
-[data-composer-style='codex']
+[data-composer-style="grok"]
+  .app-transcript
+  .composer-above-bar-stack:not(:has(> :nth-child(2))),
+[data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(
     :has(
@@ -4573,22 +4482,22 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   box-shadow: none !important;
 }
 :is(
-    [data-composer-style='claude'],
-    [data-composer-style='gemini'],
-    [data-composer-style='kimi'],
-    [data-composer-style='modular'],
-    [data-composer-style='satellite'],
-    [data-composer-style='stub'],
-    [data-composer-style='obsidian'],
-    [data-composer-style='alabaster'],
-    [data-composer-style='terminal']
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"],
+    [data-composer-style="modular"],
+    [data-composer-style="satellite"],
+    [data-composer-style="stub"],
+    [data-composer-style="obsidian"],
+    [data-composer-style="alabaster"],
+    [data-composer-style="terminal"]
   )
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura::after,
-[data-composer-style='grok']
+[data-composer-style="grok"]
   .app-transcript
   .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura::after,
-[data-composer-style='codex']
+[data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(
     :has(
@@ -4603,15 +4512,15 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   content: none !important;
 }
 :is(
-    [data-composer-style='claude'],
-    [data-composer-style='gemini'],
-    [data-composer-style='kimi'],
-    [data-composer-style='modular'],
-    [data-composer-style='satellite'],
-    [data-composer-style='stub'],
-    [data-composer-style='obsidian'],
-    [data-composer-style='alabaster'],
-    [data-composer-style='terminal']
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"],
+    [data-composer-style="modular"],
+    [data-composer-style="satellite"],
+    [data-composer-style="stub"],
+    [data-composer-style="obsidian"],
+    [data-composer-style="alabaster"],
+    [data-composer-style="terminal"]
   )
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura
@@ -4622,7 +4531,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   ),
-[data-composer-style='grok']
+[data-composer-style="grok"]
   .app-transcript
   .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura
   > :is(
@@ -4632,7 +4541,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   ),
-[data-composer-style='codex']
+[data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(
     :has(
@@ -4653,15 +4562,15 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   position: relative;
 }
 :is(
-    [data-composer-style='claude'],
-    [data-composer-style='gemini'],
-    [data-composer-style='kimi'],
-    [data-composer-style='modular'],
-    [data-composer-style='satellite'],
-    [data-composer-style='stub'],
-    [data-composer-style='obsidian'],
-    [data-composer-style='alabaster'],
-    [data-composer-style='terminal']
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"],
+    [data-composer-style="modular"],
+    [data-composer-style="satellite"],
+    [data-composer-style="stub"],
+    [data-composer-style="obsidian"],
+    [data-composer-style="alabaster"],
+    [data-composer-style="terminal"]
   )
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura
@@ -4672,7 +4581,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::after,
-[data-composer-style='grok']
+[data-composer-style="grok"]
   .app-transcript
   .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura
   > :is(
@@ -4682,7 +4591,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::after,
-[data-composer-style='codex']
+[data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(
     :has(
@@ -4711,15 +4620,15 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     0 18px 58px rgb(var(--agent-aura-rgb, 87 148 255) / 0.18);
 }
 :is(
-    [data-composer-style='claude'],
-    [data-composer-style='gemini'],
-    [data-composer-style='kimi'],
-    [data-composer-style='modular'],
-    [data-composer-style='satellite'],
-    [data-composer-style='stub'],
-    [data-composer-style='obsidian'],
-    [data-composer-style='alabaster'],
-    [data-composer-style='terminal']
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"],
+    [data-composer-style="modular"],
+    [data-composer-style="satellite"],
+    [data-composer-style="stub"],
+    [data-composer-style="obsidian"],
+    [data-composer-style="alabaster"],
+    [data-composer-style="terminal"]
   )
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura.fx-status-running
@@ -4730,7 +4639,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::after,
-[data-composer-style='grok']
+[data-composer-style="grok"]
   .app-transcript
   .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura.fx-status-running
   > :is(
@@ -4740,7 +4649,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::after,
-[data-composer-style='codex']
+[data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(
     :has(
@@ -4765,15 +4674,15 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   will-change: opacity;
 }
 :is(
-    [data-composer-style='claude'],
-    [data-composer-style='gemini'],
-    [data-composer-style='kimi'],
-    [data-composer-style='modular'],
-    [data-composer-style='satellite'],
-    [data-composer-style='stub'],
-    [data-composer-style='obsidian'],
-    [data-composer-style='alabaster'],
-    [data-composer-style='terminal']
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"],
+    [data-composer-style="modular"],
+    [data-composer-style="satellite"],
+    [data-composer-style="stub"],
+    [data-composer-style="obsidian"],
+    [data-composer-style="alabaster"],
+    [data-composer-style="terminal"]
   )
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura.fx-status-approval
@@ -4784,7 +4693,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::after,
-[data-composer-style='grok']
+[data-composer-style="grok"]
   .app-transcript
   .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura.fx-status-approval
   > :is(
@@ -4794,7 +4703,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::after,
-[data-composer-style='codex']
+[data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(
     :has(
@@ -4818,15 +4727,15 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   animation: none;
 }
 :is(
-    [data-composer-style='claude'],
-    [data-composer-style='gemini'],
-    [data-composer-style='kimi'],
-    [data-composer-style='modular'],
-    [data-composer-style='satellite'],
-    [data-composer-style='stub'],
-    [data-composer-style='obsidian'],
-    [data-composer-style='alabaster'],
-    [data-composer-style='terminal']
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"],
+    [data-composer-style="modular"],
+    [data-composer-style="satellite"],
+    [data-composer-style="stub"],
+    [data-composer-style="obsidian"],
+    [data-composer-style="alabaster"],
+    [data-composer-style="terminal"]
   )
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura.fx-status-failed
@@ -4837,7 +4746,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::after,
-[data-composer-style='grok']
+[data-composer-style="grok"]
   .app-transcript
   .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura.fx-status-failed
   > :is(
@@ -4847,7 +4756,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::after,
-[data-composer-style='codex']
+[data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(
     :has(
@@ -4870,17 +4779,17 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     0 18px 58px rgb(var(--agent-aura-danger-rgb) / 0.2);
   animation: none;
 }
-:root[data-reduce-motion='true']
+:root[data-reduce-motion="true"]
   :is(
-    [data-composer-style='claude'],
-    [data-composer-style='gemini'],
-    [data-composer-style='kimi'],
-    [data-composer-style='modular'],
-    [data-composer-style='satellite'],
-    [data-composer-style='stub'],
-    [data-composer-style='obsidian'],
-    [data-composer-style='alabaster'],
-    [data-composer-style='terminal']
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"],
+    [data-composer-style="modular"],
+    [data-composer-style="satellite"],
+    [data-composer-style="stub"],
+    [data-composer-style="obsidian"],
+    [data-composer-style="alabaster"],
+    [data-composer-style="terminal"]
   )
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura.fx-status-running
@@ -4891,8 +4800,8 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::after,
-:root[data-reduce-motion='true']
-  [data-composer-style='grok']
+:root[data-reduce-motion="true"]
+  [data-composer-style="grok"]
   .app-transcript
   .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura.fx-status-running
   > :is(
@@ -4902,7 +4811,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::after,
-[data-composer-style='codex']
+[data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(
     :has(
@@ -4938,8 +4847,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 .fx-agent-aura-root .sidebar-recents-item.active,
 .fx-agent-aura-root .sidebar-active-run-row.active {
   box-shadow:
-    inset 0 0 0 1px
-      color-mix(in srgb, var(--chat-provider-accent, var(--accent)) 42%, var(--panel-border)),
+    inset 0 0 0 1px color-mix(in srgb, var(--chat-provider-accent, var(--accent)) 42%, var(--panel-border)),
     inset 0 0 12px color-mix(in srgb, var(--chat-provider-accent, var(--accent)) 10%, transparent),
     0 0 22px rgb(var(--agent-aura-rgb, 87 148 255) / 0.12);
 }
@@ -4957,11 +4865,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   border-radius: var(--radius-md);
   padding: var(--space-md);
   background:
-    radial-gradient(
-      circle at top right,
-      rgb(var(--agent-aura-rgb, 87 148 255) / 0.1),
-      transparent 42%
-    ),
+    radial-gradient(circle at top right, rgb(var(--agent-aura-rgb, 87 148 255) / 0.1), transparent 42%),
     var(--panel-bg-muted, transparent);
 }
 
@@ -4990,8 +4894,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 }
 
 @keyframes aura-edge-scan {
-  0%,
-  100% {
+  0%, 100% {
     opacity: 0.18;
     transform: translateY(-5%);
   }
@@ -5013,8 +4916,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 }
 
 @keyframes living-parallax-back {
-  0%,
-  100% {
+  0%, 100% {
     transform: translate3d(-1%, -1%, 0) scale(1.02);
   }
   50% {
@@ -5023,8 +4925,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 }
 
 @keyframes living-parallax-mid {
-  0%,
-  100% {
+  0%, 100% {
     transform: translate3d(1%, 0, 0) scale(1.02);
   }
   50% {
@@ -5033,8 +4934,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 }
 
 @keyframes living-room-light {
-  0%,
-  100% {
+  0%, 100% {
     opacity: 0.42;
     transform: translateX(-50%) scale(0.95);
   }
@@ -5045,8 +4945,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 }
 
 @keyframes living-mote-float {
-  0%,
-  100% {
+  0%, 100% {
     transform: translate3d(0, 0, 0);
     opacity: 0.22;
   }
@@ -5085,8 +4984,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 }
 
 @keyframes run-queue-lane {
-  0%,
-  100% {
+  0%, 100% {
     transform: scaleY(0.35);
     opacity: 0.34;
   }
@@ -5097,8 +4995,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 }
 
 @keyframes composer-aura-rim {
-  0%,
-  100% {
+  0%, 100% {
     box-shadow:
       0 0 0 1px rgb(var(--agent-aura-rgb, 87 148 255) / 0.24),
       0 18px 58px rgb(var(--agent-aura-rgb, 87 148 255) / 0.14),
@@ -5112,9 +5009,9 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   }
 }
 
-:root[data-reduce-motion='true'] .agent-aura-layer,
-:root[data-reduce-motion='true'] .living-workspace-layer,
-:root[data-reduce-motion='true'] .run-data-viz-layer {
+:root[data-reduce-motion="true"] .agent-aura-layer,
+:root[data-reduce-motion="true"] .living-workspace-layer,
+:root[data-reduce-motion="true"] .run-data-viz-layer {
   display: none;
 }
 
@@ -5168,20 +5065,12 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   line-height: 1.22;
 }
 
-.message-markdown-pro h1 {
-  font-size: 1.42rem;
-}
-.message-markdown-pro h2 {
-  font-size: 1.22rem;
-}
-.message-markdown-pro h3 {
-  font-size: 1.08rem;
-}
+.message-markdown-pro h1 { font-size: 1.42rem; }
+.message-markdown-pro h2 { font-size: 1.22rem; }
+.message-markdown-pro h3 { font-size: 1.08rem; }
 .message-markdown-pro h4,
 .message-markdown-pro h5,
-.message-markdown-pro h6 {
-  font-size: 1rem;
-}
+.message-markdown-pro h6 { font-size: 1rem; }
 
 .message-markdown-pro ul,
 .message-markdown-pro ol {
@@ -5198,7 +5087,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   margin: 0.28rem 0 0.32rem;
 }
 
-.message-markdown-pro input[type='checkbox'] {
+.message-markdown-pro input[type="checkbox"] {
   margin: 0 0.45rem 0 -1.15rem;
   vertical-align: middle;
   accent-color: var(--accent);
@@ -5235,7 +5124,8 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   border: 1px solid color-mix(in srgb, rgb(184 191 200) 22%, var(--surface-border));
   border-radius: var(--radius-sm);
   background:
-    linear-gradient(180deg, rgb(255 255 255 / 0.035), transparent 42%), rgb(255 255 255 / 0.022);
+    linear-gradient(180deg, rgb(255 255 255 / 0.035), transparent 42%),
+    rgb(255 255 255 / 0.022);
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.035),
     0 14px 32px rgb(0 0 0 / 0.12);
@@ -5287,12 +5177,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
  * intact. Fixed-layout tables honor the explicit first-row width, so eight
  * 7rem columns expand to 56rem and the existing local table scroller handles
  * narrow transcripts. Body cells retain the generic wrapping rules above. */
-.message-markdown-pro
-  .markdown-table-scroll
-  > table:has(thead > tr > th:nth-child(8))
-  thead
-  > tr
-  > th {
+.message-markdown-pro .markdown-table-scroll > table:has(thead > tr > th:nth-child(8)) thead > tr > th {
   width: 7rem;
   white-space: nowrap;
   overflow-wrap: normal;
@@ -5469,13 +5354,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 /* Light themes need their own rim contrast: the accent sweep reads against
  * a light bed, so the shell swaps its darkened bed for a brightened one with
  * a darker inset hairline. */
-:is(
-    [data-theme='light'],
-    [data-theme='citrus'],
-    [data-theme='mist'],
-    [data-theme='sage'],
-    [data-theme='alabaster']
-  )
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'], [data-theme='alabaster'])
   .message-code-shell {
   border-color: rgb(var(--agent-accent-rgb) / 0.48);
   background:
@@ -5486,13 +5365,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     0 14px 32px rgb(0 0 0 / 0.1);
 }
 
-:is(
-    [data-theme='light'],
-    [data-theme='citrus'],
-    [data-theme='mist'],
-    [data-theme='sage'],
-    [data-theme='alabaster']
-  )
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'], [data-theme='alabaster'])
   .message-code-header {
   border-bottom-color: rgb(0 0 0 / 0.08);
   background: rgb(0 0 0 / 0.04);

@@ -235,13 +235,21 @@ export function EnsembleRosterPresetPicker({
     if (inferredActivePresetId) {
       onActivePresetChange(inferredActivePresetId)
     }
-  }, [inferredActivePresetId, onActivePresetChange, persistedActivePresetId, presets])
+  }, [
+    inferredActivePresetId,
+    onActivePresetChange,
+    persistedActivePresetId,
+    presets
+  ])
 
   useEffect(() => {
     if (!popoverOpen) return
     const handlePointerDown = (event: MouseEvent): void => {
       const target = event.target as Node | null
-      if (popoverRef.current?.contains(target) || triggerRef.current?.contains(target)) {
+      if (
+        popoverRef.current?.contains(target) ||
+        triggerRef.current?.contains(target)
+      ) {
         return
       }
       setPopoverOpen(false)
@@ -413,8 +421,8 @@ export function EnsembleRosterPresetPicker({
             pendingPresetName
               ? `${pendingPresetName}, pending until the current round finishes`
               : activePreset
-                ? `${activePreset.name}${hasUnsavedChanges ? ', unsaved changes' : ''}`
-                : ROSTER_TRIGGER_FALLBACK_LABEL
+              ? `${activePreset.name}${hasUnsavedChanges ? ', unsaved changes' : ''}`
+              : ROSTER_TRIGGER_FALLBACK_LABEL
           }
           data-roster-preset-dirty={hasUnsavedChanges ? 'true' : 'false'}
           data-roster-preset-pending={pendingPresetName ? 'true' : 'false'}
@@ -422,10 +430,10 @@ export function EnsembleRosterPresetPicker({
             pendingPresetName
               ? `Pending after current round: ${pendingPresetName}`
               : activePreset
-                ? `${activePreset.name}${hasUnsavedChanges ? ' — unsaved changes' : ''}`
-                : presets.length
-                  ? `${presets.length} saved roster${presets.length === 1 ? '' : 's'}`
-                  : 'No saved rosters yet'
+              ? `${activePreset.name}${hasUnsavedChanges ? ' — unsaved changes' : ''}`
+              : presets.length
+                ? `${presets.length} saved roster${presets.length === 1 ? '' : 's'}`
+                : 'No saved rosters yet'
           }
         >
           <span className="composer-combined-picker-trigger-primary">{triggerLabel}</span>

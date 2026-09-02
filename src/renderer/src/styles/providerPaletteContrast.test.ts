@@ -2,7 +2,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const themeCss = readFileSync(join(process.cwd(), 'src/renderer/src/styles/theme.css'), 'utf8')
+const themeCss = readFileSync(
+  join(process.cwd(), 'src/renderer/src/styles/theme.css'),
+  'utf8'
+)
 const iosTheme = readFileSync(
   join(process.cwd(), 'ios/TaskWraithKit/Sources/TaskWraithUI/Theme.swift'),
   'utf8'
@@ -126,9 +129,11 @@ const relativeLuminance = (hex: string): number => {
   )
 }
 
-const contrastAgainstWhite = (hex: string): number => 1.05 / (relativeLuminance(hex) + 0.05)
+const contrastAgainstWhite = (hex: string): number =>
+  1.05 / (relativeLuminance(hex) + 0.05)
 
-const contrastAgainstBlack = (hex: string): number => (relativeLuminance(hex) + 0.05) / 0.05
+const contrastAgainstBlack = (hex: string): number =>
+  (relativeLuminance(hex) + 0.05) / 0.05
 
 describe('provider palette contrast', () => {
   it('pins the reviewed desktop provider and Ollama display-brand swatches', () => {
@@ -139,7 +144,9 @@ describe('provider palette contrast', () => {
 
   it('keeps display-brand aliases attached to their canonical provider tokens', () => {
     for (const [alias, provider] of Object.entries(PROVIDER_ALIASES)) {
-      expect(themeCss).toContain(`--provider-${alias}-color: var(--provider-${provider}-color);`)
+      expect(themeCss).toContain(
+        `--provider-${alias}-color: var(--provider-${provider}-color);`
+      )
     }
   })
 

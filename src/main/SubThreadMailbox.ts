@@ -168,7 +168,9 @@ function normalizeJoinPolicy(value: unknown): SubThreadJoinPolicy | undefined {
     debounceMs: nonNegativeInteger(join.debounceMs, 0),
     armedAt,
     deadlineAt,
-    ...(nonEmptyString(join.workerRunId) ? { workerRunId: nonEmptyString(join.workerRunId) } : {})
+    ...(nonEmptyString(join.workerRunId)
+      ? { workerRunId: nonEmptyString(join.workerRunId) }
+      : {})
   }
 }
 
@@ -220,7 +222,9 @@ function normalizeEvent(value: unknown, parentChatId: string): SubThreadMailboxE
           ...(nonEmptyString(seatSource?.permissionPresetId)
             ? { permissionPresetId: nonEmptyString(seatSource?.permissionPresetId)! }
             : {}),
-          ...(['scout', 'worker', 'reviewer', 'background'].includes(String(seatSource?.stageRole))
+          ...(['scout', 'worker', 'reviewer', 'background'].includes(
+            String(seatSource?.stageRole)
+          )
             ? { stageRole: seatSource?.stageRole as SeatChangeSeatState['stageRole'] }
             : {}),
           ...(['boss', 'captain'].includes(String(seatSource?.authority))
@@ -293,7 +297,10 @@ export function emptySubThreadMailbox(parentChatId: string): SubThreadMailbox {
   }
 }
 
-export function normalizeSubThreadMailbox(value: unknown, parentChatId: string): SubThreadMailbox {
+export function normalizeSubThreadMailbox(
+  value: unknown,
+  parentChatId: string
+): SubThreadMailbox {
   const input = recordOrNull(value)
   const seen = new Set<string>()
   const events = (Array.isArray(input?.events) ? input.events : [])
@@ -412,7 +419,9 @@ export function summarizeSubThreadMailbox(
   current: SubThreadMailbox | undefined,
   options: { subThreadId?: string } = {}
 ): SubThreadMailboxSummary {
-  const mailbox = current ? normalizeSubThreadMailbox(current, current.parentChatId) : undefined
+  const mailbox = current
+    ? normalizeSubThreadMailbox(current, current.parentChatId)
+    : undefined
   const allEvents = mailbox?.events || []
   const events = options.subThreadId
     ? allEvents.filter((event) => event.source.subThreadId === options.subThreadId)
@@ -444,8 +453,9 @@ export function summarizeSubThreadMailbox(
   return {
     retainedEvents: events.length,
     pending: events.filter((event) => event.processedAt === null).length,
-    claimed: events.filter((event) => event.processedAt === null && Boolean(event.deliveryRunId))
-      .length,
+    claimed: events.filter(
+      (event) => event.processedAt === null && Boolean(event.deliveryRunId)
+    ).length,
     processed: processed.length,
     blocked: events.filter(
       (event) => event.processedAt === null && Boolean(event.lastDeliveryError)

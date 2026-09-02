@@ -110,15 +110,15 @@ describe('OllamaRunMemory', () => {
     expect(resolveOllamaWorkingMemoryLimits('lfm2.5:8b').workingMemoryMaxChars).toBeGreaterThan(
       resolveOllamaWorkingMemoryLimits('unknown-local:latest').workingMemoryMaxChars
     )
-    expect(
-      resolveOllamaWorkingMemoryLimits('laguna-xs-2.1:q8_0').workingMemoryMaxChars
-    ).toBeGreaterThan(10_000)
+    expect(resolveOllamaWorkingMemoryLimits('laguna-xs-2.1:q8_0').workingMemoryMaxChars).toBeGreaterThan(
+      10_000
+    )
     expect(
       resolveOllamaWorkingMemoryLimits('devstral-small-2:24b').toolResultMaxChars
     ).toBeGreaterThan(resolveOllamaWorkingMemoryLimits('ministral-3:14b').toolResultMaxChars)
-    expect(resolveOllamaWorkingMemoryLimits('ministral-3:14b').toolResultMaxChars).toBeGreaterThan(
-      resolveOllamaWorkingMemoryLimits('qwen3.5:4b').toolResultMaxChars
-    )
+    expect(
+      resolveOllamaWorkingMemoryLimits('ministral-3:14b').toolResultMaxChars
+    ).toBeGreaterThan(resolveOllamaWorkingMemoryLimits('qwen3.5:4b').toolResultMaxChars)
     expect(resolveOllamaWorkingMemoryLimits('qwen3.5:4b').workingMemoryMaxChars).toBeGreaterThan(
       resolveOllamaWorkingMemoryLimits('unknown-local:latest').workingMemoryMaxChars
     )
@@ -142,9 +142,9 @@ describe('OllamaRunMemory', () => {
       resolveOllamaWorkingMemoryLimits('nemotron-3.5-lightning:30b-mlx').toolResultMaxChars
     ).toBe(1200)
     expect(resolveOllamaWorkingMemoryLimits('qwen3.8:27b-mlx').toolResultMaxChars).toBe(1200)
-    expect(resolveOllamaWorkingMemoryLimits('qwen3.8-flash-next:125b-mlx').toolResultMaxChars).toBe(
-      1200
-    )
+    expect(
+      resolveOllamaWorkingMemoryLimits('qwen3.8-flash-next:125b-mlx').toolResultMaxChars
+    ).toBe(1200)
     expect(resolveOllamaWorkingMemoryLimits('mistral-medium-3.5:128b').toolResultMaxChars).toBe(
       1200
     )
@@ -189,12 +189,15 @@ describe('OllamaRunMemory', () => {
 
   it('never retains opaque permission-opportunity ids in live or legacy trajectory memory', () => {
     const permissionOpportunityId = `twp_${'p'.repeat(43)}`
-    const memory = appendOllamaTrajectoryEntry(createEmptyOllamaSessionMemory('gpt-oss:20b'), {
-      toolName: 'redeem_permission_opportunity',
-      args: { permissionOpportunityId },
-      ok: false,
-      resultSummary: `redemption failed for ${permissionOpportunityId}`
-    })
+    const memory = appendOllamaTrajectoryEntry(
+      createEmptyOllamaSessionMemory('gpt-oss:20b'),
+      {
+        toolName: 'redeem_permission_opportunity',
+        args: { permissionOpportunityId },
+        ok: false,
+        resultSummary: `redemption failed for ${permissionOpportunityId}`
+      }
+    )
     expect(JSON.stringify(memory)).not.toContain(permissionOpportunityId)
 
     const persisted = pruneOllamaSessionMemoryForPersist({
@@ -386,11 +389,9 @@ describe('OllamaRunMemory', () => {
 
     expect(memories['ensemble:qwen36']?.workingMemory).toBe('Qwen prior trajectory')
     expect(memories['ensemble:lfm']?.workingMemory).toBe('LFM prior trajectory')
-    expect(
-      normalizeOllamaSessionMemoryMap({
-        'ensemble:lfm': lfmMemory,
-        '../../bad': qwenMemory
-      })['../../bad']
-    ).toBeUndefined()
+    expect(normalizeOllamaSessionMemoryMap({
+      'ensemble:lfm': lfmMemory,
+      '../../bad': qwenMemory
+    })['../../bad']).toBeUndefined()
   })
 })

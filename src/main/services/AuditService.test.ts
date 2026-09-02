@@ -94,9 +94,12 @@ describe('AuditService', () => {
         exactReview: true
       })
     ).not.toThrow()
-    expect(resolveApprovalResponse).toHaveBeenCalledWith('canvas-approval', 'accept', 'user', {
-      exactReview: true
-    })
+    expect(resolveApprovalResponse).toHaveBeenCalledWith(
+      'canvas-approval',
+      'accept',
+      'user',
+      { exactReview: true }
+    )
   })
 
   it.each([
@@ -111,7 +114,9 @@ describe('AuditService', () => {
     const { deps } = makeDeps({ resolveApprovalResponse })
     const service = new AuditService(deps)
 
-    expect(() => service.resolveApprovalLedgerResponseStrict('canvas-approval', 'accept')).toThrow()
+    expect(() =>
+      service.resolveApprovalLedgerResponseStrict('canvas-approval', 'accept')
+    ).toThrow()
   })
 
   it('records automatic allow decisions with request-scoped expiration', () => {

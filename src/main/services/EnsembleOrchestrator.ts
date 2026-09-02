@@ -622,7 +622,9 @@ export interface EnsembleOrchestratorDeps {
    * re-briefs every slim-resumed seat. Optional so the unit-test harness
    * can omit it (seats then brief without the block).
    */
-  resolveInstructionContext?: (workspacePath: string | null) => ResolvedInstructionContext | null
+  resolveInstructionContext?: (
+    workspacePath: string | null
+  ) => ResolvedInstructionContext | null
   /**
    * Stamp a participant run's permission posture so the
    * `normalizeAgentRunPayload` clamp trusts this main-built (and
@@ -3310,9 +3312,7 @@ function buildEnsembleToolActivity(
   const presentation = presentToolInvocation(rawToolName, rawParameters)
   const toolName = canonicalImageViewToolName(presentation.toolName, presentation.parameters)
   const parameterImageCount =
-    toolName === IMAGE_VIEW_TOOL_NAME
-      ? imageViewCountFromParameters(presentation.parameters)
-      : undefined
+    toolName === IMAGE_VIEW_TOOL_NAME ? imageViewCountFromParameters(presentation.parameters) : undefined
   const parameters = parameterImageCount
     ? { ...presentation.parameters, imageCount: parameterImageCount }
     : presentation.parameters
@@ -3520,14 +3520,16 @@ function pairEnsembleToolResult(activity: ToolActivity, event: any, endedAt: str
     inputAndResultDiffSummary,
     activity.filePath || resultFilePath || singleDiffFilePath(inputAndResultDiffSummary)
   )
-  const filePath = activity.filePath || resultFilePath || singleDiffFilePath(diffSummary)
-  const resolvedDisplayName = imageView
-    ? IMAGE_VIEW_DISPLAY_NAME
-    : status === 'success' && stripToolNamespace(toolName) === 'ensemble_yield'
-      ? activity.displayName.replace(/\byielding\b/i, 'yielded')
-      : activity.filePath || !filePath
-        ? displayName
-        : getEnsembleToolDisplayName(toolName, resultPresentation.parameters)
+  const filePath =
+    activity.filePath || resultFilePath || singleDiffFilePath(diffSummary)
+  const resolvedDisplayName =
+    imageView
+      ? IMAGE_VIEW_DISPLAY_NAME
+      : status === 'success' && stripToolNamespace(toolName) === 'ensemble_yield'
+        ? activity.displayName.replace(/\byielding\b/i, 'yielded')
+        : activity.filePath || !filePath
+          ? displayName
+          : getEnsembleToolDisplayName(toolName, resultPresentation.parameters)
   return {
     ...activity,
     ...(imageView
@@ -4218,14 +4220,18 @@ export class EnsembleOrchestrator {
         ? canonicalPreviousMaxContinuationHops
         : Math.max(
             1,
-            Math.min(MAX_CONTINUATION_HOP_LIMIT, Math.floor(input.previousMaxContinuationHops))
+            Math.min(
+              MAX_CONTINUATION_HOP_LIMIT,
+              Math.floor(input.previousMaxContinuationHops)
+            )
           )
     const previousMaxContinuationHops =
       canonicalPreviousMaxContinuationHops === maxContinuationHops
         ? hintedPreviousMaxContinuationHops
         : canonicalPreviousMaxContinuationHops
     const updated =
-      input.maxContinuationHops !== undefined && previousMaxContinuationHops !== maxContinuationHops
+      input.maxContinuationHops !== undefined &&
+      previousMaxContinuationHops !== maxContinuationHops
         ? appendContinuationHopsChangeTranscriptEvent(updatedConfig, {
             id: `ensemble-continuation-hops-change-${activeRound?.roundId || 'idle'}-${changedAtMs}-${this.nextStatusSeq()}`,
             before: previousMaxContinuationHops,
@@ -4480,13 +4486,19 @@ export class EnsembleOrchestrator {
     currentRound: EnsembleRoundState | undefined
   ): EnsembleRoundState['turnTransition'] {
     const runtime = this.roundsByChatId.get(run.chatId)
-    if (!runtime || runtime.roundId !== run.roundId || runtime.activeRunId !== run.runId) {
+    if (
+      !runtime ||
+      runtime.roundId !== run.roundId ||
+      runtime.activeRunId !== run.runId
+    ) {
       return currentRound?.turnTransition
     }
     if (!this.ownsRunningRound(runtime)) return undefined
 
     const targetParticipantId =
-      runtime.yieldRouting?.kind === 'queue' ? runtime.yieldRouting.targetParticipantId : undefined
+      runtime.yieldRouting?.kind === 'queue'
+        ? runtime.yieldRouting.targetParticipantId
+        : undefined
     const existing = currentRound?.turnTransition
     if (existing?.sourceRunId === run.runId) {
       return targetParticipantId && existing.targetParticipantId !== targetParticipantId
@@ -4515,7 +4527,8 @@ export class EnsembleOrchestrator {
     const transition = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound?.turnTransition
     if (
       !transition ||
-      (transition.phase === 'handoff' && transition.targetParticipantId === targetParticipantId)
+      (transition.phase === 'handoff' &&
+        transition.targetParticipantId === targetParticipantId)
     ) {
       return
     }
@@ -5101,13 +5114,8 @@ export class EnsembleOrchestrator {
     })
     if (!userFanout.hasParticipantMention) {
       if (!input.receipt?.messageId) return
-      const fallbackTargetId =
-        input.dmTargetParticipantId ||
-        runtime.lastForegroundParticipantId ||
-        runtime.bossmanParticipantId
-      const fallbackParticipant = fallbackTargetId
-        ? chat.ensemble.participants.find((p) => p.id === fallbackTargetId)
-        : null
+      const fallbackTargetId = input.dmTargetParticipantId || runtime.lastForegroundParticipantId || runtime.bossmanParticipantId
+      const fallbackParticipant = fallbackTargetId ? chat.ensemble.participants.find(p => p.id === fallbackTargetId) : null
       if (fallbackParticipant) {
         this.launchUserFanout(runtime, [fallbackParticipant], input.prompt, input.receipt.messageId)
       }
@@ -6369,11 +6377,7 @@ export class EnsembleOrchestrator {
       if (stored) runtime.yieldRouting = stored
       if (routing?.ok && routing.action !== 'user') {
         this.markAuthorityRoutingDecision(run, 'redirected')
-      } else if (
-        routing?.ok === false &&
-        routing.reason !== 'unresolved' &&
-        routing.reason !== 'ambiguous'
-      ) {
+      } else if (routing?.ok === false && routing.reason !== 'unresolved' && routing.reason !== 'ambiguous') {
         // An explicit yield to a concrete target that was rejected for structural
         // reasons (blocked_status, outside_scope, authority_precedence, hop_limit)
         // still counts as a routing decision for checkpoint purposes. Otherwise a
@@ -6426,7 +6430,11 @@ export class EnsembleOrchestrator {
     if (activeLaneCount === 0) return undefined
 
     const participants = chat.ensemble?.participants || []
-    const eligibleManagers = this.availablePeerFanoutManagers(chat, runtime, run.participant.id)
+    const eligibleManagers = this.availablePeerFanoutManagers(
+      chat,
+      runtime,
+      run.participant.id
+    )
     const eligibleManagerIds = new Set(eligibleManagers.map((participant) => participant.id))
     const detail =
       target && !isUserYieldTarget(target)
@@ -6506,10 +6514,7 @@ export class EnsembleOrchestrator {
     return Math.max(count, run.pendingFanoutDispatches?.size || 0)
   }
 
-  private maybeAppendFanoutAwaitReminder(
-    runtime: ActiveRoundRuntime,
-    run: ActiveParticipantRun
-  ): void {
+  private maybeAppendFanoutAwaitReminder(runtime: ActiveRoundRuntime, run: ActiveParticipantRun): void {
     const turns = this.nextFanoutAwaitReminderTurn(runtime, run.participant.id)
     if (turns !== DEFAULT_ACTIVE_FANOUT_AWAIT_REMINDER_TURNS) return
     this.appendRoundStatus(
@@ -6519,7 +6524,10 @@ export class EnsembleOrchestrator {
     )
   }
 
-  private nextFanoutAwaitReminderTurn(runtime: ActiveRoundRuntime, participantId: string): number {
+  private nextFanoutAwaitReminderTurn(
+    runtime: ActiveRoundRuntime,
+    participantId: string
+  ): number {
     if (!runtime.fanoutAwaitReminderTurnsByParticipant) {
       runtime.fanoutAwaitReminderTurnsByParticipant = new Map<string, number>()
     }
@@ -6586,7 +6594,10 @@ export class EnsembleOrchestrator {
     // Preserve any explicit queue handoff with a concrete seat — manager or
     // worker. Authority-ring re-summons must not wipe a deferred Boss→worker
     // yieldRouting that should apply once the wave settles.
-    if (runtime.yieldRouting?.kind === 'queue' && runtime.yieldRouting.targetParticipantId) {
+    if (
+      runtime.yieldRouting?.kind === 'queue' &&
+      runtime.yieldRouting.targetParticipantId
+    ) {
       return
     }
     if (!runtime.yieldRouting) return
@@ -8428,10 +8439,7 @@ export class EnsembleOrchestrator {
     }
     const provider =
       typeof input.participant.provider === 'string' ? input.participant.provider : undefined
-    if (
-      provider &&
-      !selectableProviderIds(this.deps.getSettings()).includes(provider as ProviderId)
-    ) {
+    if (provider && !selectableProviderIds(this.deps.getSettings()).includes(provider as ProviderId)) {
       return {
         ok: false,
         message: `Participant seat change rejected: ${provider} is not a live selectable provider.`,
@@ -8660,9 +8668,7 @@ export class EnsembleOrchestrator {
     if (runtime) {
       const addedParticipant =
         mutation.action === 'add' && mutation.affectedParticipantId
-          ? mutation.participants.find(
-              (candidate) => candidate.id === mutation.affectedParticipantId
-            )
+          ? mutation.participants.find((candidate) => candidate.id === mutation.affectedParticipantId)
           : undefined
       if (addedParticipant) {
         this.appendSeatParticipantAdded(runtime.chatId, runtime.roundId, addedParticipant)
@@ -10613,7 +10619,10 @@ export class EnsembleOrchestrator {
     }
     this.updateBossmanControlState(runtime, (state) => ({
       ...state,
-      polls: capBossmanItems([...(state.polls || []).filter((entry) => entry.id !== poll.id), poll])
+      polls: capBossmanItems([
+        ...(state.polls || []).filter((entry) => entry.id !== poll.id),
+        poll
+      ])
     }))
     this.appendRoundStatus(
       runtime.chatId,
@@ -11048,13 +11057,13 @@ export class EnsembleOrchestrator {
           error: 'poll_closed'
         }
       }
-      const nextPoll = { ...poll, status: 'expired' as const }
-      this.clearBossmanPollTimeout(chatId, pollId)
-      const expiredRuntime = this.roundsByChatId.get(chatId)
-      if (expiredRuntime && !expiredRuntime.cancelled) {
-        this.clearPollVoteDirectives(expiredRuntime, pollId)
-      }
-      this.saveChatWithCheckpoint(
+    const nextPoll = { ...poll, status: 'expired' as const }
+    this.clearBossmanPollTimeout(chatId, pollId)
+    const expiredRuntime = this.roundsByChatId.get(chatId)
+    if (expiredRuntime && !expiredRuntime.cancelled) {
+      this.clearPollVoteDirectives(expiredRuntime, pollId)
+    }
+    this.saveChatWithCheckpoint(
         {
           ...chat,
           ensemble: {
@@ -11635,11 +11644,11 @@ export class EnsembleOrchestrator {
               ? 'active goal changed or is no longer active — resolution no-op.'
               : resolution === 'assignment_blocked'
                 ? `${completionReadiness.message || 'blocked by open assignments'} — goal stays active.`
-                : resolution === 'gate_blocked'
-                  ? `blocked by review gate(s): ${gateBlocks.join('; ')} — goal stays active.`
-                  : resolution === 'failed_floor'
-                    ? `below participation floor (${participantVotes.length}/${floor}) — goal stays active.`
-                    : `quorum not met (${completeVotes}/${denominator} 'complete', need ≥${quorumThreshold}) — goal stays active.`
+              : resolution === 'gate_blocked'
+                ? `blocked by review gate(s): ${gateBlocks.join('; ')} — goal stays active.`
+                : resolution === 'failed_floor'
+                  ? `below participation floor (${participantVotes.length}/${floor}) — goal stays active.`
+                  : `quorum not met (${completeVotes}/${denominator} 'complete', need ≥${quorumThreshold}) — goal stays active.`
       // A2/A4 authority-reachability visibility (audit-first mitigation): record
       // how many stable Boss/Captain voters actually cast, and flag when authority
       // was unreachable at resolution (health-probe out — e.g. a quota wall), so a
@@ -12580,20 +12589,14 @@ export class EnsembleOrchestrator {
     const isSubThreadWait = Boolean(requestedSubThreadIds || requestedWaveIds)
 
     if (!isEnsemble && !isSubThreadWait) {
-      return invalid(
-        'not_ensemble',
-        'ensemble_await: the active chat is not an Ensemble round and no sub-thread/wave targets were specified.'
-      )
+      return invalid('not_ensemble', 'ensemble_await: the active chat is not an Ensemble round and no sub-thread/wave targets were specified.')
     }
 
     if (input.laneIds !== undefined && requestedLaneIds === null) {
       return invalid('invalid_lane', 'ensemble_await: laneIds must be an array of lane id strings.')
     }
     if (input.subThreadIds !== undefined && requestedSubThreadIds === null) {
-      return invalid(
-        'invalid_sub_thread',
-        'ensemble_await: subThreadIds must be an array of strings.'
-      )
+      return invalid('invalid_sub_thread', 'ensemble_await: subThreadIds must be an array of strings.')
     }
     if (input.waveIds !== undefined && requestedWaveIds === null) {
       return invalid('invalid_wave', 'ensemble_await: waveIds must be an array of strings.')
@@ -12617,7 +12620,7 @@ export class EnsembleOrchestrator {
     }
     const initial = laneSnapshot()
     let awaitedIds: string[] = []
-
+    
     if (isEnsemble) {
       if (requestedLaneIds) {
         const unknown = requestedLaneIds.filter((laneId) => !initial.has(laneId))
@@ -12632,7 +12635,7 @@ export class EnsembleOrchestrator {
         awaitedIds = [...initial.keys()].filter((laneId) => laneId !== run.laneId)
       }
     }
-
+    
     if (awaitedIds.length === 0 && !requestedSubThreadIds && !requestedWaveIds) {
       return invalid(
         'no_targets',
@@ -12659,7 +12662,7 @@ export class EnsembleOrchestrator {
         }
       })
 
-    const getWaveChildren = (waveId: string) =>
+    const getWaveChildren = (waveId: string) => 
       childChats.filter((c: ChatRecord) => c.delegationContext?.joinPolicy?.groupId === waveId)
 
     const allSettled = (): boolean => {
@@ -12667,20 +12670,14 @@ export class EnsembleOrchestrator {
         const lane = lanes.get(laneId)
         return Boolean(lane && isTerminalLaneStatus(lane.status))
       })
-      const subThreadsSettled = !requestedSubThreadIds
-        ? true
-        : requestedSubThreadIds.every((id) => {
-            return mailboxEvents.some((e) => e.source?.subThreadId === id)
-          })
-      const wavesSettled = !requestedWaveIds
-        ? true
-        : requestedWaveIds.every((waveId) => {
-            const children = getWaveChildren(waveId)
-            if (children.length === 0) return false
-            return children.every((c: ChatRecord) =>
-              mailboxEvents.some((e) => e.source?.subThreadId === c.appChatId)
-            )
-          })
+      const subThreadsSettled = !requestedSubThreadIds ? true : requestedSubThreadIds.every((id) => {
+        return mailboxEvents.some((e) => e.source?.subThreadId === id)
+      })
+      const wavesSettled = !requestedWaveIds ? true : requestedWaveIds.every((waveId) => {
+        const children = getWaveChildren(waveId)
+        if (children.length === 0) return false
+        return children.every((c: ChatRecord) => mailboxEvents.some((e) => e.source?.subThreadId === c.appChatId))
+      })
       return lanesSettled && subThreadsSettled && wavesSettled
     }
 
@@ -12692,31 +12689,26 @@ export class EnsembleOrchestrator {
       mailboxEvents = this.deps.getSubThreadMailbox?.(run.chatId)?.events || []
       childChats = this.deps.getChildChats?.(run.chatId) || []
     }
-
+    
     const statuses = report()
-    const subThreadsReport: EnsembleAwaitSubThreadStatus[] = (requestedSubThreadIds || []).map(
-      (id) => {
-        const event = mailboxEvents.find((e) => e.source?.subThreadId === id)
-        return { subThreadId: id, settled: !!event, status: event?.outcome ?? 'pending' }
-      }
-    )
-    const wavesReport: EnsembleAwaitWaveStatus[] = (requestedWaveIds || []).map((waveId) => {
+    const subThreadsReport: EnsembleAwaitSubThreadStatus[] = (requestedSubThreadIds || []).map(id => {
+      const event = mailboxEvents.find((e) => e.source?.subThreadId === id)
+      return { subThreadId: id, settled: !!event, status: event?.outcome ?? 'pending' }
+    })
+    const wavesReport: EnsembleAwaitWaveStatus[] = (requestedWaveIds || []).map(waveId => {
       const children = getWaveChildren(waveId)
-      const settledCount = children.filter((c) =>
-        mailboxEvents.some((e) => e.source?.subThreadId === c.appChatId)
-      ).length
-      return {
-        waveId,
+      const settledCount = children.filter((c) => mailboxEvents.some((e) => e.source?.subThreadId === c.appChatId)).length
+      return { 
+        waveId, 
         settled: children.length > 0 && settledCount === children.length,
         childrenSpawned: children.length,
         childrenSettled: settledCount
       }
     })
 
-    const settledCount =
-      statuses.filter((lane) => lane.settled).length +
-      subThreadsReport.filter((st) => st.settled).length +
-      wavesReport.filter((w) => w.settled).length
+    const settledCount = statuses.filter((lane) => lane.settled).length
+      + subThreadsReport.filter(st => st.settled).length
+      + wavesReport.filter(w => w.settled).length
 
     const totalTargets = statuses.length + subThreadsReport.length + wavesReport.length
     const pendingCount = totalTargets - settledCount
@@ -13180,9 +13172,8 @@ export class EnsembleOrchestrator {
         return intents
       }, [])
       const laneIntentReceipt = acceptedRuns
-        .map(
-          (acceptedRun) =>
-            `${participantDisplayName(acceptedRun.participant)}: ${acceptedRun.laneIntent === 'write' ? 'write' : 'read'}`
+        .map((acceptedRun) =>
+          `${participantDisplayName(acceptedRun.participant)}: ${acceptedRun.laneIntent === 'write' ? 'write' : 'read'}`
         )
         .join(', ')
       if (acceptedTargets.length === 0) {
@@ -13396,6 +13387,7 @@ export class EnsembleOrchestrator {
         error: resolvedTargets.error
       }
     }
+
 
     // Same gate as ensemble_fanout, and deliberately the same cap: the two
     // tools dispatch into one round, so counting them separately would let a
@@ -14408,14 +14400,10 @@ export class EnsembleOrchestrator {
         normalizedKey !== '*' &&
         normalizedKey !== 'all' &&
         !targets.some((participant) =>
-          [
-            participant.id,
-            participant.role,
-            participant.provider,
-            providerLabel(participant.provider)
-          ].some(
+          [participant.id, participant.role, participant.provider, providerLabel(participant.provider)].some(
             (alias) =>
-              typeof alias === 'string' && stripLeadingAt(alias).toLowerCase() === normalizedKey
+              typeof alias === 'string' &&
+              stripLeadingAt(alias).toLowerCase() === normalizedKey
           )
         )
       )
@@ -14423,12 +14411,7 @@ export class EnsembleOrchestrator {
     if (unknownScopeKey) {
       const validAliases = targets
         .map((participant) =>
-          [
-            participant.id,
-            participant.role,
-            participant.provider,
-            providerLabel(participant.provider)
-          ]
+          [participant.id, participant.role, participant.provider, providerLabel(participant.provider)]
             .filter((alias): alias is string => typeof alias === 'string' && Boolean(alias.trim()))
             .join(', ')
         )
@@ -16258,9 +16241,8 @@ export class EnsembleOrchestrator {
       secondInCommandParticipantId: chat.ensemble.secondInCommandParticipantId
     })
     const secondInCommandParticipantId = captainParticipantIds[0]
-    const configuredSynthesizerParticipantId = resolveForegroundSynthesizerParticipantId(
-      chat.ensemble
-    )
+    const configuredSynthesizerParticipantId =
+      resolveForegroundSynthesizerParticipantId(chat.ensemble)
     const roundSynthesizer = electRoundSynthesizer({
       participants: ordered,
       configuredParticipantId: configuredSynthesizerParticipantId,
@@ -16385,7 +16367,9 @@ export class EnsembleOrchestrator {
       ...(startAfterCancellation ? { startAfterCancellation } : {}),
       ...(selfReflective ? { selfReflective: true } : {}),
       ...(externalPathGrants.length > 0 ? { externalPathGrants: [...externalPathGrants] } : {}),
-      ...(projectReferenceContextSelection ? { projectReferenceContextSelection } : {}),
+      ...(projectReferenceContextSelection
+        ? { projectReferenceContextSelection }
+        : {}),
       ...(unattended ? { unattended: true } : {}),
       ...(unattended && unattendedElevationLevel ? { unattendedElevationLevel } : {})
     }
@@ -16568,7 +16552,9 @@ export class EnsembleOrchestrator {
    * Progressive skill discovery + SessionStart stdout for ensemble seat prompts.
    * Global / missing workspace paths return empty (PromptComposition parity).
    */
-  private async resolveParticipantSkillHookContext(chat: ChatRecord): Promise<RunSkillHookContext> {
+  private async resolveParticipantSkillHookContext(
+    chat: ChatRecord
+  ): Promise<RunSkillHookContext> {
     const isGlobalRun = (chat.scope ?? 'workspace') === 'global'
     const workspacePath =
       !isGlobalRun && typeof chat.workspacePath === 'string' ? chat.workspacePath.trim() : ''
@@ -17190,7 +17176,8 @@ export class EnsembleOrchestrator {
         ensembleSlimResumeEnabled() &&
         SLIM_RESUME_PROVIDERS.has(participant.provider) &&
         Boolean(providerSessionId) &&
-        (participant.provider !== 'codex' || isCodexAppServerThreadId(providerSessionId)) &&
+        (participant.provider !== 'codex' ||
+          isCodexAppServerThreadId(providerSessionId)) &&
         (participant.provider !== 'kimi' ||
           (isProductionKimiAcpSeat(participant) &&
             String(providerSessionId).startsWith('session_'))) &&
@@ -17952,15 +17939,18 @@ export class EnsembleOrchestrator {
       const groupRoutingBossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
       const groupRoutingCaptainParticipantIds = this.activeCaptainParticipantIds(chat, runtime)
       const groupRoutingAuthorityParticipantIds = new Set(
-        [groupRoutingBossmanParticipantId, ...groupRoutingCaptainParticipantIds].filter(
-          (participantId): participantId is string => Boolean(participantId)
-        )
+        [
+          groupRoutingBossmanParticipantId,
+          ...groupRoutingCaptainParticipantIds
+        ].filter((participantId): participantId is string => Boolean(participantId))
       )
       const assistantMentionRoutingPlan = resolveAssistantMentionRoutingPlan({
         text: run.content,
         participants: allParticipants,
         callerParticipantId: participant.id,
-        canRouteGroups: Boolean(this.fanoutAuthorityRoleForCaller(chat, runtime, participant.id)),
+        canRouteGroups: Boolean(
+          this.fanoutAuthorityRoleForCaller(chat, runtime, participant.id)
+        ),
         ...(runtime.dmTargetParticipantId
           ? { dmTargetParticipantId: runtime.dmTargetParticipantId }
           : {}),
@@ -18886,13 +18876,13 @@ export class EnsembleOrchestrator {
     const synthesizerParticipantId = round?.synthesizerParticipantId
     const hasStructuredSummary = Boolean(
       round &&
-      synthesizerParticipantId &&
-      findTerminalSynthesizerRoundSummary({
-        messages: chat?.messages || [],
-        roundId: round.roundId,
-        synthesizerParticipantId,
-        capturedAt: round.endedAt || round.startedAt
-      })
+        synthesizerParticipantId &&
+        findTerminalSynthesizerRoundSummary({
+          messages: chat?.messages || [],
+          roundId: round.roundId,
+          synthesizerParticipantId,
+          capturedAt: round.endedAt || round.startedAt
+        })
     )
     if (
       !shouldAttemptFinalSynthesis({
@@ -19570,7 +19560,11 @@ export class EnsembleOrchestrator {
         ) || participant
       const forceReadOnly = forceReadOnlyForParticipant(currentParticipant.id)
       const permissions = forceReadOnly
-        ? this.resolveForcedReadOnlyFanoutPermissions(dispatchPlanChat, runtime, currentParticipant)
+        ? this.resolveForcedReadOnlyFanoutPermissions(
+            dispatchPlanChat,
+            runtime,
+            currentParticipant
+          )
         : this.resolveFanoutEligibilityPermissions(
             dispatchPlanChat,
             runtime,
@@ -19623,7 +19617,9 @@ export class EnsembleOrchestrator {
     // chat is NOT an exemption — those lanes fail closed per-lane below
     // instead of silently sharing the checkout.
     const isolateWriteLanes =
-      fanoutIsolation === 'worktree' && writeIntentCount > 0 && dispatchPlanChat.scope !== 'global'
+      fanoutIsolation === 'worktree' &&
+      writeIntentCount > 0 &&
+      dispatchPlanChat.scope !== 'global'
     const label =
       options.label || (mode === 'locked_writers' ? 'Locked writer fan-out' : 'Parallel fan-out')
     const ollamaLaneCount = lanePlans.filter(
@@ -19679,17 +19675,16 @@ export class EnsembleOrchestrator {
     this.flushChatOverlay = { chatId: runtime.chatId, chat: seedBase }
     let laneRuns: ActiveParticipantRun[]
     try {
-      laneRuns = lanePlans.map(
-        ({ participant: freshParticipant, laneIntent, approvedWriteScopes }) =>
-          this.seedParticipantRun(this.flushChatOverlay!.chat, runtime, freshParticipant, {
-            laneId: this.nextLaneId(runtime, freshParticipant),
-            laneIntent,
-            ...(fanoutWaveId ? { fanoutWaveId } : {}),
-            fanoutLabel: label,
-            fanoutCategory,
-            preserveParticipantRoundStatus: options.preserveParticipantRoundStatus,
-            approvedWriteScopes: laneIntent === 'read' ? undefined : approvedWriteScopes
-          })
+      laneRuns = lanePlans.map(({ participant: freshParticipant, laneIntent, approvedWriteScopes }) =>
+        this.seedParticipantRun(this.flushChatOverlay!.chat, runtime, freshParticipant, {
+          laneId: this.nextLaneId(runtime, freshParticipant),
+          laneIntent,
+          ...(fanoutWaveId ? { fanoutWaveId } : {}),
+          fanoutLabel: label,
+          fanoutCategory,
+          preserveParticipantRoundStatus: options.preserveParticipantRoundStatus,
+          approvedWriteScopes: laneIntent === 'read' ? undefined : approvedWriteScopes
+        })
       )
     } finally {
       const composedSeedChat = this.flushChatOverlay.chat
@@ -20377,7 +20372,9 @@ export class EnsembleOrchestrator {
       ...(options.approvedWriteScopes?.length
         ? { approvedWriteScopes: options.approvedWriteScopes }
         : {}),
-      ...(options.preserveParticipantRoundStatus ? { preserveParticipantRoundStatus: true } : {}),
+      ...(options.preserveParticipantRoundStatus
+        ? { preserveParticipantRoundStatus: true }
+        : {}),
       ...(authorityRoutingCheckpoint ? { authorityRoutingCheckpoint } : {}),
       participant,
       promptMessageId,
@@ -20573,9 +20570,12 @@ export class EnsembleOrchestrator {
       statusMessage,
       targetLabel: participant.role || participant.provider
     })
-    this.appendRoundStatus(runtime.chatId, runtime.roundId, event.content, {
-      metadata: event.metadata
-    })
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      event.content,
+      { metadata: event.metadata }
+    )
   }
 
   private tryAppendContinuationTurn(
@@ -21874,7 +21874,11 @@ export class EnsembleOrchestrator {
       participantRound && effectiveFinal && !run.laneId && !silentMaintenanceRecovery
         ? {
             ...participantRound,
-            turnTransition: this.turnTransitionForFinalizingRun(run, timestamp, participantRound)
+            turnTransition: this.turnTransitionForFinalizingRun(
+              run,
+              timestamp,
+              participantRound
+            )
           }
         : participantRound
     const activeRound = updateLaneInRound(
@@ -23165,11 +23169,16 @@ export class EnsembleOrchestrator {
     participant: EnsembleParticipant,
     explicitExternalPathGrants: ExternalPathGrant[] = runtime.externalPathGrants || []
   ): EffectiveRunPermissions {
-    return this.resolveParticipantPermissions(chat, participant, explicitExternalPathGrants, {
-      presetId: 'read_only',
-      ignoreOverrides: true,
-      disallowTrustedSession: true
-    })
+    return this.resolveParticipantPermissions(
+      chat,
+      participant,
+      explicitExternalPathGrants,
+      {
+        presetId: 'read_only',
+        ignoreOverrides: true,
+        disallowTrustedSession: true
+      }
+    )
   }
 
   private updateChatRound(
@@ -23498,7 +23507,8 @@ function updateRoundParticipant(
         : round.activeParticipantId === participantId
           ? undefined
           : round.activeParticipantId,
-    turnTransition: setActive && partial.status === 'running' ? undefined : round.turnTransition,
+    turnTransition:
+      setActive && partial.status === 'running' ? undefined : round.turnTransition,
     participants: round.participants.map((participant) =>
       participant.participantId === participantId ? { ...participant, ...partial } : participant
     )

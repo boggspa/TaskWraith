@@ -12,7 +12,10 @@ const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
   'locked_writers_user_preflight'
 ])
 
-function normalizeFanoutPolicy(value: unknown, legacyEnabled?: boolean): EnsembleFanoutPolicy {
+function normalizeFanoutPolicy(
+  value: unknown,
+  legacyEnabled?: boolean
+): EnsembleFanoutPolicy {
   const recognized = ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
     ? (value as EnsembleFanoutPolicy)
     : legacyEnabled
@@ -95,7 +98,10 @@ export function applyScheduledEnsembleSnapshot(
     ensemble: {
       ...chat.ensemble,
       orchestrationMode: snapshot.orchestrationMode,
-      fanoutPolicy: normalizeFanoutPolicy(snapshot.fanoutPolicy, snapshot.concurrentModeEnabled),
+      fanoutPolicy: normalizeFanoutPolicy(
+        snapshot.fanoutPolicy,
+        snapshot.concurrentModeEnabled
+      ),
       concurrentModeEnabled:
         typeof snapshot.concurrentModeEnabled === 'boolean'
           ? snapshot.concurrentModeEnabled

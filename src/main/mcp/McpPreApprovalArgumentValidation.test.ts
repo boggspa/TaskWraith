@@ -170,7 +170,9 @@ describe('pre-approval validation integration contracts', () => {
     const source = indexSource.slice(start, end)
     const normalize = source.indexOf('normalizeClaudeCanUseToolArgs(')
     const identity = source.indexOf('resolveClaudeToolApprovalIdentity(')
-    const invalidReservedDeny = source.indexOf("approvalIdentity.kind === 'invalid-taskwraith-mcp'")
+    const invalidReservedDeny = source.indexOf(
+      "approvalIdentity.kind === 'invalid-taskwraith-mcp'"
+    )
     const providerNativeDeny = source.indexOf("approvalIdentity.kind === 'provider-native'")
     const autoAllow = source.indexOf('isMcpAutoAllowedForRun(')
 
@@ -190,8 +192,12 @@ describe('pre-approval validation integration contracts', () => {
     const canonicalPreview = source.indexOf(
       'const approvalPreview = claudeToolApprovalPreview(toolName, normalizedInput, service)'
     )
-    const canonicalScript = source.indexOf("typeof approvalPreview.params.script === 'string'")
-    const receipt = source.indexOf('claudeCanvasEvalApproval = createCanvasEvalApprovalReceipt(')
+    const canonicalScript = source.indexOf(
+      "typeof approvalPreview.params.script === 'string'"
+    )
+    const receipt = source.indexOf(
+      'claudeCanvasEvalApproval = createCanvasEvalApprovalReceipt('
+    )
     const receiptScript = source.indexOf('exactCanvasEvalScript,', receipt)
     const receiptApprovalId = source.indexOf('approvalId', receiptScript)
     const correlation = source.indexOf('primeNativeCanvasCompatCorrelation({', receipt)

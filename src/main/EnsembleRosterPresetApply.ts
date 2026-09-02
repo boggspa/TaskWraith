@@ -44,7 +44,11 @@ export const AGENT_ROSTER_BRIEF_MAX_CHARS = 64_000
 export const AGENT_ROSTER_TOTAL_BRIEF_MAX_CHARS = 500_000
 export const AGENT_ROSTER_IMPORT_MAX_BYTES = 1_000_000
 
-const ASSIGNABLE_PERMISSION_PRESETS = new Set<PermissionPresetId>(['read_only', 'plan', 'default'])
+const ASSIGNABLE_PERMISSION_PRESETS = new Set<PermissionPresetId>([
+  'read_only',
+  'plan',
+  'default'
+])
 
 // This module stays browser-safe by consuming the node-free shared admission
 // predicate rather than duplicating the live provider list.
@@ -273,15 +277,14 @@ export function buildEnsembleRosterPresetApply(
   const preset = cloneEnsembleRosterPreset(input.preset)
   const presetName = preset.name.trim()
   if (!presetName || presetName.length > 120) {
-    return fail(
-      'invalid_preset',
-      'Roster preset import rejected: name must contain 1-120 characters.'
-    )
+    return fail('invalid_preset', 'Roster preset import rejected: name must contain 1-120 characters.')
   }
   if (
     !Number.isFinite(preset.maxParticipants) ||
-    (preset.maxContinuationHops !== undefined && !Number.isFinite(preset.maxContinuationHops)) ||
-    (preset.ensembleContextChars !== undefined && !Number.isFinite(preset.ensembleContextChars))
+    (preset.maxContinuationHops !== undefined &&
+      !Number.isFinite(preset.maxContinuationHops)) ||
+    (preset.ensembleContextChars !== undefined &&
+      !Number.isFinite(preset.ensembleContextChars))
   ) {
     return fail(
       'invalid_preset',
@@ -327,7 +330,10 @@ export function buildEnsembleRosterPresetApply(
   const captainIndexes = preset.participants
     .map((participant, index) => (participant.isSecondInCommand === true ? index : -1))
     .filter((index) => index >= 0)
-  if (captainIndexes.length > MAX_ENSEMBLE_CAPTAINS || captainIndexes.includes(bossIndexes[0])) {
+  if (
+    captainIndexes.length > MAX_ENSEMBLE_CAPTAINS ||
+    captainIndexes.includes(bossIndexes[0])
+  ) {
     return fail(
       'invalid_preset',
       `Roster preset import rejected: up to ${MAX_ENSEMBLE_CAPTAINS} non-Boss participants may set isSecondInCommand=true.`
@@ -335,16 +341,10 @@ export function buildEnsembleRosterPresetApply(
   }
   const bossSnapshot = preset.participants[bossIndexes[0]]
   if (!bossSnapshot.enabled) {
-    return fail(
-      'invalid_preset',
-      'Roster preset import rejected: the Boss participant must be enabled.'
-    )
+    return fail('invalid_preset', 'Roster preset import rejected: the Boss participant must be enabled.')
   }
   if (captainIndexes.some((index) => !preset.participants[index].enabled)) {
-    return fail(
-      'invalid_preset',
-      'Roster preset import rejected: Captain participants must be enabled.'
-    )
+    return fail('invalid_preset', 'Roster preset import rejected: Captain participants must be enabled.')
   }
 
   const isExistingEnsemble = input.chat.chatKind === 'ensemble'
@@ -454,11 +454,17 @@ export function buildEnsembleRosterPresetApply(
   )
   const maxContinuationHops = Math.max(
     1,
-    Math.min(AGENT_ROSTER_MAX_CONTINUATION_HOPS, Math.round(preset.maxContinuationHops ?? 6))
+    Math.min(
+      AGENT_ROSTER_MAX_CONTINUATION_HOPS,
+      Math.round(preset.maxContinuationHops ?? 6)
+    )
   )
   const ensembleContextChars = Math.max(
     AGENT_ROSTER_CONTEXT_MIN_CHARS,
-    Math.min(AGENT_ROSTER_CONTEXT_MAX_CHARS, Math.round(preset.ensembleContextChars ?? 24_000))
+    Math.min(
+      AGENT_ROSTER_CONTEXT_MAX_CHARS,
+      Math.round(preset.ensembleContextChars ?? 24_000)
+    )
   )
 
   return {
@@ -524,7 +530,10 @@ export function applyPendingEnsembleRosterPresetOnFinalize(chat: ChatRecord): Ch
   // live and only the stale pending marker needs to be consumed. Reapplying the
   // plan would replace the picker-materialized participant ids and clear their
   // freshly-linked provider sessions at the next round boundary.
-  if (chat.chatKind === 'ensemble' && chat.ensemble?.activeRosterPresetId === plan.presetId) {
+  if (
+    chat.chatKind === 'ensemble' &&
+    chat.ensemble?.activeRosterPresetId === plan.presetId
+  ) {
     return {
       ...chat,
       providerMetadata: withoutPendingMetadata(chat)
@@ -581,15 +590,16 @@ export function applyPendingEnsembleRosterPresetOnRunTerminal(
   const plan = readPendingEnsembleRosterPresetApply(chat)
   if (!plan) return chat
   if (plan.sourceRunId && plan.sourceRunId !== runId) return chat
-  if (chat.chatKind === 'ensemble' && chat.ensemble?.activeRosterPresetId !== plan.presetId) {
+  if (
+    chat.chatKind === 'ensemble' &&
+    chat.ensemble?.activeRosterPresetId !== plan.presetId
+  ) {
     return chat
   }
   return applyPendingEnsembleRosterPresetOnFinalize(chat)
 }
 
-export function agentRosterPresetContractGuide(
-  activeProvider?: ProviderId
-): Record<string, unknown> {
+export function agentRosterPresetContractGuide(activeProvider?: ProviderId): Record<string, unknown> {
   return {
     format: ENSEMBLE_ROSTER_PRESET_EXPORT_FORMAT,
     version: ENSEMBLE_ROSTER_PRESET_EXPORT_VERSION,
@@ -627,7 +637,8 @@ export function agentRosterPresetContractGuide(
         orchestrationMode: 'continuous',
         maxParticipants: MAX_ROSTER_PRESET_PARTICIPANTS
       },
-      note: 'Prefer the preset object over inline json. Do not call a shell, file, or time tool to create ids or timestamps; TaskWraith supplies them.'
+      note:
+        'Prefer the preset object over inline json. Do not call a shell, file, or time tool to create ids or timestamps; TaskWraith supplies them.'
     },
     participantRules: {
       count: `1-${MAX_ROSTER_PRESET_PARTICIPANTS}`,

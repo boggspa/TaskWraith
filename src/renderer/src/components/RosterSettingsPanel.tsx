@@ -266,9 +266,7 @@ export function RosterTransferPicker({
         </div>
 
         <div className="settings-roster-transfer-picker-toolbar">
-          <span>
-            {selected.size} of {presets.length} selected
-          </span>
+          <span>{selected.size} of {presets.length} selected</span>
           <div>
             <button type="button" onClick={onSelectAll} disabled={selected.size === presets.length}>
               Select all
@@ -320,7 +318,11 @@ export function RosterTransferPicker({
         )}
 
         <div className="settings-roster-transfer-picker-actions">
-          <button type="button" className="ensemble-roster-preset-dialog-button" onClick={onCancel}>
+          <button
+            type="button"
+            className="ensemble-roster-preset-dialog-button"
+            onClick={onCancel}
+          >
             Cancel
           </button>
           <button
@@ -398,7 +400,10 @@ export function RosterParticipantRow({
 }: RosterParticipantRowProps): JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const contentId = useId()
-  const availability = rosterProviderAvailability(participant.provider, configuredProviderSnapshot)
+  const availability = rosterProviderAvailability(
+    participant.provider,
+    configuredProviderSnapshot
+  )
   const unavailable = availability !== 'available'
   const retired = availability === 'retired'
   const unavailableLabel = retired ? 'Retired' : 'Setup required'
@@ -545,169 +550,167 @@ export function RosterParticipantRow({
       <div className="settings-roster-participant-body">
         {disclosure}
         <div id={contentId} className="settings-roster-participant-content" hidden={!expanded}>
-          {/* Row 1 — row-level actions (kept off the picker row so the model name
+        {/* Row 1 — row-level actions (kept off the picker row so the model name
             below has full width and never clips off the window edge). */}
-          <div className="settings-roster-participant-actions">
-            <label className="settings-roster-enable">
-              <input
-                type="checkbox"
-                checked={participant.enabled}
-                onChange={(event) => onPatch(participant.id, { enabled: event.target.checked })}
-              />
-              <span>Enabled</span>
-            </label>
-            <button
-              type="button"
-              className={`settings-roster-bossman${isBossman ? ' is-active' : ''}`}
-              onClick={() => onSetBossman(participant.id)}
-              title={isBossman ? 'Every panel keeps exactly one Boss' : 'Set as Boss'}
-              aria-pressed={isBossman}
-              disabled={isBossman}
-            >
-              Boss
-            </button>
-            <button
-              type="button"
-              className={`settings-roster-bossman${isSecondInCommand ? ' is-active' : ''}`}
-              onClick={() => onSetSecondInCommand(participant.id, !isSecondInCommand)}
-              title={
-                isSecondInCommand
-                  ? 'Clear Captain'
-                  : captainAssignmentDisabled
-                    ? `This panel already has ${MAX_ENSEMBLE_CAPTAINS} Captains`
-                    : 'Set as Captain'
-              }
-              aria-pressed={isSecondInCommand}
-              disabled={isBossman || captainAssignmentDisabled}
-            >
-              Captain
-            </button>
-            <button
-              type="button"
-              className="settings-roster-save-changes"
-              onClick={onFlush}
-              title="Save this participant's current role and brief to the roster preset"
-            >
-              Save changes
-            </button>
-            <button
-              type="button"
-              className={`settings-roster-save-pool${isLinkedToPool ? ' is-linked' : ''}`}
-              onClick={() => onSaveToPool(participant.id)}
-              title={
-                isLinkedToPool
-                  ? 'Linked to a pool agent — save again to create a new one'
-                  : 'Save this participant to the agent pool for reuse'
-              }
-              aria-label="Save to agent pool"
-            >
-              {isLinkedToPool ? '★ Pooled' : '☆ Save to pool'}
-            </button>
-            <button
-              type="button"
-              className="settings-roster-remove"
-              onClick={() => onRemove(participant.id)}
-              disabled={!canRemove}
-              title={
-                canRemove
-                  ? 'Remove participant'
-                  : isBossman
-                    ? 'Assign another Boss before removing this participant'
-                    : 'Keep at least one participant'
-              }
-              aria-label="Remove participant"
-            >
-              ✕
-            </button>
-          </div>
-
-          {/* Row 2 — provider / model / permissions pickers (full width). */}
-          <div className="settings-roster-participant-top">
-            <ParticipantPickerCluster
-              participant={participant}
-              configuredProviderSnapshot={configuredProviderSnapshot}
-              composerStyle={composerStyle}
-              agenticServices={agenticServices}
-              grokAvailable={grokAvailable}
-              cursorAvailable={cursorAvailable}
-              showApplyToAll={showApplyToAll}
-              onPatch={(patch) => onPatch(participant.id, patch)}
-              onApplyPermissionsToAll={onApplyPermissionsToAll}
+        <div className="settings-roster-participant-actions">
+          <label className="settings-roster-enable">
+            <input
+              type="checkbox"
+              checked={participant.enabled}
+              onChange={(event) => onPatch(participant.id, { enabled: event.target.checked })}
             />
-          </div>
+            <span>Enabled</span>
+          </label>
+          <button
+            type="button"
+            className={`settings-roster-bossman${isBossman ? ' is-active' : ''}`}
+            onClick={() => onSetBossman(participant.id)}
+            title={isBossman ? 'Every panel keeps exactly one Boss' : 'Set as Boss'}
+            aria-pressed={isBossman}
+            disabled={isBossman}
+          >
+            Boss
+          </button>
+          <button
+            type="button"
+            className={`settings-roster-bossman${isSecondInCommand ? ' is-active' : ''}`}
+            onClick={() => onSetSecondInCommand(participant.id, !isSecondInCommand)}
+            title={
+              isSecondInCommand
+                ? 'Clear Captain'
+                : captainAssignmentDisabled
+                  ? `This panel already has ${MAX_ENSEMBLE_CAPTAINS} Captains`
+                  : 'Set as Captain'
+            }
+            aria-pressed={isSecondInCommand}
+            disabled={isBossman || captainAssignmentDisabled}
+          >
+            Captain
+          </button>
+          <button
+            type="button"
+            className="settings-roster-save-changes"
+            onClick={onFlush}
+            title="Save this participant's current role and brief to the roster preset"
+          >
+            Save changes
+          </button>
+          <button
+            type="button"
+            className={`settings-roster-save-pool${isLinkedToPool ? ' is-linked' : ''}`}
+            onClick={() => onSaveToPool(participant.id)}
+            title={
+              isLinkedToPool
+                ? 'Linked to a pool agent — save again to create a new one'
+                : 'Save this participant to the agent pool for reuse'
+            }
+            aria-label="Save to agent pool"
+          >
+            {isLinkedToPool ? '★ Pooled' : '☆ Save to pool'}
+          </button>
+          <button
+            type="button"
+            className="settings-roster-remove"
+            onClick={() => onRemove(participant.id)}
+            disabled={!canRemove}
+            title={
+              canRemove
+                ? 'Remove participant'
+                : isBossman
+                  ? 'Assign another Boss before removing this participant'
+                  : 'Keep at least one participant'
+            }
+            aria-label="Remove participant"
+          >
+            ✕
+          </button>
+        </div>
 
-          <div className="settings-roster-field settings-roster-field-role">
-            <span className="settings-roster-field-label">Role / nickname</span>
-            <div className="settings-roster-role-controls">
-              <input
-                type="text"
-                className="settings-roster-input"
-                value={participant.role}
-                placeholder="Role / nickname"
-                onChange={(event) => onPatch(participant.id, { role: event.target.value }, false)}
-                onBlur={onFlush}
-              />
-              <select
-                className="settings-roster-select settings-roster-role-preset"
-                value={rolePresetId === 'custom' ? '' : rolePresetId}
-                aria-label="Fill role from a preset"
-                onChange={(event) => {
-                  const label = roleLabelForPresetId(event.target.value)
-                  if (label) onPatch(participant.id, { role: label })
-                }}
-              >
-                <option value="">Preset…</option>
-                {ENSEMBLE_ROLE_PRESETS.map((preset) => (
-                  <option key={preset.id} value={preset.id} title={preset.description}>
-                    {preset.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+        {/* Row 2 — provider / model / permissions pickers (full width). */}
+        <div className="settings-roster-participant-top">
+          <ParticipantPickerCluster
+            participant={participant}
+            configuredProviderSnapshot={configuredProviderSnapshot}
+            composerStyle={composerStyle}
+            agenticServices={agenticServices}
+            grokAvailable={grokAvailable}
+            cursorAvailable={cursorAvailable}
+            showApplyToAll={showApplyToAll}
+            onPatch={(patch) => onPatch(participant.id, patch)}
+            onApplyPermissionsToAll={onApplyPermissionsToAll}
+          />
+        </div>
 
-          <div className="settings-roster-field" title={ENSEMBLE_STAGE_ROLE_HINT}>
-            <span className="settings-roster-field-label">Stage</span>
+        <div className="settings-roster-field settings-roster-field-role">
+          <span className="settings-roster-field-label">Role / nickname</span>
+          <div className="settings-roster-role-controls">
+            <input
+              type="text"
+              className="settings-roster-input"
+              value={participant.role}
+              placeholder="Role / nickname"
+              onChange={(event) => onPatch(participant.id, { role: event.target.value }, false)}
+              onBlur={onFlush}
+            />
             <select
-              className="settings-roster-select"
-              value={participant.stageRole || ''}
-              aria-label="Staged fan-out stage"
-              onChange={(event) =>
-                onPatch(participant.id, {
-                  stageRole: normalizeEnsembleStageRole(event.target.value)
-                })
-              }
+              className="settings-roster-select settings-roster-role-preset"
+              value={rolePresetId === 'custom' ? '' : rolePresetId}
+              aria-label="Fill role from a preset"
+              onChange={(event) => {
+                const label = roleLabelForPresetId(event.target.value)
+                if (label) onPatch(participant.id, { role: label })
+              }}
             >
-              <option value="">Any (by permissions)</option>
-              {ENSEMBLE_STAGE_ROLE_OPTIONS.map((option) => (
-                <option
-                  key={option.id}
-                  value={option.id}
-                  title={option.description}
-                  disabled={isBossman && option.id === 'background'}
-                >
-                  {option.label}
+              <option value="">Preset…</option>
+              {ENSEMBLE_ROLE_PRESETS.map((preset) => (
+                <option key={preset.id} value={preset.id} title={preset.description}>
+                  {preset.label}
                 </option>
               ))}
             </select>
           </div>
+        </div>
 
-          <EnsembleBriefEditor
-            label="Brief / goal"
-            value={participant.instructions}
-            participants={mentionParticipants}
-            rows={4}
-            editorClassName="settings-roster-field settings-roster-brief-editor"
-            labelClassName="settings-roster-field-label"
-            textareaClassName="settings-roster-textarea"
-            syncEpoch={`${participant.id}:${mentionParticipants.length}`}
-            placeholder="What should this participant focus on each turn?"
-            commitLabel="Save"
-            commitTitle="Save this participant's role and brief to the roster preset"
-            onCommit={onFlush}
-            onChange={(value) => onPatch(participant.id, { instructions: value }, false)}
-            onBlur={onFlush}
-          />
+        <div className="settings-roster-field" title={ENSEMBLE_STAGE_ROLE_HINT}>
+          <span className="settings-roster-field-label">Stage</span>
+          <select
+            className="settings-roster-select"
+            value={participant.stageRole || ''}
+            aria-label="Staged fan-out stage"
+            onChange={(event) =>
+              onPatch(participant.id, { stageRole: normalizeEnsembleStageRole(event.target.value) })
+            }
+          >
+            <option value="">Any (by permissions)</option>
+            {ENSEMBLE_STAGE_ROLE_OPTIONS.map((option) => (
+              <option
+                key={option.id}
+                value={option.id}
+                title={option.description}
+                disabled={isBossman && option.id === 'background'}
+              >
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <EnsembleBriefEditor
+          label="Brief / goal"
+          value={participant.instructions}
+          participants={mentionParticipants}
+          rows={4}
+          editorClassName="settings-roster-field settings-roster-brief-editor"
+          labelClassName="settings-roster-field-label"
+          textareaClassName="settings-roster-textarea"
+          syncEpoch={`${participant.id}:${mentionParticipants.length}`}
+          placeholder="What should this participant focus on each turn?"
+          commitLabel="Save"
+          commitTitle="Save this participant's role and brief to the roster preset"
+          onCommit={onFlush}
+          onChange={(value) => onPatch(participant.id, { instructions: value }, false)}
+          onBlur={onFlush}
+        />
         </div>
       </div>
     </li>
@@ -746,7 +749,12 @@ export function RosterSettingsPanel({
         configuredProviderSnapshot,
         pendingFallbackProvider
       ),
-    [configuredProviderSnapshot, cursorAvailable, grokAvailable, pendingFallbackProvider]
+    [
+      configuredProviderSnapshot,
+      cursorAvailable,
+      grokAvailable,
+      pendingFallbackProvider
+    ]
   )
 
   // Always-latest editing snapshot for the flush-on-switch safety net below.
@@ -934,7 +942,9 @@ export function RosterSettingsPanel({
 
   const handleSelectAllTransferPresets = useCallback((): void => {
     setTransferPicker((current) =>
-      current ? { ...current, selectedIndexes: current.presets.map((_, index) => index) } : current
+      current
+        ? { ...current, selectedIndexes: current.presets.map((_, index) => index) }
+        : current
     )
   }, [])
 
@@ -979,7 +989,9 @@ export function RosterSettingsPanel({
       }
     } catch (error) {
       setTransferStatus(
-        error instanceof Error ? error.message : `Could not ${transferPicker.mode} roster presets.`
+        error instanceof Error
+          ? error.message
+          : `Could not ${transferPicker.mode} roster presets.`
       )
     } finally {
       setTransferPicker(null)
@@ -1149,17 +1161,20 @@ export function RosterSettingsPanel({
   // preventDefault so the browser shows a no-drop cursor — there is no toast
   // system, mirroring how "+ Add participant" simply disables.
   const [isPoolDropTarget, setIsPoolDropTarget] = useState(false)
-  const onParticipantsDragOver = useCallback((event: ReactDragEvent<HTMLUListElement>): void => {
-    if (!event.dataTransfer.types.includes(POOLED_AGENT_DRAG_MIME)) return
-    const current = editingRef.current
-    if (!current || current.participants.length >= MAX_ROSTER_PRESET_PARTICIPANTS) {
-      event.dataTransfer.dropEffect = 'none'
-      return
-    }
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'copy'
-    setIsPoolDropTarget(true)
-  }, [])
+  const onParticipantsDragOver = useCallback(
+    (event: ReactDragEvent<HTMLUListElement>): void => {
+      if (!event.dataTransfer.types.includes(POOLED_AGENT_DRAG_MIME)) return
+      const current = editingRef.current
+      if (!current || current.participants.length >= MAX_ROSTER_PRESET_PARTICIPANTS) {
+        event.dataTransfer.dropEffect = 'none'
+        return
+      }
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'copy'
+      setIsPoolDropTarget(true)
+    },
+    []
+  )
   const onParticipantsDrop = useCallback(
     (event: ReactDragEvent<HTMLUListElement>): void => {
       setIsPoolDropTarget(false)
@@ -1234,11 +1249,7 @@ export function RosterSettingsPanel({
       const current = editingRef.current
       if (!current) return
       const participant = current.participants.find((candidate) => candidate.id === id)
-      if (
-        !participant ||
-        id === current.bossmanParticipantId ||
-        participant.stageRole === 'background'
-      ) {
+      if (!participant || id === current.bossmanParticipantId || participant.stageRole === 'background') {
         return
       }
       const captainParticipantIds = enabled
@@ -1267,7 +1278,8 @@ export function RosterSettingsPanel({
       const participants = current.participants.map((participant) =>
         // Don't mutate unavailable participants; otherwise mirror the source's
         // permission preset + grants (deep-cloned so nothing aliases).
-        rosterProviderAvailability(participant.provider, configuredProviderSnapshot) !== 'available'
+        rosterProviderAvailability(participant.provider, configuredProviderSnapshot) !==
+        'available'
           ? participant
           : {
               ...participant,
@@ -1295,8 +1307,7 @@ export function RosterSettingsPanel({
           <p className="settings-roster-intro">
             Build and refine reusable ensemble line-ups. Each preset is a saved roster of
             participants — provider, model, reasoning, permissions, role and brief — that you can
-            apply to any ensemble chat. The composer keeps its compact editor; this is the roomy
-            one.
+            apply to any ensemble chat. The composer keeps its compact editor; this is the roomy one.
           </p>
         </div>
         <div className="settings-roster-transfer-actions">

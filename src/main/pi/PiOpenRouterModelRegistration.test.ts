@@ -137,12 +137,8 @@ describe('writePiOpenRouterModelRegistration', () => {
     expect(resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')?.hueClass).toBe('zai')
     expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.label).toBe('Poolside')
     expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.hueClass).toBe('poolside')
-    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.label).toBe(
-      'NVIDIA'
-    )
-    expect(
-      resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.hueClass
-    ).toBe('nvidia')
+    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.label).toBe('NVIDIA')
+    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.hueClass).toBe('nvidia')
   })
 
   it.each(PI_OPENROUTER_CUSTOM_MODELS)('registers only $modelId in Pi’s isolated home', (model) => {
@@ -170,7 +166,9 @@ describe('writePiOpenRouterModelRegistration', () => {
               cost: model.cost,
               compat: {
                 supportsDeveloperRole: false,
-                ...(model.reasoningControl === 'toggle' ? { supportsReasoningEffort: false } : {}),
+                ...(model.reasoningControl === 'toggle'
+                  ? { supportsReasoningEffort: false }
+                  : {}),
                 thinkingFormat: model.reasoningControl === 'toggle' ? 'together' : 'openrouter'
               }
             }

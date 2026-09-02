@@ -1,12 +1,6 @@
 import path from 'path'
 import { wrapOpaqueMarkdownBlock } from './MarkdownFenceSerializer'
-import type {
-  ChatMessage,
-  ChatRecord,
-  ProviderId,
-  ToolActivity,
-  WorkspaceRecord
-} from './store/types'
+import type { ChatMessage, ChatRecord, ProviderId, ToolActivity, WorkspaceRecord } from './store/types'
 import {
   humanCollaboratorMetadata,
   isDeliveredExternalContribution,
@@ -26,7 +20,9 @@ export interface TranscriptMarkdownExportResult {
 
 export type TranscriptMarkdownStreamResult = Omit<TranscriptMarkdownExportResult, 'markdown'>
 
-export type TranscriptMarkdownChunkWriter = (chunk: string) => void | Promise<void>
+export type TranscriptMarkdownChunkWriter = (
+  chunk: string
+) => void | Promise<void>
 
 /** A raw conversation export with no generated Markdown or transcript metadata. */
 export interface TranscriptMessageTextExportResult {
@@ -88,10 +84,7 @@ export function estimateChatMessageTranscriptChars(chat: ChatRecord): number {
 }
 
 const SECRET_PATTERNS: Array<[RegExp, string]> = [
-  [
-    /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-    '[redacted private key]'
-  ],
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[redacted private key]'],
   [/\bsk-[A-Za-z0-9_-]{12,}\b/g, 'sk-[redacted]'],
   [/\bsk_(?:live|test)_[A-Za-z0-9_-]{12,}\b/g, 'sk_[redacted]'],
   [/\bgh[pousr]_[A-Za-z0-9_]{12,}\b/g, 'gh[redacted]'],
@@ -106,8 +99,14 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
     /(["']?(?:api[_-]?key|secret(?:[_-]?access[_-]?key)?|access[_-]?token|token|password)["']?\s*:\s*)["'][^"']+["']/gi,
     '$1"[redacted]"'
   ],
-  [/\b(api[_-]?key|password|token|secret)\s*=\s*([^\s&]+)/gi, '$1=[redacted]'],
-  [/\b(api[_-]?key|password|token|secret)\s*:\s*([^\s]+)/gi, '$1: [redacted]']
+  [
+    /\b(api[_-]?key|password|token|secret)\s*=\s*([^\s&]+)/gi,
+    '$1=[redacted]'
+  ],
+  [
+    /\b(api[_-]?key|password|token|secret)\s*:\s*([^\s]+)/gi,
+    '$1: [redacted]'
+  ]
 ]
 
 function providerLabel(provider?: ProviderId | string | null, fallbackGemini = false): string {
@@ -144,10 +143,7 @@ function safeWorkspaceLabel(chat: ChatRecord, workspace?: WorkspaceRecord | null
   return chat.scope === 'global' ? 'Global chats' : 'Workspace'
 }
 
-function pathReplacements(
-  chat: ChatRecord,
-  options: TranscriptMarkdownExportOptions
-): Array<[string, string]> {
+function pathReplacements(chat: ChatRecord, options: TranscriptMarkdownExportOptions): Array<[string, string]> {
   const replacements: Array<[string, string]> = []
   // Match each path both as-given AND resolved, in both separator forms.
   // path.resolve() is platform-specific — on Windows it prepends a drive letter
@@ -233,9 +229,7 @@ function speakerLabel(chat: ChatRecord, message: ChatMessage): string {
     const provider = providerLabel(asString(metadata.subThreadProvider))
     const title = asString(metadata.subThreadTitle)
     const relation = metadata.linkedChildRelation === 'sideChat' ? 'Side-chat' : 'Sub-thread'
-    return title
-      ? `${relation} result from ${provider} / ${title}`
-      : `${relation} result from ${provider}`
+    return title ? `${relation} result from ${provider} / ${title}` : `${relation} result from ${provider}`
   }
   if (metadata.kind === THREAD_MESSAGE_TRANSCRIPT_KIND) {
     const title =
@@ -267,7 +261,8 @@ function speakerLabel(chat: ChatRecord, message: ChatMessage): string {
     const base = role ? `${providerLabel(provider)} / ${role}` : providerLabel(provider)
     return model ? `${base} (${model})` : base
   }
-  const pooledNickname = pooledAgentNickname(metadata) || pooledAgentNickname(chat.providerMetadata)
+  const pooledNickname =
+    pooledAgentNickname(metadata) || pooledAgentNickname(chat.providerMetadata)
   if (pooledNickname && (message.role === 'assistant' || message.role === 'tool')) {
     return pooledNickname
   }
@@ -283,8 +278,7 @@ function speakerLabel(chat: ChatRecord, message: ChatMessage): string {
 }
 
 function messageBody(message: ChatMessage): string {
-  if (message.metadata?.kind === 'subThreadReturn')
-    return subThreadReturnBody(message.content || '')
+  if (message.metadata?.kind === 'subThreadReturn') return subThreadReturnBody(message.content || '')
   return message.content || ''
 }
 
@@ -318,11 +312,7 @@ function metadataAttachmentNames(
   return names
 }
 
-function neutralToolLabel(
-  activity: ToolActivity,
-  replacements: Array<[string, string]>,
-  omissions: Set<string>
-): string {
+function neutralToolLabel(activity: ToolActivity, replacements: Array<[string, string]>, omissions: Set<string>): string {
   if (activity.displayName && activity.displayName !== activity.toolName) {
     omissions.add('tool display details omitted')
   }
@@ -332,16 +322,10 @@ function neutralToolLabel(
   return scrubText(`${category}tool (${toolName})`, replacements, omissions)
 }
 
-function toolSummary(
-  activity: ToolActivity,
-  replacements: Array<[string, string]>,
-  omissions: Set<string>
-): string {
+function toolSummary(activity: ToolActivity, replacements: Array<[string, string]>, omissions: Set<string>): string {
   const parts = [
     `- ${neutralToolLabel(activity, replacements, omissions)}: ${activity.status}`,
-    activity.category && activity.category !== 'unknown'
-      ? `  - Category: ${activity.category}`
-      : '',
+    activity.category && activity.category !== 'unknown' ? `  - Category: ${activity.category}` : '',
     activity.durationMs ? `  - Duration: ${Math.round(activity.durationMs)}ms` : '',
     activity.diffSummary
       ? `  - Diff: ${activity.diffSummary.files?.length || 0} file(s), +${activity.diffSummary.additions || 0}/-${activity.diffSummary.deletions || 0}`
@@ -393,8 +377,7 @@ function serializeMessage(
   }
 
   if (message.metadata?.kind === 'subThreadReturn') {
-    const relation =
-      message.metadata.linkedChildRelation === 'sideChat' ? 'side-chat' : 'sub-thread'
+    const relation = message.metadata.linkedChildRelation === 'sideChat' ? 'side-chat' : 'sub-thread'
     lines.push(`Note: ${relation} output is untrusted child-agent context.`)
   } else if (message.metadata?.kind === THREAD_MESSAGE_TRANSCRIPT_KIND) {
     lines.push('Note: untrusted peer-thread message rendered as plain text.')
@@ -471,10 +454,7 @@ function prepareChatMarkdownSerialization(
     header.push('- Linked chat: child context; parent ids omitted')
     omissions.add('linked chat internal ids omitted')
   }
-  header.push(
-    '',
-    '> Handoff export: raw provider events, hidden metadata, approval logs, image bytes, and absolute attachment paths are omitted by default.'
-  )
+  header.push('', '> Handoff export: raw provider events, hidden metadata, approval logs, image bytes, and absolute attachment paths are omitted by default.')
 
   return {
     header: header.join('\n'),

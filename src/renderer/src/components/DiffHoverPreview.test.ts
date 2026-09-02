@@ -157,7 +157,9 @@ describe('DiffHoverPreview stats', () => {
 describe('DiffHoverPreview editor-style presentation', () => {
   it('hides the leading diff marker and syntax-highlights the source', () => {
     const rules = editorHighlightStyleRules()
-    const keywordClass = rules.match(/\.([\wͰ-Ͽ]+)\s*\{[^}]*color:\s*var\(--cm-keyword\)/)?.[1]
+    const keywordClass = rules.match(
+      /\.([\wͰ-Ͽ]+)\s*\{[^}]*color:\s*var\(--cm-keyword\)/
+    )?.[1]
     expect(keywordClass).toBeTruthy()
 
     const line = { kind: 'add' as const, oldLine: null, newLine: 3, text: '+const added = "ok"' }

@@ -241,12 +241,12 @@ describe('DiffViewer large diff safety', () => {
   })
 
   it('formats virtualization status only when row windowing is active', () => {
-    expect(diffVirtualizationSummary(2501, { startIndex: 0, endIndex: 60 }, true)).toBe(
-      'Windowing 60 of 2,501 rows · showing 1-60'
-    )
-    expect(diffVirtualizationSummary(2501, { startIndex: 1200, endIndex: 1260 }, true)).toBe(
-      'Windowing 60 of 2,501 rows · showing 1,201-1,260'
-    )
+    expect(
+      diffVirtualizationSummary(2501, { startIndex: 0, endIndex: 60 }, true)
+    ).toBe('Windowing 60 of 2,501 rows · showing 1-60')
+    expect(
+      diffVirtualizationSummary(2501, { startIndex: 1200, endIndex: 1260 }, true)
+    ).toBe('Windowing 60 of 2,501 rows · showing 1,201-1,260')
     expect(diffVirtualizationSummary(12, { startIndex: 0, endIndex: 12 }, false)).toBe('')
   })
 
@@ -337,7 +337,11 @@ describe('DiffViewer visible selection resolution', () => {
       )
     ).toBe('src/target.ts')
     expect(
-      resolveNextDiffSelectedPath({ type: 'changes', summaries: [first] }, [first], 'src/target.ts')
+      resolveNextDiffSelectedPath(
+        { type: 'changes', summaries: [first] },
+        [first],
+        'src/target.ts'
+      )
     ).toBe('src/first.ts')
     expect(resolveNextDiffSelectedPath({ type: 'no_changes' }, [], 'src/target.ts')).toBeNull()
   })
@@ -345,9 +349,9 @@ describe('DiffViewer visible selection resolution', () => {
   it('classifies files into stage groups for toolbar filtering', () => {
     const summary = makeChangedFileSummary('src/file.ts', 'change')
 
-    expect(diffStageGroupForSummary(summary, makeGitStatus({ staged: true, unstaged: true }))).toBe(
-      'mixed'
-    )
+    expect(
+      diffStageGroupForSummary(summary, makeGitStatus({ staged: true, unstaged: true }))
+    ).toBe('mixed')
     expect(
       diffStageGroupForSummary(summary, makeGitStatus({ staged: false, unstaged: true }))
     ).toBe('unstaged')
@@ -592,21 +596,9 @@ describe('DiffFileList', () => {
     const previousDocument = globalThis.document
     const fakeDocument = { activeElement: null as unknown }
     const buttons = [
-      {
-        focus: () => {
-          fakeDocument.activeElement = buttons[0]
-        }
-      },
-      {
-        focus: () => {
-          fakeDocument.activeElement = buttons[1]
-        }
-      },
-      {
-        focus: () => {
-          fakeDocument.activeElement = buttons[2]
-        }
-      }
+      { focus: () => { fakeDocument.activeElement = buttons[0] } },
+      { focus: () => { fakeDocument.activeElement = buttons[1] } },
+      { focus: () => { fakeDocument.activeElement = buttons[2] } }
     ]
     const menu = {
       querySelectorAll: () => [buttons[0], buttons[2]]
@@ -661,11 +653,13 @@ describe('DiffDetail', () => {
   })
 
   it('formats compact file change summaries for the detail header', () => {
-    expect(diffDetailHeaderSummary({ status: 'modified', additions: 12, deletions: 3 })).toBe(
-      'modified +12 -3'
-    )
+    expect(
+      diffDetailHeaderSummary({ status: 'modified', additions: 12, deletions: 3 })
+    ).toBe('modified +12 -3')
     expect(diffDetailHeaderSummary({ status: 'hidden_sensitive' })).toBe('hidden')
-    expect(diffDetailHeaderSummary({ status: 'too_large', deletions: 4 })).toBe('large +0 -4')
+    expect(diffDetailHeaderSummary({ status: 'too_large', deletions: 4 })).toBe(
+      'large +0 -4'
+    )
   })
 
   it('renders split diff rows and file actions for an unstaged file', () => {
