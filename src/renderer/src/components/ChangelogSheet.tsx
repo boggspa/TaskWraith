@@ -15,7 +15,7 @@ interface ChangelogSheetProps {
   busy?: boolean
   onCheckForUpdates?: () => Promise<unknown> | unknown
   onDownloadUpdate?: () => Promise<unknown> | unknown
-  onInstallUpdateNow?: () => Promise<unknown> | unknown
+  onInstallUpdateNow?: (options?: { force?: boolean }) => Promise<unknown> | unknown
 }
 
 const SHEET_TITLE_ID = 'changelog-sheet-title'
@@ -57,6 +57,7 @@ export function ChangelogSheet({
   const releasePageUrl = updateSnapshot?.releasePageUrl
   const updateStatus = updateSnapshot?.status || 'idle'
   const identityHandoff = updateSnapshot?.identityHandoff
+  const restartDeferral = updateSnapshot?.restartDeferral
   const canAct = !busy && updateStatus !== 'checking' && updateStatus !== 'downloading'
   // Phase-by-phase signpost for the update flow (check → download → ready →
   // installs on restart), so the user is guided through it rather than guessing
@@ -82,8 +83,12 @@ export function ChangelogSheet({
           ? `Downloading update… ${downloadPercent}%`
           : updateStatus === 'downloaded'
             ? updateSnapshot?.restartPending
-              ? `Update ${entry.version} downloaded — TaskWraith will restart when active work completes.`
-              : `Update ${entry.version} downloaded — ready to restart.`
+              ? `Update ${entry.version} downloaded — TaskWraith will restart when active work completes.${
+                  restartDeferral ? ` ${restartDeferral.reason}.` : ''
+                }`
+              : restartDeferral?.expired
+                ? `Update ${entry.version} downloaded — the queued restart stopped waiting (${restartDeferral.reason}). Restart to queue it again, or restart anyway.`
+                : `Update ${entry.version} downloaded — ready to restart.`
             : updateStatus === 'not-available'
               ? "You're on the latest version."
               : null
@@ -96,6 +101,18 @@ export function ChangelogSheet({
     if (!confirm(prompt)) return
     void onInstallUpdateNow()
   }, [identityHandoff, onInstallUpdateNow])
+
+  const handleForceInstall = useCallback(() => {
+    if (!onInstallUpdateNow) return
+    if (
+      !confirm(
+        'Restart TaskWraith now without waiting for active work? Running agent turns, scheduled tasks, and Host runs will be interrupted.'
+      )
+    ) {
+      return
+    }
+    void onInstallUpdateNow({ force: true })
+  }, [onInstallUpdateNow])
 
   const handleOpenRelease = useCallback(() => {
     if (!releasePageUrl || typeof window.api.openExternalOrPath !== 'function') return
@@ -168,6 +185,12 @@ export function ChangelogSheet({
           </div>
         )}
 
+        {updateSnapshot?.feedNote && (
+          <div className="changelog-sheet-status changelog-sheet-status-feed" role="note">
+            {updateSnapshot.feedNote}
+          </div>
+        )}
+
         {identityHandoff?.instructions && (
           <div className="changelog-sheet-status changelog-sheet-status-identity" role="note">
             {identityHandoff.instructions}
@@ -208,6 +231,19 @@ export function ChangelogSheet({
               {identityHandoff ? 'Open Release installer' : 'Restart to install'}
             </button>
           )}
+          {updateStatus === 'downloaded' &&
+            onInstallUpdateNow &&
+            !identityHandoff &&
+            (updateSnapshot?.restartPending || restartDeferral) && (
+              <button
+                type="button"
+                className="segmented-control-action segmented-control-action--compact"
+                disabled={busy}
+                onClick={handleForceInstall}
+              >
+                Restart anyway
+              </button>
+            )}
           {(updateStatus === 'error' ||
             updateStatus === 'idle' ||
             updateStatus === 'not-available' ||

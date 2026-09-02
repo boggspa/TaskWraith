@@ -242,6 +242,15 @@ function validateBuilderIdentityFiles(repoRoot = REPO_ROOT) {
   if (/allowDowngrade\s*:\s*true/i.test(combined)) {
     errors.push('allowDowngrade must never be enabled for the identity handoff')
   }
+  // electron-updater's channel setter flips allowDowngrade back to true on
+  // every assignment, so the builder files alone cannot prove the runtime
+  // stays forward-only. The service must reset it after choosing the feed.
+  const updateService = readFileSync(join(repoRoot, 'src', 'main', 'UpdateService.ts'), 'utf8')
+  if (!/autoUpdater\.allowDowngrade\s*=\s*false/.test(updateService)) {
+    errors.push(
+      'UpdateService must reset autoUpdater.allowDowngrade = false after assigning the feed channel'
+    )
+  }
   return errors
 }
 

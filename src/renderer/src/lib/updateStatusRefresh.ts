@@ -28,7 +28,9 @@ export function fingerprintUpdateSnapshot(snapshot: UpdateStateSnapshot | null):
         }
       : null,
     errorMessage: snapshot.errorMessage || '',
+    feedNote: snapshot.feedNote || '',
     restartPending: Boolean(snapshot.restartPending),
+    restartDeferral: snapshot.restartDeferral ?? null,
     identityHandoff: snapshot.identityHandoff ?? null
   })
 }

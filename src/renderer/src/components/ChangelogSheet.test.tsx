@@ -115,6 +115,29 @@ describe('UpdatePill', () => {
     expect(html).toContain('Move to Release')
     expect(html).toContain('public Release identity')
   })
+
+  it('titles a queued restart with what it is waiting for', () => {
+    const html = renderToStaticMarkup(
+      <UpdatePill
+        snapshot={{
+          status: 'downloaded',
+          enabled: true,
+          channel: 'stable',
+          latestVersion: '1.4.4',
+          restartPending: true,
+          restartDeferral: {
+            reason: 'Waiting for 1 active agent run',
+            since: '2026-09-02T21:00:00.000Z',
+            expired: false
+          }
+        }}
+        onQuickUpdate={() => {}}
+        variant="sidebar"
+      />
+    )
+    expect(html).toContain('Restart queued')
+    expect(html).toContain('Waiting for 1 active agent run')
+  })
 })
 
 describe('ChangelogSheet', () => {
@@ -172,6 +195,100 @@ describe('ChangelogSheet', () => {
       />
     )
     expect(html).toContain('Restart to install')
+  })
+
+  it('explains a queued restart and offers restart anyway', () => {
+    const html = renderToStaticMarkup(
+      <ChangelogSheet
+        open
+        onDismiss={() => {}}
+        changelogSnapshot={changelogSnapshot}
+        updateSnapshot={{
+          status: 'downloaded',
+          enabled: true,
+          channel: 'stable',
+          latestVersion: '1.0.73',
+          restartPending: true,
+          restartDeferral: {
+            reason: 'Waiting for 1 active agent run',
+            since: '2026-09-02T21:00:00.000Z',
+            expired: false
+          }
+        }}
+        onInstallUpdateNow={() => {}}
+      />
+    )
+    expect(html).toContain('will restart when active work completes')
+    expect(html).toContain('Waiting for 1 active agent run')
+    expect(html).toContain('>Restart anyway</button>')
+  })
+
+  it('reports an abandoned restart wait and still offers restart anyway', () => {
+    const html = renderToStaticMarkup(
+      <ChangelogSheet
+        open
+        onDismiss={() => {}}
+        changelogSnapshot={changelogSnapshot}
+        updateSnapshot={{
+          status: 'downloaded',
+          enabled: true,
+          channel: 'stable',
+          latestVersion: '1.0.73',
+          restartPending: false,
+          restartDeferral: {
+            reason: 'Waiting for 2 active agent runs',
+            since: '2026-09-02T21:00:00.000Z',
+            expired: true
+          }
+        }}
+        onInstallUpdateNow={() => {}}
+      />
+    )
+    expect(html).toContain('stopped waiting')
+    expect(html).toContain('Waiting for 2 active agent runs')
+    expect(html).toContain('Restart to install')
+    expect(html).toContain('>Restart anyway</button>')
+  })
+
+  it('does not offer restart anyway for a plain downloaded update', () => {
+    const html = renderToStaticMarkup(
+      <ChangelogSheet
+        open
+        onDismiss={() => {}}
+        changelogSnapshot={changelogSnapshot}
+        updateSnapshot={{
+          status: 'downloaded',
+          enabled: true,
+          channel: 'stable',
+          latestVersion: '1.0.73'
+        }}
+        onInstallUpdateNow={() => {}}
+      />
+    )
+    expect(html).toContain('Restart to install')
+    expect(html).not.toContain('>Restart anyway</button>')
+  })
+
+  it('shows the feed note when Nightly followed the stable feed', () => {
+    const html = renderToStaticMarkup(
+      <ChangelogSheet
+        open
+        onDismiss={() => {}}
+        changelogSnapshot={changelogSnapshot}
+        updateSnapshot={{
+          status: 'not-available',
+          enabled: true,
+          channel: 'nightly',
+          feedNote:
+            'No nightly feed is published for the current release; following the stable feed.'
+        }}
+        onCheckForUpdates={() => {}}
+      />
+    )
+    expect(html).toContain('changelog-sheet-status-feed')
+    expect(html).toContain(
+      'No nightly feed is published for the current release; following the stable feed.'
+    )
   })
 
   it('shows the resumable beta-to-Release journey and exact installer action', () => {

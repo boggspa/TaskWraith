@@ -76,6 +76,34 @@ describe('shouldApplyUpdateSnapshot', () => {
     ).toBe(true)
   })
 
+  it('applies restart-deferral and feed-note changes', () => {
+    const queued = snapshot({ status: 'downloaded', latestVersion: '1.9.8', restartPending: true })
+    expect(
+      shouldApplyUpdateSnapshot(
+        queued,
+        snapshot({
+          status: 'downloaded',
+          latestVersion: '1.9.8',
+          restartPending: true,
+          restartDeferral: {
+            reason: 'Waiting for 1 active agent run',
+            since: '2026-09-02T21:00:00.000Z',
+            expired: false
+          }
+        })
+      )
+    ).toBe(true)
+    expect(
+      shouldApplyUpdateSnapshot(
+        snapshot(),
+        snapshot({
+          feedNote:
+            'No nightly feed is published for the current release; following the stable feed.'
+        })
+      )
+    ).toBe(true)
+  })
+
   it('lets an explicit user action publish lastCheckedAt even when status is unchanged', () => {
     const prev = snapshot({ lastCheckedAt: '2026-09-01T12:00:00.000Z' })
     const checked = snapshot({ lastCheckedAt: '2026-09-01T12:15:00.000Z' })

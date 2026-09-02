@@ -2,7 +2,10 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { createQuitPersistenceCoordinator } from './QuitPersistenceCoordinator'
+import {
+  QUIT_PERSISTENCE_DRAIN_TIMEOUT_MS,
+  createQuitPersistenceCoordinator
+} from './QuitPersistenceCoordinator'
 
 function quitEvent() {
   return { preventDefault: vi.fn(() => {}) }
@@ -127,5 +130,72 @@ describe('quit persistence main-process wiring', () => {
     expect(teardown).toContain('if (!quitPersistence.beginTeardown()) return')
     expect(teardown).not.toContain('event.preventDefault()')
     expect(teardown).not.toContain('AppStore.flushAllChatSaves()')
+  })
+})
+
+describe('QuitPersistenceCoordinator drain timeout', () => {
+  it('quits after the drain timeout when the flush never settles', () => {
+    vi.useFakeTimers()
+    try {
+      const gate = deferred()
+      const scheduled: Array<() => void> = []
+      const onDrainError = vi.fn()
+      const requestQuit = vi.fn()
+      const coordinator = createQuitPersistenceCoordinator({
+        flush: () => gate.promise,
+        requestQuit,
+        scheduleRetry: (callback) => scheduled.push(callback),
+        onDrainError,
+        drainTimeoutMs: 50
+      })
+
+      coordinator.handle(quitEvent())
+      vi.advanceTimersByTime(49)
+      expect(onDrainError).not.toHaveBeenCalled()
+      expect(scheduled).toHaveLength(0)
+
+      vi.advanceTimersByTime(1)
+      expect(onDrainError).toHaveBeenCalledTimes(1)
+      expect(String((onDrainError.mock.calls[0]?.[0] as Error).message)).toContain(
+        'did not finish within 50ms'
+      )
+      expect(scheduled).toHaveLength(1)
+      scheduled[0]()
+      expect(requestQuit).toHaveBeenCalledTimes(1)
+      expect(coordinator.beginTeardown()).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not schedule a second quit when a timed-out flush settles later', async () => {
+    vi.useFakeTimers()
+    try {
+      const gate = deferred()
+      const scheduled: Array<() => void> = []
+      const onDrainError = vi.fn()
+      const coordinator = createQuitPersistenceCoordinator({
+        flush: () => gate.promise,
+        requestQuit: vi.fn(),
+        scheduleRetry: (callback) => scheduled.push(callback),
+        onDrainError,
+        drainTimeoutMs: 10
+      })
+
+      coordinator.handle(quitEvent())
+      vi.advanceTimersByTime(10)
+      expect(scheduled).toHaveLength(1)
+
+      gate.reject(new Error('late failure'))
+      for (let turn = 0; turn < 6; turn += 1) await Promise.resolve()
+      expect(scheduled).toHaveLength(1)
+      expect(onDrainError).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('defaults the drain timeout to 30 seconds', () => {
+    expect(QUIT_PERSISTENCE_DRAIN_TIMEOUT_MS).toBe(30_000)
   })
 })

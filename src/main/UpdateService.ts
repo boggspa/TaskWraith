@@ -15,6 +15,7 @@ import {
   type UpdateArchitectureCompatibility
 } from './UpdateArchitecture'
 import type { IdentityHandoffService, IdentityHandoffSnapshot } from './IdentityHandoffService'
+import type { UpdateRestartDeferral } from './UpdateRestartCoordinator'
 
 /**
  * UpdateService — Phase G2 wrapper around `electron-updater`.
@@ -39,7 +40,9 @@ import type { IdentityHandoffService, IdentityHandoffSnapshot } from './Identity
  *   debug   → no auto-updates (treated as disabled)
  *   stable  → `latest` channel (default electron-updater behavior)
  *   nightly → `beta` channel (electron-builder writes a beta
- *             manifest when version contains a pre-release tag)
+ *             manifest when version contains a pre-release tag).
+ *             A release that publishes no beta manifest makes the
+ *             check follow the stable feed instead of failing.
  *
  * Failure model:
  *   - All electron-updater errors are caught and emitted as
@@ -86,6 +89,13 @@ export interface UpdateStateSnapshot {
   /** A user requested restart once the app has no live work. */
   restartPending?: boolean
   /**
+   * Why a requested restart is waiting, or why a wait was abandoned
+   * (`expired`). Present only while an update is downloaded.
+   */
+  restartDeferral?: UpdateRestartDeferral
+  /** User-facing note about which feed served this check (nightly fallback). */
+  feedNote?: string
+  /**
    * Present only for the explicit 1.9.9 → 0.1.0 app-identity bridge. The
    * ordinary updater never compares those versions; the signed beta build
    * carries a hash-pinned installer inventory instead.
@@ -121,6 +131,13 @@ export class UpdateService {
   private errorMessage: string | undefined
   private lastCheckedAt: string | undefined
   private restartPending = false
+  private restartDeferral: UpdateRestartDeferral | undefined
+  private feedNote: string | undefined
+  /** electron-updater channel for the configured product channel. */
+  private feedChannel = 'latest'
+  /** electron-updater channel the nightly feed falls back to when unpublished. */
+  private stableFeedChannel = 'latest'
+  private feedFallbackActive = false
   private listeners = new Set<Listener>()
   private wired = false
   private periodicCheckTimer: ReturnType<typeof setInterval> | null = null
@@ -194,6 +211,8 @@ export class UpdateService {
       this.downloadProgress = undefined
       this.errorMessage = undefined
       this.restartPending = false
+      this.restartDeferral = undefined
+      this.feedNote = undefined
       this.clearReleaseMetadata()
       this.stopPeriodicChecks()
       this.publish()
@@ -206,12 +225,11 @@ export class UpdateService {
     // electron-updater channels: macOS keeps the standard latest/beta
     // manifests. Windows uses arch-specific feeds because separate x64
     // and arm64 NSIS installers cannot safely share one latest.yml.
-    autoUpdater.channel =
-      this.hostPlatform === 'win32'
-        ? windowsUpdateChannelForHost(configuredChannel, this.hostArch, this.stableUpdateChannel)
-        : configuredChannel === 'nightly'
-          ? 'beta'
-          : this.stableUpdateChannel
+    this.stableFeedChannel = this.feedChannelFor('stable')
+    this.feedChannel = this.feedChannelFor(configuredChannel)
+    this.feedFallbackActive = false
+    this.feedNote = undefined
+    this.applyFeedChannel(this.feedChannel)
     // The enabled preference permits automatic *checks*, not background
     // downloads. Once an update is found, the user must explicitly choose to
     // download it from the masthead or Settings; this also prevents a routine
@@ -222,6 +240,7 @@ export class UpdateService {
     this.downloadProgress = undefined
     this.errorMessage = undefined
     this.restartPending = false
+    this.restartDeferral = undefined
     this.clearReleaseMetadata()
     this.startPeriodicChecks()
     this.publish()
@@ -242,8 +261,15 @@ export class UpdateService {
     this.lastCheckedAt = new Date().toISOString()
     this.errorMessage = undefined
     this.downloadProgress = undefined
+    this.restartPending = false
+    this.restartDeferral = undefined
     this.clearReleaseMetadata()
+    this.restoreConfiguredFeed()
     this.publish()
+    return this.runCheck()
+  }
+
+  private async runCheck(): Promise<UpdateCheckResult | null> {
     try {
       const result = await autoUpdater.checkForUpdates()
       // The actual status transition (available / not-available) is
@@ -251,10 +277,54 @@ export class UpdateService {
       // returns the raw result for callers that want it.
       return result
     } catch (err) {
+      if (this.canFallBackToStableFeed(err)) {
+        // Stable releases publish no nightly manifest, so a Nightly user would
+        // otherwise fail every check. Follow the stable feed for this check
+        // and say so; the next check probes the nightly feed again.
+        this.feedFallbackActive = true
+        this.feedNote =
+          'No nightly feed is published for the current release; following the stable feed.'
+        this.log(
+          `[UpdateService] nightly feed ${this.feedChannel} is not published; retrying with ${this.stableFeedChannel}`
+        )
+        this.applyFeedChannel(this.stableFeedChannel)
+        return this.runCheck()
+      }
       const message = err instanceof Error ? err.message : String(err)
       this.handleError(message)
       return null
     }
+  }
+
+  private feedChannelFor(channel: 'stable' | 'nightly'): string {
+    if (this.hostPlatform === 'win32') {
+      return windowsUpdateChannelForHost(channel, this.hostArch, this.stableUpdateChannel)
+    }
+    return channel === 'nightly' ? 'beta' : this.stableUpdateChannel
+  }
+
+  /**
+   * electron-updater's channel setter re-enables downgrades every time it
+   * runs. GitHub's "Latest" pointer can move to an older release, so version
+   * comparison must stay strictly forward: `allowDowngrade` is reset after
+   * every channel assignment.
+   */
+  private applyFeedChannel(channel: string): void {
+    autoUpdater.channel = channel
+    autoUpdater.allowDowngrade = false
+  }
+
+  private restoreConfiguredFeed(): void {
+    if (!this.feedFallbackActive) return
+    this.feedFallbackActive = false
+    this.feedNote = undefined
+    this.applyFeedChannel(this.feedChannel)
+  }
+
+  private canFallBackToStableFeed(err: unknown): boolean {
+    if (this.channel !== 'nightly' || this.feedFallbackActive) return false
+    if (this.feedChannel === this.stableFeedChannel) return false
+    return updaterErrorCode(err) === 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND'
   }
 
   /** Start downloading the staged update. Only valid when status is
@@ -275,15 +345,6 @@ export class UpdateService {
     }
   }
 
-  /** Mark the downloaded update to install on quit. Doesn't quit the
-   * app — the renderer should prompt the user, and the user's quit
-   * action triggers the install. */
-  installOnQuit(): void {
-    if (this.identityHandoffActive) return
-    if (this.status !== 'downloaded') return
-    autoUpdater.autoInstallOnAppQuit = true
-  }
-
   /** Immediate install + restart. The renderer should confirm with the
    * user before invoking this. */
   quitAndInstall(): boolean {
@@ -301,11 +362,20 @@ export class UpdateService {
     }
   }
 
-  /** Reflect that a user-requested update will restart once live work ends. */
-  setRestartPending(pending: boolean): void {
-    const next = pending && this.status === 'downloaded'
-    if (this.restartPending === next) return
-    this.restartPending = next
+  /**
+   * Reflect that a user-requested update will restart once live work ends,
+   * together with what it is waiting on. A deferral marked `expired` records
+   * an abandoned wait for the user to act on.
+   */
+  setRestartPending(pending: boolean, deferral?: UpdateRestartDeferral): void {
+    const downloaded = this.status === 'downloaded'
+    const nextPending = pending && downloaded
+    const nextDeferral = deferral && downloaded ? { ...deferral } : undefined
+    if (this.restartPending === nextPending && sameDeferral(this.restartDeferral, nextDeferral)) {
+      return
+    }
+    this.restartPending = nextPending
+    this.restartDeferral = nextDeferral
     this.publish()
   }
 
@@ -324,6 +394,8 @@ export class UpdateService {
       errorMessage: this.errorMessage,
       lastCheckedAt: this.lastCheckedAt,
       restartPending: this.restartPending,
+      restartDeferral: this.restartDeferral ? { ...this.restartDeferral } : undefined,
+      feedNote: this.feedNote,
       ...(this.identityHandoffActive && this.identityHandoff
         ? { identityHandoff: this.identityHandoff.snapshot() }
         : {})
@@ -365,6 +437,8 @@ export class UpdateService {
     })
     autoUpdater.on('error', (err) => {
       if (this.status === 'disabled') return
+      // checkForUpdates() retries this exact failure on the stable feed.
+      if (this.canFallBackToStableFeed(err)) return
       this.handleError(err instanceof Error ? err.message : String(err))
     })
     autoUpdater.on('download-progress', (progress) => {
@@ -422,6 +496,7 @@ export class UpdateService {
         : undefined
     this.errorMessage = snapshot.errorMessage
     this.restartPending = false
+    this.restartDeferral = undefined
     switch (snapshot.phase) {
       case 'ready':
         this.status = 'available'
@@ -501,6 +576,20 @@ export class UpdateService {
       }
     }
   }
+}
+
+function sameDeferral(
+  a: UpdateRestartDeferral | undefined,
+  b: UpdateRestartDeferral | undefined
+): boolean {
+  if (!a || !b) return a === b
+  return a.reason === b.reason && a.since === b.since && a.expired === b.expired
+}
+
+function updaterErrorCode(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null) return undefined
+  const code = (err as { code?: unknown }).code
+  return typeof code === 'string' ? code : undefined
 }
 
 function normalizeReleaseNotes(

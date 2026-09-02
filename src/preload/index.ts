@@ -1968,8 +1968,10 @@ const api = {
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
   downloadUpdateAndRestart: () => ipcRenderer.invoke('download-update-and-restart'),
-  installUpdateOnQuit: () => ipcRenderer.invoke('install-update-on-quit'),
-  installUpdateNow: () => ipcRenderer.invoke('install-update-now'),
+  installUpdateNow: (options?: { force?: boolean }) =>
+    options
+      ? ipcRenderer.invoke('install-update-now', options)
+      : ipcRenderer.invoke('install-update-now'),
   changelogSnapshot: () => ipcRenderer.invoke('changelog-snapshot'),
   markChangelogSeen: (version: string) => ipcRenderer.invoke('mark-changelog-seen', version),
   onUpdateStatusChanged: (callback: (snapshot: unknown) => void) => {

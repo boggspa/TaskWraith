@@ -25,6 +25,28 @@ context needed to answer.
   $0.10/$0.20 with the product-improvement data-use notice). Muse Spark 1.2
   stays the seat default, and New Additions leads Muse with 1.3.
 
+### Updates and Restart
+
+- **A queued restart says what it is waiting for.** Choosing Restart after an
+  update downloads now names the live agent runs, scheduled tasks, workflows,
+  or Host runs holding it, in both the sidebar pill and the update sheet. The
+  wait gives up after 30 minutes instead of silently forever, and a new
+  **Restart anyway** action installs immediately when you decide the work can
+  be interrupted. A Host that TaskWraith adopted from the TUI or another
+  process no longer blocks the restart; it is left running.
+- **Updates never move you backwards.** Version comparison now stays strictly
+  forward even though electron-updater's channel selection re-enables
+  downgrades by default, so a mis-pointed "Latest" release can no longer
+  install an older build. The identity-handoff gate checks the source for it.
+- **Nightly no longer sticks on "Update issue".** When a release publishes no
+  nightly feed, the Nightly channel follows the stable feed for that check and
+  says so, instead of failing every check.
+- **Quitting cannot hang on a stuck save.** The quit-time chat flush is capped
+  at 30 seconds, so an update restart or a plain quit completes even when the
+  disk is full or persistence stalls.
+- Removed the unused install-on-quit updater channel, which electron-updater
+  never honoured.
+
 ## 1.9.7 - 2026-09-02
 
 ### New Models and Provider Seats

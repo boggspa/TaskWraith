@@ -697,7 +697,6 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'check-for-updates',
   'download-update',
   'download-update-and-restart',
-  'install-update-on-quit',
   'install-update-now',
   'mark-changelog-seen',
   'export-product-diagnostics',

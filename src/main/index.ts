@@ -600,6 +600,8 @@ import {
   bundledActivityReportingEndpoint
 } from './activity/ActivityReportingService'
 import { UpdateRestartCoordinator } from './UpdateRestartCoordinator'
+import { describeUpdateRestartActiveWork } from './UpdateRestartActiveWork'
+import { createUpdateRestartHostBarrier } from './UpdateRestartHostBarrier'
 import { LocalServersService } from './LocalServersService'
 import { PluginHost } from './plugins/PluginHost'
 import { PluginSecretStore } from './plugins/PluginSecretStore'
@@ -54982,33 +54984,21 @@ if (isGeminiMcpBridgeProcess) {
     activityReportingServiceRef.start()
     const updateRestartCoordinator = new UpdateRestartCoordinator({
       updateService,
-      hasActiveWork: () => {
-        if (getActiveTaskWraithThreadCount() > 0) return true
-        if (
-          AppStore.getScheduledTasks().some(
-            (task) => task.status === 'due' || task.status === 'running'
-          )
-        ) {
-          return true
-        }
-        return AppStore.getWorkflowDefinitions().some((workflow) =>
-          Boolean(workflow.activeExecutionId)
-        )
-      },
+      activeWorkReason: () =>
+        describeUpdateRestartActiveWork({
+          activeThreadCount: getActiveTaskWraithThreadCount(),
+          scheduledTasks: AppStore.getScheduledTasks(),
+          workflows: AppStore.getWorkflowDefinitions()
+        }),
+      log: (line) => console.log(line),
       ...(preparedExternalHost
         ? {
-            beforeRestart: async (): Promise<boolean> => {
-              // An existing Host may be owned by a TUI or another explicit
-              // user flow. Updates may wait, never take that authority away.
-              if (preparedExternalHost.result.kind !== 'launched') return false
-              if (hostLifecycle.getSnapshot().phase === 'stopped') return true
-              const projected = await desktopHostBroker.snapshot()
-              if (!projected.ok) return false
-              if (projected.snapshot.runs.some((run) => run.providerOutcome === 'running')) {
-                return false
-              }
-              return (await hostLifecycle.stop()).ok
-            }
+            beforeRestart: createUpdateRestartHostBarrier({
+              preparedExternalHost,
+              hostLifecycle,
+              desktopHostBroker,
+              log: (line) => console.log(line)
+            })
           }
         : {})
     })

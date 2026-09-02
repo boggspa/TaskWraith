@@ -1921,8 +1921,7 @@ declare global {
       checkForUpdates: () => Promise<UpdateStateSnapshot>
       downloadUpdate: () => Promise<UpdateStateSnapshot>
       downloadUpdateAndRestart: () => Promise<UpdateStateSnapshot>
-      installUpdateOnQuit: () => Promise<UpdateStateSnapshot>
-      installUpdateNow: () => Promise<UpdateStateSnapshot>
+      installUpdateNow: (options?: { force?: boolean }) => Promise<UpdateStateSnapshot>
       changelogSnapshot: () => Promise<ProductChangelogSnapshot>
       markChangelogSeen: (version: string) => Promise<ProductChangelogSnapshot>
       onUpdateStatusChanged: (callback: (snapshot: UpdateStateSnapshot) => void) => () => void

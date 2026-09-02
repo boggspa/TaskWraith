@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ProductChangelogSnapshot } from '../../../main/store/types'
 import type { UpdateStateSnapshot, UpdateStatus } from '../../../main/UpdateService'
+import type { InstallUpdateNowOptions } from './useUpdateStatus'
 
 export type SidebarQuickUpdateAction = 'download' | 'install' | 'check' | 'openChangelog' | 'none'
 
 export function resolveSidebarQuickUpdateAction(
   status: UpdateStatus | undefined,
-  identityHandoff = false
+  identityHandoff = false,
+  restartPending = false
 ): SidebarQuickUpdateAction {
   if (
     identityHandoff &&
@@ -15,7 +17,9 @@ export function resolveSidebarQuickUpdateAction(
     return 'openChangelog'
   }
   if (status === 'available') return 'download'
-  if (status === 'downloaded') return 'install'
+  // A queued restart is already armed; the sheet shows what it is waiting on
+  // and offers the explicit "restart anyway" override.
+  if (status === 'downloaded') return restartPending ? 'openChangelog' : 'install'
   if (status === 'error') return 'check'
   if (status === 'downloading') return 'openChangelog'
   return 'none'
@@ -27,7 +31,7 @@ export type ChangelogUpdateStatus = {
   checkForUpdates: () => Promise<UpdateStateSnapshot | null>
   downloadUpdate: () => Promise<UpdateStateSnapshot | null>
   downloadUpdateAndRestart: () => Promise<UpdateStateSnapshot | null>
-  installUpdateNow: () => Promise<UpdateStateSnapshot | null>
+  installUpdateNow: (options?: InstallUpdateNowOptions) => Promise<UpdateStateSnapshot | null>
 }
 
 export function shouldAutoOpenChangelog(
@@ -104,7 +108,8 @@ export function useChangelog(
     switch (
       resolveSidebarQuickUpdateAction(
         updateStatus.snapshot?.status,
-        Boolean(updateStatus.snapshot?.identityHandoff)
+        Boolean(updateStatus.snapshot?.identityHandoff),
+        Boolean(updateStatus.snapshot?.restartPending)
       )
     ) {
       case 'download':

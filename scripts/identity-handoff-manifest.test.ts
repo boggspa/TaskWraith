@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -11,6 +12,7 @@ const {
   baseManifest,
   parseArgs,
   prepareManifest,
+  validateBuilderIdentityFiles,
   validateManifest,
   verifyArtifactDirectory
 } = require('./identity-handoff-manifest.cjs') as {
@@ -27,6 +29,7 @@ const {
     baseUrl?: string,
     sourceCommit?: string
   ) => Promise<Record<string, any>>
+  validateBuilderIdentityFiles: (repoRoot?: string) => string[]
   validateManifest: (
     manifest: unknown,
     options?: { requirePrepared?: boolean; expectedBaseUrl?: string }
@@ -168,5 +171,36 @@ describe('identity-handoff-manifest', () => {
       command: 'prepare',
       values: { 'artifact-dir': '/tmp/dist', output: '/tmp/out.json' }
     })
+  })
+})
+
+describe('validateBuilderIdentityFiles', () => {
+  const repoRoot = fileURLToPath(new URL('..', import.meta.url))
+  const builderFiles = ['electron-builder.yml', 'electron-builder.debut.yml']
+  const updaterSource = join('src', 'main', 'UpdateService.ts')
+
+  function builderRoot(updaterText: string): string {
+    const root = mkdtempSync(join(tmpdir(), 'identity-handoff-builder-'))
+    roots.push(root)
+    for (const file of builderFiles) {
+      writeFileSync(join(root, file), readFileSync(join(repoRoot, file), 'utf8'))
+    }
+    mkdirSync(join(root, 'src', 'main'), { recursive: true })
+    writeFileSync(join(root, updaterSource), updaterText)
+    return root
+  }
+
+  it('accepts the repository builder files and updater source', () => {
+    expect(validateBuilderIdentityFiles()).toEqual([])
+  })
+
+  it('rejects an updater that no longer resets allowDowngrade after choosing the feed', () => {
+    const original = readFileSync(join(repoRoot, updaterSource), 'utf8')
+    expect(validateBuilderIdentityFiles(builderRoot(original))).toEqual([])
+    const drifted = original.replace(/autoUpdater\.allowDowngrade\s*=\s*false/g, '')
+    expect(drifted).not.toBe(original)
+    expect(validateBuilderIdentityFiles(builderRoot(drifted))).toEqual([
+      'UpdateService must reset autoUpdater.allowDowngrade = false after assigning the feed channel'
+    ])
   })
 })

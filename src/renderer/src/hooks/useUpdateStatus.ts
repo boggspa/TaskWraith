@@ -2,6 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import type { UpdateStateSnapshot } from '../../../main/UpdateService'
 import { shouldApplyUpdateSnapshot } from '../lib/updateStatusRefresh'
 
+export interface InstallUpdateNowOptions {
+  /** Restart without waiting for live work to finish. */
+  force?: boolean
+}
+
 export function useUpdateStatus(): {
   snapshot: UpdateStateSnapshot | null
   busy: boolean
@@ -9,7 +14,7 @@ export function useUpdateStatus(): {
   checkForUpdates: () => Promise<UpdateStateSnapshot | null>
   downloadUpdate: () => Promise<UpdateStateSnapshot | null>
   downloadUpdateAndRestart: () => Promise<UpdateStateSnapshot | null>
-  installUpdateNow: () => Promise<UpdateStateSnapshot | null>
+  installUpdateNow: (options?: InstallUpdateNowOptions) => Promise<UpdateStateSnapshot | null>
 } {
   const [snapshot, setSnapshot] = useState<UpdateStateSnapshot | null>(null)
   const [busy, setBusy] = useState(false)
@@ -61,7 +66,8 @@ export function useUpdateStatus(): {
     [runUpdateAction]
   )
   const installUpdateNow = useCallback(
-    () => runUpdateAction(() => window.api.installUpdateNow()),
+    (options?: InstallUpdateNowOptions) =>
+      runUpdateAction(() => window.api.installUpdateNow(options)),
     [runUpdateAction]
   )
 

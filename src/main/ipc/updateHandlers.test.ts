@@ -31,8 +31,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerUpdateHandlers>
     updateService: {
       snapshot: vi.fn(() => baseSnapshot),
       checkForUpdates: vi.fn(async () => null),
-      downloadUpdate: vi.fn(async () => undefined),
-      installOnQuit: vi.fn()
+      downloadUpdate: vi.fn(async () => undefined)
     },
     updateRestartCoordinator: {
       requestRestartWhenIdle: vi.fn()
@@ -114,7 +113,7 @@ describe('registerUpdateHandlers', () => {
     expect(deps.updateRestartCoordinator.requestRestartWhenIdle).toHaveBeenCalledTimes(1)
   })
 
-  it('installs later or now and returns the latest service snapshot', () => {
+  it('installs now and returns the latest service snapshot', () => {
     const snapshot = { ...baseSnapshot, status: 'downloaded' as const }
     const deps = createDeps({
       updateService: {
@@ -124,11 +123,37 @@ describe('registerUpdateHandlers', () => {
     })
     registerUpdateHandlers(deps)
 
-    expect(handlerFor('install-update-on-quit')({} as any)).toBe(snapshot)
-    expect(deps.updateService.installOnQuit).toHaveBeenCalledTimes(1)
     expect(handlerFor('install-update-now')({} as any)).toBe(snapshot)
-    expect(deps.updateRestartCoordinator.requestRestartWhenIdle).toHaveBeenCalledTimes(1)
-    expect(deps.updateService.snapshot).toHaveBeenCalledTimes(2)
+    expect(deps.updateRestartCoordinator.requestRestartWhenIdle).toHaveBeenCalledWith({
+      force: false
+    })
+    expect(deps.updateService.snapshot).toHaveBeenCalledTimes(1)
+  })
+
+  it('forces an install only for an explicit boolean force flag', () => {
+    const deps = createDeps()
+    registerUpdateHandlers(deps)
+    const install = handlerFor('install-update-now')
+
+    install({} as any, { force: true })
+    expect(deps.updateRestartCoordinator.requestRestartWhenIdle).toHaveBeenLastCalledWith({
+      force: true
+    })
+    install({} as any, { force: 'yes' })
+    expect(deps.updateRestartCoordinator.requestRestartWhenIdle).toHaveBeenLastCalledWith({
+      force: false
+    })
+    install({} as any, null)
+    expect(deps.updateRestartCoordinator.requestRestartWhenIdle).toHaveBeenLastCalledWith({
+      force: false
+    })
+  })
+
+  it('no longer registers the dead install-on-quit channel', () => {
+    registerUpdateHandlers(createDeps())
+    expect(mockedHandle.mock.calls.some(([channel]) => channel === 'install-update-on-quit')).toBe(
+      false
+    )
   })
 
   it('returns changelog snapshots and marks non-empty seen versions', () => {

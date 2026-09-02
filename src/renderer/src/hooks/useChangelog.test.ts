@@ -30,6 +30,11 @@ describe('resolveSidebarQuickUpdateAction', () => {
     expect(resolveSidebarQuickUpdateAction('downloaded', true)).toBe('openChangelog')
     expect(resolveSidebarQuickUpdateAction('error', true)).toBe('openChangelog')
   })
+
+  it('opens the sheet instead of re-queueing when a restart is already pending', () => {
+    expect(resolveSidebarQuickUpdateAction('downloaded', false, true)).toBe('openChangelog')
+    expect(resolveSidebarQuickUpdateAction('downloaded', false, false)).toBe('install')
+  })
 })
 
 describe('shouldAutoOpenChangelog', () => {
