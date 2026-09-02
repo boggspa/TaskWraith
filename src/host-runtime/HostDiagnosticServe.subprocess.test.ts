@@ -112,7 +112,9 @@ afterAll(async () => {
   }
   await Promise.all(activeChildren.map((child) => waitForExit(child).catch(() => undefined)))
   for (const profile of profiles.splice(0)) rmSync(profile, { recursive: true, force: true })
-})
+  // Child exits are awaited with the platform wait budget (30s on win32), which
+  // exceeds vitest's 10s default hook budget.
+}, 120_000)
 
 describe('standalone diagnostic Host subprocess', () => {
   it(
