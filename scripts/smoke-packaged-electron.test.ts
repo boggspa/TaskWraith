@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import os from 'node:os'
@@ -415,5 +416,104 @@ describe('packaged macOS signature coverage', () => {
     const required = source.match(/const requiredEntitlementsByPath = new Map\(\[([\s\S]*?)\]\)/)
     expect(required?.[1]).toBeTruthy()
     expect(required?.[1]).toContain('studioApp')
+  })
+})
+
+const { stopSmokeChild } = require('./smoke-packaged-electron.cjs') as {
+  stopSmokeChild: (
+    child: unknown,
+    label: string,
+    platform?: string,
+    killTree?: (pid: number) => void
+  ) => Promise<void>
+}
+
+describe('packaged app launch smoke cleanup', () => {
+  interface FakeStream {
+    destroyed: boolean
+    destroy(): void
+  }
+  type FakeChild = EventEmitter & {
+    pid: number
+    exitCode: number | null
+    signalCode: string | null
+    stdout: FakeStream
+    stderr: FakeStream
+    signals: string[]
+    unrefCalls: number
+    kill(signal: string): boolean
+    unref(): void
+  }
+  function fakeStream(): FakeStream {
+    return {
+      destroyed: false,
+      destroy() {
+        this.destroyed = true
+      }
+    }
+  }
+  function exitNow(child: FakeChild): void {
+    process.nextTick(() => {
+      child.exitCode = 0
+      child.emit('exit', 0, null)
+    })
+  }
+  function fakeChild(pid = 4321): FakeChild {
+    const child = new EventEmitter() as FakeChild
+    child.pid = pid
+    child.exitCode = null
+    child.signalCode = null
+    child.stdout = fakeStream()
+    child.stderr = fakeStream()
+    child.signals = []
+    child.unrefCalls = 0
+    child.kill = (signal: string) => {
+      child.signals.push(signal)
+      exitNow(child)
+      return true
+    }
+    child.unref = () => {
+      child.unrefCalls += 1
+    }
+    return child
+  }
+
+  it('kills the whole process tree on Windows so the app Host sidecar cannot outlive the smoke', async () => {
+    const child = fakeChild(777)
+    const treeKills: number[] = []
+    await stopSmokeChild(child, 'packaged Windows app', 'win32', (pid) => {
+      treeKills.push(pid)
+      exitNow(child)
+    })
+    expect(treeKills).toEqual([777])
+    expect(child.signals).toEqual([])
+    expect(child.stdout.destroyed).toBe(true)
+    expect(child.stderr.destroyed).toBe(true)
+    expect(child.unrefCalls).toBe(1)
+  })
+
+  it('keeps the SIGTERM path on other platforms and still releases its pipe ends', async () => {
+    const child = fakeChild()
+    const treeKills: number[] = []
+    await stopSmokeChild(child, 'packaged Linux app', 'linux', (pid) => {
+      treeKills.push(pid)
+    })
+    expect(treeKills).toEqual([])
+    expect(child.signals).toEqual(['SIGTERM'])
+    expect(child.stdout.destroyed).toBe(true)
+    expect(child.stderr.destroyed).toBe(true)
+    expect(child.unrefCalls).toBe(1)
+  })
+
+  it('releases the pipe ends of a child that already exited without touching it', async () => {
+    const child = fakeChild()
+    child.exitCode = 0
+    await stopSmokeChild(child, 'already gone', 'win32', () => {
+      throw new Error('must not kill an exited child')
+    })
+    expect(child.signals).toEqual([])
+    expect(child.stdout.destroyed).toBe(true)
+    expect(child.stderr.destroyed).toBe(true)
+    expect(child.unrefCalls).toBe(1)
   })
 })

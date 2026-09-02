@@ -679,6 +679,7 @@ jobs:
           ref: ${{ github.sha }}
           path: .ci-release-harness
           sparse-checkout: |
+            scripts/smoke-packaged-electron.cjs
             scripts/smoke-packaged-tui.cjs
             scripts/windows-cmd-invocation.cjs
           sparse-checkout-cone-mode: false
@@ -687,6 +688,7 @@ jobs:
         if: steps.unsigned-source.outputs.sha != github.sha
         shell: pwsh
         run: |
+          Copy-Item -LiteralPath .ci-release-harness\scripts\smoke-packaged-electron.cjs -Destination scripts\smoke-packaged-electron.cjs -Force
           Copy-Item -LiteralPath .ci-release-harness\scripts\smoke-packaged-tui.cjs -Destination scripts\smoke-packaged-tui.cjs -Force
           Copy-Item -LiteralPath .ci-release-harness\scripts\windows-cmd-invocation.cjs -Destination scripts\windows-cmd-invocation.cjs -Force
       # The packaged-app launch smoke skips the arm64 executable on this x64

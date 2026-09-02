@@ -95,6 +95,13 @@ async function main() {
   runPackagedTuiSmoke(packageRoot)
   runPackagedProductionHostSmoke(packageRoot)
   runPackagedEmulatorRuntimeSmoke(packageRoot)
+  // Every check has passed and been reported. A straggling handle (see
+  // stopSmokeChild) must not keep the CI step alive after the verdict is in:
+  // flush the final line, then exit on its callback so nothing printed is lost.
+  await new Promise((resolve) =>
+    process.stdout.write('packaged Electron smoke complete\n', resolve)
+  )
+  process.exit(0)
 }
 
 /**
@@ -457,16 +464,50 @@ async function runLinuxLaunchSmoke(packageRoot) {
   console.log(`packaged app launch smoke ok: ${path.basename(executablePath)}`)
 }
 
-async function stopSmokeChild(child, label) {
-  if (child.exitCode !== null || child.signalCode !== null) return
-  child.kill('SIGTERM')
+async function stopSmokeChild(
+  child,
+  label,
+  platform = process.platform,
+  killTree = killProcessTree
+) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    releaseSmokeChild(child)
+    return
+  }
+  // Windows: by the time the launch smoke stops the app, TaskWraith.exe has
+  // already spawned its Node Host sidecar with inherited stdio. Terminating
+  // only the root process orphans that Host, and the orphan's inherited pipe
+  // handles keep THIS script's stdout/stderr streams open forever — main()
+  // resolves but the process never exits, so the CI checks step hangs (1.9.7,
+  // run 33625607309: 18 minutes on a 12-second step until cancelled, runner
+  // cleanup "Terminate orphan process: (node)"). Kill the whole tree while the
+  // root pid still anchors it; the signal path stays for every other platform.
+  if (platform === 'win32' && typeof child.pid === 'number') killTree(child.pid)
+  else child.kill('SIGTERM')
   let exitResult = await waitForChildExit(child, 3000)
-  if (exitResult.exited) return
-  child.kill('SIGKILL')
-  exitResult = await waitForChildExit(child, 2000)
+  if (!exitResult.exited) {
+    child.kill('SIGKILL')
+    exitResult = await waitForChildExit(child, 2000)
+  }
+  releaseSmokeChild(child)
   if (!exitResult.exited) {
     fail(`${label} did not exit after bounded SIGTERM/SIGKILL cleanup`)
   }
+}
+
+function killProcessTree(pid) {
+  spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+}
+
+/**
+ * Release our read ends of a stopped child's stdio pipes and drop the handle
+ * reference. Whatever a surviving descendant still holds on the write ends can
+ * then no longer keep this process's event loop alive.
+ */
+function releaseSmokeChild(child) {
+  child.stdout?.destroy()
+  child.stderr?.destroy()
+  if (typeof child.unref === 'function') child.unref()
 }
 
 // Whether the current host CPU can natively execute a Windows binary of the
@@ -1386,6 +1427,7 @@ function fail(message) {
 // codesign report, so the posture rules are exercised without a packaged app
 // and without invoking codesign.
 module.exports = {
+  stopSmokeChild,
   evaluateMacSigningIdentity,
   collectMacSigningPostureFailures,
   describeMacSigningPosture,
