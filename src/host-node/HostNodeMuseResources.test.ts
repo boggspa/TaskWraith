@@ -80,7 +80,7 @@ it('adapts child spawn without shell and settles wait on error before close', as
   const child = new EventEmitter() as EventEmitter & Record<string, unknown>
   const end = vi.fn()
   const kill = vi.fn()
-  Object.assign(child, { pid: 9, stdin: { end }, stdout, stderr, kill })
+  Object.assign(child, { pid: 9, stdin: { end, once: vi.fn() }, stdout, stderr, kill })
   const spawn = vi.fn(() => child) as never
   const resources = createHostNodeMuseResources({ temporaryParent: root, spawn })
   const handle = resources.spawn!({
@@ -108,4 +108,33 @@ it('adapts child spawn without shell and settles wait on error before close', as
   expect(out).toHaveBeenCalledWith('out')
   expect(err).toHaveBeenCalledWith('err')
   expect(kill).toHaveBeenCalledWith('SIGTERM')
+})
+
+it('absorbs an EPIPE on the child stdin instead of crashing the Host process', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'muse-resources-epipe-'))
+  const stdout = new EventEmitter()
+  const stderr = new EventEmitter()
+  const stdin = new EventEmitter() as EventEmitter & { end: (payload?: string) => void }
+  const child = new EventEmitter() as EventEmitter & Record<string, unknown>
+  stdin.end = () => {
+    // The binary exited before draining the key: the write fails after end().
+    process.nextTick(() => {
+      stdin.emit(
+        'error',
+        Object.assign(new Error('write EPIPE'), { code: 'EPIPE', syscall: 'write' })
+      )
+      child.emit('close', 1, null)
+    })
+  }
+  Object.assign(child, { pid: 11, stdin, stdout, stderr, kill: vi.fn() })
+  const spawn = vi.fn(() => child) as never
+  const resources = createHostNodeMuseResources({ temporaryParent: root, spawn })
+  const handle = resources.spawn!({
+    binaryPath: '/bin/muse',
+    argv: ['exec', '--json'],
+    cwd: root,
+    env: { PATH: '/bin' },
+    stdin: 'api-key'
+  })
+  await expect(handle.wait()).resolves.toEqual({ code: 1, signal: null })
 })

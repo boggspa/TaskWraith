@@ -79,6 +79,13 @@ function spawnAdapter(spawnImpl: typeof nodeSpawn): MuseRunSpawn {
       shell: false,
       stdio: 'pipe'
     }) as ChildProcessWithoutNullStreams
+    // The stdin payload is the API key, written the instant the child exists.
+    // A Muse binary that exits before draining it makes that write EPIPE, and
+    // an 'error' on child.stdin with no listener is an unhandled event that
+    // takes the WHOLE Host process down (1.9.7 ship, three Linux CI crashes).
+    // The child's own exit code and stderr already say why it stopped reading;
+    // the write failure adds nothing, so it is absorbed rather than fatal.
+    child.stdin.once('error', () => undefined)
     if (input.stdin) child.stdin.end(input.stdin)
     else child.stdin.end()
     let settle!: (value: { code: number | null; signal: NodeJS.Signals | null }) => void
