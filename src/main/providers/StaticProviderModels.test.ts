@@ -76,8 +76,21 @@ describe('getStaticProviderModels (Mistral hosted GLM-5.2 thinking correlation)'
 })
 
 describe('getStaticProviderModels (Muse catalogue)', () => {
-  it('offers Contributor Spark with its disclosure while keeping the standard route default', () => {
+  it('offers both Spark 1.3 routes ahead of 1.2 while keeping Spark 1.2 the default', () => {
     expect(getStaticProviderModels('muse')).toEqual([
+      {
+        id: 'muse-spark-1.3',
+        label: 'Muse Spark 1.3',
+        description: '1M context - $1.25/$4.25 per Mtok',
+        ultraTaskSupported: true
+      },
+      {
+        id: 'muse-spark-1.3-contributor',
+        label: 'Muse Contributor Spark 1.3',
+        description:
+          '1M context - $0.10/$0.20 per Mtok - content may be used for product improvement',
+        ultraTaskSupported: true
+      },
       {
         id: 'muse-spark-1.2',
         label: 'Muse Spark 1.2',

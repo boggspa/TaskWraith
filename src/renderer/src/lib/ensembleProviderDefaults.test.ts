@@ -1128,9 +1128,11 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
 })
 
 describe('muse reasoning options', () => {
-  it('offers Contributor Spark without changing the standard default', () => {
+  it('offers both Spark 1.3 routes ahead of 1.2 without changing the standard default', () => {
     const defaults = getEnsembleModelDefaults('muse')
     expect(defaults.modelOptions.map(({ id, label }) => ({ id, label }))).toEqual([
+      { id: 'muse-spark-1.3', label: 'Muse Spark 1.3' },
+      { id: 'muse-spark-1.3-contributor', label: 'Muse Contributor Spark 1.3' },
       { id: 'muse-spark-1.2', label: 'Muse Spark 1.2' },
       {
         id: 'muse-spark-1.2-contributor',

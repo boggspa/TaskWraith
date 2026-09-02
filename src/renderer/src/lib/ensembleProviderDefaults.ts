@@ -240,8 +240,11 @@ function ollamaReasoningOptions(
 }
 
 /** Muse Code seat models. Wire ids mirror the visible rows in the on-disk Muse
- *  model-catalog. Contributor Spark remains an explicit non-default choice. */
+ *  model-catalog, newest first; Spark 1.2 stays the default (still `is_current`
+ *  there) and Contributor Spark remains an explicit non-default choice. */
 const MUSE_MODEL_ROWS: CombinedModelPickerModelOption[] = [
+  { id: 'muse-spark-1.3', label: 'Muse Spark 1.3' },
+  { id: 'muse-spark-1.3-contributor', label: 'Muse Contributor Spark 1.3' },
   { id: 'muse-spark-1.2', label: 'Muse Spark 1.2' },
   { id: 'muse-spark-1.2-contributor', label: 'Muse Contributor Spark 1.2' }
 ]

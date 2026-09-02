@@ -425,10 +425,23 @@ const MISTRAL_DEFAULT_MODEL_ROWS = [
   }
 ] satisfies CodexModelOption[]
 const MISTRAL_DEFAULT_MODELS = withCuratedUltraTaskSupport(MISTRAL_DEFAULT_MODEL_ROWS)
-// Muse Code CLI seat catalog (opaque exec). Contributor Spark stays opt-in: its
-// discount carries the provider catalogue's product-improvement data-use notice.
+// Muse Code CLI seat catalog (opaque exec). Spark 1.3 leads in the CLI's own
+// order while 1.2 stays the default (the catalogue still flags it `is_current`).
+// Contributor Spark stays opt-in: its discount carries the provider catalogue's
+// product-improvement data-use notice.
 const MUSE_DEFAULT_MODEL = 'muse-spark-1.2'
 const MUSE_DEFAULT_MODEL_ROWS = [
+  {
+    id: 'muse-spark-1.3',
+    label: 'Muse Spark 1.3',
+    description: 'Muse Code CLI newest model'
+  },
+  {
+    id: 'muse-spark-1.3-contributor',
+    label: 'Muse Contributor Spark 1.3',
+    description:
+      'Discounted tokens; content, including inter-session messages, may be used for product improvement'
+  },
   {
     id: MUSE_DEFAULT_MODEL,
     label: 'Muse Spark 1.2',

@@ -1121,14 +1121,32 @@ const MISTRAL_STATIC_MODELS = [
 // that catalogue, never the web: the true context limit is 1,007,997, not the
 // widely-quoted 1,048,576.
 //
-// The contributor row is selectable but deliberately not TaskWraith's default:
-// its discount comes with the catalogue's product-improvement data-use notice,
-// so the user must choose it rather than being opted in by a default migration.
+// The contributor rows are selectable but deliberately not TaskWraith's default:
+// their discount comes with the catalogue's product-improvement data-use notice,
+// so the user must choose one rather than being opted in by a default migration.
 //
-// The id must stay byte-identical to MUSE_DEFAULT_MODELS in the renderer's
+// Spark 1.3 (catalogue release_date 2026-09-02) leads the list in the CLI's own
+// order; 1.2 stays the seat default because the catalogue still flags it
+// `is_current`, and moving the default is a separate, user-decided change.
+// Pricing per Meta's Model API page (verified 2026-09-02) is identical for 1.2
+// and 1.3.
+//
+// The ids must stay byte-identical to MUSE_DEFAULT_MODELS in the renderer's
 // providerModelDefaults.ts — providerFallthroughGuards compares the two sides
 // and a divergence means the picker and the run disagree.
 const MUSE_STATIC_MODELS = [
+  {
+    id: 'muse-spark-1.3',
+    label: 'Muse Spark 1.3',
+    description: '1M context - $1.25/$4.25 per Mtok',
+    ultraTaskSupported: true
+  },
+  {
+    id: 'muse-spark-1.3-contributor',
+    label: 'Muse Contributor Spark 1.3',
+    description: '1M context - $0.10/$0.20 per Mtok - content may be used for product improvement',
+    ultraTaskSupported: true
+  },
   {
     id: 'muse-spark-1.2',
     label: 'Muse Spark 1.2',
