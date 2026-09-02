@@ -431,7 +431,7 @@ describe('buildRemoteFirstLaunchState', () => {
     )
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'antigravity')?.models[0]?.name
-    ).toBe('Gemini 3.7 Flash')
+    ).toBe('Gemini 3.8 Flash')
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'grok')?.models[0]?.name
     ).toBe('Grok 4.6 Fast')

@@ -6,6 +6,19 @@ TaskWraith's orchestration, local history, and workspace authority stay on your
 machine, while selected cloud providers still receive the prompt and run
 context needed to answer.
 
+## 1.9.8 - Unreleased
+
+> **Source-ahead — 2026-09-02.** The highlights below describe work landed after
+> the shipped v1.9.7 boundary; they are not a release or artifact claim.
+
+### New Models and Provider Seats
+
+- **Gemini 3.8 Flash in AntiGravity.** The official `agy` catalogue now offers
+  Gemini 3.8 Flash with Low, Medium, and High reasoning. TaskWraith groups the
+  exact variants under one picker row, retains them in the consent-gated
+  fallback, makes the family the standalone Host's default AntiGravity row,
+  and leads New Additions with it.
+
 ## 1.9.7 - 2026-09-02
 
 ### New Models and Provider Seats

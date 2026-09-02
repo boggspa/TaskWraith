@@ -2807,7 +2807,7 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-09-01-2","kind":"addition","title":"New Additions","body":"Claude Fable 5.1, the Devin CLI seat, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-09-02","kind":"addition","title":"New Additions","body":"Claude Fable 5.1, the Devin CLI seat, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"claude","label":"Claude","models":[
               {"name":"Fable 5.1","blurb":"Anthropic's newest Fable — 1M context, adaptive thinking, the full effort ladder. Fable 5 moves to Legacy."}
             ]},
@@ -2817,7 +2817,7 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"SWE-1.7 · SWE-1.7 Lightning","blurb":"Cognition's newest coding models — Medium or Max on the effort slider, $0.50/$2.50 and $2.50/$12.50 per Mtok."}
             ]},
             {"provider":"antigravity","label":"AntiGravity","models":[
-              {"name":"Gemini 3.7 Flash","blurb":"The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI."}
+              {"name":"Gemini 3.8 Flash","blurb":"The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI."}
             ]},
             {"provider":"grok","label":"Grok","models":[
               {"name":"Grok 4.6 Fast","blurb":"The new 500K default with Low through Extra High reasoning in Grok Build."}

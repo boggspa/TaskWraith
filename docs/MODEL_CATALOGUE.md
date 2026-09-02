@@ -6,12 +6,12 @@ TaskWraith's model picker is provider-aware: choose a provider, then a model,
 the reasoning level it supports, and (where offered) a Fast tier. This page is
 the concise, public reference for the curated picker catalogue.
 
-> **Snapshot: 29 August 2026.** Your actual picker is still governed by the
+> **Snapshot: 2 September 2026.** Your actual picker is still governed by the
 > provider CLI, your account and plan, and (for Ollama) the models installed on
 > your machine. Codex is refreshed from its live provider catalogue when
 > available; the rows below describe TaskWraith's curated fallback and the
-> standard options it presents. Rows added or corrected after v1.9.6 describe
-> the current source-ahead checkout and are not a v1.9.6 release guarantee.
+> standard options it presents. Rows added or corrected after v1.9.7 describe
+> the current source-ahead checkout and are not a v1.9.7 release guarantee.
 
 ## Reading the catalogue
 
@@ -137,10 +137,11 @@ and workspace Tool Grants apply to TaskWraith-mediated calls; see
 </table>
 
 The separately consented official `agy` CLI lane follows the signed-in
-AntiGravity subscription catalogue. Its newest family is:
+AntiGravity subscription catalogue. Its newest families are:
 
 | Model                                                           | Reasoning           | Fast | Notes                                                                      |
 | --------------------------------------------------------------- | ------------------- | ---- | -------------------------------------------------------------------------- |
+| **Gemini 3.8 Flash** `gemini-3.8-flash-{low,medium,high}`        | Low · Medium · High | —    | Authenticated `agy models` catalogue; the standalone Host's default row.       |
 | **Gemini 3.7 Flash** `gemini-3.7-flash-{low,medium,high}`        | Low · Medium · High | —    | Authenticated `agy models` catalogue; availability remains account-controlled. |
 
 The independent bring-your-own-key lane curates the authenticated Gemini API

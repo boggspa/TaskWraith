@@ -220,7 +220,7 @@ describe('NotificationZone', () => {
     expect(html).toContain('data-provider-logo="mistral"')
     expect(html).toContain('data-provider-logo="ollama"')
     expect(html).toContain('data-provider-logo="pi"')
-    expect(html).toContain('Gemini 3.7 Flash')
+    expect(html).toContain('Gemini 3.8 Flash')
     expect(html).toContain('Grok 4.6 Fast')
     expect(html).toContain('Grok 4.6')
     expect(html).toContain('Devstral Small')
