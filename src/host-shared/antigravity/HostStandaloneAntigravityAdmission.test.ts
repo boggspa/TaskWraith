@@ -184,6 +184,53 @@ describe('discoverHostStandaloneAntigravity', () => {
     expect(JSON.stringify(result)).not.toContain('must-not-project')
   })
 
+  it('defaults to the newest Flash family, and to 3.7 on a catalogue without it', async () => {
+    const discover = (ids: readonly string[]) =>
+      discoverHostStandaloneAntigravity({
+        profilePath: profile(acceptedSettings()),
+        resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
+        capture: async () => ({
+          stdout: JSON.stringify({ models: ids.map((id) => ({ id })) }),
+          stderr: '',
+          code: 0
+        })
+      })
+    const defaults = (probe: Awaited<ReturnType<typeof discover>>) => {
+      if (probe.status !== 'ready') throw new Error('expected admission')
+      return probe.admission.offers.models.map((row) => [row.label, row.default === true])
+    }
+
+    // 3.8 is listed AFTER 3.7 so the default must be won by preference, not
+    // by the first-row fallback.
+    const current = await discover([
+      'gemini-3.7-flash-high',
+      'gemini-3.7-flash-low',
+      'gemini-3.8-flash-high',
+      'gemini-3.8-flash-medium',
+      'gemini-3.8-flash-low'
+    ])
+    expect(defaults(current)).toEqual([
+      ['Gemini 3.7 Flash', false],
+      ['Gemini 3.8 Flash', true]
+    ])
+    if (current.status !== 'ready') throw new Error('expected admission')
+    expect(current.admission.offers.models[1]).toMatchObject({
+      modelId: 'gemini-3.8-flash-high',
+      reasoning: [
+        expect.objectContaining({ reasoningId: 'low', label: 'Low' }),
+        expect.objectContaining({ reasoningId: 'medium', label: 'Medium' }),
+        expect.objectContaining({ reasoningId: 'high', label: 'High' })
+      ]
+    })
+
+    // An older live catalogue without 3.8 keeps 3.7 as its default.
+    const older = await discover(['gemini-3.6-flash-high', 'gemini-3.7-flash-high'])
+    expect(defaults(older)).toEqual([
+      ['Gemini 3.6 Flash', false],
+      ['Gemini 3.7 Flash', true]
+    ])
+  })
+
   it('rechecks consent and never substitutes cached or static rows', async () => {
     const path = profile(acceptedSettings())
     const capture = vi.fn(async () => ({

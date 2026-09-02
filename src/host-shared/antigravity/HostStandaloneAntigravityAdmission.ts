@@ -338,10 +338,36 @@ function reasoning(reasoningId: string): HostProviderReasoningOffer {
   }
 }
 
+type PreferredDefaultRow = { readonly label: string } | { readonly id: string }
+
+/**
+ * Default-row preference, newest Flash family first (lower-cased picker label
+ * or bare wire id). The ranked list keeps an older live catalogue's default
+ * stable when the newest family is absent from it; a catalogue matching none
+ * of these falls back to its first row.
+ */
+const PREFERRED_DEFAULT_ROWS: readonly PreferredDefaultRow[] = [
+  { label: 'gemini 3.8 flash' },
+  { label: 'gemini 3.7 flash' },
+  { id: 'flash-3.7' }
+]
+
+function preferredDefaultIndex(rows: ReadonlyArray<{ id: string; label: string }>): number {
+  for (const preference of PREFERRED_DEFAULT_ROWS) {
+    const index = rows.findIndex((row) =>
+      'label' in preference
+        ? row.label.toLowerCase() === preference.label
+        : row.id.toLowerCase() === preference.id
+    )
+    if (index >= 0) return index
+  }
+  return -1
+}
+
 function offerRows(models: readonly HostStandaloneAgyModel[]): HostProviderModelOffer[] {
   const grouped = groupAntigravityModelRows(models)
-  let defaultAssigned = false
-  return grouped.map((row) => {
+  const defaultIndex = preferredDefaultIndex(grouped)
+  return grouped.map((row, index) => {
     const variantEfforts = row.antigravityVariants?.map((variant) => variant.effort) ?? []
     const fixedEffort = antigravityEffortForModelId(row.id)
     const effortIds =
@@ -350,10 +376,7 @@ function offerRows(models: readonly HostStandaloneAgyModel[]): HostProviderModel
         : fixedEffort
           ? [fixedEffort]
           : []
-    const preferred =
-      row.label.toLowerCase() === 'gemini 3.7 flash' || row.id.toLowerCase() === 'flash-3.7'
-    const isDefault = preferred && !defaultAssigned
-    if (isDefault) defaultAssigned = true
+    const isDefault = index === defaultIndex
     return {
       modelId: row.id,
       label: row.label,

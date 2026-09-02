@@ -24,7 +24,7 @@ import { ANTIGRAVITY_AGY_STATIC_MODEL_IDS as STATIC_AGY_MODEL_IDS } from '../../
  * disappearance is worse than an offer row that fails loudly at dispatch.
  *
  * Ids are the offerable Gemini rows from the verbatim `agy models` catalogue,
- * refreshed 2026-08-13 after Gemini 3.7 Flash became live. Floor labels equal
+ * refreshed 2026-09-02 after Gemini 3.8 Flash became live. Floor labels equal
  * ids deliberately: the shared picker grouping derives the same family label
  * and effort ladder that the richer live labels produce.
  *

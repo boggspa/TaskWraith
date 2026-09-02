@@ -39,9 +39,12 @@ describe('readHostStandaloneAntigravityInventory', () => {
 
     const rows = readHostStandaloneAntigravityInventory(path, { agyBinaryAvailable: true })
 
-    expect(rows).toHaveLength(23)
+    expect(rows).toHaveLength(26)
     expect(rows.map((row) => row.modelId)).toEqual(
       expect.arrayContaining([
+        'gemini-3.8-flash-high',
+        'gemini-3.8-flash-medium',
+        'gemini-3.8-flash-low',
         'gemini-3.7-flash-high',
         'claude-opus-4-6',
         `${ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX}gemini-3.6-flash`,
@@ -108,6 +111,7 @@ describe('readHostStandaloneAntigravityInventory', () => {
     const apiOnly = readHostStandaloneAntigravityInventory(noBinary, {
       agyBinaryAvailable: false
     })
+    expect(apiOnly.map((row) => row.modelId)).not.toContain('gemini-3.8-flash-high')
     expect(apiOnly.map((row) => row.modelId)).not.toContain('gemini-3.7-flash-high')
     expect(apiOnly.map((row) => row.modelId)).toContain('gemini-api:gemini-3.6-flash')
 
@@ -118,6 +122,7 @@ describe('readHostStandaloneAntigravityInventory', () => {
     const agyOnly = readHostStandaloneAntigravityInventory(noDisclosure, {
       agyBinaryAvailable: true
     })
+    expect(agyOnly.map((row) => row.modelId)).toContain('gemini-3.8-flash-high')
     expect(agyOnly.map((row) => row.modelId)).toContain('gemini-3.7-flash-high')
     expect(agyOnly.some((row) => row.modelId.startsWith('gemini-api:'))).toBe(false)
   })
