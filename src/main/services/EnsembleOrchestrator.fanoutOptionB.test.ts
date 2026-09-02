@@ -148,6 +148,12 @@ describe('Option B — force-persisted Boss/Captain fan-out turn', () => {
         ],
         { ownedFanoutSettlementTimeoutMs: 50 }
       )
+      // Continuous-only (2026-09-01): the round no longer closes at the pass
+      // boundary — it auto-continues until the hop budget exhausts. One hop
+      // keeps the tail rideable: pass 1 → authority auto-continue → pass 2 →
+      // round completes.
+      harness.chat.ensemble!.orchestrationMode = 'continuous'
+      harness.chat.ensemble!.maxContinuationHops = 1
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
         prompt: 'Lead fans out and waits longer than the timeout.',
@@ -188,6 +194,13 @@ describe('Option B — force-persisted Boss/Captain fan-out turn', () => {
       await sleep(FLUSH_MS)
 
       complete(harness, 2)
+      // Continuous-only: the pass boundary no longer closes the round. The
+      // authority auto-continue re-dispatches the fan-out target once more;
+      // ride that final pass so the 1-hop budget exhausts and the round
+      // completes cleanly instead of wedging 'running'.
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+      expect(harness.dispatched[3].provider).toBe('claude')
+      complete(harness, 3)
       await vi.waitFor(() => expect(harness.chat.ensemble!.activeRound!.status).toBe('completed'))
     }
   )
@@ -201,6 +214,10 @@ describe('Option B — force-persisted Boss/Captain fan-out turn', () => {
         participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
         participant('gemini', 'gemini', 'Researcher', 3, 'workspace_write')
       ])
+      // Continuous-only (2026-09-01): ride one auto-continue hop so the
+      // round's terminal state is reachable (see the first test).
+      harness.chat.ensemble!.orchestrationMode = 'continuous'
+      harness.chat.ensemble!.maxContinuationHops = 1
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
         prompt: 'Lead fans out and synthesizes after lanes settle.',
@@ -235,6 +252,11 @@ describe('Option B — force-persisted Boss/Captain fan-out turn', () => {
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
       expect(harness.dispatched[2].provider).toBe('gemini')
       complete(harness, 2)
+      // Continuous-only: ride the authority auto-continue pass (the fan-out
+      // target) so the 1-hop budget exhausts and the round completes.
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+      expect(harness.dispatched[3].provider).toBe('claude')
+      complete(harness, 3)
       await vi.waitFor(() => expect(harness.chat.ensemble!.activeRound!.status).toBe('completed'))
     }
   )
@@ -248,6 +270,10 @@ describe('Option B — force-persisted Boss/Captain fan-out turn', () => {
         participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
         participant('gemini', 'gemini', 'Researcher', 3, 'workspace_write')
       ])
+      // Continuous-only (2026-09-01): ride one auto-continue hop so the
+      // round's terminal state is reachable (see the first test).
+      harness.chat.ensemble!.orchestrationMode = 'continuous'
+      harness.chat.ensemble!.maxContinuationHops = 1
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
         prompt: 'Lead fans out and ends turn silently.',
@@ -282,6 +308,11 @@ describe('Option B — force-persisted Boss/Captain fan-out turn', () => {
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
       expect(harness.dispatched[2].provider).toBe('gemini')
       complete(harness, 2)
+      // Continuous-only: ride the authority auto-continue pass (the fan-out
+      // target) so the 1-hop budget exhausts and the round completes.
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+      expect(harness.dispatched[3].provider).toBe('claude')
+      complete(harness, 3)
       await vi.waitFor(() => expect(harness.chat.ensemble!.activeRound!.status).toBe('completed'))
     }
   )

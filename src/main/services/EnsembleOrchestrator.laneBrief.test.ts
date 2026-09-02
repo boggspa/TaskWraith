@@ -90,10 +90,13 @@ describe('fan-out lane brief wrapper', () => {
     'tells the lane the brief is its own work, not a role question',
     { timeout: 30_000 },
     async () => {
-      const harness = makeHarness([
-        participant('lead', 'codex', 'Lead', 1),
-        participant('reviewer', 'claude', 'Reviewer', 2)
-      ])
+      // Continuous-only (2026-09-01): an assigned Boss keeps the opening
+      // writer pass serial (no-Boss user-preflight would dispatch claim
+      // lanes for both writers concurrently at round start).
+      const harness = makeHarness(
+        [participant('lead', 'codex', 'Lead', 1), participant('reviewer', 'claude', 'Reviewer', 2)],
+        'lead'
+      )
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
         prompt: 'Lead delegates a slice.',

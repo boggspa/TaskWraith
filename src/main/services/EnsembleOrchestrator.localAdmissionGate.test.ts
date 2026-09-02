@@ -53,6 +53,10 @@ function makeChat(participants: EnsembleParticipant[]): ChatRecord {
       enabled: true,
       maxParticipants: participants.length,
       fanoutPolicy: 'read_only',
+      // Continuous-only (2026-09-01): an assigned Boss keeps the opening
+      // writer pass serial (no-Boss user-preflight would dispatch claim/ack
+      // lanes for every writer concurrently at round start).
+      bossmanParticipantId: 'lead',
       participants
     }
   } as unknown as ChatRecord

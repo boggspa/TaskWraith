@@ -56,6 +56,13 @@ function makeChat(participants: EnsembleParticipant[]): ChatRecord {
       enabled: true,
       maxParticipants: participants.length,
       fanoutPolicy: 'read_only',
+      // Continuous-only (2026-09-01): fan-out is On/Off, so 'read_only'
+      // normalises to 'all'. With an assigned Boss the opening writer pass
+      // stays SERIAL ("requires the assigned Boss to call ensemble_fanout
+      // with explicit writeScopes"), which is the shape these tests drive;
+      // without one, the no-Boss user-preflight dispatches claim/ack lanes
+      // for every writer concurrently at round start.
+      bossmanParticipantId: 'codex',
       participants
     }
   } as unknown as ChatRecord
