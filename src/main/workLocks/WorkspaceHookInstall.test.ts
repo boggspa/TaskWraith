@@ -226,7 +226,14 @@ describe('the installed hook actually enforces a peer claim', () => {
     }
   }
 
-  it('blocks staging a path a live peer marker claims, and allows an unclaimed one', () => {
+  it('blocks staging a path a live peer marker claims, and allows an unclaimed one', (ctx) => {
+    if (process.platform === 'win32') {
+      // The hook probes claim liveness with `kill -0` under git's MSYS sh,
+      // which cannot see a Windows-native pid — the detached peer below reads
+      // as dead and the block would pass vacuously. Enforcement semantics are
+      // POSIX; install/uninstall coverage stays live on every leg.
+      return ctx.skip()
+    }
     const hookSource = readFileSync(
       join(__dirname, '..', '..', '..', '.githooks', 'pre-commit'),
       'utf8'

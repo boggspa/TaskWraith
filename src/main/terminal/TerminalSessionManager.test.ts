@@ -1,6 +1,6 @@
 import * as pty from 'node-pty'
 import os from 'os'
-import { join } from 'path'
+import { join, sep } from 'path'
 import { describe, expect, it, vi } from 'vitest'
 import { TerminalSessionManager } from './TerminalSessionManager'
 
@@ -69,7 +69,9 @@ describe('TerminalSessionManager', () => {
       expect.objectContaining({
         cwd: '/work/AGBench',
         env: expect.objectContaining({
-          HOME: expect.stringContaining('/terminal-home/'),
+          // The manager builds HOME with path.join, so the separator is
+          // platform-specific on the Windows leg.
+          HOME: expect.stringContaining(`${sep}terminal-home${sep}`),
           PATH: expect.stringContaining(inheritedPath),
           SHELL: '/bin/zsh'
         })

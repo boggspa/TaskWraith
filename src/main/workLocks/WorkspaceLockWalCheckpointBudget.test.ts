@@ -31,7 +31,13 @@ import {
 const timestamp = '2026-08-29T02:00:00.000Z'
 const authority = { instanceId: 'budget-instance', generation: 7 }
 const HISTORY_CYCLES = 1_500
-const MIN_SPEEDUP = 5
+// 5x proved to sit inside scheduler jitter, not outside it: the 4-core CI
+// runners measured 4.31x (macOS-Intel) / 4.52x (Linux) on run 33591765269 and
+// a loaded local Apple Silicon measured 4.97x, while the real 127.6 MiB
+// journal sits at ~19x. A lost checkpoint or reintroduced full replay measures
+// ~1x, so 3x still fails every defended regression without flaking on load.
+// `scripts/perf/walCheckpointBench.cjs` remains the precise measurement.
+const MIN_SPEEDUP = 3
 
 function lease(id: string, transitionId: string): WorkspaceLockLease {
   const target = `/workspace/${id}.ts`

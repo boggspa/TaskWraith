@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { ChildProcess } from 'node:child_process'
 import type { HostBootstrapWelcome } from '../../shared/hostProtocol'
@@ -20,6 +20,9 @@ const welcome = {
 } as HostBootstrapWelcome
 const CURRENT_PAYLOAD = `sha256:${'a'.repeat(64)}`
 const OLD_PAYLOAD = `sha256:${'b'.repeat(64)}`
+// resolve() keeps the fixture canonical on win32 too (the constructor guard
+// requires resolve(profilePath) === profilePath, which a POSIX literal fails).
+const PROFILE = resolve('/p')
 
 describe('HostExternalSupervisor', () => {
   it('rejects noncanonical profiles and marks resolver/spawn failures failed', async () => {
@@ -27,7 +30,7 @@ describe('HostExternalSupervisor', () => {
       () => new HostExternalSupervisor({ profilePath: 'relative', resolveLaunch: async () => null })
     ).toThrow('options')
     const resolver = new HostExternalSupervisor({
-      profilePath: '/p',
+      profilePath: PROFILE,
       probe: async () => {
         throw new Error('offline')
       },
@@ -38,7 +41,7 @@ describe('HostExternalSupervisor', () => {
     await expect(resolver.ensureAvailable()).rejects.toThrow('resolver failed')
     expect(resolver.status).toBe('failed')
     const spawning = new HostExternalSupervisor({
-      profilePath: '/p',
+      profilePath: PROFILE,
       probe: async () => {
         throw new Error('offline')
       },
@@ -69,7 +72,7 @@ describe('HostExternalSupervisor', () => {
   it('attaches an existing production Host without spawning', async () => {
     const spawn = vi.fn()
     const supervisor = new HostExternalSupervisor({
-      profilePath: '/p',
+      profilePath: PROFILE,
       probe: async () => welcome,
       resolveLaunch: async () => null,
       spawn
@@ -82,7 +85,7 @@ describe('HostExternalSupervisor', () => {
     const spawn = vi.fn()
     const shutdownExisting = vi.fn(async () => {})
     const supervisor = new HostExternalSupervisor({
-      profilePath: '/p',
+      profilePath: PROFILE,
       probe: async () => ({ welcome, payloadVersion: CURRENT_PAYLOAD }),
       resolveLaunch: async () => ({
         executable: '/node',
@@ -110,7 +113,7 @@ describe('HostExternalSupervisor', () => {
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValue({ welcome, payloadVersion: CURRENT_PAYLOAD })
     const supervisor = new HostExternalSupervisor({
-      profilePath: '/p',
+      profilePath: PROFILE,
       probe,
       resolveLaunch: async () => ({
         executable: '/node',
@@ -129,7 +132,7 @@ describe('HostExternalSupervisor', () => {
       { kind: 'launched', pid: 42, welcome }
     ])
     const incompatible = new HostExternalSupervisor({
-      profilePath: '/p',
+      profilePath: PROFILE,
       probe: async () => ({ ...welcome, hostVersion: '1.9.6' }),
       resolveLaunch: async () => null
     })
@@ -142,7 +145,7 @@ describe('HostExternalSupervisor', () => {
     let release: (() => void) | undefined
     const spawn = vi.fn()
     const supervisor = new HostExternalSupervisor({
-      profilePath: '/p',
+      profilePath: PROFILE,
       probe: async () => {
         throw new Error('offline')
       },
@@ -174,7 +177,7 @@ describe('HostExternalSupervisor', () => {
       kill: vi.fn()
     }) as unknown as ChildProcess
     const supervisor = new HostExternalSupervisor({
-      profilePath: '/p',
+      profilePath: PROFILE,
       probe: vi.fn().mockRejectedValue(new Error('offline')),
       resolveLaunch: async () => ({
         executable: '/node',
@@ -205,7 +208,7 @@ describe('HostExternalSupervisor', () => {
       }) as unknown as ChildProcess
       const spawn = vi.fn(() => child)
       const supervisor = new HostExternalSupervisor({
-        profilePath: '/p',
+        profilePath: PROFILE,
         probe: async () => {
           throw new Error('offline')
         },
@@ -242,7 +245,7 @@ describe('HostExternalSupervisor', () => {
       .mockResolvedValueOnce({ welcome, payloadVersion: OLD_PAYLOAD })
       .mockResolvedValue({ welcome, payloadVersion: CURRENT_PAYLOAD })
     const supervisor = new HostExternalSupervisor({
-      profilePath: '/p',
+      profilePath: PROFILE,
       probe,
       resolveLaunch: async () => ({
         executable: '/node',

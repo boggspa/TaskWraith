@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { HostBootstrapWelcome } from '../../shared/hostProtocol'
@@ -9,6 +9,11 @@ import {
   consumePreparedExternalHost,
   publishPreparedExternalHost
 } from './HostExternalRuntimeState'
+
+// resolve() keeps the fixtures canonical on win32 too (assertProfile requires
+// resolve(profilePath) === profilePath, which a POSIX literal fails there).
+const PROFILE_A = resolve('/profiles/a')
+const PROFILE_B = resolve('/profiles/b')
 
 const welcome: HostBootstrapWelcome = {
   type: 'host.welcome',
@@ -53,7 +58,7 @@ describe('HostExternalRuntimeState', () => {
     const mutableWelcome = { ...welcome, capabilities: [...welcome.capabilities] }
     const result = { kind: 'existing' as const, welcome: mutableWelcome }
     const published = publishPreparedExternalHost({
-      profilePath: '/profiles/a',
+      profilePath: PROFILE_A,
       cutoverId: 'cutover-a',
       supervisor: owner,
       createSupervisor: () => owner,
@@ -62,16 +67,16 @@ describe('HostExternalRuntimeState', () => {
     mutableWelcome.capabilities.push('channels')
     expect(published.result.welcome.capabilities).not.toContain('channels')
     expect(published.createSupervisor()).toBe(owner)
-    expect(() => consumePreparedExternalHost('/profiles/b')).toThrow('does not match')
-    expect(consumePreparedExternalHost('/profiles/a')).toBe(published)
-    expect(consumePreparedExternalHost('/profiles/a')).toBeNull()
+    expect(() => consumePreparedExternalHost(PROFILE_B)).toThrow('does not match')
+    expect(consumePreparedExternalHost(PROFILE_A)).toBe(published)
+    expect(consumePreparedExternalHost(PROFILE_A)).toBeNull()
     expect(owner.close).not.toHaveBeenCalled()
   })
 
   it('fails closed for duplicate, non-production, and noncanonical preparations', () => {
     const owner = supervisor()
     publishPreparedExternalHost({
-      profilePath: '/profiles/a',
+      profilePath: PROFILE_A,
       cutoverId: 'cutover-a',
       supervisor: owner,
       createSupervisor: () => owner,
@@ -79,7 +84,7 @@ describe('HostExternalRuntimeState', () => {
     })
     expect(() =>
       publishPreparedExternalHost({
-        profilePath: '/profiles/a',
+        profilePath: PROFILE_A,
         cutoverId: 'cutover-b',
         supervisor: owner,
         createSupervisor: () => owner,
@@ -91,7 +96,7 @@ describe('HostExternalRuntimeState', () => {
     expect(owner.close).toHaveBeenCalledOnce()
     expect(() =>
       publishPreparedExternalHost({
-        profilePath: '/profiles/a',
+        profilePath: PROFILE_A,
         cutoverId: 'cutover-invalid',
         supervisor: owner,
         createSupervisor: () => owner,

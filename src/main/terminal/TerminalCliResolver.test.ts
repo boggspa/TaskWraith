@@ -12,7 +12,12 @@ describe('resolveInteractiveTerminalCli', () => {
       binaryPath: '/Users/dev/.kimi-code/bin/kimi'
     }))
 
-    const resolved = await resolveInteractiveTerminalCli('kimi', { resolveProviderBinary })
+    // The launch command is quoted per-platform; pin the POSIX branch so the
+    // expectation is deterministic on the Windows leg too.
+    const resolved = await resolveInteractiveTerminalCli('kimi', {
+      resolveProviderBinary,
+      platform: 'linux'
+    })
 
     expect(resolveProviderBinary).toHaveBeenCalledWith('kimi')
     expect(resolved).toMatchObject({
@@ -35,7 +40,7 @@ describe('resolveInteractiveTerminalCli', () => {
   })
 
   it('quotes POSIX and PowerShell executable paths', () => {
-    expect(buildInteractiveTerminalLaunchCommand("/opt/Chris's CLI/bin/kimi")).toBe(
+    expect(buildInteractiveTerminalLaunchCommand("/opt/Chris's CLI/bin/kimi", 'linux')).toBe(
       "'/opt/Chris'\\''s CLI/bin/kimi'"
     )
     expect(

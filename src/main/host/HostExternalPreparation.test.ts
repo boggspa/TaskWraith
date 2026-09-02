@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { HostProfileAuthorityLease } from '../../host-runtime/HostProfileAuthorityLease'
@@ -14,6 +14,10 @@ import { readDesktopWriterFence } from './LegacyStoreWriterGatePersistence'
 import type { PreparedExternalHost } from './HostExternalRuntimeState'
 import type { HostExternalSupervisor } from './HostExternalSupervisor'
 import { createHostExternalPreparation } from './HostExternalPreparation'
+
+// resolve() keeps the fixture canonical on win32 too (the preparation guard
+// requires resolve(profilePath) === profilePath, which a POSIX literal fails).
+const PROFILE_A = resolve('/profiles/a')
 
 const welcome: HostBootstrapWelcome = {
   type: 'host.welcome',
@@ -77,7 +81,7 @@ describe('HostExternalPreparation', () => {
       return input
     })
     const preparation = createHostExternalPreparation({
-      profilePath: '/profiles/a',
+      profilePath: PROFILE_A,
       migrateLegacyUserData: () => {
         order.push('migrate')
       },
@@ -94,7 +98,7 @@ describe('HostExternalPreparation', () => {
     })
 
     await expect(preparation.prepare()).resolves.toMatchObject({
-      profilePath: '/profiles/a',
+      profilePath: PROFILE_A,
       cutoverId: 'cutover-1',
       result: { kind: 'existing', welcome: { hostId: 'host-1', generation: 3 } }
     })
@@ -120,7 +124,7 @@ describe('HostExternalPreparation', () => {
       return true
     })
     const preparation = createHostExternalPreparation({
-      profilePath: '/profiles/a',
+      profilePath: PROFILE_A,
       migrateLegacyUserData: vi.fn(),
       writerGate: gate,
       createSupervisor: () => owner,
@@ -145,7 +149,7 @@ describe('HostExternalPreparation', () => {
     vi.mocked(owner.ensureAvailable).mockRejectedValueOnce(new Error('offline'))
     const shutdown = vi.fn()
     const preparation = createHostExternalPreparation({
-      profilePath: '/profiles/a',
+      profilePath: PROFILE_A,
       migrateLegacyUserData: vi.fn(),
       writerGate: gate,
       createSupervisor: () => owner,
@@ -170,7 +174,7 @@ describe('HostExternalPreparation', () => {
     const log = vi.fn()
     const owner = supervisor('launched')
     const preparation = createHostExternalPreparation({
-      profilePath: '/profiles/a',
+      profilePath: PROFILE_A,
       migrateLegacyUserData: vi.fn(),
       writerGate: {
         beginDrain: () => {

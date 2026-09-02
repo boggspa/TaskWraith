@@ -1,10 +1,14 @@
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { HostBootstrapWelcome } from '../../shared/hostProtocol'
 import type { HostExternalSupervisor } from './HostExternalSupervisor'
 import { createHostExternalLifecycleAdapter } from './HostExternalLifecycleAdapter'
+
+// resolve() keeps the fixture canonical on win32 too (the adapter guard
+// requires resolve(profilePath) === profilePath, which a POSIX literal fails).
+const PROFILE_A = resolve('/profiles/a')
 
 const welcome: HostBootstrapWelcome = {
   type: 'host.welcome',
@@ -44,7 +48,7 @@ describe('HostExternalLifecycleAdapter', () => {
   it('adopts prepared readiness without probing and projects independent health', async () => {
     const owner = supervisor()
     const adapter = createHostExternalLifecycleAdapter({
-      profilePath: '/profiles/a',
+      profilePath: PROFILE_A,
       supervisor: owner,
       preparedResult: { kind: 'launched', pid: 42, welcome }
     })
@@ -63,14 +67,14 @@ describe('HostExternalLifecycleAdapter', () => {
     const shutdown = vi.fn(async () => 'stopping' as const)
     const createShutdownClient = vi.fn(() => ({ shutdown }))
     const adapter = createHostExternalLifecycleAdapter({
-      profilePath: '/profiles/a',
+      profilePath: PROFILE_A,
       supervisor: owner,
       createShutdownClient
     })
     await adapter.start()
     await adapter.stop()
     expect(owner.ensureAvailable).toHaveBeenCalledOnce()
-    expect(createShutdownClient).toHaveBeenCalledWith('/profiles/a')
+    expect(createShutdownClient).toHaveBeenCalledWith(PROFILE_A)
     expect(shutdown).toHaveBeenCalledOnce()
     expect(owner.close).toHaveBeenCalledOnce()
     expect(adapter.isRunning).toBe(false)
@@ -84,7 +88,7 @@ describe('HostExternalLifecycleAdapter', () => {
       .mockRejectedValueOnce(new Error('lease remains'))
       .mockResolvedValueOnce('stopping')
     const adapter = createHostExternalLifecycleAdapter({
-      profilePath: '/profiles/a',
+      profilePath: PROFILE_A,
       supervisor: owner,
       createShutdownClient: () => ({ shutdown })
     })
@@ -101,7 +105,7 @@ describe('HostExternalLifecycleAdapter', () => {
     const owner = supervisor()
     const shutdown = vi.fn()
     const adapter = createHostExternalLifecycleAdapter({
-      profilePath: '/profiles/a',
+      profilePath: PROFILE_A,
       supervisor: owner,
       preparedResult: { kind: 'existing', welcome },
       createShutdownClient: () => ({ shutdown })
