@@ -29,7 +29,10 @@ describe('chat popout authority projection', () => {
   })
 
   it('wires detached capability reasons into the focused composer', () => {
-    const composerContextStart = appSource.indexOf('const composerCtx: ComposerProps =')
+    // Re-anchored after 5873079b5 gave composerCtx an intersection type.
+    const composerContextStart = appSource.indexOf(
+      'const composerCtx: ComposerProps & { onOpenCompactChat: () => void } ='
+    )
     const composerContextEnd = appSource.indexOf(
       'const activeWorkspaceBoard =',
       composerContextStart

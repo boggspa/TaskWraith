@@ -51,7 +51,11 @@ describe('Multiview focused workspace presentation', () => {
     expect(diffStats).toContain('if (focusedPrimaryGitSnapshot)')
     expect(diffStats).not.toContain('if (primaryGitSnapshot)')
 
-    const composer = slice('const composerCtx: ComposerProps =', 'const activeWorkspaceBoard =')
+    // Re-anchored after 5873079b5 gave composerCtx an intersection type.
+    const composer = slice(
+      'const composerCtx: ComposerProps & { onOpenCompactChat: () => void } =',
+      'const activeWorkspaceBoard ='
+    )
     expect(composer).toContain('currentWorkspace: focusedCurrentWorkspace')
     expect(composer).toContain('primaryGitSnapshot: focusedPrimaryGitSnapshot')
     expect(composer).toContain('setPrimaryGitSnapshot: setFocusedPrimaryGitSnapshot')
