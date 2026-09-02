@@ -6,13 +6,7 @@ TaskWraith's orchestration, local history, and workspace authority stay on your
 machine, while selected cloud providers still receive the prompt and run
 context needed to answer.
 
-## 1.9.7 - Unreleased
-
-> **Source-ahead refresh — 2026-09-02.** This refresh audits the source-ahead
-> state through `a090668f9`, 1136 commits after the shipped v1.9.6 boundary. The
-> highlights below describe that source-ahead work only; they are not a release
-> or artifact claim. The Emulator Canvas highlight below describes source-ahead
-> code, not a shipped or packaged-artifact feature.
+## 1.9.7 - 2026-09-02
 
 ### New Models and Provider Seats
 
@@ -32,7 +26,7 @@ context needed to answer.
   independent of K2.7 Coding's Standard/Highspeed Fast toggle; TaskWraith reads
   the installed Kimi catalog without inspecting provider credentials.
 
-### Emulator Canvas (source-ahead)
+### Emulator Canvas
 
 - **A fixed homebrew demo, not a ROM loader.** Canvas can now host one reviewed
   packaged homebrew demo in the active chat. Its agent reuses an attached live
@@ -97,6 +91,12 @@ context needed to answer.
   and audit trail still apply.
 - **Detached provider sign-in windows.** The TUI opens a provider's auth flow
   in a detached window, so long sign-ins no longer block the terminal session.
+- **The TUI names the model a thread actually runs.** Thread rows now carry the
+  thread's own model, reasoning effort, and permission preset instead of
+  borrowing the first inventory row, which had labelled every Mistral thread
+  as Codestral and let a blind Enter reconfigure it for real. Mistral Vibe
+  sessions resume across turns with their memory intact, and a failed run says
+  why on the transcript instead of a bare FAILED.
 - **Kimi MCP waits survive long tool calls.** MCP timeouts use the supported
   override, and long TaskWraith MCP waits are preserved instead of being cut
   short.
@@ -113,8 +113,8 @@ context needed to answer.
   `taskwraith` and `tw` to the TUI, carries the pure-Node production Host, and uses the installing
   machine's ordinary Node 22+ runtime without weakening the desktop package's pinned-runtime
   boundary. Its smoke test performs a disposable global install, renders demo and live Host
-  snapshots, and authenticates a clean Host shutdown. This is source-ahead packaging; no npm
-  publication is claimed here.
+  snapshots, and authenticates a clean Host shutdown. The package is not yet published to
+  npm.
 - **Execution Graphs now have an accountable owner.** Durable graph work binds
   to its owning thread, pauses instead of dispatching when ownership is absent,
   and delivers settled results to that thread exactly once. Work exposes the
@@ -145,9 +145,8 @@ context needed to answer.
 
 - **The companion follows current Host state.** iOS projection and presentation
   now reconcile Host liveness, active terminal runs, feedback actions, and
-  recovered transcript state without retaining retired surfaces. The current
-  source tree carries companion build 97; App Store/TestFlight distribution
-  remains separately gated by the release and cryptography-review process.
+  recovered transcript state without retaining retired surfaces. This release
+  ships companion build 98 to TestFlight.
 
 ## 1.9.6 - 2026-08-19
 
