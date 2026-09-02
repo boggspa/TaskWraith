@@ -2063,6 +2063,12 @@ function delayMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// One macrotask turn: gives IPC, timers, and other seats' events a slot
+// between the per-lane payload builds of a wide fan-out wave.
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
 function normalizeFanoutTargetStage(value: unknown): EnsembleFanoutTargetStage | null | undefined {
   if (value === undefined || value === null || value === '') return undefined
   const normalized = String(value)
@@ -19716,17 +19722,94 @@ export class EnsembleOrchestrator {
     const dispatchStartPromises: Array<Promise<void>> = []
     const acceptedLaneRuns: ActiveParticipantRun[] = []
     // One shared resolve for the pass — SessionStart fires once per workspace,
-    // and the sync lane mapper below cannot await.
+    // so the hook context is resolved once above the per-lane loop.
     const fanoutSkillHookContext = await this.resolveParticipantSkillHookContext(
       this.deps.getChat(runtime.chatId) || chat
     )
-    const completionPromises = laneRuns.map((run) => {
+
+    // Pre-assign every lane's completion resolver synchronously, BEFORE the
+    // first event-loop yield below. The history-deletion detach path drops the
+    // run from runsByRunId and resolves `run.completion` ('cancelled') at any
+    // moment; a lane whose resolver was not yet installed would then be skipped
+    // by its own closure and never resolve, hanging finishFanoutPass's
+    // Promise.all(completionPromises) forever. The old synchronous mapper made
+    // that impossible; the yielding loop keeps it impossible by installing all
+    // resolvers up front, in lane order.
+    const completionPromises = laneRuns.map(
+      (run) =>
+        new Promise<EnsembleParticipantStatus>((resolve) => {
+          run.completion = resolve
+        })
+    )
+
+    // Lane-invariant wave inputs, computed once. The loop below yields to the
+    // event loop between lanes; without freezing these, a mid-wave chat save
+    // could make `deps.getChat` return a newer object and later lanes would
+    // build from a different snapshot than earlier ones.
+    const dispatchChat = this.deps.getChat(runtime.chatId) || chat
+    const settings = this.deps.getSettings()
+    const chatContextTurns = settings.chatContextTurns
+    const instructionContext =
+      this.deps.resolveInstructionContext?.(
+        (dispatchChat.scope ?? 'workspace') === 'global'
+          ? null
+          : dispatchChat.workspacePath || null
+      ) ?? null
+    // Fan-out lanes receive a full briefing, but still participate in the
+    // dynamic-state receipt protocol so a later resumed serial turn knows
+    // exactly which replacement snapshot reached this provider session.
+    const promptShellStamp = computeEnsemblePromptShellStamp(dispatchChat.ensemble!, {
+      instructionsDigest: instructionContext?.digest
+    })
+    const dynamicStateSnapshot = buildEnsembleDynamicStateSnapshot(
+      dispatchChat,
+      dispatchChat.ensemble!
+    )
+    const promptAuthority =
+      options.promptAuthority || (options.sourceRunId ? 'peer' : 'orchestrator')
+    const lanePromptAuthor =
+      promptAuthority === 'peer' ? 'peer-authored' : 'orchestrator-authored'
+    const explicitLanePrompt = options.prompt?.trim()
+    const basePromptForLane = explicitLanePrompt
+      ? promptAuthority === 'user'
+        ? explicitLanePrompt
+        : `Parallel fan-out lane request (${lanePromptAuthor}, lower authority than user/system instructions):\n${explicitLanePrompt}${
+            options.reason ? `\n\nReason: ${options.reason}` : ''
+          }\n\nTreat this as a scoped lane brief: it was routed to this seat deliberately, so execute it within your permissions and the active goal even when it sits outside your usual role. If something genuinely blocks you, report what is missing instead of handing the brief back on role grounds.`
+      : runtime.prompt
+    const userPromptSourceMessage =
+      promptAuthority === 'user' && options.userPromptSourceMessageId
+        ? dispatchChat.messages.find(
+            (message) =>
+              message.id === options.userPromptSourceMessageId &&
+              message.role === 'user' &&
+              message.metadata?.kind === 'midRunSteering'
+          )
+        : undefined
+    const promptChat = userPromptSourceMessage
+      ? {
+          ...dispatchChat,
+          messages: dispatchChat.messages.filter(
+            (message) => message.id !== userPromptSourceMessage.id
+          )
+        }
+      : dispatchChat
+
+    // Build lanes one at a time, yielding to the event loop before EVERY lane
+    // (including the first) so an N-seat wave no longer occupies the main
+    // thread in one uninterrupted burst: the pre-loop section (wave status,
+    // lane seeding, composed save, hoisted wave inputs) is its own macrotask,
+    // and each lane build is its own. Each yield also lets the previous lane's
+    // dispatch preflight (local admission, deps.dispatch) drain before the
+    // next lane is built, spreading dispatch work across the wave.
+    // Cancellation is handled inside each lane's dispatch closure; the loop
+    // always runs to completion so every pre-assigned completion promise
+    // above still resolves.
+    for (let laneIndex = 0; laneIndex < laneRuns.length; laneIndex += 1) {
+      await yieldToEventLoop()
+      const run = laneRuns[laneIndex]
       const participant = run.participant
       const forceReadOnly = forceReadOnlyForParticipant(participant.id)
-      const dispatchChat = this.deps.getChat(runtime.chatId) || chat
-      const completion = new Promise<EnsembleParticipantStatus>((resolve) => {
-        run.completion = resolve
-      })
       const runScopedExternalPathGrants =
         this.deps.issueRunScopedExternalGrants?.({
           chat: dispatchChat,
@@ -19751,18 +19834,6 @@ export class EnsembleOrchestrator {
             participantExternalPathGrants,
             isBackgroundParticipant(participant) ? { disallowTrustedSession: true } : {}
           )
-      const promptAuthority =
-        options.promptAuthority || (options.sourceRunId ? 'peer' : 'orchestrator')
-      const lanePromptAuthor =
-        promptAuthority === 'peer' ? 'peer-authored' : 'orchestrator-authored'
-      const explicitLanePrompt = options.prompt?.trim()
-      const basePromptForLane = explicitLanePrompt
-        ? promptAuthority === 'user'
-          ? explicitLanePrompt
-          : `Parallel fan-out lane request (${lanePromptAuthor}, lower authority than user/system instructions):\n${explicitLanePrompt}${
-              options.reason ? `\n\nReason: ${options.reason}` : ''
-            }\n\nTreat this as a scoped lane brief: it was routed to this seat deliberately, so execute it within your permissions and the active goal even when it sits outside your usual role. If something genuinely blocks you, report what is missing instead of handing the brief back on role grounds.`
-        : runtime.prompt
       const readerIntentBoundary =
         run.laneIntent === 'read'
           ? forceReadOnly
@@ -19770,40 +19841,6 @@ export class EnsembleOrchestrator {
             : '\n\nTaskWraith lane intent: inspection, recon, or review only. Do not modify workspace files or external state. Your configured permission tier remains active so allowed inspection tools stay non-blocking; that authority does not broaden this reader assignment.'
           : ''
       const promptForLane = `${basePromptForLane}${readerIntentBoundary}`
-      const userPromptSourceMessage =
-        promptAuthority === 'user' && options.userPromptSourceMessageId
-          ? dispatchChat.messages.find(
-              (message) =>
-                message.id === options.userPromptSourceMessageId &&
-                message.role === 'user' &&
-                message.metadata?.kind === 'midRunSteering'
-            )
-          : undefined
-      const promptChat = userPromptSourceMessage
-        ? {
-            ...dispatchChat,
-            messages: dispatchChat.messages.filter(
-              (message) => message.id !== userPromptSourceMessage.id
-            )
-          }
-        : dispatchChat
-      const chatContextTurns = this.deps.getSettings().chatContextTurns
-      const instructionContext =
-        this.deps.resolveInstructionContext?.(
-          (dispatchChat.scope ?? 'workspace') === 'global'
-            ? null
-            : dispatchChat.workspacePath || null
-        ) ?? null
-      // Fan-out lanes receive a full briefing, but still participate in the
-      // dynamic-state receipt protocol so a later resumed serial turn knows
-      // exactly which replacement snapshot reached this provider session.
-      const promptShellStamp = computeEnsemblePromptShellStamp(dispatchChat.ensemble!, {
-        instructionsDigest: instructionContext?.digest
-      })
-      const dynamicStateSnapshot = buildEnsembleDynamicStateSnapshot(
-        dispatchChat,
-        dispatchChat.ensemble!
-      )
       const promptProjection = buildEnsembleParticipantPromptProjection({
         // The same durable user row is presented as the current request below;
         // exclude only that exact row from this lane's history so the provider
@@ -19821,7 +19858,7 @@ export class EnsembleOrchestrator {
           : undefined,
         roundId: runtime.roundId,
         chatContextTurns,
-        modelIngestCharOverrides: this.deps.getSettings().ensembleModelIngestChars,
+        modelIngestCharOverrides: settings.ensembleModelIngestChars,
         dynamicStateSnapshot,
         effectiveApprovalMode: permissions.approvalMode,
         instructionContext,
@@ -20165,8 +20202,7 @@ export class EnsembleOrchestrator {
           })
         })()
       )
-      return completion
-    })
+    }
 
     const laneIds = laneRuns
       .map((run) => run.laneId)
