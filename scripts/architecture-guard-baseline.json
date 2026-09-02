@@ -20,10 +20,6 @@
     },
     {
       "from": "src/renderer/src/App.tsx",
-      "to": "src/main/ollama/OllamaEnsembleContext"
-    },
-    {
-      "from": "src/renderer/src/App.tsx",
       "to": "src/main/providerChangeQueue"
     },
     {
@@ -97,10 +93,6 @@
     {
       "from": "src/renderer/src/lib/mentionHighlight.ts",
       "to": "src/main/services/EnsembleMentionAlias"
-    },
-    {
-      "from": "src/renderer/src/lib/multiviewEnsembleComposer.ts",
-      "to": "src/main/ollama/OllamaEnsembleContext"
     },
     {
       "from": "src/renderer/src/lib/multiviewWorkspaceIsolation.ts",

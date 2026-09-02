@@ -25,6 +25,9 @@
 import type { ChatMessage, ChatRecord, ChatRun } from './store/types'
 import { buildStaleRunSettlementNotice } from './RunFailureNotice'
 import type { StaleRunSettlementEntry } from './RunFailureNotice'
+import { isActiveChatRunStatus } from '../shared/chatRunStatus'
+
+export { isActiveChatRunStatus }
 
 /** Terminal status stamped onto a ChatRun settled by this reconciler. */
 export const CHAT_RUN_STALE_SETTLEMENT_STATUS = 'failed' as const
@@ -38,25 +41,6 @@ export const CHAT_RUN_STALE_EXIT_CODE = 1
  */
 export const CHAT_RUN_STALE_REASON =
   'Interrupted with no live RunManager session, bridge transcript, background sub-thread transcript, or non-terminal run-queue job.'
-
-/**
- * ChatRun statuses that project as "still active" on remote/task surfaces.
- * Mirrors `isActiveSubThreadRunStatus` plus `steer_promoting` / `cancelling`
- * so the universal reconciler is a strict superset of the sub-thread path.
- */
-const ACTIVE_CHAT_RUN_STATUSES = new Set([
-  'running',
-  'queued',
-  'starting',
-  'cancelling',
-  'steer_promoting',
-  'active',
-  'paused'
-])
-
-export function isActiveChatRunStatus(status: unknown): boolean {
-  return typeof status === 'string' && ACTIVE_CHAT_RUN_STATUSES.has(status)
-}
 
 export interface StaleChatRunSettlement {
   chatId: string

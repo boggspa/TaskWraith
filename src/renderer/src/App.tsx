@@ -48,10 +48,7 @@ import {
   beginComposerDraftSubmission,
   isAcceptedEnsembleSteerResult
 } from './lib/composerDraftSubmission'
-import {
-  composerDraftState,
-  useComposerDraftChatIds
-} from './hooks/useComposerDraft'
+import { composerDraftState, useComposerDraftChatIds } from './hooks/useComposerDraft'
 import { resolveSessionLinkRouting } from './lib/participantSessionLink'
 import { fetchForkCapability, forkAgentThreadUniversal } from './lib/universalFork'
 import { resolveRuntimePickerScope } from './lib/participantRuntimeProfile'
@@ -224,7 +221,7 @@ import type {
 // cancelling/steer_promoting/active/paused) — shared with main's
 // sealChatRunTerminalFields so the renderer's provider-exit seal repairs the
 // same ghost shapes main's reconciler does.
-import { isActiveChatRunStatus } from '../../main/ChatRunReconciler'
+import { isActiveChatRunStatus } from '../../shared/chatRunStatus'
 import type { NormalizedProviderUsageSnapshot } from '../../main/ProviderQuotaSnapshots'
 import { resolveEnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
 import {
@@ -976,10 +973,7 @@ import {
   cachedPaneRunCompleteNotice
 } from './lib/multiviewPaneDerivations'
 import { ChatViewPane, type ChatViewPaneChromeAction } from './components/ChatViewPane'
-import {
-  type ComposerProps,
-  type ComposerRunPromptRoutingReader
-} from './components/Composer'
+import { type ComposerProps, type ComposerRunPromptRoutingReader } from './components/Composer'
 import {
   buildDetachedChatSurfaceBase,
   ChatSurfaceComposerRuntime,
@@ -6989,13 +6983,14 @@ function App(): React.JSX.Element {
       // Stage 1b: oversized transcripts open as shell + tail page; anything
       // smaller hydrates in full exactly as before (the tail page IS the
       // whole transcript there). A missing page falls back to full hydration.
-      void (shouldPageTranscriptOnOpen(chat)
-        ? hydratePagedChatShell(chat.appChatId, chat).then((paged) =>
-            paged
-              ? applyPagedHydratedChat(paged.shell, paged.page)
-              : refreshSingleChat(chat.appChatId)
-          )
-        : refreshSingleChat(chat.appChatId)
+      void (
+        shouldPageTranscriptOnOpen(chat)
+          ? hydratePagedChatShell(chat.appChatId, chat).then((paged) =>
+              paged
+                ? applyPagedHydratedChat(paged.shell, paged.page)
+                : refreshSingleChat(chat.appChatId)
+            )
+          : refreshSingleChat(chat.appChatId)
       )
         .then((resolved) => {
           if (!resolved || currentChatIdRef.current !== resolved.appChatId) return
@@ -20450,9 +20445,7 @@ function App(): React.JSX.Element {
           ? responseAccepted
           : null
       const addedCommandRule =
-        responseAccepted &&
-        typeof responseAccepted === 'object' &&
-        responseAccepted.commandRule
+        responseAccepted && typeof responseAccepted === 'object' && responseAccepted.commandRule
           ? responseAccepted.commandRule
           : null
       setRawLogs((prev) => [
@@ -21251,14 +21244,7 @@ function App(): React.JSX.Element {
     const focusedChatId = currentChatIdRef.current || currentComposerChatId
     const exactPickerParticipantId =
       routing?.chatId === focusedChatId ? routing.exactPickerParticipantId : undefined
-    handleRun(
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      exactPickerParticipantId
-    )
+    handleRun(undefined, undefined, undefined, undefined, undefined, exactPickerParticipantId)
   }
 
   const keyboardActionsRef = useRef({
@@ -22249,7 +22235,6 @@ function App(): React.JSX.Element {
       updateEnsembleFanoutIsolationForChat
     ]
   )
-
 
   // 1.0.6 — persist the user-set max handoff turns for continuous rounds onto
   // chat.ensemble.maxContinuationHops. Range-clamped at the call site
@@ -23253,16 +23238,16 @@ function App(): React.JSX.Element {
   // a stable useCallback) so the callback identity stays stable for the
   // memoized composer prop bag.
   const compactChatContext = useCallback(
-      async (chatId: string | null, trigger: 'manual' | 'auto' = 'manual'): Promise<void> => {
-        let chat = chatId ? chatByIdRef.current.get(chatId) : null
-        // Paged shell (Stage 1b): escalate to the full canonical record before
-        // ANY compaction decision — never stamp provenance (coveredMessageIds /
-        // suppliedMessageIds) from a partial page. If hydration fails, skip
-        // this tick; the next one retries. TODO(main-side compaction IPC)
-        if (chat && isTranscriptPagedShell(chat)) {
-          chat = await refreshSingleChat(chat.appChatId)
-        }
-        if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
+    async (chatId: string | null, trigger: 'manual' | 'auto' = 'manual'): Promise<void> => {
+      let chat = chatId ? chatByIdRef.current.get(chatId) : null
+      // Paged shell (Stage 1b): escalate to the full canonical record before
+      // ANY compaction decision — never stamp provenance (coveredMessageIds /
+      // suppliedMessageIds) from a partial page. If hydration fails, skip
+      // this tick; the next one retries. TODO(main-side compaction IPC)
+      if (chat && isTranscriptPagedShell(chat)) {
+        chat = await refreshSingleChat(chat.appChatId)
+      }
+      if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
       const provider = getChatProvider(chat)
       // Path-B Cursor starts a fresh contained process and receives host-fed
       // context; it has no provider-native session compaction lever. This only

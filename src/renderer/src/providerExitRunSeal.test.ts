@@ -24,7 +24,7 @@ const appSource = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8')
 describe('provider-exit ChatRun seal hardening', () => {
   it('shares main’s active-status vocabulary for the exit seal', () => {
     expect(appSource).toContain(
-      "import { isActiveChatRunStatus } from '../../main/ChatRunReconciler'"
+      "import { isActiveChatRunStatus } from '../../shared/chatRunStatus'"
     )
   })
 
