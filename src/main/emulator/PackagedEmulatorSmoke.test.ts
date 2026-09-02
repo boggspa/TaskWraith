@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { CanvasEmulatorAtomicObservation } from '../canvas/CanvasEmulatorDriver'
@@ -99,8 +100,19 @@ function driverFixture(): { driver: PackagedEmulatorSmokeDriver; close: ReturnTy
 function smokeArgs(profile: string): string[] {
   return [
     PACKAGE_EMULATOR_SMOKE_ARG,
-    `${PACKAGE_EMULATOR_SMOKE_RESULT_ARG}${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}`
+    `${PACKAGE_EMULATOR_SMOKE_RESULT_ARG}${path.join(profile, PACKAGE_EMULATOR_SMOKE_RESULT_FILE)}`
   ]
+}
+
+/**
+ * Platform-built smoke profile. `resolvePackagedEmulatorSmokeLaunch` runs
+ * `path.resolve` over `userDataPath` and the argv-derived result path, so a
+ * POSIX `/private/tmp/...` literal resolves onto a Windows drive and no
+ * longer equals the fixture-built `resultPath`. Building the profile from
+ * `os.tmpdir()` keeps `resolve` the identity on every OS.
+ */
+function smokeProfile(label: string): string {
+  return path.resolve(os.tmpdir(), `taskwraith-tui-package-smoke-${label}`)
 }
 
 function smokePosture(profile: string) {
@@ -145,10 +157,10 @@ function memoryFileOps(initial: Readonly<Record<string, string>> = {}) {
 
 describe('PackagedEmulatorSmoke', () => {
   it('admits only the exact result filename inside the already-private smoke profile', () => {
-    const profile = '/private/tmp/taskwraith-tui-package-smoke-unit'
+    const profile = smokeProfile('unit')
     const argv = [
       PACKAGE_EMULATOR_SMOKE_ARG,
-      `${PACKAGE_EMULATOR_SMOKE_RESULT_ARG}${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}`
+      `${PACKAGE_EMULATOR_SMOKE_RESULT_ARG}${path.join(profile, PACKAGE_EMULATOR_SMOKE_RESULT_FILE)}`
     ]
     expect(
       resolvePackagedEmulatorSmokeLaunch(argv, {
@@ -158,10 +170,13 @@ describe('PackagedEmulatorSmoke', () => {
         appName: 'TaskWraith Package Smoke',
         userDataPath: profile
       })
-    ).toEqual({ resultPath: `${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}` })
+    ).toEqual({ resultPath: path.join(profile, PACKAGE_EMULATOR_SMOKE_RESULT_FILE) })
     expect(
       resolvePackagedEmulatorSmokeLaunch(
-        [PACKAGE_EMULATOR_SMOKE_ARG, `${PACKAGE_EMULATOR_SMOKE_RESULT_ARG}${profile}/other.json`],
+        [
+          PACKAGE_EMULATOR_SMOKE_ARG,
+          `${PACKAGE_EMULATOR_SMOKE_RESULT_ARG}${path.join(profile, 'other.json')}`
+        ],
         {
           kind: 'package-smoke',
           isPackaged: true,
@@ -301,9 +316,9 @@ describe('PackagedEmulatorSmoke', () => {
   })
 
   it('requires a live packaged main window before it constructs the driver', async () => {
-    const profile = '/private/tmp/taskwraith-tui-package-smoke-unavailable'
-    const resultPath = `${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}`
-    const temporaryPath = `${profile}/.${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}.unit.tmp`
+    const profile = smokeProfile('unavailable')
+    const resultPath = path.join(profile, PACKAGE_EMULATOR_SMOKE_RESULT_FILE)
+    const temporaryPath = path.join(profile, `.${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}.unit.tmp`)
     const memory = memoryFileOps()
     const exits: number[] = []
     const createDriver = vi.fn(() => driverFixture().driver)
@@ -328,9 +343,9 @@ describe('PackagedEmulatorSmoke', () => {
   })
 
   it('atomically publishes a safe success receipt, then exits zero', async () => {
-    const profile = '/private/tmp/taskwraith-tui-package-smoke-success'
-    const resultPath = `${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}`
-    const temporaryPath = `${profile}/.${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}.unit.tmp`
+    const profile = smokeProfile('success')
+    const resultPath = path.join(profile, PACKAGE_EMULATOR_SMOKE_RESULT_FILE)
+    const temporaryPath = path.join(profile, `.${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}.unit.tmp`)
     const memory = memoryFileOps({ [resultPath]: '{"old":true}' })
     const fixture = driverFixture()
     const exits: number[] = []
@@ -368,9 +383,9 @@ describe('PackagedEmulatorSmoke', () => {
   })
 
   it('publishes a bounded failure and exits one without persisting a raw runtime error', async () => {
-    const profile = '/private/tmp/taskwraith-tui-package-smoke-failure'
-    const resultPath = `${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}`
-    const temporaryPath = `${profile}/.${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}.unit.tmp`
+    const profile = smokeProfile('failure')
+    const resultPath = path.join(profile, PACKAGE_EMULATOR_SMOKE_RESULT_FILE)
+    const temporaryPath = path.join(profile, `.${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}.unit.tmp`)
     const memory = memoryFileOps()
     const exits: number[] = []
 
@@ -396,9 +411,9 @@ describe('PackagedEmulatorSmoke', () => {
   })
 
   it('logs a bounded failure line to the optional logger without widening the disk envelope', async () => {
-    const profile = '/private/tmp/taskwraith-tui-package-smoke-logged'
-    const resultPath = `${profile}/${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}`
-    const temporaryPath = `${profile}/.${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}.unit.tmp`
+    const profile = smokeProfile('logged')
+    const resultPath = path.join(profile, PACKAGE_EMULATOR_SMOKE_RESULT_FILE)
+    const temporaryPath = path.join(profile, `.${PACKAGE_EMULATOR_SMOKE_RESULT_FILE}.unit.tmp`)
     const memory = memoryFileOps()
     const exits: number[] = []
     const error = vi.fn()

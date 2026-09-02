@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import * as path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { CanvasHostSurface, CanvasSurfaceOptions } from '../canvas/CanvasHostSurface'
 import type { CanvasEmulatorRuntimeBridge } from '../canvas/CanvasEmulatorDriver'
@@ -129,8 +130,12 @@ describe('createEmulatorCanvasDriverFactory', () => {
     expect(first.kind).toBe('emulator')
     expect(second.kind).toBe('emulator')
     expect(loadBundle).toHaveBeenCalledTimes(1)
-    expect(loadBundle).toHaveBeenCalledWith('/repo/resources/emulator/homebrew-demo')
-    expect(loadPackage).toHaveBeenCalledWith('/repo/resources/emulator/homebrew-demo')
+    expect(loadBundle).toHaveBeenCalledWith(
+      path.resolve('/repo', 'resources', 'emulator', 'homebrew-demo')
+    )
+    expect(loadPackage).toHaveBeenCalledWith(
+      path.resolve('/repo', 'resources', 'emulator', 'homebrew-demo')
+    )
     expect(createSurface).toHaveBeenNthCalledWith(1, 'canvas-a', 42)
     expect(createSurface).toHaveBeenNthCalledWith(2, 'canvas-b', undefined)
     expect(instantiateSurface).not.toHaveBeenCalled()
@@ -186,12 +191,13 @@ describe('createEmulatorCanvasDriverFactory', () => {
     })
 
     createDriver({ sessionId: 'canvas-packaged', embedded: true })
-    expect(loadBundle).toHaveBeenCalledWith(
-      '/Applications/TaskWraith.app/Contents/Resources/emulator/homebrew-demo'
+    const packagedRoot = path.resolve(
+      '/Applications/TaskWraith.app/Contents/Resources',
+      'emulator',
+      'homebrew-demo'
     )
-    expect(loadPackage).toHaveBeenCalledWith(
-      '/Applications/TaskWraith.app/Contents/Resources/emulator/homebrew-demo'
-    )
+    expect(loadBundle).toHaveBeenCalledWith(packagedRoot)
+    expect(loadPackage).toHaveBeenCalledWith(packagedRoot)
   })
 
   it('rejects floating and unreviewed-game requests before loading assets', () => {

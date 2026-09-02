@@ -10,7 +10,7 @@ import {
 } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -106,7 +106,15 @@ const driver = require('./build-emulator-assets.cjs') as {
 const temporaryRoots: string[] = []
 
 function temporaryRoot(label: string): string {
-  const root = mkdtempSync(join(tmpdir(), `taskwraith-emulator-${label}-`))
+  // assertSafeOutputDirectory admits an output directory only when it is
+  // outside the repository. On win32 the GitHub runner keeps the repo on one
+  // drive and tmpdir() on another, and the build script's isInside() reads a
+  // cross-drive path.relative result (an absolute path) as "inside". Landing
+  // every fixture on the repository's own drive keeps the relative checks
+  // same-drive on all platforms. The cross-drive isInside() misclassification
+  // itself is reported as a product-defect suspect, not masked here.
+  const base = process.platform === 'win32' ? resolve(process.cwd(), '..', '..') : tmpdir()
+  const root = mkdtempSync(join(base, `taskwraith-emulator-${label}-`))
   temporaryRoots.push(root)
   return root
 }
@@ -304,7 +312,7 @@ describe('emulator source/build receipt', () => {
       })
     ).toThrow(/not the recorded Emscripten source commit/)
     expect(calls).toHaveLength(1)
-    expect(calls[0]).toMatch(/git -C .*\/emscripten rev-parse HEAD/)
+    expect(calls[0]).toMatch(/git -C .*[\\/]emscripten rev-parse HEAD/)
   })
 
   it('requires an empty external output directory and retains the exact core/link plan', () => {

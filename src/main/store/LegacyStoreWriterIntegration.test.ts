@@ -46,12 +46,16 @@ function snapshotTree(root: string): unknown[] {
  * byte-for-byte comparison, contents included.
  */
 function legacyBytes(rows: unknown[]): unknown[] {
+  const transferPrefix = `${HOST_THREAD_RECORD_TRANSFER_DIRECTORY}${path.sep}`
   return rows.filter((row) => {
     const relative = (row as { relative: string }).relative
     return (
       relative !== '.' &&
       relative !== HOST_THREAD_RECORD_TRANSFER_DIRECTORY &&
-      !relative.startsWith(`${HOST_THREAD_RECORD_TRANSFER_DIRECTORY}/`)
+      // path.relative emits native separators: on win32 a '/'-joined prefix
+      // never matches and the staged Host transfer artifact leaks into the
+      // comparison.
+      !relative.startsWith(transferPrefix)
     )
   })
 }

@@ -252,7 +252,7 @@ describe('emulator package descriptor', () => {
     expect(() => loadEmulatorPackageManifest(root)).toThrow(/invalid JSON/)
   })
 
-  it('fails closed for descriptor symlinks, oversize files, truncation, and path swaps', () => {
+  it('fails closed for descriptor symlinks, oversize files, and truncation', () => {
     const root = temporaryBundleRoot()
     const runtimeBundle = bundle(root)
     const valid = descriptor(runtimeBundle.manifest.assets[1].sha256)
@@ -283,27 +283,38 @@ describe('emulator package descriptor', () => {
         })
       )
     ).toThrow(/changed while it was being read/)
-
-    writeDescriptor(root, valid)
-    const replacement = path.join(root, 'replacement.json')
-    fs.writeFileSync(replacement, `${JSON.stringify(valid, null, 2)}\n`)
-    firstFstat = true
-    expect(() =>
-      loadEmulatorPackageManifest(
-        root,
-        fileSystem({
-          fstatSync: (fd) => {
-            const stat = fs.fstatSync(fd)
-            if (firstFstat) {
-              firstFstat = false
-              fs.renameSync(replacement, descriptorPath)
-            }
-            return stat
-          }
-        })
-      )
-    ).toThrow(/changed while it was being read/)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'detects a descriptor path swap while it is being read',
+    () => {
+      // Rename-over-open file replacement is not expressible on win32: the
+      // open descriptor holds the name and renameSync fails with EPERM, so the
+      // swap mechanism itself throws before the reader can observe it.
+      const root = temporaryBundleRoot()
+      const runtimeBundle = bundle(root)
+      const valid = descriptor(runtimeBundle.manifest.assets[1].sha256)
+      const descriptorPath = writeDescriptor(root, valid)
+      const replacement = path.join(root, 'replacement.json')
+      fs.writeFileSync(replacement, `${JSON.stringify(valid, null, 2)}\n`)
+      let firstFstat = true
+      expect(() =>
+        loadEmulatorPackageManifest(
+          root,
+          fileSystem({
+            fstatSync: (fd) => {
+              const stat = fs.fstatSync(fd)
+              if (firstFstat) {
+                firstFstat = false
+                fs.renameSync(replacement, descriptorPath)
+              }
+              return stat
+            }
+          })
+        )
+      ).toThrow(/changed while it was being read/)
+    }
+  )
 
   it('rejects a root replacement after the descriptor read', () => {
     const root = temporaryBundleRoot()

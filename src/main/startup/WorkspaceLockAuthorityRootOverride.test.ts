@@ -1,3 +1,5 @@
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { workspaceLockAuthorityRootForHome } from '../WorkspaceLockRuntime'
@@ -21,13 +23,18 @@ describe('resolveWorkspaceLockAuthorityRoot', () => {
   })
 
   it('honours an absolute isolated root outside a packaged build', () => {
+    // The resolver requires the override to already be normalized: on win32 a
+    // POSIX `/tmp/...` literal normalizes to a drive-less path that resolve()
+    // then rebases onto the cwd drive. A tmpdir()-derived absolute path is
+    // already normalized on every OS, so resolve(normalize(x)) === x holds.
+    const isolatedRoot = path.resolve(os.tmpdir(), 'tw-perf', 'authority-a')
     expect(
       resolveWorkspaceLockAuthorityRoot({
         homePath: home,
-        override: '/tmp/tw-perf/authority-a',
+        override: isolatedRoot,
         isPackaged: false
       })
-    ).toEqual({ root: '/tmp/tw-perf/authority-a', overridden: true })
+    ).toEqual({ root: isolatedRoot, overridden: true })
   })
 
   it('refuses the override in a packaged build', () => {
@@ -81,7 +88,13 @@ describe('resolveWorkspaceLockAuthorityRoot', () => {
   })
 
   it('refuses a filesystem root or a single top-level directory', () => {
-    for (const override of ['/', '/tmp']) {
+    // Platform roots so the normalization gate passes on win32 too: the drive
+    // root ('C:\\') is both the filesystem root and the single top-level
+    // directory, so the second POSIX case only exists where '/' + '/tmp' do.
+    const fsRoot = path.parse(process.cwd()).root
+    const cases = [fsRoot]
+    if (process.platform !== 'win32') cases.push(path.join(fsRoot, 'tmp'))
+    for (const override of cases) {
       expect(() =>
         resolveWorkspaceLockAuthorityRoot({ homePath: home, override, isPackaged: false })
       ).toThrow(/dedicated directory/)

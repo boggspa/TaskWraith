@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import os from 'node:os'
+import path from 'node:path'
 
 describe('ElectronStoreRuntimeCompatibility', () => {
   afterEach(() => {
@@ -7,7 +9,10 @@ describe('ElectronStoreRuntimeCompatibility', () => {
   })
 
   it('installs Electron profile, safe-storage, and version ports before store/index evaluates', async () => {
-    const profilePath = '/tmp/taskwraith-electron-store-runtime'
+    // Platform-built so the runtime's own path.resolve over the profile path
+    // is the identity on every OS; a POSIX `/tmp/...` literal resolves onto a
+    // Windows drive and no longer equals the fixture value.
+    const profilePath = path.resolve(os.tmpdir(), 'taskwraith-electron-store-runtime')
     const secureStorage = {
       isEncryptionAvailable: () => true,
       encryptString: (plain: string) => Buffer.from(`electron:${plain}`, 'utf8'),

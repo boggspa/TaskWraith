@@ -254,20 +254,22 @@ describe('homebrew emulator package layout', () => {
     )
     expect(builder.match(/from: resources\/emulator/g)).toHaveLength(1)
     expect(filesBlock).not.toMatch(/^\s*-\s+'resources\/emulator\//m)
+    // emulatorAssetRoot joins onto path.resolve of its inputs, so expectations
+    // are built with the same path APIs rather than POSIX string literals.
     expect(
       emulatorAssetRoot({
         appPath: '/repo',
         resourcesPath: '/Applications/TaskWraith.app/Contents/Resources',
         isPackaged: false
       })
-    ).toBe('/repo/resources/emulator')
+    ).toBe(path.resolve('/repo', 'resources', 'emulator'))
     expect(
       emulatorAssetRoot({
         appPath: '/repo',
         resourcesPath: '/Applications/TaskWraith.app/Contents/Resources',
         isPackaged: true
       })
-    ).toBe('/Applications/TaskWraith.app/Contents/Resources/emulator')
+    ).toBe(path.resolve('/Applications/TaskWraith.app/Contents/Resources', 'emulator'))
   })
 
   it('keeps the browser facade strict, serialized, and protocol-CSP-governed', () => {

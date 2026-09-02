@@ -133,31 +133,37 @@ describe('getChats({ listShells: true }) background sweep', () => {
     expect(shell.delegationContext?.lifecycle).toBe('ephemeral')
   })
 
-  it.skipIf(runningAsRoot)('never opens the chat file when the index vouches for it', () => {
-    const saved = persistChat('ws-1', {})
-    AppStore.clearChatRecordCacheForTests()
-    // stat() still answers (that needs the directory, not the file), so the
-    // index can vouch — but nothing can read the bytes any more. readJson
-    // reports every failed open, which turns "did it open the file?" into a
-    // positive observation rather than an argument from silence.
-    fs.chmodSync(chatPath(saved.appChatId), 0o000)
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const failedOpens = (): number =>
-      consoleError.mock.calls.filter((call) =>
-        call.some((arg) => String(arg).includes(saved.appChatId))
-      ).length
-    try {
-      const shell = findRow(shellSweep(), saved.appChatId)
-      expect(isShell(shell)).toBe(true)
-      expect(shell.title).toBe(saved.title)
-      expect(failedOpens()).toBe(0)
-      // The canonical read has to open the file, and cannot.
-      expect(AppStore.getChats().some((chat) => chat.appChatId === saved.appChatId)).toBe(false)
-      expect(failedOpens()).toBeGreaterThan(0)
-    } finally {
-      consoleError.mockRestore()
+  // chmod 0o000 semantics do not exist on win32: the ACL ignores POSIX mode
+  // bits, so the file stays readable and the canonical read cannot be made to
+  // fail. The unreadable-file contrast is inherently POSIX behaviour.
+  it.skipIf(runningAsRoot || process.platform === 'win32')(
+    'never opens the chat file when the index vouches for it',
+    () => {
+      const saved = persistChat('ws-1', {})
+      AppStore.clearChatRecordCacheForTests()
+      // stat() still answers (that needs the directory, not the file), so the
+      // index can vouch — but nothing can read the bytes any more. readJson
+      // reports every failed open, which turns "did it open the file?" into a
+      // positive observation rather than an argument from silence.
+      fs.chmodSync(chatPath(saved.appChatId), 0o000)
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const failedOpens = (): number =>
+        consoleError.mock.calls.filter((call) =>
+          call.some((arg) => String(arg).includes(saved.appChatId))
+        ).length
+      try {
+        const shell = findRow(shellSweep(), saved.appChatId)
+        expect(isShell(shell)).toBe(true)
+        expect(shell.title).toBe(saved.title)
+        expect(failedOpens()).toBe(0)
+        // The canonical read has to open the file, and cannot.
+        expect(AppStore.getChats().some((chat) => chat.appChatId === saved.appChatId)).toBe(false)
+        expect(failedOpens()).toBeGreaterThan(0)
+      } finally {
+        consoleError.mockRestore()
+      }
     }
-  })
+  )
 
   it('falls back to the canonical read when the file no longer matches the index stat pair', () => {
     const saved = persistChat('ws-1', {})

@@ -182,19 +182,21 @@ describe('EmulatorAssetManifest', () => {
   })
 
   it('resolves dev and packaged public resource roots without claiming that either exists', () => {
+    // emulatorAssetRoot joins onto path.resolve of its inputs, so expectations
+    // are built with the same path APIs rather than POSIX string literals.
     expect(
       emulatorAssetRoot({
         appPath: '/repo',
         resourcesPath: '/Applications/TaskWraith.app/Contents/Resources',
         isPackaged: false
       })
-    ).toBe('/repo/resources/emulator')
+    ).toBe(path.resolve('/repo', 'resources', 'emulator'))
     expect(
       emulatorAssetRoot({
         appPath: '/repo',
         resourcesPath: '/Applications/TaskWraith.app/Contents/Resources',
         isPackaged: true
       })
-    ).toBe('/Applications/TaskWraith.app/Contents/Resources/emulator')
+    ).toBe(path.resolve('/Applications/TaskWraith.app/Contents/Resources', 'emulator'))
   })
 })
