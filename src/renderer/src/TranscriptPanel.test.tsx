@@ -1797,6 +1797,168 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('The worker turn has begun.')
   })
 
+  it('folds every wave to its own one-liner when the dispatch receipts are hidden as routine notices', () => {
+    // Production receipt wording — this is what `isRedundantEnsembleTranscriptNotice`
+    // hides, unlike the "read-only participants" phrasing of the test above.
+    // Hiding the receipt must not starve the fold of its anchor: each settled
+    // wave still folds to its own one-liner at the receipt's position, a live
+    // later wave leaves the settled ones folded, and the receipt itself never
+    // renders.
+    const roundId = 'round-hidden-receipts'
+    const receipt = (id: string, waveId: string): ChatMessage => ({
+      id,
+      role: 'system',
+      content:
+        'Locked writer fan-out · 1 participant(s) dispatched concurrently (0 read / 1 write-intent).',
+      timestamp: '2026-09-02T19:00:00.000Z',
+      metadata: {
+        kind: 'ensembleRoundStatus',
+        ensembleRoundId: roundId,
+        ensembleFanoutWaveId: waveId,
+        ensembleFanoutCategory: 'orchestrated',
+        ensembleFanoutLabel: 'Locked writer fan-out',
+        ensembleFanoutDispatch: {
+          label: 'Locked writer fan-out',
+          category: 'orchestrated',
+          participants: [
+            {
+              participantId: 'work-1',
+              provider: 'pi',
+              role: 'Work1',
+              model: 'mimo-v2.5-pro',
+              intent: 'write'
+            }
+          ]
+        }
+      }
+    })
+    const lane = (
+      id: string,
+      waveId: string,
+      attempt: number,
+      status: string,
+      content: string
+    ): ChatMessage => ({
+      id,
+      role: 'assistant',
+      content,
+      timestamp: '2026-09-02T19:00:01.000Z',
+      runId: `run-${id}`,
+      metadata: {
+        kind: 'ensembleParticipant',
+        ensembleRoundId: roundId,
+        ensembleParticipantId: 'work-1',
+        ensembleLaneId: `lane-${roundId}-work-1-${attempt}`,
+        ensembleLaneIntent: 'write',
+        ensembleFanoutWaveId: waveId,
+        ensembleFanoutLabel: 'Locked writer fan-out',
+        ensembleFanoutCategory: 'orchestrated',
+        ensembleProvider: 'pi',
+        ensembleRole: 'Work1',
+        ensembleStageRole: 'worker',
+        ensembleModel: 'mimo-v2.5-pro',
+        ensembleStatus: status,
+        ensembleOrder: 11
+      }
+    })
+    const orchestratorTurn = (id: string, content: string): ChatMessage => ({
+      id,
+      role: 'assistant',
+      content,
+      timestamp: '2026-09-02T19:00:02.000Z',
+      runId: `run-${id}`,
+      metadata: {
+        kind: 'ensembleParticipant',
+        ensembleRoundId: roundId,
+        ensembleParticipantId: 'orchestrator',
+        ensembleProvider: 'claude',
+        ensembleRole: 'Orchestrator',
+        ensembleStatus: 'answered'
+      }
+    })
+    const prompt: ChatMessage = {
+      id: 'hidden-receipt-prompt',
+      role: 'user',
+      content: 'Fix the fold.',
+      timestamp: '2026-09-02T18:59:59.000Z',
+      metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: roundId }
+    }
+    const render = (messages: ChatMessage[]): string =>
+      renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            collapseOlderRounds: true,
+            currentChat: {
+              appChatId: 'hidden-receipt-chat',
+              title: 'Hidden receipts',
+              chatKind: 'ensemble',
+              provider: 'claude',
+              createdAt: 0,
+              updatedAt: 0,
+              archived: false,
+              messages,
+              runs: [],
+              ensemble: {
+                enabled: true,
+                maxParticipants: 2,
+                participants: [],
+                activeRound: {
+                  roundId,
+                  status: 'running',
+                  prompt: 'Fix the fold.',
+                  startedAt: '2026-09-02T19:00:00.000Z',
+                  activeParticipantId: 'orchestrator',
+                  participants: [
+                    {
+                      participantId: 'orchestrator',
+                      provider: 'claude',
+                      role: 'Orchestrator',
+                      order: 1,
+                      status: 'running'
+                    }
+                  ]
+                }
+              }
+            } as ChatRecord,
+            messages
+          })}
+        />
+      )
+
+    const secondWaveLive = render([
+      prompt,
+      receipt('receipt-a', 'wave-a'),
+      lane('lane-a', 'wave-a', 1, 'answered', 'WAVE_A_LANE_MARKER'),
+      orchestratorTurn('orchestrator-1', 'ORCHESTRATOR_BETWEEN_WAVES'),
+      receipt('receipt-b', 'wave-b'),
+      lane('lane-b', 'wave-b', 2, 'running', 'WAVE_B_LANE_MARKER')
+    ])
+    // Wave A is a one-liner, wave B is a live card, and neither receipt renders.
+    expect(secondWaveLive.match(/data-fanout-stage="work"/g)).toHaveLength(1)
+    expect(secondWaveLive).not.toContain('WAVE_A_LANE_MARKER')
+    expect(secondWaveLive).toContain('WAVE_B_LANE_MARKER')
+    expect(secondWaveLive.match(/ensemble-fanout-result-card/g)).toHaveLength(1)
+    expect(secondWaveLive).not.toContain('ensemble-fanout-dispatch-message')
+    expect(secondWaveLive).not.toContain('dispatched concurrently')
+
+    const secondWaveSettled = render([
+      prompt,
+      receipt('receipt-a', 'wave-a'),
+      lane('lane-a', 'wave-a', 1, 'answered', 'WAVE_A_LANE_MARKER'),
+      orchestratorTurn('orchestrator-1', 'ORCHESTRATOR_BETWEEN_WAVES'),
+      receipt('receipt-b', 'wave-b'),
+      lane('lane-b', 'wave-b', 2, 'answered', 'WAVE_B_LANE_MARKER'),
+      orchestratorTurn('orchestrator-2', 'ORCHESTRATOR_AFTER_WAVES')
+    ])
+    // Both waves fold, each to its OWN one-liner — never one merged handle.
+    expect(secondWaveSettled.match(/data-fanout-stage="work"/g)).toHaveLength(2)
+    expect(secondWaveSettled).not.toContain('WAVE_A_LANE_MARKER')
+    expect(secondWaveSettled).not.toContain('WAVE_B_LANE_MARKER')
+    expect(secondWaveSettled).not.toContain('ensemble-fanout-result-card')
+    expect(secondWaveSettled).toContain('ORCHESTRATOR_AFTER_WAVES')
+  })
+
   it('folds a complete parallel-result wave under a Sub-thread viewport header', () => {
     const messages: ChatMessage[] = [
       {

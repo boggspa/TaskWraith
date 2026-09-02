@@ -218,6 +218,7 @@ import {
   resolveFanoutLaneLayout
 } from '../lib/fanoutLanePairing'
 import { buildFanoutLaneJumpTargets } from '../lib/fanoutLaneJumpTargets'
+import { hideRedundantEnsembleTranscriptNotices } from '../lib/transcriptRedundantNotices'
 import {
   isEnsembleFanoutLaneWorking,
   isEnsembleFanoutResultMessage
@@ -273,7 +274,6 @@ import {
 } from '../../../shared/contextWindows'
 import { CONTEXT_PRESSURE_WARN_PERCENT } from '../../../shared/contextCompaction'
 import type { ContextCompactionProgressEvent } from '../../../shared/contextCompaction'
-import { isRedundantEnsembleTranscriptNotice } from '../../../shared/ensembleTranscriptNoise'
 import { ProviderRunFailureCard } from './ProviderRunFailureCard'
 import { SeatChangeRow } from './SeatChangeRow'
 import { ContinuationHopsChangeRow } from './ContinuationHopsChangeRow'
@@ -2830,8 +2830,11 @@ export const TranscriptPanel = memo(
     )
     const visibleMessages = useMemo(() => {
       if (isWelcomeChat) return EMPTY_CHAT_MESSAGES
-      // Queued-run cards and routine Ensemble routing receipts were removed
-      // from the transcript; keep historical records equally quiet.
+      // Queued-run cards were removed from the transcript; keep historical
+      // records equally quiet. Routine Ensemble receipts are NOT dropped here:
+      // a fan-out dispatch receipt is the anchor the wave fold replaces with
+      // its one-liner, so it must reach the fold and leaves the transcript at
+      // `displayMessages` instead.
       return resolvedMessages.filter(
         (message) =>
           message?.metadata?.kind !== 'queuedRunRequest' &&
@@ -2839,8 +2842,7 @@ export const TranscriptPanel = memo(
           !(
             isExecutionResultMessage(message) &&
             liveOwnedExecutionIds.has(executionResultExecutionId(message) || '')
-          ) &&
-          !isRedundantEnsembleTranscriptNotice(message)
+          )
       )
     }, [isWelcomeChat, liveOwnedExecutionIds, resolvedMessages])
     const hasLiveContextCompactionProgress = useMemo(
@@ -3785,7 +3787,17 @@ export const TranscriptPanel = memo(
     // "Load previous / next page" boundary rows. The window grows as the reader
     // approaches either edge, so everything in this list is real history and the
     // row indices below never straddle a fake row.
-    const displayMessages = roundDisplayMessages
+    // Routine Ensemble receipts leave the transcript HERE, after the folds. A
+    // fan-out dispatch receipt is the anchor `buildEnsembleFanoutViewportRanges`
+    // replaces with the wave's one-liner, so it has to reach the fold intact;
+    // by now a folded receipt is a viewport header and an unfolded (live) one
+    // is dropped. Filtering it out of `visibleMessages` instead (2026-09-01)
+    // left every wave anchorless: one legacy group per round, no fold while any
+    // lane was live, and later waves' cards vanishing into the first one-liner.
+    const displayMessages = useMemo(
+      () => hideRedundantEnsembleTranscriptNotices(roundDisplayMessages),
+      [roundDisplayMessages]
+    )
     const blackboardUpdateStackProjection = useMemo(
       () => projectBlackboardUpdateStacks(displayMessages),
       [displayMessages]
