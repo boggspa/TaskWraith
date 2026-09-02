@@ -368,13 +368,7 @@ describe('createMcpToolApprovalPreviewer', () => {
   it('routes canvas_open(driver=device) to simulatorCanvas, not mcpTools', () => {
     const previewer = createMcpToolApprovalPreviewer(dependencies())
     expect(
-      previewer(
-        'canvas_open',
-        { url: 'http://localhost:3000' },
-        '/repo',
-        context,
-        'claude'
-      ).service
+      previewer('canvas_open', { url: 'http://localhost:3000' }, '/repo', context, 'claude').service
     ).toBe('mcpTools')
     expect(
       previewer(

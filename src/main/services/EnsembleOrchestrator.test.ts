@@ -117,9 +117,7 @@ function buildActiveGoal(id: string): ActiveGoal {
   }
 }
 
-function antigravityGoalCompletionSignal(
-  summary = 'Verified every requested check.'
-): string {
+function antigravityGoalCompletionSignal(summary = 'Verified every requested check.'): string {
   return `${ANTIGRAVITY_GOAL_COMPLETE_FALLBACK_PREFIX}${JSON.stringify({
     summary
   })}`
@@ -2482,7 +2480,11 @@ describe('EnsembleOrchestrator', () => {
       type: 'tool_use',
       tool_id: 'agy-replace',
       tool_name: 'replace_file_content',
-      parameters: { TargetFile: 'src/a.ts', TargetContent: 'before', ReplacementContent: 'after\nnext' }
+      parameters: {
+        TargetFile: 'src/a.ts',
+        TargetContent: 'before',
+        ReplacementContent: 'after\nnext'
+      }
     })
     harness.orchestrator.handleProviderOutput('antigravity', route, {
       type: 'tool_result',
@@ -5872,12 +5874,10 @@ Next action:
     expect(synthesis.ensembleRun?.participantId).toBe('codex')
     expect(synthesis.prompt).toContain('TaskWraith final synthesis pass')
     expect(synthesis.prompt).toContain('do not start new implementation work')
-    expect(
-      harness.chat.runs.find((run) => run.runId === synthesis.appRunId)
-    ).toMatchObject({ ensembleSynthesisTurn: true })
-    expect(harness.chat.ensemble?.activeRound?.synthesisAttemptedAt).toEqual(
-      expect.any(String)
-    )
+    expect(harness.chat.runs.find((run) => run.runId === synthesis.appRunId)).toMatchObject({
+      ensembleSynthesisTurn: true
+    })
+    expect(harness.chat.ensemble?.activeRound?.synthesisAttemptedAt).toEqual(expect.any(String))
 
     harness.orchestrator.handleProviderOutput(
       'codex',
@@ -8423,11 +8423,7 @@ Next action:
     // Queueing was the Boss's routing decision; the explicit user yield ends
     // the round before another pass forms, so the queue dies unapplied.
     expectYielded(
-      harness.orchestrator.markYielded(
-        harness.dispatched[0].appRunId!,
-        'Stopping here.',
-        'user'
-      )
+      harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Stopping here.', 'user')
     )
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched).toHaveLength(1)
@@ -9262,9 +9258,7 @@ Next action:
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].prompt).toContain('Boss/Captain control state:')
-    expect(harness.dispatched[1].prompt).toContain(
-      'Execution plan: Ship the control primitives'
-    )
+    expect(harness.dispatched[1].prompt).toContain('Execution plan: Ship the control primitives')
     expect(harness.dispatched[1].prompt).toContain('Assignments:')
     expect(harness.dispatched[1].prompt).toContain('Implement the worker-owned slice.')
     expect(harness.dispatched[1].prompt).toContain('Decisions:')
@@ -10039,10 +10033,9 @@ Next action:
       completeDispatchedRun(harness, 0)
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
       expect(harness.dispatched[1].ensembleRun?.participantId).toBe('codex')
-      const bossStatusBeforeReview =
-        harness.chat.ensemble?.activeRound?.participants.find(
-          (participant) => participant.participantId === 'claude'
-        )?.status
+      const bossStatusBeforeReview = harness.chat.ensemble?.activeRound?.participants.find(
+        (participant) => participant.participantId === 'claude'
+      )?.status
       expect(bossStatusBeforeReview).toBe('answered')
 
       const decision = harness.orchestrator.requestBossApprovalReview({
@@ -10107,9 +10100,8 @@ Next action:
         }
       })
       expect(
-        harness.chat.ensemble?.bossmanControlState?.polls?.find(
-          (entry) => entry.id === poll!.id
-        )?.status
+        harness.chat.ensemble?.bossmanControlState?.polls?.find((entry) => entry.id === poll!.id)
+          ?.status
       ).toBe('closed')
 
       completeDispatchedRun(harness, 2)
@@ -13813,9 +13805,7 @@ Next action:
         { type: 'result', status: 'success', stats: { total_tokens: 10 } }
       )
       await vi.waitFor(() =>
-        expect(harness.dispatched.length).toBeGreaterThan(
-          harness.dispatched.indexOf(pending) + 0
-        )
+        expect(harness.dispatched.length).toBeGreaterThan(harness.dispatched.indexOf(pending) + 0)
       )
       await new Promise((resolve) => setTimeout(resolve, 0))
     }
@@ -17180,8 +17170,7 @@ Next action:
     expect(
       harness.chat.messages.some(
         (message) =>
-          typeof message.content === 'string' &&
-          message.content.includes('extra turn appended')
+          typeof message.content === 'string' && message.content.includes('extra turn appended')
       )
     ).toBe(false)
   })
@@ -17779,9 +17768,9 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     const synthesis = harness.dispatched[2]
     expect(synthesis.ensembleRun?.participantId).toBe('fixman')
-    expect(
-      harness.chat.runs.find((run) => run.runId === synthesis.appRunId)
-    ).toMatchObject({ ensembleSynthesisTurn: true })
+    expect(harness.chat.runs.find((run) => run.runId === synthesis.appRunId)).toMatchObject({
+      ensembleSynthesisTurn: true
+    })
     harness.orchestrator.handleProviderOutput(
       'codex',
       { appRunId: synthesis.appRunId, appChatId: 'ensemble-chat' },
@@ -18135,62 +18124,62 @@ Next action:
   it.each(['kimi-k3', 'kimi-k3-256k'])(
     'dispatches %s effort with thinking on and rejects a stale Fast tier',
     async (model) => {
-    const harness = makeHarness()
-    harness.chat.ensemble!.participants = [
-      {
-        id: 'kimi-reviewer',
+      const harness = makeHarness()
+      harness.chat.ensemble!.participants = [
+        {
+          id: 'kimi-reviewer',
+          provider: 'kimi',
+          enabled: true,
+          role: 'Reviewer',
+          instructions: 'Review.',
+          order: 1,
+          model,
+          permissionPresetId: 'read_only',
+          reasoningEffort: 'high',
+          thinkingEnabled: false,
+          fastModeEnabled: true
+        }
+      ]
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Review deeply.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      expect(harness.dispatched[0]).toMatchObject({
         provider: 'kimi',
-        enabled: true,
-        role: 'Reviewer',
-        instructions: 'Review.',
-        order: 1,
-        model,
-        permissionPresetId: 'read_only',
         reasoningEffort: 'high',
-        thinkingEnabled: false,
-        fastModeEnabled: true
-      }
-    ]
-    harness.orchestrator.startRound({
-      chatId: 'ensemble-chat',
-      prompt: 'Review deeply.',
-      event: { sender: {} as Electron.WebContents }
-    })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    expect(harness.dispatched[0]).toMatchObject({
-      provider: 'kimi',
-      reasoningEffort: 'high',
-      kimiThinking: true,
-      serviceTier: 'standard'
-    })
+        kimiThinking: true,
+        serviceTier: 'standard'
+      })
 
-    const runId = harness.dispatched[0].appRunId!
-    harness.orchestrator.handleProviderOutput(
-      'kimi',
-      { appRunId: runId, appChatId: 'ensemble-chat' },
-      { type: 'content', text: 'K3 review complete.' }
-    )
-    await vi.waitFor(() =>
+      const runId = harness.dispatched[0].appRunId!
+      harness.orchestrator.handleProviderOutput(
+        'kimi',
+        { appRunId: runId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: 'K3 review complete.' }
+      )
+      await vi.waitFor(() =>
+        expect(
+          harness.chat.messages.find(
+            (message) =>
+              message.runId === runId &&
+              message.role === 'assistant' &&
+              message.metadata?.kind === 'ensembleParticipant'
+          )?.metadata
+        ).toMatchObject({
+          ensembleModel: model,
+          ensembleReasoningEffort: 'high'
+        })
+      )
       expect(
         harness.chat.messages.find(
           (message) =>
             message.runId === runId &&
             message.role === 'assistant' &&
             message.metadata?.kind === 'ensembleParticipant'
-        )?.metadata
-      ).toMatchObject({
-        ensembleModel: model,
-        ensembleReasoningEffort: 'high'
-      })
-    )
-    expect(
-      harness.chat.messages.find(
-        (message) =>
-          message.runId === runId &&
-          message.role === 'assistant' &&
-          message.metadata?.kind === 'ensembleParticipant'
-      )?.metadata?.ensembleThinkingEnabled
-    ).toBeUndefined()
+        )?.metadata?.ensembleThinkingEnabled
+      ).toBeUndefined()
     }
   )
 
@@ -23336,9 +23325,7 @@ describe('staged fan-out (stageRole)', () => {
     expect(harness.dispatched[0].provider).toBe('codex')
     completeRun(harness, 0, 'Built.')
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
-    const antigravity = harness.dispatched.find(
-      (payload) => payload.provider === 'antigravity'
-    )
+    const antigravity = harness.dispatched.find((payload) => payload.provider === 'antigravity')
     const claude = harness.dispatched.find((payload) => payload.provider === 'claude')
     expect(antigravity).toMatchObject({
       approvalMode: 'default',
@@ -24325,9 +24312,9 @@ describe('background stage routing', () => {
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
-    expect(
-      harness.dispatched.map((payload) => payload.ensembleRun?.participantId)
-    ).toEqual(expect.arrayContaining(['lead', 'background-tests', 'background-logs']))
+    expect(harness.dispatched.map((payload) => payload.ensembleRun?.participantId)).toEqual(
+      expect.arrayContaining(['lead', 'background-tests', 'background-logs'])
+    )
     expect(
       harness.dispatched
         .filter((payload) => payload.ensembleRun?.participantId?.startsWith('background-'))
@@ -24336,8 +24323,7 @@ describe('background stage routing', () => {
     expect(
       harness.chat.messages.some(
         (message) =>
-          typeof message.content === 'string' &&
-          message.content.includes('`@BG` was ambiguous')
+          typeof message.content === 'string' && message.content.includes('`@BG` was ambiguous')
       )
     ).toBe(false)
 
@@ -26928,9 +26914,7 @@ describe('fan-out worktree isolation', () => {
     ).find((lane) => lane.participantId === 'kimi')
     expect(persistedBuilderLane).toMatchObject({
       intent: 'write',
-      approvedWriteScopes: [
-        expect.objectContaining({ kind: 'workspace', approvedBy: 'boss' })
-      ]
+      approvedWriteScopes: [expect.objectContaining({ kind: 'workspace', approvedBy: 'boss' })]
     })
 
     // Terminal settlement fires for the isolated lane with a mapped status.

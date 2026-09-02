@@ -42,7 +42,8 @@ const providerIds = new Set<ProviderId>([
   'muse',
   'devin'
 ])
-const providerMcpMethodPattern = /^(gemini|codex|claude|kimi|grok|cursor|ollama|pi|mistral|muse|devin)-mcp\//
+const providerMcpMethodPattern =
+  /^(gemini|codex|claude|kimi|grok|cursor|ollama|pi|mistral|muse|devin)-mcp\//
 
 export interface ApprovalTitleBackfillChange {
   index: number
@@ -89,7 +90,9 @@ function approvalTitleProviderFromMethod(method: unknown): ProviderId | undefine
   return isProviderId(match?.[1]) ? match[1] : undefined
 }
 
-function approvalTitleProviderFromRecord(record: Partial<ApprovalLedgerRecord>): ProviderId | undefined {
+function approvalTitleProviderFromRecord(
+  record: Partial<ApprovalLedgerRecord>
+): ProviderId | undefined {
   const methodProvider = approvalTitleProviderFromMethod(record.method)
   if (methodProvider) return methodProvider
   if (isProviderId(record.provider)) return record.provider
@@ -228,7 +231,8 @@ export function expirationForApprovalAction(
   if (scope === 'session') {
     return {
       mode: 'session_end' as const,
-      description: 'This run-scoped approval expires when the current TaskWraith run reaches a terminal state.'
+      description:
+        'This run-scoped approval expires when the current TaskWraith run reaches a terminal state.'
     }
   }
   if (scope === 'run') {

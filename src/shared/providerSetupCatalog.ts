@@ -147,7 +147,11 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
     command: 'ollama run lfm2.5-thinking:1.2b'
   },
   { id: 'lfm2.5:8b', label: 'LFM 2.5 (8B-A1B)', command: 'ollama run lfm2.5:8b' },
-  { id: 'minicpm-v4.5:8b', label: 'MiniCPM-V 4.5 (8B Param)', command: 'ollama run minicpm-v4.5:8b' },
+  {
+    id: 'minicpm-v4.5:8b',
+    label: 'MiniCPM-V 4.5 (8B Param)',
+    command: 'ollama run minicpm-v4.5:8b'
+  },
   { id: 'granite4:3b', label: 'Granite 4.0 (3B Param)', command: 'ollama run granite4:3b' },
   { id: 'granite4.1:3b', label: 'Granite 4.1 (3B Param)', command: 'ollama run granite4.1:3b' },
   { id: 'granite4.1:30b', label: 'Granite 4.1 (30B Param)', command: 'ollama run granite4.1:30b' },
@@ -159,7 +163,11 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
     label: 'Nemotron 3 Nano (4B Param)',
     command: 'ollama run nemotron-3-nano:4b'
   },
-  { id: 'nemotron3:33b', label: 'Nemotron 3 Nano Omni (33B Param)', command: 'ollama run nemotron3:33b' },
+  {
+    id: 'nemotron3:33b',
+    label: 'Nemotron 3 Nano Omni (33B Param)',
+    command: 'ollama run nemotron3:33b'
+  },
   {
     id: 'nemotron-3.5-lightning:30b-mlx',
     label: 'Nemotron 3.5 Lightning (30B-MLX)',
@@ -176,7 +184,11 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
     command: 'ollama run mistral-medium-3.5:128b'
   },
   { id: 'ministral-3:3b', label: 'Ministral 3 (3B Param)', command: 'ollama run ministral-3:3b' },
-  { id: 'ministral-3:14b', label: 'Ministral 3 (14B Param)', command: 'ollama run ministral-3:14b' },
+  {
+    id: 'ministral-3:14b',
+    label: 'Ministral 3 (14B Param)',
+    command: 'ollama run ministral-3:14b'
+  },
   {
     id: 'muse-glimmer:30b-mlx',
     label: 'Muse Glimmer (30B-MLX)',

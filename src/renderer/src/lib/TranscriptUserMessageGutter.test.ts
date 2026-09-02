@@ -194,7 +194,11 @@ describe('collapsed ensemble-round markers', () => {
 
   it('keeps the last hidden prompt active when multiple markers share a collapsed header row', () => {
     const rows = projectRows(displayMessages)
-    const secondHiddenPrompt = message('u-hidden-2', 'user', 'Second prompt inside the collapsed round')
+    const secondHiddenPrompt = message(
+      'u-hidden-2',
+      'user',
+      'Second prompt inside the collapsed round'
+    )
     const markers = buildTranscriptUserGutterMarkers(
       displayMessages,
       rows,

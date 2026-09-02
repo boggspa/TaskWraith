@@ -310,8 +310,7 @@ describe('ProductOperations', () => {
           'build:unpack':
             'npm run build && electron-builder --dir && node scripts/smoke-packaged-electron.cjs dist',
           'build:mac': 'npm run build && electron-builder --mac',
-          'build:mac:notarized':
-            'npm run build && electron-builder --mac -c.mac.notarize=true',
+          'build:mac:notarized': 'npm run build && electron-builder --mac -c.mac.notarize=true',
           'build:debug:mac':
             'npm run build && electron-builder --dir --config electron-builder.debug.yml',
           'build:debug:mac:notarized':
@@ -924,9 +923,7 @@ describe('ProductOperations', () => {
         permissionPostureSignaturePresent: true
       }
     })
-    expect((snapshot.scheduledTasks[0].dispatchReceipt as any).chatIdHash).toMatch(
-      /^[a-f0-9]{64}$/
-    )
+    expect((snapshot.scheduledTasks[0].dispatchReceipt as any).chatIdHash).toMatch(/^[a-f0-9]{64}$/)
     expect(snapshot.runRecovery[0]).toMatchObject({
       hasResumeHint: true,
       jobSnapshot: { hasPromptPreview: true, hasProcessCommand: true }

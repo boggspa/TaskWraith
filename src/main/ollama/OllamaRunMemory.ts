@@ -133,7 +133,9 @@ function scaledWorkingMemoryLimits(
   }
 }
 
-export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): OllamaWorkingMemoryLimits {
+export function resolveOllamaWorkingMemoryLimits(
+  modelId?: string | null
+): OllamaWorkingMemoryLimits {
   const trimmedModelId = String(modelId || '').trim()
   const family = resolveOllamaModelFamily(trimmedModelId)
   switch (family) {
@@ -208,9 +210,7 @@ function summarizeToolResultForMemory(
 ): string {
   const normalized = output.replace(/\s+/g, ' ').trim()
   if (!normalized) return '(empty)'
-  return normalized.length <= maxChars
-    ? normalized
-    : `${normalized.slice(0, maxChars)}...`
+  return normalized.length <= maxChars ? normalized : `${normalized.slice(0, maxChars)}...`
 }
 
 interface CanvasEvalMemoryInvocation {
@@ -257,24 +257,19 @@ function resolveCanvasFillMemoryInvocation(
     return { effectiveToolName: 'canvas_fill', route: 'direct' }
   }
   if (canonical === 'request_tool_permission') {
-    return (
-      typeof args.toolName === 'string' &&
+    return typeof args.toolName === 'string' &&
       canonicalTaskWraithToolName(args.toolName) === 'canvas_fill'
-    )
       ? { effectiveToolName: 'canvas_fill', route: 'permission_retry' }
       : null
   }
   if (canonical !== 'capability_invoke') return null
-  const target =
-    typeof args.name === 'string' ? canonicalTaskWraithToolName(args.name) : undefined
+  const target = typeof args.name === 'string' ? canonicalTaskWraithToolName(args.name) : undefined
   if (target === 'canvas_fill') {
     return { effectiveToolName: 'canvas_fill', route: 'gateway' }
   }
   if (target !== 'request_tool_permission' || !isRecord(args.arguments)) return null
-  return (
-    typeof args.arguments.toolName === 'string' &&
+  return typeof args.arguments.toolName === 'string' &&
     canonicalTaskWraithToolName(args.arguments.toolName) === 'canvas_fill'
-  )
     ? { effectiveToolName: 'canvas_fill', route: 'gateway_permission_retry' }
     : null
 }
@@ -328,10 +323,7 @@ function canvasEvalArgsSummary(toolName: string, viaGateway: boolean): string {
     : `${toolName} script=[redacted]`
 }
 
-function canvasFillArgsSummary(
-  toolName: string,
-  invocation: CanvasFillMemoryInvocation
-): string {
+function canvasFillArgsSummary(toolName: string, invocation: CanvasFillMemoryInvocation): string {
   switch (invocation.route) {
     case 'gateway':
       return `${toolName} name=canvas_fill value=[redacted]`
@@ -472,7 +464,9 @@ export function buildOllamaWorkingMemoryBlock(
   return `${block.slice(0, maxChars)}\n[working memory truncated]`
 }
 
-export function formatOllamaSessionMemoryForPrompt(memory: OllamaSessionMemory | null | undefined): string {
+export function formatOllamaSessionMemoryForPrompt(
+  memory: OllamaSessionMemory | null | undefined
+): string {
   if (!memory?.workingMemory?.trim()) return ''
   return [
     'Prior Ollama session memory (pruned — tool calls + summaries, not full file bodies):',
@@ -533,7 +527,9 @@ export function compressOllamaMessagesWithWorkingMemory(
   ]
 }
 
-export function pruneOllamaSessionMemoryForPersist(memory: OllamaSessionMemory): OllamaSessionMemory {
+export function pruneOllamaSessionMemoryForPersist(
+  memory: OllamaSessionMemory
+): OllamaSessionMemory {
   const limits = resolveOllamaWorkingMemoryLimits(memory.modelId)
   const trajectory = (memory.trajectory ?? [])
     .slice(-8)

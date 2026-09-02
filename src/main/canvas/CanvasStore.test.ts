@@ -26,7 +26,11 @@ function session(id: string, over: Partial<CanvasSessionRecord> = {}): CanvasSes
   }
 }
 
-function event(id: string, canvasId: string, over: Partial<CanvasEventRecord> = {}): CanvasEventRecord {
+function event(
+  id: string,
+  canvasId: string,
+  over: Partial<CanvasEventRecord> = {}
+): CanvasEventRecord {
   return {
     schemaVersion: 1,
     id,
@@ -127,9 +131,9 @@ describe('CanvasStore', () => {
       }
     })
     store.appendEventStrict(started)
-    expect(() =>
-      store.appendEventStrict({ ...started, id: 'eval-start-replay' })
-    ).toThrow('already been consumed')
+    expect(() => store.appendEventStrict({ ...started, id: 'eval-start-replay' })).toThrow(
+      'already been consumed'
+    )
 
     const reopened = new CanvasStore(dir)
     expect(() =>
@@ -182,15 +186,13 @@ describe('CanvasStore', () => {
     const realOpenSync = openMock.getMockImplementation()
     if (!realOpenSync) throw new Error('Expected the fs.openSync passthrough mock.')
     let planted = false
-    openMock.mockImplementation(
-      ((filePath: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
-        if (!planted && String(filePath).endsWith('.tmp')) {
-          planted = true
-          fs.symlinkSync(victimPath, filePath)
-        }
-        return realOpenSync(filePath, flags, mode)
-      }) as typeof fs.openSync
-    )
+    openMock.mockImplementation(((filePath: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
+      if (!planted && String(filePath).endsWith('.tmp')) {
+        planted = true
+        fs.symlinkSync(victimPath, filePath)
+      }
+      return realOpenSync(filePath, flags, mode)
+    }) as typeof fs.openSync)
     try {
       expect(() =>
         store.appendEventStrict(
@@ -218,17 +220,15 @@ describe('CanvasStore', () => {
     const realOpenSync = openMock.getMockImplementation()
     if (!realOpenSync) throw new Error('Expected the fs.openSync passthrough mock.')
     let swapped = false
-    openMock.mockImplementation(
-      ((filePath: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
-        const fd = realOpenSync(filePath, flags, mode)
-        if (!swapped && String(filePath) === eventsPath) {
-          swapped = true
-          fs.renameSync(eventsPath, originalBackup)
-          fs.renameSync(replacementPath, eventsPath)
-        }
-        return fd
-      }) as typeof fs.openSync
-    )
+    openMock.mockImplementation(((filePath: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
+      const fd = realOpenSync(filePath, flags, mode)
+      if (!swapped && String(filePath) === eventsPath) {
+        swapped = true
+        fs.renameSync(eventsPath, originalBackup)
+        fs.renameSync(replacementPath, eventsPath)
+      }
+      return fd
+    }) as typeof fs.openSync)
     try {
       expect(() =>
         store.appendEventStrict(event('after-swap', 'a', { kind: 'eval.completed' }))
@@ -250,21 +250,19 @@ describe('CanvasStore', () => {
     const realOpenSync = openMock.getMockImplementation()
     if (!realOpenSync) throw new Error('Expected the fs.openSync passthrough mock.')
     let swapped = false
-    openMock.mockImplementation(
-      ((filePath: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
-        if (
-          !swapped &&
-          String(filePath) === dir &&
-          typeof flags === 'number' &&
-          (flags & (fs.constants.O_DIRECTORY ?? 0)) !== 0
-        ) {
-          swapped = true
-          fs.renameSync(dir, originalDir)
-          fs.symlinkSync(victimDir, dir, 'dir')
-        }
-        return realOpenSync(filePath, flags, mode)
-      }) as typeof fs.openSync
-    )
+    openMock.mockImplementation(((filePath: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
+      if (
+        !swapped &&
+        String(filePath) === dir &&
+        typeof flags === 'number' &&
+        (flags & (fs.constants.O_DIRECTORY ?? 0)) !== 0
+      ) {
+        swapped = true
+        fs.renameSync(dir, originalDir)
+        fs.symlinkSync(victimDir, dir, 'dir')
+      }
+      return realOpenSync(filePath, flags, mode)
+    }) as typeof fs.openSync)
     try {
       expect(() =>
         store.appendEventStrict(event('dir-swap', 'a', { kind: 'eval.completed' }))
@@ -319,21 +317,19 @@ describe('CanvasStore', () => {
     const realOpenSync = openMock.getMockImplementation()
     if (!realOpenSync) throw new Error('Expected the fs.openSync passthrough mock.')
     let swapped = false
-    openMock.mockImplementation(
-      ((filePath: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
-        if (
-          !swapped &&
-          String(filePath) === dir &&
-          typeof flags === 'number' &&
-          (flags & (fs.constants.O_DIRECTORY ?? 0)) !== 0
-        ) {
-          swapped = true
-          fs.renameSync(dir, originalDir)
-          fs.renameSync(replacementDir, dir)
-        }
-        return realOpenSync(filePath, flags, mode)
-      }) as typeof fs.openSync
-    )
+    openMock.mockImplementation(((filePath: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
+      if (
+        !swapped &&
+        String(filePath) === dir &&
+        typeof flags === 'number' &&
+        (flags & (fs.constants.O_DIRECTORY ?? 0)) !== 0
+      ) {
+        swapped = true
+        fs.renameSync(dir, originalDir)
+        fs.renameSync(replacementDir, dir)
+      }
+      return realOpenSync(filePath, flags, mode)
+    }) as typeof fs.openSync)
     try {
       expect(() => store.clearAll()).toThrow(/changed while it was being opened/)
       expect(swapped).toBe(true)
@@ -360,25 +356,23 @@ describe('CanvasStore', () => {
     if (!realOpenSync) throw new Error('Expected the fs.openSync passthrough mock.')
     let directoryOpenCount = 0
     let swapped = false
-    openMock.mockImplementation(
-      ((filePath: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
-        if (
-          String(filePath) === dir &&
-          typeof flags === 'number' &&
-          (flags & (fs.constants.O_DIRECTORY ?? 0)) !== 0
-        ) {
-          directoryOpenCount += 1
-          // Outer pin, receipt read, and receipt write have completed. Swap
-          // before the event read: the same pinned identity must reject it.
-          if (!swapped && directoryOpenCount === 4) {
-            swapped = true
-            fs.renameSync(dir, originalDir)
-            fs.renameSync(replacementDir, dir)
-          }
+    openMock.mockImplementation(((filePath: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
+      if (
+        String(filePath) === dir &&
+        typeof flags === 'number' &&
+        (flags & (fs.constants.O_DIRECTORY ?? 0)) !== 0
+      ) {
+        directoryOpenCount += 1
+        // Outer pin, receipt read, and receipt write have completed. Swap
+        // before the event read: the same pinned identity must reject it.
+        if (!swapped && directoryOpenCount === 4) {
+          swapped = true
+          fs.renameSync(dir, originalDir)
+          fs.renameSync(replacementDir, dir)
         }
-        return realOpenSync(filePath, flags, mode)
-      }) as typeof fs.openSync
-    )
+      }
+      return realOpenSync(filePath, flags, mode)
+    }) as typeof fs.openSync)
     const started = event('eval-split-start', 'a', {
       kind: 'eval.started',
       approvalId: 'approval-operation-pin',
@@ -388,9 +382,7 @@ describe('CanvasStore', () => {
       expect(() => store.appendEventStrict(started)).toThrow()
       expect(swapped).toBe(true)
       expect(
-        JSON.parse(
-          fs.readFileSync(join(originalDir, 'canvas-eval-approval-uses.json'), 'utf8')
-        )
+        JSON.parse(fs.readFileSync(join(originalDir, 'canvas-eval-approval-uses.json'), 'utf8'))
       ).toContain('approval-operation-pin')
       const originalEventsPath = join(originalDir, 'canvas-events.json')
       expect(
@@ -410,7 +402,9 @@ describe('CanvasStore', () => {
   })
 
   it('normalizes a screenshot event to metadata only (no pixel field round-trips unredacted)', () => {
-    store.appendEvent(event('e1', 'a', { kind: 'screenshot', detail: { frameHash: 'abc', width: 10, height: 20 } }))
+    store.appendEvent(
+      event('e1', 'a', { kind: 'screenshot', detail: { frameHash: 'abc', width: 10, height: 20 } })
+    )
     const [evt] = store.listEvents('a')
     expect(evt.detail).toEqual({ frameHash: 'abc', width: 10, height: 20 })
   })

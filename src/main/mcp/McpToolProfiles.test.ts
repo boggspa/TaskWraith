@@ -1072,9 +1072,7 @@ describe('catalogue reachability', () => {
       GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES.filter((name) => name !== 'request_tool_permission')
     )
     expect(GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual(
-      GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES.filter(
-        (name) => name !== 'request_tool_permission'
-      )
+      GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES.filter((name) => name !== 'request_tool_permission')
     )
     expect(GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES).toContain('request_tool_permission')
     expect(GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES).not.toContain('request_tool_permission')

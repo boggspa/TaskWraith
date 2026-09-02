@@ -1094,8 +1094,7 @@ function parseChanges(value: unknown): ToolDiffSummary | undefined {
         additions:
           numberValue(
             item.additions ?? item.added ?? item.linesAdded ?? item.lines_added ?? item.insertions
-          ) ??
-          previewSummary?.additions,
+          ) ?? previewSummary?.additions,
         deletions:
           numberValue(
             item.deletions ??
@@ -1104,8 +1103,7 @@ function parseChanges(value: unknown): ToolDiffSummary | undefined {
               item.linesRemoved ??
               item.lines_removed ??
               item.removals
-          ) ??
-          previewSummary?.deletions
+          ) ?? previewSummary?.deletions
       }
     })
 
@@ -1306,7 +1304,9 @@ export function createToolActivity(toolUseEvent: any): ToolActivity {
       : canonicalImageViewToolName(presentation.toolName, presentation.parameters)
   const parameterImageCount =
     toolName === IMAGE_VIEW_TOOL_NAME
-      ? imageViewCountFromParameters(rawImageToolName === IMAGE_VIEW_TOOL_NAME ? rawParameters : presentation.parameters)
+      ? imageViewCountFromParameters(
+          rawImageToolName === IMAGE_VIEW_TOOL_NAME ? rawParameters : presentation.parameters
+        )
       : undefined
   const parameters = parameterImageCount
     ? {

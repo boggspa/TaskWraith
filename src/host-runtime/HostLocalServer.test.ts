@@ -649,11 +649,11 @@ describe('HostLocalServer', () => {
       const client = await connectClient(server.socketPath)
       client.writeLine(
         JSON.stringify(
-          makeClientHello(
-            readFileSync(server.tokenPath, 'utf8').trim(),
-            [...capabilities],
-            { clientId, clientClass, clientVersion: '1.0.0' }
-          )
+          makeClientHello(readFileSync(server.tokenPath, 'utf8').trim(), [...capabilities], {
+            clientId,
+            clientClass,
+            clientVersion: '1.0.0'
+          })
         )
       )
       expect((await client.readFrame()).type).toBe('welcome')
@@ -1204,7 +1204,10 @@ describe('HostLocalServer', () => {
       allowed.writeLine(
         JSON.stringify(makeRequest('command.submit' as never, 'r-setup-allowed', setupCommand))
       )
-      expect(await allowed.readFrame()).toMatchObject({ ok: true, result: { kind: 'command.submit' } })
+      expect(await allowed.readFrame()).toMatchObject({
+        ok: true,
+        result: { kind: 'command.submit' }
+      })
       allowed.close()
       expect(authority.command).toHaveBeenCalledOnce()
     })

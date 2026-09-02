@@ -65,8 +65,6 @@ describe('Codex host-hook P1 integration', () => {
     expect(settle).toMatch(
       /gateService\s*===\s*'canvasEval'[\s\S]*?appendCanvasEvalApprovalWindowDisclosure\(formatted\.body\)/
     )
-    expect(settle).toMatch(
-      /body:\s*codexApprovalBody,[\s\S]*?preview:\s*formatted\.preview/
-    )
+    expect(settle).toMatch(/body:\s*codexApprovalBody,[\s\S]*?preview:\s*formatted\.preview/)
   })
 })

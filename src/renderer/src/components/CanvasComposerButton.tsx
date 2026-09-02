@@ -53,7 +53,15 @@ export function friendlyCanvasError(raw: string | undefined): string {
 function CanvasGlyph() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      <rect
+        x="1.5"
+        y="2.5"
+        width="13"
+        height="11"
+        rx="1.5"
+        stroke="currentColor"
+        strokeWidth="1.3"
+      />
       <path d="M1.5 5.5h13" stroke="currentColor" strokeWidth="1.3" />
     </svg>
   )
@@ -72,7 +80,9 @@ export function CanvasComposerButton({
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null)
+  const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(
+    null
+  )
   const [error, setError] = useState<string | null>(null)
   const [busyMode, setBusyMode] = useState<
     'web' | 'sketch' | 'mesh' | 'simulator' | 'emulator' | null
@@ -281,9 +291,7 @@ export function CanvasComposerButton({
               padding: 10
             }}
           >
-            <div style={{ font: '12px/1.35 system-ui, sans-serif', fontWeight: 600 }}>
-              Canvas
-            </div>
+            <div style={{ font: '12px/1.35 system-ui, sans-serif', fontWeight: 600 }}>Canvas</div>
             <div style={{ display: 'grid', gap: 8 }}>
               {/* Text block and action share one row — the pill sits beside the
                 title/description rather than claiming a third line. Width and

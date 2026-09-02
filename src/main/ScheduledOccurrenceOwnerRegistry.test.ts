@@ -134,10 +134,7 @@ describe('ScheduledOccurrenceOwnerRegistry', () => {
 
     const scheduled = registry.register({ ...owner('scheduled'), chatId: 'chat-reserved' })
     expect(registry.lookupByChatId('chat-reserved')).toBe(scheduled)
-    expectCode(
-      () => registry.reserveOrdinaryChatDispatch('chat-reserved'),
-      'duplicate-chat'
-    )
+    expectCode(() => registry.reserveOrdinaryChatDispatch('chat-reserved'), 'duplicate-chat')
     expect(registry.release(scheduled)).toBe(true)
     expect(registry.lookupByChatId('chat-reserved')).toBeUndefined()
   })
@@ -216,17 +213,11 @@ describe('ScheduledOccurrenceOwnerRegistry', () => {
     expect(registry.hasExclusiveChatDispatchReservation('chat-graph')).toBe(false)
 
     const ordinary = registry.reserveOrdinaryChatDispatch('chat-graph')
-    expectCode(
-      () => registry.reserveExclusiveChatDispatch('chat-graph'),
-      'duplicate-chat'
-    )
+    expectCode(() => registry.reserveExclusiveChatDispatch('chat-graph'), 'duplicate-chat')
     expect(registry.releaseOrdinaryChatDispatch(ordinary)).toBe(true)
 
     const scheduled = registry.register({ ...owner('scheduled'), chatId: 'chat-graph' })
-    expectCode(
-      () => registry.reserveExclusiveChatDispatch('chat-graph'),
-      'duplicate-chat'
-    )
+    expectCode(() => registry.reserveExclusiveChatDispatch('chat-graph'), 'duplicate-chat')
     expect(registry.release(scheduled)).toBe(true)
   })
 
@@ -286,9 +277,7 @@ describe('ScheduledOccurrenceOwnerRegistry', () => {
     const ensemble = registry.register(owner('ensemble-child', { rootOwner: 'ensemble-root' }))
     registry.bindEnsembleRound('round-child', ensemble.ownerRunId)
 
-    expect(registry.bindEnsembleChildRun('child-ensemble', 'round-child', 'claude')).toBe(
-      ensemble
-    )
+    expect(registry.bindEnsembleChildRun('child-ensemble', 'round-child', 'claude')).toBe(ensemble)
     expect(registry.lookupEnsembleChildRun('child-ensemble', 'claude')).toBe(ensemble)
     expect(registry.lookupEnsembleChildRun('child-ensemble', 'codex')).toBeUndefined()
     expect(registry.isAppRunIdLiveOwned('child-ensemble')).toBe(true)

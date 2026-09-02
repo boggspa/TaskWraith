@@ -475,12 +475,19 @@ describe('transcriptRowRenderCache', () => {
     expect(
       transcriptRowRenderSignatureEqual(
         signature(),
-        signature({ agentQuestionSeatKey: 'claude|claude-fable-5|SolBoss|1||||false|workspace_write' })
+        signature({
+          agentQuestionSeatKey: 'claude|claude-fable-5|SolBoss|1||||false|workspace_write'
+        })
       )
     ).toBe(false)
-    expect(transcriptRowRenderSignatureEqual(signature(), signature({ virtualized: false }))).toBe(false)
+    expect(transcriptRowRenderSignatureEqual(signature(), signature({ virtualized: false }))).toBe(
+      false
+    )
     expect(
-      transcriptRowRenderSignatureEqual(signature(), signature({ assistantRunModelKey: 'run:gpt-5.5' }))
+      transcriptRowRenderSignatureEqual(
+        signature(),
+        signature({ assistantRunModelKey: 'run:gpt-5.5' })
+      )
     ).toBe(false)
     expect(
       transcriptRowRenderSignatureEqual(

@@ -9,9 +9,7 @@ import {
   buildParticipantReasoningSelectionPatch
 } from './ParticipantPickerCluster'
 
-function participant(
-  overrides: Partial<EnsembleParticipant> = {}
-): EnsembleParticipant {
+function participant(overrides: Partial<EnsembleParticipant> = {}): EnsembleParticipant {
   return {
     id: 'participant-1',
     provider: 'claude',
@@ -98,12 +96,13 @@ describe('buildParticipantProviderModelPatch', () => {
   it('treats Cursor Composer plain and Fast model rows as explicit speed choices', () => {
     const source = participant({ provider: 'cursor', model: 'composer-2.5-fast' })
 
-    expect(
-      buildParticipantProviderModelPatch(source, 'cursor', 'composer-2.5')
-    ).toMatchObject({ model: 'composer-2.5', fastModeEnabled: false })
-    expect(
-      buildParticipantProviderModelPatch(source, 'cursor', 'composer-2.5-fast')
-    ).toMatchObject({ model: 'composer-2.5-fast', fastModeEnabled: true })
+    expect(buildParticipantProviderModelPatch(source, 'cursor', 'composer-2.5')).toMatchObject({
+      model: 'composer-2.5',
+      fastModeEnabled: false
+    })
+    expect(buildParticipantProviderModelPatch(source, 'cursor', 'composer-2.5-fast')).toMatchObject(
+      { model: 'composer-2.5-fast', fastModeEnabled: true }
+    )
   })
 
   it('preserves a selected Kimi HighSpeed tier across its K2.7 model row', () => {
@@ -178,7 +177,18 @@ describe('ParticipantPickerCluster', () => {
         { ready: true, providerIds: ['claude', 'cursor'] },
         'kimi'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse', 'devin'])
+    ).toEqual([
+      'codex',
+      'claude',
+      'kimi',
+      'cursor',
+      'grok',
+      'ollama',
+      'pi',
+      'mistral',
+      'muse',
+      'devin'
+    ])
   })
 
   it('uses authenticated AntiGravity models only from the configured snapshot', () => {
@@ -247,7 +257,18 @@ describe('ParticipantPickerCluster', () => {
         { ready: false, providerIds: [] },
         'kimi'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse', 'devin'])
+    ).toEqual([
+      'codex',
+      'claude',
+      'kimi',
+      'cursor',
+      'grok',
+      'ollama',
+      'pi',
+      'mistral',
+      'muse',
+      'devin'
+    ])
   })
 
   it('never leaks retired or flag-gated providers through the configured snapshot', () => {
@@ -263,19 +284,28 @@ describe('ParticipantPickerCluster', () => {
         { ready: true, providerIds: ['gemini', 'grok', 'codex'] },
         'claude'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse', 'devin'])
+    ).toEqual([
+      'codex',
+      'claude',
+      'kimi',
+      'cursor',
+      'grok',
+      'ollama',
+      'pi',
+      'mistral',
+      'muse',
+      'devin'
+    ])
   })
 
   it('keeps an existing disconnected participant visible and editable', () => {
     const html = renderToStaticMarkup(
       <ParticipantPickerCluster
-        participant={
-          participant({
-            provider: 'kimi',
-            model: 'kimi-k2.7-code',
-            thinkingEnabled: true
-          })
-        }
+        participant={participant({
+          provider: 'kimi',
+          model: 'kimi-k2.7-code',
+          thinkingEnabled: true
+        })}
         configuredProviderSnapshot={{ ready: true, providerIds: ['codex'] }}
         composerStyle="default"
         grokAvailable
@@ -319,14 +349,12 @@ describe('ParticipantPickerCluster', () => {
   ])('humanises the Pi Add Participant row for %s and starts it at High', (model, label) => {
     const html = renderToStaticMarkup(
       <ParticipantPickerCluster
-        participant={
-          participant({
-            provider: 'pi',
-            model,
-            reasoningEffort: undefined,
-            permissionPresetId: 'default'
-          })
-        }
+        participant={participant({
+          provider: 'pi',
+          model,
+          reasoningEffort: undefined,
+          permissionPresetId: 'default'
+        })}
         configuredProviderSnapshot={{ ready: true, providerIds: ['pi'] }}
         composerStyle="default"
         grokAvailable
@@ -343,15 +371,13 @@ describe('ParticipantPickerCluster', () => {
   it('marks a HighSpeed Kimi participant as Fast while retaining the K2.7 model row', () => {
     const html = renderToStaticMarkup(
       <ParticipantPickerCluster
-        participant={
-          participant({
-            provider: 'kimi',
-            model: 'kimi-k2.7-code',
-            fastModeEnabled: true,
-            serviceTier: 'fast',
-            thinkingEnabled: true
-          })
-        }
+        participant={participant({
+          provider: 'kimi',
+          model: 'kimi-k2.7-code',
+          fastModeEnabled: true,
+          serviceTier: 'fast',
+          thinkingEnabled: true
+        })}
         composerStyle="default"
         grokAvailable
         cursorAvailable
@@ -366,14 +392,12 @@ describe('ParticipantPickerCluster', () => {
   it('passes K3 Max to the reasoning ladder instead of its legacy thinking flag', () => {
     const html = renderToStaticMarkup(
       <ParticipantPickerCluster
-        participant={
-          participant({
-            provider: 'kimi',
-            model: 'kimi-k3',
-            reasoningEffort: 'max',
-            thinkingEnabled: true
-          })
-        }
+        participant={participant({
+          provider: 'kimi',
+          model: 'kimi-k3',
+          reasoningEffort: 'max',
+          thinkingEnabled: true
+        })}
         composerStyle="default"
         grokAvailable
         cursorAvailable
@@ -390,14 +414,12 @@ describe('ParticipantPickerCluster', () => {
   it('keeps a K2.7 UltraTask selection above its fixed thinking stop', () => {
     const html = renderToStaticMarkup(
       <ParticipantPickerCluster
-        participant={
-          participant({
-            provider: 'kimi',
-            model: 'kimi-k2.7-code',
-            reasoningEffort: 'ultraTask',
-            thinkingEnabled: true
-          })
-        }
+        participant={participant({
+          provider: 'kimi',
+          model: 'kimi-k2.7-code',
+          reasoningEffort: 'ultraTask',
+          thinkingEnabled: true
+        })}
         composerStyle="default"
         grokAvailable
         cursorAvailable

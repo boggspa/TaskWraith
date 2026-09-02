@@ -65,8 +65,8 @@
   }
 }
 
-:root[data-reduce-motion="true"] .digit-odometer__column,
-:root[data-reduce-motion="true"] .digit-odometer__column.is-rolling {
+:root[data-reduce-motion='true'] .digit-odometer__column,
+:root[data-reduce-motion='true'] .digit-odometer__column.is-rolling {
   animation: none !important;
   will-change: auto;
 }
@@ -124,31 +124,31 @@
   opacity: 1;
 }
 
-.activity-progress-note[data-provider="gemini"] {
+.activity-progress-note[data-provider='gemini'] {
   --activity-progress-note-thinking-accent: var(--provider-gemini-color, #346eec);
 }
 
-.activity-progress-note[data-provider="codex"] {
+.activity-progress-note[data-provider='codex'] {
   --activity-progress-note-thinking-accent: var(--provider-codex-color, #705aff);
 }
 
-.activity-progress-note[data-provider="claude"] {
+.activity-progress-note[data-provider='claude'] {
   --activity-progress-note-thinking-accent: var(--provider-claude-color, #b16105);
 }
 
-.activity-progress-note[data-provider="kimi"] {
+.activity-progress-note[data-provider='kimi'] {
   --activity-progress-note-thinking-accent: var(--provider-kimi-color, #0073e6);
 }
 
-.activity-progress-note[data-provider="grok"] {
+.activity-progress-note[data-provider='grok'] {
   --activity-progress-note-thinking-accent: var(--provider-grok-color, #757575);
 }
 
-.activity-progress-note[data-provider="cursor"] {
+.activity-progress-note[data-provider='cursor'] {
   --activity-progress-note-thinking-accent: var(--provider-cursor-color, #8c7508);
 }
 
-.activity-progress-note[data-provider="ollama"] {
+.activity-progress-note[data-provider='ollama'] {
   --activity-progress-note-thinking-accent: var(--provider-ollama-color, #976c52);
 }
 
@@ -376,17 +376,17 @@
   margin: 2px 0;
 }
 
-.compact-tool-trace[data-status="success"] {
+.compact-tool-trace[data-status='success'] {
   --compact-tool-rim: color-mix(in srgb, var(--tool-success) 42%, transparent);
 }
-.compact-tool-trace[data-status="error"] {
+.compact-tool-trace[data-status='error'] {
   --compact-tool-rim: color-mix(in srgb, var(--tool-error) 48%, transparent);
 }
-.compact-tool-trace[data-status="warning"] {
+.compact-tool-trace[data-status='warning'] {
   --compact-tool-rim: color-mix(in srgb, var(--tool-warning) 46%, transparent);
 }
-.compact-tool-trace[data-status="running"],
-.compact-tool-trace[data-status="pending"] {
+.compact-tool-trace[data-status='running'],
+.compact-tool-trace[data-status='pending'] {
   --compact-tool-rim: color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
@@ -446,13 +446,27 @@
   font-weight: 500;
   color: var(--text-secondary);
 }
-.compact-tool-trace-provider.provider-gemini { color: var(--provider-gemini-color, #346eec); }
-.compact-tool-trace-provider.provider-codex  { color: var(--provider-codex-color,  #705aff); }
-.compact-tool-trace-provider.provider-claude { color: var(--provider-claude-color, #b16105); }
-.compact-tool-trace-provider.provider-kimi   { color: var(--provider-kimi-color,   #0073e6); }
-.compact-tool-trace-provider.provider-grok   { color: var(--provider-grok-color,   #757575); }
-.compact-tool-trace-provider.provider-cursor { color: var(--provider-cursor-color, #8c7508); }
-.compact-tool-trace-provider.provider-ollama { color: var(--provider-ollama-color, #976c52); }
+.compact-tool-trace-provider.provider-gemini {
+  color: var(--provider-gemini-color, #346eec);
+}
+.compact-tool-trace-provider.provider-codex {
+  color: var(--provider-codex-color, #705aff);
+}
+.compact-tool-trace-provider.provider-claude {
+  color: var(--provider-claude-color, #b16105);
+}
+.compact-tool-trace-provider.provider-kimi {
+  color: var(--provider-kimi-color, #0073e6);
+}
+.compact-tool-trace-provider.provider-grok {
+  color: var(--provider-grok-color, #757575);
+}
+.compact-tool-trace-provider.provider-cursor {
+  color: var(--provider-cursor-color, #8c7508);
+}
+.compact-tool-trace-provider.provider-ollama {
+  color: var(--provider-ollama-color, #976c52);
+}
 
 /* Shared clickable file reference (compact trace + activity rows). A link-
  * styled button that resets native chrome but leaves font-weight/style/color
@@ -551,7 +565,10 @@
   font-size: 0.76rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
 }
 .transcript-file-card-action:hover {
   color: var(--text-primary);
@@ -601,11 +618,19 @@
   font-variant: small-caps;
   color: var(--text-tertiary);
 }
-.compact-tool-trace-status.status-success { color: var(--tool-success); }
-.compact-tool-trace-status.status-error   { color: var(--tool-error); }
-.compact-tool-trace-status.status-warning { color: var(--tool-warning); }
+.compact-tool-trace-status.status-success {
+  color: var(--tool-success);
+}
+.compact-tool-trace-status.status-error {
+  color: var(--tool-error);
+}
+.compact-tool-trace-status.status-warning {
+  color: var(--tool-warning);
+}
 .compact-tool-trace-status.status-running,
-.compact-tool-trace-status.status-pending { color: var(--accent); }
+.compact-tool-trace-status.status-pending {
+  color: var(--accent);
+}
 
 .compact-tool-trace-duration {
   flex-shrink: 0;
@@ -649,20 +674,20 @@
   color: var(--text-tertiary);
   transition: transform var(--motion-fast) var(--motion-ease-out);
 }
-.compact-tool-trace-chevron[data-expanded="true"] {
+.compact-tool-trace-chevron[data-expanded='true'] {
   transform: rotate(180deg);
   color: var(--text-secondary);
 }
 
-:root[data-reduce-motion="true"] .compact-tool-trace-chevron,
-:root[data-reduce-motion="true"] .compact-tool-trace-chevron[data-expanded="true"] {
+:root[data-reduce-motion='true'] .compact-tool-trace-chevron,
+:root[data-reduce-motion='true'] .compact-tool-trace-chevron[data-expanded='true'] {
   transition: none;
   transform: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .compact-tool-trace-chevron,
-  .compact-tool-trace-chevron[data-expanded="true"] {
+  .compact-tool-trace-chevron[data-expanded='true'] {
     transition: none;
     transform: none;
   }
@@ -770,7 +795,7 @@
 }
 
 /* Balanced Native Glass: Electron vibrancy plus a stable Liquid Glass-style sidebar layer. */
-[data-appearance="native_glass"][data-reduce-transparency="false"] {
+[data-appearance='native_glass'][data-reduce-transparency='false'] {
   --sidebar-glass-fill: rgba(24, 25, 24, 0.22);
   --sidebar-glass-fill-elevated: rgba(70, 73, 70, 0.16);
   --sidebar-glass-fill-strong: rgba(92, 96, 92, 0.22);
@@ -779,12 +804,18 @@
   --sidebar-glass-highlight: rgba(255, 255, 255, 0.2);
   --sidebar-glass-noise: rgba(255, 255, 255, 0.04);
   --sidebar-glass-shadow: 18px 0 48px rgba(0, 0, 0, 0.14);
-  --sidebar-glass-inner-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --sidebar-glass-inner-shadow:
+    inset -1px 0 0 rgba(255, 255, 255, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar {
+[data-appearance='native_glass'][data-reduce-transparency='false'] .app-sidebar {
   background:
-    linear-gradient(180deg, rgba(255, 255, 248, 0.08), rgba(52, 54, 52, 0.035) 42%, rgba(0, 0, 0, 0.08)),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 248, 0.08),
+      rgba(52, 54, 52, 0.035) 42%,
+      rgba(0, 0, 0, 0.08)
+    ),
     var(--sidebar-glass-fill) !important;
   border-right-color: var(--sidebar-glass-border);
   box-shadow: var(--sidebar-glass-inner-shadow), var(--sidebar-glass-shadow);
@@ -794,8 +825,8 @@
   isolation: isolate;
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar::before {
-  content: "";
+[data-appearance='native_glass'][data-reduce-transparency='false'] .app-sidebar::before {
+  content: '';
   position: absolute;
   inset: 0;
   pointer-events: none;
@@ -808,27 +839,30 @@
   opacity: 0.34;
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar::after {
-  content: "";
+[data-appearance='native_glass'][data-reduce-transparency='false'] .app-sidebar::after {
+  content: '';
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.11), transparent 2px, transparent calc(100% - 2px), rgba(255, 255, 255, 0.1));
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.11),
+    transparent 2px,
+    transparent calc(100% - 2px),
+    rgba(255, 255, 255, 0.1)
+  );
   opacity: 0.28;
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar > * {
+[data-appearance='native_glass'][data-reduce-transparency='false'] .app-sidebar > * {
   position: relative;
   z-index: 1;
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar :is(
-  .sidebar-masthead,
-  .sidebar-empty-state,
-  .run-summary,
-  .model-usage-summary
-) {
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .app-sidebar
+  :is(.sidebar-masthead, .sidebar-empty-state, .run-summary, .model-usage-summary) {
   /* Glass-mode tile chrome — intentionally excludes
    * .sidebar-workspace-item, .sidebar-chat-item, and
    * .sidebar-global-chat-item so workspace/thread/sub-thread rows render
@@ -844,16 +878,17 @@
 
 /* iOS-parity: section header rows and titles carry NO box of their own —
  * the capsule chrome lives on .sidebar-section-header-toggle (shard 08). */
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar :is(
-  .sidebar-masthead-stats span,
-  .sidebar-workspace-count-badge,
-  .sidebar-chat-age
-) {
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .app-sidebar
+  :is(.sidebar-masthead-stats span, .sidebar-workspace-count-badge, .sidebar-chat-age) {
   background: rgba(255, 255, 255, 0.055);
   border-color: rgba(255, 255, 255, 0.1);
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-workspace-scroll .sidebar-section-header {
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .app-sidebar
+  .sidebar-workspace-scroll
+  .sidebar-section-header {
   background:
     linear-gradient(to bottom, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
     rgba(28, 30, 28, 0.12);
@@ -864,11 +899,9 @@
  * the default macOS appearance, so this is the selection a dark-mode user
  * normally sees; the accent now reads as a full inset ring + faint inner
  * glow, matching Recents/Pinned and every other section. */
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar :is(
-  .sidebar-workspace-item.active,
-  .sidebar-chat-item.active,
-  .sidebar-global-chat-item.active
-) {
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .app-sidebar
+  :is(.sidebar-workspace-item.active, .sidebar-chat-item.active, .sidebar-global-chat-item.active) {
   background:
     linear-gradient(135deg, rgba(98, 130, 176, 0.18), rgba(255, 255, 255, 0.055)),
     var(--sidebar-glass-fill-strong);
@@ -880,16 +913,14 @@
     0 12px 30px rgba(24, 31, 42, 0.14);
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar :is(input, button, .sidebar-search-hint) {
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .app-sidebar
+  :is(input, button, .sidebar-search-hint) {
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.18);
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] :is(
-  .app-inspector,
-  .app-file-editor,
-  .workspace-terminal-split,
-  .composer-surface
-) {
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  :is(.app-inspector, .app-file-editor, .workspace-terminal-split, .composer-surface) {
   background:
     linear-gradient(180deg, rgba(255, 255, 248, 0.055), rgba(0, 0, 0, 0.045)),
     rgba(24, 25, 24, 0.24);
@@ -900,17 +931,14 @@
    * top is a redundant full-panel compositor pass every frame. */
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .composer-surface {
+[data-appearance='native_glass'][data-reduce-transparency='false'] .composer-surface {
   /* GPU: dropped — under [data-appearance="native_glass"] the macOS vibrancy
    * view is already blurring behind this surface, so a CSS backdrop-filter on
    * top is a redundant full-panel compositor pass every frame. */
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] :is(
-  .agent-aura-layer,
-  .living-workspace-layer,
-  .run-data-viz-layer
-) {
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  :is(.agent-aura-layer, .living-workspace-layer, .run-data-viz-layer) {
   clip-path: inset(0 0 0 calc(var(--sidebar-width, 280px) + 12px));
   opacity: 0.16;
 }
@@ -921,25 +949,25 @@
  * layer starts. Inside the transcript there's nothing to clip away
  * (`.app-transcript` is overflow:hidden), so reset the clip there. The
  * higher-specificity `.app-transcript` descendant keeps `opacity: 0.16`. */
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript :is(
-  .agent-aura-layer,
-  .living-workspace-layer,
-  .run-data-viz-layer
-) {
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .app-transcript
+  :is(.agent-aura-layer, .living-workspace-layer, .run-data-viz-layer) {
   clip-path: inset(0);
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .living-workspace-layer.fx-intensity-epic,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .living-workspace-layer.fx-intensity-cinematic {
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .living-workspace-layer.fx-intensity-epic,
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .living-workspace-layer.fx-intensity-cinematic {
   opacity: 0.18;
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .transcript-scroll {
+[data-appearance='native_glass'][data-reduce-transparency='false'] .app-transcript,
+[data-appearance='native_glass'][data-reduce-transparency='false'] .transcript-scroll {
   background: transparent;
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript {
+[data-appearance='native_glass'][data-reduce-transparency='false'] .app-transcript {
   /* Bumped from 0.25 → 0.38 (≈50% more opacity, per user
    * preference). With the macOS vibrancy view underneath, the
    * old 25% black overlay let too much of the desktop tint
@@ -960,14 +988,28 @@
  * white background where message text + tool-call cards are
  * the visual priority. Readability over aesthetic — the user
  * explicitly asked for "improve readability" on this surface. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript {
+:is(
+    [data-theme='light'],
+    [data-theme='mist'],
+    [data-theme='sage']
+  )[data-appearance='native_glass'][data-reduce-transparency='false']
+  .app-transcript {
   /* Clean white reading floor that honours the pane-opacity slider (100% ≈
    * opaque, dial down for frost). Previously a flat 0.86 — and, with FX on,
    * the sky-reveal's 0.72 floor won and read grey over the desktop. Now both
    * FX-on and FX-off resolve to this same clean, slider-scaled white. */
-  background-color: color-mix(in srgb, var(--content-bg) var(--main-pane-opacity-100), transparent) !important;
+  background-color: color-mix(
+    in srgb,
+    var(--content-bg) var(--main-pane-opacity-100),
+    transparent
+  ) !important;
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar {
+:is(
+    [data-theme='light'],
+    [data-theme='mist'],
+    [data-theme='sage']
+  )[data-appearance='native_glass'][data-reduce-transparency='false']
+  .app-sidebar {
   /* Lift the sidebar fill in light + native-glass to a brighter
    * frosted white. The base native_glass sidebar rule layers a
    * dark gradient on top of `--sidebar-glass-fill`; in light
@@ -975,24 +1017,36 @@
    * mostly-white gradient so the sidebar reads as a clean
    * frosted surface, with `backdrop-filter` off (the macOS
    * vibrancy already provides the blur). */
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, var(--sidebar-alpha-034)), rgba(255, 255, 255, var(--sidebar-alpha-022))) !important;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, var(--sidebar-alpha-034)),
+    rgba(255, 255, 255, var(--sidebar-alpha-022))
+  ) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   border-right-color: rgba(0, 0, 0, 0.08) !important;
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar::before {
+:is(
+    [data-theme='light'],
+    [data-theme='mist'],
+    [data-theme='sage']
+  )[data-appearance='native_glass'][data-reduce-transparency='false']
+  .app-sidebar::before {
   /* The base ::before adds a darkening overlay — suppress it
    * in light + native-glass so the brighter fill above shows
    * through cleanly. */
   display: none !important;
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript::after,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript.provider-codex::after,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript.provider-claude::after,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript.provider-kimi::after,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript.provider-gemini::after {
+[data-appearance='native_glass'][data-reduce-transparency='false'] .app-transcript::after,
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .app-transcript.provider-codex::after,
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .app-transcript.provider-claude::after,
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .app-transcript.provider-kimi::after,
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .app-transcript.provider-gemini::after {
   background: none;
   opacity: 0;
 }
@@ -1128,7 +1182,7 @@
   background: color-mix(in srgb, var(--content-bg) var(--main-pane-opacity-100), transparent);
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript {
+[data-appearance='native_glass'][data-reduce-transparency='false'] .app-transcript {
   background: color-mix(in srgb, var(--content-bg) var(--main-pane-opacity-100), transparent);
 }
 
@@ -1300,7 +1354,9 @@
   border-radius: 12px;
   border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.08));
   background: rgba(255, 255, 255, 0.03);
-  transition: border-color 140ms ease, background 140ms ease;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease;
 }
 /* Presence tinting matches the provider card's signed-in / not-available
  * treatment so "installed" reads the same green everywhere in the app. */

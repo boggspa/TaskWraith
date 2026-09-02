@@ -104,13 +104,16 @@ export function CommandRuleAdminSection({
   onRevoke?: (rule: CommandRuleListItem) => void | Promise<void>
 }): React.JSX.Element {
   return (
-    <section className="approval-grant-admin command-rule-admin" aria-label="Exact command allowlist">
+    <section
+      className="approval-grant-admin command-rule-admin"
+      aria-label="Exact command allowlist"
+    >
       <div className="approval-grant-admin-header">
         <div>
           <div className="approval-grant-admin-title">Exact command allowlist</div>
           <div className="settings-hint approval-grant-admin-hint">
-            Revocable brokered rules for one executable hash, literal argv, workspace, and root
-            cwd. Matches run unsandboxed and without workspace locks.
+            Revocable brokered rules for one executable hash, literal argv, workspace, and root cwd.
+            Matches run unsandboxed and without workspace locks.
           </div>
         </div>
         <span className="approval-grant-admin-count">{rules.length}</span>
@@ -339,22 +342,19 @@ export function ApprovalLedgerPanel({
     [onRevokeWorkspaceGrant]
   )
 
-  const handleRevokeCommandRule = useCallback(
-    async (rule: CommandRuleListItem): Promise<void> => {
-      try {
-        setCommandRuleError(null)
-        setRevokingCommandRuleId(rule.id)
-        const result = await window.api.removeCommandRule(rule.id)
-        if (!result?.ok) throw new Error(result?.error || 'Command rule could not be revoked.')
-        setCommandRules((current) => current.filter((entry) => entry.id !== rule.id))
-      } catch (err) {
-        setCommandRuleError(err instanceof Error ? err.message : String(err))
-      } finally {
-        setRevokingCommandRuleId(null)
-      }
-    },
-    []
-  )
+  const handleRevokeCommandRule = useCallback(async (rule: CommandRuleListItem): Promise<void> => {
+    try {
+      setCommandRuleError(null)
+      setRevokingCommandRuleId(rule.id)
+      const result = await window.api.removeCommandRule(rule.id)
+      if (!result?.ok) throw new Error(result?.error || 'Command rule could not be revoked.')
+      setCommandRules((current) => current.filter((entry) => entry.id !== rule.id))
+    } catch (err) {
+      setCommandRuleError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRevokingCommandRuleId(null)
+    }
+  }, [])
 
   // Slice (1.0.3) — set of sub-thread delegation grants scoped to the
   // workspace the user is currently viewing. Only populated when the
@@ -535,18 +535,10 @@ export function ApprovalLedgerPanel({
       </div>
 
       <div className="approval-ledger-actions">
-        <PillButton
-          size="compact"
-          onClick={() => void refresh()}
-          disabled={loading}
-        >
+        <PillButton size="compact" onClick={() => void refresh()} disabled={loading}>
           {loading ? 'Refreshing…' : 'Refresh'}
         </PillButton>
-        <PillButton
-          size="compact"
-          onClick={handleExport}
-          disabled={visibleRecords.length === 0}
-        >
+        <PillButton size="compact" onClick={handleExport} disabled={visibleRecords.length === 0}>
           Export JSON ({visibleRecords.length})
         </PillButton>
       </div>
@@ -615,10 +607,7 @@ export function ApprovalLedgerPanel({
               ))}
             </ul>
             <div className="modal-actions">
-              <PillButton
-                onClick={() => setBulkForgetPending(null)}
-                disabled={bulkRevoking}
-              >
+              <PillButton onClick={() => setBulkForgetPending(null)} disabled={bulkRevoking}>
                 Cancel
               </PillButton>
               <PillButton

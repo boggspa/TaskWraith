@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest'
 
 const mainSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
 const ollamaSource = readFileSync(new URL('./ollama/OllamaProvider.ts', import.meta.url), 'utf8')
-const auditGateSource = readFileSync(new URL('./audit/AuditGatesRunner.ts', import.meta.url), 'utf8')
+const auditGateSource = readFileSync(
+  new URL('./audit/AuditGatesRunner.ts', import.meta.url),
+  'utf8'
+)
 
 function between(source: string, start: string, end: string): string {
   const startIndex = source.indexOf(start)
@@ -15,7 +18,11 @@ function between(source: string, start: string, end: string): string {
 
 describe('host command route/history integration', () => {
   it('registers before admission/spawn and resolves timeout or error only from actual close', () => {
-    const runner = between(mainSource, 'function runHostCommand(', 'function codexNeedsApprovalGate(')
+    const runner = between(
+      mainSource,
+      'function runHostCommand(',
+      'function codexNeedsApprovalGate('
+    )
     const registered = runner.indexOf('hostCommandOperations.register(')
     const admitted = runner.indexOf('historyClearAdmissionBlocked(')
     const liveBundleGuard = runner.indexOf('runningAppBundleMutationBlockReason({')
@@ -48,7 +55,11 @@ describe('host command route/history integration', () => {
       rerun.indexOf('completeHostCommandTerminalProjection(')
     )
 
-    const mcp = between(mainSource, 'async function executeGeminiMcpTool(', 'async function startGeminiMcpBroker(')
+    const mcp = between(
+      mainSource,
+      'async function executeGeminiMcpTool(',
+      'async function startGeminiMcpBroker('
+    )
     expect(mcp).toContain("source: 'brokered-mcp'")
     // Call head only: the brokered shell also forwards a session release-lease
     // approval, so this call is no longer two-arity.

@@ -33,10 +33,10 @@ import { KIMI_256K_CONTEXT_WINDOW } from '../../../shared/kimiModels'
 const NON_MODEL_ALIAS_IDS = new Set<string>(['auto'])
 
 export interface ModelContextLengthRow {
-  modelId: string          // canonical model id, e.g. 'claude-opus-4-8-1m'
-  label: string            // curated catalog picker label, e.g. 'Claude Opus 4.8 1M'
-  contextWindow: number    // resolved official window in tokens
-  formatted: string        // e.g. '1.0M' or '256k'
+  modelId: string // canonical model id, e.g. 'claude-opus-4-8-1m'
+  label: string // curated catalog picker label, e.g. 'Claude Opus 4.8 1M'
+  contextWindow: number // resolved official window in tokens
+  formatted: string // e.g. '1.0M' or '256k'
 }
 
 export interface ModelContextLengthGroup {
@@ -44,9 +44,10 @@ export interface ModelContextLengthGroup {
   models: ModelContextLengthRow[]
 }
 
-export function buildModelContextLengthGroups(
-  options?: { includeOllama?: boolean; excludeProviders?: ProviderId[] }
-): ModelContextLengthGroup[] {
+export function buildModelContextLengthGroups(options?: {
+  includeOllama?: boolean
+  excludeProviders?: ProviderId[]
+}): ModelContextLengthGroup[] {
   const excluded = new Set<ProviderId>(options?.excludeProviders ?? [])
   const order: ProviderId[] = [
     ...MODEL_USAGE_PROVIDER_ORDER,

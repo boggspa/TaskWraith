@@ -263,7 +263,10 @@ describe('mergeChatUpdatedForRender', () => {
   it('leaves the record untouched when live and delivered rosters agree', () => {
     const delivered = { ...chat([message('a', 'frame')]) }
     delivered.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
-    delivered.ensemble = makeEnsemble([{ id: 'seat-1', role: 'Worker' }], '2026-09-01T00:00:01.000Z')
+    delivered.ensemble = makeEnsemble(
+      [{ id: 'seat-1', role: 'Worker' }],
+      '2026-09-01T00:00:01.000Z'
+    )
     const live = { ...chat([message('a', 'frame')]) }
     live.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
     live.ensemble = makeEnsemble([{ id: 'seat-1', role: 'Worker' }], '2026-09-01T00:00:01.000Z')
@@ -302,9 +305,7 @@ describe('mergeChatUpdatedForRender', () => {
     expect(merged.chatKind).toBe('single')
     expect(merged.ensemble).toBeUndefined()
     // The stashed roster rides across too, or a later Ensemble-on toggle loses it.
-    expect(merged.providerMetadata?.stashedEnsemble).toEqual(
-      live.providerMetadata.stashedEnsemble
-    )
+    expect(merged.providerMetadata?.stashedEnsemble).toEqual(live.providerMetadata.stashedEnsemble)
   })
 
   it('keeps a just-enabled ensemble mode against a staler single-provider delivery', () => {

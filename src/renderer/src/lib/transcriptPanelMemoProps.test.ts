@@ -114,8 +114,16 @@ describe('transcriptPanelMemoProps', () => {
     ).toBe(false)
     expect(
       transcriptPanelPropsEqual(
-        { ...shared, onOpenProjectReferenceCitation: openA, resolveProjectReferenceExtract: resolveA },
-        { ...shared, onOpenProjectReferenceCitation: openA, resolveProjectReferenceExtract: resolveA }
+        {
+          ...shared,
+          onOpenProjectReferenceCitation: openA,
+          resolveProjectReferenceExtract: resolveA
+        },
+        {
+          ...shared,
+          onOpenProjectReferenceCitation: openA,
+          resolveProjectReferenceExtract: resolveA
+        }
       )
     ).toBe(true)
   })

@@ -61,10 +61,7 @@ export interface ApprovalResponseHandlerDeps {
     ApprovalService,
     'getPendingExternalPathDetection' | 'listRendererApprovalRequests' | 'resolve'
   >
-  commandRuleApprovalFlow?: Pick<
-    CommandRuleApprovalFlow,
-    'accept' | 'commit' | 'rollback'
-  >
+  commandRuleApprovalFlow?: Pick<CommandRuleApprovalFlow, 'accept' | 'commit' | 'rollback'>
   assertSenderCanRespond: (event: IpcMainInvokeEvent, requestId: string) => void
   issueExternalPathGrant: (
     grant: Omit<ExternalPathGrant, 'issuedBy' | 'signature'>

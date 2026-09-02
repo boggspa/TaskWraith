@@ -285,7 +285,10 @@ function assertBoundExecutionGraphSupported(revision: ExecutionGraphRevision): v
     if (step.kind !== 'solo_agent' && step.kind !== 'output') {
       throw new Error(`Bound execution graph cannot execute ${step.kind} steps.`)
     }
-    if (step.kind === 'output' && (step.inputs?.length !== 1 || step.inputs[0]?.required !== true)) {
+    if (
+      step.kind === 'output' &&
+      (step.inputs?.length !== 1 || step.inputs[0]?.required !== true)
+    ) {
       throw new Error('Bound execution graph output steps require one required data input.')
     }
     if (step.kind === 'solo_agent' && !step.agent.runTemplateRef?.trim()) {
@@ -617,15 +620,11 @@ export class ExecutionGraphCoordinator {
    * path (for example a host-process rerun) is encountered before the provider
    * can produce an authoritative terminal result.
    */
-  requireActionForProviderRun(
-    runId: string,
-    reason: string
-  ): ExecutionRunProjection | undefined {
+  requireActionForProviderRun(runId: string, reason: string): ExecutionRunProjection | undefined {
     const claims = this.listExecutions({ includeTerminal: false }).flatMap((projection) =>
       Object.values(projection.attempts)
         .filter(
-          (attempt) =>
-            attempt.providerRunRef === runId && !isStepAttemptTerminal(attempt.state)
+          (attempt) => attempt.providerRunRef === runId && !isStepAttemptTerminal(attempt.state)
         )
         .map((attempt) => ({ projection, attempt }))
     )
@@ -708,9 +707,7 @@ export class ExecutionGraphCoordinator {
 
     this.assertAppendAuthority(appendContext, input)
     if (isExecutionRunTerminal(appendContext.state)) {
-      throw new Error(
-        `Execution "${appendContext.executionId}" is already ${appendContext.state}.`
-      )
+      throw new Error(`Execution "${appendContext.executionId}" is already ${appendContext.state}.`)
     }
     const frontier = executionTopologyFrontier(appendContext.topology)
     if (frontier.length > 1) {
@@ -860,7 +857,10 @@ export class ExecutionGraphCoordinator {
     for (const projection of projections) {
       if (projection.anchorRunRef === runId && terminalSession(event.session.status)) {
         if (!projection.workspaceId) {
-          this.requireAnchorAction(projection, 'Anchor execution has no durable workspace identity.')
+          this.requireAnchorAction(
+            projection,
+            'Anchor execution has no durable workspace identity.'
+          )
           disposition = 'rejected'
           continue
         }
@@ -878,10 +878,7 @@ export class ExecutionGraphCoordinator {
           disposition = 'rejected'
           continue
         }
-        if (
-          event.session.appChatId !== projection.rootChatId ||
-          status !== event.session.status
-        ) {
+        if (event.session.appChatId !== projection.rootChatId || status !== event.session.status) {
           this.requireAnchorAction(
             projection,
             'Anchor terminal event did not match the exact durable chat, workspace, and queue lifecycle.'
@@ -1788,10 +1785,7 @@ export class ExecutionGraphCoordinator {
     if (!ceiling) return null
     const request = step.permissionRequestRef
     if (!request) return ceiling.authorityDigest
-    if (
-      request.ceilingReferenceId !== ceiling.referenceId ||
-      !request.authorityDigest?.trim()
-    ) {
+    if (request.ceilingReferenceId !== ceiling.referenceId || !request.authorityDigest?.trim()) {
       return null
     }
     return request.authorityDigest
@@ -1875,9 +1869,7 @@ export class ExecutionGraphCoordinator {
     )
   }
 
-  private requiresActionCancellationIsContained(
-    projection: ExecutionRunProjection
-  ): boolean {
+  private requiresActionCancellationIsContained(projection: ExecutionRunProjection): boolean {
     for (const activation of Object.values(projection.activations)) {
       if (isStepActivationTerminal(activation.state)) continue
       const attempt = latestAttemptForActivation(projection, activation)
@@ -1954,9 +1946,7 @@ export class ExecutionGraphCoordinator {
         ? job.status === 'starting'
         : event.session.status === 'running'
           ? job.status === 'starting' || job.status === 'active'
-          : job.status === 'starting' ||
-            job.status === 'active' ||
-            job.status === 'cancelling')
+          : job.status === 'starting' || job.status === 'active' || job.status === 'cancelling')
     )
     if (exactQueueBinding && exactSessionIdentity && exactQueueLifecycle) return true
 

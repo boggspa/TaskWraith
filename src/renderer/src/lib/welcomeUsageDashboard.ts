@@ -6,10 +6,7 @@ import type {
   WorkspaceRecord
 } from '../../../main/store/types'
 import { canonicalModelIdForProvider, humaniseModelId } from './modelDisplayName'
-import {
-  resolveOllamaDisplayBrand,
-  resolveProviderHueClass
-} from './ollamaDisplayBrand'
+import { resolveOllamaDisplayBrand, resolveProviderHueClass } from './ollamaDisplayBrand'
 import { usageRecordInputTokens, usageRecordTotalTokens } from './providerRateEstimate'
 
 export type WelcomeUsageTab = 'overview' | 'models' | 'workspaces' | 'providers' | 'agents'
@@ -136,9 +133,7 @@ export const WELCOME_USAGE_PROVIDER_IDS: readonly ProviderId[] = Object.freeze(
   Object.keys(WELCOME_USAGE_PROVIDER_MEMBERSHIP) as ProviderId[]
 )
 
-const WELCOME_USAGE_PROVIDER_ID_SET: ReadonlySet<string> = new Set(
-  WELCOME_USAGE_PROVIDER_IDS
-)
+const WELCOME_USAGE_PROVIDER_ID_SET: ReadonlySet<string> = new Set(WELCOME_USAGE_PROVIDER_IDS)
 
 const isWelcomeUsageProviderId = (value: unknown): value is ProviderId =>
   typeof value === 'string' && WELCOME_USAGE_PROVIDER_ID_SET.has(value)
@@ -360,9 +355,10 @@ const dayKeyFromTimestamp = (timestamp: number): string => {
 }
 
 const emptyProviderTotals = (): Record<ProviderId, number> =>
-  Object.fromEntries(
-    WELCOME_USAGE_PROVIDER_IDS.map((provider) => [provider, 0])
-  ) as Record<ProviderId, number>
+  Object.fromEntries(WELCOME_USAGE_PROVIDER_IDS.map((provider) => [provider, 0])) as Record<
+    ProviderId,
+    number
+  >
 
 const formatHourLabel = (dayKey: string, hour: number): string => {
   const [year, month, day] = dayKey.split('-').map(Number)
@@ -683,10 +679,7 @@ export const buildWelcomeUsageDashboardData = (
   // chat-completions; Gemini often leaves it 0 — that's a real
   // signal worth surfacing, not noise).
   const providerCostAggregate = Object.fromEntries(
-    WELCOME_USAGE_PROVIDER_IDS.map((provider) => [
-      provider,
-      { tokens: 0, costUsd: 0 }
-    ])
+    WELCOME_USAGE_PROVIDER_IDS.map((provider) => [provider, { tokens: 0, costUsd: 0 }])
   ) as Record<ProviderId, { tokens: number; costUsd: number }>
   // 1.0.5-EW52 — Cumulative wall time across runs whose
   // timestamp is within the last 24 hours. Distinct from
@@ -872,10 +865,7 @@ export const buildWelcomeUsageDashboardData = (
     modelMap.set(modelId, existing)
   }
 
-  const totalTokens = runRecords.reduce(
-    (sum, record) => sum + usageRecordTotalTokens(record),
-    0
-  )
+  const totalTokens = runRecords.reduce((sum, record) => sum + usageRecordTotalTokens(record), 0)
   // Welcome L4/L8 — model breakdown is range-scoped AND filtered to
   // canonical models (see shouldSurfaceModelInBreakdown). Percentage
   // denominator is the sum of KEPT model tokens, not all run records:
@@ -1134,8 +1124,8 @@ export const buildWelcomeUsageDashboardData = (
     (sum, provider) => sum + providerCostAggregate[provider].tokens,
     0
   )
-  const providerCostBreakdown: ProviderCostBreakdownEntry[] = WELCOME_USAGE_PROVIDER_IDS
-    .map((provider) => ({
+  const providerCostBreakdown: ProviderCostBreakdownEntry[] = WELCOME_USAGE_PROVIDER_IDS.map(
+    (provider) => ({
       provider,
       displayName: PROVIDER_DISPLAY_NAMES[provider],
       tokens: providerCostAggregate[provider].tokens,
@@ -1148,7 +1138,8 @@ export const buildWelcomeUsageDashboardData = (
         totalProviderTokensForBreakdown > 0
           ? (providerCostAggregate[provider].tokens / totalProviderTokensForBreakdown) * 100
           : 0
-    }))
+    })
+  )
     // Cursor rows cover live Path-B runs as well as historical usage; this
     // breakdown is a ledger view, not a provider offer.
     .sort(

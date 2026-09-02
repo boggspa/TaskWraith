@@ -516,10 +516,7 @@ describe('ChatService', () => {
 
     service.saveChat(record, { authoredTranscript })
 
-    expect(store.saveChat).toHaveBeenCalledWith(
-      makeChat({ title: 'Chat' }),
-      { authoredTranscript }
-    )
+    expect(store.saveChat).toHaveBeenCalledWith(makeChat({ title: 'Chat' }), { authoredTranscript })
   })
 
   it('preserves imported transcript provenance across renderer whole-record saves', () => {
@@ -1026,7 +1023,10 @@ describe('ChatService', () => {
         makeChat({ appChatId: chatId, chatKind: targetKind })
       )
       const { deps } = makeDeps({
-        appStore: makeStore({ setChatKind, getChat: vi.fn(() => makeChat({ chatKind: 'ensemble' })) })
+        appStore: makeStore({
+          setChatKind,
+          getChat: vi.fn(() => makeChat({ chatKind: 'ensemble' }))
+        })
       })
 
       new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'single' })
@@ -2307,9 +2307,7 @@ describe('ChatService', () => {
     const service = new ChatService(deps)
     expect(() => service.getChat('../settings')).toThrow(/safe chat id/)
     expect(() => service.deleteChat('../settings')).toThrow(/safe chat id/)
-    expect(() => service.saveChat(makeChat({ appChatId: '../settings' }))).toThrow(
-      /safe chat id/
-    )
+    expect(() => service.saveChat(makeChat({ appChatId: '../settings' }))).toThrow(/safe chat id/)
     expect(store.getChat).not.toHaveBeenCalled()
     expect(store.deleteChat).not.toHaveBeenCalled()
     expect(store.saveChat).not.toHaveBeenCalled()
@@ -2467,10 +2465,12 @@ describe('ChatService', () => {
       sourceProviderThreadId: 'provider-thread-1',
       sourceModel: 'kimi-k2'
     })
-    expect(store.saveChat).toHaveBeenCalledWith(expect.objectContaining({
-      appChatId: 'side-chat-1',
-      forkContext: expect.objectContaining({ kind: 'emulated' })
-    }))
+    expect(store.saveChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appChatId: 'side-chat-1',
+        forkContext: expect.objectContaining({ kind: 'emulated' })
+      })
+    )
   })
 
   it('prepares detached fork messages after shell creation and before the copied transcript is saved', () => {
@@ -2673,9 +2673,9 @@ describe('ChatService', () => {
       })
     })
 
-    expect(() =>
-      new ChatService(deps).createForkChat({ parentChatId: parent.appChatId })
-    ).toThrow('ownership persistence failed')
+    expect(() => new ChatService(deps).createForkChat({ parentChatId: parent.appChatId })).toThrow(
+      'ownership persistence failed'
+    )
     expect(events).toEqual(['createSideChat', 'prepare'])
     expect(store.createSideChat).toHaveBeenCalledTimes(1)
     expect(saveChat).not.toHaveBeenCalled()

@@ -864,8 +864,7 @@ export function resolveReasoningLadderAvailability(
   // thumb + label at that stop rather than collapsing to the empty-rail dash.
   if (ladder.enabledIndices.length === 1) {
     const index = ladder.enabledIndices[0]
-    const fallbackLabel =
-      provider === 'kimi' ? 'On' : LADDER_STOPS[index]?.label || '—'
+    const fallbackLabel = provider === 'kimi' ? 'On' : LADDER_STOPS[index]?.label || '—'
     const fallbackReason =
       provider === 'kimi'
         ? 'Thinking is always on and cannot be disabled for this model.'
@@ -887,7 +886,8 @@ export function resolveReasoningLadderAvailability(
       ? {
           index: 2,
           label: 'Medium',
-          disabledReason: 'Cursor Composer 2.5 uses implicit Medium reasoning; it is not configurable.'
+          disabledReason:
+            'Cursor Composer 2.5 uses implicit Medium reasoning; it is not configurable.'
         }
       : {
           index: 0,
@@ -1028,8 +1028,7 @@ export function ReasoningLadderSlider({
   // parent re-render / ensemble notice), not one per stop crossed. Keyboard/
   // click paths still commit directly.
   const [dragIndex, setDragIndex] = useState<number | null>(null)
-  const interactive =
-    !disabled && !unavailablePresentation && ladder.enabledIndices.length > 1
+  const interactive = !disabled && !unavailablePresentation && ladder.enabledIndices.length > 1
   const currentIndex =
     unavailablePresentation?.index ?? clampedLadderIndex(provider, selectedReasoning, ladder)
   const displayIndex = interactive && dragIndex != null ? dragIndex : currentIndex
@@ -1479,8 +1478,7 @@ export function CombinedModelPicker({
         kimiReasoningEffort: provider === 'kimi' ? kimiReasoningEffort : undefined,
         museReasoningEffort:
           provider === 'muse' ? museReasoningEffort || selectedReasoning : undefined,
-        antigravityReasoningEffort:
-          provider === 'antigravity' ? selectedReasoning : undefined,
+        antigravityReasoningEffort: provider === 'antigravity' ? selectedReasoning : undefined,
         shellFastModeActive: showShellFastLabel
       }),
     [
@@ -1519,8 +1517,7 @@ export function CombinedModelPicker({
         kimiReasoningEffort: provider === 'kimi' ? kimiReasoningEffort : undefined,
         museReasoningEffort:
           provider === 'muse' ? museReasoningEffort || selectedReasoning : undefined,
-        antigravityReasoningEffort:
-          provider === 'antigravity' ? selectedReasoning : undefined
+        antigravityReasoningEffort: provider === 'antigravity' ? selectedReasoning : undefined
       }),
     [
       provider,
@@ -1902,9 +1899,7 @@ export function CombinedModelPicker({
       role="dialog"
       aria-label={dialogAriaLabel || 'Choose provider, model, reasoning level, and speed'}
     >
-      {hasTopContent && (
-        <div className="composer-combined-picker-top-content">{topContent}</div>
-      )}
+      {hasTopContent && <div className="composer-combined-picker-top-content">{topContent}</div>}
       {isOllamaProviderPicker && (
         <div
           className={`composer-combined-picker-column composer-combined-picker-providers ${focusedColumn === 'provider' ? 'is-focused' : ''}`}
@@ -1919,9 +1914,11 @@ export function CombinedModelPicker({
                 className={`composer-combined-picker-row composer-combined-picker-provider-row ${active ? 'is-selected' : ''} ${idx === providerHighlight && focusedColumn === 'provider' ? 'is-highlighted' : ''}`}
                 data-ollama-provider-class={group.providerClass}
                 data-provider-hue={group.providerClass}
-                style={{
-                  '--model-row-accent': `var(--provider-${group.providerClass}-color, var(--accent))`
-                } as React.CSSProperties}
+                style={
+                  {
+                    '--model-row-accent': `var(--provider-${group.providerClass}-color, var(--accent))`
+                  } as React.CSSProperties
+                }
                 disabled={disabled}
                 onMouseEnter={() => {
                   highlightSourceRef.current = 'pointer'
@@ -2013,11 +2010,7 @@ export function CombinedModelPicker({
                   const rowIndex = modelOffset + optionIndex
                   const selected = group.provider === provider && option.id === selectedModelId
                   const supportsFast = Boolean(group.fastModeCapableModelIds?.has(option.id))
-                  const rowHueClass = modelPickerHueClass(
-                    group.provider,
-                    option.id,
-                    option.label
-                  )
+                  const rowHueClass = modelPickerHueClass(group.provider, option.id, option.label)
                   // Grouped view spans providers, so the lane is decided by THIS
                   // row's provider — not the picker's currently selected one.
                   const requiresApiKey = modelRequiresApiKey(group.provider, option.id)
@@ -2058,10 +2051,7 @@ export function CombinedModelPicker({
                       }}
                     >
                       <span className="composer-combined-picker-row-label">{option.label}</span>
-                      <OllamaCloudModelIndicator
-                        provider={group.provider}
-                        modelId={option.id}
-                      />
+                      <OllamaCloudModelIndicator provider={group.provider} modelId={option.id} />
                       {option.retiresAt && (
                         <span
                           className="composer-combined-picker-retirement-pill"
@@ -2133,9 +2123,7 @@ export function CombinedModelPicker({
                   }`}
                   data-provider-hue={rowHueClass}
                   data-ollama-cloud-model={
-                    provider === 'ollama' && isOllamaCloudModelId(option.id)
-                      ? 'true'
-                      : undefined
+                    provider === 'ollama' && isOllamaCloudModelId(option.id) ? 'true' : undefined
                   }
                   style={modelPickerAccentStyle(provider, option.id, option.label)}
                   disabled={Boolean(disabled || option.disabled)}

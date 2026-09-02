@@ -563,9 +563,9 @@ describe('runGrokAcpTurn', () => {
     await new Promise((r) => setTimeout(r, 40))
 
     // The turn the user would otherwise have lost entirely.
-    expect(
-      events.some((e) => e.type === 'content' && e.text === 'Answer after the blip.')
-    ).toBe(true)
+    expect(events.some((e) => e.type === 'content' && e.text === 'Answer after the blip.')).toBe(
+      true
+    )
     expect(closeInfos).toEqual([{ code: 0, turnComplete: true, terminalStatus: 'end_turn' }])
   })
 

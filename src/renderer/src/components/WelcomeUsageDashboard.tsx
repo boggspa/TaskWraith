@@ -470,15 +470,9 @@ export function WelcomeUsageDashboard({
               const percent = Math.max(0, Math.min(100, model.percent))
               const fillWidth = `${Math.max(2, percent)}%`
               return (
-                <div
-                  key={model.id}
-                  className={`welcome-usage-model-meter ${model.colorClass}`}
-                >
+                <div key={model.id} className={`welcome-usage-model-meter ${model.colorClass}`}>
                   <div className="welcome-usage-model-meter-header">
-                    <span
-                      className={`welcome-usage-model-dot ${model.colorClass}`}
-                      aria-hidden
-                    />
+                    <span className={`welcome-usage-model-dot ${model.colorClass}`} aria-hidden />
                     <span className="welcome-usage-model-name" title={model.label}>
                       {model.label}
                     </span>

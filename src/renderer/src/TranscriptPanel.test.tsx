@@ -484,9 +484,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
   })
 
   it('renders one unified Working signal with the active Ensemble seat and telemetry', () => {
-    const chat = activeEnsembleChat(
-      ensembleParticipant({ tokenTotals: { total_tokens: 28_500 } })
-    )
+    const chat = activeEnsembleChat(ensembleParticipant({ tokenTotals: { total_tokens: 28_500 } }))
     chat.runs = [
       {
         runId: 'builder-previous',
@@ -3551,11 +3549,7 @@ describe('collapsed one-liner super-groups', () => {
   })
 
   it('leaves a lone settled stack as an ordinary one-liner', () => {
-    const loneStack = [
-      superGroupMessages[0],
-      superGroupMessages[1],
-      superGroupMessages[4]
-    ]
+    const loneStack = [superGroupMessages[0], superGroupMessages[1], superGroupMessages[4]]
     const html = renderToStaticMarkup(
       <TranscriptPanel {...makeProps({ messages: loneStack, virtualize: false })} />
     )
@@ -3779,9 +3773,7 @@ describe('working-indicator context-pressure hint', () => {
       createdAt: 0,
       updatedAt: 0,
       archived: false,
-      messages: [
-        { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' }
-      ],
+      messages: [{ id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' }],
       runs: [
         {
           runId: 'run-1',
@@ -4129,9 +4121,7 @@ describe('inter-seat transcript rows', () => {
     currentChat.messages = messages
     if (currentChat.ensemble) currentChat.ensemble.activeRound = undefined
     const html = renderToStaticMarkup(
-      <TranscriptPanel
-        {...makeProps({ messages, currentChat, virtualize: false })}
-      />
+      <TranscriptPanel {...makeProps({ messages, currentChat, virtualize: false })} />
     )
     const start = html.indexOf('data-message-id="side-1"')
     const next = html.indexOf('data-message-id="sys-1"', start)

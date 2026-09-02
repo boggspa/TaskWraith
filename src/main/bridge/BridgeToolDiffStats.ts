@@ -234,19 +234,17 @@ export function bridgeToolDiffStats(
   if (isShellCatalogTool(toolName)) {
     return bridgeShellCommandDiffStats(input)
   }
-  const explicitAdditions =
-    bridgeNumberish(
-      input.additions ?? input.added ?? input.linesAdded ?? input.lines_added ?? input.insertions
-    )
-  const explicitDeletions =
-    bridgeNumberish(
-      input.deletions ??
-        input.deleted ??
-        input.linesDeleted ??
-        input.linesRemoved ??
-        input.lines_removed ??
-        input.removals
-    )
+  const explicitAdditions = bridgeNumberish(
+    input.additions ?? input.added ?? input.linesAdded ?? input.lines_added ?? input.insertions
+  )
+  const explicitDeletions = bridgeNumberish(
+    input.deletions ??
+      input.deleted ??
+      input.linesDeleted ??
+      input.linesRemoved ??
+      input.lines_removed ??
+      input.removals
+  )
   if (
     (explicitAdditions !== undefined && !Number.isNaN(explicitAdditions)) ||
     (explicitDeletions !== undefined && !Number.isNaN(explicitDeletions))

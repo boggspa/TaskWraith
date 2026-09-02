@@ -351,8 +351,7 @@ function preserveNewerLocalChatKind(
   if (liveIsEnsemble && !liveChat.ensemble) return merged
   const liveStash = liveChat.providerMetadata?.stashedEnsemble
   const deliveredStash = merged.providerMetadata?.stashedEnsemble
-  const sameStash =
-    JSON.stringify(liveStash ?? null) === JSON.stringify(deliveredStash ?? null)
+  const sameStash = JSON.stringify(liveStash ?? null) === JSON.stringify(deliveredStash ?? null)
   if (liveIsEnsemble === deliveredIsEnsemble && sameStash) return merged
   if (stampToMs(liveChat.updatedAt) <= stampToMs(merged.updatedAt)) return merged
   const next: ChatRecord = { ...merged, chatKind: liveIsEnsemble ? 'ensemble' : 'single' }

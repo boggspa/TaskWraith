@@ -395,7 +395,9 @@ describe('ToolParser', () => {
       expect(getToolDisplayName('tw_recall_find', { taskQuery: 'M3 Ultra' })).toBe(
         'Searched past threads for M3 Ultra'
       )
-      expect(getToolDisplayName('mcp__TaskWraith__tw_recall_find', {})).toBe('Searched past threads')
+      expect(getToolDisplayName('mcp__TaskWraith__tw_recall_find', {})).toBe(
+        'Searched past threads'
+      )
     })
     it('shows Shell command', () => {
       expect(getToolDisplayName('run_shell_command', {})).toBe('Shell command')
@@ -625,7 +627,11 @@ describe('ToolParser', () => {
     })
     it('upgrades a legacy raw viewer activity when its result is paired', () => {
       const use = {
-        ...createToolActivity({ type: 'tool_use', tool_name: 'read_file', tool_id: 'legacy-image' }),
+        ...createToolActivity({
+          type: 'tool_use',
+          tool_name: 'read_file',
+          tool_id: 'legacy-image'
+        }),
         toolName: 'view_image',
         displayName: 'View image'
       }
@@ -1170,9 +1176,14 @@ describe('ToolParser', () => {
       // ACP tool_kind 'edit' classifies rows whose human title resolution
       // cannot ("Apply my change") — the category evidence must keep the pill.
       expect(
-        deriveToolDiffSummary('Apply my change', { filePath: 'a.ts', content: 'one\ntwo' }, undefined, {
-          category: 'write'
-        })
+        deriveToolDiffSummary(
+          'Apply my change',
+          { filePath: 'a.ts', content: 'one\ntwo' },
+          undefined,
+          {
+            category: 'write'
+          }
+        )
       ).toMatchObject({ additions: 2, deletions: 0 })
     })
 

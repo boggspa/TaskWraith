@@ -763,8 +763,7 @@ export function summariseDevinStatus(status: unknown): ProviderAuthSummary {
     return {
       variant: 'not-signed-in',
       statusText: 'Devin setup not checked yet',
-      hint:
-        'Install the Devin CLI (`curl -fsSL https://cli.devin.ai/install.sh | bash`), then set WINDSURF_API_KEY or run `devin auth login`.'
+      hint: 'Install the Devin CLI (`curl -fsSL https://cli.devin.ai/install.sh | bash`), then set WINDSURF_API_KEY or run `devin auth login`.'
     }
   }
   if (record.available === false) {
@@ -774,12 +773,11 @@ export function summariseDevinStatus(status: unknown): ProviderAuthSummary {
       hint: 'Install the Devin CLI, then set WINDSURF_API_KEY or run `devin auth login` in Terminal.'
     }
   }
-  const authState = String(record.authState || '').trim().toLowerCase()
+  const authState = String(record.authState || '')
+    .trim()
+    .toLowerCase()
   const credentialPresent = record.credentialPresent === true
-  if (
-    credentialPresent ||
-    ['authenticated', 'api-key', 'windsurf-api-key'].includes(authState)
-  ) {
+  if (credentialPresent || ['authenticated', 'api-key', 'windsurf-api-key'].includes(authState)) {
     return {
       variant: 'signed-in',
       statusText: 'Devin signed in',
@@ -6644,9 +6642,9 @@ export function SettingsPanel({
                 </label>
                 <p className="settings-hint">
                   Uses a bounded, main-owned snapshot of your request and settled thread evidence.
-                  Agent output is labelled untrusted, unsafe or generic proposals are rejected,
-                  and the model may show nothing. A suggestion enters your draft only when you
-                  press Tab. Turning this off disables composer AutoDraft.
+                  Agent output is labelled untrusted, unsafe or generic proposals are rejected, and
+                  the model may show nothing. A suggestion enters your draft only when you press
+                  Tab. Turning this off disables composer AutoDraft.
                 </p>
               </div>
 
@@ -6719,10 +6717,7 @@ export function SettingsPanel({
                     onChange({
                       maxWaveAgents: Math.max(
                         2,
-                        Math.min(
-                          64,
-                          Math.floor(Number(e.target.value) || DEFAULT_MAX_WAVE_AGENTS)
-                        )
+                        Math.min(64, Math.floor(Number(e.target.value) || DEFAULT_MAX_WAVE_AGENTS))
                       )
                     })
                   }
@@ -7512,7 +7507,9 @@ export function SettingsPanel({
                         onClick={importKimiWebSession}
                         disabled={kimiWebSessionBusy}
                       >
-                        {kimiWebSessionStatus?.configured ? 'Re-import web session…' : 'Import web session…'}
+                        {kimiWebSessionStatus?.configured
+                          ? 'Re-import web session…'
+                          : 'Import web session…'}
                       </PillButton>
                       <PillButton
                         size="compact"
@@ -7524,9 +7521,7 @@ export function SettingsPanel({
                       </PillButton>
                     </div>
                     {kimiWebSessionStatus?.configured ? (
-                      <p className="settings-provider-auth-footnote">
-                        Web session imported.
-                      </p>
+                      <p className="settings-provider-auth-footnote">Web session imported.</p>
                     ) : null}
                     {kimiWebSessionError ? (
                       <p className="settings-provider-auth-error">{kimiWebSessionError}</p>

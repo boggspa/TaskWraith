@@ -300,10 +300,7 @@ interface SidebarProps {
    * "Active runs" sidebar section navigates to the chat AND opens
    * the Run Inspector for that runId. */
   onInspectRun?: (runId: string, chatId: string | undefined) => void
-  onCreateWorkflowFromPluginTemplate?: (
-    templateId: string,
-    workspace?: WorkspaceRecord
-  ) => void
+  onCreateWorkflowFromPluginTemplate?: (templateId: string, workspace?: WorkspaceRecord) => void
   onCreateWorkflow?: (workspace?: WorkspaceRecord) => void
   onCreateWorkspaceBoard?: (input?: WorkspaceBoardCreateInput) => void
   onOpenWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
@@ -386,7 +383,8 @@ export interface PairedRemoteDeviceSummary {
 type SidebarPathAction = () => Promise<{ ok: boolean; reason?: string; error?: string }>
 
 const isSideChatRecord = (chat: ChatRecord): boolean => chat.parentChatRelation === 'sideChat'
-const isLinkedChildChat = (chat: ChatRecord): boolean => isSubThreadChat(chat) || isSideChatRecord(chat)
+const isLinkedChildChat = (chat: ChatRecord): boolean =>
+  isSubThreadChat(chat) || isSideChatRecord(chat)
 
 const SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY = 'sideChatSelectedParticipantId'
 const SIDE_CHAT_SELECTED_PARTICIPANT_ROLE_METADATA_KEY = 'sideChatSelectedParticipantRole'
@@ -461,7 +459,8 @@ const getLinkedChildRouteLabel = (chat: ChatRecord, parentChat: ChatRecord | nul
     return `${parentLabel} historical guest transcript`
   }
   const participantLabel = getSideChatChildParticipantLabel(chat)
-  if (!participantLabel && parentProvider === chat.provider) return `${parentLabel} isolated side chat`
+  if (!participantLabel && parentProvider === chat.provider)
+    return `${parentLabel} isolated side chat`
   return participantLabel
     ? `${parentLabel} dedicated branch to ${participantLabel}`
     : `${parentLabel} side branch to ${childLabel}`
@@ -517,15 +516,10 @@ const SIDEBAR_SECTION_IDS: readonly SidebarSectionId[] = [
   'chats',
   'shared'
 ] as const
-const SIDEBAR_SECTIONS_EXPANDED_BY_DEFAULT = new Set<SidebarSectionId>([
-  'active-runs',
-  'recents'
-])
+const SIDEBAR_SECTIONS_EXPANDED_BY_DEFAULT = new Set<SidebarSectionId>(['active-runs', 'recents'])
 
 function defaultCollapsedSidebarSections(): Set<SidebarSectionId> {
-  return new Set(
-    SIDEBAR_SECTION_IDS.filter((id) => !SIDEBAR_SECTIONS_EXPANDED_BY_DEFAULT.has(id))
-  )
+  return new Set(SIDEBAR_SECTION_IDS.filter((id) => !SIDEBAR_SECTIONS_EXPANDED_BY_DEFAULT.has(id)))
 }
 
 function defaultExpandedWorkspaceId(
@@ -617,9 +611,7 @@ export function resolveSidebarSettingsMenuPortalPosition(
       SIDEBAR_SETTINGS_MENU_PORTAL_GUTTER,
       Math.min(
         anchorRect.left,
-        viewport.width -
-          SIDEBAR_SETTINGS_MENU_MAX_WIDTH -
-          SIDEBAR_SETTINGS_MENU_PORTAL_GUTTER
+        viewport.width - SIDEBAR_SETTINGS_MENU_MAX_WIDTH - SIDEBAR_SETTINGS_MENU_PORTAL_GUTTER
       )
     ),
     bottom: Math.max(
@@ -636,10 +628,7 @@ export function resolveSidebarFooterPopoverPortalPosition(
   viewport: { width: number; height: number },
   options: { placement: SidebarFooterPopoverPortalPlacement; popoverWidth: number }
 ): Pick<CSSProperties, 'position' | 'left' | 'bottom'> {
-  const availableWidth = Math.max(
-    0,
-    viewport.width - SIDEBAR_FOOTER_POPOVER_PORTAL_GUTTER * 2
-  )
+  const availableWidth = Math.max(0, viewport.width - SIDEBAR_FOOTER_POPOVER_PORTAL_GUTTER * 2)
   const clampedWidth = Math.min(options.popoverWidth, availableWidth)
   const desiredLeft =
     options.placement === 'side'
@@ -650,10 +639,7 @@ export function resolveSidebarFooterPopoverPortalPosition(
     position: 'fixed',
     left: Math.max(
       SIDEBAR_FOOTER_POPOVER_PORTAL_GUTTER,
-      Math.min(
-        desiredLeft,
-        viewport.width - clampedWidth - SIDEBAR_FOOTER_POPOVER_PORTAL_GUTTER
-      )
+      Math.min(desiredLeft, viewport.width - clampedWidth - SIDEBAR_FOOTER_POPOVER_PORTAL_GUTTER)
     ),
     bottom: Math.max(
       SIDEBAR_FOOTER_POPOVER_PORTAL_GUTTER,
@@ -975,11 +961,7 @@ export function SidebarSettingsMenu({
   // live via onAppearanceQuickChange WITHOUT onClose (dragging must not dismiss
   // the menu), and stop keydown propagation so arrow keys nudge the slider
   // rather than moving menu focus (moveMenuFocus on the menu root).
-  const renderOpacitySlider = (
-    label: string,
-    value: number,
-    apply: (value: number) => void
-  ) => (
+  const renderOpacitySlider = (label: string, value: number, apply: (value: number) => void) => (
     <label className="sidebar-settings-menu-slider">
       <span className="sidebar-settings-menu-slider-head">
         <span className="sidebar-settings-menu-item-label">{label}</span>
@@ -1503,11 +1485,7 @@ const GIT_WORKFLOW_ICON_FAMILY: Record<
  * change replaces the ChatRecord, so the `a.chat === b.chat` comparators
  * already cover re-rendering. Tones mirror the satellite row's palette.
  */
-export function SidebarGitWorkflowIcon({
-  marker
-}: {
-  marker: ChatGitWorkflowSnapshot
-}): ReactNode {
+export function SidebarGitWorkflowIcon({ marker }: { marker: ChatGitWorkflowSnapshot }): ReactNode {
   const label = chatGitWorkflowLabel(marker)
   return (
     <span
@@ -2015,8 +1993,7 @@ export function sidebarChatRowPropsAreEqual(
     a.subThreadsExpanded === b.subThreadsExpanded &&
     a.query === b.query &&
     (a.dragHandlers?.draggable ?? false) === (b.dragHandlers?.draggable ?? false) &&
-    (a.dragHandlers?.['data-dragging'] ?? null) ===
-      (b.dragHandlers?.['data-dragging'] ?? null) &&
+    (a.dragHandlers?.['data-dragging'] ?? null) === (b.dragHandlers?.['data-dragging'] ?? null) &&
     (a.dragHandlers?.['data-sidebar-thread-list'] ?? null) ===
       (b.dragHandlers?.['data-sidebar-thread-list'] ?? null) &&
     (a.dragHandlers?.['data-sidebar-thread-drop-target'] ?? null) ===
@@ -2301,7 +2278,9 @@ function formatWorkflowStatus(status?: string): string {
   return status
 }
 
-function workflowStatusTone(status?: string): 'running' | 'success' | 'warning' | 'danger' | 'muted' {
+function workflowStatusTone(
+  status?: string
+): 'running' | 'success' | 'warning' | 'danger' | 'muted' {
   if (status === 'queued' || status === 'running') return 'running'
   if (status === 'completed') return 'success'
   if (status === 'failed') return 'danger'
@@ -2718,11 +2697,7 @@ export function ApprovalsFooterPopover({
     requestId: string,
     action: AgentApprovalAction
   ) => boolean | void | Promise<boolean | void>
-  onAnswerQuestion?: (
-    questionId: string,
-    answer: string,
-    isCustom: boolean
-  ) => void | Promise<void>
+  onAnswerQuestion?: (questionId: string, answer: string, isCustom: boolean) => void | Promise<void>
   onDismissQuestion?: (questionId: string) => void | Promise<void>
   onOpenSettings: () => void
   loadRecent?: () => Promise<ApprovalLedgerRecord[]>
@@ -2800,9 +2775,7 @@ export function ApprovalsFooterPopover({
         <>
           <div className="sidebar-footer-popover-subhead">Questions</div>
           {questionsShown.map(({ chatId, question }) => {
-            const providerLabel = question.provider
-              ? getProviderLabel(question.provider)
-              : 'Agent'
+            const providerLabel = question.provider ? getProviderLabel(question.provider) : 'Agent'
             const chatTitle = resolveChatTitle?.(chatId)?.trim() || 'Thread'
             const options = question.options ?? []
             const canAnswerInline = Boolean(onAnswerQuestion) && options.length > 0
@@ -2902,9 +2875,9 @@ export function ApprovalsFooterPopover({
             // Signed-elevated canvas_eval must be reviewed in the task, where the
             // live (non-durable) card shows the exact script. The compact sidebar
             // row intentionally cannot approve a title-only summary.
-            const requiresDetailedReview = isCanvasEvalApprovalToolName(
-              approval.preview?.toolName
-            ) || approval.preview?.requiresExactDesktopReview === true
+            const requiresDetailedReview =
+              isCanvasEvalApprovalToolName(approval.preview?.toolName) ||
+              approval.preview?.requiresExactDesktopReview === true
             const canApprove = actions.includes('accept') && !requiresDetailedReview
             const broaderScopeAction: AgentApprovalAction | null = actions.includes(
               'acceptForWorkspace'
@@ -2918,30 +2891,32 @@ export function ApprovalsFooterPopover({
               : null
             const canDeny = actions.includes('decline')
             const hasInlineActions = Boolean(onRespondApproval) && (canApprove || canDeny)
-            const rowLabel = chatId && onJumpToChat
-              ? `${approval.title}, ${providerLabel}, open thread`
-              : `${approval.title}, ${providerLabel}`
-            const summary = chatId && onJumpToChat ? (
-              <button
-                type="button"
-                className="sidebar-footer-approval-row is-clickable sidebar-footer-approval-summary"
-                onClick={() => onJumpToChat(chatId)}
-                aria-label={rowLabel}
-              >
-                <span className="sidebar-footer-led is-pending" aria-hidden />
-                <span className="sidebar-footer-approval-title">{approval.title}</span>
-                <span className="sidebar-footer-approval-meta">{providerLabel}</span>
-              </button>
-            ) : (
-              <div
-                className="sidebar-footer-approval-row sidebar-footer-approval-summary"
-                aria-label={rowLabel}
-              >
-                <span className="sidebar-footer-led is-pending" aria-hidden />
-                <span className="sidebar-footer-approval-title">{approval.title}</span>
-                <span className="sidebar-footer-approval-meta">{providerLabel}</span>
-              </div>
-            )
+            const rowLabel =
+              chatId && onJumpToChat
+                ? `${approval.title}, ${providerLabel}, open thread`
+                : `${approval.title}, ${providerLabel}`
+            const summary =
+              chatId && onJumpToChat ? (
+                <button
+                  type="button"
+                  className="sidebar-footer-approval-row is-clickable sidebar-footer-approval-summary"
+                  onClick={() => onJumpToChat(chatId)}
+                  aria-label={rowLabel}
+                >
+                  <span className="sidebar-footer-led is-pending" aria-hidden />
+                  <span className="sidebar-footer-approval-title">{approval.title}</span>
+                  <span className="sidebar-footer-approval-meta">{providerLabel}</span>
+                </button>
+              ) : (
+                <div
+                  className="sidebar-footer-approval-row sidebar-footer-approval-summary"
+                  aria-label={rowLabel}
+                >
+                  <span className="sidebar-footer-led is-pending" aria-hidden />
+                  <span className="sidebar-footer-approval-title">{approval.title}</span>
+                  <span className="sidebar-footer-approval-meta">{providerLabel}</span>
+                </div>
+              )
             return (
               <div className="sidebar-footer-approval-pending" key={approval.id}>
                 {summary}
@@ -3015,7 +2990,6 @@ export function ApprovalsFooterPopover({
   )
 }
 
-
 // Devices popover — up to five paired devices, each with a connected/idle LED,
 // or an empty state, then a deep-link to Settings → Devices. The summaries
 // expose only a `connected` boolean (no last-seen), so the LED is green when
@@ -3058,9 +3032,7 @@ export function DevicesFooterPopover({
               </span>
             </div>
           ))}
-          {overflow > 0 && (
-            <div className="sidebar-footer-popover-more">+{overflow} more</div>
-          )}
+          {overflow > 0 && <div className="sidebar-footer-popover-more">+{overflow} more</div>}
         </>
       )}
     </SidebarFooterPopover>
@@ -3166,9 +3138,8 @@ export function Sidebar({
   const [newMenuWorkflowTemplatesOpen, setNewMenuWorkflowTemplatesOpen] = useState(false)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [settingsMenuPane, setSettingsMenuPane] = useState<SidebarSettingsMenuPane>('root')
-  const [settingsMenuPortalPosition, setSettingsMenuPortalPosition] = useState<CSSProperties | null>(
-    null
-  )
+  const [settingsMenuPortalPosition, setSettingsMenuPortalPosition] =
+    useState<CSSProperties | null>(null)
   // Footer control-row popovers (Approvals / Shares / Devices). At most one is
   // open at a time — each button's onClick closes the others (and the settings
   // menu) before toggling itself.
@@ -3200,11 +3171,7 @@ export function Sidebar({
     [hostProjectionState, pendingAgentApprovalByChatId, pendingApprovalQueueByChatId]
   )
   const pendingQuestionsFlat = useMemo(
-    () =>
-      joinHostPendingQuestions(
-        hostProjectionState,
-        pendingAgentQuestionsByChatId
-      ),
+    () => joinHostPendingQuestions(hostProjectionState, pendingAgentQuestionsByChatId),
     [hostProjectionState, pendingAgentQuestionsByChatId]
   )
   const hasPendingApprovals = pendingApprovalsFlat.length > 0
@@ -3237,11 +3204,13 @@ export function Sidebar({
    */
   const [draggedChatId, setDraggedChatId] = useState<string | null>(null)
   const [pinDropActive, setPinDropActive] = useState(false)
-  const [sidebarThreadOrderState, setSidebarThreadOrderState] =
-    useState<SidebarThreadOrderState>(() => loadSidebarThreadOrderState())
+  const [sidebarThreadOrderState, setSidebarThreadOrderState] = useState<SidebarThreadOrderState>(
+    () => loadSidebarThreadOrderState()
+  )
   const draggedThreadPayloadRef = useRef<SidebarThreadDragPayload | null>(null)
-  const [draggedThreadPayload, setDraggedThreadPayload] =
-    useState<SidebarThreadDragPayload | null>(null)
+  const [draggedThreadPayload, setDraggedThreadPayload] = useState<SidebarThreadDragPayload | null>(
+    null
+  )
   const [threadDropTarget, setThreadDropTarget] = useState<SidebarThreadDragPayload | null>(null)
   useEffect(() => {
     saveSidebarThreadOrderState(sidebarThreadOrderState)
@@ -3255,8 +3224,9 @@ export function Sidebar({
     chatId: string
     surfaceId: string
   } | null>(null)
-  const [terminalOutcomeAcknowledgements, setTerminalOutcomeAcknowledgements] =
-    useState(loadSidebarTerminalOutcomeAcknowledgements)
+  const [terminalOutcomeAcknowledgements, setTerminalOutcomeAcknowledgements] = useState(
+    loadSidebarTerminalOutcomeAcknowledgements
+  )
   // Seeded once, on the first render this install ever performs. Everything
   // that had already finished by then is history and stays quiet; see
   // loadOrSeedSidebarSuccessInkEpoch.
@@ -3319,9 +3289,7 @@ export function Sidebar({
   // and bumps `focusSearchRequestId` when it should focus this field.
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const [projectsSearchResultCount, setProjectsSearchResultCount] = useState(0)
-  const [initialSelectedWorkProjectId] = useState(
-    () => readColdLaunchNewChatContext().projectId
-  )
+  const [initialSelectedWorkProjectId] = useState(() => readColdLaunchNewChatContext().projectId)
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarActiveTab>(() => {
     const storedTab = readPersistedSidebarActiveTab()
     if (storedTab === 'projects') return 'projects'
@@ -3561,7 +3529,9 @@ export function Sidebar({
     .filter((workflow) => workspaceWorkflowIds.has(workflow.workspaceId))
     .slice()
     .sort((left, right) => {
-      const leftRunAt = left.nextRunAt ? new Date(left.nextRunAt).getTime() : Number.POSITIVE_INFINITY
+      const leftRunAt = left.nextRunAt
+        ? new Date(left.nextRunAt).getTime()
+        : Number.POSITIVE_INFINITY
       const rightRunAt = right.nextRunAt
         ? new Date(right.nextRunAt).getTime()
         : Number.POSITIVE_INFINITY
@@ -3680,16 +3650,17 @@ export function Sidebar({
     }
     return map
   }, [workspaceBoardCards])
-  const visibleWorkspaceBoards = (isSidebarSearchActive
-    ? workspaceBoards.filter((board) =>
-        workspaceBoardMatchesSearch(
-          board,
-          workspaceById.get(board.workspaceId),
-          workspaceBoardCardsByBoardId.get(board.id) || [],
-          sidebarSearchQuery
+  const visibleWorkspaceBoards = (
+    isSidebarSearchActive
+      ? workspaceBoards.filter((board) =>
+          workspaceBoardMatchesSearch(
+            board,
+            workspaceById.get(board.workspaceId),
+            workspaceBoardCardsByBoardId.get(board.id) || [],
+            sidebarSearchQuery
+          )
         )
-      )
-    : workspaceBoards
+      : workspaceBoards
   )
     .filter((board) => workspaceWorkflowIds.has(board.workspaceId) && !board.archived)
     .slice()
@@ -3697,16 +3668,17 @@ export function Sidebar({
       if (Boolean(left.pinned) !== Boolean(right.pinned)) return left.pinned ? -1 : 1
       return right.updatedAt.localeCompare(left.updatedAt)
     })
-  const archivedWorkspaceBoards = (isSidebarSearchActive
-    ? workspaceBoards.filter((board) =>
-        workspaceBoardMatchesSearch(
-          board,
-          workspaceById.get(board.workspaceId),
-          workspaceBoardCardsByBoardId.get(board.id) || [],
-          sidebarSearchQuery
+  const archivedWorkspaceBoards = (
+    isSidebarSearchActive
+      ? workspaceBoards.filter((board) =>
+          workspaceBoardMatchesSearch(
+            board,
+            workspaceById.get(board.workspaceId),
+            workspaceBoardCardsByBoardId.get(board.id) || [],
+            sidebarSearchQuery
+          )
         )
-      )
-    : workspaceBoards
+      : workspaceBoards
   )
     .filter((board) => workspaceWorkflowIds.has(board.workspaceId) && board.archived)
     .slice()
@@ -3761,10 +3733,7 @@ export function Sidebar({
   // affordances now live in the per-tile three-dots overflow menu,
   // wired via `buildChatMenuItems` / `buildWorkspaceMenuItems`.
 
-  const getSidebarThreadListDropProps = (
-    listId: string,
-    list: readonly ChatRecord[]
-  ) => {
+  const getSidebarThreadListDropProps = (listId: string, list: readonly ChatRecord[]) => {
     const listIds = list.map((chat) => chat.appChatId)
     const findTarget = (event: ReactDragEvent<HTMLElement>): HTMLElement | null => {
       if (!(event.target instanceof HTMLElement)) return null
@@ -3828,10 +3797,7 @@ export function Sidebar({
    * thread therefore cannot be reordered into an adjacent list or workspace.
    * The legacy chat-id MIME remains available only for the existing pin drop.
    */
-  const getChatTileDragProps = (
-    chat: ChatRecord,
-    listId: string
-  ): SidebarChatTileDragProps => {
+  const getChatTileDragProps = (chat: ChatRecord, listId: string): SidebarChatTileDragProps => {
     if (!listId || editingChatTarget?.chatId === chat.appChatId) {
       return { draggable: false }
     }
@@ -3843,7 +3809,10 @@ export function Sidebar({
         draggedThreadPayloadRef.current = payload
         setDraggedThreadPayload(payload)
         event.dataTransfer.effectAllowed = canPin ? 'copyMove' : 'move'
-        event.dataTransfer.setData(SIDEBAR_THREAD_DRAG_MIME, serializeSidebarThreadDragPayload(payload))
+        event.dataTransfer.setData(
+          SIDEBAR_THREAD_DRAG_MIME,
+          serializeSidebarThreadDragPayload(payload)
+        )
         if (canPin) {
           event.dataTransfer.setData('application/x-taskwraith-chat-id', chat.appChatId)
           setDraggedChatId(chat.appChatId)
@@ -3970,7 +3939,8 @@ export function Sidebar({
     return grouped
   }, [chats])
   const selectedChatId = activeChatId ?? currentChat?.appChatId ?? null
-  const selectedChat = chats.find((chat) => chat.appChatId === selectedChatId) || currentChat || null
+  const selectedChat =
+    chats.find((chat) => chat.appChatId === selectedChatId) || currentChat || null
   const acknowledgeTerminalOutcomeProjection = useCallback(
     (chatId: string, outcome: NonNullable<ReturnType<typeof projectSidebarTerminalOutcome>>) => {
       const current = terminalOutcomeAcknowledgementsRef.current
@@ -4307,7 +4277,9 @@ export function Sidebar({
     let interval: number | undefined
     const start = () => {
       if (interval !== undefined) return
-      interval = window.setInterval(() => { void refreshRemoteDevices() }, 5000)
+      interval = window.setInterval(() => {
+        void refreshRemoteDevices()
+      }, 5000)
     }
     const stop = () => {
       if (interval !== undefined) {
@@ -4317,7 +4289,10 @@ export function Sidebar({
     }
     const onVisibilityChange = () => {
       if (document.hidden) stop()
-      else { void refreshRemoteDevices(); start() }
+      else {
+        void refreshRemoteDevices()
+        start()
+      }
     }
     if (!document.hidden) {
       void refreshRemoteDevices()
@@ -4540,10 +4515,7 @@ export function Sidebar({
   const isChatRenameTarget = (chat: ChatRecord, surfaceId: string): boolean =>
     editingChatTarget?.chatId === chat.appChatId && editingChatTarget.surfaceId === surfaceId
 
-  const buildChatMenuItems = (
-    chat: ChatRecord,
-    surfaceId: string
-  ): SidebarOverflowMenuItem[] => {
+  const buildChatMenuItems = (chat: ChatRecord, surfaceId: string): SidebarOverflowMenuItem[] => {
     const items: SidebarOverflowMenuItem[] = []
     const hasWorkspaceDirectory =
       chat.scope !== 'global' && Boolean(chat.workspaceId || chat.workspacePath)
@@ -4708,10 +4680,7 @@ export function Sidebar({
     onRenameChat?.(chat.appChatId, trimmed)
   }
 
-  const handleChatRowKeyDown = (
-    event: KeyboardEvent<HTMLDivElement>,
-    chat: ChatRecord
-  ): void => {
+  const handleChatRowKeyDown = (event: KeyboardEvent<HTMLDivElement>, chat: ChatRecord): void => {
     if (event.target !== event.currentTarget) return
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
@@ -4772,7 +4741,9 @@ export function Sidebar({
     return items
   }
 
-  const buildWorkspaceBoardMenuItems = (board: WorkspaceBoardDefinition): SidebarOverflowMenuItem[] => {
+  const buildWorkspaceBoardMenuItems = (
+    board: WorkspaceBoardDefinition
+  ): SidebarOverflowMenuItem[] => {
     const items: SidebarOverflowMenuItem[] = []
     if (onTogglePinWorkspaceBoard) {
       items.push({
@@ -4831,8 +4802,9 @@ export function Sidebar({
     const subLastStatus = getLastRunStatus(subChat)
     const subIsSideChat = isSideChatRecord(subChat)
     const subKindLabel = subIsSideChat ? getSideChatChildKindLabel(subChat) : 'Sub-thread'
-    const subParentChat =
-      subChat.parentChatId ? chats.find((chat) => chat.appChatId === subChat.parentChatId) || null : null
+    const subParentChat = subChat.parentChatId
+      ? chats.find((chat) => chat.appChatId === subChat.parentChatId) || null
+      : null
     const subRouteLabel = getLinkedChildRouteLabel(subChat, subParentChat)
     const subAgentIdentity = getLinkedChildAgentIdentity(subChat)
     const subSideChatMetaLabels = subIsSideChat
@@ -4869,9 +4841,7 @@ export function Sidebar({
           subIsSideChat ? 'sidebar-side-chat-child' : ''
         } provider-${subChat.provider || 'gemini'} ${
           selectedChatId === subChat.appChatId ? 'active' : ''
-        } ${subRunning ? 'running' : ''}${
-          subRowTone ? ` ${sidebarRowToneClass(subRowTone)}` : ''
-        }`}
+        } ${subRunning ? 'running' : ''}${subRowTone ? ` ${sidebarRowToneClass(subRowTone)}` : ''}`}
         onClick={() => selectAndAcknowledgeChat(subChat)}
         onKeyDown={(event) => handleChatRowKeyDown(event, subChat)}
         aria-label={subRowA11y.ariaLabel}
@@ -4895,7 +4865,11 @@ export function Sidebar({
             title={subAgentIdentity.name}
           />
         ) : (
-          <span className="sidebar-sub-thread-dot" aria-hidden="true" style={{ background: subProviderColor }} />
+          <span
+            className="sidebar-sub-thread-dot"
+            aria-hidden="true"
+            style={{ background: subProviderColor }}
+          />
         )}
         <span className="sidebar-chat-copy" title={subChat.title}>
           <span className="sidebar-chat-title-line">
@@ -5005,325 +4979,333 @@ export function Sidebar({
       <div className="sidebar-titlebar-fill" aria-hidden />
       <div className="sidebar-content">
         <div className="sidebar-top-chrome">
-        {/* The update pill lives INSIDE the fixed-opacity top-chrome band so the
+          {/* The update pill lives INSIDE the fixed-opacity top-chrome band so the
             row shares the band's fill — outside it the row sat on the raw
             slider-opacity sidebar surface and read as a gap in the chrome. */}
-        {isUpdatePillVisible(updateSnapshot) && (onQuickUpdate || onOpenChangelog) ? (
-          <div className="sidebar-update-pill-row">
-            <UpdatePill
-              snapshot={updateSnapshot ?? null}
-              onQuickUpdate={onQuickUpdate}
-              onOpen={onOpenChangelog}
-              variant="sidebar"
-            />
-          </div>
-        ) : null}
-        <div className="sidebar-masthead">
-          <div className="sidebar-masthead-copy">
-            <span className="sidebar-product-label">
-              <span
-                className="sidebar-product-ghost sidebar-product-ghost-monoline"
-                aria-hidden
-                dangerouslySetInnerHTML={{ __html: taskwraithGhostMonolineSvg }}
+          {isUpdatePillVisible(updateSnapshot) && (onQuickUpdate || onOpenChangelog) ? (
+            <div className="sidebar-update-pill-row">
+              <UpdatePill
+                snapshot={updateSnapshot ?? null}
+                onQuickUpdate={onQuickUpdate}
+                onOpen={onOpenChangelog}
+                variant="sidebar"
               />
-              TaskWraith
-            </span>
-            {/* On the first-launch zero-state `currentScopeTitle` falls
+            </div>
+          ) : null}
+          <div className="sidebar-masthead">
+            <div className="sidebar-masthead-copy">
+              <span className="sidebar-product-label">
+                <span
+                  className="sidebar-product-ghost sidebar-product-ghost-monoline"
+                  aria-hidden
+                  dangerouslySetInnerHTML={{ __html: taskwraithGhostMonolineSvg }}
+                />
+                TaskWraith
+              </span>
+              {/* On the first-launch zero-state `currentScopeTitle` falls
                 back to "TaskWraith" (no workspace, no global chat), which
                 would render "TaskWraith" twice stacked. Suppress the
                 redundant scope title in that single case. */}
-            {currentScopeTitle && currentScopeTitle !== 'TaskWraith' && (
-              <strong title={currentWorkspace?.path || currentScopeTitle}>
-                {currentScopeTitle}
-              </strong>
-            )}
-          </div>
-          <div className="sidebar-new-menu-wrap" ref={newMenuWrapRef}>
-            <button
-              type="button"
-              className="sidebar-primary-action"
-              onClick={() => {
-                if (activeSidebarTab === 'terminal') {
-                  const wsPath = currentWorkspace?.path || defaultWorkspaceForNewChat?.path
-                  if (wsPath) {
-                    void import('../lib/TerminalSidebarStore').then(({ terminalLaunchBus }) => {
-                      terminalLaunchBus.request(wsPath)
-                    })
+              {currentScopeTitle && currentScopeTitle !== 'TaskWraith' && (
+                <strong title={currentWorkspace?.path || currentScopeTitle}>
+                  {currentScopeTitle}
+                </strong>
+              )}
+            </div>
+            <div className="sidebar-new-menu-wrap" ref={newMenuWrapRef}>
+              <button
+                type="button"
+                className="sidebar-primary-action"
+                onClick={() => {
+                  if (activeSidebarTab === 'terminal') {
+                    const wsPath = currentWorkspace?.path || defaultWorkspaceForNewChat?.path
+                    if (wsPath) {
+                      void import('../lib/TerminalSidebarStore').then(({ terminalLaunchBus }) => {
+                        terminalLaunchBus.request(wsPath)
+                      })
+                    }
+                    return
                   }
-                  return
-                }
-                setNewMenuOpen((current) => {
-                  const next = !current
-                  if (next) {
-                    setNewMenuWorkflowTemplatesOpen(false)
-                  }
-                  return next
-                })
-              }}
-              title={activeSidebarTab === 'terminal' ? 'New Terminal Session…' : 'Create'}
-              aria-label={activeSidebarTab === 'terminal' ? 'New Terminal Session…' : 'Create'}
-              aria-expanded={activeSidebarTab === 'terminal' ? undefined : newMenuOpen}
-              aria-haspopup={activeSidebarTab === 'terminal' ? undefined : 'menu'}
-            >
-              <PlusSymbolIcon />
-              <span>New</span>
-            </button>
-            {newMenuOpen && (
-              <div className="sidebar-new-menu" role="menu" onKeyDown={moveMenuFocus}>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="sidebar-new-menu-item"
-                  onClick={
-                    activeSidebarTab === 'threads'
-                      ? handleNewWorkspaceChat
-                      : handlePrimaryNewChat
-                  }
-                  disabled={activeSidebarTab === 'threads' && !defaultWorkspaceForNewChat}
-                  title={primaryNewTitle}
-                >
-                  {activeSidebarTab === 'threads' ? <FolderSymbolIcon /> : <ChatBubbleSymbolIcon />}
-                  <span className="sidebar-new-menu-item-label">
-                    {activeSidebarTab === 'threads' ? 'New Workspace Chat' : 'New Chat'}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="sidebar-new-menu-item"
-                  onClick={
-                    activeSidebarTab === 'threads'
-                      ? handlePrimaryNewChat
-                      : handleNewWorkspaceChat
-                  }
-                  disabled={activeSidebarTab !== 'threads' && !defaultWorkspaceForNewChat}
-                  title={
-                    activeSidebarTab === 'threads'
-                      ? 'New general chat'
-                      : defaultWorkspaceForNewChat
-                      ? `New workspace chat in ${defaultWorkspaceForNewChat.displayName}`
-                      : 'Add a workspace first to create a workspace chat'
-                  }
-                >
-                  {activeSidebarTab === 'threads' ? <ChatBubbleSymbolIcon /> : <FolderSymbolIcon />}
-                  <span className="sidebar-new-menu-item-label">
-                    {activeSidebarTab === 'threads' ? 'New General Chat' : 'New Workspace Chat'}
-                  </span>
-                </button>
-                {onCreateWorkflow && (
+                  setNewMenuOpen((current) => {
+                    const next = !current
+                    if (next) {
+                      setNewMenuWorkflowTemplatesOpen(false)
+                    }
+                    return next
+                  })
+                }}
+                title={activeSidebarTab === 'terminal' ? 'New Terminal Session…' : 'Create'}
+                aria-label={activeSidebarTab === 'terminal' ? 'New Terminal Session…' : 'Create'}
+                aria-expanded={activeSidebarTab === 'terminal' ? undefined : newMenuOpen}
+                aria-haspopup={activeSidebarTab === 'terminal' ? undefined : 'menu'}
+              >
+                <PlusSymbolIcon />
+                <span>New</span>
+              </button>
+              {newMenuOpen && (
+                <div className="sidebar-new-menu" role="menu" onKeyDown={moveMenuFocus}>
                   <button
                     type="button"
                     role="menuitem"
                     className="sidebar-new-menu-item"
-                    onClick={handleNewWorkflow}
-                    disabled={!defaultWorkflowWorkspace}
+                    onClick={
+                      activeSidebarTab === 'threads' ? handleNewWorkspaceChat : handlePrimaryNewChat
+                    }
+                    disabled={activeSidebarTab === 'threads' && !defaultWorkspaceForNewChat}
+                    title={primaryNewTitle}
+                  >
+                    {activeSidebarTab === 'threads' ? (
+                      <FolderSymbolIcon />
+                    ) : (
+                      <ChatBubbleSymbolIcon />
+                    )}
+                    <span className="sidebar-new-menu-item-label">
+                      {activeSidebarTab === 'threads' ? 'New Workspace Chat' : 'New Chat'}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="sidebar-new-menu-item"
+                    onClick={
+                      activeSidebarTab === 'threads' ? handlePrimaryNewChat : handleNewWorkspaceChat
+                    }
+                    disabled={activeSidebarTab !== 'threads' && !defaultWorkspaceForNewChat}
                     title={
-                      defaultWorkflowWorkspace
-                        ? `New workflow in ${defaultWorkflowWorkspace.displayName}`
-                        : 'Open a workspace first — workflows run inside a workspace'
+                      activeSidebarTab === 'threads'
+                        ? 'New general chat'
+                        : defaultWorkspaceForNewChat
+                          ? `New workspace chat in ${defaultWorkspaceForNewChat.displayName}`
+                          : 'Add a workspace first to create a workspace chat'
                     }
                   >
-                    <WorkflowGlyphIcon />
-                    <span className="sidebar-new-menu-item-label">New Workflow</span>
+                    {activeSidebarTab === 'threads' ? (
+                      <ChatBubbleSymbolIcon />
+                    ) : (
+                      <FolderSymbolIcon />
+                    )}
+                    <span className="sidebar-new-menu-item-label">
+                      {activeSidebarTab === 'threads' ? 'New General Chat' : 'New Workspace Chat'}
+                    </span>
                   </button>
-                )}
-                {onCreateWorkflowFromPluginTemplate && pluginWorkflowTemplates.length > 0 && (
-                  <>
+                  {onCreateWorkflow && (
                     <button
                       type="button"
                       role="menuitem"
-                      className="sidebar-new-menu-item sidebar-new-menu-shared-toggle"
-                      onClick={() => {
-                        setNewMenuWorkflowTemplatesOpen((current) => !current)
-                      }}
-                      aria-expanded={newMenuWorkflowTemplatesOpen}
+                      className="sidebar-new-menu-item"
+                      onClick={handleNewWorkflow}
                       disabled={!defaultWorkflowWorkspace}
                       title={
                         defaultWorkflowWorkspace
-                          ? 'Start from an active plugin workflow template'
+                          ? `New workflow in ${defaultWorkflowWorkspace.displayName}`
                           : 'Open a workspace first — workflows run inside a workspace'
                       }
                     >
                       <WorkflowGlyphIcon />
-                      <span className="sidebar-new-menu-item-label">Workflow Templates...</span>
-                      <span className="sidebar-new-menu-chevron" aria-hidden>
-                        <ChevronSymbolIcon isExpanded={newMenuWorkflowTemplatesOpen} />
-                      </span>
+                      <span className="sidebar-new-menu-item-label">New Workflow</span>
                     </button>
-                    {newMenuWorkflowTemplatesOpen &&
-                      pluginWorkflowTemplates.slice(0, 8).map((entry) => (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          key={entry.id}
-                          className="sidebar-new-menu-item sidebar-new-menu-subitem"
-                          onClick={() => handleNewWorkflowFromTemplate(entry.id)}
-                          disabled={!defaultWorkflowWorkspace}
-                          title={
-                            entry.template.description ||
-                            `${entry.plugin.pluginId} workflow template`
-                          }
-                        >
-                          <WorkflowGlyphIcon />
-                          <span className="sidebar-new-menu-item-label">
-                            {entry.template.name}
-                          </span>
-                        </button>
-                      ))}
-                  </>
-                )}
-                {onCreateWorkspaceBoard && (
+                  )}
+                  {onCreateWorkflowFromPluginTemplate && pluginWorkflowTemplates.length > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="sidebar-new-menu-item sidebar-new-menu-shared-toggle"
+                        onClick={() => {
+                          setNewMenuWorkflowTemplatesOpen((current) => !current)
+                        }}
+                        aria-expanded={newMenuWorkflowTemplatesOpen}
+                        disabled={!defaultWorkflowWorkspace}
+                        title={
+                          defaultWorkflowWorkspace
+                            ? 'Start from an active plugin workflow template'
+                            : 'Open a workspace first — workflows run inside a workspace'
+                        }
+                      >
+                        <WorkflowGlyphIcon />
+                        <span className="sidebar-new-menu-item-label">Workflow Templates...</span>
+                        <span className="sidebar-new-menu-chevron" aria-hidden>
+                          <ChevronSymbolIcon isExpanded={newMenuWorkflowTemplatesOpen} />
+                        </span>
+                      </button>
+                      {newMenuWorkflowTemplatesOpen &&
+                        pluginWorkflowTemplates.slice(0, 8).map((entry) => (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            key={entry.id}
+                            className="sidebar-new-menu-item sidebar-new-menu-subitem"
+                            onClick={() => handleNewWorkflowFromTemplate(entry.id)}
+                            disabled={!defaultWorkflowWorkspace}
+                            title={
+                              entry.template.description ||
+                              `${entry.plugin.pluginId} workflow template`
+                            }
+                          >
+                            <WorkflowGlyphIcon />
+                            <span className="sidebar-new-menu-item-label">
+                              {entry.template.name}
+                            </span>
+                          </button>
+                        ))}
+                    </>
+                  )}
+                  {onCreateWorkspaceBoard && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="sidebar-new-menu-item"
+                      onClick={handleNewWorkspaceBoard}
+                      disabled={workspaces.length === 0}
+                      title={
+                        workspaces.length > 0
+                          ? 'New workspace board'
+                          : 'Add a workspace first to create a board'
+                      }
+                    >
+                      <BoardSymbolIcon />
+                      <span className="sidebar-new-menu-item-label">New Workspace Board</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="sidebar-masthead-stats" aria-label="Sidebar summary">
+            {activeSidebarTab !== 'chat' && (
+              <span>
+                {workspaces.length} workspace{workspaces.length === 1 ? '' : 's'}
+              </span>
+            )}
+            {activeSidebarTab !== 'terminal' && (
+              <span>
+                {activeSidebarChatCount} {activeSidebarTab === 'chat' ? 'chat' : 'thread'}
+                {activeSidebarChatCount === 1 ? '' : 's'}
+              </span>
+            )}
+            {runningCount > 0 && <span className="sidebar-stat-live">{runningCount} running</span>}
+          </div>
+
+          <div
+            className="segmented-control sidebar-view-tabs"
+            role="tablist"
+            aria-label="Sidebar view"
+          >
+            {SIDEBAR_ACTIVE_TABS.map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={activeSidebarTab === tab}
+                aria-controls={`sidebar-${tab}-panel`}
+                className={`segmented-control-segment sidebar-view-tab ${
+                  activeSidebarTab === tab ? 'is-active' : ''
+                }`}
+                id={`sidebar-${tab}-tab`}
+                onClick={() => selectSidebarTab(tab)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+                  event.preventDefault()
+                  const direction = event.key === 'ArrowRight' ? 1 : -1
+                  const currentIndex = SIDEBAR_ACTIVE_TABS.indexOf(tab)
+                  const nextTab =
+                    SIDEBAR_ACTIVE_TABS[
+                      (currentIndex + direction + SIDEBAR_ACTIVE_TABS.length) %
+                        SIDEBAR_ACTIVE_TABS.length
+                    ]
+                  selectSidebarTab(nextTab)
+                  window.requestAnimationFrame(() => {
+                    document.getElementById(`sidebar-${nextTab}-tab`)?.focus()
+                  })
+                }}
+                tabIndex={activeSidebarTab === tab ? 0 : -1}
+              >
+                {tab === 'chat'
+                  ? 'Chat'
+                  : tab === 'threads'
+                    ? 'Code'
+                    : tab === 'projects'
+                      ? 'Work'
+                      : 'Terminal'}
+              </button>
+            ))}
+          </div>
+
+          <div className="sidebar-search-section">
+            <label className="sidebar-search-field">
+              <SearchSymbolIcon />
+              <input
+                ref={searchInputRef}
+                type="search"
+                value={sidebarSearch}
+                onChange={(event) => setActiveSidebarSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  // Escape clears a non-empty query, then blurs an
+                  // already-empty field — matches the ✕ clear button +
+                  // the Finder-style "Escape backs out" expectation.
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    if (sidebarSearch) {
+                      setActiveSidebarSearch('')
+                    } else {
+                      event.currentTarget.blur()
+                    }
+                  }
+                }}
+                placeholder={
+                  activeSidebarTab === 'projects'
+                    ? 'Search projects & members'
+                    : activeSidebarTab === 'terminal'
+                      ? 'Search sessions'
+                      : activeSidebarTab === 'chat'
+                        ? 'Search chats'
+                        : 'Search workspaces & threads'
+                }
+                aria-label={
+                  activeSidebarTab === 'projects'
+                    ? 'Search projects and project members'
+                    : activeSidebarTab === 'terminal'
+                      ? 'Search terminal sessions'
+                      : activeSidebarTab === 'chat'
+                        ? 'Search chats'
+                        : 'Search workspaces and chats'
+                }
+                spellCheck={false}
+              />
+              {!isSidebarSearchActive && searchShortcutHint && (
+                <span className="sidebar-search-hint">{searchShortcutHint}</span>
+              )}
+              {isSidebarSearchActive && (
+                <>
+                  <span className="sidebar-search-result-count">
+                    {activeSidebarSearchResultCount}
+                  </span>
                   <button
                     type="button"
-                    role="menuitem"
-                    className="sidebar-new-menu-item"
-                    onClick={handleNewWorkspaceBoard}
-                    disabled={workspaces.length === 0}
-                    title={
-                      workspaces.length > 0
-                        ? 'New workspace board'
-                        : 'Add a workspace first to create a board'
+                    className="sidebar-search-clear"
+                    onClick={() => setActiveSidebarSearch('')}
+                    title="Clear search"
+                    aria-label={
+                      activeSidebarTab === 'projects'
+                        ? 'Clear project search'
+                        : activeSidebarTab === 'terminal'
+                          ? 'Clear session search'
+                          : activeSidebarTab === 'chat'
+                            ? 'Clear chat search'
+                            : 'Clear workspace and thread search'
                     }
                   >
-                    <BoardSymbolIcon />
-                    <span className="sidebar-new-menu-item-label">New Workspace Board</span>
+                    <XSymbolIcon />
                   </button>
-                )}
-              </div>
-            )}
+                </>
+              )}
+            </label>
           </div>
-        </div>
-        <div className="sidebar-masthead-stats" aria-label="Sidebar summary">
-          {activeSidebarTab !== 'chat' && (
-            <span>
-              {workspaces.length} workspace{workspaces.length === 1 ? '' : 's'}
-            </span>
-          )}
-          {activeSidebarTab !== 'terminal' && (
-            <span>
-              {activeSidebarChatCount} {activeSidebarTab === 'chat' ? 'chat' : 'thread'}
-              {activeSidebarChatCount === 1 ? '' : 's'}
-            </span>
-          )}
-          {runningCount > 0 && <span className="sidebar-stat-live">{runningCount} running</span>}
-        </div>
-
-        <div
-          className="segmented-control sidebar-view-tabs"
-          role="tablist"
-          aria-label="Sidebar view"
-        >
-          {SIDEBAR_ACTIVE_TABS.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              role="tab"
-              aria-selected={activeSidebarTab === tab}
-              aria-controls={`sidebar-${tab}-panel`}
-              className={`segmented-control-segment sidebar-view-tab ${
-                activeSidebarTab === tab ? 'is-active' : ''
-              }`}
-              id={`sidebar-${tab}-tab`}
-              onClick={() => selectSidebarTab(tab)}
-              onKeyDown={(event) => {
-                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-                event.preventDefault()
-                const direction = event.key === 'ArrowRight' ? 1 : -1
-                const currentIndex = SIDEBAR_ACTIVE_TABS.indexOf(tab)
-                const nextTab =
-                  SIDEBAR_ACTIVE_TABS[
-                    (currentIndex + direction + SIDEBAR_ACTIVE_TABS.length) %
-                      SIDEBAR_ACTIVE_TABS.length
-                  ]
-                selectSidebarTab(nextTab)
-                window.requestAnimationFrame(() => {
-                  document.getElementById(`sidebar-${nextTab}-tab`)?.focus()
-                })
-              }}
-              tabIndex={activeSidebarTab === tab ? 0 : -1}
-            >
-              {tab === 'chat' ? 'Chat' : tab === 'threads' ? 'Code' : tab === 'projects' ? 'Work' : 'Terminal'}
-            </button>
-          ))}
-        </div>
-
-        <div className="sidebar-search-section">
-          <label className="sidebar-search-field">
-            <SearchSymbolIcon />
-            <input
-              ref={searchInputRef}
-              type="search"
-              value={sidebarSearch}
-              onChange={(event) => setActiveSidebarSearch(event.target.value)}
-              onKeyDown={(event) => {
-                // Escape clears a non-empty query, then blurs an
-                // already-empty field — matches the ✕ clear button +
-                // the Finder-style "Escape backs out" expectation.
-                if (event.key === 'Escape') {
-                  event.preventDefault()
-                  if (sidebarSearch) {
-                    setActiveSidebarSearch('')
-                  } else {
-                    event.currentTarget.blur()
-                  }
-                }
-              }}
-              placeholder={
-                activeSidebarTab === 'projects'
-                  ? 'Search projects & members'
-                  : activeSidebarTab === 'terminal'
-                    ? 'Search sessions'
-                    : activeSidebarTab === 'chat'
-                      ? 'Search chats'
-                      : 'Search workspaces & threads'
-              }
-              aria-label={
-                activeSidebarTab === 'projects'
-                  ? 'Search projects and project members'
-                  : activeSidebarTab === 'terminal'
-                    ? 'Search terminal sessions'
-                    : activeSidebarTab === 'chat'
-                      ? 'Search chats'
-                      : 'Search workspaces and chats'
-              }
-              spellCheck={false}
-            />
-            {!isSidebarSearchActive && searchShortcutHint && (
-              <span className="sidebar-search-hint">{searchShortcutHint}</span>
-            )}
-            {isSidebarSearchActive && (
-              <>
-                <span className="sidebar-search-result-count">{activeSidebarSearchResultCount}</span>
-                <button
-                  type="button"
-                  className="sidebar-search-clear"
-                  onClick={() => setActiveSidebarSearch('')}
-                  title="Clear search"
-                  aria-label={
-                    activeSidebarTab === 'projects'
-                      ? 'Clear project search'
-                      : activeSidebarTab === 'terminal'
-                        ? 'Clear session search'
-                        : activeSidebarTab === 'chat'
-                          ? 'Clear chat search'
-                          : 'Clear workspace and thread search'
-                  }
-                >
-                  <XSymbolIcon />
-                </button>
-              </>
-            )}
-          </label>
-        </div>
         </div>
 
         <div className="sidebar-hierarchy-scroll">
           {activeSidebarTab === 'projects' ? (
-            <div
-              id="sidebar-projects-panel"
-              role="tabpanel"
-              aria-labelledby="sidebar-projects-tab"
-            >
+            <div id="sidebar-projects-panel" role="tabpanel" aria-labelledby="sidebar-projects-tab">
               <ProjectsSidebarView
                 chats={projectSidebarChats}
                 activeRunChats={displayChats}
@@ -5371,10 +5353,7 @@ export function Sidebar({
                 </section>
               )}
               {onOpenExecutionRun && executionRunEntries && executionRunEntries.length > 0 && (
-                <section
-                  className="sidebar-execution-runs-section"
-                  aria-label="Durable executions"
-                >
+                <section className="sidebar-execution-runs-section" aria-label="Durable executions">
                   <div className="sidebar-project-graphs-header">
                     <span className="sidebar-project-graphs-title">Executions</span>
                     <span className="sidebar-project-graphs-hint">Open the execution map</span>
@@ -5409,7 +5388,9 @@ export function Sidebar({
                 <section className="sidebar-project-graphs-section" aria-label="Node graphs">
                   <div className="sidebar-project-graphs-header">
                     <span className="sidebar-project-graphs-title">Node Graphs</span>
-                    <span className="sidebar-project-graphs-hint">Map a project&apos;s threads</span>
+                    <span className="sidebar-project-graphs-hint">
+                      Map a project&apos;s threads
+                    </span>
                   </div>
                   <div className="sidebar-project-graphs-list">
                     {projectGraphEntries.map((entry) => (
@@ -5441,11 +5422,7 @@ export function Sidebar({
               )}
             </div>
           ) : activeSidebarTab === 'terminal' ? (
-            <div
-              id="sidebar-terminal-panel"
-              role="tabpanel"
-              aria-labelledby="sidebar-terminal-tab"
-            >
+            <div id="sidebar-terminal-panel" role="tabpanel" aria-labelledby="sidebar-terminal-tab">
               <TerminalSidebarView workspaces={workspaces} />
             </div>
           ) : (
@@ -5454,615 +5431,1316 @@ export function Sidebar({
               role="tabpanel"
               aria-labelledby={`sidebar-${activeSidebarTab}-tab`}
             >
-          {wrapHierarchySection(
-            'active-runs',
-            <ActiveRunsSection
-              chats={chats}
-              currentChat={currentChat}
-              runningChatIds={runningChatIds}
-              surface={activeSidebarTab === 'chat' ? 'chat' : 'code'}
-              onSelectChat={selectAndAcknowledgeChat}
-              onOpenChatPopout={onOpenChatPopout}
-              onInspectRun={onInspectRun}
-              onAddRunQueueJobToWorkspaceBoard={onAddRunQueueJobToWorkspaceBoard}
-              collapsed={isSectionCollapsed('active-runs')}
-              onToggleCollapsed={() => toggleSidebarSection('active-runs')}
-            />
-          )}
+              {wrapHierarchySection(
+                'active-runs',
+                <ActiveRunsSection
+                  chats={chats}
+                  currentChat={currentChat}
+                  runningChatIds={runningChatIds}
+                  surface={activeSidebarTab === 'chat' ? 'chat' : 'code'}
+                  onSelectChat={selectAndAcknowledgeChat}
+                  onOpenChatPopout={onOpenChatPopout}
+                  onInspectRun={onInspectRun}
+                  onAddRunQueueJobToWorkspaceBoard={onAddRunQueueJobToWorkspaceBoard}
+                  collapsed={isSectionCollapsed('active-runs')}
+                  onToggleCollapsed={() => toggleSidebarSection('active-runs')}
+                />
+              )}
 
-          {wrapHierarchySection(
-            'local-servers',
-            <LocalServersSection
-              onAddLocalServerToWorkspaceBoard={onAddLocalServerToWorkspaceBoard}
-              collapsed={isSectionCollapsed('local-servers')}
-              onToggleCollapsed={() => toggleSidebarSection('local-servers')}
-            />,
-            activeSidebarTab === 'threads' && localServers.length > 0
-          )}
+              {wrapHierarchySection(
+                'local-servers',
+                <LocalServersSection
+                  onAddLocalServerToWorkspaceBoard={onAddLocalServerToWorkspaceBoard}
+                  collapsed={isSectionCollapsed('local-servers')}
+                  onToggleCollapsed={() => toggleSidebarSection('local-servers')}
+                />,
+                activeSidebarTab === 'threads' && localServers.length > 0
+              )}
 
-          {wrapHierarchySection(
-            'workflows',
-            <div className="sidebar-workflows-section">
-            <div className="sidebar-section-header">
-              <button
-                type="button"
-                className="sidebar-section-header-toggle"
-                onClick={() => toggleSidebarSection('workflows')}
-                aria-expanded={!isSectionCollapsed('workflows')}
-                title={
-                  isSectionCollapsed('workflows') ? 'Expand Workflows' : 'Collapse Workflows'
-                }
-              >
-                <ChevronSymbolIcon isExpanded={!isSectionCollapsed('workflows')} />
-                <h4 className="sidebar-section-title">Workflows</h4>
-                {visibleWorkflows.length > 0 && (
-                  <span className="sidebar-section-count">{visibleWorkflows.length}</span>
-                )}
-              </button>
-              <button
-                type="button"
-                className="sidebar-section-header-action sidebar-workflow-create"
-                onClick={handleNewWorkflow}
-                disabled={!onCreateWorkflow || workspaces.length === 0}
-                title={
-                  workspaces.length === 0
-                    ? 'Add a workspace first — workflows run inside a workspace'
-                    : defaultWorkflowWorkspace
-                      ? `New workflow in ${defaultWorkflowWorkspace.displayName}`
-                      : 'Open a workspace first — workflows run inside a workspace'
-                }
-                aria-label="New workflow"
-              >
-                <PlusSymbolIcon />
-              </button>
-            </div>
-            {!isSectionCollapsed('workflows') && (
-              <div className="sidebar-workflow-list">
-                {visibleWorkflows.length === 0 ? (
-                  <div className="sidebar-workflow-empty">
-                    {isSidebarSearchActive ? 'No matching workflows' : 'No workflows'}
+              {wrapHierarchySection(
+                'workflows',
+                <div className="sidebar-workflows-section">
+                  <div className="sidebar-section-header">
+                    <button
+                      type="button"
+                      className="sidebar-section-header-toggle"
+                      onClick={() => toggleSidebarSection('workflows')}
+                      aria-expanded={!isSectionCollapsed('workflows')}
+                      title={
+                        isSectionCollapsed('workflows') ? 'Expand Workflows' : 'Collapse Workflows'
+                      }
+                    >
+                      <ChevronSymbolIcon isExpanded={!isSectionCollapsed('workflows')} />
+                      <h4 className="sidebar-section-title">Workflows</h4>
+                      {visibleWorkflows.length > 0 && (
+                        <span className="sidebar-section-count">{visibleWorkflows.length}</span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="sidebar-section-header-action sidebar-workflow-create"
+                      onClick={handleNewWorkflow}
+                      disabled={!onCreateWorkflow || workspaces.length === 0}
+                      title={
+                        workspaces.length === 0
+                          ? 'Add a workspace first — workflows run inside a workspace'
+                          : defaultWorkflowWorkspace
+                            ? `New workflow in ${defaultWorkflowWorkspace.displayName}`
+                            : 'Open a workspace first — workflows run inside a workspace'
+                      }
+                      aria-label="New workflow"
+                    >
+                      <PlusSymbolIcon />
+                    </button>
                   </div>
-                ) : (
-                  visibleWorkflows.map((workflow) => {
-                    const activeExecution = workflow.activeExecutionId
-                      ? workflow.history.find(
-                          (execution) => execution.id === workflow.activeExecutionId
-                        ) || null
-                      : null
-                    const activeTask = activeExecution?.scheduledTaskId
-                      ? scheduledTaskById.get(activeExecution.scheduledTaskId) || null
-                      : null
-                    const isActiveExecution =
-                      isWorkflowExecutionActive(activeExecution?.status) ||
-                      activeTask?.status === 'running' ||
-                      activeTask?.status === 'due'
-                    const latestExecution =
-                      workflow.history.length > 0
-                        ? workflow.history[workflow.history.length - 1]
-                        : null
-                    const status = isActiveExecution
-                      ? activeTask?.status === 'running'
-                        ? 'running'
-                        : activeExecution?.status || 'queued'
-                      : workflow.enabled
-                        ? workflow.lastStatus
-                        : 'paused'
-                    const statusLabel = workflow.enabled
-                      ? formatWorkflowStatus(status)
-                      : 'Paused'
-                    const selected = selectedWorkflowId === workflow.id
-                    const statusCounters = getWorkflowStatusCounters(workflow.history)
-                    // P2b: a minted, non-safe unattended-elevation ack.
-                    const unattendedElevation =
-                      workflow.unattendedElevation && workflow.unattendedElevation.level !== 'safe'
-                        ? workflow.unattendedElevation
-                        : null
-                    const unattendedElevationLabel =
-                      unattendedElevation?.level === 'full_access'
-                        ? 'Full Access'
-                        : 'Default'
-                    return (
-                      <div key={workflow.id} className="sidebar-workflow-block">
-                        <button
-                          type="button"
-                          className={`sidebar-workflow-item provider-${workflow.template.provider || 'gemini'} ${
-                            selected ? 'active' : ''
-                          } ${workflow.enabled ? '' : 'is-paused'}`}
-                          onClick={() => {
-                            // Summon the workflow's transcript into the main pane
-                            // AND expand its controls. The chip used to only toggle
-                            // the controls, leaving the main pane on whatever chat
-                            // was open — the source of the "workflows feel detached"
-                            // confusion.
-                            setSelectedWorkflowId((current) =>
-                              current === workflow.id ? null : workflow.id
-                            )
-                            const workflowChat = chats.find(
-                              (chat) => chat.appChatId === workflow.template.chatId
-                            )
-                            if (workflowChat && currentChat?.appChatId !== workflowChat.appChatId) {
-                              selectAndAcknowledgeChat(workflowChat)
-                            }
-                          }}
-                          aria-expanded={selected}
-                          title={workflow.name}
-                        >
-                          <ProviderBadgeIcon provider={workflow.template.provider} />
-                          <span className="sidebar-workflow-copy">
-                            <span className="sidebar-workflow-name">
-                              <HighlightMatch text={workflow.name} query={sidebarSearchQuery} />
-                            </span>
-                            <span className="sidebar-workflow-meta">
-                              {formatWorkflowTrigger(workflow)}
-                            </span>
-                          </span>
-                          {unattendedElevation && (
-                            <span
-                              className="sidebar-workflow-unattended-badge"
-                              title={`Runs unattended with ${unattendedElevationLabel} permissions`}
-                              aria-label={`Runs unattended with ${unattendedElevationLabel} permissions`}
-                            >
-                              ⚠
-                            </span>
-                          )}
-                          {typeof workflow.lastRunIterationCount === 'number' &&
-                            workflow.lastRunIterationCount > 0 && (
-                              <span
-                                className="sidebar-workflow-loop-count"
-                                title={`Loop: ${workflow.lastRunIterationCount} iteration${
-                                  workflow.lastRunIterationCount === 1 ? '' : 's'
-                                }${workflow.lastRunStopReason ? ` · ${workflow.lastRunStopReason}` : ''}`}
-                                aria-label={`${workflow.lastRunIterationCount} loop iterations`}
-                              >
-                                {workflow.lastRunIterationCount}×
-                              </span>
-                            )}
-                          <span
-                            className={`sidebar-workflow-status tone-${workflowStatusTone(status)}`}
-                          >
-                            {statusLabel}
-                          </span>
-                        </button>
-                        {selected && (
-                          <div className="sidebar-workflow-detail">
-                            <div className="sidebar-workflow-detail-row">
-                              <span>Next</span>
-                              <strong>{formatWorkflowTime(workflow.nextRunAt)}</strong>
-                            </div>
-                            {latestExecution && (
-                              <div className="sidebar-workflow-detail-row">
-                                <span>Last</span>
-                                <strong>{formatWorkflowStatus(latestExecution.status)}</strong>
-                              </div>
-                            )}
-                            <div className="sidebar-workflow-icon-strip">
-                              <div className="sidebar-workflow-actions">
-                                <button
-                                  type="button"
-                                  className="sidebar-workflow-action primary"
-                                  onClick={() => onRunWorkflowNow?.(workflow.id)}
-                                  disabled={!onRunWorkflowNow}
-                                  title="Run now"
-                                  aria-label={`Run ${workflow.name} now`}
-                                >
-                                  <WorkflowActionIcon kind="run" />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="sidebar-workflow-action"
-                                  onClick={() => onAddWorkflowToWorkspaceBoard?.(workflow)}
-                                  disabled={!onAddWorkflowToWorkspaceBoard}
-                                  title="Add to Workspace Board"
-                                  aria-label={`Add ${workflow.name} to workspace board`}
-                                >
-                                  <WorkflowActionIcon kind="board" />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="sidebar-workflow-action"
-                                  onClick={() => onToggleWorkflowEnabled?.(workflow)}
-                                  disabled={!onToggleWorkflowEnabled}
-                                  title={workflow.enabled ? 'Pause' : 'Resume'}
-                                  aria-label={`${workflow.enabled ? 'Pause' : 'Resume'} ${
-                                    workflow.name
-                                  }`}
-                                >
-                                  <WorkflowActionIcon
-                                    kind={workflow.enabled ? 'pause' : 'resume'}
-                                  />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="sidebar-workflow-action"
-                                  onClick={() => onEditWorkflowInterval?.(workflow)}
-                                  disabled={!onEditWorkflowInterval}
-                                  title="Cadence"
-                                  aria-label={`Edit ${workflow.name} cadence`}
-                                >
-                                  <WorkflowActionIcon kind="cadence" />
-                                </button>
-                                <button
-                                  type="button"
-                                  className={`sidebar-workflow-action${
-                                    unattendedElevation ? ' is-active' : ''
-                                  }`}
-                                  onClick={() => onSetWorkflowUnattended?.(workflow)}
-                                  disabled={!onSetWorkflowUnattended}
-                                  title={
-                                    unattendedElevation
-                                      ? `Unattended: ${unattendedElevationLabel} — click to revoke`
-                                      : 'Unattended permissions'
+                  {!isSectionCollapsed('workflows') && (
+                    <div className="sidebar-workflow-list">
+                      {visibleWorkflows.length === 0 ? (
+                        <div className="sidebar-workflow-empty">
+                          {isSidebarSearchActive ? 'No matching workflows' : 'No workflows'}
+                        </div>
+                      ) : (
+                        visibleWorkflows.map((workflow) => {
+                          const activeExecution = workflow.activeExecutionId
+                            ? workflow.history.find(
+                                (execution) => execution.id === workflow.activeExecutionId
+                              ) || null
+                            : null
+                          const activeTask = activeExecution?.scheduledTaskId
+                            ? scheduledTaskById.get(activeExecution.scheduledTaskId) || null
+                            : null
+                          const isActiveExecution =
+                            isWorkflowExecutionActive(activeExecution?.status) ||
+                            activeTask?.status === 'running' ||
+                            activeTask?.status === 'due'
+                          const latestExecution =
+                            workflow.history.length > 0
+                              ? workflow.history[workflow.history.length - 1]
+                              : null
+                          const status = isActiveExecution
+                            ? activeTask?.status === 'running'
+                              ? 'running'
+                              : activeExecution?.status || 'queued'
+                            : workflow.enabled
+                              ? workflow.lastStatus
+                              : 'paused'
+                          const statusLabel = workflow.enabled
+                            ? formatWorkflowStatus(status)
+                            : 'Paused'
+                          const selected = selectedWorkflowId === workflow.id
+                          const statusCounters = getWorkflowStatusCounters(workflow.history)
+                          // P2b: a minted, non-safe unattended-elevation ack.
+                          const unattendedElevation =
+                            workflow.unattendedElevation &&
+                            workflow.unattendedElevation.level !== 'safe'
+                              ? workflow.unattendedElevation
+                              : null
+                          const unattendedElevationLabel =
+                            unattendedElevation?.level === 'full_access' ? 'Full Access' : 'Default'
+                          return (
+                            <div key={workflow.id} className="sidebar-workflow-block">
+                              <button
+                                type="button"
+                                className={`sidebar-workflow-item provider-${workflow.template.provider || 'gemini'} ${
+                                  selected ? 'active' : ''
+                                } ${workflow.enabled ? '' : 'is-paused'}`}
+                                onClick={() => {
+                                  // Summon the workflow's transcript into the main pane
+                                  // AND expand its controls. The chip used to only toggle
+                                  // the controls, leaving the main pane on whatever chat
+                                  // was open — the source of the "workflows feel detached"
+                                  // confusion.
+                                  setSelectedWorkflowId((current) =>
+                                    current === workflow.id ? null : workflow.id
+                                  )
+                                  const workflowChat = chats.find(
+                                    (chat) => chat.appChatId === workflow.template.chatId
+                                  )
+                                  if (
+                                    workflowChat &&
+                                    currentChat?.appChatId !== workflowChat.appChatId
+                                  ) {
+                                    selectAndAcknowledgeChat(workflowChat)
                                   }
-                                  aria-label={`Unattended permissions for ${workflow.name}`}
-                                  aria-pressed={Boolean(unattendedElevation)}
-                                >
-                                  <WorkflowActionIcon kind="unattended" />
-                                </button>
-                                {isActiveExecution && (
-                                  <button
-                                    type="button"
-                                    className="sidebar-workflow-action danger"
-                                    onClick={() => onCancelWorkflowExecution?.(workflow)}
-                                    disabled={!onCancelWorkflowExecution}
-                                    title="Cancel"
-                                    aria-label={`Cancel ${workflow.name} run`}
+                                }}
+                                aria-expanded={selected}
+                                title={workflow.name}
+                              >
+                                <ProviderBadgeIcon provider={workflow.template.provider} />
+                                <span className="sidebar-workflow-copy">
+                                  <span className="sidebar-workflow-name">
+                                    <HighlightMatch
+                                      text={workflow.name}
+                                      query={sidebarSearchQuery}
+                                    />
+                                  </span>
+                                  <span className="sidebar-workflow-meta">
+                                    {formatWorkflowTrigger(workflow)}
+                                  </span>
+                                </span>
+                                {unattendedElevation && (
+                                  <span
+                                    className="sidebar-workflow-unattended-badge"
+                                    title={`Runs unattended with ${unattendedElevationLabel} permissions`}
+                                    aria-label={`Runs unattended with ${unattendedElevationLabel} permissions`}
                                   >
-                                    <WorkflowActionIcon kind="cancel" />
-                                  </button>
+                                    ⚠
+                                  </span>
                                 )}
-                                <button
-                                  type="button"
-                                  className="sidebar-workflow-action danger"
-                                  onClick={() => onDeleteWorkflow?.(workflow.id)}
-                                  disabled={!onDeleteWorkflow}
-                                  title="Delete"
-                                  aria-label={`Delete ${workflow.name}`}
-                                >
-                                  <WorkflowActionIcon kind="delete" />
-                                </button>
-                              </div>
-                              {statusCounters.length > 0 && (
-                                <div
-                                  className="sidebar-workflow-stats"
-                                  aria-label="Workflow run counters"
-                                >
-                                  {statusCounters.map(({ status, count }) => (
+                                {typeof workflow.lastRunIterationCount === 'number' &&
+                                  workflow.lastRunIterationCount > 0 && (
                                     <span
-                                      key={status}
-                                      className={`sidebar-workflow-stat tone-${workflowStatusTone(
-                                        status
-                                      )}`}
-                                      title={`${formatWorkflowStatus(status)}: ${count}`}
-                                      aria-label={`${formatWorkflowStatus(status)} runs: ${count}`}
+                                      className="sidebar-workflow-loop-count"
+                                      title={`Loop: ${workflow.lastRunIterationCount} iteration${
+                                        workflow.lastRunIterationCount === 1 ? '' : 's'
+                                      }${workflow.lastRunStopReason ? ` · ${workflow.lastRunStopReason}` : ''}`}
+                                      aria-label={`${workflow.lastRunIterationCount} loop iterations`}
                                     >
-                                      <WorkflowStatusCounterIcon status={status} />
-                                      <span>{count}</span>
+                                      {workflow.lastRunIterationCount}×
                                     </span>
-                                  ))}
+                                  )}
+                                <span
+                                  className={`sidebar-workflow-status tone-${workflowStatusTone(status)}`}
+                                >
+                                  {statusLabel}
+                                </span>
+                              </button>
+                              {selected && (
+                                <div className="sidebar-workflow-detail">
+                                  <div className="sidebar-workflow-detail-row">
+                                    <span>Next</span>
+                                    <strong>{formatWorkflowTime(workflow.nextRunAt)}</strong>
+                                  </div>
+                                  {latestExecution && (
+                                    <div className="sidebar-workflow-detail-row">
+                                      <span>Last</span>
+                                      <strong>
+                                        {formatWorkflowStatus(latestExecution.status)}
+                                      </strong>
+                                    </div>
+                                  )}
+                                  <div className="sidebar-workflow-icon-strip">
+                                    <div className="sidebar-workflow-actions">
+                                      <button
+                                        type="button"
+                                        className="sidebar-workflow-action primary"
+                                        onClick={() => onRunWorkflowNow?.(workflow.id)}
+                                        disabled={!onRunWorkflowNow}
+                                        title="Run now"
+                                        aria-label={`Run ${workflow.name} now`}
+                                      >
+                                        <WorkflowActionIcon kind="run" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="sidebar-workflow-action"
+                                        onClick={() => onAddWorkflowToWorkspaceBoard?.(workflow)}
+                                        disabled={!onAddWorkflowToWorkspaceBoard}
+                                        title="Add to Workspace Board"
+                                        aria-label={`Add ${workflow.name} to workspace board`}
+                                      >
+                                        <WorkflowActionIcon kind="board" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="sidebar-workflow-action"
+                                        onClick={() => onToggleWorkflowEnabled?.(workflow)}
+                                        disabled={!onToggleWorkflowEnabled}
+                                        title={workflow.enabled ? 'Pause' : 'Resume'}
+                                        aria-label={`${workflow.enabled ? 'Pause' : 'Resume'} ${
+                                          workflow.name
+                                        }`}
+                                      >
+                                        <WorkflowActionIcon
+                                          kind={workflow.enabled ? 'pause' : 'resume'}
+                                        />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="sidebar-workflow-action"
+                                        onClick={() => onEditWorkflowInterval?.(workflow)}
+                                        disabled={!onEditWorkflowInterval}
+                                        title="Cadence"
+                                        aria-label={`Edit ${workflow.name} cadence`}
+                                      >
+                                        <WorkflowActionIcon kind="cadence" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={`sidebar-workflow-action${
+                                          unattendedElevation ? ' is-active' : ''
+                                        }`}
+                                        onClick={() => onSetWorkflowUnattended?.(workflow)}
+                                        disabled={!onSetWorkflowUnattended}
+                                        title={
+                                          unattendedElevation
+                                            ? `Unattended: ${unattendedElevationLabel} — click to revoke`
+                                            : 'Unattended permissions'
+                                        }
+                                        aria-label={`Unattended permissions for ${workflow.name}`}
+                                        aria-pressed={Boolean(unattendedElevation)}
+                                      >
+                                        <WorkflowActionIcon kind="unattended" />
+                                      </button>
+                                      {isActiveExecution && (
+                                        <button
+                                          type="button"
+                                          className="sidebar-workflow-action danger"
+                                          onClick={() => onCancelWorkflowExecution?.(workflow)}
+                                          disabled={!onCancelWorkflowExecution}
+                                          title="Cancel"
+                                          aria-label={`Cancel ${workflow.name} run`}
+                                        >
+                                          <WorkflowActionIcon kind="cancel" />
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        className="sidebar-workflow-action danger"
+                                        onClick={() => onDeleteWorkflow?.(workflow.id)}
+                                        disabled={!onDeleteWorkflow}
+                                        title="Delete"
+                                        aria-label={`Delete ${workflow.name}`}
+                                      >
+                                        <WorkflowActionIcon kind="delete" />
+                                      </button>
+                                    </div>
+                                    {statusCounters.length > 0 && (
+                                      <div
+                                        className="sidebar-workflow-stats"
+                                        aria-label="Workflow run counters"
+                                      >
+                                        {statusCounters.map(({ status, count }) => (
+                                          <span
+                                            key={status}
+                                            className={`sidebar-workflow-stat tone-${workflowStatusTone(
+                                              status
+                                            )}`}
+                                            title={`${formatWorkflowStatus(status)}: ${count}`}
+                                            aria-label={`${formatWorkflowStatus(status)} runs: ${count}`}
+                                          >
+                                            <WorkflowStatusCounterIcon status={status} />
+                                            <span>{count}</span>
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                    <WorkflowRunHistory
+                                      key={workflow.id}
+                                      workflowId={workflow.id}
+                                    />
+                                  </div>
                                 </div>
                               )}
-                              <WorkflowRunHistory key={workflow.id} workflowId={workflow.id} />
                             </div>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })
-                )}
-              </div>
-            )}
-            </div>,
-            activeSidebarTab === 'threads'
-          )}
-
-          {wrapHierarchySection(
-            'workspace-boards',
-            <div className="sidebar-workspace-boards-section">
-              <div className="sidebar-section-header">
-                <button
-                  type="button"
-                  className="sidebar-section-header-toggle"
-                  onClick={() => toggleSidebarSection('workspace-boards')}
-                  aria-expanded={!isSectionCollapsed('workspace-boards')}
-                  title={
-                    isSectionCollapsed('workspace-boards')
-                      ? 'Expand Workspace Boards'
-                      : 'Collapse Workspace Boards'
-                  }
-                >
-                  <ChevronSymbolIcon isExpanded={!isSectionCollapsed('workspace-boards')} />
-                  <h4 className="sidebar-section-title">Workspace Boards</h4>
-                  {visibleWorkspaceBoards.length > 0 && (
-                    <span className="sidebar-section-count">{visibleWorkspaceBoards.length}</span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="sidebar-section-header-action sidebar-workspace-board-create"
-                  onClick={handleNewWorkspaceBoard}
-                  disabled={!onCreateWorkspaceBoard || workspaces.length === 0}
-                  title={
-                    workspaces.length > 0
-                      ? 'New workspace board'
-                      : 'Add a workspace first to create a board'
-                  }
-                  aria-label="New workspace board"
-                >
-                  <PlusSymbolIcon />
-                </button>
-              </div>
-              {!isSectionCollapsed('workspace-boards') && (
-                <div className="sidebar-workspace-board-list">
-                  {visibleWorkspaceBoards.length === 0 && archivedWorkspaceBoards.length === 0 ? (
-                    <div className="sidebar-workflow-empty">
-                      {isSidebarSearchActive ? 'No matching boards' : 'No workspace boards'}
+                          )
+                        })
+                      )}
                     </div>
-                  ) : visibleWorkspaceBoards.length > 0 ? (
-                    visibleWorkspaceBoards.map((board) => {
-                      const workspace = workspaceById.get(board.workspaceId)
-                      const boardCards = workspaceBoardCardsByBoardId.get(board.id) || []
-                      const attentionCount = boardCards.filter(
-                        (card) =>
-                          card.columnId === 'needs-input' ||
-                          card.columnId === 'blocked' ||
-                          card.columnId === 'review-ready'
-                      ).length
-                      const boardMeta = [
-                        board.pinned ? 'Pinned' : null,
-                        workspace?.displayName || 'Workspace',
-                        `${boardCards.length} card${boardCards.length === 1 ? '' : 's'}`,
-                        attentionCount > 0
-                          ? `${attentionCount} attention`
-                          : null
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')
-                      return (
-                        <div key={board.id} className="sidebar-workspace-board-block">
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            className={`sidebar-workspace-board-item ${
-                              activeWorkspaceBoardId === board.id ? 'active' : ''
-                            }`}
-                            onClick={() => onOpenWorkspaceBoard?.(board)}
-                            onKeyDown={(event) => {
-                              if (event.target !== event.currentTarget) return
-                              if (event.key === 'Enter' || event.key === ' ') {
-                                event.preventDefault()
-                                onOpenWorkspaceBoard?.(board)
-                              }
-                            }}
-                            title={board.name}
-                          >
-                            <span className="sidebar-workspace-board-icon" aria-hidden>
-                              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor">
-                                <path d="M3 3.5h10M3 8h10M3 12.5h10" />
-                                <path d="M5.5 2.5v11M10.5 2.5v11" />
-                              </svg>
-                            </span>
-                            <span className="sidebar-workflow-copy">
-                              <span className="sidebar-workflow-name">
-                                <HighlightMatch text={board.name} query={sidebarSearchQuery} />
-                              </span>
-                              <span className="sidebar-workflow-meta">
-                                {boardMeta}
-                              </span>
-                            </span>
-                            <SidebarOverflowMenu
-                              triggerLabel="Workspace board actions"
-                              items={buildWorkspaceBoardMenuItems(board)}
-                            />
-                          </div>
+                  )}
+                </div>,
+                activeSidebarTab === 'threads'
+              )}
+
+              {wrapHierarchySection(
+                'workspace-boards',
+                <div className="sidebar-workspace-boards-section">
+                  <div className="sidebar-section-header">
+                    <button
+                      type="button"
+                      className="sidebar-section-header-toggle"
+                      onClick={() => toggleSidebarSection('workspace-boards')}
+                      aria-expanded={!isSectionCollapsed('workspace-boards')}
+                      title={
+                        isSectionCollapsed('workspace-boards')
+                          ? 'Expand Workspace Boards'
+                          : 'Collapse Workspace Boards'
+                      }
+                    >
+                      <ChevronSymbolIcon isExpanded={!isSectionCollapsed('workspace-boards')} />
+                      <h4 className="sidebar-section-title">Workspace Boards</h4>
+                      {visibleWorkspaceBoards.length > 0 && (
+                        <span className="sidebar-section-count">
+                          {visibleWorkspaceBoards.length}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="sidebar-section-header-action sidebar-workspace-board-create"
+                      onClick={handleNewWorkspaceBoard}
+                      disabled={!onCreateWorkspaceBoard || workspaces.length === 0}
+                      title={
+                        workspaces.length > 0
+                          ? 'New workspace board'
+                          : 'Add a workspace first to create a board'
+                      }
+                      aria-label="New workspace board"
+                    >
+                      <PlusSymbolIcon />
+                    </button>
+                  </div>
+                  {!isSectionCollapsed('workspace-boards') && (
+                    <div className="sidebar-workspace-board-list">
+                      {visibleWorkspaceBoards.length === 0 &&
+                      archivedWorkspaceBoards.length === 0 ? (
+                        <div className="sidebar-workflow-empty">
+                          {isSidebarSearchActive ? 'No matching boards' : 'No workspace boards'}
                         </div>
-                      )
-                    })
-                  ) : null}
-                  {archivedWorkspaceBoards.length > 0 && (
-                    <div className="sidebar-workspace-board-archived-group">
-                      <div className="sidebar-workflow-empty">Archived</div>
-                      {archivedWorkspaceBoards.map((board) => {
-                        const workspace = workspaceById.get(board.workspaceId)
-                        const boardCards = workspaceBoardCardsByBoardId.get(board.id) || []
-                        const boardMeta = [
-                          'Archived',
-                          workspace?.displayName || 'Workspace',
-                          `${boardCards.length} active card${boardCards.length === 1 ? '' : 's'}`
-                        ].join(' · ')
-                        return (
-                          <div key={board.id} className="sidebar-workspace-board-block">
-                            <div
-                              className="sidebar-workspace-board-item archived"
-                              title={`${board.name} (archived)`}
-                            >
-                              <span className="sidebar-workspace-board-icon" aria-hidden>
-                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor">
-                                  <path d="M3 3.5h10M3 8h10M3 12.5h10" />
-                                  <path d="M5.5 2.5v11M10.5 2.5v11" />
-                                </svg>
-                              </span>
-                              <span className="sidebar-workflow-copy">
-                                <span className="sidebar-workflow-name">
-                                  <HighlightMatch text={board.name} query={sidebarSearchQuery} />
+                      ) : visibleWorkspaceBoards.length > 0 ? (
+                        visibleWorkspaceBoards.map((board) => {
+                          const workspace = workspaceById.get(board.workspaceId)
+                          const boardCards = workspaceBoardCardsByBoardId.get(board.id) || []
+                          const attentionCount = boardCards.filter(
+                            (card) =>
+                              card.columnId === 'needs-input' ||
+                              card.columnId === 'blocked' ||
+                              card.columnId === 'review-ready'
+                          ).length
+                          const boardMeta = [
+                            board.pinned ? 'Pinned' : null,
+                            workspace?.displayName || 'Workspace',
+                            `${boardCards.length} card${boardCards.length === 1 ? '' : 's'}`,
+                            attentionCount > 0 ? `${attentionCount} attention` : null
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')
+                          return (
+                            <div key={board.id} className="sidebar-workspace-board-block">
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                className={`sidebar-workspace-board-item ${
+                                  activeWorkspaceBoardId === board.id ? 'active' : ''
+                                }`}
+                                onClick={() => onOpenWorkspaceBoard?.(board)}
+                                onKeyDown={(event) => {
+                                  if (event.target !== event.currentTarget) return
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault()
+                                    onOpenWorkspaceBoard?.(board)
+                                  }
+                                }}
+                                title={board.name}
+                              >
+                                <span className="sidebar-workspace-board-icon" aria-hidden>
+                                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor">
+                                    <path d="M3 3.5h10M3 8h10M3 12.5h10" />
+                                    <path d="M5.5 2.5v11M10.5 2.5v11" />
+                                  </svg>
                                 </span>
-                                <span className="sidebar-workflow-meta">{boardMeta}</span>
+                                <span className="sidebar-workflow-copy">
+                                  <span className="sidebar-workflow-name">
+                                    <HighlightMatch text={board.name} query={sidebarSearchQuery} />
+                                  </span>
+                                  <span className="sidebar-workflow-meta">{boardMeta}</span>
+                                </span>
+                                <SidebarOverflowMenu
+                                  triggerLabel="Workspace board actions"
+                                  items={buildWorkspaceBoardMenuItems(board)}
+                                />
+                              </div>
+                            </div>
+                          )
+                        })
+                      ) : null}
+                      {archivedWorkspaceBoards.length > 0 && (
+                        <div className="sidebar-workspace-board-archived-group">
+                          <div className="sidebar-workflow-empty">Archived</div>
+                          {archivedWorkspaceBoards.map((board) => {
+                            const workspace = workspaceById.get(board.workspaceId)
+                            const boardCards = workspaceBoardCardsByBoardId.get(board.id) || []
+                            const boardMeta = [
+                              'Archived',
+                              workspace?.displayName || 'Workspace',
+                              `${boardCards.length} active card${boardCards.length === 1 ? '' : 's'}`
+                            ].join(' · ')
+                            return (
+                              <div key={board.id} className="sidebar-workspace-board-block">
+                                <div
+                                  className="sidebar-workspace-board-item archived"
+                                  title={`${board.name} (archived)`}
+                                >
+                                  <span className="sidebar-workspace-board-icon" aria-hidden>
+                                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor">
+                                      <path d="M3 3.5h10M3 8h10M3 12.5h10" />
+                                      <path d="M5.5 2.5v11M10.5 2.5v11" />
+                                    </svg>
+                                  </span>
+                                  <span className="sidebar-workflow-copy">
+                                    <span className="sidebar-workflow-name">
+                                      <HighlightMatch
+                                        text={board.name}
+                                        query={sidebarSearchQuery}
+                                      />
+                                    </span>
+                                    <span className="sidebar-workflow-meta">{boardMeta}</span>
+                                  </span>
+                                  <SidebarOverflowMenu
+                                    triggerLabel="Archived workspace board actions"
+                                    items={buildWorkspaceBoardMenuItems(board)}
+                                  />
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>,
+                activeSidebarTab === 'threads'
+              )}
+
+              {wrapHierarchySection(
+                'pinned',
+                <>
+                  {(visiblePinnedWorkspaces.length > 0 || visiblePinnedChats.length > 0) && (
+                    <div className="sidebar-pinned-section" {...pinDropProps}>
+                      <div className="sidebar-section-header">
+                        <button
+                          type="button"
+                          className="sidebar-section-header-toggle"
+                          onClick={() => toggleSidebarSection('pinned')}
+                          aria-expanded={!isSectionCollapsed('pinned')}
+                          title={isSectionCollapsed('pinned') ? 'Expand Pinned' : 'Collapse Pinned'}
+                        >
+                          <ChevronSymbolIcon isExpanded={!isSectionCollapsed('pinned')} />
+                          <h4 className="sidebar-section-title">Pinned</h4>
+                          {visiblePinnedWorkspaces.length + visiblePinnedChats.length > 0 && (
+                            <span className="sidebar-section-count">
+                              {visiblePinnedWorkspaces.length + visiblePinnedChats.length}
+                            </span>
+                          )}
+                        </button>
+                      </div>
+                      {!isSectionCollapsed('pinned') && (
+                        <div
+                          className="sidebar-pinned-list"
+                          {...getSidebarThreadListDropProps('code:pinned', orderedPinnedChats)}
+                        >
+                          {visiblePinnedWorkspaces.map((workspace) => (
+                            <div
+                              key={`pinned-workspace-${workspace.id}`}
+                              role="button"
+                              tabIndex={0}
+                              className={`sidebar-pinned-item ${currentWorkspace?.id === workspace.id ? 'active' : ''}`}
+                              onClick={() => onSelectWorkspace(workspace)}
+                              onKeyDown={(event) => {
+                                if (event.target !== event.currentTarget) return
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault()
+                                  onSelectWorkspace(workspace)
+                                }
+                              }}
+                              title={workspace.path}
+                            >
+                              <FolderSymbolIcon />
+                              <span className="sidebar-pinned-label">
+                                <HighlightMatch
+                                  text={workspace.displayName}
+                                  query={sidebarSearchQuery}
+                                />
                               </span>
                               <SidebarOverflowMenu
-                                triggerLabel="Archived workspace board actions"
-                                items={buildWorkspaceBoardMenuItems(board)}
+                                triggerLabel="Workspace actions"
+                                items={buildWorkspaceMenuItems(workspace)}
                               />
                             </div>
-                          </div>
-                        )
-                      })}
+                          ))}
+                          {visiblePinnedChats.map((chat) => {
+                            const renameSurfaceId = `pinned-${chat.appChatId}`
+                            const dragHandlers = getChatTileDragProps(chat, 'code:pinned')
+                            return (
+                              <SidebarCompactChatRow
+                                key={`pinned-chat-${chat.appChatId}`}
+                                chat={chat}
+                                variant="pinned"
+                                surfaceId={renameSurfaceId}
+                                isSelected={selectedChatId === chat.appChatId}
+                                isRunning={runningChatIdSet.has(chat.appChatId)}
+                                rowTone={rowToneByChatId.get(chat.appChatId) ?? null}
+                                needsInput={chatHasPendingAgentQuestion(
+                                  pendingAgentQuestionsByChatId,
+                                  chat.appChatId
+                                )}
+                                isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                                query={sidebarSearchQuery}
+                                identityTicker={
+                                  selectedChatId === chat.appChatId
+                                    ? activeChatIdentityTicker
+                                    : null
+                                }
+                                identityGitIndicators={
+                                  selectedChatId === chat.appChatId
+                                    ? activeChatIdentityGitIndicators
+                                    : null
+                                }
+                                identityBranch={
+                                  selectedChatId === chat.appChatId
+                                    ? activeChatIdentityBranch
+                                    : null
+                                }
+                                draggable={dragHandlers.draggable}
+                                isDragging={dragHandlers['data-dragging'] === 'true'}
+                                dragHandlers={dragHandlers}
+                                onSelect={selectAndAcknowledgeChat}
+                                onStartRename={startChatRename}
+                                onSubmitRename={commitChatRename}
+                                onCancelRename={cancelChatRename}
+                                buildMenuItems={buildChatMenuItems}
+                              />
+                            )
+                          })}
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
-              )}
-            </div>,
-            activeSidebarTab === 'threads'
-          )}
 
-          {wrapHierarchySection(
-            'pinned',
-            <>
-          {(visiblePinnedWorkspaces.length > 0 || visiblePinnedChats.length > 0) && (
-            <div className="sidebar-pinned-section" {...pinDropProps}>
-              <div className="sidebar-section-header">
-                <button
-                  type="button"
-                  className="sidebar-section-header-toggle"
-                  onClick={() => toggleSidebarSection('pinned')}
-                  aria-expanded={!isSectionCollapsed('pinned')}
-                  title={isSectionCollapsed('pinned') ? 'Expand Pinned' : 'Collapse Pinned'}
-                >
-                  <ChevronSymbolIcon isExpanded={!isSectionCollapsed('pinned')} />
-                  <h4 className="sidebar-section-title">Pinned</h4>
-                  {visiblePinnedWorkspaces.length + visiblePinnedChats.length > 0 && (
-                    <span className="sidebar-section-count">
-                      {visiblePinnedWorkspaces.length + visiblePinnedChats.length}
-                    </span>
-                  )}
-                </button>
-              </div>
-              {!isSectionCollapsed('pinned') && (
-                <div
-                  className="sidebar-pinned-list"
-                  {...getSidebarThreadListDropProps('code:pinned', orderedPinnedChats)}
-                >
-                  {visiblePinnedWorkspaces.map((workspace) => (
-                    <div
-                      key={`pinned-workspace-${workspace.id}`}
-                      role="button"
-                      tabIndex={0}
-                      className={`sidebar-pinned-item ${currentWorkspace?.id === workspace.id ? 'active' : ''}`}
-                      onClick={() => onSelectWorkspace(workspace)}
-                      onKeyDown={(event) => {
-                        if (event.target !== event.currentTarget) return
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault()
-                          onSelectWorkspace(workspace)
-                        }
-                      }}
-                      title={workspace.path}
-                    >
-                      <FolderSymbolIcon />
-                      <span className="sidebar-pinned-label">
-                        <HighlightMatch text={workspace.displayName} query={sidebarSearchQuery} />
-                      </span>
-                      <SidebarOverflowMenu
-                        triggerLabel="Workspace actions"
-                        items={buildWorkspaceMenuItems(workspace)}
-                      />
-                    </div>
-                  ))}
-                  {visiblePinnedChats.map((chat) => {
-                    const renameSurfaceId = `pinned-${chat.appChatId}`
-                    const dragHandlers = getChatTileDragProps(chat, 'code:pinned')
-                    return (
-                      <SidebarCompactChatRow
-                        key={`pinned-chat-${chat.appChatId}`}
-                        chat={chat}
-                        variant="pinned"
-                        surfaceId={renameSurfaceId}
-                        isSelected={selectedChatId === chat.appChatId}
-                        isRunning={runningChatIdSet.has(chat.appChatId)}
-                        rowTone={rowToneByChatId.get(chat.appChatId) ?? null}
-                        needsInput={chatHasPendingAgentQuestion(
-                          pendingAgentQuestionsByChatId,
-                          chat.appChatId
-                        )}
-                        isEditing={isChatRenameTarget(chat, renameSurfaceId)}
-                        query={sidebarSearchQuery}
-                        identityTicker={
-                          selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
-                        }
-                        identityGitIndicators={
-                          selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
-                        }
-                        identityBranch={
-                          selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
-                        }
-                        draggable={dragHandlers.draggable}
-                        isDragging={dragHandlers['data-dragging'] === 'true'}
-                        dragHandlers={dragHandlers}
-                        onSelect={selectAndAcknowledgeChat}
-                        onStartRename={startChatRename}
-                        onSubmitRename={commitChatRename}
-                        onCancelRename={cancelChatRename}
-                        buildMenuItems={buildChatMenuItems}
-                      />
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/*
+                  {/*
             1.0.5-SB5 — Empty-state drop placeholder. Surfaces only
             while a non-pinned chat is being dragged AND the
             Pinned section is currently empty. Without this, a
             fresh user with nothing pinned has no visible drop
             target and discovers drag-to-pin only by accident.
           */}
-          {showPinDropPlaceholder && (
-            <div
-              className="sidebar-pin-drop-placeholder"
-              {...pinDropProps}
-              role="region"
-              aria-label="Drop here to pin"
-            >
-              <span className="sidebar-pin-drop-placeholder-glyph" aria-hidden>
-                ☆
-              </span>
-              <span className="sidebar-pin-drop-placeholder-copy">Drop here to pin</span>
-            </div>
-          )}
-            </>,
-            visiblePinnedWorkspaces.length > 0 ||
-              visiblePinnedChats.length > 0 ||
-              showPinDropPlaceholder
-          )}
-
-          {wrapHierarchySection(
-            'git',
-            <div className="sidebar-git-section">
-              <div className="sidebar-section-header">
-                <button
-                  type="button"
-                  className="sidebar-section-header-toggle"
-                  onClick={() => toggleSidebarSection('git')}
-                  aria-expanded={!isSectionCollapsed('git')}
-                  title={isSectionCollapsed('git') ? 'Expand Git' : 'Collapse Git'}
-                >
-                  <ChevronSymbolIcon isExpanded={!isSectionCollapsed('git')} />
-                  <h4 className="sidebar-section-title">Git</h4>
-                  {visibleGitWorkflowChats.length > 0 && (
-                    <span className="sidebar-section-count">{visibleGitWorkflowChats.length}</span>
-                  )}
-                </button>
-              </div>
-              {!isSectionCollapsed('git') && (
-                <div className="sidebar-git-list">
-                  {gitWorkflowGroups.map((group) => (
+                  {showPinDropPlaceholder && (
                     <div
-                      key={`git-group-${group.group}`}
-                      className="sidebar-git-group"
-                      {...getSidebarThreadListDropProps(`code:git:${group.group}`, group.chats)}
+                      className="sidebar-pin-drop-placeholder"
+                      {...pinDropProps}
+                      role="region"
+                      aria-label="Drop here to pin"
                     >
-                      <div className="sidebar-git-subheader">{group.label}</div>
-                      {previewSidebarList(`git:${group.group}`, group.chats).map((chat) => {
-                        const renameSurfaceId = `git-${group.group}-${chat.appChatId}`
-                        const dragHandlers = getChatTileDragProps(
-                          chat,
-                          `code:git:${group.group}`
-                        )
+                      <span className="sidebar-pin-drop-placeholder-glyph" aria-hidden>
+                        ☆
+                      </span>
+                      <span className="sidebar-pin-drop-placeholder-copy">Drop here to pin</span>
+                    </div>
+                  )}
+                </>,
+                visiblePinnedWorkspaces.length > 0 ||
+                  visiblePinnedChats.length > 0 ||
+                  showPinDropPlaceholder
+              )}
+
+              {wrapHierarchySection(
+                'git',
+                <div className="sidebar-git-section">
+                  <div className="sidebar-section-header">
+                    <button
+                      type="button"
+                      className="sidebar-section-header-toggle"
+                      onClick={() => toggleSidebarSection('git')}
+                      aria-expanded={!isSectionCollapsed('git')}
+                      title={isSectionCollapsed('git') ? 'Expand Git' : 'Collapse Git'}
+                    >
+                      <ChevronSymbolIcon isExpanded={!isSectionCollapsed('git')} />
+                      <h4 className="sidebar-section-title">Git</h4>
+                      {visibleGitWorkflowChats.length > 0 && (
+                        <span className="sidebar-section-count">
+                          {visibleGitWorkflowChats.length}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                  {!isSectionCollapsed('git') && (
+                    <div className="sidebar-git-list">
+                      {gitWorkflowGroups.map((group) => (
+                        <div
+                          key={`git-group-${group.group}`}
+                          className="sidebar-git-group"
+                          {...getSidebarThreadListDropProps(`code:git:${group.group}`, group.chats)}
+                        >
+                          <div className="sidebar-git-subheader">{group.label}</div>
+                          {previewSidebarList(`git:${group.group}`, group.chats).map((chat) => {
+                            const renameSurfaceId = `git-${group.group}-${chat.appChatId}`
+                            const dragHandlers = getChatTileDragProps(
+                              chat,
+                              `code:git:${group.group}`
+                            )
+                            return (
+                              <SidebarCompactChatRow
+                                key={`git-chat-${group.group}-${chat.appChatId}`}
+                                chat={chat}
+                                variant="git"
+                                surfaceId={renameSurfaceId}
+                                isSelected={selectedChatId === chat.appChatId}
+                                isRunning={runningChatIdSet.has(chat.appChatId)}
+                                rowTone={rowToneByChatId.get(chat.appChatId) ?? null}
+                                needsInput={chatHasPendingAgentQuestion(
+                                  pendingAgentQuestionsByChatId,
+                                  chat.appChatId
+                                )}
+                                isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                                query={sidebarSearchQuery}
+                                identityTicker={
+                                  selectedChatId === chat.appChatId
+                                    ? activeChatIdentityTicker
+                                    : null
+                                }
+                                identityGitIndicators={
+                                  selectedChatId === chat.appChatId
+                                    ? activeChatIdentityGitIndicators
+                                    : null
+                                }
+                                identityBranch={
+                                  selectedChatId === chat.appChatId
+                                    ? activeChatIdentityBranch
+                                    : null
+                                }
+                                draggable={dragHandlers.draggable}
+                                isDragging={dragHandlers['data-dragging'] === 'true'}
+                                dragHandlers={dragHandlers}
+                                onSelect={selectAndAcknowledgeChat}
+                                onStartRename={startChatRename}
+                                onSubmitRename={commitChatRename}
+                                onCancelRename={cancelChatRename}
+                                buildMenuItems={buildChatMenuItems}
+                              />
+                            )
+                          })}
+                          {renderSidebarShowMore(`git:${group.group}`, group.chats.length)}
+                        </div>
+                      ))}
+                      {gitWorkflowGroups.length === 0 && !isSidebarSearchActive && (
+                        <div className="sidebar-empty-state">
+                          <strong>No git workflows yet</strong>
+                          <span>Threads land here when they push or open a PR.</span>
+                        </div>
+                      )}
+                      {gitWorkflowGroups.length === 0 && isSidebarSearchActive && (
+                        <div className="sidebar-empty-state">
+                          <strong>No matches</strong>
+                          <span>No git workflow threads match.</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>,
+                true
+              )}
+
+              {wrapHierarchySection(
+                'recents',
+                visibleRecentChats.length > 0 ? (
+                  <div className="sidebar-recents-section">
+                    <div className="sidebar-section-header">
+                      <button
+                        type="button"
+                        className="sidebar-section-header-toggle"
+                        onClick={() => toggleSidebarSection('recents')}
+                        aria-expanded={!isSectionCollapsed('recents')}
+                        title={
+                          isSectionCollapsed('recents') ? 'Expand Recents' : 'Collapse Recents'
+                        }
+                      >
+                        <ChevronSymbolIcon isExpanded={!isSectionCollapsed('recents')} />
+                        <h4 className="sidebar-section-title">Recents</h4>
+                      </button>
+                    </div>
+                    {!isSectionCollapsed('recents') && (
+                      <div
+                        className="sidebar-recents-list"
+                        {...getSidebarThreadListDropProps('code:recents', orderedRecentChats)}
+                      >
+                        {previewSidebarList('recents', visibleRecentChats).map((chat) => {
+                          const renameSurfaceId = `recent-${chat.appChatId}`
+                          const dragHandlers = getChatTileDragProps(chat, 'code:recents')
+                          return (
+                            <SidebarCompactChatRow
+                              key={`recent-${chat.appChatId}`}
+                              chat={chat}
+                              variant="recents"
+                              surfaceId={renameSurfaceId}
+                              isSelected={selectedChatId === chat.appChatId}
+                              isRunning={runningChatIdSet.has(chat.appChatId)}
+                              rowTone={rowToneByChatId.get(chat.appChatId) ?? null}
+                              needsInput={chatHasPendingAgentQuestion(
+                                pendingAgentQuestionsByChatId,
+                                chat.appChatId
+                              )}
+                              isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                              query={sidebarSearchQuery}
+                              identityTicker={
+                                selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
+                              }
+                              identityGitIndicators={
+                                selectedChatId === chat.appChatId
+                                  ? activeChatIdentityGitIndicators
+                                  : null
+                              }
+                              identityBranch={
+                                selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
+                              }
+                              draggable={dragHandlers.draggable}
+                              isDragging={dragHandlers['data-dragging'] === 'true'}
+                              dragHandlers={dragHandlers}
+                              onSelect={selectAndAcknowledgeChat}
+                              onStartRename={startChatRename}
+                              onSubmitRename={commitChatRename}
+                              onCancelRename={cancelChatRename}
+                              buildMenuItems={buildChatMenuItems}
+                            />
+                          )
+                        })}
+                        {renderSidebarShowMore('recents', visibleRecentChats.length)}
+                      </div>
+                    )}
+                  </div>
+                ) : null,
+                visibleRecentChats.length > 0
+              )}
+
+              {wrapHierarchySection(
+                'ensembles',
+                ensembleModeEnabled ? (
+                  <div className="sidebar-ensembles-section">
+                    {/* 1.0.3 — dropped the `sidebar-section-header-with-action`
+                  modifier so the Ensembles `+` aligns to the trailing
+                  edge (matches Workspaces / Chats). The modifier was
+                  pinning the `+` flush against the title with
+                  justify-content: flex-start; the base `.sidebar-section-
+                  header` uses space-between which is what we want here. */}
+                    <div className="sidebar-section-header">
+                      <button
+                        type="button"
+                        className="sidebar-section-header-toggle"
+                        onClick={() => toggleSidebarSection('ensembles')}
+                        aria-expanded={!isSectionCollapsed('ensembles')}
+                        title={
+                          isSectionCollapsed('ensembles')
+                            ? 'Expand Ensembles'
+                            : 'Collapse Ensembles'
+                        }
+                      >
+                        <ChevronSymbolIcon isExpanded={!isSectionCollapsed('ensembles')} />
+                        <h4 className="sidebar-section-title">Ensembles</h4>
+                        {visibleEnsembleChats.length > 0 && (
+                          <span className="sidebar-section-count">
+                            {visibleEnsembleChats.length}
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="sidebar-section-header-action sidebar-ensemble-create"
+                        onClick={handleNewEnsemble}
+                        title="New Ensemble"
+                        aria-label="New Ensemble"
+                      >
+                        <PlusSymbolIcon />
+                      </button>
+                    </div>
+                    {!isSectionCollapsed('ensembles') &&
+                      (visibleEnsembleChats.length === 0 ? (
+                        /*
+                  Empty-state caption. Gives ensembles the same
+                  discoverability Workspaces gets when the list is
+                  empty — without it, fresh users never see the
+                  section at all. The caption points at the section
+                  header action now that the masthead picker keeps chat
+                  creation deterministic.
+                */
+                        <div className="sidebar-ensembles-empty" role="note">
+                          <span className="sidebar-ensembles-empty-icon" aria-hidden>
+                            <EnsembleSymbolIcon />
+                          </span>
+                          <span className="sidebar-ensembles-empty-copy">
+                            No ensembles yet. Use the <strong>Ensembles +</strong> button to put two
+                            or more providers in the same thread.
+                          </span>
+                        </div>
+                      ) : (
+                        <div
+                          className="sidebar-chat-list sidebar-ensemble-list"
+                          {...getSidebarThreadListDropProps('code:ensembles', orderedEnsembleChats)}
+                        >
+                          {previewSidebarList('ensembles', visibleEnsembleChats).map((chat) => {
+                            const activeRound = chat.ensemble?.activeRound
+                            const activeParticipant = chat.ensemble?.participants.find(
+                              (participant) => participant.id === activeRound?.activeParticipantId
+                            )
+                            const isRunning = isEnsembleActiveRoundDispatchLive(activeRound)
+                            const rowTone = rowToneByChatId.get(chat.appChatId) ?? null
+                            const toneClass = rowTone ? ` ${sidebarRowToneClass(rowTone)}` : ''
+                            // Trim the role so a blank/whitespace role doesn't
+                            // render a dangling "Provider / " — fall back to
+                            // just the provider name in that case.
+                            const activeRole = activeParticipant?.role?.trim()
+                            const subtitle = activeParticipant
+                              ? activeRole
+                                ? `${getProviderName(activeParticipant.provider)} / ${activeRole}`
+                                : getProviderName(activeParticipant.provider)
+                              : chat.scope === 'global'
+                                ? 'General ensemble'
+                                : 'Workspace ensemble'
+                            const subThreads = subThreadsByParentId.get(chat.appChatId) ?? []
+                            const subThreadsExpanded = isSidebarSearchActive
+                              ? true
+                              : expandedSubThreadParentIds.has(chat.appChatId)
+                            const renameSurfaceId = `ensemble-${chat.appChatId}`
+                            const ensembleNeedsInput = chatHasPendingAgentQuestion(
+                              pendingAgentQuestionsByChatId,
+                              chat.appChatId
+                            )
+                            const ensembleRowA11y = buildSidebarChatRowA11y({
+                              chatId: chat.appChatId,
+                              title: chat.title,
+                              providerLabel: 'Ensemble',
+                              selected: selectedChatId === chat.appChatId,
+                              isRunning,
+                              needsInput: ensembleNeedsInput,
+                              rowTone,
+                              lastRunStatus: isRunning
+                                ? { label: 'Running', tone: 'warning' }
+                                : null,
+                              prefix: subtitle
+                            })
+                            return (
+                              <div
+                                key={`ensemble-${chat.appChatId}`}
+                                className="sidebar-chat-family"
+                              >
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  className={`sidebar-item sidebar-chat-item sidebar-ensemble-item provider-ensemble ${selectedChatId === chat.appChatId ? 'active' : ''} ${isRunning ? 'running' : ''}${toneClass}`}
+                                  onClick={() => selectAndAcknowledgeChat(chat)}
+                                  onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
+                                  aria-label={ensembleRowA11y.ariaLabel}
+                                  aria-current={ensembleRowA11y.ariaCurrent}
+                                  aria-describedby={ensembleRowA11y.statusDescribedById}
+                                  {...getChatTileDragProps(chat, 'code:ensembles')}
+                                >
+                                  {ensembleRowA11y.statusDescription ? (
+                                    <span
+                                      id={ensembleRowA11y.statusDescribedById}
+                                      className="sr-only"
+                                    >
+                                      {ensembleRowA11y.statusDescription}
+                                    </span>
+                                  ) : null}
+                                  {subThreads.length > 0 && (
+                                    <span
+                                      role="button"
+                                      tabIndex={0}
+                                      className="sidebar-tree-toggle sidebar-chat-tree-toggle"
+                                      onClick={(event) =>
+                                        toggleSubThreadsExpanded(event, chat.appChatId)
+                                      }
+                                      onKeyDown={(event) => {
+                                        if (event.key === 'Enter' || event.key === ' ') {
+                                          toggleSubThreadsExpanded(event, chat.appChatId)
+                                        }
+                                      }}
+                                      title={
+                                        subThreadsExpanded
+                                          ? 'Collapse linked chats'
+                                          : 'Expand linked chats'
+                                      }
+                                      aria-label={
+                                        subThreadsExpanded
+                                          ? 'Collapse linked chats'
+                                          : 'Expand linked chats'
+                                      }
+                                      aria-expanded={subThreadsExpanded}
+                                    >
+                                      <ChevronSymbolIcon isExpanded={subThreadsExpanded} />
+                                    </span>
+                                  )}
+                                  {renderChatProviderBadge(chat)}
+                                  <span className="sidebar-chat-copy" title={chat.title}>
+                                    <span className="sidebar-chat-title-line">
+                                      <span className="sidebar-provider-label provider-ensemble">
+                                        <span>Ensemble</span>
+                                      </span>
+                                      <SidebarChatTitleEditable
+                                        chat={chat}
+                                        className="sidebar-chat-title"
+                                        query={sidebarSearchQuery}
+                                        isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                                        onStartEdit={() => startChatRename(chat, renameSurfaceId)}
+                                        onSubmit={(next) => commitChatRename(chat, next)}
+                                        onCancel={() => setEditingChatTarget(null)}
+                                      />
+                                    </span>
+                                    <span className="sidebar-chat-subline">
+                                      {/* Identity (which participant holds the turn), not run state. Muted, not amber, so it never competes with the waiting ink. */}
+                                      <span className="sidebar-run-status tone-muted">
+                                        {isRunning ? `Speaking: ${subtitle}` : subtitle}
+                                      </span>
+                                      {subThreads.length > 0 && (
+                                        <span
+                                          className="sidebar-branched-badge sidebar-branched-dim"
+                                          title={`${subThreads.length} linked chat${subThreads.length === 1 ? '' : 's'}`}
+                                        >
+                                          linked · {subThreads.length}
+                                        </span>
+                                      )}
+                                      {collaboratingChatIds.has(chat.appChatId) && (
+                                        <span
+                                          className="sidebar-branched-badge sidebar-shared-badge"
+                                          title="Channel members have access"
+                                        >
+                                          People
+                                        </span>
+                                      )}
+                                    </span>
+                                  </span>
+                                  {isRunning && <SidebarRunningGhost />}
+                                  {!isRunning && (
+                                    <ChatAgeLabel timestamp={chat.updatedAt || chat.createdAt} />
+                                  )}
+                                  <SidebarOverflowMenu
+                                    triggerLabel="Ensemble actions"
+                                    items={buildChatMenuItems(chat, renameSurfaceId)}
+                                  />
+                                </div>
+                                {subThreads.length > 0 && subThreadsExpanded && (
+                                  <div className="sidebar-chat-children">
+                                    {subThreads.map(renderLinkedChildChat)}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                          {renderSidebarShowMore('ensembles', visibleEnsembleChats.length)}
+                        </div>
+                      ))}
+                  </div>
+                ) : null,
+                ensembleModeEnabled
+              )}
+
+              {wrapHierarchySection(
+                'workspaces',
+                <div className="sidebar-workspace-scroll">
+                  <div className="sidebar-section-header">
+                    <button
+                      type="button"
+                      className="sidebar-section-header-toggle"
+                      onClick={() => toggleSidebarSection('workspaces')}
+                      aria-expanded={!isSectionCollapsed('workspaces')}
+                      title={
+                        isSectionCollapsed('workspaces')
+                          ? 'Expand Workspaces'
+                          : 'Collapse Workspaces'
+                      }
+                    >
+                      <ChevronSymbolIcon isExpanded={!isSectionCollapsed('workspaces')} />
+                      <h4 className="sidebar-section-title">Workspaces</h4>
+                      {visibleWorkspaceEntries.length > 0 && (
+                        <span className="sidebar-section-count">
+                          {visibleWorkspaceEntries.length}
+                        </span>
+                      )}
+                    </button>
+                    {/*
+                Sits OUTSIDE the section-header toggle so clicking `+`
+                opens the workspace picker without ever collapsing the
+                section. Keeping the `+` reachable when the section is
+                collapsed lets the user add a workspace even while their
+                list is folded away.
+              */}
+                    <button
+                      type="button"
+                      className="sidebar-section-header-action sidebar-workspace-create"
+                      onClick={onSelectWorkspaceDialog}
+                      title="Add workspace"
+                      aria-label="Add workspace"
+                      id="sidebar-add-workspace-btn"
+                    >
+                      <PlusSymbolIcon />
+                    </button>
+                  </div>
+                  {/*
+              First-launch onboarding hint. Renders only when the
+              workspace list is empty AND the App-owned
+              `showOnboardingHint` flag is on (which auto-starts true
+              for fresh users and stays off after explicit dismissal,
+              unless the user re-opens it from the `?` button in
+              chat-corner-controls-left). Inline ✕ persists the
+              dismissal so the next launch starts hidden too.
+            */}
+                  {!isSectionCollapsed('workspaces') &&
+                    showOnboardingHint &&
+                    workspaces.length === 0 && (
+                      <div className="sidebar-onboarding-hint" role="note">
+                        <div className="sidebar-onboarding-hint-body">
+                          <strong>Add your first workspace</strong>
+                          <span>
+                            Click the <span className="sidebar-onboarding-plus">+</span> above to
+                            point TaskWraith at a project folder. Workspaces hold your chats and let
+                            the agent read / edit files inside their trust boundary.
+                          </span>
+                        </div>
+                        {onDismissOnboardingHint && (
+                          <button
+                            className="sidebar-onboarding-hint-dismiss"
+                            type="button"
+                            onClick={onDismissOnboardingHint}
+                            aria-label="Dismiss onboarding hint"
+                            title="Dismiss"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  <div className="sidebar-workspace-list">
+                    {/*
+                Workspace entries — gated on the Workspaces section's
+                collapse state. The "No matches" search empty-state and
+                the global "Chats" section below has its own collapse
+                state, so workspace folding never hides the top-level
+                global-chat controls.
+              */}
+                    {!isSectionCollapsed('workspaces') &&
+                      visibleWorkspaceEntries.map(
+                        ({ workspace: ws, workspaceChats, visibleChats, totalChats }) => {
+                          const expanded = isSidebarSearchActive
+                            ? true
+                            : expandedWorkspaceIds.has(ws.id)
+                          const workspaceHasRunning = workspaceChats.some((chat) =>
+                            runningChatIdSet.has(chat.appChatId)
+                          )
+                          // Linked child chats render nested under their parent below, so
+                          // the preview cap + "show more" count only the top-level rows.
+                          const workspaceListId = `ws:${ws.id}`
+                          const workspaceTopLevelChats = visibleChats.filter(
+                            (chat) => !isLinkedChildChat(chat)
+                          )
+                          return (
+                            <div key={ws.id} className="sidebar-workspace-group">
+                              <div
+                                className={`sidebar-item sidebar-workspace-item ${currentWorkspace?.id === ws.id ? 'active' : ''}`}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => onSelectWorkspace(ws)}
+                                onKeyDown={(event) => {
+                                  if (event.target !== event.currentTarget) {
+                                    return
+                                  }
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault()
+                                    onSelectWorkspace(ws)
+                                  }
+                                }}
+                                onFocus={() => setHoveredWorkspace(ws.id)}
+                                onBlur={(event) => {
+                                  if (
+                                    !event.currentTarget.contains(
+                                      event.relatedTarget as Node | null
+                                    )
+                                  ) {
+                                    setHoveredWorkspace(null)
+                                  }
+                                }}
+                                onMouseEnter={() => setHoveredWorkspace(ws.id)}
+                                onMouseLeave={() => setHoveredWorkspace(null)}
+                              >
+                                {totalChats > 0 ? (
+                                  <button
+                                    type="button"
+                                    className="sidebar-tree-toggle"
+                                    onClick={(event) => toggleWorkspaceExpanded(event, ws.id)}
+                                    title={expanded ? 'Collapse chats' : 'Expand chats'}
+                                    aria-label={expanded ? 'Collapse chats' : 'Expand chats'}
+                                  >
+                                    <ChevronSymbolIcon isExpanded={expanded} />
+                                  </button>
+                                ) : (
+                                  <span className="sidebar-tree-toggle spacer" />
+                                )}
+                                <FolderSymbolIcon />
+                                <span className="sidebar-workspace-copy" title={ws.path}>
+                                  <span className="sidebar-workspace-name">
+                                    <HighlightMatch
+                                      text={ws.displayName}
+                                      query={sidebarSearchQuery}
+                                    />
+                                  </span>
+                                  <span className="sidebar-workspace-meta">
+                                    <HighlightMatch
+                                      text={getWorkspaceMeta(ws)}
+                                      query={sidebarSearchQuery}
+                                    />
+                                  </span>
+                                </span>
+                                {workspaceHasRunning && (
+                                  <>
+                                    {/* Same pulsing monoline ghost the thread rows use.
+                              A workspace is running because a THREAD inside it
+                              is, so the folded parent should say it in the same
+                              vocabulary rather than inventing a second "busy"
+                              mark — the dot that used to live here read as a
+                              different kind of state. */}
+                                    <SidebarRunningGhost />
+                                    {/* The ghost is decorative (aria-hidden), and this
+                              row's accessible name is its text content, so the
+                              running state needs a text node of its own. Thread
+                              rows announce it through their composed aria-label
+                              instead. */}
+                                    <span className="sr-only">Task running in this workspace</span>
+                                  </>
+                                )}
+                                {totalChats > 0 && hoveredWorkspace !== ws.id && (
+                                  <span
+                                    className="sidebar-workspace-count-badge"
+                                    title={`${totalChats} chat${totalChats === 1 ? '' : 's'}`}
+                                    aria-label={`${totalChats} chat${totalChats === 1 ? '' : 's'} in this workspace`}
+                                  >
+                                    {totalChats}
+                                  </span>
+                                )}
+                                {/* 1.0.3 — workspace inline action icons retired in
+                          favour of the three-dots overflow menu (single
+                          source of actions per chat-tile rework). All
+                          affordances (New chat / Pin / Unpin / Remove
+                          workspace) live in `buildWorkspaceMenuItems`. */}
+                                <SidebarOverflowMenu
+                                  triggerLabel="Workspace actions"
+                                  items={buildWorkspaceMenuItems(ws)}
+                                />
+                              </div>
+                              {visibleChats.length > 0 && expanded ? (
+                                <div
+                                  className="sidebar-chat-list"
+                                  {...getSidebarThreadListDropProps(
+                                    `code:workspace:${ws.id}`,
+                                    workspaceChats
+                                  )}
+                                >
+                                  {previewSidebarList(workspaceListId, workspaceTopLevelChats).map(
+                                    (chat) => {
+                                      const subThreads =
+                                        subThreadsByParentId.get(chat.appChatId) ?? []
+                                      // Linked-child badge. Bright while any child is
+                                      // running, dim once they settle.
+                                      const subThreadCount = subThreads.length
+                                      const subThreadsExpanded = isSidebarSearchActive
+                                        ? true
+                                        : expandedSubThreadParentIds.has(chat.appChatId)
+                                      const liveSubThreadCount = subThreads.reduce(
+                                        (count, sub) =>
+                                          count + (runningChatIdSet.has(sub.appChatId) ? 1 : 0),
+                                        0
+                                      )
+                                      const renameSurfaceId = `workspace-${ws.id}-${chat.appChatId}`
+                                      const dragHandlers = getChatTileDragProps(
+                                        chat,
+                                        `code:workspace:${ws.id}`
+                                      )
+                                      return (
+                                        <div key={chat.appChatId} className="sidebar-chat-family">
+                                          <SidebarChatRow
+                                            chat={chat}
+                                            variant="workspace"
+                                            surfaceId={renameSurfaceId}
+                                            isSelected={selectedChatId === chat.appChatId}
+                                            isRunning={runningChatIdSet.has(chat.appChatId)}
+                                            rowTone={rowToneByChatId.get(chat.appChatId) ?? null}
+                                            needsInput={chatHasPendingAgentQuestion(
+                                              pendingAgentQuestionsByChatId,
+                                              chat.appChatId
+                                            )}
+                                            isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                                            isCollaborating={collaboratingChatIds.has(
+                                              chat.appChatId
+                                            )}
+                                            subThreadCount={subThreadCount}
+                                            liveSubThreadCount={liveSubThreadCount}
+                                            subThreadsExpanded={subThreadsExpanded}
+                                            query={sidebarSearchQuery}
+                                            identityTicker={
+                                              selectedChatId === chat.appChatId
+                                                ? activeChatIdentityTicker
+                                                : null
+                                            }
+                                            identityGitIndicators={
+                                              selectedChatId === chat.appChatId
+                                                ? activeChatIdentityGitIndicators
+                                                : null
+                                            }
+                                            dragHandlers={dragHandlers}
+                                            onSelect={selectAndAcknowledgeChat}
+                                            onRowKeyDown={handleChatRowKeyDown}
+                                            onToggleSubThreads={toggleSubThreadsExpanded}
+                                            onStartRename={startChatRename}
+                                            onSubmitRename={commitChatRename}
+                                            onCancelRename={cancelChatRename}
+                                            buildMenuItems={buildChatMenuItems}
+                                          />
+                                          {subThreads.length > 0 && subThreadsExpanded && (
+                                            <div className="sidebar-chat-children">
+                                              {subThreads.map(renderLinkedChildChat)}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )
+                                    }
+                                  )}
+                                  {renderSidebarShowMore(
+                                    workspaceListId,
+                                    workspaceTopLevelChats.length
+                                  )}
+                                </div>
+                              ) : null}
+                            </div>
+                          )
+                        }
+                      )}
+                  </div>
+                  {isSidebarSearchActive && visibleWorkspaceEntries.length === 0 && (
+                    <div className="sidebar-empty-state">
+                      <strong>No matches</strong>
+                      <span>Try a workspace name, provider, branch, or thread title.</span>
+                    </div>
+                  )}
+                </div>,
+                activeSidebarTab === 'threads'
+              )}
+
+              {wrapHierarchySection(
+                'chats',
+                <div className="sidebar-chats-section">
+                  <div className="sidebar-section-header sidebar-chats-header">
+                    <button
+                      type="button"
+                      className="sidebar-section-header-toggle"
+                      onClick={() => toggleSidebarSection('chats')}
+                      aria-expanded={!isSectionCollapsed('chats')}
+                      title={isSectionCollapsed('chats') ? 'Expand Chats' : 'Collapse Chats'}
+                    >
+                      <ChevronSymbolIcon isExpanded={!isSectionCollapsed('chats')} />
+                      <h4 className="sidebar-section-title">Chats</h4>
+                      {visibleGlobalChats.length > 0 && (
+                        <span className="sidebar-section-count">{visibleGlobalChats.length}</span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="sidebar-section-header-action sidebar-global-chat-create"
+                      onClick={onNewGlobalChat}
+                      title="New general chat"
+                      aria-label="New general chat"
+                    >
+                      <PlusSymbolIcon />
+                    </button>
+                  </div>
+                  {!isSectionCollapsed('chats') && (
+                    <div
+                      className="sidebar-chat-list sidebar-global-chat-list"
+                      {...getSidebarThreadListDropProps('chat:chats', orderedGlobalChats)}
+                    >
+                      {previewSidebarList('chats', visibleGlobalChats).map((chat) => {
+                        const renameSurfaceId = `global-${chat.appChatId}`
+                        const dragHandlers = getChatTileDragProps(chat, 'chat:chats')
                         return (
-                          <SidebarCompactChatRow
-                            key={`git-chat-${group.group}-${chat.appChatId}`}
+                          <SidebarChatRow
+                            key={chat.appChatId}
                             chat={chat}
-                            variant="git"
+                            variant="global"
                             surfaceId={renameSurfaceId}
                             isSelected={selectedChatId === chat.appChatId}
                             isRunning={runningChatIdSet.has(chat.appChatId)}
@@ -6072,20 +6750,26 @@ export function Sidebar({
                               chat.appChatId
                             )}
                             isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                            isCollaborating={false}
+                            subThreadCount={0}
+                            liveSubThreadCount={0}
+                            subThreadsExpanded={false}
                             query={sidebarSearchQuery}
                             identityTicker={
                               selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
                             }
                             identityGitIndicators={
-                              selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
+                              selectedChatId === chat.appChatId
+                                ? activeChatIdentityGitIndicators
+                                : null
                             }
                             identityBranch={
                               selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
                             }
-                            draggable={dragHandlers.draggable}
-                            isDragging={dragHandlers['data-dragging'] === 'true'}
                             dragHandlers={dragHandlers}
                             onSelect={selectAndAcknowledgeChat}
+                            onRowKeyDown={handleChatRowKeyDown}
+                            onToggleSubThreads={toggleSubThreadsExpanded}
                             onStartRename={startChatRename}
                             onSubmitRename={commitChatRename}
                             onCancelRename={cancelChatRename}
@@ -6093,756 +6777,121 @@ export function Sidebar({
                           />
                         )
                       })}
-                      {renderSidebarShowMore(`git:${group.group}`, group.chats.length)}
-                    </div>
-                  ))}
-                  {gitWorkflowGroups.length === 0 && !isSidebarSearchActive && (
-                    <div className="sidebar-empty-state">
-                      <strong>No git workflows yet</strong>
-                      <span>Threads land here when they push or open a PR.</span>
-                    </div>
-                  )}
-                  {gitWorkflowGroups.length === 0 && isSidebarSearchActive && (
-                    <div className="sidebar-empty-state">
-                      <strong>No matches</strong>
-                      <span>No git workflow threads match.</span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>,
-            true
-          )}
-
-          {wrapHierarchySection(
-            'recents',
-            visibleRecentChats.length > 0 ? (
-            <div className="sidebar-recents-section">
-              <div className="sidebar-section-header">
-                <button
-                  type="button"
-                  className="sidebar-section-header-toggle"
-                  onClick={() => toggleSidebarSection('recents')}
-                  aria-expanded={!isSectionCollapsed('recents')}
-                  title={isSectionCollapsed('recents') ? 'Expand Recents' : 'Collapse Recents'}
-                >
-                  <ChevronSymbolIcon isExpanded={!isSectionCollapsed('recents')} />
-                  <h4 className="sidebar-section-title">Recents</h4>
-                </button>
-              </div>
-              {!isSectionCollapsed('recents') && (
-                <div
-                  className="sidebar-recents-list"
-                  {...getSidebarThreadListDropProps('code:recents', orderedRecentChats)}
-                >
-                  {previewSidebarList('recents', visibleRecentChats).map((chat) => {
-                    const renameSurfaceId = `recent-${chat.appChatId}`
-                    const dragHandlers = getChatTileDragProps(chat, 'code:recents')
-                    return (
-                      <SidebarCompactChatRow
-                        key={`recent-${chat.appChatId}`}
-                        chat={chat}
-                        variant="recents"
-                        surfaceId={renameSurfaceId}
-                        isSelected={selectedChatId === chat.appChatId}
-                        isRunning={runningChatIdSet.has(chat.appChatId)}
-                        rowTone={rowToneByChatId.get(chat.appChatId) ?? null}
-                        needsInput={chatHasPendingAgentQuestion(
-                          pendingAgentQuestionsByChatId,
-                          chat.appChatId
-                        )}
-                        isEditing={isChatRenameTarget(chat, renameSurfaceId)}
-                        query={sidebarSearchQuery}
-                        identityTicker={
-                          selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
-                        }
-                        identityGitIndicators={
-                          selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
-                        }
-                        identityBranch={
-                          selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
-                        }
-                        draggable={dragHandlers.draggable}
-                        isDragging={dragHandlers['data-dragging'] === 'true'}
-                        dragHandlers={dragHandlers}
-                        onSelect={selectAndAcknowledgeChat}
-                        onStartRename={startChatRename}
-                        onSubmitRename={commitChatRename}
-                        onCancelRename={cancelChatRename}
-                        buildMenuItems={buildChatMenuItems}
-                      />
-                    )
-                  })}
-                  {renderSidebarShowMore('recents', visibleRecentChats.length)}
-                </div>
-              )}
-            </div>
-            ) : null,
-            visibleRecentChats.length > 0
-          )}
-
-          {wrapHierarchySection(
-            'ensembles',
-            ensembleModeEnabled ? (
-            <div className="sidebar-ensembles-section">
-              {/* 1.0.3 — dropped the `sidebar-section-header-with-action`
-                  modifier so the Ensembles `+` aligns to the trailing
-                  edge (matches Workspaces / Chats). The modifier was
-                  pinning the `+` flush against the title with
-                  justify-content: flex-start; the base `.sidebar-section-
-                  header` uses space-between which is what we want here. */}
-              <div className="sidebar-section-header">
-                <button
-                  type="button"
-                  className="sidebar-section-header-toggle"
-                  onClick={() => toggleSidebarSection('ensembles')}
-                  aria-expanded={!isSectionCollapsed('ensembles')}
-                  title={
-                    isSectionCollapsed('ensembles') ? 'Expand Ensembles' : 'Collapse Ensembles'
-                  }
-                >
-                  <ChevronSymbolIcon isExpanded={!isSectionCollapsed('ensembles')} />
-                  <h4 className="sidebar-section-title">Ensembles</h4>
-                  {visibleEnsembleChats.length > 0 && (
-                    <span className="sidebar-section-count">{visibleEnsembleChats.length}</span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="sidebar-section-header-action sidebar-ensemble-create"
-                  onClick={handleNewEnsemble}
-                  title="New Ensemble"
-                  aria-label="New Ensemble"
-                >
-                  <PlusSymbolIcon />
-                </button>
-              </div>
-              {!isSectionCollapsed('ensembles') &&
-                (visibleEnsembleChats.length === 0 ? (
-                  /*
-                  Empty-state caption. Gives ensembles the same
-                  discoverability Workspaces gets when the list is
-                  empty — without it, fresh users never see the
-                  section at all. The caption points at the section
-                  header action now that the masthead picker keeps chat
-                  creation deterministic.
-                */
-                  <div className="sidebar-ensembles-empty" role="note">
-                    <span className="sidebar-ensembles-empty-icon" aria-hidden>
-                      <EnsembleSymbolIcon />
-                    </span>
-                    <span className="sidebar-ensembles-empty-copy">
-                      No ensembles yet. Use the <strong>Ensembles +</strong> button to put two or
-                      more providers in the same thread.
-                    </span>
-                  </div>
-                ) : (
-                  <div
-                    className="sidebar-chat-list sidebar-ensemble-list"
-                    {...getSidebarThreadListDropProps('code:ensembles', orderedEnsembleChats)}
-                  >
-                    {previewSidebarList('ensembles', visibleEnsembleChats).map((chat) => {
-                      const activeRound = chat.ensemble?.activeRound
-                      const activeParticipant = chat.ensemble?.participants.find(
-                        (participant) => participant.id === activeRound?.activeParticipantId
-                      )
-                      const isRunning = isEnsembleActiveRoundDispatchLive(activeRound)
-                      const rowTone = rowToneByChatId.get(chat.appChatId) ?? null
-                      const toneClass = rowTone ? ` ${sidebarRowToneClass(rowTone)}` : ''
-                      // Trim the role so a blank/whitespace role doesn't
-                      // render a dangling "Provider / " — fall back to
-                      // just the provider name in that case.
-                      const activeRole = activeParticipant?.role?.trim()
-                      const subtitle = activeParticipant
-                        ? activeRole
-                          ? `${getProviderName(activeParticipant.provider)} / ${activeRole}`
-                          : getProviderName(activeParticipant.provider)
-                        : chat.scope === 'global'
-                          ? 'General ensemble'
-                          : 'Workspace ensemble'
-                      const subThreads = subThreadsByParentId.get(chat.appChatId) ?? []
-                      const subThreadsExpanded = isSidebarSearchActive
-                        ? true
-                        : expandedSubThreadParentIds.has(chat.appChatId)
-                      const renameSurfaceId = `ensemble-${chat.appChatId}`
-                      const ensembleNeedsInput = chatHasPendingAgentQuestion(
-                        pendingAgentQuestionsByChatId,
-                        chat.appChatId
-                      )
-                      const ensembleRowA11y = buildSidebarChatRowA11y({
-                        chatId: chat.appChatId,
-                        title: chat.title,
-                        providerLabel: 'Ensemble',
-                        selected: selectedChatId === chat.appChatId,
-                        isRunning,
-                        needsInput: ensembleNeedsInput,
-                        rowTone,
-                        lastRunStatus: isRunning
-                          ? { label: 'Running', tone: 'warning' }
-                          : null,
-                        prefix: subtitle
-                      })
-                      return (
-                        <div key={`ensemble-${chat.appChatId}`} className="sidebar-chat-family">
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            className={`sidebar-item sidebar-chat-item sidebar-ensemble-item provider-ensemble ${selectedChatId === chat.appChatId ? 'active' : ''} ${isRunning ? 'running' : ''}${toneClass}`}
-                            onClick={() => selectAndAcknowledgeChat(chat)}
-                            onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
-                            aria-label={ensembleRowA11y.ariaLabel}
-                            aria-current={ensembleRowA11y.ariaCurrent}
-                            aria-describedby={ensembleRowA11y.statusDescribedById}
-                            {...getChatTileDragProps(chat, 'code:ensembles')}
-                          >
-                            {ensembleRowA11y.statusDescription ? (
-                              <span id={ensembleRowA11y.statusDescribedById} className="sr-only">
-                                {ensembleRowA11y.statusDescription}
-                              </span>
-                            ) : null}
-                            {subThreads.length > 0 && (
-                              <span
-                                role="button"
-                                tabIndex={0}
-                                className="sidebar-tree-toggle sidebar-chat-tree-toggle"
-                                onClick={(event) => toggleSubThreadsExpanded(event, chat.appChatId)}
-                                onKeyDown={(event) => {
-                                  if (event.key === 'Enter' || event.key === ' ') {
-                                    toggleSubThreadsExpanded(event, chat.appChatId)
-                                  }
-                                }}
-                                title={
-                                  subThreadsExpanded
-                                    ? 'Collapse linked chats'
-                                    : 'Expand linked chats'
-                                }
-                                aria-label={
-                                  subThreadsExpanded
-                                    ? 'Collapse linked chats'
-                                    : 'Expand linked chats'
-                                }
-                                aria-expanded={subThreadsExpanded}
-                              >
-                                <ChevronSymbolIcon isExpanded={subThreadsExpanded} />
-                              </span>
-                            )}
-                            {renderChatProviderBadge(chat)}
-                            <span className="sidebar-chat-copy" title={chat.title}>
-                              <span className="sidebar-chat-title-line">
-                                <span className="sidebar-provider-label provider-ensemble">
-                                  <span>Ensemble</span>
-                                </span>
-                                <SidebarChatTitleEditable
-                                  chat={chat}
-                                  className="sidebar-chat-title"
-                                  query={sidebarSearchQuery}
-                                  isEditing={isChatRenameTarget(chat, renameSurfaceId)}
-                                  onStartEdit={() => startChatRename(chat, renameSurfaceId)}
-                                  onSubmit={(next) => commitChatRename(chat, next)}
-                                  onCancel={() => setEditingChatTarget(null)}
-                                />
-                              </span>
-                              <span className="sidebar-chat-subline">
-                                      {/* Identity (which participant holds the turn), not run state. Muted, not amber, so it never competes with the waiting ink. */}
-                                      <span className="sidebar-run-status tone-muted">
-                                        {isRunning ? `Speaking: ${subtitle}` : subtitle}
-                                      </span>
-                                {subThreads.length > 0 && (
-                                  <span
-                                    className="sidebar-branched-badge sidebar-branched-dim"
-                                    title={`${subThreads.length} linked chat${subThreads.length === 1 ? '' : 's'}`}
-                                  >
-                                    linked · {subThreads.length}
-                                  </span>
-                                )}
-                                {collaboratingChatIds.has(chat.appChatId) && (
-                                  <span
-                                    className="sidebar-branched-badge sidebar-shared-badge"
-                                    title="Channel members have access"
-                                  >
-                                    People
-                                  </span>
-                                )}
-                              </span>
-                            </span>
-                            {isRunning && <SidebarRunningGhost />}
-                            {!isRunning && (
-                              <ChatAgeLabel timestamp={chat.updatedAt || chat.createdAt} />
-                            )}
-                            <SidebarOverflowMenu
-                              triggerLabel="Ensemble actions"
-                              items={buildChatMenuItems(chat, renameSurfaceId)}
-                            />
-                          </div>
-                          {subThreads.length > 0 && subThreadsExpanded && (
-                            <div className="sidebar-chat-children">
-                              {subThreads.map(renderLinkedChildChat)}
-                            </div>
-                          )}
+                      {renderSidebarShowMore('chats', visibleGlobalChats.length)}
+                      {visibleGlobalChats.length === 0 && !isSidebarSearchActive && (
+                        <div className="sidebar-empty-state sidebar-empty-state--ghost">
+                          <MascotGhost size={28} />
+                          <strong>No chats yet</strong>
+                          <span>Hit + above to start one.</span>
                         </div>
-                      )
-                    })}
-                    {renderSidebarShowMore('ensembles', visibleEnsembleChats.length)}
-                  </div>
-                ))}
-            </div>
-            ) : null,
-            ensembleModeEnabled
-          )}
-
-          {wrapHierarchySection(
-            'workspaces',
-            <div className="sidebar-workspace-scroll">
-            <div className="sidebar-section-header">
-              <button
-                type="button"
-                className="sidebar-section-header-toggle"
-                onClick={() => toggleSidebarSection('workspaces')}
-                aria-expanded={!isSectionCollapsed('workspaces')}
-                title={
-                  isSectionCollapsed('workspaces') ? 'Expand Workspaces' : 'Collapse Workspaces'
-                }
-              >
-                <ChevronSymbolIcon isExpanded={!isSectionCollapsed('workspaces')} />
-                <h4 className="sidebar-section-title">Workspaces</h4>
-                {visibleWorkspaceEntries.length > 0 && (
-                  <span className="sidebar-section-count">{visibleWorkspaceEntries.length}</span>
-                )}
-              </button>
-              {/*
-                Sits OUTSIDE the section-header toggle so clicking `+`
-                opens the workspace picker without ever collapsing the
-                section. Keeping the `+` reachable when the section is
-                collapsed lets the user add a workspace even while their
-                list is folded away.
-              */}
-              <button
-                type="button"
-                className="sidebar-section-header-action sidebar-workspace-create"
-                onClick={onSelectWorkspaceDialog}
-                title="Add workspace"
-                aria-label="Add workspace"
-                id="sidebar-add-workspace-btn"
-              >
-                <PlusSymbolIcon />
-              </button>
-            </div>
-            {/*
-              First-launch onboarding hint. Renders only when the
-              workspace list is empty AND the App-owned
-              `showOnboardingHint` flag is on (which auto-starts true
-              for fresh users and stays off after explicit dismissal,
-              unless the user re-opens it from the `?` button in
-              chat-corner-controls-left). Inline ✕ persists the
-              dismissal so the next launch starts hidden too.
-            */}
-            {!isSectionCollapsed('workspaces') && showOnboardingHint && workspaces.length === 0 && (
-              <div className="sidebar-onboarding-hint" role="note">
-                <div className="sidebar-onboarding-hint-body">
-                  <strong>Add your first workspace</strong>
-                  <span>
-                    Click the <span className="sidebar-onboarding-plus">+</span> above to point
-                    TaskWraith at a project folder. Workspaces hold your chats and let the agent read /
-                    edit files inside their trust boundary.
-                  </span>
-                </div>
-                {onDismissOnboardingHint && (
-                  <button
-                    className="sidebar-onboarding-hint-dismiss"
-                    type="button"
-                    onClick={onDismissOnboardingHint}
-                    aria-label="Dismiss onboarding hint"
-                    title="Dismiss"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            )}
-            <div className="sidebar-workspace-list">
-              {/*
-                Workspace entries — gated on the Workspaces section's
-                collapse state. The "No matches" search empty-state and
-                the global "Chats" section below has its own collapse
-                state, so workspace folding never hides the top-level
-                global-chat controls.
-              */}
-              {!isSectionCollapsed('workspaces') &&
-                visibleWorkspaceEntries.map(({ workspace: ws, workspaceChats, visibleChats, totalChats }) => {
-                  const expanded = isSidebarSearchActive ? true : expandedWorkspaceIds.has(ws.id)
-                  const workspaceHasRunning = workspaceChats.some((chat) =>
-                    runningChatIdSet.has(chat.appChatId)
-                  )
-                  // Linked child chats render nested under their parent below, so
-                  // the preview cap + "show more" count only the top-level rows.
-                  const workspaceListId = `ws:${ws.id}`
-                  const workspaceTopLevelChats = visibleChats.filter(
-                    (chat) => !isLinkedChildChat(chat)
-                  )
-                  return (
-                    <div key={ws.id} className="sidebar-workspace-group">
-                      <div
-                        className={`sidebar-item sidebar-workspace-item ${currentWorkspace?.id === ws.id ? 'active' : ''}`}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => onSelectWorkspace(ws)}
-                        onKeyDown={(event) => {
-                          if (event.target !== event.currentTarget) {
-                            return
-                          }
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault()
-                            onSelectWorkspace(ws)
-                          }
-                        }}
-                        onFocus={() => setHoveredWorkspace(ws.id)}
-                        onBlur={(event) => {
-                          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                            setHoveredWorkspace(null)
-                          }
-                        }}
-                        onMouseEnter={() => setHoveredWorkspace(ws.id)}
-                        onMouseLeave={() => setHoveredWorkspace(null)}
-                      >
-                        {totalChats > 0 ? (
-                          <button
-                            type="button"
-                            className="sidebar-tree-toggle"
-                            onClick={(event) => toggleWorkspaceExpanded(event, ws.id)}
-                            title={expanded ? 'Collapse chats' : 'Expand chats'}
-                            aria-label={expanded ? 'Collapse chats' : 'Expand chats'}
-                          >
-                            <ChevronSymbolIcon isExpanded={expanded} />
-                          </button>
-                        ) : (
-                          <span className="sidebar-tree-toggle spacer" />
-                        )}
-                        <FolderSymbolIcon />
-                        <span className="sidebar-workspace-copy" title={ws.path}>
-                          <span className="sidebar-workspace-name">
-                            <HighlightMatch text={ws.displayName} query={sidebarSearchQuery} />
-                          </span>
-                          <span className="sidebar-workspace-meta">
-                            <HighlightMatch
-                              text={getWorkspaceMeta(ws)}
-                              query={sidebarSearchQuery}
-                            />
-                          </span>
-                        </span>
-                        {workspaceHasRunning && (
-                          <>
-                            {/* Same pulsing monoline ghost the thread rows use.
-                              A workspace is running because a THREAD inside it
-                              is, so the folded parent should say it in the same
-                              vocabulary rather than inventing a second "busy"
-                              mark — the dot that used to live here read as a
-                              different kind of state. */}
-                            <SidebarRunningGhost />
-                            {/* The ghost is decorative (aria-hidden), and this
-                              row's accessible name is its text content, so the
-                              running state needs a text node of its own. Thread
-                              rows announce it through their composed aria-label
-                              instead. */}
-                            <span className="sr-only">Task running in this workspace</span>
-                          </>
-                        )}
-                        {totalChats > 0 && hoveredWorkspace !== ws.id && (
-                          <span
-                            className="sidebar-workspace-count-badge"
-                            title={`${totalChats} chat${totalChats === 1 ? '' : 's'}`}
-                            aria-label={`${totalChats} chat${totalChats === 1 ? '' : 's'} in this workspace`}
-                          >
-                            {totalChats}
-                          </span>
-                        )}
-                        {/* 1.0.3 — workspace inline action icons retired in
-                          favour of the three-dots overflow menu (single
-                          source of actions per chat-tile rework). All
-                          affordances (New chat / Pin / Unpin / Remove
-                          workspace) live in `buildWorkspaceMenuItems`. */}
-                        <SidebarOverflowMenu
-                          triggerLabel="Workspace actions"
-                          items={buildWorkspaceMenuItems(ws)}
-                        />
-                      </div>
-                      {visibleChats.length > 0 && expanded ? (
-                        <div
-                          className="sidebar-chat-list"
-                          {...getSidebarThreadListDropProps(
-                            `code:workspace:${ws.id}`,
-                            workspaceChats
-                          )}
-                        >
-                          {previewSidebarList(workspaceListId, workspaceTopLevelChats)
-                            .map((chat) => {
-                              const subThreads = subThreadsByParentId.get(chat.appChatId) ?? []
-                              // Linked-child badge. Bright while any child is
-                              // running, dim once they settle.
-                              const subThreadCount = subThreads.length
-                              const subThreadsExpanded = isSidebarSearchActive
-                                ? true
-                                : expandedSubThreadParentIds.has(chat.appChatId)
-                              const liveSubThreadCount = subThreads.reduce(
-                                (count, sub) =>
-                                  count + (runningChatIdSet.has(sub.appChatId) ? 1 : 0),
-                                0
-                              )
-                              const renameSurfaceId = `workspace-${ws.id}-${chat.appChatId}`
-                              const dragHandlers = getChatTileDragProps(
-                                chat,
-                                `code:workspace:${ws.id}`
-                              )
-                              return (
-                                <div key={chat.appChatId} className="sidebar-chat-family">
-                                  <SidebarChatRow
-                                    chat={chat}
-                                    variant="workspace"
-                                    surfaceId={renameSurfaceId}
-                                    isSelected={selectedChatId === chat.appChatId}
-                                    isRunning={runningChatIdSet.has(chat.appChatId)}
-                                    rowTone={rowToneByChatId.get(chat.appChatId) ?? null}
-                                    needsInput={chatHasPendingAgentQuestion(
-                                      pendingAgentQuestionsByChatId,
-                                      chat.appChatId
-                                    )}
-                                    isEditing={isChatRenameTarget(chat, renameSurfaceId)}
-                                    isCollaborating={collaboratingChatIds.has(chat.appChatId)}
-                                    subThreadCount={subThreadCount}
-                                    liveSubThreadCount={liveSubThreadCount}
-                                    subThreadsExpanded={subThreadsExpanded}
-                                    query={sidebarSearchQuery}
-                                    identityTicker={
-                                      selectedChatId === chat.appChatId
-                                        ? activeChatIdentityTicker
-                                        : null
-                                    }
-                                    identityGitIndicators={
-                                      selectedChatId === chat.appChatId
-                                        ? activeChatIdentityGitIndicators
-                                        : null
-                                    }
-                                    dragHandlers={dragHandlers}
-                                    onSelect={selectAndAcknowledgeChat}
-                                    onRowKeyDown={handleChatRowKeyDown}
-                                    onToggleSubThreads={toggleSubThreadsExpanded}
-                                    onStartRename={startChatRename}
-                                    onSubmitRename={commitChatRename}
-                                    onCancelRename={cancelChatRename}
-                                    buildMenuItems={buildChatMenuItems}
-                                  />
-                                  {subThreads.length > 0 && subThreadsExpanded && (
-                                    <div className="sidebar-chat-children">
-                                      {subThreads.map(renderLinkedChildChat)}
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          {renderSidebarShowMore(workspaceListId, workspaceTopLevelChats.length)}
+                      )}
+                      {visibleGlobalChats.length === 0 && isSidebarSearchActive && (
+                        <div className="sidebar-empty-state">
+                          <strong>No matches</strong>
+                          <span>Try a provider or chat title.</span>
                         </div>
-                      ) : null}
-                    </div>
-                  )
-                })}
-            </div>
-              {isSidebarSearchActive &&
-                visibleWorkspaceEntries.length === 0 && (
-                  <div className="sidebar-empty-state">
-                    <strong>No matches</strong>
-                    <span>Try a workspace name, provider, branch, or thread title.</span>
-                  </div>
-                )}
-            </div>,
-            activeSidebarTab === 'threads'
-          )}
-
-          {wrapHierarchySection(
-            'chats',
-            <div className="sidebar-chats-section">
-              <div className="sidebar-section-header sidebar-chats-header">
-                <button
-                  type="button"
-                  className="sidebar-section-header-toggle"
-                  onClick={() => toggleSidebarSection('chats')}
-                  aria-expanded={!isSectionCollapsed('chats')}
-                  title={isSectionCollapsed('chats') ? 'Expand Chats' : 'Collapse Chats'}
-                >
-                  <ChevronSymbolIcon isExpanded={!isSectionCollapsed('chats')} />
-                  <h4 className="sidebar-section-title">Chats</h4>
-                  {visibleGlobalChats.length > 0 && (
-                    <span className="sidebar-section-count">{visibleGlobalChats.length}</span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="sidebar-section-header-action sidebar-global-chat-create"
-                  onClick={onNewGlobalChat}
-                  title="New general chat"
-                  aria-label="New general chat"
-                >
-                  <PlusSymbolIcon />
-                </button>
-              </div>
-              {!isSectionCollapsed('chats') && (
-                <div
-                  className="sidebar-chat-list sidebar-global-chat-list"
-                  {...getSidebarThreadListDropProps('chat:chats', orderedGlobalChats)}
-                >
-                  {previewSidebarList('chats', visibleGlobalChats).map((chat) => {
-                    const renameSurfaceId = `global-${chat.appChatId}`
-                    const dragHandlers = getChatTileDragProps(chat, 'chat:chats')
-                    return (
-                      <SidebarChatRow
-                        key={chat.appChatId}
-                        chat={chat}
-                        variant="global"
-                        surfaceId={renameSurfaceId}
-                        isSelected={selectedChatId === chat.appChatId}
-                        isRunning={runningChatIdSet.has(chat.appChatId)}
-                        rowTone={rowToneByChatId.get(chat.appChatId) ?? null}
-                        needsInput={chatHasPendingAgentQuestion(
-                          pendingAgentQuestionsByChatId,
-                          chat.appChatId
-                        )}
-                        isEditing={isChatRenameTarget(chat, renameSurfaceId)}
-                        isCollaborating={false}
-                        subThreadCount={0}
-                        liveSubThreadCount={0}
-                        subThreadsExpanded={false}
-                        query={sidebarSearchQuery}
-                        identityTicker={
-                          selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
-                        }
-                        identityGitIndicators={
-                          selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
-                        }
-                        identityBranch={
-                          selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
-                        }
-                        dragHandlers={dragHandlers}
-                        onSelect={selectAndAcknowledgeChat}
-                        onRowKeyDown={handleChatRowKeyDown}
-                        onToggleSubThreads={toggleSubThreadsExpanded}
-                        onStartRename={startChatRename}
-                        onSubmitRename={commitChatRename}
-                        onCancelRename={cancelChatRename}
-                        buildMenuItems={buildChatMenuItems}
-                      />
-                    )
-                  })}
-                  {renderSidebarShowMore('chats', visibleGlobalChats.length)}
-                  {visibleGlobalChats.length === 0 && !isSidebarSearchActive && (
-                    <div className="sidebar-empty-state sidebar-empty-state--ghost">
-                      <MascotGhost size={28} />
-                      <strong>No chats yet</strong>
-                      <span>Hit + above to start one.</span>
+                      )}
                     </div>
                   )}
-                  {visibleGlobalChats.length === 0 && isSidebarSearchActive && (
-                    <div className="sidebar-empty-state">
-                      <strong>No matches</strong>
-                      <span>Try a provider or chat title.</span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>,
-            activeSidebarTab === 'chat'
-          )}
-          {wrapHierarchySection(
-            'shared',
-            <div className="sidebar-shared-section">
-              <div className="sidebar-section-header sidebar-shared-header">
-                <button
-                  type="button"
-                  className="sidebar-section-header-toggle"
-                  onClick={() => toggleSidebarSection('shared')}
-                  aria-expanded={!isSectionCollapsed('shared')}
-                  title={isSectionCollapsed('shared') ? 'Expand Channels' : 'Collapse Channels'}
-                >
-                  <ChevronSymbolIcon isExpanded={!isSectionCollapsed('shared')} />
-                  <h4 className="sidebar-section-title">Channels</h4>
-                  {visibleSharedChats.length > 0 && (
-                    <span className="sidebar-section-count">{visibleSharedChats.length}</span>
-                  )}
-                </button>
-              </div>
-              {!isSectionCollapsed('shared') && (
-                <div
-                  className="sidebar-chat-list sidebar-shared-chat-list"
-                  {...getSidebarThreadListDropProps('code:shared', orderedSharedChats)}
-                >
-                  {previewSidebarList('shared', visibleSharedChats).map((chat) => {
-                    const renameSurfaceId = `shared-${chat.appChatId}`
-                    const dragHandlers = getChatTileDragProps(chat, 'code:shared')
-                    return (
-                      <SidebarChatRow
-                        key={chat.appChatId}
-                        chat={chat}
-                        variant="shared"
-                        surfaceId={renameSurfaceId}
-                        isSelected={selectedChatId === chat.appChatId}
-                        isRunning={runningChatIdSet.has(chat.appChatId)}
-                        rowTone={rowToneByChatId.get(chat.appChatId) ?? null}
-                        needsInput={chatHasPendingAgentQuestion(
-                          pendingAgentQuestionsByChatId,
-                          chat.appChatId
-                        )}
-                        isEditing={isChatRenameTarget(chat, renameSurfaceId)}
-                        isCollaborating={false}
-                        subThreadCount={0}
-                        liveSubThreadCount={0}
-                        subThreadsExpanded={false}
-                        query={sidebarSearchQuery}
-                        identityTicker={
-                          selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
-                        }
-                        identityGitIndicators={
-                          selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
-                        }
-                        identityBranch={
-                          selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
-                        }
-                        dragHandlers={dragHandlers}
-                        onSelect={selectAndAcknowledgeChat}
-                        onRowKeyDown={handleChatRowKeyDown}
-                        onToggleSubThreads={toggleSubThreadsExpanded}
-                        onStartRename={startChatRename}
-                        onSubmitRename={commitChatRename}
-                        onCancelRename={cancelChatRename}
-                        buildMenuItems={buildChatMenuItems}
-                      />
-                    )
-                  })}
-                  {renderSidebarShowMore('shared', visibleSharedChats.length)}
-                  {visibleSharedChats.length === 0 && !isSidebarSearchActive && (
-                    <div className="sidebar-empty-state sidebar-empty-state--ghost">
-                      <PeopleSymbolIcon />
-                      <strong>No channels yet</strong>
-                      <span>Share any chat from its Channel panel.</span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          {dragGhost
-            ? createPortal(
-                <div
-                  className="sidebar-section-drag-ghost"
-                  style={{
-                    position: 'fixed',
-                    left: `${dragGhost.x}px`,
-                    top: `${dragGhost.y}px`,
-                    zIndex: 10050
-                  }}
-                  aria-hidden
-                >
-                  <span className="sidebar-section-drag-ghost-title">{dragGhost.label}</span>
                 </div>,
-                document.body
-              )
-            : null}
+                activeSidebarTab === 'chat'
+              )}
+              {wrapHierarchySection(
+                'shared',
+                <div className="sidebar-shared-section">
+                  <div className="sidebar-section-header sidebar-shared-header">
+                    <button
+                      type="button"
+                      className="sidebar-section-header-toggle"
+                      onClick={() => toggleSidebarSection('shared')}
+                      aria-expanded={!isSectionCollapsed('shared')}
+                      title={isSectionCollapsed('shared') ? 'Expand Channels' : 'Collapse Channels'}
+                    >
+                      <ChevronSymbolIcon isExpanded={!isSectionCollapsed('shared')} />
+                      <h4 className="sidebar-section-title">Channels</h4>
+                      {visibleSharedChats.length > 0 && (
+                        <span className="sidebar-section-count">{visibleSharedChats.length}</span>
+                      )}
+                    </button>
+                  </div>
+                  {!isSectionCollapsed('shared') && (
+                    <div
+                      className="sidebar-chat-list sidebar-shared-chat-list"
+                      {...getSidebarThreadListDropProps('code:shared', orderedSharedChats)}
+                    >
+                      {previewSidebarList('shared', visibleSharedChats).map((chat) => {
+                        const renameSurfaceId = `shared-${chat.appChatId}`
+                        const dragHandlers = getChatTileDragProps(chat, 'code:shared')
+                        return (
+                          <SidebarChatRow
+                            key={chat.appChatId}
+                            chat={chat}
+                            variant="shared"
+                            surfaceId={renameSurfaceId}
+                            isSelected={selectedChatId === chat.appChatId}
+                            isRunning={runningChatIdSet.has(chat.appChatId)}
+                            rowTone={rowToneByChatId.get(chat.appChatId) ?? null}
+                            needsInput={chatHasPendingAgentQuestion(
+                              pendingAgentQuestionsByChatId,
+                              chat.appChatId
+                            )}
+                            isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                            isCollaborating={false}
+                            subThreadCount={0}
+                            liveSubThreadCount={0}
+                            subThreadsExpanded={false}
+                            query={sidebarSearchQuery}
+                            identityTicker={
+                              selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
+                            }
+                            identityGitIndicators={
+                              selectedChatId === chat.appChatId
+                                ? activeChatIdentityGitIndicators
+                                : null
+                            }
+                            identityBranch={
+                              selectedChatId === chat.appChatId ? activeChatIdentityBranch : null
+                            }
+                            dragHandlers={dragHandlers}
+                            onSelect={selectAndAcknowledgeChat}
+                            onRowKeyDown={handleChatRowKeyDown}
+                            onToggleSubThreads={toggleSubThreadsExpanded}
+                            onStartRename={startChatRename}
+                            onSubmitRename={commitChatRename}
+                            onCancelRename={cancelChatRename}
+                            buildMenuItems={buildChatMenuItems}
+                          />
+                        )
+                      })}
+                      {renderSidebarShowMore('shared', visibleSharedChats.length)}
+                      {visibleSharedChats.length === 0 && !isSidebarSearchActive && (
+                        <div className="sidebar-empty-state sidebar-empty-state--ghost">
+                          <PeopleSymbolIcon />
+                          <strong>No channels yet</strong>
+                          <span>Share any chat from its Channel panel.</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+              {dragGhost
+                ? createPortal(
+                    <div
+                      className="sidebar-section-drag-ghost"
+                      style={{
+                        position: 'fixed',
+                        left: `${dragGhost.x}px`,
+                        top: `${dragGhost.y}px`,
+                        zIndex: 10050
+                      }}
+                      aria-hidden
+                    >
+                      <span className="sidebar-section-drag-ghost-title">{dragGhost.label}</span>
+                    </div>,
+                    document.body
+                  )
+                : null}
             </div>
           )}
         </div>

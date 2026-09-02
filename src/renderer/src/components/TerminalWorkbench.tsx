@@ -49,10 +49,9 @@ export function keepVisibleTerminalSessions(
   current: readonly ActiveTerminalSession[],
   incoming: ActiveTerminalSession
 ): ActiveTerminalSession[] {
-  return [
-    ...current.filter((session) => session.sessionId !== incoming.sessionId),
-    incoming
-  ].slice(-MAX_VISIBLE_TERMINAL_SESSIONS)
+  return [...current.filter((session) => session.sessionId !== incoming.sessionId), incoming].slice(
+    -MAX_VISIBLE_TERMINAL_SESSIONS
+  )
 }
 
 export function TerminalWorkbench({
@@ -77,8 +76,8 @@ export function TerminalWorkbench({
   }, [])
 
   const removeSession = useCallback((sessionId: string) => {
-    setSessions(prev => {
-      const next = prev.filter(session => session.sessionId !== sessionId)
+    setSessions((prev) => {
+      const next = prev.filter((session) => session.sessionId !== sessionId)
       if (next.length !== prev.length) {
         sessionsRef.current = next
         return next
@@ -94,10 +93,7 @@ export function TerminalWorkbench({
       setLaunchError(null)
       try {
         await window.api.terminal.create(workspacePath, sessionId, cliId)
-        terminalSidebarStore.recordRecipe(
-          workspacePath,
-          cliId === 'default' ? undefined : cliId
-        )
+        terminalSidebarStore.recordRecipe(workspacePath, cliId === 'default' ? undefined : cliId)
         updateSessions(
           keepVisibleTerminalSessions(sessionsRef.current, { sessionId, workspacePath })
         )
@@ -149,15 +145,15 @@ export function TerminalWorkbench({
   const handleClose = (sessionId: string) => {
     removeSession(sessionId)
     void window.api.terminal.kill(sessionId).catch((error) => {
-      console.error('[TerminalWorkbench] terminal.kill failed while closing pane', { sessionId, error })
+      console.error('[TerminalWorkbench] terminal.kill failed while closing pane', {
+        sessionId,
+        error
+      })
     })
   }
 
   return (
-    <div
-      className="terminal-workbench-root"
-      style={{ left: workspaceSidebarWidth }}
-    >
+    <div className="terminal-workbench-root" style={{ left: workspaceSidebarWidth }}>
       {pickerOpen ? (
         <section className="terminal-workbench-picker" aria-label="New Terminal Session">
           <header className="thread-home-surface-toolbar">
@@ -252,9 +248,12 @@ export function TerminalPane({ sessionId, workspacePath, onClose }: TerminalPane
     fitAddon.current.fit()
 
     // Restore scrollback
-    window.api.terminal.getScrollback(sessionId).then(data => {
-      if (!disposed && data) term.current?.write(data)
-    }).catch(() => {})
+    window.api.terminal
+      .getScrollback(sessionId)
+      .then((data) => {
+        if (!disposed && data) term.current?.write(data)
+      })
+      .catch(() => {})
 
     const disposableData = term.current.onData((data) => {
       window.api.terminal.write(sessionId, data)

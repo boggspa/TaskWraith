@@ -75,7 +75,7 @@ export function buildProviderShellRoutingPrompt(input: {
       ? 'run_shell_command'
       : taskWraithToolNameForProvider(input.provider, 'run_shell_command')
   const permissionRoute =
-    'follow the returned `permissionOpportunity` or legacy `permissionRetry` instruction exactly once. A fresh profile redeems only TaskWraith\'s opaque id; an older profile uses the listed compatibility capability gateway to `request_tool_permission`. Never reconstruct or alter the failed target, arguments, or failure text'
+    "follow the returned `permissionOpportunity` or legacy `permissionRetry` instruction exactly once. A fresh profile redeems only TaskWraith's opaque id; an older profile uses the listed compatibility capability gateway to `request_tool_permission`. Never reconstruct or alter the failed target, arguments, or failure text"
   return [
     TASKWRAITH_SHELL_ROUTING_PROMPT_OPEN,
     'TaskWraith shell-routing (effective grant):',

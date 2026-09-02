@@ -133,16 +133,14 @@ describe('getDefaultEnsembleParticipantConfig', () => {
 })
 
 describe('Kimi reasoning picker selection', () => {
-  it('keeps K3 effort separate from K2.7 Coding\'s fixed thinking state', () => {
+  it("keeps K3 effort separate from K2.7 Coding's fixed thinking state", () => {
     expect(resolveKimiReasoningPickerSelection('kimi-k3', 'max')).toBe('max')
     expect(resolveKimiReasoningPickerSelection('kimi-k3', 'high')).toBe('high')
     expect(resolveKimiReasoningPickerSelection('kimi-k3', undefined)).toBe('max')
     expect(resolveKimiReasoningPickerSelection('kimi-k3-256k', 'low')).toBe('low')
     expect(resolveKimiReasoningPickerSelection('k3-256k', undefined)).toBe('max')
     expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code', 'max')).toBe('on')
-    expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code', 'ultraTask')).toBe(
-      'ultraTask'
-    )
+    expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code', 'ultraTask')).toBe('ultraTask')
   })
 
   it('persists K3 ladder choices as reasoning effort rather than the legacy thinking flag', () => {
@@ -788,9 +786,9 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     })
 
     const cerebrasRetired = getEnsembleModelDefaults('pi', new Date(2026, 7, 17, 0, 0))
-    expect(cerebrasRetired.modelOptions.some((option) => option.id === 'cerebras/zai-glm-4.7')).toBe(
-      false
-    )
+    expect(
+      cerebrasRetired.modelOptions.some((option) => option.id === 'cerebras/zai-glm-4.7')
+    ).toBe(false)
     expect(
       cerebrasRetired.modelOptions.some((option) => option.id === 'openrouter/stealth/ox-alpha')
     ).toBe(true)
@@ -800,12 +798,12 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       oxAlphaRetired.modelOptions.some((option) => option.id === 'openrouter/stealth/ox-alpha')
     ).toBe(false)
     expect(oxAlphaRetired.modelOptions.some((option) => option.id === 'zai/glm-4.7')).toBe(true)
-    expect(oxAlphaRetired.modelOptions.some((option) => option.id === 'cerebras/gpt-oss-120b')).toBe(
-      true
-    )
-    expect(oxAlphaRetired.modelOptions.some((option) => option.id === 'openrouter/z-ai/glm-5.2')).toBe(
-      true
-    )
+    expect(
+      oxAlphaRetired.modelOptions.some((option) => option.id === 'cerebras/gpt-oss-120b')
+    ).toBe(true)
+    expect(
+      oxAlphaRetired.modelOptions.some((option) => option.id === 'openrouter/z-ai/glm-5.2')
+    ).toBe(true)
   })
 
   it('does not expose Default or CLI Default as ensemble picker model rows', () => {
@@ -932,8 +930,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(claude.fastModeCapableModelIds.has('claude-fable-5')).toBe(false)
     expect(claude.fastModeCapableModelIds.has('claude-fable-5-1m')).toBe(false)
     expect(
-      claude.modelOptions.find((option) => option.id === 'claude-haiku-4-5')
-        ?.ultraTaskSupported
+      claude.modelOptions.find((option) => option.id === 'claude-haiku-4-5')?.ultraTaskSupported
     ).toBe(false)
   })
 
@@ -1207,14 +1204,17 @@ describe('mistral configurable reasoning support', () => {
     // control that silently does nothing.
     for (const modelId of ['zai/glm-4.7', 'minimax/MiniMax-M2.7']) {
       const options = getEnsembleReasoningOptions('pi', modelId)
-      expect(options.map((option) => option.value), modelId).toEqual(['high'])
+      expect(
+        options.map((option) => option.value),
+        modelId
+      ).toEqual(['high'])
       expect(options[0]?.disabledReason, modelId).toMatch(/always reasons/i)
     }
     // GPT-OSS reasoning cannot be switched off on Groq or Cerebras either —
     // neither enum carries a `none`.
-    expect(getEnsembleReasoningOptions('pi', 'groq/openai/gpt-oss-120b').map((o) => o.value)).toEqual(
-      ['low', 'medium', 'high']
-    )
+    expect(
+      getEnsembleReasoningOptions('pi', 'groq/openai/gpt-oss-120b').map((o) => o.value)
+    ).toEqual(['low', 'medium', 'high'])
   })
 
   it('unlocks Devstral Small in both live and Pi BYOK lanes', () => {

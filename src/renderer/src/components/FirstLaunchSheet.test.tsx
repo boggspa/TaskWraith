@@ -48,7 +48,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+      />
     )
     expect(html).toBe('')
   })
@@ -61,7 +62,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+      />
     )
     expect(html).toContain('data-provider="codex"')
     expect(html).toContain('data-provider="claude"')
@@ -158,7 +160,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+      />
     )
     expect(html).toContain('Welcome to TaskWraith')
     expect(html).toContain('1. Sign in to your providers')
@@ -201,7 +204,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+      />
     )
     // The "TaskWraith brings together …" sentence is an OFFER surface, so the
     // retired Gemini must not appear there even though its chat history is
@@ -221,7 +225,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}        themeAppearance="blue"
+        kimiAuthStatus={null}
+        themeAppearance="blue"
         composerStyle="claude"
         diffStatColors={{ additions: '#12C4A0', deletions: '#F15A70' }}
       />
@@ -249,7 +254,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+      />
     )
     expect(html).toContain('Toggle Ensemble on an idle top-level chat')
     expect(html).toContain('data-provider="codex"')
@@ -332,7 +338,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+      />
     )
     const card = providerCardMarkup(html, 'kimi')
     expect(card).toContain('structural identity, probe, and posture admission checks')
@@ -522,7 +529,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={codexStatus}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+      />
     )
     // Plan label appears in the Codex card status row, AND the
     // signed-in dot variant class is present at least once.
@@ -560,7 +568,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={{ available: false }}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+      />
     )
     expect(html).toContain('Codex CLI not found')
   })
@@ -573,7 +582,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={{ available: true, codexUsage: { error: 'no credential' } }}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+      />
     )
     expect(html).toContain('Usage credential missing')
   })
@@ -628,7 +638,8 @@ describe('FirstLaunchSheet', () => {
           codexUsage: { planType: 'pro', userId: 'u1' }
         }}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}        usageSummary={usageSummary}
+        kimiAuthStatus={null}
+        usageSummary={usageSummary}
       />
     )
     // Codex was "signed in (pro)" but the maxed window flips it to the
@@ -700,7 +711,8 @@ describe('FirstLaunchSheet', () => {
           codexUsage: { planType: 'pro', userId: 'u1' }
         }}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}        usageSummary={usageSummary}
+        kimiAuthStatus={null}
+        usageSummary={usageSummary}
       />
     )
     expect(html).toContain('Signed in (pro)')
@@ -716,7 +728,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={makeProviderApiKeyStatus({ apiKeyConfigured: true })}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+      />
     )
     expect(html).toContain('API key saved')
   })
@@ -729,7 +742,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={makeProviderApiKeyStatus({ available: false })}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+      />
     )
     expect(html).toContain('CLI not found')
   })
@@ -760,7 +774,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}        composerStyle="claude"
+        kimiAuthStatus={null}
+        composerStyle="claude"
       />
     )
     // The rich preview card with its data-attribute is present.
@@ -786,7 +801,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+      />
     )
     expect(html).toContain('Skip for now')
     expect(html).toContain('Got it')
@@ -800,7 +816,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+      />
     )
     expect(html).toContain('npm i -g @openai/codex')
     expect(html).toContain('https://claude.ai/install.sh')

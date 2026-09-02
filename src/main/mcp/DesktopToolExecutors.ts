@@ -724,11 +724,11 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       const current = deps.attachedWindow.getForChat(snapshot.chatID)
       return Boolean(
         current &&
-          current.handleID === snapshot.handleID &&
-          current.scopeID === snapshot.scopeID &&
-          current.chatID === snapshot.chatID &&
-          current.consentEpoch === snapshot.consentEpoch &&
-          current.generation === snapshot.generation
+        current.handleID === snapshot.handleID &&
+        current.scopeID === snapshot.scopeID &&
+        current.chatID === snapshot.chatID &&
+        current.consentEpoch === snapshot.consentEpoch &&
+        current.generation === snapshot.generation
       )
     } catch {
       return false
@@ -2346,7 +2346,9 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
         toolCallId: event.toolCallId,
         payload: event.payload,
         artifacts:
-          args.includeArtifacts === false ? undefined : redactRunEventArtifactPaths(event.artifacts),
+          args.includeArtifacts === false
+            ? undefined
+            : redactRunEventArtifactPaths(event.artifacts),
         hash: event.hash
       }))
     }

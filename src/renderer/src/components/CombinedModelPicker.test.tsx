@@ -20,10 +20,7 @@ import {
   toggleExpandedProviderGroup
 } from './CombinedModelPicker'
 import type { ProviderId } from '../../../main/store/types'
-import {
-  OLLAMA_CLOUD_MODEL_CLASSIFIER_LABEL,
-  OllamaCloudIcon
-} from './icons/OllamaCloudIcon'
+import { OLLAMA_CLOUD_MODEL_CLASSIFIER_LABEL, OllamaCloudIcon } from './icons/OllamaCloudIcon'
 import { ModelApiKeyIndicator } from './ModelApiKeyIndicator'
 import { API_KEY_MODEL_INDICATOR_LABEL } from '../../../shared/apiKeyModelIndicator'
 import { mergeOllamaModelCatalog } from '../lib/ollamaModelCatalog'
@@ -52,9 +49,7 @@ describe('CombinedModelPicker', () => {
     expect(confirmLayoutRule).toContain('var(--accent) 38%')
     expect(confirmLayoutRule).toContain('var(--accent) 10%')
     expect(confirmLayoutRule).toContain('var(--accent) 18%')
-    expect(confirmLayoutRule).not.toMatch(
-      /(?:^|\n)\s*(?:background|border|padding|min-height)\s*:/
-    )
+    expect(confirmLayoutRule).not.toMatch(/(?:^|\n)\s*(?:background|border|padding|min-height)\s*:/)
   })
 
   it('keeps Add open while Done is the Return-key action that closes', () => {
@@ -77,9 +72,9 @@ describe('CombinedModelPicker', () => {
       true
     )
     expect(events).toEqual(['add'])
-    expect(
-      runCombinedModelPickerConfirmAction(doneAction, false, () => events.push('close'))
-    ).toBe(true)
+    expect(runCombinedModelPickerConfirmAction(doneAction, false, () => events.push('close'))).toBe(
+      true
+    )
     expect(events).toEqual(['add', 'done', 'close'])
   })
 
@@ -282,10 +277,12 @@ describe('CombinedModelPicker', () => {
       'glm-5.2:cloud',
       'qwen3.5:cloud'
     ])
-    expect(groups.slice(1).flatMap((group) => group.models).map((model) => model.id)).toEqual([
-      'qwen3.5:9b',
-      'granite4.1:3b'
-    ])
+    expect(
+      groups
+        .slice(1)
+        .flatMap((group) => group.models)
+        .map((model) => model.id)
+    ).toEqual(['qwen3.5:9b', 'granite4.1:3b'])
     expect(modelPickerHueClass('ollama', 'glm-5.3-flash:cloud', 'GLM 5.3 Flash')).toBe('zai')
     expect(modelPickerHueClass('ollama', 'glm-5.2:cloud', 'GLM 5.2')).toBe('zai')
     expect(modelPickerHueClass('ollama', 'minimax-m3:cloud', 'MiniMax M3')).toBe('minimax')
@@ -361,9 +358,7 @@ describe('CombinedModelPicker', () => {
 
   it('uses every selected Pi model upstream hue without changing its runtime provider mark', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
-      const id = Object.keys(PI_MODEL_LABELS).find((model) =>
-        model.startsWith(`${upstream}/`)
-      )
+      const id = Object.keys(PI_MODEL_LABELS).find((model) => model.startsWith(`${upstream}/`))
       expect(id, `missing representative Pi model for ${upstream}`).toBeTruthy()
       const model = { id: id!, label: PI_MODEL_LABELS[id!] }
       const html = renderToStaticMarkup(
@@ -384,9 +379,7 @@ describe('CombinedModelPicker', () => {
       expect(modelPickerHueClass('pi', model.id, model.label)).toBe(brand.hueClass)
       expect(html).toContain('data-provider="pi"')
       expect(html).toContain(`data-provider-hue="${brand.hueClass}"`)
-      expect(html).toContain(
-        `--chip-accent:var(--provider-${brand.hueClass}-color, var(--accent))`
-      )
+      expect(html).toContain(`--chip-accent:var(--provider-${brand.hueClass}-color, var(--accent))`)
       expect(html).toContain('data-provider-logo="pi"')
     }
   })
@@ -448,9 +441,7 @@ describe('CombinedModelPicker', () => {
       'utf8'
     )
     const blocks = (selector: string): string[] =>
-      [...css.matchAll(new RegExp(`${selector}\\s*\\{[\\s\\S]*?\\}`, 'g'))].map(
-        (match) => match[0]
-      )
+      [...css.matchAll(new RegExp(`${selector}\\s*\\{[\\s\\S]*?\\}`, 'g'))].map((match) => match[0])
 
     expect(css).toMatch(
       /\.composer-combined-picker-row:hover,\s*\.composer-combined-picker-row\.is-highlighted\s*\{[\s\S]*?var\(--model-row-accent, var\(--accent\)\)/

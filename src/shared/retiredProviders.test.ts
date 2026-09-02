@@ -96,16 +96,20 @@ describe('AntiGravity opt-in gate (isAntigravityOptInEnabled)', () => {
 
   it('stays CLOSED when consent is recorded but the provider is disabled', () => {
     expect(
-      isAntigravityOptInEnabled({ antigravityEnabled: false, antigravityOptInAcceptedAt: 1_700_000_000_000 })
+      isAntigravityOptInEnabled({
+        antigravityEnabled: false,
+        antigravityOptInAcceptedAt: 1_700_000_000_000
+      })
     ).toBe(false)
-    expect(
-      isAntigravityOptInEnabled({ antigravityOptInAcceptedAt: 1_700_000_000_000 })
-    ).toBe(false)
+    expect(isAntigravityOptInEnabled({ antigravityOptInAcceptedAt: 1_700_000_000_000 })).toBe(false)
   })
 
   it('OPENS only when enabled AND consent timestamp is set', () => {
     expect(
-      isAntigravityOptInEnabled({ antigravityEnabled: true, antigravityOptInAcceptedAt: 1_700_000_000_000 })
+      isAntigravityOptInEnabled({
+        antigravityEnabled: true,
+        antigravityOptInAcceptedAt: 1_700_000_000_000
+      })
     ).toBe(true)
   })
 })

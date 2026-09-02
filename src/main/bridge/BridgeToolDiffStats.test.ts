@@ -186,9 +186,10 @@ describe('parsePatchFileStats (per-file evidence + card filenames)', () => {
 describe('bridgeUnifiedDiffStats (structure gate)', () => {
   it('requires diff structure so prose bullets never mint counts', () => {
     expect(bridgeUnifiedDiffStats('- a markdown bullet\n+ a plus bullet')).toBeUndefined()
-    expect(
-      bridgeUnifiedDiffStats('@@ -1,2 +1,3 @@\n-old\n+new\n+more')
-    ).toEqual({ additions: 2, deletions: 1 })
+    expect(bridgeUnifiedDiffStats('@@ -1,2 +1,3 @@\n-old\n+new\n+more')).toEqual({
+      additions: 2,
+      deletions: 1
+    })
   })
 })
 
@@ -237,7 +238,10 @@ describe('bridgeResultDiffStats (result-side derivation)', () => {
       bridgeResultDiffStats({ toolName: 'grok_thinking', kind: 'add', summary: '+looks\n-diffy' })
     ).toBeUndefined()
     expect(
-      bridgeResultDiffStats({ toolName: 'edit_file', summary: 'The file was updated successfully.' })
+      bridgeResultDiffStats({
+        toolName: 'edit_file',
+        summary: 'The file was updated successfully.'
+      })
     ).toBeUndefined()
   })
 })

@@ -62,14 +62,9 @@ describe('Thread Home integration', () => {
 
   it('routes the primary glass-pill dismiss to Thread Home without collapsing MultiView', () => {
     const dismissStart = layoutSource.indexOf('const dismissPrimaryMultiviewPane =')
-    const dismissEnd = layoutSource.indexOf(
-      'const requestMainPaneWorkspaceStats',
-      dismissStart
-    )
+    const dismissEnd = layoutSource.indexOf('const requestMainPaneWorkspaceStats', dismissStart)
     const dismiss = layoutSource.slice(dismissStart, dismissEnd)
-    expect(dismiss).toContain(
-      'multiview.dismissPane(primaryPaneIndex, currentChatAppChatId)'
-    )
+    expect(dismiss).toContain('multiview.dismissPane(primaryPaneIndex, currentChatAppChatId)')
     expect(dismiss).not.toContain('multiview.closePane')
 
     const paneDismissStart = appSource.indexOf('const handleCloseMultiviewPane = useCallback')
@@ -78,9 +73,7 @@ describe('Thread Home integration', () => {
       paneDismissStart
     )
     const paneDismiss = appSource.slice(paneDismissStart, paneDismissEnd)
-    expect(paneDismiss).toContain(
-      'multiview.dismissPane(paneIndex, currentChatIdRef.current)'
-    )
+    expect(paneDismiss).toContain('multiview.dismissPane(paneIndex, currentChatIdRef.current)')
     expect(paneDismiss).not.toContain('multiview.closePane')
 
     const pillStart = layoutSource.indexOf('<MainPaneActionPill\n')

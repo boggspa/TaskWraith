@@ -143,14 +143,21 @@ function ensembleWithGrants(): EnsembleConfig {
 
 describe('ensembleRosterPresets — capture + materialize', () => {
   it('captures roster order and settings without runtime session ids', () => {
-    const preset = buildEnsembleRosterPresetFromConfig('Review panel', sampleEnsemble(), 1_700_000_000_000)
+    const preset = buildEnsembleRosterPresetFromConfig(
+      'Review panel',
+      sampleEnsemble(),
+      1_700_000_000_000
+    )
     expect(preset.name).toBe('Review panel')
     expect(preset.orchestrationMode).toBe('continuous')
     expect(preset.maxContinuationHops).toBe(12)
     // Fan-out collapsed to On/Off: legacy read_only captures as 'all'.
     expect(preset.fanoutPolicy).toBe('all')
     expect(preset.concurrentModeEnabled).toBe(true)
-    expect(preset.participants.map((participant) => participant.role)).toEqual(['Builder', 'Planner'])
+    expect(preset.participants.map((participant) => participant.role)).toEqual([
+      'Builder',
+      'Planner'
+    ])
     expect(preset.participants[0]).toMatchObject({
       provider: 'codex',
       enabled: false,
@@ -174,14 +181,18 @@ describe('ensembleRosterPresets — capture + materialize', () => {
   })
 
   it('materializes fresh participant ids while preserving order', () => {
-    const preset = buildEnsembleRosterPresetFromConfig('Review panel', sampleEnsemble(), 1_700_000_000_000)
+    const preset = buildEnsembleRosterPresetFromConfig(
+      'Review panel',
+      sampleEnsemble(),
+      1_700_000_000_000
+    )
     const participants = materializeParticipantsFromPreset(preset.participants)
     expect(participants).toHaveLength(2)
     expect(participants.map((participant) => participant.role)).toEqual(['Builder', 'Planner'])
     expect(participants.map((participant) => participant.order)).toEqual([1, 2])
-    expect(participants.every((participant) => participant.id.startsWith('ensemble-participant-'))).toBe(
-      true
-    )
+    expect(
+      participants.every((participant) => participant.id.startsWith('ensemble-participant-'))
+    ).toBe(true)
     expect(participants.every((participant) => participant.linkedProviderSessionId === null)).toBe(
       true
     )
@@ -201,10 +212,9 @@ describe('ensembleRosterPresets — capture + materialize', () => {
       false,
       true
     ])
-    expect(preset.participants.map((participant) => participant.isSecondInCommand === true)).toEqual([
-      true,
-      false
-    ])
+    expect(
+      preset.participants.map((participant) => participant.isSecondInCommand === true)
+    ).toEqual([true, false])
     const materialized = materializeParticipantsFromPresetWithBossman(preset.participants)
     expect(materialized.bossmanParticipantId).toBe(materialized.participants[1].id)
     expect(materialized.secondInCommandParticipantId).toBe(materialized.participants[0].id)
@@ -215,7 +225,9 @@ describe('ensembleRosterPresets — capture + materialize', () => {
       materialized.secondInCommandParticipantId
     )
     expect(resnapshot.filter((participant) => participant.isBossman === true)).toHaveLength(1)
-    expect(resnapshot.filter((participant) => participant.isSecondInCommand === true)).toHaveLength(1)
+    expect(resnapshot.filter((participant) => participant.isSecondInCommand === true)).toHaveLength(
+      1
+    )
     expect(resnapshot[1].isBossman).toBe(true)
     expect(resnapshot[0].isSecondInCommand).toBe(true)
   })
@@ -234,11 +246,15 @@ describe('ensembleRosterPresets — capture + materialize', () => {
       'captain-3'
     )
     expect(
-      snapshots.filter((participant) => participant.isSecondInCommand).map((participant) => participant.role)
+      snapshots
+        .filter((participant) => participant.isSecondInCommand)
+        .map((participant) => participant.role)
     ).toEqual(['Captain 1', 'Captain 2', 'Captain 3'])
 
     const materialized = materializeParticipantsFromPresetWithBossman(snapshots)
-    expect(materialized.captainParticipantIds).toEqual(materialized.participants.slice(1).map((p) => p.id))
+    expect(materialized.captainParticipantIds).toEqual(
+      materialized.participants.slice(1).map((p) => p.id)
+    )
     expect(materialized.secondInCommandParticipantId).toBe(materialized.participants[1].id)
     expect(
       snapshotParticipantsForPreset(
@@ -254,7 +270,9 @@ describe('ensembleRosterPresets — capture + materialize', () => {
 describe('ensembleRosterPresets — round-trip fidelity + isolation', () => {
   it('preserves every optional field across build → materialize → snapshot', () => {
     const preset = buildEnsembleRosterPresetFromConfig('Rich', ensembleWithGrants(), 1)
-    const round = snapshotParticipantsForPreset(materializeParticipantsFromPreset(preset.participants))
+    const round = snapshotParticipantsForPreset(
+      materializeParticipantsFromPreset(preset.participants)
+    )
     // Builder (order 1) carries all the optional config.
     expect(round[0]).toMatchObject({
       provider: 'codex',
@@ -311,7 +329,9 @@ describe('ensembleRosterPresets — round-trip fidelity + isolation', () => {
       },
       5
     )
-    const reSnapshot = snapshotParticipantsForPreset(materializeParticipantsFromPreset(preset.participants))
+    const reSnapshot = snapshotParticipantsForPreset(
+      materializeParticipantsFromPreset(preset.participants)
+    )
     upsertEnsembleRosterPreset({ ...preset, participants: reSnapshot })
     const stored = getEnsembleRosterPreset(preset.id)!
     expect(stored.participants[0]).toMatchObject({
@@ -340,8 +360,8 @@ describe('ensembleRosterPresets — editor primitives', () => {
     expect(
       seeded
         .flatMap((preset) => preset.participants)
-        .every((participant) =>
-          participant.provider === 'codex' || participant.provider === 'mistral'
+        .every(
+          (participant) => participant.provider === 'codex' || participant.provider === 'mistral'
         )
     ).toBe(true)
   })
@@ -392,7 +412,9 @@ describe('ensembleRosterPresets — editor primitives', () => {
   })
 
   it('duplicate mints a fresh id + timestamps + " copy" name and deep-clones', () => {
-    const base = upsertEnsembleRosterPreset(buildEnsembleRosterPresetFromConfig('Base', ensembleWithGrants(), 1))
+    const base = upsertEnsembleRosterPreset(
+      buildEnsembleRosterPresetFromConfig('Base', ensembleWithGrants(), 1)
+    )
     const copy = duplicateEnsembleRosterPreset(base.id)!
     expect(copy.id).not.toBe(base.id)
     expect(copy.name).toBe('Base copy')
@@ -407,7 +429,9 @@ describe('ensembleRosterPresets — editor primitives', () => {
   })
 
   it('upsert is clobber-safe — a concurrent edit to a DIFFERENT preset survives', () => {
-    const p1 = upsertEnsembleRosterPreset(buildEnsembleRosterPresetFromConfig('P1', sampleEnsemble(), 1))
+    const p1 = upsertEnsembleRosterPreset(
+      buildEnsembleRosterPresetFromConfig('P1', sampleEnsemble(), 1)
+    )
     const p2 = buildEnsembleRosterPresetFromConfig('P2', sampleEnsemble(), 2)
     p2.id = `${p1.id}-two`
     upsertEnsembleRosterPreset(p2)
@@ -480,10 +504,7 @@ describe('ensembleRosterPresets — import/export', () => {
       JSON.stringify({ presets: [first, { id: 'bad' }, second] })
     )
 
-    expect(preview.presets.map((preset) => preset.name)).toEqual([
-      'First choice',
-      'Second choice'
-    ])
+    expect(preview.presets.map((preset) => preset.name)).toEqual(['First choice', 'Second choice'])
     expect(preview.skippedCount).toBe(1)
     expect(listEnsembleRosterPresets()).toHaveLength(0)
   })
@@ -492,10 +513,7 @@ describe('ensembleRosterPresets — import/export', () => {
     const first = buildEnsembleRosterPresetFromConfig('First choice', sampleEnsemble(), 1)
     const second = buildEnsembleRosterPresetFromConfig('Second choice', sampleEnsemble(), 2)
     const preview = previewEnsembleRosterPresetsFromJson(JSON.stringify([first, second]))
-    const result = importEnsembleRosterPresetsFromJson(
-      JSON.stringify([preview.presets[1]]),
-      15_000
-    )
+    const result = importEnsembleRosterPresetsFromJson(JSON.stringify([preview.presets[1]]), 15_000)
 
     expect(result.importedCount).toBe(1)
     expect(result.presets[0].name).toBe('Second choice')
@@ -622,6 +640,8 @@ describe('bridge preset save carries stageRole (spike 4 iOS parity)', () => {
     ])
 
     expect(preset.participants.filter((participant) => participant.isBossman)).toHaveLength(1)
-    expect(preset.participants.filter((participant) => participant.isSecondInCommand)).toHaveLength(3)
+    expect(preset.participants.filter((participant) => participant.isSecondInCommand)).toHaveLength(
+      3
+    )
   })
 })

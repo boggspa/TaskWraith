@@ -20,10 +20,10 @@
   --sidebar-alpha-026: 0.26;
   --sidebar-alpha-024: 0.24;
   --sidebar-alpha-022: 0.22;
-  --sidebar-alpha-020: 0.20;
+  --sidebar-alpha-020: 0.2;
   --sidebar-alpha-018: 0.18;
   --sidebar-alpha-014: 0.14;
-  --sidebar-alpha-010: 0.10;
+  --sidebar-alpha-010: 0.1;
   --sidebar-alpha-006: 0.06;
   --sidebar-alpha-002: 0.02;
   /* Sidebar matches the dark transcript (#161616) — was the slightly lighter,
@@ -50,7 +50,11 @@
    * fades this chrome in lockstep with the transcript. Independent of the SIDEBAR
    * slider, which governs only the .app-sidebar list surface. color-mix on the
    * always-opaque chrome colour, NOT --sidebar-bg (`transparent` in native_glass). */
-  --sidebar-chrome-fixed-bg: color-mix(in srgb, var(--sidebar-chrome-color) var(--main-pane-opacity-100), transparent);
+  --sidebar-chrome-fixed-bg: color-mix(
+    in srgb,
+    var(--sidebar-chrome-color) var(--main-pane-opacity-100),
+    transparent
+  );
   --sidebar-border: rgba(255, 255, 255, 0.06);
   --sidebar-text: rgba(255, 255, 255, 0.85);
   --sidebar-text-secondary: rgba(255, 255, 255, 0.5);
@@ -92,7 +96,7 @@
   --rightdock-surface: var(--rightdock-pane-bg);
   --rightdock-surface-raised: #242422;
   --rightdock-surface-sunken: #181817;
-  --rightdock-border: rgba(255, 255, 255, 0.10);
+  --rightdock-border: rgba(255, 255, 255, 0.1);
   --rightdock-text: rgba(255, 255, 255, 0.92);
   --rightdock-text-muted: rgba(255, 255, 255, 0.55);
   --rightdock-text-faint: rgba(255, 255, 255, 0.35);
@@ -123,28 +127,76 @@
   --theme-wash-medium: 16%;
   --theme-wash-strong: 24%;
   --theme-border-accent: color-mix(in srgb, var(--theme-chroma-1) 36%, var(--surface-border));
-  --theme-border-accent-strong: color-mix(in srgb, var(--theme-chroma-2) 46%, var(--surface-border));
+  --theme-border-accent-strong: color-mix(
+    in srgb,
+    var(--theme-chroma-2) 46%,
+    var(--surface-border)
+  );
   --theme-gradient-app:
-    radial-gradient(ellipse at 13% -8%, color-mix(in srgb, var(--theme-chroma-1) var(--theme-wash-strong), transparent), transparent 42%),
-    radial-gradient(ellipse at 92% 6%, color-mix(in srgb, var(--theme-chroma-2) var(--theme-wash-medium), transparent), transparent 44%),
-    linear-gradient(135deg, color-mix(in srgb, var(--theme-chroma-3) var(--theme-wash-soft), transparent), transparent 58%);
+    radial-gradient(
+      ellipse at 13% -8%,
+      color-mix(in srgb, var(--theme-chroma-1) var(--theme-wash-strong), transparent),
+      transparent 42%
+    ),
+    radial-gradient(
+      ellipse at 92% 6%,
+      color-mix(in srgb, var(--theme-chroma-2) var(--theme-wash-medium), transparent),
+      transparent 44%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--theme-chroma-3) var(--theme-wash-soft), transparent),
+      transparent 58%
+    );
   --theme-gradient-sidebar:
-    radial-gradient(ellipse at 0% 8%, color-mix(in srgb, var(--theme-chroma-1) var(--theme-wash-strong), transparent), transparent 48%),
-    linear-gradient(180deg, color-mix(in srgb, var(--theme-chroma-2) var(--theme-wash-soft), transparent), transparent 46%);
+    radial-gradient(
+      ellipse at 0% 8%,
+      color-mix(in srgb, var(--theme-chroma-1) var(--theme-wash-strong), transparent),
+      transparent 48%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--theme-chroma-2) var(--theme-wash-soft), transparent),
+      transparent 46%
+    );
   /* Transcript pane — flat fill only. Prior versions stacked radial side
    * washes (chroma-1 left / chroma-2 right, commit 969fd730) plus a top
    * vertical wash (chroma-3); all dropped so theme tint does not compete
    * with weather / FX on the main reading surface. */
   --theme-gradient-transcript: none;
   --theme-gradient-panel:
-    radial-gradient(ellipse at 0% 0%, color-mix(in srgb, var(--theme-chroma-2) var(--theme-wash-medium), transparent), transparent 48%),
-    linear-gradient(160deg, color-mix(in srgb, var(--theme-chroma-1) var(--theme-wash-soft), transparent), transparent 56%);
+    radial-gradient(
+      ellipse at 0% 0%,
+      color-mix(in srgb, var(--theme-chroma-2) var(--theme-wash-medium), transparent),
+      transparent 48%
+    ),
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--theme-chroma-1) var(--theme-wash-soft), transparent),
+      transparent 56%
+    );
   --theme-gradient-editor:
-    linear-gradient(135deg, color-mix(in srgb, var(--theme-chroma-1) 14%, transparent), transparent 42%),
-    radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--theme-chroma-3) 12%, transparent), transparent 46%);
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--theme-chroma-1) 14%, transparent),
+      transparent 42%
+    ),
+    radial-gradient(
+      ellipse at 100% 0%,
+      color-mix(in srgb, var(--theme-chroma-3) 12%, transparent),
+      transparent 46%
+    );
   --theme-gradient-file-manager:
-    linear-gradient(180deg, color-mix(in srgb, var(--theme-chroma-2) 12%, transparent), transparent 48%),
-    radial-gradient(ellipse at 12% 100%, color-mix(in srgb, var(--theme-chroma-1) 10%, transparent), transparent 42%);
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--theme-chroma-2) 12%, transparent),
+      transparent 48%
+    ),
+    radial-gradient(
+      ellipse at 12% 100%,
+      color-mix(in srgb, var(--theme-chroma-1) 10%, transparent),
+      transparent 42%
+    );
 
   /* Composer */
   --composer-bg: rgba(7, 16, 36, 0.92);
@@ -154,7 +206,7 @@
   --composer-glass-bg: rgba(6, 14, 34, 0.48);
   --composer-glass-border: rgba(124, 158, 255, 0.22);
   --composer-glass-highlight: rgba(145, 174, 255, 0.14);
-  --composer-glass-vignette: rgba(0, 6, 24, 0.20);
+  --composer-glass-vignette: rgba(0, 6, 24, 0.2);
 
   /* Canonical neutral material. The Model Usage pane is the visual source of
    * truth; sidebar section pills and popovers consume these same primitives so
@@ -167,12 +219,10 @@
   --tw-neutral-material-backdrop: blur(22px) saturate(0%) brightness(0.96);
   --tw-neutral-material-backdrop-soft: blur(16px) saturate(0%) brightness(0.96);
   --tw-neutral-material-shadow-dark:
-    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
-    0 12px 28px -18px rgba(0, 0, 0, 0.72),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5), 0 12px 28px -18px rgba(0, 0, 0, 0.72),
     0 1px 2px rgba(0, 0, 0, 0.42);
   --tw-neutral-material-shadow-light:
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 12px 28px -19px rgba(0, 0, 0, 0.3),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.08), 0 12px 28px -19px rgba(0, 0, 0, 0.3),
     0 1px 2px rgba(0, 0, 0, 0.12);
   --tw-neutral-material-sheen: linear-gradient(
     118deg,
@@ -204,15 +254,15 @@
 
   /* Provider palette. Focused mirrors live in UsageHeatmap,
    * WelcomeUsageDashboard, transcript Agent Aura RGB, and the iOS theme. */
-  --provider-gemini-color: #346EEC;
-  --provider-codex-color: #705AFF;
-  --provider-claude-color: #B16105;
-  --provider-kimi-color: #0073E6;
+  --provider-gemini-color: #346eec;
+  --provider-codex-color: #705aff;
+  --provider-claude-color: #b16105;
+  --provider-kimi-color: #0073e6;
   /* Grok — balanced monochrome identity. This mid-gray is the integer-sRGB
    * point nearest equal WCAG contrast on pure white and pure black. */
   --provider-grok-color: #757575;
   /* Cursor (Composer 2.5) — saturated golden yellow (leans yellow, not orange). */
-  --provider-cursor-color: #8C7508;
+  --provider-cursor-color: #8c7508;
   /* Ollama / Local — walnut brown for on-device inference. The old green-teal
    * #1A8562 sat only CIEDE2000 dE 7.89 from Xiaomi's #008844, barely over the
    * dE 7.6 bar this palette uses for a new hue and the tightest pair in the
@@ -221,7 +271,7 @@
    * 63), and it is that chroma gap, not hue, that buys the separation the
    * crowded 6-32 degree orange band could not. Nearest neighbours are cerebras
    * dE 12.9 and claude dE 13.0. */
-  --provider-ollama-color: #976C52;
+  --provider-ollama-color: #976c52;
   /* AntiGravity — yellow-green, AA-readable on both pure white and black. */
   --provider-antigravity-color: #308713;
   /* Pi — cold slate. Every other hue in this palette sits at ~4.58 contrast
@@ -231,34 +281,34 @@
    * as a neutral seat colour: Pi is a BYOK shell, so the sub-provider brand
    * below carries the identity. Low chroma keeps it clear of Grok's pure
    * neutral gray. */
-  --provider-pi-color: #68768C;
-   /* Muse Code — Meta Model API blue (same reviewed Meta swatch). */
-   --provider-muse-color: #1671EA;
-   /* Devin — TaskWraith design token: steel blue at the AA-on-both-grounds luminance. */
-   --provider-devin-color: #4878AE;
-   /* Ensemble — aggregate provider roster in a soft white-gray pink. */
+  --provider-pi-color: #68768c;
+  /* Muse Code — Meta Model API blue (same reviewed Meta swatch). */
+  --provider-muse-color: #1671ea;
+  /* Devin — TaskWraith design token: steel blue at the AA-on-both-grounds luminance. */
+  --provider-devin-color: #4878ae;
+  /* Ensemble — aggregate provider roster in a soft white-gray pink. */
   --provider-ensemble-color: #986781;
   /* Ollama-backed display brands. Runtime provider remains `ollama`; these
    * presentation aliases let local models wear their upstream brand hue. */
-  --provider-alibaba-color: #8C52EF;
+  --provider-alibaba-color: #8c52ef;
   --provider-qwen-color: var(--provider-alibaba-color);
   /* `google` is the Gemma spoof class and nothing else. It now wears
    * Google's AntiGravity green rather than the retired Gemini blue. */
   --provider-google-color: var(--provider-antigravity-color);
   --provider-openai-color: var(--provider-codex-color);
-  --provider-deep-reinforce-color: #BE5809;
+  --provider-deep-reinforce-color: #be5809;
   --provider-ornith-color: var(--provider-deep-reinforce-color);
-  --provider-ibm-color: #3079BC;
-  --provider-liquid-color: #D72D82;
+  --provider-ibm-color: #3079bc;
+  --provider-liquid-color: #d72d82;
   /* Official upstream anchors adjusted only in lightness to meet the palette's
    * AA-on-white-and-black invariant: Meta #0668E1, Cohere #355146, Essential
    * AI #6A46AC. DeepSeek/Z.ai reuse their canonical Pi-upstream tokens below. */
-  --provider-meta-color: #1671EA;
-  --provider-cohere-color: #5E7C6F;
-  --provider-essential-color: #8462CA;
+  --provider-meta-color: #1671ea;
+  --provider-cohere-color: #5e7c6f;
+  --provider-essential-color: #8462ca;
   --provider-nvidia-color: #538200;
-  --provider-openbmb-color: #E22B17;
-  --provider-poolside-color: #0C8194;
+  --provider-openbmb-color: #e22b17;
+  --provider-poolside-color: #0c8194;
   /* Pi-backed BYOK upstream brands. Runtime provider remains `pi`; these
    * presentation aliases let a Pi row wear the upstream that actually serves
    * it (see shared/piBrandTable + resolveProviderHueClass). Each is its real
@@ -274,10 +324,10 @@
    *    the same AA-readable luminance as the rest of this palette.
    * `qwen-token-plan` maps to the EXISTING --provider-qwen-color, so Qwen
    * reads the same whether it arrives via Ollama or via Pi. */
-  --provider-deepseek-color: #4E6AEE;
-  --provider-zai-color: #177DAA;
-  --provider-minimax-color: #C044A4;
-  --provider-mistral-color: #D44404;
+  --provider-deepseek-color: #4e6aee;
+  --provider-zai-color: #177daa;
+  --provider-minimax-color: #c044a4;
+  --provider-mistral-color: #d44404;
   /* Xiaomi MiMo token plan — a THIRD forced departure, on the same grounds as
    * Groq and Z.ai above. Xiaomi's brand orange darkens to #B36004 at this
    * palette's luminance, which sat 0.6 degrees of hue from Claude's #B16105 at
@@ -289,9 +339,9 @@
    * Same both-sides AA band as every other seat colour. */
   --provider-xiaomi-color: #008844;
   --provider-mimo-color: var(--provider-xiaomi-color);
-  --provider-cerebras-color: #BB584A;
+  --provider-cerebras-color: #bb584a;
   --provider-groq-color: #088482;
-  --provider-openrouter-color: #E02948;
+  --provider-openrouter-color: #e02948;
   /* Thinking Machines has not published this as a corporate brand colour.
    * TaskWraith previously derived the token from the flagship Inkling card
    * blue (#0155BF), which landed on #016EF6 — a royal blue only CIEDE2000
@@ -301,7 +351,7 @@
    * moves to a rose of its own. It is held clear of the two pinks it could be
    * confused with: liquid dE 9.3, and openrouter dE 9.5 — #E02948 stays the
    * generic OpenRouter fallback rather than becoming Inkling's colour. */
-  --provider-thinkingmachines-color: #C24E68;
+  --provider-thinkingmachines-color: #c24e68;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill
@@ -310,8 +360,8 @@
    * Per-theme overrides (in the [data-theme="…"] blocks below) can
    * tune the exact hues, but the defaults match another-project
    * so TaskWraith's card reads as a sibling. */
-  --quota-warning-color: #F59E0B;
-  --quota-danger-color: #DC2626;
+  --quota-warning-color: #f59e0b;
+  --quota-danger-color: #dc2626;
 
   /* Accents */
   --accent: #5a8cff;
@@ -334,12 +384,12 @@
   --focus-glow: color-mix(in srgb, var(--accent) 28%, transparent);
 
   /* Diff */
-  --diff-add-bg: rgba(76, 195, 138, 0.10);
+  --diff-add-bg: rgba(76, 195, 138, 0.1);
   --diff-add-text: #6ddfa8;
-  --diff-del-bg: rgba(229, 77, 77, 0.10);
+  --diff-del-bg: rgba(229, 77, 77, 0.1);
   --diff-del-text: #f08080;
-  --diff-stat-add-color: #2DB777;
-  --diff-stat-del-color: #EC3D35;
+  --diff-stat-add-color: #2db777;
+  --diff-stat-del-color: #ec3d35;
   --diff-hunk: #5a8cff;
 
   /* CodeMirror syntax + editor chrome (File Editor / popout).
@@ -378,9 +428,9 @@
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.25);
-  --shadow-md: 0 4px 16px rgba(0,0,0,0.30);
-  --shadow-lg: 0 12px 40px rgba(0,0,0,0.40);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.4);
 
   /* Sizing */
   --sidebar-width: 260px;
@@ -398,12 +448,18 @@
   --space-xl: 24px;
 
   /* Typography */
-  --font-sans: "SF Pro", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Roboto, Arial, sans-serif;
+  --font-sans:
+    'SF Pro', 'SF Pro Text', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'Helvetica Neue', Roboto, Arial, sans-serif;
   --transcript-font-family: var(--font-sans);
   --composer-font-family: var(--font-sans);
-  --font-compact: "SF Compact", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Roboto, Arial, sans-serif;
-  --font-serif: "New York", "Times New Roman", Georgia, serif;
-  --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Monaco, "Courier New", ui-monospace, monospace;
+  --font-compact:
+    'SF Compact', 'SF Pro Text', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'Helvetica Neue', Roboto, Arial, sans-serif;
+  --font-serif: 'New York', 'Times New Roman', Georgia, serif;
+  --font-mono:
+    'SF Mono', 'JetBrains Mono', 'Cascadia Code', Menlo, Monaco, 'Courier New', ui-monospace,
+    monospace;
   --font-size-xs: calc(0.936rem * 1);
   --font-size-sm: calc(1.066rem * 1);
   --font-size-md: calc(1.196rem * 1);
@@ -464,11 +520,11 @@
 
   /* Scrollbar */
   --scrollbar-track: transparent;
-  --scrollbar-thumb: rgba(255,255,255,0.12);
-  --scrollbar-thumb-hover: rgba(255,255,255,0.22);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
 }
 
-:root:is([data-appearance="soft_glass"], [data-appearance="native_glass"]) {
+:root:is([data-appearance='soft_glass'], [data-appearance='native_glass']) {
   --tw-popover-material-backdrop: var(--tw-neutral-material-backdrop-soft);
 }
 
@@ -478,7 +534,13 @@
  * sidebar on a light theme) is intentionally excluded so it keeps that dark
  * chrome. Obsidian (light sidebar on a dark theme) flips in its .app-sidebar
  * block below. */
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="xcode-light"]) {
+:is(
+  [data-theme='light'],
+  [data-theme='citrus'],
+  [data-theme='mist'],
+  [data-theme='sage'],
+  [data-theme='xcode-light']
+) {
   --sidebar-chrome-color: var(--sidebar-bg-solid);
   --sidebar-chrome-rim: rgba(18, 21, 27, 0.08);
   --tw-sidebar-neutral-material-bg: var(--tw-neutral-material-bg-light);
@@ -490,9 +552,9 @@
 }
 
 /* Theme palettes ported from the Swift shared theme choices */
-[data-theme="light"],
-[data-theme="citrus"],
-[data-theme="xcode-light"] {
+[data-theme='light'],
+[data-theme='citrus'],
+[data-theme='xcode-light'] {
   --app-bg: #f8fafc;
   --app-bg-elevated: #ffffff;
   --app-bg-sunken: #e9edf2;
@@ -518,7 +580,7 @@
   --surface-1: #ffffff;
   --surface-2: #f1f1f4;
   --surface-3: #e7e7ec;
-  --surface-border: rgba(18, 21, 27, 0.10);
+  --surface-border: rgba(18, 21, 27, 0.1);
   --rightdock-pane-bg: #eef2f7;
   --rightdock-surface-raised: #ffffff;
   --rightdock-surface-sunken: #e8e8e5;
@@ -545,8 +607,8 @@
   --text-muted: rgba(18, 21, 27, 0.32);
   --sidebar-text: rgba(18, 21, 27, 0.82);
   --sidebar-text-secondary: rgba(18, 21, 27, 0.52);
-  --sidebar-border: rgba(18, 21, 27, 0.10);
-  --panel-border: rgba(18, 21, 27, 0.10);
+  --sidebar-border: rgba(18, 21, 27, 0.1);
+  --panel-border: rgba(18, 21, 27, 0.1);
   --composer-border: rgba(18, 21, 27, 0.12);
   --shadow-lg: 0 14px 44px rgba(80, 96, 120, 0.18);
   --theme-chroma-1: #5a8cff;
@@ -576,21 +638,21 @@
   --cm-heading: #0550ae;
   --cm-invalid: #cf222e;
   --cm-gutter-bg: rgba(18, 21, 27, 0.05);
-  --cm-gutter-border: rgba(18, 21, 27, 0.10);
+  --cm-gutter-border: rgba(18, 21, 27, 0.1);
   --cm-active-line: rgba(18, 21, 27, 0.045);
   --cm-bracket-match: rgba(18, 21, 27, 0.12);
 }
 
-[data-theme="midnight"] {
+[data-theme='midnight'] {
   --app-bg: #020308;
   --app-bg-elevated: #080b14;
   --app-bg-sunken: #010207;
   --content-bg: rgba(3, 5, 12, 0.96);
   --sidebar-bg: rgba(5, 8, 18, 0.46);
   --panel-bg: rgba(5, 8, 18, 0.52);
-  --panel-elevated-bg: rgba(20, 28, 46, 0.60);
+  --panel-elevated-bg: rgba(20, 28, 46, 0.6);
   --composer-bg: rgba(10, 15, 28, 0.58);
-  --composer-glass-bg: rgba(7, 11, 22, 0.30);
+  --composer-glass-bg: rgba(7, 11, 22, 0.3);
   --composer-glass-border: rgba(135, 164, 255, 0.24);
   --accent: #6f93ff;
   --accent-hover: #89a7ff;
@@ -599,8 +661,8 @@
   --theme-chroma-3: #37a9ff;
 }
 
-[data-theme="blue"],
-[data-theme="ocean"] {
+[data-theme='blue'],
+[data-theme='ocean'] {
   --app-bg: #030b10;
   --app-bg-elevated: #07161d;
   --content-bg: rgba(5, 13, 18, 0.96);
@@ -608,7 +670,7 @@
   --panel-bg: rgba(8, 25, 34, 0.52);
   --panel-elevated-bg: rgba(15, 45, 58, 0.62);
   --composer-bg: rgba(10, 31, 42, 0.58);
-  --composer-glass-bg: rgba(7, 27, 38, 0.30);
+  --composer-glass-bg: rgba(7, 27, 38, 0.3);
   --composer-glass-border: rgba(73, 201, 226, 0.22);
   --accent: #41c7e5;
   --accent-hover: #62d8ef;
@@ -617,16 +679,16 @@
   --theme-chroma-3: #4fd1c5;
 }
 
-[data-theme="green"],
-[data-theme="forest"] {
+[data-theme='green'],
+[data-theme='forest'] {
   --app-bg: #030c07;
   --app-bg-elevated: #071610;
   --content-bg: rgba(5, 13, 9, 0.96);
   --sidebar-bg: rgba(8, 28, 16, 0.46);
   --panel-bg: rgba(8, 28, 16, 0.52);
-  --panel-elevated-bg: rgba(22, 54, 32, 0.60);
+  --panel-elevated-bg: rgba(22, 54, 32, 0.6);
   --composer-bg: rgba(12, 34, 20, 0.58);
-  --composer-glass-bg: rgba(8, 30, 18, 0.30);
+  --composer-glass-bg: rgba(8, 30, 18, 0.3);
   --composer-glass-border: rgba(86, 207, 129, 0.22);
   --accent: #4fd17d;
   --accent-hover: #70df97;
@@ -635,17 +697,17 @@
   --theme-chroma-3: #2fb986;
 }
 
-[data-theme="sunset"],
-[data-theme="orange"],
-[data-theme="red"] {
+[data-theme='sunset'],
+[data-theme='orange'],
+[data-theme='red'] {
   --app-bg: #130609;
   --app-bg-elevated: #1d0d0d;
   --content-bg: rgba(18, 8, 10, 0.96);
   --sidebar-bg: rgba(38, 14, 14, 0.46);
   --panel-bg: rgba(42, 16, 14, 0.52);
-  --panel-elevated-bg: rgba(72, 30, 21, 0.60);
+  --panel-elevated-bg: rgba(72, 30, 21, 0.6);
   --composer-bg: rgba(45, 19, 18, 0.58);
-  --composer-glass-bg: rgba(42, 17, 17, 0.30);
+  --composer-glass-bg: rgba(42, 17, 17, 0.3);
   --composer-glass-border: rgba(255, 144, 86, 0.22);
   --accent: #ff9b54;
   --accent-hover: #ffb071;
@@ -654,18 +716,18 @@
   --theme-chroma-3: #f2c94c;
 }
 
-[data-theme="purple"],
-[data-theme="pink"],
-[data-theme="nebula"],
-[data-theme="candy"] {
+[data-theme='purple'],
+[data-theme='pink'],
+[data-theme='nebula'],
+[data-theme='candy'] {
   --app-bg: #090510;
   --app-bg-elevated: #12091d;
   --content-bg: rgba(11, 7, 18, 0.96);
   --sidebar-bg: rgba(27, 13, 42, 0.46);
   --panel-bg: rgba(30, 14, 46, 0.52);
-  --panel-elevated-bg: rgba(50, 24, 72, 0.60);
+  --panel-elevated-bg: rgba(50, 24, 72, 0.6);
   --composer-bg: rgba(32, 16, 48, 0.58);
-  --composer-glass-bg: rgba(30, 14, 46, 0.30);
+  --composer-glass-bg: rgba(30, 14, 46, 0.3);
   --composer-glass-border: rgba(213, 121, 255, 0.22);
   --accent: #d889ff;
   --accent-hover: #e2a5ff;
@@ -674,8 +736,8 @@
   --theme-chroma-3: #6f93ff;
 }
 
-[data-theme="yellow"],
-[data-theme="citrus"] {
+[data-theme='yellow'],
+[data-theme='citrus'] {
   --accent: #d8a900;
   --accent-hover: #efbf1d;
   --theme-chroma-1: #f2c94c;
@@ -683,7 +745,7 @@
   --theme-chroma-3: #4cc38a;
 }
 
-[data-theme="mist"] {
+[data-theme='mist'] {
   --app-bg: #eef4f6;
   --app-bg-elevated: #fbfdfe;
   --app-bg-sunken: #dfe9ed;
@@ -691,7 +753,7 @@
   --content-bg: rgba(251, 253, 255, 0.96);
   --bg-primary: var(--content-bg);
   --bg-secondary: var(--app-bg-elevated);
-  --sidebar-bg: rgba(229, 238, 242, 0.70);
+  --sidebar-bg: rgba(229, 238, 242, 0.7);
   --sidebar-bg-solid: #e5eef2;
   --panel-bg: rgba(232, 241, 245, 0.72);
   --panel-bg-solid: #e8f1f5;
@@ -719,8 +781,8 @@
   --text-muted: rgba(18, 29, 35, 0.32);
   --sidebar-text: rgba(18, 29, 35, 0.82);
   --sidebar-text-secondary: rgba(18, 29, 35, 0.52);
-  --sidebar-border: rgba(28, 44, 54, 0.10);
-  --panel-border: rgba(28, 44, 54, 0.10);
+  --sidebar-border: rgba(28, 44, 54, 0.1);
+  --panel-border: rgba(28, 44, 54, 0.1);
   --composer-border: rgba(28, 44, 54, 0.12);
   --accent: #3f8794;
   --accent-hover: #2e7180;
@@ -750,12 +812,12 @@
   --cm-heading: #2e7180;
   --cm-invalid: #cf222e;
   --cm-gutter-bg: rgba(18, 29, 35, 0.05);
-  --cm-gutter-border: rgba(18, 29, 35, 0.10);
+  --cm-gutter-border: rgba(18, 29, 35, 0.1);
   --cm-active-line: rgba(18, 29, 35, 0.045);
   --cm-bracket-match: rgba(18, 29, 35, 0.12);
 }
 
-[data-theme="sage"] {
+[data-theme='sage'] {
   --app-bg: #f0f5f0;
   --app-bg-elevated: #fcfefb;
   --app-bg-sunken: #e3ece2;
@@ -763,7 +825,7 @@
   --content-bg: rgba(252, 255, 251, 0.96);
   --bg-primary: var(--content-bg);
   --bg-secondary: var(--app-bg-elevated);
-  --sidebar-bg: rgba(231, 240, 229, 0.70);
+  --sidebar-bg: rgba(231, 240, 229, 0.7);
   --sidebar-bg-solid: #e7f0e5;
   --panel-bg: rgba(235, 243, 233, 0.72);
   --panel-bg-solid: #ebf3e9;
@@ -791,8 +853,8 @@
   --text-muted: rgba(22, 32, 22, 0.32);
   --sidebar-text: rgba(22, 32, 22, 0.82);
   --sidebar-text-secondary: rgba(22, 32, 22, 0.52);
-  --sidebar-border: rgba(34, 54, 38, 0.10);
-  --panel-border: rgba(34, 54, 38, 0.10);
+  --sidebar-border: rgba(34, 54, 38, 0.1);
+  --panel-border: rgba(34, 54, 38, 0.1);
   --composer-border: rgba(34, 54, 38, 0.12);
   --accent: #5f8f62;
   --accent-hover: #4b7a4f;
@@ -822,12 +884,12 @@
   --cm-heading: #4b7a4f;
   --cm-invalid: #cf222e;
   --cm-gutter-bg: rgba(22, 32, 22, 0.05);
-  --cm-gutter-border: rgba(22, 32, 22, 0.10);
+  --cm-gutter-border: rgba(22, 32, 22, 0.1);
   --cm-active-line: rgba(22, 32, 22, 0.045);
   --cm-bracket-match: rgba(22, 32, 22, 0.12);
 }
 
-[data-theme="graphite"] {
+[data-theme='graphite'] {
   --app-bg: #111216;
   --app-bg-elevated: #1b1d22;
   --content-bg: rgba(18, 19, 24, 0.96);
@@ -865,7 +927,7 @@
  * The `rimshine` composer style at the top of main.css opts into
  * the same variable so the look pairs naturally with — but isn't
  * limited to — this theme. */
-[data-theme="obsidian"] {
+[data-theme='obsidian'] {
   --app-bg: #181818;
   --app-bg-elevated: #0e0c11;
   /* 1.0.5-EW55 — Transcript fully opaque on Obsidian. The
@@ -884,7 +946,7 @@
    * reads through, framing the opaque transcript on the right
    * with a feathered glassy left edge. */
   --sidebar-bg: rgba(20, 18, 24, 0.18);
-  --panel-bg: rgba(22, 20, 26, 0.60);
+  --panel-bg: rgba(22, 20, 26, 0.6);
   --panel-elevated-bg: rgba(34, 31, 38, 0.66);
   --composer-bg: rgba(22, 20, 26, 0.68);
   --composer-glass-bg: rgba(22, 20, 26, 0.34);
@@ -907,8 +969,8 @@
   --obsidian-rim-shine-strong: rgba(255, 232, 214, 0.26);
   /* Optional inner shadow at the bottom edge — sells the
    * "lit from above" read when paired with the rim. */
-  --obsidian-base-shadow: 0 1px 0 rgba(0, 0, 0, 0.55) inset,
-    0 -10px 24px -12px rgba(0, 0, 0, 0.4) inset;
+  --obsidian-base-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.55) inset, 0 -10px 24px -12px rgba(0, 0, 0, 0.4) inset;
   /* The faint dusk-pink ambient wash painted behind the whole
    * app-bg. Set as a backgroundImage layer in the body rule
    * below. */
@@ -921,8 +983,8 @@
  * is active. The gradient is fixed (so it doesn't scroll with
  * content) and feathered into transparency so the rest of the
  * surface reads as deep charcoal. */
-[data-theme="obsidian"] body,
-[data-theme="obsidian"] {
+[data-theme='obsidian'] body,
+[data-theme='obsidian'] {
   background-image: var(--obsidian-ambient-gradient);
   background-attachment: fixed;
 }
@@ -937,15 +999,15 @@
  * The two-tone-sidebar block above gives .app-sidebar its own
  * light box-shadow (white inset left + dark inset right) so
  * applying the dark-mode rim-shine here would fight it. */
-[data-theme="obsidian"] .panel,
-[data-theme="obsidian"] .panel-elevated,
-[data-theme="obsidian"] .composer-surface,
-[data-theme="obsidian"] .welcome-usage-dashboard,
-[data-theme="obsidian"] .welcome-usage-provider-card,
-[data-theme="obsidian"] .welcome-usage-workspace-card,
-[data-theme="obsidian"] .welcome-usage-stat,
-[data-theme="obsidian"] .welcome-usage-cost-chart,
-[data-theme="obsidian"] .welcome-usage-providers-timecode {
+[data-theme='obsidian'] .panel,
+[data-theme='obsidian'] .panel-elevated,
+[data-theme='obsidian'] .composer-surface,
+[data-theme='obsidian'] .welcome-usage-dashboard,
+[data-theme='obsidian'] .welcome-usage-provider-card,
+[data-theme='obsidian'] .welcome-usage-workspace-card,
+[data-theme='obsidian'] .welcome-usage-stat,
+[data-theme='obsidian'] .welcome-usage-cost-chart,
+[data-theme='obsidian'] .welcome-usage-providers-timecode {
   box-shadow:
     inset 0 1px 0 var(--obsidian-rim-shine),
     0 1px 0 rgba(0, 0, 0, 0.4);
@@ -975,11 +1037,15 @@
  * settings pane, killing legibility of every label and option.
  * `background-image: none` removes the overlay; the explicit
  * background-color locks the surface to the theme's true fill. */
-[data-theme="obsidian"][data-appearance] .app-transcript,
-[data-theme="obsidian"] .app-transcript,
-[data-theme="obsidian"][data-appearance] .app-settings-pane,
-[data-theme="obsidian"] .app-settings-pane {
-  background-color: color-mix(in srgb, var(--content-bg) var(--main-pane-opacity-100), transparent) !important;
+[data-theme='obsidian'][data-appearance] .app-transcript,
+[data-theme='obsidian'] .app-transcript,
+[data-theme='obsidian'][data-appearance] .app-settings-pane,
+[data-theme='obsidian'] .app-settings-pane {
+  background-color: color-mix(
+    in srgb,
+    var(--content-bg) var(--main-pane-opacity-100),
+    transparent
+  ) !important;
   background-image: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -1015,7 +1081,7 @@
  * `!important` on `background` plus the explicit per-mode
  * overrides below ensure the light wash actually paints
  * regardless of which appearance the user picks. */
-[data-theme="obsidian"][data-theme="obsidian"] .app-sidebar {
+[data-theme='obsidian'][data-theme='obsidian'] .app-sidebar {
   /* Sidebar-specific tokens — light palette. */
   --sidebar-bg: rgba(238, 242, 247, 0.06);
   --sidebar-bg-solid: #eef2f7;
@@ -1032,7 +1098,7 @@
   --text-secondary: rgba(18, 21, 27, 0.62);
   --text-tertiary: rgba(18, 21, 27, 0.45);
   --text-muted: rgba(18, 21, 27, 0.32);
-  --panel-border: rgba(18, 21, 27, 0.10);
+  --panel-border: rgba(18, 21, 27, 0.1);
   --panel-bg: rgba(255, 255, 255, 0.42);
   --panel-elevated-bg: rgba(255, 255, 255, 0.58);
   --tw-sidebar-neutral-material-bg: var(--tw-neutral-material-bg-light);
@@ -1055,24 +1121,31 @@
  * brighter light wash than the EW56 attempt so the light read
  * is unmistakable even when sitting on top of macOS sidebar
  * vibrancy (which trends dark on dark-mode systems). */
-[data-theme="obsidian"][data-appearance="solid"] .app-sidebar {
+[data-theme='obsidian'][data-appearance='solid'] .app-sidebar {
   background: rgba(238, 242, 247, var(--sidebar-alpha-042)) !important;
 }
-[data-theme="obsidian"][data-appearance="soft_glass"] .app-sidebar {
+[data-theme='obsidian'][data-appearance='soft_glass'] .app-sidebar {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, var(--sidebar-alpha-028)), rgba(255, 255, 255, var(--sidebar-alpha-010))),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, var(--sidebar-alpha-028)),
+      rgba(255, 255, 255, var(--sidebar-alpha-010))
+    ),
     rgba(238, 242, 247, var(--sidebar-alpha-018)) !important;
   backdrop-filter: blur(22px) !important;
   -webkit-backdrop-filter: blur(22px) !important;
 }
-[data-theme="obsidian"][data-appearance="native_glass"] .app-sidebar {
+[data-theme='obsidian'][data-appearance='native_glass'] .app-sidebar {
   /* macOS vibrancy paints behind via the BrowserWindow's
    * `vibrancy: 'sidebar'` option — on dark-mode systems this
    * material is dark, so we paint a substantial light wash on
    * top to flip the read to light. The previous 0.10 / 0.02
    * gradient was too faint to overcome the vibrancy. */
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, var(--sidebar-alpha-036)), rgba(255, 255, 255, var(--sidebar-alpha-020))) !important;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, var(--sidebar-alpha-036)),
+    rgba(255, 255, 255, var(--sidebar-alpha-020))
+  ) !important;
 }
 
 /* ============================================================
@@ -1094,7 +1167,7 @@
  * main.css — both lock their own values and ignore the rest
  * of the cascade, so you can wear obsidian-composer on
  * alabaster-theme or vice-versa if you want a brutalist mix. */
-[data-theme="alabaster"] {
+[data-theme='alabaster'] {
   --app-bg: #f4f3ef;
   --app-bg-elevated: #fbfaf6;
   --app-bg-sunken: #ecebe6;
@@ -1107,7 +1180,7 @@
   /* Sidebar — VERY transparent dark wash (the inverse bizarre
    * twin to obsidian's very-transparent-light sidebar). The
    * lavender halo behind it reads through aggressively. */
-  --sidebar-bg: rgba(18, 21, 27, 0.10);
+  --sidebar-bg: rgba(18, 21, 27, 0.1);
   --sidebar-bg-solid: #1a1a1d;
   --panel-bg: rgba(252, 251, 247, 0.74);
   --panel-bg-solid: #fbfaf6;
@@ -1115,7 +1188,7 @@
   --surface-1: #ffffff;
   --surface-2: #f0efea;
   --surface-3: #e6e5e0;
-  --surface-border: rgba(18, 21, 27, 0.10);
+  --surface-border: rgba(18, 21, 27, 0.1);
   --rightdock-pane-bg: #fbfaf6;
   --rightdock-surface-raised: #ffffff;
   --rightdock-surface-sunken: #e8e8e5;
@@ -1128,7 +1201,7 @@
   --composer-glass-bg: rgba(255, 255, 255, 0.62);
   --composer-glass-border: rgba(18, 21, 27, 0.18);
   --composer-glass-highlight: rgba(0, 0, 0, 0.04);
-  --composer-glass-vignette: rgba(140, 145, 160, 0.10);
+  --composer-glass-vignette: rgba(140, 145, 160, 0.1);
   --tw-popover-glass-bg: var(--tw-neutral-material-bg-light);
   --tw-glass-solid: var(--tw-neutral-material-solid-light);
   --tw-popover-material-shadow: var(--tw-neutral-material-shadow-light);
@@ -1141,10 +1214,10 @@
    * also scope-overrides these for safety. */
   --sidebar-text: rgba(255, 255, 255, 0.86);
   --sidebar-text-secondary: rgba(255, 255, 255, 0.54);
-  --sidebar-border: rgba(255, 255, 255, 0.10);
-  --panel-border: rgba(18, 21, 27, 0.10);
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --panel-border: rgba(18, 21, 27, 0.1);
   --composer-border: rgba(18, 21, 27, 0.12);
-  --shadow-lg: 0 14px 44px rgba(60, 70, 110, 0.10);
+  --shadow-lg: 0 14px 44px rgba(60, 70, 110, 0.1);
   /* Accent trio — slate / ink / pewter (cool/neutral, the
    * polar inverse of obsidian's pewter / copper / smoke). */
   --accent: #5a6172;
@@ -1176,12 +1249,12 @@
   --cm-heading: #0550ae;
   --cm-invalid: #cf222e;
   --cm-gutter-bg: rgba(18, 21, 27, 0.05);
-  --cm-gutter-border: rgba(18, 21, 27, 0.10);
+  --cm-gutter-border: rgba(18, 21, 27, 0.1);
   --cm-active-line: rgba(18, 21, 27, 0.045);
   --cm-bracket-match: rgba(18, 21, 27, 0.12);
   /* Cool halo wash — lavender/blue at very low alpha. The
    * polar inverse of obsidian's warm peach/copper halo. */
-  --alabaster-halo-cool: rgba(120, 140, 200, 0.10);
+  --alabaster-halo-cool: rgba(120, 140, 200, 0.1);
   --alabaster-halo-cool-strong: rgba(120, 140, 200, 0.18);
   /* The signature rim — 1px charcoal-tinted shadow on the top
    * edge of every panel / card / composer surface. Inverse of
@@ -1203,7 +1276,7 @@
  * tokens, prominent blue-band active-line highlight, and a
  * seamless gutter that merges with the editor background.
  * Paired with xcode-light below. */
-[data-theme="xcode-dark"] {
+[data-theme='xcode-dark'] {
   --cm-keyword: #fc5fa3;
   --cm-name: #d0d0d0;
   --cm-property: #4eb0cc;
@@ -1222,7 +1295,7 @@
   --cm-bracket-match: rgba(100, 130, 255, 0.25);
 }
 
-[data-theme="xcode-dark"] .cm-activeLineGutter {
+[data-theme='xcode-dark'] .cm-activeLineGutter {
   color: #ffffff !important;
 }
 
@@ -1230,7 +1303,7 @@
  * Clean white editor surface, saturated Xcode-palette syntax
  * tokens for light backgrounds, light-blue active-line band,
  * and a seamless gutter. Paired with xcode-dark above. */
-[data-theme="xcode-light"] {
+[data-theme='xcode-light'] {
   --cm-keyword: #ad3da4;
   --cm-name: #262626;
   --cm-property: #4b21b0;
@@ -1249,15 +1322,15 @@
   --cm-bracket-match: rgba(0, 70, 200, 0.15);
 }
 
-[data-theme="xcode-light"] .cm-activeLineGutter {
+[data-theme='xcode-light'] .cm-activeLineGutter {
   color: #000000 !important;
 }
 
 /* Paint the cool lavender ambient gradient behind the app on
  * alabaster. Fixed (doesn't scroll with content), feathered
  * into transparency at the edges. */
-[data-theme="alabaster"] body,
-[data-theme="alabaster"] {
+[data-theme='alabaster'] body,
+[data-theme='alabaster'] {
   background-image: var(--alabaster-ambient-gradient);
   background-attachment: fixed;
 }
@@ -1266,15 +1339,15 @@
  * edge of every elevated surface. Sidebar deliberately
  * EXCLUDED here because its block below paints its own
  * inverse-bizarre shadow (dark-inset-left + light-inset-right). */
-[data-theme="alabaster"] .panel,
-[data-theme="alabaster"] .panel-elevated,
-[data-theme="alabaster"] .composer-surface,
-[data-theme="alabaster"] .welcome-usage-dashboard,
-[data-theme="alabaster"] .welcome-usage-provider-card,
-[data-theme="alabaster"] .welcome-usage-workspace-card,
-[data-theme="alabaster"] .welcome-usage-stat,
-[data-theme="alabaster"] .welcome-usage-cost-chart,
-[data-theme="alabaster"] .welcome-usage-providers-timecode {
+[data-theme='alabaster'] .panel,
+[data-theme='alabaster'] .panel-elevated,
+[data-theme='alabaster'] .composer-surface,
+[data-theme='alabaster'] .welcome-usage-dashboard,
+[data-theme='alabaster'] .welcome-usage-provider-card,
+[data-theme='alabaster'] .welcome-usage-workspace-card,
+[data-theme='alabaster'] .welcome-usage-stat,
+[data-theme='alabaster'] .welcome-usage-cost-chart,
+[data-theme='alabaster'] .welcome-usage-providers-timecode {
   box-shadow:
     inset 0 1px 0 var(--alabaster-rim-shine),
     0 1px 0 rgba(255, 255, 255, 0.6);
@@ -1291,11 +1364,15 @@
  * dark-gray wash over the cream settings pane, killing every
  * label's legibility. `background-image: none` removes the
  * overlay; the cream background-color locks the surface. */
-[data-theme="alabaster"][data-appearance] .app-transcript,
-[data-theme="alabaster"] .app-transcript,
-[data-theme="alabaster"][data-appearance] .app-settings-pane,
-[data-theme="alabaster"] .app-settings-pane {
-  background-color: color-mix(in srgb, #f4f3ef var(--main-pane-opacity-100), transparent) !important;
+[data-theme='alabaster'][data-appearance] .app-transcript,
+[data-theme='alabaster'] .app-transcript,
+[data-theme='alabaster'][data-appearance] .app-settings-pane,
+[data-theme='alabaster'] .app-settings-pane {
+  background-color: color-mix(
+    in srgb,
+    #f4f3ef var(--main-pane-opacity-100),
+    transparent
+  ) !important;
   background-image: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -1308,8 +1385,8 @@
  * through. Same doubled-attribute specificity trick as
  * obsidian for the same reason (beats the appearance-mode
  * sidebar rules that load later in main.css). */
-[data-theme="alabaster"][data-theme="alabaster"] .app-sidebar {
-  --sidebar-bg: rgba(18, 21, 27, 0.10);
+[data-theme='alabaster'][data-theme='alabaster'] .app-sidebar {
+  --sidebar-bg: rgba(18, 21, 27, 0.1);
   --sidebar-bg-solid: #1a1a1d;
   --sidebar-text: rgba(255, 255, 255, 0.88);
   --sidebar-text-secondary: rgba(255, 255, 255, 0.58);
@@ -1321,7 +1398,7 @@
   --text-secondary: rgba(255, 255, 255, 0.62);
   --text-tertiary: rgba(255, 255, 255, 0.45);
   --text-muted: rgba(255, 255, 255, 0.32);
-  --panel-border: rgba(255, 255, 255, 0.10);
+  --panel-border: rgba(255, 255, 255, 0.1);
   --panel-bg: rgba(20, 22, 28, 0.46);
   --panel-elevated-bg: rgba(28, 30, 38, 0.56);
   --tw-sidebar-neutral-material-bg: var(--tw-neutral-material-bg-dark);
@@ -1345,23 +1422,34 @@
 /* Per-appearance-mode sidebar tunings — give each glass mode a
  * substantial dark wash so the inverse-bizarre read survives
  * macOS vibrancy (which trends light on light-mode systems). */
-[data-theme="alabaster"][data-appearance="solid"] .app-sidebar {
-  background: color-mix(in srgb, rgba(18, 21, 27, 0.38) var(--sidebar-opacity-100), transparent) !important;
+[data-theme='alabaster'][data-appearance='solid'] .app-sidebar {
+  background: color-mix(
+    in srgb,
+    rgba(18, 21, 27, 0.38) var(--sidebar-opacity-100),
+    transparent
+  ) !important;
 }
-[data-theme="alabaster"][data-appearance="soft_glass"] .app-sidebar {
+[data-theme='alabaster'][data-appearance='soft_glass'] .app-sidebar {
   background:
-    linear-gradient(180deg, rgba(0, 0, 0, var(--sidebar-alpha-018)), rgba(0, 0, 0, var(--sidebar-alpha-006))),
+    linear-gradient(
+      180deg,
+      rgba(0, 0, 0, var(--sidebar-alpha-018)),
+      rgba(0, 0, 0, var(--sidebar-alpha-006))
+    ),
     rgba(20, 22, 28, var(--sidebar-alpha-022)) !important;
   backdrop-filter: blur(22px) !important;
   -webkit-backdrop-filter: blur(22px) !important;
 }
-[data-theme="alabaster"][data-appearance="native_glass"] .app-sidebar {
+[data-theme='alabaster'][data-appearance='native_glass'] .app-sidebar {
   /* macOS sidebar vibrancy paints behind — on light-mode
    * systems this material is light, so we paint a substantial
    * dark wash on top to flip the read to dark. Mirror of
    * obsidian's light wash on native_glass. */
-  background:
-    linear-gradient(180deg, rgba(0, 0, 0, var(--sidebar-alpha-034)), rgba(0, 0, 0, var(--sidebar-alpha-018))) !important;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, var(--sidebar-alpha-034)),
+    rgba(0, 0, 0, var(--sidebar-alpha-018))
+  ) !important;
 }
 
 /* ============================================================
@@ -1389,7 +1477,7 @@
  * sidebar, so they can't rely on vibrancy alone for legibility).
  * Obsidian is deliberately untouched — its panels already read
  * correctly on the dark base. */
-[data-theme="alabaster"][data-theme="alabaster"]
+[data-theme='alabaster'][data-theme='alabaster']
   :is(.app-inspector, .app-file-editor, .chat-media-panel) {
   --sidebar-text: rgba(255, 255, 255, 0.88);
   --sidebar-text-secondary: rgba(255, 255, 255, 0.58);
@@ -1411,11 +1499,11 @@
   --panel-bg: rgba(20, 22, 28, 0.46);
   --panel-bg-solid: #1a1a1d;
   --panel-elevated-bg: rgba(28, 30, 38, 0.56);
-  --panel-border: rgba(255, 255, 255, 0.10);
+  --panel-border: rgba(255, 255, 255, 0.1);
   --surface-1: #1c1c21;
   --surface-2: #222228;
   --surface-3: #2a2a31;
-  --surface-border: rgba(255, 255, 255, 0.10);
+  --surface-border: rgba(255, 255, 255, 0.1);
   --composer-glass-bg: rgba(20, 22, 28, 0.55);
   color-scheme: dark;
 }
@@ -1426,42 +1514,40 @@
  * the doubled-theme / appearance specificity beats the generic
  * `background-image: var(--theme-gradient-panel) !important` and
  * the base translucent fills. */
-[data-theme="alabaster"][data-appearance="solid"]
+[data-theme='alabaster'][data-appearance='solid']
   :is(.app-inspector, .app-file-editor, .chat-media-panel) {
   background: #17171b !important;
   background-image: none !important;
 }
-[data-theme="alabaster"][data-appearance="soft_glass"]
+[data-theme='alabaster'][data-appearance='soft_glass']
   :is(.app-inspector, .app-file-editor, .chat-media-panel) {
   background:
-    linear-gradient(180deg, rgba(0, 0, 0, 0.20), rgba(0, 0, 0, 0.08)),
-    rgba(22, 24, 30, 0.74) !important;
+    linear-gradient(180deg, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.08)), rgba(22, 24, 30, 0.74) !important;
   backdrop-filter: blur(22px) !important;
   -webkit-backdrop-filter: blur(22px) !important;
 }
-[data-theme="alabaster"][data-appearance="native_glass"][data-reduce-transparency="false"]
+[data-theme='alabaster'][data-appearance='native_glass'][data-reduce-transparency='false']
   :is(.app-inspector, .app-file-editor, .chat-media-panel) {
   background:
-    linear-gradient(180deg, rgba(0, 0, 0, 0.34), rgba(0, 0, 0, 0.18)),
-    rgba(20, 22, 28, 0.62) !important;
-  border-color: rgba(255, 255, 255, 0.10) !important;
+    linear-gradient(180deg, rgba(0, 0, 0, 0.34), rgba(0, 0, 0, 0.18)), rgba(20, 22, 28, 0.62) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
 }
-[data-theme="alabaster"][data-reduce-transparency="true"]
+[data-theme='alabaster'][data-reduce-transparency='true']
   :is(.app-inspector, .app-file-editor, .chat-media-panel) {
   background: #17171b !important;
   background-image: none !important;
 }
 
-[data-theme="rainbow"],
-[data-theme="twilight"],
-[data-theme="cyber"] {
+[data-theme='rainbow'],
+[data-theme='twilight'],
+[data-theme='cyber'] {
   --app-bg: #05070d;
   --app-bg-elevated: #10131d;
   --content-bg: rgba(7, 9, 16, 0.96);
-  --sidebar-bg: rgba(19, 23, 38, 0.50);
+  --sidebar-bg: rgba(19, 23, 38, 0.5);
   --panel-bg: rgba(18, 22, 36, 0.56);
   --panel-elevated-bg: rgba(31, 36, 56, 0.64);
-  --composer-bg: rgba(20, 24, 38, 0.60);
+  --composer-bg: rgba(20, 24, 38, 0.6);
   --composer-glass-bg: rgba(18, 22, 36, 0.32);
   --composer-glass-border: rgba(101, 210, 255, 0.22);
   --accent: #62d8ff;
@@ -1471,61 +1557,61 @@
   --theme-chroma-3: #4cc38a;
 }
 
-[data-theme="ocean"] {
+[data-theme='ocean'] {
   --theme-chroma-1: #41c7e5;
   --theme-chroma-2: #2563eb;
   --theme-chroma-3: #22d3ee;
 }
 
-[data-theme="forest"] {
+[data-theme='forest'] {
   --theme-chroma-1: #4cc38a;
   --theme-chroma-2: #84a33b;
   --theme-chroma-3: #1f8f65;
 }
 
-[data-theme="red"] {
+[data-theme='red'] {
   --theme-chroma-1: #e65b62;
   --theme-chroma-2: #ff7a59;
   --theme-chroma-3: #b91c1c;
 }
 
-[data-theme="sunset"] {
+[data-theme='sunset'] {
   --theme-chroma-1: #ff9b54;
   --theme-chroma-2: #ff5fa2;
   --theme-chroma-3: #7c5cff;
 }
 
-[data-theme="pink"] {
+[data-theme='pink'] {
   --theme-chroma-1: #ff5fa2;
   --theme-chroma-2: #ff84c5;
   --theme-chroma-3: #bf7cff;
 }
 
-[data-theme="nebula"] {
+[data-theme='nebula'] {
   --theme-chroma-1: #bf7cff;
   --theme-chroma-2: #62d8ff;
   --theme-chroma-3: #ff5fa2;
 }
 
-[data-theme="candy"] {
+[data-theme='candy'] {
   --theme-chroma-1: #ff5fa2;
   --theme-chroma-2: #f2c94c;
   --theme-chroma-3: #62d8ff;
 }
 
-[data-theme="rainbow"] {
+[data-theme='rainbow'] {
   --theme-chroma-1: #ff5fa2;
   --theme-chroma-2: #f2c94c;
   --theme-chroma-3: #62d8ff;
 }
 
-[data-theme="twilight"] {
+[data-theme='twilight'] {
   --theme-chroma-1: #5a8cff;
   --theme-chroma-2: #bf7cff;
   --theme-chroma-3: #ff9b54;
 }
 
-[data-theme="cyber"] {
+[data-theme='cyber'] {
   --theme-chroma-1: #62d8ff;
   --theme-chroma-2: #4cc38a;
   --theme-chroma-3: #ff5fa2;
@@ -1536,20 +1622,41 @@
  * is the lone "warm" beat that ties back to the ambient halo
  * gradient; pewter + smoke stay restrained so the rim shine
  * remains the primary visual moment. */
-[data-theme="obsidian"] {
+[data-theme='obsidian'] {
   --theme-chroma-1: #c8c0d2;
   --theme-chroma-2: #d8a07a;
   --theme-chroma-3: #6f6878;
 }
 
 /* Accent overrides */
-[data-accent="blue"] { --accent: #5a8cff; --accent-hover: #79a2ff; }
-[data-accent="purple"] { --accent: #bf7cff; --accent-hover: #d09aff; }
-[data-accent="pink"] { --accent: #ff5fa2; --accent-hover: #ff84b8; }
-[data-accent="orange"] { --accent: #ff9b54; --accent-hover: #ffb071; }
-[data-accent="green"] { --accent: #4cc38a; --accent-hover: #6ddfa8; }
-[data-accent="red"] { --accent: #e65b62; --accent-hover: #f17b81; }
-[data-accent="yellow"] { --accent: #f2c94c; --accent-hover: #ffd968; }
+[data-accent='blue'] {
+  --accent: #5a8cff;
+  --accent-hover: #79a2ff;
+}
+[data-accent='purple'] {
+  --accent: #bf7cff;
+  --accent-hover: #d09aff;
+}
+[data-accent='pink'] {
+  --accent: #ff5fa2;
+  --accent-hover: #ff84b8;
+}
+[data-accent='orange'] {
+  --accent: #ff9b54;
+  --accent-hover: #ffb071;
+}
+[data-accent='green'] {
+  --accent: #4cc38a;
+  --accent-hover: #6ddfa8;
+}
+[data-accent='red'] {
+  --accent: #e65b62;
+  --accent-hover: #f17b81;
+}
+[data-accent='yellow'] {
+  --accent: #f2c94c;
+  --accent-hover: #ffd968;
+}
 
 [data-accent] {
   --info: var(--accent);
@@ -1567,14 +1674,30 @@
  * single `--user-bubble-base` hue that `main.css` mixes into both
  * the bubble background and the matching `.message-meta.user-meta`
  * label so they read as one theme. */
-[data-user-bubble-color="blue"]     { --user-bubble-base: #5a8cff; }
-[data-user-bubble-color="purple"]   { --user-bubble-base: #bf7cff; }
-[data-user-bubble-color="pink"]     { --user-bubble-base: #ff5fa2; }
-[data-user-bubble-color="orange"]   { --user-bubble-base: #ff9b54; }
-[data-user-bubble-color="green"]    { --user-bubble-base: #4cc38a; }
-[data-user-bubble-color="red"]      { --user-bubble-base: #e65b62; }
-[data-user-bubble-color="yellow"]   { --user-bubble-base: #f2c94c; }
-[data-user-bubble-color="graphite"] { --user-bubble-base: #9da6b8; }
+[data-user-bubble-color='blue'] {
+  --user-bubble-base: #5a8cff;
+}
+[data-user-bubble-color='purple'] {
+  --user-bubble-base: #bf7cff;
+}
+[data-user-bubble-color='pink'] {
+  --user-bubble-base: #ff5fa2;
+}
+[data-user-bubble-color='orange'] {
+  --user-bubble-base: #ff9b54;
+}
+[data-user-bubble-color='green'] {
+  --user-bubble-base: #4cc38a;
+}
+[data-user-bubble-color='red'] {
+  --user-bubble-base: #e65b62;
+}
+[data-user-bubble-color='yellow'] {
+  --user-bubble-base: #f2c94c;
+}
+[data-user-bubble-color='graphite'] {
+  --user-bubble-base: #9da6b8;
+}
 
 /* Settings → Appearance → "Message bubble" supplies this colour directly, as
  * `--message-bubble-accent` (set inline on :root by useAppearance).
@@ -1583,11 +1706,11 @@
  * so aliasing it here would drag the bubble back onto the desktop's blue. It
  * survives only as the last-resort fallback for a renderer that painted
  * before the inline token was written. */
-[data-user-bubble-color="shared"] {
+[data-user-bubble-color='shared'] {
   --user-bubble-base: var(--message-bubble-accent, var(--accent));
 }
 
-[data-corners="hard"] {
+[data-corners='hard'] {
   --radius-sm: 3px;
   --radius-md: 5px;
   --radius-lg: 7px;
@@ -1596,40 +1719,40 @@
   --tw-popover-row-radius: 4px;
 }
 
-[data-visual-effect="classic"] {
+[data-visual-effect='classic'] {
   --composer-glass-bg: color-mix(in srgb, var(--composer-bg) 78%, transparent);
   --composer-glass-border: rgba(255, 255, 255, 0.18);
 }
 
-[data-visual-effect="liquid_glass"] {
+[data-visual-effect='liquid_glass'] {
   --composer-glass-border: color-mix(in srgb, var(--accent) 18%, rgba(255, 255, 255, 0.16));
 }
 
 /* Soft Glass mode: use backdrop-filter on sidebar/panel */
-[data-appearance="soft_glass"] {
+[data-appearance='soft_glass'] {
   --sidebar-bg: rgba(30, 30, 34, 0.42);
-  --panel-bg: rgba(28, 28, 32, 0.50);
+  --panel-bg: rgba(28, 28, 32, 0.5);
   --panel-elevated-bg: rgba(38, 38, 44, 0.62);
   --composer-bg: rgba(34, 34, 40, 0.64);
 }
 
 /* Native Glass mode: lighter for OS vibrancy to show through */
-[data-appearance="native_glass"] {
+[data-appearance='native_glass'] {
   --app-bg: transparent;
   --app-bg-elevated: rgba(255, 255, 255, 0.06);
   --app-bg-sunken: transparent;
   --sidebar-bg: transparent;
   --panel-bg: transparent;
   --panel-elevated-bg: rgba(255, 255, 255, 0.024);
-  --composer-bg: rgba(34, 34, 40, 0.40);
+  --composer-bg: rgba(34, 34, 40, 0.4);
   --content-bg: rgba(22, 23, 27, 0.94);
   --composer-border: rgba(255, 255, 255, 0.16);
-  --sidebar-border: rgba(255, 255, 255, 0.20);
-  --panel-border: rgba(255, 255, 255, 0.20);
+  --sidebar-border: rgba(255, 255, 255, 0.2);
+  --panel-border: rgba(255, 255, 255, 0.2);
 }
 
 /* Solid mode: fully opaque */
-[data-appearance="solid"] {
+[data-appearance='solid'] {
   --sidebar-bg: var(--sidebar-bg-solid);
   --panel-bg: var(--panel-bg-solid);
   --panel-elevated-bg: #2a2a30;
@@ -1637,7 +1760,7 @@
 }
 
 /* Reduce Transparency */
-[data-reduce-transparency="true"] {
+[data-reduce-transparency='true'] {
   --sidebar-bg: var(--sidebar-bg-solid);
   --panel-bg: var(--panel-bg-solid);
   --panel-elevated-bg: #2a2a30;
@@ -1645,7 +1768,7 @@
 }
 
 /* Compact density */
-[data-compact="true"] {
+[data-compact='true'] {
   --space-xs: 2px;
   --space-sm: 4px;
   --space-md: 8px;
@@ -1655,23 +1778,40 @@
 }
 
 /* Scrollbars */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--scrollbar-track); }
-::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
 
 /* Selection */
-::selection { background: rgba(90, 140, 255, 0.30); color: #fff; }
+::selection {
+  background: rgba(90, 140, 255, 0.3);
+  color: #fff;
+}
 
 /* Reduce motion */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.001ms !important;
     transition-duration: 0.001ms !important;
   }
 }
-[data-reduce-motion="true"] {
-  *, *::before, *::after {
+[data-reduce-motion='true'] {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.001ms !important;
     transition-duration: 0.001ms !important;
   }
@@ -1680,10 +1820,10 @@
 /* High contrast / increased contrast */
 @media (prefers-contrast: more) {
   :root {
-    --sidebar-border: rgba(255,255,255,0.20);
-    --panel-border: rgba(255,255,255,0.20);
-    --composer-border: rgba(255,255,255,0.25);
+    --sidebar-border: rgba(255, 255, 255, 0.2);
+    --panel-border: rgba(255, 255, 255, 0.2);
+    --composer-border: rgba(255, 255, 255, 0.25);
     --text-primary: #fff;
-    --text-secondary: rgba(255,255,255,0.75);
+    --text-secondary: rgba(255, 255, 255, 0.75);
   }
 }

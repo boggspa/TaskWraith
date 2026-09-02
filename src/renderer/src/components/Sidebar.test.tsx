@@ -225,7 +225,8 @@ function renderSidebar(
 ) {
   const workspace = makeWorkspace()
   const workspaces = options.workspaces ?? [workspace]
-  const currentWorkspace = options.currentWorkspace === undefined ? workspace : options.currentWorkspace
+  const currentWorkspace =
+    options.currentWorkspace === undefined ? workspace : options.currentWorkspace
   return renderToStaticMarkup(
     <Sidebar
       workspaces={workspaces}
@@ -340,17 +341,25 @@ describe('Sidebar settings quick menu', () => {
     const anchor = { left: 14, right: 61, top: 780, bottom: 940 }
 
     expect(
-      resolveSidebarFooterPopoverPortalPosition(anchor, { width: 1280, height: 980 }, {
-        placement: 'above',
-        popoverWidth: 280
-      })
+      resolveSidebarFooterPopoverPortalPosition(
+        anchor,
+        { width: 1280, height: 980 },
+        {
+          placement: 'above',
+          popoverWidth: 280
+        }
+      )
     ).toEqual({ position: 'fixed', left: 14, bottom: 208 })
 
     expect(
-      resolveSidebarFooterPopoverPortalPosition(anchor, { width: 430, height: 980 }, {
-        placement: 'side',
-        popoverWidth: 420
-      })
+      resolveSidebarFooterPopoverPortalPosition(
+        anchor,
+        { width: 430, height: 980 },
+        {
+          placement: 'side',
+          popoverWidth: 420
+        }
+      )
     ).toEqual({ position: 'fixed', left: 8, bottom: 40 })
   })
 })
@@ -414,7 +423,10 @@ describe('Sidebar masthead', () => {
       ],
       { currentWorkspace: null }
     )
-    const masthead = html.slice(html.indexOf('sidebar-masthead'), html.indexOf('sidebar-masthead-stats'))
+    const masthead = html.slice(
+      html.indexOf('sidebar-masthead'),
+      html.indexOf('sidebar-masthead-stats')
+    )
 
     expect(masthead).toContain('TaskWraith')
     expect(masthead).not.toContain('General chats')
@@ -1666,10 +1678,7 @@ describe('Sidebar ensembles section', () => {
   it('dual-lists workspace-scoped ensembles under Workspaces and Ensembles', () => {
     stubSidebarStorage({
       [SIDEBAR_ACTIVE_TAB_STORAGE_KEY]: 'threads',
-      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept(
-        'workspaces',
-        'ensembles'
-      )
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces', 'ensembles')
     })
 
     const html = renderSidebar(
@@ -2545,7 +2554,12 @@ describe('Sidebar sleeping accent', () => {
     })
     const html = renderSidebar(
       [
-        makeChat({ appChatId: 'napping', title: 'Napping thread', updatedAt: 2, runs: [sleepingRun] }),
+        makeChat({
+          appChatId: 'napping',
+          title: 'Napping thread',
+          updatedAt: 2,
+          runs: [sleepingRun]
+        }),
         makeChat({ appChatId: 'viewer', updatedAt: 1 })
       ],
       { activeChatId: 'viewer' }
@@ -2562,7 +2576,12 @@ describe('Sidebar sleeping accent', () => {
     })
     const html = renderSidebar(
       [
-        makeChat({ appChatId: 'napping', title: 'Napping thread', updatedAt: 2, runs: [sleepingRun] }),
+        makeChat({
+          appChatId: 'napping',
+          title: 'Napping thread',
+          updatedAt: 2,
+          runs: [sleepingRun]
+        }),
         makeChat({ appChatId: 'viewer', updatedAt: 1 })
       ],
       {
@@ -2828,7 +2847,6 @@ describe('Sidebar footer controls', () => {
     expect(approval).not.toContain('glow-red')
     expect(question).not.toContain('glow-red')
   })
-
 })
 
 function makeDevice(overrides: Record<string, unknown> = {}) {
@@ -2855,7 +2873,7 @@ describe('DevicesFooterPopover', () => {
     const html = renderToStaticMarkup(
       <DevicesFooterPopover devices={[makeDevice()]} onOpenSettings={() => {}} />
     )
-    expect(html).toContain("Chris&#x27;s iPhone")
+    expect(html).toContain('Chris&#x27;s iPhone')
     expect(html).toContain('sidebar-footer-led is-on')
     expect(html).toContain('Connected')
   })
@@ -2937,7 +2955,10 @@ describe('ApprovalsFooterPopover', () => {
     const html = renderToStaticMarkup(
       <ApprovalsFooterPopover
         pendingApprovals={[
-          { chatId: 'parent-1', approval: makeApproval({ title: 'Write a file', provider: 'codex' }) }
+          {
+            chatId: 'parent-1',
+            approval: makeApproval({ title: 'Write a file', provider: 'codex' })
+          }
         ]}
         onJumpToChat={() => {}}
         onOpenSettings={() => {}}
@@ -2956,7 +2977,9 @@ describe('ApprovalsFooterPopover', () => {
   it('stays clickable when the approval has no own appChatId but a filing chatId', () => {
     const html = renderToStaticMarkup(
       <ApprovalsFooterPopover
-        pendingApprovals={[{ chatId: 'parent-1', approval: makeApproval({ appChatId: undefined }) }]}
+        pendingApprovals={[
+          { chatId: 'parent-1', approval: makeApproval({ appChatId: undefined }) }
+        ]}
         onJumpToChat={() => {}}
         onOpenSettings={() => {}}
       />
@@ -3043,8 +3066,6 @@ describe('ApprovalsFooterPopover', () => {
     expect(html).toContain('+2 more pending')
   })
 })
-
-
 
 describe('git workflow markers', () => {
   const merged = { state: 'merged' as const, prNumber: 12, updatedAt: 40 }

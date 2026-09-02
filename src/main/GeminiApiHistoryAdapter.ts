@@ -276,7 +276,8 @@ export function buildGeminiTurnContents(
     // rows do in chatMessagesToGeminiContents.
     if (history.length && history[0].role === 'user') {
       const first = history[0]
-      const onlyTextParts = first.parts.length === 1 && 'text' in first.parts[0] && first.parts[0].text
+      const onlyTextParts =
+        first.parts.length === 1 && 'text' in first.parts[0] && first.parts[0].text
       if (onlyTextParts) {
         first.parts[0] = {
           text: `${(summaryTurn.parts[0] as { text: string }).text}\n\n${(first.parts[0] as { text: string }).text}`

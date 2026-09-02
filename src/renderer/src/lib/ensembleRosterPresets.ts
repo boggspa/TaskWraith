@@ -63,9 +63,7 @@ export function clonePermissionOverrides(
     // objects, so an in-place edit of one snapshot's grant would mutate every
     // other copy AND any live chat the preset was applied to.
     ...overrides,
-    ...(overrides.agenticServices
-      ? { agenticServices: { ...overrides.agenticServices } }
-      : {}),
+    ...(overrides.agenticServices ? { agenticServices: { ...overrides.agenticServices } } : {}),
     ...(overrides.externalPathGrants
       ? { externalPathGrants: overrides.externalPathGrants.map((grant) => ({ ...grant })) }
       : {})

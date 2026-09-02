@@ -22,10 +22,7 @@ import {
   isEnsembleControlToolName,
   normalizeEnsembleMcpToolArguments
 } from '../../shared/taskWraithMcpCatalog'
-import {
-  isPlanAdvertisedTool,
-  isReadOnlyAdvertisedTool
-} from './McpAutoAllowedTools'
+import { isPlanAdvertisedTool, isReadOnlyAdvertisedTool } from './McpAutoAllowedTools'
 import { isExactReviewerVerdictInvocation } from '../ReviewerVerdictInvocation'
 import {
   gatewayToolDefinitions,
@@ -375,7 +372,10 @@ export interface McpBridgeRuntimeDeps {
     cwd?: string
   ) => Promise<GeminiCapabilityProcessResult>
   parseCapabilityRawItems: (stdout: string, kind: GeminiCapabilityKind) => GeminiCapabilityItem[]
-  createCliEnv: (extra: Record<string, string>, binaryPath?: string | null) => Record<string, string>
+  createCliEnv: (
+    extra: Record<string, string>,
+    binaryPath?: string | null
+  ) => Record<string, string>
   appendLimitedOutput?: (current: string, chunk: Buffer) => { value: string; truncated: boolean }
   executeGeminiMcpTool: (
     toolName: TaskWraithMcpToolName | CapabilityGatewayToolName,
@@ -698,11 +698,7 @@ function ensurePrivateBridgeLogDirectory(path: string): BridgeFsIdentity {
     }
     const privateStat = fsSync.fstatSync(fd)
     assertBridgeDirectoryStat(privateStat, 'Bridge log directory')
-    assertBridgePrivateMode(
-      privateStat,
-      BRIDGE_LOG_DIRECTORY_MODE,
-      'Bridge log directory'
-    )
+    assertBridgePrivateMode(privateStat, BRIDGE_LOG_DIRECTORY_MODE, 'Bridge log directory')
     const after = fsSync.lstatSync(path)
     assertBridgeDirectoryStat(after, 'Bridge log directory')
     if (!sameBridgeFsIdentity(privateStat, after)) {
@@ -742,9 +738,7 @@ function openPrivateBridgeFile(
   try {
     fd = fsSync.openSync(
       path,
-      flags |
-        (options.create ? fsSync.constants.O_CREAT : 0) |
-        (fsSync.constants.O_NOFOLLOW ?? 0),
+      flags | (options.create ? fsSync.constants.O_CREAT : 0) | (fsSync.constants.O_NOFOLLOW ?? 0),
       BRIDGE_LOG_FILE_MODE
     )
     const opened = fsSync.fstatSync(fd)
@@ -777,7 +771,11 @@ function openPrivateBridgeFile(
     fd = null
     return result
   } catch (error) {
-    if (!options.create && options.missingOk && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (
+      !options.create &&
+      options.missingOk &&
+      (error as NodeJS.ErrnoException).code === 'ENOENT'
+    ) {
       return null
     }
     throw error
@@ -1381,10 +1379,7 @@ function bridgeFailureMetadata(value: unknown): string {
   return `failure.kind=${bridgeStructuralKind(value)}`
 }
 
-function bridgeToolLogName(
-  name: unknown,
-  gatewayTarget?: GatewayInvocationTarget | null
-): string {
+function bridgeToolLogName(name: unknown, gatewayTarget?: GatewayInvocationTarget | null): string {
   const canonical = String(name || '')
   const outerKnown =
     isTaskWraithMcpToolName(canonical) ||
@@ -1600,11 +1595,10 @@ export function bridgeLog(message: string, pid: number = process.pid): void {
       // repopulate the new generation's diagnostic log after the clear returns.
       return
     }
-    opened = openPrivateBridgeFile(
-      path,
-      fsSync.constants.O_WRONLY | fsSync.constants.O_APPEND,
-      { create: true, label: 'Bridge subprocess log' }
-    )
+    opened = openPrivateBridgeFile(path, fsSync.constants.O_WRONLY | fsSync.constants.O_APPEND, {
+      create: true,
+      label: 'Bridge subprocess log'
+    })
     if (!opened) return
     validateBridgeLogLock(lock)
     revalidatePrivateBridgeFile(path, opened, 'Bridge subprocess log')
@@ -1678,8 +1672,7 @@ export async function beginBridgeSubprocessLogHistoryClear(
   // This executes before the async function returns its Promise, so log
   // admission is fenced synchronously even when strict validation later fails.
   bridgeLogHistoryClearHolds += 1
-  const path =
-    targetPath === undefined ? resolveBridgeLogPathStrict() : targetPath
+  const path = targetPath === undefined ? resolveBridgeLogPathStrict() : targetPath
   if (!path) return { status: 'missing', epoch: bridgeLogProcessEpoch ?? 0 }
 
   const lock = await acquireBridgeLogLockStrict(path)
@@ -1740,8 +1733,7 @@ export function handleMcpJsonRpcMessage(
   brokerToken: string,
   message: unknown,
   transport: McpResponseTransport = 'framed',
-  instanceEpoch: string =
-    deps.env?.[MCP_BRIDGE_ENDPOINT_ENV_KEYS.instanceEpoch] ||
+  instanceEpoch: string = deps.env?.[MCP_BRIDGE_ENDPOINT_ENV_KEYS.instanceEpoch] ||
     process.env[MCP_BRIDGE_ENDPOINT_ENV_KEYS.instanceEpoch] ||
     ''
 ): void {
@@ -1813,8 +1805,7 @@ export function handleMcpJsonRpcMessage(
       (deps.env?.TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT ??
         process.env.TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT) === '1'
     const sketchDirect =
-      (deps.env?.TASKWRAITH_MCP_SKETCH_DIRECT ??
-        process.env.TASKWRAITH_MCP_SKETCH_DIRECT) === '1'
+      (deps.env?.TASKWRAITH_MCP_SKETCH_DIRECT ?? process.env.TASKWRAITH_MCP_SKETCH_DIRECT) === '1'
     const orchestrationDirect =
       (deps.env?.TASKWRAITH_MCP_ORCHESTRATION_DIRECT ??
         process.env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT) === '1'
@@ -1895,10 +1886,7 @@ export function handleMcpJsonRpcMessage(
     const params = isRecord(request.params) ? request.params : {}
     const rawName = params.name
     const rawArgs = params.arguments || {}
-    const rawDispatchContract = resolveToolDispatchContractStrict(
-      String(rawName || ''),
-      rawArgs
-    )
+    const rawDispatchContract = resolveToolDispatchContractStrict(String(rawName || ''), rawArgs)
     if (!rawDispatchContract.ok) {
       const gatewayTargetError =
         rawDispatchContract.code === 'gateway_target_required' ||
@@ -1954,8 +1942,7 @@ export function handleMcpJsonRpcMessage(
       (deps.env?.TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT ??
         process.env.TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT) === '1'
     const sketchDirect =
-      (deps.env?.TASKWRAITH_MCP_SKETCH_DIRECT ??
-        process.env.TASKWRAITH_MCP_SKETCH_DIRECT) === '1'
+      (deps.env?.TASKWRAITH_MCP_SKETCH_DIRECT ?? process.env.TASKWRAITH_MCP_SKETCH_DIRECT) === '1'
     const orchestrationDirect =
       (deps.env?.TASKWRAITH_MCP_ORCHESTRATION_DIRECT ??
         process.env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT) === '1'
@@ -2011,8 +1998,7 @@ export function handleMcpJsonRpcMessage(
       )
       return
     }
-    const auditSubset =
-      (deps.env?.TASKWRAITH_MCP_AUDIT ?? process.env.TASKWRAITH_MCP_AUDIT) === '1'
+    const auditSubset = (deps.env?.TASKWRAITH_MCP_AUDIT ?? process.env.TASKWRAITH_MCP_AUDIT) === '1'
     const auditToolRequested = auditSubset && isBridgeAuditMcpToolName(String(name))
     // Read-only scoped bridge (TASKWRAITH_MCP_SAFE_SUBSET=1): refuse any tool
     // outside the non-mutating safe subset rather than routing it to the broker.
@@ -2430,13 +2416,7 @@ export function startGeminiMcpBridgeProcess(deps: GeminiMcpBridgeProcessDeps): v
           )
         } catch {
           bridgeLog('parse FAILED (framed): malformed JSON', deps.pid?.() || process.pid)
-          writeMcpError(
-            null,
-            -32700,
-            'Malformed MCP JSON request.',
-            'framed',
-            stdout
-          )
+          writeMcpError(null, -32700, 'Malformed MCP JSON request.', 'framed', stdout)
         }
         continue
       }
@@ -2458,13 +2438,7 @@ export function startGeminiMcpBridgeProcess(deps: GeminiMcpBridgeProcessDeps): v
         )
       } catch {
         bridgeLog('parse FAILED (line): malformed JSON', deps.pid?.() || process.pid)
-        writeMcpError(
-          null,
-          -32700,
-          'Malformed MCP JSON request.',
-          'line',
-          stdout
-        )
+        writeMcpError(null, -32700, 'Malformed MCP JSON request.', 'line', stdout)
       }
     }
   }
@@ -2629,7 +2603,11 @@ export class McpBridgeRuntime {
   }
 
   private taskwraithMcpBridgeCommandUnavailableMessage(
-    status: { command: string; available: boolean; error?: string } = this.taskwraithMcpBridgeCommandStatus()
+    status: {
+      command: string
+      available: boolean
+      error?: string
+    } = this.taskwraithMcpBridgeCommandStatus()
   ): string {
     return `TaskWraith MCP bridge executable is not available at ${status.command}: ${status.error || 'not executable'}`
   }
@@ -2871,7 +2849,10 @@ export class McpBridgeRuntime {
         !isCapabilityGatewayToolName(dispatchContract.toolName) &&
         !isBridgeAuditMcpToolName(dispatchContract.toolName))
     ) {
-      return { ok: false, error: `Unknown TaskWraith MCP tool: ${String(rawToolName || 'unknown')}` }
+      return {
+        ok: false,
+        error: `Unknown TaskWraith MCP tool: ${String(rawToolName || 'unknown')}`
+      }
     }
     const toolName = dispatchContract.toolName
     const requestedRoute = normalizeRunRoute(brokerRequestRecord)
@@ -3062,8 +3043,7 @@ export class McpBridgeRuntime {
               continue
             }
             const parsedRecord = isRecord(parsed) ? parsed : {}
-            const tracksExecutionAbandonment =
-              parsedRecord.control !== MCP_STEER_SETTLEMENT_CONTROL
+            const tracksExecutionAbandonment = parsedRecord.control !== MCP_STEER_SETTLEMENT_CONTROL
             if (tracksExecutionAbandonment) inFlightRequests.add(parsedRecord)
             this.handleGeminiMcpBrokerRequest(parsed)
               .then(async (result) => {
@@ -3180,7 +3160,10 @@ export class McpBridgeRuntime {
   ): Promise<{ ok: boolean; error?: string }> {
     const bridgeCommandStatus = this.taskwraithMcpBridgeCommandStatus()
     if (!bridgeCommandStatus.available) {
-      return { ok: false, error: this.taskwraithMcpBridgeCommandUnavailableMessage(bridgeCommandStatus) }
+      return {
+        ok: false,
+        error: this.taskwraithMcpBridgeCommandUnavailableMessage(bridgeCommandStatus)
+      }
     }
     return new Promise((resolveSelfTest) => {
       let stdout = ''
@@ -3292,9 +3275,7 @@ export class McpBridgeRuntime {
             const result = isRecord(messageRecord.result) ? messageRecord.result : {}
             const tools = Array.isArray(result.tools) ? result.tools : []
             const names = new Set(
-              tools
-                .map((tool) => (isRecord(tool) ? String(tool.name || '') : ''))
-                .filter(Boolean)
+              tools.map((tool) => (isRecord(tool) ? String(tool.name || '') : '')).filter(Boolean)
             )
             const missing = TASKWRAITH_MCP_TOOLS.filter((name) => !names.has(name))
             if (missing.length > 0) {
@@ -3335,7 +3316,10 @@ export class McpBridgeRuntime {
           params: {
             protocolVersion: '2024-11-05',
             capabilities: {},
-            clientInfo: { name: 'TaskWraith-self-test', version: this.deps.getAppVersion() || '1.0.0' }
+            clientInfo: {
+              name: 'TaskWraith-self-test',
+              version: this.deps.getAppVersion() || '1.0.0'
+            }
           }
         })}\n`
       )
@@ -3395,13 +3379,16 @@ export class McpBridgeRuntime {
     const raw = [section.stdout, section.stderr].filter(Boolean).join('\n')
     const staleRegistration = this.hasStaleGeminiMcpBridgeRegistration(raw, socketPath)
     const bridgeItem = section.items.find((item) => {
-      const haystack = `${item.id} ${item.name} ${item.detail || ''} ${item.raw || ''}`.toLowerCase()
+      const haystack =
+        `${item.id} ${item.name} ${item.detail || ''} ${item.raw || ''}`.toLowerCase()
       return haystack.includes(GEMINI_MCP_SERVER_NAME_LOWER)
     })
-    const installed = Boolean(bridgeItem || raw.toLowerCase().includes(GEMINI_MCP_SERVER_NAME_LOWER))
+    const installed = Boolean(
+      bridgeItem || raw.toLowerCase().includes(GEMINI_MCP_SERVER_NAME_LOWER)
+    )
     const disabled = Boolean(
       bridgeItem &&
-        /disabled|inactive|off/i.test(`${bridgeItem.status || ''} ${bridgeItem.raw || ''}`)
+      /disabled|inactive|off/i.test(`${bridgeItem.status || ''} ${bridgeItem.raw || ''}`)
     )
     const disconnected =
       /disconnected|connection\s+refused|failed\s+to\s+connect|not\s+connected|unavailable|error/i.test(
@@ -3413,12 +3400,12 @@ export class McpBridgeRuntime {
         : null
     const available = Boolean(
       installed &&
-        !disabled &&
-        !staleRegistration &&
-        section.status === 0 &&
-        !section.error &&
-        !section.timedOut &&
-        (!disconnected || bridgeSelfTest?.ok)
+      !disabled &&
+      !staleRegistration &&
+      section.status === 0 &&
+      !section.error &&
+      !section.timedOut &&
+      (!disconnected || bridgeSelfTest?.ok)
     )
     const status: GeminiMcpBridgeStatus = {
       checkedAt: new Date().toISOString(),
@@ -3627,7 +3614,11 @@ export class McpBridgeRuntime {
     ) {
       return true
     }
-    if (this.deps.isDev() && raw.includes(GEMINI_MCP_BRIDGE_ARG) && !raw.includes(this.deps.getAppPath())) {
+    if (
+      this.deps.isDev() &&
+      raw.includes(GEMINI_MCP_BRIDGE_ARG) &&
+      !raw.includes(this.deps.getAppPath())
+    ) {
       return true
     }
     return this.deps.isPackaged() && !raw.includes(this.processExecPath())
@@ -3739,9 +3730,7 @@ export class McpBridgeRuntime {
     const requireWriteTools = Boolean(options.requireWriteTools && scope !== 'global')
     let runContextInstallAttempted = false
     let cleanupAttempted = false
-    const assertRunAuthorized = (
-      boundary: GeminiMcpBridgePreparationBoundary
-    ): void => {
+    const assertRunAuthorized = (boundary: GeminiMcpBridgePreparationBoundary): void => {
       if (options.setupSignal?.aborted || options.isRunAuthorized?.() === false) {
         let runContextCleanup: GeminiMcpBridgePreparationRevocationReceipt['runContextCleanup'] =
           runContextInstallAttempted ? 'unavailable' : 'not-required'
@@ -3840,10 +3829,7 @@ export class McpBridgeRuntime {
     return installedRoute
   }
 
-  async addKimiMcpBridgeRegistration(
-    _kimiBinaryPath: string,
-    _socketPath: string
-  ): Promise<void> {
+  async addKimiMcpBridgeRegistration(_kimiBinaryPath: string, _socketPath: string): Promise<void> {
     throw new Error(
       'Global Kimi MCP registration is retired; managed Kimi uses a per-run authenticated HTTP gateway.'
     )

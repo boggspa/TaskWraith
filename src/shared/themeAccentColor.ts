@@ -9,7 +9,14 @@ export const DEFAULT_DARK_THEME_ACCENT_COLOR = '#0B0C0F'
 export const DEFAULT_LIGHT_THEME_ACCENT_COLOR = '#FAFAFA'
 export const DEFAULT_THEME_ACCENT_COLOR = DEFAULT_DARK_THEME_ACCENT_COLOR
 
-const LIGHT_THEME_APPEARANCES = new Set(['light', 'citrus', 'mist', 'sage', 'alabaster', 'xcode-light'])
+const LIGHT_THEME_APPEARANCES = new Set([
+  'light',
+  'citrus',
+  'mist',
+  'sage',
+  'alabaster',
+  'xcode-light'
+])
 
 const LEGACY_THEME_ACCENT_COLORS: Readonly<Record<string, string>> = {
   blue: '#5A8CFF',

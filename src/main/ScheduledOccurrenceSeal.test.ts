@@ -86,16 +86,11 @@ const ROOT = testAuthorityRoot()
 const KEY = ROOT
 const POSTURE_SECRET = Buffer.alloc(32, 73)
 const POSTURE_VERIFIER = createScheduledOccurrencePostureVerifier(POSTURE_SECRET)
-const POSTURE_INPUT_BY_CAPABILITY = new WeakMap<
-  object,
-  ScheduledOccurrencePostureIssueInput
->()
+const POSTURE_INPUT_BY_CAPABILITY = new WeakMap<object, ScheduledOccurrencePostureIssueInput>()
 
 function refreshPostureCapabilities(current: ScheduledOccurrenceCurrentContext): void {
   const runtimeSeats = current.runtimeSeats.map((seat) => {
-    const input = POSTURE_INPUT_BY_CAPABILITY.get(
-      seat.permissionPostureCapability as object
-    )
+    const input = POSTURE_INPUT_BY_CAPABILITY.get(seat.permissionPostureCapability as object)
     if (!input) return seat
     const capability = POSTURE_VERIFIER.issue(input)
     if (!capability) throw new Error('Test posture capability refresh failed.')
@@ -482,9 +477,13 @@ function providerLaunchPlan(provider: ProviderId): ProviderLaunchAuthorityInput 
           hostExecutableRealPath: providerBinary(provider),
           hostExecutableSha256: hex('c'),
           hostRuntimeVersionSha256: hex('d'),
-          sdkPackageJsonRealPath: resolve('/opt/taskwraith/node_modules/@google/genai/package.json'),
+          sdkPackageJsonRealPath: resolve(
+            '/opt/taskwraith/node_modules/@google/genai/package.json'
+          ),
           sdkPackageJsonSha256: hex('e'),
-          sdkEntrypointRealPath: resolve('/opt/taskwraith/node_modules/@google/genai/dist/index.js'),
+          sdkEntrypointRealPath: resolve(
+            '/opt/taskwraith/node_modules/@google/genai/dist/index.js'
+          ),
           sdkEntrypointSha256: hex('f')
         },
         tools,
@@ -585,9 +584,7 @@ function codexLaunchPlan(
     controls: {
       ...plan.controls,
       ...controls,
-      taskWraithMcpAttachmentMode: advertiseTaskWraithMcp
-        ? 'app-server-config'
-        : 'none'
+      taskWraithMcpAttachmentMode: advertiseTaskWraithMcp ? 'app-server-config' : 'none'
     }
   }
 }
@@ -773,8 +770,7 @@ function selectedSeat(
     launchAuthority: {
       kind: 'selected-runtime-profile',
       profile: selectedProfile,
-      effectiveAuthority:
-        options.effective ?? effectiveAuthority(selectedProfile.provider)
+      effectiveAuthority: options.effective ?? effectiveAuthority(selectedProfile.provider)
     },
     resolvedEnv: options.resolvedEnv ?? {
       PUBLIC_MODE: 'review',
@@ -803,8 +799,7 @@ function defaultSeat(
       effectiveAuthority: options.effective ?? effectiveAuthority(provider)
     },
     resolvedEnv: options.resolvedEnv ?? { SERVICE_TOKEN: 'resolved-default-secret' },
-    permissionPostureCapability:
-      options.permissionCapability ?? postureCapability(provider, seatId)
+    permissionPostureCapability: options.permissionCapability ?? postureCapability(provider, seatId)
   }
 }
 
@@ -852,7 +847,7 @@ function context(
     overrides.effectiveLoopVerifierProvider !== undefined
       ? overrides.effectiveLoopVerifierProvider
       : workflow?.loop?.acceptance.verifier
-        ? workflow.loop.acceptance.verifier.provider ?? currentTask.provider
+        ? (workflow.loop.acceptance.verifier.provider ?? currentTask.provider)
         : null
   return {
     ...overrides,
@@ -860,8 +855,7 @@ function context(
     workflow,
     canonicalizePath: canonicalPath,
     workspaceRealPath: REAL_WORKSPACE_PATH,
-    runtimeSeats:
-      overrides.runtimeSeats ?? defaultRuntimeSeats(currentTask, workflow),
+    runtimeSeats: overrides.runtimeSeats ?? defaultRuntimeSeats(currentTask, workflow),
     phase,
     effectiveLoopVerifierProvider
   }
@@ -898,10 +892,7 @@ function defaultRuntimeSeats(
     : defaultSeat(scheduledTask.provider)
   const verifierProvider = workflow?.loop?.acceptance.verifier?.provider
   return verifierProvider && verifierProvider !== scheduledTask.provider
-    ? [
-        root,
-        defaultSeat(verifierProvider, { seatId: SCHEDULED_LOOP_VERIFIER_SEAT_ID })
-      ]
+    ? [root, defaultSeat(verifierProvider, { seatId: SCHEDULED_LOOP_VERIFIER_SEAT_ID })]
     : [root]
 }
 
@@ -1005,9 +996,7 @@ function remac(
   const { sealMac: _sealMac, ...payload } = candidate
   const encoded = JSON.stringify(
     Object.fromEntries(
-      Object.entries(payload).sort(([left], [right]) =>
-        left < right ? -1 : left > right ? 1 : 0
-      )
+      Object.entries(payload).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     )
   )
   return {
@@ -1063,23 +1052,15 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
       phase: { kind: 'running', ownerRunId: 'other-owner' }
     })
     persistSeal(swappedOwner, seal)
-    expect(
-      verifyScheduledOccurrenceSealAgainstCurrentContext(KEY, seal, swappedOwner)
-    ).toBeNull()
+    expect(verifyScheduledOccurrenceSealAgainstCurrentContext(KEY, seal, swappedOwner)).toBeNull()
     const queued = context(task(), { phase: { kind: 'queued' } })
     expect(() => mint(queued)).toThrow(/running post-image/i)
+    expect(verifyScheduledOccurrenceSealAgainstCurrentContext(KEY, seal, queued)).toBeNull()
     expect(
-      verifyScheduledOccurrenceSealAgainstCurrentContext(KEY, seal, queued)
-    ).toBeNull()
-    expect(
-      verifyScheduledOccurrenceSealAgainstCurrentContext(
-        KEY,
-        seal,
-        {
-          ...running,
-          task: { ...running.task, status: 'completed' }
-        }
-      )
+      verifyScheduledOccurrenceSealAgainstCurrentContext(KEY, seal, {
+        ...running,
+        task: { ...running.task, status: 'completed' }
+      })
     ).toBeNull()
     const changedPromptTask = task({ prompt: 'Mutated after ownership.' })
     const changedPrompt = context(changedPromptTask, {
@@ -1092,9 +1073,7 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
       ]
     })
     persistSeal(changedPrompt, seal)
-    expect(
-      verifyScheduledOccurrenceSealAgainstCurrentContext(KEY, seal, changedPrompt)
-    ).toBeNull()
+    expect(verifyScheduledOccurrenceSealAgainstCurrentContext(KEY, seal, changedPrompt)).toBeNull()
     expect(
       verifyScheduledOccurrenceSealAgainstCurrentContext(KEY, seal, {
         ...running,
@@ -1133,9 +1112,7 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
         occurrenceSeal: seal
       }
     }
-    expect(
-      verifyScheduledOccurrenceSealAgainstCurrentContext(ROOT, seal, heartbeat)
-    ).not.toBeNull()
+    expect(verifyScheduledOccurrenceSealAgainstCurrentContext(ROOT, seal, heartbeat)).not.toBeNull()
     for (const patch of [
       { firedAt: heartbeatAt },
       { runningSince: '2026-07-14T11:59:59.000Z' },
@@ -1174,11 +1151,7 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
       }
     }
     expect(
-      verifyScheduledOccurrenceSealAgainstCurrentContext(
-        ROOT,
-        linkedSeal,
-        linkedHeartbeat
-      )
+      verifyScheduledOccurrenceSealAgainstCurrentContext(ROOT, linkedSeal, linkedHeartbeat)
     ).not.toBeNull()
     for (const executionPatch of [
       { startedAt: heartbeatAt },
@@ -1241,9 +1214,7 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
     const current = context()
     const seal = mint(current)
     const missing = { ...current, task: { ...current.task, occurrenceSeal: undefined } }
-    expect(
-      verifyScheduledOccurrenceSealAgainstCurrentContext(ROOT, seal, missing)
-    ).toBeNull()
+    expect(verifyScheduledOccurrenceSealAgainstCurrentContext(ROOT, seal, missing)).toBeNull()
     const different = remac(seal, { issuedAt: '2026-07-14T12:00:01.000Z' })
     expect(
       verifyScheduledOccurrenceSealAgainstCurrentContext(ROOT, seal, {
@@ -1282,9 +1253,7 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
       const current = candidate()
       expect(() =>
         mintScheduledOccurrenceSeal(ROOT, withExecutionPatch(current, patch), now)
-      ).toThrow(
-        /running post-image|claim timestamps/i
-      )
+      ).toThrow(/running post-image|claim timestamps/i)
     }
     for (const patch of [
       { updatedAt: '2026-07-14T12:00:01.000Z' },
@@ -1298,9 +1267,7 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
           { ...current, workflow: { ...current.workflow!, ...patch } },
           now
         )
-      ).toThrow(
-        /running post-image|claim timestamps/i
-      )
+      ).toThrow(/running post-image|claim timestamps/i)
     }
   })
 
@@ -1322,21 +1289,19 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
     ).toBeNull()
     const rootOwnerCandidate = remac(seal, { rootOwner: 'ensemble-root' })
     expect(
-      verifyScheduledOccurrenceSealAgainstCurrentContext(
-        ROOT,
-        rootOwnerCandidate,
-        { ...current, task: { ...current.task, occurrenceSeal: rootOwnerCandidate } }
-      )
+      verifyScheduledOccurrenceSealAgainstCurrentContext(ROOT, rootOwnerCandidate, {
+        ...current,
+        task: { ...current.task, occurrenceSeal: rootOwnerCandidate }
+      })
     ).toBeNull()
     const rootCandidate = remac(seal, {
       rootId: `twso-root-v1:${'2'.repeat(64)}`
     })
     expect(
-      verifyScheduledOccurrenceSealAgainstCurrentContext(
-        ROOT,
-        rootCandidate,
-        { ...current, task: { ...current.task, occurrenceSeal: rootCandidate } }
-      )
+      verifyScheduledOccurrenceSealAgainstCurrentContext(ROOT, rootCandidate, {
+        ...current,
+        task: { ...current.task, occurrenceSeal: rootCandidate }
+      })
     ).toBeNull()
 
     const replacementRoot = testAuthorityRoot(Buffer.alloc(32, 27), '2')
@@ -1349,26 +1314,14 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
         })
       ]
     })
-    const replacementSeal = mintScheduledOccurrenceSeal(
-      replacementRoot,
-      replacementContext,
-      now
-    )
+    const replacementSeal = mintScheduledOccurrenceSeal(replacementRoot, replacementContext, now)
     persistSeal(replacementContext, replacementSeal)
     expect(
-      verifyScheduledOccurrenceSealAgainstCurrentContext(
-        ROOT,
-        replacementSeal,
-        replacementContext
-      )
+      verifyScheduledOccurrenceSealAgainstCurrentContext(ROOT, replacementSeal, replacementContext)
     ).toBeNull()
     const sameIdDifferentSecret = testAuthorityRoot(Buffer.alloc(32, 28), '1')
     expect(
-      verifyScheduledOccurrenceSealAgainstCurrentContext(
-        sameIdDifferentSecret,
-        seal,
-        current
-      )
+      verifyScheduledOccurrenceSealAgainstCurrentContext(sameIdDifferentSecret, seal, current)
     ).toBeNull()
   })
 
@@ -1535,12 +1488,9 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
           context(task(), {
             runtimeSeats: [
               selectedSeat(profile(), {
-                permissionCapability: postureCapability(
-                  'codex',
-                  'root',
-                  'profile-codex',
-                  { context: contextPatch }
-                )
+                permissionCapability: postureCapability('codex', 'root', 'profile-codex', {
+                  context: contextPatch
+                })
               })
             ]
           }),
@@ -1577,16 +1527,12 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
   it('requires a fresh capability from the explicitly supplied verifier instance', () => {
     const current = context()
     const seat = current.runtimeSeats[0]
-    const input = POSTURE_INPUT_BY_CAPABILITY.get(
-      seat.permissionPostureCapability as object
-    )!
+    const input = POSTURE_INPUT_BY_CAPABILITY.get(seat.permissionPostureCapability as object)!
     const foreignVerifier = createScheduledOccurrencePostureVerifier(POSTURE_SECRET)
     const foreignCapability = foreignVerifier.issue(input)!
     const foreignContext = {
       ...current,
-      runtimeSeats: [
-        { ...seat, permissionPostureCapability: foreignCapability }
-      ]
+      runtimeSeats: [{ ...seat, permissionPostureCapability: foreignCapability }]
     }
     expect(() =>
       mintScheduledOccurrenceSealWithPostureResolver(
@@ -1598,20 +1544,10 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
     ).toThrow(/fresh verified permission posture capability/i)
 
     expect(
-      mintScheduledOccurrenceSealWithPostureResolver(
-        ROOT,
-        POSTURE_VERIFIER.resolver,
-        current,
-        now
-      )
+      mintScheduledOccurrenceSealWithPostureResolver(ROOT, POSTURE_VERIFIER.resolver, current, now)
     ).toMatchObject({ schemaVersion: 2 })
     expect(() =>
-      mintScheduledOccurrenceSealWithPostureResolver(
-        ROOT,
-        POSTURE_VERIFIER.resolver,
-        current,
-        now
-      )
+      mintScheduledOccurrenceSealWithPostureResolver(ROOT, POSTURE_VERIFIER.resolver, current, now)
     ).toThrow(/fresh verified permission posture capability/i)
   })
 })
@@ -1838,9 +1774,11 @@ describe('runtime launch and loop verifier authority', () => {
       .filter(([, policy]) => policy === 'authority')
       .map(([field]) => field)
       .sort()
-    expect(Object.keys(original).filter((field) => field !== 'schemaVersion').sort()).toEqual(
-      expectedFields
-    )
+    expect(
+      Object.keys(original)
+        .filter((field) => field !== 'schemaVersion')
+        .sort()
+    ).toEqual(expectedFields)
 
     expect(
       buildRuntimeProfileAuthority(
@@ -2086,11 +2024,7 @@ describe('runtime launch and loop verifier authority', () => {
     }
     extraSeat.futureAuthority = true
     expect(() =>
-      mintScheduledOccurrenceSeal(
-        ROOT,
-        context(task(), { runtimeSeats: [extraSeat] }),
-        now
-      )
+      mintScheduledOccurrenceSeal(ROOT, context(task(), { runtimeSeats: [extraSeat] }), now)
     ).toThrow(/runtime seat.*invalid field set/i)
 
     const wrappedSeat = selectedSeat()
@@ -2141,13 +2075,7 @@ describe('runtime launch and loop verifier authority', () => {
       )
     ).toThrow(/agentic services do not match/i)
 
-    for (const provider of [
-      'codex',
-      'claude',
-      'grok',
-      'cursor',
-      'ollama'
-    ] as const) {
+    for (const provider of ['codex', 'claude', 'grok', 'cursor', 'ollama'] as const) {
       const scheduled = task({
         provider,
         runtimeProfileId: undefined,
@@ -2229,21 +2157,9 @@ describe('runtime launch and loop verifier authority', () => {
   })
 
   it.each([
-    [
-      'shell-command deny',
-      { shellCommands: 'deny' as const, fileChanges: 'allow' as const },
-      true
-    ],
-    [
-      'file-change deny',
-      { shellCommands: 'allow' as const, fileChanges: 'deny' as const },
-      false
-    ],
-    [
-      'shell and file deny',
-      { shellCommands: 'deny' as const, fileChanges: 'deny' as const },
-      false
-    ]
+    ['shell-command deny', { shellCommands: 'deny' as const, fileChanges: 'allow' as const }, true],
+    ['file-change deny', { shellCommands: 'allow' as const, fileChanges: 'deny' as const }, false],
+    ['shell and file deny', { shellCommands: 'deny' as const, fileChanges: 'deny' as const }, false]
   ])(
     'reconciles Pi exact file tools independently at the full seal boundary for signed %s',
     (_label, deniedServices, expectedWriteCapable) => {
@@ -2256,9 +2172,7 @@ describe('runtime launch and loop verifier authority', () => {
           ...deniedServices
         }
       })
-      const readOnlyPlan = providerLaunchPlan(
-        'pi'
-      ) as ProviderLaunchAuthorityInputByProvider['pi']
+      const readOnlyPlan = providerLaunchPlan('pi') as ProviderLaunchAuthorityInputByProvider['pi']
       const writePlan = {
         ...readOnlyPlan,
         controls: { ...readOnlyPlan.controls, writeCapable: true }
@@ -2458,9 +2372,7 @@ describe('runtime launch and loop verifier authority', () => {
       mintScheduledOccurrenceSeal(
         ROOT,
         context(scheduled, {
-          runtimeSeats: [
-            defaultSeatForPermissions('codex', defaultPermissions, interactiveExec)
-          ]
+          runtimeSeats: [defaultSeatForPermissions('codex', defaultPermissions, interactiveExec)]
         }),
         now
       )
@@ -2547,9 +2459,7 @@ describe('runtime launch and loop verifier authority', () => {
       mintScheduledOccurrenceSeal(
         ROOT,
         context(scheduledCodex, {
-          runtimeSeats: [
-            defaultSeatForPermissions('codex', mcpDenied, providerLaunchPlan('codex'))
-          ]
+          runtimeSeats: [defaultSeatForPermissions('codex', mcpDenied, providerLaunchPlan('codex'))]
         }),
         now
       )
@@ -2854,11 +2764,7 @@ describe('runtime launch and loop verifier authority', () => {
     })
     persistSeal(changedVerifierRuntime, seal)
     expect(
-      verifyScheduledOccurrenceSealAgainstCurrentContext(
-        KEY,
-        seal,
-        changedVerifierRuntime
-      )
+      verifyScheduledOccurrenceSealAgainstCurrentContext(KEY, seal, changedVerifierRuntime)
     ).toBeNull()
 
     const retiredWorkflow = workflowFor(linked, {
@@ -2930,11 +2836,7 @@ describe('runtime launch and loop verifier authority', () => {
       }
     })
     const seats = defaultRuntimeSeats(ensemble, null)
-    const first = mintScheduledOccurrenceSeal(
-      ROOT,
-      context(ensemble, { runtimeSeats: seats }),
-      now
-    )
+    const first = mintScheduledOccurrenceSeal(ROOT, context(ensemble, { runtimeSeats: seats }), now)
     const second = mintScheduledOccurrenceSeal(
       ROOT,
       context(ensemble, { runtimeSeats: defaultRuntimeSeats(ensemble, null).reverse() }),
@@ -2947,11 +2849,7 @@ describe('runtime launch and loop verifier authority', () => {
       participant.enabled = false
     }
     expect(() =>
-      mintScheduledOccurrenceSeal(
-        ROOT,
-        context(allDisabled, { runtimeSeats: [] }),
-        now
-      )
+      mintScheduledOccurrenceSeal(ROOT, context(allDisabled, { runtimeSeats: [] }), now)
     ).toThrow(/enabled participant/i)
     const mismatchedSeats = defaultRuntimeSeats(ensemble, null)
     expect(() =>
@@ -2976,19 +2874,13 @@ describe('strict persisted seal schema', () => {
   it('decodes legacy v1 only for migration and never authorizes queued-v1 replay', () => {
     const current = context()
     const legacy = legacySealV1(mint(current))
-    const decoded = decodeLegacyScheduledOccurrenceSealV1ForMigration(
-      structuredClone(legacy)
-    )
+    const decoded = decodeLegacyScheduledOccurrenceSealV1ForMigration(structuredClone(legacy))
 
     expect(decoded).toEqual(legacy)
     expect(decoded).not.toBe(legacy)
     expect(Object.isFrozen(decoded)).toBe(true)
-    expect(
-      verifyScheduledOccurrenceSealAgainstCurrentContext(ROOT, legacy, current)
-    ).toBeNull()
-    expect(
-      decodeLegacyScheduledOccurrenceSealV1ForMigration({ ...legacy, extra: true })
-    ).toBeNull()
+    expect(verifyScheduledOccurrenceSealAgainstCurrentContext(ROOT, legacy, current)).toBeNull()
+    expect(decodeLegacyScheduledOccurrenceSealV1ForMigration({ ...legacy, extra: true })).toBeNull()
     expect(
       decodeLegacyScheduledOccurrenceSealV1ForMigration(omit(legacy, 'sealSignature'))
     ).toBeNull()
@@ -3044,9 +2936,7 @@ describe('strict persisted seal schema', () => {
       { ...seal, workspaceRealPath: `${REAL_WORKSPACE_PATH}${sep}` },
       { ...seal, taskAuthorityDigest: seal.taskAuthorityDigest.toUpperCase() }
     ]) {
-      expect(
-        verifyScheduledOccurrenceSealAgainstCurrentContext(KEY, invalid, current)
-      ).toBeNull()
+      expect(verifyScheduledOccurrenceSealAgainstCurrentContext(KEY, invalid, current)).toBeNull()
     }
   })
 
@@ -3065,9 +2955,7 @@ describe('strict persisted seal schema', () => {
       { ...seal, permissionPostureSetHmac: '4'.repeat(64) },
       { ...seal, sealMac: '5'.repeat(64) }
     ]) {
-      expect(
-        verifyScheduledOccurrenceSealAgainstCurrentContext(KEY, candidate, current)
-      ).toBeNull()
+      expect(verifyScheduledOccurrenceSealAgainstCurrentContext(KEY, candidate, current)).toBeNull()
     }
   })
 })

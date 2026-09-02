@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  ensembleFanoutPolicyEnabled,
-  normalizeEnsembleFanoutPolicy
-} from './ensembleFanoutPolicy'
+import { ensembleFanoutPolicyEnabled, normalizeEnsembleFanoutPolicy } from './ensembleFanoutPolicy'
 
 describe('ensembleFanoutPolicy', () => {
   it('collapses every enabled policy to all (fan-out is On/Off now)', () => {

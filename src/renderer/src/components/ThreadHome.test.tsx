@@ -140,7 +140,9 @@ describe('ThreadHome', () => {
 
     expect(html).toContain('aria-label="Thread Home"')
     expect(html.indexOf('New Chat')).toBeLessThan(html.indexOf('Open New Terminal'))
-    expect(html.indexOf('Open New Terminal')).toBeLessThan(html.indexOf('Choose a MultiView layout'))
+    expect(html.indexOf('Open New Terminal')).toBeLessThan(
+      html.indexOf('Choose a MultiView layout')
+    )
     expect(html.indexOf('Choose a MultiView layout')).toBeLessThan(html.indexOf('Mission Control'))
     expect(html.indexOf('Mission Control')).toBeLessThan(html.indexOf('>Active</div>'))
     expect(html.indexOf('Mission Control')).toBeLessThan(html.indexOf('Alpha'))
@@ -473,7 +475,10 @@ describe('ThreadHome', () => {
   it('detaches on navigation and reserves termination for explicit kill actions', () => {
     const source = readFileSync(new URL('./ThreadHome.tsx', import.meta.url), 'utf8')
     const mountStart = source.indexOf('mountedRef.current = true')
-    const mountEnd = source.indexOf('useEffect(\n    () =>\n      window.api.terminal.onExit', mountStart)
+    const mountEnd = source.indexOf(
+      'useEffect(\n    () =>\n      window.api.terminal.onExit',
+      mountStart
+    )
     const closeStart = source.indexOf('const closeSurface = useCallback')
     const closeEnd = source.indexOf('const killCurrentTerminal = useCallback', closeStart)
     const killEnd = source.indexOf('const closeCurrentSurface = useCallback', closeEnd)

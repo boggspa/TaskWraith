@@ -151,7 +151,9 @@ function deriveAuthState(
   }
 
   if (provider === 'codex') {
-    const normalized = String(rawAuthState || '').trim().toLowerCase()
+    const normalized = String(rawAuthState || '')
+      .trim()
+      .toLowerCase()
     if (normalized === 'missing' || normalized === 'expired') {
       return {
         authState: normalized,
@@ -227,11 +229,7 @@ function deriveAuthState(
     const normalized = String(rawAuthState || '')
       .trim()
       .toLowerCase()
-    if (
-      normalized === 'authenticated' ||
-      normalized === 'oauth' ||
-      normalized === 'api-key'
-    ) {
+    if (normalized === 'authenticated' || normalized === 'oauth' || normalized === 'api-key') {
       return { authState: 'authenticated' }
     }
     if (

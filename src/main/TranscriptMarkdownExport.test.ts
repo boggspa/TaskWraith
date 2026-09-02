@@ -166,9 +166,7 @@ describe('buildChatMarkdownTranscript', () => {
   })
 
   it('uses dynamic fences so nested code blocks remain valid markdown', () => {
-    const nested = ['Intro', '```ts', 'console.log("hi")', '```', '````', 'four', '````'].join(
-      '\n'
-    )
+    const nested = ['Intro', '```ts', 'console.log("hi")', '```', '````', 'four', '````'].join('\n')
     const result = buildChatMarkdownTranscript(chat([message({ content: nested })]))
 
     expect(result.markdown).toContain('````` markdown\nIntro')
@@ -515,9 +513,7 @@ describe('buildChatMessageTranscript', () => {
       ])
     )
 
-    expect(result.text).toBe(
-      'Coordinate.\n\n↪ Reviewer to Worker: Please check the write path.'
-    )
+    expect(result.text).toBe('Coordinate.\n\n↪ Reviewer to Worker: Please check the write path.')
     expect(result.messageCount).toBe(2)
   })
 

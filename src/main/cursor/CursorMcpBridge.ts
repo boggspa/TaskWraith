@@ -20,10 +20,7 @@
 // legacy qualification builders plus the production global-entry, profile, and
 // merge helpers called by the Electron launch lifecycle.
 
-import {
-  isPlanAdvertisedTool,
-  isReadOnlyAdvertisedTool
-} from '../mcp/McpAutoAllowedTools'
+import { isPlanAdvertisedTool, isReadOnlyAdvertisedTool } from '../mcp/McpAutoAllowedTools'
 import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
 import {
   GATEWAY_MCP_ADVERTISE_TOOLS,
@@ -116,23 +113,15 @@ export const CURSOR_MCP_ALLOW_RULES: readonly string[] = [
 /** Exact read-only rules for the canonical global broker name. Server approval
  * is handled separately by `cursor-agent mcp enable`; no wildcard is needed. */
 export const CURSOR_BROKER_READONLY_MCP_ALLOW_RULES: readonly string[] = [
-  ...CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES.map(
-    (tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`
-  ),
-  ...CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES.map(
-    (tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`
-  )
+  ...CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`),
+  ...CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
 ]
 
 /** Plan-seat variant: exact canonical-broker rules for the read tools plus the
  * host-gated Canvas/media plan instruments. */
 export const CURSOR_BROKER_PLAN_MCP_ALLOW_RULES: readonly string[] = [
-  ...CURSOR_GATEWAY_PLAN_MCP_TOOL_NAMES.map(
-    (tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`
-  ),
-  ...CURSOR_GATEWAY_PLAN_MCP_TOOL_NAMES.map(
-    (tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`
-  )
+  ...CURSOR_GATEWAY_PLAN_MCP_TOOL_NAMES.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`),
+  ...CURSOR_GATEWAY_PLAN_MCP_TOOL_NAMES.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
 ]
 
 const CURSOR_SIGNED_DELEGATION_DIRECT_TOOL_NAME_SET: ReadonlySet<string> = new Set(

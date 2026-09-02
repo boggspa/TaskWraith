@@ -39,18 +39,11 @@ export interface MultiviewEnsembleSelectionPruneSnapshot {
 export function buildEnsembleProviderBlendStyle(
   participants: readonly Pick<EnsembleParticipant, 'provider' | 'model'>[]
 ): Record<string, string> {
-  return participants.slice(0, 4).reduce<Record<string, string>>(
-    (style, participant, index) => {
-      const providerClass = resolveProviderHueClass(
-        participant.provider,
-        participant.model
-      )
-      style[`--ensemble-provider-${index + 1}`] =
-        `var(--provider-${providerClass}-color)`
-      return style
-    },
-    {}
-  )
+  return participants.slice(0, 4).reduce<Record<string, string>>((style, participant, index) => {
+    const providerClass = resolveProviderHueClass(participant.provider, participant.model)
+    style[`--ensemble-provider-${index + 1}`] = `var(--provider-${providerClass}-color)`
+    return style
+  }, {})
 }
 
 export function isMultiviewEnsembleParticipantSelectionValid(
@@ -59,7 +52,7 @@ export function isMultiviewEnsembleParticipantSelectionValid(
 ): boolean {
   return Boolean(
     chat?.chatKind === 'ensemble' &&
-      chat.ensemble?.participants.some((participant) => participant.id === participantId)
+    chat.ensemble?.participants.some((participant) => participant.id === participantId)
   )
 }
 
@@ -75,9 +68,7 @@ export function resolveMultiviewEnsembleParticipantSelection(
 ): string | null {
   const liveRound = activeEnsembleRoundForComposer(chat?.ensemble?.activeRound)
   const roundKey =
-    chat?.appChatId && liveRound?.roundId
-      ? `${chat.appChatId}:${liveRound.roundId}`
-      : null
+    chat?.appChatId && liveRound?.roundId ? `${chat.appChatId}:${liveRound.roundId}` : null
   const activeParticipantId = liveRound?.activeParticipantId
   const validUserSelection =
     userSelectedParticipantId &&
@@ -85,9 +76,7 @@ export function resolveMultiviewEnsembleParticipantSelection(
       ? userSelectedParticipantId
       : null
   const hasValidManualOverride = Boolean(
-    validUserSelection &&
-      roundKey &&
-      userOverrodeSelectionRoundKeys.has(roundKey)
+    validUserSelection && roundKey && userOverrodeSelectionRoundKeys.has(roundKey)
   )
   if (
     activeParticipantId &&
@@ -207,9 +196,7 @@ export function buildMultiviewEnsembleComposerProjection(
   pendingParticipantSelections?: Record<string, EnsembleParticipant>
 ): MultiviewEnsembleComposerProjection {
   const participants = overlayPendingEnsembleSeatSelections(
-    [...(chat.ensemble?.participants || [])].sort(
-      (left, right) => left.order - right.order
-    ),
+    [...(chat.ensemble?.participants || [])].sort((left, right) => left.order - right.order),
     pendingParticipantSelections
   )
   const enabledParticipants = participants.filter((participant) => participant.enabled)
@@ -235,8 +222,7 @@ export function buildMultiviewEnsembleComposerProjection(
     currentFanoutPolicy,
     activeFanoutPolicy,
     continuationHops: liveRound?.continuationHops ?? 0,
-    maxContinuationHops:
-      chat.ensemble?.maxContinuationHops ?? liveRound?.maxContinuationHops ?? 6,
+    maxContinuationHops: chat.ensemble?.maxContinuationHops ?? liveRound?.maxContinuationHops ?? 6,
     isRoundRunning: Boolean(liveRound),
     roundStatus: liveRound?.status,
     activeGoalStatus: chat.activeGoal?.status ?? null,

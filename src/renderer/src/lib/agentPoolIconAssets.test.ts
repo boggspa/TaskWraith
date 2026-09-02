@@ -128,12 +128,8 @@ describe('agent pool icon assets', () => {
 
     expect(first).toContain('agent-pool-icon-provider-ensemble-first-')
     expect(second).toContain('agent-pool-icon-provider-ensemble-second-')
-    expect(first).toContain(
-      'class="agent-pool-icon-provider-ensemble-first-ensemble-line"'
-    )
-    expect(second).toContain(
-      'class="agent-pool-icon-provider-ensemble-second-ensemble-line"'
-    )
+    expect(first).toContain('class="agent-pool-icon-provider-ensemble-first-ensemble-line"')
+    expect(second).toContain('class="agent-pool-icon-provider-ensemble-second-ensemble-line"')
     expect(first).not.toContain('agent-pool-icon-provider-ensemble-second-')
     expect(second).not.toContain('agent-pool-icon-provider-ensemble-first-')
     expect(first).toContain('stroke-width: 1.85')

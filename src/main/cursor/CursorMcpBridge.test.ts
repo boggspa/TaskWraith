@@ -26,10 +26,7 @@ import {
   mergeCursorMcpConfig,
   mergeGlobalCursorMcpServers
 } from './CursorMcpBridge'
-import {
-  isPlanAdvertisedTool,
-  isReadOnlyAdvertisedTool
-} from '../mcp/McpAutoAllowedTools'
+import { isPlanAdvertisedTool, isReadOnlyAdvertisedTool } from '../mcp/McpAutoAllowedTools'
 import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
 
 // 1.0.6-CRUX34 (OQ#2) — the Cursor MCP bridge. The live spike proved that a
@@ -44,15 +41,9 @@ describe('CURSOR_MCP_ALLOW_RULES', () => {
     expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:*)`)
     expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:run_shell_command)`)
     expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:apply_patch)`)
-    expect(CURSOR_MCP_ALLOW_RULES).toContain(
-      `Mcp(${CURSOR_MCP_SERVER_NAME}:capability_search)`
-    )
-    expect(CURSOR_MCP_ALLOW_RULES).toContain(
-      `Mcp(${CURSOR_MCP_SERVER_NAME}:capability_invoke)`
-    )
-    expect(CURSOR_MCP_ALLOW_RULES).not.toContain(
-      `Mcp(${CURSOR_MCP_SERVER_NAME}:video_encode_clip)`
-    )
+    expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:capability_search)`)
+    expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:capability_invoke)`)
+    expect(CURSOR_MCP_ALLOW_RULES).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:video_encode_clip)`)
     expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-run_shell_command)`)
     expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-apply_patch)`)
     expect(CURSOR_MCP_ALLOW_RULES).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-*)`)
@@ -62,9 +53,7 @@ describe('CURSOR_MCP_ALLOW_RULES', () => {
     expect(CURSOR_MCP_ALLOW_RULES).toContain(
       `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}-run_shell_command)`
     )
-    expect(CURSOR_MCP_ALLOW_RULES).not.toContain(
-      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:*)`
-    )
+    expect(CURSOR_MCP_ALLOW_RULES).not.toContain(`Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:*)`)
   })
 
   it('reserves the TaskWraith server prefix for brokered tools only', () => {
@@ -105,13 +94,9 @@ describe('canonical global broker allow rules', () => {
     expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).not.toContain(
       `Mcp(${CURSOR_MCP_SERVER_NAME}:write_file)`
     )
-    expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).not.toContain(
-      `Mcp(${CURSOR_MCP_SERVER_NAME}:*)`
-    )
+    expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:*)`)
     for (const tool of CURSOR_GATEWAY_PLAN_MCP_TOOL_NAMES) {
-      expect(CURSOR_BROKER_PLAN_MCP_ALLOW_RULES).toContain(
-        `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`
-      )
+      expect(CURSOR_BROKER_PLAN_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`)
     }
     expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).toContain(
       `Mcp(${CURSOR_MCP_SERVER_NAME}:capability_search)`
@@ -233,7 +218,10 @@ describe('buildCursorReadOnlyMcpServerEntry', () => {
 })
 
 describe('B-mode global broker helpers', () => {
-  const invocation = { command: '/x/electron', args: ['/tmp/s.cjs', '--socket', '/sock', '--token', 'T1'] }
+  const invocation = {
+    command: '/x/electron',
+    args: ['/tmp/s.cjs', '--socket', '/sock', '--token', 'T1']
+  }
 
   it('buildCursorBrokerMcpServerEntry registers the full broker WITHOUT the legacy alias', () => {
     const entry = buildCursorBrokerMcpServerEntry(invocation)
@@ -277,14 +265,17 @@ describe('B-mode global broker helpers', () => {
     })
   })
 
-  it('mergeGlobalCursorMcpServers PRESERVES the user\'s own servers and only adds broker keys', () => {
+  it("mergeGlobalCursorMcpServers PRESERVES the user's own servers and only adds broker keys", () => {
     const existing = {
       mcpServers: {
         taskwraith: { command: 'node', args: ['/web.cjs'] }, // user's global web server
         agbench: { command: 'node', args: ['/agb.cjs'] }
       }
     }
-    const merged = mergeGlobalCursorMcpServers(existing, buildCursorBrokerMcpServerEntry(invocation))
+    const merged = mergeGlobalCursorMcpServers(
+      existing,
+      buildCursorBrokerMcpServerEntry(invocation)
+    )
     const servers = (merged.mcpServers ?? {}) as Record<string, unknown>
     // user servers untouched
     expect(servers.taskwraith).toEqual({ command: 'node', args: ['/web.cjs'] })
@@ -335,9 +326,9 @@ describe('B-mode global broker helpers', () => {
       entry
     )
 
-    expect(
-      globalCursorMcpNeedsUpdate(registered, entry, [CURSOR_SCOPED_MCP_SERVER_NAME])
-    ).toBe(true)
+    expect(globalCursorMcpNeedsUpdate(registered, entry, [CURSOR_SCOPED_MCP_SERVER_NAME])).toBe(
+      true
+    )
   })
 })
 
@@ -474,12 +465,8 @@ describe('mergeCursorAllowRules', () => {
   it('adds the allow rule into an empty config (with an empty deny)', () => {
     const merged = mergeCursorAllowRules(null, CURSOR_MCP_ALLOW_RULES)
     expect(merged.permissions.allow).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:*)`)
-    expect(merged.permissions.allow).toContain(
-      `Mcp(${CURSOR_MCP_SERVER_NAME}:run_shell_command)`
-    )
-    expect(merged.permissions.allow).toContain(
-      `Mcp(${CURSOR_MCP_SERVER_NAME}-run_shell_command)`
-    )
+    expect(merged.permissions.allow).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:run_shell_command)`)
+    expect(merged.permissions.allow).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-run_shell_command)`)
     expect(merged.permissions.allow).toContain(
       `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:run_shell_command)`
     )
@@ -487,9 +474,7 @@ describe('mergeCursorAllowRules', () => {
       `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}-run_shell_command)`
     )
     expect(merged.permissions.allow).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-*)`)
-    expect(merged.permissions.allow).not.toContain(
-      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:*)`
-    )
+    expect(merged.permissions.allow).not.toContain(`Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:*)`)
     expect(merged.permissions.deny).toEqual([])
   })
 
@@ -499,12 +484,8 @@ describe('mergeCursorAllowRules', () => {
     }
     const merged = mergeCursorAllowRules(existing, CURSOR_MCP_ALLOW_RULES)
     expect(merged.permissions.allow).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:*)`)
-    expect(merged.permissions.allow).toContain(
-      `Mcp(${CURSOR_MCP_SERVER_NAME}:run_shell_command)`
-    )
-    expect(merged.permissions.allow).toContain(
-      `Mcp(${CURSOR_MCP_SERVER_NAME}-run_shell_command)`
-    )
+    expect(merged.permissions.allow).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:run_shell_command)`)
+    expect(merged.permissions.allow).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-run_shell_command)`)
     expect(merged.permissions.allow).toContain(
       `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:run_shell_command)`
     )
@@ -512,9 +493,7 @@ describe('mergeCursorAllowRules', () => {
       `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}-run_shell_command)`
     )
     expect(merged.permissions.allow).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-*)`)
-    expect(merged.permissions.allow).not.toContain(
-      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:*)`
-    )
+    expect(merged.permissions.allow).not.toContain(`Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:*)`)
     expect(merged.permissions.deny).toEqual(['Shell(**)'])
   })
 
@@ -633,9 +612,7 @@ describe('CURSOR_WEB_FETCH_MCP_SERVER_SOURCE', () => {
         cwd: ws
       })
       expect(mcpText(readEscaped)).toMatch(/workspace|inside/i)
-      expect(readEscaped.result && (readEscaped.result as { isError?: boolean }).isError).toBe(
-        true
-      )
+      expect(readEscaped.result && (readEscaped.result as { isError?: boolean }).isError).toBe(true)
     } finally {
       rmSync(ws, { force: true, recursive: true })
     }
@@ -643,9 +620,7 @@ describe('CURSOR_WEB_FETCH_MCP_SERVER_SOURCE', () => {
 })
 
 function mcpText(msg: Record<string, unknown>): string {
-  const result = msg.result as
-    | { content?: Array<{ text?: string }>; isError?: boolean }
-    | undefined
+  const result = msg.result as { content?: Array<{ text?: string }>; isError?: boolean } | undefined
   return result?.content?.[0]?.text ?? JSON.stringify(msg)
 }
 

@@ -50,7 +50,10 @@ function isRetiredExternalChannelInboundMessage(message: ChatMessage): boolean {
   return message.metadata?.kind === 'channelInbound'
 }
 
-export function buildHiddenSideChatInitialPrompt(contextPrompt: string, userPrompt: string): string {
+export function buildHiddenSideChatInitialPrompt(
+  contextPrompt: string,
+  userPrompt: string
+): string {
   const context = contextPrompt.trim()
   const request = userPrompt.trim()
   if (!context) return request

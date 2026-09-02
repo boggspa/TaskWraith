@@ -6,7 +6,7 @@
 ## North star
 
 Manage TaskWraith chat threads from iPhone/iPad with transcript-flow parity —
-the same *reading experience* as the desktop transcript (identity labels, tool
+the same _reading experience_ as the desktop transcript (identity labels, tool
 traces, status chrome), skinned in TaskWraith's own theme tokens.
 
 ## Reference UX (format, not skin)
@@ -17,7 +17,7 @@ traces, status chrome), skinned in TaskWraith's own theme tokens.
 - **Claude iOS app** — transcript composure: clean prose rows, message action
   affordances, bottom composer with model pill + voice.
 
-We borrow the *formats*; all colors/typography come from `TWTheme`
+We borrow the _formats_; all colors/typography come from `TWTheme`
 (Sources/TaskWraithUI/Theme.swift), which mirrors the desktop `theme.css`
 tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
 `#5a8cff/#bf7cff/#41c7e5`, white-alpha text ramp). Dark-first.
@@ -32,7 +32,7 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
   here before being compressed onto phone.
 - **Ensemble parity matters**: panel messages carry the SAME
   participant identity as the desktop transcript tag (`Provider / Role
-  (Model)`) via the `speaker` field on thread rows (Mac commit e44f56cd).
+(Model)`) via the `speaker` field on thread rows (Mac commit e44f56cd).
 - **Remote workspace access is provider-agnostic** — one durable grant exposes
   the workspace to every provider the Mac currently admits. Provider admission
   remains dynamic (including consent/credential-gated AntiGravity), while the
@@ -386,7 +386,7 @@ a claim that build 97 has been uploaded or released.
   AgentIdentityBadge prefers the real character art (accent ring kept);
   the minimal ghost+orbital badge remains the fallback for unknown
   slugs. Re-bake: qlmanage -t -s 512 -o tmp design-assets/
-  agent-identicon/named/*.svg → rename identicon-{slug}.png → Resources.
+  agent-identicon/named/\*.svg → rename identicon-{slug}.png → Resources.
 - **Masthead logo**: MastheadLogoView shows ghost-guy-wwdc26 until
   9 Jul 2026 then flips to ghost-guy-sticker automatically (date gate —
   no code change to revert). Loads from Bundle.module Resources (the
@@ -585,9 +585,9 @@ lifecycle modifiers landed.)
   controls.
 - **Side chats inspector tab** (4th tab): lists the thread's side chats
   (identity badges, status dots, tap-to-open via the cross-column nav)
-  + a "New side chat" provider menu →
-  createSideChat (ack returns threadId; singleProvider mode default —
-  ensembleClone/fanOut modes accepted by the action for later UI).
+  - a "New side chat" provider menu →
+    createSideChat (ack returns threadId; singleProvider mode default —
+    ensembleClone/fanOut modes accepted by the action for later UI).
 - All three actions gate under startTurn (thread create/configure write
   class) — default read-write entries cover them.
 
@@ -742,7 +742,7 @@ attention fanout already firing on approvals/questions). This slice closed the
 loop:
 
 - **Mac**: DEFAULT_APNS_BUNDLE_ID fixed to com.taskwraith.companion
-  (was com.example.* — APNs rejects mismatched topics); reason union
+  (was com.example.\* — APNs rejects mismatched topics); reason union
   gains runComplete/runFailed, fired on the running→success/failed
   transition detected in maybeNotifyRemoteTaskNeedsAttention (same
   idle gate + coalescing). pairID binding was already transport-
@@ -813,7 +813,7 @@ the iPad shell into a NavigationSplitView and full-screen-covers on
 iPhone:
 
 - **Mac**: new read-only `workspaceDiff` bridge action (Payload →
-  Router → Executor → index.ts wiring, mirroring the workspaceFile*
+  Router → Executor → index.ts wiring, mirroring the workspaceFile\*
   trio). It runs the SAME git surface the desktop renders (`get-diff`
   IPC → getWorkspaceDiff) projected through
   `DiffService.buildBoundedWorkspaceDiff` so the ack stays inside the
@@ -893,7 +893,7 @@ Five boss asks, each fixed at the data source rather than patched in UI:
   \n\n---\n\n on agentMessage itemId transitions; the bridge-run
   persistence path and the iOS live bubble both ignored itemId and jammed
   bursts into one paragraph. Both now separate; MarkdownLite renders
-  ---/***/___ as a hairline divider.
+  ---/\*\*\*/\_\_\_ as a hairline divider.
 - **Run-summary file edits** (T63e): run summaries carried counts only,
   and the iOS card relied on the latest-run diffSummary envelope (so older
   cards / post-relaunch cards showed nothing). Every run summary now
@@ -1077,14 +1077,14 @@ ship baseline as the design-doc desktop pin.
 ## v0.45 — transcript row-vocabulary closure (2026-07-26)
 
 An audit of transcript presentation across the two platforms found the row
-*vocabulary* was the only real gap worth closing — markdown engine, typography,
+_vocabulary_ was the only real gap worth closing — markdown engine, typography,
 projection caps, and platform chrome are deliberate divergences, but two desktop
 card kinds had no iOS counterpart at all and fell through to generic rows:
 
 - **Ensemble fan-out lane result** (`EnsembleFanoutResultCard`) rendered as a
   plain assistant bubble, and — worse — the lane's tool activities were dropped
   entirely, because `buildToolSummary` only projected tool calls for `role ===
-  'tool'` messages while a fan-out result is an ASSISTANT message carrying its
+'tool'` messages while a fan-out result is an ASSISTANT message carrying its
   own activities. Fixed: `RemoteThreadRow.fanoutResult` carries the header
   identity (lane id, intent, provider, role, model, order) and the tool-summary
   predicate now admits fan-out rows. iOS renders `EnsembleFanoutResultHeader`
@@ -1126,7 +1126,7 @@ an anchored popover at regular width.
 Three new bridge actions carry it, each gated on what it actually does:
 `gitBranches` (diffReview), `gitCheckout` (fileWrite — it rewrites the working
 tree exactly as a commit does and never leaves the machine), and
-`githubWatchPr` (diffReview — a standing PR *read* subscription must take the
+`githubWatchPr` (diffReview — a standing PR _read_ subscription must take the
 capability that gates the one-shot PR reads; `pin` alone must not buy polling).
 
 **Two safety properties worth not regressing:**

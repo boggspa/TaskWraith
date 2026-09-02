@@ -43,10 +43,7 @@ export interface ApprovalDecisionInput {
 }
 
 function isNonGrantableService(service: AgenticServiceId | undefined): boolean {
-  return (
-    service === 'canvasEval' ||
-    service === 'mediaRecording'
-  )
+  return service === 'canvasEval' || service === 'mediaRecording'
 }
 
 /**
@@ -262,9 +259,9 @@ export class PermissionService {
           ? sessionGrantAllowed
             ? 'allow'
             : 'ask'
-        : workspaceGrantAllowed || sessionGrantAllowed
-          ? 'allow'
-          : resolveAgenticPermission(policy, false, false)
+          : workspaceGrantAllowed || sessionGrantAllowed
+            ? 'allow'
+            : resolveAgenticPermission(policy, false, false)
     return {
       policy,
       workspaceGrantAllowed,

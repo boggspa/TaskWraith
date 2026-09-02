@@ -1003,12 +1003,10 @@ describe('MainSanitizers settings patches', () => {
   it('persists the contextual AutoDraft opt-out as a boolean', () => {
     const { sanitizeSettingsPatch } = makeSanitizers(makeSettings())
     expect(
-      sanitizeSettingsPatch({ composerContinuationAiEnabled: false })
-        .composerContinuationAiEnabled
+      sanitizeSettingsPatch({ composerContinuationAiEnabled: false }).composerContinuationAiEnabled
     ).toBe(false)
     expect(
-      sanitizeSettingsPatch({ composerContinuationAiEnabled: true })
-        .composerContinuationAiEnabled
+      sanitizeSettingsPatch({ composerContinuationAiEnabled: true }).composerContinuationAiEnabled
     ).toBe(true)
   })
 

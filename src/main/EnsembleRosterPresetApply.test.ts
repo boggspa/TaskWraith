@@ -49,9 +49,7 @@ function soloChat(provider: EnsembleParticipant['provider'] = 'codex'): ChatReco
     archived: false,
     linkedProviderSessionId: 'solo-session',
     providerMetadata: { selectedModelType: 'gpt-5.6-terra' },
-    messages: [
-      { id: 'm-1', role: 'user', content: 'Set up my ensemble', timestamp: '2026-07-12' }
-    ],
+    messages: [{ id: 'm-1', role: 'user', content: 'Set up my ensemble', timestamp: '2026-07-12' }],
     runs: []
   }
 }
@@ -333,9 +331,7 @@ describe('EnsembleRosterPresetApply', () => {
     if (!result.ok) return
     const queued = queuePendingEnsembleRosterPresetApply(chat, result.plan)
 
-    expect(
-      applyPendingEnsembleRosterPresetOnRunTerminal(queued, 'unrelated-run')
-    ).toBe(queued)
+    expect(applyPendingEnsembleRosterPresetOnRunTerminal(queued, 'unrelated-run')).toBe(queued)
 
     const applied = applyPendingEnsembleRosterPresetOnRunTerminal(
       queued,
@@ -389,9 +385,7 @@ describe('EnsembleRosterPresetApply', () => {
     if (!result.ok) return
     const queued = queuePendingEnsembleRosterPresetApply(chat, result.plan)
 
-    expect(
-      applyPendingEnsembleRosterPresetOnRunTerminal(queued, 'participant-run')
-    ).toBe(queued)
+    expect(applyPendingEnsembleRosterPresetOnRunTerminal(queued, 'participant-run')).toBe(queued)
   })
 
   it('rejects a solo preset whose marked Boss is a different provider', () => {
@@ -455,8 +449,9 @@ describe('EnsembleRosterPresetApply', () => {
       queuePendingEnsembleRosterPresetApply(chat, result.plan)
     )
     expect(applied.ensemble?.bossmanAutoApprovals).toBeUndefined()
-    expect(applied.ensemble?.participants.every((entry) => entry.linkedProviderSessionId === null))
-      .toBe(true)
+    expect(
+      applied.ensemble?.participants.every((entry) => entry.linkedProviderSessionId === null)
+    ).toBe(true)
   })
 
   it('lets Captain refine a roster but not clear Captain authority', () => {
@@ -510,7 +505,12 @@ describe('EnsembleRosterPresetApply', () => {
     const captainThree = participant('captain-three', 'grok', 'Captain Three', 4)
     chat.ensemble = {
       ...chat.ensemble!,
-      participants: [chat.ensemble!.participants[0], chat.ensemble!.participants[1], captainTwo, captainThree],
+      participants: [
+        chat.ensemble!.participants[0],
+        chat.ensemble!.participants[1],
+        captainTwo,
+        captainThree
+      ],
       captainParticipantIds: ['captain-id', 'captain-two', 'captain-three'],
       secondInCommandParticipantId: 'captain-id'
     }

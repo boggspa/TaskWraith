@@ -44,11 +44,7 @@ describe('WelcomeUsageDashboard', () => {
     }
     const data = buildWelcomeUsageDashboardData([record], [], '30d', now)
     const html = renderToStaticMarkup(
-      <WelcomeUsageDashboard
-        data={data}
-        initialTab="models"
-        autoCycleSeconds={0}
-      />
+      <WelcomeUsageDashboard data={data} initialTab="models" autoCycleSeconds={0} />
     )
 
     expect(html).toContain('welcome-usage-model-meters')
@@ -143,9 +139,7 @@ describe('WelcomeUsageDashboard', () => {
     )
 
     for (const provider of WELCOME_USAGE_PROVIDER_IDS) {
-      expect(overviewHtml).toContain(
-        `welcome-usage-provider-ribbon-seg provider-${provider}`
-      )
+      expect(overviewHtml).toContain(`welcome-usage-provider-ribbon-seg provider-${provider}`)
       expect(providersHtml).toContain(`welcome-usage-provider-card provider-${provider}`)
     }
     expect(providersHtml.match(/role="listitem"/g)).toHaveLength(12)

@@ -40,16 +40,16 @@ normal text on both backgrounds. They do not meet AAA's `7:1` normal-text thresh
 
 ## Primary provider allocations
 
-| Provider | Current token | Current white / black | Proposed token | Proposed RGB | Proposed white / black | Notes |
-| --- | --- | ---: | --- | --- | ---: | --- |
-| Gemini | `#2563EB` | 5.17 / 4.06 | `#346EEC` | `rgb(52, 110, 236)` | 4.58 / 4.59 | Historical provider; also inherited by Google/Gemma branding. |
-| Codex | `#A070F2` | 3.45 / 6.09 | **`#705AFF`** | **`rgb(112, 90, 255)`** | **4.57 / 4.60** | Approved new indigo field; also inherited by OpenAI/GPT OSS branding. |
-| Claude | `#D97706` | 3.19 / 6.59 | `#B16105` | `rgb(177, 97, 5)` | 4.58 / 4.58 | Same rust-orange field, darkened. |
-| Kimi | `#1A8CFF` | 3.37 / 6.24 | `#0073E6` | `rgb(0, 115, 230)` | 4.57 / 4.59 | Same saturated blue field, darkened. |
-| Grok | `var(--text-primary)` | Theme-dependent | `#757575` | `rgb(117, 117, 117)` | 4.61 / 4.56 | Static monochrome allocation; see the Grok note below. |
-| Cursor | `#E3B91E` | 1.87 / 11.22 | `#8D7312` | `rgb(141, 115, 18)` | 4.57 / 4.59 | Same mustard field, substantially darkened. **Superseded 2026-08-16 — see the Cursor revision below.** |
-| Ollama | `#20A77A` | 3.06 / 6.87 | `#1A8562` | `rgb(26, 133, 98)` | 4.59 / 4.58 | Same local green-teal field, darkened. |
-| Ensemble | `#E8DDE3` | 1.32 / 15.88 | `#986781` | `rgb(152, 103, 129)` | 4.57 / 4.59 | Same soft pink-gray field, moved to a mid-tone mauve. |
+| Provider | Current token         | Current white / black | Proposed token | Proposed RGB            | Proposed white / black | Notes                                                                                                  |
+| -------- | --------------------- | --------------------: | -------------- | ----------------------- | ---------------------: | ------------------------------------------------------------------------------------------------------ |
+| Gemini   | `#2563EB`             |           5.17 / 4.06 | `#346EEC`      | `rgb(52, 110, 236)`     |            4.58 / 4.59 | Historical provider; also inherited by Google/Gemma branding.                                          |
+| Codex    | `#A070F2`             |           3.45 / 6.09 | **`#705AFF`**  | **`rgb(112, 90, 255)`** |        **4.57 / 4.60** | Approved new indigo field; also inherited by OpenAI/GPT OSS branding.                                  |
+| Claude   | `#D97706`             |           3.19 / 6.59 | `#B16105`      | `rgb(177, 97, 5)`       |            4.58 / 4.58 | Same rust-orange field, darkened.                                                                      |
+| Kimi     | `#1A8CFF`             |           3.37 / 6.24 | `#0073E6`      | `rgb(0, 115, 230)`      |            4.57 / 4.59 | Same saturated blue field, darkened.                                                                   |
+| Grok     | `var(--text-primary)` |       Theme-dependent | `#757575`      | `rgb(117, 117, 117)`    |            4.61 / 4.56 | Static monochrome allocation; see the Grok note below.                                                 |
+| Cursor   | `#E3B91E`             |          1.87 / 11.22 | `#8D7312`      | `rgb(141, 115, 18)`     |            4.57 / 4.59 | Same mustard field, substantially darkened. **Superseded 2026-08-16 — see the Cursor revision below.** |
+| Ollama   | `#20A77A`             |           3.06 / 6.87 | `#1A8562`      | `rgb(26, 133, 98)`      |            4.59 / 4.58 | Same local green-teal field, darkened.                                                                 |
+| Ensemble | `#E8DDE3`             |          1.32 / 15.88 | `#986781`      | `rgb(152, 103, 129)`    |            4.57 / 4.59 | Same soft pink-gray field, moved to a mid-tone mauve.                                                  |
 
 ### Cursor revision — 2026-08-16 (`a52b510ae`)
 
@@ -57,9 +57,9 @@ The allocation table above is the 2026-07-13 record and is left as recorded.
 Cursor has since been re-tuned by `a52b510ae` ("style(theme): brighten Cursor
 provider accent"):
 
-| Provider | Allocated 2026-07-13 | Current | RGB | White / black contrast | Note |
-| --- | --- | --- | --- | ---: | --- |
-| Cursor | `#8D7312` | **`#8C7508`** | `rgb(140, 117, 8)` | **4.50 / 4.66** | Same mustard field; slightly lighter and more saturated. |
+| Provider | Allocated 2026-07-13 | Current       | RGB                | White / black contrast | Note                                                     |
+| -------- | -------------------- | ------------- | ------------------ | ---------------------: | -------------------------------------------------------- |
+| Cursor   | `#8D7312`            | **`#8C7508`** | `rgb(140, 117, 8)` |        **4.50 / 4.66** | Same mustard field; slightly lighter and more saturated. |
 
 Contrast recomputed here by the same sRGB relative-luminance method the table
 above uses — that method reproduces the recorded `4.57 / 4.59` for `#8D7312`
@@ -98,10 +98,10 @@ were picked by sweeping the whole integer-sRGB cube for colours inside the
 equal-contrast band and maximising the minimum dE2000 to the rest of the
 palette within the requested colour family.
 
-| Provider | Old token | Old white / black | New token | New RGB | Relative luminance | New white / black | Nearest neighbour (dE2000) | Note |
-| --- | --- | ---: | --- | --- | ---: | ---: | --- | --- |
-| Ollama | `#1A8562` | 4.59 / 4.58 | **`#976C52`** | `rgb(151, 108, 82)` | `0.1791363` | **4.5824 / 4.5827** | cerebras `#BB584A` — **12.93** | Green-teal to walnut brown. |
-| Thinking Machines / Inkling | `#016EF6` | 4.60 / 4.56 | **`#C24E68`** | `rgb(194, 78, 104)` | `0.1791759` | **4.5816 / 4.5835** | liquid `#D72D82` — **9.28** | Royal blue to rose. |
+| Provider                    | Old token | Old white / black | New token     | New RGB             | Relative luminance |   New white / black | Nearest neighbour (dE2000)     | Note                        |
+| --------------------------- | --------- | ----------------: | ------------- | ------------------- | -----------------: | ------------------: | ------------------------------ | --------------------------- |
+| Ollama                      | `#1A8562` |       4.59 / 4.58 | **`#976C52`** | `rgb(151, 108, 82)` |        `0.1791363` | **4.5824 / 4.5827** | cerebras `#BB584A` — **12.93** | Green-teal to walnut brown. |
+| Thinking Machines / Inkling | `#016EF6` |       4.60 / 4.56 | **`#C24E68`** | `rgb(194, 78, 104)` |        `0.1791759` | **4.5816 / 4.5835** | liquid `#D72D82` — **9.28**    | Royal blue to rose.         |
 
 Why each moved:
 
@@ -169,17 +169,17 @@ Runtime provider remains `ollama`. These are presentation overrides selected by
 `src/shared/ollamaBrandTable.ts`; the implementation keeps the documented alias
 relationships as aliases.
 
-| Display brand / model family | Current token | Current white / black | Proposed token | Proposed RGB | Proposed white / black | Relationship |
-| --- | --- | ---: | --- | --- | ---: | --- |
-| Alibaba / Qwen | `#7C3AED` | 5.70 / 3.69 | `#8C52EF` | `rgb(140, 82, 239)` | 4.60 / 4.57 | `qwen` inherits Alibaba. |
-| Deep Reinforce / Ornith | `#B45309` | 5.02 / 4.18 | `#BE5809` | `rgb(190, 88, 9)` | 4.58 / 4.59 | `ornith` inherits Deep Reinforce. |
-| Google / Gemma | Gemini alias | 5.17 / 4.06 | `#346EEC` | `rgb(52, 110, 236)` | 4.58 / 4.59 | Continue inheriting Gemini. |
-| IBM / Granite | `#1F4E79` | 8.66 / 2.42 | `#3079BC` | `rgb(48, 121, 188)` | 4.58 / 4.59 | Same steel-blue field, lightened. |
-| Liquid / LFM | `#F7D5E6` | 1.34 / 15.62 | `#D72D82` | `rgb(215, 45, 130)` | 4.58 / 4.59 | Same pink field; large shift from pastel to vivid mid-tone. |
-| NVIDIA / Nemotron | `#76B900` | 2.41 / 8.71 | `#538200` | `rgb(83, 130, 0)` | 4.60 / 4.56 | Same NVIDIA green field, darkened. |
-| OpenAI / GPT OSS | Codex alias | 3.45 / 6.09 | `#705AFF` | `rgb(112, 90, 255)` | 4.57 / 4.60 | Continue inheriting the approved Codex token. |
-| OpenBMB / MiniCPM | `#EF6F61` | 2.95 / 7.12 | `#E22B17` | `rgb(226, 43, 23)` | 4.57 / 4.59 | Same coral-red field, darkened and intensified. |
-| Poolside / Laguna | `#86E5F5` | 1.44 / 14.54 | `#0C8194` | `rgb(12, 129, 148)` | 4.58 / 4.58 | Same cyan field; large shift from pastel to deep teal-cyan. |
+| Display brand / model family | Current token | Current white / black | Proposed token | Proposed RGB        | Proposed white / black | Relationship                                                |
+| ---------------------------- | ------------- | --------------------: | -------------- | ------------------- | ---------------------: | ----------------------------------------------------------- |
+| Alibaba / Qwen               | `#7C3AED`     |           5.70 / 3.69 | `#8C52EF`      | `rgb(140, 82, 239)` |            4.60 / 4.57 | `qwen` inherits Alibaba.                                    |
+| Deep Reinforce / Ornith      | `#B45309`     |           5.02 / 4.18 | `#BE5809`      | `rgb(190, 88, 9)`   |            4.58 / 4.59 | `ornith` inherits Deep Reinforce.                           |
+| Google / Gemma               | Gemini alias  |           5.17 / 4.06 | `#346EEC`      | `rgb(52, 110, 236)` |            4.58 / 4.59 | Continue inheriting Gemini.                                 |
+| IBM / Granite                | `#1F4E79`     |           8.66 / 2.42 | `#3079BC`      | `rgb(48, 121, 188)` |            4.58 / 4.59 | Same steel-blue field, lightened.                           |
+| Liquid / LFM                 | `#F7D5E6`     |          1.34 / 15.62 | `#D72D82`      | `rgb(215, 45, 130)` |            4.58 / 4.59 | Same pink field; large shift from pastel to vivid mid-tone. |
+| NVIDIA / Nemotron            | `#76B900`     |           2.41 / 8.71 | `#538200`      | `rgb(83, 130, 0)`   |            4.60 / 4.56 | Same NVIDIA green field, darkened.                          |
+| OpenAI / GPT OSS             | Codex alias   |           3.45 / 6.09 | `#705AFF`      | `rgb(112, 90, 255)` |            4.57 / 4.60 | Continue inheriting the approved Codex token.               |
+| OpenBMB / MiniCPM            | `#EF6F61`     |           2.95 / 7.12 | `#E22B17`      | `rgb(226, 43, 23)`  |            4.57 / 4.59 | Same coral-red field, darkened and intensified.             |
+| Poolside / Laguna            | `#86E5F5`     |          1.44 / 14.54 | `#0C8194`      | `rgb(12, 129, 148)` |            4.58 / 4.58 | Same cyan field; large shift from pastel to deep teal-cyan. |
 
 ## Interpretation guardrails
 
@@ -238,9 +238,9 @@ participant filters, transcript accents, light/dark themes, and reduce-transpare
 
 ## Change history
 
-| Date | State | Notes |
-| --- | --- | --- |
-| 2026-07-13 | Proposed | Allocated balanced provider and Ollama display-brand swatches. Codex `#705AFF` approved as the new direction. Production code unchanged. |
-| 2026-07-13 | Implemented | Applied the allocations across desktop and iOS in `8dccc4625`; added exact palette, alias, RGB-mirror, and dual-background contrast regression coverage. |
-| 2026-08-16 | Revised | Cursor re-tuned `#8D7312` to `#8C7508` in `a52b510ae`; see the Cursor revision above. |
-| 2026-08-30 | Revised | Ollama `#1A8562` to `#976C52` and Thinking Machines `#016EF6` to `#C24E68` on CIEDE2000 collision grounds (Xiaomi dE 7.89, Meta/Muse dE 1.73); both held at the equal-contrast luminance. See the collision revision above. |
+| Date       | State       | Notes                                                                                                                                                                                                                       |
+| ---------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-07-13 | Proposed    | Allocated balanced provider and Ollama display-brand swatches. Codex `#705AFF` approved as the new direction. Production code unchanged.                                                                                    |
+| 2026-07-13 | Implemented | Applied the allocations across desktop and iOS in `8dccc4625`; added exact palette, alias, RGB-mirror, and dual-background contrast regression coverage.                                                                    |
+| 2026-08-16 | Revised     | Cursor re-tuned `#8D7312` to `#8C7508` in `a52b510ae`; see the Cursor revision above.                                                                                                                                       |
+| 2026-08-30 | Revised     | Ollama `#1A8562` to `#976C52` and Thinking Machines `#016EF6` to `#C24E68` on CIEDE2000 collision grounds (Xiaomi dE 7.89, Meta/Muse dE 1.73); both held at the equal-contrast luminance. See the collision revision above. |

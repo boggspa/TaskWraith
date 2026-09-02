@@ -21,9 +21,7 @@ describe('IpcValidation', () => {
   })
 
   it('accepts OpenRouter at the Pi key-management IPC gate', () => {
-    expect(() =>
-      validateIpcArgs('pi:set-upstream-key', ['openrouter', 'or-key'])
-    ).not.toThrow()
+    expect(() => validateIpcArgs('pi:set-upstream-key', ['openrouter', 'or-key'])).not.toThrow()
     expect(() => validateIpcArgs('pi:set-upstream-key', ['not-openrouter', 'or-key'])).toThrow(
       /supported Pi upstream/
     )
@@ -737,12 +735,7 @@ describe('IpcValidation', () => {
       validateIpcArgs('respond-agent-approval', ['approval-1', 'useTaskWraithSubthread'])
     ).not.toThrow()
     expect(() =>
-      validateIpcArgs('respond-agent-approval', [
-        'approval-1',
-        'accept',
-        undefined,
-        'offer-1'
-      ])
+      validateIpcArgs('respond-agent-approval', ['approval-1', 'accept', undefined, 'offer-1'])
     ).not.toThrow()
     expect(() => validateIpcArgs('command-rules:list', [])).not.toThrow()
     expect(() => validateIpcArgs('command-rules:remove', ['rule-1'])).not.toThrow()

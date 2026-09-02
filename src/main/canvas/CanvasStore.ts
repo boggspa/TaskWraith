@@ -101,14 +101,12 @@ function readJson<T>(filePath: string, defaultData: T): T {
 }
 
 function isMissingPathError(error: unknown): boolean {
-  return Boolean(error && typeof error === 'object' && (error as NodeJS.ErrnoException).code === 'ENOENT')
+  return Boolean(
+    error && typeof error === 'object' && (error as NodeJS.ErrnoException).code === 'ENOENT'
+  )
 }
 
-function assertSameFileIdentity(
-  filePath: string,
-  opened: fs.Stats,
-  linked: fs.Stats
-): void {
+function assertSameFileIdentity(filePath: string, opened: fs.Stats, linked: fs.Stats): void {
   if (opened.dev !== linked.dev || opened.ino !== linked.ino) {
     throw new Error(`Security ledger ${filePath} changed while it was being opened.`)
   }
@@ -238,15 +236,11 @@ function assertExistingTargetSafe(filePath: string): void {
 function isCanvasRecoveryArtifact(name: string): boolean {
   return [...CANVAS_STORE_FILE_NAMES].some(
     (fileName) =>
-      name.startsWith(`${fileName}.`) &&
-      (name.endsWith('.tmp') || name.includes('.corrupt-'))
+      name.startsWith(`${fileName}.`) && (name.endsWith('.tmp') || name.includes('.corrupt-'))
   )
 }
 
-function purgeCanvasRecoveryArtifactsStrict(
-  directoryPath: string,
-  pinned?: PinnedDirectory
-): void {
+function purgeCanvasRecoveryArtifactsStrict(directoryPath: string, pinned?: PinnedDirectory): void {
   const directory = openStrictDirectory(directoryPath)
   try {
     assertDirectoryIdentity(directoryPath, directory.stat)
@@ -501,8 +495,7 @@ function normalizeEventRecord(value: unknown): CanvasEventRecord | null {
     kind: input.kind,
     provider: typeof input.provider === 'string' ? input.provider : undefined,
     chatId: typeof input.chatId === 'string' ? input.chatId : undefined,
-    workspacePath:
-      typeof input.workspacePath === 'string' ? input.workspacePath : undefined,
+    workspacePath: typeof input.workspacePath === 'string' ? input.workspacePath : undefined,
     runId: typeof input.runId === 'string' ? input.runId : undefined,
     approvalId: typeof input.approvalId === 'string' ? input.approvalId : undefined,
     detail: evalDetail,
@@ -542,8 +535,7 @@ function normalizeAnnotation(value: unknown): CanvasAnnotation | null {
     id: input.id,
     canvasId: input.canvasId,
     chatId: typeof input.chatId === 'string' ? input.chatId : undefined,
-    workspacePath:
-      typeof input.workspacePath === 'string' ? input.workspacePath : undefined,
+    workspacePath: typeof input.workspacePath === 'string' ? input.workspacePath : undefined,
     runId: typeof input.runId === 'string' ? input.runId : undefined,
     marks,
     author: input.author === 'human' ? 'human' : 'agent',
@@ -664,9 +656,7 @@ export class CanvasStore {
     chatIds?: Iterable<string>
     workspacePaths?: Iterable<string>
   }): void {
-    const chatIds = new Set(
-      [...(input.chatIds ?? [])].map((value) => value.trim()).filter(Boolean)
-    )
+    const chatIds = new Set([...(input.chatIds ?? [])].map((value) => value.trim()).filter(Boolean))
     const workspacePaths = new Set(
       [...(input.workspacePaths ?? [])].map((value) => value.trim()).filter(Boolean)
     )
@@ -681,11 +671,9 @@ export class CanvasStore {
       const matchesSession = (session: CanvasSessionRecord): boolean =>
         Boolean(
           (session.chatId && chatIds.has(session.chatId)) ||
-            (session.workspacePath && workspacePaths.has(session.workspacePath))
+          (session.workspacePath && workspacePaths.has(session.workspacePath))
         )
-      const removedCanvasIds = new Set(
-        sessions.filter(matchesSession).map((session) => session.id)
-      )
+      const removedCanvasIds = new Set(sessions.filter(matchesSession).map((session) => session.id))
 
       const events = readJsonArrayStrict(this.eventsPath, pinned)
         .map((item) => normalizeEventRecord(item))

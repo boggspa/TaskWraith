@@ -1233,6 +1233,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.8.8 - 2026-07-24
 
 ### Added
+
 - **AntiGravity joins the provider roster (opt-in).** Bring your own Gemini
   API key and run Gemini models as a first-class provider: isolated per-turn
   execution, authenticated model discovery with product names, a prompt-cache
@@ -1261,6 +1262,7 @@ are culled so your phone hears about state changes that matter.
   field, and section-highlighted cards.
 
 ### Changed
+
 - **Read-only plans can run `git status`.** Tool grants respond immediately,
   and the grants picker is wider and easier to scan.
 - **The sidebar organizes work more predictably.** Workspace ensembles are
@@ -1272,6 +1274,7 @@ are culled so your phone hears about state changes that matter.
   Kimi's subscription tiers are shown by name.
 
 ### Fixed
+
 - **Closing the window no longer ends active runs.** Runs keep executing after
   the window closes and are there when you come back.
 - **Startup does less before first paint.** Project-reference reconciliation
@@ -1295,6 +1298,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.8.7 - 2026-07-22
 
 ### Added
+
 - **Blackboard posts can land in their intended section.** The Composer's
   Blackboard popover now lets you choose Decisions, Facts, Risks, Do Not
   Repeat, or Notes before posting; Notes remains the default.
@@ -1307,6 +1311,7 @@ are culled so your phone hears about state changes that matter.
   scans into the welcome experience.
 
 ### Fixed
+
 - **Provider quota refreshes time out instead of blocking the desktop.** Every
   supported external usage endpoint now has a bounded 15-second request window.
 - **Ensemble routing is more deterministic.** Seed-id aliases no longer leak
@@ -1320,6 +1325,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.8.6 - 2026-07-22
 
 ### Added
+
 - **Path-B Cursor is selectable again after the 1.8.5 product path.** Managed
   Cursor stays on contained native-sandbox argv (read-only vs write by seat),
   First Launch and Settings restore CLI login, and sidebar Model Usage meters
@@ -1335,6 +1341,7 @@ are culled so your phone hears about state changes that matter.
   clients.
 
 ### Fixed
+
 - **Packaged macOS builds no longer crash when Electron reads hardened fuses.**
   The final app bundle restores a valid ad-hoc signature after fuse hardening,
   and package smoke tests now verify the Electron framework signature before
@@ -1380,6 +1387,7 @@ are culled so your phone hears about state changes that matter.
   composer chrome stays compact.
 
 ### Changed
+
 - **Docs realign to always-enabled Kimi admission and live Path-B Cursor.**
   The 1.8.5 note claiming packaged builds still reject Kimi is corrected in
   place (admission is structural and always-enabled; unreviewed runs are
@@ -1391,6 +1399,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.8.5 - 2026-07-20
 
 ### Added
+
 - **Kimi ACP sessions can resume as durable, isolated seats.** Native ACP
   continuity now survives TaskWraith run boundaries, with seat checkpoints,
   resumable provider sessions, and bounded prompt compaction for longer-lived
@@ -1441,6 +1450,7 @@ are culled so your phone hears about state changes that matter.
   of that lookup.
 
 ### Changed
+
 - **Cursor runs again under Path-B contained native sandbox (+ write).**
   Managed Cursor is always-enabled (no brittle per-build fingerprint gate) and
   re-admitted through the shared CLI transport. Production argv always comes
@@ -1483,6 +1493,7 @@ are culled so your phone hears about state changes that matter.
   the same destination; ambiguous membership safely falls back to the chat.
 
 ### Fixed
+
 - **Provider and orchestration edges are more resilient.** Fixes cover Kimi
   transport and usage hardening, Ensemble roster imports, stale broker sockets,
   and related run-lifecycle cleanup.
@@ -1514,9 +1525,9 @@ are culled so your phone hears about state changes that matter.
   intentionally empty, so release qualification stays red and sealed scheduled
   Kimi execution stays unavailable until their respective admission/authority
   evidence is commissioned. A successful `kimi login` or a Settings usage key
-  does not qualify a managed run. *(Corrected 2026-07-21: this entry
+  does not qualify a managed run. _(Corrected 2026-07-21: this entry
   originally claimed packaged builds still reject Kimi; the admission that
-  shipped in 1.8.5 is always-enabled in packaged builds too.)*
+  shipped in 1.8.5 is always-enabled in packaged builds too.)_
 - **Manual unsigned builds cannot write GitHub Release assets.** Windows and
   Linux testing builds now upload only immutable SHA/run-labelled Actions
   artifacts under read-only repository permission. The credentialed provider
@@ -1542,6 +1553,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.8.4 - 2026-07-16
 
 ### Fixed
+
 - **Transcript scrolling stays under the reader's control from the first
   message.** New messages, thinking traces, and tool activity no longer pull a
   reader back to the live edge after they scroll away. The initial
@@ -1561,6 +1573,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.8.3 - 2026-07-16
 
 ### Added
+
 - **Kimi K3.** Moonshot's new flagship model joins the Kimi provider with a
   256K context window and always-on Max-effort thinking, selectable alongside
   Kimi K2.7 Code in solo, Ensemble, queued, scheduled, and remote runs. K2.7
@@ -1569,6 +1582,7 @@ are culled so your phone hears about state changes that matter.
   the K2.7 family.
 
 ### Fixed
+
 - **Windows is a first-class platform again.** The 1.8.2 Windows and Linux
   artifacts were never published; this release is the first since 1.8.1 for
   those platforms and repairs four Windows-fatal defects that had landed with
@@ -1589,6 +1603,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.8.2 - 2026-07-16
 
 ### Added
+
 - **Kimi Code now runs through a contained ACP transport (the new default).**
   Kimi Code sessions run in an isolated provider home over ACP while TaskWraith
   holds workspace file authority through its brokered read/write/edit tools,
@@ -1607,6 +1622,7 @@ are culled so your phone hears about state changes that matter.
   detected account plan where that metadata is available.
 
 ### Changed
+
 - **Scheduled workflow occurrences dispatch exactly once.** Occurrence
   lifecycles are transacted with single-owner claims, journaled transitions,
   and bounded deferred retries; launches fail closed when preflight, admission,
@@ -1621,6 +1637,7 @@ are culled so your phone hears about state changes that matter.
   contrast and less competing chrome.
 
 ### Fixed
+
 - **Transcript navigation keeps the reader's place.** Chat switches, popouts,
   document-root scrolling, and virtual-window remounts restore the correct
   reading anchor; expanded Ensemble rounds remain expanded per chat. Explicit
@@ -1678,6 +1695,7 @@ are culled so your phone hears about state changes that matter.
   livelock.
 
 ### Security
+
 - **Run authority is reconstructed from canonical state.** Main revalidates the
   invoking chat, workspace, scheduled occurrence, popout owner, attachment and
   external-path capabilities, and IPC operation instead of trusting renderer
@@ -1711,6 +1729,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.8.1 - 2026-07-12
 
 ### Added
+
 - **Background lanes for Ensemble work.** The new BG stage keeps a participant
   out of ordinary round rotation and starts it in a detached lane only when
   explicitly @mentioned or delegated. Normal BG launches are read-only, and BG
@@ -1736,6 +1755,7 @@ are culled so your phone hears about state changes that matter.
   counter movement, and interaction feedback while respecting Reduce Motion.
 
 ### Changed
+
 - **Review gates now follow the active goal.** Resolved or superseded gates no
   longer block a newer goal, and an eligible reviewer can record a passed or
   failed verdict for the gate it owns.
@@ -1748,6 +1768,7 @@ are culled so your phone hears about state changes that matter.
   ends the current pass before a new one can run on the stale seat.
 
 ### Fixed
+
 - **Ensemble lifecycle and routing are more dependable.** Transcript events keep
   their order, directed prompts and shortcut queues retain their intended scope,
   and terminal yields close cleanly instead of leaving misleading idle hops.
@@ -1776,6 +1797,7 @@ are culled so your phone hears about state changes that matter.
   a failed launch.
 
 ### Security
+
 - **Reviewer verdicts use a strict, narrow allowance.** Only the exact
   gate-specific passed/failed verdict payload can take the reviewer path; every
   other management action remains behind its existing authority checks.
@@ -1784,6 +1806,7 @@ are culled so your phone hears about state changes that matter.
   or Default permissions without custom overrides.
 
 ### Documentation
+
 - **Motion and transitions guide.** The how-to documentation now explains the
   shared motion tokens, presence rules, feedback, and Reduce Motion behaviour.
 - **MCP catalogue catch-up.** Settings groups goal-complete proposals with the
@@ -1794,6 +1817,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.8.0 - 2026-07-11
 
 ### Added
+
 - **Durable delegated workers with joined return results.** Parent agents can now
   choose the provider, model, and reasoning controls for a fresh sub-thread
   worker, then recall that same worker later without losing its provider session
@@ -1974,6 +1998,7 @@ are culled so your phone hears about state changes that matter.
   dismissal.
 
 ### Changed
+
 - **Composer shells no longer repaint the whole app.** A composer style now
   changes composer chrome only; the selected app theme consistently owns the
   transcript, sidebar, message bubbles, and surrounding surfaces. Light mode's
@@ -2170,6 +2195,7 @@ are culled so your phone hears about state changes that matter.
   context compaction and read each seat's pressure at a glance.
 
 ### Fixed
+
 - **Weather-off light themes no longer show a stray sky band.** The transcript's
   blue top reveal is now keyed to an actually mounted Weather/Sky layer in each
   pane, rather than the broader visual-effects switch, so disabling weather
@@ -2440,6 +2466,7 @@ are culled so your phone hears about state changes that matter.
   belonged to; it's now correctly ordered ahead of the card, matching desktop.
 
 ### Security
+
 - **Async delegated workers cannot inherit Trusted Session.** Worker runs carry
   a capped, signed snapshot of the invoking run's permission posture and
   external-path grants, with their run identity bound before dispatch. A
@@ -2470,12 +2497,14 @@ are culled so your phone hears about state changes that matter.
   get the local model to parrot it back as "analysis."
 
 ### Accessibility
+
 - **Finer app-size control on iOS.** The app display-scale setting now offers
   five steps in each direction (60% to 150%) instead of just one, letting you
   dial in text and UI size more precisely. Existing saved choices are
   unaffected.
 
 ### Removed
+
 - **Redundant internal transcript notices.** Legacy queued-run request cards,
   per-run crash-recovery notes, steer-handoff notes, and retired Gemini
   capacity/command-bridge notices no longer interrupt the conversation. Their
@@ -2493,6 +2522,7 @@ are culled so your phone hears about state changes that matter.
   simplifying the composer bar.
 
 ### Documentation
+
 - **First-launch guidance matches the 1.8 permission and orchestration model.**
   Onboarding now distinguishes General chats from workspace-scoped coding,
   names Workspace Write and lane-scoped Trusted Session accurately, documents
@@ -2512,6 +2542,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.7.9 - 2026-07-07
 
 ### Added
+
 - **iOS performance pass.** The companion app caches MarkdownLite blocks by text
   and participant signature, resplits streaming Markdown only when a paragraph
   boundary crosses chunk edges, gates the composer rim-chase idle animation behind
@@ -2547,10 +2578,11 @@ are culled so your phone hears about state changes that matter.
   update, clear, and query the active thread goal inside ensemble rounds.
 
 ### Fixed
+
 - **Ensemble participant ordering on iOS and Mac.** Round `participants` arrived
   in speaking-queue array order while the configured roster used slot order; both
   the host projection and iOS `displayParticipants` now sort by `(order,
-  participantId)` so transcript, mention, and chip-strip surfaces stay aligned
+participantId)` so transcript, mention, and chip-strip surfaces stay aligned
   after mid-round roster edits.
 - **iPad transcript scrolling restored.** A layout regression from the iOS parity
   work broke scroll-to-bottom and upward scrolling on iPad; the detail view now
@@ -2574,6 +2606,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.7.8 - 2026-07-06
 
 ### Added
+
 - **Queued messages → Blackboard.** The queued-message Steer button on desktop
   is now a small menu: **Steer now** (unchanged — interrupts the round and
   dispatches immediately) or **Add to Blackboard** (consumes the queued
@@ -2600,6 +2633,7 @@ are culled so your phone hears about state changes that matter.
   presets until eval confidence.
 
 ### Fixed
+
 - **Transcript scroll-up yank.** Automatic follow snaps no longer pull the
   viewport back to the live edge when you scroll up to read history during
   streaming. The scroll hook now checks live `scrollTop` movement before any
@@ -2631,6 +2665,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.7.7 - 2026-07-06
 
 ### Added
+
 - **Thread Introspection — memory promotion (read-only MVP).** A retrospective
   layer scans recent threads and runs, harvests evidence (run events, approval
   friction, message feedback, correction heuristics), and produces reviewable
@@ -2675,6 +2710,7 @@ are culled so your phone hears about state changes that matter.
   glyphs.
 
 ### Changed
+
 - **Trusted Session replaces ambiguous YOLO trust.** Full local authority is now
   granted per chat or per ensemble participant lane, not globally to every
   participant in the session. Workspace Write is accented orange and Trusted
@@ -2693,6 +2729,7 @@ are culled so your phone hears about state changes that matter.
   optional macOS dependency installation scoped to the universal build path.
 
 ### Fixed
+
 - **iOS thread-list recovery.** Task-card fallbacks, `chatKind` repair, and
   metadata snapshot merge keep companion lists aligned with desktop state after
   older or partial broadcasts.
@@ -2705,6 +2742,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.7.6 - 2026-07-05
 
 ### Added
+
 - **Prompt caching guarantee tiers.** Settings → Providers → Prompt caching shows
   per-transport posture (Guaranteed / Automatic / Best effort / Unsupported) with
   optional diagnostics when providers report cache read/creation tokens. Controllable
@@ -2715,7 +2753,7 @@ are culled so your phone hears about state changes that matter.
   sibling chat with duplicated transcript) on other live providers, with clear
   native vs emulated labeling.
 - **Worktree and branch orchestration.** Runtime profile `workspaceMode:
-  worktree` resolves to git worktree lifecycle at run launch. The composer
+worktree` resolves to git worktree lifecycle at run launch. The composer
   above-row branch control opens a popover to list branches, create a branch,
   checkout, and create/select/remove worktrees with dirty-tree guards.
 - **Thinking trace actions.** Reasoning traces in the activity stack gain
@@ -2724,6 +2762,7 @@ are culled so your phone hears about state changes that matter.
   summaries where the provider exposes reasoning metadata.
 
 ### Changed
+
 - **Cache usage telemetry.** Model Usage and prompt-cache diagnostics surface
   cache read/creation tokens when providers report them, including on implicit
   caching transports TaskWraith observes but does not control.
@@ -2737,6 +2776,7 @@ are culled so your phone hears about state changes that matter.
   run-details screen.
 
 ### Fixed
+
 - **Branch popover readability and placement.** The composer branch/worktree
   popover reuses the Model/Reasoning picker frosted-glass chrome and opens above
   the trigger by default so it no longer overlaps the picker row below.
@@ -2749,12 +2789,14 @@ are culled so your phone hears about state changes that matter.
   explicit user approval.
 
 ### Documentation
+
 - New guide: `SESSION_AND_WORKSPACE.md` (caching tiers, forks, worktrees).
 - Architecture and Advanced Optional Setup cross-links for BYOK caching caveats.
 
 ## 1.7.5 - 2026-07-05
 
 ### Added
+
 - **Agent Pool icon colour controls.** Hue and brightness sliders stay visible for
   seed, asset, and named icons — not only after Shuffle — with editable Hex and
   RGB fields for precise picks. When **Tint icon** is on, your chosen colour
@@ -2789,6 +2831,7 @@ are culled so your phone hears about state changes that matter.
   condenses into a tighter grid layout.
 
 ### Changed
+
 - **Fan-out transcript grouping.** Parallel fan-out activity rolls up into grouped
   cards instead of scattering individual lane messages through the thread.
 - **Ensemble send queueing.** Sends issued while the orchestrator is busy route
@@ -2807,6 +2850,7 @@ are culled so your phone hears about state changes that matter.
   discovery.
 
 ### Fixed
+
 - **Agent Pool tint precedence.** Legacy baked accents no longer win over user
   hue/brightness when tinting is enabled.
 - **Settings roster brief editor width.** The ensemble brief editor no longer
@@ -2824,6 +2868,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.7.4 - 2026-07-04
 
 ### Added
+
 - **Mid-thread ensemble toggle.** Top-level chats can now flip in place between
   single-provider and Ensemble mode on the same chat, preserving transcript and
   run history. Solo → Ensemble seeds a single participant from the current
@@ -2871,6 +2916,7 @@ are culled so your phone hears about state changes that matter.
   notifications are dialled back so the ones that arrive are worth reading.
 
 ### Changed
+
 - **Provider / model / reasoning switching no longer stops at first send.** In
   normal chats, the composer provider and model / reasoning pickers stay usable
   after a thread has history. Idle changes apply immediately; while a turn is
@@ -2899,6 +2945,7 @@ are culled so your phone hears about state changes that matter.
   back to just its drifting +/− line counts.
 
 ### Fixed
+
 - **Priority @-mentions reach the Boss even after they've spoken.** Directing a
   round back to the Boss — or the acting Captain when the Boss is away — after
   that authority had already taken its turn printed a "takes routing priority"
@@ -2941,6 +2988,7 @@ are culled so your phone hears about state changes that matter.
   tier and the command actually runs.
 
 ### Security
+
 - **Roster permission changes respect the workspace auto-edit gate.** Setting an
   ensemble participant to an auto-edit-tier posture (workspace-write or full
   access) from a remote device now requires the workspace to permit auto-edit,
@@ -2953,6 +3001,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.7.3 - 2026-07-03
 
 ### Fixed
+
 - **Full Access agents can build, sign and ship.** A Codex agent running under
   the **Full access** permission preset now launches without the workspace
   sandbox (`danger-full-access`) instead of being confined to the repository.
@@ -2965,6 +3014,7 @@ are culled so your phone hears about state changes that matter.
   commands" setting still overrides it.
 
 ### Added
+
 - **iOS: grant Full access from your phone.** The iOS participant permission
   picker now offers **Full access**, matching the desktop permission picker, so
   a phone-driven ensemble participant can be given the full-access posture that
@@ -2973,6 +3023,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.7.2 - 2026-07-03
 
 ### Added
+
 - **iOS ensemble orchestration parity.** The iOS companion can now adjust
   ensemble controls that were previously desktop-only: designate the
   **Captain** (second-in-command who steps in when the Boss is unavailable),
@@ -2984,6 +3035,7 @@ are culled so your phone hears about state changes that matter.
   round.
 
 ### Changed
+
 - **Question routing.** The agent runtime preamble now steers agents to the
   TaskWraith `ask_user_question` tool instead of a provider-native question
   prompt, which silently auto-resolves without reaching the user in this
@@ -2992,6 +3044,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.7.1 - 2026-07-03
 
 ### Added
+
 - **Context compaction, made visible.** Solo Claude and Codex chats now show a
   glass compaction card when a context reset completes or fails, and the
   composer context donut grows a pressure state (amber at 80%, red at 95%) with
@@ -3024,7 +3077,7 @@ are culled so your phone hears about state changes that matter.
 - **Agent Pool gets its own page.** The reusable Agent Pool moves out of the
   foot of the Ensemble Roster tab into a dedicated **AI & Providers -> Agent
   pool** settings page, so it has room to grow and is no longer squashed under a
-  large roster. The roster tab keeps its per-participant *Save to pool* action.
+  large roster. The roster tab keeps its per-participant _Save to pool_ action.
 - **Projects sidebar, finished.** The Projects tab added in 1.7.0 gets a full
   polish pass: archived member chats stay visible with an **Archived** chip,
   expand state persists, chat rows drag straight onto a project, search is truly
@@ -3046,6 +3099,7 @@ are culled so your phone hears about state changes that matter.
   track, and a hover bulge for moving between prompts in a long conversation.
 
 ### Changed
+
 - **Local models follow the standard permission role.** Ollama's bespoke
   tool-control tier ladder is retired. Local models now get the full tool
   surface and obey the same Plan / Read-Only / Default / Full Workspace Access
@@ -3069,7 +3123,7 @@ are culled so your phone hears about state changes that matter.
 - **Sidebar running vs. selection.** A running thread now shows a slow-pulsing
   monoline "ghost" mark, and the accent rim is reserved strictly for the selected
   thread — the two were nearly indistinguishable before. Each sidebar section
-  previews its first few threads with a *show more* affordance, and on macOS the
+  previews its first few threads with a _show more_ affordance, and on macOS the
   corner-controls pill clears the window traffic lights when the sidebar is
   closed.
 - **Ensemble roster controls.** Orchestration controls move onto a labeled
@@ -3084,11 +3138,12 @@ are culled so your phone hears about state changes that matter.
   softened.
 
 ### Fixed
+
 - **Ensemble reliability.** A cluster of round-lifecycle fixes: the composer and
   queued-row **Steer** now act on the first click, queued-row Steer and Delete
   recover after an app restart, seat changes hand over cleanly and preserve their
   stage role, duplicate yield-activity rows are removed, and a clean exit with
-  streamed content finalizes as *answered* instead of hanging.
+  streamed content finalizes as _answered_ instead of hanging.
 - **Startup opens a fresh chat.** Launch no longer restores the most recent
   global chat into a stale, un-hydrated transcript. The app now opens a fresh
   single General chat on your default provider every time; workspaces and
@@ -3115,6 +3170,7 @@ are culled so your phone hears about state changes that matter.
   transcript identity is de-boxed to match the desktop.
 
 ### Removed
+
 - **Ollama tier machinery.** With local models now on the standard permission
   role, the dead tier resolvers, tier tables, mid-run tier-bump path, the
   now-inert tier and run-profile picker UI, and the unused global run-profile
@@ -3125,6 +3181,7 @@ are culled so your phone hears about state changes that matter.
 ## 1.7.0 - 2026-07-01
 
 ### Added
+
 - **Plan Mode workflow.** Composer mode now separates Plan workflow from
   Read-only recon. Plan chats can surface a single proposed plan from the
   designated owner, approve / customize / dismiss it, and carry the approved
@@ -3157,6 +3214,7 @@ are culled so your phone hears about state changes that matter.
   remain listed so unarchive can restore membership.
 
 ### Changed
+
 - **Claude picker line-up.** Mythos 5 is retired from current Claude model
   pickers while Fable 5 and Sonnet 5 remain visible; historical Mythos chats,
   aliases, display names, rates, context windows, and CLI normalization stay
@@ -3188,6 +3246,7 @@ are culled so your phone hears about state changes that matter.
   organization-wide retention, or a complete managed organization control plane.
 
 ### Fixed
+
 - **Plan Mode security.** Workflow mode is signed into run permission posture,
   and plan-artifact paths reject symlink / realpath escapes.
 - **Recovery transcript noise.** Restarting after interrupted parallel fan-out no
@@ -3216,6 +3275,7 @@ are culled so your phone hears about state changes that matter.
   genuinely older rounds get the compact card treatment.
 
 ### Known Open
+
 - **Grok interrupted-lane resume.** Grok session-id persistence remains
   evidence-first after the steering fix; no source patch is claimed without a
   fresh post-fix recovery capture.
@@ -3230,6 +3290,7 @@ published.
 ## 1.6.9 - 2026-06-28
 
 ### Added
+
 - **Ornith local Ollama models.** Local / Ollama now includes Ornith 1.0
   (9B Param) and Ornith 1.0 (35B Param), with model labels, context-window
   estimates, setup hints, preflight checks, run profiles, rate estimates, and
@@ -3245,6 +3306,7 @@ published.
   between user prompts in long conversations.
 
 ### Changed
+
 - **Cleaner welcome notices.** Welcome / first-launch notices are dismissible and
   swipeable, with the carousel now focused on local Ollama models (Ornith + LFM),
   the AntiGravity policy notice, and rotating changelog highlights instead of
@@ -3261,6 +3323,7 @@ published.
   softer provider glow and ambient sparkle treatment.
 
 ### Fixed
+
 - **Ollama reliability.** Ollama transport failures are handled more cleanly, and
   local-model routing now carries Ornith-specific context, memory, retrieval, and
   preflight behavior instead of falling through generic defaults.
@@ -3276,6 +3339,7 @@ published.
 ## 1.6.8 - 2026-06-28
 
 ### Added
+
 - **Scheduled messages in the visible queue.** The composer Schedule clock now
   creates a timer-locked queued message instead of a separate hidden scheduled
   task. Scheduled rows keep Edit/Delete, show a live countdown where Steer
@@ -3288,6 +3352,7 @@ published.
   MagicDNS URL and port.
 
 ### Changed
+
 - **Cleaner trust-mode UX.** YOLO / Trust This Session now appears as a compact
   composer chip with an explanatory tooltip and click-to-disable behavior,
   replacing the warning-style banner.
@@ -3301,6 +3366,7 @@ published.
   message body.
 
 ### Fixed
+
 - **Share invite reliability.** Shared-chat invite copy and relay setup are more
   robust, including stronger validation around collaborator join payloads.
 - **iOS relay pairing fallback.** Tailscale and relay pairing paths recover more
@@ -3315,6 +3381,7 @@ published.
 ## 1.6.7 - 2026-06-28
 
 ### Added
+
 - **Universal composer scheduling.** Workspace-backed single and Ensemble chats
   now have a Schedule clock in the composer controls. It opens a glass date/time
   picker with quick presets and uses the existing scheduled-task pipeline so
@@ -3322,6 +3389,7 @@ published.
   guardrails.
 
 ### Changed
+
 - **Scheduled task visibility.** Scheduled-task pills now show a live countdown
   and switch to "due / waiting" when the timer has elapsed but the chat is still
   busy.
@@ -3330,6 +3398,7 @@ published.
   less likely to get stuck on the wrong network path.
 
 ### Fixed
+
 - **Sidebar rename reliability.** Inline chat rename fields focus and select
   consistently, rename can be started deliberately from the row or menu, and
   renamed titles avoid unnecessary truncation in edit fields.
@@ -3339,6 +3408,7 @@ published.
 ## 1.6.6 - 2026-06-27
 
 ### Added
+
 - **Decomposition groundwork.** App and main-process orchestration have started
   moving out of the large root files into focused helper, hook, and IPC modules,
   making future changes easier to review without changing user-facing behavior.
@@ -3346,6 +3416,7 @@ published.
   from the sidebar during local project work.
 
 ### Changed
+
 - **More robust iOS remote access.** Dev and release builds recover Tailscale /
   relay routing more reliably, retry transient status probes, prefer recently
   successful relay doors on reconnect, and restart the embedded bridge on demand
@@ -3357,6 +3428,7 @@ published.
   dismissed permanently and moved through with explicit carousel controls.
 
 ### Fixed
+
 - **Ensemble orchestration reliability.** Role and Boss mention routing now
   takes priority over ambiguous provider tags, stale round lifecycle state
   recovers cleanly, and shared-chat invite joins are harder to trip up.
@@ -3373,6 +3445,7 @@ published.
 ## 1.6.5 - 2026-06-27
 
 ### Added
+
 - **User MCP server manager.** Settings can now manage user-defined MCP servers,
   import/export provider snippets, show per-server readiness, and copy
   provider-specific config for Codex, Claude, Cursor, and compatible JSON/TOML
@@ -3386,6 +3459,7 @@ published.
   so long transcripts can move back to the originating request more reliably.
 
 ### Fixed
+
 - **iOS thread rename parity.** Chat renames from the iOS companion sync back to
   the Mac, full titles are preserved across the bridge, and headers/sidebar rows
   avoid unnecessary truncation in rename fields and wide-enough title areas.
@@ -3403,6 +3477,7 @@ published.
   unselectable on models that do not support them.
 
 ### Changed
+
 - **MCP setup copy is clearer.** Provider-tool setup now labels active MCP
   servers, routes settings searches to the right config panes, and explains the
   Cursor/Grok bridge fallback without implying retired Gemini setup work.
@@ -3412,6 +3487,7 @@ published.
 ## 1.6.4 - 2026-06-26
 
 ### Added
+
 - **Composer-aligned slash picker.** Slash commands now open in a wider,
   composer-width picker with grouped sections, richer command descriptions, and
   custom monoline icons for review, planning, side-chat, ensemble, Gemini,
@@ -3422,6 +3498,7 @@ published.
   selection.
 
 ### Changed
+
 - **Consistent theme opacity.** Every named system theme now obeys Settings ->
   Appearance -> Main pane opacity, instead of only Light, Dark, Alabaster, and
   Obsidian honoring the slider.
@@ -3432,6 +3509,7 @@ published.
   tuning the remote UI density on the phone.
 
 ### Fixed
+
 - **Slash routing hardening.** Typed slash commands now route through the shared
   registry, preserve drafts when a pane handler redirects, resolve participants
   per focused pane, refresh Gemini command discovery after `/commands reload`, and
@@ -3442,6 +3520,7 @@ published.
 ## 1.6.3 - 2026-06-26
 
 ### Added
+
 - **Shared chats.** You can now invite other people into a chat. Sharing runs over
   the same end-to-end-encrypted relay as the iOS companion: invitees join by
   confirming a short verification code, see a live projection of the conversation,
@@ -3475,6 +3554,7 @@ published.
   guide, a composer-variant gallery and refreshed README screenshots.
 
 ### Changed
+
 - **Codex surfaces media.** Codex runs now show their generated images and trusted
   audio/video in the transcript, at parity with the other providers.
 - **Looping workflows show live progress.** A looping workflow reports per-iteration
@@ -3488,6 +3568,7 @@ published.
   shared bridge copy no longer names retired Gemini as an active setup target.
 
 ### Fixed
+
 - **No more repeated notification banner (iOS).** The companion no longer raises a
   banner every time it registers for push notifications.
 - **iOS recovers instead of bricking.** A keychain identity error (-34018) now
@@ -3503,6 +3584,7 @@ published.
 ## 1.6.2 - 2026-06-25
 
 ### Added
+
 - **Refractive "liquid glass."** An optional refractive-glass material that brings a
   subtle liquid-glass refraction to the composer, sidebars, pickers, dashboard and
   first-launch sheet in place of the flat frosted look. Toggle it under
@@ -3520,6 +3602,7 @@ published.
   with a full audit ledger.
 
 ### Changed
+
 - **General chats are friendlier.** "Global Chat" is now "General" across desktop and
   iOS, with a less technical welcome and softer chrome for non-coding conversations.
 - **App-icon picker (macOS).** The Monoline and WWDC26 variants now render the correct
@@ -3528,6 +3611,7 @@ published.
 - **Branded macOS installer.** The DMG now uses a branded background from the brand kit.
 
 ### Fixed
+
 - **The transcript stays where you put it.** Scrolling up is no longer overridden by an
   auto-snap to the bottom on new activity, and the streaming tail no longer flashes;
   the side-chat panel gained the same scroll-up release (desktop).
@@ -3550,6 +3634,7 @@ published.
 ## 1.6.1 - 2026-06-23
 
 ### Added
+
 - **Composer drafts persist.** Typed-but-unsent prompt text now survives switching
   threads, backgrounding, and even an app restart — on both desktop and iOS. Send
   clears the draft, and a prompt you already sent never resurrects.
@@ -3568,6 +3653,7 @@ published.
   current API rate metadata.
 
 ### Changed
+
 - **Smoother streaming.** A matched type-out reveal (closer to the Codex / Claude
   cadence) plus render-coalescing and scroll / markdown perf retunes make streamed
   replies read more evenly on desktop and iOS.
@@ -3578,6 +3664,7 @@ published.
   configuration passed through to the agent.
 
 ### Fixed
+
 - **Ensemble completion alerts fire once.** A finished ensemble round now sends a
   single "task complete" notification instead of one per participant.
 - **Multiview diff stats are per-pane.** Each pane's "files changed / diff" in the
@@ -3591,6 +3678,7 @@ published.
 ## 1.6.0 - 2026-06-22
 
 ### Added
+
 - **Multiview — split the workbench into up to four live panes.** Open several
   chats side by side over one shared environment, each with its own composer,
   agent aura, and ambient FX; drag the dividers to resize. Welcome and split
@@ -3656,6 +3744,7 @@ published.
   guide mirrors the desktop onboarding with live provider readiness from your Mac.
 
 ### Changed
+
 - **Gemini has been retired.** Google ended the Gemini CLI sign-in, so Gemini is
   no longer available for new runs and is removed from new-run and picker
   surfaces, the sidebar usage meter, Settings (Providers + MCP), onboarding, and
@@ -3679,6 +3768,7 @@ published.
   above Bridge networking on the pairing screen.
 
 ### Fixed
+
 - **iOS image attachments work end to end.** Attached photos now reach the agent
   and render inline in the transcript, and the encoder no longer silently drops a
   dense image.
@@ -3702,12 +3792,14 @@ published.
 ## 1.5.9 - 2026-06-18
 
 ### Changed
+
 - **iOS composer collapses to one line when idle.** On the phone, when the
   composer isn't focused (keyboard down) it now collapses to a single-line
   input + model pill + send — the diff/changes rows, participant roster, queued
   prompts, and telemetry rail all tuck away and reappear when you tap in.
 
 ### Fixed
+
 - **Ensemble "Task Complete" summary covers the whole round.** The end-of-round
   completion card now sums tokens and cost across every participant, unions
   their file changes, and spans the full round duration — previously it showed
@@ -3717,6 +3809,7 @@ published.
 ## 1.5.8 - 2026-06-18
 
 ### Changed
+
 - **Turn-based guest participation.** When a chat has a guest agent, the primary
   agent now answers first and the guest replies on its turn — so each sees and
   can build on the other's response, instead of both answering at once. Tag
@@ -3725,6 +3818,7 @@ published.
   desktop turns.
 
 ### Fixed
+
 - **iOS companion.** Removing a guest now reliably clears the composer chip
   (bigger tap target plus an explicit "Remove guest" item in the guest picker);
   each composer shell collapses to a single line when you're not typing;
@@ -3735,6 +3829,7 @@ published.
 ## 1.5.7 - 2026-06-18
 
 ### Added
+
 - **Guided Tailscale device linking.** Settings → Devices now walks you through
   connecting a phone over Tailscale — a setup signposting section plus guided
   auth-key linking — so remote access is reachable without hand-editing config.
@@ -3745,7 +3840,7 @@ published.
   defensive/uncertain phrasing into concrete steps, and estimates the execution
   risk before anything runs — with intake-safety guards on the way in.
 - **iOS companion — composer shells, welcome dashboard, transcript font.** The
-  phone composer now matches the Mac's per-shell *layout* (Codex, Claude, Cursor,
+  phone composer now matches the Mac's per-shell _layout_ (Codex, Claude, Cursor,
   Grok, Gemini and the rest — rows, tucked tabs, rims, corner radii); the New
   Chat welcome screen shows a compact usage dashboard mirrored live from the Mac;
   and Settings adds a Transcript response-font picker (Avenir Next, SF Pro, Serif,
@@ -3754,6 +3849,7 @@ published.
   tool names on the phone, matching the desktop transcript.
 
 ### Fixed
+
 - **Run permission posture.** Hardened how a run's permissions are resolved so it
   can't end up with a broader posture than intended.
 - **Welcome dashboard robustness.** The Mac→remote dashboard broadcast no longer
@@ -3770,6 +3866,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.5.6 - 2026-06-17
 
 ### Added
+
 - **iOS composer shells.** The phone composer now mirrors the Mac's composer
   style — Default, Codex, Claude, Cursor, Grok, Gemini, Kimi, Modular, Terminal,
   Ticket Stub, Satellite, Obsidian, and Alabaster — following the Mac by default,
@@ -3778,6 +3875,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   composer layout picker, per-pane focus/close, and simultaneous streaming.
 
 ### Fixed
+
 - **Ensemble runaway loop.** A participant that kept choosing "continue" with the
   same restatement (no new work) could loop for dozens of rounds. It now stops
   after a couple of identical continuations and reports no progress, asking the
@@ -3805,6 +3903,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.5.5 - 2026-06-16
 
 ### Fixed
+
 - **iOS Ensemble participant editing.** Each participant chip can now set its own
   approval mode (Plan / Default / Full workspace) and reasoning/thinking (effort
   for Codex/Claude/Grok, extended thinking for Kimi, plus fast mode) from the
@@ -3821,6 +3920,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.5.4 - 2026-06-16
 
 ### Fixed
+
 - **Local (Ollama) models can now edit files.** Choosing a file-edit tier (or
   Tier 4 / Provider parity) reliably grants edit tools: the per-workspace parity
   grant is matched tolerant of path form, and when Tier 4 is selected but the
@@ -3835,6 +3935,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   counts, matching the desktop sidebar.
 
 ### Changed
+
 - **iOS notification banners.** Warnings, errors and confirmations now use a
   translucent glass style with a top-lit rim and consistently appear pinned at
   the top of the screen instead of crowding the composer.
@@ -3852,6 +3953,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.5.3 - 2026-06-16
 
 ### Fixed
+
 - **iOS Stop button.** Stop now targets the live run the moment streaming starts
   (rather than the throttled projection), and works on global chats and
   experimental providers — the desktop honors the cancel for those paths too.
@@ -3871,6 +3973,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   iPhone to avoid a UICollectionView abort seen over cellular.
 
 ### Changed
+
 - **App Store export compliance.** The iOS companion declares standard, exempt
   encryption (`ITSAppUsesNonExemptEncryption = NO`) per App Store Connect's
   questionnaire result, and TestFlight export entitlements are verified in the
@@ -3879,6 +3982,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.5.2 - 2026-06-15
 
 ### Added
+
 - **iOS companion TestFlight path.** The companion now has a release archive
   script, app lifecycle readiness coverage, lifted remote-pairing flags, APNs
   wake/reconnect hardening, and foreground/background reconnect fixes for paired
@@ -3893,6 +3997,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   heatmaps so provider activity history is easier to scan.
 
 ### Changed
+
 - **Runtime prompt compaction.** The TaskWraith runtime preamble is more compact
   and carries an explicit persisted version so future prompt upgrades can be
   reasoned about and migrated deliberately.
@@ -3904,6 +4009,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   masks, and run-summary copy labelling were tightened.
 
 ### Fixed
+
 - **Remote security and allowlists.** Explicit workspace capabilities now persist,
   secondary workspace writes require write allowlist coverage, APNs attention
   payloads are sanitized, stale bridge state is cleaned up, and workspace file
@@ -3919,6 +4025,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.5.1 - 2026-06-13
 
 ### Added
+
 - **Persistent thread goals.** Use `/goal <objective>` or the new composer goal
   control to set an active objective and stopping condition for a chat. Codex can
   mirror goals into native app-server goal state when supported; other providers
@@ -3935,6 +4042,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   runtime.
 
 ### Changed
+
 - **GPT-OSS/Ollama coding harness.** Local models get richer model metadata,
   profile-aware context budgets, native-first tool calling, safer loop stopping
   around goal lifecycle tools, workspace symbols/git context, and stricter
@@ -3950,6 +4058,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   updated copy for the current seven-provider surface.
 
 ### Fixed
+
 - **Audit runs no longer assume Claude.** Audit provider selection respects the
   configured provider set instead of spawning a provider the user may not have.
 - **Audit banners are dismissible.** Completed audit run cards can be hidden after
@@ -3962,6 +4071,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.5.0 - 2026-06-13
 
 ### Added
+
 - **iOS companion source publication.** The Swift package, iOS app target, assets,
   privacy manifest, entitlements, and interop fixtures are now tracked while
   signing-local state, build outputs, and provisioning material remain ignored.
@@ -3973,6 +4083,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   unsigned Windows and Linux artifact jobs.
 
 ### Changed
+
 - **Public provider/MCP docs.** The docs now describe the seven first-class
   providers and distinguish full brokered MCP providers from narrower Cursor,
   Grok, and Ollama tool surfaces.
@@ -3981,6 +4092,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   large workspaces.
 
 ### Security
+
 - **Public build boundary maintained.** Remote/iOS user-facing surfaces remain
   gated behind `IOS_REMOTE_TRUE` while TestFlight/export-compliance work
   continues.
@@ -3990,6 +4102,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.4.8 — 2026-06-11
 
 ### Added
+
 - **Remote companion preview groundwork.** Paired iPhone/iPad sessions now carry
   richer thread snapshots, run telemetry, tool transcript segments, model usage
   quota windows, thread notes, pinned messages, side-chat creation, guest
@@ -4005,6 +4118,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   into the remote bridge feed, with refreshed heatmap labels.
 
 ### Changed
+
 - **Remote run continuity.** Phone-initiated continuations now inherit the chat's
   model/session context, preserve interleaved tool transcripts, keep readable MCP
   tool details, and use the canonical compatibility vocabulary.
@@ -4015,6 +4129,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   bands for a softer naturalistic atmosphere.
 
 ### Fixed
+
 - **Remote provider inheritance.** Gemini auth/session state, Ollama memory, and
   ensemble steering now preserve the expected provider context across phone runs.
 - **Remote payload size.** Diff envelopes and thread projections were tightened
@@ -4023,6 +4138,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.4.7 — 2026-06-10
 
 ### Added
+
 - **Flag-gated iOS remote transport foundation.** End-to-end encrypted pairing,
   trusted reconnect, in-process relay hosting, ghost-branded QR pairing, remote
   workspace allowlists, live transcript streaming, model catalogs, ensemble roster
@@ -4031,6 +4147,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   model-labelled identities and can be addressed by role or model name.
 
 ### Changed
+
 - **Ollama harness routing.** Small-talk prompts skip the heavier agentic scaffold,
   while `todo_write` routes to its real MCP handler.
 - **Composer and sky polish.** Schedule/runtime rows, composer accessory rails, sky
@@ -4039,6 +4156,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.4.6 — 2026-06-09
 
 ### Added
+
 - **Local Servers.** TaskWraith detects workspace dev servers (Vite, Next, etc.),
   surfaces them in a new sidebar section and Settings tab, and maps legacy AGBench
   workspace labels to TaskWraith.
@@ -4057,6 +4175,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   Recents, Workspaces, etc.).
 
 ### Changed
+
 - **Composer above-bar polish across every shell.** Canonical element order
   restored (git → files/diff → action); secondary rows group trailing controls as
   Push/Review → access icon → revoke; Cursor secondary workspaces render as
@@ -4068,6 +4187,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   background glows neutralised; top-edge chroma wash and side glows removed.
 
 ### Fixed
+
 - **Above-bar trailing order regressions.** Push/Review no longer sits after the
   read/write and ✕ icons on secondary workspace rows.
 - **Codex secondary workspace divider.** Hairline appears above the 2nd workspace
@@ -4077,6 +4197,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.4.5 — 2026-06-09
 
 ### Added
+
 - **Ollama explore-before-edit harness.** Local models are gated through an
   explore→read→edit workflow with a `todo_write` scaffold, replacing the narrower
   retrieval-first read policy — fewer blind edits, more grounded local runs.
@@ -4085,11 +4206,13 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   Settings and First-Launch previews and a "Create PR" preview label.
 
 ### Changed
+
 - **Accurate Ollama token chips in ensembles.** Per-participant token spend now
   reads the same canonical totals (snake_case + camelCase reconciled) as usage
   recording and the composer tally.
 
 ### Fixed
+
 - **Ensemble participant chips collapsing to slivers.** On every composer shell,
   ensembles of 1–6 participants rendered as ~2px status-dot slivers (and, in an
   earlier state, overlapping labels). Chips now size to their content — short
@@ -4100,6 +4223,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.4.4 — 2026-06-09
 
 ### Added
+
 - **Ollama context engineering.** Per-model conversation budgets (Qwen 4B vs 9B vs
   GPT-OSS vs Gemma differ), a pre-run workspace index (shallow file tree + symbol
   sample), retrieval-first read policy (search before unfamiliar `read_file`),
@@ -4120,11 +4244,13 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   to install. The app also polls for updates every 15 minutes in the background.
 
 ### Changed
+
 - **Concurrent ensemble lanes** default on (`TASKWRAITH_CONCURRENT_LANES` opt-out).
 - **Ensemble thinking state** survives chat switches without losing the in-flight
   indicator.
 
 ### Fixed
+
 - **Renderer crash** when reading Ollama feature gates from `process.env` in the
   packaged app (gates now come from the native capability snapshot).
 - **Ensemble Ollama brand spoofing** no longer clobbers other participants' labels
@@ -4133,6 +4259,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.4.3 — 2026-06-09
 
 ### Added
+
 - **Saved ensemble roster presets** with a recall picker above the work-in-folder row.
 - **Role presets and goal brief** in the participant overflow popover; **apply-to-all**
   permissions control.
@@ -4144,6 +4271,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   row in the PR popover.
 
 ### Changed
+
 - **Liquid-glass native composer** outer frame; agent aura fans to detached above-bar
   rows; Satellite shell flattens roster + ensemble rows; Cursor above-rows match the
   merged frosted instrument frame.
@@ -4151,6 +4279,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   hierarchy provider icons enlarged.
 
 ### Fixed
+
 - **Composer glass/aura** polish on default and native instrument shells (neutral
   smoked glass, no blue wash on above-bar stacks).
 - **IPC schema** for `shell:reveal-in-finder`; external-path grant preflight types
@@ -4159,6 +4288,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.4.2 — 2026-06-08
 
 ### Added
+
 - **Goal-step checklist (`todo_write`).** Universal TaskWraith MCP tool with a
   compact transcript card and live-viewport pin (Ollama from approved-edits tier).
 - **Ollama local-model tuning.** Per-model preflight, model-aware prompts and
@@ -4166,12 +4296,14 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   workflow hint.
 
 ### Changed
+
 - **Live activity viewport** gains overflow-aware top/bottom edge fades and fixed
   jump/expand overlays while streaming.
 
 ## 1.4.1 — 2026-06-08
 
 ### Added
+
 - **Native Ollama tool-calling** via Ollama's `tools` API (structured `tool_calls`
   instead of JSON-in-prose only).
 - **Cursor-style live activity viewport** for in-flight tool calls and thinking
@@ -4180,6 +4312,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   internal reasoning as first-class thinking activity.
 
 ### Fixed
+
 - **GPT-OSS empty replies** when answers land in the reasoning channel only.
 - **Tool-intent stubs** and **malformed tool JSON** (tolerant re-parse + re-prompt
   instead of leaking protocol blobs to the user).
@@ -4188,6 +4321,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.4.0 — 2026-06-08
 
 ### Added
+
 - **Live web access for local models.** Local Ollama runs can now use `web_search`
   and `web_fetch`. Search returns ranked result links; fetch downloads a page and
   returns its readable text (HTML markup, scripts, and styles are stripped) so the
@@ -4208,6 +4342,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   the cost estimate shown for metered cloud providers.
 
 ### Fixed
+
 - **GPT OSS replies again.** Harmony-format models (e.g. GPT OSS) that stream their
   answer into the reasoning channel no longer finish with an empty response;
   TaskWraith now surfaces that text when the normal content channel is empty.
@@ -4222,12 +4357,14 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   cards.
 
 ### Changed
+
 - **Ollama approval previews tightened.** Clearer previews before approved-edit and
   approved-shell tool calls.
 - **Provider parity scoped to workspace grants.** Ollama provider-parity tooling is
   gated behind explicit per-workspace grants.
 
 ### Security
+
 - **Local web + workspace tools stay policy-gated.** `web_search`/`web_fetch` are
   read-only and routed through TaskWraith policy; workspace tools keep every path
   inside the active workspace, and write/shell tiers require explicit approval.
@@ -4235,6 +4372,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.3.0 — 2026-06-08
 
 ### Added
+
 - **Local Ollama provider.** TaskWraith can talk to a local Ollama runtime without
   a cloud API key, starting with curated presets for Qwen 3 4B, Gemma 4 12B, and
   GPT OSS 20B. Local transcript labels present those models by their upstream
@@ -4260,6 +4398,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   reviewed from a dedicated dock/settings surface.
 
 ### Changed
+
 - **Side-chat UX polish.** Linked sidecars have cleaner copy, sizing, and run
   presentation so they read as attached work surfaces rather than stray chats.
 - **Faster chat hydration.** Thread selection and chat-list IPC are now hydrated
@@ -4271,6 +4410,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   cover Codex, Claude, Gemini, Kimi, Grok, Cursor, and local Ollama.
 
 ### Security
+
 - **Channel gateway remains gated.** Channel user surfaces and bridge runtime are
   available only in development/debug builds while the remote message pipeline
   settles, preserving the 1.2.1 public-build boundary.
@@ -4282,6 +4422,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.2.1 — 2026-06-07
 
 ### Changed
+
 - **Messages bridge is dev/debug-only.** The local Messages.app / iMessage relay is
   hidden from public release builds and its IPC surface returns a clear disabled
   status outside development or the packaged TaskWraith Debug app.
@@ -4292,6 +4433,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   controls now use info-circle, question-circle, and shield-warning symbols.
 
 ### Fixed
+
 - **Dropdown pickers render again.** The condensed glass pill no longer clips the
   popout-tools picker or side-chat layout menu.
 - **Changelog freshness.** Old downloaded-update notes no longer override the
@@ -4300,6 +4442,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.2.0 — 2026-06-07
 
 ### Added
+
 - **First-class side chats.** Side chats are now durable and flexible — pop one out
   into its own window, dock it back, or promote it to a top-level chat, with draft
   text, scroll position, and presentation preserved across the move.
@@ -4313,12 +4456,14 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   produced on demand and attached to releases — a testing channel ahead of signed builds.
 
 ### Changed
+
 - **Clearer MCP surface.** Settings → MCP no longer mislabels working providers:
   Cursor shows its TaskWraith web bridge (web_fetch + web_search) and Grok shows
   provider-managed status, replacing the misleading "unsupported / not installed" tags.
 - **Tidier README.** Screenshots are now a grid instead of a long stack.
 
 ### Fixed
+
 - **Grok no longer dead-ends.** A write/Default-mode Grok turn that reached for a
   shell command (e.g. `mkdir`) could cancel with no output; Grok is now steered to the
   Write/Edit tools and to adapt rather than end the turn when a tool is refused.
@@ -4326,6 +4471,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 - Side-chat composer, above-row, and presentation-lifecycle fixes.
 
 ### Security
+
 - **Untrusted-input hardening.** External iMessage content is wrapped and replayed to
   the model as untrusted; IPC validation, shell-open policy, and prompt-composition
   sanitizers were extended for the new message surface.
@@ -4333,9 +4479,10 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.1.0 — 2026-06-06
 
 ### Added
+
 - **First-class workspace rows.** Every connected workspace row (primary and
   additional) now carries the full action set — Review changes → Push → Create PR
-  + commit — scoped to that folder, with a compact read/edit access icon.
+  - commit — scoped to that folder, with a compact read/edit access icon.
 - **Adjustable ensemble history.** A shared-history budget slider (5K–500K
   characters) in the ensemble Turn picker controls how much recent panel context
   each agent sees.
@@ -4349,6 +4496,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   blurred backdrop.
 
 ### Changed
+
 - **Provider-tinted composer pills.** Gemini (blue) and Kimi (olive) controls now
   carry the provider highlight; the native and other shells drop the redundant
   outer pill chrome for a cleaner row.
@@ -4357,6 +4505,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   never overlap the most recent message.
 
 ### Fixed
+
 - **Grok no longer stalls.** A write-enabled Grok turn that ran a shell command
   was cancelling with no output; write mode now allows Bash, and read-only turns
   get a steer so they answer directly instead of dead-ending.
@@ -4369,6 +4518,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.0.75 — 2026-06-05
 
 ### Fixed
+
 - **No more runaway background processes.** Fixed a loop where leftover Gemini
   MCP bridge registrations from before the rename could relaunch the app
   repeatedly in the background. Bridge detection is now rename-proof, and stale
@@ -4377,6 +4527,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.0.74 — 2026-06-05
 
 ### Changed
+
 - **AGBench is now TaskWraith.** The app is renamed end to end — name, icon,
   bundle ID, updater, MCP services, and docs. Your existing data carries over
   automatically on first launch: chats, settings, usage history, and saved state
@@ -4391,6 +4542,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   whole folder in a click.
 
 ### Added
+
 - **Push from the composer.** The Review changes menu now has a Push step
   between commit and Create PR — publish a new branch (sets its upstream) or push
   ahead commits in a click — and the primary action button names the real next
@@ -4401,6 +4553,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   failing run).
 
 ### Fixed
+
 - **Delegation cards read as one agent.** Sub-agent cards and the inspector
   timeline are tinted with each agent's identity colour as a full rim, replacing
   the left-edge accent sliver.
@@ -4411,6 +4564,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.0.73 — 2026-06-04
 
 ### Added
+
 - **Commit & open PRs from the composer** — the Review changes menu now drives a
   real Git flow: see your branch and changed files, write a message and Stage all
   & Commit, then Create PR once the branch is pushed and ready (gated on a live
@@ -4423,6 +4577,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   deny an agent action; it's recorded in the approval ledger.
 
 ### Changed
+
 - **Refined native composer** — the TaskWraith shell is now a cohesive console: the
   input sits in a framed module (solid black/white outer frame, theme-tone inner
   panel + provider rim, full-bleed and squared), the Ensemble / Create-PR / Steer
@@ -4432,6 +4587,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   that chat's own run-forensic artifacts (and only those).
 
 ### Fixed
+
 - **Kimi tool calls** — repeated calls coalesce into a single inline card that
   updates in place (instead of stacking) and now show the target filename,
   matching the other providers.
@@ -4443,6 +4599,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.0.72 — 2026-06-04
 
 ### Security
+
 - **Read-only means read-only** — choosing "Plan / read-only" for a run is now a
   hard floor that nothing downstream can quietly loosen: full-auto can't override
   it, delegated sub-agents inherit it, and uncategorised tools fail closed. The
@@ -4452,6 +4609,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   search) tools, with the host denying any write the agent attempts.
 
 ### Added
+
 - **Read-only that's still useful** — read-only agents keep full read parity
   (list / read / search) without prompts, and the run surface explains what a
   read-only seat can and can't do, by tool class.
@@ -4464,6 +4622,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   ready-to-file issue.
 
 ### Changed
+
 - **Denied writes stay honest** — a blocked or rejected edit is no longer counted
   or shown as an applied file change; it reads "attempted (not applied)", and a
   read-only agent is told its posture up front so a refused write doesn't
@@ -4478,6 +4637,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   collapse now persist across launches.
 
 ### Fixed
+
 - Ensemble: the "interrupted checkpoint" prompt no longer re-fires on every
   message, and stale checkpoint cards were removed from the composer.
 - The MCP tool broker is confirmed up before a Claude run starts, with start
@@ -4486,6 +4646,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.0.71 — 2026-06-02
 
 ### Added
+
 - **Onboarding clarity** — the first-launch sheet now shows copyable official
   install commands for each provider CLI, a sign-in primer (terminal-login vs
   in-app OAuth vs API key), a status-dot legend, and new "You stay in control"
@@ -4496,6 +4657,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   onboarding and Settings.
 
 ### Changed
+
 - **Confirmations** — deleting a chat or removing a workspace now asks first.
 - **Failed runs explain themselves** — the completion card shows the exit code
   and last error instead of a bare "check Raw Events"; cancelled runs read "Run
@@ -4513,12 +4675,14 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   say "0s left", and failed participants offer an inline retry.
 
 ### Accessibility
+
 - Search is focusable with ⌘F; sidebar menus support arrow-key navigation; the
   onboarding sheet now traps focus and focuses its first control on open.
 
 ## 1.0.7 — 2026-06-01
 
 ### Added
+
 - **Ensemble shared blackboard** — a compact, scoped scratchpad of agreed facts,
   decisions, open risks, and do-not-repeat notes that panel participants consume
   instead of re-deriving context every round.
@@ -4531,24 +4695,28 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   substantive turn and its tool trace across pause/resume.
 
 ### Changed
+
 - **Long-transcript performance** — the transcript is virtualized, so dense
   ensemble threads stay smooth as they grow.
 - **Usage & cost tracking** — ensemble runs now count toward the cumulative
   wall-clock and the activity heatmaps, and ensemble chats appear in Recents.
 - **Ensemble coordination** — heuristics detect stuck / looping / disagreement
-  patterns and *recommend* extending a round or synthesizing (never autonomous).
+  patterns and _recommend_ extending a round or synthesizing (never autonomous).
 - More robust content-filter retries and provider rate-refresh fallbacks.
 
 ### Accessibility
+
 - Status and indicator animations honour the in-app reduce-motion setting; the
   keyboard focus ring on message actions was restored.
 
 ### Security
+
 - Signed and notarized macOS build.
 
 ## 1.0.6 — 2026-05-31
 
 ### Added
+
 - **Two new first-class providers** — Grok (xAI agent CLI) and Cursor
   (Composer 2.5 CLI) — wired through composer shells, model pickers, sign-in
   flows, usage meters, and sub-thread inference alongside the existing lineup.
@@ -4562,6 +4730,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
   provider glyphs, and an app-shell stats toolbar.
 
 ### Changed
+
 - Welcome, dashboard, and composer polish; light-mode contrast fixes; a
   consolidated participant-health header for ensemble panels.
 
@@ -4570,6 +4739,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.0.4 — 2026-05-27
 
 ### Added
+
 - **Ensemble mode** — run several coding agents as a panel with a chair /
   synthesizer, structured rounds, and per-participant review.
 - **Work sessions** — grouped, resumable units of agent work.
@@ -4577,6 +4747,7 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.0.3
 
 ### Added
+
 - Desktop workbench for running and reviewing coding-agent CLIs
   across multiple providers: workspace trust state, approval modes, activity
   timelines, command-output and status review, and run-scoped diff review.

@@ -324,10 +324,7 @@ describe('ApprovalLedger', () => {
       '2026-05-07T00:00:00.000Z'
     )
     const firstRun = backfillApprovalLedgerTitles([record], '2026-05-31T20:00:00.000Z')
-    const secondRun = backfillApprovalLedgerTitles(
-      firstRun.records,
-      '2026-05-31T20:01:00.000Z'
-    )
+    const secondRun = backfillApprovalLedgerTitles(firstRun.records, '2026-05-31T20:01:00.000Z')
 
     expect(firstRun.changed).toBe(1)
     expect(secondRun.changed).toBe(0)
@@ -396,7 +393,12 @@ describe('ApprovalLedger', () => {
       } as unknown as ReturnType<typeof make>
     })
 
-    const capped = capApprovalLedgerRecords([...audits, realWorkspaceGrant, realSessionGrant, pending])
+    const capped = capApprovalLedgerRecords([
+      ...audits,
+      realWorkspaceGrant,
+      realSessionGrant,
+      pending
+    ])
     const ids = new Set(capped.map((record) => record.approvalId))
 
     // The user's actual grants and the pending request are untouchable.

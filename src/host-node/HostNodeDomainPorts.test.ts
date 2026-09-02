@@ -1201,10 +1201,7 @@ describe('HostNodeDomainPorts', () => {
     expect(offers.currentModel).toBe('muse-spark-1.2')
     expect(offers.currentReasoningEffort).toBe('high')
     expect(offers.currentPostureId).toBe('workspace_write')
-    expect(offers.postures?.map((posture) => posture.label)).toEqual([
-      'Workspace write',
-      'Default'
-    ])
+    expect(offers.postures?.map((posture) => posture.label)).toEqual(['Workspace write', 'Default'])
     expect(offers.provider.runtimeProvider).toBe('muse')
     expect(offers.models.map((model) => model.id)).toEqual(['muse-spark-1.2', 'muse-flow-2'])
     const model = offers.models[0]
@@ -2164,7 +2161,12 @@ describe('HostNodeDomainPorts', () => {
     await expect(
       domain.executeCommand(
         context,
-        command('composer.send', 'run-cap-1', { threadId: firstThread.appChatId }, { text: 'first' }),
+        command(
+          'composer.send',
+          'run-cap-1',
+          { threadId: firstThread.appChatId },
+          { text: 'first' }
+        ),
         { id: 'target' }
       )
     ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
@@ -2231,7 +2233,9 @@ describe('HostNodeDomainPorts', () => {
       ),
       { id: 'target' }
     )
-    await vi.waitFor(() => expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 1 }))
+    await vi.waitFor(() =>
+      expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 1 })
+    )
     await expect(
       domain.executeCommand(
         context,
@@ -2322,7 +2326,9 @@ describe('HostNodeDomainPorts', () => {
       ),
       { id: 'target' }
     )
-    await vi.waitFor(() => expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 1 }))
+    await vi.waitFor(() =>
+      expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 1 })
+    )
     const stopping = domain.shutdown()
     await expect(queued).resolves.toMatchObject({
       status: 'failed',

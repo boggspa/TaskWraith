@@ -239,8 +239,7 @@ function summariseDevinStatus(status: unknown): ProviderAuthSummary {
     return {
       variant: 'not-signed-in',
       statusText: 'Devin setup not checked yet',
-      hint:
-        'Install the Devin CLI (`curl -fsSL https://cli.devin.ai/install.sh | bash`), then set WINDSURF_API_KEY or run `devin auth login`.'
+      hint: 'Install the Devin CLI (`curl -fsSL https://cli.devin.ai/install.sh | bash`), then set WINDSURF_API_KEY or run `devin auth login`.'
     }
   }
   if (record.available === false) {
@@ -250,12 +249,11 @@ function summariseDevinStatus(status: unknown): ProviderAuthSummary {
       hint: 'Install the Devin CLI, then set WINDSURF_API_KEY or run `devin auth login` in Terminal.'
     }
   }
-  const authState = String(record.authState || '').trim().toLowerCase()
+  const authState = String(record.authState || '')
+    .trim()
+    .toLowerCase()
   const credentialPresent = record.credentialPresent === true
-  if (
-    credentialPresent ||
-    ['authenticated', 'api-key', 'windsurf-api-key'].includes(authState)
-  ) {
+  if (credentialPresent || ['authenticated', 'api-key', 'windsurf-api-key'].includes(authState)) {
     return {
       variant: 'signed-in',
       statusText: 'Devin signed in',
@@ -389,8 +387,7 @@ export function FirstLaunchSheet({
         )
       ).filter(
         (el) =>
-          !el.closest('[inert]') &&
-          (el.offsetParent !== null || el === document.activeElement)
+          !el.closest('[inert]') && (el.offsetParent !== null || el === document.activeElement)
       )
     const frame = window.requestAnimationFrame(() => {
       getFocusable()[0]?.focus()
@@ -440,8 +437,10 @@ export function FirstLaunchSheet({
   const devinSummary = summariseDevinStatus(devinStatus)
   // Hosts that only pass the reachability boolean still get a truthful
   // runtime answer; the account half simply stays "not signed in".
-  const ollamaSnapshot =
-    ollamaStatus ?? { available: ollamaProviderAvailable, localAvailable: ollamaProviderAvailable }
+  const ollamaSnapshot = ollamaStatus ?? {
+    available: ollamaProviderAvailable,
+    localAvailable: ollamaProviderAvailable
+  }
   const ollamaSummary = summariseOllamaStatus(ollamaSnapshot)
 
   const baseProviderRows: ProviderRowSpec[] = [
@@ -519,8 +518,7 @@ export function FirstLaunchSheet({
               'Conditionally offered AntiGravity identity. It appears here only after the host confirms that one authorized transport lane has satisfied its own consent and credential requirements.',
             variant: 'partial' as const,
             statusText: 'Conditional setup ready',
-            hint:
-              'The host currently offers this provider; its selected runtime still passes ordinary structural admission checks at launch.',
+            hint: 'The host currently offers this provider; its selected runtime still passes ordinary structural admission checks at launch.',
             optional: true,
             badge: 'Conditional',
             localOnly: true
@@ -534,8 +532,7 @@ export function FirstLaunchSheet({
         'Pi coding agent with bring-your-own upstream keys. TaskWraith keeps Pi provider credentials scoped to the configured upstream and applies the selected read/write tool posture.',
       variant: 'partial',
       statusText: 'BYOK setup in Settings',
-      hint:
-        'Install the Pi CLI, then configure a supported upstream key and model in Settings. Pi is reported here even before setup; this card does not grant provider admission.',
+      hint: 'Install the Pi CLI, then configure a supported upstream key and model in Settings. Pi is reported here even before setup; this card does not grant provider admission.',
       optional: true,
       localOnly: true
     },
@@ -618,25 +615,22 @@ export function FirstLaunchSheet({
 
         <section className="first-launch-sheet-section">
           <p className="first-launch-sheet-prose">
-            TaskWraith brings together{' '}
-            <strong>Codex</strong>,{' '}
-            <strong>Claude</strong>, <strong>Kimi</strong>, <strong>Grok</strong>,{' '}
-            <strong>Cursor</strong>, local <strong>Ollama</strong> models, and BYOK{' '}
-            <strong>Pi</strong>
+            TaskWraith brings together <strong>Codex</strong>, <strong>Claude</strong>,{' '}
+            <strong>Kimi</strong>, <strong>Grok</strong>, <strong>Cursor</strong>, local{' '}
+            <strong>Ollama</strong> models, and BYOK <strong>Pi</strong>
             {antigravityProviderOffered ? (
               <>
                 , plus your conditionally configured <strong>AntiGravity</strong> seat
               </>
             ) : null}{' '}
             inside one desktop UI so you can run solo chats, side chats, delegated workers, and
-            Ensembles side by side.
-            Each provider keeps its own auth — sign in to the ones you want to use, skip the rest.
-            Historical Gemini chats and usage stay visible for reporting even though Gemini is not
-            offered for new runs.{' '}
-            Chat history, goals, approvals, audit events, and usage stay in TaskWraith&apos;s local
-            store; each provider receives only the context for the chat or run it is working on.
-            Bare provider filesystem and shell shortcuts that cannot enforce that boundary stay
-            disabled — work uses TaskWraith&apos;s namespaced workspace tools instead.
+            Ensembles side by side. Each provider keeps its own auth — sign in to the ones you want
+            to use, skip the rest. Historical Gemini chats and usage stay visible for reporting even
+            though Gemini is not offered for new runs. Chat history, goals, approvals, audit events,
+            and usage stay in TaskWraith&apos;s local store; each provider receives only the context
+            for the chat or run it is working on. Bare provider filesystem and shell shortcuts that
+            cannot enforce that boundary stay disabled — work uses TaskWraith&apos;s namespaced
+            workspace tools instead.
           </p>
         </section>
 
@@ -656,9 +650,9 @@ export function FirstLaunchSheet({
         <section className="first-launch-sheet-section">
           <h3 className="first-launch-sheet-section-title">1. Sign in to your providers</h3>
           <p className="first-launch-sheet-section-helper">
-            Status reflects what TaskWraith can see right now. A red dot can mean two different things
-            — read the label. Green means TaskWraith can launch that provider from this app. Open
-            Settings for inline sign-in flows (OAuth, API keys, CLI paths).
+            Status reflects what TaskWraith can see right now. A red dot can mean two different
+            things — read the label. Green means TaskWraith can launch that provider from this app.
+            Open Settings for inline sign-in flows (OAuth, API keys, CLI paths).
           </p>
           <ul className="first-launch-sheet-status-legend" aria-label="What the status dots mean">
             <li>
@@ -754,19 +748,19 @@ export function FirstLaunchSheet({
         <section className="first-launch-sheet-section">
           <h3 className="first-launch-sheet-section-title">3. Where your CLIs live</h3>
           <p className="first-launch-sheet-section-helper">
-              Only needed if a CLI you know is installed shows as <em>not found</em>. TaskWraith is
-              launched by macOS, not by your shell, so it doesn&apos;t inherit your shell&apos;s
-              PATH. It already checks the usual places (Homebrew, <code>/usr/local/bin</code>,{' '}
-              <code>~/.local/bin</code>, npm and bun global bins). Add a directory here if yours
-              lives somewhere else — a version manager shim (asdf, mise, volta), a custom npm
-              prefix, or a non-standard Homebrew prefix.
-            </p>
-            <p className="first-launch-sheet-section-helper">
-              These are searched <strong>first</strong>, ahead of everything else, and apply to
-              every CLI at once — provider CLIs, <code>git</code>, and <code>gh</code>. Run{' '}
-              <code>which codex</code> (or <code>which gh</code>) in your terminal and paste the
-              directory part. Pasting a whole PATH works too; it gets split into rows.
-            </p>
+            Only needed if a CLI you know is installed shows as <em>not found</em>. TaskWraith is
+            launched by macOS, not by your shell, so it doesn&apos;t inherit your shell&apos;s PATH.
+            It already checks the usual places (Homebrew, <code>/usr/local/bin</code>,{' '}
+            <code>~/.local/bin</code>, npm and bun global bins). Add a directory here if yours lives
+            somewhere else — a version manager shim (asdf, mise, volta), a custom npm prefix, or a
+            non-standard Homebrew prefix.
+          </p>
+          <p className="first-launch-sheet-section-helper">
+            These are searched <strong>first</strong>, ahead of everything else, and apply to every
+            CLI at once — provider CLIs, <code>git</code>, and <code>gh</code>. Run{' '}
+            <code>which codex</code> (or <code>which gh</code>) in your terminal and paste the
+            directory part. Pasting a whole PATH works too; it gets split into rows.
+          </p>
           {onCliPathDirectoriesChange && (
             <CliPathDirectoriesEditor
               value={cliPathDirectories ?? []}
@@ -785,10 +779,10 @@ export function FirstLaunchSheet({
             inside. Workspace chats are rooted in that folder, and the agent can only touch files
             within its trust boundary unless you explicitly grant another path. General chats can
             start without a project folder, but use a workspace for coding work. Find the{' '}
-            <span className="first-launch-sheet-plus">+</span> button next to
-            &quot;Workspaces&quot; in the sidebar and pick a folder; you can add more later.
-            TaskWraith&apos;s built-in Git actions also treat repository-local hooks, filters,
-            helpers, and transport rewrites as untrusted rather than executing them.
+            <span className="first-launch-sheet-plus">+</span> button next to &quot;Workspaces&quot;
+            in the sidebar and pick a folder; you can add more later. TaskWraith&apos;s built-in Git
+            actions also treat repository-local hooks, filters, helpers, and transport rewrites as
+            untrusted rather than executing them.
           </p>
         </section>
 
@@ -883,11 +877,11 @@ export function FirstLaunchSheet({
           </div>
           <p className="first-launch-sheet-prose">
             Runs start inside the workspace boundary — files outside the project are off-limits
-            unless you allow a path. Plan and Ask stay cautious; Accept Edits keeps
-            file actions visible; Full WS Access removes per-action prompts inside the project;
-            and lane-scoped Full Access is the highest local authority. Plan-authoring mode can still
-            use approval-gated instruments like canvas, media, and sub-thread delegation when you
-            allow them, but it does not grant ordinary file mutation by itself.
+            unless you allow a path. Plan and Ask stay cautious; Accept Edits keeps file actions
+            visible; Full WS Access removes per-action prompts inside the project; and lane-scoped
+            Full Access is the highest local authority. Plan-authoring mode can still use
+            approval-gated instruments like canvas, media, and sub-thread delegation when you allow
+            them, but it does not grant ordinary file mutation by itself.
           </p>
         </section>
 
@@ -941,9 +935,9 @@ export function FirstLaunchSheet({
           </p>
           <p className="first-launch-sheet-prose">
             Stage roles shape the hand-off: Scouts investigate in parallel first, Workers take
-            serial implementation turns, and Reviewers check the result last. BG seats skip
-            ordinary rotation; @mention or delegate one for detached read-only work. They cannot
-            take Boss, Captain, or synthesizer authority.
+            serial implementation turns, and Reviewers check the result last. BG seats skip ordinary
+            rotation; @mention or delegate one for detached read-only work. They cannot take Boss,
+            Captain, or synthesizer authority.
           </p>
           <p className="first-launch-sheet-prose">
             In Settings → Roster, choose individual saved panels when importing or exporting, then
@@ -1007,8 +1001,8 @@ export function FirstLaunchSheet({
               thread goal immediately, alongside compact, help, feedback, and model shortcuts.
             </li>
             <li>
-              <strong>Cmd-K opens slash commands.</strong> Anywhere in the app, press{' '}
-              <kbd>Cmd</kbd>+<kbd>K</kbd> to open the composer slash menu.
+              <strong>Cmd-K opens slash commands.</strong> Anywhere in the app, press <kbd>Cmd</kbd>
+              +<kbd>K</kbd> to open the composer slash menu.
             </li>
             <li>
               <strong>Commit &amp; open PRs from the composer.</strong> The composer&apos;s{' '}
@@ -1018,17 +1012,17 @@ export function FirstLaunchSheet({
             </li>
             <li>
               <strong>Permission picker colour-codes the authority.</strong> Plan-authoring mode is
-              separate from Ask: Plan drafts for approval, Accept Edits keeps
-              actions visible, Full WS Access removes per-action prompts inside the project, and
-              Full Access is lane-scoped host authority. Approval-gated instruments remain
-              explicit. Check the selected posture before you hit Enter.
+              separate from Ask: Plan drafts for approval, Accept Edits keeps actions visible, Full
+              WS Access removes per-action prompts inside the project, and Full Access is
+              lane-scoped host authority. Approval-gated instruments remain explicit. Check the
+              selected posture before you hit Enter.
             </li>
             <li>
               <strong>Fast Mode toggle.</strong> Inside the model picker, capable models (Codex
-              GPT-5.6 / 5.5 / 5.4, supported Claude Opus models, and Kimi K2.7 Coding) expose a
-              Fast choice — K2.7 Coding switches between Standard and
-              Highspeed (neither K3 route has a Fast tier), while Grok 4.6 and the retained
-              Grok 4.5 model on the Grok CLI are always labelled Fast.
+              GPT-5.6 / 5.5 / 5.4, supported Claude Opus models, and Kimi K2.7 Coding) expose a Fast
+              choice — K2.7 Coding switches between Standard and Highspeed (neither K3 route has a
+              Fast tier), while Grok 4.6 and the retained Grok 4.5 model on the Grok CLI are always
+              labelled Fast.
             </li>
             <li>
               <strong>Kimi thinking stays on.</strong> K2.7 Coding has a fixed On setting; both K3
@@ -1049,8 +1043,8 @@ export function FirstLaunchSheet({
               surface, provider, workspace, theme, and Ensemble context into the local bug log.
             </li>
             <li>
-              <strong>Screen Watch.</strong> The eye-on-screen icon in the composer&apos;s control row
-              picks a macOS window for the AI to see. Click again to detach. A small pulse dot
+              <strong>Screen Watch.</strong> The eye-on-screen icon in the composer&apos;s control
+              row picks a macOS window for the AI to see. Click again to detach. A small pulse dot
               signals a live capture is running.
             </li>
             <li>
@@ -1059,8 +1053,8 @@ export function FirstLaunchSheet({
               re-dispatches just that participant against the last user prompt.
             </li>
             <li>
-              <strong>Cumulative session timecode.</strong> Composer&apos;s lower-left shows
-              the current turn&apos;s elapsed time, while the right side shows total wall-time across
+              <strong>Cumulative session timecode.</strong> Composer&apos;s lower-left shows the
+              current turn&apos;s elapsed time, while the right side shows total wall-time across
               the thread. Click the time bar for the run-duration breakdown.
             </li>
           </ul>

@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  evaluateBossmanAutoApproval,
-  type BossmanAutoApprovalContext
-} from './BossmanAutoApproval'
+import { evaluateBossmanAutoApproval, type BossmanAutoApprovalContext } from './BossmanAutoApproval'
 
 function makeContext(over: Partial<BossmanAutoApprovalContext> = {}): BossmanAutoApprovalContext {
   return {
@@ -14,7 +11,11 @@ function makeContext(over: Partial<BossmanAutoApprovalContext> = {}): BossmanAut
     forcePrompt: false,
     hasExternalPathDetection: false,
     bossmanParticipantId: 'boss',
-    autoApprovals: { enabled: true, mode: 'permission_preset_once', confirmedAt: '2026-06-24T00:00:00.000Z' },
+    autoApprovals: {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-06-24T00:00:00.000Z'
+    },
     participantIds: ['boss', 'worker'],
     targetParticipantId: 'worker',
     targetProvider: 'codex',
@@ -78,18 +79,17 @@ describe('evaluateBossmanAutoApproval', () => {
     'crossThreadRead',
     'mediaEditing',
     'mediaRecording'
-  ] as const)(
-    'never auto-allows the %s action class (only shell/file are in scope)',
-    (service) => {
-      expect(evaluateBossmanAutoApproval(makeContext({ service }))).toBeNull()
-    }
-  )
+  ] as const)('never auto-allows the %s action class (only shell/file are in scope)', (service) => {
+    expect(evaluateBossmanAutoApproval(makeContext({ service }))).toBeNull()
+  })
 
   // --- consent + roster membership --------------------------------------
   it('returns null when auto-approvals are not enabled', () => {
     expect(
       evaluateBossmanAutoApproval(
-        makeContext({ autoApprovals: { enabled: false, mode: 'permission_preset_once', confirmedAt: 'x' } })
+        makeContext({
+          autoApprovals: { enabled: false, mode: 'permission_preset_once', confirmedAt: 'x' }
+        })
       )
     ).toBeNull()
     expect(evaluateBossmanAutoApproval(makeContext({ autoApprovals: undefined }))).toBeNull()
@@ -151,14 +151,14 @@ describe('evaluateBossmanAutoApproval', () => {
   })
 
   it('returns null when the Boss is no longer in the roster (stale id)', () => {
-    expect(
-      evaluateBossmanAutoApproval(makeContext({ participantIds: ['worker'] }))
-    ).toBeNull()
+    expect(evaluateBossmanAutoApproval(makeContext({ participantIds: ['worker'] }))).toBeNull()
   })
 
   it('returns null when the requesting participant is not in the roster (replaced/removed)', () => {
     expect(
-      evaluateBossmanAutoApproval(makeContext({ participantIds: ['boss'], targetParticipantId: 'worker' }))
+      evaluateBossmanAutoApproval(
+        makeContext({ participantIds: ['boss'], targetParticipantId: 'worker' })
+      )
     ).toBeNull()
     expect(evaluateBossmanAutoApproval(makeContext({ targetParticipantId: undefined }))).toBeNull()
   })

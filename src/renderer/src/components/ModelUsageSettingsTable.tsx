@@ -53,7 +53,11 @@ import {
 import { fetchProviderRates, type RendererProviderRates } from '../lib/providerRateEstimate'
 import { loadRendererUsageRecords } from '../lib/usageRecordsCache'
 import type { DisplayCurrency } from '../lib/formatCost'
-import { buildProviderApiRateGroups, type ProviderApiRateGroup, type ProviderApiRateRow } from '../lib/providerApiRatesTable'
+import {
+  buildProviderApiRateGroups,
+  type ProviderApiRateGroup,
+  type ProviderApiRateRow
+} from '../lib/providerApiRatesTable'
 import { humaniseModelIdCompact, humaniseModelIdTableCell } from '../lib/modelDisplayName'
 import { formatTokenCount } from '../lib/UsageHeatmap'
 import {
@@ -240,7 +244,10 @@ export function ModelUsageProviderTableBlock({ group }: { group: ModelUsageProvi
       </tr>
       {group.models.map((model) => (
         <tr key={`${group.provider}-${model.model}`} className="model-usage-table-model-row">
-          <td className="model-usage-table-model-cell" title={humaniseModelIdCompact(group.provider, model.model)}>
+          <td
+            className="model-usage-table-model-cell"
+            title={humaniseModelIdCompact(group.provider, model.model)}
+          >
             {humaniseModelIdTableCell(group.provider, model.model)}
           </td>
           {MODEL_USAGE_WINDOW_ORDER.map((windowKey) => (
@@ -306,7 +313,10 @@ export function ModelUsageOllamaTableBlock({ group }: { group: OllamaMemoryProvi
       </tr>
       {group.models.map((model) => (
         <tr key={`ollama-${model.model}`} className="model-usage-table-model-row">
-          <td className="model-usage-table-model-cell" title={humaniseModelIdCompact('ollama', model.model)}>
+          <td
+            className="model-usage-table-model-cell"
+            title={humaniseModelIdCompact('ollama', model.model)}
+          >
             {humaniseModelIdTableCell('ollama', model.model)}
           </td>
           {MODEL_USAGE_WINDOW_ORDER.map((windowKey) => (
@@ -377,11 +387,7 @@ export function ModelUsageTableTotalsFooter({
             Ollama RAM total
           </th>
           {MODEL_USAGE_WINDOW_ORDER.map((windowKey) => (
-            <OllamaCells
-              key={windowKey}
-              windowKey={windowKey}
-              totals={ollamaTotals[windowKey]}
-            />
+            <OllamaCells key={windowKey} windowKey={windowKey} totals={ollamaTotals[windowKey]} />
           ))}
         </tr>
       ) : null}
@@ -392,10 +398,7 @@ export function ModelUsageTableTotalsFooter({
 export function ModelUsageWorkspaceMatrixTable({ matrix }: { matrix: ModelUsageWorkspaceMatrix }) {
   if (matrix.workspaces.length === 0 || matrix.groups.length === 0) return null
   return (
-    <section
-      className="model-usage-table-section"
-      aria-label="Model usage by workspace"
-    >
+    <section className="model-usage-table-section" aria-label="Model usage by workspace">
       <div className="model-usage-table-header">
         <div className="model-usage-table-heading">
           <span className="model-usage-table-title">Models by workspace</span>
@@ -431,12 +434,17 @@ export function ModelUsageWorkspaceMatrixTable({ matrix }: { matrix: ModelUsageW
             </tr>
           </thead>
           {matrix.groups.map((group) => (
-            <tbody key={group.provider} className={`model-usage-table-provider provider-${group.provider}`}>
+            <tbody
+              key={group.provider}
+              className={`model-usage-table-provider provider-${group.provider}`}
+            >
               <tr className="model-usage-table-provider-row">
                 <th scope="rowgroup" className="model-usage-table-provider-cell">
                   <span className={`model-usage-table-provider-label provider-${group.provider}`}>
                     <ProviderLogoTile provider={group.provider} />
-                    <span className="model-usage-table-provider-name">{getProviderName(group.provider)}</span>
+                    <span className="model-usage-table-provider-name">
+                      {getProviderName(group.provider)}
+                    </span>
                     <span
                       className="model-usage-table-model-count"
                       title={`${group.models.length} model${group.models.length === 1 ? '' : 's'}`}
@@ -454,10 +462,14 @@ export function ModelUsageWorkspaceMatrixTable({ matrix }: { matrix: ModelUsageW
                       title={workspaceMatrixCellTitle(cell)}
                     >
                       <span className="model-usage-table-workspace-diffs">
-                        {cell.changedFiles > 0 ? `${cell.changedFiles.toLocaleString()} files` : '— files'}
+                        {cell.changedFiles > 0
+                          ? `${cell.changedFiles.toLocaleString()} files`
+                          : '— files'}
                       </span>
                       <span className="model-usage-table-workspace-tokens">
-                        {cell.totalTokens > 0 ? `${formatTokenCount(cell.totalTokens)} tok` : '— tok'}
+                        {cell.totalTokens > 0
+                          ? `${formatTokenCount(cell.totalTokens)} tok`
+                          : '— tok'}
                       </span>
                       <span className="model-usage-table-workspace-cost">
                         {workspaceMatrixCostCell(cell)}
@@ -467,8 +479,14 @@ export function ModelUsageWorkspaceMatrixTable({ matrix }: { matrix: ModelUsageW
                 })}
               </tr>
               {group.models.map((model) => (
-                <tr key={`${group.provider}-${model.model}`} className="model-usage-table-model-row">
-                  <td className="model-usage-table-model-cell" title={humaniseModelIdCompact(group.provider, model.model)}>
+                <tr
+                  key={`${group.provider}-${model.model}`}
+                  className="model-usage-table-model-row"
+                >
+                  <td
+                    className="model-usage-table-model-cell"
+                    title={humaniseModelIdCompact(group.provider, model.model)}
+                  >
                     {humaniseModelIdTableCell(group.provider, model.model)}
                   </td>
                   {matrix.workspaces.map((workspace) => {
@@ -480,10 +498,14 @@ export function ModelUsageWorkspaceMatrixTable({ matrix }: { matrix: ModelUsageW
                         title={workspaceMatrixCellTitle(cell)}
                       >
                         <span className="model-usage-table-workspace-diffs">
-                          {cell.changedFiles > 0 ? `${cell.changedFiles.toLocaleString()} files` : '— files'}
+                          {cell.changedFiles > 0
+                            ? `${cell.changedFiles.toLocaleString()} files`
+                            : '— files'}
                         </span>
                         <span className="model-usage-table-workspace-tokens">
-                          {cell.totalTokens > 0 ? `${formatTokenCount(cell.totalTokens)} tok` : '— tok'}
+                          {cell.totalTokens > 0
+                            ? `${formatTokenCount(cell.totalTokens)} tok`
+                            : '— tok'}
                         </span>
                         <span className="model-usage-table-workspace-cost">
                           {workspaceMatrixCostCell(cell)}
@@ -527,7 +549,9 @@ export function ProviderApiRatesTableBlock({ group }: { group: ProviderApiRateGr
         <td className="model-usage-table-rate-meta" colSpan={4}>
           <span>rate table {group.rateTableVersion || 'unknown'}</span>
           {group.provider === 'gemini' ? <span>historic provider</span> : null}
-          {group.provider === 'codex' || group.provider === 'grok' || group.provider === 'cursor' ? (
+          {group.provider === 'codex' ||
+          group.provider === 'grok' ||
+          group.provider === 'cursor' ? (
             <span>API-equivalent projection</span>
           ) : null}
         </td>
@@ -552,10 +576,16 @@ export function ProviderApiRatesTableBlock({ group }: { group: ProviderApiRateGr
           )
         return (
           <tr key={`${group.provider}-${row.modelId}`} className="model-usage-table-model-row">
-            <td className="model-usage-table-model-cell" title={humaniseModelIdCompact(group.provider, row.modelId)}>
+            <td
+              className="model-usage-table-model-cell"
+              title={humaniseModelIdCompact(group.provider, row.modelId)}
+            >
               {humaniseModelIdTableCell(group.provider, row.modelId)}
             </td>
-            <td className="model-usage-table-rate" title={`${row.inputUsdPerMillion} USD per 1M input tokens`}>
+            <td
+              className="model-usage-table-rate"
+              title={`${row.inputUsdPerMillion} USD per 1M input tokens`}
+            >
               {rateCell(row.inputUsdPerMillion)}
             </td>
             <td
@@ -568,7 +598,10 @@ export function ProviderApiRatesTableBlock({ group }: { group: ProviderApiRateGr
             >
               {rateCell(row.cachedInputUsdPerMillion)}
             </td>
-            <td className="model-usage-table-rate" title={`${row.outputUsdPerMillion} USD per 1M output tokens`}>
+            <td
+              className="model-usage-table-rate"
+              title={`${row.outputUsdPerMillion} USD per 1M output tokens`}
+            >
               {rateCell(row.outputUsdPerMillion)}
             </td>
             <td className="model-usage-table-rate-source-cell">{source}</td>
@@ -680,7 +713,9 @@ export function ModelContextLengthsSettingsTable() {
       <div className="model-usage-table-header">
         <div className="model-usage-table-heading">
           <span className="model-usage-table-title">Model Context Lengths</span>
-          <span className="model-usage-table-subtitle">Official maximum context window per model</span>
+          <span className="model-usage-table-subtitle">
+            Official maximum context window per model
+          </span>
         </div>
       </div>
       <div className="model-usage-table-scroll">
@@ -691,25 +726,41 @@ export function ModelContextLengthsSettingsTable() {
           </colgroup>
           <thead>
             <tr>
-              <th scope="col" className="model-usage-table-corner">Model</th>
-              <th scope="col" className="model-usage-table-tokens">Context length</th>
+              <th scope="col" className="model-usage-table-corner">
+                Model
+              </th>
+              <th scope="col" className="model-usage-table-tokens">
+                Context length
+              </th>
             </tr>
           </thead>
           {groups.map((group) => (
-            <tbody key={group.provider} className={`model-usage-table-provider provider-${group.provider}`}>
+            <tbody
+              key={group.provider}
+              className={`model-usage-table-provider provider-${group.provider}`}
+            >
               <tr className="model-usage-table-provider-row">
                 <th scope="rowgroup" className="model-usage-table-provider-cell">
                   <span className={`model-usage-table-provider-label provider-${group.provider}`}>
                     <ProviderLogoTile provider={group.provider} />
-                    <span className="model-usage-table-provider-name">{getProviderName(group.provider)}</span>
-                    <span className="model-usage-table-model-count" title={`${group.models.length} model${group.models.length === 1 ? '' : 's'}`}>{group.models.length}</span>
+                    <span className="model-usage-table-provider-name">
+                      {getProviderName(group.provider)}
+                    </span>
+                    <span
+                      className="model-usage-table-model-count"
+                      title={`${group.models.length} model${group.models.length === 1 ? '' : 's'}`}
+                    >
+                      {group.models.length}
+                    </span>
                   </span>
                 </th>
                 <td className="model-usage-table-tokens" aria-hidden />
               </tr>
               {group.models.map((m) => (
                 <tr key={`${group.provider}-${m.modelId}`} className="model-usage-table-model-row">
-                  <td className="model-usage-table-model-cell" title={m.label}>{humaniseModelIdTableCell(group.provider, m.modelId)}</td>
+                  <td className="model-usage-table-model-cell" title={m.label}>
+                    {humaniseModelIdTableCell(group.provider, m.modelId)}
+                  </td>
                   <td
                     className="model-usage-table-tokens"
                     title={`${m.contextWindow.toLocaleString()} tokens`}
@@ -913,18 +964,12 @@ export function ModelUsageSettingsTable({
 
   const workspaceMatrix = useMemo(
     () =>
-      buildModelUsageWorkspaceMatrix(
-        internalRecords,
-        externalRecords,
-        chats,
-        rates,
-        {
-          currency,
-          overestimatePercent,
-          locale,
-          includeExternal
-        }
-      ),
+      buildModelUsageWorkspaceMatrix(internalRecords, externalRecords, chats, rates, {
+        currency,
+        overestimatePercent,
+        locale,
+        includeExternal
+      }),
     [
       internalRecords,
       externalRecords,
@@ -980,8 +1025,7 @@ export function ModelUsageSettingsTable({
       .finally(() => setIsRefreshing(false))
   }
 
-  const shownRuns =
-    countShownRuns(groups) + (ollamaGroup?.totals.d90.runs ?? 0)
+  const shownRuns = countShownRuns(groups) + (ollamaGroup?.totals.d90.runs ?? 0)
 
   return (
     <section className="model-usage-table-section" aria-label="Per-model usage and estimated cost">

@@ -192,8 +192,17 @@ function parseMarks(value: unknown): CanvasMark[] {
     const mark: CanvasMark = { label: label.slice(0, 200) }
     const ref = asOptString(r.ref)
     if (ref) mark.ref = ref
-    if (Array.isArray(r.bbox) && r.bbox.length === 4 && r.bbox.every((n) => typeof n === 'number')) {
-      mark.bbox = [r.bbox[0] as number, r.bbox[1] as number, r.bbox[2] as number, r.bbox[3] as number]
+    if (
+      Array.isArray(r.bbox) &&
+      r.bbox.length === 4 &&
+      r.bbox.every((n) => typeof n === 'number')
+    ) {
+      mark.bbox = [
+        r.bbox[0] as number,
+        r.bbox[1] as number,
+        r.bbox[2] as number,
+        r.bbox[3] as number
+      ]
     }
     if (r.severity === 'info' || r.severity === 'warn' || r.severity === 'error') {
       mark.severity = r.severity
@@ -206,7 +215,8 @@ function parseMarks(value: unknown): CanvasMark[] {
 
 function parseSketchElements(value: unknown): CanvasSketchElement[] {
   return Array.isArray(value)
-    ? value.filter((item): item is CanvasSketchElement => Boolean(item) && typeof item === 'object')
+    ? value
+        .filter((item): item is CanvasSketchElement => Boolean(item) && typeof item === 'object')
         .filter((item) =>
           ['rect', 'ellipse', 'line', 'arrow', 'text', 'path'].includes(
             String((item as { kind?: unknown }).kind || '')
@@ -218,9 +228,7 @@ function parseSketchElements(value: unknown): CanvasSketchElement[] {
 function parseSketchUpdate(args: Record<string, unknown>): CanvasSketchUpdateInput {
   const rawMode = asOptString(args.mode)
   const mode =
-    rawMode === 'replace' || rawMode === 'clear' || rawMode === 'delete'
-      ? rawMode
-      : 'append'
+    rawMode === 'replace' || rawMode === 'clear' || rawMode === 'delete' ? rawMode : 'append'
   const update: CanvasSketchUpdateInput = { mode }
   const title = asOptString(args.title)
   if (title) update.title = title
@@ -261,14 +269,14 @@ function canvasToolErrorForProvider(error: unknown): string {
     : lower.includes('stale expectedupdatedat')
       ? 'stale_document'
       : lower.includes('timed out')
-    ? 'timeout'
-    : lower.includes('cancel') || lower.includes('history')
-      ? 'authority_changed'
-      : lower.includes('navigation') || lower.includes('load')
-        ? 'navigation_failed'
-        : lower.includes('not found') || lower.includes('no open canvas')
-          ? 'not_found'
-          : 'operation_failed'
+        ? 'timeout'
+        : lower.includes('cancel') || lower.includes('history')
+          ? 'authority_changed'
+          : lower.includes('navigation') || lower.includes('load')
+            ? 'navigation_failed'
+            : lower.includes('not found') || lower.includes('no open canvas')
+              ? 'not_found'
+              : 'operation_failed'
   return `Canvas operation failed (${code}).`
 }
 
@@ -319,7 +327,10 @@ function launchLogHtml(attempt: LaunchAttempt): string {
     ['Started', attempt.startedAt],
     ['Updated', attempt.updatedAt]
   ]
-    .map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value || '')}</dd></div>`)
+    .map(
+      ([label, value]) =>
+        `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value || '')}</dd></div>`
+    )
     .join('')
 
   return `<!doctype html>
@@ -599,7 +610,8 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
         }
         case 'canvas_open_launch': {
           const attemptId = asOptString(args.attemptId)
-          if (!attemptId) return fail(toolName, '`attemptId` is required (from launch_start / launch_status).')
+          if (!attemptId)
+            return fail(toolName, '`attemptId` is required (from launch_start / launch_status).')
           const requestedPresentation = asOptString(args.presentation)
           if (
             requestedPresentation &&
@@ -790,7 +802,11 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
           return jsonResult({ ok: true, tool: toolName, sessions: controller.list(ctx) })
         }
         case 'canvas_status': {
-          return jsonResult({ ok: true, tool: toolName, session: controller.status(needsId(), ctx) })
+          return jsonResult({
+            ok: true,
+            tool: toolName,
+            session: controller.status(needsId(), ctx)
+          })
         }
         case 'canvas_drive_report': {
           if (!controller.driveReports) {
@@ -1054,10 +1070,7 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
           // Bound the script size before it ever reaches the page (defence-in-depth
           // alongside the per-session eval budget and per-execution receipt).
           if (script.length > CANVAS_EVAL_SCRIPT_CAP) {
-            return fail(
-              toolName,
-              `\`script\` too large (max ${CANVAS_EVAL_SCRIPT_CAP} chars).`
-            )
+            return fail(toolName, `\`script\` too large (max ${CANVAS_EVAL_SCRIPT_CAP} chars).`)
           }
           if (!ctx.canvasEvalApproval) {
             return fail(toolName, 'canvas_eval requires a bound per-execution approval receipt.')
@@ -1080,7 +1093,10 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               ? rawAction
               : undefined
           if (rawAction && !action) {
-            return fail(toolName, `Unsupported action "${rawAction}". Use back/forward/reload/stop.`)
+            return fail(
+              toolName,
+              `Unsupported action "${rawAction}". Use back/forward/reload/stop.`
+            )
           }
           if ((url && action) || (!url && !action)) {
             return fail(toolName, 'Provide exactly one of `url` or `action`.')

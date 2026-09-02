@@ -93,7 +93,11 @@
 
 .model-usage-table-refresh-button:hover:not(:disabled) {
   color: var(--text-primary);
-  border-color: color-mix(in srgb, var(--accent, #6b7cff) 35%, var(--panel-border, var(--surface-border)));
+  border-color: color-mix(
+    in srgb,
+    var(--accent, #6b7cff) 35%,
+    var(--panel-border, var(--surface-border))
+  );
 }
 
 .model-usage-table-refresh-button:disabled {
@@ -233,7 +237,8 @@
   text-align: right;
   white-space: nowrap;
   color: var(--text-secondary);
-  border-top: 1px solid color-mix(in srgb, var(--panel-border, var(--surface-border)) 45%, transparent);
+  border-top: 1px solid
+    color-mix(in srgb, var(--panel-border, var(--surface-border)) 45%, transparent);
 }
 
 .model-usage-table-model-cell {
@@ -531,7 +536,8 @@
   background: color-mix(in srgb, var(--surface-2, #8884) 55%, transparent);
   text-align: right;
   white-space: nowrap;
-  border-top: 1px solid color-mix(in srgb, var(--panel-border, var(--surface-border)) 65%, transparent);
+  border-top: 1px solid
+    color-mix(in srgb, var(--panel-border, var(--surface-border)) 65%, transparent);
 }
 
 .model-usage-table-totals-label {

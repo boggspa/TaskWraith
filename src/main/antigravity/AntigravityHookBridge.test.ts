@@ -129,10 +129,7 @@ describe('classifyAgyHookTool', () => {
     ]) {
       expect(classifyAgyHookTool(name), name).toBe('taskwraith-mcp')
     }
-    for (const name of [
-      'mcp_TaskWraith_not_a_real_tool',
-      'mcp_TaskWraith_read_file_lookalike'
-    ]) {
+    for (const name of ['mcp_TaskWraith_not_a_real_tool', 'mcp_TaskWraith_read_file_lookalike']) {
       expect(classifyAgyHookTool(name), name).toBe('invalid-taskwraith-mcp')
     }
   })
@@ -263,11 +260,7 @@ describe('startAgyHookBridgeServer', () => {
       })
     }
     await expect(
-      post(
-        server.port,
-        { toolCall: { name: 'mcp_TaskWraith_not_a_real_tool', args: {} } },
-        token
-      )
+      post(server.port, { toolCall: { name: 'mcp_TaskWraith_not_a_real_tool', args: {} } }, token)
     ).resolves.toEqual({
       decision: 'deny',
       reason: 'invalid reserved TaskWraith tool name'

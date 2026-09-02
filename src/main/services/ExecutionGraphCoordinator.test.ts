@@ -293,11 +293,7 @@ function markQueueStarting(h: Harness, runId: string): void {
   h.jobs.set(runId, { ...job, status: 'starting' })
 }
 
-function terminalReceipt(
-  h: Harness,
-  runId: string,
-  status: 'completed' | 'failed' | 'cancelled'
-) {
+function terminalReceipt(h: Harness, runId: string, status: 'completed' | 'failed' | 'cancelled') {
   const job = h.jobs.get(runId)
   const binding = job?.executionGraph
   if (!job || !binding || !job.workspaceId || !job.chatId) {
@@ -704,9 +700,9 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     )
     markQueueStarting(h, firstRunId)
 
-    expect(
-      h.coordinator.onRunSessionChange(terminalEvent(firstRunId, 'completed'))
-    ).toBe('accepted')
+    expect(h.coordinator.onRunSessionChange(terminalEvent(firstRunId, 'completed'))).toBe(
+      'accepted'
+    )
 
     const gated = h.coordinator.getExecution(first.executionId)!
     expect(gated.state).toBe('requires_action')
@@ -2021,9 +2017,9 @@ describe('ExecutionGraphCoordinator owning-run tether', () => {
 
     const projection = h.coordinator.getExecution('tether-owner-failed')!
     expect(projection.state).toBe('cancelled')
-    expect(
-      Object.values(projection.activations).map((activation) => activation.reason)
-    ).toEqual(new Array(4).fill('The owning run failed before this execution settled.'))
+    expect(Object.values(projection.activations).map((activation) => activation.reason)).toEqual(
+      new Array(4).fill('The owning run failed before this execution settled.')
+    )
   })
 
   it('cancels a live tethered graph when its owning run is cancelled', async () => {
@@ -2037,9 +2033,9 @@ describe('ExecutionGraphCoordinator owning-run tether', () => {
 
     const projection = h.coordinator.getExecution('tether-owner-cancelled')!
     expect(projection.state).toBe('cancelled')
-    expect(
-      Object.values(projection.activations).map((activation) => activation.reason)
-    ).toEqual(new Array(4).fill('Cancelled with the owning parent run.'))
+    expect(Object.values(projection.activations).map((activation) => activation.reason)).toEqual(
+      new Array(4).fill('Cancelled with the owning parent run.')
+    )
   })
 
   it('ignores unrelated run terminals and non-terminal owner updates', () => {
@@ -2077,9 +2073,9 @@ describe('ExecutionGraphCoordinator owning-run tether', () => {
 
     const projection = h.coordinator.getExecution('tether-restart')!
     expect(projection.state).toBe('cancelled')
-    expect(
-      Object.values(projection.activations).map((activation) => activation.reason)
-    ).toEqual(new Array(4).fill('The owning run did not survive the restart.'))
+    expect(Object.values(projection.activations).map((activation) => activation.reason)).toEqual(
+      new Array(4).fill('The owning run did not survive the restart.')
+    )
     expect([...h.jobs.values()].map((job) => job.status)).toEqual(['cancelled', 'cancelled'])
   })
 

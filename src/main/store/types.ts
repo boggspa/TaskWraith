@@ -6307,10 +6307,10 @@ export interface RunQueueRequestSnapshot {
     museReasoningEffort?: string | null
     mistralReasoningEffort?: string | null
     devinReasoningEffort?: string | null
-  piReasoningEffort?: string | null
+    piReasoningEffort?: string | null
     ollamaReasoningEffort?: string | null
     cursorReasoningEffort?: string | null
-  antigravityReasoningEffort?: string | null
+    antigravityReasoningEffort?: string | null
     cursorFastMode?: boolean
     claudeFastMode?: boolean
     kimiFastMode?: boolean

@@ -140,8 +140,7 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
     'OpenAI Codex CLI for fast agentic coding work. Sign-in happens on the Mac through the Codex CLI.',
   claude:
     'Anthropic Claude Code for careful reasoning and edits. OAuth or API-key setup happens on the Mac.',
-  kimi:
-    'Moonshot Kimi over structurally admitted ACP. Structural admission is always enabled; compatible unreviewed runtimes are labelled unattested-development. Managed credentials come from the current Kimi Code OAuth login or a provider key in ~/.kimi-code/config.toml and do not bypass compatibility checks.',
+  kimi: 'Moonshot Kimi over structurally admitted ACP. Structural admission is always enabled; compatible unreviewed runtimes are labelled unattested-development. Managed credentials come from the current Kimi Code OAuth login or a provider key in ~/.kimi-code/config.toml and do not bypass compatibility checks.',
   cursor:
     'Cursor Composer via the Cursor CLI. Sign in on the Mac with cursor-agent login; runs use a contained OS sandbox.',
   grok: 'xAI Grok runs through its local CLI. TaskWraith does not read Grok credentials remotely.',
@@ -150,12 +149,10 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   // Opt-in provider; never listed in PROVIDER_ORDER, so this placeholder is not
   // surfaced. Real onboarding copy lives in the buried Settings card slice.
   antigravity: 'Antigravity.',
-  pi:
-    'Pi coding agent with bring-your-own-key access to DeepSeek, GLM, Qwen, MiniMax, Mistral, Groq and Cerebras models.',
+  pi: 'Pi coding agent with bring-your-own-key access to DeepSeek, GLM, Qwen, MiniMax, Mistral, Groq and Cerebras models.',
   mistral:
     "Mistral's Vibe CLI agent over ACP. Use your Mistral plan on the Mac through Vibe; its optional Vibe API-key setup remains separate from Pi's metered Mistral upstream.",
-  muse:
-    'Muse Code CLI (`muse exec --json`) on a Meta Model API key or Muse login.',
+  muse: 'Muse Code CLI (`muse exec --json`) on a Meta Model API key or Muse login.',
   devin:
     'Devin CLI agent over ACP (`devin acp`). Sign-in happens on the Mac through `devin auth login` or a WINDSURF_API_KEY environment key.'
 }
@@ -165,10 +162,8 @@ const SETUP_HINTS: Record<ProviderId, string> = {
   codex:
     'Install Codex if needed, then use TaskWraith’s Codex sign-in. Its private Codex home stays separate from the Codex app history.',
   claude: 'On your Mac, open TaskWraith Settings or run the Claude auth flow.',
-  kimi:
-    'On your Mac, use `kimi login` or configure a provider key in ~/.kimi-code/config.toml. TaskWraith always applies stable identity, bounded startup, and ACP compatibility checks; admitted unreviewed runtimes are labelled unattested-development. The key saved in TaskWraith Settings is usage-only.',
-  cursor:
-    'On your Mac, install cursor-agent if needed, then run cursor-agent login in Terminal.',
+  kimi: 'On your Mac, use `kimi login` or configure a provider key in ~/.kimi-code/config.toml. TaskWraith always applies stable identity, bounded startup, and ACP compatibility checks; admitted unreviewed runtimes are labelled unattested-development. The key saved in TaskWraith Settings is usage-only.',
+  cursor: 'On your Mac, install cursor-agent if needed, then run cursor-agent login in Terminal.',
   grok: 'On your Mac, install the Grok CLI and finish xAI/Grok sign-in there.',
   ollama: 'On your Mac, install Ollama, start the service, then pull a supported model.',
   // Opt-in provider; not in PROVIDER_ORDER, so this placeholder is not surfaced.
@@ -176,8 +171,7 @@ const SETUP_HINTS: Record<ProviderId, string> = {
   pi: 'On your Mac, install the Pi CLI, then add at least one upstream API key in TaskWraith Settings.',
   mistral:
     'On your Mac, install Mistral Vibe if needed, then run `vibe --setup` to sign in with your Mistral plan or finish Vibe’s own API-key setup. This is separate from Pi’s Mistral upstream key.',
-  muse:
-    'On your Mac, install the Muse Code CLI and finish Muse login or Meta Model API key setup.',
+  muse: 'On your Mac, install the Muse Code CLI and finish Muse login or Meta Model API key setup.',
   devin:
     'On your Mac, install the Devin CLI (`curl -fsSL https://cli.devin.ai/install.sh | bash`), then run `devin auth login` or set WINDSURF_API_KEY.'
 }
@@ -277,10 +271,10 @@ function deriveProviderStatus(
     provider !== 'codex' ||
     Boolean(
       availability?.available &&
-        !availability.setupRequired &&
-        ['authenticated', 'chatgpt', 'api-key', 'apikey', 'not-required'].includes(
-          String(availability.authState || '').toLowerCase()
-        )
+      !availability.setupRequired &&
+      ['authenticated', 'chatgpt', 'api-key', 'apikey', 'not-required'].includes(
+        String(availability.authState || '').toLowerCase()
+      )
     )
   const exhausted = usage?.windows.some(
     (window) => typeof window.usedPercent === 'number' && window.usedPercent >= 99

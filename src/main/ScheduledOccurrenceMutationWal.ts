@@ -37,15 +37,8 @@ const MAX_METADATA_TEXT_LENGTH = 4_096
 const ROOT_ID = /^twso-root-v1:[0-9a-f]{64}$/
 const LOWER_HEX_256 = /^[0-9a-f]{64}$/
 const FORBIDDEN_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
-const MUTATION_KINDS = new Set<ScheduledOccurrenceMutationKind>([
-  'materialize',
-  'claim',
-  'settle'
-])
-const PROJECTION_KINDS = new Set<ScheduledOccurrenceProjectionKind>([
-  'standalone',
-  'workflow'
-])
+const MUTATION_KINDS = new Set<ScheduledOccurrenceMutationKind>(['materialize', 'claim', 'settle'])
+const PROJECTION_KINDS = new Set<ScheduledOccurrenceProjectionKind>(['standalone', 'workflow'])
 const WORKFLOW_RUN_EVENT_KINDS = new Set<WorkflowRunEventKind>([
   'materialized',
   'dispatched',
@@ -75,13 +68,7 @@ const PAYLOAD_KEYS = [
   'workflowAfter',
   'workflowBefore'
 ] as const
-const IDENTITY_KEYS = [
-  'executionId',
-  'plannedFor',
-  'runId',
-  'taskId',
-  'workflowId'
-] as const
+const IDENTITY_KEYS = ['executionId', 'plannedFor', 'runId', 'taskId', 'workflowId'] as const
 const LEDGER_PREFIX_KEYS = [
   'byteLength',
   'eventCount',
@@ -512,10 +499,7 @@ export function decodeScheduledOccurrenceMutationWal(
     const rootId = requireAuthorityRootId(authorityRoot)
     const serialized = serializedInput(input)
     const parsed = parseStrictJson(serialized)
-    const canonicalEnvelope = canonicalizePlainData(
-      parsed,
-      'scheduled occurrence WAL envelope'
-    )
+    const canonicalEnvelope = canonicalizePlainData(parsed, 'scheduled occurrence WAL envelope')
     assertEncodedSize(canonicalEnvelope.encoded)
     if (serialized !== canonicalEnvelope.encoded) return null
 
@@ -580,7 +564,10 @@ function assertPayloadShape(
   }
   requireTrimmedText(payload.mutationId, 'mutation id')
   requireCanonicalIso(payload.createdAt, 'mutation createdAt')
-  const identity = assertIdentityShape(payload.identity, projection as ScheduledOccurrenceProjectionKind)
+  const identity = assertIdentityShape(
+    payload.identity,
+    projection as ScheduledOccurrenceProjectionKind
+  )
   const taskBefore = nullablePlainObject(payload.taskBefore, 'task before-image')
   const taskAfter = requirePlainObject(payload.taskAfter, 'task after-image')
   assertScheduledTaskShape(taskAfter, authorityRoot)
@@ -668,10 +655,10 @@ function assertLedgerPrefixShape(
     !isNonNegativeSafeInteger(prefix.eventCount) ||
     !isNonNegativeSafeInteger(prefix.tailSequence) ||
     prefix.tailSequence !== prefix.eventCount ||
-    (!prefix.fileExisted && (prefix.byteLength !== 0 || prefix.eventCount !== 0))
-    || (prefix.byteLength === 0 && prefix.sha256 !== emptySha256)
-    || (prefix.eventCount === 0 && prefix.byteLength !== 0)
-    || (prefix.eventCount > 0 && (!prefix.fileExisted || prefix.byteLength === 0))
+    (!prefix.fileExisted && (prefix.byteLength !== 0 || prefix.eventCount !== 0)) ||
+    (prefix.byteLength === 0 && prefix.sha256 !== emptySha256) ||
+    (prefix.eventCount === 0 && prefix.byteLength !== 0) ||
+    (prefix.eventCount > 0 && (!prefix.fileExisted || prefix.byteLength === 0))
   ) {
     throw new TypeError('WAL ledger prefix is invalid.')
   }
@@ -779,12 +766,7 @@ function assertScheduledTaskShape(
     throw new TypeError('Scheduled task status is invalid.')
   }
   optionalTrimmedText(task.runId, 'scheduled task runId')
-  for (const field of [
-    'firedAt',
-    'runningSince',
-    'completedAt',
-    'workflowOccurrenceAt'
-  ] as const) {
+  for (const field of ['firedAt', 'runningSince', 'completedAt', 'workflowOccurrenceAt'] as const) {
     if (task[field] !== undefined) {
       requireCanonicalIso(task[field], `scheduled task ${field}`)
     }
@@ -793,11 +775,7 @@ function assertScheduledTaskShape(
   optionalTrimmedText(task.workflowExecutionId, 'scheduled task workflowExecutionId')
   optionalText(task.lastError, 'scheduled task lastError')
   const receipt = requirePlainObject(task.dispatchReceipt, 'scheduled task dispatchReceipt')
-  assertAllowedKeys(
-    receipt,
-    RUN_QUEUE_DISPATCH_RECEIPT_KEYS,
-    'scheduled task dispatchReceipt'
-  )
+  assertAllowedKeys(receipt, RUN_QUEUE_DISPATCH_RECEIPT_KEYS, 'scheduled task dispatchReceipt')
   requireCanonicalIso(receipt.generatedAt, 'scheduled task dispatchReceipt generatedAt')
   if (!scheduledTaskDispatchReceiptIsExact(task as unknown as ScheduledTask)) {
     throw new TypeError('Scheduled task dispatch receipt is not canonical.')
@@ -938,11 +916,7 @@ function assertWorkflowTriggerShape(value: unknown): asserts value is WorkflowTr
     return
   }
   if (trigger.kind === 'cron') {
-    assertAllowedKeys(
-      trigger,
-      ['cronExpression', 'kind', 'timezone'],
-      'cron workflow trigger'
-    )
+    assertAllowedKeys(trigger, ['cronExpression', 'kind', 'timezone'], 'cron workflow trigger')
     requireKeys(trigger, ['cronExpression', 'kind'], 'cron workflow trigger')
     if (typeof trigger.cronExpression !== 'string') {
       throw new TypeError('Cron workflow expression is invalid.')
@@ -989,10 +963,7 @@ function assertUnattendedElevationShape(value: unknown): void {
     ['acknowledgedApprovalMode', 'acknowledgedAt', 'authorityDigest', 'level'],
     'workflow unattended elevation'
   )
-  if (
-    typeof ack.level !== 'string' ||
-    !['safe', 'default', 'full_access'].includes(ack.level)
-  ) {
+  if (typeof ack.level !== 'string' || !['safe', 'default', 'full_access'].includes(ack.level)) {
     throw new TypeError('Workflow unattended elevation level is invalid.')
   }
   requireCanonicalIso(ack.acknowledgedAt, 'workflow unattended elevation acknowledgedAt')
@@ -1099,18 +1070,14 @@ function assertOccurrenceSealV2(
     'scheduled task occurrenceSeal payload'
   )
   if (
-    authorityRoot.verifySealPayloadMac(
-      Buffer.from(unsignedSeal.encoded, 'utf8'),
-      seal.sealMac
-    ) !== true
+    authorityRoot.verifySealPayloadMac(Buffer.from(unsignedSeal.encoded, 'utf8'), seal.sealMac) !==
+    true
   ) {
     throw new TypeError('Scheduled task occurrenceSeal MAC is invalid.')
   }
 }
 
-function assertWorkflowDefinitionShape(
-  workflow: Record<string, unknown>
-): void {
+function assertWorkflowDefinitionShape(workflow: Record<string, unknown>): void {
   assertAllowedKeys(workflow, WORKFLOW_DEFINITION_KEYS, 'workflow projection')
   requireKeys(
     workflow,
@@ -1219,9 +1186,7 @@ function assertWorkflowDefinitionShape(
   if (workflow.loop !== undefined) assertWorkflowLoopShape(workflow.loop)
 }
 
-function assertWorkflowExecutionShape(
-  value: unknown
-): asserts value is WorkflowExecutionRecord {
+function assertWorkflowExecutionShape(value: unknown): asserts value is WorkflowExecutionRecord {
   const execution = requirePlainObject(value, 'workflow execution')
   assertAllowedKeys(execution, WORKFLOW_EXECUTION_KEYS, 'workflow execution')
   requireKeys(
@@ -1240,10 +1205,7 @@ function assertWorkflowExecutionShape(
   if (Date.parse(createdAt) > Date.parse(updatedAt)) {
     throw new TypeError('Workflow execution timestamps are out of order.')
   }
-  if (
-    typeof execution.status !== 'string' ||
-    !WORKFLOW_EXECUTION_STATUSES.has(execution.status)
-  ) {
+  if (typeof execution.status !== 'string' || !WORKFLOW_EXECUTION_STATUSES.has(execution.status)) {
     throw new TypeError('Workflow execution status is invalid.')
   }
   optionalTrimmedText(execution.scheduledTaskId, 'workflow execution scheduledTaskId')
@@ -1366,8 +1328,7 @@ function canonicalizePlainData(value: unknown, label: string): CanonicalizedValu
             (key) =>
               typeof key === 'symbol' ||
               (key !== 'length' &&
-                (!/^(0|[1-9][0-9]*)$/.test(String(key)) ||
-                  Number(key) >= candidate.length))
+                (!/^(0|[1-9][0-9]*)$/.test(String(key)) || Number(key) >= candidate.length))
           )
         ) {
           throw new TypeError(`${label} contains an invalid array property.`)
@@ -1431,7 +1392,15 @@ function canonicalJsonStringByteLength(value: string): number {
   let bytes = 2
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index)
-    if (code === 0x22 || code === 0x5c || code === 0x08 || code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d) {
+    if (
+      code === 0x22 ||
+      code === 0x5c ||
+      code === 0x08 ||
+      code === 0x09 ||
+      code === 0x0a ||
+      code === 0x0c ||
+      code === 0x0d
+    ) {
       bytes += 2
     } else if (code < 0x20) {
       bytes += 6
@@ -1537,7 +1506,8 @@ function parseStrictJson(serialized: string): unknown {
       whitespace()
       const key = parseString()
       if (keys.has(key)) throw new TypeError('JSON input contains a duplicate object key.')
-      if (FORBIDDEN_OBJECT_KEYS.has(key)) throw new TypeError('JSON input contains a forbidden key.')
+      if (FORBIDDEN_OBJECT_KEYS.has(key))
+        throw new TypeError('JSON input contains a forbidden key.')
       keys.add(key)
       whitespace()
       if (serialized[offset] !== ':') throw new TypeError('Expected a JSON object colon.')
@@ -1644,10 +1614,7 @@ function assertExactKeys(
   label: string
 ): void {
   const actual = Object.keys(value).sort()
-  if (
-    actual.length !== expected.length ||
-    actual.some((key, index) => key !== expected[index])
-  ) {
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
     throw new TypeError(`${label} keys are not exact.`)
   }
 }

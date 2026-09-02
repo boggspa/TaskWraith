@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildRemoteFirstLaunchState } from './RemoteFirstLaunchState'
-import {
-  NEW_ADDITIONS_NOTIFICATION_ID,
-  resolveAppNotifications
-} from '../shared/appNotifications'
+import { NEW_ADDITIONS_NOTIFICATION_ID, resolveAppNotifications } from '../shared/appNotifications'
 import type { ProviderUsageSummary } from './ProviderUsageStatus'
 import type { ProviderCapabilityContract, ProviderId } from './store/types'
 import type { TaskWraithPluginActivatedProviderSetup } from '../shared/plugins/PluginTypes'
@@ -130,9 +127,9 @@ describe('buildRemoteFirstLaunchState', () => {
       statusText: 'Not observable'
     })
     expect(
-      state.providerCards.find((card) => card.id === 'cursor')?.setupCommands.some(
-        (entry) => entry.id === 'cursor'
-      )
+      state.providerCards
+        .find((card) => card.id === 'cursor')
+        ?.setupCommands.some((entry) => entry.id === 'cursor')
     ).toBe(true)
     expect(state.setupCommands.some((entry) => entry.id === 'cursor')).toBe(true)
     expect(state.providerCards.find((card) => card.id === 'ollama')?.statusKind).toBe('localReady')
@@ -395,9 +392,7 @@ describe('buildRemoteFirstLaunchState', () => {
 
     // Pin via the registry constant, not a dated literal — the id bumps every
     // time the New Additions lineup changes.
-    expect(state.notifications.map((notice) => notice.id)).toContain(
-      NEW_ADDITIONS_NOTIFICATION_ID
-    )
+    expect(state.notifications.map((notice) => notice.id)).toContain(NEW_ADDITIONS_NOTIFICATION_ID)
     expect(state.notifications.map((notice) => notice.id)).not.toContain(
       'gemini-retirement-2026-06-18'
     )
@@ -432,9 +427,9 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'antigravity')?.models[0]?.name
     ).toBe('Gemini 3.7 Flash')
-    expect(
-      newAdditions?.groups?.find((group) => group.provider === 'grok')?.models[0]?.name
-    ).toBe('Grok 4.6 Fast')
+    expect(newAdditions?.groups?.find((group) => group.provider === 'grok')?.models[0]?.name).toBe(
+      'Grok 4.6 Fast'
+    )
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'cursor')?.models[0]?.name
     ).toBe('Grok 4.6')

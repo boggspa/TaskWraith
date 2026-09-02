@@ -227,7 +227,9 @@ describe('SettingsPanel provider cards', () => {
       />
     )
 
-    expect(html).toContain('class="segmented-control segmented-control--compact settings-option-list settings-option-list-inline"')
+    expect(html).toContain(
+      'class="segmented-control segmented-control--compact settings-option-list settings-option-list-inline"'
+    )
     expect(html).toContain('role="radiogroup" aria-label="Window material"')
     expect(html).toContain('role="radio" aria-checked="true"')
     expect(html).toContain('aria-label="Epic FX mode"')
@@ -1241,13 +1243,9 @@ describe('SettingsPanel provider cards', () => {
       'Muse',
       'Devin'
     ]) {
-      expect(html).toContain(
-        `<span class="approval-timeout-field-label">${provider}</span>`
-      )
+      expect(html).toContain(`<span class="approval-timeout-field-label">${provider}</span>`)
     }
-    expect(html).not.toContain(
-      '<span class="approval-timeout-field-label">Gemini</span>'
-    )
+    expect(html).not.toContain('<span class="approval-timeout-field-label">Gemini</span>')
     expect(html).toContain('value="60"')
     expect(html).toContain('value="240"')
     expect(html).toContain('Kimi, Mistral, and Main authority 120s')
@@ -1264,9 +1262,7 @@ describe('SettingsPanel provider cards', () => {
       />
     )
 
-    expect(html).toContain(
-      '<span class="approval-timeout-field-label">Antigravity</span>'
-    )
+    expect(html).toContain('<span class="approval-timeout-field-label">Antigravity</span>')
   })
 
   it('renders managed-policy status when organization controls are active', () => {
@@ -1287,7 +1283,9 @@ describe('SettingsPanel provider cards', () => {
     )
 
     expect(html).toContain('Managed by organization')
-    expect(html).toContain('Acme Corp is enforcing TaskWraith settings from signed-mdm-preferences.')
+    expect(html).toContain(
+      'Acme Corp is enforcing TaskWraith settings from signed-mdm-preferences.'
+    )
     expect(html).toContain('Locked controls: agenticServices, approvalTimeouts')
   })
 
@@ -1579,13 +1577,14 @@ describe('SettingsPanel provider cards', () => {
       /<button type="button" class="segmented-control-action segmented-control-action--compact segmented-control-action--primary" disabled="">Add server<\/button>/
     )
     expect(html).toMatch(/<input type="checkbox" disabled="" checked=""/)
-    expect(html).toMatch(/<button type="button" class="segmented-control-action segmented-control-action--compact" disabled="">Edit<\/button>/)
+    expect(html).toMatch(
+      /<button type="button" class="segmented-control-action segmented-control-action--compact" disabled="">Edit<\/button>/
+    )
     expect(html).toMatch(
       /<button type="button" class="segmented-control-action segmented-control-action--compact segmented-control-action--danger" disabled="">Delete<\/button>/
     )
     expect(html).toContain('Copy audit JSON')
   })
-
 })
 
 describe('parseUserMcpServersImportJson', () => {

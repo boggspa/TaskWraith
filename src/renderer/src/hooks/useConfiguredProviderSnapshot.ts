@@ -1,9 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ProviderId } from '../../../main/store/types'
-import {
-  ANTIGRAVITY_PROVIDER_ID,
-  isLiveSelectableProvider
-} from '../../../shared/retiredProviders'
+import { ANTIGRAVITY_PROVIDER_ID, isLiveSelectableProvider } from '../../../shared/retiredProviders'
 import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../../shared/hostProtocol'
 import { useHostProjectionStore } from '../components/HostProjectionProvider'
 import { useHostProjection } from './useHostProjection'
@@ -140,7 +137,7 @@ export function useAntigravityGeminiApiSecretRefreshIdentity(): string {
 }
 
 export function sanitizeConfiguredProviderSnapshot(value: unknown): ConfiguredProviderSnapshot {
-  const snapshot = value && typeof value === 'object' ? value as Record<string, unknown> : null
+  const snapshot = value && typeof value === 'object' ? (value as Record<string, unknown>) : null
   const rawModels =
     snapshot?.modelsByProvider && typeof snapshot.modelsByProvider === 'object'
       ? (snapshot.modelsByProvider as Record<string, unknown>)[ANTIGRAVITY_PROVIDER_ID]
@@ -247,9 +244,7 @@ export function configuredProviderSnapshotFromHostProjection(
     const modelId = typeof row.modelId === 'string' ? row.modelId.trim() : ''
     if (!modelId) continue
     const label =
-      typeof row.modelLabel === 'string' && row.modelLabel.trim()
-        ? row.modelLabel.trim()
-        : modelId
+      typeof row.modelLabel === 'string' && row.modelLabel.trim() ? row.modelLabel.trim() : modelId
     const list = modelsByProvider[providerId] ?? []
     if (!list.some((model) => model.id === modelId)) {
       list.push({

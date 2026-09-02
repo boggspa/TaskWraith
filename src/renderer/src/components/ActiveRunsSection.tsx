@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type JSX
+} from 'react'
 import { MascotGhost, SidebarRunningGhost } from './AppChromeSymbols'
 import type {
   ChatRecord,

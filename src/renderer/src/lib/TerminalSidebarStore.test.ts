@@ -25,18 +25,18 @@ describe('terminalSidebarStore', () => {
   it('mutates reactivity: subscribe listener fires and snapshot reference changes', () => {
     const listener = vi.fn()
     const unsubscribe = terminalSidebarStore.subscribe(listener)
-    
+
     const initial = terminalSidebarStore.getRecipes()
-    
+
     terminalSidebarStore.recordRecipe('/test/path', 'echo test')
-    
+
     expect(listener).toHaveBeenCalledOnce()
     const next = terminalSidebarStore.getRecipes()
     expect(next).not.toBe(initial)
     expect(next.length).toBe(1)
     expect(next[0].workspacePath).toBe('/test/path')
     expect(next[0].command).toBe('echo test')
-    
+
     unsubscribe()
   })
 
@@ -44,16 +44,16 @@ describe('terminalSidebarStore', () => {
     terminalSidebarStore.recordRecipe('/path/1', 'npm start')
     const initialRecipes = terminalSidebarStore.getRecipes()
     const recipeId = initialRecipes[0].id
-    
+
     const raw = window.localStorage.getItem('taskwraith-terminal-recipes')
     expect(raw).toBeTruthy()
     const parsed = JSON.parse(raw!)
     expect(parsed[0].workspacePath).toBe('/path/1')
-    
+
     terminalSidebarStore.togglePin(recipeId)
     const toggled = terminalSidebarStore.getRecipes()
     expect(toggled[0].pinned).toBe(true)
-    
+
     terminalSidebarStore.deleteRecipe(recipeId)
     const finalState = terminalSidebarStore.getRecipes()
     expect(finalState.length).toBe(0)
@@ -61,10 +61,10 @@ describe('terminalSidebarStore', () => {
 
   it('handles corrupted JSON gracefully and returns stable empty array', () => {
     window.localStorage.setItem('taskwraith-terminal-recipes', '{corrupted')
-    
+
     const first = terminalSidebarStore.getRecipes()
     const second = terminalSidebarStore.getRecipes()
-    
+
     expect(first).toEqual([])
     expect(first).toBe(second)
   })

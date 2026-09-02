@@ -581,13 +581,10 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('owner')
 
-    const olderWave = await harness.orchestrator.fanoutForRun(
-      harness.dispatched[0].appRunId,
-      {
-        targets: ['Work1'],
-        prompt: 'Keep inspecting while the owner continues.'
-      }
-    )
+    const olderWave = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Work1'],
+      prompt: 'Keep inspecting while the owner continues.'
+    })
     expect(olderWave.ok).toBe(true)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     stream(harness, 1, 'OLDER-WORK1-LANE.')
@@ -628,9 +625,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       message.content.includes('NEW-ORCHESTRATOR-LANE.')
     )
     expect(newLaneIndex).toBeGreaterThan(dispatchIndex)
-    expect(harness.chat.messages[newLaneIndex].metadata?.ensembleFanoutWaveId).toBe(
-      dispatchWaveId
-    )
+    expect(harness.chat.messages[newLaneIndex].metadata?.ensembleFanoutWaveId).toBe(dispatchWaveId)
 
     complete(harness, 2)
     complete(harness, 1)
@@ -683,9 +678,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       harness.dispatched.slice(1).map((payload) => payload.ensembleRun?.participantId)
     ).toEqual(['claude', 'observer', 'grok-bg'])
     expect(
-      harness.dispatched.filter(
-        (payload) => payload.ensembleRun?.participantId === 'codex'
-      )
+      harness.dispatched.filter((payload) => payload.ensembleRun?.participantId === 'codex')
     ).toHaveLength(1)
     expect(
       harness.promptEvidence
@@ -1241,7 +1234,9 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(harness.dispatched[2].ensembleRun?.participantId).toBe('captain-b')
     expect(
-      harness.dispatched.slice(0, 3).some((payload) => payload.ensembleRun?.participantId === 'worker')
+      harness.dispatched
+        .slice(0, 3)
+        .some((payload) => payload.ensembleRun?.participantId === 'worker')
     ).toBe(false)
     await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
   })
