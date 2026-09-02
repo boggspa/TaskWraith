@@ -329,7 +329,8 @@ describe('NodeWorkspaceLockPersistence', () => {
     const worktree = join(root, 'checkout')
     mkdirSync(worktree)
     const canonicalWorktree = canonicalRealpath(worktree)
-    const initialStat = lstatSync(canonicalWorktree)
+    // bigint: the store compares a bigint dev/ino identity, and NTFS file ids exceed 2^53.
+    const initialStat = lstatSync(canonicalWorktree, { bigint: true })
     const worktreeIdentity = `dev:${initialStat.dev}:ino:${initialStat.ino}`
     const markerName = `.WORK-IN-PROGRESS-taskwraith-runtime-desktop-${'a'.repeat(64)}.md`
 
@@ -345,7 +346,7 @@ describe('NodeWorkspaceLockPersistence', () => {
     expect(store.removeDerivedMarker(canonicalWorktree, markerName, worktreeIdentity)).toBe(false)
 
     mkdirSync(worktree)
-    const replacementStat = lstatSync(canonicalWorktree)
+    const replacementStat = lstatSync(canonicalWorktree, { bigint: true })
     const replacementIdentity = `dev:${replacementStat.dev}:ino:${replacementStat.ino}`
     store.writeDerivedMarker(canonicalWorktree, markerName, 'private', replacementIdentity)
     expectOwnerOnly(join(worktree, markerName))
@@ -359,7 +360,7 @@ describe('NodeWorkspaceLockPersistence', () => {
     mkdirSync(worktree)
     mkdirSync(outside)
     const canonicalWorktree = canonicalRealpath(worktree)
-    const originalStat = lstatSync(canonicalWorktree)
+    const originalStat = lstatSync(canonicalWorktree, { bigint: true })
     const originalIdentity = `dev:${originalStat.dev}:ino:${originalStat.ino}`
     const markerName = `.WORK-IN-PROGRESS-taskwraith-runtime-desktop-${'b'.repeat(64)}.md`
     store.writeDerivedMarker(canonicalWorktree, markerName, 'original', originalIdentity)

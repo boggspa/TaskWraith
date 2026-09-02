@@ -94,9 +94,9 @@ export interface HostProfileAuthorityLeaseFs {
   }
   mkdirSync(path: string, options?: { recursive?: boolean; mode?: number }): unknown
   realpathSync(path: string): string
-  lstatSync(path: string): HostProfileAuthorityLeaseFileStat
+  lstatSync(path: string, options?: { bigint: true }): HostProfileAuthorityLeaseFileStat
   openSync(path: string, flags: number, mode?: number): number
-  fstatSync(fd: number): HostProfileAuthorityLeaseFileStat
+  fstatSync(fd: number, options?: { bigint: true }): HostProfileAuthorityLeaseFileStat
   readSync(
     fd: number,
     buffer: Buffer,
@@ -285,7 +285,7 @@ export class HostProfileAuthorityLease {
     if (configuredPath === parse(configuredPath).root) return { kind: 'unreadable' }
     let profilePath: string
     try {
-      const stat = fs.lstatSync(configuredPath)
+      const stat = fs.lstatSync(configuredPath, { bigint: true })
       if (!stat.isDirectory() || stat.isSymbolicLink()) return { kind: 'unreadable' }
       profilePath = fs.realpathSync(configuredPath)
     } catch (error) {
@@ -468,7 +468,7 @@ function resolveOptions(options: HostProfileAuthorityLeaseOptions): ResolvedOpti
 }
 
 function ensurePrivateProfileDirectory(options: ResolvedOptions): void {
-  const stat = options.fs.lstatSync(options.profilePath)
+  const stat = options.fs.lstatSync(options.profilePath, { bigint: true })
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new HostProfileAuthorityLeaseBlockedError(
       'Host profile authority requires a real profile directory, not a link or non-directory.'
@@ -572,16 +572,16 @@ function createExclusiveRecord(
       if (isErrno(error, 'EEXIST')) return null
       throw error
     }
-    const descriptorStat = options.fs.fstatSync(descriptor)
+    const descriptorStat = options.fs.fstatSync(descriptor, { bigint: true })
     assertRegularFile(descriptorStat, path)
     openedIdentity = fileIdentity(descriptorStat, path)
-    const pathStat = options.fs.lstatSync(path)
+    const pathStat = options.fs.lstatSync(path, { bigint: true })
     assertSameFile(pathStat, openedIdentity, path)
     if (options.platform !== 'win32') options.fs.fchmodSync(descriptor, PRIVATE_FILE_MODE)
 
     writeAll(options.fs, descriptor, Buffer.from(serializeRecord(record), 'utf8'))
     options.fs.fsyncSync(descriptor)
-    assertSameFile(options.fs.lstatSync(path), openedIdentity, path)
+    assertSameFile(options.fs.lstatSync(path, { bigint: true }), openedIdentity, path)
   } catch (error) {
     creationFailed = true
     failure = error
@@ -652,11 +652,11 @@ function readOptionalRecord(
       if (isErrno(error, 'ENOENT')) return null
       throw blockedReadError(label, error)
     }
-    const descriptorStat = options.fs.fstatSync(descriptor)
+    const descriptorStat = options.fs.fstatSync(descriptor, { bigint: true })
     assertRegularFile(descriptorStat, label)
     assertOwnerOnlyMode(descriptorStat, options.platform, label)
     const identity = fileIdentity(descriptorStat, label)
-    assertSameFile(options.fs.lstatSync(path), identity, label)
+    assertSameFile(options.fs.lstatSync(path, { bigint: true }), identity, label)
     const size = boundedSize(descriptorStat.size, label)
     const bytes = readExactly(options.fs, descriptor, size, label)
     if (bytes.byteLength !== size) {
@@ -664,7 +664,7 @@ function readOptionalRecord(
         `${label} changed while it was being read; refusing a partial authority record.`
       )
     }
-    const finalDescriptorStat = options.fs.fstatSync(descriptor)
+    const finalDescriptorStat = options.fs.fstatSync(descriptor, { bigint: true })
     assertSameFile(finalDescriptorStat, identity, label)
     assertOwnerOnlyMode(finalDescriptorStat, options.platform, label)
     if (boundedSize(finalDescriptorStat.size, label) !== size) {
@@ -672,7 +672,7 @@ function readOptionalRecord(
         `${label} changed size while it was being read; refusing a raced authority record.`
       )
     }
-    assertSameFile(options.fs.lstatSync(path), identity, label)
+    assertSameFile(options.fs.lstatSync(path, { bigint: true }), identity, label)
     return { raw: bytes.toString('utf8'), identity }
   } catch (error) {
     if (error instanceof HostProfileAuthorityLeaseBlockedError) throw error
@@ -717,7 +717,7 @@ function removePathIfSameIdentity(
   expectedIdentity: FileIdentity
 ): void {
   try {
-    const stat = options.fs.lstatSync(path)
+    const stat = options.fs.lstatSync(path, { bigint: true })
     assertRegularFile(stat, path)
     if (!sameFileIdentity(fileIdentity(stat, path), expectedIdentity)) return
     options.fs.unlinkSync(path)
@@ -936,6 +936,9 @@ function boundedSize(size: number | bigint, label: string): number {
   return normalized
 }
 
+// Stats are requested as bigint everywhere: NTFS file reference numbers are
+// 64-bit and routinely exceed Number.MAX_SAFE_INTEGER, so a double-typed `ino`
+// normalizes to null and compare-before-release fails closed on Windows.
 function fileIdentity(stat: HostProfileAuthorityLeaseFileStat, label: string): FileIdentity {
   const dev = normalizeIdentityPart(stat.dev)
   const ino = normalizeIdentityPart(stat.ino)

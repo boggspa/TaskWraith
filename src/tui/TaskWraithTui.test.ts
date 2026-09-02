@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { PassThrough } from 'node:stream'
 import { tmpdir } from 'node:os'
@@ -195,7 +196,9 @@ class FakeHostV2 {
   async start(): Promise<void> {
     const server = createServer((socket) => this.accept(socket))
     this.server = server
-    const canonicalUserDataPath = await realpath(this.userDataPath)
+    // JS realpathSync, the flavour HostLocalServer and HostProjectionClient share;
+    // fs/promises.realpath is native-flavoured and disagrees on Windows 8.3 names.
+    const canonicalUserDataPath = realpathSync(this.userDataPath)
     this.socketPath = taskWraithHostSocketPath(canonicalUserDataPath)
     if (process.platform !== 'win32') {
       await mkdir(dirname(this.socketPath), { recursive: true, mode: 0o700 })
@@ -3001,6 +3004,16 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
         .homeContinuationThreadId
     ).toBe('thread-lazy')
     expect(output.lastFrame).toContain('TaskWraith')
+    // The cold-start continuation selects the thread and (re-)arms the Home
+    // continuation synchronously in the same tick; wait for that selection so a
+    // slow runner cannot interleave openThread() before the re-arm and then see
+    // the id come back.
+    await waitFor(
+      () =>
+        (tui as unknown as { state: { selectedThreadId?: string } }).state.selectedThreadId ===
+        'thread-lazy',
+      'lazy thread selected'
+    )
     await (tui as unknown as { openThread: (threadId: string) => Promise<void> }).openThread(
       'thread-lazy'
     )

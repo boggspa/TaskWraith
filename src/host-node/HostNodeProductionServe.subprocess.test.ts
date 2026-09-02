@@ -133,8 +133,17 @@ describe('production Host CLI subprocess', () => {
         ...(exerciseMuse ? { META_API_KEY: 'subprocess-test-key' } : {}),
         PATH: ''
       },
-      stdio: 'ignore'
+      stdio: ['ignore', 'ignore', 'pipe']
     })
+    // Keep the Host's stderr: when the graceful stop below cannot reach the
+    // socket, the only explanation lives there. Drained continuously so the
+    // pipe can never back-pressure the Host.
+    let hostStderr = ''
+    child.stderr?.setEncoding('utf8')
+    child.stderr?.on('data', (chunk: string) => {
+      if (hostStderr.length < 64 * 1024) hostStderr += chunk
+    })
+    let bodyFailure: unknown = null
     let client: HostProjectionClient | null = null
     let reconnected: HostProjectionClient | null = null
     let desktopPeer: HostProjectionClient | null = null
@@ -282,6 +291,9 @@ describe('production Host CLI subprocess', () => {
           commandId: 'cmd-thread'
         })
       }
+    } catch (error) {
+      bodyFailure = error
+      throw error
     } finally {
       client?.close()
       reconnected?.close()
@@ -303,7 +315,17 @@ describe('production Host CLI subprocess', () => {
         child.kill('SIGTERM')
         await waitForExit(child)
       }
-      expect(graceful.status, `${graceful.stdout || ''}${graceful.stderr || ''}`).toBe(0)
+      const stopEvidence = `${graceful.stdout || ''}${graceful.stderr || ''}\nhost exit=${String(
+        child.exitCode
+      )} signal=${String(child.signalCode)}\nhost stderr:\n${hostStderr}`
+      if (bodyFailure !== null) {
+        // The body already failed; report the stop outcome without replacing that error.
+        console.error(
+          `[production Host subprocess] graceful stop status=${String(graceful.status)}\n${stopEvidence}`
+        )
+      } else {
+        expect(graceful.status, stopEvidence).toBe(0)
+      }
     }
     expect(existsSync(taskWraithHostDiscoveryPath(profile))).toBe(false)
     expect(existsSync(taskWraithHostTokenPath(profile))).toBe(false)

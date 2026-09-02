@@ -13,6 +13,8 @@ import { HOST_PROFILE_AUTHORITY_LEASE_FILENAME } from './HostProfileAuthorityLea
 
 const REPO_ROOT = resolve(process.cwd())
 const CLI_PATH = resolve(REPO_ROOT, 'out/host/host-runtime/cli.js')
+// The hosted Windows runner is several times slower than the POSIX legs.
+const WAIT_BUDGET_MS = process.platform === 'win32' ? 30_000 : 8_000
 const profiles: string[] = []
 const children: ChildProcess[] = []
 
@@ -60,7 +62,11 @@ function spawnHost(profilePath: string, mode = 'diagnostic'): ChildProcess {
   return child
 }
 
-async function waitFor(check: () => boolean, message: string, timeoutMs = 8_000): Promise<void> {
+async function waitFor(
+  check: () => boolean,
+  message: string,
+  timeoutMs = WAIT_BUDGET_MS
+): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (check()) return
@@ -69,7 +75,10 @@ async function waitFor(check: () => boolean, message: string, timeoutMs = 8_000)
   throw new Error(message)
 }
 
-async function waitForExit(child: ChildProcess, timeoutMs = 8_000): Promise<number | null> {
+async function waitForExit(
+  child: ChildProcess,
+  timeoutMs = WAIT_BUDGET_MS
+): Promise<number | null> {
   if (child.exitCode !== null) return child.exitCode
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -106,82 +115,94 @@ afterAll(async () => {
 })
 
 describe('standalone diagnostic Host subprocess', () => {
-  it('serves an authenticated degraded projection, rejects a duplicate profile, and cleans up', async () => {
-    const profilePath = createProfile()
-    const child = spawnHost(profilePath)
-    const discoveryPath = join(profilePath, 'taskwraith-host-v2.json')
-    const tokenPath = join(profilePath, 'taskwraith-host-v2.token')
+  it(
+    'serves an authenticated degraded projection, rejects a duplicate profile, and cleans up',
+    async () => {
+      const profilePath = createProfile()
+      const child = spawnHost(profilePath)
+      const discoveryPath = join(profilePath, 'taskwraith-host-v2.json')
+      const tokenPath = join(profilePath, 'taskwraith-host-v2.token')
 
-    await waitFor(
-      () => existsSync(discoveryPath) && existsSync(tokenPath),
-      `diagnostic Host did not publish discovery: ${JSON.stringify(outputOf(child))}`
-    )
-    const discovery = JSON.parse(readFileSync(discoveryPath, 'utf8')) as { socketPath: string }
+      await waitFor(
+        () => existsSync(discoveryPath) && existsSync(tokenPath),
+        `diagnostic Host did not publish discovery: ${JSON.stringify(outputOf(child))}`
+      )
+      const discovery = JSON.parse(readFileSync(discoveryPath, 'utf8')) as { socketPath: string }
 
-    const client = new HostProjectionClient({
-      client: {
-        clientId: 'diagnostic-subprocess-client',
-        clientClass: 'test',
-        clientVersion: '1.0.0'
-      },
-      userDataPath: profilePath,
-      connectTimeoutMs: 2_000,
-      requestTimeoutMs: 2_000
-    })
-    try {
-      const welcome = await client.connect()
-      expect(welcome.capabilities).toEqual(['bootstrap', 'snapshot', 'health'])
-      expect(welcome.capabilities).not.toContain('commands')
-      expect(welcome.capabilities).not.toContain('provider-catalog')
-      expect(welcome.capabilities).not.toContain('provider-auth')
-      expect(welcome.capabilities).not.toContain('history')
+      const client = new HostProjectionClient({
+        client: {
+          clientId: 'diagnostic-subprocess-client',
+          clientClass: 'test',
+          clientVersion: '1.0.0'
+        },
+        userDataPath: profilePath,
+        connectTimeoutMs: 2_000,
+        requestTimeoutMs: 2_000
+      })
+      try {
+        const welcome = await client.connect()
+        expect(welcome.capabilities).toEqual(['bootstrap', 'snapshot', 'health'])
+        expect(welcome.capabilities).not.toContain('commands')
+        expect(welcome.capabilities).not.toContain('provider-catalog')
+        expect(welcome.capabilities).not.toContain('provider-auth')
+        expect(welcome.capabilities).not.toContain('history')
 
-      const snapshot = await client.getSnapshot()
-      expect(snapshot.snapshot.health.hostStatus).toBe('degraded')
-      expect(snapshot.snapshot.warnings).toEqual([
-        expect.objectContaining({ code: 'diagnostic_mode', severity: 'warning' })
-      ])
-      await expect(
-        client.submitCommand({
-          type: 'host.command',
-          protocolVersion: 2,
-          commandId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-          idempotencyKey: 'test:test:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-          actor: {
-            actorId: 'diagnostic-subprocess-client',
-            clientId: 'diagnostic-subprocess-client',
-            clientClass: 'test'
-          },
-          name: 'ping',
-          target: {},
-          arguments: {},
-          issuedAt: '2026-08-24T00:00:00.000Z'
-        })
-      ).rejects.toBeInstanceOf(HostProjectionTransportError)
-      await expect(client.getProviderStatuses()).rejects.toMatchObject({ code: 'unauthorized' })
-      await expect(
-        client.getThreadHistory({ threadId: 'diagnostic-thread', limit: 25 })
-      ).rejects.toMatchObject({ code: 'unauthorized' })
+        const snapshot = await client.getSnapshot()
+        expect(snapshot.snapshot.health.hostStatus).toBe('degraded')
+        expect(snapshot.snapshot.warnings).toEqual([
+          expect.objectContaining({ code: 'diagnostic_mode', severity: 'warning' })
+        ])
+        await expect(
+          client.submitCommand({
+            type: 'host.command',
+            protocolVersion: 2,
+            commandId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            idempotencyKey: 'test:test:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            actor: {
+              actorId: 'diagnostic-subprocess-client',
+              clientId: 'diagnostic-subprocess-client',
+              clientClass: 'test'
+            },
+            name: 'ping',
+            target: {},
+            arguments: {},
+            issuedAt: '2026-08-24T00:00:00.000Z'
+          })
+        ).rejects.toBeInstanceOf(HostProjectionTransportError)
+        await expect(client.getProviderStatuses()).rejects.toMatchObject({ code: 'unauthorized' })
+        await expect(
+          client.getThreadHistory({ threadId: 'diagnostic-thread', limit: 25 })
+        ).rejects.toMatchObject({ code: 'unauthorized' })
 
-      const duplicate = spawnHost(profilePath)
-      await expect(waitForExit(duplicate)).resolves.not.toBe(0)
-      expect(outputOf(duplicate).stderr).toMatch(/profile authority/i)
-    } finally {
-      client.close()
-    }
+        const duplicate = spawnHost(profilePath)
+        await expect(waitForExit(duplicate)).resolves.not.toBe(0)
+        expect(outputOf(duplicate).stderr).toMatch(/profile authority/i)
+      } finally {
+        client.close()
+      }
 
-    child.kill('SIGTERM')
-    await expect(waitForExit(child)).resolves.toBe(0)
-    expect(existsSync(discoveryPath)).toBe(false)
-    expect(existsSync(tokenPath)).toBe(false)
-    expect(existsSync(discovery.socketPath)).toBe(false)
-    expect(existsSync(join(profilePath, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(false)
+      if (process.platform === 'win32') {
+        // @portability-ok Windows cannot deliver SIGTERM: child.kill() terminates the
+        // process outright, so the graceful-exit and artifact-cleanup contract is not
+        // observable here; the POSIX legs prove it.
+        child.kill()
+        await waitForExit(child).catch(() => undefined)
+      } else {
+        child.kill('SIGTERM')
+        await expect(waitForExit(child)).resolves.toBe(0)
+        expect(existsSync(discoveryPath)).toBe(false)
+        expect(existsSync(tokenPath)).toBe(false)
+        expect(existsSync(discovery.socketPath)).toBe(false)
+        expect(existsSync(join(profilePath, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(false)
+      }
 
-    // The compiled process is launched by Node and contains no Electron import.
-    expect(readFileSync(CLI_PATH, 'utf8')).not.toMatch(
-      /(?:require|from)\(['"]electron|from ['"]electron/
-    )
-  }, 20_000)
+      // The compiled process is launched by Node and contains no Electron import.
+      expect(readFileSync(CLI_PATH, 'utf8')).not.toMatch(
+        /(?:require|from)\(['"]electron|from ['"]electron/
+      )
+    },
+    process.platform === 'win32' ? 90_000 : 20_000
+  )
 
   it('fails closed before creating profile-owned artifacts for unavailable modes', async () => {
     for (const mode of ['production', 'read-only']) {
