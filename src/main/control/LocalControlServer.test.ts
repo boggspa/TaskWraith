@@ -133,7 +133,12 @@ describe('LocalControlServer', () => {
     const welcome = await client.connect()
     expect(welcome.hostVersion).toBe('1.8.9-test')
     expect((await client.getSnapshot()).threads[0]?.id).toBe('demo-thread')
-    expect((await client.selectThread('demo-thread')).rows).toHaveLength(3)
+    // The demo row count is owned by createTaskWraithTuiDemoState; the
+    // tune-lens pass (76394cb1c) trimmed the demo thread from 3 rows to 2.
+    // Assert against the demo itself so selectThread delegation is proven
+    // without pinning a count the TUI can legitimately change.
+    expect(demo.thread!.rows.length).toBeGreaterThan(0)
+    expect((await client.selectThread('demo-thread')).rows).toHaveLength(demo.thread!.rows.length)
     await expect(client.sendPrompt('demo-thread', 'hello')).resolves.toMatchObject({
       dispatched: true
     })

@@ -40,7 +40,10 @@ describe('Channels production main integration', () => {
     expect(composition).toContain("'human-collaboration-identity.json'")
     expect(composition).toContain('safeStorage,')
     expect(composition).toContain('migratedAdmissionAuthority,')
-    expect(composition).toContain('migrationHandoff,')
+    // 0ede2bbf6 (the 1.9.7 lint pass) let prettier drop the trailing comma:
+    // migrationHandoff is now the last property before `})`. It is still
+    // passed into createChannelProductionBootstrap.
+    expect(composition).toMatch(/migrationHandoff\s*\}\)/)
     expect(composition).toContain('createChannelProductionRelayPort({')
     expect(composition).toContain('getEmbeddedRelayPort: () => embeddedRelayHandle?.port')
     expect(composition).toContain(

@@ -28,19 +28,26 @@ describe('first-turn goal creation guard integration', () => {
     // Verify first turn calculation
     expect(block).toContain('const isFirstTurn = (chat?.messages || []).length === 1')
 
-    // Verify guard relaxation condition
+    // Verify guard relaxation condition. 0ede2bbf6 (the 1.9.7 lint pass) let
+    // prettier join the guard onto one line — pin the shipped single line.
     expect(block).toContain(
-      "chat &&\n          isFirstTurn &&\n          (toolName === 'goal_update' || toolName === 'update_goal')"
+      "if (chat && isFirstTurn && (toolName === 'goal_update' || toolName === 'update_goal')) {"
     )
 
-    // Verify objective extraction fallback
-    expect(block).toContain(
+    // Verify objective extraction fallback. The same pass split the fallback
+    // chain across lines, so compare a whitespace-normalised form and stop
+    // being a prettier hostage.
+    const flatBlock = block.replace(/\s+/g, ' ')
+    expect(flatBlock).toContain(
       "args.objective || args.description || chat.messages[0]?.content || 'Auto-created objective'"
     )
 
-    // Verify goal creation
-    expect(block).toContain("const { createActiveGoal } = require('./GoalState')")
-    expect(block).toContain('const newGoal = createActiveGoal(chat.provider, objective, {')
+    // Verify goal creation. 0ede2bbf6 dropped the inline require because
+    // createActiveGoal is already a static top-level import in index.ts, and
+    // narrowed the provider with `!` for typecheck.
+    expect(block).not.toContain("require('./GoalState')")
+    expect(indexSource).toContain('createActiveGoal,')
+    expect(block).toContain('const newGoal = createActiveGoal(chat.provider!, objective, {')
     expect(block).toContain("objectiveSource: 'user'")
 
     // Verify goal is saved to store
@@ -55,29 +62,36 @@ describe('first-turn goal creation guard integration', () => {
   })
 
   it('injects hint on first turn only in PromptComposition', () => {
-    const block = sourceBetween(
-      promptCompSource,
-      'if (!input.activeGoal && (input.messages || []).length === 1) {',
-      '}\n  }'
+    // c25e87a40 feat(prompt): dedupe persistent solo context moved the
+    // first-turn heuristic out of the old `if` block: PromptComposition now
+    // derives firstMessage/suggestDurableGoal and hands the flag to
+    // buildAgentWorkState, which renders the hint wording itself. Compare
+    // whitespace-normalised source so prettier cannot break these pins.
+    const flatPromptComp = promptCompSource.replace(/\s+/g, ' ')
+
+    // First-turn gating: only a goalless thread with exactly one message
+    // feeds the heuristic, so the hint stays first-turn-only.
+    expect(flatPromptComp).toContain(
+      "const firstMessage = !input.activeGoal && (input.messages || []).length === 1 ? input.messages[0]?.content || '' : ''"
     )
 
-    // Ensure first turn gating
-    expect(promptCompSource).toContain(
-      'if (!input.activeGoal && (input.messages || []).length === 1) {'
+    // Heuristic gating (not a greeting, > 20 chars)
+    expect(flatPromptComp).toContain(
+      "const suggestDurableGoal = firstMessage.length > 20 && !firstMessage.match(/^(hi|hello|hey|what's up|greetings)\\b/i)"
     )
 
-    // Ensure it extracts the first message
-    expect(block).toContain("const firstMsg = input.messages[0]?.content || ''")
-
-    // Ensure heuristic gating (not a greeting, > 20 chars)
-    expect(block).toContain(
-      "if (firstMsg.length > 20 && !firstMsg.match(/^(hi|hello|hey|what's up|greetings)\\b/i)) {"
+    // The flag is passed into buildAgentWorkState({...})
+    expect(flatPromptComp).toContain(
+      "buildAgentWorkState({ activeGoal: input.activeGoal, providerOwnsGoalSteering, completionAuthority: 'root', suggestDurableGoal })"
     )
 
-    // Ensure hint text
-    expect(block).toContain('No TaskWraith goal is set for this thread.')
-    expect(block).toContain(
-      'Since your prompt appears to require action, you may call `update_goal` to set the objective'
+    // The hint wording now lives in the work contract shared by Host and App.
+    const workContractSource = readFileSync(
+      new URL('../host-shared/AgentWorkContract.ts', import.meta.url),
+      'utf8'
+    )
+    expect(workContractSource).toContain(
+      'If it needs multi-turn action, call update_goal once to persist it.'
     )
   })
 })

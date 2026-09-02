@@ -167,7 +167,10 @@ describe('history deletion startup integration', () => {
   })
 
   it('releases the correlated usage hold only from the post-commit release phase', () => {
-    const commit = indexSource.indexOf('commit: (operationId) => {')
+    // ce8d076da fix(main): route chat delete, truncate and clear through the
+    // Host — the commit phase now awaits the Host, so the shipped seam is
+    // `commit: async (operationId) => {`.
+    const commit = indexSource.indexOf('commit: async (operationId) => {')
     // Checkpoint and collaboration purges run under the frozen intent, before
     // the store commit inside the same commit phase (TW-SEC-2026-014).
     const checkpointPurge = indexSource.indexOf('store.purgeForHistoryDeletionScope(', commit)
