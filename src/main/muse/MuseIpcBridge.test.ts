@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -675,7 +676,7 @@ describe('createChildProcessMuseSpawn', () => {
   it('adapts child_process.spawn into a MuseRunSpawnHandle and pipes stdin', async () => {
     const stdoutHandlers: Array<(chunk: Buffer | string) => void> = []
     const closeHandlers: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
-    const stdin = { write: vi.fn(), end: vi.fn() }
+    const stdin = { write: vi.fn(), end: vi.fn(), once: vi.fn() }
     const child = {
       pid: 7,
       stdin,
@@ -741,5 +742,44 @@ describe('readDefaultMuseAuthJsonText', () => {
     const text = await readDefaultMuseAuthJsonText({ env: {}, home: root })
     expect(text).toContain('from-login')
     expect(defaultMuseAuthJsonPath({}, root)).toBe(authPath)
+  })
+})
+
+describe('createChildProcessMuseSpawn', () => {
+  it('absorbs an EPIPE on the child stdin instead of crashing Electron main', async () => {
+    const stdin = new EventEmitter() as EventEmitter & {
+      write: (payload: string) => boolean
+      end: () => void
+    }
+    const child = new EventEmitter() as EventEmitter & Record<string, unknown>
+    stdin.write = () => {
+      // The muse binary exited before draining the API key: the write fails
+      // after the fact, as an 'error' event on the stdin socket.
+      process.nextTick(() => {
+        stdin.emit(
+          'error',
+          Object.assign(new Error('write EPIPE'), { code: 'EPIPE', syscall: 'write' })
+        )
+        child.emit('close', 1, null)
+      })
+      return false
+    }
+    stdin.end = () => undefined
+    Object.assign(child, {
+      pid: 12,
+      stdin,
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      kill: vi.fn()
+    })
+    const spawnImpl = vi.fn(() => child) as never
+    const handle = createChildProcessMuseSpawn(spawnImpl)({
+      binaryPath: '/bin/muse',
+      argv: ['exec', '--json'],
+      cwd: tmpdir(),
+      env: { PATH: '/bin' },
+      stdin: 'api-key'
+    })
+    await expect(handle.wait()).resolves.toEqual({ code: 1, signal: null })
   })
 })

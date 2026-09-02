@@ -224,6 +224,13 @@ export function createChildProcessMuseSpawn(spawnImpl: NodeSpawn = nodeSpawn): M
       shell: false
     })
 
+    // The stdin payload is the API key, written the instant the child exists.
+    // A muse binary that exits before draining it makes the write EPIPE, and
+    // an 'error' on child.stdin with no listener is an unhandled event in
+    // Electron main — the whole app, not the turn. The child's exit code and
+    // stderr already say why it stopped reading, so the write failure is
+    // absorbed. Same fix as the Host adapter (HostNodeMuseResources).
+    child.stdin?.once('error', () => undefined)
     if (typeof input.stdin === 'string' && input.stdin.length > 0) {
       child.stdin?.write(input.stdin)
     }
