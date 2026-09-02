@@ -507,7 +507,7 @@ if [[ "$hook_output" == *'no live claim of yours'* ]]; then
 fi
 assertions=$((assertions + 1))
 
-# THE 15-MINUTE LEASE CEILING. Nothing bounded a lease before: `expires: 2099-…`
+# THE 20-MINUTE LEASE CEILING. Nothing bounded a lease before: `expires: 2099-…`
 # held a path for 73 years, and an owner-id claim has no pid to decay it, so the
 # lease was its only decay signal and that signal was unbounded. The cap is
 # anchored to `started` — anchoring to "now" would push the expiry forward on
@@ -521,14 +521,14 @@ repo="$(new_repo lease-within-ceiling)"
 stage_file "$repo" src/manual.ts
 write_manual_marker "$repo" "$foreign_pid" src/manual.ts
 set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 5)"
-expect_block 'a claim inside its 15m ceiling still blocks' "$repo"
+expect_block 'a claim inside its 20m ceiling still blocks' "$repo"
 
 repo="$(new_repo lease-past-ceiling)"
 stage_file "$repo" src/manual.ts
 write_manual_marker "$repo" "$foreign_pid" src/manual.ts
-set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 20)"
-expect_allow 'a 2099 lease decays at 15m from started' "$repo"
-if [[ "$hook_output" != *'15m ceiling'* ]]; then
+set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 25)"
+expect_allow 'a 2099 lease decays at 20m from started' "$repo"
+if [[ "$hook_output" != *'20m ceiling'* ]]; then
   printf 'FAIL: ceiling decay was not explained to its owner\n%s\n' "$hook_output" >&2
   exit 1
 fi
