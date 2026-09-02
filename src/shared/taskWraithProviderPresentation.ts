@@ -145,6 +145,8 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'composer-2.5-fast': 'Composer 2.5 Fast',
   'mistral-medium-3.5': 'Mistral Medium 3.5',
   'mistral-vibe-cli-latest': 'Mistral Medium 3.5',
+  'muse-spark-1.3': 'Muse Spark 1.3',
+  'muse-spark-1.3-contributor': 'Muse Contributor Spark 1.3',
   'muse-spark-1.2': 'Muse Spark 1.2',
   'muse-spark-1.2-contributor': 'Muse Contributor Spark 1.2',
   'devstral-small': 'Devstral Small',

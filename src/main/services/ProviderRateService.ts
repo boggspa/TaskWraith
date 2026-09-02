@@ -44,7 +44,7 @@ import type { ProviderId } from '../store/types'
 
 /** Snapshot date for the baked-in rate values. Bump alongside the
  * rate values themselves when the manual diligence cycle runs. */
-export const RATE_TABLE_VERSION = '2026-08-31'
+export const RATE_TABLE_VERSION = '2026-09-02'
 
 /**
  * Per-model rate entry. Rates are USD per 1,000,000 tokens (so
@@ -1806,6 +1806,26 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'Wire-id alias for muse-spark-1.2 when a run records the seat default sentinel instead of the catalog id.'
+      },
+      {
+        modelId: 'muse-spark-1.3',
+        inputUsdPerMillion: 1.25,
+        outputUsdPerMillion: 4.25,
+        cachedInputUsdPerMillion: 0.15,
+        sourceUrl: 'https://developer.meta.com/ai/products/meta-model-api/',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Meta Model API published pricing for muse-spark-1.3 ($1.25/$4.25/$0.15 per Mtok input/output/cached), verified 2026-09-02 and identical to muse-spark-1.2. Not Meta-billed invoice line items — subscription / plan spend may differ.'
+      },
+      {
+        modelId: 'muse-spark-1.3-contributor',
+        inputUsdPerMillion: 0.1,
+        outputUsdPerMillion: 0.2,
+        cachedInputUsdPerMillion: 0.002,
+        sourceUrl: 'https://developer.meta.com/ai/products/meta-model-api/',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Meta Model API published pricing for muse-spark-1.3-contributor ($0.10/$0.20/$0.002 per Mtok input/output/cached), verified 2026-09-02. Discounted tokens carry the provider notice that content, including inter-session messages, may be used for product improvement. Not Meta-billed invoice line items — subscription / plan spend may differ.'
       }
     ]
   },

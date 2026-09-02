@@ -74,6 +74,8 @@ describe('shortModelName', () => {
   })
 
   it('keeps Muse Contributor Spark distinct from the standard Spark route', () => {
+    expect(shortModelName('muse', '', 'muse-spark-1.3')).toBe('Spark 1.3')
+    expect(shortModelName('muse', '', 'muse-spark-1.3-contributor')).toBe('Contributor Spark 1.3')
     expect(shortModelName('muse', '', 'muse-spark-1.2')).toBe('Spark 1.2')
     expect(shortModelName('muse', '', 'muse-spark-1.2-contributor')).toBe('Contributor Spark 1.2')
   })

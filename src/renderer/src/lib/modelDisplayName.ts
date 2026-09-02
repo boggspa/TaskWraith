@@ -178,6 +178,8 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'ministral-3b-2512': 'Ministral 3 (3B)',
 
   // ── Muse (Meta Muse Code CLI) ─────────────────────────────
+  'muse-spark-1.3': 'Muse Spark 1.3',
+  'muse-spark-1.3-contributor': 'Muse Contributor Spark 1.3',
   'muse-spark-1.2': 'Muse Spark 1.2',
   'muse-spark-1.2-contributor': 'Muse Contributor Spark 1.2',
 

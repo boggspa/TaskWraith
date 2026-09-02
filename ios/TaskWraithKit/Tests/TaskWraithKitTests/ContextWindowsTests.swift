@@ -70,6 +70,10 @@ struct ContextWindowsTests {
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-4-8") == 200_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-sonnet-5") == 1_000_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-sonnet-4-6") == 200_000)
+        #expect(ContextWindows.resolve(provider: "muse", model: "muse-spark-1.3") == 200_000)
+        #expect(
+            ContextWindows.resolve(provider: "muse", model: "muse-spark-1.3-contributor")
+                == 200_000)
         #expect(ContextWindows.resolve(provider: "muse", model: "muse-spark-1.2") == 200_000)
         #expect(
             ContextWindows.resolve(provider: "muse", model: "muse-spark-1.2-contributor")

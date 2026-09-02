@@ -82,6 +82,25 @@ describe('TaskWraith TUI provider presentation', () => {
     expect(pi.accent).toBe(TASKWRAITH_PROVIDER_ACCENTS.pi)
   })
 
+  it('humanises both Muse Spark 1.3 routes without changing their runtime identity', () => {
+    expect(resolveTaskWraithProviderPresentation('muse', 'muse-spark-1.3')).toMatchObject({
+      runtimeProvider: 'muse',
+      displayProvider: 'Muse',
+      modelLabel: 'Muse Spark 1.3'
+    })
+    expect(
+      resolveTaskWraithProviderPresentation('muse', 'muse-spark-1.3-contributor')
+    ).toMatchObject({
+      runtimeProvider: 'muse',
+      displayProvider: 'Muse',
+      modelLabel: 'Muse Contributor Spark 1.3'
+    })
+    expect(taskWraithModelLabel('muse', 'muse-spark-1.3')).toBe('Muse Spark 1.3')
+    expect(taskWraithModelLabel('muse', 'muse-spark-1.3-contributor')).toBe(
+      'Muse Contributor Spark 1.3'
+    )
+  })
+
   it('humanises the Muse contributor route without changing its runtime identity', () => {
     expect(
       resolveTaskWraithProviderPresentation('muse', 'muse-spark-1.2-contributor')

@@ -190,7 +190,7 @@ describe('BAKED_IN_RATES', () => {
 
   it('records exact Grok 4.6 direct and Cursor API-equivalent tiers', () => {
     const direct = BAKED_IN_RATES.grok.models.find((model) => model.modelId === 'grok-4.6')
-    expect(RATE_TABLE_VERSION).toBe('2026-08-31')
+    expect(RATE_TABLE_VERSION).toBe('2026-09-02')
     expect(BAKED_IN_RATES.grok.models[0]?.modelId).toBe('grok-4.6')
     expect(direct).toMatchObject({
       inputUsdPerMillion: 2,
@@ -222,6 +222,32 @@ describe('BAKED_IN_RATES', () => {
       sourceUrl: 'https://cursor.com/docs/models/grok-4-6',
       lastVerified: RATE_TABLE_VERSION
     })
+  })
+
+  it('prices both Muse Spark 1.3 routes exactly, leaving the 1.2 fallback row first', () => {
+    expect(BAKED_IN_RATES.muse.models[0]?.modelId).toBe('muse-spark-1.2')
+    expect(
+      BAKED_IN_RATES.muse.models.find((model) => model.modelId === 'muse-spark-1.3')
+    ).toMatchObject({
+      inputUsdPerMillion: 1.25,
+      outputUsdPerMillion: 4.25,
+      cachedInputUsdPerMillion: 0.15,
+      sourceUrl: 'https://developer.meta.com/ai/products/meta-model-api/',
+      lastVerified: RATE_TABLE_VERSION
+    })
+    expect(
+      BAKED_IN_RATES.muse.models.find((model) => model.modelId === 'muse-spark-1.3-contributor')
+    ).toMatchObject({
+      inputUsdPerMillion: 0.1,
+      outputUsdPerMillion: 0.2,
+      cachedInputUsdPerMillion: 0.002,
+      sourceUrl: 'https://developer.meta.com/ai/products/meta-model-api/',
+      lastVerified: RATE_TABLE_VERSION
+    })
+    expect(
+      BAKED_IN_RATES.muse.models.find((model) => model.modelId === 'muse-spark-1.3-contributor')
+        ?.notes
+    ).toMatch(/content.*product improvement/i)
   })
 
   it('records Muse Contributor Spark discounted rates without changing the standard fallback', () => {
