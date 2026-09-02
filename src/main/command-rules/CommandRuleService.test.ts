@@ -32,6 +32,7 @@ async function createFixture(): Promise<{
   const bin = join(root, 'bin')
   const executable = join(bin, 'taskwraith-test')
   await Promise.all([mkdir(app, { recursive: true }), mkdir(bin, { recursive: true })])
+  // @portability-ok: fixture realpath'd and content-hashed only — never executed
   await writeFile(executable, '#!/bin/sh\nexit 0\n')
   await chmod(executable, 0o755)
   return { root, workspace, app, bin, executable }
@@ -149,6 +150,7 @@ describe('CommandRuleService', () => {
     const compiled = service.compileCandidate(input)
     if (!compiled.ok) throw new Error(compiled.reason)
     service.upsert(compiled.candidate)
+    // @portability-ok: fixture realpath'd and content-hashed only — never executed
     await writeFile(executable, '#!/bin/sh\necho changed\n')
     await chmod(executable, 0o755)
 
@@ -253,6 +255,7 @@ describe('CommandRuleService', () => {
     const { root, workspace, bin } = await createFixture()
     const { service } = createService()
     const outsideExecutable = join(root, 'outside-tool')
+    // @portability-ok: fixture realpath'd and content-hashed only — never executed
     await writeFile(outsideExecutable, '#!/bin/sh\nexit 0\n')
     await chmod(outsideExecutable, 0o755)
 

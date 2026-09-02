@@ -15,6 +15,7 @@ it('resolves an explicit real binary and reads only bounded owner-safe auth text
   paths.push(root)
   const binary = join(root, 'muse')
   const auth = join(root, 'auth.json')
+  // @portability-ok: resolved via realpath only — never executed in this test
   writeFileSync(binary, '#!/bin/sh\n')
   chmodSync(binary, 0o700)
   writeFileSync(auth, '{"providers":{}}')

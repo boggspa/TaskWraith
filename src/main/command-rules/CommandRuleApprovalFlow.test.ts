@@ -4,14 +4,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { AppSettings, CommandRule } from '../store/types'
-import {
-  CommandRuleService,
-  createCommandRuleHmacSigningAuthority
-} from './CommandRuleService'
-import {
-  CommandRuleApprovalFlow,
-  type BrokeredCommandRuleInput
-} from './CommandRuleApprovalFlow'
+import { CommandRuleService, createCommandRuleHmacSigningAuthority } from './CommandRuleService'
+import { CommandRuleApprovalFlow, type BrokeredCommandRuleInput } from './CommandRuleApprovalFlow'
 
 const tempPaths: string[] = []
 
@@ -26,6 +20,7 @@ async function fixture() {
   await mkdir(workspace)
   await mkdir(join(workspace, 'src'))
   const executable = join(root, 'inspect-tool')
+  // @portability-ok: fixture realpath'd and content-hashed only — never executed
   await writeFile(executable, '#!/bin/sh\nprintf inspected\n')
   await chmod(executable, 0o700)
   const settings: Pick<AppSettings, 'commandRules'> = { commandRules: [] }
@@ -120,6 +115,7 @@ describe('CommandRuleApprovalFlow', () => {
     expect(flow.register('approval-stale', input)).not.toBeNull()
     expect(flow.accept('approval-stale', 'offer-stale')).toMatchObject({ ok: false })
     live = { ...input }
+    // @portability-ok: fixture realpath'd and content-hashed only — never executed
     await writeFile(executable, '#!/bin/sh\nprintf changed\n')
     await chmod(executable, 0o700)
     expect(flow.accept('approval-stale', 'offer-stale')).toMatchObject({
@@ -149,6 +145,7 @@ describe('CommandRuleApprovalFlow', () => {
     }
 
     const workspaceExecutable = join(workspace, 'workspace-tool')
+    // @portability-ok: fixture realpath'd and content-hashed only — never executed
     await writeFile(workspaceExecutable, '#!/bin/sh\nprintf unsafe\n')
     await chmod(workspaceExecutable, 0o700)
     expect(

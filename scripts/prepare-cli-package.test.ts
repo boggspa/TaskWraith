@@ -39,11 +39,14 @@ function fixture(overrides: { rootVersion?: string; cliVersion?: string } = {}) 
       }
     })
   )
+  // @portability-ok: fixture bytes copied and read back verbatim — never executed
   writeFileSync(join(packageRoot, 'bin', 'taskwraith.cjs'), '#!/usr/bin/env node\n')
   writeFileSync(join(packageRoot, 'bin', 'taskwraith-host.cjs'), '#!/usr/bin/env node\n')
   writeFileSync(join(root, 'LICENSE'), 'fixture license')
+  // @portability-ok: fixture bytes copied and read back verbatim — never executed
   writeFileSync(join(root, 'out', 'tui', 'tui', 'cli.js'), '#!/usr/bin/env node\n')
   writeFileSync(join(root, 'out', 'tui', 'tui', 'cli.js.map'), 'omit me')
+  // @portability-ok: fixture bytes copied and read back verbatim — never executed
   writeFileSync(join(root, 'out', 'host', 'host-runtime', 'cli.js'), '#!/usr/bin/env node\n')
   writeFileSync(join(root, 'out', 'host', 'host-node', 'provider.js'), 'require("node-pty")\n')
   return { root, packageRoot }
@@ -59,6 +62,7 @@ describe('prepare CLI package', () => {
     const { prepareCliPackage } = await import('./prepare-cli-package.cjs')
     const dist = prepareCliPackage({ repoRoot: root, packageRoot, build: false })
 
+    // @portability-ok: data round-trip — asserts the copied file still contains the fixture shebang
     expect(readFileSync(join(dist, 'tui', 'tui', 'cli.js'), 'utf8')).toContain('/usr/bin/env node')
     expect(existsSync(join(dist, 'tui', 'tui', 'cli.js.map'))).toBe(false)
     expect(readFileSync(join(dist, 'LICENSE'), 'utf8')).toBe('fixture license')

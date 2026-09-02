@@ -277,94 +277,98 @@ it('admits AntiGravity only from existing consent plus a live nonempty agy model
   await server.stop()
 })
 
-it('probes Git once, advertises only when available, and serves a hardened workspace read', async () => {
-  const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-git-')))
-  paths.push(parent)
-  const profile = join(parent, 'profile')
-  const workspace = join(parent, 'workspace')
-  const binary = join(parent, 'git-test')
-  const counter = join(parent, 'git-calls')
-  mkdirSync(workspace)
-  mkdirSync(join(workspace, '.git'))
-  writeFileSync(
-    binary,
-    [
-      '#!/bin/sh',
-      `printf x >> "${counter}"`,
-      'test -z "$GITHUB_TOKEN" || exit 9',
-      'case "$*" in',
-      '  *--version*) printf "git version test\\n" ;;',
-      `  *--show-toplevel*) printf "%s\\n" "${workspace}" ;;`,
-      '  *--show-current*) printf "main\\n" ;;',
-      '  *"rev-parse HEAD"*) printf "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n" ;;',
-      '  *status*) printf "M  file.ts\\0" ;;',
-      '  *) exit 1 ;;',
-      'esac'
-    ].join('\n')
-  )
-  chmodSync(binary, 0o700)
+it.skipIf(process.platform === 'win32')(
+  'probes Git once, advertises only when available, and serves a hardened workspace read',
+  async () => {
+    const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-git-')))
+    paths.push(parent)
+    const profile = join(parent, 'profile')
+    const workspace = join(parent, 'workspace')
+    const binary = join(parent, 'git-test')
+    const counter = join(parent, 'git-calls')
+    mkdirSync(workspace)
+    mkdirSync(join(workspace, '.git'))
+    // @portability-ok: gated by it.skipIf(process.platform === 'win32') above
+    writeFileSync(
+      binary,
+      [
+        '#!/bin/sh',
+        `printf x >> "${counter}"`,
+        'test -z "$GITHUB_TOKEN" || exit 9',
+        'case "$*" in',
+        '  *--version*) printf "git version test\\n" ;;',
+        `  *--show-toplevel*) printf "%s\\n" "${workspace}" ;;`,
+        '  *--show-current*) printf "main\\n" ;;',
+        '  *"rev-parse HEAD"*) printf "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n" ;;',
+        '  *status*) printf "M  file.ts\\0" ;;',
+        '  *) exit 1 ;;',
+        'esac'
+      ].join('\n')
+    )
+    chmodSync(binary, 0o700)
 
-  const server = createHostNodeProductionServer({
-    profilePath: profile,
-    gitExecutable: binary,
-    env: { PATH: '', GITHUB_TOKEN: 'must-not-reach-git' },
-    temporaryParent: parent
-  })
-  await server.start()
-  expect(readFileSync(counter, 'utf8')).toBe('x')
+    const server = createHostNodeProductionServer({
+      profilePath: profile,
+      gitExecutable: binary,
+      env: { PATH: '', GITHUB_TOKEN: 'must-not-reach-git' },
+      temporaryParent: parent
+    })
+    await server.start()
+    expect(readFileSync(counter, 'utf8')).toBe('x')
 
-  const client = new HostProjectionClient({
-    userDataPath: profile,
-    client: { clientId: 'git-client', clientClass: 'test', clientVersion: '1.0' },
-    capabilities: [
-      'bootstrap',
-      'snapshot',
-      'deltas',
-      'workspace-git',
-      'setup',
-      'commands',
-      'receipts',
-      'health'
-    ]
-  })
-  await client.connect()
-  expect(client.welcome?.capabilities).toContain('workspace-git')
-  const register: HostCommand = {
-    type: 'host.command',
-    protocolVersion: HOST_PROTOCOL_VERSION,
-    commandId: 'git-workspace-register',
-    idempotencyKey: 'git-workspace-register-key',
-    actor: { actorId: 'git-client', clientId: 'git-client', clientClass: 'test' },
-    name: 'workspace.register',
-    target: {},
-    arguments: { path: workspace },
-    issuedAt: '2026-08-28T00:00:00.000Z'
+    const client = new HostProjectionClient({
+      userDataPath: profile,
+      client: { clientId: 'git-client', clientClass: 'test', clientVersion: '1.0' },
+      capabilities: [
+        'bootstrap',
+        'snapshot',
+        'deltas',
+        'workspace-git',
+        'setup',
+        'commands',
+        'receipts',
+        'health'
+      ]
+    })
+    await client.connect()
+    expect(client.welcome?.capabilities).toContain('workspace-git')
+    const register: HostCommand = {
+      type: 'host.command',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      commandId: 'git-workspace-register',
+      idempotencyKey: 'git-workspace-register-key',
+      actor: { actorId: 'git-client', clientId: 'git-client', clientClass: 'test' },
+      name: 'workspace.register',
+      target: {},
+      arguments: { path: workspace },
+      issuedAt: '2026-08-28T00:00:00.000Z'
+    }
+    const receipt = await client.submitCommand(register)
+    const workspaceId = receipt.resultRef?.kind === 'workspace' ? receipt.resultRef.workspaceId : ''
+    const result = await (
+      client as unknown as {
+        request(
+          kind: 'workspace.git.read',
+          params: { workspaceId: string; scope: 'status' }
+        ): Promise<{ kind: string; result: unknown }>
+      }
+    ).request('workspace.git.read', { workspaceId, scope: 'status' })
+    expect(result).toMatchObject({
+      kind: 'workspace.git.read',
+      result: {
+        scope: 'status',
+        branch: 'main',
+        head: 'a'.repeat(40),
+        files: [{ path: 'file.ts', kind: 'modified' }],
+        truncated: false
+      }
+    })
+    expect(readFileSync(counter, 'utf8')).toBe('xxxxx')
+
+    client.close()
+    await server.stop()
   }
-  const receipt = await client.submitCommand(register)
-  const workspaceId = receipt.resultRef?.kind === 'workspace' ? receipt.resultRef.workspaceId : ''
-  const result = await (
-    client as unknown as {
-      request(
-        kind: 'workspace.git.read',
-        params: { workspaceId: string; scope: 'status' }
-      ): Promise<{ kind: string; result: unknown }>
-    }
-  ).request('workspace.git.read', { workspaceId, scope: 'status' })
-  expect(result).toMatchObject({
-    kind: 'workspace.git.read',
-    result: {
-      scope: 'status',
-      branch: 'main',
-      head: 'a'.repeat(40),
-      files: [{ path: 'file.ts', kind: 'modified' }],
-      truncated: false
-    }
-  })
-  expect(readFileSync(counter, 'utf8')).toBe('xxxxx')
-
-  client.close()
-  await server.stop()
-})
+)
 
 it('serves an authenticated cold-profile setup/history workflow and cleans owned resources', async () => {
   const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-live-')))
@@ -373,6 +377,7 @@ it('serves an authenticated cold-profile setup/history workflow and cleans owned
   const workspace = join(parent, 'workspace')
   const binary = join(parent, 'muse')
   mkdirSync(workspace)
+  // @portability-ok: resolved via realpath only — never executed (API-key auth path)
   writeFileSync(binary, '#!/bin/sh\n')
   chmodSync(binary, 0o700)
   const server = createHostNodeProductionServer({
@@ -487,11 +492,13 @@ it('wires a real optional provider terminal launcher into production auth flows'
   mkdirSync(binDir)
   for (const name of ['codex', 'kimi', 'vibe', 'grok']) {
     const binary = join(binDir, name)
+    // @portability-ok: resolved via realpath only — terminal launches are mocked, never executed
     writeFileSync(binary, '#!/bin/sh\n')
     chmodSync(binary, 0o700)
   }
   for (const name of ['claude', 'cursor-agent']) {
     const binary = join(binDir, name)
+    // @portability-ok: resolved via realpath only — terminal launches are mocked, never executed
     writeFileSync(binary, '#!/bin/sh\nexit 1\n')
     chmodSync(binary, 0o700)
   }
@@ -619,6 +626,7 @@ it('disposes lease-late Muse resources when terminal handoff construction is inv
   paths.push(parent)
   const profile = join(parent, 'cold-profile')
   const binary = join(parent, 'muse')
+  // @portability-ok: resolved via realpath only — start() rejects on the invalid launcher before any run
   writeFileSync(binary, '#!/bin/sh\n')
   chmodSync(binary, 0o700)
   const server = createHostNodeProductionServer({

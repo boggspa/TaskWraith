@@ -88,6 +88,7 @@ describe('hardening reaches the actual spawn call', () => {
       expect(call.env).not.toHaveProperty('GITHUB_TOKEN')
       expect(call.env).not.toHaveProperty('GIT_DIR')
       expect(call.env.GIT_TERMINAL_PROMPT).toBe('0')
+      // @portability-ok: asserts the fixture PATH passes through the env scrub unchanged — the code under test pins no literal
       expect(call.env.PATH).toBe('/usr/bin')
     }
   })

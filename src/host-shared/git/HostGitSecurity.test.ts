@@ -84,6 +84,7 @@ describe('environment scrubbing', () => {
       SSH_ASKPASS: '/tmp/evil',
       UNSET: undefined
     })
+    // @portability-ok: asserts the fixture PATH passes through the scrub unchanged — the code under test pins no literal
     expect(env.PATH).toBe('/usr/bin')
     expect(env).not.toHaveProperty('GITHUB_TOKEN')
     expect(env).not.toHaveProperty('GIT_DIR')

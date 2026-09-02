@@ -29,6 +29,7 @@ describe('resolveMistralCredentialLaunch', () => {
         credentialEnvPresent: true,
         missingApiKey: false
       })
+      // @portability-ok: asserts the fixture PATH passes through the credential lane unchanged — the code under test pins no literal
       expect(result.childEnv.PATH).toBe('/usr/bin')
       expect(result.childEnv.MISTRAL_API_KEY).toBeUndefined()
       expect(result.childEnv.MISTRAL_TOKEN).toBeUndefined()

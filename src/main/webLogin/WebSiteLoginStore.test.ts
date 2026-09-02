@@ -189,8 +189,11 @@ describe('WebSiteLoginStore', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-web-login-'))
     tempDirs.push(dir)
     new WebSiteLoginStore({ userDataPath: dir }).add({ origin: 'https://example.com' })
-    const mode = fs.statSync(path.join(dir, 'web-site-logins.json')).mode & 0o777
-    expect(mode).toBe(0o600)
+    if (process.platform !== 'win32') {
+      // NTFS reports 0666 for all files; owner-only on Windows is ACL-enforced, not octal.
+      const mode = fs.statSync(path.join(dir, 'web-site-logins.json')).mode & 0o777
+      expect(mode).toBe(0o600)
+    }
   })
 })
 

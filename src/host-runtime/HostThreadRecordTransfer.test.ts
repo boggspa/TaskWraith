@@ -148,8 +148,11 @@ describe('publishHostThreadRecordTransfer', () => {
     publishFixture(profile)
 
     const directory = hostThreadRecordTransferDirectory(profile)
-    expect(statSync(directory).mode & 0o777).toBe(0o700)
-    expect(statSync(hostThreadRecordTransferPath(profile, 'transfer-1')).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      // NTFS reports 0666 for everything; owner-only on Windows is ACL-enforced, not octal.
+      expect(statSync(directory).mode & 0o777).toBe(0o700)
+      expect(statSync(hostThreadRecordTransferPath(profile, 'transfer-1')).mode & 0o777).toBe(0o600)
+    }
     expect(readdirSync(directory)).toEqual(['transfer-1.record.json'])
   })
 

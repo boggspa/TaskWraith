@@ -670,7 +670,10 @@ describe('integration with the landed transfer primitive', () => {
       HOST_THREAD_RECORD_TRANSFER_DIRECTORY,
       'real-transfer-1.record.json'
     )
-    expect(statSync(artifact).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      // NTFS reports 0666; owner-only on Windows is ACL-enforced, not octal.
+      expect(statSync(artifact).mode & 0o777).toBe(0o600)
+    }
 
     const consumed = consumeHostThreadRecordTransfer({
       profilePath: profile,

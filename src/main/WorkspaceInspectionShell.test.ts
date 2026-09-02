@@ -78,8 +78,8 @@ describe('WorkspaceInspectionShell', () => {
       "jq -n 'env | .'",
       "jq -n '[env]'",
       "jq -n 'null | env'",
-      "jq -n 'include \"../external/module\"; .'",
-      "jq -n 'import \"module\" as x; x'",
+      'jq -n \'include "../external/module"; .\'',
+      'jq -n \'import "module" as x; x\'',
       'jq --run-tests README.md',
       'cat README.md > /dev/null',
       'git -C /tmp status',
@@ -126,7 +126,7 @@ describe('WorkspaceInspectionShell', () => {
       'grep -f../external/secret.txt needle src',
       'rg -f../external/secret.txt needle src',
       'rg -nf../external/secret.txt needle src',
-      "jq -f../external/secret.txt README.md",
+      'jq -f../external/secret.txt README.md',
       "jq -L../external '.' README.md",
       "jq -nL../external '.' README.md",
       'rg permission src | head -n 10',
@@ -194,7 +194,12 @@ describe('WorkspaceInspectionShell', () => {
       GIT_CONFIG_VALUE_1: '/usr/bin/false'
     })
     expect(gitPlan?.unsetEnvironment).toEqual(
-      expect.arrayContaining(['GIT_DIR', 'GIT_WORK_TREE', 'GIT_EXTERNAL_DIFF', 'GIT_CONFIG_PARAMETERS'])
+      expect.arrayContaining([
+        'GIT_DIR',
+        'GIT_WORK_TREE',
+        'GIT_EXTERNAL_DIFF',
+        'GIT_CONFIG_PARAMETERS'
+      ])
     )
 
     const rgPlan = workspaceInspectionExecutionPlan('rg permission src', {
@@ -214,6 +219,7 @@ describe('WorkspaceInspectionShell', () => {
     const { workspace, external } = await fixture()
     const marker = join(external, 'fsmonitor-ran')
     const helper = join(external, 'fsmonitor.sh')
+    // @portability-ok: helper content only — the test asserts git never executes it
     await writeFile(helper, `#!/bin/sh\ntouch '${marker}'\nexit 0\n`)
     await chmod(helper, 0o700)
     const git = workspaceInspectionExecutionPlan('git status --short', {

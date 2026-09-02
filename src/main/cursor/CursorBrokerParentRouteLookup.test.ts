@@ -72,8 +72,11 @@ describe('Cursor broker parent-pid route lookup', () => {
     })
 
     expect(recorded.path).toBe(join(cursorBrokerParentRouteDirectory(socketPath), '4242.json'))
-    expect(fs.statSync(recorded.path).mode & 0o777).toBe(0o600)
-    expect(fs.statSync(cursorBrokerParentRouteDirectory(socketPath)).mode & 0o777).toBe(0o700)
+    if (process.platform !== 'win32') {
+      // NTFS reports 0666; owner-only on Windows is ACL-enforced, not octal.
+      expect(fs.statSync(recorded.path).mode & 0o777).toBe(0o600)
+      expect(fs.statSync(cursorBrokerParentRouteDirectory(socketPath)).mode & 0o777).toBe(0o700)
+    }
 
     const resolved = resolveCursorBrokerParentRouteFromAncestors({
       startPid: 99,

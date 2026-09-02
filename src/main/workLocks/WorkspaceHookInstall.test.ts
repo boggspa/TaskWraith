@@ -15,6 +15,7 @@ import {
 
 const created: string[] = []
 const peerPids: number[] = []
+// @portability-ok: written and read back as text — never executed; the enforcement describe below runs the real .githooks/pre-commit instead
 const HOOK_SOURCE = '#!/usr/bin/env bash\necho "coordination check"\nexit 0\n'
 
 function scratch(label: string): string {
@@ -74,6 +75,7 @@ describe('planWorkspaceHookInstall', () => {
 
   it('refuses to touch a pre-commit hook somebody else wrote', () => {
     const root = plainRepo('foreign')
+    // @portability-ok: foreign hook content inspected only — never executed
     writeFileSync(join(root, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 0\n', 'utf8')
     expect(planWorkspaceHookInstall({ worktreeRoot: root, readHooksPath: noHooksPath })).toEqual({
       status: 'blocked',
@@ -115,7 +117,11 @@ describe('installWorkspaceHook', () => {
 
   it('is recognised as already-installed on the next plan, and never doubles up', () => {
     const root = plainRepo('reinstall')
-    installWorkspaceHook({ worktreeRoot: root, hookSource: HOOK_SOURCE, readHooksPath: noHooksPath })
+    installWorkspaceHook({
+      worktreeRoot: root,
+      hookSource: HOOK_SOURCE,
+      readHooksPath: noHooksPath
+    })
 
     const plan = planWorkspaceHookInstall({ worktreeRoot: root, readHooksPath: noHooksPath })
     expect(plan.status).toBe('already-installed')
@@ -123,6 +129,7 @@ describe('installWorkspaceHook', () => {
 
   it('refuses at write time too, not only at plan time', () => {
     const root = plainRepo('defence')
+    // @portability-ok: foreign hook content inspected only — never executed
     writeFileSync(join(root, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 0\n', 'utf8')
     const result = installWorkspaceHook({
       worktreeRoot: root,
@@ -131,6 +138,7 @@ describe('installWorkspaceHook', () => {
     })
     expect(result.status).toBe('blocked')
     // The foreign hook is left byte-identical.
+    // @portability-ok: byte-for-byte comparison of hook text — never executed
     expect(readFileSync(join(root, '.git', 'hooks', 'pre-commit'), 'utf8')).toBe(
       '#!/bin/sh\nexit 0\n'
     )
@@ -161,7 +169,11 @@ describe('installWorkspaceHook', () => {
 describe('uninstallWorkspaceHook', () => {
   it('removes the hook and its receipt', () => {
     const root = plainRepo('uninstall')
-    installWorkspaceHook({ worktreeRoot: root, hookSource: HOOK_SOURCE, readHooksPath: noHooksPath })
+    installWorkspaceHook({
+      worktreeRoot: root,
+      hookSource: HOOK_SOURCE,
+      readHooksPath: noHooksPath
+    })
 
     expect(uninstallWorkspaceHook({ worktreeRoot: root }).status).toBe('removed')
     expect(() => readFileSync(join(root, '.git', 'hooks', 'pre-commit'), 'utf8')).toThrow()
@@ -172,8 +184,13 @@ describe('uninstallWorkspaceHook', () => {
 
   it('leaves a hook the user has since edited, rather than deleting their work', () => {
     const root = plainRepo('edited')
-    installWorkspaceHook({ worktreeRoot: root, hookSource: HOOK_SOURCE, readHooksPath: noHooksPath })
+    installWorkspaceHook({
+      worktreeRoot: root,
+      hookSource: HOOK_SOURCE,
+      readHooksPath: noHooksPath
+    })
     const hookPath = join(root, '.git', 'hooks', 'pre-commit')
+    // @portability-ok: user-edited hook text compared only — never executed
     writeFileSync(hookPath, '#!/bin/sh\n# my own edits now\nexit 0\n', 'utf8')
 
     expect(uninstallWorkspaceHook({ worktreeRoot: root }).status).toBe('modified-since-install')
@@ -210,7 +227,10 @@ describe('the installed hook actually enforces a peer claim', () => {
   }
 
   it('blocks staging a path a live peer marker claims, and allows an unclaimed one', () => {
-    const hookSource = readFileSync(join(__dirname, '..', '..', '..', '.githooks', 'pre-commit'), 'utf8')
+    const hookSource = readFileSync(
+      join(__dirname, '..', '..', '..', '.githooks', 'pre-commit'),
+      'utf8'
+    )
 
     const root = scratch('enforces')
     git(root, ['init', '-q'])
