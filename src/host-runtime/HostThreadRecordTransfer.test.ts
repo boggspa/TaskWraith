@@ -55,9 +55,9 @@ function hookedFs(hooks: Partial<HostThreadRecordTransferFs>): HostThreadRecordT
     constants: base.constants,
     mkdirSync: (path, options) => base.mkdirSync(path, options),
     realpathSync: (path) => base.realpathSync(path),
-    lstatSync: (path) => base.lstatSync(path),
+    lstatSync: (path, options) => base.lstatSync(path, options),
     openSync: (path, flags, mode) => base.openSync(path, flags, mode),
-    fstatSync: (fd) => base.fstatSync(fd),
+    fstatSync: (fd, options) => base.fstatSync(fd, options),
     readSync: (fd, buffer, offset, length, position) =>
       base.readSync(fd, buffer, offset, length, position),
     writeSync: (fd, data) => base.writeSync(fd, data),
@@ -204,7 +204,9 @@ describe('consumeHostThreadRecordTransfer', () => {
   it('returns the exact file identity it read', () => {
     const profile = createProfile()
     const descriptor = publishFixture(profile)
-    const onDisk = statSync(hostThreadRecordTransferPath(profile, 'transfer-1'))
+    // bigint: an NTFS file id above 2^53 stringifies differently as a rounded double
+    // than as the exact integer the transfer reports.
+    const onDisk = statSync(hostThreadRecordTransferPath(profile, 'transfer-1'), { bigint: true })
 
     const consumed = consumeHostThreadRecordTransfer({ profilePath: profile, descriptor })
 

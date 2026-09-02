@@ -96,9 +96,9 @@ export interface HostThreadRecordTransferFs {
   }
   mkdirSync(path: string, options?: { recursive?: boolean; mode?: number }): unknown
   realpathSync(path: string): string
-  lstatSync(path: string): HostThreadRecordTransferFileStat
+  lstatSync(path: string, options?: { bigint: true }): HostThreadRecordTransferFileStat
   openSync(path: string, flags: number, mode?: number): number
-  fstatSync(fd: number): HostThreadRecordTransferFileStat
+  fstatSync(fd: number, options?: { bigint: true }): HostThreadRecordTransferFileStat
   readSync(
     fd: number,
     buffer: Buffer,
@@ -223,7 +223,10 @@ export function publishHostThreadRecordTransfer(
         (fs.constants.O_NOFOLLOW || 0),
       PRIVATE_FILE_MODE
     )
-    assertRegularFile(fs.fstatSync(descriptor), 'Host thread-record transfer artifact')
+    assertRegularFile(
+      fs.fstatSync(descriptor, { bigint: true }),
+      'Host thread-record transfer artifact'
+    )
     if (platform !== 'win32') fs.fchmodSync(descriptor, PRIVATE_FILE_MODE)
     writeAll(fs, descriptor, serialized)
     fs.fsyncSync(descriptor)
@@ -290,7 +293,7 @@ export function consumeHostThreadRecordTransfer(
       )
     }
 
-    const stat = fs.fstatSync(descriptor)
+    const stat = fs.fstatSync(descriptor, { bigint: true })
     assertRegularFile(stat, 'Host thread-record transfer artifact')
     assertOwnerOnlyMode(stat, platform, 'Host thread-record transfer artifact')
     identity = { dev: stat.dev, ino: stat.ino }
@@ -358,7 +361,7 @@ export function removeHostThreadRecordTransfer(
 
   let stat: HostThreadRecordTransferFileStat
   try {
-    stat = fs.lstatSync(path)
+    stat = fs.lstatSync(path, { bigint: true })
   } catch (error) {
     if (isErrno(error, 'ENOENT')) return false
     throw new HostThreadRecordTransferIntegrityError(
@@ -388,7 +391,7 @@ function removeExactInode(
 ): boolean {
   let current: HostThreadRecordTransferFileStat
   try {
-    current = fs.lstatSync(path)
+    current = fs.lstatSync(path, { bigint: true })
   } catch (error) {
     if (isErrno(error, 'ENOENT')) return false
     throw new HostThreadRecordTransferIntegrityError(
@@ -424,6 +427,9 @@ function describeIdentity(identity: {
 }
 
 /** Decimal text, so a number and an equal bigint from a bigint-stat compare equal. */
+// Stats are requested as bigint: NTFS file reference numbers exceed
+// Number.MAX_SAFE_INTEGER, and a double-typed inode is no longer an exact
+// identity (the vault and authority lease take the same precaution).
 function toIdentityText(value: number | bigint): string {
   if (typeof value === 'bigint') return value.toString(10)
   if (!Number.isFinite(value)) {
