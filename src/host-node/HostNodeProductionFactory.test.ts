@@ -493,141 +493,147 @@ it('serves an authenticated cold-profile setup/history workflow and cleans owned
   expect(readdirSync(parent).filter((name) => name.startsWith('taskwraith-muse-'))).toEqual([])
 })
 
-it('wires a real optional provider terminal launcher into production auth flows', async () => {
-  const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-auth-launcher-')))
-  paths.push(parent)
-  const binDir = join(parent, 'bin')
-  mkdirSync(binDir)
-  for (const name of ['codex', 'kimi', 'vibe', 'grok']) {
-    const binary = join(binDir, name)
-    // @portability-ok: resolved via realpath only — terminal launches are mocked, never executed
-    writeFileSync(binary, '#!/bin/sh\n')
-    chmodSync(binary, 0o700)
-  }
-  for (const name of ['claude', 'cursor-agent']) {
-    const binary = join(binDir, name)
-    // @portability-ok: resolved via realpath only — terminal launches are mocked, never executed
-    writeFileSync(binary, '#!/bin/sh\nexit 1\n')
-    chmodSync(binary, 0o700)
-  }
+// @portability-ok The fake provider binaries are `#!/bin/sh` scripts found through PATH,
+// which win32 resolves through PATHEXT and cannot execute for the auth probe, so the
+// statuses come back `degraded` rather than `auth_required` there.
+it.skipIf(process.platform === 'win32')(
+  'wires a real optional provider terminal launcher into production auth flows',
+  async () => {
+    const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-auth-launcher-')))
+    paths.push(parent)
+    const binDir = join(parent, 'bin')
+    mkdirSync(binDir)
+    for (const name of ['codex', 'kimi', 'vibe', 'grok']) {
+      const binary = join(binDir, name)
+      // @portability-ok: resolved via realpath only — terminal launches are mocked, never executed
+      writeFileSync(binary, '#!/bin/sh\n')
+      chmodSync(binary, 0o700)
+    }
+    for (const name of ['claude', 'cursor-agent']) {
+      const binary = join(binDir, name)
+      // @portability-ok: resolved via realpath only — terminal launches are mocked, never executed
+      writeFileSync(binary, '#!/bin/sh\nexit 1\n')
+      chmodSync(binary, 0o700)
+    }
 
-  const previousPath = process.env.PATH
-  const previousHome = process.env.HOME
-  const previousCodexHome = process.env.CODEX_HOME
-  const previousOpenAiKey = process.env.OPENAI_API_KEY
-  const previousXaiKey = process.env.XAI_API_KEY
-  const previousGrokKey = process.env.GROK_API_KEY
-  process.env.PATH = binDir
-  process.env.HOME = join(parent, 'empty-home')
-  process.env.CODEX_HOME = join(parent, 'empty-codex-home')
-  delete process.env.OPENAI_API_KEY
-  delete process.env.XAI_API_KEY
-  delete process.env.GROK_API_KEY
+    const previousPath = process.env.PATH
+    const previousHome = process.env.HOME
+    const previousCodexHome = process.env.CODEX_HOME
+    const previousOpenAiKey = process.env.OPENAI_API_KEY
+    const previousXaiKey = process.env.XAI_API_KEY
+    const previousGrokKey = process.env.GROK_API_KEY
+    process.env.PATH = binDir
+    process.env.HOME = join(parent, 'empty-home')
+    process.env.CODEX_HOME = join(parent, 'empty-codex-home')
+    delete process.env.OPENAI_API_KEY
+    delete process.env.XAI_API_KEY
+    delete process.env.GROK_API_KEY
 
-  const domainFor = (server: unknown) =>
-    (
-      server as {
-        domain: {
-          registry: {
-            getInstance(providerId: string): {
-              getStatus(): Promise<{ status: string }>
-              getAuthFlows(): Promise<readonly { flowId: string }[]>
-              beginAuth(operationId: string): Promise<void>
+    const domainFor = (server: unknown) =>
+      (
+        server as {
+          domain: {
+            registry: {
+              getInstance(providerId: string): {
+                getStatus(): Promise<{ status: string }>
+                getAuthFlows(): Promise<readonly { flowId: string }[]>
+                beginAuth(operationId: string): Promise<void>
+              }
             }
           }
         }
-      }
-    ).domain
+      ).domain
 
-  try {
-    const detached = createHostNodeProductionServer({
-      profilePath: join(parent, 'detached-profile'),
-      env: { PATH: binDir },
-      temporaryParent: parent
-    })
-    await detached.start()
-    const detachedDomain = domainFor(detached)
-    const detachedCodex = detachedDomain.registry.getInstance('codex')
-    const detachedClaude = detachedDomain.registry.getInstance('claude')
-    const detachedCursor = detachedDomain.registry.getInstance('cursor')
-    const detachedGrok = detachedDomain.registry.getInstance('grok')
-    await expect(detachedCodex.getStatus()).resolves.toMatchObject({ status: 'auth_required' })
-    await expect(detachedClaude.getStatus()).resolves.toMatchObject({ status: 'auth_required' })
-    await expect(detachedCursor.getStatus()).resolves.toMatchObject({ status: 'auth_required' })
-    await expect(detachedCodex.getAuthFlows()).resolves.toEqual([])
-    await expect(detachedClaude.getAuthFlows()).resolves.toEqual([])
-    await expect(detachedCursor.getAuthFlows()).resolves.toEqual([])
-    await expect(detachedGrok.getAuthFlows()).resolves.toEqual([])
-    await detached.stop()
-
-    const terminalLauncher = {
-      launch: vi.fn(async () => undefined),
-      launchForProvider: vi.fn(async () => undefined)
-    }
-    const interactive = createHostNodeProductionServer({
-      profilePath: join(parent, 'interactive-profile'),
-      env: { PATH: binDir },
-      temporaryParent: parent,
-      terminalLauncher
-    })
-    await interactive.start()
-    const interactiveDomain = domainFor(interactive)
-    const interactiveCodex = interactiveDomain.registry.getInstance('codex')
-    const interactiveClaude = interactiveDomain.registry.getInstance('claude')
-    const interactiveCursor = interactiveDomain.registry.getInstance('cursor')
-    const interactiveGrok = interactiveDomain.registry.getInstance('grok')
-    await expect(interactiveCodex.getAuthFlows()).resolves.toEqual([
-      expect.objectContaining({ flowId: 'codex:login' })
-    ])
-    await expect(interactiveClaude.getAuthFlows()).resolves.toEqual([
-      expect.objectContaining({ flowId: 'claude:login' })
-    ])
-    await expect(interactiveCursor.getAuthFlows()).resolves.toEqual([
-      expect.objectContaining({ flowId: 'cursor:login' })
-    ])
-    await expect(interactiveGrok.getAuthFlows()).resolves.toEqual([
-      expect.objectContaining({
-        flowId: 'grok:login',
-        kind: 'manual',
-        available: true
+    try {
+      const detached = createHostNodeProductionServer({
+        profilePath: join(parent, 'detached-profile'),
+        env: { PATH: binDir },
+        temporaryParent: parent
       })
-    ])
-    await interactiveCodex.beginAuth('factory-auth-1')
-    await interactiveClaude.beginAuth('factory-auth-2')
-    await interactiveCursor.beginAuth('factory-auth-3')
-    await interactiveGrok.beginAuth('factory-auth-4')
-    expect(terminalLauncher.launchForProvider).toHaveBeenCalledWith(
-      'codex',
-      expect.objectContaining({ argv: [join(binDir, 'codex'), 'login'] })
-    )
-    expect(terminalLauncher.launchForProvider).toHaveBeenCalledWith(
-      'claude',
-      expect.objectContaining({ argv: [join(binDir, 'claude'), 'auth', 'login'] })
-    )
-    expect(terminalLauncher.launchForProvider).toHaveBeenCalledWith(
-      'cursor',
-      expect.objectContaining({ argv: [join(binDir, 'cursor-agent'), 'login'] })
-    )
-    expect(terminalLauncher.launchForProvider).toHaveBeenCalledWith(
-      'grok',
-      expect.objectContaining({ argv: [join(binDir, 'grok'), 'login'] })
-    )
-    await interactive.stop()
-  } finally {
-    if (previousPath === undefined) delete process.env.PATH
-    else process.env.PATH = previousPath
-    if (previousHome === undefined) delete process.env.HOME
-    else process.env.HOME = previousHome
-    if (previousCodexHome === undefined) delete process.env.CODEX_HOME
-    else process.env.CODEX_HOME = previousCodexHome
-    if (previousOpenAiKey === undefined) delete process.env.OPENAI_API_KEY
-    else process.env.OPENAI_API_KEY = previousOpenAiKey
-    if (previousXaiKey === undefined) delete process.env.XAI_API_KEY
-    else process.env.XAI_API_KEY = previousXaiKey
-    if (previousGrokKey === undefined) delete process.env.GROK_API_KEY
-    else process.env.GROK_API_KEY = previousGrokKey
+      await detached.start()
+      const detachedDomain = domainFor(detached)
+      const detachedCodex = detachedDomain.registry.getInstance('codex')
+      const detachedClaude = detachedDomain.registry.getInstance('claude')
+      const detachedCursor = detachedDomain.registry.getInstance('cursor')
+      const detachedGrok = detachedDomain.registry.getInstance('grok')
+      await expect(detachedCodex.getStatus()).resolves.toMatchObject({ status: 'auth_required' })
+      await expect(detachedClaude.getStatus()).resolves.toMatchObject({ status: 'auth_required' })
+      await expect(detachedCursor.getStatus()).resolves.toMatchObject({ status: 'auth_required' })
+      await expect(detachedCodex.getAuthFlows()).resolves.toEqual([])
+      await expect(detachedClaude.getAuthFlows()).resolves.toEqual([])
+      await expect(detachedCursor.getAuthFlows()).resolves.toEqual([])
+      await expect(detachedGrok.getAuthFlows()).resolves.toEqual([])
+      await detached.stop()
+
+      const terminalLauncher = {
+        launch: vi.fn(async () => undefined),
+        launchForProvider: vi.fn(async () => undefined)
+      }
+      const interactive = createHostNodeProductionServer({
+        profilePath: join(parent, 'interactive-profile'),
+        env: { PATH: binDir },
+        temporaryParent: parent,
+        terminalLauncher
+      })
+      await interactive.start()
+      const interactiveDomain = domainFor(interactive)
+      const interactiveCodex = interactiveDomain.registry.getInstance('codex')
+      const interactiveClaude = interactiveDomain.registry.getInstance('claude')
+      const interactiveCursor = interactiveDomain.registry.getInstance('cursor')
+      const interactiveGrok = interactiveDomain.registry.getInstance('grok')
+      await expect(interactiveCodex.getAuthFlows()).resolves.toEqual([
+        expect.objectContaining({ flowId: 'codex:login' })
+      ])
+      await expect(interactiveClaude.getAuthFlows()).resolves.toEqual([
+        expect.objectContaining({ flowId: 'claude:login' })
+      ])
+      await expect(interactiveCursor.getAuthFlows()).resolves.toEqual([
+        expect.objectContaining({ flowId: 'cursor:login' })
+      ])
+      await expect(interactiveGrok.getAuthFlows()).resolves.toEqual([
+        expect.objectContaining({
+          flowId: 'grok:login',
+          kind: 'manual',
+          available: true
+        })
+      ])
+      await interactiveCodex.beginAuth('factory-auth-1')
+      await interactiveClaude.beginAuth('factory-auth-2')
+      await interactiveCursor.beginAuth('factory-auth-3')
+      await interactiveGrok.beginAuth('factory-auth-4')
+      expect(terminalLauncher.launchForProvider).toHaveBeenCalledWith(
+        'codex',
+        expect.objectContaining({ argv: [join(binDir, 'codex'), 'login'] })
+      )
+      expect(terminalLauncher.launchForProvider).toHaveBeenCalledWith(
+        'claude',
+        expect.objectContaining({ argv: [join(binDir, 'claude'), 'auth', 'login'] })
+      )
+      expect(terminalLauncher.launchForProvider).toHaveBeenCalledWith(
+        'cursor',
+        expect.objectContaining({ argv: [join(binDir, 'cursor-agent'), 'login'] })
+      )
+      expect(terminalLauncher.launchForProvider).toHaveBeenCalledWith(
+        'grok',
+        expect.objectContaining({ argv: [join(binDir, 'grok'), 'login'] })
+      )
+      await interactive.stop()
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH
+      else process.env.PATH = previousPath
+      if (previousHome === undefined) delete process.env.HOME
+      else process.env.HOME = previousHome
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+      if (previousOpenAiKey === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = previousOpenAiKey
+      if (previousXaiKey === undefined) delete process.env.XAI_API_KEY
+      else process.env.XAI_API_KEY = previousXaiKey
+      if (previousGrokKey === undefined) delete process.env.GROK_API_KEY
+      else process.env.GROK_API_KEY = previousGrokKey
+    }
   }
-})
+)
 
 it('disposes lease-late Muse resources when terminal handoff construction is invalid', async () => {
   const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-invalid-launcher-')))

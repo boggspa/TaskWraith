@@ -85,7 +85,12 @@ describe('packaged production Host smoke', () => {
     () => {
       // @portability-ok Windows resolves the npm launcher as npm.cmd.
       const npmBinary = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-      execFileSync(npmBinary, ['run', 'host:build', '--silent'], { cwd: repoRoot, stdio: 'pipe' })
+      execFileSync(npmBinary, ['run', 'host:build', '--silent'], {
+        cwd: repoRoot,
+        stdio: 'pipe',
+        // Node refuses to spawn .cmd/.bat without a shell (EINVAL); the args carry no spaces.
+        shell: process.platform === 'win32'
+      })
       const result = spawnSync(
         process.execPath,
         ['scripts/smoke-packaged-host.cjs', '--source-launcher'],

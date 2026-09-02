@@ -711,7 +711,9 @@ export class IdentityHandoffService {
       mode: 0o600,
       flag: 'wx'
     })
-    const fd = openSync(temporaryPath, 'r')
+    // 'r+' rather than 'r': Windows FlushFileBuffers requires write access, so
+    // fsync on a read-only handle throws EPERM (the IncrementalChatJournal fix).
+    const fd = openSync(temporaryPath, 'r+')
     try {
       fsyncSync(fd)
     } finally {

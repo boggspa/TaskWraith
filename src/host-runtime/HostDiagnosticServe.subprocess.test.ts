@@ -92,7 +92,9 @@ beforeAll(() => {
     }
   )
   chmodSync(CLI_PATH, 0o755)
-})
+  // A full tsc compile of the Host runtime; vitest's default 10s hook budget is
+  // exceeded on the loaded macOS Intel and Windows runners.
+}, 120_000)
 
 afterAll(async () => {
   const activeChildren = children.splice(0)

@@ -558,7 +558,11 @@ describe('CURSOR_WEB_FETCH_MCP_SERVER_SOURCE', () => {
     expect(CURSOR_WEB_FETCH_MCP_SERVER_SOURCE).toContain("name: 'list_directory'")
   })
 
-  it('lists and executes workspace shell + write tools over stdio JSON-RPC', async () => {
+  // @portability-ok run_shell_command in the embedded server spawns /bin/sh; there is no
+  // Windows shell route, so the executed-tool assertions cannot hold on win32.
+  it.skipIf(process.platform === 'win32')(
+    'lists and executes workspace shell + write tools over stdio JSON-RPC',
+    async () => {
     const listed = await callCursorWebFetchMcp({ method: 'tools/list' })
     const listedResult = listed.result as { tools?: Array<{ name?: string }> } | undefined
     const names = (listedResult?.tools ?? []).map((tool) => tool.name)

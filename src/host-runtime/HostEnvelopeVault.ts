@@ -86,9 +86,9 @@ export interface HostEnvelopeVaultFs {
   }
   mkdirSync(path: string, options?: { recursive?: boolean; mode?: number }): unknown
   realpathSync(path: string): string
-  lstatSync(path: string): HostEnvelopeVaultFileStat
+  lstatSync(path: string, options?: { bigint: true }): HostEnvelopeVaultFileStat
   openSync(path: string, flags: number, mode?: number): number
-  fstatSync(fd: number): HostEnvelopeVaultFileStat
+  fstatSync(fd: number, options?: { bigint: true }): HostEnvelopeVaultFileStat
   readSync(
     fd: number,
     buffer: Buffer,
@@ -560,7 +560,7 @@ export class HostEnvelopeVault {
           (this.fs.constants.O_NOFOLLOW || 0),
         PRIVATE_FILE_MODE
       )
-      const stat = this.fs.fstatSync(descriptor)
+      const stat = this.fs.fstatSync(descriptor, { bigint: true })
       assertRegularFile(stat, temporaryPath)
       if (this.platform !== 'win32') this.fs.fchmodSync(descriptor, PRIVATE_FILE_MODE)
       writeAll(this.fs, descriptor, serialized)
@@ -623,7 +623,7 @@ function canonicalProfilePath(profilePath: string, fs: HostEnvelopeVaultFs): str
     throw new TypeError('Host envelope vault refuses a filesystem-root profile path.')
   }
   const canonical = fs.realpathSync(resolved)
-  const stat = fs.lstatSync(canonical)
+  const stat = fs.lstatSync(canonical, { bigint: true })
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new HostEnvelopeVaultIntegrityError(
       'Host envelope vault profile path is not a real directory.'
@@ -640,7 +640,7 @@ function initializeVaultDirectory(
   const path = join(profilePath, HOST_ENVELOPE_VAULT_DIRECTORY)
   let direct: HostEnvelopeVaultFileStat | null = null
   try {
-    direct = fs.lstatSync(path)
+    direct = fs.lstatSync(path, { bigint: true })
   } catch (error) {
     if (!isErrno(error, 'ENOENT')) {
       throw new HostEnvelopeVaultIntegrityError(
@@ -655,15 +655,19 @@ function initializeVaultDirectory(
     assertPrivateDirectory(direct, platform, 'Host envelope vault directory')
   } else {
     fs.mkdirSync(path, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
-    direct = fs.lstatSync(path)
+    direct = fs.lstatSync(path, { bigint: true })
     assertPrivateDirectory(direct, platform, 'Host envelope vault directory')
   }
   if (platform !== 'win32') {
     fs.chmodSync(path, PRIVATE_DIRECTORY_MODE)
-    assertPrivateDirectory(fs.lstatSync(path), platform, 'Host envelope vault directory')
+    assertPrivateDirectory(
+      fs.lstatSync(path, { bigint: true }),
+      platform,
+      'Host envelope vault directory'
+    )
   }
   const canonical = fs.realpathSync(path)
-  const stat = fs.lstatSync(canonical)
+  const stat = fs.lstatSync(canonical, { bigint: true })
   assertPrivateDirectory(stat, platform, 'Host envelope vault directory')
   return canonical
 }
@@ -830,14 +834,14 @@ function readOptionalPrivateRegularFile(
       if (isErrno(error, 'ENOENT')) return null
       throw error
     }
-    const initial = fs.fstatSync(descriptor)
+    const initial = fs.fstatSync(descriptor, { bigint: true })
     assertRegularFile(initial, path)
     assertOwnerOnlyMode(initial, platform, path)
     const identity = fileIdentity(initial, path)
-    assertSameFile(fs.lstatSync(path), identity, path)
+    assertSameFile(fs.lstatSync(path, { bigint: true }), identity, path)
     const size = boundedSize(initial.size, path)
     const raw = readBoundedExactly(fs, descriptor, size, path)
-    const final = fs.fstatSync(descriptor)
+    const final = fs.fstatSync(descriptor, { bigint: true })
     assertRegularFile(final, path)
     assertOwnerOnlyMode(final, platform, path)
     if (
@@ -847,7 +851,7 @@ function readOptionalPrivateRegularFile(
       raw.fill(0)
       throw new HostEnvelopeVaultIntegrityError('Vault envelope changed during validation.')
     }
-    assertSameFile(fs.lstatSync(path), identity, path)
+    assertSameFile(fs.lstatSync(path, { bigint: true }), identity, path)
     return { raw, identity }
   } catch (error) {
     if (error instanceof HostEnvelopeVaultError) throw error
@@ -1013,7 +1017,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function assertRegularFile(stat: HostEnvelopeVaultFileStat, label: string): void {
-  if (!stat.isFile() || stat.isSymbolicLink() || (stat.nlink !== undefined && stat.nlink !== 1)) {
+  const nlink = typeof stat.nlink === 'bigint' ? Number(stat.nlink) : stat.nlink
+  if (!stat.isFile() || stat.isSymbolicLink() || (nlink !== undefined && nlink !== 1)) {
     throw new HostEnvelopeVaultIntegrityError(`${label} is not a private regular file.`)
   }
 }
@@ -1053,6 +1058,10 @@ function boundedSize(value: number | bigint, label: string): number {
   return size
 }
 
+// Stats are requested as bigint everywhere: NTFS file reference numbers are
+// 64-bit (16-bit sequence number in the high bits) and routinely exceed
+// Number.MAX_SAFE_INTEGER, so a double-typed `ino` normalizes to null and every
+// read fails with "no stable file identity" on Windows.
 function fileIdentity(stat: HostEnvelopeVaultFileStat, label: string): FileIdentity {
   const dev = normalizeIdentity(stat.dev)
   const ino = normalizeIdentity(stat.ino)

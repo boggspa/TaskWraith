@@ -240,52 +240,57 @@ describe('HostEnvelopeVault', () => {
     ).toEqual([])
   })
 
-  it('returns an indeterminate outcome after record or tombstone publication may have landed', () => {
-    const recordProfile = createProfile()
-    const baseFs = nodeFs as unknown as HostEnvelopeVaultFs
-    let recordFsyncs = 0
-    const recordPostRenameFs: HostEnvelopeVaultFs = {
-      ...baseFs,
-      fsyncSync: (descriptor) => {
-        recordFsyncs += 1
-        if (recordFsyncs === 2) throw new Error('injected post-rename directory fsync failure')
-        baseFs.fsyncSync(descriptor)
+  // @portability-ok The injected fault fires on the post-rename directory fsync, a step the
+  // vault deliberately skips on win32, so the indeterminate outcome cannot be provoked there.
+  it.skipIf(process.platform === 'win32')(
+    'returns an indeterminate outcome after record or tombstone publication may have landed',
+    () => {
+      const recordProfile = createProfile()
+      const baseFs = nodeFs as unknown as HostEnvelopeVaultFs
+      let recordFsyncs = 0
+      const recordPostRenameFs: HostEnvelopeVaultFs = {
+        ...baseFs,
+        fsyncSync: (descriptor) => {
+          recordFsyncs += 1
+          if (recordFsyncs === 2) throw new Error('injected post-rename directory fsync failure')
+          baseFs.fsyncSync(descriptor)
+        }
       }
-    }
-    const uncertainRecord = openVault(recordProfile, {
-      masterKey: key(18),
-      fs: recordPostRenameFs
-    })
-    expect(() => uncertainRecord.write('record', Buffer.from('may-have-landed'))).toThrow(
-      HostEnvelopeVaultIndeterminateError
-    )
-    expect(
-      openVault(recordProfile, { masterKey: key(18) })
-        .read('record')
-        ?.plaintext.toString()
-    ).toBe('may-have-landed')
+      const uncertainRecord = openVault(recordProfile, {
+        masterKey: key(18),
+        fs: recordPostRenameFs
+      })
+      expect(() => uncertainRecord.write('record', Buffer.from('may-have-landed'))).toThrow(
+        HostEnvelopeVaultIndeterminateError
+      )
+      expect(
+        openVault(recordProfile, { masterKey: key(18) })
+          .read('record')
+          ?.plaintext.toString()
+      ).toBe('may-have-landed')
 
-    const tombstoneProfile = createProfile()
-    const stable = openVault(tombstoneProfile, { masterKey: key(19) })
-    stable.write('tombstone', Buffer.from('old'))
-    let tombstoneFsyncs = 0
-    const tombstonePostRenameFs: HostEnvelopeVaultFs = {
-      ...baseFs,
-      fsyncSync: (descriptor) => {
-        tombstoneFsyncs += 1
-        if (tombstoneFsyncs === 2) throw new Error('injected tombstone directory fsync failure')
-        baseFs.fsyncSync(descriptor)
+      const tombstoneProfile = createProfile()
+      const stable = openVault(tombstoneProfile, { masterKey: key(19) })
+      stable.write('tombstone', Buffer.from('old'))
+      let tombstoneFsyncs = 0
+      const tombstonePostRenameFs: HostEnvelopeVaultFs = {
+        ...baseFs,
+        fsyncSync: (descriptor) => {
+          tombstoneFsyncs += 1
+          if (tombstoneFsyncs === 2) throw new Error('injected tombstone directory fsync failure')
+          baseFs.fsyncSync(descriptor)
+        }
       }
+      const uncertainTombstone = openVault(tombstoneProfile, {
+        masterKey: key(19),
+        fs: tombstonePostRenameFs
+      })
+      expect(() => uncertainTombstone.delete('tombstone')).toThrow(
+        HostEnvelopeVaultIndeterminateError
+      )
+      expect(openVault(tombstoneProfile, { masterKey: key(19) }).read('tombstone')).toBeNull()
     }
-    const uncertainTombstone = openVault(tombstoneProfile, {
-      masterKey: key(19),
-      fs: tombstonePostRenameFs
-    })
-    expect(() => uncertainTombstone.delete('tombstone')).toThrow(
-      HostEnvelopeVaultIndeterminateError
-    )
-    expect(openVault(tombstoneProfile, { masterKey: key(19) }).read('tombstone')).toBeNull()
-  })
+  )
 
   it('persists authenticated tombstones across restart, omits them from reads/lists, and rejects rollback', () => {
     const profile = createProfile()

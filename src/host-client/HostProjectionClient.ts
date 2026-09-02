@@ -16,7 +16,8 @@
 
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { lstat, realpath } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
+import { lstat } from 'node:fs/promises'
 import { createConnection, type Socket } from 'node:net'
 
 import {
@@ -268,7 +269,12 @@ function parseDiscovery(raw: string): TaskWraithHostDiscovery {
 }
 
 async function canonicalProfileDirectory(path: string): Promise<string> {
-  const canonical = await realpath(path)
+  // Must use the SAME realpath flavour as HostLocalServer, which derives the
+  // discovery/token/socket paths with the JavaScript `realpathSync`.
+  // `fs/promises.realpath` has `realpath.native` semantics, and on Windows the
+  // two disagree on 8.3 short names (`RUNNER~1` vs `runneradmin`) and casing,
+  // which turns into a discovery-path mismatch at connect time.
+  const canonical = realpathSync(path)
   const stat = await lstat(canonical)
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error('TaskWraith Host profile directory is unsafe.')
