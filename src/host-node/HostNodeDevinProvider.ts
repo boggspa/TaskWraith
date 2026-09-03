@@ -69,7 +69,13 @@ import {
   buildDevinAcpCliArgs
 } from '../main/devin/DevinCliArgs'
 import { resolveDevinVariantId } from '../shared/devinModelCatalog'
+import { clampDevinModelForPlan } from '../shared/devinPlanAccess'
 import { resolveDevinCredentialLaunch } from '../main/devin/DevinCredentialLane'
+import { defaultDevinPlanInfoRows } from '../main/devin/DevinPlanInfoRows'
+import {
+  createDevinPlanStateResolver,
+  type DevinPlanStateResolver
+} from '../main/devin/DevinPlanState'
 import {
   readDevinStoredCredentials,
   type DevinCredentialStoreOptions
@@ -83,6 +89,16 @@ const PROVIDER_DISPLAY_NAME = 'Devin'
  * Host side before any interaction is registered (see handlePermissionRequest).
  */
 const MUTATING_TOOL_KINDS: ReadonlySet<string> = new Set(['edit', 'delete', 'move', 'execute'])
+
+/**
+ * Inert plan state for an instance built without one. The factory always
+ * injects a real resolver, so this only covers a direct construction; it
+ * reports an unknown plan, which devinPlanAccess treats as ungated.
+ */
+const UNGATED_DEVIN_PLAN_STATE: DevinPlanStateResolver = {
+  resolve: async () => undefined,
+  invalidate: () => {}
+}
 
 type AcpSpawn = (
   command: string,
@@ -114,6 +130,12 @@ export interface HostNodeDevinProviderOptions {
    * path so the real home directory is never read.
    */
   readonly credentialsPath?: string
+  /**
+   * Devin subscription-plan state for the dispatch clamp. Production builds one
+   * cached resolver per provider over the CLI's own local state DB; tests
+   * inject a stub so no real database is opened.
+   */
+  readonly planState?: DevinPlanStateResolver
 }
 
 function devinReadOnlySeat(posture: HostProviderRunThread['posture']): boolean {
@@ -131,9 +153,21 @@ function devinReadOnlySeat(posture: HostProviderRunThread['posture']): boolean {
  * into `<family>-<level>`, a legacy 'cli-default' thread (or any other
  * sentinel) resolves to the catalogue default, and an id outside the
  * catalogue passes through verbatim.
+ *
+ * `freePlan` is the same clamp the desktop lane applies at dispatch: a thread
+ * carrying a paid family — persisted before the plan lapsed, or restored from
+ * another seat — launches SWE-1.6 Slow rather than a model the plan will
+ * refuse. It is fail-open by construction: only a positively observed free
+ * plan narrows anything, so an unreadable or absent plan state changes nothing.
  */
-export function hostNodeDevinAcpArgs(modelId: string, reasoningId?: string | null): string[] {
-  return buildDevinAcpCliArgs(resolveDevinVariantId(modelId, reasoningId))
+export function hostNodeDevinAcpArgs(
+  modelId: string,
+  reasoningId?: string | null,
+  freePlan?: boolean
+): string[] {
+  return buildDevinAcpCliArgs(
+    resolveDevinVariantId(clampDevinModelForPlan(modelId, { freePlan }), reasoningId)
+  )
 }
 
 function credentialStoreOptions(
@@ -253,6 +287,10 @@ class HostNodeDevinProviderInstance implements HostNodeProviderInstance {
     private readonly offers: HostProviderOffersProjection,
     private readonly options: HostNodeDevinProviderOptions
   ) {}
+
+  private get planState(): DevinPlanStateResolver {
+    return this.options.planState ?? UNGATED_DEVIN_PLAN_STATE
+  }
 
   private get resources(): HostNodeProviderResourcePort {
     return (
@@ -402,7 +440,11 @@ class HostNodeDevinProviderInstance implements HostNodeProviderInstance {
       return { runId: request.runId, status: 'failed' }
     }
 
-    const args = hostNodeDevinAcpArgs(thread.modelId, thread.reasoningId)
+    const args = hostNodeDevinAcpArgs(
+      thread.modelId,
+      thread.reasoningId,
+      await this.planState.resolve()
+    )
     let child: ChildProcessWithoutNullStreams
     try {
       child = this.options.spawn
@@ -728,6 +770,14 @@ export function createHostNodeDevinProvider(
   const entry = hostProviderCatalogEntry(PROVIDER_ID)
   const offers = hostProviderOffers(PROVIDER_ID, true)
   if (!entry || !offers) throw new Error(PROVIDER_DISPLAY_NAME + ' catalog is unavailable.')
+  // One cached plan read per Host process, shared by every instance this
+  // provider creates: the CLI's state DB is large and a per-run open would be
+  // pure waste. An injected resolver (tests) wins.
+  const planState =
+    options.planState ??
+    createDevinPlanStateResolver({
+      readPlanInfoRows: defaultDevinPlanInfoRows
+    })
   return {
     providerId: PROVIDER_ID,
     displayProvider: entry.displayProvider,
@@ -739,7 +789,10 @@ export function createHostNodeDevinProvider(
     // which ACP requires before any agent-to-client question method.
     supportsQuestions: false,
     create(input: HostNodeProviderCreateInput): HostNodeProviderInstance {
-      return new HostNodeDevinProviderInstance(input.runPort, input.interactions, offers, options)
+      return new HostNodeDevinProviderInstance(input.runPort, input.interactions, offers, {
+        ...options,
+        planState
+      })
     }
   }
 }

@@ -21,16 +21,9 @@ import type {
   UsageWebSessionReading
 } from '../../shared/usageWebSession'
 import type { MuseSubscriptionUsageReading } from '../muse/MuseSubscriptionUsage'
-import {
-  DEVIN_PLAN_INFO_SQL,
-  devinStateDbCandidates,
-  loadDevinUsageSnapshot,
-  type DevinUsageSnapshot
-} from '../devin/DevinUsage'
+import { loadDevinUsageSnapshot, type DevinUsageSnapshot } from '../devin/DevinUsage'
+import { defaultDevinPlanInfoRows } from '../devin/DevinPlanInfoRows'
 import { readUsageWebSessionReading } from '../providers/UsageWebSessionClient'
-import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { homedir } from 'node:os'
 
 const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
 const DEEPSEEK_RESPONSE_LIMIT_BYTES = 1024 * 1024
@@ -748,77 +741,13 @@ function openrouterSnapshot(
   }
 }
 
-const DEVIN_SQLITE_TIMEOUT_MS = 5_000
-const DEVIN_SQLITE_MAX_BUFFER_BYTES = 4 * 1024 * 1024
-
 /**
- * Production default for `readDevinPlanInfoRows`: query the first readable
- * Devin state DB candidate (live file, then its `.backup`) with the
- * reference app's plan-info key families, read-only, mirroring the
- * MuseSessionLog sqlite3 pattern (URI read-only first, `-readonly` flag
- * fallback). Never throws and never blocks a missing DB: anything unreadable
- * resolves to no rows, which the lane renders as an unconfigured tombstone.
+ * The production plan-info query runner now lives beside the parser it feeds
+ * (`../devin/DevinPlanInfoRows`) so the Host Node bundle can share the exact
+ * reader this lane uses; re-exported here because this module's own dependency
+ * default and `src/main/index.ts` both resolve it from this path.
  */
-export function defaultDevinPlanInfoRows(): Promise<string[]> {
-  return new Promise((resolve) => {
-    try {
-      if (process.platform !== 'darwin') {
-        resolve([])
-        return
-      }
-      const home = process.env.HOME || homedir() || ''
-      if (!home) {
-        resolve([])
-        return
-      }
-      const candidate = devinStateDbCandidates(home).find((path) => {
-        try {
-          return existsSync(path)
-        } catch {
-          return false
-        }
-      })
-      if (!candidate) {
-        resolve([])
-        return
-      }
-      const opts = { timeout: DEVIN_SQLITE_TIMEOUT_MS, maxBuffer: DEVIN_SQLITE_MAX_BUFFER_BYTES }
-      const finish = (output: unknown): void => {
-        resolve(
-          String(output ?? '')
-            .split('\n')
-            .map((line) => line.trim())
-            .filter(Boolean)
-        )
-      }
-      execFile(
-        '/usr/bin/sqlite3',
-        [`file:${candidate}?mode=ro&immutable=1`, DEVIN_PLAN_INFO_SQL],
-        opts,
-        (uriErr, uriStdout) => {
-          if (!uriErr) {
-            finish(uriStdout)
-            return
-          }
-          execFile(
-            '/usr/bin/sqlite3',
-            ['-readonly', candidate, DEVIN_PLAN_INFO_SQL],
-            opts,
-            (err, stdout) => {
-              if (err) {
-                resolve([])
-                return
-              }
-              finish(stdout)
-            }
-          )
-        }
-      )
-    } catch {
-      resolve([])
-    }
-  })
-}
+export { defaultDevinPlanInfoRows }
 
 /**
  * Project the committed Devin module's snapshot onto the hook's window

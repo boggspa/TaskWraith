@@ -56,12 +56,17 @@ const PURE_MISTRAL_CLOSURE = new Set([
 ])
 
 /** Deliberate production closure required by the Node Devin adapter: launch
- *  policy, the three credential lanes, and the credentials.toml reader. The
- *  ACP client and the env gates stay main-only (they pull Electron surfaces). */
+ *  policy, the three credential lanes, the credentials.toml reader, and the
+ *  plan-state trio the dispatch clamp reads (cache -> blob parser -> the one
+ *  read-only sqlite3 query the desktop quota lane also uses). The ACP client
+ *  and the env gates stay main-only (they pull Electron surfaces). */
 const PURE_DEVIN_CLOSURE = new Set([
   'DevinCliArgs.ts',
   'DevinCredentialLane.ts',
-  'DevinCredentialStore.ts'
+  'DevinCredentialStore.ts',
+  'DevinPlanInfoRows.ts',
+  'DevinPlanState.ts',
+  'DevinUsage.ts'
 ])
 
 const PINNED_MAIN_PROVIDER_CLOSURES = new Map<string, ReadonlySet<string>>([

@@ -102,6 +102,12 @@ function open(
     readonly interactions?: HostNodeInteractionResolver
     readonly environment?: NodeJS.ProcessEnv
     readonly credentialsPath?: string
+    /**
+     * Devin subscription plan the stubbed resolver reports. Left undefined the
+     * plan is unknown, which is the fail-open (ungated) case. A resolver is
+     * ALWAYS injected so a test never opens the real Devin state DB.
+     */
+    readonly freePlan?: boolean
   } = {}
 ) {
   const appends: unknown[] = []
@@ -109,6 +115,7 @@ function open(
   const events: unknown[] = []
   const cancels = new Map<string, () => void>()
   const spawns: { command: string; args: string[]; env: NodeJS.ProcessEnv }[] = []
+  const planStateReads: number[] = []
   const child = new FakeChild()
   const port: HostProviderRunPort = {
     getThread: () => input.configuredThread ?? thread(),
@@ -137,6 +144,13 @@ function open(
     ...(input.terminalLauncher ? { terminalLauncher: input.terminalLauncher } : {}),
     environment: input.environment ?? { PATH: '/usr/bin', WINDSURF_API_KEY: 'env-key' },
     credentialsPath: input.credentialsPath ?? credentialsFixture(),
+    planState: {
+      resolve: async () => {
+        planStateReads.push(planStateReads.length + 1)
+        return input.freePlan
+      },
+      invalidate: () => undefined
+    },
     spawn: (command, args, options) => {
       spawns.push({ command, args, env: options.env })
       return child as never
@@ -150,7 +164,7 @@ function open(
         register: () => new Promise<never>(() => {})
       } satisfies HostNodeInteractionResolver)
   } satisfies HostNodeProviderCreateInput)
-  return { factory, instance, child, appends, finishes, events, cancels, spawns }
+  return { factory, instance, child, appends, finishes, events, cancels, spawns, planStateReads }
 }
 
 function frames(child: FakeChild): string[] {
@@ -325,6 +339,76 @@ describe('HostNodeDevinProvider', () => {
     // sentinel; it must never reach the CLI as `--model cli-default`.
     expect(hostNodeDevinAcpArgs('cli-default')).toEqual(['acp', '--model', 'swe-1-6-slow'])
     expect(hostNodeDevinAcpArgs('devin-custom-x')).toEqual(['acp', '--model', 'devin-custom-x'])
+  })
+
+  it('clamps argv to SWE-1.6 Slow on an observed free plan and stays open otherwise', () => {
+    // A free plan may run exactly one family, so a paid selection that survived
+    // in a thread record never reaches the CLI as `--model <paid family>`.
+    expect(hostNodeDevinAcpArgs('claude-opus-5', 'high', true)).toEqual([
+      'acp',
+      '--model',
+      'swe-1-6-slow'
+    ])
+    expect(hostNodeDevinAcpArgs('claude-opus-5-high', null, true)).toEqual([
+      'acp',
+      '--model',
+      'swe-1-6-slow'
+    ])
+    // The one allowed family is untouched, and its reasoning id cannot invent a
+    // variant the single-variant family does not have.
+    expect(hostNodeDevinAcpArgs('swe-1-6-slow', 'high', true)).toEqual([
+      'acp',
+      '--model',
+      'swe-1-6-slow'
+    ])
+    // Fail-open: only a positively observed free plan narrows anything. An
+    // unknown plan (unreadable state DB, a non-macOS Host, a signed-out CLI)
+    // and a paid plan both dispatch the selection as made.
+    expect(hostNodeDevinAcpArgs('claude-opus-5', 'high', undefined)).toEqual([
+      'acp',
+      '--model',
+      'claude-opus-5-high'
+    ])
+    expect(hostNodeDevinAcpArgs('claude-opus-5', 'high', false)).toEqual([
+      'acp',
+      '--model',
+      'claude-opus-5-high'
+    ])
+  })
+
+  it('clamps a stale paid selection to the free-plan family at launch', async () => {
+    // The Host's offers projection is not plan-filtered, so the selectable gate
+    // passes a paid family; the clamp is what keeps the launch honest.
+    const { instance, child, spawns, planStateReads } = open({
+      freePlan: true,
+      configuredThread: thread({ modelId: 'claude-opus-5', reasoningId: 'high' })
+    })
+    const sent = frames(child)
+    const running = instance.run(runRequest)
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    expect(spawns).toHaveLength(1)
+    expect(spawns[0]).toMatchObject({ command: BINARY, args: ['acp', '--model', 'swe-1-6-slow'] })
+    expect(planStateReads).toHaveLength(1)
+
+    expect(instance.cancel('run-1')).toBe(true)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('leaves a paid selection alone when the plan state is unknown', async () => {
+    const { instance, child, spawns } = open({
+      configuredThread: thread({ modelId: 'claude-opus-5', reasoningId: 'high' })
+    })
+    const sent = frames(child)
+    const running = instance.run(runRequest)
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    expect(spawns[0]).toMatchObject({ args: ['acp', '--model', 'claude-opus-5-high'] })
+
+    expect(instance.cancel('run-1')).toBe(true)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
   })
 
   it('prompts straight after session/new with the write preamble and records an exact completed receipt', async () => {

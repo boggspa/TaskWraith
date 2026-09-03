@@ -182,9 +182,14 @@ function validateHostPayload(hostRoot, label) {
     ...['MistralCliArgs.js', 'MistralCredentialLane.js', 'MistralQuotaEstimate.js'].map((name) =>
       path.join('mistral', name)
     ),
-    ...['DevinCliArgs.js', 'DevinCredentialLane.js', 'DevinCredentialStore.js'].map((name) =>
-      path.join('devin', name)
-    )
+    ...[
+      'DevinCliArgs.js',
+      'DevinCredentialLane.js',
+      'DevinCredentialStore.js',
+      'DevinPlanInfoRows.js',
+      'DevinPlanState.js',
+      'DevinUsage.js'
+    ].map((name) => path.join('devin', name))
   ])
   const mainRoot = path.join(hostRoot, 'main')
   if (!fs.existsSync(mainRoot)) {
