@@ -48,6 +48,7 @@ import {
   type MuseProviderStats,
   type MuseUsageReducer
 } from './MuseUsage'
+import { composeMuseLaunchPrompt } from './MuseLongTurnProgress'
 import { MUSE_FORBIDDEN_ARGV_FLAGS, MUSE_METERING_EXCLUSIVE_ARGV_FLAGS } from './MuseTypes'
 
 export interface MuseRunSpawnHandle {
@@ -316,8 +317,9 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
     }
   }
 
+  // Isolated-home exec has no native resume. Host-side only; never shown.
   const argv = buildMuseExecArgv({
-    prompt: input.prompt,
+    prompt: composeMuseLaunchPrompt(input.prompt),
     workspace: workspacePath,
     sessionId,
     model: input.model,

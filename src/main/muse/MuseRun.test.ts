@@ -170,6 +170,88 @@ describe('runMuseProvider', () => {
     expect(outcome.warnings.filter((w) => w.includes('cron')).length).toBe(0)
   })
 
+  it('steers the launch prompt to announce a plan before the first tool call', async () => {
+    const temporaryRoot = tempDir('muse-run-steer-')
+    const workspacePath = tempDir('muse-ws-steer-')
+    let observedArgv: readonly string[] = []
+
+    const outcome = await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: 'say hi',
+      runId: 'run-steer',
+      temporaryRoot,
+      approvalMode: 'plan',
+      resolveSessionLog: async () => ({
+        row: null,
+        sessionLogPath: null,
+        source: 'missing'
+      }),
+      assertCron: () => ({
+        ok: true,
+        sessionId: 'run-steer',
+        sessionDir: temporaryRoot,
+        cronDbPath: join(temporaryRoot, 'cron.db'),
+        jobCount: 0,
+        schemaVersion: null
+      }),
+      spawn: (input) => {
+        observedArgv = input.argv
+        return fakeSpawn([
+          stdoutEnvelope({
+            payload_type: 'run.terminal.completed',
+            payload: { kind: 'run_terminal_completed', terminal: 'completed', text: 'done' }
+          })
+        ])
+      }
+    })
+
+    const launchPrompt = observedArgv[observedArgv.length - 1]
+    expect(outcome.status).toBe('success')
+    expect(launchPrompt).toContain('say hi')
+    expect(launchPrompt).toContain('announce what you plan to do before starting tool calls')
+    expect(launchPrompt).toContain('phase-based, not per tool or fixed count')
+    expect(launchPrompt).toContain('not a final answer, question, yield, handoff, or completion signal')
+  })
+
+  it('leaves a slash-prefixed Muse prompt on the wire prefix', async () => {
+    const temporaryRoot = tempDir('muse-run-slash-')
+    const workspacePath = tempDir('muse-ws-slash-')
+    let observedArgv: readonly string[] = []
+
+    await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: '/compact',
+      runId: 'run-slash',
+      temporaryRoot,
+      resolveSessionLog: async () => ({
+        row: null,
+        sessionLogPath: null,
+        source: 'missing'
+      }),
+      assertCron: () => ({
+        ok: true,
+        sessionId: 'run-slash',
+        sessionDir: temporaryRoot,
+        cronDbPath: join(temporaryRoot, 'cron.db'),
+        jobCount: 0,
+        schemaVersion: null
+      }),
+      spawn: (input) => {
+        observedArgv = input.argv
+        return fakeSpawn([
+          stdoutEnvelope({
+            payload_type: 'run.terminal.completed',
+            payload: { kind: 'run_terminal_completed', terminal: 'completed', text: 'done' }
+          })
+        ])
+      }
+    })
+
+    expect(observedArgv[observedArgv.length - 1]).toBe('/compact')
+  })
+
   it('projects OAuth only into the private run home and does not use API-key stdin', async () => {
     const temporaryRoot = tempDir('muse-run-oauth-')
     const workspacePath = tempDir('muse-ws-oauth-')
