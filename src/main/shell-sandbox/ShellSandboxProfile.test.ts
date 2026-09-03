@@ -522,3 +522,32 @@ describe('contributed temp roots — disclosed widening', () => {
     expect(header).toContain('/private/tmp')
   })
 })
+
+describe('resolveShellSandboxPlan — an unquotable path must not throw', () => {
+  // Callers resolve a plan while BUILDING the host-command projection scope,
+  // which every brokered MCP tool passes through. A throw there would fail
+  // read_file and list_directory — tools that spawn nothing — for a shell
+  // boundary they never touch. macOS filenames may legally contain a newline,
+  // so this is reachable, not theoretical.
+  it('degrades to an enforced refusal instead of throwing', () => {
+    const result = plan({ workspacePath: '/Users/dev/we\nird' })
+    expect(result).toMatchObject({
+      sandboxed: false,
+      enforced: true,
+      reason: 'profile_build_failed'
+    })
+  })
+
+  it('carries the refusal reason so the message can name it', () => {
+    const result = plan({ workspacePath: '/Users/dev/we\nird' })
+    if (result.sandboxed) throw new Error('expected a refusal')
+    expect(result.detail).toContain('control bytes')
+  })
+
+  // The same hazard reaches the profile through a user-granted path, not only
+  // through the workspace root.
+  it('refuses rather than throwing for an unquotable external grant', () => {
+    const result = plan({ externalWritableDirectories: ['/Users/dev/gr\nant'] })
+    expect(result).toMatchObject({ sandboxed: false, enforced: true })
+  })
+})

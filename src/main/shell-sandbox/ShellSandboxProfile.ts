@@ -50,6 +50,7 @@ export type ShellSandboxUnavailableReason =
   | 'no_workspace_root'
   | 'unsafe_workspace_root'
   | 'sandbox_binary_unavailable'
+  | 'profile_build_failed'
 
 /** Absolute path to the Seatbelt driver. Apple has deprecated it, so its absence
  *  is a real state to handle rather than a theoretical one. */
@@ -360,12 +361,31 @@ export function resolveShellSandboxPlan(input: ShellSandboxPlanInput): ShellSand
     if (!writableFiles.includes(resolved)) writableFiles.push(resolved)
   }
 
-  const profile = buildWorkspaceSandboxProfile({
-    workspaceRoot,
-    writableRoots,
-    writableFiles,
-    deniedReadPaths
-  })
+  // Building the profile can REFUSE — `sbplQuote` throws on a path carrying
+  // control bytes, and a macOS filename may legally contain a newline. That
+  // throw must not escape: callers resolve a plan while constructing the
+  // host-command projection scope, which every brokered MCP tool passes
+  // through, so an unquotable workspace or grant path would fail `read_file`
+  // and `list_directory` too — tools that spawn nothing and have no business
+  // failing for a shell boundary. Degrade to the failure this module already
+  // models instead: enforced, so the shell is refused, while everything that
+  // does not spawn carries on.
+  let profile: string
+  try {
+    profile = buildWorkspaceSandboxProfile({
+      workspaceRoot,
+      writableRoots,
+      writableFiles,
+      deniedReadPaths
+    })
+  } catch (error) {
+    return {
+      sandboxed: false,
+      enforced: true,
+      reason: 'profile_build_failed',
+      detail: error instanceof Error ? error.message : String(error)
+    }
+  }
   return {
     sandboxed: true,
     profile,
