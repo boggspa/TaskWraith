@@ -1909,8 +1909,13 @@ import {
   type AntigravityAcpResolvedBinary
 } from './antigravity/AntigravityAcpBinaryResolver'
 import {
+  ANTIGRAVITY_ACP_BROKER_MCP_TOOL_NAMESPACE,
+  ANTIGRAVITY_ACP_SCOPED_MCP_SERVER_NAME,
+  antigravityAcpMcpAdvertiseEnabled,
+  antigravityAcpWriteCapable,
   createAntigravityAcpClient,
   createAntigravityAcpTurnAbortController,
+  shouldAdvertiseTaskWraithMcpToAntigravityAcp,
   type AntigravityAcpRunHandle
 } from './antigravity/AntigravityAcpClient'
 import {
@@ -35775,6 +35780,31 @@ async function runAntigravityProvider(
 }
 
 /**
+ * Whether an official-ACP AntiGravity permission request targets one exact
+ * TaskWraith broker tool.
+ *
+ * Spawn-site sibling of devinAcpBrokerToolRequested, and it likewise accepts
+ * the FULL server name because a write-capable seat is handed
+ * GEMINI_MCP_SERVER_NAME rather than the scoped name. Fails closed on strict
+ * canonical tool resolution, and this ACP permission is NOT mutation approval:
+ * the broker independently applies the signed service gate and the exact edit
+ * transaction before executing the call.
+ */
+function antigravityAcpBrokerToolRequested(request: {
+  toolName?: string
+  toolKind?: string
+  rawToolCall?: unknown
+}): boolean {
+  return Boolean(
+    resolveStructuredTaskWraithToolRequest(request, [
+      ANTIGRAVITY_ACP_SCOPED_MCP_SERVER_NAME,
+      ANTIGRAVITY_ACP_BROKER_MCP_TOOL_NAMESPACE,
+      GEMINI_MCP_SERVER_NAME
+    ])
+  )
+}
+
+/**
  * Official-ACP AntiGravity lane composition (S5): the third dispatch arm's
  * provider. Assembles the binary resolver from the install-transport
  * factories, enforces pin-on-first-install provenance through the resolver,
@@ -35834,6 +35864,83 @@ async function runAntigravityOfficialAcpProvider(
     )
     return
   }
+  // TaskWraith MCP broker attachment. This is the seat's WRITE path: native
+  // mutators stay denied below (house invariant), so brokered exact edits are
+  // how an ACP turn can change a file at all — the same division Devin and
+  // Vibe use. Both gates must pass, and the broker is scoped by seat posture.
+  let antigravityAcpMcpServers: unknown[] = []
+  const antigravityAcpWriteSeat = antigravityAcpWriteCapable(payload.approvalMode)
+  const antigravityAcpReadOnlySeat = !antigravityAcpWriteSeat
+  if (
+    shouldAdvertiseTaskWraithMcpToAntigravityAcp({
+      taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised === true,
+      advertiseEnabled: antigravityAcpMcpAdvertiseEnabled()
+    })
+  ) {
+    try {
+      const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
+      if (!bridgeCommandStatus.available) {
+        throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
+      }
+      await mcpBridgeRuntime.startGeminiMcpBroker()
+      // POSTURE: a read-only seat gets the safe (non-mutating) subset and a
+      // plan seat the plan instruments, exactly as the Devin seat scopes it, so
+      // attaching a broker can never widen a restricted seat into writes.
+      const safeSubset = antigravityAcpReadOnlySeat
+      const antigravityAcpPlanSeat =
+        safeSubset && payload.effectivePermissions?.presetId === 'plan'
+      const antigravityAcpAuditRun = Boolean(payload.auditRun)
+      const antigravityAcpBridgeArgs = taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
+        safeSubset,
+        planSubset: antigravityAcpPlanSeat,
+        coreSubset: isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        gatewaySubset: isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        portableEnsembleControl: isPortableEnsembleControlMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
+        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
+        soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        permissionOpportunityDirect: isPermissionOpportunityDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        )
+      })
+      antigravityAcpMcpServers = [
+        {
+          // ACP McpServer is an UNTAGGED enum: the stdio variant is
+          // {name, command, args, env} with NO `type` field and env REQUIRED.
+          // A stray `type:'stdio'` matches no variant and produces a -32602
+          // that also hangs the turn.
+          name: safeSubset ? ANTIGRAVITY_ACP_SCOPED_MCP_SERVER_NAME : GEMINI_MCP_SERVER_NAME,
+          command: bridgeCommandStatus.command,
+          args: antigravityAcpAuditRun
+            ? [...antigravityAcpBridgeArgs, GEMINI_MCP_AUDIT_SUBSET_ARG]
+            : antigravityAcpBridgeArgs,
+          env: [
+            { name: GEMINI_MCP_BRIDGE_ENV, value: '1' },
+            { name: 'TASKWRAITH_PARENT_PROVIDER', value: 'antigravity' },
+            { name: 'TASKWRAITH_RUN_ID', value: route.appRunId || '' },
+            { name: 'TASKWRAITH_CHAT_ID', value: route.appChatId || '' },
+            {
+              name: 'TASKWRAITH_WORKSPACE_PATH',
+              value: payload.scope === 'global' ? '' : payload.workspace || ''
+            },
+            ...(antigravityAcpAuditRun ? [{ name: 'TASKWRAITH_MCP_AUDIT', value: '1' }] : [])
+          ]
+        }
+      ]
+    } catch {
+      // Broker failed to start: no tools, which is the safe outcome. The turn
+      // still runs toolless rather than failing the participant.
+      antigravityAcpMcpServers = []
+    }
+  }
   const client = createAntigravityAcpClient({
     appVersion: app.getVersion(),
     spawnProcess: createAntigravityAcpSpawnProcess(resolved.binaryPath, resolved.args)
@@ -35847,11 +35954,18 @@ async function runAntigravityOfficialAcpProvider(
   const antigravityAcpPermissionHandler = async (
     request: AcpPermissionRequest
   ): Promise<AcpPermissionDecision> => {
+    // TaskWraith broker tools are independently gated by the broker itself.
+    // Allowing the ACP hop here avoids a duplicate provider card; it does not
+    // bypass the signed service policy or the exact mutation transaction. The
+    // length guard is stricter than the sibling seats: this allow is
+    // unreachable unless a broker was actually attached above.
+    if (antigravityAcpMcpServers.length > 0 && antigravityAcpBrokerToolRequested(request)) {
+      return 'allow'
+    }
     // The same closed-adapter gate the sibling ACP seats use, resolved against
     // the antigravity native-action catalogue (view_file/read_file/list_dir are
     // reads; write_to_file/replace_file_content/delete_file are mutations;
-    // run_command is shell). No TaskWraith MCP is advertised to this lane yet,
-    // so there is deliberately no broker-allow branch to mirror.
+    // run_command is shell).
     const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
       provider: 'antigravity',
       toolName: request.toolName,
@@ -35926,6 +36040,9 @@ async function runAntigravityOfficialAcpProvider(
       prompt: payload.prompt,
       cwd,
       onPermissionRequest: antigravityAcpPermissionHandler,
+      // Brokered TaskWraith tools are this seat's write path; native mutators
+      // stay denied. Empty list when the two attach gates did not both pass.
+      mcpServers: antigravityAcpMcpServers,
       // Raw catalogue id (`antigravity-acp:<model>`); the client strips the
       // routing namespace so the bare id reaches session/set_config_option.
       // Without this the seat silently ran the server's default model.

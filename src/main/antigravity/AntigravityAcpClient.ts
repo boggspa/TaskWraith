@@ -67,6 +67,70 @@ export function formatAntigravityAcpProcessError(err: Error): string {
 }
 
 /**
+ * Dedicated scoped broker server name for the official-ACP AntiGravity seat.
+ * Kept distinct for the same reason as Grok's, Mistral's and Devin's: a shared
+ * name would let one seat's scoped-subset qualifier vouch for another seat's
+ * call during session/request_permission evaluation.
+ */
+export const ANTIGRAVITY_ACP_SCOPED_MCP_SERVER_NAME = 'taskwraith-antigravity'
+
+/** Tool namespace the official ACP server reports for the per-run broker. */
+export const ANTIGRAVITY_ACP_BROKER_MCP_TOOL_NAMESPACE = 'TaskWraith'
+
+/**
+ * Env gate for attaching the TaskWraith MCP broker to the official-ACP seat.
+ *
+ * DEFAULT ON by explicit in-session user ruling (2026-09-03), recorded in
+ * `scripts/provider-intent.json`. This is a deliberate DIVERGENCE from
+ * `devinMcpAdvertiseEnabled()`, which stays default-OFF "until
+ * request_permission coverage is live-measured": Google's `agy_acp_server` is
+ * an RC01 build whose per-tool permission coverage is documented but has never
+ * been live-measured here. The user weighed that and chose usability, because
+ * the broker is the ONLY write path for this seat — native mutators always
+ * deny — so a default-OFF broker means a seat that cannot edit a file at all.
+ *
+ * Shaped as an opt-OUT, mirroring `mistralMcpAdvertiseEnabled()` (the existing
+ * default-ON provider) rather than inventing a new convention: any of
+ * `0`/`false`/`no`/`off` disables it. What this gate does NOT do is widen a
+ * posture — the broker is still scoped by `safeSubset`/`planSubset` at the
+ * attach site, so a read-only or plan seat gets the restricted instrument set
+ * even with advertising on.
+ */
+export function antigravityAcpMcpAdvertiseEnabled(): boolean {
+  const value = process.env.TASKWRAITH_ANTIGRAVITY_MCP?.trim().toLowerCase()
+  return value !== '0' && value !== 'false' && value !== 'no' && value !== 'off'
+}
+
+/**
+ * True when the approval mode permits writes (anything other than read-only
+ * plan). Trimmed before the 'plan' compare for the same reason Grok, Mistral
+ * and Devin trim: a stray-whitespace `'plan '` must still read as READ-ONLY
+ * rather than falling through to write-capable and silently dropping posture.
+ */
+export function antigravityAcpWriteCapable(approvalMode: string | null | undefined): boolean {
+  return (
+    typeof approvalMode === 'string' && approvalMode.trim() !== '' && approvalMode.trim() !== 'plan'
+  )
+}
+
+/**
+ * Per-run attach decision for the official-ACP seat.
+ *
+ * Deliberately NARROWER than `shouldAdvertiseTaskWraithMcpToDevin`: that
+ * sibling also attaches on a signed UltraTask delegation consent even when the
+ * ordinary preference is off. This lane omits that override, so the two gates
+ * are the only way in. Being more restrictive than the sibling never widens a
+ * posture, and the override can be added deliberately once the lane's
+ * permission coverage is measured.
+ */
+export function shouldAdvertiseTaskWraithMcpToAntigravityAcp(input: {
+  taskWraithMcpAdvertised: boolean
+  advertiseEnabled: boolean
+}): boolean {
+  return input.taskWraithMcpAdvertised && input.advertiseEnabled
+}
+
+/**
  * ACP's advertised config id for model selection. Kimi, Grok and Mistral all
  * advertise this same `model` option on the session result.
  */

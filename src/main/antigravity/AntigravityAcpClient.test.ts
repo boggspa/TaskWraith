@@ -13,6 +13,11 @@ import {
   runAntigravityAcpTurn,
   antigravityAcpSessionConfigOptions,
   stripAntigravityAcpModelNamespace,
+  antigravityAcpMcpAdvertiseEnabled,
+  antigravityAcpWriteCapable,
+  shouldAdvertiseTaskWraithMcpToAntigravityAcp,
+  ANTIGRAVITY_ACP_BROKER_MCP_TOOL_NAMESPACE,
+  ANTIGRAVITY_ACP_SCOPED_MCP_SERVER_NAME,
   ANTIGRAVITY_ACP_MODEL_CONFIG_ID,
   type AntigravityAcpRunOptions
 } from './AntigravityAcpClient'
@@ -418,6 +423,141 @@ describe('official-ACP model passthrough', () => {
  * work. These tests pin both halves: an attached mediator is honoured, and the
  * core's default-DENY safety property survives every failure mode.
  */
+/**
+ * S9 — TaskWraith MCP broker attachment. Native mutators stay denied (house
+ * invariant shared with Devin and Vibe), so brokered exact edits are the only
+ * way this seat can change a file. These pin the attach gates and the posture
+ * scoping that keeps a restricted seat from gaining writes.
+ */
+describe('official-ACP MCP broker attachment gates', () => {
+  const ENV_KEY = 'TASKWRAITH_ANTIGRAVITY_MCP'
+  const withEnv = <T>(value: string | undefined, run: () => T): T => {
+    const previous = process.env[ENV_KEY]
+    if (value === undefined) delete process.env[ENV_KEY]
+    else process.env[ENV_KEY] = value
+    try {
+      return run()
+    } finally {
+      if (previous === undefined) delete process.env[ENV_KEY]
+      else process.env[ENV_KEY] = previous
+    }
+  }
+
+  // DEFAULT-ON by explicit user ruling (2026-09-03), shaped as an opt-OUT
+  // mirroring mistralMcpAdvertiseEnabled rather than Devin's opt-IN. The
+  // broker is this seat's only write path, so default-OFF meant a seat that
+  // could not edit a file at all.
+  it('defaults the advertise gate ON and disables only on an explicit opt-out value', () => {
+    expect(withEnv(undefined, antigravityAcpMcpAdvertiseEnabled)).toBe(true)
+    for (const value of ['0', 'false', 'no', 'off', 'FALSE', ' Off ', '  0  ']) {
+      expect(withEnv(value, antigravityAcpMcpAdvertiseEnabled), JSON.stringify(value)).toBe(false)
+    }
+    for (const value of ['', '1', 'true', 'yes', 'random', 'on', 'enabled']) {
+      expect(withEnv(value, antigravityAcpMcpAdvertiseEnabled), JSON.stringify(value)).toBe(true)
+    }
+  })
+
+  // THE property that makes default-ON safe: advertising is orthogonal to
+  // posture. "On by default" plus "posture ignored" would silently hand write
+  // instruments to a review seat, so this pins that the posture input the
+  // attach site scopes on (safeSubset) is unaffected by the advertise gate.
+  it('does not widen posture when advertising is ON by default', () => {
+    withEnv(undefined, () => {
+      expect(antigravityAcpMcpAdvertiseEnabled()).toBe(true)
+      // A plan/read-only seat stays read-only, which is what drives
+      // safeSubset at the attach site.
+      expect(antigravityAcpWriteCapable('plan')).toBe(false)
+      expect(antigravityAcpWriteCapable(' plan ')).toBe(false)
+      expect(antigravityAcpWriteCapable(undefined)).toBe(false)
+      // And a write seat is still classified independently of the gate.
+      expect(antigravityAcpWriteCapable('default')).toBe(true)
+    })
+    // The classification is identical with advertising explicitly OFF, proving
+    // the two decisions are independent rather than coupled.
+    withEnv('0', () => {
+      expect(antigravityAcpMcpAdvertiseEnabled()).toBe(false)
+      expect(antigravityAcpWriteCapable('plan')).toBe(false)
+      expect(antigravityAcpWriteCapable('default')).toBe(true)
+    })
+  })
+
+  it('requires BOTH attach gates — neither alone advertises the broker', () => {
+    expect(
+      shouldAdvertiseTaskWraithMcpToAntigravityAcp({
+        taskWraithMcpAdvertised: true,
+        advertiseEnabled: true
+      })
+    ).toBe(true)
+    expect(
+      shouldAdvertiseTaskWraithMcpToAntigravityAcp({
+        taskWraithMcpAdvertised: true,
+        advertiseEnabled: false
+      })
+    ).toBe(false)
+    expect(
+      shouldAdvertiseTaskWraithMcpToAntigravityAcp({
+        taskWraithMcpAdvertised: false,
+        advertiseEnabled: true
+      })
+    ).toBe(false)
+  })
+
+  // The posture input that decides safeSubset. A stray-whitespace 'plan ' must
+  // still read READ-ONLY: without the trim it falls through to write-capable
+  // and silently drops the posture (the trap Grok/Mistral/Devin all record).
+  it('reads a plan seat as READ-ONLY, including with stray whitespace', () => {
+    expect(antigravityAcpWriteCapable('plan')).toBe(false)
+    expect(antigravityAcpWriteCapable(' plan ')).toBe(false)
+    expect(antigravityAcpWriteCapable('')).toBe(false)
+    expect(antigravityAcpWriteCapable('   ')).toBe(false)
+    expect(antigravityAcpWriteCapable(undefined)).toBe(false)
+    expect(antigravityAcpWriteCapable(null)).toBe(false)
+    expect(antigravityAcpWriteCapable('default')).toBe(true)
+    expect(antigravityAcpWriteCapable('acceptEdits')).toBe(true)
+  })
+
+  // A shared name would let one seat's scoped-subset qualifier vouch for
+  // another seat's call during session/request_permission evaluation.
+  it('uses a scoped broker name distinct from the shared and sibling brokers', () => {
+    expect(ANTIGRAVITY_ACP_SCOPED_MCP_SERVER_NAME).toBe('taskwraith-antigravity')
+    expect(ANTIGRAVITY_ACP_SCOPED_MCP_SERVER_NAME).not.toBe('taskwraith-broker')
+    expect(ANTIGRAVITY_ACP_SCOPED_MCP_SERVER_NAME).not.toBe('taskwraith-devin')
+    expect(ANTIGRAVITY_ACP_BROKER_MCP_TOOL_NAMESPACE).toBe('TaskWraith')
+  })
+
+  it('advertises NO mcpServers on session/new when none are attached', async () => {
+    const child = new FakeAcpChild()
+    const { handle } = run(child)
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    const sessionNew = child.sent().find((message) => message.method === 'session/new')
+    const params = sessionNew?.params as { mcpServers?: unknown[] } | undefined
+    // Either absent or empty — never a fabricated server entry.
+    expect(params?.mcpServers ?? []).toEqual([])
+    handle.cancel()
+    await handle.closed
+  })
+
+  it('forwards an attached broker entry untagged, with no `type` discriminator', async () => {
+    const child = new FakeAcpChild()
+    const brokerEntry = {
+      name: ANTIGRAVITY_ACP_SCOPED_MCP_SERVER_NAME,
+      command: '/usr/local/bin/node',
+      args: ['bridge.js', '--safe-subset'],
+      env: [{ name: 'TASKWRAITH_PARENT_PROVIDER', value: 'antigravity' }]
+    }
+    const { handle } = run(child, { mcpServers: [brokerEntry] })
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    const sessionNew = child.sent().find((message) => message.method === 'session/new')
+    const params = sessionNew?.params as { mcpServers?: Record<string, unknown>[] }
+    expect(params.mcpServers).toHaveLength(1)
+    expect(Object.keys(params.mcpServers![0]).sort()).toEqual(['args', 'command', 'env', 'name'])
+    expect(params.mcpServers![0]).not.toHaveProperty('type')
+    expect(params.mcpServers![0].name).toBe('taskwraith-antigravity')
+    handle.cancel()
+    await handle.closed
+  })
+})
+
 describe('permission mediator safety contract', () => {
   const askPermission = (child: FakeAcpChild, id = 9): void => {
     child.emit({
