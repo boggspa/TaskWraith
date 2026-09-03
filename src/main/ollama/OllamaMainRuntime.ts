@@ -43,6 +43,7 @@ import {
 } from './OllamaRunMemory'
 import type { OllamaModelPreflightResult } from './OllamaModelPreflight'
 import { assertOllamaMutationIntent, assertOllamaProtectedWritePaths } from './OllamaToolPolicy'
+import { applyOllamaSmallLocalModelToolArguments } from './OllamaSmallLocalModelProfile'
 
 interface OllamaWorkspaceToolExecutors {
   executeFindFiles: (
@@ -307,10 +308,18 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         )
         return { ok: true, output }
       }
-      const canonicalArguments = canonicalizeOllamaToolArguments(
-        request.toolName,
-        request.arguments
-      )
+      // Pre-tool hook order: canonicalize the model's own keys FIRST (synonym
+      // promotion), then let the small-model profile fill in economical
+      // defaults and clamp runaway values. That order matters — the hook must
+      // see `maxResults` on its canonical key before deciding whether the
+      // model supplied one. The hook is additive only and cannot refuse a
+      // call, so validation below still judges the model's real intent.
+      const canonicalArguments = request.smallLocalModel
+        ? applyOllamaSmallLocalModelToolArguments(
+            request.toolName,
+            canonicalizeOllamaToolArguments(request.toolName, request.arguments)
+          )
+        : canonicalizeOllamaToolArguments(request.toolName, request.arguments)
       const argCheck = validateOllamaToolArguments(request.toolName, canonicalArguments)
       if (!argCheck.ok) {
         return { ok: false, output: argCheck.message, validationError: true }

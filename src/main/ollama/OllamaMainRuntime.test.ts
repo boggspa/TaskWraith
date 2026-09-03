@@ -204,6 +204,62 @@ describe('createOllamaMainRuntime', () => {
     )
   })
 
+  it('applies small-local-model argument economy at the pre-execution hook', async () => {
+    const executeWorkspaceSearch = vi.fn(async () => ({ matches: [], count: 0, exitCode: 0 }))
+    const deps = dependencies({
+      workspaceToolExecutors: {
+        ...dependencies().workspaceToolExecutors,
+        executeWorkspaceSearch
+      }
+    })
+    const runtime = createOllamaMainRuntime(deps)
+    const workspacePath = resolve('/repo')
+
+    await runtime.executeLocalTool({
+      toolName: 'workspace_search',
+      arguments: { query: 'needle' },
+      workspacePath,
+      smallLocalModel: true
+    })
+
+    // The compact native schema omits maxResults/contextLines entirely, so a
+    // small model cannot ask for them; the hook supplies them instead.
+    expect(executeWorkspaceSearch).toHaveBeenCalledWith(
+      { query: 'needle', maxResults: 20, contextLines: 2 },
+      expect.objectContaining({ workspacePath }),
+      workspacePath
+    )
+  })
+
+  it('clamps rather than refuses a runaway small-model argument', async () => {
+    const executeWorkspaceSearch = vi.fn(async () => ({ matches: [], count: 0, exitCode: 0 }))
+    const deps = dependencies({
+      workspaceToolExecutors: {
+        ...dependencies().workspaceToolExecutors,
+        executeWorkspaceSearch
+      }
+    })
+    const runtime = createOllamaMainRuntime(deps)
+    const workspacePath = resolve('/repo')
+
+    const result = await runtime.executeLocalTool({
+      toolName: 'workspace_search',
+      arguments: { query: 'needle', maxResults: 5000 },
+      workspacePath,
+      smallLocalModel: true
+    })
+
+    // A clamp still returns the tool's real result. The retired retrieval-first
+    // gate refused instead, which cost the model a turn and taught it nothing.
+    expect(result).toMatchObject({ ok: true })
+    expect(result.validationError).toBeUndefined()
+    expect(executeWorkspaceSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ maxResults: 50 }),
+      expect.anything(),
+      workspacePath
+    )
+  })
+
   it('fails unknown tools closed with a typed structured error', async () => {
     const runtime = createOllamaMainRuntime(dependencies())
     const result = await runtime.executeLocalTool({

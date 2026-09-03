@@ -1,4 +1,5 @@
 import { ollamaGptOssFewShotTrajectories } from './OllamaModelProtocol'
+import { ollamaSmallLocalModelPromptLines } from './OllamaSmallLocalModelProfile'
 import { resolveOllamaModelFamily } from './OllamaModelPreflight'
 import type { OllamaPromptIntent } from './OllamaPromptIntent'
 import type { OllamaToolControlTier, TaskWraithMcpProfileId } from '../store/types'
@@ -390,6 +391,8 @@ export function ollamaLocalToolSystemPrompt(
     /** Derived only from signed `subThreadDelegationAutoAllowSource=ultratask`. */
     ultraTaskDelegationAutoAllow?: boolean
     taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
+    /** True only for a LOCAL model at or below the small-model parameter ceiling. */
+    smallLocalModel?: boolean
   } = {}
 ): string {
   const intent = options.intent ?? 'workspace'
@@ -403,7 +406,8 @@ export function ollamaLocalToolSystemPrompt(
     readOnly: options.readOnly,
     plan: options.plan,
     ultraTaskDelegationAutoAllow: options.ultraTaskDelegationAutoAllow,
-    taskWraithMcpProfileId: options.taskWraithMcpProfileId
+    taskWraithMcpProfileId: options.taskWraithMcpProfileId,
+    smallLocalModel: options.smallLocalModel
   })
   const hasWebTools = tools.includes('web_search') || tools.includes('web_fetch')
   const familyLines = modelId?.trim()
@@ -438,6 +442,12 @@ export function ollamaLocalToolSystemPrompt(
         ]
       : []),
     ...familyLines,
+    // The small-model directive is workspace-only: the conversational branch
+    // above already tells the model to answer without tools, and a working
+    // directive on top of that just contradicts it.
+    ...(options.smallLocalModel && intent !== 'conversational'
+      ? ollamaSmallLocalModelPromptLines()
+      : []),
     'Common tools:',
     ...detailed,
     ...(named.length

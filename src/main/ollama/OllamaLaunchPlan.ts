@@ -35,6 +35,7 @@ import {
   type OllamaThinkingSetting
 } from './OllamaRunProfiles'
 import { ollamaAdvertisedToolNames } from './OllamaToolTiers'
+import { isOllamaSmallLocalModel } from './OllamaSmallLocalModelProfile'
 import type {
   OllamaChatMessage,
   OllamaModelInfo,
@@ -68,6 +69,12 @@ export interface OllamaFinalLaunchPlan {
   readonly runProfile: OllamaRunProfile
   readonly nativeToolsSupported: boolean
   readonly compactToolSchemas: boolean
+  /**
+   * True only for a LOCAL model at or below the small-model parameter ceiling.
+   * Resolved once here so the advertised schema, the prompt directive and the
+   * executor's argument hook cannot disagree about which profile a run is on.
+   */
+  readonly smallLocalModel: boolean
   readonly oneToolAtATime: boolean
   readonly networkAccess: AgenticNetworkPolicy
   readonly readOnly: boolean
@@ -139,6 +146,7 @@ export interface ResolveOllamaFinalLaunchPlanDeps {
     plan: boolean
     ultraTaskDelegationAutoAllow: boolean
     taskWraithMcpProfileId: TaskWraithMcpProfileId | null
+    smallLocalModel: boolean
   }): OllamaNativeToolDefinition[]
   getSessionMemory(chatId: string, memoryKey?: string): OllamaSessionMemory | null | undefined
   prepareEnsemblePrompt(input: {
@@ -161,6 +169,7 @@ export interface ResolveOllamaFinalLaunchPlanDeps {
     plan: boolean
     ultraTaskDelegationAutoAllow: boolean
     taskWraithMcpProfileId: TaskWraithMcpProfileId | null
+    smallLocalModel: boolean
     model: string
     workspaceIndexBlock: string
     userPrompt: string
@@ -232,6 +241,10 @@ export async function resolveOllamaFinalLaunchPlan(
     runProfile.compactToolSchemas === true ||
     ollamaUsesCompactToolSchemas(model, merged)
   const oneToolAtATime = runProfile.oneToolAtATime !== false && ollamaOneToolAtATime(model, merged)
+  // Model-shape knob, resolved from the daemon's reported parameter_size and
+  // the size token in the tag. Local models only; a cloud model or an
+  // unrecognised size keeps the full surface.
+  const smallLocalModel = isOllamaSmallLocalModel(model, merged)
   const networkAccess: AgenticNetworkPolicy =
     input.configuredNetworkAccess === 'deny' || input.effectiveNetworkAccess === 'deny'
       ? 'deny'
@@ -245,7 +258,8 @@ export async function resolveOllamaFinalLaunchPlan(
           readOnly: input.readOnly,
           plan: input.plan,
           ultraTaskDelegationAutoAllow,
-          taskWraithMcpProfileId: input.taskWraithMcpProfileId ?? null
+          taskWraithMcpProfileId: input.taskWraithMcpProfileId ?? null,
+          smallLocalModel
         })
       : []
   const availableToolNames =
@@ -258,7 +272,8 @@ export async function resolveOllamaFinalLaunchPlan(
               readOnly: input.readOnly,
               plan: input.plan,
               ultraTaskDelegationAutoAllow,
-              taskWraithMcpProfileId: input.taskWraithMcpProfileId
+              taskWraithMcpProfileId: input.taskWraithMcpProfileId,
+              smallLocalModel
             }),
             ...CAPABILITY_GATEWAY_TOOL_NAMES,
             OLLAMA_TOOL_HELP_NAME
@@ -303,6 +318,7 @@ export async function resolveOllamaFinalLaunchPlan(
     plan: input.plan,
     ultraTaskDelegationAutoAllow,
     taskWraithMcpProfileId: input.taskWraithMcpProfileId ?? null,
+    smallLocalModel,
     model,
     workspaceIndexBlock,
     userPrompt,
@@ -377,6 +393,7 @@ export async function resolveOllamaFinalLaunchPlan(
     runProfile: cloneJson(runProfile),
     nativeToolsSupported,
     compactToolSchemas,
+    smallLocalModel,
     oneToolAtATime,
     networkAccess,
     readOnly: input.readOnly,

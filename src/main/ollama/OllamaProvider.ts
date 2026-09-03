@@ -441,6 +441,13 @@ export interface OllamaToolExecutionRequest {
   ultraTaskDelegationAutoAllow?: boolean
   /** Immutable MCP catalogue receipt for profile-aware tool_help lookup. */
   taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
+  /**
+   * True only for a LOCAL model at or below the small-model parameter ceiling.
+   * Resolved once by the launch plan and carried here so the executor's
+   * argument hook uses the SAME verdict the advertised schema was built from,
+   * rather than re-deriving it from the model id alone.
+   */
+  smallLocalModel?: boolean
 }
 
 export interface OllamaToolExecutionResult {
@@ -493,6 +500,8 @@ export interface OllamaOpeningMessagesInput {
   /** Main-derived from the HMAC-signed UltraTask delegation consent. */
   ultraTaskDelegationAutoAllow?: boolean
   taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
+  /** True only for a LOCAL model at or below the small-model parameter ceiling. */
+  smallLocalModel?: boolean
   model: string
   workspaceIndexBlock: string
   userPrompt: string
@@ -653,7 +662,8 @@ export function buildOllamaOpeningMessages(input: OllamaOpeningMessagesInput): O
             readOnly: input.readOnly,
             plan: input.plan,
             ultraTaskDelegationAutoAllow: input.ultraTaskDelegationAutoAllow,
-            taskWraithMcpProfileId: input.taskWraithMcpProfileId
+            taskWraithMcpProfileId: input.taskWraithMcpProfileId,
+            smallLocalModel: input.smallLocalModel
           }),
           OLLAMA_CAPABILITY_GATEWAY_PROMPT
         ].join('\n')
@@ -2647,9 +2657,13 @@ export function ollamaNativeToolDefinitions(
     /** Main-derived from the HMAC-signed UltraTask delegation consent. */
     ultraTaskDelegationAutoAllow?: boolean
     taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
+    /** True only for a LOCAL model at or below the small-model parameter ceiling. */
+    smallLocalModel?: boolean
   }
 ): OllamaNativeToolDefinition[] {
-  const compact = Boolean(options?.compact)
+  // A small local model always gets the compact schemas: the terse descriptions
+  // are the same saving as the narrowed set, applied per definition.
+  const compact = Boolean(options?.compact) || options?.smallLocalModel === true
   // Advertise the immutable gateway-v9 direct set as native function defs (not
   // the full catalogue). The tail remains executable through capability_invoke
   // and discoverable through the gateway or legacy tool_help. Read-only receives
@@ -2659,7 +2673,8 @@ export function ollamaNativeToolDefinitions(
     readOnly: options?.readOnly,
     plan: options?.plan,
     ultraTaskDelegationAutoAllow: options?.ultraTaskDelegationAutoAllow,
-    taskWraithMcpProfileId: options?.taskWraithMcpProfileId
+    taskWraithMcpProfileId: options?.taskWraithMcpProfileId,
+    smallLocalModel: options?.smallLocalModel
   }).map((toolName) => {
     const { description, properties, required } = ollamaNativeToolParameters(toolName, compact)
     return {
@@ -4659,7 +4674,8 @@ export async function runOllamaProvider(
           appRunId: route.appRunId || payload.appRunId,
           toolControlTier,
           ultraTaskDelegationAutoAllow: plannedUltraTaskDelegationAutoAllow,
-          taskWraithMcpProfileId: payload.taskWraithMcpProfileId
+          taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
+          smallLocalModel: launchPlan.smallLocalModel
         }
         const hostCommandProjection = deps.createHostCommandProjection?.(toolExecutionRequest)
         const harnessGate = harnessEnabled

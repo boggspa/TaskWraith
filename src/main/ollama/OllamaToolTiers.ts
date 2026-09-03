@@ -4,6 +4,7 @@ import {
   GATEWAY_V17_MCP_DIRECT_TOOLS,
   taskWraithGatewayDirectToolNamesForProfile
 } from '../mcp/McpToolProfiles'
+import { isOllamaSmallLocalModelDirectTool } from './OllamaSmallLocalModelProfile'
 import type { OllamaToolControlTier, TaskWraithMcpProfileId } from '../store/types'
 
 export type OllamaToolName = TaskWraithMcpToolName
@@ -186,6 +187,12 @@ const PLAN_MCP_ADVERTISE_TOOL_SET = new Set<OllamaToolName>(PLAN_MCP_ADVERTISE_T
  * (the immutable gateway set intersected with the shared read-only or Plan
  * advertise set for a scoped run). Hidden tools stay reachable only as targets
  * of capability_invoke, not as extra top-level names in the fallback grammar.
+ *
+ * `smallLocalModel` narrows the surface further, to the compact find/read/
+ * change/verify set a 1.5B-4B local model can actually hold in its window. It
+ * intersects like every other filter here, so it can only ever remove — and it
+ * removes from the SCHEMA only, since the tail stays reachable through
+ * capability_invoke exactly as it does for a large model.
  */
 export function ollamaAdvertisedToolNames(
   options: {
@@ -195,6 +202,8 @@ export function ollamaAdvertisedToolNames(
     taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
     /** Derived only from signed `subThreadDelegationAutoAllowSource=ultratask`. */
     ultraTaskDelegationAutoAllow?: boolean
+    /** True only for a LOCAL model at or below the small-model parameter ceiling. */
+    smallLocalModel?: boolean
   } = {}
 ): OllamaToolName[] {
   const directNames = ollamaDirectToolNamesForProfile(options.taskWraithMcpProfileId)
@@ -203,6 +212,13 @@ export function ollamaAdvertisedToolNames(
   // otherwise those generic sets would strip lifecycle readers that this exact
   // consent intentionally enables.
   let names: OllamaToolName[] = filterOllamaUltraTaskDelegationTools(directNames, false)
+  if (options.smallLocalModel) {
+    // Applied to the ordinary surface only. A run the user explicitly started
+    // as UltraTask still gets its delegation lifecycle back below: that consent
+    // is the user's call about their own model, and this profile does not
+    // overrule it.
+    names = names.filter((toolName) => isOllamaSmallLocalModelDirectTool(toolName))
+  }
   if (options.networkAccess === 'deny') {
     names = names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
   }
