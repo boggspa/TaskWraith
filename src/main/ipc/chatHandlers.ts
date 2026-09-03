@@ -865,6 +865,33 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
             messages.push(...operation.messages)
             continue
           }
+          if (operation.op === 'truncateFrom') {
+            // Rewind: drop every row after the anchor, keeping the anchor. The
+            // anchor's own text is edited by a separate `update` op.
+            const anchorIndex = transaction.indexOf(operation.id)
+            if (anchorIndex < 0) throw new Error('Transcript operation target is absent')
+            const removed = messages.slice(anchorIndex + 1)
+            if (removed.length === 0) continue
+            // Same fence as a single delete, applied to EVERY dropped row: a
+            // renderer-authored truncation cannot take main-owned graph rows,
+            // because preserveExecutionGraphTranscript would re-add them on
+            // save and the caller would silently see the tail come back.
+            if (
+              removed.some((message) =>
+                messageClaimsExecutionGraphOwnership(message, graphOwnedRunIds)
+              )
+            ) {
+              throw new Error('Renderer cannot truncate main-owned graph transcript rows')
+            }
+            transaction.splice(
+              anchorIndex + 1,
+              removed.length,
+              removed.map((message) => message.id),
+              []
+            )
+            messages.splice(anchorIndex + 1, removed.length)
+            continue
+          }
           const messageIndex = transaction.indexOf(operation.id)
           if (messageIndex < 0) throw new Error('Transcript operation target is absent')
           if (
