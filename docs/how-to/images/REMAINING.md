@@ -1,22 +1,83 @@
 # Shot list — remaining captures
 
-Inventory reconciled 2026-09-03: **61 of 89 captured; 28 pending**. Two pages were added on 2026-09-03 (`composer/ultratask.md`, `sidebar-navigation/project-references-studio.md`), each with a `screenshot-pending` marker, taking the baseline from 87 shots to 89 and the pending set from 26 to 28. The folder holds 62 top-level PNGs, one of which is not a current capture: `footer-control-row__shares-popover.png` is an orphan left behind by a shot retired on 2026-08-12. That leaves 61 named captures against 89 feature guide pages — of which one (`chats-and-threads__chat-types`) is known stale rather than current, so 60 are trustworthy today. See "Captured but stale" below. Two bonus composer variations in `composer-variations/` are not part of the 89-shot baseline.
+Inventory reconciled 2026-09-03 (second pass): **60 of 90 captured; 30 pending**.
+
+The first pass reported 61 captured / 28 pending over an 89-page baseline. That
+set did not reconcile against the tree: the baseline missed a page entirely, two
+pages were outstanding yet invisible to the pending count because they carried no
+`screenshot-pending` marker, and two PNGs on disk are referenced by no page. The
+page-level accounting is now correct — every one of the 90 feature guide pages is
+covered by exactly one of an embedded image or a marker, and SHOTLIST carries one
+row per page.
+
+Changes in this pass (bookkeeping only — no page or capture was deleted):
+
+- `composer/ensemble-mode-picker.md` **marked pending**. The page was rewritten as
+  the Ensemble Orchestration Row and now states there is no Turn/Continuous
+  choice. Its capture shows exactly that retired picker and had been unlinked
+  from the page without being re-marked, so the page counted as neither captured
+  nor pending. The SHOTLIST caption is corrected from "Turn / Continuous options";
+  the superseded PNG is **kept on disk** pending its replacement.
+- `canvas-and-previews/emulator-canvas.md` **marked pending** and added to
+  SHOTLIST — it had never been entered in the manifest at all, which is why the
+  baseline read 89 rather than 90.
+- The stale-capture section below is expanded from one entry to six, graded by
+  how strong the evidence is.
+
+**Two PNGs are retained on disk without a referencing page** —
+`composer__ensemble-mode-picker.png` (superseded by the Orchestration Row
+rewrite) and `footer-control-row__shares-popover.png` (from a shot retired
+2026-08-12). They are deliberately kept, so "every PNG is referenced" is not an
+invariant here; "every page is accounted for" is.
+
+Two bonus composer variations in `composer-variations/` are not part of the
+90-shot baseline.
 
 Capture replacements are being made against latest-source development apps. Use only the authorized `Test 1` through `Test 4` workspaces for live state, keep full private paths and unrelated content out of frame, and treat pairing QR codes and secrets as non-publishable. Personal agent/task metrics, usage telemetry, and demo transcripts are acceptable.
 
 ## Captured but stale — recapture without changing the pending count
 
-These pages **do** have an image, so they are not part of the 28 pending and
+These pages **do** have an image, so they are not part of the 30 pending and
 must not be added to it — the pending set is defined as pages carrying a
 `screenshot-pending` marker, and it has to keep matching that marker set
 exactly. They are listed here because the capture on disk shows retired UI,
 which is worse than an honest gap: the page reads as done.
+
+Every surviving capture dates from either 2026-07-09 or 2026-07-18, so all 60
+are at least seven weeks behind the renderer. The entries below are the ones
+with an identified invalidating commit; absence from this list is not evidence
+a capture is current.
+
+**Proven stale** — the retired UI is confirmed absent from source today:
 
 - `chats-and-threads__chat-types` — captured 2026-07-18, three weeks before the
   Channels rename (`c3001deac`, 2026-08-11). It still shows a **"Shared"**
   sidebar section; `>Shared<` has zero occurrences in `Sidebar.tsx` today. The
   page's prose and alt text have been corrected to "Channels", so the image is
   now the only thing still asserting the old label.
+- `getting-started__welcome-screen` — captured 2026-07-18. `262c5668d`
+  (2026-08-30) dropped the welcome-hero subtitle; the empty-thread hero is
+  heading-only now, so the capture shows body text that no longer renders.
+
+**Suspected stale from the commit record** — the change is named in a commit
+that postdates the capture, but the exact framing has not been re-checked
+against a live window. Verify at recapture rather than trusting either state:
+
+- `getting-started__first-launch-sheet` — captured 2026-07-18. `378984605`
+  (2026-08-30) replaced the historical Gemini card in First Launch with a themed
+  Muse card. Note that other Gemini copy legitimately survives in the sheet for
+  historical reporting, so only the card itself should have changed.
+- `composer__provider-model-permissions-pickers` — captured 2026-07-09, before
+  four separate label passes: `b9d887e6b` title-case provider headers,
+  `af75d0dae` Ollama Cloud row branding, `b59a34bba` OpenRouter "Free" suffix
+  dropped, and `b6794a47c` Fable 5.1 added with Fable 5 relabelled "Legacy". A
+  July picker capture can show none of these.
+- `transcript-and-search__transcript-message-stream` — captured 2026-07-09,
+  before `bf27ead64` (expanded-card redesign: bare row, rim on card) and
+  `c5dcb4f6e` (animated code-block rim removed).
+- `approvals-and-permissions__approval-ledger` — captured 2026-07-09, before
+  `0cec6f8ee` (2026-08-31) relabelled run-scoped grants. Confirm whether the
+  changed labels actually surface in the Ledger panel before recapturing.
 
 ## Needs investigation before recapture
 
@@ -25,18 +86,25 @@ which is worse than an honest gap: the page reads as done.
 ## Needs privacy-safe setup
 
 - `settings-and-configuration__devices-tab` — use a demo or redacted pairing state; never publish a live QR code or device credential.
-- `settings-and-configuration__local-model-tool-surface` — show the current Ollama gateway profile (41 direct tools plus capability search/invoke) without exposing local endpoints or paths.
+- `settings-and-configuration__local-model-tool-surface` — show the current Ollama gateway profile — the direct tool list plus capability search/invoke — without exposing local endpoints or paths. Do not caption a tool count; the profile version changes and a pinned number rots silently.
 - `settings-and-configuration__channels-tab` — the page was rewritten for the Channels cutover and the stale pre-cutover Shares capture has been removed. Capture **Settings → Integrations → Channels** with a demo or redacted membership state; never publish a live invite code or member credential.
 
 ## Needs live or transient desktop state
 
 - `composer__ultratask` — needs a model whose catalogue entry supports UltraTask, with the reasoning ladder open and the top stop selected.
 - `sidebar-navigation__project-references-studio` — needs a Project with at least one reference marked **Use next** and a generated draft on screen.
+- `composer__ensemble-mode-picker` — needs an Ensemble chat, showing the Fan-Out, Isolate and Turns controls on the second Roster Presets row.
 - `approvals-and-permissions__pending-approval-modal`
 - `chats-and-threads__sub-thread-delegation`
 - `goals-todos-and-scheduling__todos`
 - `notifications-and-status__provider-health-chips`
-- `notifications-and-status__sub-thread-status-ticker`
+- `notifications-and-status__sub-thread-status-ticker` — **cannot be captured as
+  described.** The strip was deleted outright on 2026-08-19 (`e48d38e33`):
+  component, both mounts, CSS and tests, leaving only a comment in
+  `ChatViewPane.tsx`. The page is retained by decision, so its shot needs a
+  direction — either the page is rewritten around where sub-thread status lives
+  now (transcript fleet cards and sub-thread chips, per the removal commit) and
+  captured there, or the marker stays permanently unfillable.
 - `transcript-and-search__agent-question-cards`
 - `transcript-and-search__copy-transcript-button`
 - `transcript-and-search__proposed-plan-cards`
@@ -46,6 +114,8 @@ which is worse than an honest gap: the page reads as done.
 
 - `canvas-and-previews__canvas-browser` — keep private paths, vault URLs, and signed-in site content out of frame.
 - `canvas-and-previews__canvas-multiview-pane`
+- `canvas-and-previews__emulator-canvas` — source-ahead fixed demo; open it from the right
+  Inspector's Canvas menu. Keep local source paths out of frame.
 - `canvas-and-previews__mesh-canvas` — capture a redacted exported scene; do not show local source paths or vault URLs.
 - `media-audio-and-video__chat-media-dock`
 - `media-audio-and-video__inline-transcript-media`

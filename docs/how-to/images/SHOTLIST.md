@@ -1,8 +1,8 @@
 # How-To Manual — Screenshot Shot List
 
-89 screenshots, one per feature guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
+90 screenshots, one per feature guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
 
-Current inventory, reconciled 2026-09-03: **61 captured, 28 pending**. See [`REMAINING.md`](REMAINING.md) for the unresolved set. The count is 89 feature guide pages minus the 28 with no capture on disk. Two shots were added on 2026-09-03 with the new `composer/ultratask.md` and `sidebar-navigation/project-references-studio.md` pages. One captured page is explicitly stale and is not trustworthy until recaptured.
+Current inventory, reconciled 2026-09-03 (second pass): **60 captured, 30 pending**, over 90 feature guide pages. Every page is covered by exactly one of an embedded image or a `screenshot-pending` marker. Two superseded PNGs are retained on disk without a referencing page; see [`REMAINING.md`](REMAINING.md), which also grades the captures that are on disk but stale.
 
 The current refresh uses latest-source development apps, not an installed release build. Existing captures can be replaced in place without changing the inventory count.
 
@@ -34,6 +34,7 @@ The current refresh uses latest-source development apps, not an installed releas
 | `canvas-and-previews__canvas-browser.png` | Electron | Canvas Browser in the right dock with the address bar and a loaded page | Open the right dock and select **Canvas**, or ask the agent to browse — a navigation request opens Canvas automatically in the active task. |
 | `canvas-and-previews__canvas-composer-button.png` | Electron | Canvas composer button in the telemetry row | It's an icon-only button in the composer's telemetry row (the footer icon cluster), next to the Multiview layout picker. |
 | `canvas-and-previews__canvas-multiview-pane.png` | Electron | Canvas multiview pane showing an embedded preview | Switch to a split multiview layout (2/3/4 panes) with the Multiview layout picker in the composer's telemetry row, then pick a surface card in an empty pane's Thread Home. |
+| `canvas-and-previews__emulator-canvas.png` | Electron | Homebrew Emulator demo running in the right Inspector Canvas dock | In a chat's right Inspector, open **Canvas** and choose **Homebrew Emulator**. Source-ahead feature. |
 | `canvas-and-previews__mesh-canvas.png` | Electron | Mesh Canvas dock with direct-model and scene-package import actions | Open the composer's **Canvas** menu, choose **Open Mesh Canvas**, then use the right-dock toolbar. |
 | `canvas-and-previews__ios-canvas-preview.png` | iOS | iOS canvas preview card in the companion app | Open a chat in the companion app that has an open Canvas on the desktop. |
 
@@ -51,7 +52,7 @@ The current refresh uses latest-source development apps, not an installed releas
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `composer__ensemble-mode-picker.png` | Electron | Composer ensemble mode picker showing Turn / Continuous options | In an **ensemble chat**, look at the **composer's action row** above the input box. |
+| `composer__ensemble-mode-picker.png` | Electron | Ensemble Orchestration Row showing the Fan-Out, Isolate, and Turns controls | In an **ensemble chat**, in the **Roster Presets** section above the composer input, on the second row. |
 | `composer__goal-button.png` | Electron | Composer goal button popover showing objective and status | In the **composer's telemetry row** (the icon row beneath the prompt box), next to the Screen Watch and schedule controls. |
 | `composer__plus-tools-menu.png` | Electron | Composer + tools menu expanded showing attachments, screen watch, and workspace tools | Click the **+ button** at the start of the composer's action row (next to the prompt input, identified by the plus icon). |
 | `composer__provider-model-permissions-pickers.png` | Electron | Composer inline pickers row with provider, model+reasoning, and permissions chips | In the **composer's inline pickers row**, just below the prompt input. |

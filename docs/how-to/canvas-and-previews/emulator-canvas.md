@@ -18,6 +18,8 @@ opens it as a full pane in a Multiview layout; the Inspector dock can also
 transfer an already-open dock session into a floating Canvas window. Neither
 entry point gives an agent permission to control a different chat's session.
 
+<!-- screenshot-pending: Homebrew Emulator demo running in the right Inspector Canvas dock -->
+
 ## Open and place the demo
 
 1. In a chat's right Inspector, open **Canvas** and choose **Homebrew
