@@ -8,6 +8,11 @@ import {
   type SurfaceChatHydratorDeps
 } from './chatSurfacePagedHydration'
 import { ChatTranscriptStore } from './chatTranscriptStore'
+import {
+  applySideChatLifecycle,
+  getSideChatLifecycleState,
+  isTerminatedSideChat
+} from './sideChatLifecycle'
 
 const OVER_BUDGET = DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 1
 
@@ -265,5 +270,124 @@ describe('createSurfaceChatHydrator', () => {
     expect(await hydrate('')).toBeNull()
     expect(fullHydrate).not.toHaveBeenCalled()
     expect(fetchPagedShell).not.toHaveBeenCalled()
+  })
+})
+
+describe('createSurfaceChatHydrator finalizePagedOpen (post-hydration parity)', () => {
+  // The full branch delegates to `fullHydrate`, which owns whatever
+  // post-hydration work its surface needs — the linked side chat's binding
+  // (`hydratePresentedSideChat`) hydrates and THEN applies
+  // `applySideChatLifecycle(source, 'active')`. The paged branch never calls
+  // `fullHydrate`, so without a counterpart injection point that transition is
+  // silently skipped for exactly the chats big enough to page: a side chat over
+  // the page budget would open and never be marked active.
+  function sideChatShell(chatId: string): ChatShell {
+    return {
+      ...shellOf(chatId, OVER_BUDGET),
+      parentChatId: 'parent-1',
+      parentChatRelation: 'sideChat'
+    } as ChatShell
+  }
+
+  it('runs finalizePagedOpen on the committed shell of a paged open', async () => {
+    const row = {
+      ...sideChatShell('side-big'),
+      transcriptPaged: undefined
+    } as unknown as ChatRecord
+    const finalizePagedOpen = vi.fn(
+      (shell: ChatRecord): ChatRecord => ({ ...shell, title: 'finalized' }) as ChatRecord
+    )
+    const { deps, commitPagedShell } = makeDeps({
+      resolveChat: () => row,
+      fetchPagedShell: async (chatId: string) => ({
+        shell: sideChatShell(chatId),
+        page: tailPage(chatId)
+      }),
+      finalizePagedOpen
+    })
+    const hydrate = createSurfaceChatHydrator(deps)
+
+    const result = await hydrate('side-big')
+
+    expect(finalizePagedOpen).toHaveBeenCalledTimes(1)
+    expect(finalizePagedOpen).toHaveBeenCalledWith(commitPagedShell.mock.results[0]?.value)
+    expect(result?.title).toBe('finalized')
+  })
+
+  it('applies the real side-chat lifecycle to a shell without losing its paging marker', async () => {
+    // Shell-safety, end to end: `applySideChatLifecycle` touches only
+    // `sideChatContext` chrome, which `buildChatShell` preserves, so the
+    // transition composes with a paged open instead of forcing full hydration.
+    const row = {
+      ...sideChatShell('side-real'),
+      transcriptPaged: undefined
+    } as unknown as ChatRecord
+    const { deps } = makeDeps({
+      resolveChat: () => row,
+      fetchPagedShell: async (chatId: string) => ({
+        shell: sideChatShell(chatId),
+        page: tailPage(chatId)
+      }),
+      finalizePagedOpen: (shell) =>
+        shell.parentChatRelation === 'sideChat' && !shell.archived && !isTerminatedSideChat(shell)
+          ? applySideChatLifecycle(shell, 'active')
+          : shell
+    })
+    const hydrate = createSurfaceChatHydrator(deps)
+
+    const result = await hydrate('side-real')
+
+    expect(getSideChatLifecycleState(result as ChatRecord)).toBe('active')
+    expect(result?.sideChatContext?.openedAt).toBeGreaterThan(0)
+    // Still a paged shell: the transition must not rehydrate or refill arrays.
+    expect(result?.transcriptPaged).toBe(true)
+    expect(result?.messages).toEqual([])
+    expect(result?.runs).toEqual([])
+  })
+
+  it('does NOT run finalizePagedOpen on the full-hydration branch', async () => {
+    // `fullHydrate` already owns its surface's post-step; running the paged
+    // counterpart here too would apply the transition twice.
+    const finalizePagedOpen = vi.fn((shell: ChatRecord) => shell)
+    const { deps, fullHydrate } = makeDeps({
+      resolveChat: () => summaryRow('small', 3),
+      finalizePagedOpen
+    })
+    const hydrate = createSurfaceChatHydrator(deps)
+
+    await hydrate('small')
+
+    expect(fullHydrate).toHaveBeenCalledTimes(1)
+    expect(finalizePagedOpen).not.toHaveBeenCalled()
+  })
+
+  it('does NOT re-run finalizePagedOpen for an already-open shell', async () => {
+    // Re-entry on a loaded shell is the idempotent early return; re-applying a
+    // lifecycle step there would re-stamp `openedAt` on every coordinator pass.
+    const shell = sideChatShell('side-open') as unknown as ChatRecord
+    const finalizePagedOpen = vi.fn((chat: ChatRecord) => chat)
+    const { deps, store } = makeDeps({ resolveChat: () => shell, finalizePagedOpen })
+    store.ingestPage(tailPage('side-open'))
+    const hydrate = createSurfaceChatHydrator(deps)
+
+    const result = await hydrate('side-open')
+
+    expect(result).toBe(shell)
+    expect(finalizePagedOpen).not.toHaveBeenCalled()
+  })
+
+  it('does NOT run finalizePagedOpen when a failed paged fetch falls back to full hydration', async () => {
+    const finalizePagedOpen = vi.fn((chat: ChatRecord) => chat)
+    const { deps, fullHydrate } = makeDeps({
+      resolveChat: () => summaryRow('big', OVER_BUDGET),
+      fetchPagedShell: async () => null,
+      finalizePagedOpen
+    })
+    const hydrate = createSurfaceChatHydrator(deps)
+
+    await hydrate('big')
+
+    expect(fullHydrate).toHaveBeenCalledTimes(1)
+    expect(finalizePagedOpen).not.toHaveBeenCalled()
   })
 })

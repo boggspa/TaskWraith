@@ -45,6 +45,23 @@ export interface SurfaceChatHydratorDeps {
    * install the shell record and ingest the tail page into the store.
    */
   commitPagedShell(shell: ChatShell, page: TranscriptPage): ChatRecord
+  /**
+   * Post-open step for the PAGED branch only, applied to the committed shell.
+   *
+   * The full branch delegates to `fullHydrate`, which owns whatever
+   * post-hydration work its surface needs — App's linked-side-chat binding
+   * (`hydratePresentedSideChat`) hydrates and THEN applies
+   * `applySideChatLifecycle(source, 'active')`. A paged open never calls
+   * `fullHydrate`, so a surface with such a step MUST supply its counterpart
+   * here or the step is silently skipped for exactly the chats big enough to
+   * page: a side chat over the page budget would open and never be marked
+   * active.
+   *
+   * Deliberately not applied on the full branch (it would run the step twice)
+   * nor on the already-open early return (a lifecycle step would re-stamp
+   * `openedAt` on every coordinator pass). Defaults to identity.
+   */
+  finalizePagedOpen?(shell: ChatRecord): ChatRecord
   /** Test seam; defaults to the shared pager's `hydratePagedChatShell`. */
   fetchPagedShell?(chatId: string, summaryRow: ChatRecord): Promise<PagedChatHydration | null>
 }
@@ -73,9 +90,10 @@ export function isSurfaceChatHydrated(chat: ChatRecord, store: ChatTranscriptSto
  *    it untouched. Makes direct calls (the pop-out boot) idempotent with the
  *    coordinator-gated calls (panes).
  * 2. Summary row over the page budget (`shouldPageTranscriptOnOpen`) → fetch
- *    shell + tail page, commit via `commitPagedShell`. Fetch failure or a
- *    missing page falls back to full hydration — paging is an optimisation,
- *    never a correctness gate.
+ *    shell + tail page, commit via `commitPagedShell`, then run the surface's
+ *    `finalizePagedOpen` counterpart to whatever post-step `fullHydrate` owns.
+ *    Fetch failure or a missing page falls back to full hydration — paging is
+ *    an optimisation, never a correctness gate.
  * 3. Everything else (small chats, ids the renderer has no row for) → full
  *    hydration, exactly as before.
  *
@@ -109,7 +127,8 @@ export function createSurfaceChatHydrator(
         paged = null
       }
       if (!paged) return deps.fullHydrate(chatId)
-      return deps.commitPagedShell(paged.shell, paged.page)
+      const committed = deps.commitPagedShell(paged.shell, paged.page)
+      return deps.finalizePagedOpen ? deps.finalizePagedOpen(committed) : committed
     })().finally(() => {
       pagedInFlight.delete(chatId)
     })
