@@ -388,6 +388,34 @@ function usageFromClaudeResult(value: unknown): HostProviderRunUsage | undefined
  * Adapter
  * ------------------------------------------------------------------ */
 
+/**
+ * Bounded turn watchdog. A provider child that neither exits nor errors used
+ * to pin the run at "running" forever — and the admission lease then wedged
+ * the whole thread. The deadline is generous by default so genuine mutation
+ * turns are never killed, env-configurable, and escalates SIGTERM → grace →
+ * SIGKILL (the grace mirrors the ACP FORCE_KILL_MS backstop).
+ */
+const CLAUDE_TURN_DEADLINE_ENV = 'TASKWRAITH_TURN_DEADLINE_MS'
+const CLAUDE_TURN_DEADLINE_DEFAULT_MS = 300_000
+const CLAUDE_TURN_KILL_GRACE_MS = 4_000
+/** Bounded evidence tail carried into the watchdog's failure summary. */
+const CLAUDE_TURN_OUTPUT_TAIL_CHARS = 500
+
+function resolveClaudeTurnDeadlineMs(override: number | undefined): number {
+  if (override !== undefined && Number.isFinite(override) && override > 0) {
+    return Math.floor(override)
+  }
+  const parsed = Number.parseInt(process.env[CLAUDE_TURN_DEADLINE_ENV] ?? '', 10)
+  if (Number.isFinite(parsed) && parsed > 0) return parsed
+  return CLAUDE_TURN_DEADLINE_DEFAULT_MS
+}
+
+function boundedOutputTail(text: string): string {
+  return text.length <= CLAUDE_TURN_OUTPUT_TAIL_CHARS
+    ? text
+    : text.slice(text.length - CLAUDE_TURN_OUTPUT_TAIL_CHARS)
+}
+
 type ActiveClaudeRun = {
   cancelled: boolean
   cancellationPublished: boolean
@@ -400,6 +428,8 @@ export interface HostNodeClaudeProviderOptions {
   readonly resources?: HostNodeProviderResourcePort
   readonly spawn?: HostNodeClaudeSpawn
   readonly now?: () => number
+  /** Test seam; production reads TASKWRAITH_TURN_DEADLINE_MS (default 300000). */
+  readonly turnDeadlineMs?: number
   readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   readonly probeAuth?: HostNodeClaudeAuthProbe
 }
@@ -410,11 +440,13 @@ export class HostNodeClaudeProvider implements HostNodeProviderInstance {
   private readonly resources: HostNodeProviderResourcePort
   private readonly spawnProcess: HostNodeClaudeSpawn
   private readonly now: () => number
+  private readonly turnDeadlineMs: number
 
   constructor(private readonly options: HostNodeClaudeProviderOptions) {
     this.resources = options.resources ?? createHostNodeProviderResourcePort(CLAUDE_PROVIDER_ID)
     this.spawnProcess = options.spawn ?? hostNodeClaudeSpawn
     this.now = options.now ?? (() => Date.now())
+    this.turnDeadlineMs = resolveClaudeTurnDeadlineMs(options.turnDeadlineMs)
   }
 
   private async probeAuthState(
@@ -515,6 +547,36 @@ export class HostNodeClaudeProvider implements HostNodeProviderInstance {
       active.cancelled = true
       active.handle?.kill('SIGTERM')
     }
+  }
+
+  /**
+   * Await the child's exit with the bounded turn deadline armed. On deadline
+   * the wedged child is escalated SIGTERM → grace → SIGKILL; the run then
+   * finishes failed with the watchdog summary instead of pinning the thread
+   * at "running" forever. A child that exits before the deadline is never
+   * signalled. Timers are unref'd so an armed watchdog never holds the
+   * process open.
+   */
+  private async awaitChildExit(handle: HostNodeClaudeSpawnHandle): Promise<{
+    readonly exit: { readonly code: number | null; readonly signal: string | null }
+    readonly exceeded: boolean
+  }> {
+    return new Promise((resolve) => {
+      let exceeded = false
+      let killTimer: ReturnType<typeof setTimeout> | undefined
+      const deadlineTimer = setTimeout(() => {
+        exceeded = true
+        handle.kill('SIGTERM')
+        killTimer = setTimeout(() => handle.kill('SIGKILL'), CLAUDE_TURN_KILL_GRACE_MS)
+        killTimer.unref?.()
+      }, this.turnDeadlineMs)
+      deadlineTimer.unref?.()
+      handle.exit.then((exit) => {
+        clearTimeout(deadlineTimer)
+        if (killTimer) clearTimeout(killTimer)
+        resolve({ exit, exceeded })
+      })
+    })
   }
 
   async run(request: HostNodeProviderRunRequest): Promise<HostNodeProviderRunResult> {
@@ -626,6 +688,8 @@ export class HostNodeClaudeProvider implements HostNodeProviderInstance {
 
       let carry = ''
       let assistantText = ''
+      let stdoutTail = ''
+      let stderrTail = ''
       let result: HostNodeClaudeResultSummary | null = null
       const warnings = new Set<string>()
 
@@ -648,6 +712,7 @@ export class HostNodeClaudeProvider implements HostNodeProviderInstance {
         cwd: thread.workspace.canonicalPath,
         env: hostNodeProviderEnvironment(process.env, { FORCE_COLOR: '0', NO_COLOR: '1' }),
         onStdout: (chunk) => {
+          stdoutTail = boundedOutputTail(stdoutTail + String(chunk))
           const parsed = parseHostNodeClaudeChunk(chunk, carry)
           carry = parsed.carry
           for (const line of parsed.lines) {
@@ -661,14 +726,22 @@ export class HostNodeClaudeProvider implements HostNodeProviderInstance {
           }
         },
         onStderr: (chunk) => {
+          stderrTail = boundedOutputTail(stderrTail + String(chunk))
           if (String(chunk).trim()) warnings.add('Claude reported stderr during the run.')
         }
       })
       active.handle = handle
       if (active.cancelled) handle.kill('SIGTERM')
 
-      const exit = await handle.exit
+      const { exit, exceeded } = await this.awaitChildExit(handle)
       const settled = result as HostNodeClaudeResultSummary | null
+      if (exceeded) {
+        warnings.add(
+          `Claude run exceeded the ${this.turnDeadlineMs}ms turn deadline; the wedged child ` +
+            `was terminated (SIGTERM, then SIGKILL after a ${CLAUDE_TURN_KILL_GRACE_MS}ms grace). ` +
+            `stdout tail: ${stdoutTail.trim() || '(empty)'} · stderr tail: ${stderrTail.trim() || '(empty)'}`
+        )
+      }
 
       const status: HostProviderRunTerminalStatus = active.cancelled
         ? 'cancelled'

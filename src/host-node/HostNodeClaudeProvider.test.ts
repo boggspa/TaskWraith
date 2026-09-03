@@ -123,6 +123,29 @@ function scriptedSpawn(script: {
   return { spawn, killed, captured }
 }
 
+/** Fake process that never exits on its own; kill() settles exit, as a real signal would. */
+function wedgedSpawn(script: { readonly stdout?: readonly string[] } = {}): {
+  spawn: HostNodeClaudeSpawn
+  killed: string[]
+} {
+  const killed: string[] = []
+  const spawn: HostNodeClaudeSpawn = (input) => {
+    for (const chunk of script.stdout ?? []) input.onStdout(chunk)
+    let settleExit: (exit: { code: number | null; signal: string | null }) => void = () => {}
+    const handle: HostNodeClaudeSpawnHandle = {
+      kill(signal) {
+        killed.push(String(signal))
+        settleExit({ code: null, signal: String(signal) })
+      },
+      exit: new Promise((resolve) => {
+        settleExit = resolve
+      })
+    }
+    return handle
+  }
+  return { spawn, killed }
+}
+
 function providerWith(
   runPort: FakeRunPort,
   spawn: HostNodeClaudeSpawn,
@@ -130,6 +153,7 @@ function providerWith(
   extra: {
     readonly terminalLauncher?: HostNodeProviderTerminalLauncher
     readonly probeAuth?: HostNodeClaudeAuthProbe
+    readonly turnDeadlineMs?: number
   } = {}
 ): HostNodeClaudeProvider {
   return new HostNodeClaudeProvider({
@@ -666,6 +690,96 @@ describe('HostNodeClaudeProvider run', () => {
     )
     await provider.run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hi', target: TARGET })
     await expect(provider.shutdown()).resolves.toBeUndefined()
+  })
+
+  it('fails a wedged child at the turn deadline with a legible watchdog summary', async () => {
+    // The observed production failure: the claude child neither exits nor
+    // errors, pinning the run at "running" forever. The watchdog must convert
+    // that into a failed run carrying the evidence tail.
+    const runPort = new FakeRunPort()
+    const { spawn, killed } = wedgedSpawn({ stdout: ['partial-output-marker\n'] })
+    const result = await providerWith(runPort, spawn, resourcePort(), {
+      turnDeadlineMs: 40
+    }).run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hi', target: TARGET })
+    expect(result.status).toBe('failed')
+    // SIGTERM closed the child, so the SIGKILL grace timer never fired.
+    expect(killed).toEqual(['SIGTERM'])
+    expect(runPort.finish?.status).toBe('failed')
+    expect(runPort.finish?.errorCode).toBe('provider_failed')
+    const summary = (runPort.finish?.warningSummaries ?? []).join('\n')
+    expect(summary).toContain('turn deadline')
+    expect(summary).toContain('partial-output-marker')
+  })
+
+  it('never signals a child that completes before the turn deadline', async () => {
+    const runPort = new FakeRunPort()
+    // Exit settles ~30ms in, well under the 120ms deadline. Waiting past the
+    // deadline afterwards proves the armed timer was genuinely cleared, not
+    // merely never reached.
+    const killed: string[] = []
+    const spawn: HostNodeClaudeSpawn = (input) => {
+      for (const chunk of SUCCESS_STREAM) input.onStdout(chunk)
+      return {
+        kill: (signal: NodeJS.Signals) => killed.push(String(signal)),
+        exit: new Promise<{ code: number | null; signal: string | null }>((resolve) => {
+          setTimeout(() => resolve({ code: 0, signal: null }), 30)
+        })
+      }
+    }
+    const result = await providerWith(runPort, spawn, resourcePort(), {
+      turnDeadlineMs: 120
+    }).run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hi', target: TARGET })
+    expect(result.status).toBe('completed')
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(killed).toEqual([])
+    expect(runPort.finish?.status).toBe('completed')
+  })
+
+  it('frees the thread for the next run after a watchdog kill', async () => {
+    // The wedged run must release everything it registered, or the thread is
+    // poisoned for every later send (the production thread_busy wedge).
+    const runPort = new FakeRunPort()
+    let invocation = 0
+    const killed: string[] = []
+    const spawn: HostNodeClaudeSpawn = (input) => {
+      invocation += 1
+      if (invocation === 1) {
+        let settleExit: (exit: { code: number | null; signal: string | null }) => void = () => {}
+        return {
+          kill(signal: NodeJS.Signals) {
+            killed.push(String(signal))
+            settleExit({ code: null, signal: String(signal) })
+          },
+          exit: new Promise<{ code: number | null; signal: string | null }>((resolve) => {
+            settleExit = resolve
+          })
+        }
+      }
+      for (const chunk of SUCCESS_STREAM) input.onStdout(chunk)
+      return {
+        kill: (signal: NodeJS.Signals) => killed.push(String(signal)),
+        exit: Promise.resolve({ code: 0, signal: null })
+      }
+    }
+    const provider = providerWith(runPort, spawn, resourcePort(), { turnDeadlineMs: 40 })
+
+    const wedged = await provider.run({
+      runId: 'run-wedged',
+      threadId: 'thread-1',
+      prompt: 'hi',
+      target: TARGET
+    })
+    expect(wedged.status).toBe('failed')
+    expect(killed).toContain('SIGTERM')
+
+    const healthy = await provider.run({
+      runId: 'run-2',
+      threadId: 'thread-1',
+      prompt: 'again',
+      target: TARGET
+    })
+    expect(healthy.status).toBe('completed')
+    expect(runPort.begins.map((entry) => entry.runId)).toEqual(['run-wedged', 'run-2'])
   })
 })
 
