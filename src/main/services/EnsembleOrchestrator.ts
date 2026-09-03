@@ -418,6 +418,35 @@ import {
 } from './EnsembleSeatRuntimePosture'
 
 export type EnsembleRunMode = 'normal' | 'queue' | 'steer'
+
+/**
+ * Rewind-from-message ("Edit & resend from here") restart hints for a
+ * replacement round started after the previous round was cancelled.
+ *
+ * The rewind flow is renderer-orchestrated (cancel → quiesce → truncate →
+ * re-dispatch), and cancel destroys every piece of rotation state
+ * (`activeParticipantId`, `remainingParticipants`, the runtime itself), so
+ * whatever the replacement round needs must be captured BEFORE the cancel and
+ * threaded through here.
+ */
+export interface EnsembleRewindRoundOptions {
+  /**
+   * Seat that was active when the round was cancelled. The replacement round
+   * resumes the rotation AT this seat and runs only the seats that were still
+   * waiting after it — seats earlier in the order already spoke this round,
+   * and re-running them would duplicate turns whose rows survived the
+   * truncation. Unknown/removed ids fail soft to the full roster order.
+   */
+  resumeFromParticipantId?: string
+  /**
+   * The edited anchor row was already rewritten in place by the transcript
+   * mutation, so the replacement round must NOT append a fresh
+   * `ensemble-user-*` prompt row — that would duplicate the message the user
+   * just edited.
+   */
+  suppressPromptEcho?: boolean
+}
+
 export type EnsembleQueuedSteerResult = {
   status: 'steered' | 'ignored'
   roundId?: string
@@ -5336,6 +5365,17 @@ export class EnsembleOrchestrator {
      * an interactive round that already owns the chat.
      */
     prepareFreshChat?: (chat: ChatRecord) => ChatRecord
+    /**
+     * Rewind-from-message ("Edit & resend from here") restart hints. Only
+     * meaningful together with `mode: 'steer'` on a chat whose round was just
+     * cancelled: the renderer captured the active seat BEFORE the cancel
+     * (cancel destroys the rotation state) and the anchor row was already
+     * rewritten in place, so the replacement round resumes the rotation
+     * instead of restarting from the roster top, skips the opening preamble
+     * (no scout/writer fan-out re-fire), and must not append a second copy of
+     * the edited prompt to the transcript.
+     */
+    rewind?: EnsembleRewindRoundOptions
   }): { status: 'started' | 'queued' | 'steered' | 'ignored' | 'busy'; roundId?: string } {
     if (input.prepareFreshChat && !input.requireFreshRound) {
       throw new Error('A prepared Ensemble chat requires fresh-round ownership.')
@@ -5527,7 +5567,10 @@ export class EnsembleOrchestrator {
       undefined,
       input.onRoundReserved,
       input.prepareFreshChat,
-      input.projectReferenceContextSelection
+      input.projectReferenceContextSelection,
+      // Rewind hints ride only with an explicit steer-mode restart; a normal
+      // send never carries them (the IPC handler enforces the same split).
+      input.mode === 'steer' ? input.rewind : undefined
     )
     return { status: 'started', roundId }
   }
@@ -16260,7 +16303,13 @@ export class EnsembleOrchestrator {
     startAfterCancellation?: Promise<unknown>,
     onRoundReserved?: (roundId: string) => void,
     prepareFreshChat?: (chat: ChatRecord) => ChatRecord,
-    projectReferenceContextSelection?: ProjectReferenceContextSelection
+    projectReferenceContextSelection?: ProjectReferenceContextSelection,
+    /**
+     * Rewind-from-message restart hints (see EnsembleRewindRoundOptions).
+     * Present only when this round REPLACES a cancelled one at the user's
+     * "edit & resend from here" gesture.
+     */
+    rewind?: EnsembleRewindRoundOptions
   ): string {
     const storedChat = this.deps.getChat(chatId)
     if (!storedChat?.ensemble) throw new Error('Ensemble chat not found.')
@@ -16290,7 +16339,23 @@ export class EnsembleOrchestrator {
         `Directed Ensemble target "${dmTargetParticipantId}" is no longer in the roster.`
       )
     }
-    const requestedParticipants = dmTargetParticipant ? [dmTargetParticipant] : orderedFull
+    // Rewind resume (contract v1.1, FORK A): the cancelled round's rotation
+    // state was destroyed with its runtime, so the renderer captured the
+    // active seat BEFORE cancelling and threads it through `rewind`. Resume
+    // the rotation AT that seat and run only the seats that were still
+    // waiting — seats earlier in the order already spoke this round, and
+    // re-running them from the roster top would duplicate turns whose rows
+    // survived the truncation. An unknown/removed id (roster changed since
+    // the capture) fails soft to the full order: a wider resume beats a
+    // thrown error mid-gesture.
+    const rewindResumeIndex = rewind?.resumeFromParticipantId
+      ? orderedFull.findIndex((participant) => participant.id === rewind.resumeFromParticipantId)
+      : -1
+    const rotationParticipants =
+      !dmTargetParticipant && rewindResumeIndex > 0
+        ? orderedFull.slice(rewindResumeIndex)
+        : orderedFull
+    const requestedParticipants = dmTargetParticipant ? [dmTargetParticipant] : rotationParticipants
     const backgroundMentionResolution = resolveBackgroundMentionRouting({
       text: prompt,
       participants: chat.ensemble.participants
@@ -16446,7 +16511,12 @@ export class EnsembleOrchestrator {
             ? `${prompt.slice(0, 30)}...`
             : prompt
           : chat.title,
-      messages: [...chat.messages, userMessage, ...toolMessages],
+      // Rewind echo suppression: the transcript mutation already rewrote the
+      // anchor row in place with the edited text, so appending the round's
+      // prompt row here would show the same message twice.
+      messages: rewind?.suppressPromptEcho
+        ? chat.messages
+        : [...chat.messages, userMessage, ...toolMessages],
       ensemble: {
         ...chat.ensemble,
         activeRound: round,
@@ -16564,9 +16634,15 @@ export class EnsembleOrchestrator {
       }
       void this.trackRoundActivity(
         runtime,
-        this.runRound(runtime, ordered, { backgroundParticipants }).catch((error) =>
-          this.failUnexpectedRound(runtime, error)
-        )
+        // A rewind-replacement round skips the opening preamble: no health
+        // re-probe, no background dispatch, and crucially no opening
+        // scout/writer fan-out re-fire (contract v1.1 — only a corrected
+        // chat-opening prompt re-fires the scout wave, and that re-enters
+        // through a NORMAL send, not this steer path).
+        this.runRound(runtime, ordered, {
+          backgroundParticipants,
+          ...(rewind ? { skipPreamble: true } : {})
+        }).catch((error) => this.failUnexpectedRound(runtime, error))
       )
     } catch (error) {
       this.failUnexpectedRound(runtime, error)
