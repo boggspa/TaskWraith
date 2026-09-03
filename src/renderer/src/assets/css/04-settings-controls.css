@@ -8515,3 +8515,32 @@ input:disabled, select:disabled, textarea:disabled {
 .shares-panel-full-history span {
   line-height: 1.35;
 }
+
+.settings-antigravity-transport-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.settings-antigravity-transport-section h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.settings-antigravity-transport-switch {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+.settings-antigravity-transport-switch input {
+  margin-top: 3px;
+}
