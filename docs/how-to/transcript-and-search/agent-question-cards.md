@@ -3,27 +3,23 @@
 **Platform:** Both
 
 ## What it is
-An agent question card is an inline prompt that appears in the transcript when an agent calls the `ask_user_question` tool mid-run to ask you something directly — a clarifying question, or a choice between a few options — instead of guessing and continuing.
-
-Managed Cursor can call `ask_user_question` when its TaskWraith tool gateway is
-active, just like other tool-capable seats. A visible native-only fallback turn
-cannot open a question card.
+An inline card that appears when an agent needs your input mid-run — a clarifying question or multiple-choice options.
 
 ## Where to find it
-The card appears automatically in the transcript, anchored next to the system message marking the question, whenever a participant asks one. You don't navigate to it — it surfaces inline in the chat you're already viewing, on both Electron and iOS.
+In the transcript, next to the system message that contains the question. Appears automatically on both Electron and iOS.
 
 <!-- screenshot-pending: Agent question card inline in the transcript -->
 
 ## How to use it
-1. When a card appears, read the question (and any extra context shown below it).
-2. If the agent offered options, click one to answer immediately.
-3. If you want to answer in your own words, click **Other…** (or, on iOS, type directly into the answer field) and enter free text.
-4. Submit your answer — on Electron, use ⌘/Ctrl+Enter in the text box or click **Send answer**; the answer also appears as your next message in the transcript.
-5. To skip without answering, dismiss the card with the **×** button or Escape — the agent's tool call resolves as cancelled and it continues without your input.
-6. If you leave a question untouched, it automatically expires after 10 minutes and the agent is told the question timed out.
+1. When a card appears, read the question and any context below it.
+2. If options are shown, click one to answer immediately.
+3. For a free-text answer, click **Other** or type directly (on iOS) and enter your response.
+4. Submit by pressing ⌘/Ctrl+Enter or clicking **Send answer**.
+5. To skip, dismiss with **×** or Escape — the agent continues without your input.
+6. Unanswered questions expire after 10 minutes and the agent is told it timed out.
 
 ## Tips & related
-- [Pending Approval Modal](../approvals-and-permissions/pending-approval-modal.md) — a related in-transcript prompt, but for approving tool actions rather than answering questions.
-- [Proposed Plan Cards](proposed-plan-cards.md) — another inline transcript card, shown when an agent proposes a plan for approval.
-- [Transcript Message Stream](transcript-message-stream.md) — the scrolling view these cards render inside.
-- [iOS Ensemble UI](../ensemble-mode/ios-ensemble-ui.md) — how inline cards like this behave in TaskWraith's iOS transcript.
+- [Pending Approval Modal](../approvals-and-permissions/pending-approval-modal.md) — related prompt for approving tool actions
+- [Proposed Plan Cards](proposed-plan-cards.md) — another inline card for plan approval
+- [Transcript Message Stream](transcript-message-stream.md) — the chat view these cards appear in
+- [iOS Ensemble UI](../ensemble-mode/ios-ensemble-ui.md) — how inline cards behave on iOS

@@ -3,23 +3,23 @@
 **Platform:** Electron
 
 ## What it is
-The activity stack is the collapsible list of tool calls (file reads, edits, shell commands, searches, web searches, reasoning traces) an agent performs during a turn. Consecutive same-type calls automatically fold into an expandable compact group (e.g. "Read 5 files") so a busy turn doesn't flood the transcript.
+A collapsible list of tool calls an agent makes during a turn. Similar calls group together to keep long runs tidy.
 
 ## Where to find it
-Renders inline in the transcript, beneath an agent's turn, wherever the agent used tools.
+In the transcript, under an agent's turn, wherever tools were used.
 
 ![Collapsible activity stack showing tool calls in the transcript](../images/transcript-and-search__activity-stack.png)
 
 ## How to use it
-1. Click a row (or a compact group's header) to expand it and see details — file path, command, search query, diff preview, or full output.
-2. Click an open row again to collapse it; by default opening a new row collapses the previous one.
-3. Hold ⌘ (or Shift) while clicking to keep multiple rows open at once instead of single-open mode.
-4. In an ensemble chat, watch for the "yielding to @\<name\>" row — it shows which participant is taking the next turn.
-5. Enable **Live activity viewport** in Settings → Appearance → Effects & Material → Density to stream activity in a bounded, auto-scrolling panel while the agent is actively working.
-6. Enable **Compact density** in the same section to collapse tool cards to a tighter one-line trace throughout the interface.
+1. Click a row to expand it and see details like file paths, commands, or search queries.
+2. Click an open row again to collapse it.
+3. Hold ⌘ or Shift while clicking to keep multiple rows open at once.
+4. In an ensemble, watch for the "yielding to @<name>" row to see which participant runs next.
+5. Turn on **Live activity viewport** in Settings → Appearance → Effects & Material → Density for a live scrolling view while the agent works.
+6. Turn on **Compact density** in the same place to make tool cards more compact.
 
 ## Tips & related
-- [Transcript message stream](transcript-message-stream.md) — the surrounding scroll the activity stack renders inside.
-- [Inspector panel](inspector-panel.md) — open the raw events / diff / timeline view for full untruncated detail.
-- [Diff hover preview](diff-hover-preview.md) — hover a file edit's diff preview without expanding the row.
-- [File changes row](file-changes-row.md) — the composer-area summary of files an agent changed during the chat.
+- [Transcript message stream](transcript-message-stream.md) — the main chat view the stack appears in
+- [Inspector panel](inspector-panel.md) — view raw events and full diffs
+- [Diff hover preview](diff-hover-preview.md) — preview a file diff without expanding
+- [File changes row](file-changes-row.md) — see all file changes for a chat

@@ -1,6 +1,6 @@
 # Transcript, Search & Rich Content
 
-This area covers the main chat transcript, message interactions, search, and the right-dock panels that surface run details, media, notes, and inspector tools.
+Guides for the main chat transcript, message interactions, and the right-dock panels.
 
 ## Guides
 

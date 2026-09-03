@@ -1,6 +1,6 @@
 # Goals, To-dos and Scheduling
 
-Overview of intent tracking, checklists, and time-based automation in TaskWraith.
+Guides for intent tracking, checklists, and time-based automation.
 
 ## Guides
 
