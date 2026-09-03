@@ -56,6 +56,7 @@ import {
   isExternalProviderThreadImportMessage
 } from '../../../shared/externalProviderThreadImport'
 import { shouldCollapseUserMessage, truncateUserMessagePreview } from '../lib/UserMessageCollapse'
+import { shouldOpenUserMessageEditor } from '../lib/userMessageEditHitTest'
 import {
   buildRunCompleteBlockers,
   formatWorkDurationMs,
@@ -6604,10 +6605,34 @@ export const TranscriptPanel = memo(
                               openMessageContextMenu(event, msg, msg.content, 'user message')
                             }
                             onClick={(event) => {
-                              // Only start editing on direct click (not on children like buttons)
-                              if (event.target === event.currentTarget && !editingMessageId && msg.role === 'user') {
-                                handleStartEditMessage(msg.id, msg.content || '')
+                              // Open the inline editor from a click anywhere in
+                              // the bubble, including the text body — the old
+                              // `target === currentTarget` guard never fired
+                              // there because the text renders inside a child
+                              // `.user-message-content` wrapper. Interactive
+                              // descendants (links, the collapse toggle, media
+                              // controls) and an active drag-selection stay
+                              // excluded via the pure hit-test above.
+                              if (msg.role !== 'user') return
+                              const target = event.target as HTMLElement | null
+                              const selection =
+                                typeof window !== 'undefined' ? window.getSelection() : null
+                              if (
+                                !shouldOpenUserMessageEditor({
+                                  alreadyEditing: editingMessageId !== null,
+                                  interactiveTarget: Boolean(
+                                    target?.closest?.(
+                                      'a, button, input, textarea, select, [role="button"]'
+                                    )
+                                  ),
+                                  hasTextSelection: Boolean(
+                                    selection && selection.toString().length > 0
+                                  )
+                                })
+                              ) {
+                                return
                               }
+                              handleStartEditMessage(msg.id, msg.content || '')
                             }}
                           >
                             {editingMessageId === msg.id ? (
@@ -7687,7 +7712,20 @@ export const TranscriptPanel = memo(
           onMessageFeedback={onMessageFeedback}
           onOpenSideChatFromMessage={onOpenSideChatFromMessage}
           onDeleteMessage={onDeleteMessage}
-          onEditAndResendFromHere={onEditAndResendFromHere}
+          // The menu item says "Edit & resend from here", so it must OPEN the
+          // inline editor — not fire the App orchestration handler directly.
+          // Forwarding `onEditAndResendFromHere` itself cancelled the run,
+          // truncated the transcript tail, and re-dispatched the ORIGINAL
+          // unedited text: irreversible transcript loss from a mislabelled
+          // control. The actual resend only happens through the editor's
+          // Save & Resend (handleSaveAndResend → editedContent). Panels whose
+          // App never wired the handler (multiview/side-chat) keep the item
+          // hidden, exactly as before.
+          onEditAndResendFromHere={
+            onEditAndResendFromHere
+              ? (messageId, content) => handleStartEditMessage(messageId, content)
+              : undefined
+          }
           onClose={closeMessageContextMenu}
         />
         <DiffHoverPreviewOverlay
