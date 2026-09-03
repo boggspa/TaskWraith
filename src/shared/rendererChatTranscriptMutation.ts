@@ -92,6 +92,12 @@ export function parseRendererChatTranscriptMutationRequest(
       if (typeof candidate.id !== 'string' || !candidate.id) return null
       continue
     }
+    if (candidate.op === 'truncateFrom') {
+      // Rewind: drop every row after the anchor. The anchor's own text edit
+      // travels as a separate `update` op ahead of this one.
+      if (typeof candidate.id !== 'string' || !candidate.id) return null
+      continue
+    }
     return null
   }
 

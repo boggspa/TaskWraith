@@ -30,6 +30,18 @@ export type ChatTranscriptOp =
   | { op: 'append'; messages: ChatMessage[] }
   | { op: 'update'; id: string; message: ChatMessage }
   | { op: 'delete'; id: string }
+  /**
+   * Rewind: drop every row AFTER `id`; the anchor row itself survives.
+   *
+   * A rewind can cut hundreds of rows, and expressing that as one delete per
+   * row costs an op per row on the wire and an O(rows) index rewrite per op on
+   * both sides. This states the intent once and applies in a single pass.
+   *
+   * Editing the anchor's own text is deliberately NOT part of this op — that is
+   * the existing `update`, so a rewind is `[update(anchor), truncateFrom(anchor)]`
+   * and the net new wire surface stays one member.
+   */
+  | { op: 'truncateFrom'; id: string }
 
 export interface ChatUpdateSubRevisions {
   ensembleRevision: number
@@ -614,6 +626,17 @@ export function applyChatTranscriptOps(
       for (let cursor = index; cursor < next.length; cursor += 1) {
         indexById.set(next[cursor].id, cursor)
       }
+      continue
+    }
+    if (op.op === 'truncateFrom') {
+      const index = indexById.get(op.id)
+      if (index === undefined) return null
+      // Surviving rows keep their indices, so only the dropped ids leave the
+      // map — no reindex pass, unlike the per-row delete this replaces.
+      for (let cursor = index + 1; cursor < next.length; cursor += 1) {
+        indexById.delete(next[cursor].id)
+      }
+      next.length = index + 1
       continue
     }
     return null

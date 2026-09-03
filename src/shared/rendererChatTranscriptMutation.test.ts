@@ -64,4 +64,35 @@ describe('rendererChatTranscriptMutation', () => {
       })
     ).toBeNull()
   })
+
+  it('decodes the rewind pair: anchor update followed by truncateFrom', () => {
+    const updated = message('anchor', 'edited prompt')
+    const request = {
+      version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+      chatId: 'chat-1',
+      baseRevision: 3,
+      transcriptOps: [
+        { op: 'update', id: updated.id, message: updated },
+        { op: 'truncateFrom', id: updated.id }
+      ]
+    }
+
+    expect(parseRendererChatTranscriptMutationRequest(request)).toBe(request)
+    expect(
+      parseRendererChatTranscriptMutationRequest({
+        ...request,
+        transcriptOps: [{ op: 'truncateFrom', id: '' }]
+      })
+    ).toBeNull()
+      expect(
+      parseRendererChatTranscriptMutationRequest({
+        ...request,
+        // Unknown op must stay rejected. No @ts-expect-error here: the parser
+        // takes `unknown`, so an unknown op is not a compile-time error and
+        // the directive would itself fail the build (TS2578). The runtime
+        // null assertion below is the actual coverage.
+        transcriptOps: [{ op: 'truncate', id: updated.id }]
+      })
+    ).toBeNull()
+  })
 })
