@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import {
+  ANTIGRAVITY_ACP_LANE_NOT_CONNECTED_MESSAGE,
+  ANTIGRAVITY_ACP_TRANSPORT_DISABLED_MESSAGE,
+  ANTIGRAVITY_ACP_TURN_UNAVAILABLE_MESSAGE,
   dispatchAntigravityCombinedMode,
+  isAntigravityAcpModelCandidate,
   isAntigravityGeminiApiModelCandidate,
   type AntigravityCombinedModeDispatchDependencies
 } from './AntigravityCombinedModeDispatch'
@@ -21,6 +25,7 @@ type Capture = {
   errors: string[]
   exits: Array<number | null>
   finishes: Array<{ runId: string | undefined; status: string }>
+  terminalOrder: string[]
   sessionRegistrations: Array<{ appChatId?: string; appRunId?: string }>
 }
 
@@ -50,6 +55,7 @@ function createDeps(overrides: Partial<AntigravityCombinedModeDispatchDependenci
     errors: [],
     exits: [],
     finishes: [],
+    terminalOrder: [],
     sessionRegistrations: []
   }
 
@@ -62,12 +68,15 @@ function createDeps(overrides: Partial<AntigravityCombinedModeDispatchDependenci
       capture.agentTurnCalls.push({ payload, route: { ...route } })
     },
     sendAgentCompatError: (_sender, _provider, message) => {
+      capture.terminalOrder.push('error')
       capture.errors.push(message)
     },
     sendAgentCompatExit: (_sender, _provider, code) => {
+      capture.terminalOrder.push('exit')
       capture.exits.push(code)
     },
     finishRun: (runId, status) => {
+      capture.terminalOrder.push('finish')
       capture.finishes.push({ runId, status })
     },
     runAgyProvider: async (_event, payload) => {
@@ -288,5 +297,144 @@ describe('dispatchAntigravityCombinedMode', () => {
     delete (payload as unknown as Record<string, unknown>).appRunId
     await dispatchAntigravityCombinedMode(mockEvent(), payload, absentDeps)
     expect(absentCapture.agentTurnCalls[0]?.route).toEqual({})
+  })
+})
+
+const ACP_MODEL = 'antigravity-acp:gemini-3-pro'
+
+describe('isAntigravityAcpModelCandidate', () => {
+  it('admits exact, case-variant, whitespace, and malformed-separator namespace candidates', () => {
+    expect(isAntigravityAcpModelCandidate(ACP_MODEL)).toBe(true)
+    expect(isAntigravityAcpModelCandidate('antigravity-acp:claude-3')).toBe(true)
+    expect(isAntigravityAcpModelCandidate(' Antigravity-ACP:gemini-3-pro')).toBe(true)
+    expect(isAntigravityAcpModelCandidate('antigravity-acp :gemini-3-pro')).toBe(true)
+    expect(isAntigravityAcpModelCandidate('ANTIGRAVITY-ACP:gemini-3-pro')).toBe(true)
+    expect(isAntigravityAcpModelCandidate('\tantigravity-acp:gemini-3-pro\n')).toBe(true)
+    // Colonless / space-delimited variants must also quarantine (never reach agy).
+    expect(isAntigravityAcpModelCandidate('antigravity-acp')).toBe(true)
+    expect(isAntigravityAcpModelCandidate('ANTIGRAVITY-ACP')).toBe(true)
+    expect(isAntigravityAcpModelCandidate('antigravity-acp gemini-3-pro')).toBe(true)
+    expect(isAntigravityAcpModelCandidate('antigravity-acp/gemini-3-pro')).toBe(true)
+  })
+
+  it('leaves ordinary models and alphanumeric/hyphen continuations on the agy lane', () => {
+    expect(isAntigravityAcpModelCandidate('gemini-2.5-flash')).toBe(false)
+    expect(isAntigravityAcpModelCandidate('gemini-api:gemini-2.5-flash')).toBe(false)
+    expect(isAntigravityAcpModelCandidate('claude-sonnet-4')).toBe(false)
+    expect(isAntigravityAcpModelCandidate('cli-default')).toBe(false)
+    expect(isAntigravityAcpModelCandidate('')).toBe(false)
+    expect(isAntigravityAcpModelCandidate(undefined)).toBe(false)
+    expect(isAntigravityAcpModelCandidate(null)).toBe(false)
+    // Token-boundary: alphanumeric or hyphen continuation must NOT quarantine.
+    expect(isAntigravityAcpModelCandidate('antigravity-acpx')).toBe(false)
+    expect(isAntigravityAcpModelCandidate('antigravity-acp2')).toBe(false)
+    expect(isAntigravityAcpModelCandidate('antigravity-acp-extra')).toBe(false)
+  })
+})
+
+describe('dispatchAntigravityCombinedMode official-ACP lane', () => {
+  it('terminalizes with enable-the-switch copy when the transport switch dep is absent or false', async () => {
+    for (const isAcpTransportEnabled of [undefined, () => false]) {
+      const { deps, capture } = createDeps({ isAcpTransportEnabled })
+      await dispatchAntigravityCombinedMode(mockEvent(), basePayload({ model: ACP_MODEL }), deps)
+
+      expect(capture.errors).toEqual([ANTIGRAVITY_ACP_TRANSPORT_DISABLED_MESSAGE])
+      expect(capture.exits).toEqual([1])
+      expect(capture.finishes).toEqual([{ runId: RUN_ID, status: 'failed' }])
+      // Exit seals the renderer run and finish releases persistence authority,
+      // so the terminal order is part of the contract.
+      expect(capture.terminalOrder).toEqual(['error', 'exit', 'finish'])
+      // Never falls through to another lane.
+      expect(capture.agyCalls).toEqual([])
+      expect(capture.agentTurnCalls).toEqual([])
+      expect(capture.sessionRegistrations).toEqual([{ appRunId: RUN_ID, appChatId: CHAT_ID }])
+    }
+  })
+
+  it('terminalizes with not-connected copy when the switch is on but no provider is wired', async () => {
+    const { deps, capture } = createDeps({ isAcpTransportEnabled: () => true })
+    await dispatchAntigravityCombinedMode(mockEvent(), basePayload({ model: ACP_MODEL }), deps)
+
+    expect(capture.errors).toEqual([ANTIGRAVITY_ACP_LANE_NOT_CONNECTED_MESSAGE])
+    expect(capture.exits).toEqual([1])
+    expect(capture.finishes).toEqual([{ runId: RUN_ID, status: 'failed' }])
+    expect(capture.terminalOrder).toEqual(['error', 'exit', 'finish'])
+    expect(capture.agyCalls).toEqual([])
+    expect(capture.agentTurnCalls).toEqual([])
+  })
+
+  it('routes enabled, wired ACP candidates to the official provider with exact payload and route', async () => {
+    const acpCalls: Array<{
+      payload: AgentRunPayload
+      route: { appChatId?: string; appRunId?: string }
+    }> = []
+    const { deps, capture } = createDeps({
+      isAcpTransportEnabled: () => true,
+      runOfficialAcpProvider: async (_event, payload, route) => {
+        acpCalls.push({ payload, route: { ...route } })
+      }
+    })
+    const payload = basePayload({ model: ACP_MODEL })
+    await dispatchAntigravityCombinedMode(mockEvent(), payload, deps)
+
+    expect(acpCalls).toHaveLength(1)
+    expect(acpCalls[0]?.payload).toBe(payload)
+    expect(acpCalls[0]?.route).toEqual({ appRunId: RUN_ID, appChatId: CHAT_ID })
+    // The provider owns its lifecycle — dispatch adds no terminal projections.
+    expect(capture.errors).toEqual([])
+    expect(capture.exits).toEqual([])
+    expect(capture.finishes).toEqual([])
+    expect(capture.agyCalls).toEqual([])
+    expect(capture.agentTurnCalls).toEqual([])
+    expect(capture.sessionRegistrations).toEqual([{ appRunId: RUN_ID, appChatId: CHAT_ID }])
+  })
+
+  it('recovers a fixed-copy terminal exactly once when the official provider throws', async () => {
+    const { deps, capture } = createDeps({
+      isAcpTransportEnabled: () => true,
+      runOfficialAcpProvider: async () => {
+        throw new Error('private detail must not escape')
+      }
+    })
+    await dispatchAntigravityCombinedMode(mockEvent(), basePayload({ model: ACP_MODEL }), deps)
+
+    expect(capture.errors).toEqual([ANTIGRAVITY_ACP_TURN_UNAVAILABLE_MESSAGE])
+    expect(capture.exits).toEqual([1])
+    expect(capture.finishes).toEqual([{ runId: RUN_ID, status: 'failed' }])
+    expect(capture.terminalOrder).toEqual(['error', 'exit', 'finish'])
+    expect(JSON.stringify(capture)).not.toContain('private detail')
+  })
+
+  it('completes ACP recovery even when individual terminal projections throw', async () => {
+    const { deps, capture } = createDeps({
+      isAcpTransportEnabled: () => true,
+      runOfficialAcpProvider: async () => {
+        throw new Error('turn died')
+      },
+      sendAgentCompatError: () => {
+        throw new Error('error channel down')
+      },
+      sendAgentCompatExit: () => {
+        throw new Error('exit channel down')
+      }
+    })
+    await dispatchAntigravityCombinedMode(mockEvent(), basePayload({ model: ACP_MODEL }), deps)
+    expect(capture.finishes).toEqual([{ runId: RUN_ID, status: 'failed' }])
+  })
+
+  it('keeps malformed ACP candidates off the agy lane even with the switch off', async () => {
+    const malformed = [
+      'antigravity-acp',
+      ' ANTIGRAVITY-ACP ',
+      'antigravity-acp :bad',
+      'antigravity-acp gemini-3-pro'
+    ]
+    for (const model of malformed) {
+      const { deps, capture } = createDeps()
+      await dispatchAntigravityCombinedMode(mockEvent(), basePayload({ model }), deps)
+      expect(capture.agyCalls).toEqual([])
+      expect(capture.agentTurnCalls).toEqual([])
+      expect(capture.errors).toEqual([ANTIGRAVITY_ACP_TRANSPORT_DISABLED_MESSAGE])
+    }
   })
 })
