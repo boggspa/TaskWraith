@@ -36795,6 +36795,32 @@ async function cancelExplicitParentRun(provider: ProviderId, runId?: string): Pr
   return result.parentCancelled
 }
 
+/**
+ * Ensemble participant/lane cancellation.
+ *
+ * Every ensemble cancel called the provider adapter directly. That stops the
+ * participant transport but leaves every execution graph and sub-thread that
+ * run had initiated still running: they are owned by the run, not the round,
+ * and nothing else tore them down. Cancelling a round therefore leaked the
+ * chained work the user asked to stop.
+ *
+ * Routing through the explicit-stop cascade fixes every ensemble cancel site
+ * at once (round cancel, skip participant, skip read fan-out, skip lane).
+ *
+ * The bare adapter cancel stays as a fallback so this is never WEAKER than
+ * what it replaced: the cascade declines when another path already claimed
+ * the run terminal status, and a claim is not proof the transport stopped.
+ * Provider cancel is idempotent, so the extra call is safe.
+ */
+async function cancelEnsembleParticipantRun(
+  provider: ProviderId,
+  runId?: string
+): Promise<boolean> {
+  const cascaded = await cancelExplicitParentRun(provider, runId)
+  if (cascaded) return true
+  return providerAdapters.require(provider).cancel(runId)
+}
+
 async function readCliVersion(command: string): Promise<string> {
   const provider = availableProviderIds().includes(command as ProviderId)
     ? (command as ProviderId)
@@ -60468,7 +60494,7 @@ if (isGeminiMcpBridgeProcess) {
       },
       shouldPersistProviderSessionForRun,
       releaseProviderSessionPersistenceDecision,
-      cancelRun: (provider, runId) => providerAdapters.require(provider).cancel(runId),
+      cancelRun: (provider, runId) => cancelEnsembleParticipantRun(provider, runId),
       getProviderRunTransportLiveness: (runId) =>
         cursorTransportLivenessFromRunSession(runManager.get(runId)),
       hasPendingProviderRunApprovals: (runId) => {
@@ -60972,6 +60998,15 @@ if (isGeminiMcpBridgeProcess) {
           externalPathGrants?: ExternalPathGrant[]
           scheduledTaskId?: string
           projectReferenceContextSelection?: unknown
+          /**
+           * Rewind-from-message ("Edit & resend from here") restart hints,
+           * honoured only with `mode: 'steer'` — see
+           * EnsembleRewindRoundOptions on the orchestrator.
+           */
+          rewind?: {
+            resumeFromParticipantId?: unknown
+            suppressPromptEcho?: unknown
+          }
         }
       ) => {
         if (AppStore.getSettings().ensembleModeEnabled === false) {
@@ -61049,6 +61084,30 @@ if (isGeminiMcpBridgeProcess) {
         if (dmTargetError) throw new Error(dmTargetError)
         const dmTargetParticipantId =
           dmTargetResolution.kind === 'target' ? dmTargetResolution.participantId : undefined
+        // Rewind-from-message restart hints (steer-mode only). Both fields are
+        // advisory routing hints, never authority: MAIN re-resolves the seat id
+        // against the canonical roster inside beginRound and fails soft to the
+        // full rotation order, and a resolved DM target already scopes the
+        // round to one seat, which makes a resume anchor meaningless.
+        const rewindInput = payload?.mode === 'steer' ? payload?.rewind : undefined
+        const rewindResumeFromParticipantId =
+          typeof rewindInput?.resumeFromParticipantId === 'string' &&
+          rewindInput.resumeFromParticipantId.trim().length > 0 &&
+          !dmTargetParticipantId
+            ? rewindInput.resumeFromParticipantId.trim()
+            : undefined
+        const rewind =
+          rewindInput &&
+          (rewindResumeFromParticipantId || rewindInput.suppressPromptEcho === true)
+            ? {
+                ...(rewindResumeFromParticipantId
+                  ? { resumeFromParticipantId: rewindResumeFromParticipantId }
+                  : {}),
+                ...(rewindInput.suppressPromptEcho === true
+                  ? { suppressPromptEcho: true as const }
+                  : {})
+              }
+            : undefined
         // Mid-run steering: any steer into a LIVE round is absorbed — appended
         // immediately and delivered at the next hop — instead of cancelling
         // the active speaker and restarting. Attachments / DM / grants /
@@ -61103,7 +61162,8 @@ if (isGeminiMcpBridgeProcess) {
           ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
           ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
           ...(externalPathGrants.length > 0 ? { externalPathGrants } : {}),
-          ...(projectReferenceContextSelection ? { projectReferenceContextSelection } : {})
+          ...(projectReferenceContextSelection ? { projectReferenceContextSelection } : {}),
+          ...(rewind ? { rewind } : {})
         })
         if (
           ensembleStartResult?.status === 'started' ||
