@@ -388,6 +388,19 @@ function isSetupMutationName(name: HostCommand['name']): boolean {
   )
 }
 
+/**
+ * An offer set a send can actually be validated against: at least one runnable
+ * model. A failed dynamic refresh collapses to an empty/unavailable
+ * projection, which must not be mistaken for a set worth validating against —
+ * and, at the extreme, a provider genuinely reporting no runnable models fails
+ * its send later at run start with the provider's own honest refusal.
+ */
+function offersAreRunnable(
+  offers: HostProviderOffersProjection | null | undefined
+): offers is HostProviderOffersProjection {
+  return Boolean(offers && offers.models.some((model) => model.available))
+}
+
 export class HostNodeDomainPorts {
   readonly runPort: HostNodeProfileRunPort
   readonly registry: HostNodeProviderRegistry
@@ -398,6 +411,10 @@ export class HostNodeDomainPorts {
   private readonly authOperations = new Map<string, AuthOperation>()
   private readonly runCompletions = new Map<string, Promise<void>>()
   private readonly runAdmission: HostNodeRunAdmission
+  /** Last offer set per provider that actually named runnable models. */
+  private readonly lastKnownRunnableOffers = new Map<string, HostProviderOffersProjection>()
+  /** Threads already told a send was validated against last-known offers. */
+  private readonly staleOfferNotices = new Set<string>()
   private readonly now: () => number
   private shutdownPromise: Promise<{
     readonly stopped: true
@@ -509,7 +526,11 @@ export class HostNodeDomainPorts {
 
   private cachedProviderOffers(providerId: string): HostProviderOffersProjection | null {
     const base = this.registry.getOffers(providerId)
-    return base ? this.effectiveProviderOffers(base) : null
+    // When the registry cache holds a collapsed post-failure projection, fall
+    // back to the last offer set that named runnable models so the send gate
+    // validates against known offers instead of a transient refresh outage.
+    const usable = offersAreRunnable(base) ? base : this.lastKnownRunnableOffers.get(providerId)
+    return usable ? this.effectiveProviderOffers(usable) : null
   }
 
   private effectiveProviderOffers(
@@ -1072,10 +1093,45 @@ export class HostNodeDomainPorts {
     if (command.name !== 'composer.send' || !localContext(context, command)) return true
     const providerId = this.options.store.getThread(command.target.threadId)?.provider
     if (!isCanonicalId(providerId)) return true
+    const cached = this.registry.getOffers(providerId)
+    if (offersAreRunnable(cached)) this.lastKnownRunnableOffers.set(providerId, cached)
+    let refreshed: HostProviderOffersProjection | undefined
     try {
-      return Boolean(await this.registry.refreshOffers(providerId))
+      refreshed = await this.registry.refreshOffers(providerId)
     } catch {
-      return false
+      refreshed = undefined
+    }
+    if (offersAreRunnable(refreshed)) {
+      this.lastKnownRunnableOffers.set(providerId, refreshed)
+      for (const key of [...this.staleOfferNotices]) {
+        if (key.startsWith(`${providerId} `)) this.staleOfferNotices.delete(key)
+      }
+      return true
+    }
+    // A transient refresh failure (a briefly unreachable local daemon, an auth
+    // blip) must not kill a send for models this Host already knows. Validate
+    // against the last-known-good offer set instead — but only when one
+    // exists: with nothing cached the state is genuinely unknown and the send
+    // stays fail-closed.
+    if (!this.lastKnownRunnableOffers.has(providerId)) return false
+    this.noteStaleOfferValidation(providerId, command.target.threadId)
+    return true
+  }
+
+  private noteStaleOfferValidation(providerId: string, threadId: string): void {
+    const key = `${providerId} ${threadId}`
+    if (this.staleOfferNotices.has(key)) return
+    if (this.staleOfferNotices.size >= 1_024) this.staleOfferNotices.clear()
+    this.staleOfferNotices.add(key)
+    try {
+      this.options.store.appendTranscript({
+        threadId,
+        role: 'system',
+        content:
+          'Provider catalogue refresh failed · this send was validated against the last known offer set.'
+      })
+    } catch {
+      // Best effort: the gate decision does not depend on the notice.
     }
   }
 

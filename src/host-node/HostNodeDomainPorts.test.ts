@@ -1601,6 +1601,161 @@ describe('HostNodeDomainPorts', () => {
     ).toBe(true)
   })
 
+  it('validates a send against last-known offers when a live refresh fails', async () => {
+    // Every composer.send triggers a live offer refresh, and for providers
+    // whose catalogue probe is a local daemon call a transient failure used to
+    // kill the send: the refresh collapses the registry cache to an empty
+    // unavailable projection, and the gate then rejects the staged model the
+    // client legitimately holds. With a cached offer set the Host must
+    // validate against that last-known-good set instead — and say so.
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    let releaseRun: (() => void) | undefined
+    const pending = new Promise<void>((resolve) => {
+      releaseRun = resolve
+    })
+    const holder: { domain?: HostNodeDomainPorts } = {}
+    const flakyCatalogProvider: HostNodeProviderInstance = {
+      providerId: 'muse',
+      getOffers: async () => {
+        throw new Error('daemon unreachable')
+      },
+      getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+      getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
+      run: async (input: HostNodeProviderRunRequest) => {
+        holder.domain!.runPort.beginRun({
+          runId: input.runId,
+          threadId: input.threadId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          startedAt: '2026-08-24T05:00:00.000Z'
+        })
+        holder.domain!.runPort.appendTranscript({
+          threadId: input.threadId,
+          runId: input.runId,
+          role: 'user',
+          text: input.prompt,
+          createdAt: '2026-08-24T05:00:00.000Z'
+        })
+        await pending
+        return { runId: input.runId, status: 'completed', sessionId: SESSION_ID, exitCode: 0 }
+      },
+      cancel: () => true,
+      shutdown: async () => undefined
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUSE',
+          offers: museOffers,
+          supportsApprovals: false,
+          supportsQuestions: false,
+          create: () => flakyCatalogProvider
+        }
+      ]
+    })
+    holder.domain = domain
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-stale-offers',
+          { threadId: thread.appChatId },
+          { text: 'still runnable', model: 'muse-spark-1.2' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    releaseRun?.()
+    await domain.shutdown()
+    expect(
+      store
+        .getThread(thread.appChatId)
+        ?.messages.some(
+          (message) =>
+            message.role === 'system' &&
+            message.content ===
+              'Provider catalogue refresh failed · this send was validated against the last known offer set.'
+        )
+    ).toBe(true)
+  })
+
+  it('stays fail-closed when a refresh fails and no runnable offers were ever cached', async () => {
+    // Last-known-good is a bounded relaxation, not an open door: when the
+    // provider never produced a usable offer set this session, a failed
+    // refresh leaves the state genuinely unknown and the send is denied.
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    const unreachableProvider: HostNodeProviderInstance = {
+      providerId: 'muse',
+      getOffers: async () => {
+        throw new Error('daemon unreachable')
+      },
+      getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+      getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
+      run: async () => {
+        throw new Error('the run must never start without known offers')
+      },
+      cancel: () => true,
+      shutdown: async () => undefined
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUSE',
+          offers: { ...museOffers, offerRevision: 'muse-offer-empty', models: [] },
+          supportsApprovals: false,
+          supportsQuestions: false,
+          create: () => unreachableProvider
+        }
+      ]
+    })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-no-known-offers',
+          { threadId: thread.appChatId },
+          { text: 'go' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'failed', errorCode: 'provider_offers_unavailable' })
+    await domain.shutdown()
+  })
+
   it('hands Mistral a bounded transcript for cold sessions, without Host notices in it', async () => {
     // Vibe opens a fresh process per turn. When its native session cannot be
     // resumed the provider prompts with this bounded transcript instead, so a
