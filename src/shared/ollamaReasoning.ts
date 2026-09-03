@@ -296,7 +296,15 @@ export function isOllamaThinkingLevel(value: unknown): value is OllamaThinkingLe
 /** Ladder tokens that mean "as little reasoning as possible". */
 const OFF_TOKENS = new Set(['off', 'false', 'none', 'minimal'])
 /** Ladder tokens above the highest named level TaskWraith shows per provider. */
-const TOP_TOKENS = new Set(['xhigh', 'max', 'maximum', 'ultra', 'ultracode', 'ultratask'])
+const TOP_TOKENS = new Set([
+  'xhigh',
+  'max',
+  'maximum',
+  'ultra',
+  'ultracode',
+  'persistent',
+  'ultratask'
+])
 
 /**
  * True when `value` is a ladder token this module knows how to fold.

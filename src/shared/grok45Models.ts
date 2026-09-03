@@ -1,3 +1,4 @@
+import { isAboveXhighReasoningEffort } from './reasoningEffortLadder'
 export const GROK_45_MODEL_ID = 'grok-4.5'
 export const GROK_45_LATEST_MODEL_ID = 'grok-4.5-latest'
 export const GROK_BUILD_LATEST_MODEL_ID = 'grok-build-latest'
@@ -62,7 +63,7 @@ export function normalizeGrok45ReasoningEffort(
 ): string {
   const effort = String(value || '').trim().toLowerCase()
   // Top-of-ladder tiers clamp to Grok 4.5's 'high' ceiling.
-  if (effort === 'ultra' || effort === 'ultracode' || effort === 'ultratask' || effort === 'max') {
+  if (isAboveXhighReasoningEffort(effort)) {
     return 'high'
   }
   return effort === 'low' || effort === 'medium' || effort === 'high' ? effort : fallback
@@ -74,7 +75,7 @@ export function normalizeGrok46ReasoningEffort(
 ): string {
   const effort = String(value || '').trim().toLowerCase()
   // Top-of-ladder tiers clamp to Grok 4.6's 'xhigh' ceiling.
-  if (effort === 'ultra' || effort === 'ultracode' || effort === 'ultratask' || effort === 'max') {
+  if (isAboveXhighReasoningEffort(effort)) {
     return 'xhigh'
   }
   return effort === 'low' || effort === 'medium' || effort === 'high' || effort === 'xhigh'

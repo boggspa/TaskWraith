@@ -3,6 +3,7 @@ import {
   CODEX_RESERVE_MODEL_ID,
   codexReserveGrantActive,
   filterCodexDiscoverableModelRows,
+  isCodexDaybreakModelId,
   isCodexReserveLimitName,
   isCodexReserveModelId
 } from './codexReserveModel'
@@ -140,5 +141,55 @@ describe('Codex reserve limit naming', () => {
     expect(isCodexReserveLimitName('codex_bengalfox')).toBe(false)
     expect(isCodexReserveLimitName('GPT-5.3-Codex-Spark')).toBe(false)
     expect(isCodexReserveLimitName(undefined)).toBe(false)
+  })
+})
+
+describe('Codex Daybreak cyber models', () => {
+  // Released models behind a conditional account flag. Codex CLI 0.153.0 ships
+  // both slugs; an unentitled account is served neither, so presence is the
+  // entitlement check.
+  const DAYBREAK_ROWS = [
+    { id: 'gpt-daybreak-blue-latest', hidden: true },
+    { id: 'gpt-daybreak-red-latest', hidden: true },
+    { id: 'gpt-5.6-sol', hidden: false },
+    { id: 'codex-auto-review', hidden: true }
+  ]
+
+  it('identifies both released slugs and pinned siblings', () => {
+    expect(isCodexDaybreakModelId('gpt-daybreak-blue-latest')).toBe(true)
+    expect(isCodexDaybreakModelId('gpt-daybreak-red-latest')).toBe(true)
+    expect(isCodexDaybreakModelId('  GPT-Daybreak-Red-Latest  ')).toBe(true)
+    expect(isCodexDaybreakModelId('gpt-daybreak-blue-2026-09-03')).toBe(true)
+    expect(isCodexDaybreakModelId('gpt-5.6-sol')).toBe(false)
+    expect(isCodexDaybreakModelId('gpt-reserve')).toBe(false)
+    expect(isCodexDaybreakModelId('daybreak')).toBe(false)
+    expect(isCodexDaybreakModelId(null)).toBe(false)
+  })
+
+  it('offers Daybreak rows whenever the account is served them', () => {
+    for (const reserveGrantActive of [true, false]) {
+      const kept = filterCodexDiscoverableModelRows(DAYBREAK_ROWS, { reserveGrantActive })
+      expect(kept.map((row) => row.id)).toEqual([
+        'gpt-daybreak-blue-latest',
+        'gpt-daybreak-red-latest',
+        'gpt-5.6-sol'
+      ])
+    }
+  })
+
+  it('still drops the internal review model alongside them', () => {
+    const kept = filterCodexDiscoverableModelRows(DAYBREAK_ROWS, { reserveGrantActive: true })
+    expect(kept.map((row) => row.id)).not.toContain('codex-auto-review')
+    expect(kept.length).toBe(3)
+  })
+
+  it('offers nothing extra to an account the server did not serve them to', () => {
+    const unentitled = [
+      { id: 'gpt-5.6-sol', hidden: false },
+      { id: 'codex-auto-review', hidden: true }
+    ]
+    expect(
+      filterCodexDiscoverableModelRows(unentitled, { reserveGrantActive: false }).map((r) => r.id)
+    ).toEqual(['gpt-5.6-sol'])
   })
 })

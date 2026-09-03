@@ -21,6 +21,10 @@ import {
   isCursorGrokModelId
 } from '../../shared/grok45Models'
 import { activeCodexModelRows, isCodexModelRetired } from '../../shared/codexModelLifecycle'
+import {
+  isAboveXhighReasoningEffort,
+  sortByReasoningEffortLadder
+} from '../../shared/reasoningEffortLadder'
 import { activePiModelRows } from '../../shared/piModelLifecycle'
 import { resolvePiReasoningSupport } from '../../shared/piReasoning'
 import {
@@ -242,12 +246,7 @@ function explicitCodexWireReasoningEffort(effort?: string | null): CodexWireReas
   // 'ultratask' is TaskWraith's top-of-ladder tier; like 'ultracode'/'ultra'
   // it clamps to the API's highest wire effort instead of being dropped
   // (a dropped token falls back to the model default — a silent downgrade).
-  if (
-    normalized === 'ultracode' ||
-    normalized === 'ultra' ||
-    normalized === 'max' ||
-    normalized === 'ultratask'
-  ) {
+  if (isAboveXhighReasoningEffort(normalized)) {
     return 'xhigh'
   }
   return CODEX_WIRE_REASONING_EFFORT_SET.has(normalized)
@@ -327,7 +326,13 @@ export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOpti
   if (codexModelSupportsUltracodeReasoning(modelId) && !seen.has('ultracode')) {
     normalized.push({ reasoningEffort: 'ultracode' })
   }
-  return normalized
+  // Assembly above is append-ordered, which was only incidentally the ladder
+  // order. A live `model/list` rung that arrives out of band — `persistent`,
+  // which Codex places above `ultra` and below `ultratask` — would land
+  // wherever the catalog happened to list it. Sort onto the canonical ladder
+  // so every picker agrees; the sort is stable, so same-rung rows keep their
+  // catalog order and the existing tiers do not move.
+  return sortByReasoningEffortLadder(normalized, (option) => option.reasoningEffort)
 }
 
 // GPT-5.6 trio: GA'd upstream on 2026-07-09, but OpenAI is ramping accounts

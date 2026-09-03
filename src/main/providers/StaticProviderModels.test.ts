@@ -3,8 +3,8 @@ import {
   CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS,
   CODEX_STAGED_ROLLOUT_MODEL_IDS,
   CODEX_WIRE_REASONING_EFFORTS,
-  codexReasoningEffortsForModel,
   codexModelContextConfig,
+  codexReasoningEffortsForModel,
   codexWireReasoningEffort,
   claudeModelSupportsFastMode,
   appendKimiModelArgs,
@@ -613,6 +613,20 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
   })
 
+  it('orders a live catalog onto the canonical ladder, not catalog order', () => {
+    // A live `model/list` may list rungs in any order. `persistent` sits above
+    // `ultracode` and below `ultratask`; catalog order must not decide that.
+    const efforts = codexReasoningEffortsForModel('gpt-5.6-sol', [
+      { reasoningEffort: 'persistent' },
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'ultra' },
+      { reasoningEffort: 'high' }
+    ])
+    const order = efforts.map((option) => option.reasoningEffort)
+    expect(order).toEqual(['low', 'high', 'max', 'ultracode', 'persistent'])
+    expect(order.indexOf('persistent')).toBeGreaterThan(order.indexOf('ultracode'))
+  })
+
   it("clamps above-xhigh tiers to 'xhigh' for the Codex wire (API enum ceiling)", () => {
     // The reasoning.effort enum is {none,minimal,low,medium,high,xhigh}; the API
     // 400s on 'max'/'ultra'/'ultracode' ("Codex failed · exit 1"), so each
@@ -621,6 +635,13 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(codexWireReasoningEffort('Ultracode')).toBe('xhigh')
     expect(codexWireReasoningEffort('ultra')).toBe('xhigh')
     expect(codexWireReasoningEffort('max')).toBe('xhigh')
+    // 'persistent' is Codex's tier above 'ultra' (CLI 0.153.0 effort enum) and
+    // sits under 'ultratask' on TaskWraith's ladder. It is equally absent from
+    // the API enum, so it clamps rather than falling back to the model default
+    // — a fallback here would be a silent downgrade, not a safe no-op.
+    expect(codexWireReasoningEffort('persistent')).toBe('xhigh')
+    expect(codexWireReasoningEffort('Persistent')).toBe('xhigh')
+    expect(codexWireReasoningEffort('ultratask')).toBe('xhigh')
     // Accepted tiers pass through untouched.
     expect(codexWireReasoningEffort('xhigh')).toBe('xhigh')
     expect(codexWireReasoningEffort('high')).toBe('high')

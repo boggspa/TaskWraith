@@ -193,6 +193,7 @@ export function defaultPiReasoningEffort(wireId?: string | null): string {
 const PI_SYNTHETIC_TOP_TIER_EFFORTS: ReadonlySet<string> = new Set([
   'ultra',
   'ultracode',
+  'persistent',
   'ultratask'
 ])
 

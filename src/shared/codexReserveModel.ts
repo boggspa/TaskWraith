@@ -15,6 +15,16 @@
  * TaskWraith: the row is revealed when a live grant is observed and stays
  * hidden otherwise, so an unusable model never reaches the picker.
  *
+ * The Daybreak cyber models (`gpt-daybreak-blue-latest`,
+ * `gpt-daybreak-red-latest`) are released models behind a conditional account
+ * flag. Their gate is server-owned — the Codex app-server schema says so
+ * outright for the matching `CyberAccessProgram` enum: "Authorization and
+ * model-tier restrictions remain server-owned." An unentitled account simply
+ * never receives the rows (verified 2026-09-03: `model/list` with
+ * `includeHidden: true` on an account without the flag returns neither), so
+ * their PRESENCE in the account's catalog is the entitlement check, and they
+ * are offered whenever the server lists them.
+ *
  * Every other discovery-hidden row (for example `codex-auto-review`, the
  * internal approval-review model) stays hidden unconditionally.
  */
@@ -22,6 +32,18 @@
 export const CODEX_RESERVE_MODEL_ID = 'gpt-reserve'
 
 const LUNA_RESERVE_BANNER_TYPE = 'luna_reserve'
+
+/**
+ * Released cyber models gated by a conditional account flag. The `-latest`
+ * suffix implies pinned siblings, so the prefix is matched too rather than
+ * only the two ids observed in Codex CLI 0.153.0.
+ */
+export const CODEX_DAYBREAK_MODEL_IDS: ReadonlySet<string> = new Set([
+  'gpt-daybreak-blue-latest',
+  'gpt-daybreak-red-latest'
+])
+
+const CODEX_DAYBREAK_MODEL_ID_PREFIX = 'gpt-daybreak-'
 
 function normalizedToken(value: unknown): string {
   if (typeof value !== 'string') return ''
@@ -47,6 +69,20 @@ export function isCodexReserveLimitName(value: unknown): boolean {
   if (!normalized) return false
   return (
     normalized === normalizedToken(CODEX_RESERVE_MODEL_ID) || normalized.includes('lunareserve')
+  )
+}
+
+/**
+ * True for a Daybreak cyber model. Entitlement is not inspected here: the
+ * server withholds the row entirely from accounts without the flag.
+ */
+export function isCodexDaybreakModelId(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return false
+  return (
+    CODEX_DAYBREAK_MODEL_IDS.has(normalized) ||
+    normalized.startsWith(CODEX_DAYBREAK_MODEL_ID_PREFIX)
   )
 }
 
@@ -109,10 +145,11 @@ export function codexReserveGrantActive(payload: unknown): boolean {
 /**
  * Reduce live `model/list` rows to the set a picker may show.
  *
- * Replaces a blanket `!row.hidden` filter: visible rows always survive, the
- * reserve row survives only while a grant is live, and every other hidden row
- * is dropped. Input order is preserved so downstream ordering rules still see
- * the catalog's own sequence.
+ * Replaces a blanket `!row.hidden` filter: visible rows always survive,
+ * Daybreak rows survive because the server only lists them for entitled
+ * accounts, the reserve row survives only while a grant is live, and every
+ * other hidden row is dropped. Input order is preserved so downstream ordering
+ * rules still see the catalog's own sequence.
  */
 export function filterCodexDiscoverableModelRows<T extends { id?: unknown; hidden?: unknown }>(
   rows: readonly (T | null | undefined)[],
@@ -124,6 +161,7 @@ export function filterCodexDiscoverableModelRows<T extends { id?: unknown; hidde
     if (!entry) return false
     if (typeof entry.id !== 'string' || !entry.id.trim()) return false
     if (entry.hidden !== true) return true
+    if (isCodexDaybreakModelId(entry.id)) return true
     return isCodexReserveModelId(entry.id) && options.reserveGrantActive
   })
 }
