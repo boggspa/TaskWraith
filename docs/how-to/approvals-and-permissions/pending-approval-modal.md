@@ -3,29 +3,26 @@
 **Platform:** Electron
 
 ## What it is
-The pending approval card blocks the active chat turn when an agent requests a gated action (running a shell command, editing a file outside the workspace, calling an MCP tool, etc.). It shows the request details and lets you allow it once, allow it for the workspace or session, or deny it — with an optional auto-deny countdown.
+A card that pauses the chat when an agent wants to do something gated — run a shell command, edit a file outside the workspace, call an MCP tool. It shows what was asked for and lets you allow it, widen the allowance, or refuse.
 
 ## Where to find it
-Appears automatically above the composer for the chat that triggered the request, whenever an agent's action needs your approval.
+It appears by itself above the composer of the chat that asked, whenever an agent's action needs your approval.
 
 <!-- screenshot-pending: Pending approval modal showing Accept / Decline options with countdown -->
 
 ## How to use it
-1. Read the request title, message, and any preview details (target path, command, or payload) shown on the card.
-2. Optionally type a short note in the "why?" field to record your reasoning — it's saved with the decision.
-3. Choose a response:
-   - **Allow once** — approve just this request (becomes **Rerun outside sandbox** for sandbox-escape reruns).
-   - **Use Provider Native** — hand the request to the provider CLI/SDK's own native approval flow instead of TaskWraith handling it (only offered when the request supports it).
-   - **Use TaskWraith Sub-thread** — move the work into a TaskWraith sub-thread so it continues with isolated context and its own approval handling.
-   - Under **Longer approval scopes**: **Allow … for session** — approve matching requests for the rest of the app session (restarting the app clears the grant) — and **Allow … in workspace** — approve this kind of request for the current workspace until you revoke it in Approvals & Grants. When the request names a service, both labels name that service.
-   - **Start Full Access...** — raise only this chat, or the selected ensemble participant, to the Full Access preset and then approve this request once. It is lane-scoped: other chats and participants are unchanged, and it does not turn on process-wide auto-approval. The button reads **Full Access in main window** and is disabled when the change has to be made from the main window.
-   - **Deny** — reject this specific request.
-   - **Cancel run** — stop the run that's waiting on the approval.
-4. If a countdown is shown ("Auto-denies in...") and you don't respond in time, the request is automatically denied.
-5. If more approvals are queued behind this one, a "+N more" badge appears; the next request shows once you respond to the current one.
+1. Read the title, message, and details — the path, command, or payload being requested.
+2. Optionally type a short note in the **why?** field; it is saved with your decision.
+3. Click **Allow once** to approve just this request. Everything similar still asks next time. For a sandbox escape this button reads **Rerun outside sandbox**.
+4. To allow more than one, use the wider choice below: **Allow matching requests for this run** lasts until the run ends, and **Allow matching requests in this workspace** lasts until you revoke it in Approvals & Grants. When the request names a service, both read "Allow all *service*…" instead.
+5. Click **Deny** to refuse this one request, or **Cancel run** to stop the run waiting on it.
 
 ## Tips & related
+- For a shell request TaskWraith can pin exactly, you get **Add exact command to Allowlist** in place of the for-this-run button. It allows only that literal command, and you can revoke it later.
+- **Use Provider Native** hands the request to the provider's own approval flow; **Use TaskWraith Sub-thread** moves the work into a sub-thread instead. Both appear only when the request supports them.
+- **Start Full Access...** raises just this chat, or the selected participant, then approves. It never turns on auto-approval anywhere else. It reads **Full Access in main window** and is disabled when the change must be made there.
+- If a countdown is showing ("Auto-denies in…") and you do nothing, the request is denied for you. A **+N more** badge means more are queued behind it.
 - [Approval Ledger](approval-ledger.md) — full audit history of past approval decisions.
 - [Approval Timeouts](approval-timeouts.md) — configure the per-provider auto-deny countdown.
 - [Provider Agentic Policies](provider-agentic-policies.md) — set which services each provider can use without prompting.
-- [Approvals Popover](../footer-control-row/approvals-popover.md) — view pending approvals across all chats from the sidebar footer.
+- [Approvals Popover](../footer-control-row/approvals-popover.md) — pending approvals across all chats.

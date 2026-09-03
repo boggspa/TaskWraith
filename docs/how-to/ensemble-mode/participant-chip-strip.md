@@ -3,24 +3,27 @@
 **Platform:** Electron
 
 ## What it is
-The chip strip shows every participant in an ensemble chat as a row of chips. Click a chip to select it and edit its settings, drag to reorder the speaking sequence, and use the per-chip overflow popover to enable/disable a participant, rename their role, or assign them as Boss.
+A row of chips above the composer, one per participant in an Ensemble chat. Click a chip to select it, drag to reorder who speaks when, and double-click to set a seat's authority and stage.
 
 ## Where to find it
-In an ensemble chat, the strip sits in the composer's above-row stack: below the branch / files-changed / Create PR row (and any external-path rows), and above the message textarea. It also renders on the welcome state for a new ensemble chat so you can configure participants before sending the first prompt.
+In an Ensemble chat, just above the message box — below the branch, files-changed, and Create PR rows. It also shows on a new Ensemble chat before you send anything, so you can set the panel up first.
 
 ![Participant chip strip above composer with multiple provider chips](../images/ensemble-mode__participant-chip-strip.png)
 
 ## How to use it
-1. Click a chip to select it. The selected chip gets a highlighted border, and the composer's model and permissions pickers below now read/write that participant's settings.
-2. Click the already-selected chip a second time to open its overflow popover, where you can toggle **Enabled in ensemble rounds**, assign **Boss** (and optionally allow Boss auto-approvals), change the **Role** preset (or type a custom one), choose a **Stage**, and edit the **Goal / brief**. The stages are **Any**, **Scout**, **Work**, **Review**, and **BG**. A BG seat does not receive an ordinary rotation turn; explicitly `@`-mention it to request a detached background lane. Launch still depends on concurrent-lane enablement, current activity, admission, and budget.
-3. Press and drag a chip horizontally to reorder the speaking sequence; drop it on or near another chip to move it there.
-4. Use the **+** button at the end of the strip to add a participant (pick a provider from the popover), or select a chip and use the **−** button to remove it. Ensembles require at least 2 participants, and the strip caps out at 20. From 6 participants the strip splits into balanced rows of at most 5 chips (e.g. 7 → 3+4, 13 → 4+4+5, 20 → 5+5+5+5), so role names stay readable.
-5. Each chip shows a status icon (idle, speaking, answered, yielded, failed, skipped, sleeping, unreachable, cancelled). A failed or unreachable chip shows an inline retry button; a sleeping chip's popover offers **Wake now** / **Cancel wakeup**.
-6. While a round is running, membership changes are locked — you can still select chips to inspect them, and a **Skip** button appears to advance past the currently-speaking participant without cancelling the whole round.
+1. Click a chip to select it. It gains a highlighted border, and the model and permissions chips below now edit that participant.
+2. Double-click a chip to open its seat-role picker. Toggle **Enabled** to include or exclude it from rounds, and **Auto** for thread-wide Boss/Captain auto-approvals.
+3. In the same picker, set authority — **Boss**, **Captain**, or **Agent** — then a stage: **Any**, **Scout**, **Work**, **Review**, or **BG**.
+4. Drag a chip sideways to change the speaking order; drop it on or near another chip.
+5. Click **+** at the end of the strip to add a participant, or select a chip and click **−** to remove it.
 
 ## Tips & related
-- [Create an Ensemble Chat](create-ensemble-chat.md) to get an ensemble chat with a chip strip in the first place.
-- [Saved Roster Presets](saved-roster-presets.md) to apply or save a participant lineup instead of building one chip at a time.
-- [Mention & Yield Routing](mention-yield-routing.md) for how `@Role` mentions and explicit yields change who speaks next, independent of chip order.
-- BG seats are workers, not round owners: do not assign one as Boss, Captain, or synthesizer. TaskWraith ignores conflicting authority assignments at dispatch time.
-- [Continuous Hops Meter](continuous-hops-meter.md) for the related handoff-budget control shown alongside the strip.
+- A panel needs at least 2 participants and holds up to 50. From 6 the strip wraps into balanced rows of at most 5 chips (7 → 3+4, 13 → 4+4+5) so role names stay readable.
+- A **BG** seat sits out the normal rotation — `@`-mention it to start a background lane. Whether it launches still depends on parallel lanes being on and the seat being free.
+- Each chip shows its state: idle, speaking, answered, yielded, failed, skipped, sleeping, unreachable, or cancelled. A failed or unreachable chip offers a retry button; a sleeping one offers **Wake now** / **Cancel wakeup**.
+- While a round runs you cannot add or remove seats, but you can still inspect them, and **Skip** moves past whoever is speaking without cancelling the round.
+- BG seats are workers, not round owners: do not make one Boss, Captain, or synthesizer. TaskWraith ignores conflicting authority at dispatch.
+- [Create an Ensemble Chat](create-ensemble-chat.md) — get a chat with a chip strip in the first place.
+- [Saved Roster Presets](saved-roster-presets.md) — apply a saved line-up instead of building one chip at a time.
+- [Mention & Yield Routing](mention-yield-routing.md) — how mentions and yields override chip order.
+- [Continuous Hops Meter](continuous-hops-meter.md) — the handoff budget shown alongside the strip.
