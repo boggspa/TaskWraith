@@ -169,4 +169,76 @@ describe('computeQuotaPace', () => {
     expect(pace?.state).toBe('behind')
     expect(pace?.expectedFraction).toBeCloseTo(0.5, 1)
   })
+
+  it('infers monthly window duration from the "Monthly" label', () => {
+    // 30-day monthly window, 50% elapsed (15 days in), 10% used → ahead.
+    const start = Date.now()
+    const fakeReset = new Date(start + 15 * 24 * 60 * 60 * 1000)
+    const now = new Date(start)
+    const pace = computeQuotaPace(
+      makeWindow({
+        label: 'Monthly',
+        resetAt: fakeReset.toISOString(),
+        usedPercent: 10
+      }),
+      now
+    )
+    expect(pace?.state).toBe('ahead')
+    expect(pace?.expectedFraction).toBeCloseTo(0.5, 1)
+  })
+
+  it('infers monthly window duration from the "Credit Used" label', () => {
+    // 30-day monthly window for credit tracking, 75% elapsed (22.5 days in), 50% used → ahead.
+    const start = Date.now()
+    const fakeReset = new Date(start + 7.5 * 24 * 60 * 60 * 1000) // 7.5 days from now
+    const now = new Date(start)
+    const totalDurationMs = 30 * 24 * 60 * 60 * 1000 // 30 days total
+    const elapsedMs = totalDurationMs - 7.5 * 24 * 60 * 60 * 1000 // 22.5 days elapsed = 75%
+    const expectedFraction = elapsedMs / totalDurationMs // 0.75
+    const pace = computeQuotaPace(
+      makeWindow({
+        label: 'Credit Used',
+        resetAt: fakeReset.toISOString(),
+        usedPercent: 50 // 50% used
+      }),
+      now
+    )
+    expect(pace?.state).toBe('ahead')
+    expect(pace?.expectedFraction).toBeCloseTo(0.75, 1)
+  })
+
+  it('infers daily window duration from the "Daily" label for Devin', () => {
+    // 24-hour daily window for Devin, 25% elapsed (6 hours in), 50% used → ahead.
+    const start = Date.now()
+    const fakeReset = new Date(start + 18 * 60 * 60 * 1000) // 18 hours from now
+    const now = new Date(start)
+    const totalDurationMs = 24 * 60 * 60 * 1000 // 24 hours total
+    const elapsedMs = totalDurationMs - 18 * 60 * 60 * 1000 // 6 hours elapsed = 25%
+    const pace = computeQuotaPace(
+      makeWindow({
+        label: 'Daily',
+        resetAt: fakeReset.toISOString(),
+        usedPercent: 50 // 50% used - ahead of the expected 25%
+      }),
+      now
+    )
+    expect(pace?.state).toBe('behind')
+    expect(pace?.expectedFraction).toBeCloseTo(0.25, 1)
+  })
+
+  it('returns null for monthly window without explicit duration when label is unrecognized', () => {
+    // Monthly "Credit Used" with no matching label and no limitWindowSeconds → null
+    const start = Date.now()
+    const fakeReset = new Date(start + 15 * 24 * 60 * 60 * 1000)
+    const now = new Date(start)
+    const pace = computeQuotaPace(
+      makeWindow({
+        label: 'SomeCustomMeter',
+        resetAt: fakeReset.toISOString(),
+        usedPercent: 50
+      }),
+      now
+    )
+    expect(pace).toBeNull()
+  })
 })
