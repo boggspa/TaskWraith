@@ -8,7 +8,7 @@ A row of three controls that set how an Ensemble round runs: **Fan-Out**, **Isol
 ## Where to find it
 In the **Roster Presets** section above the composer input, on the second row. It only appears in an Ensemble chat.
 
-<!-- screenshot-pending: Ensemble Orchestration Row showing the Fan-Out, Isolate, and Turns controls above the composer -->
+![Ensemble Orchestration Row showing the Fan-Out, Isolate, and Turns controls above the composer](../images/composer__ensemble-mode-picker.png)
 
 ## How to use it
 1. Click **Fan-Out** and pick **On** to let agents work in parallel lanes, or **Off** to keep them strictly one at a time.

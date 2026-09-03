@@ -2,7 +2,7 @@
 
 90 screenshots, one per feature guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
 
-Current inventory, reconciled 2026-09-03 (second pass): **61 captured, 29 pending**, over 90 feature guide pages. Every page is covered by exactly one of an embedded image or a `screenshot-pending` marker. Two superseded PNGs are retained on disk without a referencing page; see [`REMAINING.md`](REMAINING.md), which also grades the captures that are on disk but stale.
+Current inventory, reconciled 2026-09-03 (second pass): **68 captured, 22 pending**, over 90 feature guide pages. Every page is covered by exactly one of an embedded image or a `screenshot-pending` marker. Two superseded PNGs are retained on disk without a referencing page; see [`REMAINING.md`](REMAINING.md), which also grades the captures that are on disk but stale.
 
 The current refresh uses latest-source development apps, not an installed release build. Existing captures can be replaced in place without changing the inventory count.
 
@@ -31,10 +31,10 @@ The current refresh uses latest-source development apps, not an installed releas
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `canvas-and-previews__canvas-browser.png` | Electron | Canvas Browser in the right dock with the address bar and a loaded page | Open the right dock and select **Canvas**, or ask the agent to browse — a navigation request opens Canvas automatically in the active task. |
+| `canvas-and-previews__canvas-browser.png` | Electron | Canvas Browser in the right dock with its address bar and navigation controls. Keep private paths, vault URLs, and signed-in site content out of frame. | Open the right dock and select **Canvas**, or ask the agent to browse — a navigation request opens Canvas automatically in the active task. |
 | `canvas-and-previews__canvas-composer-button.png` | Electron | Canvas composer button in the telemetry row | It's an icon-only button in the composer's telemetry row (the footer icon cluster), next to the Multiview layout picker. |
 | `canvas-and-previews__canvas-multiview-pane.png` | Electron | Canvas multiview pane showing an embedded preview | Switch to a split multiview layout (2/3/4 panes) with the Multiview layout picker in the composer's telemetry row, then pick a surface card in an empty pane's Thread Home. |
-| `canvas-and-previews__emulator-canvas.png` | Electron | Homebrew Emulator demo running in the right Inspector Canvas dock | In a chat's right Inspector, open **Canvas** and choose **Homebrew Emulator**. Source-ahead feature. |
+| `canvas-and-previews__emulator-canvas.png` | Electron | Homebrew Emulator demo in Canvas with the Play control and key mapping. Source-ahead feature. | In a chat's right Inspector, open **Canvas** and choose **Homebrew Emulator**. Source-ahead feature. |
 | `canvas-and-previews__mesh-canvas.png` | Electron | Mesh Canvas dock with direct-model and scene-package import actions | Open the composer's **Canvas** menu, choose **Open Mesh Canvas**, then use the right-dock toolbar. |
 | `canvas-and-previews__ios-canvas-preview.png` | iOS | iOS canvas preview card in the companion app | Open a chat in the companion app that has an open Canvas on the desktop. |
 
@@ -136,7 +136,7 @@ The current refresh uses latest-source development apps, not an installed releas
 | `settings-and-configuration__provider-tools-tab.png` | Electron | Provider tools tab showing MCP bridge audit and tool catalog | **Settings → Integrations → Provider Tools**. |
 | `settings-and-configuration__providers-tab.png` | Electron | Providers tab showing provider sign-in cards and agentic policy matrix | Open **Settings → AI & Providers → Providers**. |
 | `settings-and-configuration__safety-and-privacy-tab.png` | Electron | Safety and privacy tab showing risk posture overview and deep-links | Open **Settings → Data → Safety & Privacy**. |
-| `settings-and-configuration__channels-tab.png` | Electron | Channels tab showing the hosted/joined channel list with member and revoke controls. Use a demo or redacted membership state; never publish a live invite code or member credential. | **Settings → Integrations → Channels** |
+| `settings-and-configuration__channels-tab.png` | Electron | Channels overview in Settings with no active channels yet and the audit log entry. An honest empty state: creating a real channel would mean issuing a live invite. Never publish an invite code or member credential. | **Settings → Integrations → Channels** |
 | `settings-and-configuration__workspaces-tab.png` | Electron | Workspaces tab showing loaded workspace list with pin/remove controls | **Settings → Workspaces → Workspaces**. |
 
 ### sidebar-navigation

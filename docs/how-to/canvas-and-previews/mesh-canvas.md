@@ -17,7 +17,7 @@ actions:
 - **Import scene package** selects a folder containing
   `taskwraith.mesh-scene.json`.
 
-<!-- screenshot-pending: Mesh Canvas dock showing both import actions -->
+![Mesh Canvas dock showing both import actions](../images/canvas-and-previews__mesh-canvas.png)
 
 ## Create and collaborate without an import
 

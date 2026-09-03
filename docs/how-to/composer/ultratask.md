@@ -5,7 +5,7 @@
 ## What it is
 The top setting on the composer's **Reasoning** ladder. It runs your request as a staged job instead of one answer: several scouts research the problem in parallel, a worker produces the result, a separate reviewer checks it, and a final pass pulls everything together. Use it for work worth the extra time and tokens, not for quick questions.
 
-<!-- screenshot-pending: Composer reasoning ladder with the UltraTask stop selected on a supporting model -->
+![Composer reasoning ladder with the UltraTask stop selected on a supporting model](../images/composer__ultratask.png)
 
 ## Where to find it
 Click the **model chip** under the prompt box. **UltraTask** is the highest stop on the **Reasoning** ladder, above **Ultracode**.

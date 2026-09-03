@@ -5,7 +5,7 @@
 ## What it is
 Bring a saved Codex, Claude, Cursor, or AntiGravity transcript into TaskWraith as a read-only archived copy, so you can search and re-read it here. It is a snapshot for reading, not a live session you can carry on.
 
-<!-- screenshot-pending: Settings → Archived showing the Import an external provider thread panel -->
+![Settings → Archived showing the Import an external provider thread panel](../images/getting-started__external-provider-thread-import.png)
 
 ## Where to find it
 **Settings → Data → Archived**, in the **Import an external provider thread** panel.

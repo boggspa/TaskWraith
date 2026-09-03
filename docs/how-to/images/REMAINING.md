@@ -1,6 +1,6 @@
 # Shot list — remaining captures
 
-Inventory reconciled 2026-09-03 (second pass): **61 of 90 captured; 29 pending**.
+Inventory reconciled 2026-09-03 (second pass): **68 of 90 captured; 22 pending**.
 
 The first pass reported 61 captured / 28 pending over an 89-page baseline. That
 set did not reconcile against the tree: the baseline missed a page entirely, two
@@ -24,11 +24,12 @@ Changes in this pass (bookkeeping only — no page or capture was deleted):
 - The stale-capture section below is expanded from one entry to six, graded by
   how strong the evidence is.
 
-**Two PNGs are retained on disk without a referencing page** —
-`composer__ensemble-mode-picker.png` (superseded by the Orchestration Row
-rewrite) and `footer-control-row__shares-popover.png` (from a shot retired
-2026-08-12). They are deliberately kept, so "every PNG is referenced" is not an
-invariant here; "every page is accounted for" is.
+**One PNG is retained on disk without a referencing page** —
+`footer-control-row__shares-popover.png`, from a shot retired 2026-08-12. The
+other former orphan, `composer__ensemble-mode-picker.png`, is now a live embed:
+the 2026-09-03 recapture replaced the retired Turn/Continuous picker with the
+Ensemble Orchestration Row the page actually documents. So "every PNG is
+referenced" is still not an invariant here; "every page is accounted for" is.
 
 Two bonus composer variations in `composer-variations/` are not part of the
 90-shot baseline.
@@ -44,7 +45,7 @@ Capture replacements are being made against latest-source development apps. Use 
 
 ## Captured but stale — recapture without changing the pending count
 
-These pages **do** have an image, so they are not part of the 29 pending and
+These pages **do** have an image, so they are not part of the 22 pending and
 must not be added to it — the pending set is defined as pages carrying a
 `screenshot-pending` marker, and it has to keep matching that marker set
 exactly. They are listed here because the capture on disk shows retired UI,
@@ -76,21 +77,49 @@ against a live window. Verify at recapture rather than trusting either state:
   `0cec6f8ee` (2026-08-31) relabelled run-scoped grants. Confirm whether the
   changed labels actually surface in the Ledger panel before recapturing.
 
+## Capture-rig constraints found 2026-09-03
+
+- **Canvas surfaces do not composite into the parent screenshot.** Each Canvas
+  (emulator, browser, mesh viewport) is its own Electron page target, so
+  `Page.captureScreenshot` against the renderer returns the dock chrome with a
+  blank content area. Two consequences: a CDP driver must select the renderer
+  target explicitly, because the *first* page target is whichever Canvas is open;
+  and any shot needing dock chrome **and** live surface content in one frame has
+  to be taken at OS level, not over CDP. `emulator-canvas` was therefore captured
+  from the Canvas target directly and its caption no longer claims dock chrome,
+  and `canvas-browser` shows the address bar with an empty browser — which is
+  also the safest frame under the privacy rule.
+- **Capture Canvas docks at 1700px window width or wider.** At 1397px the dock is
+  376px and the Mesh Canvas import row overruns it by 43px, collapsing the
+  description to one word per line and clipping a button. At 1700px the dock is
+  679px and the row fits.
+
 ## Needs investigation before recapture
 
 - `chats-and-threads__in-chat-search` — a 2026-07-09 capture attempt crashed the transcript with `Maximum update depth exceeded` after typing a query. This has not been reverified; test it in an isolated dev profile before taking the shot.
 
 ## Needs privacy-safe setup
 
-- `settings-and-configuration__devices-tab` — use a demo or redacted pairing state; never publish a live QR code or device credential.
-- `settings-and-configuration__local-model-tool-surface` — show the current Ollama gateway profile — the direct tool list plus capability search/invoke — without exposing local endpoints or paths. Do not caption a tool count; the profile version changes and a pinned number rots silently.
-- `settings-and-configuration__channels-tab` — the page was rewritten for the Channels cutover and the stale pre-cutover Shares capture has been removed. Capture **Settings → Integrations → Channels** with a demo or redacted membership state; never publish a live invite code or member credential.
+- `settings-and-configuration__devices-tab` — **blocked two ways.** The verify
+  recipe launches with `IOS_REMOTE_TRUE=0`, which forces the iOS bridge off, so
+  no QR renders at all — the tab says so in place of the code. Enabling the
+  bridge to produce one is exactly what the verify skill warns against, and a
+  live QR is non-publishable regardless. The tab also shows the machine hostname
+  and a Tailscale node identifier; both need redacting before any frame of this
+  page is published.
+- `settings-and-configuration__local-model-tool-surface` — **not reachable from a
+  bare verify instance.** Ollama is running locally (its API answers on 11434),
+  but Provider Tools lists the `TaskWraith-local` gateway as **unavailable** and
+  Refresh does not change it. The page's own hint explains why: Ollama tools
+  require a workspace thread so paths can be scoped by TaskWraith. Open a
+  workspace-backed chat before capturing. Show the gateway profile — the direct
+  tool list plus capability search/invoke — without exposing local endpoints or
+  paths, and do not caption a tool count; the profile version changes and a
+  pinned number rots silently.
 
 ## Needs live or transient desktop state
 
-- `composer__ultratask` — needs a model whose catalogue entry supports UltraTask, with the reasoning ladder open and the top stop selected.
 - `sidebar-navigation__project-references-studio` — needs a Project with at least one reference marked **Use next** and a generated draft on screen.
-- `composer__ensemble-mode-picker` — needs an Ensemble chat, showing the Fan-Out, Isolate and Turns controls on the second Roster Presets row.
 - `approvals-and-permissions__pending-approval-modal`
 - `chats-and-threads__sub-thread-delegation`
 - `goals-todos-and-scheduling__todos`
@@ -108,11 +137,7 @@ against a live window. Verify at recapture rather than trusting either state:
 
 ## Needs Canvas or media content
 
-- `canvas-and-previews__canvas-browser` — keep private paths, vault URLs, and signed-in site content out of frame.
 - `canvas-and-previews__canvas-multiview-pane`
-- `canvas-and-previews__emulator-canvas` — source-ahead fixed demo; open it from the right
-  Inspector's Canvas menu. Keep local source paths out of frame.
-- `canvas-and-previews__mesh-canvas` — capture a redacted exported scene; do not show local source paths or vault URLs.
 - `media-audio-and-video__chat-media-dock`
 - `media-audio-and-video__inline-transcript-media`
 - `media-audio-and-video__multiview-media-pane`
@@ -125,7 +150,6 @@ against a live window. Verify at recapture rather than trusting either state:
 
 ## Needs clean-profile or update state
 
-- `getting-started__external-provider-thread-import`
 - `getting-started__first-run-ensemble-task` — the Welcome sheet's **Try this first** card; use a scratch workspace and keep private paths out of frame.
 - `getting-started__sidebar-onboarding-hint`
 - `sidebar-navigation__update-pill`

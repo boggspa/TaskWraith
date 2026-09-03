@@ -8,7 +8,7 @@ The Channels tab is the global overview of every channel this Mac hosts or has j
 ## Where to find it
 **Settings → Integrations → Channels**
 
-<!-- screenshot-pending: Channels tab showing hosted channel list with member and revoke controls -->
+![Channels overview in Settings with no active channels yet and the audit log entry](../images/settings-and-configuration__channels-tab.png)
 
 ## How to use it
 1. Open **Settings → Integrations → Channels** to see every channel you host or belong to.

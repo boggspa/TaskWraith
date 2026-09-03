@@ -16,7 +16,7 @@ The empty Canvas starts with a quiet **New tab** view. Use **+** to switch betwe
 
 The Canvas window uses the same tab strip and surface picker as the dock. Choose **Dock** in the window header to move that window's live Browser and Sketch tabs back into the owning task. Mesh Canvas, Simulator Canvas, and Media Viewer follow the same pop-out and Dock pattern.
 
-<!-- screenshot-pending: Canvas Browser in the right dock with the address bar and a loaded page -->
+![Canvas Browser in the right dock with its address bar and navigation controls](../images/canvas-and-previews__canvas-browser.png)
 
 ## Browse with an agent
 
