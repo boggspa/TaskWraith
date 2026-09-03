@@ -1,6 +1,6 @@
 # Shot list — remaining captures
 
-Inventory reconciled 2026-09-03 (second pass): **68 of 90 captured; 22 pending**.
+Inventory reconciled 2026-09-03 (second pass): **69 of 90 captured; 21 pending**.
 
 The first pass reported 61 captured / 28 pending over an 89-page baseline. That
 set did not reconcile against the tree: the baseline missed a page entirely, two
@@ -45,7 +45,7 @@ Capture replacements are being made against latest-source development apps. Use 
 
 ## Captured but stale — recapture without changing the pending count
 
-These pages **do** have an image, so they are not part of the 22 pending and
+These pages **do** have an image, so they are not part of the 21 pending and
 must not be added to it — the pending set is defined as pages carrying a
 `screenshot-pending` marker, and it has to keep matching that marker set
 exactly. They are listed here because the capture on disk shows retired UI,
@@ -79,6 +79,17 @@ against a live window. Verify at recapture rather than trusting either state:
 
 ## Capture-rig constraints found 2026-09-03
 
+- **Driving the app for live states.** New chats default to Ensemble; the
+  composer's ensemble pill needs paired PointerEvents (a plain `.click()` does
+  nothing), and choosing **Off** raises a "Pick the solo provider" modal that
+  converts the thread in place, keeping its transcript. Roster seats behave the
+  same way — tap `.ensemble-above-chip` with PointerEvents and confirm
+  `.is-selected` actually moved before using the remove control.
+- **Seat providers matter for cost and success.** A default roster shipped a Grok
+  seat, which failed mid-round on an account with no Grok quota and left
+  "Specialist failed." in the transcript. Remove no-quota seats before capturing:
+  on this account Grok, any Codex seat, and Claude Fable are unavailable.
+
 - **Canvas surfaces do not composite into the parent screenshot.** Each Canvas
   (emulator, browser, mesh viewport) is its own Electron page target, so
   `Page.captureScreenshot` against the renderer returns the dock chrome with a
@@ -103,7 +114,14 @@ against a live window. Verify at recapture rather than trusting either state:
 
 ## Needs investigation before recapture
 
-- `chats-and-threads__in-chat-search` — a 2026-07-09 capture attempt crashed the transcript with `Maximum update depth exceeded` after typing a query. This has not been reverified; test it in an isolated dev profile before taking the shot.
+- `chats-and-threads__in-chat-search` — **captured; the 2026-07-09 crash does not
+  reproduce.** Typing a query against a real transcript returned a live match
+  counter with the transcript still mounted and no `Maximum update depth
+  exceeded`. Two notes for whoever revisits it: the shortcut needs a real
+  `Input.dispatchKeyEvent` (a synthetic KeyboardEvent is untrusted and never
+  opens the bar), and **the transcript renders no highlight** — the bar counts
+  matches ("1 / 3") but no `mark` element or highlight class appears on the
+  matched text, so the caption no longer promises highlighted results.
 
 ## Needs privacy-safe setup
 
@@ -131,7 +149,13 @@ against a live window. Verify at recapture rather than trusting either state:
 - `sidebar-navigation__project-references-studio` — needs a Project with at least one reference marked **Use next** and a generated draft on screen.
 - `approvals-and-permissions__pending-approval-modal`
 - `chats-and-threads__sub-thread-delegation`
-- `goals-todos-and-scheduling__todos`
+- `goals-todos-and-scheduling__todos` — **the card is transient.** A live run
+  does render `todo-checklist-card` (with `todo-checklist-item`/`-glyph`/`-text`
+  under a "Goal steps · n/n complete" header), but it lives inside an
+  `activity-row` that collapses once the step finishes, and the card is then
+  unmounted entirely — it was gone from the DOM within a minute. Capture it while
+  a step is still in flight, and prompt for a genuinely multi-step task: the run
+  tried here produced a single-step plan, so the card only ever held one item.
 - `notifications-and-status__provider-health-chips`
 - `notifications-and-status__sub-thread-status-ticker` — **cannot be captured as
   described.** The strip was deleted outright on 2026-08-19 (`e48d38e33`):
