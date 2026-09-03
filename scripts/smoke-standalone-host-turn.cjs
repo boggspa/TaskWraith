@@ -221,6 +221,12 @@ async function main() {
       completedRuns.push({ runId: 'cmd-e2e-send', probeName })
       sentProbes.push(probeName)
       assertProbeFile(workspace, probeName, 'base')
+      // Restored pre-widening guarantee: the base turn must leave user +
+      // assistant rows immediately — reuse/resume only prove survival of rows
+      // that were asserted here, so TASKWRAITH_SMOKE_AXES=base alone must look
+      // at history too.
+      const baseHistory = await client.getThreadHistory({ threadId, limit: 50 })
+      assertBaseTranscript(baseHistory.entries, probeName)
       passAxis(
         'base',
         `axis base ok: ${providerId}/${currentModelId} completed a run and wrote ${probeName}`
@@ -653,6 +659,21 @@ function missingRunIds(beforeRuns, afterRuns) {
   return (beforeRuns || []).filter((run) => run && !afterIds.has(run.runId)).map((run) => run.runId)
 }
 
+/**
+ * The base-axis transcript gate (the pre-widening guarantee): immediately
+ * after the base turn, history must hold the user row naming the probe plus
+ * an assistant row. Single-probe wrapper so the live base path and the
+ * selftest pin the same function — weakening this wrapper must red the
+ * NAMED `base-transcript-*` selftest checks below.
+ */
+function assertBaseTranscript(entries, probeName) {
+  assertHistoryCoversProbes(
+    entries,
+    [probeName],
+    'axis base: transcript missing rows for the completed turn'
+  )
+}
+
 /** Every sent probe needs its user row; assistant rows must cover every turn. */
 function assertHistoryCoversProbes(entries, probeNames, context) {
   const rows = entries || []
@@ -820,6 +841,26 @@ function runSelfTests() {
   expectThrow(
     'history-no-assistant-red',
     () => assertHistoryCoversProbes([{ role: 'user', text: 'write probe-1' }], ['probe-1'], 'ctx'),
+    /assistant rows 0\/1/
+  )
+
+  check('base-transcript-covered', () => {
+    assertBaseTranscript(
+      [
+        { role: 'user', text: 'write probe-base' },
+        { role: 'assistant', text: 'done' }
+      ],
+      'probe-base'
+    )
+  })
+  expectThrow(
+    'base-transcript-missing-red',
+    () => assertBaseTranscript([{ role: 'assistant', text: 'done' }], 'probe-base'),
+    /missing user rows: probe-base/
+  )
+  expectThrow(
+    'base-transcript-no-assistant-red',
+    () => assertBaseTranscript([{ role: 'user', text: 'write probe-base' }], 'probe-base'),
     /assistant rows 0\/1/
   )
 
