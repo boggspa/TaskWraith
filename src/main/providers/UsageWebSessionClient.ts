@@ -35,7 +35,7 @@ export const USAGE_WEB_SESSION_SPECS: Record<UsageWebSessionProviderId, UsageWeb
   cerebras: {
     provider: 'cerebras',
     windowTitle: 'Sign in to Cerebras billing',
-    startUrl: 'https://cloud.cerebras.ai/platform/',
+    startUrl: 'https://cloud.cerebras.ai/platform/billing',
     partition: 'websession-import:cerebras-usage',
     cookieDomainSuffixes: ['cerebras.ai']
   },
@@ -43,7 +43,7 @@ export const USAGE_WEB_SESSION_SPECS: Record<UsageWebSessionProviderId, UsageWeb
     provider: 'qwen',
     windowTitle: 'Sign in to Qwen Token Plan',
     startUrl:
-      'https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=plan#/efm/subscription/token-plan/personal',
+      'https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=plan&productCode=p_efm#/efm/subscription/token-plan/personal',
     partition: 'websession-import:qwen-token-plan',
     cookieDomainSuffixes: ['alibabacloud.com']
   },
