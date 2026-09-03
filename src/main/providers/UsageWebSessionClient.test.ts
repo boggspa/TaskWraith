@@ -2,7 +2,7 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { parseUsageWebSessionReading, readUsageWebSessionReading } from './UsageWebSessionClient'
+import { parseUsageWebSessionReading, readUsageWebSessionReading, mergeUsageWebSessionCookieHeader } from './UsageWebSessionClient'
 import { configureUsageWebSessionStores, usageWebSessionStore } from './UsageWebSessionStore'
 
 const CAPTURED_AT = '2026-08-25T20:00:00.000Z'
@@ -242,5 +242,97 @@ describe('readUsageWebSessionReading refresh throttle', () => {
     expect(first).toMatchObject({ currentUsedPercent: 41 })
     expect(second).toMatchObject({ currentUsedPercent: 41 })
     expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('parseUsageWebSessionReading fallbacks', () => {
+  it('reads a Muse meter rendered above its label (value-before-label DOM order)', () => {
+    expect(parseUsageWebSessionReading('muse', '37% used\nCurrent usage', CAPTURED_AT)).toEqual({
+      currentUsedPercent: 37,
+      capturedAt: CAPTURED_AT
+    })
+  })
+
+  it('reads a billing balance rendered above its label', () => {
+    expect(
+      parseUsageWebSessionReading('meta', '<div>£15.00</div><div>Current balance</div>', CAPTURED_AT)
+    ).toEqual({ balance: 15, currency: 'GBP', capturedAt: CAPTURED_AT })
+  })
+
+  it('reads Muse meters from an RSC flight payload when nothing is server-rendered', () => {
+    const html =
+      '<div>Loading…</div><script>self.__next_f.push(["Current\\u0020usage 37%\\u0020used","Weekly\\u0020limit 82%\\u0020used"]);</script>'
+    expect(parseUsageWebSessionReading('muse', html, CAPTURED_AT)).toMatchObject({
+      currentUsedPercent: 37,
+      weeklyUsedPercent: 82
+    })
+  })
+})
+
+describe('mergeUsageWebSessionCookieHeader', () => {
+  const META_URL = 'https://dev.meta.ai/usage/'
+
+  it('replaces a rotated value while preserving order', () => {
+    expect(
+      mergeUsageWebSessionCookieHeader('a=1; b=2', ['b=3; Path=/'], META_URL, ['meta.ai'], NOW)
+    ).toBe('a=1; b=3')
+  })
+
+  it('appends a new session cookie scoped to an allowed domain', () => {
+    expect(
+      mergeUsageWebSessionCookieHeader(
+        'a=1',
+        ['sess=xyz; Path=/; Domain=meta.ai'],
+        META_URL,
+        ['meta.ai'],
+        NOW
+      )
+    ).toBe('a=1; sess=xyz')
+  })
+
+  it('rejects cookies from foreign domains', () => {
+    expect(
+      mergeUsageWebSessionCookieHeader('a=1', ['x=1; Domain=evil.com'], META_URL, ['meta.ai'], NOW)
+    ).toBeNull()
+  })
+
+  it('deletes an expired cookie', () => {
+    expect(
+      mergeUsageWebSessionCookieHeader(
+        'a=1; b=2',
+        ['b=gone; Expires=Thu, 01 Jan 1970 00:00:00 GMT'],
+        META_URL,
+        ['meta.ai'],
+        NOW
+      )
+    ).toBe('a=1')
+  })
+
+  it('returns null when there is nothing to merge', () => {
+    expect(mergeUsageWebSessionCookieHeader('a=1', [], META_URL, ['meta.ai'], NOW)).toBeNull()
+  })
+})
+
+describe('readUsageWebSessionReading cookie rotation', () => {
+  it('persists server-rotated cookies alongside the refreshed reading', async () => {
+    await seedMuseSession('muse=rotation-persist', new Date(NOW - 60 * 60 * 1000).toISOString())
+    const fetchImpl = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          headers: {
+            get: (name: string) =>
+              name.toLowerCase() === 'content-length' ? `${FRESH_MUSE_PAGE.length}` : null,
+            getSetCookie: () => ['muse_session=rotated456; Path=/; Domain=meta.ai']
+          },
+          text: async () => FRESH_MUSE_PAGE
+        }) as unknown as Response
+    )
+    const reading = await readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW })
+    expect(reading).toMatchObject({ currentUsedPercent: 41 })
+    expect(usageWebSessionStore('muse')?.loadSession()?.cookieHeader).toContain(
+      'muse_session=rotated456'
+    )
   })
 })
