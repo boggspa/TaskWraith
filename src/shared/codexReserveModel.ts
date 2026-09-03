@@ -25,6 +25,17 @@
  * their PRESENCE in the account's catalog is the entitlement check, and they
  * are offered whenever the server lists them.
  *
+ * GPT-6 Astra is a deliberate override rather than a gate. Codex CLI 0.153.1
+ * added it to the bundled catalog with `visibility: "hide"` — the release note
+ * is explicit that it is configurable "without ... showing it in the model
+ * picker" — and the app-server surfaces that as `hidden: true` (verified by
+ * the same mapping on `codex-auto-review`: `visibility: "hide"` upstream,
+ * `hidden: true` over `model/list`, while `gpt-5.6-sol` is `visibility:
+ * "list"` / `hidden: false`). TaskWraith offers it anyway, by product
+ * decision: rollout is by organisation, so a row that is present in the
+ * account's catalog is worth surfacing rather than hiding behind upstream's
+ * own picker policy. Revisit if upstream flips it to `list`.
+ *
  * Every other discovery-hidden row (for example `codex-auto-review`, the
  * internal approval-review model) stays hidden unconditionally.
  */
@@ -44,6 +55,14 @@ export const CODEX_DAYBREAK_MODEL_IDS: ReadonlySet<string> = new Set([
 ])
 
 const CODEX_DAYBREAK_MODEL_ID_PREFIX = 'gpt-daybreak-'
+
+/**
+ * GPT-6 Astra. The Amazon Bedrock catalog names the same model with a region
+ * prefix (`openai.`, `global.openai.`, `us.openai.`), so the suffix is matched
+ * too — but only as a whole trailing segment, never as a substring, so a
+ * distinct sibling slug cannot be swept in by accident.
+ */
+export const CODEX_ASTRA_MODEL_ID = 'gpt-6-astra'
 
 function normalizedToken(value: unknown): string {
   if (typeof value !== 'string') return ''
@@ -84,6 +103,14 @@ export function isCodexDaybreakModelId(value: unknown): boolean {
     CODEX_DAYBREAK_MODEL_IDS.has(normalized) ||
     normalized.startsWith(CODEX_DAYBREAK_MODEL_ID_PREFIX)
   )
+}
+
+/** True for GPT-6 Astra, including its Bedrock region-prefixed forms. */
+export function isCodexAstraModelId(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return false
+  return normalized === CODEX_ASTRA_MODEL_ID || normalized.endsWith(`.${CODEX_ASTRA_MODEL_ID}`)
 }
 
 function windowHasHeadroom(windowEntry: unknown): boolean {
@@ -147,8 +174,9 @@ export function codexReserveGrantActive(payload: unknown): boolean {
  *
  * Replaces a blanket `!row.hidden` filter: visible rows always survive,
  * Daybreak rows survive because the server only lists them for entitled
- * accounts, the reserve row survives only while a grant is live, and every
- * other hidden row is dropped. Input order is preserved so downstream ordering
+ * accounts, GPT-6 Astra survives as a deliberate override of upstream's
+ * picker policy, the reserve row survives only while a grant is live, and
+ * every other hidden row is dropped. Input order is preserved so downstream ordering
  * rules still see the catalog's own sequence.
  */
 export function filterCodexDiscoverableModelRows<T extends { id?: unknown; hidden?: unknown }>(
@@ -162,6 +190,7 @@ export function filterCodexDiscoverableModelRows<T extends { id?: unknown; hidde
     if (typeof entry.id !== 'string' || !entry.id.trim()) return false
     if (entry.hidden !== true) return true
     if (isCodexDaybreakModelId(entry.id)) return true
+    if (isCodexAstraModelId(entry.id)) return true
     return isCodexReserveModelId(entry.id) && options.reserveGrantActive
   })
 }

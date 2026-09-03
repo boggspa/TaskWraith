@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CODEX_ASTRA_MODEL_ID,
   CODEX_RESERVE_MODEL_ID,
   codexReserveGrantActive,
   filterCodexDiscoverableModelRows,
+  isCodexAstraModelId,
   isCodexDaybreakModelId,
   isCodexReserveLimitName,
   isCodexReserveModelId
@@ -191,5 +193,47 @@ describe('Codex Daybreak cyber models', () => {
     expect(
       filterCodexDiscoverableModelRows(unentitled, { reserveGrantActive: false }).map((r) => r.id)
     ).toEqual(['gpt-5.6-sol'])
+  })
+})
+
+describe('GPT-6 Astra reveal', () => {
+  // Codex CLI 0.153.1 ships Astra with `visibility: "hide"`, which the
+  // app-server surfaces as `hidden: true`. TaskWraith overrides that by
+  // product decision, so the row must survive the filter.
+  const ASTRA_ROWS = [
+    { id: 'gpt-6-astra', hidden: true },
+    { id: 'gpt-5.6-sol', hidden: false },
+    { id: 'codex-auto-review', hidden: true }
+  ]
+
+  it('matches the slug and its Bedrock region-prefixed forms', () => {
+    expect(CODEX_ASTRA_MODEL_ID).toBe('gpt-6-astra')
+    expect(isCodexAstraModelId('gpt-6-astra')).toBe(true)
+    expect(isCodexAstraModelId('  GPT-6-Astra  ')).toBe(true)
+    expect(isCodexAstraModelId('openai.gpt-6-astra')).toBe(true)
+    expect(isCodexAstraModelId('global.openai.gpt-6-astra')).toBe(true)
+    expect(isCodexAstraModelId('us.openai.gpt-6-astra')).toBe(true)
+  })
+
+  it('does not sweep in a distinct sibling slug', () => {
+    // A suffixed sibling is a DIFFERENT model, not a region form of this one.
+    expect(isCodexAstraModelId('gpt-6-astra-aeon')).toBe(false)
+    expect(isCodexAstraModelId('gpt-6-astra-pro')).toBe(false)
+    expect(isCodexAstraModelId('notgpt-6-astra')).toBe(false)
+    expect(isCodexAstraModelId('gpt-5.6-sol')).toBe(false)
+    expect(isCodexAstraModelId(null)).toBe(false)
+  })
+
+  it('offers Astra despite upstream hiding it, with or without a reserve grant', () => {
+    for (const reserveGrantActive of [true, false]) {
+      const kept = filterCodexDiscoverableModelRows(ASTRA_ROWS, { reserveGrantActive })
+      expect(kept.map((row) => row.id)).toEqual(['gpt-6-astra', 'gpt-5.6-sol'])
+    }
+  })
+
+  it('still drops the internal review model alongside it', () => {
+    const kept = filterCodexDiscoverableModelRows(ASTRA_ROWS, { reserveGrantActive: true })
+    expect(kept.map((row) => row.id)).not.toContain('codex-auto-review')
+    expect(kept.length).toBe(2)
   })
 })
