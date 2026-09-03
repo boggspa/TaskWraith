@@ -35868,6 +35868,10 @@ async function runAntigravityOfficialAcpProvider(
     handle = client.runTurn({
       prompt: payload.prompt,
       cwd,
+      // Raw catalogue id (`antigravity-acp:<model>`); the client strips the
+      // routing namespace so the bare id reaches session/set_config_option.
+      // Without this the seat silently ran the server's default model.
+      model: payload.model,
       onEvent: (evt) => {
         if (evt.type === 'content' && evt.text) {
           sendAgentCompatLine(

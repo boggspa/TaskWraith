@@ -16,11 +16,16 @@ import {
   createAcpTurnAbortController,
   runAcpTurn,
   type AcpChildProcess,
+  type AcpSessionConfigSelection,
   type AcpSteerPromptContext,
   type AcpToolRecoveryContext,
   type AcpTurnHandle
 } from '../acp/AcpTurnClient'
 import type { AcpPermissionDecision, AcpPermissionRequest, AcpRunEvent } from '../acp/AcpProtocol'
+import {
+  ANTIGRAVITY_ACP_MODEL_ID_PREFIX,
+  isAntigravityAcpCatalogModelId
+} from './AntigravityAcpStaticModels'
 
 export type { AcpChildProcess } from '../acp/AcpTurnClient'
 
@@ -61,9 +66,67 @@ export function formatAntigravityAcpProcessError(err: Error): string {
   return `Antigravity ACP process error: ${message}`
 }
 
+/**
+ * ACP's advertised config id for model selection. Kimi, Grok and Mistral all
+ * advertise this same `model` option on the session result.
+ */
+export const ANTIGRAVITY_ACP_MODEL_CONFIG_ID = 'model'
+
+/**
+ * Recover the bare, server-selectable model id from a catalogue row id.
+ *
+ * The catalogue emits `antigravity-acp:<model>` so dispatch can quarantine the
+ * row onto the official ACP binary, but that prefix is a TaskWraith ROUTING
+ * DEVICE: the Google ACP server has never heard of it and would reject or
+ * ignore it. The namespace must therefore be stripped before the id reaches
+ * the wire — exactly the contract the sibling Gemini API lane enforces with
+ * its capturing `^gemini-api:(gemini-…)$` route regex.
+ *
+ * The namespace itself is NOT re-derived here: the prefix constant and its
+ * predicate are imported from AntigravityAcpStaticModels so there is one
+ * source of truth. (This inverse belongs beside them; it lives here only
+ * because that module sits outside this lane's write scope.)
+ *
+ * A bare id is returned unchanged, so callers may apply this unconditionally.
+ * Returns '' when nothing survives the strip — treat that as "no model
+ * selected" rather than sending a blank selection.
+ */
+export function stripAntigravityAcpModelNamespace(modelId: unknown): string {
+  if (typeof modelId !== 'string') return ''
+  const trimmed = modelId.trim()
+  if (!isAntigravityAcpCatalogModelId(trimmed)) return trimmed
+  return trimmed.slice(ANTIGRAVITY_ACP_MODEL_ID_PREFIX.length).trim()
+}
+
+/**
+ * The run's model as an ACP session config selection.
+ *
+ * ACP carries a model through `session/set_config_option`, not through
+ * session/new params — passing it as a session/new field is silently ignored
+ * by current runtimes (see HostNodeAcpSessionConfig). AcpTurnClient drains
+ * these after session/new and before the prompt, and this lane always opens a
+ * fresh session (`cwdLifetime: 'run'`), so `sessionConfigOptions` is the
+ * correct half of that pair and `resumeConfigOptions` is deliberately unset.
+ *
+ * An absent or blank model yields NO selection, leaving the server on its own
+ * default rather than asserting an empty one.
+ */
+export function antigravityAcpSessionConfigOptions(model: unknown): AcpSessionConfigSelection[] {
+  const bare = stripAntigravityAcpModelNamespace(model)
+  if (!bare) return []
+  return [{ configId: ANTIGRAVITY_ACP_MODEL_CONFIG_ID, value: bare }]
+}
+
 export interface AntigravityAcpRunOptions {
   prompt: string
   cwd: string
+  /**
+   * The user's selected model, accepted in EITHER form: the catalogue's
+   * `antigravity-acp:<model>` row id or an already-bare id. It is normalized
+   * here, so the routing namespace can never reach the wire regardless of
+   * which caller supplies it. Omitted/blank leaves the server default.
+   */
+  model?: string
   /** TaskWraith's version string, sent as ACP clientInfo.version. */
   appVersion: string
   /** Spawns the official `agy_acp_server` stdio process (injected for testability). */
@@ -159,6 +222,9 @@ export function runAntigravityAcpTurn(options: AntigravityAcpRunOptions): Antigr
     spawnProcess: options.spawnProcess,
     initializeParams: buildAntigravityAcpInitializeParams(options.appVersion),
     mcpServers: options.mcpServers,
+    sessionConfigOptions: antigravityAcpSessionConfigOptions(options.model),
+    // Selects the user's model on the freshly opened session. Without this the
+    // seat silently ran whatever the server defaulted to, discarding the pick.
     formatSteerPrompt: formatAntigravityAcpSteerPrompt,
     onEvent: options.onEvent,
     onToolBatchBoundary: options.onToolBatchBoundary,

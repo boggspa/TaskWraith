@@ -11,8 +11,12 @@ import {
   formatAntigravityAcpProcessError,
   formatAntigravityAcpSteerPrompt,
   runAntigravityAcpTurn,
+  antigravityAcpSessionConfigOptions,
+  stripAntigravityAcpModelNamespace,
+  ANTIGRAVITY_ACP_MODEL_CONFIG_ID,
   type AntigravityAcpRunOptions
 } from './AntigravityAcpClient'
+import { toAntigravityAcpModelId } from './AntigravityAcpStaticModels'
 
 describe('buildAntigravityAcpInitializeParams', () => {
   it('reports protocol 1, the taskwraith client identity, and no client-fs capability', () => {
@@ -290,6 +294,119 @@ describe('createAntigravityAcpClient', () => {
     expect(child.sent().find((message) => message.method === 'initialize')?.params).toEqual(
       buildAntigravityAcpInitializeParams('9.9.9')
     )
+    handle.cancel()
+    await handle.closed
+  })
+})
+
+/**
+ * S7 — model passthrough. The catalogue emits `antigravity-acp:<model>` so
+ * dispatch can quarantine the row onto this binary, but that prefix is a
+ * TaskWraith routing device the ACP server has never heard of. Before this,
+ * runTurn accepted no model at all: every run silently used the server's own
+ * default and the user's pick was discarded.
+ */
+describe('official-ACP model passthrough', () => {
+  const PREFIXED = 'antigravity-acp:gemini-3.8-flash-high'
+  const BARE = 'gemini-3.8-flash-high'
+
+  const sessionReadyAdvertisingModel = (
+    child: FakeAcpChild,
+    currentValue = 'gemini-3.1-pro'
+  ): void => {
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 2,
+      result: {
+        sessionId: 'session-1',
+        configOptions: [
+          {
+            id: ANTIGRAVITY_ACP_MODEL_CONFIG_ID,
+            currentValue,
+            options: [{ value: currentValue }, { value: BARE }]
+          }
+        ]
+      }
+    })
+  }
+
+  const configFrame = (child: FakeAcpChild): Record<string, unknown> | undefined =>
+    child.sent().find((message) => message.method === 'session/set_config_option')
+
+  it('strips the routing namespace and leaves a bare id untouched', () => {
+    expect(stripAntigravityAcpModelNamespace(PREFIXED)).toBe(BARE)
+    expect(stripAntigravityAcpModelNamespace(BARE)).toBe(BARE)
+    // Round-trips exactly against the catalogue's projection.
+    expect(stripAntigravityAcpModelNamespace(toAntigravityAcpModelId(BARE))).toBe(BARE)
+    expect(stripAntigravityAcpModelNamespace('  ANTIGRAVITY-ACP:Gemini-3.8-Flash-High ')).toBe(
+      'Gemini-3.8-Flash-High'
+    )
+    // Nothing survives the strip => "no model selected", never a blank value.
+    expect(stripAntigravityAcpModelNamespace('antigravity-acp:')).toBe('')
+    expect(stripAntigravityAcpModelNamespace('   ')).toBe('')
+    expect(stripAntigravityAcpModelNamespace(undefined)).toBe('')
+  })
+
+  it('projects the model onto exactly one ACP config selection', () => {
+    expect(antigravityAcpSessionConfigOptions(PREFIXED)).toEqual([
+      { configId: 'model', value: BARE }
+    ])
+    expect(antigravityAcpSessionConfigOptions(BARE)).toEqual([{ configId: 'model', value: BARE }])
+    // Absent/blank asserts nothing, leaving the server's own default alone.
+    expect(antigravityAcpSessionConfigOptions(undefined)).toEqual([])
+    expect(antigravityAcpSessionConfigOptions('antigravity-acp:')).toEqual([])
+  })
+
+  it('sends the BARE id to session/set_config_option and never leaks the namespace on the wire', async () => {
+    const child = new FakeAcpChild()
+    const { handle } = run(child, { model: PREFIXED })
+    sessionReadyAdvertisingModel(child)
+    await tick()
+
+    expect(configFrame(child)).toMatchObject({
+      method: 'session/set_config_option',
+      params: { sessionId: 'session-1', configId: 'model', value: BARE }
+    })
+    // The decisive assertion: the routing prefix reaches no frame at all.
+    expect(JSON.stringify(child.sent())).not.toContain('antigravity-acp')
+
+    handle.cancel()
+    await handle.closed
+  })
+
+  it('treats an already-bare model identically (idempotent at the wire)', async () => {
+    const child = new FakeAcpChild()
+    const { handle } = run(child, { model: BARE })
+    sessionReadyAdvertisingModel(child)
+    await tick()
+    expect(configFrame(child)?.params).toMatchObject({ configId: 'model', value: BARE })
+    handle.cancel()
+    await handle.closed
+  })
+
+  it('still prompts after the model selection settles', async () => {
+    const child = new FakeAcpChild()
+    const { handle } = run(child, { model: PREFIXED })
+    sessionReadyAdvertisingModel(child)
+    await tick()
+    const config = configFrame(child)
+    expect(config).toBeDefined()
+    // The server accepts the selection; the turn must then proceed to prompt.
+    child.emit({ jsonrpc: '2.0', id: config!.id, result: {} })
+    await tick()
+    expect(child.sent().some((message) => message.method === 'session/prompt')).toBe(true)
+    handle.cancel()
+    await handle.closed
+  })
+
+  it('asserts no selection when no model is supplied, preserving prior behaviour', async () => {
+    const child = new FakeAcpChild()
+    const { handle } = run(child)
+    sessionReadyAdvertisingModel(child)
+    await tick()
+    expect(configFrame(child)).toBeUndefined()
+    expect(child.sent().some((message) => message.method === 'session/prompt')).toBe(true)
     handle.cancel()
     await handle.closed
   })
