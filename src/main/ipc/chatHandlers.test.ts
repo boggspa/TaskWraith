@@ -62,6 +62,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
     isChatBusy: vi.fn(() => false),
     chatService: {
       getChats: vi.fn(() => [chat('chat-1')]),
+      getWorkspaceCommitAttributionProjections: vi.fn(() => [chat('chat-1')]),
       getChatList: vi.fn(() => []),
       getPinnedMessages: vi.fn(() => []),
       getChat: vi.fn((chatId: string) => chat(chatId)),

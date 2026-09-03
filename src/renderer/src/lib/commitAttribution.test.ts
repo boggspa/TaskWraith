@@ -6,6 +6,7 @@ import {
   loadWorkspaceTaskWraithCommitAttributions,
   resolveTaskWraithCommitAttribution
 } from './commitAttribution'
+import { projectChatForCommitAttribution } from '../../../shared/commitAttributionProjection'
 
 const seatLink: SeatChangeLink = {
   participantId: 'seat-1',
@@ -133,5 +134,59 @@ describe('commitAttribution', () => {
     expect(
       resolveTaskWraithCommitAttribution(attributions, '0123456789abcdef0123456789abcdef01234567')
     ).toBeNull()
+  })
+
+  it('attributes a seat identically from a transcript-reduced projection', () => {
+    // The Commits inspector no longer receives whole transcripts: main sends
+    // the same record with every non-commit message and tool activity removed.
+    // The seat a human reads in the Attribution column must not change.
+    const committed = {
+      id: 'committed',
+      role: 'assistant',
+      content: 'Committed the composer change',
+      timestamp: new Date().toISOString(),
+      runId: 'run-1',
+      metadata: { ensembleParticipantId: 'seat-1' },
+      toolActivities: [
+        {
+          id: 'read-activity',
+          toolName: 'Read',
+          displayName: 'Read',
+          category: 'read',
+          status: 'success',
+          resultSummary: 'a'.repeat(5000)
+        },
+        {
+          id: 'commit-activity',
+          toolName: 'git_commit',
+          displayName: 'git_commit',
+          category: 'task',
+          status: 'success',
+          resultSummary: '[master 1ebbc82fc] feat(composer): pick a branch\n 4 files changed'
+        }
+      ]
+    } as unknown as ChatMessage
+    const chatter = {
+      id: 'chatter',
+      role: 'assistant',
+      content: 'b'.repeat(20000),
+      timestamp: new Date().toISOString()
+    } as ChatMessage
+    const source = {
+      ...chat([chatter, committed]),
+      workspacePath: '/repo',
+      runs: [{ runId: 'run-1', effectiveWorkspacePath: '/repo' }],
+      ensemble: {
+        participants: [{ id: 'seat-1', provider: 'codex', model: 'gpt-5.6', role: 'Work1' }]
+      }
+    } as unknown as ChatRecord
+
+    const fromSource = collectTaskWraithCommitAttributions([source])
+    const projection = projectChatForCommitAttribution(source)
+    const fromProjection = collectTaskWraithCommitAttributions([projection as ChatRecord])
+
+    // Not vacuous: the seat really is resolved from the receipt.
+    expect(fromSource.get('1ebbc82fc')?.seatLink?.participantId).toBe('seat-1')
+    expect(Array.from(fromProjection)).toEqual(Array.from(fromSource))
   })
 })

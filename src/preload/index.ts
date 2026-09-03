@@ -2288,6 +2288,8 @@ const api = {
   signInWebSiteLogin: (input: { id: string }) => ipcRenderer.invoke('web-login:sign-in', input),
   signOutWebSiteLogin: (input: { id: string }) => ipcRenderer.invoke('web-login:sign-out', input),
   getChats: (workspaceId?: string) => ipcRenderer.invoke('get-chats', workspaceId),
+  getWorkspaceCommitAttributions: (workspaceId: string) =>
+    ipcRenderer.invoke('get-workspace-commit-attributions', workspaceId),
   getChatList: (workspaceId?: string) => ipcRenderer.invoke('get-chat-list', workspaceId),
   getPinnedMessages: (workspaceId?: string) =>
     ipcRenderer.invoke('get-pinned-messages', workspaceId),

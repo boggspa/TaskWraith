@@ -57,6 +57,12 @@ export function collectTaskWraithCommitAttributions(
  * contribute its commit receipts directly. Hydrate only while the Commits
  * inspector is open, keep the read workspace-scoped, and let an already-live
  * renderer record win over its durable copy.
+ *
+ * `loadWorkspaceChats` must NOT be `window.api.getChats`. That channel parses
+ * every chat in the profile and serializes the workspace's whole transcript
+ * across IPC on the main process, which froze the app for as long as it ran;
+ * `getWorkspaceCommitAttributions` returns the same records with everything
+ * but their commit receipts removed.
  */
 export async function loadWorkspaceTaskWraithCommitAttributions(input: {
   chats: readonly ChatRecord[]

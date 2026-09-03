@@ -16,6 +16,7 @@ import type {
   ReapAbandonedChatsDeps,
   RendererReapContext
 } from '../AbandonedChatReaper'
+import { projectChatForCommitAttribution } from '../../shared/commitAttributionProjection'
 import { readPendingWorkspaceRebind } from '../pendingWorkspaceRebind'
 import { defaultThreadTitleRepairStatePath } from '../store/ThreadTitleRepair'
 import {
@@ -50,6 +51,7 @@ export interface ChatHandlerDeps {
   chatService: Pick<
     ChatService,
     | 'getChats'
+    | 'getWorkspaceCommitAttributionProjections'
     | 'getChatList'
     | 'getPinnedMessages'
     | 'getChat'
@@ -483,6 +485,24 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     if (scope.kind === 'all') return deps.chatService.getChats(workspaceId)
     const owned = deps.chatService.getChat(scope.chatId)
     return owned ? [owned] : []
+  })
+  /**
+   * Commit attributions for one workspace, without its transcripts.
+   *
+   * The Commits inspector used `get-chats` for this and paid a whole-profile
+   * parse plus a whole-workspace transcript serialization on the main process
+   * for every open — the app froze until it finished. The records returned
+   * here keep only messages carrying a commit receipt.
+   */
+  ipcMain.handle('get-workspace-commit-attributions', (event, workspaceId: string) => {
+    const scope = deps.resolveSenderChatReadScope(event)
+    assertReadableWorkspace(scope, workspaceId)
+    if (scope.kind === 'all') {
+      return deps.chatService.getWorkspaceCommitAttributionProjections(workspaceId)
+    }
+    const owned = deps.chatService.getChat(scope.chatId)
+    const projected = owned ? projectChatForCommitAttribution(owned) : null
+    return projected ? [projected] : []
   })
   ipcMain.handle('get-chat-list', (event, workspaceId?: string) => {
     const scope = deps.resolveSenderChatReadScope(event)

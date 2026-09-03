@@ -17,6 +17,7 @@ import { redactSecrets } from '../../shared/secretRedaction'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../shared/diffStatColors'
 import { DEFAULT_THEME_ACCENT_COLOR, resolveThemeAccentColor } from '../../shared/themeAccentColor'
 import { normalizeEnsembleAuthority } from '../../shared/ensembleAuthority'
+import { projectChatForCommitAttribution } from '../../shared/commitAttributionProjection'
 import { stripExternalProviderThreadImportContinuity } from '../../shared/externalProviderThreadImport'
 import {
   normalizeSystemThemeAppearance,
@@ -6793,6 +6794,59 @@ export class AppStore {
       }
     }
     return chats.sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  /**
+   * Workspace-scoped, transcript-reduced records for the Commits inspector's
+   * attribution column.
+   *
+   * `getChats` cannot serve this surface. It reads and parses EVERY chat file
+   * in the profile before filtering by workspace, then hands the renderer
+   * complete transcripts across IPC — measured on a real profile, 954MB read
+   * to ship 692MB, synchronously on the main process, to build a map of a few
+   * hundred commit hashes. The whole app froze for the duration. This path
+   * narrows the read to one workspace and drops every message that carries no
+   * commit receipt before the records cross the boundary.
+   */
+  static getWorkspaceCommitAttributionProjections(workspaceId: string): ChatRecord[] {
+    if (!workspaceId) return []
+    this.ensureOrphanSubThreadsReaped()
+    if (!fs.existsSync(chatsDir)) return []
+    const projections: ChatRecord[] = []
+    for (const chatId of this.commitAttributionChatIds(workspaceId)) {
+      if (this.orphanSubThreadReapCandidates.has(chatId)) continue
+      const chat = this.readChatRecordCached(chatId, path.join(chatsDir, `${chatId}.json`))
+      if (!chat || chat.workspaceId !== workspaceId) continue
+      const projected = projectChatForCommitAttribution(chat)
+      if (projected) projections.push(projected)
+    }
+    return projections.sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  /**
+   * Chat ids worth parsing for `workspaceId`. The list index carries each
+   * chat's workspace, so it narrows the parse to one workspace's files;
+   * `readdirSync` only yields names, so sweeping it for chats the index has
+   * not seen yet stays cheap and keeps a freshly-created thread visible.
+   */
+  private static commitAttributionChatIds(workspaceId: string): string[] {
+    let indexed: Record<string, ChatListItem> | null = null
+    try {
+      indexed = chatListIndexStore.readAll()
+    } catch {
+      indexed = null
+    }
+    const files = fs.readdirSync(chatsDir).filter((file) => file.endsWith('.json'))
+    if (!indexed || Object.keys(indexed).length === 0) {
+      return files.map((file) => path.basename(file, '.json'))
+    }
+    const scoped = new Set<string>()
+    for (const file of files) {
+      const chatId = path.basename(file, '.json')
+      const item = indexed[chatId]
+      if (!item || item.workspaceId === workspaceId) scoped.add(chatId)
+    }
+    return Array.from(scoped)
   }
 
   static listOrphanSubThreadReapCandidates(): string[] {

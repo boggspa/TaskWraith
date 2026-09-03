@@ -100,6 +100,7 @@ function makeContextSummary(
 function makeStore(overrides: Partial<ChatServiceStore> = {}): ChatServiceStore {
   return {
     getChats: vi.fn(() => [makeChat()]),
+    getWorkspaceCommitAttributionProjections: vi.fn(() => [makeChat()]),
     getChatList: vi.fn(() => [
       {
         ...makeChat(),

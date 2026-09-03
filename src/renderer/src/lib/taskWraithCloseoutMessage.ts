@@ -31,7 +31,7 @@ import {
   type CloseoutReceipt,
   type CloseoutValidationKind
 } from '../../../shared/closeoutReceipt'
-import { resolveCatalogToolName } from '../../../shared/canonicalToolCoalesce'
+import { commitAttributionActivityKind } from '../../../shared/commitAttributionProjection'
 import type { SeatChangeLink, SeatChangeSeatState } from '../../../shared/seatChange'
 import { formatContextTokens } from './contextWindows'
 import { reasoningDisplayLabel } from './composerChipFormat'
@@ -2184,13 +2184,9 @@ function formatCommitStats(raw: string): string {
 }
 
 export function closeoutCommitActivityKind(activity: ToolActivity): 'dedicated' | 'shell' | null {
-  const catalogTool = resolveCatalogToolName(activity.toolName || '')
-  if (catalogTool === 'git_commit') return 'dedicated'
-  if (catalogTool === 'run_shell_command' || activity.category?.toLowerCase() === 'shell') {
-    return 'shell'
-  }
-  const text = `${activity.toolName || ''} ${activity.displayName || ''}`.toLowerCase()
-  return text.includes('git_commit') || text.includes('git commit') ? 'dedicated' : null
+  // Single definition, shared with the main-side attribution projection: the
+  // projection drops every activity this rejects, so the two must not drift.
+  return commitAttributionActivityKind(activity)
 }
 
 function extractCommitsFromActivity(

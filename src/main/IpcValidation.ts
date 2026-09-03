@@ -147,6 +147,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'projects:revoke-reference-extract': ['object'],
   'projects:read-reference-extract-text': ['object'],
   'get-chats': ['optionalString'],
+  'get-workspace-commit-attributions': ['string'],
   'get-chat-list': ['optionalString'],
   'get-pinned-messages': ['optionalString'],
   'get-chat': ['chatId'],

@@ -223,6 +223,7 @@ export type PrepareForkMessages = (input: PrepareForkMessagesInput) => ChatMessa
 
 export interface ChatServiceStore {
   getChats: (workspaceId?: string) => ChatRecord[]
+  getWorkspaceCommitAttributionProjections: (workspaceId: string) => ChatRecord[]
   getChatList: (workspaceId?: string) => ChatListItem[]
   getPinnedMessages: (workspaceId?: string) => PinnedMessageGroup[]
   getChat: (chatId: string) => ChatRecord | null
@@ -331,6 +332,11 @@ export class ChatService {
 
   getChats(workspaceId?: string): ChatRecord[] {
     return this.deps.appStore.getChats(workspaceId)
+  }
+
+  /** Transcript-reduced, workspace-scoped records for the Commits inspector. */
+  getWorkspaceCommitAttributionProjections(workspaceId: string): ChatRecord[] {
+    return this.deps.appStore.getWorkspaceCommitAttributionProjections(workspaceId)
   }
 
   getChatList(workspaceId?: string): ChatListItem[] {

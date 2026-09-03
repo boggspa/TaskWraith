@@ -50,6 +50,7 @@ function harness(options: { withQueue?: boolean } = {}) {
   const chats = new Map<string, ChatRecord>([['chat-1', chat()]])
   const store: ChatServiceStore = {
     getChats: vi.fn(() => Array.from(chats.values())),
+    getWorkspaceCommitAttributionProjections: vi.fn(() => Array.from(chats.values())),
     getChatList: vi.fn(() => []),
     getPinnedMessages: vi.fn(() => []),
     getChat: vi.fn((chatId) => chats.get(chatId) || null),
@@ -863,6 +864,7 @@ function roomHarness(
   const calls: string[] = []
   const store: ChatServiceStore = {
     getChats: vi.fn(() => Array.from(chats.values())),
+    getWorkspaceCommitAttributionProjections: vi.fn(() => Array.from(chats.values())),
     getChatList: vi.fn((workspaceId?: string): ChatListItem[] =>
       Array.from(chats.values())
         .filter((record) => !workspaceId || record.workspaceId === workspaceId)
