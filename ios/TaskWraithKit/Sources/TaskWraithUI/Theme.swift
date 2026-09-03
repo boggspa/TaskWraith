@@ -213,6 +213,7 @@ public enum TWTheme {
         // own: dE 9.28 from liquid and 9.50 from the openrouter fallback.
         case "thinkingmachines": return 0xC24E68
         case "tencent": return 0x3458B0
+        case "inception": return 0x9675FF
         default: return chroma1Hex
         }
     }

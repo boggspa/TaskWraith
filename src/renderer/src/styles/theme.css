@@ -304,6 +304,8 @@
   --provider-thinkingmachines-color: #C24E68;
   /* Tencent corporate blue — matches the Hunyuan / Hy4 brand identity. */
   --provider-tencent-color: #3458B0;
+  /* Inception Labs purple — matches the Mercury dLLM brand identity. */
+  --provider-inception-color: #9675FF;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill

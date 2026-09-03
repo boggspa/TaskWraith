@@ -505,7 +505,8 @@ const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
     id: 'openrouter/thinkingmachines/inkling-small:free',
     label: 'Inkling Small'
   },
-  { id: 'openrouter/tencent/hy4-preview', label: 'Hy4 Preview' }
+  { id: 'openrouter/tencent/hy4-preview', label: 'Hy4 Preview' },
+  { id: 'openrouter/inception/mercury-2.5-preview', label: 'Mercury 2.5 Preview' }
 ]
 const PI_MODELS = withCuratedUltraTaskSupport(PI_MODEL_ROWS)
 

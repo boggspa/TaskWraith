@@ -1643,6 +1643,9 @@
 .ensemble-above-chip.provider-tencent .ensemble-above-chip-role {
   color: var(--provider-tencent-color);
 }
+.ensemble-above-chip.provider-inception .ensemble-above-chip-role {
+  color: var(--provider-inception-color);
+}
 .ensemble-above-chip.provider-qwen .ensemble-above-chip-role {
   color: var(--provider-qwen-color);
 }
@@ -1909,6 +1912,9 @@
 }
 .ensemble-above-chip-tooltip.provider-tencent .ensemble-above-chip-tooltip-title {
   color: var(--provider-tencent-color);
+}
+.ensemble-above-chip-tooltip.provider-inception .ensemble-above-chip-tooltip-title {
+  color: var(--provider-inception-color);
 }
 .ensemble-above-chip-tooltip.provider-qwen .ensemble-above-chip-tooltip-title {
   color: var(--provider-qwen-color);
