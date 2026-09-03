@@ -451,6 +451,13 @@
   box-shadow: 0 0 5px 1px currentColor;
 }
 
+/* Pass 1 dash markers — sidebar-scale override for the 5px sidebar
+ * bar: thinner tick re-centred on its division line. */
+.app-sidebar .model-usage-liquid-card .quota-segment-tick {
+  width: 1px;
+  transform: translateX(-0.5px);
+}
+
 .app-sidebar .model-usage-liquid-card .model-usage-window-meta {
   display: none;
 }

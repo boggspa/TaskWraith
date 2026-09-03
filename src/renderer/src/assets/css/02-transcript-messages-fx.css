@@ -3388,6 +3388,22 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   transform: translateX(-50%);
   pointer-events: none;
   box-shadow: 0 0 4px -1px currentColor;
+  z-index: 2;
+}
+
+/* Pass 1 dash markers (Limit Counter parity) — window-subdivision
+ * dividers. Count comes from `quotaSegmentCount`; the component
+ * renders `segmentCount - 1` ticks at `(i + 1) / segmentCount`.
+ * z-index sits below the pace tick so the pace marker stays on top. */
+.quota-segment-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1.5px;
+  background: rgba(255, 255, 255, 0.5);
+  transform: translateX(-0.75px);
+  pointer-events: none;
+  z-index: 1;
 }
 [data-reduce-motion="true"] .quota-progress-fill {
   transition: none;

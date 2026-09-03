@@ -53,6 +53,12 @@ interface QuotaProgressBarProps {
    * on the bar at `pace.expectedFraction`. Hidden silently for
    * `onTrack` windows. */
   pace?: QuotaPace | null
+  /** Pass 1 dash markers (Limit Counter parity) — number of window
+   * subdivisions. Renders `segmentCount - 1` divider ticks at
+   * `(i + 1) / segmentCount`. `null` / non-finite / < 2 renders no
+   * ticks. Resolved per window by `quotaSegmentCount` in
+   * `../lib/quotaSegments` (the single source of truth). */
+  segmentCount?: number | null
 }
 
 /**
@@ -99,7 +105,8 @@ export function QuotaProgressBar({
   accent,
   className,
   emphasised = false,
-  pace = null
+  pace = null,
+  segmentCount = null
 }: QuotaProgressBarProps): ReactElement {
   const clampedFraction = Number.isFinite(fraction) ? Math.max(0, Math.min(1, fraction)) : 0
   // Render the fill at AT LEAST 3% width so a non-zero fraction
@@ -112,6 +119,12 @@ export function QuotaProgressBar({
   // tiny fraction to the 3% visual floor.
   const fillStyle = buildProgressGradient(renderFraction, accent)
   const surfacePace = pace !== null && paceShouldSurface(pace)
+  // Pass 1 dash markers: non-finite, null, or < 2 renders nothing.
+  const segmentTotal =
+    typeof segmentCount === 'number' && Number.isFinite(segmentCount)
+      ? Math.floor(segmentCount)
+      : 0
+  const renderSegments = segmentTotal >= 2 ? segmentTotal : 0
 
   return (
     <div
@@ -132,6 +145,15 @@ export function QuotaProgressBar({
           }}
         />
       )}
+      {renderSegments >= 2 &&
+        Array.from({ length: renderSegments - 1 }, (_, i) => (
+          <span
+            key={i}
+            className="quota-segment-tick"
+            aria-hidden
+            style={{ left: `${(((i + 1) / renderSegments) * 100).toFixed(2)}%` }}
+          />
+        ))}
       {surfacePace && pace && (
         <span
           className="quota-pace-tick"
