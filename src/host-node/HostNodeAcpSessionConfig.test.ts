@@ -213,10 +213,12 @@ describe('HostNodeAcpSessionConfig', () => {
     })
     expect(write).not.toHaveBeenCalled()
     expect(onComplete).not.toHaveBeenCalled()
+    expect(onWarning).not.toHaveBeenCalled()
     expect(onStrictUnapplied).toHaveBeenCalledWith(
       'model',
-      expect.stringContaining('not-a-kimi-model')
+      expect.stringMatching(/cannot apply selected model "not-a-kimi-model"/)
     )
+    expect(String(onStrictUnapplied.mock.calls[0]?.[1])).not.toMatch(/keeping its persisted value/)
   })
 
   it('aborts a strict selection whose set_config_option is rejected', () => {
@@ -244,7 +246,7 @@ describe('HostNodeAcpSessionConfig', () => {
     expect(onComplete).not.toHaveBeenCalled()
     expect(onStrictUnapplied).toHaveBeenCalledWith(
       'model',
-      expect.stringContaining('unknown model')
+      expect.stringMatching(/cannot apply selected model "kimi-code\/k3".*unknown model/)
     )
   })
 
@@ -270,6 +272,9 @@ describe('HostNodeAcpSessionConfig', () => {
       selections: hostAcpModelAndEffortSelections({ modelValue: 'kimi-code/k3' })
     })
     expect(onComplete).not.toHaveBeenCalled()
-    expect(onStrictUnapplied).toHaveBeenCalledWith('model', expect.any(String))
+    expect(onStrictUnapplied).toHaveBeenCalledWith(
+      'model',
+      expect.stringMatching(/cannot apply selected model "kimi-code\/k3".*not advertised/)
+    )
   })
 })

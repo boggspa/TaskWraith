@@ -486,4 +486,160 @@ describe('HostNodeGrokProvider', () => {
       state: 'authenticated'
     })
   })
+
+  it('fails the turn instead of running the wrong model when the CLI does not offer it', async () => {
+    const { instance, child, finishes } = open({
+      configuredThread: thread({ modelId: 'grok-4.6', reasoningId: 'high' })
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-grok-no-fallback',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-stale',
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'grok-4.5',
+              options: [{ value: 'grok-4.5' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    expect(sent.join('')).not.toContain('"method":"session/prompt"')
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        errorCode: 'provider_failed',
+        warningSummaries: [expect.stringContaining('grok-4.6')]
+      })
+    ])
+  })
+
+  it('fails the turn when set_config_option rejects the selected model', async () => {
+    const { instance, child, finishes } = open({
+      configuredThread: thread({ modelId: 'grok-4.6', reasoningId: undefined })
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-grok-set-config-reject',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-grok',
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'grok-4.5',
+              options: [{ value: 'grok-4.5' }, { value: 'grok-4.6' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/set_config_option"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 1000,
+        error: { code: -32000, message: 'unknown model' }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    expect(sent.join('')).not.toContain('"method":"session/prompt"')
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        errorCode: 'provider_failed',
+        warningSummaries: [expect.stringContaining('grok-4.6')]
+      })
+    ])
+  })
+
+  it('fails the turn when the advertised config surface omits model entirely', async () => {
+    const { instance, child, finishes } = open({
+      configuredThread: thread({ modelId: 'grok-4.6' })
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-grok-no-model-option',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-grok',
+          configOptions: [
+            {
+              id: 'mode',
+              currentValue: 'default',
+              options: [{ value: 'default' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    expect(sent.join('')).not.toContain('"method":"session/prompt"')
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        errorCode: 'provider_failed',
+        warningSummaries: [expect.stringContaining('grok-4.6')]
+      })
+    ])
+  })
+
+  it('still prompts when the ACP session advertises no config surface at all', async () => {
+    const { instance, child } = open()
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-grok-no-config-surface',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(JSON.stringify({ id: 2, result: { sessionId: 'session-1' } }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/prompt"'))
+    expect(instance.cancel('run-grok-no-config-surface')).toBe(true)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
 })

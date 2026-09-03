@@ -408,7 +408,14 @@ class HostNodeGrokProviderInstance implements HostNodeProviderInstance {
       const sessionConfig = createHostAcpSessionConfigApplicator({
         write,
         onWarning: (text) => configWarnings.push(text.slice(0, 300)),
-        onComplete: sendPrompt
+        onComplete: sendPrompt,
+        // The user's exact model selection must run or the turn must fail —
+        // never a silent fallback onto the CLI's persisted model.
+        strictConfigIds: ['model'],
+        onStrictUnapplied: (_configId, detail) => {
+          failure = detail.slice(0, 300)
+          completion.requestStop()
+        }
       })
       const publishText = (value: string): void => {
         const text = normalizeHostProviderRunPresentationText(value)

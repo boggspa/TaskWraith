@@ -645,6 +645,100 @@ describe('HostNodeKimiProvider', () => {
       })
     ])
   })
+
+  it('fails the turn when set_config_option rejects the selected model', async () => {
+    const { instance, child, finishes } = open({
+      configuredThread: thread({ modelId: 'kimi-k3', reasoningId: undefined })
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-kimi-set-config-reject',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-k3',
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'kimi-code/kimi-for-coding',
+              options: [{ value: 'kimi-code/kimi-for-coding' }, { value: 'kimi-code/k3' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/set_config_option"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 1000,
+        error: { code: -32000, message: 'unknown model' }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    expect(sent.join('')).not.toContain('"method":"session/prompt"')
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        errorCode: 'provider_failed',
+        warningSummaries: [expect.stringContaining('kimi-code/k3')]
+      })
+    ])
+  })
+
+  it('fails the turn when the advertised config surface omits model entirely', async () => {
+    const { instance, child, finishes } = open({
+      configuredThread: thread({ modelId: 'kimi-k3', reasoningId: 'high' })
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-kimi-no-model-option',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-k3',
+          configOptions: [
+            {
+              id: 'mode',
+              currentValue: 'default',
+              options: [{ value: 'default' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    expect(sent.join('')).not.toContain('"method":"session/prompt"')
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        errorCode: 'provider_failed',
+        warningSummaries: [expect.stringContaining('kimi-code/k3')]
+      })
+    ])
+  })
+
   it('registers an ACP permission and resumes its exact request once after approval', async () => {
     let settle!: (value: {
       id: string

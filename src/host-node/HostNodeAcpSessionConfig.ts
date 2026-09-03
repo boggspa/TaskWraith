@@ -93,6 +93,20 @@ function advertisedForSelection(
   return undefined
 }
 
+function requestedValuesLabel(values: readonly string[]): string {
+  return values.length === 1
+    ? `"${values[0]}"`
+    : `any allowed value (${values.map((value) => `"${value}"`).join(', ')})`
+}
+
+function abortUnappliedDetail(configId: string, values: readonly string[], reason: string): string {
+  const requested = requestedValuesLabel(values)
+  if (configId === 'model') {
+    return `ACP session cannot apply selected model ${requested}: ${reason}`
+  }
+  return `ACP session cannot apply selected "${configId}" ${requested}: ${reason}`
+}
+
 export function createHostAcpSessionConfigApplicator(options: {
   write: (id: number, method: string, params: Record<string, unknown>) => void
   onWarning: (text: string) => void
@@ -140,7 +154,10 @@ export function createHostAcpSessionConfigApplicator(options: {
     if (!option) {
       const detail = `ACP session did not advertise config option "${desired.configId}"; keeping its persisted value.`
       if (strictIds.has(desired.configId)) {
-        abortStrict(desired.configId, detail)
+        abortStrict(
+          desired.configId,
+          abortUnappliedDetail(desired.configId, desired.values, 'config option was not advertised')
+        )
         return
       }
       options.onWarning(detail)
@@ -158,13 +175,17 @@ export function createHostAcpSessionConfigApplicator(options: {
         ? desired.values[0]
         : desired.values.find((value) => option.values.includes(value))
     if (!selectedValue) {
-      const requested =
-        desired.values.length === 1
-          ? `"${desired.values[0]}"`
-          : `any allowed value (${desired.values.map((value) => `"${value}"`).join(', ')})`
+      const requested = requestedValuesLabel(desired.values)
       const detail = `ACP session does not offer ${requested} for config option "${option.id}"; keeping its persisted value.`
       if (strictIds.has(desired.configId)) {
-        abortStrict(desired.configId, detail)
+        abortStrict(
+          desired.configId,
+          abortUnappliedDetail(
+            desired.configId,
+            desired.values,
+            'it is not in the advertised values'
+          )
+        )
         return
       }
       options.onWarning(detail)
@@ -212,7 +233,14 @@ export function createHostAcpSessionConfigApplicator(options: {
             : 'request error'
         const detail = `ACP session config "${pendingConfig.configId}" was not applied: ${message}`
         if (strictIds.has(pendingConfig.desiredId)) {
-          abortStrict(pendingConfig.desiredId, detail)
+          abortStrict(
+            pendingConfig.desiredId,
+            abortUnappliedDetail(
+              pendingConfig.desiredId,
+              [pendingConfig.value],
+              `set_config_option failed (${message})`
+            )
+          )
           return true
         }
         options.onWarning(detail)
