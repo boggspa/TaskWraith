@@ -1039,6 +1039,92 @@ describe('TaskWraith TUI renderer', () => {
     expect(stripAnsi(swept(1).join('\n'))).toBe(stripAnsi(first.join('\n')))
   })
 
+  it('marks a provider that can never modify files, at the point of selection', () => {
+    // Otherwise a user picks it, asks for an edit, and gets only a failure —
+    // the reported "turns fail with nothing evidently wrong". Disclose, never
+    // hide: a hidden provider reads as a missing feature.
+    const state = loadedHomeState()
+    state.overlay = 'tune'
+    state.homeTune!.providers = [
+      {
+        status: { providerId: 'antigravity', status: 'ready', label: 'AntiGravity' },
+        offers: {
+          providerId: 'antigravity',
+          offerRevision: 'agy-offer',
+          models: [{ modelId: 'agy-1', label: 'Gemini', available: true, reasoning: [] }],
+          postures: [
+            {
+              postureId: 'plan',
+              label: 'Plan',
+              available: true,
+              requiresExplicitConsent: false,
+              ceiling: 'read'
+            },
+            {
+              postureId: 'default',
+              label: 'Accept Edits',
+              available: false,
+              requiresExplicitConsent: false,
+              ceiling: 'workspace_write',
+              detail: 'The standalone Host has not yet proved the agy write-approval bridge.'
+            }
+          ]
+        }
+      }
+    ]
+    state.homeTune!.modelIndex = 0
+
+    // Wide enough that the Host's own reason is not elided by line fitting —
+    // the point is that we forward it, not that it survives every width.
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 160,
+        height: 24,
+        ansi: new Ansi('truecolor'),
+        animationEnabled: false
+      })
+    )
+
+    expect(output).toContain('read-only')
+    expect(output).toContain('AntiGravity cannot modify files')
+    expect(output).toContain('agy write-approval bridge')
+  })
+
+  it('does not brand a genuinely write-capable provider read-only', () => {
+    const state = loadedHomeState()
+    state.overlay = 'tune'
+
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 100,
+        height: 24,
+        ansi: new Ansi('truecolor'),
+        animationEnabled: false
+      })
+    )
+
+    expect(output).not.toContain('cannot modify files')
+  })
+
+  it('says when two offered permission tiers share one authority ceiling', () => {
+    // The user reported permissions are "switchable but I worry it doesn't work
+    // properly". For Claude both editing tiers reach the CLI as acceptEdits —
+    // deliberate and documented — so the honest fix is to say so, not re-map it.
+    const state = loadedHomeState()
+    state.overlay = 'tune'
+
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 100,
+        height: 24,
+        ansi: new Ansi('truecolor'),
+        animationEnabled: false
+      })
+    )
+
+    expect(output).toContain('share one authority ceiling')
+  })
+
   it('renders every provider model in one combined picker without a provider submenu', () => {
     const state = loadedHomeState()
     state.overlay = 'tune'

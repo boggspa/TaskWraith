@@ -29,7 +29,12 @@ import { tuiSeatsRoster, visibleThreadRows, type TaskWraithTuiState } from './st
 import { queuedDraftsForThread } from './promptQueue'
 import { providerLoginGuidance } from './providerLoginFlow'
 import { permissionToneHex } from './permissionTone'
-import { resolveTuiHomePosture, tuiModelChoices } from './modelPicker'
+import {
+  resolveTuiHomePosture,
+  tuiModelChoices,
+  tuiPostureCeilingNote,
+  tuiProviderWriteDisclosure
+} from './modelPicker'
 import {
   TUI_AUTO_THEME_NAME,
   TUI_DEFAULT_THEME_NAME,
@@ -1536,7 +1541,16 @@ function renderTuneOverlay(
         const current =
           thread?.provider.runtimeProvider === candidate.provider.status.providerId &&
           thread.provider.model === candidate.model.modelId
-        const suffix = [current ? 'current' : '', candidate.model.default ? 'Host default' : '']
+        // Mark a provider that can never mutate a file AT THE POINT OF CHOICE.
+        // Hiding it would read as a missing feature; labelling it is the whole
+        // difference between an informed choice and a turn that fails for no
+        // reason the user can see.
+        const readOnly = !tuiProviderWriteDisclosure(candidate.provider).canModifyFiles
+        const suffix = [
+          current ? 'current' : '',
+          candidate.model.default ? 'Host default' : '',
+          readOnly ? 'read-only' : ''
+        ]
           .filter(Boolean)
           .join(' · ')
         const line = `${selected ? glyphs.selection : ' '} ${ansi.provider(
@@ -1545,6 +1559,31 @@ function renderTuneOverlay(
           current
         )}${suffix ? ` ${ansi.dim(`(${suffix})`)}` : ''}`
         lines.push(borderedLine(selected ? ansi.inverse(line) : line, width, ansi, glyphs))
+      }
+      // Spell out WHY the highlighted provider cannot edit, in the Host's own
+      // words, so the row marker is an explanation rather than a label.
+      const writeDisclosure = provider ? tuiProviderWriteDisclosure(provider) : undefined
+      if (writeDisclosure?.notice) {
+        lines.push(
+          borderedLine(
+            tone(ansi, terminalLabel(writeDisclosure.notice), 'warning'),
+            width,
+            ansi,
+            glyphs
+          )
+        )
+      }
+      // Say when two offered tiers grant the same authority, so Shift+Tab is
+      // not read as a change it does not make. Disclosure only — the mapping
+      // behind it is deliberate and documented.
+      const ceilingNote = provider
+        ? tuiPostureCeilingNote(
+            provider.offers.postures,
+            resolveTuiHomePosture(home.providers, home.modelIndex, state.homePermission)?.postureId
+          )
+        : undefined
+      if (ceilingNote) {
+        lines.push(borderedLine(ansi.dim(terminalLabel(ceilingNote)), width, ansi, glyphs))
       }
       const reasoning = model?.reasoning.filter((candidate) => candidate.available) ?? []
       const reasoningRows = [
