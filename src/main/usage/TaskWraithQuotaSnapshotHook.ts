@@ -20,6 +20,7 @@ import type {
   UsageWebSessionProviderId,
   UsageWebSessionReading
 } from '../../shared/usageWebSession'
+import type { MuseSubscriptionUsageReading } from '../muse/MuseSubscriptionUsage'
 import { readUsageWebSessionReading } from '../providers/UsageWebSessionClient'
 
 const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
@@ -43,6 +44,20 @@ export interface TaskWraithQuotaSnapshotHookDependencies {
   readUsageWebSession?: (
     provider: UsageWebSessionProviderId
   ) => Promise<UsageWebSessionReading | null>
+  /**
+   * Explicit/opt-in CLI-sourced Muse subscription reading (e.g. a cached
+   * `parseMuseSubscriptionUsagePanel` result refreshed by a user action).
+   * NEVER the live `probeMuseSubscriptionUsage` on the automatic snapshot
+   * path: the probe spawns a real `muse` TUI session, and Muse meters itself
+   * from session.jsonl — the instrument may perturb the thing it measures.
+   * The browser import stays the automatic source; this only takes
+   * precedence when a reading is supplied.
+   */
+  readMuseSubscriptionCli?: () =>
+    | MuseSubscriptionUsageReading
+    | null
+    | undefined
+    | Promise<MuseSubscriptionUsageReading | null | undefined>
   fetchImpl?: FetchLike
   now?: () => number
   deepSeekCacheTtlMs?: number
@@ -713,36 +728,63 @@ function openrouterSnapshot(
 }
 
 /**
- * The Muse Code subscription meters imported from dev.meta.ai/usage: the
- * "Current usage" and "Weekly limit" percent windows, with the weekly reset
- * and the plan name from the page. Pay-as-you-go spend stays on the `meta`
- * lane — the subscription is a separate pool with its own ceiling.
+ * The Muse Code subscription meters: the "Current usage" and "Weekly limit"
+ * percent windows, with resets and the plan name. The browser import
+ * (dev.meta.ai/usage) is the automatic source; an explicitly supplied CLI
+ * reading (first-party `/usage` capture, fresher) takes precedence per meter
+ * when present. Pay-as-you-go spend stays on the `meta` lane — the
+ * subscription is a separate pool with its own ceiling.
+ *
+ * Deliberate non-mapping: the CLI reading's session token counts
+ * (input/cached/output, turns, subagents) are a DIFFERENT quantity from
+ * these percent meters (they already live in `MuseUsage.ts` session-jsonl
+ * metering) and have no percent-window shape, so they are not projected
+ * here — reshaping the aggregate types to fit them is out of scope.
+ *
+ * Current usage carries its reset when the CLI supplies one but NEVER a
+ * window duration: no source states the window length, and a fabricated
+ * duration would paint dashes on an unproven window.
  */
 function museSubscriptionSnapshot(
-  reading: UsageWebSessionReading,
-  now: number
+  reading: UsageWebSessionReading | null,
+  now: number,
+  cli: MuseSubscriptionUsageReading | null = null
 ): QuotaSnapshotHookSnapshot {
-  const capturedAt = Date.parse(reading.capturedAt)
+  // `??` (not `||`): a 0% meter is a real value, never "absent".
+  const cliCurrentUsed = cli?.current.usedPercent ?? undefined
+  const cliWeeklyUsed = cli?.weekly.usedPercent ?? undefined
+  const currentUsedPercent = cliCurrentUsed ?? reading?.currentUsedPercent
+  const weeklyUsedPercent = cliWeeklyUsed ?? reading?.weeklyUsedPercent
+  const currentViaCli = cliCurrentUsed !== undefined
+  const weeklyViaCli = cliWeeklyUsed !== undefined
+  const cliLed = currentViaCli || weeklyViaCli
+  // The browser reading carries a single reset for the weekly window; it
+  // must never leak onto Current (byte-identical browser-only output).
+  const currentResetAt = cli?.current.resetAt ?? undefined
+  const weeklyResetAt = cli?.weekly.resetAt ?? reading?.resetAt
+  const fetchedAt = cliLed && cli?.refreshedAt ? cli.refreshedAt : reading?.capturedAt ?? cli?.refreshedAt ?? new Date(now).toISOString()
+  const capturedAt = Date.parse(fetchedAt)
   const windows: QuotaSnapshotHookWindow[] = []
-  if (reading.currentUsedPercent !== undefined) {
-    const remainingPercent = Math.max(0, Math.min(100, 100 - reading.currentUsedPercent))
+  if (currentUsedPercent !== undefined) {
+    const remainingPercent = Math.max(0, Math.min(100, 100 - currentUsedPercent))
     windows.push({
       id: 'muse-subscription-current',
       label: 'Current usage',
-      usedPercent: reading.currentUsedPercent,
+      usedPercent: currentUsedPercent,
       remainingPercent,
-      limitLabel: `${remainingPercent}% remaining · imported browser session`
+      limitLabel: `${remainingPercent}% remaining · ${currentViaCli ? 'Muse CLI /usage' : 'imported browser session'}`,
+      ...(currentResetAt ? { resetAt: currentResetAt } : {})
     })
   }
-  if (reading.weeklyUsedPercent !== undefined) {
-    const remainingPercent = Math.max(0, Math.min(100, 100 - reading.weeklyUsedPercent))
+  if (weeklyUsedPercent !== undefined) {
+    const remainingPercent = Math.max(0, Math.min(100, 100 - weeklyUsedPercent))
     windows.push({
       id: 'muse-subscription-weekly',
       label: 'Weekly limit',
-      usedPercent: reading.weeklyUsedPercent,
+      usedPercent: weeklyUsedPercent,
       remainingPercent,
-      limitLabel: `${remainingPercent}% remaining · imported browser session`,
-      ...(reading.resetAt ? { resetAt: reading.resetAt } : {}),
+      limitLabel: `${remainingPercent}% remaining · ${weeklyViaCli ? 'Muse CLI /usage' : 'imported browser session'}`,
+      ...(weeklyResetAt ? { resetAt: weeklyResetAt } : {}),
       limitWindowSeconds: 7 * 24 * 60 * 60
     })
   }
@@ -751,19 +793,32 @@ function museSubscriptionSnapshot(
       'muse',
       now,
       true,
-      'Muse subscription session imported, but no usage meters were captured. Re-import after the usage page finishes loading.'
+      reading
+        ? 'Muse subscription session imported, but no usage meters were captured. Re-import after the usage page finishes loading.'
+        : 'Muse CLI /usage reported no subscription meters. The subscription lane appears after a successful capture.'
     )
   }
   return {
     provider: 'muse',
     source: 'taskwraith-native',
     configured: true,
-    fetchedAt: reading.capturedAt,
+    fetchedAt,
     stale: !Number.isFinite(capturedAt) || now - capturedAt > QUOTA_SNAPSHOT_HOOK_STALE_AFTER_MS,
-    planType: reading.planName ?? 'Muse Code subscription',
+    planType: cliLed && cli?.planName ? cli.planName : (reading?.planName ?? 'Muse Code subscription'),
     windows,
     balances: []
   }
+}
+
+/** True when a CLI reading carries at least one projectable meter. */
+function hasMuseSubscriptionCliMeters(
+  cli: MuseSubscriptionUsageReading | null | undefined
+): cli is MuseSubscriptionUsageReading {
+  return (
+    !!cli &&
+    cli.hasSubscription === true &&
+    (cli.current.usedPercent != null || cli.weekly.usedPercent != null)
+  )
 }
 
 function tokenPlanSnapshot(
@@ -1023,6 +1078,22 @@ export function createTaskWraithQuotaSnapshotHook(
     activeDeepSeekKey = deepSeekKey || null
     if (!deepSeekKey) deepSeekCache = null
 
+    // The CLI reading is an explicitly supplied (cached) capture — never a
+    // live probe spawn: this automatic path must not start a `muse` TUI.
+    // Sync fast path: a sync supplier (or none) must not yield, because the
+    // DeepSeek join below dispatches its fetch synchronously and an existing
+    // test pins that timing. Only a genuinely async supplier awaits.
+    const maybeCli: unknown = (() => {
+      try {
+        return dependencies.readMuseSubscriptionCli?.() ?? null
+      } catch {
+        return null
+      }
+    })()
+    const museCliReading: MuseSubscriptionUsageReading | null =
+      maybeCli && typeof (maybeCli as { then?: unknown }).then === 'function'
+        ? await Promise.resolve(maybeCli as MuseSubscriptionUsageReading | null).catch(() => null)
+        : (maybeCli as MuseSubscriptionUsageReading | null)
     const [deepSeek, museConfigured, [cerebrasWeb, metaWeb, museWeb, qwenWeb, mimoWeb]] =
       await Promise.all([
         deepSeekKey
@@ -1104,7 +1175,9 @@ export function createTaskWraithQuotaSnapshotHook(
             readAt
           )
         : emptySnapshot('openrouter', readAt, false),
-      ...(museWeb ? [museSubscriptionSnapshot(museWeb, readAt)] : []),
+      ...(museWeb || hasMuseSubscriptionCliMeters(museCliReading)
+        ? [museSubscriptionSnapshot(museWeb, readAt, museCliReading)]
+        : []),
       ...(mimoWeb ? [tokenPlanSnapshot('mimo', mimoWeb, readAt)] : []),
       ...(qwenWeb ? [tokenPlanSnapshot('qwen', qwenWeb, readAt)] : [])
     ]

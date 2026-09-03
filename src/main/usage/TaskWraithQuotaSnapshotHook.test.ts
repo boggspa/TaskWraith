@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { UsageRecord } from '../store/types'
+import type { MuseSubscriptionUsageReading } from '../muse/MuseSubscriptionUsage'
+import type { UsageWebSessionReading } from '../../shared/usageWebSession'
 import {
   createTaskWraithQuotaSnapshotHook,
   parseDeepSeekBalanceResponse
@@ -570,6 +572,218 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         stale: true,
         planType: 'Muse Code subscription',
         windows: [expect.objectContaining({ label: 'Weekly limit', usedPercent: 5 })]
+      })
+    )
+  })
+
+  function cliReading(overrides?: Partial<MuseSubscriptionUsageReading>): MuseSubscriptionUsageReading {
+    return {
+      planName: 'Muse Code High Usage',
+      hasSubscription: true,
+      current: {
+        usedPercent: 47,
+        resetAtText: '4:18 PM',
+        resetAt: '2026-08-13T16:18:00.000Z',
+        limitWindowSeconds: null
+      },
+      weekly: {
+        usedPercent: 17,
+        resetAtText: 'Sep 7 1:00 AM',
+        resetAt: '2026-09-07T01:00:00.000Z',
+        limitWindowSeconds: 7 * 24 * 60 * 60
+      },
+      session: {
+        inputTokens: 0,
+        cachedTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        turns: 0,
+        subagents: 0
+      },
+      refreshedAt: new Date(NOW - 30_000).toISOString(),
+      ...overrides
+    }
+  }
+
+  function museHook(deps: {
+    web?: UsageWebSessionReading | null
+    cli?: MuseSubscriptionUsageReading | null
+  }) {
+    return createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({}),
+      getApiUsageBilling: () => ({}),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readUsageWebSession: vi.fn(async (provider: string) =>
+        provider === 'muse' ? (deps.web ?? null) : null
+      ),
+      ...(deps.cli !== undefined && deps.cli !== null
+        ? { readMuseSubscriptionCli: () => deps.cli }
+        : {}),
+      now: () => NOW
+    })
+  }
+
+  it('prefers the CLI-supplied Muse subscription reading over the browser import', async () => {
+    const browserCapturedAt = new Date(NOW - 60_000).toISOString()
+    const read = museHook({
+      web: {
+        currentUsedPercent: 37,
+        weeklyUsedPercent: 82,
+        planName: 'Browser Plan',
+        resetAt: '2026-09-07T00:00:00.000Z',
+        capturedAt: browserCapturedAt
+      },
+      cli: cliReading()
+    })
+
+    const muse = (await read()).find((snapshot) => snapshot.provider === 'muse')
+    expect(muse).toEqual(
+      expect.objectContaining({
+        provider: 'muse',
+        configured: true,
+        fetchedAt: new Date(NOW - 30_000).toISOString(),
+        stale: false,
+        planType: 'Muse Code High Usage',
+        windows: [
+          expect.objectContaining({
+            id: 'muse-subscription-current',
+            label: 'Current usage',
+            usedPercent: 47,
+            remainingPercent: 53,
+            resetAt: '2026-08-13T16:18:00.000Z',
+            limitLabel: '53% remaining · Muse CLI /usage'
+          }),
+          expect.objectContaining({
+            id: 'muse-subscription-weekly',
+            label: 'Weekly limit',
+            usedPercent: 17,
+            remainingPercent: 83,
+            resetAt: '2026-09-07T01:00:00.000Z',
+            limitWindowSeconds: 7 * 24 * 60 * 60,
+            limitLabel: '83% remaining · Muse CLI /usage'
+          })
+        ]
+      })
+    )
+  })
+
+  it('projects a CLI-only Muse subscription reading with no browser import', async () => {
+    const read = museHook({ web: null, cli: cliReading() })
+
+    const muse = (await read()).find((snapshot) => snapshot.provider === 'muse')
+    expect(muse).toEqual(
+      expect.objectContaining({
+        provider: 'muse',
+        configured: true,
+        fetchedAt: new Date(NOW - 30_000).toISOString(),
+        planType: 'Muse Code High Usage',
+        windows: [
+          expect.objectContaining({ id: 'muse-subscription-current', usedPercent: 47 }),
+          expect.objectContaining({ id: 'muse-subscription-weekly', usedPercent: 17 })
+        ]
+      })
+    )
+  })
+
+  it('keeps the browser-only Muse snapshot byte-identical without a CLI reading', async () => {
+    const capturedAt = new Date(NOW - 60_000).toISOString()
+    const read = museHook({
+      web: {
+        currentUsedPercent: 37,
+        weeklyUsedPercent: 82,
+        planName: 'Muse Code High Usage',
+        resetAt: '2026-09-07T00:00:00.000Z',
+        capturedAt
+      }
+    })
+
+    const muse = (await read()).find((snapshot) => snapshot.provider === 'muse')
+    expect(muse?.windows).toEqual([
+      {
+        id: 'muse-subscription-current',
+        label: 'Current usage',
+        usedPercent: 37,
+        remainingPercent: 63,
+        limitLabel: '63% remaining · imported browser session'
+      },
+      {
+        id: 'muse-subscription-weekly',
+        label: 'Weekly limit',
+        usedPercent: 82,
+        remainingPercent: 18,
+        limitLabel: '18% remaining · imported browser session',
+        resetAt: '2026-09-07T00:00:00.000Z',
+        limitWindowSeconds: 7 * 24 * 60 * 60
+      }
+    ])
+    expect(muse?.fetchedAt).toBe(capturedAt)
+  })
+
+  it('never synthesises a window duration for Current usage, even with a CLI reset', async () => {
+    const read = museHook({ web: null, cli: cliReading() })
+
+    const muse = (await read()).find((snapshot) => snapshot.provider === 'muse')
+    const current = muse?.windows.find((window) => window.id === 'muse-subscription-current')
+    const weekly = muse?.windows.find((window) => window.id === 'muse-subscription-weekly')
+    expect(current?.resetAt).toBe('2026-08-13T16:18:00.000Z')
+    expect(current).not.toHaveProperty('limitWindowSeconds')
+    expect(weekly?.limitWindowSeconds).toBe(7 * 24 * 60 * 60)
+  })
+
+  it('accepts an async CLI supplier without disturbing the snapshot', async () => {
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({}),
+      getApiUsageBilling: () => ({}),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readUsageWebSession: vi.fn(async () => null),
+      readMuseSubscriptionCli: async () => cliReading(),
+      now: () => NOW
+    })
+
+    const muse = (await read()).find((snapshot) => snapshot.provider === 'muse')
+    expect(muse).toEqual(
+      expect.objectContaining({
+        provider: 'muse',
+        planType: 'Muse Code High Usage',
+        windows: [
+          expect.objectContaining({ id: 'muse-subscription-current', usedPercent: 47 }),
+          expect.objectContaining({ id: 'muse-subscription-weekly', usedPercent: 17 })
+        ]
+      })
+    )
+  })
+
+  it('treats a 0% CLI meter as a real value, not an absent one', async () => {
+    const read = museHook({
+      web: {
+        currentUsedPercent: 37,
+        capturedAt: new Date(NOW - 60_000).toISOString()
+      },
+      cli: cliReading({
+        current: {
+          usedPercent: 0,
+          resetAtText: '4:18 PM',
+          resetAt: '2026-08-13T16:18:00.000Z',
+          limitWindowSeconds: null
+        }
+      })
+    })
+
+    const muse = (await read()).find((snapshot) => snapshot.provider === 'muse')
+    const current = muse?.windows.find((window) => window.id === 'muse-subscription-current')
+    expect(current).toEqual(
+      expect.objectContaining({
+        usedPercent: 0,
+        remainingPercent: 100,
+        limitLabel: '100% remaining · Muse CLI /usage'
       })
     )
   })
