@@ -4375,17 +4375,55 @@ function createHostCommandProjectionScope(input: {
  * scope, so every tool that spawns inside that scope inherits the same decision.
  */
 function brokeredShellSandboxPlan(input: {
+  globalScopeRun: boolean
   workspacePath?: string | null
+  appChatId?: string | null
+  provider: ProviderId
   effectivePermissions?: EffectiveRunPermissions | null
 }): ShellSandboxPlan {
+  // The Seatbelt is a SECOND permission system sitting under TaskWraith's own.
+  // An external path grant is an explicit user decision, so the profile has to
+  // re-grant it — otherwise enabling containment silently revokes a capability
+  // the user deliberately gave, and the two systems disagree with no way to see
+  // which one refused.
+  const grants = input.appChatId
+    ? executableExternalPathGrantsForChat(AppStore.getChat(input.appChatId), input.provider).filter(
+        (grant) => grant.access === 'write'
+      )
+    : []
   return resolveShellSandboxPlan({
     platform: process.platform,
     enabled: shellSandboxEnabled(),
     fullAccessGranted: isFullShellAccessGranted(input.effectivePermissions),
+    globalScopeRun: input.globalScopeRun,
     workspacePath: input.workspacePath ?? null,
     writableRoots: [os.tmpdir()],
+    externalWritableDirectories: grants
+      .filter((grant) => grant.kind === 'directory')
+      .map((grant) => grant.path),
+    externalWritableFiles: grants
+      .filter((grant) => grant.kind === 'file')
+      .map((grant) => grant.path),
     homePath: os.homedir()
   })
+}
+
+/**
+ * One refusal message for both spawn families. It names what to DO: a bare
+ * reason code reads as a broken shell, and the two enforced reasons have
+ * different, actionable remedies.
+ */
+function shellSandboxRefusalMessage(
+  plan: Extract<ShellSandboxPlan, { sandboxed: false }>,
+  subject: string
+): string {
+  const remedy =
+    plan.reason === 'unsafe_workspace_root'
+      ? `This workspace root (${plan.detail || 'unknown'}) cannot be contained without granting write access to everything inside it. Use a workspace rooted at a project directory rather than your home directory, or run this seat on the Full Access preset, or set TASKWRAITH_SHELL_SANDBOX=0.`
+      : plan.reason === 'sandbox_binary_unavailable'
+        ? `${plan.detail || 'sandbox-exec'} is not present on this host, so the workspace shell sandbox cannot be applied. Set TASKWRAITH_SHELL_SANDBOX=0 to run without it.`
+        : 'Set TASKWRAITH_SHELL_SANDBOX=0 to run without workspace shell containment.'
+  return `TaskWraith did not run this ${subject}: the workspace shell sandbox is enabled and this run could not be contained (${plan.reason}). ${remedy}`
 }
 
 function runWithHostCommandProjectionScope<T>(
@@ -9082,9 +9120,7 @@ const workspaceToolExecutors = createWorkspaceToolExecutors({
       })
       const sandboxPlan = hostCommandProjectionContext.getStore()?.shellSandbox
       if (sandboxPlan && !sandboxPlan.sandboxed && sandboxPlan.enforced) {
-        throw new Error(
-          `TaskWraith could not contain this background command (${sandboxPlan.reason}). The workspace shell sandbox is enabled, so it was not started.`
-        )
+        throw new Error(shellSandboxRefusalMessage(sandboxPlan, 'background command'))
       }
       return backgroundProcessRegistry.start(command, cwd, {
         ...options,
@@ -15340,11 +15376,7 @@ function runHostCommand(
     // leave the operator believing writes are confined while they are not, so
     // refuse instead of silently degrading open.
     if (sandboxPlan && !sandboxPlan.sandboxed && sandboxPlan.enforced) {
-      resolveWithoutChild(
-        `TaskWraith could not contain this shell command (${sandboxPlan.reason}${
-          sandboxPlan.detail ? `: ${sandboxPlan.detail}` : ''
-        }). The workspace shell sandbox is enabled, so the command was not run.`
-      )
+      resolveWithoutChild(shellSandboxRefusalMessage(sandboxPlan, 'shell command'))
       return
     }
     const blockedReleaseCommand =
@@ -40827,7 +40859,10 @@ async function executeGeminiMcpTool(
         appChatId: workspaceExecutionContext.appChatId,
         workspacePath: workspaceExecutionContext.workspacePath,
         shellSandbox: brokeredShellSandboxPlan({
+          globalScopeRun: context.scope === 'global',
           workspacePath: context.scope === 'global' ? null : workspacePath,
+          appChatId: workspaceExecutionContext.appChatId,
+          provider: parentProvider,
           effectivePermissions: context.effectivePermissions
         })
       })
@@ -41018,7 +41053,10 @@ async function executeGeminiMcpTool(
         appChatId: workspaceExecutionContext.appChatId,
         workspacePath: workspaceExecutionContext.workspacePath,
         shellSandbox: brokeredShellSandboxPlan({
+          globalScopeRun: context.scope === 'global',
           workspacePath: context.scope === 'global' ? null : workspacePath,
+          appChatId: workspaceExecutionContext.appChatId,
+          provider: parentProvider,
           effectivePermissions: context.effectivePermissions
         })
       })

@@ -6,18 +6,20 @@
 /**
  * Wrap the agent shell in a workspace-write Seatbelt (`sandbox-exec`).
  *
- * Default OFF — a deliberate seatbelt, for the same reason
- * `grokReadOnlyMcpAdvertiseEnabled` is: turning it on changes what a real
- * toolchain is allowed to do mid-build, and the failure mode is a confusing
- * write error deep inside `npm`/`cargo`/`swift` rather than a permission card.
- * It stays gated until a live canary proves the common build paths still run
- * contained. Enabling it never widens anything: the only outcomes are "same as
- * today" and "writes outside the workspace now fail".
+ * Default ON since 2026-09-03, after a live canary ran git, node, npm, tsc,
+ * vitest, prettier and eslint under the generated profile in a real workspace
+ * with no failures — the evidence the earlier default-OFF posture was waiting
+ * for. It was gated because the failure mode of a too-tight profile is a
+ * confusing write error deep inside a build rather than a permission card.
  *
- * Full Access runs are exempt inside `resolveShellSandboxPlan` regardless of
- * this flag — that posture is the explicit opt-in to an uncontained shell.
+ * `TASKWRAITH_SHELL_SANDBOX=0` (or false/no/off) turns it back off, which is the
+ * escape hatch if a toolchain the canary did not cover needs to write outside
+ * the workspace. Prefer the Full Access preset for a run that legitimately
+ * needs an uncontained shell: that is a per-run, signed, user-visible decision,
+ * whereas this variable silently disables containment for every seat at once.
  */
 export function shellSandboxEnabled(): boolean {
   const value = process.env.TASKWRAITH_SHELL_SANDBOX?.trim().toLowerCase()
-  return value === '1' || value === 'true' || value === 'yes' || value === 'on'
+  if (value === undefined || value === '') return true
+  return value !== '0' && value !== 'false' && value !== 'no' && value !== 'off'
 }

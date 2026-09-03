@@ -49,15 +49,27 @@ describe('resolveShellSandboxPlan — when a Seatbelt is refused', () => {
     })
   })
 
-  it('refuses a global run with no workspace to contain to', () => {
-    expect(plan({ workspacePath: null })).toMatchObject({
+  // A global-scope run has no workspace concept at all — resolveScopedDirectory
+  // hands it an arbitrary host directory by design — so it is out of scope for a
+  // workspace-rooted boundary rather than a failure of one. Named explicitly so
+  // the exemption is a decision someone can find, not a side effect of a missing
+  // root, and so it reads differently from a workspace run that lost its root.
+  it('names the global-scope exemption instead of reporting a missing root', () => {
+    expect(plan({ globalScopeRun: true })).toMatchObject({
       sandboxed: false,
-      reason: 'no_workspace_root'
+      enforced: false,
+      reason: 'global_scope_run'
     })
-    expect(plan({ workspacePath: 'relative/path' })).toMatchObject({
-      sandboxed: false,
-      reason: 'no_workspace_root'
-    })
+  })
+
+  it('ENFORCES a workspace run that lost its root rather than running it open', () => {
+    for (const workspacePath of [null, 'relative/path']) {
+      expect(plan({ workspacePath })).toMatchObject({
+        sandboxed: false,
+        enforced: true,
+        reason: 'no_workspace_root'
+      })
+    }
   })
 
   // A profile whose writable root is / or the home directory grants back
@@ -250,7 +262,7 @@ describe('resolveShellSandboxPlan — fail closed, never degrade open', () => {
       { platform: 'linux' as NodeJS.Platform },
       { enabled: false },
       { fullAccessGranted: true },
-      { workspacePath: null }
+      { globalScopeRun: true }
     ]) {
       const result = plan(overrides)
       expect(result).toMatchObject({ sandboxed: false, enforced: false })
@@ -332,9 +344,58 @@ describe('index.ts containment wiring', () => {
     expect(indexSource).toContain('sandboxArgv: sandboxPlan.wrap')
   })
 
+  it('feeds user-granted external write paths into the profile', () => {
+    expect(indexSource).toContain('externalWritableDirectories:')
+    expect(indexSource).toContain('externalWritableFiles:')
+    expect(indexSource).toContain("grant.access === 'write'")
+  })
+
   it('attaches a plan to every brokered-mcp projection scope', () => {
     const brokered = indexSource.split("source: 'brokered-mcp'").length - 1
     const attached = indexSource.split('shellSandbox: brokeredShellSandboxPlan(').length - 1
     expect(`brokered:${brokered} attached:${attached}`).toBe(`brokered:2 attached:2`)
+  })
+})
+
+describe('resolveShellSandboxPlan — external path grants', () => {
+  // The Seatbelt is a second permission system under TaskWraith's own. An
+  // external grant is an explicit user decision; if the profile does not
+  // re-grant it, enabling containment silently revokes a capability the user
+  // gave and the two systems disagree with no way to see which one refused.
+  it('re-grants a directory the user granted write access to', () => {
+    const result = plan({ externalWritableDirectories: ['/Users/dev/shared-assets'] })
+    if (!result.sandboxed) throw new Error('expected a contained plan')
+    expect(result.profile).toContain('(allow file-write* (subpath "/Users/dev/shared-assets"))')
+  })
+
+  it('re-grants a single granted file as a literal, not a subpath', () => {
+    const result = plan({ externalWritableFiles: ['/Users/dev/notes/log.txt'] })
+    if (!result.sandboxed) throw new Error('expected a contained plan')
+    expect(result.profile).toContain('(allow file-write* (literal "/Users/dev/notes/log.txt"))')
+    expect(result.profile).not.toContain('(subpath "/Users/dev/notes/log.txt")')
+  })
+
+  // A grant cannot be used to re-open everything the deny just took.
+  it('still refuses a granted directory that would re-open the tree', () => {
+    const result = plan({ externalWritableDirectories: ['/', '/Users', '/Users/dev'] })
+    if (!result.sandboxed) throw new Error('expected a contained plan')
+    expect(result.profile).not.toContain('(allow file-write* (subpath "/"))')
+    expect(result.profile).not.toContain('(allow file-write* (subpath "/Users"))')
+    expect(result.profile).not.toContain('(allow file-write* (subpath "/Users/dev"))')
+  })
+})
+
+// The registry has TWO spawn branches. Only the ungated one carried the
+// transform at first; the gated one is unreachable today (no spawnGatedProcess
+// is wired) and would have silently reopened the bypass the moment it was.
+describe('BackgroundProcessRegistry containment wiring', () => {
+  const registrySource = readFileSyncNode(
+    new URL('../services/BackgroundProcessRegistry.ts', import.meta.url),
+    'utf8'
+  )
+
+  it('forwards the sandbox transform on both spawn branches', () => {
+    const forwards = registrySource.split('sandboxArgv: options.sandboxArgv').length - 1
+    expect(forwards).toBe(2)
   })
 })

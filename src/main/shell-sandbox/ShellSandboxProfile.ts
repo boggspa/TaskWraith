@@ -33,6 +33,7 @@ export type ShellSandboxUnavailableReason =
   | 'platform_unsupported'
   | 'gate_disabled'
   | 'full_access_granted'
+  | 'global_scope_run'
   | 'no_workspace_root'
   | 'unsafe_workspace_root'
   | 'sandbox_binary_unavailable'
@@ -68,8 +69,24 @@ export interface ShellSandboxPlanInput {
   fullAccessGranted: boolean
   /** Active workspace root. Absent means there is nothing to contain to. */
   workspacePath?: string | null
+  /**
+   * A global-scope run has no workspace concept at all — `resolveScopedDirectory`
+   * hands it an arbitrary host directory by design. It is therefore OUT OF SCOPE
+   * for a workspace-rooted boundary rather than a failure of one, and is reported
+   * as its own named exemption instead of masquerading as a missing root.
+   */
+  globalScopeRun?: boolean
   /** Additional writable roots (temp dirs). Non-absolute entries are dropped. */
   writableRoots?: readonly string[]
+  /**
+   * Directories the USER granted write access to outside the workspace
+   * (`ExternalPathGrant`, kind 'directory', access 'write'). They must be
+   * re-granted in the profile: the Seatbelt is a second permission system, and
+   * silently overriding an explicit user grant revokes a capability they gave.
+   */
+  externalWritableDirectories?: readonly string[]
+  /** Single files granted write access outside the workspace. */
+  externalWritableFiles?: readonly string[]
   /**
    * Home directory used to site the secret denylist and to refuse a home-rooted
    * writable root. REQUIRED: when it was optional, omitting it silently skipped
@@ -169,6 +186,8 @@ function safeRealpath(value: string, realpath: (input: string) => string): strin
 export function buildWorkspaceSandboxProfile(input: {
   workspaceRoot: string
   writableRoots?: readonly string[]
+  /** Exact single files (a file-kind external grant), not subpaths. */
+  writableFiles?: readonly string[]
   deniedReadPaths?: readonly string[]
 }): string {
   const writable = [input.workspaceRoot, ...(input.writableRoots || [])]
@@ -179,6 +198,9 @@ export function buildWorkspaceSandboxProfile(input: {
     '; Writes are the contained axis. Everything below re-grants the minimum.',
     '(deny file-write*)',
     ...writable.map((root) => `(allow file-write* (subpath ${sbplQuote(root)}))`),
+    ...(input.writableFiles || []).map(
+      (file) => `(allow file-write* (literal ${sbplQuote(file)}))`
+    ),
     '(allow file-write-data',
     '  (literal "/dev/null")',
     '  (literal "/dev/zero")',
@@ -217,9 +239,15 @@ export function resolveShellSandboxPlan(input: ShellSandboxPlanInput): ShellSand
     return { sandboxed: false, enforced: false, reason: 'full_access_granted' }
   }
 
+  if (input.globalScopeRun) {
+    return { sandboxed: false, enforced: false, reason: 'global_scope_run' }
+  }
+
   const rawWorkspace = (input.workspacePath || '').trim()
   if (!rawWorkspace || !isAbsolute(rawWorkspace)) {
-    return { sandboxed: false, enforced: false, reason: 'no_workspace_root' }
+    // A WORKSPACE run that somehow lost its root is a failure to contain, not an
+    // exemption: enforce rather than hand back an unconfined shell.
+    return { sandboxed: false, enforced: true, reason: 'no_workspace_root' }
   }
 
   // Past this point the gate is on, the posture is contained, and there IS a
@@ -247,7 +275,10 @@ export function resolveShellSandboxPlan(input: ShellSandboxPlanInput): ShellSand
   }
 
   const writableRoots: string[] = []
-  for (const candidate of input.writableRoots || []) {
+  for (const candidate of [
+    ...(input.writableRoots || []),
+    ...(input.externalWritableDirectories || [])
+  ]) {
     const trimmed = (candidate || '').trim()
     if (!trimmed || !isAbsolute(trimmed)) continue
     const resolved = safeRealpath(trimmed, realpath)
@@ -271,7 +302,21 @@ export function resolveShellSandboxPlan(input: ShellSandboxPlanInput): ShellSand
     return true
   })
 
-  const profile = buildWorkspaceSandboxProfile({ workspaceRoot, writableRoots, deniedReadPaths })
+  const writableFiles: string[] = []
+  for (const candidate of input.externalWritableFiles || []) {
+    const trimmed = (candidate || '').trim()
+    if (!trimmed || !isAbsolute(trimmed)) continue
+    const resolved = safeRealpath(trimmed, realpath)
+    // A single file cannot re-open a tree, so only de-duplication applies here.
+    if (!writableFiles.includes(resolved)) writableFiles.push(resolved)
+  }
+
+  const profile = buildWorkspaceSandboxProfile({
+    workspaceRoot,
+    writableRoots,
+    writableFiles,
+    deniedReadPaths
+  })
   return {
     sandboxed: true,
     profile,

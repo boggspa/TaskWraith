@@ -73,7 +73,10 @@ export interface BackgroundProcessRegistryDependencies {
   spawnGatedProcess?: (
     command: string,
     cwd: string,
-    authority: { workspaceLockOwnerId: string }
+    authority: {
+      workspaceLockOwnerId: string
+      sandboxArgv?: (argv: readonly string[]) => string[]
+    }
   ) => WorkspaceLockGatedProcess
   /** Signal the exact process group when one exists, with an exact-child fallback. */
   signalProcess: (child: ChildProcess, signal: BackgroundProcessSignalName) => void
@@ -243,8 +246,12 @@ export class BackgroundProcessRegistry {
     let gatedProcess: WorkspaceLockGatedProcess | null = null
     try {
       if (options.workspaceLockLifecycle && options.workspaceLockOwnerId) {
+        // The gated branch carries the transform too. Leaving it out is how the
+        // ungated branch became an uncontained door in the first place, and this
+        // one is unreachable today only because no spawnGatedProcess is wired.
         gatedProcess = this.deps.spawnGatedProcess!(command, cwd, {
-          workspaceLockOwnerId: options.workspaceLockOwnerId
+          workspaceLockOwnerId: options.workspaceLockOwnerId,
+          ...(options.sandboxArgv ? { sandboxArgv: options.sandboxArgv } : {})
         })
         child = gatedProcess.child
       } else {
