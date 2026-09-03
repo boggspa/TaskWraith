@@ -1,6 +1,6 @@
 import { lstatSync, realpathSync, statSync } from 'node:fs'
 
-import { hostRunFailureNotice } from '../shared/hostProtocol'
+import { hostRunFailureNotice, hostRunFailureReason } from '../shared/hostProtocol'
 import type {
   HostProfileDomainStore,
   HostProfileThread
@@ -31,6 +31,37 @@ import { isEnsembleSeatProvider } from '../shared/retiredProviders'
 
 export interface HostNodeRunEventSink {
   publish(target: HostRunEventTarget, event: HostProviderRunEvent): void
+}
+
+/** Keeps a store-sourced provider id short enough to sit inside a wire-bounded reason. */
+const FAILED_RUN_FLOOR_PROVIDER_MAX = 64
+
+/**
+ * The last-resort reason for a run that failed and explained nothing.
+ *
+ * WHY A FLOOR RATHER THAN ANOTHER BRANCH
+ * --------------------------------------
+ * "A failed run shows no reason" was fixed three separate times — the
+ * projection wire, the spawn stderr reason, the JSON result path — and every
+ * correct fix left a different shape uncovered, because each one taught a
+ * single provider to speak in a single situation. This says the true thing for
+ * ALL of them, in the one place every provider finishes through, which turns
+ * "we found another empty-reason path" from a recurring bug into an impossible
+ * state.
+ *
+ * IT REPORTS ONLY WHAT IS KNOWN. The finish contract carries no exit code and
+ * no signal, so this does not pretend to have them, and it never guesses a
+ * cause. It says the provider ended the run without reporting one — which is
+ * the literal truth, and is far more useful to a user than a bare FAILED. A
+ * plausible-sounding invented cause would be worse than silence.
+ */
+function failedRunReasonFloor(provider: string | undefined, errorCode: string | undefined): string {
+  const named =
+    typeof provider === 'string' ? provider.trim().slice(0, FAILED_RUN_FLOOR_PROVIDER_MAX) : ''
+  const subject = named ? `The ${named} provider` : 'The provider'
+  const code = typeof errorCode === 'string' ? errorCode.trim() : ''
+  const qualifier = code ? ` (${code})` : ''
+  return `${subject} ended this run without reporting a reason${qualifier}.`
 }
 
 export interface HostNodeProfileRunPortOptions {
@@ -441,9 +472,21 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
     // client renders — the TUI showed a bare FAILED. Publish it once as a Host
     // notice on the transcript. Providers that already wrote their own notice
     // pass no summaries and add nothing here.
-    const notice =
-      input.status === 'failed' ? hostRunFailureNotice(input.warningSummaries) : undefined
-    const alreadyTerminal = (this.options.store.getThread(threadId)?.runs ?? []).some(
+    const thread = this.options.store.getThread(threadId)
+    const storedRun = (thread?.runs ?? []).find((run) => run.runId === input.runId)
+    // THE INVARIANT: a run that finishes `failed` never carries an empty
+    // reason. This same defect was fixed three times in three places — the
+    // projection wire, the spawn stderr reason, the JSON result path — and each
+    // correct fix left another shape uncovered. That is the signature of a
+    // missing invariant rather than a missing branch, so it is enforced once
+    // here, at the single boundary every provider's finishRun passes through.
+    // It therefore also covers adapters and error shapes nobody has read.
+    const summaries =
+      input.status === 'failed' && hostRunFailureReason(input.warningSummaries) === undefined
+        ? [failedRunReasonFloor(storedRun?.provider ?? thread?.provider, input.errorCode)]
+        : input.warningSummaries
+    const notice = input.status === 'failed' ? hostRunFailureNotice(summaries) : undefined
+    const alreadyTerminal = (thread?.runs ?? []).some(
       (run) => run.runId === input.runId && run.status === input.status
     )
     if (notice && !alreadyTerminal) {
@@ -466,7 +509,7 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
       endedAt: input.finishedAt,
       ...(input.providerSessionId ? { providerSessionId: input.providerSessionId } : {}),
       ...(input.usage ? { usage: input.usage } : {}),
-      warningSummaries: input.warningSummaries,
+      warningSummaries: summaries,
       ...(input.errorCode ? { errorCode: input.errorCode } : {})
     })
   }

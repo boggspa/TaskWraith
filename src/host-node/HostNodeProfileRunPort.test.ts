@@ -628,4 +628,137 @@ describe('HostNodeProfileRunPort', () => {
     })
     expect(store.getThread(threadId)?.messages).toHaveLength(1)
   })
+
+  describe('a failed run always says something', () => {
+    // The same defect was fixed three times in three places — the projection
+    // wire, the spawn stderr reason, the JSON result path — and each correct
+    // fix left another shape uncovered. The floor is enforced once here so an
+    // empty failure reason becomes an impossible state rather than a recurring
+    // bug, including for providers and error shapes nobody has read.
+    function failingPort() {
+      const opened = openStore()
+      const port = new HostNodeProfileRunPort({
+        store: opened.store,
+        events: { publish: () => undefined }
+      })
+      port.beginRun({
+        runId: 'run-silent',
+        threadId: opened.threadId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        startedAt: '2026-08-24T05:00:00.000Z'
+      })
+      return { ...opened, port }
+    }
+
+    function finishSilently(
+      port: HostNodeProfileRunPort,
+      warningSummaries: readonly string[],
+      errorCode?: 'provider_failed'
+    ) {
+      port.finishRun({
+        runId: 'run-silent',
+        status: 'failed',
+        finishedAt: '2026-08-24T05:00:01.000Z',
+        warningSummaries,
+        ...(errorCode ? { errorCode } : {})
+      })
+    }
+
+    it('synthesizes a reason when the provider reports none at all', () => {
+      const { store, threadId, port } = failingPort()
+
+      finishSilently(port, [], 'provider_failed')
+
+      expect(store.getThread(threadId)?.runs?.[0]?.warningSummaries).toEqual([
+        'The muse provider ended this run without reporting a reason (provider_failed).'
+      ])
+    })
+
+    it('puts that synthesized reason on the transcript the user actually reads', () => {
+      const { store, threadId, port } = failingPort()
+
+      finishSilently(port, [], 'provider_failed')
+
+      expect(store.getThread(threadId)?.messages).toEqual([
+        expect.objectContaining({
+          role: 'system',
+          runId: 'run-silent',
+          content:
+            'Run failed · The muse provider ended this run without reporting a reason (provider_failed).'
+        })
+      ])
+    })
+
+    it('is not the layer that has to handle blank summaries — those are refused upstream', () => {
+      // Worth pinning, because it bounds what the floor is FOR. A blank or
+      // whitespace-only entry makes normalizeHostProviderRunWarnings return
+      // null, which invalidates the whole finish and throws here, so `['']`
+      // can never reach writeFinish. The only reachable no-reason shape is an
+      // empty array. The floor still tests the same predicate the downstream
+      // composer uses rather than a bare length check, so it stays correct if
+      // this normalizer is ever relaxed.
+      const { port } = failingPort()
+
+      expect(() => finishSilently(port, ['   '], 'provider_failed')).toThrow(
+        /run finish is invalid/i
+      )
+    })
+
+    it('names the provider even when no errorCode was supplied', () => {
+      const { store, threadId, port } = failingPort()
+
+      finishSilently(port, [])
+
+      expect(store.getThread(threadId)?.runs?.[0]?.warningSummaries).toEqual([
+        'The muse provider ended this run without reporting a reason.'
+      ])
+    })
+
+    it('never double-reports when the provider already gave a reason', () => {
+      const { store, threadId, port } = failingPort()
+
+      finishSilently(port, ['You have hit your usage limit.'], 'provider_failed')
+
+      expect(store.getThread(threadId)?.runs?.[0]?.warningSummaries).toEqual([
+        'You have hit your usage limit.'
+      ])
+      expect(store.getThread(threadId)?.messages?.[0]?.content).toBe(
+        'Run failed · You have hit your usage limit.'
+      )
+    })
+
+    it('leaves completed and cancelled runs completely alone', () => {
+      // The transcript leak guard and the completed-run generic-wrapper pins
+      // depend on these paths staying exactly as they were.
+      const { store, threadId } = openStore()
+      const runPort = new HostNodeProfileRunPort({
+        store,
+        events: { publish: () => undefined }
+      })
+      for (const [runId, status] of [
+        ['run-done', 'completed'],
+        ['run-stopped', 'cancelled']
+      ] as const) {
+        runPort.beginRun({
+          runId,
+          threadId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          startedAt: '2026-08-24T05:00:00.000Z'
+        })
+        runPort.finishRun({
+          runId,
+          status,
+          finishedAt: '2026-08-24T05:00:01.000Z',
+          warningSummaries: []
+        })
+      }
+
+      const runs = store.getThread(threadId)?.runs ?? []
+      expect(runs.find((run) => run.runId === 'run-done')?.warningSummaries ?? []).toEqual([])
+      expect(runs.find((run) => run.runId === 'run-stopped')?.warningSummaries ?? []).toEqual([])
+      expect(store.getThread(threadId)?.messages ?? []).toEqual([])
+    })
+  })
 })
