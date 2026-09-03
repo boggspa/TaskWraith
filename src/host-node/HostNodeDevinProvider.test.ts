@@ -396,6 +396,37 @@ describe('HostNodeDevinProvider', () => {
     await expect(running).resolves.toMatchObject({ status: 'cancelled' })
   })
 
+  it('offers a free plan the one family it can run, without narrowing the run gate', async () => {
+    const { instance, child, spawns } = open({
+      freePlan: true,
+      configuredThread: thread({ modelId: 'claude-opus-5', reasoningId: 'high' })
+    })
+
+    const gated = await instance.getOffers!()
+    expect(gated.models.map((model) => model.modelId)).toEqual(['swe-1-6-slow'])
+
+    // The same seat still runs. A thread that carries a family it could select
+    // before the plan lapsed is clamped at dispatch, exactly as the desktop
+    // lane does — validating the run against the narrowed rows instead would
+    // turn it into a hard 'not selectable' failure.
+    const sent = frames(child)
+    const running = instance.run(runRequest)
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    expect(spawns[0]).toMatchObject({ args: ['acp', '--model', 'swe-1-6-slow'] })
+
+    expect(instance.cancel('run-1')).toBe(true)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('offers the whole catalogue while the plan is unknown', async () => {
+    const { factory, instance } = open()
+    const offers = await instance.getOffers!()
+    expect(offers.models.length).toBeGreaterThan(1)
+    expect(offers.models.map((model) => model.modelId)).toContain('claude-opus-5')
+    expect(offers.offerRevision).toBe(factory.offers.offerRevision)
+  })
+
   it('leaves a paid selection alone when the plan state is unknown', async () => {
     const { instance, child, spawns } = open({
       configuredThread: thread({ modelId: 'claude-opus-5', reasoningId: 'high' })

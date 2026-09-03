@@ -23,6 +23,11 @@ import {
   devinModelDescription,
   devinReasoningEfforts
 } from '../shared/devinModelCatalog'
+import {
+  isDevinFreePlanGated,
+  isDevinModelAllowedForPlan,
+  type DevinPlanAccess
+} from '../shared/devinPlanAccess'
 import { PI_DEFAULT_MODEL_WIRE_ID, PI_STATIC_MODELS } from './pi/PiModels'
 import {
   KIMI_K27_MODEL_ID,
@@ -679,6 +684,44 @@ export function hostProviderKimiOffers(
       authFlows: entry.authFlows
     }),
     models: gatedModels,
+    postures: base.postures.map((posture) => ({ ...posture }))
+  }
+}
+
+/**
+ * Devin-only subscription-plan gate. A free plan may run exactly one family, so
+ * the Host offers that single row instead of advertising two dozen the account
+ * cannot dispatch — the same narrowing the desktop picker applies, applied here
+ * so a client that talks to the Host directly sees the same catalogue.
+ *
+ * Fail-open like the rest of devinPlanAccess: only a positively observed free
+ * plan removes anything, and a gate that would leave no row at all (a catalogue
+ * that no longer carries the free family) returns the projection untouched
+ * rather than presenting Devin as offering nothing. The revision is rehashed
+ * over the surviving rows, so a client caching by `offerRevision` cannot keep
+ * serving the full catalogue after a plan lapses.
+ */
+export function projectDevinOffersForPlan(
+  base: HostProviderOffersProjection,
+  access?: DevinPlanAccess | null
+): HostProviderOffersProjection {
+  const entry = CATALOG.devin
+  if (base.providerId !== 'devin' || !entry || !isDevinFreePlanGated(access)) return base
+  const models = base.models.filter((model) => isDevinModelAllowedForPlan(model.modelId, access))
+  if (models.length === 0) return base
+  return {
+    providerId: 'devin',
+    offerRevision: hashEntry({
+      displayProvider: entry.displayProvider,
+      shortCode: entry.shortCode,
+      models,
+      postures: base.postures,
+      authFlows: entry.authFlows
+    }),
+    models: models.map((model) => ({
+      ...model,
+      reasoning: model.reasoning.map((reasoning) => ({ ...reasoning }))
+    })),
     postures: base.postures.map((posture) => ({ ...posture }))
   }
 }

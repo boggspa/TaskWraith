@@ -34,7 +34,8 @@ import {
 import {
   hostProviderAuthFlows,
   hostProviderCatalogEntry,
-  hostProviderOffers
+  hostProviderOffers,
+  projectDevinOffersForPlan
 } from '../host-shared/HostProviderCatalog'
 import type {
   HostProviderAuthFlowProjection,
@@ -290,6 +291,22 @@ class HostNodeDevinProviderInstance implements HostNodeProviderInstance {
 
   private get planState(): DevinPlanStateResolver {
     return this.options.planState ?? UNGATED_DEVIN_PLAN_STATE
+  }
+
+  /**
+   * Plan-narrowed catalogue. The registry refreshes this before it publishes
+   * offers, so a free seat is shown the one family it can run rather than the
+   * whole catalogue.
+   *
+   * The run gate below deliberately keeps validating against the UNFILTERED
+   * offers. A thread carrying a paid family it could select before the plan
+   * lapsed must still run — the dispatch clamp resolves it to SWE-1.6 Slow,
+   * which is what the desktop lane does. Validating the run against these rows
+   * instead would turn that same case into a hard 'not selectable' failure and
+   * put the two lanes back out of step.
+   */
+  async getOffers(): Promise<HostProviderOffersProjection> {
+    return projectDevinOffersForPlan(this.offers, { freePlan: await this.planState.resolve() })
   }
 
   private get resources(): HostNodeProviderResourcePort {

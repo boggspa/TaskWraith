@@ -9,6 +9,7 @@ import {
   hostProviderKimiOffers,
   hostProviderOffers,
   hostProviderStatus,
+  projectDevinOffersForPlan,
   projectHostProviderOfferCapabilities
 } from './HostProviderCatalog'
 import { PI_STATIC_MODELS } from './pi/PiModels'
@@ -388,5 +389,58 @@ describe('HostProviderCatalog', () => {
     expect(offers!.models.map((model) => model.modelId)).toEqual(
       expect.arrayContaining(['openrouter/z-ai/glm-5.2', 'openrouter/poolside/laguna-s-2.1'])
     )
+  })
+})
+
+describe('Devin subscription-plan offer gate', () => {
+  const devinOffers = () => {
+    const offers = hostProviderOffers('devin', true)
+    expect(offers).not.toBeNull()
+    return offers!
+  }
+
+  it('offers a free plan the one family it can dispatch, on a fresh revision', () => {
+    const base = devinOffers()
+    expect(base.models.length).toBeGreaterThan(1)
+
+    const gated = projectDevinOffersForPlan(base, { freePlan: true })
+    expect(gated.models.map((model) => model.modelId)).toEqual(['swe-1-6-slow'])
+    // The survivor is still the default row, so a free seat has a selection.
+    expect(gated.models[0]?.default).toBe(true)
+    expect(gated.models[0]?.available).toBe(true)
+    // A client caching by revision must not keep serving the full catalogue.
+    expect(gated.offerRevision).not.toBe(base.offerRevision)
+    // Narrowing models is not narrowing postures.
+    expect(gated.postures).toEqual(base.postures)
+  })
+
+  it('leaves the catalogue alone unless a free plan was positively observed', () => {
+    const base = devinOffers()
+    // Unknown plan (unreadable state DB, a non-macOS Host, a signed-out CLI),
+    // an explicitly paid plan, and no access record at all are all ungated.
+    expect(projectDevinOffersForPlan(base, { freePlan: undefined })).toBe(base)
+    expect(projectDevinOffersForPlan(base, { freePlan: false })).toBe(base)
+    expect(projectDevinOffersForPlan(base, null)).toBe(base)
+    expect(projectDevinOffersForPlan(base)).toBe(base)
+  })
+
+  it('never narrows another provider that happens to be passed through it', () => {
+    // Devin's own rows under a foreign provider id. Passing a genuinely
+    // unrelated catalogue would prove nothing: nothing in it can match the free
+    // family, so the empty-result fail-open would return it whole even if the
+    // provider-id guard were gone.
+    const foreign = { ...devinOffers(), providerId: 'kimi' }
+    expect(projectDevinOffersForPlan(foreign, { freePlan: true })).toBe(foreign)
+  })
+
+  it('keeps the full catalogue rather than offering nothing when no row survives', () => {
+    // Fail-open: a catalogue that no longer carries the free family must not
+    // present Devin as a provider with no models at all.
+    const base = devinOffers()
+    const withoutFreeFamily = {
+      ...base,
+      models: base.models.filter((model) => model.modelId !== 'swe-1-6-slow')
+    }
+    expect(projectDevinOffersForPlan(withoutFreeFamily, { freePlan: true })).toBe(withoutFreeFamily)
   })
 })
