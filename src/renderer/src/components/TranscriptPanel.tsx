@@ -748,6 +748,7 @@ export type TranscriptPanelProps = {
   onAddMessageToPrompt?: (messageId: string, content: string) => void
   onDeleteMessage: (messageId: string) => void
   onTogglePinMessage?: (messageId: string) => void
+  onEditAndResendFromHere?: (messageId: string, content: string) => void
   /** Thumbs feedback on an assistant message (up/down; host writes the receipt). */
   onMessageFeedback?: (messageId: string, vote: 'up' | 'down', details?: MessageFeedbackDetails) => void
   onPromoteCollaboratorComment?: (messageId: string) => void
@@ -2804,6 +2805,7 @@ export const TranscriptPanel = memo(
     onAddMessageToPrompt,
     onDeleteMessage,
     onTogglePinMessage,
+    onEditAndResendFromHere,
     onMessageFeedback,
     onPromoteCollaboratorComment,
     onMessageSelectionCandidate,
@@ -3464,6 +3466,24 @@ export const TranscriptPanel = memo(
         return next
       })
     }, [])
+    // Inline edit state for the rewind feature
+    const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
+    const [editingContent, setEditingContent] = useState<string>('')
+    const handleStartEditMessage = useCallback((messageId: string, content: string) => {
+      setEditingMessageId(messageId)
+      setEditingContent(content)
+    }, [])
+    const handleCancelEditMessage = useCallback(() => {
+      setEditingMessageId(null)
+      setEditingContent('')
+    }, [])
+    const handleSaveAndResend = useCallback((messageId: string, editedContent: string) => {
+      if (onEditAndResendFromHere) {
+        onEditAndResendFromHere(messageId, editedContent)
+      }
+      setEditingMessageId(null)
+      setEditingContent('')
+    }, [onEditAndResendFromHere])
 
     // 1.0.6-TV2 — lifted ActivityStack expansion. Keyed by message id
     // (the tool row's id), value is the stack's set of open activity
@@ -6579,20 +6599,61 @@ export const TranscriptPanel = memo(
                           <div
                             className={`message-bubble user${
                               collapsible ? ' is-collapsible' : ''
-                            }${showCollapsed ? ' is-collapsed' : ''}`}
+                            }${showCollapsed ? ' is-collapsed' : ''}${editingMessageId === msg.id ? ' is-editing' : ''}`}
                             onContextMenu={(event) =>
                               openMessageContextMenu(event, msg, msg.content, 'user message')
                             }
+                            onClick={(event) => {
+                              // Only start editing on direct click (not on children like buttons)
+                              if (event.target === event.currentTarget && !editingMessageId && msg.role === 'user') {
+                                handleStartEditMessage(msg.id, msg.content || '')
+                              }
+                            }}
                           >
-                            <div className="user-message-content">
-                              <MarkdownMessage
-                                content={preview}
-                                chat={currentChat || undefined}
-                                mediaRefs={mediaRefs}
-                                workspacePath={currentChat?.workspacePath}
-                                onPreviewImage={onPreviewImage}
-                              />
-                            </div>
+                            {editingMessageId === msg.id ? (
+                              <>
+                                <textarea
+                                  className="user-message-edit-textarea"
+                                  value={editingContent}
+                                  onChange={(e) => setEditingContent(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Escape') {
+                                      handleCancelEditMessage()
+                                    } else if (e.key === 'Enter' && !e.shiftKey) {
+                                      e.preventDefault()
+                                      handleSaveAndResend(msg.id, editingContent)
+                                    }
+                                  }}
+                                  autoFocus
+                                />
+                                <div className="user-message-edit-actions">
+                                  <button
+                                    type="button"
+                                    className="user-message-edit-button cancel"
+                                    onClick={handleCancelEditMessage}
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="user-message-edit-button save"
+                                    onClick={() => handleSaveAndResend(msg.id, editingContent)}
+                                  >
+                                    Save & Resend
+                                  </button>
+                                </div>
+                              </>
+                            ) : (
+                              <div className="user-message-content">
+                                <MarkdownMessage
+                                  content={preview}
+                                  chat={currentChat || undefined}
+                                  mediaRefs={mediaRefs}
+                                  workspacePath={currentChat?.workspacePath}
+                                  onPreviewImage={onPreviewImage}
+                                />
+                              </div>
+                            )}
                             {stripRefs.length > 0 && (
                               <ChatMessageMediaStrip
                                 refs={stripRefs}
@@ -6601,7 +6662,7 @@ export const TranscriptPanel = memo(
                                 onDetachToPane={onDetachToPane}
                               />
                             )}
-                            {collapsible && (
+                            {collapsible && editingMessageId !== msg.id && (
                               <button
                                 type="button"
                                 className="user-message-toggle"
@@ -7626,6 +7687,7 @@ export const TranscriptPanel = memo(
           onMessageFeedback={onMessageFeedback}
           onOpenSideChatFromMessage={onOpenSideChatFromMessage}
           onDeleteMessage={onDeleteMessage}
+          onEditAndResendFromHere={onEditAndResendFromHere}
           onClose={closeMessageContextMenu}
         />
         <DiffHoverPreviewOverlay

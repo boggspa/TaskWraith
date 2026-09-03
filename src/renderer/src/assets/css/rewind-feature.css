@@ -1,0 +1,65 @@
+/* Rewind feature styles - inline message editing */
+
+.message-bubble.user.is-editing {
+  background-color: var(--background-secondary);
+  border: 1px solid var(--border-focused);
+  padding: 8px;
+}
+
+.message-bubble.user.is-editing .user-message-content {
+  display: none;
+}
+
+.user-message-edit-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 8px;
+  font-family: var(--font-family);
+  font-size: var(--font-size-normal);
+  line-height: 1.5;
+  background-color: var(--background-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-muted);
+  border-radius: 4px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.user-message-edit-textarea:focus {
+  outline: none;
+  border-color: var(--border-focused);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.user-message-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.user-message-edit-button {
+  padding: 6px 12px;
+  font-size: var(--font-size-small);
+  border-radius: 4px;
+  cursor: pointer;
+  border: none;
+}
+
+.user-message-edit-button.cancel {
+  background-color: var(--background-tertiary);
+  color: var(--text-secondary);
+}
+
+.user-message-edit-button.cancel:hover {
+  background-color: var(--background-secondary);
+}
+
+.user-message-edit-button.save {
+  background-color: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+.user-message-edit-button.save:hover {
+  background-color: var(--accent-primary-hover);
+}
