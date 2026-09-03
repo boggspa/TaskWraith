@@ -11,6 +11,7 @@ import {
 } from '../host-shared/twmission'
 import type { HostSnapshot } from '../shared/hostProtocol'
 import { Ansi } from './ansi'
+import { createTuiEscapedErrorHandler } from './escapedErrorPolicy'
 import {
   isAutoThemeName,
   resolveAutoTheme,
@@ -403,21 +404,23 @@ process.once('SIGHUP', () => {
   process.exitCode = 129
 })
 // A last line of defence: an escaped exception anywhere in the run loop must
-// still restore raw mode / the alternate screen before the process ends.
-process.once('uncaughtException', (error) => {
-  activeTui?.stop()
-  process.stderr.write(
-    `TaskWraith TUI: unexpected error — ${error instanceof Error ? error.message : String(error)}\n`
-  )
-  process.exitCode = 1
+// still restore raw mode / the alternate screen before the process ends. What
+// changed is only which errors earn that teardown — a dropped Host socket does
+// not, because stop() latches `stopped` and would switch off the reconnect loop
+// that already recovers from it and already warns the user. Registered with
+// `on` rather than `once` so absorbing one blip cannot leave the next genuine
+// fault to Node's default hard crash.
+const handleEscapedTuiError = createTuiEscapedErrorHandler({
+  stopTui: () => activeTui?.stop(),
+  writeStderr: (line) => {
+    process.stderr.write(line)
+  },
+  setExitCode: (code) => {
+    process.exitCode = code
+  }
 })
-process.once('unhandledRejection', (reason) => {
-  activeTui?.stop()
-  process.stderr.write(
-    `TaskWraith TUI: unexpected rejection — ${reason instanceof Error ? reason.message : String(reason)}\n`
-  )
-  process.exitCode = 1
-})
+process.on('uncaughtException', (error) => handleEscapedTuiError('exception', error))
+process.on('unhandledRejection', (reason) => handleEscapedTuiError('rejection', reason))
 process.on('exit', () => {
   activeTui?.stop()
 })
