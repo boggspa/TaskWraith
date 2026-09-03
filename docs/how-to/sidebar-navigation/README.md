@@ -11,5 +11,6 @@ The sidebar has three surfaces. Pick one at the top to change what it lists:
 - [Overflow Menus](overflow-menus.md)
 - [Sidebar Search](sidebar-search.md)
 - [Project Reference Library](project-reference-library.md)
+- [Project References Studio](project-references-studio.md)
 - [Settings Entry](settings-entry.md)
 - [Update Pill](update-pill.md)

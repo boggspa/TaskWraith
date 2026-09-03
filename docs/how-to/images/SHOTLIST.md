@@ -1,8 +1,8 @@
 # How-To Manual — Screenshot Shot List
 
-87 screenshots, one per feature guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
+89 screenshots, one per feature guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
 
-Current inventory, reconciled 2026-08-29 against the 2026-07-18 latest-source capture pass: **61 captured, 26 pending**. See [`REMAINING.md`](REMAINING.md) for the unresolved set. The count is 87 feature guide pages minus the 26 with no capture on disk. One captured page is explicitly stale and is not trustworthy until recaptured.
+Current inventory, reconciled 2026-09-03: **61 captured, 28 pending**. See [`REMAINING.md`](REMAINING.md) for the unresolved set. The count is 89 feature guide pages minus the 28 with no capture on disk. Two shots were added on 2026-09-03 with the new `composer/ultratask.md` and `sidebar-navigation/project-references-studio.md` pages. One captured page is explicitly stale and is not trustworthy until recaptured.
 
 The current refresh uses latest-source development apps, not an installed release build. Existing captures can be replaced in place without changing the inventory count.
 
@@ -57,6 +57,7 @@ The current refresh uses latest-source development apps, not an installed releas
 | `composer__provider-model-permissions-pickers.png` | Electron | Composer inline pickers row with provider, model+reasoning, and permissions chips | In the **composer's inline pickers row**, just below the prompt input. |
 | `composer__schedule-prompt.png` | Electron | Composer schedule button with quick offset options | In the **composer's control row** (the icon row beneath the prompt box), next to the Goal button. |
 | `composer__slash-commands.png` | Electron | Composer slash command menu open with available commands | Open it from the **chat composer** in three ways: - Type `/` at the start of a word in the composer. |
+| `composer__ultratask.png` | Electron | Composer reasoning ladder with the UltraTask stop selected on a supporting model | Click the **model chip** under the prompt box; **UltraTask** is the top stop on the **Reasoning** ladder, above **Ultracode**. Only shown on models that support it. |
 
 ### ensemble-mode
 
@@ -143,6 +144,7 @@ The current refresh uses latest-source development apps, not an installed releas
 |---|---|---|---|
 | `sidebar-navigation__overflow-menus.png` | Electron | Sidebar overflow menu expanded on a workspace or chat item | In the **Sidebar**, on any workspace or chat item — click the **⋯** (overflow) button or right-click the item. |
 | `sidebar-navigation__project-reference-library.png` | Electron | Selected Project detail showing the metadata-only file, folder, and link References controls | Select **Work**, then select a Project; the References controls appear in its expanded detail panel. |
+| `sidebar-navigation__project-references-studio.png` | Electron | Project library dock showing the Studio row and a generated draft with Save to library and Discard | Select **Work**, choose a Project, open the **Refs** tab in the right dock, mark at least one reference **Use next**, then generate a **Briefing**, **FAQ**, or **Decision log**. |
 | `sidebar-navigation__settings-entry.png` | Electron | Sidebar footer with Settings button highlighted | In the **Sidebar footer** — click the **Settings** (gear) button. |
 | `sidebar-navigation__sidebar-search.png` | Electron | Surface-scoped sidebar search focused with results | Select **Chat**, **Code**, or **Work**, then focus the search field below the switcher; capture text/results appropriate to that surface. |
 | `sidebar-navigation__sidebar-sections.png` | Electron | Sidebar showing the Chat / Code / Work switcher and current Chat hierarchy | In the **left sidebar panel** of the TaskWraith main window, with **Chat** selected and its hierarchy visible. |

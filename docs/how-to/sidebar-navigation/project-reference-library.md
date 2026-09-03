@@ -19,5 +19,6 @@ Select **Work** and choose a Project. The **References** pane opens in the right
 ## Tips & related
 - Selecting an entry is not a blanket grant. The usual per-chat permission and approval flow still applies, and TaskWraith rechecks every item when you send.
 - Open a chat inside the Project to use **Use next**; without one the pane stays a catalogue.
+- [Project References Studio](project-references-studio.md) — draft a Briefing, FAQ, or Decision log from the entries you marked **Use next**.
 - [Sidebar sections](sidebar-sections.md) explains the Chat, Code, and Work surfaces.
 - [Workspace and chat tree](workspace-and-chat-tree.md) covers the separate workspace hierarchy under Code.

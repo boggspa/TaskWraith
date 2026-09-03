@@ -4,6 +4,7 @@ The prompt box and everything around it: the chips that choose your model and pe
 
 - [Provider, Model, and Permissions Pickers](provider-model-permissions-pickers.md)
 - [Model Catalogue](../../MODEL_CATALOGUE.md)
+- [UltraTask](ultratask.md)
 - [Ensemble Orchestration Row](ensemble-mode-picker.md)
 - [Plus Tools Menu](plus-tools-menu.md)
 - [Slash Commands](slash-commands.md)

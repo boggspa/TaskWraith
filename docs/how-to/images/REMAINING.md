@@ -1,12 +1,12 @@
 # Shot list — remaining captures
 
-Inventory reconciled 2026-08-29 against the 2026-07-18 latest-source capture pass: **61 of 87 captured; 26 pending**. The folder holds 62 top-level PNGs, one of which is not a current capture: `footer-control-row__shares-popover.png` is an orphan left behind by a shot retired on 2026-08-12. That leaves 61 named captures against 87 feature guide pages — of which one (`chats-and-threads__chat-types`) is known stale rather than current, so 60 are trustworthy today. See "Captured but stale" below. Two bonus composer variations in `composer-variations/` are not part of the 87-shot baseline.
+Inventory reconciled 2026-09-03: **61 of 89 captured; 28 pending**. Two pages were added on 2026-09-03 (`composer/ultratask.md`, `sidebar-navigation/project-references-studio.md`), each with a `screenshot-pending` marker, taking the baseline from 87 shots to 89 and the pending set from 26 to 28. The folder holds 62 top-level PNGs, one of which is not a current capture: `footer-control-row__shares-popover.png` is an orphan left behind by a shot retired on 2026-08-12. That leaves 61 named captures against 89 feature guide pages — of which one (`chats-and-threads__chat-types`) is known stale rather than current, so 60 are trustworthy today. See "Captured but stale" below. Two bonus composer variations in `composer-variations/` are not part of the 89-shot baseline.
 
 Capture replacements are being made against latest-source development apps. Use only the authorized `Test 1` through `Test 4` workspaces for live state, keep full private paths and unrelated content out of frame, and treat pairing QR codes and secrets as non-publishable. Personal agent/task metrics, usage telemetry, and demo transcripts are acceptable.
 
 ## Captured but stale — recapture without changing the pending count
 
-These pages **do** have an image, so they are not part of the 27 pending and
+These pages **do** have an image, so they are not part of the 28 pending and
 must not be added to it — the pending set is defined as pages carrying a
 `screenshot-pending` marker, and it has to keep matching that marker set
 exactly. They are listed here because the capture on disk shows retired UI,
@@ -30,6 +30,8 @@ which is worse than an honest gap: the page reads as done.
 
 ## Needs live or transient desktop state
 
+- `composer__ultratask` — needs a model whose catalogue entry supports UltraTask, with the reasoning ladder open and the top stop selected.
+- `sidebar-navigation__project-references-studio` — needs a Project with at least one reference marked **Use next** and a generated draft on screen.
 - `approvals-and-permissions__pending-approval-modal`
 - `chats-and-threads__sub-thread-delegation`
 - `goals-todos-and-scheduling__todos`
