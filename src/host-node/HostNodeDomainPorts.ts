@@ -79,6 +79,14 @@ import { createHostNodeRunAdmission, type HostNodeRunAdmission } from './HostNod
 
 const LOCAL_CLIENT_CLASSES = new Set(['desktop', 'tui', 'test'])
 const HOST_RESUME_FALLBACK_MAX_CHARS = 16_000
+/**
+ * Bounded grace for a provider run to durably persist its start. A single
+ * microtask was not enough: providers that await session resume, auth, or
+ * offer discovery before beginRun (Kimi's getOffers, ACP session config) had
+ * healthy runs cancelled as run_not_started purely on event-loop timing.
+ */
+const HOST_PERSISTED_START_GRACE_MS = 2_000
+const HOST_PERSISTED_START_POLL_MS = 5
 
 /**
  * Build a bounded cold-session prompt for providers whose native session cannot
@@ -1043,8 +1051,7 @@ export class HostNodeDomainPorts {
       this.runCompletions.delete(command.commandId)
       lease.release()
     })
-    await Promise.resolve()
-    if (!this.hasPersistedStart(command.commandId, command.target.threadId, prompt)) {
+    if (!(await this.awaitPersistedStart(command.commandId, command.target.threadId, prompt))) {
       try {
         provider.cancel(command.commandId)
       } catch {
@@ -1301,6 +1308,26 @@ export class HostNodeDomainPorts {
     if (!cancelled) return { ...input, outcome: 'not_cancellable' }
     operation.cancelled = true
     return { ...input, outcome: 'cancelled' }
+  }
+
+  /**
+   * Poll briefly for a durably persisted start instead of trusting one
+   * microtask of settle time. The fire-and-forget completion design is
+   * unchanged — run completion is never awaited here — and a provider that
+   * never persists still fails closed as run_not_started once the grace
+   * deadline passes.
+   */
+  private async awaitPersistedStart(
+    runId: string,
+    threadId: string,
+    prompt: unknown
+  ): Promise<boolean> {
+    const deadline = this.now() + HOST_PERSISTED_START_GRACE_MS
+    while (!this.hasPersistedStart(runId, threadId, prompt)) {
+      if (this.now() >= deadline) return false
+      await new Promise((resolve) => setTimeout(resolve, HOST_PERSISTED_START_POLL_MS))
+    }
+    return true
   }
 
   private hasPersistedStart(runId: string, threadId: string, prompt: unknown): boolean {

@@ -1506,6 +1506,101 @@ describe('HostNodeDomainPorts', () => {
     ])
   })
 
+  it('waits for a provider that persists its start only after an await', async () => {
+    // Kimi awaits getOffers() before beginRun/appendTranscript; ACP adapters
+    // await session config. A single microtask of grace fired the
+    // persisted-start proof before that persistence landed, so the Host
+    // cancelled a perfectly healthy run and reported run_not_started. The
+    // proof now polls briefly for the durable start instead.
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    let releaseRun: (() => void) | undefined
+    const pending = new Promise<void>((resolve) => {
+      releaseRun = resolve
+    })
+    const holder: { domain?: HostNodeDomainPorts } = {}
+    const delayedStartProvider: HostNodeProviderInstance = {
+      providerId: 'muse',
+      getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+      getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
+      run: async (input: HostNodeProviderRunRequest) => {
+        // The async gap BEFORE beginRun is the behaviour under test: any
+        // provider that awaits auth/session/offers first needs the Host to
+        // wait longer than one microtask for the durable start.
+        await new Promise((resolveLater) => setTimeout(resolveLater, 25))
+        holder.domain!.runPort.beginRun({
+          runId: input.runId,
+          threadId: input.threadId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          startedAt: '2026-08-24T05:00:00.000Z'
+        })
+        holder.domain!.runPort.appendTranscript({
+          threadId: input.threadId,
+          runId: input.runId,
+          role: 'user',
+          text: input.prompt,
+          createdAt: '2026-08-24T05:00:00.000Z'
+        })
+        await pending
+        return { runId: input.runId, status: 'completed', sessionId: SESSION_ID, exitCode: 0 }
+      },
+      cancel: () => true,
+      shutdown: async () => undefined
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUSE',
+          offers: museOffers,
+          supportsApprovals: false,
+          supportsQuestions: false,
+          create: () => delayedStartProvider
+        }
+      ]
+    })
+    holder.domain = domain
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-delayed-start',
+          { threadId: thread.appChatId },
+          { text: 'hold on' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    releaseRun?.()
+    await domain.shutdown()
+    expect(
+      store
+        .getThread(thread.appChatId)
+        ?.messages.some(
+          (message) =>
+            message.runId === 'run-delayed-start' &&
+            message.role === 'user' &&
+            message.content === 'hold on'
+        )
+    ).toBe(true)
+  })
+
   it('hands Mistral a bounded transcript for cold sessions, without Host notices in it', async () => {
     // Vibe opens a fresh process per turn. When its native session cannot be
     // resumed the provider prompts with this bounded transcript instead, so a
