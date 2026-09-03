@@ -4,12 +4,37 @@ import {
 } from '../McpToolCatalog'
 import {
   filterTaskWraithMcpToolDefinitionsForProfile,
-  GATEWAY_V9_MCP_DIRECT_TOOLS,
+  taskWraithGatewayDirectToolNamesForProfile,
   taskWraithMcpAdvertisedToolNamesForProfile
 } from '../mcp/McpToolProfiles'
+import { TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID } from '../mcp/McpSessionProfileFence'
 import type { TaskWraithMcpProfileId } from '../store/types'
 
-const OLLAMA_DIRECT_TOOL_NAMES: ReadonlySet<string> = new Set(GATEWAY_V9_MCP_DIRECT_TOOLS)
+function isGatewayProfileId(profileId: TaskWraithMcpProfileId): boolean {
+  return profileId.startsWith('taskwraith-gateway-')
+}
+
+/**
+ * The tools this profile advertises DIRECTLY, which is exactly the set whose
+ * documented example must be a top-level call.
+ *
+ * capability_invoke reaches hidden capabilities only — selectGatewayHiddenToolNames
+ * filters a profile's direct names out of the eligible set — so documenting a
+ * direct tool in the wrapped form publishes a call form that is rejected
+ * `unknown_target` before dispatch. Pinning this to a frozen older gateway
+ * generation silently broke every tool promoted to direct after it. A full/core
+ * profile has no capability gateway at all, so its whole advertised surface is
+ * direct.
+ */
+function directToolNamesForProfile(
+  profileId: TaskWraithMcpProfileId = TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID
+): ReadonlySet<string> {
+  return new Set<string>(
+    isGatewayProfileId(profileId)
+      ? taskWraithGatewayDirectToolNamesForProfile(profileId)
+      : taskWraithMcpAdvertisedToolNamesForProfile(profileId)
+  )
+}
 
 /**
  * Reproducible generator for `resources/Tools.md` — a full, drift-checked
@@ -69,7 +94,10 @@ interface ToolArgSummary {
   optional: string[]
 }
 
-function summarizeToolArgs(def: TaskWraithMcpToolDefinition): ToolArgSummary {
+function summarizeToolArgs(
+  def: TaskWraithMcpToolDefinition,
+  directToolNames: ReadonlySet<string>
+): ToolArgSummary {
   const schema = (
     def.inputSchema && typeof def.inputSchema === 'object' ? def.inputSchema : {}
   ) as Record<string, unknown>
@@ -98,7 +126,7 @@ function summarizeToolArgs(def: TaskWraithMcpToolDefinition): ToolArgSummary {
     for (const key of exampleKeys) args[key] = schemaPlaceholder(props[key])
   }
   const example = JSON.stringify({
-    taskwraith_tool: OLLAMA_DIRECT_TOOL_NAMES.has(def.name)
+    taskwraith_tool: directToolNames.has(def.name)
       ? { name: def.name, arguments: args }
       : { name: 'capability_invoke', arguments: { name: def.name, arguments: args } }
   })
@@ -118,6 +146,13 @@ function accessLabel(def: TaskWraithMcpToolDefinition): string {
   if (def.name === 'request_tool_permission') {
     return 'permission elicitation — callable under Ask/Plan; the exact target runs only after one-shot user approval and all non-grantable guards still apply'
   }
+  // Auto-allowed in MCP_AUTO_ALLOWED_TOOLS and carried by both the read-only and
+  // Plan advertise sets: redeeming an opportunity supplies no target of its own,
+  // so the generic role caveat misreported every scoped tier and read as "your
+  // seat cannot call this".
+  if (def.name === 'redeem_permission_opportunity') {
+    return 'permission elicitation — callable under every permission role including read-only and Plan; redemption only reopens the host review of one exact host-retained target, and all non-grantable guards still apply'
+  }
   // Screenshot-like pixel egress is host-state access. It remains on the
   // normal mcpTools approval path even though it does not mutate a surface.
   if (def.name === 'canvas_screenshot' || def.name === 'emulator_observe') {
@@ -136,8 +171,11 @@ function accessLabel(def: TaskWraithMcpToolDefinition): string {
 // One tool's markdown section (the `## name` heading through its blank line).
 // Shared by the full-doc generator and the per-tool `tool_help` runtime lookup so
 // both render identically.
-function renderToolSectionLines(def: TaskWraithMcpToolDefinition): string[] {
-  const { example, required, optional } = summarizeToolArgs(def)
+function renderToolSectionLines(
+  def: TaskWraithMcpToolDefinition,
+  directToolNames: ReadonlySet<string>
+): string[] {
+  const { example, required, optional } = summarizeToolArgs(def, directToolNames)
   const lines: string[] = [`## ${def.name}`, '']
   if (def.description) {
     lines.push(def.description, '')
@@ -153,6 +191,9 @@ function renderToolSectionLines(def: TaskWraithMcpToolDefinition): string[] {
 
 export function buildOllamaToolsMarkdown(): string {
   const defs = createTaskWraithMcpToolDefinitions()
+  // The shipped reference documents the profile a fresh gateway session is
+  // actually born with; tool_help below narrows to the seat's own profile.
+  const directToolNames = directToolNamesForProfile(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
   const lines: string[] = [
     '<!-- GENERATED FILE — do not edit by hand.',
     '     Source of truth: src/main/McpToolCatalog.ts (createTaskWraithMcpToolDefinitions).',
@@ -167,11 +208,11 @@ export function buildOllamaToolsMarkdown(): string {
     '{"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}',
     '```',
     '',
-    `The ${defs.length} tools below are the full TaskWraith surface. ${GATEWAY_V9_MCP_DIRECT_TOOLS.length} common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.`,
+    `The ${defs.length} tools below are the full TaskWraith surface. ${directToolNames.size} common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. capability_invoke reaches hidden capabilities only — a directly advertised tool must be called by name. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.`,
     ''
   ]
   for (const def of defs) {
-    lines.push(...renderToolSectionLines(def))
+    lines.push(...renderToolSectionLines(def, directToolNames))
   }
   // Single trailing newline for a clean POSIX file.
   return `${lines.join('\n').replace(/\s+$/, '')}\n`
@@ -191,8 +232,9 @@ export function buildOllamaToolDocSection(
 ): string {
   const wanted = String(name || '').trim()
   const allDefinitions = createTaskWraithMcpToolDefinitions()
+  const directToolNames = directToolNamesForProfile(profileId ?? undefined)
   const defs = profileId
-    ? profileId.startsWith('taskwraith-gateway-')
+    ? isGatewayProfileId(profileId)
       ? filterTaskWraithMcpToolDefinitionsForProfile(profileId, allDefinitions)
       : allDefinitions.filter((definition) =>
           (taskWraithMcpAdvertisedToolNamesForProfile(profileId) as readonly string[]).includes(
@@ -208,5 +250,5 @@ export function buildOllamaToolDocSection(
   if (!def) {
     return `Unknown tool "${wanted}". Available tools: ${allNames}.`
   }
-  return renderToolSectionLines(def).join('\n').trimEnd()
+  return renderToolSectionLines(def, directToolNames).join('\n').trimEnd()
 }

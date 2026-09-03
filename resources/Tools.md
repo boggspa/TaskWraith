@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 222 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 222 tools below are the full TaskWraith surface. 48 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. capability_invoke reaches hidden capabilities only — a directly advertised tool must be called by name. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -20,7 +20,7 @@ Run proven read-only workspace commands; opaque or mutating effects require audi
 - Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
 - Required args: command
 - Optional args: cwd
-- Example: `{"taskwraith_tool":{"name":"run_shell_command","arguments":{"command":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"run_shell_command","arguments":{"command":"npm test"}}}`
 
 ## write_file
 
@@ -28,7 +28,7 @@ Write a UTF-8 text file inside the active TaskWraith workspace after approval.
 
 - Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
 - Required args: path, content
-- Example: `{"taskwraith_tool":{"name":"write_file","arguments":{"path":"text","content":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"write_file","arguments":{"path":"src/main/thing.ts","content":"export const thing = 1"}}}`
 
 ## replace
 
@@ -37,7 +37,7 @@ Replace text in a UTF-8 file inside the active TaskWraith workspace after approv
 - Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
 - Required args: path, old_string, new_string
 - Optional args: replace_all
-- Example: `{"taskwraith_tool":{"name":"replace","arguments":{"path":"text","old_string":"text","new_string":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"replace","arguments":{"path":"src/main/thing.ts","old_string":"const a = 1","new_string":"const a = 2"}}}`
 
 ## create_directory
 
@@ -55,7 +55,7 @@ Delete a file or empty directory inside the active TaskWraith workspace after ap
 - Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
 - Required args: path
 - Optional args: intent
-- Example: `{"taskwraith_tool":{"name":"delete_path","arguments":{"path":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"delete_path","arguments":{"path":"tmp/scratch.txt","intent":"Remove scratch file"}}}`
 
 ## move_path
 
@@ -82,7 +82,7 @@ Read a UTF-8 text file inside the active TaskWraith workspace after tool policy 
 - Access: read-only (no approval needed)
 - Required args: path
 - Optional args: offset, limit
-- Example: `{"taskwraith_tool":{"name":"read_file","arguments":{"path":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"read_file","arguments":{"path":"src/main/thing.ts"}}}`
 
 ## list_directory
 
@@ -892,7 +892,7 @@ Wait (bounded) for fan-out lanes, sub-threads, waves, or owned durable execution
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: laneIds, subThreadIds, waveIds, executionIds, timeoutSeconds
-- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ensemble_await","arguments":{"laneIds":[]}}}}`
+- Example: `{"taskwraith_tool":{"name":"ensemble_await","arguments":{"laneIds":[]}}}`
 
 ## ensemble_lane_result
 
@@ -901,7 +901,7 @@ In Ensemble Mode, read one fan-out lane’s transcript output as structured data
 - Access: read-only (no approval needed)
 - Required args: laneId
 - Optional args: maxChars
-- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ensemble_lane_result","arguments":{"laneId":"text"}}}}`
+- Example: `{"taskwraith_tool":{"name":"ensemble_lane_result","arguments":{"laneId":"text"}}}`
 
 ## thread_message
 
@@ -999,7 +999,7 @@ Pause the turn and surface a question to the user via a modal card. Use this whe
 - Access: governed by your run permission role
 - Required args: question
 - Optional args: options, context
-- Example: `{"taskwraith_tool":{"name":"ask_user_question","arguments":{"question":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"ask_user_question","arguments":{"question":"Which database should I target?","options":["Postgres","SQLite"]}}}`
 
 ## request_tool_permission
 
@@ -1014,9 +1014,9 @@ After a TaskWraith tool or native tool fails because of an apparent permission, 
 
 Redeem one opaque permission opportunity issued by TaskWraith after a host-observed eligible boundary. Pass only the exact opportunity id returned by TaskWraith; do not add target tool names, arguments, failure text, or rationale. The host retains and revalidates the canonical target before any approval or execution. The id is single-use, run-bound, and expires quickly.
 
-- Access: governed by your run permission role
+- Access: permission elicitation — callable under every permission role including read-only and Plan; redemption only reopens the host review of one exact host-retained target, and all non-grantable guards still apply
 - Required args: permissionOpportunityId
-- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"redeem_permission_opportunity","arguments":{"permissionOpportunityId":"text"}}}}`
+- Example: `{"taskwraith_tool":{"name":"redeem_permission_opportunity","arguments":{"permissionOpportunityId":"text"}}}`
 
 ## goal_read
 
@@ -1086,7 +1086,7 @@ Spawn a wave of fresh context-isolated sub-threads (fleet). lifecycle=ephemeral 
 - Access: governed by your run permission role
 - Required args: workers
 - Optional args: lifecycle, allowMultiProvider, join
-- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"delegate_wave","arguments":{"workers":[]}}}}`
+- Example: `{"taskwraith_tool":{"name":"delegate_wave","arguments":{"workers":[]}}}`
 
 ## ultra_task
 
@@ -1095,7 +1095,7 @@ Start a durable staged UltraTask graph for one exact provider/model. TaskWraith 
 - Access: governed by your run permission role
 - Required args: task
 - Optional args: provider, model, enableFanout, enableReview, maxWorkers, reasoningEffort, returnResult
-- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ultra_task","arguments":{"task":"text"}}}}`
+- Example: `{"taskwraith_tool":{"name":"ultra_task","arguments":{"task":"text"}}}`
 
 ## scout_brief
 
@@ -1104,7 +1104,7 @@ Share structured findings from a parallel fan-out lane with the next serial writ
 - Access: read-only (no approval needed)
 - Required args: findings, confidence
 - Optional args: blockers, recommendations, tags
-- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"scout_brief","arguments":{"findings":"text","confidence":"text"}}}}`
+- Example: `{"taskwraith_tool":{"name":"scout_brief","arguments":{"findings":"text","confidence":"text"}}}`
 
 ## blackboard_post
 
@@ -1790,7 +1790,7 @@ View one or more EXISTING raster images and return them as image content blocks 
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: path, paths, sourceMediaId, sourceMediaIds
-- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"image_view","arguments":{"path":"text"}}}}`
+- Example: `{"taskwraith_tool":{"name":"image_view","arguments":{"path":"text"}}}`
 
 ## image_edit
 

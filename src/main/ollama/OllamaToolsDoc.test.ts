@@ -11,7 +11,8 @@ vi.mock('electron', () => ({
 
 import { buildOllamaToolDocSection, buildOllamaToolsMarkdown } from './OllamaToolsDoc'
 import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
-import { GATEWAY_V9_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { taskWraithGatewayDirectToolNamesForProfile } from '../mcp/McpToolProfiles'
+import { TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID } from '../mcp/McpSessionProfileFence'
 import { validateEmulatorStepToolInput } from '../../shared/emulatorCanvas'
 
 const TOOLS_MD = resolve(__dirname, '../../../resources/Tools.md')
@@ -46,14 +47,68 @@ describe('resources/Tools.md', () => {
     expect(sectionCount).toBe(TASKWRAITH_MCP_TOOLS.length)
   })
 
-  it('uses direct examples only for the compact profile and gateway examples for the tail', () => {
-    const directNames = new Set<string>(GATEWAY_V9_MCP_DIRECT_TOOLS)
+  // capability_invoke reaches HIDDEN capabilities only: selectGatewayHiddenToolNames
+  // filters the profile's direct names out of the eligible set, so a wrapped call
+  // naming a direct tool is rejected `unknown_target` before dispatch. Pinning the
+  // doc to a frozen older direct catalogue therefore publishes a call form that
+  // cannot work for every tool promoted to direct since — most recently
+  // redeem_permission_opportunity, whose only front door is the direct call.
+  it('documents the fresh gateway direct surface with direct examples', () => {
+    const directNames = new Set<string>(
+      taskWraithGatewayDirectToolNamesForProfile(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
+    )
     for (const name of TASKWRAITH_MCP_TOOLS) {
-      expect(generated).toContain(
+      expect(generated, name).toContain(
         directNames.has(name)
           ? `{"taskwraith_tool":{"name":"${name}"`
           : `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"${name}"`
       )
+    }
+  })
+
+  it('never documents a capability_invoke form for a directly advertised tool', () => {
+    for (const name of taskWraithGatewayDirectToolNamesForProfile(
+      TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID
+    )) {
+      expect(generated, name).not.toContain(
+        `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"${name}"`
+      )
+    }
+  })
+
+  it('documents redeem_permission_opportunity as a direct call under every posture', () => {
+    const section = buildOllamaToolDocSection('redeem_permission_opportunity')
+    expect(section).toContain(
+      '- Example: `{"taskwraith_tool":{"name":"redeem_permission_opportunity","arguments":{"permissionOpportunityId":"text"}}}`'
+    )
+    expect(section).not.toContain('capability_invoke')
+    // It is in MCP_AUTO_ALLOWED_TOOLS and in both the read-only and Plan
+    // advertise sets, so the generic role caveat misreports every scoped tier.
+    expect(section).toContain(
+      '- Access: permission elicitation — callable under every permission role including read-only and Plan; redemption only reopens the host review of one exact host-retained target, and all non-grantable guards still apply'
+    )
+    expect(section).not.toContain('- Access: governed by your run permission role')
+  })
+
+  it('follows the profile a seat was born with when tool_help is profile-scoped', () => {
+    // Solo seats keep ensemble coordination behind capability discovery, so the
+    // same tool must render each form for the profile that actually applies.
+    expect(buildOllamaToolDocSection('ensemble_send', 'taskwraith-gateway-v19')).toContain(
+      '{"taskwraith_tool":{"name":"ensemble_send"'
+    )
+    expect(buildOllamaToolDocSection('ensemble_send', 'taskwraith-gateway-solo-v3')).toContain(
+      '{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ensemble_send"'
+    )
+    // Redemption is direct on every profile that advertises it at all.
+    for (const profileId of [
+      'taskwraith-gateway-v19',
+      'taskwraith-gateway-v19-mesh',
+      'taskwraith-gateway-solo-v3'
+    ] as const) {
+      expect(
+        buildOllamaToolDocSection('redeem_permission_opportunity', profileId),
+        profileId
+      ).toContain('{"taskwraith_tool":{"name":"redeem_permission_opportunity"')
     }
   })
 
