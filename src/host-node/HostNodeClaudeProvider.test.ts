@@ -615,6 +615,58 @@ describe('HostNodeClaudeProvider run', () => {
     expect(runPort.transcripts.some((entry) => entry.text.includes('some noise'))).toBe(false)
   })
 
+  it('records a meaningful stderr line as the failed-run reason instead of a generic wrapper', async () => {
+    const runPort = new FakeRunPort()
+    const quota = "You've hit your usage limit for claude-fable-5-1. Try again later."
+    const { spawn } = scriptedSpawn({
+      stdout: [
+        `${JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'session-9' })}\n`
+      ],
+      stderr: [
+        'DEBUG: warming up\n',
+        `${quota}\n`,
+        'Sentry is attempting to send 2 pending events\n'
+      ],
+      exitCode: 1
+    })
+    await providerWith(runPort, spawn).run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hi',
+      target: TARGET
+    })
+    expect(runPort.finish?.status).toBe('failed')
+    expect(runPort.finish?.warningSummaries).toEqual([quota])
+    expect(runPort.finish?.warningSummaries).not.toContain('Claude reported stderr during the run.')
+    expect(runPort.transcripts.some((entry) => entry.text.includes(quota))).toBe(false)
+    expect(runPort.transcripts.some((entry) => entry.text.includes('DEBUG:'))).toBe(false)
+    expect(runPort.transcripts.some((entry) => entry.text.includes('Sentry'))).toBe(false)
+  })
+
+  it('keeps the generic stderr wrapper when a failed run only emitted telemetry', async () => {
+    const runPort = new FakeRunPort()
+    const { spawn } = scriptedSpawn({
+      stdout: [
+        `${JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'session-9' })}\n`
+      ],
+      stderr: [
+        'INFO: warming up\n',
+        'DEBUG:vibe:x\n',
+        'Sentry is attempting to send 2 pending events\n'
+      ],
+      exitCode: 1
+    })
+    await providerWith(runPort, spawn).run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hi',
+      target: TARGET
+    })
+    expect(runPort.finish?.status).toBe('failed')
+    expect(runPort.finish?.warningSummaries).toEqual(['Claude reported stderr during the run.'])
+    expect(runPort.transcripts.some((entry) => entry.text.includes('DEBUG:'))).toBe(false)
+  })
+
   it('reports setup failure without launching when the binary is missing', async () => {
     const runPort = new FakeRunPort()
     const { spawn, captured } = scriptedSpawn({ stdout: SUCCESS_STREAM })

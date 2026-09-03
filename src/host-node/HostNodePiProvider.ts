@@ -109,6 +109,7 @@ import type {
   HostNodeProviderRunRequest,
   HostNodeProviderRunResult
 } from './HostNodeProvider'
+import { meaningfulAcpStderrLine } from './HostNodeAcpStderr'
 
 const PI_PROVIDER_ID = 'pi'
 const SAFE_IDENTIFIER_MAX_CHARS = 512
@@ -608,6 +609,8 @@ export class HostNodePiProvider implements HostNodeProviderInstance {
       let usage: HostProviderRunUsage | undefined
       let resolvedSessionId = sessionId
       const warnings = new Set<string>()
+      let stderrMeaningful = ''
+      let sawStderr = false
 
       const handle = this.spawnProcess({
         binaryPath: binary.binaryPath,
@@ -628,7 +631,9 @@ export class HostNodePiProvider implements HostNodeProviderInstance {
           }
         },
         onStderr: (chunk) => {
-          if (String(chunk).trim()) warnings.add('Pi reported stderr during the run.')
+          const line = meaningfulAcpStderrLine(String(chunk))
+          if (line) stderrMeaningful = line
+          if (String(chunk).trim()) sawStderr = true
         }
       })
       active.handle = handle
@@ -659,6 +664,12 @@ export class HostNodePiProvider implements HostNodeProviderInstance {
       }
       if (status === 'failed' && outcome.text) {
         warnings.add(boundedText(outcome.text, HOST_PROVIDER_RUN_MAX_WARNING_CHARS, secrets))
+      } else if (sawStderr) {
+        warnings.add(
+          status === 'failed' && stderrMeaningful
+            ? boundedText(stderrMeaningful, HOST_PROVIDER_RUN_MAX_WARNING_CHARS, secrets)
+            : 'Pi reported stderr during the run.'
+        )
       }
 
       const warningSummaries = [...warnings]

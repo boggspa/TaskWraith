@@ -38,6 +38,7 @@ import type {
 } from './HostNodeProvider'
 import type { HostNodeProviderResourcePort } from './HostNodeProviderResources'
 import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
+import { meaningfulAcpStderrLine } from './HostNodeAcpStderr'
 
 const PROBE_CACHE_MS = 1_000
 const AGY_PRINT_TIMEOUT = '30m'
@@ -317,6 +318,7 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
     let cancelRegistered = false
     let rawOutput = ''
     let stderrSeen = false
+    let stderrMeaningful = ''
     let status: 'completed' | 'failed' | 'cancelled' = 'failed'
     let exitCode: number | null = null
     let providerSessionId: string | undefined
@@ -380,7 +382,10 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
           }
         },
         onStderr: (chunk) => {
-          if (chunk.trim()) stderrSeen = true
+          if (!chunk.trim()) return
+          stderrSeen = true
+          const line = meaningfulAcpStderrLine(chunk)
+          if (line) stderrMeaningful = line
         }
       })
       active.handle = handle
@@ -420,7 +425,13 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
         status,
         finishedAt: new Date(this.now()).toISOString(),
         ...(providerSessionId ? { providerSessionId } : {}),
-        warningSummaries: stderrSeen ? ['agy reported stderr during the run.'] : [],
+        warningSummaries: stderrSeen
+          ? [
+              status === 'failed' && stderrMeaningful
+                ? stderrMeaningful
+                : 'agy reported stderr during the run.'
+            ]
+          : [],
         ...(status === 'failed' ? { errorCode: 'provider_failed' as const } : {})
       }
       this.options.runPort.finishRun(finish)

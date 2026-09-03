@@ -67,6 +67,7 @@ import type {
   HostNodeProviderRunResult
 } from './HostNodeProvider'
 import { hostNodeProviderEnvironment } from './HostNodeProviderEnvironment'
+import { meaningfulAcpStderrLine } from './HostNodeAcpStderr'
 
 const CLAUDE_PROVIDER_ID = 'claude'
 const SAFE_IDENTIFIER_MAX_CHARS = 512
@@ -690,6 +691,8 @@ export class HostNodeClaudeProvider implements HostNodeProviderInstance {
       let assistantText = ''
       let stdoutTail = ''
       let stderrTail = ''
+      let stderrMeaningful = ''
+      let sawStderr = false
       let result: HostNodeClaudeResultSummary | null = null
       const warnings = new Set<string>()
 
@@ -727,7 +730,9 @@ export class HostNodeClaudeProvider implements HostNodeProviderInstance {
         },
         onStderr: (chunk) => {
           stderrTail = boundedOutputTail(stderrTail + String(chunk))
-          if (String(chunk).trim()) warnings.add('Claude reported stderr during the run.')
+          const line = meaningfulAcpStderrLine(String(chunk))
+          if (line) stderrMeaningful = line
+          if (String(chunk).trim()) sawStderr = true
         }
       })
       active.handle = handle
@@ -748,6 +753,14 @@ export class HostNodeClaudeProvider implements HostNodeProviderInstance {
         : settled && !settled.isError && exit.code === 0
           ? 'completed'
           : 'failed'
+
+      if (sawStderr) {
+        warnings.add(
+          status === 'failed' && stderrMeaningful
+            ? boundedText(stderrMeaningful, HOST_PROVIDER_RUN_MAX_WARNING_CHARS)
+            : 'Claude reported stderr during the run.'
+        )
+      }
 
       const finalText = boundedText(
         assistantText.trim() ? assistantText : (settled?.finalText ?? ''),

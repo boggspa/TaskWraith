@@ -295,6 +295,70 @@ describe('HostNodeAntigravityProvider run path', () => {
     expect(runPort.transcripts[1]?.text).toContain('token=[redacted]')
   })
 
+  it('records stderr as a bounded warning rather than transcript text on a completed run', async () => {
+    const runPort = new RunPort()
+    const spawn = (input: HostNodeAntigravitySpawnInput): HostNodeAntigravitySpawnHandle => {
+      input.onStdout('Plan complete.')
+      input.onStderr('some noise')
+      return { kill: vi.fn(), exit: Promise.resolve({ code: 0, signal: null }) }
+    }
+    const provider = instance({ runPort, spawn })
+    await provider.getOffers()
+    await provider.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'inspect',
+      target: TARGET
+    })
+    expect(runPort.finish?.status).toBe('completed')
+    expect(runPort.finish?.warningSummaries).toEqual(['agy reported stderr during the run.'])
+    expect(runPort.transcripts.some((entry) => entry.text.includes('some noise'))).toBe(false)
+  })
+
+  it('records a meaningful stderr line as the failed-run reason instead of a generic wrapper', async () => {
+    const runPort = new RunPort()
+    const quota = "You've hit your usage limit for this AntiGravity model."
+    const spawn = (input: HostNodeAntigravitySpawnInput): HostNodeAntigravitySpawnHandle => {
+      input.onStderr(`DEBUG: warming up\n${quota}\nSentry is attempting to send 2 pending events\n`)
+      return { kill: vi.fn(), exit: Promise.resolve({ code: 1, signal: null }) }
+    }
+    const provider = instance({ runPort, spawn })
+    await provider.getOffers()
+    await provider.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'inspect',
+      target: TARGET
+    })
+    expect(runPort.finish?.status).toBe('failed')
+    expect(runPort.finish?.warningSummaries).toEqual([quota])
+    expect(runPort.finish?.warningSummaries).not.toContain('agy reported stderr during the run.')
+    expect(runPort.transcripts.some((entry) => entry.text.includes(quota))).toBe(false)
+    expect(runPort.transcripts.some((entry) => entry.text.includes('DEBUG:'))).toBe(false)
+    expect(runPort.transcripts.some((entry) => entry.text.includes('Sentry'))).toBe(false)
+  })
+
+  it('keeps the generic stderr wrapper when a failed run only emitted telemetry', async () => {
+    const runPort = new RunPort()
+    const spawn = (input: HostNodeAntigravitySpawnInput): HostNodeAntigravitySpawnHandle => {
+      input.onStderr(
+        'INFO: warming up\nDEBUG:vibe:x\nSentry is attempting to send 2 pending events\n'
+      )
+      return { kill: vi.fn(), exit: Promise.resolve({ code: 1, signal: null }) }
+    }
+    const provider = instance({ runPort, spawn })
+    await provider.getOffers()
+    await provider.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'inspect',
+      target: TARGET
+    })
+    expect(runPort.finish?.status).toBe('failed')
+    expect(runPort.finish?.warningSummaries).toEqual(['agy reported stderr during the run.'])
+    expect(runPort.transcripts.some((entry) => entry.text.includes('DEBUG:'))).toBe(false)
+  })
+
   it('cancels a live agy child exactly once', async () => {
     let settle: ((value: { code: number | null; signal: string | null }) => void) | undefined
     const kill = vi.fn(() => settle?.({ code: null, signal: 'SIGTERM' }))

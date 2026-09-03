@@ -566,6 +566,56 @@ describe('HostNodePiProvider run', () => {
     expect(runPort.finish?.warningSummaries).toContain('Pi reported stderr during the run.')
     expect(runPort.transcripts.some((entry) => entry.text.includes('noisy pi output'))).toBe(false)
   })
+
+  it('records a meaningful stderr line as the failed-run reason instead of a generic wrapper', async () => {
+    const runPort = new FakeRunPort()
+    const quota = "You've hit your usage limit for this Pi model. Try again later."
+    const { spawn } = scriptedSpawn({
+      stdout: [],
+      stderr: [
+        'DEBUG: warming up\n',
+        `${quota}\n`,
+        'Sentry is attempting to send 2 pending events\n'
+      ],
+      exitCode: 1,
+      replyToPrompt: true
+    })
+    await providerWith(runPort, spawn).run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hi',
+      target: TARGET
+    })
+    expect(runPort.finish?.status).toBe('failed')
+    expect(runPort.finish?.warningSummaries).toEqual([quota])
+    expect(runPort.finish?.warningSummaries).not.toContain('Pi reported stderr during the run.')
+    expect(runPort.transcripts.some((entry) => entry.text.includes(quota))).toBe(false)
+    expect(runPort.transcripts.some((entry) => entry.text.includes('DEBUG:'))).toBe(false)
+    expect(runPort.transcripts.some((entry) => entry.text.includes('Sentry'))).toBe(false)
+  })
+
+  it('keeps the generic stderr wrapper when a failed run only emitted telemetry', async () => {
+    const runPort = new FakeRunPort()
+    const { spawn } = scriptedSpawn({
+      stdout: [],
+      stderr: [
+        'INFO: warming up\n',
+        'DEBUG:vibe:x\n',
+        'Sentry is attempting to send 2 pending events\n'
+      ],
+      exitCode: 1,
+      replyToPrompt: true
+    })
+    await providerWith(runPort, spawn).run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hi',
+      target: TARGET
+    })
+    expect(runPort.finish?.status).toBe('failed')
+    expect(runPort.finish?.warningSummaries).toEqual(['Pi reported stderr during the run.'])
+    expect(runPort.transcripts.some((entry) => entry.text.includes('DEBUG:'))).toBe(false)
+  })
 })
 
 describe('HostNodePiProvider factory', () => {
