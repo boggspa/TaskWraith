@@ -177,6 +177,7 @@ export const EXPANDED_USAGE_PROVIDER_ORDER: readonly ModelUsageProviderId[] = [
   'meta',
   'deepseek',
   'cerebras',
+  'openrouter',
   'gemini',
   'pi',
   'muse',
@@ -239,6 +240,7 @@ export const COMPACT_USAGE_PROVIDER_LABELS: Partial<Record<ModelUsageProviderId,
   devin: 'Devin',
   deepseek: 'DeepSeek',
   cerebras: 'Cerebras',
+  openrouter: 'OpenRouter',
   meta: 'Meta',
   mimo: 'MiMo',
   qwen: 'Qwen'
@@ -327,6 +329,7 @@ function ProviderLabel({
 function modelUsageProviderName(provider?: ModelUsageProviderId): string {
   if (provider === 'deepseek') return 'DeepSeek'
   if (provider === 'cerebras') return 'Cerebras'
+  if (provider === 'openrouter') return 'OpenRouter'
   if (provider === 'meta') return 'Meta API'
   if (provider === 'mimo') return 'MiMo Token Plan'
   if (provider === 'qwen') return 'Qwen Token Plan'
@@ -602,6 +605,7 @@ function compactCellsForEntry(
   if (
     provider === 'deepseek' ||
     provider === 'cerebras' ||
+    provider === 'openrouter' ||
     provider === 'meta' ||
     provider === 'mimo' ||
     provider === 'qwen'
@@ -751,7 +755,8 @@ export function CompactModelUsageGrid({
     ...(entriesByProvider.has('meta') ? (['meta'] as const) : []),
     ...(entriesByProvider.has('muse') ? (['muse'] as const) : []),
     ...(entriesByProvider.has('deepseek') ? (['deepseek'] as const) : []),
-    ...(entriesByProvider.has('cerebras') ? (['cerebras'] as const) : [])
+    ...(entriesByProvider.has('cerebras') ? (['cerebras'] as const) : []),
+    ...(entriesByProvider.has('openrouter') ? (['openrouter'] as const) : [])
   ]
   const rows = COMPACT_USAGE_ROWS
   const cellsByProvider = new Map(

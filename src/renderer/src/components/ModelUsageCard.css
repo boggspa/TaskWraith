@@ -608,6 +608,10 @@
   --compact-quota-color: var(--provider-qwen-color);
 }
 
+.model-usage-compact-cell.provider-openrouter {
+  --compact-quota-color: var(--provider-openrouter-color);
+}
+
 .model-usage-compact-cell.provider-mistral.is-estimated {
   opacity: 0.72;
   font-style: italic;

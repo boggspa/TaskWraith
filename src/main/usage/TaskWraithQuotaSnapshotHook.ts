@@ -8,11 +8,13 @@ import {
 } from '../../shared/quotaSnapshotHook'
 import {
   hasApiUsageBillingProvider,
+  nextMonthlyResetAt,
   type ApiUsageBillingCurrency,
   type ApiUsageBillingSettings,
   type CerebrasApiUsageBilling,
   type DeepSeekApiUsageBilling,
-  type MetaApiUsageBilling
+  type MetaApiUsageBilling,
+  type OpenRouterApiUsageBilling
 } from '../../shared/apiUsageBilling'
 import type {
   UsageWebSessionProviderId,
@@ -288,7 +290,7 @@ function monthBounds(now: number, local: boolean): { start: number; next: string
 function summarizeSpend(
   records: readonly UsageRecord[],
   providerRates: unknown,
-  lane: 'deepseek' | 'cerebras' | 'meta',
+  lane: 'deepseek' | 'cerebras' | 'meta' | 'openrouter',
   now: number
 ): SpendSummary & { nextMonth: string } {
   const isMeta = lane === 'meta'
@@ -318,7 +320,7 @@ function summarizeSpend(
 
 function usageMatchesSpendLane(
   usage: UsageRecord | null | undefined,
-  lane: 'deepseek' | 'cerebras' | 'meta'
+  lane: 'deepseek' | 'cerebras' | 'meta' | 'openrouter'
 ): usage is UsageRecord {
   if (!usage || usage.usageKind === 'reset_hint') return false
   if (lane === 'meta') return usage.provider === 'muse'
@@ -331,7 +333,7 @@ function usageMatchesSpendLane(
 function summarizeSpendSince(
   records: readonly UsageRecord[],
   providerRates: unknown,
-  lane: 'deepseek' | 'cerebras' | 'meta',
+  lane: 'deepseek' | 'cerebras' | 'meta' | 'openrouter',
   since: number | null,
   now: number
 ): number {
@@ -407,7 +409,8 @@ function deepSeekSnapshot(
         currency: observation.currency,
         subtitle: totalTopUp
           ? 'Configured top-ups minus official remaining balance'
-          : 'Configured credit budget minus official remaining balance'
+          : 'Configured credit budget minus official remaining balance',
+        resetAt: nextMonthlyResetAt(billing?.resetAt, new Date(now))
       })
     )
   } else {
@@ -489,7 +492,8 @@ function cerebrasSnapshot(
         subtitle:
           imported?.balance !== undefined
             ? 'Imported Cerebras billing session'
-            : 'Manual Cerebras billing anchor'
+            : 'Manual Cerebras billing anchor',
+        resetAt: nextMonthlyResetAt(billing?.resetAt, new Date(now))
       })
     )
   } else if (importedSpend !== undefined) {
@@ -500,7 +504,8 @@ function cerebrasSnapshot(
         amount: importedSpend,
         total: billing?.monthlyBudgetUsd,
         currency,
-        subtitle: 'Imported Cerebras billing session'
+        subtitle: 'Imported Cerebras billing session',
+        resetAt: nextMonthlyResetAt(billing?.resetAt, new Date(now))
       })
     )
   } else if (current !== undefined) {
@@ -589,7 +594,8 @@ function metaSnapshot(
         subtitle:
           localIncrement > 0
             ? 'Preload minus remaining, advanced by tracked Muse spend'
-            : 'Configured preload minus remaining Meta balance'
+            : 'Configured preload minus remaining Meta balance',
+        resetAt: nextMonthlyResetAt(billing?.resetAt, new Date(now))
       })
     )
   } else if (imported?.spend !== undefined) {
@@ -603,7 +609,8 @@ function metaSnapshot(
         subtitle:
           localIncrement > 0
             ? 'Imported Meta spend, advanced by tracked Muse usage'
-            : 'Imported Meta billing session'
+            : 'Imported Meta billing session',
+        resetAt: nextMonthlyResetAt(billing?.resetAt, new Date(now))
       })
     )
   }
@@ -660,6 +667,48 @@ function metaSnapshot(
           ]
         : [])
     ]
+  }
+}
+
+/**
+ * OpenRouter credit meter, config-anchored with NO live fetch: the spend is
+ * TaskWraith's own tracked `openrouter/*` usage since the billing anchor and
+ * the ceiling is the configured monthly budget. A live
+ * GET /api/v1/auth/key read (Limit Counter's OpenRouterProviderClient parity:
+ * total spend / remaining budget) is a deferred follow-up — new network plus
+ * secret-handling review — not this slice.
+ */
+function openrouterSnapshot(
+  billing: OpenRouterApiUsageBilling | undefined,
+  openrouterSpendSinceAnchorUsd: number,
+  now: number
+): QuotaSnapshotHookSnapshot {
+  const currency = supportedBillingCurrency(undefined, billing?.currency)
+  const budget = billing?.monthlyBudgetUsd
+  const windows: QuotaSnapshotHookWindow[] = []
+  if (budget !== undefined) {
+    windows.push(
+      financialWindow({
+        id: 'openrouter-credit-used',
+        label: 'Credit used',
+        amount: Math.max(0, openrouterSpendSinceAnchorUsd),
+        total: budget,
+        currency,
+        subtitle: 'Tracked OpenRouter spend since billing anchor',
+        estimated: true,
+        resetAt: nextMonthlyResetAt(billing?.resetAt, new Date(now))
+      })
+    )
+  }
+  return {
+    provider: 'openrouter',
+    source: 'taskwraith-native',
+    configured: true,
+    fetchedAt: fetchedAt(now),
+    stale: false,
+    planType: 'API Credits',
+    windows,
+    balances: []
   }
 }
 
@@ -929,7 +978,7 @@ export function createTaskWraithQuotaSnapshotHook(
 
   return async () => {
     const readAt = now()
-    let keys: Partial<Record<'deepseek' | 'cerebras', string>> = {}
+    let keys: Partial<Record<'deepseek' | 'cerebras' | 'openrouter', string>> = {}
     try {
       const loaded = dependencies.loadPiKeys()
       if (loaded?.status === 'ok') keys = loaded.keys
@@ -967,8 +1016,10 @@ export function createTaskWraithQuotaSnapshotHook(
     // DeepSeek needs no summary: its key alone gates it.
     const cerebrasSpend = summarizeSpend(usageRecords, providerRates, 'cerebras', readAt)
     const metaSpend = summarizeSpend(usageRecords, providerRates, 'meta', readAt)
+    const openrouterSpend = summarizeSpend(usageRecords, providerRates, 'openrouter', readAt)
     const deepSeekKey = typeof keys.deepseek === 'string' ? keys.deepseek.trim() : ''
     const cerebrasKey = typeof keys.cerebras === 'string' ? keys.cerebras.trim() : ''
+    const openrouterKey = typeof keys.openrouter === 'string' ? keys.openrouter.trim() : ''
     activeDeepSeekKey = deepSeekKey || null
     if (!deepSeekKey) deepSeekCache = null
 
@@ -1009,6 +1060,27 @@ export function createTaskWraithQuotaSnapshotHook(
       readAt
     )
 
+    // OpenRouter has no browser import, so its anchor is the rolled monthly
+    // reset alone. Approximate the current cycle as the 30 days preceding that
+    // reset (months are 28-31 days; the amount is already a local estimate, so
+    // calendar-exactness here would be false precision). Without a reset date,
+    // fall back to the UTC calendar-month start like the other Pi lanes.
+    const openrouterResetAt = nextMonthlyResetAt(
+      apiUsageBilling.openrouter?.resetAt,
+      new Date(readAt)
+    )
+    const openrouterResetMs = openrouterResetAt ? Date.parse(openrouterResetAt) : Number.NaN
+    const openrouterAnchorMs = Number.isFinite(openrouterResetMs)
+      ? openrouterResetMs - THIRTY_DAYS_MS
+      : monthBounds(readAt, false).start
+    const openrouterSpendSinceAnchorUsd = summarizeSpendSince(
+      usageRecords,
+      providerRates,
+      'openrouter',
+      openrouterAnchorMs,
+      readAt
+    )
+
     return [
       deepSeek,
       cerebrasKey ||
@@ -1023,6 +1095,15 @@ export function createTaskWraithQuotaSnapshotHook(
       hasApiUsageBillingProvider(apiUsageBilling, 'meta')
         ? metaSnapshot(apiUsageBilling.meta, metaWeb, metaSpendSinceAnchorUsd, fxRates, readAt)
         : emptySnapshot('meta', readAt, false),
+      openrouterKey ||
+      openrouterSpend.runs > 0 ||
+      hasApiUsageBillingProvider(apiUsageBilling, 'openrouter')
+        ? openrouterSnapshot(
+            apiUsageBilling.openrouter,
+            openrouterSpendSinceAnchorUsd,
+            readAt
+          )
+        : emptySnapshot('openrouter', readAt, false),
       ...(museWeb ? [museSubscriptionSnapshot(museWeb, readAt)] : []),
       ...(mimoWeb ? [tokenPlanSnapshot('mimo', mimoWeb, readAt)] : []),
       ...(qwenWeb ? [tokenPlanSnapshot('qwen', qwenWeb, readAt)] : [])

@@ -291,7 +291,8 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         provider: 'meta',
         planType: 'Muse local estimate',
         windows: []
-      })
+      }),
+      expect.objectContaining({ provider: 'openrouter', configured: false, windows: [] })
     ])
     expect(JSON.stringify(snapshots)).not.toContain('ds-secret')
     expect(JSON.stringify(snapshots)).not.toContain('cerebras-secret')
@@ -314,7 +315,8 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
     await expect(read()).resolves.toEqual([
       expect.objectContaining({ provider: 'deepseek', configured: false, windows: [] }),
       expect.objectContaining({ provider: 'cerebras', configured: false, windows: [] }),
-      expect.objectContaining({ provider: 'meta', configured: false, windows: [] })
+      expect.objectContaining({ provider: 'meta', configured: false, windows: [] }),
+      expect.objectContaining({ provider: 'openrouter', configured: false, windows: [] })
     ])
     expect(fetchImpl).not.toHaveBeenCalled()
   })
@@ -459,6 +461,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
           expect.objectContaining({ label: 'Remaining balance', amount: 15 })
         ])
       }),
+      expect.objectContaining({ provider: 'openrouter', configured: false, windows: [] }),
       expect.objectContaining({
         provider: 'mimo',
         planType: 'Lite Monthly Plan',
@@ -709,7 +712,8 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         error: expect.stringContaining('DeepSeek key')
       }),
       expect.objectContaining({ provider: 'cerebras', configured: false }),
-      expect.objectContaining({ provider: 'meta', configured: false })
+      expect.objectContaining({ provider: 'meta', configured: false }),
+      expect.objectContaining({ provider: 'openrouter', configured: false })
     ])
   })
 
@@ -780,7 +784,8 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       await expect(readWith(fetchImpl)()).resolves.toEqual([
         expect.objectContaining({ provider: 'deepseek', configured: true, windows: [], error }),
         expect.objectContaining({ provider: 'cerebras', configured: false }),
-        expect.objectContaining({ provider: 'meta', configured: false })
+        expect.objectContaining({ provider: 'meta', configured: false }),
+        expect.objectContaining({ provider: 'openrouter', configured: false })
       ])
     }
 
@@ -845,5 +850,191 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
     expect(deepseek?.balances).toEqual(
       expect.arrayContaining([expect.objectContaining({ label: 'Total available', amount: -0.03 })])
     )
+  })
+
+  it('rolls the configured monthly reset onto deepseek/cerebras/meta credit-used windows', async () => {
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'ok', keys: { deepseek: 'ds-secret' } }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, EUR: 0.92, GBP: 0.79 } }),
+      getApiUsageBilling: () => ({
+        deepseek: { totalTopUp: 10, resetAt: '2026-07-20T00:00:00.000Z' },
+        cerebras: {
+          purchasedCredits: 20,
+          currentBalance: 6.5,
+          resetAt: '2026-07-20T00:00:00.000Z'
+        },
+        meta: {
+          preloadCredits: 15,
+          remainingBalance: 14.95,
+          resetAt: '2026-07-20T00:00:00.000Z'
+        }
+      }),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      fetchImpl: vi.fn(async () => response(deepSeekBalance())),
+      now: () => NOW
+    })
+
+    const snapshots = await read()
+    // 2026-07-20 rolls one whole month forward to the next occurrence
+    // strictly after NOW (2026-08-13T12:00Z): 2026-08-20.
+    for (const provider of ['deepseek', 'cerebras', 'meta'] as const) {
+      const snapshot = snapshots.find((entry) => entry.provider === provider)
+      expect(snapshot?.windows[0]).toEqual(
+        expect.objectContaining({
+          label: 'Credit used',
+          resetAt: '2026-08-20T00:00:00.000Z'
+        })
+      )
+    }
+  })
+
+  it('leaves credit-used and balance windows reset-free without a reset date', async () => {
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'ok', keys: { deepseek: 'ds-secret' } }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, EUR: 0.92, GBP: 0.79 } }),
+      getApiUsageBilling: () => ({
+        deepseek: { totalTopUp: 10 },
+        cerebras: { purchasedCredits: 20, currentBalance: 6.5 },
+        meta: { preloadCredits: 15, remainingBalance: 14.95 }
+      }),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      fetchImpl: vi.fn(async () => response(deepSeekBalance())),
+      now: () => NOW
+    })
+
+    const snapshots = await read()
+    // No synthetic default: without a configured date the windows carry no
+    // resetAt (dashes already resolve via the 'credit' label; resetAt drives
+    // pace/reset text only).
+    for (const provider of ['deepseek', 'cerebras', 'meta'] as const) {
+      const snapshot = snapshots.find((entry) => entry.provider === provider)
+      expect(snapshot?.windows[0]?.label).toBe('Credit used')
+      expect(snapshot?.windows[0]).not.toHaveProperty('resetAt')
+    }
+
+    const anchorless = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'ok', keys: { deepseek: 'ds-secret' } }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1 } }),
+      getApiUsageBilling: () => undefined,
+      getMuseConfigured: () => false,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      fetchImpl: vi.fn(async () => response(deepSeekBalance())),
+      now: () => NOW
+    })
+    const [balanceOnly] = await anchorless()
+    expect(balanceOnly?.windows[0]?.label).toBe('Available balance')
+    expect(balanceOnly?.windows[0]).not.toHaveProperty('resetAt')
+  })
+
+  it('keeps OpenRouter unconfigured without a key, billing anchor, or tracked spend', async () => {
+    const readWith = (
+      overrides: Partial<Parameters<typeof createTaskWraithQuotaSnapshotHook>[0]>
+    ) =>
+      createTaskWraithQuotaSnapshotHook({
+        loadPiKeys: () => ({ status: 'missing' }),
+        getUsageRecords: () => [],
+        getProviderRates: () => providerRates,
+        getFxRates: () => ({ rates: { USD: 1 } }),
+        getApiUsageBilling: () => undefined,
+        getMuseConfigured: () => false,
+        getMuseMonthlySpendCapUsd: () => undefined,
+        now: () => NOW,
+        ...overrides
+      })
+
+    // Nothing known: the fourth lane is a configured-false tombstone.
+    expect((await readWith({})())[3]).toEqual(
+      expect.objectContaining({ provider: 'openrouter', configured: false, windows: [] })
+    )
+
+    // A stored key alone gates the lane (no budget, so no windows yet) and
+    // the secret never crosses into the snapshot.
+    const keyed = await readWith({
+      loadPiKeys: () => ({ status: 'ok', keys: { openrouter: 'or-secret' } })
+    })()
+    expect(keyed[3]).toEqual(
+      expect.objectContaining({ provider: 'openrouter', configured: true, windows: [] })
+    )
+    expect(JSON.stringify(keyed)).not.toContain('or-secret')
+
+    // Tracked openrouter/* runs alone gate the lane the same way.
+    const spent = await readWith({
+      getUsageRecords: () => [usage({ id: 'or-usage', model: 'openrouter/z-ai/glm-5.2' })]
+    })()
+    expect(spent[3]).toEqual(
+      expect.objectContaining({ provider: 'openrouter', configured: true, windows: [] })
+    )
+  })
+
+  it('meters OpenRouter credit used against the configured monthly budget and rolled reset', async () => {
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [
+        usage({
+          id: 'or-usage',
+          model: 'openrouter/z-ai/glm-5.2',
+          timestamp: NOW - 1_000,
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        })
+      ],
+      getProviderRates: () => ({
+        baseline: {
+          pi: {
+            models: [
+              ...providerRates.baseline.pi.models,
+              {
+                modelId: 'openrouter/z-ai/glm-5.2',
+                inputUsdPerMillion: 1,
+                outputUsdPerMillion: 2,
+                cachedInputUsdPerMillion: 0.1
+              }
+            ]
+          },
+          muse: providerRates.baseline.muse
+        }
+      }),
+      getFxRates: () => ({ rates: { USD: 1 } }),
+      getApiUsageBilling: () => ({
+        openrouter: {
+          monthlyBudgetUsd: 50,
+          currency: 'USD',
+          resetAt: '2026-07-20T00:00:00.000Z'
+        }
+      }),
+      getMuseConfigured: () => false,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      now: () => NOW
+    })
+
+    const snapshots = await read()
+    // The 1M/1M run prices to $3.00 and falls inside the approximated cycle
+    // (30 days before the rolled 2026-08-20 reset), so the config-anchored
+    // meter reads ~$3 of $50 with the rolled reset attached.
+    expect(snapshots[3]).toEqual(
+      expect.objectContaining({
+        provider: 'openrouter',
+        configured: true,
+        planType: 'API Credits',
+        windows: [
+          expect.objectContaining({
+            id: 'openrouter-credit-used',
+            label: 'Credit used',
+            valueText: '~$3.00',
+            usedPercent: expect.closeTo(6),
+            resetAt: '2026-08-20T00:00:00.000Z'
+          })
+        ]
+      })
+    )
+    expect(snapshots[3]?.windows[0]?.limitLabel).toContain('$50.00')
   })
 })

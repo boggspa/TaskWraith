@@ -30,6 +30,7 @@ import {
 } from '../../../main/mistral/MistralQuotaEstimate'
 import type { MistralQuotaSnapshot } from '../../../main/mistral/MistralQuotaStore'
 import { formatResetShort } from '../lib/UsageFormat'
+import { quotaSegmentCount } from '../lib/quotaSegments'
 
 const MISTRAL_CYCLE_START = new Date('2026-07-01T00:00:00.000Z')
 
@@ -1386,6 +1387,96 @@ describe('API spend roster lockstep', () => {
 // exactly that state while the expanded meters (which build
 // `var(--provider-<id>-color)` directly) were already tinted. Pin the full
 // column roster against both the accent rule and the token it points at.
+describe('OpenRouter usage meter', () => {
+  it('renders the OpenRouter credit row in the expanded card when its snapshot is present', () => {
+    const html = renderToStaticMarkup(
+      <ModelUsageCard
+        usageSummary={[
+          quotaEntry({
+            provider: 'openrouter',
+            windows: [
+              {
+                id: 'openrouter-credit-used',
+                label: 'Credit used',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '~$3.00 of $50.00 · Tracked OpenRouter spend since billing anchor',
+                usedPercent: 6,
+                remainingPercent: 94,
+                valueText: '~$3.00',
+                unit: 'USD',
+                windowKind: 'local-estimate',
+                resetAt: '2026-08-20T00:00:00.000Z'
+              }
+            ]
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('OpenRouter')
+    expect(html).toContain('Credit used')
+    expect(html).toContain('~$3.00')
+    expect(html).toContain('~$3.00 of $50.00')
+  })
+
+  it('shows the OpenRouter column in the compact grid beside the other API-credit lanes', () => {
+    const financialWindow = (
+      id: string,
+      label: string,
+      valueText: string,
+      limitLabel: string,
+      usedPercent: number
+    ) => ({
+      id,
+      label,
+      runs: 0,
+      totalTokens: 0,
+      limitLabel,
+      usedPercent,
+      valueText,
+      unit: 'USD'
+    })
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[
+          quotaEntry({
+            provider: 'deepseek',
+            windows: [
+              financialWindow('deepseek-credit', 'Credit used', '$0.92', '$0.92 of $10.00', 9.2)
+            ]
+          }),
+          quotaEntry({
+            provider: 'openrouter',
+            windows: [
+              financialWindow(
+                'openrouter-credit-used',
+                'Credit used',
+                '~$3.00',
+                '~$3.00 of $50.00',
+                6
+              )
+            ]
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('>DeepSeek</th>')
+    expect(html).toContain('>OpenRouter</th>')
+    expect(html).toContain('>$0.92</td>')
+    expect(html).toContain('>~$3.00</td>')
+  })
+
+  it('maps the OpenRouter credit window to four division dashes without a mapper change', () => {
+    // 'Credit used' already resolves to 4 via the credit regex — this pins
+    // the new lane to that mapping so a mapper edit cannot silently undash it.
+    expect(
+      quotaSegmentCount('openrouter', { id: 'openrouter-credit-used', label: 'Credit used' })
+    ).toBe(4)
+  })
+})
+
 describe('compact grid accent lockstep', () => {
   it('gives every compact column an accent rule wired to a defined brand token', () => {
     const cardCss = readFileSync(
