@@ -1,46 +1,24 @@
 # First-run Ensemble task
 
-TaskWraith's Welcome sheet includes a small **Try this first** card under
-**8. Try Ensemble chats**. It answers the first-run question “what should I do
-to test this?” with a bounded exercise that makes the panel visible without
-silently changing a workspace.
+**Platform:** Electron
+
+## What it is
+A ready-made sample task on the Welcome sheet that shows you what an Ensemble chat actually does: several agents look at your workspace from different angles, hand findings to each other, and finish with one ranked recommendation. The task asks the panel to inspect only — not to edit, create, delete, commit, install, or publish anything.
 
 <!-- screenshot-pending: Welcome sheet "Try this first: a governed workspace review" card with Copy task and Show the sample task -->
 
-## What the sample does
+## Where to find it
+On the Welcome sheet, under **8. Try Ensemble chats**, in the card headed **Try this first: a governed workspace review**.
 
-The task asks the current seats to inspect the workspace through different
-lenses, hand off evidence, and finish with a ranked verdict:
+## How to use it
+1. Click **Show the sample task** to read the prompt first, or click **Copy task** to put it on your clipboard.
+2. Create an Ensemble chat and turn on three or four seats.
+3. Set each seat's permission chip to **Ask** so agents can look but not change anything. Copying the task cannot set permissions for you.
+4. Paste the task into the composer and press Send. Nothing runs until you do.
 
-1. Explorer maps the relevant entry points, tests, and user-visible flow.
-2. Risk reviewer checks correctness, safety, privacy, and maintenance concerns.
-3. Delivery planner proposes the smallest useful next step and its acceptance
-   checks.
-4. Chair/reviewer compares the peer findings and explains why its ranked choice
-   wins.
-
-The prompt explicitly says not to edit, create, delete, commit, install,
-publish, or send anything. That is an instruction, not an enforced permission
-boundary: the card only copies text. Use a scratch repository or another
-workspace you are comfortable inspecting and choose the **Read-only**
-permission role for every seat before sending.
-
-## How to run it
-
-1. Open or create an Ensemble chat and enable three or four seats.
-2. Choose Turn mode so the hand-offs are easy to follow.
-3. Set each seat to the **Read-only** permission role. The copied prompt cannot
-   change this setting for you.
-4. Open **Show the sample task** in the Welcome sheet, or click **Copy task**.
-5. Paste it into the Ensemble composer and press Send yourself.
-
-Nothing starts merely because the Welcome sheet is open or because the task is
-copied. The user chooses the roster, reviews the prompt, and sends it.
-
-## What a useful result looks like
-
-The transcript should show named seats taking distinct lenses, a visible hand-
-off, and a reviewer citing at least two peer findings. The final deliverable is
-a decision and evidence summary rather than a raw filesystem path or an
-unreviewed solo answer. If fewer than three seats are enabled, the task tells
-the panel to say so instead of pretending a missing contribution exists.
+## Tips & related
+- Point it at a scratch repository, or a project you are happy to have read.
+- A good run ends with **Seat contributions**, **Ranked verdict**, **Smallest safe next step**, and **Evidence still missing** — and the final seat quotes at least two of its peers.
+- With fewer than three seats on, the panel says so instead of inventing a missing contribution.
+- [First Launch Sheet](first-launch-sheet.md) — where the card lives.
+- [Create an Ensemble Chat](../ensemble-mode/create-ensemble-chat.md) — set the chat up first.

@@ -3,17 +3,17 @@
 **Platform:** Electron
 
 ## What it is
-A faint onboarding card that appears under the **+** button in the sidebar when your workspace list is empty, guiding you to add your first workspace.
+A faint card that appears under the sidebar's **+** button while you have no workspaces, pointing you at the next step.
 
 ## Where to find it
-In the **Sidebar**, directly under the **+** (Add workspace) button, when no workspaces are loaded.
+In the sidebar, directly under the **+** (Add workspace) button. It disappears as soon as one workspace is loaded.
 
 <!-- screenshot-pending: Sidebar onboarding hint card under the + button -->
 
 ## How to use it
-1. Click the **+** button above the card to add a workspace. The card itself is informational only — it isn't clickable.
-2. Follow the workspace picker to select a folder on your Mac.
+1. Click the **+** button above the card. The card itself is a hint and is not clickable.
+2. Choose a folder in the picker that opens.
 
 ## Tips & related
-- [Add workspace](add-workspace.md)
+- [Add workspace](add-workspace.md) — the full steps.
 - [Welcome screen](welcome-screen.md) — what you see once a workspace is active.

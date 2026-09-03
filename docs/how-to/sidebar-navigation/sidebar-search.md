@@ -3,18 +3,20 @@
 **Platform:** Electron
 
 ## What it is
-A quick-search field scoped to the active sidebar surface. **Chat** searches General chats, **Code** searches workspaces and their threads (including matching workspace workflows and boards), and **Work** searches Projects and their member chats. Each surface keeps its own query while you switch between tabs.
+A search box that filters whatever the sidebar is currently showing. **Chat** searches General chats, **Code** searches workspaces and their threads (including matching workflows and boards), and **Work** searches Projects and their members. Each surface keeps its own search text as you switch.
 
 ## Where to find it
-Immediately below the **Chat / Code / Work** switcher. Press **⌘⇧F** on macOS (or the shortcut shown in the field on your platform) to focus it, or click the field.
+Just below the **Chat / Code / Work** buttons. Click it, or press the shortcut shown in the field — **⌘⇧F** by default on macOS, **Ctrl+Shift+F** elsewhere.
 
 ![Code-surface sidebar search focused on a Test 1 board result](../images/sidebar-navigation__sidebar-search.png)
 
 ## How to use it
-1. Select the surface you want to search: Chat, Code, or Work.
-2. Focus the search field and type a chat, workspace, thread, project, or project-member name appropriate to that surface.
-3. Click a result to jump to it. Press **Escape** once to clear a query and again to leave the field.
+1. Click **Chat**, **Code**, or **Work** to choose what you are searching.
+2. Click the search field and type a name.
+3. Click a result to open it.
+4. Press **Escape** once to clear the text, and again to leave the field.
 
 ## Tips & related
+- The shortcut is editable in **Settings → App → Keyboard shortcuts**.
 - [In-chat search](../chats-and-threads/in-chat-search.md) — search inside a single transcript.
 - [Sidebar sections](sidebar-sections.md) — understand the sidebar layout before searching.

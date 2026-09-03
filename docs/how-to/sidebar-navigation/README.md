@@ -1,10 +1,10 @@
 # Sidebar & Thread Navigation
 
-Overview of the sidebar, its sections, and navigation features. Use the three primary surfaces at the top of the sidebar to change scope:
+The sidebar has three surfaces. Pick one at the top to change what it lists:
 
-- **Chat** — General chats that are not tied to a workspace.
-- **Code** — workspaces, workspace-scoped threads, workflows, and boards.
-- **Work** — the **Projects** organizer, which can group chats and threads across scopes.
+- **Chat** — General chats, not tied to a workspace.
+- **Code** — workspaces, their chats, workflows, and boards.
+- **Work** — the **Projects** organizer, which groups chats from anywhere.
 
 - [Sidebar Sections](sidebar-sections.md)
 - [Workspace and Chat Tree](workspace-and-chat-tree.md)

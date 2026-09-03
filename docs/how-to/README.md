@@ -1,8 +1,10 @@
 # TaskWraith How-To Guides
 
-This section contains public "How To…" guides for TaskWraith's user-facing features. Each guide focuses on **where to find the feature** and a **brief explanation of what it does**. The current desktop navigation is split into **Chat**, **Code**, and **Work**: Chat holds General chats, Code holds workspace-scoped threads and workspace tools, and Work contains the Projects organizer.
+Short guides to TaskWraith's features: what each one does, where to find it, and how to use it.
 
-Screenshot coverage is still being refreshed against the latest development build; a `screenshot-pending` comment marks each outstanding page. The [shot list](images/SHOTLIST.md) and [remaining-captures ledger](images/REMAINING.md) carry the live page, capture, and pending counts — they are reconciled on their own schedule, so read the numbers there rather than here.
+The sidebar has three surfaces. **Chat** holds General chats, **Code** holds your workspaces and their chats, and **Work** holds the Projects organizer. Start with [Getting Started](getting-started/) if this is your first run.
+
+Some pages are still waiting on a fresh screenshot; a `screenshot-pending` comment marks each one. The [shot list](images/SHOTLIST.md) and [remaining-captures ledger](images/REMAINING.md) hold the live counts.
 
 ## Areas
 

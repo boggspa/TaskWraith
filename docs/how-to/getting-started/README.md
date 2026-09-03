@@ -1,6 +1,6 @@
 # Getting Started
 
-Overview of onboarding and first-run features in TaskWraith.
+Your first hour with TaskWraith: what you see on first launch, how to add a workspace, and how to try an Ensemble chat safely.
 
 - [First Launch Sheet](first-launch-sheet.md)
 - [First-run Ensemble task](first-run-ensemble-task.md)

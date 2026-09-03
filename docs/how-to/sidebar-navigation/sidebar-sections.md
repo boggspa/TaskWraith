@@ -3,19 +3,21 @@
 **Platform:** Electron
 
 ## What it is
-The sidebar starts with three primary surfaces: **Chat**, **Code**, and **Work**. Chat shows General chats; Code shows workspace-scoped threads and workspace tools; Work opens the **Projects** organizer. Chat and Code show the sections relevant to that surface, such as Active Runs, Pinned, Recents, Ensembles, Channels, Workflows, Workspace Boards, Workspaces, and Local Servers. Some remain visible in an empty state so their create action or status is still reachable. Section headers can be collapsed and reordered.
+Three buttons at the top of the sidebar decide what it lists. **Chat** shows General chats, **Code** shows your workspaces and their threads, and **Work** opens the **Projects** organizer. Under them sit the sections for that surface — Active Runs, Pinned, Recents, Ensembles, Channels, Workflows, Workspace Boards, Workspaces, and Local Servers.
 
 ## Where to find it
-In the **left sidebar panel** of the TaskWraith main window.
+At the top of the left sidebar, in the main TaskWraith window.
 
 ![Chat, Code, and Work switcher with the current Chat hierarchy visible](../images/sidebar-navigation__sidebar-sections.png)
 
 ## How to use it
-1. Pick **Chat**, **Code**, or **Work** to choose the scope you want to navigate.
-2. In Chat or Code, click a section header to collapse or expand it, or drag headers to reorder them.
-3. In Work, the **Projects** header stays open. Select a project to view its members and details, and expand project rows that contain child projects.
-4. TaskWraith remembers the active surface, section order, and collapsed state across launches.
+1. Click **Chat**, **Code**, or **Work** to switch what the sidebar lists.
+2. Click a section header to collapse or expand it.
+3. Drag a section header up or down to reorder it.
+4. In **Work**, select a project to see its members, and expand a project row to see projects nested inside it.
 
 ## Tips & related
+- Some sections stay visible when empty so you can still reach their create button.
+- TaskWraith remembers your surface, section order, and collapsed sections between launches.
 - [Workspace and chat tree](workspace-and-chat-tree.md) — the workspace hierarchy in Code.
-- [Sidebar search](sidebar-search.md) — search within the current Chat, Code, or Work surface.
+- [Sidebar search](sidebar-search.md) — search within the current surface.
