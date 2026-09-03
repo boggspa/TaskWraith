@@ -149,6 +149,8 @@ describe('notification registry', () => {
     )
     const groups = newAdditions?.groups ?? []
     expect(groups.map((g) => g.provider)).toEqual([
+      // Codex leads: GPT-6 Astra is the headline launch of this lineup.
+      'codex',
       'claude',
       'devin',
       'antigravity',
@@ -160,6 +162,7 @@ describe('notification registry', () => {
       'pi'
     ])
     expect(groups.map((g) => g.label)).toEqual([
+      'Codex',
       'Claude',
       'Devin',
       'AntiGravity',

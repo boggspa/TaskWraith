@@ -413,6 +413,8 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
+      // Codex leads the lineup from the GPT-6 Astra launch (2026-09-03).
+      'codex',
       'claude',
       'devin',
       'antigravity',

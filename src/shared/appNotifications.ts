@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-02-2'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-03'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -138,9 +138,27 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: "Claude Fable 5.1, the Devin CLI seat, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
+    body: "GPT-6 Astra and GPT-6 Astra Pro in Codex, Claude Fable 5.1, the Devin CLI seat, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
+      {
+        // GPT-6 Astra launched 2026-09-03. Listed regardless of entitlement:
+        // access rolls out by organisation (OpenAI's Daybreak cyber programme
+        // first), so the card announces the model rather than this seat's
+        // current access to it.
+        provider: 'codex',
+        label: 'Codex',
+        models: [
+          {
+            name: 'GPT-6 Astra',
+            blurb: "OpenAI's newest frontier model. Rolling out by organisation."
+          },
+          {
+            name: 'GPT-6 Astra Pro',
+            blurb: 'The Pro tier of Astra, on Pro, Business, and Enterprise plans.'
+          }
+        ]
+      },
       {
         provider: 'claude',
         label: 'Claude',
