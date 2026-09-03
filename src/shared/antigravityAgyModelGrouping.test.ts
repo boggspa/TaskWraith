@@ -233,3 +233,79 @@ describe('antigravity reasoning ladder options', () => {
     expect(antigravityUltraTaskTargetId(LIVE_CATALOGUE, 'gemini-api:gemini-3.8-flash')).toBeNull()
   })
 })
+
+describe('antigravity-acp namespace is stripped for picker labels', () => {
+  it('renders the same concrete display name as the bare agy id', () => {
+    expect(antigravityDisplayName('antigravity-acp:gemini-3-flash-high')).toBe('Gemini 3 Flash High')
+    expect(antigravityDisplayName('gemini-3-flash-high')).toBe('Gemini 3 Flash High')
+    expect(antigravityDisplayName('antigravity-acp:gemini-3.8-flash')).toBe('Gemini 3.8 Flash')
+    expect(antigravityDisplayName('gemini-3.8-flash')).toBe('Gemini 3.8 Flash')
+    expect(antigravityDisplayName('antigravity-acp:flash-3.6')).toBe('Flash 3.6 Fast')
+    expect(antigravityDisplayName('flash-3.6')).toBe('Flash 3.6 Fast')
+    expect(antigravityDisplayName('antigravity-acp:claude-sonnet-4-6')).toBe('Sonnet 4.6')
+    expect(antigravityDisplayName('claude-sonnet-4-6')).toBe('Sonnet 4.6')
+  })
+
+  it('groups prefixed rows identically to their bare counterparts', () => {
+    const bare = [
+      { id: 'gemini-3.8-flash-high' },
+      { id: 'gemini-3.8-flash-medium' },
+      { id: 'gemini-3.8-flash-low' }
+    ]
+    const prefixed = bare.map((row) => ({ id: `antigravity-acp:${row.id}` }))
+    const bareRows = groupAntigravityModelRows(bare)
+    const prefixedRows = groupAntigravityModelRows(prefixed)
+
+    expect(bareRows).toHaveLength(1)
+    expect(prefixedRows).toHaveLength(1)
+    expect(bareRows[0]?.label).toBe('Gemini 3.8 Flash')
+    expect(prefixedRows[0]?.label).toBe('Gemini 3.8 Flash')
+    expect(prefixedRows[0]?.id).toBe('antigravity-acp:gemini-3.8-flash-high')
+    expect(bareRows[0]?.id).toBe('gemini-3.8-flash-high')
+    expect(prefixedRows[0]?.antigravityVariants).toEqual([
+      { effort: 'low', id: 'antigravity-acp:gemini-3.8-flash-low' },
+      { effort: 'medium', id: 'antigravity-acp:gemini-3.8-flash-medium' },
+      { effort: 'high', id: 'antigravity-acp:gemini-3.8-flash-high' }
+    ])
+    expect(bareRows[0]?.antigravityVariants).toEqual([
+      { effort: 'low', id: 'gemini-3.8-flash-low' },
+      { effort: 'medium', id: 'gemini-3.8-flash-medium' },
+      { effort: 'high', id: 'gemini-3.8-flash-high' }
+    ])
+  })
+
+  it('places a prefixed family on the effort ladder, not the no-reasoning fallback', () => {
+    const prefixedCatalogue = [
+      { id: 'antigravity-acp:gemini-3.8-flash-high' },
+      { id: 'antigravity-acp:gemini-3.8-flash-medium' },
+      { id: 'antigravity-acp:gemini-3.8-flash-low' },
+      { id: 'antigravity-acp:claude-sonnet-4-6' },
+      { id: 'antigravity-acp:gpt-oss-120b-medium' }
+    ]
+    expect(
+      antigravityReasoningLadderOptions(
+        prefixedCatalogue,
+        'antigravity-acp:gemini-3.8-flash-high',
+        false
+      )
+    ).toEqual([
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' }
+    ])
+    expect(
+      antigravityReasoningLadderOptions(
+        prefixedCatalogue,
+        'antigravity-acp:claude-sonnet-4-6',
+        false
+      )
+    ).toEqual([{ value: 'on', label: 'Thinking' }])
+    expect(
+      antigravityReasoningLadderOptions(
+        prefixedCatalogue,
+        'antigravity-acp:gpt-oss-120b-medium',
+        false
+      )
+    ).toEqual([{ value: 'medium', label: 'Medium' }])
+  })
+})

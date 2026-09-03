@@ -18,6 +18,25 @@
 
 import { ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX } from './antigravityGeminiApiModelNaming'
 
+/**
+ * Official-ACP catalogue namespace. Shared cannot import main's `ACP_TOKEN`
+ * / `ANTIGRAVITY_ACP_MODEL_ID_PREFIX`; persisted picker ids freeze
+ * `antigravity-acp:` the same way `gemini-api:` is mirrored in this module.
+ * Strip before display-name and grouping so ACP rows read and group like
+ * their CLI counterparts. Do not strip `gemini-api:` — that lane keeps its
+ * own curated labels.
+ */
+const ANTIGRAVITY_ACP_MODEL_ID_PREFIX = 'antigravity-acp:'
+
+function stripAntigravityAcpModelNamespace(modelId: string): string {
+  const trimmed = modelId.trim()
+  const lower = trimmed.toLowerCase()
+  if (lower.startsWith(ANTIGRAVITY_ACP_MODEL_ID_PREFIX)) {
+    return trimmed.slice(ANTIGRAVITY_ACP_MODEL_ID_PREFIX.length)
+  }
+  return trimmed
+}
+
 export type AntigravityEffort = 'high' | 'medium' | 'low'
 export type AntigravityReasoningEffort = AntigravityEffort | 'on'
 
@@ -36,7 +55,7 @@ const FIXED_REASONING_MODELS: Record<string, AntigravityReasoningEffort> = {
 }
 
 export function antigravityEffortForModelId(modelId: string): AntigravityReasoningEffort | null {
-  const normalized = modelId.trim().toLowerCase()
+  const normalized = stripAntigravityAcpModelNamespace(modelId).toLowerCase()
   const match = VARIANT_EFFORT_SUFFIX.exec(normalized)
   if (match) {
     return match[1] as AntigravityEffort
@@ -121,13 +140,13 @@ interface CatalogueOptionLike {
  * 'GPT-OSS 120B'). Generic word rules plus a tiny exception map; an unknown
  * id still comes out readable. */
 export function antigravityDisplayName(baseId: string): string {
-  const normalized = baseId.trim().toLowerCase()
+  const normalized = stripAntigravityAcpModelNamespace(baseId).toLowerCase()
   if (normalized === 'claude-sonnet-4-6' || normalized === 'claude-sonnet-4-6-thinking')
     return 'Sonnet 4.6'
   if (normalized === 'claude-opus-4-6' || normalized === 'claude-opus-4-6-thinking')
     return 'Opus 4.6'
   if (normalized.startsWith('gpt-oss-120b')) return 'GPT-OSS (120B Param)'
-  return collectDisplayNameTokens(baseId).join(' ')
+  return collectDisplayNameTokens(normalized).join(' ')
 }
 
 function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
@@ -158,14 +177,18 @@ function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
       })
       continue
     }
-    const normalized = id.trim().toLowerCase()
+    const semanticId = stripAntigravityAcpModelNamespace(id)
+    const normalized = semanticId.toLowerCase()
     const effort =
       !FIXED_REASONING_MODELS[normalized] && VARIANT_EFFORT_SUFFIX.exec(normalized)
         ? (antigravityEffortForModelId(id) as AntigravityEffort)
         : null
     if (!effort) {
       // A curated label (differing from the id) is authored — keep it.
-      const curated = option.label && option.label !== id ? option.label : undefined
+      const curated =
+        option.label && option.label !== id && option.label !== semanticId
+          ? option.label
+          : undefined
       orderedEntries.push({
         kind: 'single',
         id,
@@ -174,7 +197,7 @@ function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
       })
       continue
     }
-    const baseId = id.slice(0, id.length - effort.length - 1)
+    const baseId = semanticId.slice(0, semanticId.length - effort.length - 1)
     let group = groupsByBase.get(baseId)
     if (!group) {
       group = {
