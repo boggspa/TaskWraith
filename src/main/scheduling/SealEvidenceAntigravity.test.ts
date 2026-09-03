@@ -11,7 +11,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatRecord } from '../store/types'
 import { buildAgyReadOnlyPrintArgs } from '../antigravity/AntigravityCli'
 import { formatAgyProjectBoundSessionId } from '../antigravity/AntigravityConversationReceipt'
-import { isAntigravityGeminiApiModelCandidate } from '../antigravity/AntigravityCombinedModeDispatch'
+import {
+  isAntigravityAcpModelCandidate,
+  isAntigravityGeminiApiModelCandidate
+} from '../antigravity/AntigravityCombinedModeDispatch'
 import {
   antigravityLaunchAuthorityDigest,
   buildAntigravityLaunchAuthority
@@ -250,6 +253,28 @@ describe('AntiGravity scheduled evidence route', () => {
     const route = antigravityScheduledEvidenceRoute({ model })
     expect(isAntigravityGeminiApiModelCandidate(model)).toBe(expected !== 'official-agy')
     expect(route.kind).toBe(expected)
+  })
+
+  it('routes official-ACP namespace candidates to an explicit unsealed skip, never to official-agy', () => {
+    const acpModels = [
+      'antigravity-acp:gemini-3-pro',
+      ' ANTIGRAVITY-ACP:gemini-3-pro ',
+      'antigravity-acp'
+    ]
+    for (const model of acpModels) {
+      expect(isAntigravityAcpModelCandidate(model)).toBe(true)
+      // The defect this guards: ACP models previously fell through and were
+      // recorded as the legacy agy transport.
+      expect(antigravityScheduledEvidenceRoute({ model })).toEqual({
+        kind: 'skipped',
+        reason:
+          'The AntiGravity model is routed to the official ACP transport, which is not seal-wired yet; dispatching under the existing signed posture without claiming exact ACP transport evidence.'
+      })
+    }
+    // Token-boundary continuations still belong to the agy lane.
+    expect(antigravityScheduledEvidenceRoute({ model: 'antigravity-acpx' })).toEqual({
+      kind: 'official-agy'
+    })
   })
 
   it('keeps image-bearing Gemini API turns as an explicit unsealed skip', () => {
