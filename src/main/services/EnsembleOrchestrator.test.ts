@@ -1081,6 +1081,115 @@ describe('EnsembleOrchestrator', () => {
     }
   })
 
+  it('quietly re-dispatches a Cursor seat whose transport never started, then bounds the retry', async () => {
+    vi.useFakeTimers()
+    try {
+      // `starting` is the live shape of a seat queued on the workspace-config
+      // lease: RunManager holds an active session with no child attached.
+      const seatStatuses: string[] = []
+      const harness = makeHarness({
+        now: () => Date.now(),
+        getProviderRunTransportLiveness: () => 'starting',
+        beforeSaveChat: (chat) => {
+          const status = chat.ensemble?.activeRound?.participants.find(
+            (participant) => participant.participantId === 'cursor'
+          )?.status
+          if (status) seatStatuses.push(status)
+        }
+      })
+      harness.chat.ensemble!.participants = [
+        {
+          id: 'cursor',
+          provider: 'cursor',
+          enabled: true,
+          role: 'Challenge3',
+          instructions: 'Review.',
+          order: 1,
+          permissionPresetId: 'read_only'
+        },
+        {
+          id: 'codex',
+          provider: 'codex',
+          enabled: true,
+          role: 'Worker',
+          instructions: 'Continue.',
+          order: 2,
+          permissionPresetId: 'workspace_write'
+        }
+      ]
+
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Queue a Cursor reviewer behind a busy writer.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      for (let i = 0; i < 20; i += 1) await Promise.resolve()
+      expect(harness.dispatched).toHaveLength(1)
+      expect(harness.dispatched[0].provider).toBe('cursor')
+      const firstRunId = harness.dispatched[0].appRunId
+
+      // Far past the 30s silence deadline that used to kill this seat, and past
+      // the measured 2m31s lease queue, without a single provider byte.
+      for (let step = 0; step < 5; step += 1) {
+        vi.advanceTimersByTime(60_000)
+        for (let i = 0; i < 20; i += 1) await Promise.resolve()
+        if (harness.dispatched.length >= 2) break
+      }
+      expect(harness.dispatched).toHaveLength(1)
+
+      for (let step = 0; step < 15; step += 1) {
+        vi.advanceTimersByTime(60_000)
+        for (let i = 0; i < 20; i += 1) await Promise.resolve()
+        if (harness.dispatched.length >= 2) break
+      }
+      expect(harness.dispatched).toHaveLength(2)
+      expect(harness.dispatched[1].provider).toBe('cursor')
+      expect(harness.dispatched[1].appRunId).not.toBe(firstRunId)
+      expect(harness.cancelRun).toHaveBeenCalledWith('cursor', firstRunId)
+
+      // Discreet: no failed coda, no round status, and no compaction card —
+      // the seat never ran, so there was nothing to prune.
+      expect(
+        harness.chat.messages.some((message) =>
+          (message.content || '').includes('missing terminal result')
+        )
+      ).toBe(false)
+      expect(
+        harness.chat.messages.some((message) =>
+          /Cursor (failed|skipped)\./i.test(message.content || '')
+        )
+      ).toBe(false)
+      expect(
+        harness.chat.messages.some((message) => message.metadata?.kind === 'contextCompaction')
+      ).toBe(false)
+      expect(
+        harness.chat.ensemble?.activeRound?.participants.find(
+          (participant) => participant.participantId === 'cursor'
+        )?.status
+      ).toBe('running')
+      // Every intermediate save, not just the settled one: the roster chip must
+      // never flash a terminal status while the seat is being re-dispatched.
+      expect(seatStatuses.length).toBeGreaterThan(0)
+      expect(seatStatuses).not.toContain('cancelled')
+      expect(seatStatuses).not.toContain('failed')
+
+      // Bounded: a seat that cannot start twice in one round surfaces rather
+      // than pinning the roster.
+      for (let step = 0; step < 20; step += 1) {
+        vi.advanceTimersByTime(60_000)
+        for (let i = 0; i < 20; i += 1) await Promise.resolve()
+        if (harness.dispatched.length >= 3) break
+      }
+      expect(
+        harness.chat.messages.some((message) =>
+          (message.content || '').includes('missing terminal result')
+        )
+      ).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('finalizes a streamed Cursor yield and cancels its exact child after an explicit handoff', async () => {
     vi.useFakeTimers()
     try {

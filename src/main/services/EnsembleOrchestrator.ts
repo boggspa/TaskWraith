@@ -1087,6 +1087,13 @@ interface ActiveParticipantRun {
    * chip in `running` and skip failed/skipped coda copy.
    */
   cursorContextPressureRecovery?: boolean
+  /**
+   * Cursor startup recovery: the transport never spawned (typically still
+   * queued on the workspace-config lease) and the same seat will be
+   * re-dispatched. Nothing was produced, so keep the roster chip in `running`
+   * and skip failed/skipped coda copy.
+   */
+  cursorStartupRecovery?: boolean
   /** Terminal bookkeeping is deferred with a held transcript and applied once. */
   terminalSideEffectsApplied?: boolean
   /** Participant token totals merge once, on the effective terminal flush. */
@@ -4366,17 +4373,25 @@ export class EnsembleOrchestrator {
       onContextPressureRecovery: (reason) => {
         this.recoverCursorSeatFromContextPressure(run, reason)
       },
+      onStartupRecovery: (reason) => {
+        this.recoverCursorSeatBeforeFirstOutput(run, reason)
+      },
       onMissingTerminal: (reason) => {
         // Release the serial completion promise first. The exact provider
         // cancellation is best-effort cleanup and must never strand rotation
         // behind a provider that already stopped publishing lifecycle events.
         if (this.runsByRunId.get(run.runId) !== run || run.terminalFinalized) return
-        const message = `Cursor turn recovered after missing terminal result: ${reason}`
-        this.appendRoundStatus(run.chatId, run.roundId, message)
-        this.finalizeRun(run, 'failed', message)
-        void this.requestExactRunCancellation(run).catch(() => undefined)
+        this.failCursorSeatWithMissingTerminal(run, reason)
       }
     })
+  }
+
+  /** Visible fail-closed coda for a Cursor seat that published no terminal. */
+  private failCursorSeatWithMissingTerminal(run: ActiveParticipantRun, reason: string): void {
+    const message = `Cursor turn recovered after missing terminal result: ${reason}`
+    this.appendRoundStatus(run.chatId, run.roundId, message)
+    this.finalizeRun(run, 'failed', message)
+    void this.requestExactRunCancellation(run).catch(() => undefined)
   }
 
   private touchCursorCompletionWatchdog(run: ActiveParticipantRun): void {
@@ -4419,10 +4434,7 @@ export class EnsembleOrchestrator {
     if (runtime.cursorContextRecoveryAttemptedParticipantIds.has(run.participant.id)) {
       // Already recovered once this round — fall back to the visible fail path
       // so a looping seat cannot pin the roster forever.
-      const message = `Cursor turn recovered after missing terminal result: ${reason}`
-      this.appendRoundStatus(run.chatId, run.roundId, message)
-      this.finalizeRun(run, 'failed', message)
-      void this.requestExactRunCancellation(run).catch(() => undefined)
+      this.failCursorSeatWithMissingTerminal(run, reason)
       return
     }
     runtime.cursorContextRecoveryAttemptedParticipantIds.add(run.participant.id)
@@ -4501,6 +4513,51 @@ export class EnsembleOrchestrator {
     if (!run.laneId && runtime.activeRunId === run.runId) {
       runtime.pendingCursorContextRecoveryParticipantId = run.participant.id
     }
+    // Finalize first so a racing cancel/exit cannot stamp failed/skipped coda.
+    this.finalizeRun(run, 'cancelled', reason)
+    void this.requestExactRunCancellation(run).catch(() => undefined)
+  }
+
+  /**
+   * Discreet recovery for a Cursor seat whose transport never started. The
+   * workspace-config lease fairly queues an incompatible posture behind the
+   * current holder's whole turn, so a queued seat can outlive even the bounded
+   * startup window with nothing wrong with it. No bytes were produced, so the
+   * seat is cancelled and re-dispatched with no failed coda — by which time
+   * the holder has usually released.
+   */
+  private recoverCursorSeatBeforeFirstOutput(run: ActiveParticipantRun, reason: string): void {
+    if (this.runsByRunId.get(run.runId) !== run || run.terminalFinalized) return
+    if (run.participant.provider !== 'cursor') return
+    const runtime = this.roundsByChatId.get(run.chatId)
+    // Only the serial foreground seat has somewhere to retry into:
+    // `pendingCursorContextRecoveryParticipantId` is consumed by serial
+    // rotation, and setting it for a detached lane would arm a retry on that
+    // participant's unrelated serial turn. A lane keeps its pre-existing
+    // visible failure — nothing here made it quieter, only patient — and a
+    // silent settle would leave a lane with no evidence it ever ran.
+    if (
+      !runtime ||
+      runtime.roundId !== run.roundId ||
+      runtime.cancelled ||
+      run.laneId ||
+      runtime.activeRunId !== run.runId
+    ) {
+      this.failCursorSeatWithMissingTerminal(run, reason)
+      return
+    }
+    // Shared with the context-pressure lane on purpose: a seat gets at most one
+    // silent maintenance retry per round, whatever the cause.
+    runtime.cursorContextRecoveryAttemptedParticipantIds ??= new Set()
+    if (runtime.cursorContextRecoveryAttemptedParticipantIds.has(run.participant.id)) {
+      this.failCursorSeatWithMissingTerminal(run, reason)
+      return
+    }
+    runtime.cursorContextRecoveryAttemptedParticipantIds.add(run.participant.id)
+    run.cursorStartupRecovery = true
+    run.invalidatePromptShellReceipt = true
+    run.invalidatePromptDynamicStateReceipt = true
+    runtime.pendingCursorContextRecoveryParticipantId = run.participant.id
     // Finalize first so a racing cancel/exit cannot stamp failed/skipped coda.
     this.finalizeRun(run, 'cancelled', reason)
     void this.requestExactRunCancellation(run).catch(() => undefined)
@@ -21730,7 +21787,9 @@ export class EnsembleOrchestrator {
     const effectiveFinal =
       final && (!holdingOwnedFanoutTranscript || suppressingOwnedFanoutTranscript)
     const silentMaintenanceRecovery = Boolean(
-      run.cursorContextPressureRecovery || run.antigravityFalseRefusalRecovery
+      run.cursorContextPressureRecovery ||
+        run.cursorStartupRecovery ||
+        run.antigravityFalseRefusalRecovery
     )
     const visibleStatus: EnsembleParticipantStatus = silentMaintenanceRecovery
       ? 'running'
