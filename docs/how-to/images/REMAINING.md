@@ -117,14 +117,25 @@ against a live window. Verify at recapture rather than trusting either state:
 
 ## Needs investigation before recapture
 
-- `chats-and-threads__in-chat-search` — **captured; the 2026-07-09 crash does not
-  reproduce.** Typing a query against a real transcript returned a live match
-  counter with the transcript still mounted and no `Maximum update depth
-  exceeded`. Two notes for whoever revisits it: the shortcut needs a real
-  `Input.dispatchKeyEvent` (a synthetic KeyboardEvent is untrusted and never
-  opens the bar), and **the transcript renders no highlight** — the bar counts
-  matches ("1 / 3") but no `mark` element or highlight class appears on the
-  matched text, so the caption no longer promises highlighted results.
+- `chats-and-threads__in-chat-search` — **captured, and the highlight now paints.**
+  Two earlier notes are superseded: the 2026-07-09 "Maximum update depth exceeded"
+  crash does not reproduce, and the missing highlight was a real defect that has
+  since been fixed (transcript matches are painted via the CSS Custom Highlight
+  API, with the active match given its own brighter style). Verified in a rebuilt
+  app: a single-word query registered 2 ranges against a "1 / 2" counter and the
+  match is visibly painted.
+
+  **Capture with a SINGLE-WORD query.** The counter and the highlighter use
+  different matchers: the counter collapses whitespace, while the highlighter
+  searches inside one text node at a time. So a phrase query can still count
+  without painting — if it spans a line break, a double space, or any element
+  boundary (bold, a link, inline code), the two halves live in different text
+  nodes. A phrase that cannot paint looks exactly like the original bug, counter
+  live and nothing highlighted, so a multi-word query is the one way to take a
+  screenshot that misrepresents the fixed behaviour.
+
+  The shortcut also needs a real `Input.dispatchKeyEvent`; a synthetic
+  KeyboardEvent is untrusted and never opens the bar.
 
 ## Needs privacy-safe setup
 
