@@ -85,10 +85,13 @@ against a live window. Verify at recapture rather than trusting either state:
   converts the thread in place, keeping its transcript. Roster seats behave the
   same way — tap `.ensemble-above-chip` with PointerEvents and confirm
   `.is-selected` actually moved before using the remove control.
-- **Seat providers matter for cost and success.** A default roster shipped a Grok
-  seat, which failed mid-round on an account with no Grok quota and left
-  "Specialist failed." in the transcript. Remove no-quota seats before capturing:
-  on this account Grok, any Codex seat, and Claude Fable are unavailable.
+- **Check seat quota before capturing.** A default roster shipped a Grok seat,
+  which failed mid-round because that provider's quota was exhausted at the time,
+  leaving "Specialist failed." in the transcript. This is a **transient** quota
+  state, not a permanent capability gap — quotas refresh on their own schedules,
+  so re-check rather than treating any provider as unavailable. Swap a
+  quota-exhausted seat out of the roster before capturing, or the failure lands
+  in the frame.
 
 - **Canvas surfaces do not composite into the parent screenshot.** Each Canvas
   (emulator, browser, mesh viewport) is its own Electron page target, so

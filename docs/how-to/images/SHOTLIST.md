@@ -9,7 +9,8 @@ The current refresh uses latest-source development apps, not an installed releas
 ## Capture settings
 
 - **Format:** PNG at native display resolution. Do not upscale a small capture.
-- **Theme:** use a consistent current theme unless the page specifically documents Appearance or dark mode.
+- **Theme and shell: vary them deliberately.** The manual is no longer pinned to one look. TaskWraith ships 25 themes plus four app-icon styles and several composer shells, and a manual shot entirely in one theme undersells that. Mix Light and Dark across pages, and vary the composer shell, so the reader sees the range. Two rules still bind: a page that documents a *specific* appearance must show that appearance, and a page whose point is a control's layout should not pick a theme that obscures it. Record the theme used in a shot only when it is load-bearing for the page.
+- **Window size:** capture at roughly 1834x1320 (a conventional desktop aspect). Avoid very tall windows — they are a personal working preference, not what most readers run, and they leave large dead bands in a cropped shot.
 - **Scope:** capture or crop to the relevant panel/control so the detail remains legible. Include surrounding chrome only when it explains where the feature lives.
 - **State:** put the UI in the state the caption describes (e.g. a popover open, a chip active, an ensemble running).
 - **Privacy:** use only the authorized `Test 1` through `Test 4` workspaces for live examples. Workspace names, agent/task metrics, usage telemetry, and live demo transcripts are acceptable; full private file paths, secrets, pairing QR codes, and unrelated personal content are not. Crop or redact before committing when necessary.
@@ -124,7 +125,7 @@ The current refresh uses latest-source development apps, not an installed releas
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `settings-and-configuration__appearance-tab.png` | Electron | Appearance tab showing theme selector, accent color picker, and FX Labs section | Open **Settings → App → Appearance**. |
+| `settings-and-configuration__appearance-tab.png` | Electron | Appearance tab showing the app-icon styles and the full theme grid with live preview cards | Open **Settings → App → Appearance**. |
 | `settings-and-configuration__devices-tab.png` | Electron | Devices tab showing QR code, paired devices list, and networking options | **Settings → Integrations → Devices**. |
 | `settings-and-configuration__general-tab.png` | Electron | General tab showing behavior settings, context turns slider, and product ops section | Open **Settings → App → General**. |
 | `settings-and-configuration__keyboard-shortcuts-tab.png` | Electron | Keyboard shortcuts tab showing editable keybinding list | Open the sidebar footer **Settings** entry, then choose **Keyboard shortcuts** under the App group in the Settings sidebar rail. |
@@ -148,7 +149,7 @@ The current refresh uses latest-source development apps, not an installed releas
 | `sidebar-navigation__project-references-studio.png` | Electron | Project library dock showing the Studio row and a generated draft with Save to library and Discard | Select **Work**, choose a Project, open the **Refs** tab in the right dock, mark at least one reference **Use next**, then generate a **Briefing**, **FAQ**, or **Decision log**. |
 | `sidebar-navigation__settings-entry.png` | Electron | Sidebar footer with Settings button highlighted | In the **Sidebar footer** — click the **Settings** (gear) button. |
 | `sidebar-navigation__sidebar-search.png` | Electron | Surface-scoped sidebar search focused with results | Select **Chat**, **Code**, or **Work**, then focus the search field below the switcher; capture text/results appropriate to that surface. |
-| `sidebar-navigation__sidebar-sections.png` | Electron | Sidebar showing the Chat / Code / Work switcher and current Chat hierarchy | In the **left sidebar panel** of the TaskWraith main window, with **Chat** selected and its hierarchy visible. |
+| `sidebar-navigation__sidebar-sections.png` | Electron | Sidebar showing the Chat / Code / Work switcher and current Chat hierarchy, captured in the Light theme | In the **left sidebar panel** of the TaskWraith main window, with **Chat** selected and its hierarchy visible. |
 | `sidebar-navigation__update-pill.png` | Electron | Sidebar update pill above the masthead | In the **Sidebar**, directly above the masthead (workspace name / + button area), for as long as an update is available, downloading, downloaded, or has hit an error. |
 | `sidebar-navigation__workspace-and-chat-tree.png` | Electron | Tight crop of an expanded authorized test workspace with a parent and linked child | Select **Code**, expand a workspace in **Workspaces**, then expand a thread with a linked side chat or sub-thread. Keep full filesystem paths and unrelated workspace names out of frame. |
 
