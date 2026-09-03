@@ -2,37 +2,22 @@
 
 **Platform:** Electron
 
-> **The Turn / Continuous mode picker documented here was retired.** Ensembles
-> now always run **Continuous** — agents hand work back and forth across
-> bounded continuation turns, and the round keeps going until the goal
-> completes, someone yields to the user, or the Turn Budget runs out. Older
-> chats that still record a "Turn" setting are treated as Continuous. To get
-> the old strict one-pass feel, keep the Turn Budget low and leave Fan-Out
-> off.
+## What it is
+A row of three controls that set how an Ensemble round runs: **Fan-Out**, **Isolate**, and **Turns**. Ensembles always run continuously — agents hand work back and forth until the goal is done or the turn count runs out — so there is no longer a Turn/Continuous choice to make.
 
-## What the row holds now
+## Where to find it
+In the **Roster Presets** section above the composer input, on the second row. It only appears in an Ensemble chat.
 
-The second row of the Roster Presets section above the composer input groups
-the remaining orchestration controls:
-
-- **Fan-Out** — an On/Off toggle for parallel lanes. On enables read/review
-  fan-out plus Boss-triggered writer lanes with explicit writeScopes (or the
-  user-preflight writer path when no Boss is assigned). See
-  [Fan-Out Toggle](../ensemble-mode/fan-out.md).
-- **Isolate** — Shared / Worktrees / Any: where fan-out lanes do their work.
-- **Turn Budget** — the `n/m` continuation-hops meter. See
-  [Continuous Hops Meter](../ensemble-mode/continuous-hops-meter.md).
-
-The chat-wide **Shared History Budget (Chars) slider is gone too**: each
-participant's transcript ingest is now sized automatically from its model's
-context window, so capable models receive the full shared history. Only Codex
-GPT-5.3 Spark and 4B–12B-parameter local Ollama models keep a hand-tunable
-budget — a per-model slider on their rows in the composer's
-**Context · per participant** panel.
+## How to use it
+1. Click **Fan-Out** and pick **On** to let agents work in parallel lanes, or **Off** to keep them strictly one at a time.
+2. Click **Isolate** to choose where those lanes work: **Shared** (the live checkout), **Worktrees** (a separate copy each), or **Any**.
+3. Read the **Turns** chip as `n/m` — handoffs used out of the limit for this round.
+4. Click **Turns** and set **Max handoff turns** to give the round more or less room, then save.
 
 ## Tips & related
-
-- [Create an Ensemble Chat](../ensemble-mode/create-ensemble-chat.md) — start an ensemble chat before this row becomes available.
-- [Fan-Out Toggle](../ensemble-mode/fan-out.md) — the On/Off parallel-lanes control on this row.
-- [Continuous Hops Meter](../ensemble-mode/continuous-hops-meter.md) — tracks remaining continuation turns.
-- [Participant Chip Strip](../ensemble-mode/participant-chip-strip.md) — manage who's in the round above the composer.
+- To keep a round short, lower **Max handoff turns** and leave **Fan-Out** off.
+- Each agent's share of the shared history is now sized automatically from its model's context window. Only a few models keep a manual slider, on their row in the **Context · per participant** panel.
+- [Create an Ensemble Chat](../ensemble-mode/create-ensemble-chat.md) — start an ensemble chat before this row appears.
+- [Fan-Out Toggle](../ensemble-mode/fan-out.md) — what parallel lanes actually do.
+- [Continuous Hops Meter](../ensemble-mode/continuous-hops-meter.md) — more on the Turns meter.
+- [Participant Chip Strip](../ensemble-mode/participant-chip-strip.md) — manage who is in the round.

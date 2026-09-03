@@ -1,10 +1,10 @@
 # Composer
 
-Overview of the composer and its tools, pickers, and commands.
+The prompt box and everything around it: the chips that choose your model and permissions, the **+** menu for adding context, slash commands, scheduling, and goals.
 
 - [Provider, Model, and Permissions Pickers](provider-model-permissions-pickers.md)
 - [Model Catalogue](../../MODEL_CATALOGUE.md)
-- [Ensemble Mode Picker](ensemble-mode-picker.md)
+- [Ensemble Orchestration Row](ensemble-mode-picker.md)
 - [Plus Tools Menu](plus-tools-menu.md)
 - [Slash Commands](slash-commands.md)
 - [Schedule Prompt](schedule-prompt.md)

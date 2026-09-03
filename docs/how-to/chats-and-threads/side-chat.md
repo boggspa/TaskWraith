@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-A side chat is a linked sidecar chat that opens next to your current chat — either docked as a split pane, a right-hand drawer, or a separate pop-out window. It starts from a copied snapshot of the parent chat (or a clone of the parent ensemble, a delegated sub-thread, a guest participant, a fan-out of all participants, or a specific transcript message) so you can explore a tangent without disturbing the main transcript. Ending a side chat cancels its queued work and archives it.
+A side chat is a linked chat that opens next to your current chat — as a split pane, a right-hand drawer, or a separate window. It starts from a copy of the parent chat (or a clone of an ensemble, a sub-thread, or a single message) so you can explore a tangent without disturbing the main transcript. Ending a side chat cancels its queued work and archives it.
 
 ## Where to find it
 The split-pane button in the pane's corner controls is a plain toggle, not a menu: it reads **Open isolated side chat** when no sidecar is showing, and **Hide linked chat pane** once one is. Click it to open a sidecar beside the current chat with a copied parent snapshot.
@@ -20,7 +20,7 @@ You can also right-click (or use the context menu on) any message in the transcr
 
 ## How to use it
 1. With a chat open, click the split-pane corner control (or run `/side`) to dock a sidecar pane; use `/side-drawer` instead for the right-hand overlay.
-2. While the new sidecar is still empty, its welcome line reads "New **Side Chat** in …". Click that label to open the side-chat type picker and choose a different kind: in an ensemble chat the default becomes **Side Ensemble** (clones the ensemble's participants), and each of the parent's live sub-threads is offered as **Subagent Side Chat with …**. Side chats created as a fan-out are labelled **Fan-out side chat** wherever they are listed.
+2. While the new sidecar is still empty, click its "New **Side Chat** in …" label to pick a different kind: **Side Ensemble** clones the ensemble's participants, and each live sub-thread is offered as **Subagent Side Chat with …**. Fan-out side chats are labelled **Fan-out side chat**.
 3. Work in the side chat like any other chat — it has its own composer and transcript.
 4. Use the sidecar's header buttons to **Pop out linked chat**, **Open as main**, go **Back to parent**, or **Close side view** (which leaves the linked chat running).
 5. When you're done, click the danger button to **End side chat**, which cancels queued work and archives it. In a popped-out side chat window, the same header also offers **Dock as split** and **Dock as drawer**.
