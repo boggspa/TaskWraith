@@ -39,6 +39,13 @@ const SAFE_API_MODEL_ID = /^gemini-api:gemini-[a-z0-9][a-z0-9._-]{0,127}$/
 const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
 // eslint-disable-next-line no-control-regex -- profile metadata rejects C0 controls.
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
+/**
+ * Official-ACP catalogue namespace. host-shared cannot import main's
+ * `ANTIGRAVITY_ACP_MODEL_ID_PREFIX`; persist `antigravity-acp:` locally
+ * (same freeze as grouping). Host `--model` is agy-CLI-only, so strip
+ * at the agy-section boundary.
+ */
+const ANTIGRAVITY_ACP_MODEL_ID_PREFIX = 'antigravity-acp:'
 
 export interface HostStandaloneAntigravityCatalogRow {
   readonly modelId: string
@@ -83,6 +90,15 @@ function readJson(path: string): unknown | null {
   }
 }
 
+function stripAntigravityAcpModelNamespace(modelId: string): string {
+  const trimmed = modelId.trim()
+  const lower = trimmed.toLowerCase()
+  if (lower.startsWith(ANTIGRAVITY_ACP_MODEL_ID_PREFIX)) {
+    return trimmed.slice(ANTIGRAVITY_ACP_MODEL_ID_PREFIX.length)
+  }
+  return trimmed
+}
+
 function inventoryRow(
   idValue: unknown,
   labelValue: unknown
@@ -101,6 +117,19 @@ function inventoryRow(
     return null
   }
   return { modelId: id, label }
+}
+
+/** AGY-section rows only: strip ACP namespace, drop Gemini API ids. */
+function agySectionInventoryRow(
+  idValue: unknown,
+  labelValue: unknown
+): HostStandaloneAntigravityCatalogRow | null {
+  const id = typeof idValue === 'string' ? stripAntigravityAcpModelNamespace(idValue) : idValue
+  const label =
+    typeof labelValue === 'string' ? stripAntigravityAcpModelNamespace(labelValue) : labelValue
+  const row = inventoryRow(id, label)
+  if (!row || row.modelId.startsWith(ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX)) return null
+  return row
 }
 
 function appendUnique(
@@ -126,8 +155,8 @@ function readAgyCache(profilePath: string): HostStandaloneAntigravityCatalogRow[
   for (const entry of record.models) {
     if (rows.length >= MAX_CATALOG_ROWS || !entry || typeof entry !== 'object') break
     const model = entry as { id?: unknown; label?: unknown }
-    const row = inventoryRow(model.id, model.label ?? model.id)
-    if (!row || row.modelId.startsWith(ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX)) continue
+    const row = agySectionInventoryRow(model.id, model.label ?? model.id)
+    if (!row) continue
     appendUnique(rows, seen, row)
   }
   return rows
@@ -205,7 +234,8 @@ export function readHostStandaloneAntigravityInventory(
   const consent = readHostStandaloneAntigravityConsent(profilePath)
   if (options.agyBinaryAvailable === true && consent.accepted) {
     for (const entry of combined) {
-      if (!isApiModelId(entry.id)) appendUnique(rows, seen, inventoryRow(entry.id, entry.label))
+      if (!isApiModelId(entry.id))
+        appendUnique(rows, seen, agySectionInventoryRow(entry.id, entry.label))
     }
     for (const row of readAgyCache(profilePath)) appendUnique(rows, seen, row)
     // Match Electron main's live-wins contract: the floor recovers an empty

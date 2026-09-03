@@ -126,4 +126,97 @@ describe('readHostStandaloneAntigravityInventory', () => {
     expect(agyOnly.map((row) => row.modelId)).toContain('gemini-3.7-flash-high')
     expect(agyOnly.some((row) => row.modelId.startsWith('gemini-api:'))).toBe(false)
   })
+
+  it('strips antigravity-acp: from combined-cache AGY rows and leaves API rows prefixed', () => {
+    const path = profile({
+      antigravityEnabled: true,
+      antigravityOptInAcceptedAt: 1_700_000_000_000,
+      antigravityGeminiApiDisclosureAcceptedAt: 1_700_000_000_001
+    })
+    writeFileSync(
+      join(path, 'antigravity-combined-models.json'),
+      JSON.stringify({
+        version: 1,
+        updatedAt: '2026-08-30T23:01:00.000Z',
+        models: [
+          { id: 'antigravity-acp:agy-live', label: 'AGY Live' },
+          { id: 'gemini-api:gemini-4.0-flash', label: '4.0 Flash' },
+          { id: 'gemini-api:not safe!', label: 'Ignored' }
+        ]
+      }),
+      { mode: 0o600 }
+    )
+
+    const rows = readHostStandaloneAntigravityInventory(path, { agyBinaryAvailable: true })
+
+    expect(rows[0]).toEqual({ modelId: 'agy-live', label: 'AGY Live' })
+    expect(rows.map((row) => row.modelId)).not.toContain('antigravity-acp:agy-live')
+    expect(rows).toContainEqual({ modelId: 'gemini-api:gemini-4.0-flash', label: '4.0 Flash' })
+    expect(rows.map((row) => row.modelId)).not.toContain('gemini-api:not safe!')
+    expect(rows.map((row) => row.modelId)).not.toContain('gemini-3.7-flash-high')
+  })
+
+  it('strips antigravity-acp: from the authenticated AGY cache', () => {
+    const path = profile({
+      antigravityEnabled: true,
+      antigravityOptInAcceptedAt: 1_700_000_000_000
+    })
+    writeFileSync(
+      join(path, 'antigravity-agy-models.json'),
+      JSON.stringify({
+        version: 1,
+        updatedAt: '2026-08-30T23:01:00.000Z',
+        models: [{ id: 'antigravity-acp:gemini-live', label: 'antigravity-acp:gemini-live' }]
+      }),
+      { mode: 0o600 }
+    )
+
+    const rows = readHostStandaloneAntigravityInventory(path, { agyBinaryAvailable: true })
+
+    expect(rows).toEqual([{ modelId: 'gemini-live', label: 'gemini-live' }])
+    expect(rows.map((row) => row.modelId)).not.toContain('antigravity-acp:gemini-live')
+  })
+
+  it('switch-OFF bare ids stay byte-identical to the stripped switch-ON projection', () => {
+    const settings = {
+      antigravityEnabled: true,
+      antigravityOptInAcceptedAt: 1_700_000_000_000,
+      antigravityGeminiApiDisclosureAcceptedAt: 1_700_000_000_001
+    }
+    const offPath = profile(settings)
+    writeFileSync(
+      join(offPath, 'antigravity-combined-models.json'),
+      JSON.stringify({
+        version: 1,
+        updatedAt: '2026-08-30T23:01:00.000Z',
+        models: [
+          { id: 'agy-live', label: 'AGY Live' },
+          { id: 'gemini-api:gemini-4.0-flash', label: '4.0 Flash' }
+        ]
+      }),
+      { mode: 0o600 }
+    )
+    const onPath = profile(settings)
+    writeFileSync(
+      join(onPath, 'antigravity-combined-models.json'),
+      JSON.stringify({
+        version: 1,
+        updatedAt: '2026-08-30T23:01:00.000Z',
+        models: [
+          { id: 'antigravity-acp:agy-live', label: 'AGY Live' },
+          { id: 'gemini-api:gemini-4.0-flash', label: '4.0 Flash' }
+        ]
+      }),
+      { mode: 0o600 }
+    )
+
+    const offRows = readHostStandaloneAntigravityInventory(offPath, { agyBinaryAvailable: true })
+    const onRows = readHostStandaloneAntigravityInventory(onPath, { agyBinaryAvailable: true })
+    expect(onRows).toEqual(offRows)
+    expect(offRows[0]).toEqual({ modelId: 'agy-live', label: 'AGY Live' })
+    expect(offRows).toContainEqual({
+      modelId: 'gemini-api:gemini-4.0-flash',
+      label: '4.0 Flash'
+    })
+  })
 })
