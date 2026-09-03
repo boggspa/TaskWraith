@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GrokUsageSnapshot } from '../../../main/grok/GrokUsage'
 import { computeQuotaPace } from '../lib/QuotaPace'
+import { quotaSegmentCount } from '../lib/quotaSegments'
 import { providerPlanName } from '../lib/providerPlanName'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { QuotaProgressBar } from './QuotaProgressBar'
@@ -97,6 +98,16 @@ export function GrokCreditsMeterView({
           limitWindowSeconds: snapshot.limitWindowSeconds
         })
       : null
+  // Division markers. Grok's weekly limit divides into 7 day-ticks; the legacy
+  // monthly credit pool into 4 week-ticks. Routed through the shared mapper
+  // rather than hardcoded here so every provider's divisions keep ONE source of
+  // truth — this meter is bespoke, but its bar must not disagree with the card.
+  const segmentCount = quotaSegmentCount('grok', {
+    id: 'grok-credits',
+    label: windowLabel,
+    windowKind: weekly ? 'weekly' : 'monthly',
+    limitWindowSeconds: snapshot?.limitWindowSeconds ?? undefined
+  })
 
   return (
     <div className="model-usage-item provider-grok quota-only">
@@ -119,7 +130,12 @@ export function GrokCreditsMeterView({
               ) : null}
               <span className="model-usage-window-percent">{display}</span>
             </div>
-            <QuotaProgressBar fraction={fraction} accent="var(--provider-grok-color)" pace={pace} />
+            <QuotaProgressBar
+              fraction={fraction}
+              accent="var(--provider-grok-color)"
+              pace={pace}
+              segmentCount={segmentCount}
+            />
             <div className="model-usage-window-meta">
               <span>{metaText}</span>
             </div>

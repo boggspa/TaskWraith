@@ -7,6 +7,14 @@ function snap(raw: string): GrokUsageSnapshot {
   return parseGrokUsage(raw, '2026-05-28T00:00:00.000Z')
 }
 
+/** How many dash-division ticks the bar actually painted. Counted, never just
+ *  probed with `toContain`: a presence check passes on a SINGLE tick, so it
+ *  cannot tell 7 weekly divisions from 4 monthly ones — exactly the mistake a
+ *  wrong `quotaSegmentCount` mapping would make. */
+function segmentTicks(html: string): number {
+  return (html.match(/quota-segment-tick/g) ?? []).length
+}
+
 function render(props: {
   snapshot: GrokUsageSnapshot | null
   loading?: boolean
@@ -78,6 +86,35 @@ describe('GrokCreditsMeterView', () => {
     const snapshot = parseGrokUsage(`Credits used: 1%\nResets: ${resetText}`, now.toISOString())
     const html = render({ snapshot })
     expect(html).toContain('quota-pace-tick')
+  })
+
+  it('divides the weekly bar into 7 day segments — 6 ticks, none at the far edge', () => {
+    // Grok Weekly (7D) => one dash per day division => 7 segments => 7-1 ticks.
+    // No reset line, so `limitWindowSeconds` is null and this binds the mapper's
+    // WEEK REGEX branch (the duration bands are unit-covered in quotaSegments.test.ts).
+    const html = render({ snapshot: snap('Weekly limit: 98%') })
+    expect(segmentTicks(html)).toBe(6)
+    // Geometry: ticks sit at (i+1)/7 of the track, so the first is 14.29% and
+    // the last 85.71%. An off-by-one drawing `count` ticks instead of `count-1`
+    // would put one at the bar's own end, which is never a division.
+    expect(html).toContain('left:14.29%')
+    expect(html).toContain('left:85.71%')
+    expect(html).not.toContain('left:100.00%')
+  })
+
+  it('divides the legacy monthly credit bar into 4 week segments — 3 ticks', () => {
+    // Same component, same bar, DIFFERENT meter. The count must follow the
+    // window, so this reds if the mapper is bypassed or pinned to one value.
+    const html = render({ snapshot: snap('Credits used: 1.05%') })
+    expect(segmentTicks(html)).toBe(3)
+    expect(html).toContain('left:25.00%')
+    expect(html).toContain('left:50.00%')
+    expect(html).toContain('left:75.00%')
+  })
+
+  it('draws no division ticks when there is no bar to divide', () => {
+    expect(segmentTicks(render({ snapshot: snap('') }))).toBe(0)
+    expect(segmentTicks(render({ snapshot: null, loading: true }))).toBe(0)
   })
 
   it('tidies a collapsed reset window for display', () => {

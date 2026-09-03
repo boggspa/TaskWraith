@@ -54,6 +54,7 @@ import {
   type OllamaMemoryWindowTotals
 } from '../lib/ollamaMemoryAggregation'
 import { computeQuotaPace } from '../lib/QuotaPace'
+import { quotaSegmentCount } from '../lib/quotaSegments'
 import { loadRendererUsageRecords } from '../lib/usageRecordsCache'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import { formatResetShort } from '../lib/UsageFormat'
@@ -862,6 +863,11 @@ function UsageWindowRow({
          * `null` for on-track / unmeasurable windows and the bar
          * paints no tick in that case. */
         pace={computeQuotaPace(windowEntry)}
+        /* Division markers. `quotaSegmentCount` returns `null` for any
+         * window whose period we cannot name (the bar then paints no
+         * ticks), so an unrecognised provider/window degrades to today's
+         * plain bar rather than a wrong division count. */
+        segmentCount={quotaSegmentCount(provider, windowEntry)}
       />
       <div className="model-usage-window-meta">
         <span>{windowEntry.limitLabel}</span>

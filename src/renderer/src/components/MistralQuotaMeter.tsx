@@ -56,6 +56,7 @@ import type {
   MistralQuotaFigureSource
 } from '../../../main/mistral/MistralQuotaEstimate'
 import { formatResetShort } from '../lib/UsageFormat'
+import { quotaSegmentCount } from '../lib/quotaSegments'
 import { formatCostAlwaysOn, type DisplayCurrency } from '../lib/formatCost'
 import { providerPlanName } from '../lib/providerPlanName'
 import {
@@ -146,6 +147,26 @@ export interface MistralQuotaMeterViewProps {
   currency?: DisplayCurrency
   locale?: string
 }
+
+/**
+ * Division markers for the two Mistral rows. Both are monthly cycles (the
+ * console's shared API-usage allowance and this seat's Vibe Code budget), so
+ * both divide into 4 week-ticks — but the COUNT is resolved by the shared
+ * mapper, never written here, so one helper stays the single source of truth
+ * for every provider's divisions. The descriptors name each window's real
+ * period; `estimate.label` is a verbal band phrase ("well within budget"), not
+ * a period, so it is deliberately not fed to the mapper.
+ */
+const MISTRAL_API_USAGE_SEGMENTS = quotaSegmentCount('mistral', {
+  id: 'mistral-api-usage',
+  label: 'API usage',
+  windowKind: 'monthly'
+})
+const MISTRAL_VIBE_CYCLE_SEGMENTS = quotaSegmentCount('mistral', {
+  id: 'mistral-vibe-cycle',
+  label: 'Vibe Code usage',
+  windowKind: 'monthly'
+})
 
 /** Pure presentational meter — no IPC, no state. Reuses the Model Usage card's
  *  provider/quota markup so it reads as a sibling of the metered providers. */
@@ -260,6 +281,7 @@ export function MistralQuotaMeterView({
               <QuotaProgressBar
                 fraction={Math.max(0, Math.min(1, estimate.apiUsage.usedPercent / 100))}
                 accent="var(--provider-mistral-color)"
+                segmentCount={MISTRAL_API_USAGE_SEGMENTS}
               />
             ) : null}
           </div>
@@ -291,6 +313,7 @@ export function MistralQuotaMeterView({
             fraction={fraction}
             accent="var(--provider-mistral-color)"
             className={calibrated ? undefined : 'mistral-quota-bar--estimated'}
+            segmentCount={MISTRAL_VIBE_CYCLE_SEGMENTS}
           />
           <div className="mistral-quota-footnote">
             <span>{footnote}</span>
