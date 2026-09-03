@@ -39,6 +39,7 @@ import { classifyMarkdownLink } from '../lib/classifyMarkdownLink'
 import { tokeniseMentions } from '../lib/mentionHighlight'
 import { resolveInlineMarkdownImage } from '../lib/resolveMarkdownImageRef'
 import { rehypeInlineMarkdownDiffStats } from '../lib/inlineMarkdownDiffStats'
+import { rehypeInlineMarkdownCheckOutcomes } from '../lib/inlineMarkdownCheckOutcomes'
 import {
   normalizeInlineMarkdownColor,
   rehypeInlineMarkdownColorTokens
@@ -703,6 +704,7 @@ const REMARK_PLUGINS = [remarkGfm]
 const REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
   rehypeInlineMarkdownColorTokens,
   rehypeInlineMarkdownDiffStats,
+  rehypeInlineMarkdownCheckOutcomes,
   rehypeInlineMarkdownCommitReferences
 ]
 // Raw HTML is opt-in for bounded, non-streaming surfaces such as the
@@ -728,6 +730,7 @@ const SAFE_HTML_REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
   [rehypeSanitize, SAFE_HTML_SCHEMA],
   rehypeInlineMarkdownColorTokens,
   rehypeInlineMarkdownDiffStats,
+  rehypeInlineMarkdownCheckOutcomes,
   rehypeInlineMarkdownCommitReferences
 ]
 
