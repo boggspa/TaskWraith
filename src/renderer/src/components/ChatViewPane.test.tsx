@@ -563,7 +563,7 @@ describe('ChatViewPane pane-local follow recovery', () => {
     const paneTranscript = paneSource.slice(hookStart, composerStart)
     expect(paneTranscript).toContain('<TranscriptJumpToLatestPill')
     expect(paneTranscript).toContain(
-      'visible={!props.isWelcomeChat && paneScrollState.showJumpToLatestPill}'
+      'visible={!paneIsWelcomeChat && paneScrollState.showJumpToLatestPill}'
     )
     expect(paneTranscript).toContain('unreadCount={paneScrollState.unreadFromBottomCount}')
     expect(paneTranscript).toContain('onJumpToLatest={paneScrollState.handleJumpToLatest}')
@@ -644,6 +644,65 @@ describe('ChatViewPane per-pane run data visualization', () => {
     expect(chatViewPanePropsEqual(runDataProps(), runDataProps({ showRunDataViz: false }))).toBe(
       false
     )
+  })
+})
+
+describe('ChatViewPane paged-shell chat (Stage 1b parity)', () => {
+  // A Stage 1b paged open leaves `messages`/`runs` empty on the record by
+  // design (chrome shell + store window). App derives pane welcome-ness from
+  // `messages.length === 0`, which reads true for EVERY shell — so a resting
+  // pane showing a paged chat painted a welcome hero over a real transcript.
+  const pagedShell = {
+    appChatId: 'paged-chat',
+    scope: 'workspace',
+    title: 'Big thread',
+    workspacePath: '/tmp/AGBench',
+    summaryOnly: true,
+    transcriptPaged: true,
+    messageCount: 2200,
+    runCount: 4,
+    messages: [],
+    runs: []
+  } as unknown as ChatViewPaneProps['chat']
+
+  it('renders the transcript, not a welcome hero, when App mis-gates a paged shell as welcome', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: pagedShell,
+          isWelcomeChat: true,
+          messages: [],
+          composerProps: stubComposerProps()
+        })}
+      />
+    )
+    expect(html).toContain('multiview-pane-content')
+    expect(html).not.toContain('welcome-mode')
+  })
+
+  it('keeps genuine welcome panes (non-shell chats) on the welcome surface', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: {
+            appChatId: 'fresh-chat',
+            scope: 'workspace',
+            title: 'New Chat'
+          } as unknown as ChatViewPaneProps['chat'],
+          isWelcomeChat: true,
+          messages: [],
+          composerProps: stubComposerProps()
+        })}
+      />
+    )
+    expect(html).toContain('welcome-mode')
+    expect(html).not.toContain('multiview-pane-content')
+  })
+
+  it('sources the pane transcript from the store window while the chat is paged', () => {
+    expect(paneSource).toContain('useCurrentChatTranscriptWindow(props.chat ?? null)')
+    expect(paneSource).toContain('paneTranscript.paged ? paneTranscript.messages : props.messages')
+    expect(paneSource).toContain('runs: paneTranscript.paged ? paneTranscript.runs : undefined')
   })
 })
 

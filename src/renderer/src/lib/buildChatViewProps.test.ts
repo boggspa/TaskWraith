@@ -91,6 +91,55 @@ describe('buildChatViewProps (viewer policy)', () => {
     expect(p.fileChangeDisplayDels).toBe(0)
   })
 
+  it('backs run-evidence ownership with the `runs` override when the record arrays are stripped', () => {
+    // Stage 1b paged shells carry `runs: []` by design; the pane passes the
+    // store window's runs instead. A legacy null-runId tool row is only
+    // attributable through a completed run ownership window, so without the
+    // override the pane's file-change card silently lost this evidence.
+    const legacyToolMessage = {
+      id: 'legacy-tool',
+      role: 'tool' as const,
+      content: '',
+      timestamp: '2026-01-01T00:00:10.000Z',
+      toolActivities: [
+        {
+          id: 'legacy-write',
+          toolName: 'write_file',
+          displayName: 'Wrote file',
+          category: 'write',
+          status: 'success',
+          parameters: { path: 'paged-window.txt', content: 'from the window\n' }
+        }
+      ]
+    }
+    const shellChat = {
+      appChatId: 'paged-shell',
+      summaryOnly: true,
+      transcriptPaged: true,
+      runs: []
+    } as unknown as BuildChatViewPropsInput['chat']
+    const windowRuns = [
+      {
+        runId: 'r1',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        endedAt: '2026-01-01T00:01:00.000Z'
+      }
+    ] as unknown as NonNullable<BuildChatViewPropsInput['runs']>
+    const base = {
+      chat: shellChat,
+      messages: [legacyToolMessage] as unknown as BuildChatViewPropsInput['messages'],
+      currentRun: { runId: 'r1' } as unknown as BuildChatViewPropsInput['currentRun']
+    }
+
+    const withWindowRuns = buildChatViewProps(makeInput({ ...base, runs: windowRuns }))
+    expect(withWindowRuns.displayFileChangeSummaries.map((item) => item.path)).toEqual([
+      'paged-window.txt'
+    ])
+
+    const withoutWindowRuns = buildChatViewProps(makeInput(base))
+    expect(withoutWindowRuns.displayFileChangeSummaries).toEqual([])
+  })
+
   it('does not reuse another pane run summary', () => {
     const test2 = buildChatViewProps(
       makeInput({

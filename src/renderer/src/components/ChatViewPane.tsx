@@ -4,6 +4,7 @@ import type { ComposerStyle } from '../../../main/store/types'
 import { TranscriptPanel, transcriptRunningChatIdsSignature } from './TranscriptPanel'
 import { Composer, type ComposerProps } from './Composer'
 import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildChatViewProps'
+import { useCurrentChatTranscriptWindow } from '../lib/currentChatTranscriptWindow'
 import { transcriptPendingApprovalsSignature } from '../lib/transcriptPanelMemoProps'
 import type { MessageFeedbackDetails } from '../lib/messageFeedback'
 import { FileMenuSelectionIcon } from './AppChromeSymbols'
@@ -509,6 +510,15 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
     []
   )
   const chatId = props.chat?.appChatId ?? ''
+  // Stage 1b parity — a paged shell strips `messages`/`runs` from the record
+  // (chrome + store window by design). Read the loaded window for this pane's
+  // chat, exactly as the focused surface does via the same hook: the window is
+  // the transcript source, and a shell must never present as a welcome pane
+  // (App derives pane welcome-ness from `messages.length === 0`, which reads
+  // true for every shell). Subscribes only while the chat is actually paged.
+  const paneTranscript = useCurrentChatTranscriptWindow(props.chat ?? null)
+  const paneMessages = paneTranscript.paged ? paneTranscript.messages : props.messages
+  const paneIsWelcomeChat = props.isWelcomeChat && !paneTranscript.paged
   const paneGitSnapshot = useWorkspaceGitSnapshot(props.gitSnapshotStore, props.gitSnapshotPath)
   const panePrCi = useWorkspacePrCi(props.gitPrCiStore, props.gitSnapshotPath)
   const effectiveComposerProps = useMemo<ComposerProps | undefined>(() => {
@@ -567,9 +577,9 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
   const hasComposerProps = Boolean(effectiveComposerProps)
   const paneScrollState = useTranscriptScrollState({
     chatId: chatId || null,
-    messages: props.messages,
+    messages: paneMessages,
     runCompleteNotice: props.runCompleteNotice,
-    transcriptMounted: !props.isWelcomeChat,
+    transcriptMounted: !paneIsWelcomeChat,
     streamingActive: props.isThinking,
     ownsRootKeyboardScroll: props.ownsRootKeyboardScroll === true,
     transcriptScrollRef: props.refs.scrollRef,
@@ -598,7 +608,7 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
     `provider-${props.providerClass}`,
     props.isEnsemble ? 'chat-kind-ensemble' : '',
     props.welcomeIsGlobalChat ? 'chat-scope-global' : '',
-    props.isWelcomeChat ? 'welcome-mode' : ''
+    paneIsWelcomeChat ? 'welcome-mode' : ''
   ]
     .filter(Boolean)
     .join(' ')
@@ -657,7 +667,7 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
         composerProps={effectiveComposerProps}
         workspaceStats={workspaceStats}
       />
-      {props.isWelcomeChat &&
+      {paneIsWelcomeChat &&
         props.showWelcomeUsageDashboard &&
         props.welcomeUsageDashboardData && (
           <div className="welcome-usage-region welcome-usage-region-small multiview-pane-welcome-usage">
@@ -673,17 +683,22 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
             />
           </div>
         )}
-      {props.isWelcomeChat && props.reserveWelcomeUsageDashboard && (
+      {paneIsWelcomeChat && props.reserveWelcomeUsageDashboard && (
         <div
           className="welcome-usage-region welcome-usage-region-small welcome-usage-region-reserved multiview-pane-welcome-usage"
           aria-hidden
         />
       )}
-      {!props.isWelcomeChat && (
+      {!paneIsWelcomeChat && (
         <div className="multiview-pane-content">
           <TranscriptPanel
             {...buildChatViewProps({
               ...props,
+              messages: paneMessages,
+              isWelcomeChat: paneIsWelcomeChat,
+              // Window runs back the run-evidence projections while paged; a
+              // hydrated record keeps its own arrays (input default).
+              runs: paneTranscript.paged ? paneTranscript.runs : undefined,
               autoFollowRef: paneScrollState.autoFollowRef,
               getUserScrollGestureLive: paneScrollState.getUserScrollGestureLive,
               externalRestoreAnchorMessageId: paneScrollState.externalRestoreAnchorMessageId,
@@ -711,7 +726,7 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
         </div>
       )}
       <TranscriptJumpToLatestPill
-        visible={!props.isWelcomeChat && paneScrollState.showJumpToLatestPill}
+        visible={!paneIsWelcomeChat && paneScrollState.showJumpToLatestPill}
         unreadCount={paneScrollState.unreadFromBottomCount}
         provider={props.provider}
         onJumpToLatest={paneScrollState.handleJumpToLatest}
