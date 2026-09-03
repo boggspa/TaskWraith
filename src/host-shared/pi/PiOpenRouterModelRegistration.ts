@@ -126,6 +126,24 @@ export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegist
     contextWindow: 1_048_576,
     maxTokens: 262_144,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  },
+  {
+    // Tencent Hy4 preview — 770B MoE (49B active). Released 2026-08-28.
+    // OpenRouter effort strings: none (no-think), low, high.
+    // Pi spells 'none' as 'off'; xhigh/max/minimal/medium have no mapping.
+    // Sources: OpenRouter model page + aireiter.com pricing page, 2026-08-30.
+    modelId: 'tencent/hy4-preview',
+    label: 'Hy4 Preview',
+    reasoning: true,
+    thinkingLevelMap: {
+      off: 'none',
+      low: 'low',
+      high: 'high'
+    },
+    input: ['text'],
+    contextWindow: 1_048_576,
+    maxTokens: 64_000,
+    cost: { input: 0.834, output: 2.501, cacheRead: 0.042, cacheWrite: 0 }
   }
 ]
 

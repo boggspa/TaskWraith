@@ -502,6 +502,18 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     maxOutputTokens: 262_144,
     thinking: true,
     images: true
+  },
+  {
+    // Tencent Hy4 preview — 770B MoE (49B active), 1M context. Released 2026-08-28.
+    // OpenRouter model id: tencent/hy4-preview. Text-only input.
+    wireId: 'openrouter/tencent/hy4-preview',
+    upstream: 'openrouter',
+    modelId: 'tencent/hy4-preview',
+    label: 'Hy4 Preview',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 64_000,
+    thinking: true,
+    images: false
   }
 ]
 

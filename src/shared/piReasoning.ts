@@ -146,7 +146,10 @@ const PI_MODEL_REASONING: Readonly<Record<string, PiReasoningSupport>> = {
   'openrouter/thinkingmachines/inkling-small:free': ladder(
     ['minimal', 'low', 'medium', 'high', 'max'],
     'high'
-  )
+  ),
+  // Tencent Hy4 preview advertises no-think (off), low, and high CoT modes.
+  // OpenRouter maps these to none / low / high effort strings.
+  'openrouter/tencent/hy4-preview': ladder(['low', 'high'], 'high')
 }
 
 const FULL: PiReasoningSupport = Object.freeze({
