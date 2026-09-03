@@ -107,6 +107,8 @@ import {
 import { shouldPersistCompatProviderRawEvent } from './providers/ProviderCompatRunEventPolicy'
 import { claudeSdkThinkingConfigForEffort } from './providers/ClaudeThinkingConfig'
 import { kimiAcpEnabled } from './kimiGate'
+import { shellSandboxEnabled } from './shellSandboxGate'
+import { resolveShellSandboxPlan, type ShellSandboxPlan } from './shell-sandbox/ShellSandboxProfile'
 import { startKimiHttpMcpBridge, type KimiHttpMcpBridgeHandle } from './kimi/KimiHttpMcpBridge'
 import { createKimiMcpDispatch, type KimiMcpDispatchTimeout } from './kimi/KimiMcpDispatch'
 import { flushKimiThinkingChunks, queueKimiThinkingChunk } from './kimi/KimiThinkingBatcher'
@@ -4312,6 +4314,13 @@ interface HostCommandRunOptions {
   environment?: Readonly<Record<string, string>>
   /** Main-owned hardening: remove inherited helper/config variables before spawn. */
   unsetEnvironment?: readonly string[]
+  /**
+   * Opt-IN Seatbelt for the agent shell. Only the brokered run_shell_command
+   * path supplies one: internal host commands (release reruns, local-server
+   * launches, version probes) are TaskWraith's own work, not agent-authored
+   * argv, and confining them would break the app rather than an agent.
+   */
+  sandbox?: ShellSandboxPlan
 }
 
 type HostCommandRunArgument = number | HostCommandRunOptions
@@ -15239,6 +15248,7 @@ function runHostCommand(
     const commandEnvironment = typeof options === 'number' ? undefined : options.environment
     const unsetCommandEnvironment =
       typeof options === 'number' ? undefined : options.unsetEnvironment
+    const sandboxPlan = typeof options === 'number' ? undefined : options.sandbox
     const projectionScope = hostCommandProjectionContext.getStore()
     const operationSource = projectionScope?.source ?? 'internal-host-command'
     const historyOperation = hostCommandOperations.register(
@@ -15325,10 +15335,17 @@ function runHostCommand(
       return env
     }
 
+    // The Seatbelt prefixes the argv; it must NOT change how the environment is
+    // built. `createCliEnv` keys off the binary being run, so both branches keep
+    // passing the ORIGINAL command, never `sandbox-exec`.
+    const sandboxedArgv = (argv: readonly string[]): string[] =>
+      sandboxPlan?.sandboxed ? sandboxPlan.wrap(argv) : [...argv]
+
     try {
       if (Array.isArray(command) && command.length > 0) {
         const [binary, ...args] = command.map(codexString)
-        child = spawn(binary, args, {
+        const [spawnBinary, ...spawnArgs] = sandboxedArgv([binary, ...args])
+        child = spawn(spawnBinary, spawnArgs, {
           cwd,
           shell: false,
           detached: detachSpawns,
@@ -15342,7 +15359,8 @@ function runHostCommand(
           process.platform === 'win32'
             ? ['-NoProfile', '-Command', commandText]
             : ['-lc', commandText]
-        child = spawn(shellCommand, shellArgs, {
+        const [spawnBinary, ...spawnArgs] = sandboxedArgv([shellCommand, ...shellArgs])
+        child = spawn(spawnBinary, spawnArgs, {
           cwd,
           shell: false,
           detached: detachSpawns,
@@ -40834,7 +40852,15 @@ async function executeGeminiMcpTool(
           : runHostCommand(executionCommand, executionCwd, {
               ...(shellReleaseApproval ? { releaseApproval: shellReleaseApproval } : {}),
               ...(executionEnvironment ? { environment: executionEnvironment } : {}),
-              ...(unsetExecutionEnvironment ? { unsetEnvironment: unsetExecutionEnvironment } : {})
+              ...(unsetExecutionEnvironment ? { unsetEnvironment: unsetExecutionEnvironment } : {}),
+              sandbox: resolveShellSandboxPlan({
+                platform: process.platform,
+                enabled: shellSandboxEnabled(),
+                fullAccessGranted: isFullShellAccessGranted(context.effectivePermissions),
+                workspacePath: context.scope === 'global' ? null : workspacePath,
+                writableRoots: [os.tmpdir()],
+                homePath: os.homedir()
+              })
             })
       )
       text = formatHostCommandResult(result)
