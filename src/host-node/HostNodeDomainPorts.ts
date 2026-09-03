@@ -1045,7 +1045,7 @@ export class HostNodeDomainPorts {
     })
     await Promise.resolve()
     if (
-      !this.hasPersistedStart(command.commandId, command.target.threadId, command.arguments.text)
+      !this.hasPersistedStart(command.commandId, command.target.threadId, prompt)
     ) {
       try {
         provider.cancel(command.commandId)
