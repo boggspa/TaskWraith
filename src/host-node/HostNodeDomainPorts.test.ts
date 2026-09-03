@@ -1283,11 +1283,20 @@ describe('HostNodeDomainPorts', () => {
     }
     writeFileSync(recordPath, JSON.stringify(record))
 
-    await domain.executeCommand(
+    // The receipt is the load-bearing assertion, not an afterthought. The Host
+    // proves a run persisted its start before reporting success, and it does so
+    // by matching the stored user message against the prompt it handed the
+    // provider. Goal wrapping rewrites that prompt, so comparing against the
+    // raw composer text failed every goal-live send with `run_not_started` —
+    // after cancelling a perfectly healthy run. Discarding this result is
+    // exactly how that shipped: the prompt assertions below stayed green
+    // throughout, because the provider was still called before the check.
+    const goalSend = await domain.executeCommand(
       context,
       command('composer.send', 'cmd-goal-send', { threadId }, { text: 'Carry on.' }),
       { id: 'tui-target' }
     )
+    expect(goalSend).toMatchObject({ status: 'succeeded', resultSummary: 'run_started' })
     releaseRun()
     await domain.shutdown()
 

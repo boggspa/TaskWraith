@@ -1044,9 +1044,7 @@ export class HostNodeDomainPorts {
       lease.release()
     })
     await Promise.resolve()
-    if (
-      !this.hasPersistedStart(command.commandId, command.target.threadId, prompt)
-    ) {
+    if (!this.hasPersistedStart(command.commandId, command.target.threadId, prompt)) {
       try {
         provider.cancel(command.commandId)
       } catch {
