@@ -1246,6 +1246,10 @@ import {
   previewModelCatalogEnabledForProvider
 } from '../shared/previewModelCatalog'
 import {
+  codexReserveGrantActive,
+  filterCodexDiscoverableModelRows
+} from '../shared/codexReserveModel'
+import {
   GROK_46_MODEL_ID,
   isCursorGrokModelId,
   isGrokReasoningModelId
@@ -59532,14 +59536,25 @@ if (isGeminiMcpBridgeProcess) {
           'model-catalog',
           async (client) => {
             await client.ensureStarted(app.getVersion())
-            return client.request('model/list', {}, 15_000)
+            // `includeHidden` also returns the discovery-hidden rows the CLI
+            // keeps out of its own picker (gpt-reserve, codex-auto-review).
+            // filterCodexDiscoverableModelRows decides which of those may be
+            // shown; the reserve row needs a live grant, so read the account's
+            // rate limits on this same connection rather than a second
+            // lifecycle. A rate-limit failure degrades to "no grant", which
+            // hides the row — never to revealing an unusable model.
+            const [catalog, rateLimits] = await Promise.all([
+              client.request('model/list', { includeHidden: true }, 15_000),
+              client.request('account/rateLimits/read', {}, 15_000).catch(() => null)
+            ])
+            return { catalog, rateLimits }
           },
           { borrowActiveProviderClient: true }
         )
-        const models = Array.isArray(response?.data) ? response.data : []
+        const models = Array.isArray(response?.catalog?.data) ? response.catalog.data : []
+        const reserveGrantActive = codexReserveGrantActive(response?.rateLimits)
         const normalized = activeCodexModelRows(
-          models
-            .filter((model: any) => model && typeof model.id === 'string' && !model.hidden)
+          filterCodexDiscoverableModelRows(models, { reserveGrantActive })
             .map((model: any) => ({
               id: model.id,
               label: model.displayName || model.model || model.id,
