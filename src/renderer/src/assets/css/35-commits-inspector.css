@@ -451,32 +451,53 @@
   font-size: var(--font-size-xs);
 }
 
+/* The lifecycle glyph that replaced the uppercase state pill. Colours are
+   GitHub's vocabulary, matching .sidebar-git-indicator in shard 01: open is
+   green, merged is purple and final, closed-without-merge is red. The old
+   pill painted merged in var(--accent) — the app's own accent, which carries
+   no git meaning and collided with whatever theme was active. */
 .pull-request-state {
+  display: inline-flex;
+  align-items: center;
   flex: 0 0 auto;
-  padding: 1px 5px;
-  border: 1px solid currentColor;
-  border-radius: 999px;
+  line-height: 1;
   color: var(--text-secondary);
-  font-size: 9px;
-  font-weight: 650;
-  line-height: 1.5;
-  text-transform: uppercase;
+}
+
+.pull-request-state svg {
+  display: block;
 }
 
 .pull-request-state.is-open {
-  color: var(--success);
+  color: color-mix(in srgb, var(--success, #4cc38a) 88%, var(--text-primary));
 }
 
-.pull-request-state.is-draft {
+.pull-request-state.is-draft,
+.pull-request-state.is-unknown {
   color: var(--text-secondary);
 }
 
+/* Merged is the one final-success state — purple, never green. */
 .pull-request-state.is-merged {
-  color: var(--accent);
+  color: #a78bfa;
 }
 
 .pull-request-state.is-closed {
-  color: var(--danger);
+  color: color-mix(in srgb, var(--danger, #e54d4d) 88%, var(--text-primary));
+}
+
+/* The check rollup sits beside the glyph and is a git status too, so it takes
+   the same accents rather than the meta row's flat secondary ink. */
+.pull-request-checks.is-pass {
+  color: color-mix(in srgb, var(--success, #4cc38a) 88%, var(--text-primary));
+}
+
+.pull-request-checks.is-pending {
+  color: color-mix(in srgb, var(--warning, #f5a623) 90%, var(--text-primary));
+}
+
+.pull-request-checks.is-fail {
+  color: color-mix(in srgb, var(--danger, #e54d4d) 88%, var(--text-primary));
 }
 
 .pull-request-card-meta {

@@ -11,6 +11,7 @@ import {
   taskWraithCommitGroupHashes
 } from '../../../shared/gitPullRequestGroups'
 import { summarizeChecks } from './GitStatusChips'
+import { GitLifecycleGlyph, type GitLifecycleGlyphKind } from './icons/GitLifecycleGlyph'
 
 export interface PullRequestDraft {
   title: string
@@ -85,24 +86,31 @@ export function pullRequestsByOriginalCommit(
   return grouped
 }
 
-function pullRequestState(pr: GitPrSummary): {
+/*
+ * Lifecycle grading for one pull request. `glyph` and `tone` follow the
+ * sidebar's GitHub vocabulary (lib/sidebarGitIndicators.ts): open is green,
+ * merged is purple and final, closed-without-merge is red. Deliberately NOT
+ * the `.github-satellite-icon.tone-*` mapping, which inverts open and merged.
+ */
+export function pullRequestState(pr: GitPrSummary): {
   label: string
   tone: string
+  glyph: GitLifecycleGlyphKind
 } {
   const state = (pr.state || '').toUpperCase()
-  if (state === 'MERGED') return { label: 'Merged', tone: 'merged' }
-  if (state === 'CLOSED') return { label: 'Closed', tone: 'closed' }
-  if (pr.isDraft) return { label: 'Draft', tone: 'draft' }
-  if (state === 'OPEN') return { label: 'Ready', tone: 'open' }
-  return { label: pr.state || 'Unknown', tone: 'unknown' }
+  if (state === 'MERGED') return { label: 'Merged', tone: 'merged', glyph: 'merged' }
+  if (state === 'CLOSED') return { label: 'Closed', tone: 'closed', glyph: 'closed' }
+  if (pr.isDraft) return { label: 'Draft', tone: 'draft', glyph: 'open' }
+  if (state === 'OPEN') return { label: 'Ready', tone: 'open', glyph: 'open' }
+  return { label: pr.state || 'Unknown', tone: 'unknown', glyph: 'open' }
 }
 
-function pullRequestChecks(pr: GitPrSummary): string | null {
+function pullRequestChecks(pr: GitPrSummary): { label: string; tone: string } | null {
   const checks = summarizeChecks(pr.checks)
   if (checks.total === 0) return null
-  if (checks.fail > 0) return `${checks.fail} failed`
-  if (checks.pending > 0) return `${checks.pending} pending`
-  return `${checks.pass} passed`
+  if (checks.fail > 0) return { label: `${checks.fail} failed`, tone: 'fail' }
+  if (checks.pending > 0) return { label: `${checks.pending} pending`, tone: 'pending' }
+  return { label: `${checks.pass} passed`, tone: 'pass' }
 }
 
 function prKey(pr: GitPrSummary, index: number): string {
@@ -455,7 +463,13 @@ export function PullRequestWorkflowPanel({
               <article className="pull-request-card" key={prKey(pr, index)}>
                 <div className="pull-request-card-heading">
                   <div className="pull-request-card-title">
-                    <span className={`pull-request-state is-${state.tone}`}>{state.label}</span>
+                    <span
+                      className={`pull-request-state is-${state.tone}`}
+                      title={`Pull request ${state.label.toLowerCase()}`}
+                    >
+                      <GitLifecycleGlyph kind={state.glyph} size={14} />
+                      <span className="sr-only">{state.label}</span>
+                    </span>
                     <strong title={pr.title}>{pr.title || `Pull request #${number || '—'}`}</strong>
                   </div>
                   {number && <code>#{number}</code>}
@@ -469,7 +483,11 @@ export function PullRequestWorkflowPanel({
                       {groupedCount} grouped commit{groupedCount === 1 ? '' : 's'}
                     </span>
                   )}
-                  {checkLabel && <span>{checkLabel}</span>}
+                  {checkLabel && (
+                    <span className={`pull-request-checks is-${checkLabel.tone}`}>
+                      {checkLabel.label}
+                    </span>
+                  )}
                 </div>
 
                 {isEditing && editing ? (
