@@ -412,6 +412,115 @@ describe('official-ACP model passthrough', () => {
   })
 })
 
+/**
+ * S8 — the mediator contract. Before this the seat attached no handler at all,
+ * so the ACP core declined EVERY tool call and the seat could talk but not
+ * work. These tests pin both halves: an attached mediator is honoured, and the
+ * core's default-DENY safety property survives every failure mode.
+ */
+describe('permission mediator safety contract', () => {
+  const askPermission = (child: FakeAcpChild, id = 9): void => {
+    child.emit({
+      jsonrpc: '2.0',
+      id,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 'session-1',
+        toolCall: {
+          toolCallId: 'native-1',
+          title: 'view_file',
+          kind: 'read',
+          rawInput: { path: 'src/main/index.ts' }
+        },
+        options: [
+          { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'reject', name: 'Reject', kind: 'reject_once' }
+        ]
+      }
+    })
+  }
+
+  const decisionFor = (child: FakeAcpChild, id = 9): string | undefined =>
+    (
+      child.sent().find((message) => message.id === id)?.result as
+        | { outcome?: { outcome?: string; optionId?: string } }
+        | undefined
+    )?.outcome?.optionId
+
+  it('forwards the exact request and honours an ALLOW decision', async () => {
+    const child = new FakeAcpChild()
+    const seen: AcpPermissionRequest[] = []
+    const { handle } = run(child, {
+      onPermissionRequest: (request) => {
+        seen.push(request)
+        return 'allow'
+      }
+    })
+    sessionReady(child)
+    askPermission(child)
+    await tick()
+    expect(seen).toHaveLength(1)
+    // The mediator must receive the fields the native gate keys on.
+    expect(seen[0]?.toolName).toBe('view_file')
+    expect(decisionFor(child)).toBe('allow')
+    handle.cancel()
+    await handle.closed
+  })
+
+  it('honours a DENY decision', async () => {
+    const child = new FakeAcpChild()
+    const { handle } = run(child, { onPermissionRequest: () => 'deny' })
+    sessionReady(child)
+    askPermission(child)
+    await tick()
+    expect(decisionFor(child)).toBe('reject')
+    handle.cancel()
+    await handle.closed
+  })
+
+  it('still DENIES when the mediator throws synchronously', async () => {
+    const child = new FakeAcpChild()
+    const { handle } = run(child, {
+      onPermissionRequest: () => {
+        throw new Error('mediator exploded')
+      }
+    })
+    sessionReady(child)
+    askPermission(child)
+    await tick()
+    expect(decisionFor(child)).toBe('reject')
+    expect(JSON.stringify(child.sent())).not.toContain('mediator exploded')
+    handle.cancel()
+    await handle.closed
+  })
+
+  it('still DENIES when the mediator returns a rejected promise', async () => {
+    const child = new FakeAcpChild()
+    const { handle } = run(child, {
+      onPermissionRequest: () => Promise.reject(new Error('mediator rejected'))
+    })
+    sessionReady(child)
+    askPermission(child)
+    await tick()
+    expect(decisionFor(child)).toBe('reject')
+    handle.cancel()
+    await handle.closed
+  })
+
+  // The regression guard that matters most: removing the wiring must never
+  // silently become an allow.
+  it('still DENIES when NO mediator is attached at all', async () => {
+    const child = new FakeAcpChild()
+    const { handle } = run(child)
+    sessionReady(child)
+    askPermission(child)
+    await tick()
+    expect(decisionFor(child)).toBe('reject')
+    handle.cancel()
+    await handle.closed
+  })
+})
+
 describe('permission mediator wiring', () => {
   it('writes back an attached mediator decision', async () => {
     const child = new FakeAcpChild()

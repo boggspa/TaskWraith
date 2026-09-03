@@ -1646,7 +1646,11 @@ import {
   buildGrokCliArgs,
   buildGrokProviderPrompt
 } from './grok/GrokCliArgs'
-import { grokToolKindToService, type AcpPermissionRequest } from './grok/GrokAcpProtocol'
+import {
+  grokToolKindToService,
+  type AcpPermissionRequest,
+  type AcpPermissionDecision
+} from './grok/GrokAcpProtocol'
 import {
   grokTaskWraithBrokerToolRequested,
   resolveStructuredTaskWraithToolRequest,
@@ -35834,11 +35838,46 @@ async function runAntigravityOfficialAcpProvider(
     appVersion: app.getVersion(),
     spawnProcess: createAntigravityAcpSpawnProcess(resolved.binaryPath, resolved.args)
   })
+  // Client-mediated tool approval. The official ACP server asks before running
+  // a tool (session/request_permission), so like the Devin and Vibe seats this
+  // handler is the primary gate. The ACP core turns a 'deny' into a rejected
+  // outcome, and its documented default is DENY: a missing, throwing,
+  // rejecting, or late/stale handler can never resolve to an allow. Nothing
+  // below weakens any of those properties.
+  const antigravityAcpPermissionHandler = async (
+    request: AcpPermissionRequest
+  ): Promise<AcpPermissionDecision> => {
+    // The same closed-adapter gate the sibling ACP seats use, resolved against
+    // the antigravity native-action catalogue (view_file/read_file/list_dir are
+    // reads; write_to_file/replace_file_content/delete_file are mutations;
+    // run_command is shell). No TaskWraith MCP is advertised to this lane yet,
+    // so there is deliberately no broker-allow branch to mirror.
+    const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
+      provider: 'antigravity',
+      toolName: request.toolName,
+      toolKind: request.toolKind,
+      rawToolCall: request.rawToolCall,
+      workspacePath: payload.scope === 'global' ? undefined : payload.workspace,
+      // The official ACP server exposes a permission hook but no
+      // workspace-rooted native shell sandbox TaskWraith can attest. File tools
+      // can be path-preflighted; shell stays fail-closed.
+      runtimeSandboxed: false
+    })
+    if (nativeWorkspacePreflight.kind === 'deny') return 'deny'
+    if (nativeWorkspacePreflight.kind === 'allow' && nativeWorkspacePreflight.access === 'read') {
+      return 'allow'
+    }
+    if (grokReadOnlyShellRequestAllowed(request)) return 'allow'
+    // Anything unresolved or not provably read falls through to DENY, including
+    // the 'not_applicable' classification. Native mutators never bypass the
+    // mutation transaction boundary, exactly as on the Devin and Vibe seats: a
+    // write-capable seat is served by brokered exact edits, not opaque provider
+    // writes. The seat's configured posture is therefore never widened here.
+    return 'deny'
+  }
   // Thin per-run projection modeled on the other ACP seats' compat lines,
   // deliberately minimal: no usage estimation, thinking projection, or
-  // session resume yet. No onPermissionRequest is wired, so ACP tool calls
-  // run default-DENY and the client's recovery prompt keeps the turn alive —
-  // a TaskWraith permission bridge is a deliberate follow-up.
+  // session resume yet.
   let stopReason = 'success'
   let toolSeq = 0
   let finished = false
@@ -35886,6 +35925,7 @@ async function runAntigravityOfficialAcpProvider(
     handle = client.runTurn({
       prompt: payload.prompt,
       cwd,
+      onPermissionRequest: antigravityAcpPermissionHandler,
       // Raw catalogue id (`antigravity-acp:<model>`); the client strips the
       // routing namespace so the bare id reaches session/set_config_option.
       // Without this the seat silently ran the server's default model.
