@@ -1716,6 +1716,9 @@ import {
 } from './devin/devinGate'
 import { probeDevinCredentialState } from './devin/DevinAuthProbe'
 import { resolveDevinVariantId } from '../shared/devinModelCatalog'
+import { clampDevinModelForPlan } from '../shared/devinPlanAccess'
+import { createDevinPlanStateResolver } from './devin/DevinPlanState'
+import { defaultDevinPlanInfoRows } from './usage/TaskWraithQuotaSnapshotHook'
 import { estimateMistralTokenUsage } from './mistral/MistralUsage'
 import {
   createChildProcessMuseSpawn,
@@ -25223,6 +25226,13 @@ async function runDevinProvider(event: Electron.IpcMainInvokeEvent, payload: Age
   await runDevinAcpProvider(event, payload)
 }
 
+// One cached reader of the Devin desktop client's plan info, shared by the
+// picker catalogue and the dispatch clamp below. Defined above both consumers
+// so neither can reach it in its temporal dead zone.
+const devinPlanState = createDevinPlanStateResolver({
+  readPlanInfoRows: defaultDevinPlanInfoRows
+})
+
 async function runDevinAcpProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('devin', payload)
   const resolved = await resolveCliProviderBinary('devin', payload.runtimeProfile)
@@ -25526,7 +25536,15 @@ async function runDevinAcpProvider(event: Electron.IpcMainInvokeEvent, payload: 
   // CLI's `<family>-<level>` uid, sentinels (including a legacy 'cli-default'
   // selection) resolve to the catalogue default, and any other id passes
   // through verbatim so an unknown one fails visibly at the CLI.
-  const devinAcpArgs = buildDevinAcpCliArgs(resolveDevinVariantId(model, payload.reasoningEffort))
+  // Defence in depth behind the picker gate: a paid model persisted before the
+  // plan lapsed (or restored from another seat) clamps to SWE-1.6 Slow rather
+  // than dispatching to a plan that will refuse it. Ungated plans pass through.
+  const devinPlanModel = clampDevinModelForPlan(model, {
+    freePlan: await devinPlanState.resolve()
+  })
+  const devinAcpArgs = buildDevinAcpCliArgs(
+    resolveDevinVariantId(devinPlanModel, payload.reasoningEffort)
+  )
 
   const devinSpawnAcpProcess = (): AcpChildProcess => {
     const child = spawn(binaryPath, devinAcpArgs, {
@@ -59686,8 +59704,13 @@ if (isGeminiMcpBridgeProcess) {
     // (get-agent-models IPC) and the paired-device broadcast both call this,
     // so the phone's hierarchical picker can never drift from the desktop's.
     const listAgentModelsForProvider = async (provider: ProviderId): Promise<unknown[]> => {
+      // A free Devin plan may run only SWE-1.6 Slow, so resolve it before the
+      // catalogue is built and the picker never advertises a row the account
+      // cannot dispatch. Other providers skip the read entirely.
+      const devinFreePlan = provider === 'devin' ? await devinPlanState.resolve() : undefined
       const staticFallback = getStaticProviderModels(provider, {
-        includePreviewModels: previewModelCatalogEnabledForProvider(provider, process.env)
+        includePreviewModels: previewModelCatalogEnabledForProvider(provider, process.env),
+        devinFreePlan
       })
       const publishLiveModels = <T extends UltraTaskCatalogModelLike>(models: readonly T[]) =>
         materializeDiscoveredUltraTaskSupport(

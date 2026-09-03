@@ -759,7 +759,7 @@ const DEVIN_SQLITE_MAX_BUFFER_BYTES = 4 * 1024 * 1024
  * fallback). Never throws and never blocks a missing DB: anything unreadable
  * resolves to no rows, which the lane renders as an unconfigured tombstone.
  */
-function defaultDevinPlanInfoRows(): Promise<string[]> {
+export function defaultDevinPlanInfoRows(): Promise<string[]> {
   return new Promise((resolve) => {
     try {
       if (process.platform !== 'darwin') {
