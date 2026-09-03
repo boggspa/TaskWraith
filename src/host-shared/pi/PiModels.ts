@@ -504,6 +504,18 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     images: true
   },
   {
+    // Inception Mercury 2.5 Preview — fastest reasoning dLLM (diffusion LLM).
+    // Released 2026-08-31. OpenRouter model id: inception/mercury-2.5-preview.
+    wireId: 'openrouter/inception/mercury-2.5-preview',
+    upstream: 'openrouter',
+    modelId: 'inception/mercury-2.5-preview',
+    label: 'Mercury 2.5 Preview',
+    contextWindow: 260_000,
+    maxOutputTokens: 32_768,
+    thinking: true,
+    images: false
+  },
+  {
     // Tencent Hy4 preview — 770B MoE (49B active), 1M context. Released 2026-08-28.
     // OpenRouter model id: tencent/hy4-preview. Text-only input.
     wireId: 'openrouter/tencent/hy4-preview',

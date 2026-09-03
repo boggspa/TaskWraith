@@ -128,6 +128,26 @@ export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegist
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   },
   {
+    // Inception Mercury 2.5 Preview — fastest reasoning dLLM, 260K context.
+    // Released 2026-08-31. Tunable effort (null supported_efforts → full ladder).
+    // Sources: OpenRouter model page + inceptionlabs.ai, verified 2026-08-31.
+    modelId: 'inception/mercury-2.5-preview',
+    label: 'Mercury 2.5 Preview',
+    reasoning: true,
+    thinkingLevelMap: {
+      off: 'none',
+      minimal: 'minimal',
+      low: 'low',
+      medium: 'medium',
+      high: 'high',
+      max: 'max'
+    },
+    input: ['text'],
+    contextWindow: 260_000,
+    maxTokens: 32_768,
+    cost: { input: 0.2, output: 0.75, cacheRead: 0, cacheWrite: 0 }
+  },
+  {
     // Tencent Hy4 preview — 770B MoE (49B active). Released 2026-08-28.
     // OpenRouter effort strings: none (no-think), low, high.
     // Pi spells 'none' as 'off'; xhigh/max/minimal/medium have no mapping.

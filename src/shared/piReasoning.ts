@@ -149,7 +149,14 @@ const PI_MODEL_REASONING: Readonly<Record<string, PiReasoningSupport>> = {
   ),
   // Tencent Hy4 preview advertises no-think (off), low, and high CoT modes.
   // OpenRouter maps these to none / low / high effort strings.
-  'openrouter/tencent/hy4-preview': ladder(['low', 'high'], 'high')
+  'openrouter/tencent/hy4-preview': ladder(['low', 'high'], 'high'),
+  // Inception Mercury 2.5 Preview supports tunable reasoning levels.
+  // supported_efforts is not enumerated in the OpenRouter schema (null →
+  // all gateway effort values accepted). Surfacing the full ladder.
+  'openrouter/inception/mercury-2.5-preview': ladder(
+    ['minimal', 'low', 'medium', 'high', 'max'],
+    'medium'
+  )
 }
 
 const FULL: PiReasoningSupport = Object.freeze({
