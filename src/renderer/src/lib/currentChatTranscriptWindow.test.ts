@@ -1,14 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import type { ChatMessage, ChatRecord, ChatRun } from '../../../main/store/types'
 import {
+  currentChatTranscriptSubscriptionId,
   resolveCurrentChatTranscriptWindow,
   useCurrentChatTranscriptWindow
 } from './currentChatTranscriptWindow'
 import { ChatTranscriptStore } from './chatTranscriptStore'
 import {
   bindChatTranscriptStore,
-  resetChatTranscriptStoreBindingForTests
+  getChatTranscriptSnapshot,
+  resetChatTranscriptStoreBindingForTests,
+  subscribeChatTranscript
 } from './useChatTranscript'
 
 function message(id: string): ChatMessage {
@@ -74,13 +77,98 @@ describe('resolveCurrentChatTranscriptWindow', () => {
   })
 })
 
-describe('useCurrentChatTranscriptWindow', () => {
-  it('is exported as a function (hook binding exercised via store tests)', () => {
-    expect(typeof useCurrentChatTranscriptWindow).toBe('function')
-    // Binding hygiene for downstream tests that bind a store.
+describe('useCurrentChatTranscriptWindow store subscription target', () => {
+  // The hook's contract is that it subscribes to the transcript store ONLY
+  // while the chat is a paged shell, so a fully hydrated chat never re-renders
+  // its surface off store churn. ChatViewPane calls this hook on EVERY pane
+  // render, so if that ever inverted, every open multiview pane would re-render
+  // on any store write for its chat. There is no DOM test env here, so the
+  // decision is extracted and pinned directly (same idiom as
+  // useChatTranscript.test.tsx).
+  afterEach(() => {
+    resetChatTranscriptStoreBindingForTests()
+  })
+
+  it('subscribes to nothing for a null or undefined chat', () => {
+    expect(currentChatTranscriptSubscriptionId(null)).toBeNull()
+    expect(currentChatTranscriptSubscriptionId(undefined)).toBeNull()
+  })
+
+  it('subscribes to nothing for a fully hydrated chat', () => {
+    expect(currentChatTranscriptSubscriptionId(fullChat(['m1']))).toBeNull()
+  })
+
+  it('subscribes to the chat id for a paged shell', () => {
+    expect(currentChatTranscriptSubscriptionId(pagedShell())).toBe('chat-1')
+  })
+
+  it('subscribes to nothing for a paged shell carrying no id', () => {
+    const idless = { ...pagedShell(), appChatId: '' } as unknown as ChatRecord
+    expect(currentChatTranscriptSubscriptionId(idless)).toBeNull()
+  })
+
+  it('store churn on a hydrated chat reaches no subscriber', () => {
     const store = new ChatTranscriptStore()
     bindChatTranscriptStore(store)
-    resetChatTranscriptStoreBindingForTests()
+    const hydrated = fullChat(['m1'])
+    const listener = vi.fn()
+    const unsubscribe = subscribeChatTranscript(
+      currentChatTranscriptSubscriptionId(hydrated),
+      listener
+    )
+
+    store.ingest(fullChat(['m1', 'm2']))
+
+    expect(listener).not.toHaveBeenCalled()
+    unsubscribe()
+  })
+
+  it('store churn on a paged shell DOES reach its subscriber', () => {
+    const store = new ChatTranscriptStore()
+    bindChatTranscriptStore(store)
+    const listener = vi.fn()
+    const unsubscribe = subscribeChatTranscript(
+      currentChatTranscriptSubscriptionId(pagedShell()),
+      listener
+    )
+
+    store.ingest(fullChat(['m1', 'm2']))
+
+    expect(listener).toHaveBeenCalled()
+    unsubscribe()
+  })
+
+  it('reads a referentially stable snapshot on both sides of the decision', () => {
+    // useSyncExternalStore requires getSnapshot to be cached; an uncached
+    // payload here would loop React on every pane render. Pin the subscribed
+    // (paged, window loaded) side too — the unsubscribed side alone is
+    // near-tautological, since a null id short-circuits to a shared constant.
+    const store = new ChatTranscriptStore()
+    bindChatTranscriptStore(store)
+    store.ingest(fullChat(['m1', 'm2']))
+
+    const unsubscribed = currentChatTranscriptSubscriptionId(fullChat(['m1']))
+    expect(unsubscribed).toBeNull()
+    expect(getChatTranscriptSnapshot(unsubscribed)).toBe(getChatTranscriptSnapshot(unsubscribed))
+
+    const subscribed = currentChatTranscriptSubscriptionId(pagedShell())
+    expect(subscribed).toBe('chat-1')
+    const first = getChatTranscriptSnapshot(subscribed)
+    expect(first.messages).toHaveLength(2)
+    expect(getChatTranscriptSnapshot(subscribed)).toBe(first)
+  })
+
+  it('the hook routes its subscription through the extracted decision', () => {
+    // Guards against the pure function drifting out of the hook it describes.
+    const source = readFileSync(
+      new URL('./currentChatTranscriptWindow.ts', import.meta.url),
+      'utf8'
+    )
+    const hookStart = source.indexOf('export function useCurrentChatTranscriptWindow')
+    expect(hookStart).toBeGreaterThan(-1)
+    const hookBody = source.slice(hookStart)
+    expect(hookBody).toContain('currentChatTranscriptSubscriptionId(chat)')
+    expect(typeof useCurrentChatTranscriptWindow).toBe('function')
   })
 })
 

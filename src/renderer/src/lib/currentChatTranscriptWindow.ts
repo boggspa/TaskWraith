@@ -54,6 +54,24 @@ export function resolveCurrentChatTranscriptWindow(
 }
 
 /**
+ * The store id the hook below subscribes to for `chat`, or `null` for "do not
+ * subscribe at all".
+ *
+ * Split out of the hook because it is the load-bearing half and there is no DOM
+ * test env here to mount the hook in (same idiom as `useChatTranscript.test.ts`
+ * — pin the helpers the hook wires into `useSyncExternalStore`). ChatViewPane
+ * calls the hook on EVERY pane render, so if this ever returned an id for a
+ * hydrated chat, every open multiview pane would re-render on any store write
+ * for its chat.
+ */
+export function currentChatTranscriptSubscriptionId(
+  chat: ChatRecord | null | undefined
+): string | null {
+  if (!chat || !isTranscriptPagedShell(chat)) return null
+  return chat.appChatId || null
+}
+
+/**
  * React binding. Subscribes to the transcript store ONLY while the chat is a
  * paged shell, so fully hydrated chats (the common case) never re-render App
  * off store churn; escalation replaces the shell with the full record and
@@ -62,10 +80,10 @@ export function resolveCurrentChatTranscriptWindow(
 export function useCurrentChatTranscriptWindow(
   chat: ChatRecord | null | undefined
 ): CurrentChatTranscriptWindow {
-  const paged = chat ? isTranscriptPagedShell(chat) : false
-  const payload = useChatTranscript(paged && chat ? chat.appChatId : null)
+  const subscriptionId = currentChatTranscriptSubscriptionId(chat)
+  const payload = useChatTranscript(subscriptionId)
   return useMemo(
-    () => resolveCurrentChatTranscriptWindow(chat, paged ? payload : null),
-    [chat, paged, payload]
+    () => resolveCurrentChatTranscriptWindow(chat, subscriptionId === null ? null : payload),
+    [chat, subscriptionId, payload]
   )
 }
