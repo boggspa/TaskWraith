@@ -19,7 +19,7 @@ treated as On.
 
 In an ensemble chat, it sits in the labeled **Fan-Out** cell on the second row
 of the Roster Presets section above the composer input, beside the Isolate
-picker and the Turn Budget meter.
+picker and the **Turns** meter.
 
 ![Fan-out toggle in the roster presets second row](../images/ensemble-mode__fan-out.png)
 
@@ -27,29 +27,22 @@ picker and the Turn Budget meter.
 
 1. Click **Off** to keep participants running serially, one at a time (the
    default).
-2. Click **On** to enable parallel lanes:
-   - Read-only scouts fan out at the start of the round and reviewers can run
-     as a parallel wave later; every seat keeps its configured permission
-     tier. Requires parallel lanes (`TASKWRAITH_CONCURRENT_LANES`, on by
-     default) — if disabled, rounds fall back to serial dispatch.
-   - Writer-capable participants can also run in parallel lanes, gated by
-     `TASKWRAITH_CONCURRENT_WRITE_LANES`. With an assigned Boss, that Boss
-     must call the `ensemble_fanout` tool with explicit write scopes;
-     otherwise a user-enabled write-scope preflight (claim scopes, a host
-     conflict check, then an acknowledgement) runs before any writer lane.
+2. Click **On** to enable parallel lanes. Read-only scouts fan out at the start of the round and reviewers can run
+     as a parallel wave later; every seat keeps its permission
+     level. Parallel lanes must be enabled in settings — if disabled, rounds fall back to running one at a time.
+   - Writer seats can also run in parallel lanes. With an assigned Boss, that Boss
+     must start the parallel run with explicit write scopes;
+     otherwise a write-scope check runs before any writer lane.
 3. Hover the toggle, or the running round's status, to see the active fan-out
    summary. A round that is already running shows the policy it was admitted
    with; a change applies from the next round.
-4. To keep a participant out of ordinary rotation, set its Stage to **BG**. A
-   unique `@Background`, `@Role`, or `@Model` mention attempts to launch that
-   seat asynchronously through the same lane executor. `@BG` is different — it
-   is a group token that launches **every** enabled BG seat, never just one.
-   Concurrent lanes must be enabled, the seat must not already be active, and
-   admission/budget checks must pass. Automatic mention/yield launches are
-   capped read-only; use the Boss-authorized
-   `ensemble_fanout(mode=locked_writers, targetStage=backgrounds,
-   writeScopes=...)` path when scoped background mutation is genuinely
-   required.
+4. To keep a participant out of normal rotation, set its Stage to **BG**. A
+   unique `@Background`, `@Role`, or `@Model` mention starts that
+   seat in the background through the same lane system. `@BG` is different — it
+   starts **every** background seat, never just one.
+   Background lanes need parallel lanes enabled, and the seat must not already be active. Automatic mention/yield launches are
+   read-only; scoped background edits need a Boss-started
+   parallel run with explicit write scopes.
 
 ## Tips & related
 

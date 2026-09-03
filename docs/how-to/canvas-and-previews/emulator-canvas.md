@@ -23,8 +23,7 @@ entry point gives an agent permission to control a different chat's session.
 1. In a chat's right Inspector, open **Canvas** and choose **Homebrew
    Emulator**. An agent can also request the fixed demo with `emulator_open`.
 2. To use the full-pane presentation, open an empty Multiview cell, choose its
-   **Thread Home**, then select the **Emulator** surface card. Thread Home needs
-   an authority thread before it can attach the demo.
+   **Thread Home**, then select the **Emulator** surface card. Thread Home needs one of your chats attached before it can open the demo.
 3. For a demo already open in Inspector Canvas, use the Canvas placement
    control to **Pop Out** that active dock session into a floating Canvas
    window. Choose **Dock** in that window to return it to the Inspector Canvas
@@ -40,10 +39,10 @@ agent's authority.
    you are done.
 2. Use the arrow keys to move. `Z` is B, `X` is A, Enter is Start, and Shift is
    Select.
-3. If the emulator loses focus or becomes hidden, it pauses and clears any held
-   buttons. Start Play again after returning to it.
-4. Pause before asking an agent to step. Human play takes precedence, so agent
-   frame control stands down while the human loop is active.
+3. If the emulator loses focus or becomes hidden, it pauses and lets go of any held
+   buttons. Press Play again after returning to it.
+4. Pause before asking an agent to step. Your play takes priority, so agent
+   control pauses while you are playing.
 
 ## Work with an agent
 
@@ -73,12 +72,10 @@ data. The demo cannot be repointed at another game and it has no cheat command.
 
 ## You stay in control
 
-An agent may step only with an exact-surface Canvas/AppDrive approval or grant.
-That consent applies to the reviewed live Canvas, not another Canvas, chat, or
-replacement session. You can take over and play directly whenever you want.
-While a trusted human play loop is active, agent stepping stands down;
-TaskWraith revokes the exact surface authority rather than trying to continue
-around your input.
+An agent may step only with an approval or grant for that exact emulator session.
+That approval covers the session you approved, not another Canvas, chat, or
+replacement session. You can take over and play directly whenever you want;
+while you are playing, agent stepping pauses.
 
 Like any Canvas screenshot, an observed frame can be visible to the active
 provider. Keep the demo and its on-screen state appropriate for that provider's

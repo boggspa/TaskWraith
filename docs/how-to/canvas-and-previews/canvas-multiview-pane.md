@@ -12,7 +12,7 @@ Switch to a split multiview layout (2/3/4 panes) with the Multiview layout picke
 
 ## How to use it
 1. Open a multiview layout with at least one empty pane (or close a pane's chat/canvas to free it up).
-2. In the empty pane's Thread Home, pick a surface card: **Graphs & charts**, **Browser**, **Mesh**, **Sketch**, **Emulator**, **Media**, or **Simulator**. The cards are disabled until the pane has an authority thread to attach the surface to.
+2. In the empty pane's Thread Home, pick a surface card: **Graphs & charts**, **Browser**, **Mesh**, **Sketch**, **Emulator**, **Media**, or **Simulator**. The cards stay disabled until the pane has one of your chats to attach the surface to.
 3. **Browser** opens a blank embedded TaskWraith browser, **Sketch** opens a sketch board, and **Emulator** opens the fixed built-in homebrew demo as a full Canvas pane with no browser controls. Each shows a brief "Opening…" state and reports inline if it can't open. The other cards render their surface directly in the pane.
 4. To go back, use the pane's close control — it returns the cell to Thread Home first, and closes the pane itself once Thread Home is already showing. Selecting a thread from the list turns the cell back into a chat pane.
 

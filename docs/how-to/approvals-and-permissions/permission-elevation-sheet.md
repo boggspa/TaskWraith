@@ -16,17 +16,14 @@ Appears automatically over the current chat when you raise the **permissions chi
 
 ## How to use it
 1. Open the **permissions chip** in the composer and pick a higher preset.
-2. Read the warning. For **Full WS Access** it explains the agent can create, edit, run, and delete workspace files **without approving each action**, and that the preset stays workspace-scoped. For **Full Access** it also covers host-level shell authority and notes that external publishing, media recording, and globally blocked actions keep their own approval rules.
+2. Read the warning. For **Full WS Access** it explains the agent can create, edit, run, and delete workspace files **without approving each action**. For **Full Access** it also covers host-level shell authority and notes that external publishing, media recording, and globally blocked actions keep their own approval rules.
 3. For Full WS Access and Full Access, tick the risk acknowledgement checkbox — the confirm button stays disabled until you do. The Accept Edits notice needs no checkbox.
 4. Click the confirm button (**Continue**, **Enable Full WS Access**, or **Start Full Access**) to apply the change, or **Cancel** (or press Esc) to stay at the current, safer preset. Nothing changes until you confirm — the chip keeps its old value while the sheet is open.
 5. You can lower the preset again at any time from the same chip — no warning is shown when lowering.
 
-For managed Cursor, the selected permission posture shapes both the native seat
-and its TaskWraith tool gateway. TaskWraith-mediated calls use approval cards
-and workspace Tool Grants; Cursor-native actions remain provider-owned.
-
 ## Tips & related
 - The once-per-workspace memory applies only to the Accept Edits notice and covers all agents at once; Full WS Access and Full Access ask every time by design.
+- With Cursor, the level you pick applies to both its own tools and the ones it calls through TaskWraith. TaskWraith's calls still show approval cards; Cursor's own actions are handled by Cursor.
 - In an Ensemble chat, the confirmation covers only the selected participant — other participants keep their own presets.
 - [Provider, Model, and Permissions Pickers](../composer/provider-model-permissions-pickers.md) — the composer chip that triggers this sheet.
 - [Pending Approval Modal](pending-approval-modal.md) — the per-action approval prompt you still see for individual gated actions even after elevating.

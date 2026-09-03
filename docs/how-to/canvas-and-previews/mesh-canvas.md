@@ -4,17 +4,9 @@
 
 ## What it is
 
-Mesh Canvas is TaskWraith's local, declarative 3D scene and topology surface.
-Agents can create a scene from primitives without an existing model, convert a
-primitive or imported object to editable geometry, and then revise its stable
-vertices, edges, face loops, UVs, sculpted form, bones, weights, and poses. A
-human can also import an exported model or complete scene into the current chat.
+Mesh Canvas is TaskWraith's built-in 3D scene surface. Agents can create a scene from simple shapes without an existing model, turn a shape or imported object into editable geometry, and then change its vertices, edges, faces, UVs, sculpted form, bones, weights, and poses. You can also import an exported model or complete scene into the current chat.
 
-Scenes and editable topology are owned by the chat, so solo agents and Ensemble
-participants see the same current revision. Imported source paths never become
-renderer filesystem URLs: TaskWraith copies approved exports into its private
-local asset vault first, and topology conversion never rewrites the source
-file.
+Scenes and editable geometry belong to the chat, so solo agents and Ensemble participants see the same current version. Imported files are copied into TaskWraith's private local asset store first — the import never rewrites your original file.
 
 ## Where to find it
 
@@ -30,9 +22,9 @@ actions:
 ## Create and collaborate without an import
 
 Ask an agent to create a Mesh Canvas scene and add a box, sphere, plane,
-cylinder, or torus. The agent can arrange and material the primitives with the
-scene tools, then use the topology tools when it needs to change their internal
-geometry:
+cylinder, or torus. The agent can arrange the shapes and set their materials,
+then convert one into editable geometry when it needs to change its internal
+shape:
 
 | Tool | What it does |
 | --- | --- |
@@ -48,11 +40,10 @@ and grab sculpt strokes; and editing bones, vertex weights, and poses. An agent
 can also replace the complete internal vertex/face geometry of an editable node
 in one validated transaction.
 
-Every mutation includes an `expectedRevision` and a `clientMutationId`. If two
-participants inspect revision 7, the first accepted edit creates revision 8;
+Every change includes an `expectedRevision` and a `clientMutationId`. If two
+participants read version 7, the first accepted edit creates version 8;
 the second gets a conflict instead of silently overwriting it. That participant
-must inspect revision 8, reconcile the change, and retry. Mutation receipts
-retain the run and Ensemble participant attribution when available.
+must re-read version 8, reconcile the change, and retry.
 
 The viewer renders editable faces directly and offers **Surface**, **Edges**,
 **Vertices**, and **Rig** overlays. Its caption shows live editable-object,
@@ -127,28 +118,17 @@ compressed geometry, morph targets, and animation payloads, rather than
 silently discarding them. The private editable copy can be rewritten while the
 workspace export remains byte-for-byte unchanged.
 
-## Permissions and provider sessions
+## Permissions
 
-Mesh authoring follows the same five run postures for every supported solo or
-Ensemble seat:
+Mesh authoring follows the same permission presets as everything else:
 
-- **Ask** and **Plan** show a per-call Mesh Canvas approval. Those cards are
-  request-only: a session or workspace grant cannot silence the next mutation.
-- **Accept Edits**, **Full WS Access**, and **Full Access** treat the selected
-  posture as the run-level authorization and do not show an extra Mesh card.
-- An explicit Mesh Canvas **Deny** remains a kill switch in every posture.
+- **Ask** and **Plan** ask for approval before each change to the scene.
+- **Accept Edits**, **Full WS Access**, and **Full Access** treat the selected preset as approval for the run and do not ask again per change.
+- An explicit Mesh Canvas **Deny** blocks scene changes in every preset.
 
-Permissions belong to each participant/run. On profile-backed seats, topology
-tools are part of the fresh v15 Mesh profile, so a provider session born on an
-older profile keeps its frozen catalogue; start a fresh provider session to
-receive the new direct surface. Pi receives the same tools through its fresh,
-run-bound extension. Ollama reaches topology through capability
-search/invocation rather than its compact direct-tool parser.
+Permissions belong to each participant and run. If a provider seat was started before Mesh tools were added, start a fresh session with that provider to pick them up.
 
-Tools operate on the durable declarative scene and never receive the private
-vault access token. Workspace model import still requires a workspace-scoped
-chat; chat-local primitives and topology can also be used in a saved global
-chat.
+Tools work on the saved scene and never receive the private vault access token. Importing a model from your files needs a workspace-backed chat; creating shapes and editing geometry also works in a saved global chat.
 
 ## Tips & related
 

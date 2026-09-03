@@ -14,7 +14,7 @@ Settings → **AI & Providers → Ensemble roster** for the full editor (create,
 
 ## How to use it
 1. Open **Settings → AI & Providers → Ensemble roster**. The left pane lists your saved presets, including the six starter panels on a fresh store; click **+ New** to create another. A new custom preset starts as a three-seat Boss + Captain + Specialist panel, with room for a second specialist and an optional outsider, or you can select an existing preset to edit it.
-2. In the right-hand editor, set **Turn order** (turn-based or continuous) and **Max participants**, then add, remove, or reorder participants with the row controls.
+2. In the right-hand editor, set **Max participants**, then add, remove, or reorder participants with the row controls.
 3. For each participant, pick a provider/model and permissions, write a **Role / nickname** and **Brief / goal**, toggle **Enabled**, and optionally assign one **Boss** plus one **Captain** as second-in-command.
 4. Use **☆ Save to pool** on a row to turn that participant into a reusable Agent, or **+ Add from pool** to drop a saved Agent into the roster; pooled Agents stay linked, so editing the Agent later updates every preset that uses it.
 5. Use **Duplicate** to branch a variation of a preset, or **Delete** to remove one you no longer need.
@@ -38,6 +38,6 @@ Starter panels are ordinary saved roster JSON after creation: you can edit, dupl
 ## Tips & related
 - Keep a panel small unless the task benefits from explicit reconnaissance, parallel workstreams, or independent challenge; larger panels add coordination and token cost.
 - [Create an Ensemble Chat](create-ensemble-chat.md) — start a multi-provider chat that a roster preset can populate.
-- [Ensemble Orchestration Row](../composer/ensemble-mode-picker.md) — the fan-out, isolation, and turn-budget controls presets capture.
+- [Ensemble Orchestration Row](../composer/ensemble-mode-picker.md) — the fan-out, isolation, and turn-limit controls presets capture.
 - [Participant Chip Strip](participant-chip-strip.md) — the in-chat strip for adjusting participants once a chat is running.
 - [Providers tab](../settings-and-configuration/providers-tab.md) — sign in to the providers a roster preset references.
