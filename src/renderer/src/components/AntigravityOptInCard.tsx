@@ -417,7 +417,7 @@ export function AntigravityOptInCard({
             </label>
             <p className="settings-provider-auth-footnote">
               {antigravityUseAcp === true
-                ? 'ACP selected: the official agy_acp_server binary lane. It is not connected yet, so runs still use the legacy CLI until that lane lands — both stay behind the risk acceptance recorded above.'
+                ? 'ACP selected: runs use the official agy_acp_server binary lane. First launch downloads the Google-published binary and pins its hash; a later hash mismatch refuses to launch, and both stay behind the risk acceptance recorded above.'
                 : 'Legacy agy CLI selected. Both options stay behind the risk acceptance recorded above.'}
             </p>
           </section>

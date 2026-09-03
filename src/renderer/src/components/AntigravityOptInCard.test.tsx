@@ -87,7 +87,7 @@ describe('AntigravityOptInCard', () => {
     expect(input).not.toContain('checked')
   })
 
-  it('reflects an ACP preference without claiming the lane runs yet', () => {
+  it('reflects an ACP preference that runs the connected binary lane', () => {
     const html = renderToStaticMarkup(
       <AntigravityOptInCard
         enabled
@@ -100,8 +100,11 @@ describe('AntigravityOptInCard', () => {
     const input = html.match(/<input[^>]*data-testid="antigravity-use-acp"[^>]*>/)?.[0]
     expect(input).toBeDefined()
     expect(input).toContain('checked')
-    expect(html).toContain('It is not connected yet')
+    expect(html).toContain('runs use the official agy_acp_server binary lane')
+    expect(html).toContain('pins its hash')
+    expect(html).toContain('refuses to launch')
     expect(html).toContain('both stay behind the risk acceptance recorded above')
+    expect(html).not.toContain('not connected yet')
     // No softening: the ban-risk consent gate copy is unchanged.
     expect(html).toContain('Risk acceptance recorded')
   })
