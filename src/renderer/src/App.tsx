@@ -80,6 +80,11 @@ import {
   applyChatUpdateDelivery,
   type ChatUpdateBaseline
 } from '../../shared/chatUpdateTransport'
+import { classifyRewindTarget } from '../../shared/chatRewindPolicy'
+import {
+  RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+  chatPersistenceRevision
+} from '../../shared/rendererChatTranscriptMutation'
 import { buildChatUpdateAck } from './lib/chatUpdateAck'
 import {
   buildChatUpdateRenderedAck,
@@ -1802,6 +1807,9 @@ function App(): React.JSX.Element {
   // Single-flight guard for the ENSEMBLE composer Steer IPC. Keyed by chatId;
   // added before dispatch and cleared in a `finally`.
   const ensembleSteerInFlightChatIdsRef = useRef<Set<string>>(new Set())
+  // Edit-&-resend rewind single-flight: ignore a re-entrant resend for this
+  // chat while a previous rewind's cancel → truncate → dispatch is in flight.
+  const rewindInFlightChatIdsRef = useRef<Set<string>>(new Set())
   const runStreamMetricsByRunIdRef = useRef<Map<string, RunStreamMetrics>>(new Map())
   const pendingStreamFlushCharsByRunIdRef = useRef<Map<string, number>>(new Map())
   const pendingStreamFlushCharsByRunItemRef = useRef<Map<string, number>>(new Map())
@@ -17908,7 +17916,11 @@ function App(): React.JSX.Element {
     // Multiview resting panes steer their OWN chat by passing the pane
     // chat/draft/attachments here (buildRunRequest's target shape). Absent for
     // the focused composer, which steers the visible chat as before.
-    target?: Parameters<typeof buildRunRequest>[2]
+    target?: Parameters<typeof buildRunRequest>[2],
+    // Rewind-from-message restart hints for the post-cancel replacement round
+    // (see handleEditAndResendFromHere): resume the rotation at the captured
+    // seat, skip the opening preamble, and do not echo the edited prompt row.
+    rewind?: { resumeFromParticipantId?: string; suppressPromptEcho?: boolean }
   ) => {
     const request = buildRunRequest(overrideModel, existingPrompt, target)
     if (!runRequestHasContent(request)) {
@@ -17983,6 +17995,7 @@ function App(): React.JSX.Element {
           concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
           fanoutPolicy,
           ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
+          ...(rewind ? { rewind } : {}),
           ...(request.exactPickerParticipantId
             ? { exactPickerParticipantId: request.exactPickerParticipantId }
             : {}),
@@ -20017,6 +20030,151 @@ function App(): React.JSX.Element {
     },
     [currentChat, deleteMessageFromChat]
   )
+
+  // Rewind-from-message ("Edit & resend from here"). The user re-typed an
+  // older user bubble and re-sent it: stop the live run and everything chained
+  // to it, drop the transcript tail after the edited row, and dispatch the
+  // edited text from that point.
+  //
+  // Transcript + lifecycle ONLY: no file or git revert, no seat change, and
+  // the blackboard/goal/todos ride through untouched — the truncate op drops
+  // message rows and nothing else. Order is CANCEL → QUIESCE → TRUNCATE →
+  // DISPATCH per the binding contract (blackboard
+  // `rewind-contract-v1.1-AMENDMENT-BINDING`): cancelling after truncation
+  // would let an in-flight run append into the cut tail, and truncating
+  // before the post-cancel quiesce would let a row already in flight land
+  // inside it.
+  const handleEditAndResendFromHere = async (messageId: string, editedContent: string) => {
+    const chat = currentChat
+    if (!chat || !messageId) return
+    if (!editedContent || !editedContent.trim()) return
+    const chatId = chat.appChatId
+    if (rewindInFlightChatIdsRef.current.has(chatId)) return
+    // Classify BEFORE cancelling: cancel destroys the rotation state a
+    // mid-round-steer resume reads, so the steer-vs-fresh dispatch decision
+    // is taken up front.
+    const classification = classifyRewindTarget({
+      // ChatMessage carries its round linkage at metadata.ensembleRoundId, not
+      // a top-level roundId — map it explicitly or every row reads as one
+      // unrouted group and a later round-opening prompt misclassifies as a
+      // mid-round steer.
+      messages: chat.messages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        // `metadata` is an index-signature bag, so this reads back as
+        // `unknown`; the in-tree convention (ensembleRoundCards,
+        // blackboardChangeStack, TranscriptPanel) is an explicit string
+        // guard. A non-string round id is treated as unstamped rather than
+        // coerced, which keeps the classifier's grouping honest.
+        roundId:
+          typeof message.metadata?.ensembleRoundId === 'string'
+            ? message.metadata.ensembleRoundId
+            : null
+      })),
+      messageId,
+      isEnsemble: chat.chatKind === 'ensemble'
+    })
+    if (!classification.ok) return
+    const { kind, index } = classification
+    const anchor = chat.messages[index]
+    if (!anchor || anchor.id !== messageId || anchor.role !== 'user') return
+    // FORK A (contract v1.1): capture the seat that is active RIGHT NOW. The
+    // cancel below destroys the rotation state with the round runtime
+    // (EnsembleOrchestrator clears activeParticipantId and drops the runtime),
+    // so this is the last chance to read it. The re-dispatch threads it
+    // through so a mid-round-steer rewind resumes the rotation at that seat
+    // instead of restarting from the roster top and re-running seats whose
+    // output survived the truncate.
+    const resumeFromParticipantId =
+      chat.chatKind === 'ensemble' && kind === 'mid-round-steer'
+        ? chat.ensemble?.activeRound?.activeParticipantId
+        : undefined
+    // Same orphan-pending guard as delete, extended over the whole cut tail:
+    // never strand an approval/question/plan modal whose anchor row is about
+    // to be rewritten or dropped.
+    const cutIds = chat.messages.slice(index).map((message) => message.id)
+    const strandsOpenPrompt = cutIds.some(
+      (id) =>
+        agentQuestionQueueHasMessage(pendingAgentQuestionsByChatId[chatId], id) ||
+        messageAnchorsActivePrompt(id, null, pendingPlanChoiceByChatId[chatId]?.messageId)
+    )
+    if (strandsOpenPrompt) {
+      if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+        window.alert(
+          'This part of the transcript has an open prompt waiting on it. Answer or dismiss the prompt before editing & resending from here.'
+        )
+      }
+      return
+    }
+    rewindInFlightChatIdsRef.current.add(chatId)
+    try {
+      // 1. CANCEL. Reuses the linked-chat stop path so the run, queued jobs,
+      // scheduled occurrences, and (ensemble) the round drain together.
+      await cancelLinkedChatRun(chat)
+      // 2. QUIESCE (contract v1.1). Re-baseline against canonical AFTER
+      // cancel: a row that landed mid-cancel is now visible, and the revision
+      // fence on the mutation below turns any later arrival into a retryable
+      // conflict instead of a row inside the cut tail.
+      const baseline = (await refreshSingleChat(chatId)) || chat
+      const sendRewindMutation = (record: ChatRecord) => {
+        const anchorMessage = record.messages.find((message) => message.id === messageId)
+        if (!anchorMessage || anchorMessage.role !== 'user') return null
+        return window.api.mutateChatTranscript({
+          version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+          chatId,
+          baseRevision: chatPersistenceRevision(record),
+          transcriptOps: [
+            { op: 'update', id: messageId, message: { ...anchorMessage, content: editedContent } },
+            { op: 'truncateFrom', id: messageId }
+          ]
+        })
+      }
+      let mutation = await sendRewindMutation(baseline)
+      if (
+        mutation &&
+        !mutation.accepted &&
+        mutation.reason === 'revision-conflict' &&
+        mutation.canonical
+      ) {
+        // A row landed between quiesce and truncate — exactly the race v1.1
+        // names. Retry ONCE against the returned canonical, then give up.
+        mutation = await sendRewindMutation(mutation.canonical)
+      }
+      if (!mutation || !mutation.accepted) {
+        const reason = !mutation ? 'no response' : mutation.reason
+        appendThreadRawLog(chatId, {
+          type: 'stderr',
+          content: `Edit & resend stopped the live run but could not rewrite the transcript (${reason}). Files and blackboard are untouched — the edited text was moved to the composer draft; send it from there to continue.`
+        })
+        handleAddTranscriptMessageToPrompt(chatId, editedContent)
+        return
+      }
+      void refreshSingleChat(chatId)
+      // 3. DISPATCH from that point. A corrected premise inside an ensemble
+      // chat re-enters through the steer path carrying the rewind hints: the
+      // replacement round skips the opening preamble (a scout/writer fan-out
+      // re-fire is the chat-opening exception ONLY), resumes the rotation at
+      // the seat captured before the cancel for a mid-round steer, and does
+      // not echo the edited prompt — the truncate mutation already rewrote
+      // the anchor row in place. A fresh premise — solo turn or the chat's
+      // opening prompt — dispatches as a new send with the full preamble.
+      // Both ride `existingPrompt` so the composer draft is never disturbed.
+      relockMainTranscriptToLatest()
+      if (chat.chatKind === 'ensemble' && kind !== 'chat-opening') {
+        void handleSteerRef.current(undefined, editedContent, undefined, {
+          ...(resumeFromParticipantId ? { resumeFromParticipantId } : {}),
+          suppressPromptEcho: true
+        })
+      } else {
+        handleRunRef.current(undefined, editedContent)
+      }
+      if (chatId === (currentChatIdRef.current || currentChat?.appChatId)) {
+        setIsThinking(true)
+      }
+    } finally {
+      rewindInFlightChatIdsRef.current.delete(chatId)
+    }
+  }
 
   const handleOpenSideChatFromMessage = useCallback(
     (message: ChatMessage) => {
@@ -31734,6 +31892,7 @@ function App(): React.JSX.Element {
     handleDeleteAllChatHistory,
     handleDeleteChat,
     handleDeleteMessage,
+    handleEditAndResendFromHere,
     handleDeleteQueuedMessage,
     handleDeleteWorkflow,
     handleDeleteWorkspaceBoard,

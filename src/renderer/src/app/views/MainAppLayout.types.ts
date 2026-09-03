@@ -329,6 +329,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleDeleteAllChatHistory: any
   handleDeleteChat: MainAppLayoutSidebarProps['handleDeleteChat']
   handleDeleteMessage: any
+  handleEditAndResendFromHere?: any
   handleDeleteQueuedMessage: any
   handleDeleteWorkflow: MainAppLayoutSidebarProps['handleDeleteWorkflow']
   handleDeleteWorkspaceBoard: MainAppLayoutSidebarProps['handleDeleteWorkspaceBoard']

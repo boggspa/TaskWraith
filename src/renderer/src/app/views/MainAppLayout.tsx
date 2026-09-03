@@ -273,6 +273,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleDeleteAllChatHistory,
   handleDeleteChat,
   handleDeleteMessage,
+  handleEditAndResendFromHere,
   handleDeleteQueuedMessage,
   handleDeleteWorkflow,
   handleDeleteWorkspaceBoard,
@@ -2341,6 +2342,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   currentChatAppChatId ? handleTranscriptAddMessageToPrompt : undefined
                 }
                 onDeleteMessage={handleDeleteMessage}
+                onEditAndResendFromHere={handleEditAndResendFromHere}
                 onTogglePinMessage={handleTranscriptTogglePinMessage}
                 onMessageFeedback={handleTranscriptMessageFeedback}
                 onPromoteCollaboratorComment={handleTranscriptPromoteCollaboratorComment}
