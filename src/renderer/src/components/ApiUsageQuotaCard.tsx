@@ -119,6 +119,18 @@ export function ApiUsageQuotaCardView({
           onChange={(value) => onChange('deepseekMonthlyBudgetUsd', value)}
         />
       </div>
+      <div className="settings-field-row">
+        <label className="settings-field">
+          <span className="settings-field-label">Credit resets on</span>
+          <input
+            className="settings-input"
+            type="date"
+            value={drafts.deepseekResetAt}
+            disabled={busy}
+            onChange={(event) => onChange('deepseekResetAt', event.target.value)}
+          />
+        </label>
+      </div>
       <div className="settings-provider-auth-divider" />
       <strong>Cerebras</strong>
       <div className="settings-field-row">
@@ -149,6 +161,18 @@ export function ApiUsageQuotaCardView({
           disabled={busy}
           onChange={(value) => onChange('cerebrasMonthlyBudgetUsd', value)}
         />
+      </div>
+      <div className="settings-field-row">
+        <label className="settings-field">
+          <span className="settings-field-label">Credit resets on</span>
+          <input
+            className="settings-input"
+            type="date"
+            value={drafts.cerebrasResetAt}
+            disabled={busy}
+            onChange={(event) => onChange('cerebrasResetAt', event.target.value)}
+          />
+        </label>
       </div>
       <UsageWebSessionControls provider="cerebras" />
 
@@ -221,6 +245,34 @@ export function ApiUsageQuotaCardView({
       </div>
       <UsageWebSessionControls provider="meta" />
       <UsageWebSessionControls provider="muse" />
+
+      <div className="settings-provider-auth-divider" />
+      <strong>OpenRouter</strong>
+      <div className="settings-field-row">
+        <MoneyField
+          label="Monthly soft budget (USD)"
+          value={drafts.openrouterMonthlyBudgetUsd}
+          placeholder="20"
+          disabled={busy}
+          onChange={(value) => onChange('openrouterMonthlyBudgetUsd', value)}
+        />
+        <CurrencyField
+          label="Billing currency"
+          value={drafts.openrouterCurrency}
+          disabled={busy}
+          onChange={(value) => onChange('openrouterCurrency', value)}
+        />
+        <label className="settings-field">
+          <span className="settings-field-label">Credit resets on</span>
+          <input
+            className="settings-input"
+            type="date"
+            value={drafts.openrouterResetAt}
+            disabled={busy}
+            onChange={(event) => onChange('openrouterResetAt', event.target.value)}
+          />
+        </label>
+      </div>
 
       <div className="settings-provider-auth-divider" />
       <strong>Token plan browser imports</strong>

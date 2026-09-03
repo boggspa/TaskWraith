@@ -12,6 +12,7 @@ export type ApiUsageBillingCurrency = (typeof API_USAGE_BILLING_CURRENCIES)[numb
 export interface DeepSeekApiUsageBilling {
   totalTopUp?: number
   monthlyBudgetUsd?: number
+  resetAt?: string
 }
 
 export interface CerebrasApiUsageBilling {
@@ -19,6 +20,13 @@ export interface CerebrasApiUsageBilling {
   currentBalance?: number
   currency?: ApiUsageBillingCurrency
   monthlyBudgetUsd?: number
+  resetAt?: string
+}
+
+export interface OpenRouterApiUsageBilling {
+  monthlyBudgetUsd?: number
+  currency?: ApiUsageBillingCurrency
+  resetAt?: string
 }
 
 export interface MetaApiUsageBilling {
@@ -37,6 +45,7 @@ export interface ApiUsageBillingSettings {
   deepseek?: DeepSeekApiUsageBilling
   cerebras?: CerebrasApiUsageBilling
   meta?: MetaApiUsageBilling
+  openrouter?: OpenRouterApiUsageBilling
 }
 
 const MAX_BILLING_AMOUNT = 1_000_000_000_000
@@ -102,6 +111,7 @@ export function normalizeApiUsageBillingSettings(
   if (!input) return undefined
 
   const deepseekInput = record(input.deepseek)
+  const deepseekResetAt = isoDate(deepseekInput?.resetAt)
   const deepseek = deepseekInput
     ? present<DeepSeekApiUsageBilling>({
         ...(amount(deepseekInput.totalTopUp, { positive: true }) !== undefined
@@ -117,12 +127,14 @@ export function normalizeApiUsageBillingSettings(
                 maximum: MAX_MONTHLY_BUDGET_USD
               })
             }
-          : {})
+          : {}),
+        ...(deepseekResetAt ? { resetAt: deepseekResetAt } : {})
       })
     : undefined
 
   const cerebrasInput = record(input.cerebras)
   const cerebrasCurrency = currency(cerebrasInput?.currency)
+  const cerebrasResetAt = isoDate(cerebrasInput?.resetAt)
   const cerebras = cerebrasInput
     ? present<CerebrasApiUsageBilling>({
         ...(amount(cerebrasInput.purchasedCredits, { positive: true }) !== undefined
@@ -142,7 +154,8 @@ export function normalizeApiUsageBillingSettings(
                 maximum: MAX_MONTHLY_BUDGET_USD
               })
             }
-          : {})
+          : {}),
+        ...(cerebrasResetAt ? { resetAt: cerebrasResetAt } : {})
       })
     : undefined
 
@@ -181,10 +194,32 @@ export function normalizeApiUsageBillingSettings(
       })
     : undefined
 
+  const openrouterInput = record(input.openrouter)
+  const openrouterCurrency = currency(openrouterInput?.currency)
+  const openrouterResetAt = isoDate(openrouterInput?.resetAt)
+  const openrouter = openrouterInput
+    ? present<OpenRouterApiUsageBilling>({
+        ...(amount(openrouterInput.monthlyBudgetUsd, {
+          positive: true,
+          maximum: MAX_MONTHLY_BUDGET_USD
+        }) !== undefined
+          ? {
+              monthlyBudgetUsd: amount(openrouterInput.monthlyBudgetUsd, {
+                positive: true,
+                maximum: MAX_MONTHLY_BUDGET_USD
+              })
+            }
+          : {}),
+        ...(openrouterCurrency ? { currency: openrouterCurrency } : {}),
+        ...(openrouterResetAt ? { resetAt: openrouterResetAt } : {})
+      })
+    : undefined
+
   return present<ApiUsageBillingSettings>({
     ...(deepseek ? { deepseek } : {}),
     ...(cerebras ? { cerebras } : {}),
-    ...(meta ? { meta } : {})
+    ...(meta ? { meta } : {}),
+    ...(openrouter ? { openrouter } : {})
   })
 }
 
@@ -193,4 +228,43 @@ export function hasApiUsageBillingProvider(
   provider: keyof ApiUsageBillingSettings
 ): boolean {
   return Boolean(settings?.[provider] && Object.keys(settings[provider] as object).length > 0)
+}
+
+/**
+ * Roll a user-entered monthly billing anchor forward to its next occurrence
+ * strictly after `now`, adding whole months and clamping the anchor's
+ * day-of-month into short months (e.g. Jan 31 -> Feb 28/29). An anchor in
+ * the future is returned unchanged; an absent or invalid anchor yields
+ * undefined. All arithmetic is UTC so DST never shifts the result.
+ */
+export function nextMonthlyResetAt(
+  anchorIso: string | undefined,
+  now: Date = new Date()
+): string | undefined {
+  const anchor = isoDate(anchorIso)
+  if (!anchor) return undefined
+  const anchorDate = new Date(anchor)
+  const day = anchorDate.getUTCDate()
+  const hours = anchorDate.getUTCHours()
+  const minutes = anchorDate.getUTCMinutes()
+  const seconds = anchorDate.getUTCSeconds()
+  const milliseconds = anchorDate.getUTCMilliseconds()
+  let year = anchorDate.getUTCFullYear()
+  let month = anchorDate.getUTCMonth()
+
+  const candidate = (): number => {
+    const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
+    return Date.UTC(year, month, Math.min(day, daysInMonth), hours, minutes, seconds, milliseconds)
+  }
+
+  let next = candidate()
+  while (next <= now.getTime()) {
+    month += 1
+    if (month > 11) {
+      month = 0
+      year += 1
+    }
+    next = candidate()
+  }
+  return new Date(next).toISOString()
 }
