@@ -444,3 +444,67 @@ describe('Devin subscription-plan offer gate', () => {
     expect(projectDevinOffersForPlan(withoutFreeFamily, { freePlan: true })).toBe(withoutFreeFamily)
   })
 })
+
+describe('providers that cannot honour an editing posture say so', () => {
+  const postures = (providerId: string) => hostProviderCatalogEntry(providerId)?.postures ?? []
+  const posture = (providerId: string, postureId: string) =>
+    postures(providerId).find((entry) => entry.postureId === postureId)
+
+  it('withholds Pi editing tiers, because a Host Pi run is read-only by construction', () => {
+    // Advertising an editing tier a provider pins to writeCapable:false is the
+    // Host lying about itself: the user picks it, asks for a change, and gets
+    // only a failure.
+    expect(posture('pi', 'default')?.available).toBe(false)
+    expect(posture('pi', 'workspace_write')?.available).toBe(false)
+    expect(posture('pi', 'default')?.detail).toContain('read-only by construction')
+  })
+
+  it('keeps Pi read tiers available, because those genuinely work', () => {
+    // Withholding everything would be its own dishonesty — Pi runs fine
+    // read-only, and a provider with no usable tier is effectively hidden.
+    expect(posture('pi', 'plan')?.available).toBe(true)
+    expect(posture('pi', 'read_only')?.available).toBe(true)
+  })
+
+  it('withholds every Cursor tier, because no Cursor run can start at all', () => {
+    expect(postures('cursor').every((entry) => !entry.available)).toBe(true)
+    expect(posture('cursor', 'plan')?.detail).toContain('not supported yet')
+  })
+
+  it('still lists both providers — disclose, never hide', () => {
+    // A missing provider reads as a missing feature and generates a bug
+    // report; a withheld tier with a reason is an informed choice.
+    expect(hasHostProviderCatalogEntry('pi')).toBe(true)
+    expect(hasHostProviderCatalogEntry('cursor')).toBe(true)
+    expect(postures('pi').length).toBeGreaterThan(0)
+    expect(postures('cursor').length).toBeGreaterThan(0)
+  })
+
+  it('gives every withheld tier a reason rather than a bare refusal', () => {
+    for (const providerId of ['pi', 'cursor']) {
+      for (const entry of postures(providerId)) {
+        if (!entry.available) expect(entry.detail ?? '').not.toBe('')
+      }
+    }
+  })
+
+  it('satisfies the exact predicate the TUI read-only disclosure derives from', () => {
+    // The TUI marks a provider read-only when NO available posture has a
+    // ceiling above `read` (tuiProviderWriteDisclosure). Stated here without
+    // importing the TUI, so the coupling is explicit and this file fails if the
+    // catalogue ever stops carrying the evidence that disclosure depends on.
+    const canEdit = (providerId: string) =>
+      postures(providerId).some((entry) => entry.available && entry.ceiling !== 'read')
+
+    expect(canEdit('pi')).toBe(false)
+    expect(canEdit('cursor')).toBe(false)
+    expect(canEdit('claude')).toBe(true)
+    expect(canEdit('codex')).toBe(true)
+  })
+
+  it('leaves a write-capable provider untouched', () => {
+    expect(posture('claude', 'default')?.available).toBe(true)
+    expect(posture('claude', 'workspace_write')?.available).toBe(true)
+    expect(posture('claude', 'default')?.detail).toBeUndefined()
+  })
+})

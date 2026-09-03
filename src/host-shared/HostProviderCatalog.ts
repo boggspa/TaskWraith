@@ -134,11 +134,60 @@ export interface HostProviderCatalogCapabilities {
   readonly fullAccessConsentAuthority?: boolean
 }
 
+/**
+ * Providers whose standalone transport cannot honour an editing posture.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * The base POSTURES list is written for a provider that can edit, so every
+ * provider inherited `Accept Edits` and `Full WS Access` as available. For two
+ * of them that is the Host lying about itself:
+ *
+ *   pi     — HostNodePiProvider pins `writeCapable: false`; a Host Pi run is
+ *            read-only by construction, so an editing tier can never apply.
+ *   cursor — the run path is a typed hard stop until a Host-side containment
+ *            attestation exists, so NO posture can currently run at all.
+ *
+ * A user could therefore pick one, choose an editing tier the picker showed as
+ * available, ask for a change, and get only a failure. AntiGravity already
+ * solved this the honest way (see HostStandaloneAntigravityAdmission): withhold
+ * the tier and say why. This applies that same pattern at the one place
+ * per-provider postures are built.
+ *
+ * DISCLOSE, NEVER HIDE. Neither provider is removed from the catalogue — a
+ * missing provider reads as a missing feature and generates a bug report,
+ * while a withheld tier with a reason is an informed choice. `detail` is the
+ * existing carrier for that reason and already crosses the wire, so this needs
+ * no new protocol state: a client that renders posture availability plus detail
+ * gets the whole story for free.
+ */
+const WITHHELD_EDITING_POSTURES: Readonly<
+  Record<string, { readonly detail: string; readonly withholdAll: boolean }>
+> = {
+  pi: {
+    detail: 'Host Pi runs are read-only by construction; no editing tier can apply.',
+    withholdAll: false
+  },
+  cursor: {
+    detail:
+      'Standalone Cursor runs are not supported yet: the Node Host cannot produce the containment attestation a write-capable Cursor argv requires.',
+    withholdAll: true
+  }
+}
+
 function posturesForProvider(
   providerId: string,
   capabilities: HostProviderCatalogCapabilities
 ): readonly HostPermissionPostureOffer[] {
+  const withheld = WITHHELD_EDITING_POSTURES[providerId]
   return POSTURES.map((posture) => {
+    // A provider that cannot honour a tier must not advertise it. `withholdAll`
+    // separates "cannot edit" (pi keeps its read tiers, which genuinely work)
+    // from "cannot run at all" (cursor, where offering any tier would promise a
+    // turn that is hard-stopped before it starts).
+    if (withheld && (withheld.withholdAll || posture.ceiling !== 'read')) {
+      return { ...posture, available: false, detail: withheld.detail }
+    }
     if (posture.postureId !== 'full_access') return { ...posture }
     const detail = FULL_ACCESS_TRANSPORT_DETAIL[providerId]
     return detail && capabilities.fullAccessConsentAuthority === true
