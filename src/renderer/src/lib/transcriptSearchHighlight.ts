@@ -96,8 +96,19 @@ function escapeSelectorValue(value: string): string {
     : value.replace(/["\\]/g, '\\$&')
 }
 
+/**
+ * The needle whose ranges are currently registered, or null when nothing is
+ * painted. This is what lets a pass tell "the query moved on and paints
+ * nothing" (clear) apart from "the same query simply has no matched row
+ * mounted at this instant" (keep what is painted). Without the distinction the
+ * second case unpaints on any frame that scrolls a match out of the window, and
+ * the highlight visibly flashes as you scroll or step between matches.
+ */
+let paintedNeedle: string | null = null
+
 /** Drop both highlight registrations. Safe to call when none were made. */
 export function clearTranscriptSearchHighlights(): void {
+  paintedNeedle = null
   const registry = highlightRegistry()
   if (!registry) return
   registry.delete(TRANSCRIPT_SEARCH_HIGHLIGHT_NAME)
@@ -136,8 +147,15 @@ export function applyTranscriptSearchHighlights({
   const registry = highlightRegistry()
   if (!registry) return 0
   const needle = normalizeTranscriptHighlightQuery(query)
-  if (!scroller || !needle || rowKeys.length === 0) {
+  if (!scroller || !needle) {
     clearTranscriptSearchHighlights()
+    return 0
+  }
+  // No matched row is mounted right now. If the query has not changed, the
+  // paint on screen is still correct for it — dropping it here would unpaint
+  // every time the virtual window scrolls a match out, which reads as a flash.
+  if (rowKeys.length === 0) {
+    if (needle !== paintedNeedle) clearTranscriptSearchHighlights()
     return 0
   }
   const all: Range[] = []
@@ -151,10 +169,14 @@ export function applyTranscriptSearchHighlights({
     collectRangesInRow(row, needle, all)
     if (rowKey === activeRowKey) active.push(...all.slice(before))
   }
+  // Rows were mounted but nothing walked — e.g. the query spans an element
+  // boundary the walker cannot cross. Same rule as above: only a CHANGED query
+  // may unpaint, so a transient miss does not flash.
   if (all.length === 0) {
-    clearTranscriptSearchHighlights()
+    if (needle !== paintedNeedle) clearTranscriptSearchHighlights()
     return 0
   }
+  paintedNeedle = needle
   registry.set(TRANSCRIPT_SEARCH_HIGHLIGHT_NAME, new Highlight(...all))
   if (active.length > 0) {
     const activeHighlight = new Highlight(...active)

@@ -727,6 +727,39 @@ describe('ToolParser', () => {
       ).toMatchObject({ additions: 3, deletions: 2 })
     })
 
+    it('reads create and delete from /dev/null markers, not just git mode lines', () => {
+      // A plain unified diff carries the operation ONLY in its /dev/null
+      // markers; `new file mode` / `deleted file mode` are git-specific. Without
+      // this the file kept the `diff --git` header's default of 'modified', so a
+      // DELETION reached the close-out card badged "Edited".
+      const deleted = parseUnifiedDiffSummary(
+        [
+          'diff --git a/build_output.txt b/build_output.txt',
+          '--- a/build_output.txt',
+          '+++ /dev/null',
+          '@@ -1,2 +0,0 @@',
+          '-gone one',
+          '-gone two'
+        ].join('\n')
+      )
+      expect(deleted?.files?.[0]).toMatchObject({
+        path: 'build_output.txt',
+        status: 'deleted'
+      })
+
+      const created = parseUnifiedDiffSummary(
+        [
+          'diff --git a/fresh.txt b/fresh.txt',
+          '--- /dev/null',
+          '+++ b/fresh.txt',
+          '@@ -0,0 +1,2 @@',
+          '+new one',
+          '+new two'
+        ].join('\n')
+      )
+      expect(created?.files?.[0]).toMatchObject({ path: 'fresh.txt', status: 'created' })
+    })
+
     it('parses unified diffs when changes do not carry stats', () => {
       const summary = parseUnifiedDiffSummary(
         [

@@ -5043,7 +5043,11 @@ export const TranscriptPanel = memo(
         rowKeys: mountedMatches,
         activeRowKey: threadSearchActiveRowKey
       })
-      return () => clearTranscriptSearchHighlights()
+      // NO cleanup here on purpose. This effect is keyed on `renderedRows`,
+      // which changes on every scroll frame and every streaming delta, and a
+      // cleanup runs BEFORE each re-run — so returning one would unpaint and
+      // repaint the highlight on every one of those frames, which is exactly
+      // the flashing this used to produce. Teardown is handled once, below.
     }, [
       renderedRows,
       scrollRef,
@@ -5051,6 +5055,16 @@ export const TranscriptPanel = memo(
       threadSearchMatchRowKeys,
       threadSearchQuery
     ])
+
+    // Teardown for the painting effect above, deliberately split out so it is
+    // keyed on whether this pane HAS a search bar at all rather than on
+    // `renderedRows`. It therefore fires once — when the pane stops carrying a
+    // search bar, or unmounts — instead of on every scroll and stream frame.
+    const hasThreadSearchBar = threadSearchQuery !== undefined
+    useEffect(() => {
+      if (!hasThreadSearchBar) return
+      return () => clearTranscriptSearchHighlights()
+    }, [hasThreadSearchBar])
 
     useLayoutEffect(() => {
       if (!pendingFocusTarget) return

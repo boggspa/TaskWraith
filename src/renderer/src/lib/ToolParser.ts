@@ -1171,6 +1171,20 @@ export function parseUnifiedDiffSummary(diffText: string): ToolDiffSummary | und
     if (line.startsWith('+++ b/')) current.path = line.slice(6)
     if (line.startsWith('new file mode')) current.status = 'created'
     if (line.startsWith('deleted file mode')) current.status = 'deleted'
+    // A plain unified diff carries create/delete ONLY in its `/dev/null`
+    // markers — `new file mode` / `deleted file mode` are git-specific and
+    // absent from `diff -u` output and from patches that ship just the two
+    // header lines. Without this the file stayed at the `diff --git` header's
+    // default of 'modified', so a deletion reached the close-out card badged
+    // "Edited". `BridgeToolDiffStats` already reads these markers; this parser
+    // did not. Guarded on a hunk not having started, so a removed CONTENT line
+    // that happens to read `-- /dev/null` cannot be mistaken for the header.
+    if ((current.additions || 0) === 0 && (current.deletions || 0) === 0) {
+      if (line.startsWith('--- ') && line.slice(4).trim() === '/dev/null')
+        current.status = 'created'
+      if (line.startsWith('+++ ') && line.slice(4).trim() === '/dev/null')
+        current.status = 'deleted'
+    }
     if (line.startsWith('+') && !line.startsWith('+++'))
       current.additions = (current.additions || 0) + 1
     if (line.startsWith('-') && !line.startsWith('---'))
