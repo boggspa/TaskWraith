@@ -773,6 +773,7 @@ import { isChatSummaryRecord, mergeChatRecord, mergeChatRecordValue } from './li
 import { ChatUpdateHydrationQueue } from './lib/chatUpdateHydrationQueue'
 import { commitHydratedChat, resolveChatHydration } from './lib/chatHydrationMerge'
 import { hydratePagedChatShell } from './lib/chatTranscriptPager'
+import { createSurfaceChatHydrator, isSurfaceChatHydrated } from './lib/chatSurfacePagedHydration'
 import { useCurrentChatTranscriptWindow } from './lib/currentChatTranscriptWindow'
 import {
   isTranscriptPagedShell,
@@ -6420,6 +6421,27 @@ function App(): React.JSX.Element {
     return committed
   }
 
+  // Stage 1b parity for SECONDARY chat surfaces. Built once and driven through
+  // a ref: `createSurfaceChatHydrator` owns a per-chat single-flight map, so a
+  // hydrator rebuilt on every render would throw that away. The runtime and its
+  // transcript store are themselves ref-held (getOrCreateChatHydrationRuntime),
+  // so closing over them here is stable.
+  const surfacePagedHydrationDepsRef = useRef({ refreshSingleChat, applyPagedHydratedChat })
+  surfacePagedHydrationDepsRef.current = { refreshSingleChat, applyPagedHydratedChat }
+  const hydrateSurfaceChatRef = useRef<((chatId: string) => Promise<ChatRecord | null>) | null>(
+    null
+  )
+  if (!hydrateSurfaceChatRef.current) {
+    hydrateSurfaceChatRef.current = createSurfaceChatHydrator({
+      resolveChat: (chatId) => chatByIdRef.current.get(chatId),
+      transcriptStore: chatHydrationRuntime.transcriptStore,
+      fullHydrate: (chatId) => surfacePagedHydrationDepsRef.current.refreshSingleChat(chatId),
+      commitPagedShell: (shell, page) =>
+        surfacePagedHydrationDepsRef.current.applyPagedHydratedChat(shell, page)
+    })
+  }
+  const hydrateSurfaceChat = hydrateSurfaceChatRef.current
+
   // Composer prop: Class W surfaces (e.g. the @-mention menu) request full
   // hydration of a paged chat through this.
   const onRequestFullChat = useCallback(
@@ -6434,8 +6456,13 @@ function App(): React.JSX.Element {
   // are deduplicated per id, and a failed pane cannot cancel its neighbours.
   useChatSurfaceHydration<ChatRecord>(isMultiviewSplit ? multiview.paneChatIds : [], {
     resolveChat: (chatId) => chatByIdRef.current.get(chatId),
-    isHydrated: (chat) => !isChatSummaryRecord(chat),
-    hydrateChat: refreshSingleChat,
+    // A marked shell counts as hydrated while the store holds its window. The
+    // old `!isChatSummaryRecord` binding read every shell as un-hydrated, so
+    // the coordinator escalated each one back to a full fetch — including the
+    // FOCUSED chat's shell whenever a pane shared it, undoing Stage 1b for the
+    // main window in split mode.
+    isHydrated: (chat) => isSurfaceChatHydrated(chat, chatHydrationRuntime.transcriptStore),
+    hydrateChat: hydrateSurfaceChat,
     pinChat: (chatId) => chatHydrationRuntime.retention.pin(chatId, 'pane'),
     unpinChat: (chatId) => chatHydrationRuntime.retention.unpin(chatId, 'pane')
   })
@@ -6464,6 +6491,15 @@ function App(): React.JSX.Element {
   // focused parent. Keep it resident for the whole presentation lifetime —
   // including while another right-dock tab temporarily covers it — and hydrate
   // its own id independently of currentChat/focus.
+  //
+  // DELIBERATELY NOT on the Stage 1b paged policy, unlike panes and the pop-out.
+  // Presenting a live side chat always mutates it (`hydratePresentedSideChat` →
+  // `applySideChatLifecycle(..., 'active')`), and `updateChatById` routes any
+  // mutation whose base is a summary record — which a shell is — through the
+  // summary queue, whose `hydrate` is a full `window.api.getChat`. Paging here
+  // would therefore pay for a shell + tail page AND still full-fetch on the very
+  // next statement. Full hydration is strictly cheaper until the lifecycle
+  // stamp can be applied without escalating.
   useChatSurfaceHydration<ChatRecord>(sideChatId ? [sideChatId] : [], {
     resolveChat: (chatId) => chatByIdRef.current.get(chatId),
     isHydrated: (chat) => !isChatSummaryRecord(chat),
@@ -7672,10 +7708,35 @@ function App(): React.JSX.Element {
     await rehydrateQueuedRuns(wsList).catch(() => {})
     if (isChatPopoutWindow) {
       const popoutSummary = allChats.find((chat) => chat.appChatId === chatPopoutChatIdRef.current)
-      const popoutChat =
-        popoutSummary && isChatSummaryRecord(popoutSummary)
-          ? (await window.api.getChat(popoutSummary.appChatId)) || popoutSummary
-          : popoutSummary
+      // Stage 1b: the pop-out / Compact Companion boot used to fetch the FULL
+      // record unconditionally and never ingest it into the transcript store, so
+      // an idle large chat rendered its entire transcript through
+      // TranscriptPanel's derivation graph for the whole window lifetime
+      // (`storeReady` only flips once a live stream frame arrives). Route the
+      // open through the shared surface policy instead: over-budget chats open
+      // as chrome shell + one bounded tail page, everything else full-hydrates
+      // byte-identically to before.
+      //
+      // This does NOT reuse `hydrateSurfaceChat`: that resolves through
+      // `chatByIdRef`, which the `replaceAll` above only populates once React
+      // commits, so at boot the ref is still empty for this id and every open
+      // would silently fall through to a full fetch. Resolving the row we
+      // already hold is what makes the paging decision reachable here.
+      //
+      // Safe to page: the boot tail below only reads chrome and sets local UI
+      // state — it never mutates the record, which would auto-escalate through
+      // `updateChatById`'s summary queue.
+      const hydratePopoutBootChat = createSurfaceChatHydrator({
+        resolveChat: () => popoutSummary ?? null,
+        transcriptStore: chatHydrationRuntime.transcriptStore,
+        // Deliberately the raw channel, not `refreshSingleChat`: the non-paged
+        // path must stay exactly what it was before this change.
+        fullHydrate: async (chatId) => (await window.api.getChat(chatId)) || null,
+        commitPagedShell: applyPagedHydratedChat
+      })
+      const popoutChat = popoutSummary
+        ? (await hydratePopoutBootChat(popoutSummary.appChatId)) || popoutSummary
+        : popoutSummary
       if (popoutChat) {
         if (!isChatSummaryRecord(popoutChat)) {
           setChats((prev) => mergeChatRecord(prev, popoutChat))
@@ -29770,7 +29831,8 @@ function App(): React.JSX.Element {
       runningChatIds,
       runQueueJobs
     })
-    const viewerIsWelcomeChat = (viewerChat.messages?.length || 0) === 0
+    const viewerIsWelcomeChat =
+      !isTranscriptPagedShell(viewerChat) && (viewerChat.messages?.length || 0) === 0
     const viewerRun = viewerChat.runs?.[viewerChat.runs.length - 1] || null
     // ── Per-pane agent-aura inputs ─────────────────────────────────────────
     // Mirror App's app-global `auraProviderKey` + `runFxStatus` (see ~15834)
@@ -30716,7 +30778,8 @@ function App(): React.JSX.Element {
         runningChatIds,
         runQueueJobs
       })
-      const viewerIsWelcomeChat = (viewerChat.messages?.length || 0) === 0
+      const viewerIsWelcomeChat =
+        !isTranscriptPagedShell(viewerChat) && (viewerChat.messages?.length || 0) === 0
       const viewerRun = viewerChat.runs?.[viewerChat.runs.length - 1] || null
       // (Per-pane agent-aura inputs are shell-only and live in
       // `renderMultiviewPaneCell`; the composer ctx doesn't need them.)
