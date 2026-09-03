@@ -101,7 +101,8 @@ import {
   type TaskWraithTuiState,
   type TuiOverlay,
   type TuiPendingHostMutation,
-  type TuiPendingSelection
+  type TuiPendingSelection,
+  type TuiQueuedDraft
 } from './state'
 import {
   liveThreadWorkIds,
@@ -4312,6 +4313,111 @@ export class TaskWraithTui {
     this.queueRetryFences.delete(draftId)
   }
 
+  /**
+   * Whether a queued draft stages a model the thread's elevated consent does
+   * not cover.
+   *
+   * The Host pins the exact model an elevated posture was consented for and
+   * denies a per-send switch as `standalone_configuration_mismatch`, asking for
+   * an explicit reconfigure instead. That guard is correct and is left alone —
+   * this only detects the case so the TUI can perform the reconfigure the Host
+   * is asking for.
+   *
+   * These projection fields are display-only and never grant authority. They
+   * decide only whether it is worth asking the Host, which re-validates the
+   * posture, the model and the offer revision regardless of what is read here.
+   */
+  private elevatedDraftPinsAnotherModel(draft: TuiQueuedDraft): boolean {
+    const staged = draft.selection?.model
+    if (!staged) return false
+    const thread = this.hostSnapshot?.threads.find((candidate) => candidate.id === draft.threadId)
+    if (!thread) return false
+    const elevated =
+      thread.permissionPresetId === 'workspace_write' || thread.permissionPresetId === 'full_access'
+    // The pin denies only on inequality, so an override that already matches
+    // the thread is accepted as-is and must not trigger a reconfigure.
+    return elevated && typeof thread.modelId === 'string' && thread.modelId !== staged
+  }
+
+  /**
+   * Reconfigure an elevated thread onto the draft's staged model so the next
+   * drain pass can send it against a selection the Host has consented to.
+   */
+  private async reconfigureElevatedDraftModel(
+    draft: TuiQueuedDraft,
+    fence: string
+  ): Promise<boolean> {
+    const staged = draft.selection?.model
+    const thread = this.hostSnapshot?.threads.find((candidate) => candidate.id === draft.threadId)
+    const providerId = thread?.providerId
+    if (!staged || !providerId || !this.client) return false
+    try {
+      const [current, refreshed] = await Promise.all([
+        this.client.getThreadOffers(draft.threadId),
+        this.client.getProviderOffers(providerId)
+      ])
+      const offers = this.effectiveProviderOffers(refreshed)
+      const model = offers.models.find(
+        (candidate) => candidate.modelId === staged && candidate.available
+      )
+      if (!model) throw new Error('That model is no longer offered by the Host.')
+      // The posture is carried across unchanged. This is a model switch, not a
+      // permission change, and re-consenting to a different tier here would be
+      // exactly the unconsented escalation the Host's pin exists to prevent.
+      const postureId = current.currentPostureId ?? thread.permissionPresetId
+      const posture = offers.postures.find(
+        (candidate) => candidate.postureId === postureId && candidate.available
+      )
+      if (!posture) throw new Error('The thread permission tier is no longer offered.')
+      // The queued command is memoised by draft id and its receipt recovered by
+      // command id. A denial is terminal, so replaying that identity would
+      // re-apply the old refusal verbatim and the reconfigure would look like it
+      // did nothing. Drop it so the next pass mints a fresh command.
+      this.queuedDraftCommands.delete(draft.id)
+      await this.configureThreadSelection({
+        threadId: draft.threadId,
+        providerId: offers.providerId,
+        providerLabel: offers.providerId,
+        offers,
+        model,
+        posture,
+        ...(draft.selection?.reasoningEffort
+          ? { reasoningId: draft.selection.reasoningEffort }
+          : {})
+      })
+    } catch (error) {
+      this.failElevatedReconfigure(
+        draft,
+        fence,
+        error instanceof Error ? error.message : String(error)
+      )
+      return false
+    }
+    // configureThreadSelection reports nothing on refusal, so the thread itself
+    // is the evidence. Without this check a refused reconfigure would leave the
+    // draft dispatchable and unchanged, and the drain would spin on it forever.
+    if (this.elevatedDraftPinsAnotherModel(draft)) {
+      this.failElevatedReconfigure(
+        draft,
+        fence,
+        'The Host did not accept the model switch for this write-capable thread.'
+      )
+      return false
+    }
+    return true
+  }
+
+  /** Park a draft whose reconfigure did not take, rather than spin the drain. */
+  private failElevatedReconfigure(draft: TuiQueuedDraft, fence: string, message: string): void {
+    this.queueRetryFences.set(draft.id, fence)
+    this.state.queuedDrafts = replaceQueuedDraft(this.state.queuedDrafts, draft.id, {
+      phase: 'queued',
+      error: message
+    })
+    this.setNotice(message, 'warning', 4_000)
+    this.render()
+  }
+
   private async drainQueuedDrafts(): Promise<void> {
     if (
       (this.state.queuedDrafts?.length ?? 0) > 0 &&
@@ -4345,6 +4451,28 @@ export class TaskWraithTui {
       new Set(this.acceptedQueueRuns.keys())
     )
     if (!draft) return
+
+    // A write-capable thread pins the model its consent was granted for, so a
+    // staged switch has to be an explicit reconfigure rather than a per-send
+    // override the Host will deny. Sequenced as its own settled mutation
+    // because runHostMutation refuses to reenter while one is in flight; the
+    // next drain pass sends the draft against the consented selection.
+    if (this.elevatedDraftPinsAnotherModel(draft)) {
+      let reconfigured = false
+      this.queueDrainActive = true
+      try {
+        reconfigured = await this.reconfigureElevatedDraftModel(draft, fence)
+      } finally {
+        this.queueDrainActive = false
+      }
+      // Scheduled only once the drain flag has cleared. scheduleQueuedDraftDrain
+      // defers through queueMicrotask, so scheduling from inside the guarded
+      // section runs the next pass while the guard is still held: it returns at
+      // the reentry check having already consumed the scheduled slot, and the
+      // draft sits queued forever with nothing left to wake it.
+      if (reconfigured) this.scheduleQueuedDraftDrain()
+      return
+    }
 
     this.queueDrainActive = true
     this.state.queuedDrafts = replaceQueuedDraft(this.state.queuedDrafts, draft.id, {

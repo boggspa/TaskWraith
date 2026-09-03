@@ -129,6 +129,8 @@ interface FakeHostHandlers {
   capabilities?: readonly HostCapability[]
   providerStatuses?: () => readonly HostProviderStatusProjection[]
   providerOffers?: (providerId: string) => HostProviderOffersProjection
+  /** Return a deny reason to model a Host authority gate refusing this command. */
+  denyCommand?: (command: HostCommand) => string | undefined
   providerAuthFlows?: (providerId: string) => readonly HostProviderAuthFlowProjection[]
   providerAuthStatus?: (providerId: string) => HostProviderAuthStatusProjection
   threadHistory?: (request: HostThreadHistoryRequest) => HostThreadHistoryPage
@@ -605,6 +607,20 @@ class FakeHostV2 {
     }
     if (command.name === 'question.answer' && command.target.questionId) {
       this.answeredProjectionQuestions.add(command.target.questionId)
+    }
+    // Lets a test model a real Host authority gate (the elevated-posture model
+    // pin denies with standalone_configuration_mismatch). Without this the fake
+    // accepts everything, and a test for a denied send would pass either way.
+    const denial = this.handlers.denyCommand?.(command)
+    if (denial) {
+      const receipt = this.makeReceipt(command, {
+        status: 'denied',
+        authority: { decision: 'deny', reason: denial },
+        errorMessage: denial
+      })
+      this.receipts.set(receipt.commandId, receipt)
+      this.cursor += 1
+      return receipt
     }
     const mode = this.handlers.mutationMode ?? 'allow'
     if (mode === 'allow' || command.name === 'ping') {
@@ -1176,6 +1192,204 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       host.commands.filter((command) => command.name === 'composer.send')[1]?.arguments.text
     ).toBe('second queued')
   })
+
+  it('reconfigures an elevated thread before sending a staged model switch', async () => {
+    // The Host pins the exact model an elevated posture was consented for and
+    // denies a per-send switch, asking for an explicit reconfigure instead.
+    // That gate is modelled faithfully here, so this reds against a TUI that
+    // only resends the override: the draft is denied and never drains.
+    const initialRun = {
+      runId: 'run-elevated',
+      threadId: 'thread-1',
+      providerId: 'claude',
+      providerOutcome: 'running' as const
+    }
+    let threadModel = 'claude-sonnet-5'
+    const threadsNow = () => [
+      {
+        id: 'thread-1',
+        workspaceId: 'ws-1',
+        title: 'Solo thread',
+        chatKind: 'single' as const,
+        archived: false,
+        pinned: false,
+        updatedAt: 10,
+        messageCount: 1,
+        providerId: 'claude',
+        modelId: threadModel,
+        permissionPresetId: 'workspace_write',
+        latestPreview: 'Hello TaskWraith',
+        previewTruncated: false
+      }
+    ]
+    let current = makeHostSnapshot({ runs: [initialRun], threads: threadsNow() })
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-elevated-switch-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => current,
+      resultSummary: (command) => (command.name === 'composer.send' ? 'run_started' : undefined),
+      providerOffers: (providerId) => ({
+        providerId,
+        offerRevision: `${providerId}-revision`,
+        models: [
+          { modelId: 'claude-sonnet-5', label: 'Sonnet 5', available: true, reasoning: [] },
+          { modelId: 'claude-opus-5', label: 'Opus 5', available: true, reasoning: [] }
+        ],
+        postures: [
+          {
+            postureId: 'workspace_write',
+            label: 'Full WS Access',
+            available: true,
+            requiresExplicitConsent: true,
+            ceiling: 'workspace_write' as const
+          }
+        ]
+      }),
+      denyCommand: (command) =>
+        command.name === 'composer.send' &&
+        typeof command.arguments.model === 'string' &&
+        command.arguments.model !== threadModel
+          ? 'standalone_configuration_mismatch'
+          : undefined,
+      onCommand: (command) => {
+        if (command.name === 'thread.configure') {
+          threadModel = String(command.arguments.modelId ?? threadModel)
+          current = { ...current, threads: threadsNow() }
+          return
+        }
+        if (command.name !== 'composer.send') return
+        current = {
+          ...current,
+          threads: threadsNow(),
+          runs: [
+            ...current.runs.filter((run) => run.runId !== command.commandId),
+            {
+              runId: command.commandId,
+              threadId: command.target.threadId,
+              providerId: 'claude',
+              providerOutcome: 'running'
+            }
+          ]
+        }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, { projectionRefreshMs: 60_000 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+
+    feed(input, 'switch model\r')
+    const drafts = () =>
+      (tui as unknown as { state: { queuedDrafts?: Array<{ selection?: unknown }> } }).state
+        .queuedDrafts ?? []
+    await waitFor(() => drafts().length === 1, 'draft queued behind the live run')
+    // The tune lens stages the switch onto the draft it was authored for.
+    drafts()[0].selection = { model: 'claude-opus-5' }
+
+    const done = { ...initialRun, providerOutcome: 'completed' as const, endedAt: 20 }
+    current = { ...current, runs: [done] }
+    host.pushDeltas([{ family: 'run', entityId: initialRun.runId, payload: done }])
+
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'thread.configure'),
+      'elevated thread reconfigured onto the staged model',
+      5_000
+    )
+    const configure = host.commands.find((command) => command.name === 'thread.configure')!
+    expect(configure.arguments.modelId).toBe('claude-opus-5')
+    // The posture is carried across untouched — this is a model switch, not a
+    // permission change, and re-consenting to another tier here would be the
+    // escalation the Host's pin exists to prevent.
+    expect(configure.arguments.postureId).toBe('workspace_write')
+
+    // The receipt is the assertion that matters. A denied send leaves the draft
+    // queued forever, which is precisely the reported bug, so draining to zero
+    // is the only thing that proves the send was actually accepted.
+    await waitFor(() => drafts().length === 0, 'queued draft sent after the reconfigure', 5_000)
+    const sent = host.commands.filter((command) => command.name === 'composer.send')
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.arguments.text).toBe('switch model')
+    expect(host.commands.findIndex((command) => command.name === 'thread.configure')).toBeLessThan(
+      host.commands.findIndex((command) => command.name === 'composer.send')
+    )
+  }, 15_000)
+
+  it('keeps the cheap per-send override on a thread that is not write-capable', async () => {
+    // Only the elevated pin needs a reconfigure. A normal thread must keep
+    // riding the model on the send itself rather than paying for an extra
+    // round-trip, so this guards against widening the fix.
+    const initialRun = {
+      runId: 'run-plain',
+      threadId: 'thread-1',
+      providerId: 'claude',
+      providerOutcome: 'running' as const
+    }
+    let current = makeHostSnapshot({
+      runs: [initialRun],
+      threads: [
+        {
+          id: 'thread-1',
+          workspaceId: 'ws-1',
+          title: 'Solo thread',
+          chatKind: 'single' as const,
+          archived: false,
+          pinned: false,
+          updatedAt: 10,
+          messageCount: 1,
+          providerId: 'claude',
+          modelId: 'claude-sonnet-5',
+          permissionPresetId: 'default',
+          latestPreview: 'Hello TaskWraith',
+          previewTruncated: false
+        }
+      ]
+    })
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-plain-switch-'))
+    const host = new FakeHostV2(userDataPath, {
+      snapshot: () => current,
+      resultSummary: (command) => (command.name === 'composer.send' ? 'run_started' : undefined),
+      onCommand: (command) => {
+        if (command.name !== 'composer.send') return
+        current = {
+          ...current,
+          runs: [
+            ...current.runs.filter((run) => run.runId !== command.commandId),
+            {
+              runId: command.commandId,
+              threadId: command.target.threadId,
+              providerId: 'claude',
+              providerOutcome: 'running'
+            }
+          ]
+        }
+      }
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath, { projectionRefreshMs: 60_000 })
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'thread selected')
+
+    feed(input, 'plain switch\r')
+    const drafts = () =>
+      (tui as unknown as { state: { queuedDrafts?: Array<{ selection?: unknown }> } }).state
+        .queuedDrafts ?? []
+    await waitFor(() => drafts().length === 1, 'draft queued behind the live run')
+    drafts()[0].selection = { model: 'claude-opus-5' }
+
+    const done = { ...initialRun, providerOutcome: 'completed' as const, endedAt: 20 }
+    current = { ...current, runs: [done] }
+    host.pushDeltas([{ family: 'run', entityId: initialRun.runId, payload: done }])
+
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'composer.send'),
+      'draft dispatched with its per-send override',
+      5_000
+    )
+    const sent = host.commands.find((command) => command.name === 'composer.send')!
+    expect(sent.arguments.model).toBe('claude-opus-5')
+    expect(host.commands.find((command) => command.name === 'thread.configure')).toBeUndefined()
+  }, 15_000)
 
   it('Esc captures the current draft, requests one cancel, and waits for terminal proof', async () => {
     const active = {
