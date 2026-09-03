@@ -4465,7 +4465,13 @@ function shellSandboxRefusalMessage(
       ? `This workspace root (${plan.detail || 'unknown'}) cannot be contained without granting write access to everything inside it. Use a workspace rooted at a project directory rather than your home directory, or run this seat on the Full Access preset, or set TASKWRAITH_SHELL_SANDBOX=0.`
       : plan.reason === 'sandbox_binary_unavailable'
         ? `${plan.detail || 'sandbox-exec'} is not present on this host, so the workspace shell sandbox cannot be applied. Set TASKWRAITH_SHELL_SANDBOX=0 to run without it.`
-        : 'Set TASKWRAITH_SHELL_SANDBOX=0 to run without workspace shell containment.'
+        : plan.reason === 'profile_build_failed'
+          ? // Usually a directory name carrying a control byte, which macOS
+            // permits. That is fixable by renaming, so say so rather than
+            // pointing at the off switch and discarding the one field that
+            // names the cause.
+            `The sandbox profile could not be built for this workspace or one of its granted paths (${plan.detail || 'unknown reason'}). Rename the offending directory, or run this seat on the Full Access preset, or set TASKWRAITH_SHELL_SANDBOX=0.`
+          : 'Set TASKWRAITH_SHELL_SANDBOX=0 to run without workspace shell containment.'
   return `TaskWraith did not run this ${subject}: the workspace shell sandbox is enabled and this run could not be contained (${plan.reason}). ${remedy}`
 }
 

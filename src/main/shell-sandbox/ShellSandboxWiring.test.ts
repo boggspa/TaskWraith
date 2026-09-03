@@ -99,3 +99,28 @@ describe('index.ts brokered shell sandbox — unenforceable containment warning'
     expect(warnMessageSource).toContain('${workspacePath')
   })
 })
+
+// Every enforced reason must carry an actionable remedy AND its detail. A
+// generic "set the env var to 0" for a condition the user could fix by
+// renaming a directory points them at disabling the feature instead.
+describe('refusal message covers every enforced reason', () => {
+  const indexSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
+  const start = indexSource.indexOf('function shellSandboxRefusalMessage(')
+  const body = indexSource.slice(start, indexSource.indexOf('\n}', start))
+
+  it('gives each enforced reason its own remedy', () => {
+    for (const reason of [
+      'unsafe_workspace_root',
+      'sandbox_binary_unavailable',
+      'profile_build_failed'
+    ]) {
+      expect(`${reason}:${body.includes(`'${reason}'`)}`).toBe(`${reason}:true`)
+    }
+  })
+
+  it('surfaces plan.detail in every one of those branches', () => {
+    const branches = body.split('plan.reason ===').length - 1
+    const details = body.split('plan.detail').length - 1
+    expect(`branches:${branches} details:${details}`).toBe(`branches:3 details:3`)
+  })
+})

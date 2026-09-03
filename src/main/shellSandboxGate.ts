@@ -6,23 +6,29 @@
 /**
  * Wrap the agent shell in a workspace-write Seatbelt (`sandbox-exec`).
  *
- * Default OFF while two reviewed defects are open: `thisRun`-duration external
- * write grants are not yet re-granted in the profile, and a login shell can
- * reassign TMPDIR past the allowed temp root. Both would silently deny writes
- * the user authorized, so the default is held until they are closed and a
- * review comes back clean.
+ * Default ON. It shipped OFF first and stayed there through four review rounds,
+ * because the two things that make this safe to default had to be true and
+ * neither was assumed:
  *
- * A live canary already ran git, node, npm, tsc, vitest, prettier and eslint
- * under the generated profile in a real workspace with no failures, so the
- * toolchain evidence for turning it on exists — it is the grant handling that
- * is not ready, not the profile.
+ *   1. Real toolchains still build contained. A live canary ran git, node, npm,
+ *      tsc, vitest, prettier and eslint under the generated profile in a real
+ *      workspace — 14/14, no failures.
+ *   2. Containment never silently overrides a permission the USER granted.
+ *      External write grants, including `thisRun`-duration ones, are re-granted
+ *      in the profile; a run that cannot be contained refuses rather than
+ *      running open; and a workspace whose paths cannot be expressed refuses
+ *      the shell without taking non-spawning tools down with it.
  *
- * `TASKWRAITH_SHELL_SANDBOX=1` (or true/yes/on) opts in. Prefer the Full Access
- * preset for a run that legitimately needs an UNcontained shell: that is a
- * per-run, signed, user-visible decision, whereas this variable moves every
- * seat at once.
+ * `TASKWRAITH_SHELL_SANDBOX=0` (or false/no/off) disables it. An UNRECOGNISED
+ * value keeps containment on: the safe reading of a typo is that the operator
+ * wanted the sandbox, not that they wanted an open shell.
+ *
+ * For a run that legitimately needs an UNcontained shell, prefer the Full
+ * Access preset — a per-run, signed, user-visible decision that this module
+ * already stands down for — over this variable, which moves every seat at once.
  */
 export function shellSandboxEnabled(): boolean {
   const value = process.env.TASKWRAITH_SHELL_SANDBOX?.trim().toLowerCase()
-  return value === '1' || value === 'true' || value === 'yes' || value === 'on'
+  if (value === undefined || value === '') return true
+  return value !== '0' && value !== 'false' && value !== 'no' && value !== 'off'
 }
