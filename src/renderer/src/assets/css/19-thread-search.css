@@ -127,3 +127,24 @@
     width: auto;
   }
 }
+
+/* In-chat search matches inside the transcript, painted from
+ * `lib/transcriptSearchHighlight.ts` through the CSS Custom Highlight API
+ * (`CSS.highlights` + Range). `::highlight()` only honours colour-ish
+ * properties — no padding, no border-radius — so this is the flat cousin of
+ * the sidebar's `.sidebar-search-highlight` <mark>. Nothing here can affect
+ * layout, which is why the painting pass is safe to run over rows the
+ * transcript virtualiser owns. */
+::highlight(thread-search-match) {
+  background-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--text-primary);
+}
+
+/* The match the "N / M" counter is pointing at — the one the ↑/↓ buttons step
+ * between. Registered second and at a higher priority, so it paints over the
+ * all-matches highlight it overlaps. */
+::highlight(thread-search-match-active) {
+  background-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  color: var(--text-primary);
+  text-decoration: underline;
+}

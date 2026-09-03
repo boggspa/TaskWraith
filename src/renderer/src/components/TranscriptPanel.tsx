@@ -197,6 +197,10 @@ import {
   transcriptRunningChatIdsSignature
 } from '../lib/transcriptPanelMemoProps'
 import {
+  applyTranscriptSearchHighlights,
+  clearTranscriptSearchHighlights
+} from '../lib/transcriptSearchHighlight'
+import {
   ActivityStack,
   stabilizeThinkingTraceActions,
   type ActivityTimelineSegmentKind,
@@ -751,6 +755,18 @@ export type TranscriptPanelProps = {
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
   sideChatSeedMessageId?: string | null
   jumpToMessageRequest?: { messageId: string; rowKey?: string; requestId: number } | null
+  /**
+   * In-chat search (Cmd+F). The bar owns the query, the match list and the
+   * "N / M" cursor; the panel's only job is to PAINT them over the rows it has
+   * mounted. `undefined` means this pane has no search bar at all (the side
+   * pane) — the panel then never touches the shared highlight registry, so it
+   * cannot wipe the main pane's highlights.
+   */
+  threadSearchQuery?: string
+  /** `rowKey`s the matcher counted as hits, across the whole transcript. */
+  threadSearchMatchRowKeys?: ReadonlySet<string>
+  /** The `rowKey` the counter is currently pointing at. */
+  threadSearchActiveRowKey?: string | null
   /** Temporarily force-mount this transferred reading anchor so the host's
    * exact-offset restore can find it even when the destination virtual window
    * initially lands elsewhere after a width change. */
@@ -2794,6 +2810,9 @@ export const TranscriptPanel = memo(
     onOpenSideChatFromMessage,
     sideChatSeedMessageId,
     jumpToMessageRequest,
+    threadSearchQuery,
+    threadSearchMatchRowKeys,
+    threadSearchActiveRowKey,
     externalRestoreAnchorMessageId,
     onManualTranscriptJump,
     onJumpToLatest,
@@ -5000,6 +5019,38 @@ export const TranscriptPanel = memo(
         if (!mountedRowKeys.has(rowKey)) rowElementCacheRef.current.delete(rowKey)
       }
     }, [renderedRows])
+
+    // In-chat search painting. Sibling of the cache sweep above and keyed on
+    // the same `renderedRows`, so the pass re-runs whenever the virtual window
+    // moves, a row remounts, or a streaming delta rewrites a row's text — which
+    // is also what keeps every registered `Range` pointing at a live node.
+    // Scoped to matched rows that are mounted right now, so the cost is a text
+    // walk over a handful of rows rather than the transcript.
+    useEffect(() => {
+      // `undefined` query = this pane has no search bar; never touch the
+      // registry, or the side pane would clear the main pane's highlights.
+      if (threadSearchQuery === undefined) return
+      const matchedRowKeys = threadSearchMatchRowKeys
+      const mountedMatches =
+        matchedRowKeys && matchedRowKeys.size > 0
+          ? renderedRows
+              .filter((row) => matchedRowKeys.has(row.rowKey))
+              .map((row) => row.rowKey)
+          : []
+      applyTranscriptSearchHighlights({
+        scroller: scrollRef.current,
+        query: threadSearchQuery,
+        rowKeys: mountedMatches,
+        activeRowKey: threadSearchActiveRowKey
+      })
+      return () => clearTranscriptSearchHighlights()
+    }, [
+      renderedRows,
+      scrollRef,
+      threadSearchActiveRowKey,
+      threadSearchMatchRowKeys,
+      threadSearchQuery
+    ])
 
     useLayoutEffect(() => {
       if (!pendingFocusTarget) return

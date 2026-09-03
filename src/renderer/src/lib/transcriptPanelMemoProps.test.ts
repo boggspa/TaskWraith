@@ -181,6 +181,33 @@ describe('transcriptPanelMemoProps', () => {
     ).toBe(false)
   })
 
+  it('invalidates when in-chat search query, matches, or active row change', () => {
+    // Without these three the panel never re-renders on a keystroke, so the
+    // highlight pass never runs and the counter is again the only feedback.
+    const shared = baseProps({
+      threadSearchQuery: 'alpha',
+      threadSearchMatchRowKeys: new Set(['m-1#0']),
+      threadSearchActiveRowKey: 'm-1#0'
+    })
+    expect(transcriptPanelPropsEqual(shared, { ...shared, threadSearchQuery: 'beta' })).toBe(false)
+    expect(
+      transcriptPanelPropsEqual(shared, {
+        ...shared,
+        threadSearchMatchRowKeys: new Set(['m-2#0'])
+      })
+    ).toBe(false)
+    expect(
+      transcriptPanelPropsEqual(shared, { ...shared, threadSearchActiveRowKey: 'm-2#0' })
+    ).toBe(false)
+    // Same membership under a fresh Set object must NOT force a repaint.
+    expect(
+      transcriptPanelPropsEqual(shared, {
+        ...shared,
+        threadSearchMatchRowKeys: new Set(['m-1#0'])
+      })
+    ).toBe(true)
+  })
+
   it('invalidates on execution-only progress and control changes', () => {
     const shared = baseProps()
     const open = () => undefined

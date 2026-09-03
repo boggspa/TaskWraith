@@ -1316,6 +1316,18 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     () => (isChatPopoutWindow ? null : <ChannelMemberPanel />),
     [isChatPopoutWindow]
   )
+  // In-chat search paint state for the main transcript. The bar counts matches
+  // per message; these carry the same match list down so TranscriptPanel can
+  // paint the query inside the rows it has mounted, and mark the one the
+  // "N / M" counter points at. Only the main pane has a search bar, so the side
+  // pane is deliberately left without these props.
+  const threadSearchMatchList = threadSearchMatches as { rowKey: string }[] | undefined
+  const threadSearchMatchRowKeys = useMemo(
+    () => new Set<string>((threadSearchMatchList || []).map((match) => match.rowKey)),
+    [threadSearchMatchList]
+  )
+  const threadSearchActiveRowKey: string | null =
+    threadSearchMatchList?.[activeThreadSearchIndex]?.rowKey || null
   // Feeds the pane cell's identity-preserving chrome composer. Built inline it
   // was a fresh fragment per render, which defeated that composer (and with it
   // every mounted pane's memo) for the host-projection pane.
@@ -2346,6 +2358,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     ? transcriptJumpRequest
                     : null
                 }
+                threadSearchQuery={threadSearchVisible ? threadSearchQuery : ''}
+                threadSearchMatchRowKeys={threadSearchMatchRowKeys}
+                threadSearchActiveRowKey={threadSearchActiveRowKey}
                 onManualTranscriptJump={beginManualMainTranscriptJump}
                 onJumpToLatest={handleJumpToLatest}
                 copiedId={copiedId}

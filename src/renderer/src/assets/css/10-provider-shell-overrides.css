@@ -2484,6 +2484,12 @@
   border: 0;
   overflow: visible;
 }
+/* The model name is the chip's headline, so it must not be the child the flex
+ * algorithm sacrifices first — but it MUST stay shrinkable, or a long model name
+ * spills outside the 260px-clamped chip instead of ellipsising. Ordering is done
+ * with shrink factors on the provider instead (see the provider rule in the
+ * unified-trigger refinements below); this keeps the ellipsis contract as the
+ * last resort it is meant to be. */
 :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="model"] .composer-combined-picker-trigger-primary {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3850,6 +3856,28 @@
   [data-composer-control="model"]
   .composer-combined-picker-trigger-provider {
   flex: 0 0 auto;
+}
+
+/* Cursor/ChatGPT: the pin above left the model name as the ONLY shrinkable
+ * child of a 260px-clamped chip — bolt, reasoning suffix and chevron are all
+ * `flex: 0 0 auto` — so once the provider identity moved into this chip the
+ * model label ate 100% of the overflow at every viewport width ("Claude Opus"
+ * rendered as "Op…" while "Claude" and the reasoning tier stayed whole).
+ * Make the provider group the shrink target, and a DOMINANT one: flex
+ * distributes a deficit in proportion to shrink-factor x base-size, so a large
+ * factor here means the provider absorbs essentially all of it and collapses
+ * first. The model name keeps its default factor of 1, so it only begins to
+ * ellipsise once the provider has bottomed out at its `min-width: 0` floor —
+ * which preserves containment for genuinely long model names such as
+ * "North Mini Code 1.0 (30B-A3B Q4)" instead of letting the chip overflow.
+ * `.composer-combined-picker-trigger-provider-label` already carries the
+ * ellipsis contract and sits in a `min-width: 0` parent, so it truncates
+ * cleanly. Gemini keeps its pin above. */
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"])
+  [data-composer-control="model"]
+  .composer-combined-picker-trigger-provider {
+  flex: 0 100 auto;
+  min-width: 0;
 }
 
 /* Claude light shell — match the real app's gray above-row family while

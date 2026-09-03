@@ -67,6 +67,10 @@ export type TranscriptPanelMemoComparable = {
   onOpenSideChatFromMessage?: unknown
   sideChatSeedMessageId?: string | null
   jumpToMessageRequest?: { messageId: string; rowKey?: string; requestId: number } | null
+  /** In-chat search (Cmd+F) painting state; see `transcriptSearchHighlight`. */
+  threadSearchQuery?: string
+  threadSearchMatchRowKeys?: ReadonlySet<string>
+  threadSearchActiveRowKey?: string | null
   externalRestoreAnchorMessageId?: string | null
   onManualTranscriptJump?: unknown
   onJumpToLatest?: unknown
@@ -216,6 +220,22 @@ export function transcriptChatIdentityEqual(
   )
 }
 
+/**
+ * Matched-row identity for the in-chat search paint. Identity compare first,
+ * because the layout memoises the set; the membership walk only runs when a
+ * new set object arrives, and only while the search bar is open.
+ */
+export function transcriptSearchRowKeysEqual(
+  previous: ReadonlySet<string> | undefined,
+  next: ReadonlySet<string> | undefined
+): boolean {
+  if (previous === next) return true
+  if (!previous || !next) return false
+  if (previous.size !== next.size) return false
+  for (const rowKey of previous) if (!next.has(rowKey)) return false
+  return true
+}
+
 export function transcriptPanelPropsEqual(
   previous: TranscriptPanelMemoComparable,
   next: TranscriptPanelMemoComparable
@@ -280,6 +300,12 @@ export function transcriptPanelPropsEqual(
     previous.jumpToMessageRequest?.messageId === next.jumpToMessageRequest?.messageId &&
     previous.jumpToMessageRequest?.rowKey === next.jumpToMessageRequest?.rowKey &&
     previous.jumpToMessageRequest?.requestId === next.jumpToMessageRequest?.requestId &&
+    previous.threadSearchQuery === next.threadSearchQuery &&
+    previous.threadSearchActiveRowKey === next.threadSearchActiveRowKey &&
+    transcriptSearchRowKeysEqual(
+      previous.threadSearchMatchRowKeys,
+      next.threadSearchMatchRowKeys
+    ) &&
     previous.externalRestoreAnchorMessageId === next.externalRestoreAnchorMessageId &&
     previous.onManualTranscriptJump === next.onManualTranscriptJump &&
     previous.onJumpToLatest === next.onJumpToLatest &&

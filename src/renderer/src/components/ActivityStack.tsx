@@ -1789,6 +1789,15 @@ function isGroupableActivity(activity: ToolActivity): boolean {
   // segment — sweeping one into a "used N tools" group would both hide the
   // card and defeat the anchor-id segment split.
   if (isChildAgentSpawnActivity(activity)) return false
+  // Goal-step / todo checklist calls render their own persistent
+  // "Goal steps · n/n complete" card (TodoChecklistCard — compact inline,
+  // full when the row is expanded). A compact group renders NO ActivityRow
+  // while collapsed, so folding one in unmounts the checklist behind a
+  // generic "used N tools" header with no visual trace a plan was ever
+  // there. `category: 'task'` puts todo_write next to summary/intent/
+  // progress/goal_update, so a single adjacent terminal task call was
+  // enough to swallow a just-completed checklist.
+  if (isTodoToolName(activity.toolName)) return false
   return true
 }
 

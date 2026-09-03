@@ -173,6 +173,27 @@ describe('buildTimelineItems — same-tool grouping (unified single + ensemble)'
     if (items[1].type === 'activity') expect(items[1].activity.id).toBe('y1')
   })
 
+  it('keeps todo/goal-step calls inline so the checklist card stays mounted (all alias forms)', () => {
+    const todos: ToolActivity[] = [
+      activity({ id: 'd1', toolName: 'todo_write', category: 'task' }),
+      activity({ id: 'd2', toolName: 'update_todo_list', category: 'task' }),
+      activity({ id: 'd3', toolName: 'mcp__TaskWraith__todowrite', category: 'task' }),
+      activity({ id: 'd4', toolName: 'codex_plan', category: 'task' })
+    ]
+    const items = buildTimelineItems(todos)
+    expect(items.map((i) => i.type)).toEqual(['activity', 'activity', 'activity', 'activity'])
+  })
+
+  it('does not fold a completed todo_write into an adjacent task-family group', () => {
+    const acts: ToolActivity[] = [
+      activity({ id: 'todo', toolName: 'todo_write', category: 'task', status: 'success' }),
+      activity({ id: 'diag', toolName: 'get_diagnostics', category: 'task', status: 'success' })
+    ]
+    const items = buildTimelineItems(acts)
+    expect(items.map((i) => i.type)).toEqual(['activity', 'activity'])
+    if (items[0].type === 'activity') expect(items[0].activity.id).toBe('todo')
+  })
+
   it('does NOT merge same-family calls from DIFFERENT ensemble providers (keeps attribution)', () => {
     const acts: ToolActivity[] = [
       activity({ id: 'a', category: 'write', metadata: { ensembleProvider: 'codex' } }),
