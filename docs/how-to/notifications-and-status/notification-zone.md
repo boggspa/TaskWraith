@@ -6,7 +6,7 @@
 The notification zone is a rotating card that surfaces significant, app-authored announcements — new providers or models, deprecations, and shipped features. It shows one notice at a time and never appears if there is nothing to announce.
 
 ## Where to find it
-It appears on the welcome / new-thread screen for a selected pristine, idle draft and on the First Launch Sheet shown on your first run.
+It appears on the welcome / new-thread screen while the selected draft is fresh and untouched, and on the First Launch Sheet shown on your first run.
 
 ![Notification zone showing a sample toast/alert banner](../images/notifications-and-status__notification-zone.png)
 

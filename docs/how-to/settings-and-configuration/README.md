@@ -1,6 +1,6 @@
 # Settings & Configuration
 
-Settings is a full-app takeover panel where you configure everything about TaskWraith — app behavior, appearance, AI providers, automation, workspaces, integrations, and data. Open it with the **Settings** (gear) button in the sidebar footer, **Cmd+,** on macOS, or **Ctrl+,** on Windows/Linux; use the search box to filter tabs by name or keyword, then click **Back to app** (or press **Escape**) to return. The sidebar rail groups tabs into six sections: **App**, **AI & Providers**, **Automation**, **Workspaces**, **Integrations**, and **Data**.
+Settings is a full-app takeover panel for everything TaskWraith — app behavior, appearance, AI providers, automation, workspaces, integrations, and data. Open it with the **Settings** (gear) button in the sidebar footer, **Cmd+,** on macOS, or **Ctrl+,** on Windows/Linux; use the search box to filter tabs, then click **Back to app** (or press **Escape**) to return. The rail groups tabs into six sections: **App**, **AI & Providers**, **Automation**, **Workspaces**, **Integrations**, and **Data**.
 
 ## Guides
 
@@ -36,7 +36,7 @@ Settings is a full-app takeover panel where you configure everything about TaskW
 - [Local model tool surface](local-model-tool-surface.md) — how Ollama exposes the compact gateway profile and reaches specialized tools on demand.
 
 ### Data
-- [Safety & Privacy tab](safety-and-privacy-tab.md) — risk posture, local history, provider data flow, mobile visibility, and grant status.
+- [Safety & Privacy tab](safety-and-privacy-tab.md) — risk overview, local history, provider data flow, mobile visibility, and grant status.
 - **Notification banners** — wording of run-complete notifications on paired iPhone and iPad (hidden when iOS remote is off).
 - **Archived** — restore, permanently delete, or export archived conversation threads.
 - [Model usage tab](model-usage-tab.md) — cross-provider quota, token, usage, cost, and context snapshots.

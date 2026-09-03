@@ -20,8 +20,8 @@ Multiview panes.
 1. Delegate work from a parent chat; the child appears nested beneath it in the
    sidebar and, while it runs, as a ticker entry above the parent transcript.
 2. Click a ticker entry to open that sub-thread.
-3. When a child finishes, its entry leaves the ticker. A typed terminal return
-   card appears in the parent when result return is enabled.
+3. When a child finishes, its entry leaves the ticker. When result return is
+   enabled, a summary card with the outcome appears in the parent chat.
 4. An idle parent shows no ticker — the sidebar's nested child rows remain the
    place to inspect finished or queued sub-threads.
 
