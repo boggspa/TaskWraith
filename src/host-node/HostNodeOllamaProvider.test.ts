@@ -1,4 +1,8 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 
 import {
   createHostNodeOllamaProviderFactory,
@@ -121,6 +125,7 @@ import {
   unloadOllamaModel
 } from '../host-shared/ollama/OllamaDaemonClient'
 import { runOllamaChatLoop } from '../host-shared/ollama/OllamaChatLoop'
+import { HOST_OLLAMA_MAX_TOOL_TURNS } from '../host-shared/ollama/OllamaHostToolTurns'
 
 const mockFetchCatalog = vi.mocked(fetchOllamaModelCatalog)
 const mockUnloadModel = vi.mocked(unloadOllamaModel)
@@ -623,5 +628,201 @@ describe('HostNodeOllamaProvider factory', () => {
     expect(() =>
       createHostNodeOllamaProviderFactory({ offers: hostProviderOffers('pi', true)! })
     ).toThrow()
+  })
+})
+
+describe('HostNodeOllamaProvider Host-owned tool tier', () => {
+  // The tier resolves every path against the thread's REAL workspace root, so a
+  // fixture path that does not exist on disk makes every tool refuse. These
+  // tests need a real directory to tell a refused tool from an executed one.
+  const workspaces: string[] = []
+
+  function realWorkspace(): string {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'ollama-host-run-')))
+    workspaces.push(root)
+    return root
+  }
+
+  function runPortAt(root: string, posture?: HostProviderRunThread['posture']): FakeRunPort {
+    const runPort = new FakeRunPort()
+    runPort.thread = threadFixture({
+      workspace: { workspaceId: 'ws-1', canonicalPath: root, canonical: true },
+      ...(posture ? { posture } : {})
+    })
+    return runPort
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockFetchCatalog.mockResolvedValue(mockCatalog([{ id: OLLAMA_MODEL_ID }]))
+  })
+
+  afterEach(() => {
+    while (workspaces.length > 0) rmSync(workspaces.pop()!, { recursive: true, force: true })
+  })
+
+  function toolNamesFromCall(index: number): string[] {
+    return (mockRunChatLoop.mock.calls[index]![0].tools ?? []).map((tool) => tool.function.name)
+  }
+
+  async function runOnce(
+    runPort: FakeRunPort,
+    options: Partial<ConstructorParameters<typeof HostNodeOllamaProvider>[0]> = {}
+  ) {
+    return provider(resourcePort(), runPort, options).run({
+      runId: 'run-tools',
+      threadId: 'thread-1',
+      prompt: 'inspect the workspace',
+      target: TARGET
+    })
+  }
+
+  it('advertises only the read tools to a plan-posture seat', async () => {
+    mockRunChatLoop.mockResolvedValue({ content: 'read only', toolCalls: [], toolResults: [] })
+    await runOnce(new FakeRunPort())
+    expect(toolNamesFromCall(0)).toEqual(['read_file', 'list_dir'])
+  })
+
+  it('advertises the write tools to a seat whose posture permits edits', async () => {
+    mockRunChatLoop.mockResolvedValue({ content: 'can edit', toolCalls: [], toolResults: [] })
+    const runPort = runPortAt(realWorkspace(), {
+      postureId: 'posture-default',
+      approvalMode: 'default',
+      requiresExplicitConsent: false,
+      explicitConsentAcknowledged: false
+    })
+    await runOnce(runPort)
+    expect(toolNamesFromCall(0)).toEqual(['read_file', 'list_dir', 'write_file', 'replace_in_file'])
+  })
+
+  it('leaves the advertised set to a caller that injected its own tool port', async () => {
+    mockRunChatLoop.mockResolvedValue({ content: 'injected', toolCalls: [], toolResults: [] })
+    const executeTool = vi.fn(async () => ({ ok: true, result: 'from the gateway' }))
+    await runOnce(new FakeRunPort(), { executeTool })
+    expect(toolNamesFromCall(0)).toEqual([])
+    expect(mockRunChatLoop.mock.calls[0]![0].executeTool).toBeDefined()
+  })
+
+  it('feeds tool results back so the model sees its own tool output', async () => {
+    let call = 0
+    mockRunChatLoop.mockImplementation(async () => {
+      call += 1
+      if (call === 1) {
+        return {
+          content: 'let me look',
+          toolCalls: [{ name: 'read_file', arguments: { path: 'a.txt' } }],
+          toolResults: [{ role: 'tool' as const, content: 'FILE BODY', tool_name: 'read_file' }],
+          usage: { promptTokens: 1, completionTokens: 2 }
+        }
+      }
+      return {
+        content: 'the file says FILE BODY',
+        toolCalls: [],
+        toolResults: [],
+        usage: { promptTokens: 3, completionTokens: 4 }
+      }
+    })
+    const runPort = new FakeRunPort()
+    const result = await runOnce(runPort)
+
+    expect(mockRunChatLoop).toHaveBeenCalledTimes(2)
+    const secondTurn = mockRunChatLoop.mock.calls[1]![0].messages
+    expect(secondTurn.some((message) => message.role === 'tool')).toBe(true)
+    expect(secondTurn.find((message) => message.role === 'tool')?.content).toBe('FILE BODY')
+    expect(
+      secondTurn.some((message) => message.role === 'assistant' && message.tool_calls?.length === 1)
+    ).toBe(true)
+
+    expect(result.status).toBe('completed')
+    const assistant = runPort.transcripts.find((entry) => entry.role === 'assistant')
+    expect(assistant?.text).toBe('let me look\n\nthe file says FILE BODY')
+    expect(runPort.finish?.usage?.inputTokens).toBe(4)
+    expect(runPort.finish?.usage?.outputTokens).toBe(6)
+  })
+
+  it('executes the Host tier against the thread workspace, not the raw request', async () => {
+    const seen: Array<{ ok: boolean; result: string }> = []
+    mockRunChatLoop.mockImplementation(async (options) => {
+      if (options.executeTool) {
+        seen.push(await options.executeTool({ name: 'read_file', arguments: { path: '../out' } }))
+      }
+      return { content: 'done', toolCalls: [], toolResults: [] }
+    })
+    await runOnce(new FakeRunPort())
+    expect(seen[0]?.ok).toBe(false)
+    expect(seen[0]?.result).toContain('escapes the workspace')
+  })
+
+  it('finalizes with a spoken ceiling when the same tool keeps failing', async () => {
+    mockRunChatLoop.mockImplementation(async (options) => {
+      await options.executeTool?.({ name: 'read_file', arguments: { path: '../out' } })
+      return {
+        content: '',
+        toolCalls: [{ name: 'read_file', arguments: { path: '../out' } }],
+        toolResults: []
+      }
+    })
+    const runPort = new FakeRunPort()
+    const result = await runOnce(runPort)
+    expect(result.status).toBe('completed')
+    expect(mockRunChatLoop.mock.calls.length).toBeLessThan(HOST_OLLAMA_MAX_TOOL_TURNS)
+    const assistant = runPort.transcripts.find((entry) => entry.role === 'assistant')
+    expect(assistant?.text).toContain('stopping instead of looping')
+  })
+
+  it('bounds a model that keeps calling tools productively forever', async () => {
+    mockRunChatLoop.mockImplementation(async (options) => {
+      await options.executeTool?.({ name: 'list_dir', arguments: { path: '.' } })
+      return {
+        content: '',
+        toolCalls: [{ name: 'list_dir', arguments: { path: '.' } }],
+        toolResults: []
+      }
+    })
+    await runOnce(runPortAt(realWorkspace()))
+    expect(mockRunChatLoop).toHaveBeenCalledTimes(HOST_OLLAMA_MAX_TOOL_TURNS)
+  })
+})
+
+describe('HostNodeOllamaProvider tool trajectory memory', () => {
+  const workspaces: string[] = []
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockFetchCatalog.mockResolvedValue(mockCatalog([{ id: OLLAMA_MODEL_ID }]))
+  })
+
+  afterEach(() => {
+    while (workspaces.length > 0) rmSync(workspaces.pop()!, { recursive: true, force: true })
+  })
+
+  it('accumulates every tool call in working memory, not just the last one', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'ollama-host-memory-')))
+    workspaces.push(root)
+    const runPort = new FakeRunPort()
+    runPort.thread = threadFixture({
+      workspace: { workspaceId: 'ws-1', canonicalPath: root, canonical: true }
+    })
+    const instance = provider(resourcePort(), runPort)
+
+    mockRunChatLoop.mockImplementation(async (options) => {
+      await options.executeTool?.({ name: 'list_dir', arguments: { path: '.' } })
+      await options.executeTool?.({ name: 'read_file', arguments: { path: 'missing.txt' } })
+      return { content: 'looked around', toolCalls: [], toolResults: [] }
+    })
+    await instance.run({ runId: 'run-a', threadId: 'thread-1', prompt: 'look', target: TARGET })
+
+    mockRunChatLoop.mockImplementation(async () => ({
+      content: 'second',
+      toolCalls: [],
+      toolResults: []
+    }))
+    await instance.run({ runId: 'run-b', threadId: 'thread-1', prompt: 'again', target: TARGET })
+
+    const systemMessage = mockRunChatLoop.mock.calls
+      .at(-1)![0]
+      .messages.find((message) => message.role === 'system')
+    expect(systemMessage?.content).toContain('list_dir')
+    expect(systemMessage?.content).toContain('read_file')
   })
 })

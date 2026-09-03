@@ -35,6 +35,19 @@ import {
   type OllamaSessionMemory
 } from '../host-shared/ollama/OllamaContextBudget'
 import { runOllamaChatLoop, type OllamaToolCall } from '../host-shared/ollama/OllamaChatLoop'
+import {
+  createOllamaHostToolExecutor,
+  ollamaHostToolDefinitions,
+  type OllamaHostToolDefinition
+} from '../host-shared/ollama/OllamaHostTools'
+import {
+  closeOllamaHostToolTurn,
+  createOllamaHostToolTurnState,
+  foldOllamaHostToolOutcome,
+  HOST_OLLAMA_MAX_TOOL_TURNS,
+  ollamaHostToolCeilingContent,
+  ollamaHostToolCeilingReached
+} from '../host-shared/ollama/OllamaHostToolTurns'
 import type { HostNodeProviderResourcePort } from './HostNodeProviderResources'
 import {
   normalizeHostProviderRunThread,
@@ -80,6 +93,25 @@ function isCanonicalIdentifier(value: unknown): value is string {
     value.trim() === value &&
     !hasControlCharacter(value)
   )
+}
+
+/**
+ * Seats that may read but not edit. Same predicate the Mistral and Devin Host
+ * adapters apply, kept verbatim so one posture reads identically across
+ * providers; it decides which half of the tool tier is even advertised.
+ */
+function ollamaHostReadOnlySeat(posture: HostProviderRunThread['posture']): boolean {
+  return (
+    posture.postureId === 'plan' ||
+    posture.postureId === 'read_only' ||
+    posture.approvalMode === 'read' ||
+    posture.approvalMode === 'plan'
+  )
+}
+
+/** Assistant prose across tool turns reads as one answer, not N stapled ones. */
+function joinOllamaAssistantSegments(segments: readonly string[]): string {
+  return segments.filter((segment) => segment.trim()).join('\n\n')
 }
 
 export class HostNodeOllamaValidationError extends Error {
@@ -353,6 +385,41 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     return messages
   }
 
+  /**
+   * The Host-owned file tool tier for one thread. The write half is advertised
+   * only when the seat's posture permits edits, and the executor is handed the
+   * same allow list, so a hallucinated write on a read-only seat fails legibly
+   * instead of mutating.
+   */
+  private hostToolTierFor(thread: HostProviderRunThread): {
+    readonly definitions: OllamaHostToolDefinition[]
+    readonly execute: (toolCall: OllamaToolCall) => Promise<{ ok: boolean; result: string }>
+  } {
+    const write = !ollamaHostReadOnlySeat(thread.posture)
+    return {
+      definitions: ollamaHostToolDefinitions({ write }),
+      execute: createOllamaHostToolExecutor({
+        workspaceRoot: thread.workspace.canonicalPath,
+        write
+      })
+    }
+  }
+
+  /** Fold the transcript onto working memory when it outgrows the window. */
+  private compressForPressure(input: {
+    readonly messages: OllamaChatMessage[]
+    readonly memory: OllamaSessionMemory
+    readonly contextLimit: number
+  }): OllamaChatMessage[] {
+    return shouldCompressOllamaMessagesForPressure({
+      measuredRuntimeContextTokens: input.contextLimit,
+      currentPromptTokens: input.messages.reduce((sum, message) => sum + message.content.length, 0),
+      toolTurnCount: input.memory.toolTurnCount
+    })
+      ? compressOllamaMessagesWithWorkingMemory({ messages: input.messages, memory: input.memory })
+      : [...input.messages]
+  }
+
   private usageFromResult(result: {
     promptTokens?: number
     completionTokens?: number
@@ -448,7 +515,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
       const transportBaseUrl = directCloud ? OLLAMA_CLOUD_API_BASE_URL : this.baseUrl
       const transportModelId = directCloud ? ollamaCloudBaseModelId(thread.modelId) : thread.modelId
       const memoryKey = `${request.threadId}:${thread.modelId}`
-      const sessionMemory =
+      let sessionMemory =
         this.sessionMemoryByThreadModel.get(memoryKey) ??
         createEmptyOllamaSessionMemory(thread.modelId)
       this.sessionMemoryByThreadModel.set(memoryKey, sessionMemory)
@@ -461,59 +528,118 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
         measuredContextTokens: model.contextLength,
         contextCapTokens: contextLimit
       })
-      const compressedMessages = shouldCompressOllamaMessagesForPressure({
-        measuredRuntimeContextTokens: contextLimit,
-        currentPromptTokens: messages.reduce((sum, message) => sum + message.content.length, 0),
-        toolTurnCount: sessionMemory.toolTurnCount
+      const hostTools = this.executeTool ? undefined : this.hostToolTierFor(thread)
+      const runTool = this.executeTool ?? hostTools?.execute
+      const conversation = this.compressForPressure({
+        messages,
+        memory: sessionMemory,
+        contextLimit
       })
-        ? compressOllamaMessagesWithWorkingMemory({ messages, memory: sessionMemory })
-        : messages
 
-      const result = await runOllamaChatLoop({
-        baseUrl: transportBaseUrl,
-        ...(directCloud && this.cloudApiKey ? { apiKey: this.cloudApiKey } : {}),
-        signal: abortController.signal,
-        model: transportModelId,
-        messages: compressedMessages,
-        tools: this.executeTool ? [] : undefined, // Tool definitions would come from the tool tier system
-        executeTool: this.executeTool
-          ? async (toolCall) => {
-              const result = await this.executeTool!(toolCall)
-              const trajectoryEntry = {
-                toolName: toolCall.name,
-                argsSummary: JSON.stringify(toolCall.arguments).slice(0, 120),
-                ok: result.ok,
-                resultSummary: result.result.slice(0, toolLimits.toolResultMaxChars)
+      // A tool call is only useful if the model then SEES its result, so each
+      // turn's assistant message and tool results are appended and the loop
+      // re-runs until the model answers without calling a tool. The breakers in
+      // OllamaHostToolTurns are what stop a model that keeps calling tools
+      // forever, or keeps hitting the same failure.
+      const assistantSegments: string[] = []
+      let turnState = createOllamaHostToolTurnState()
+      let ceilingFired = false
+      let promptTokens: number | undefined
+      let completionTokens: number | undefined
+
+      for (let turnIndex = 0; turnIndex < HOST_OLLAMA_MAX_TOOL_TURNS; turnIndex += 1) {
+        if (active.cancelled) break
+        let productiveThisTurn = false
+        const result = await runOllamaChatLoop({
+          baseUrl: transportBaseUrl,
+          ...(directCloud && this.cloudApiKey ? { apiKey: this.cloudApiKey } : {}),
+          signal: abortController.signal,
+          model: transportModelId,
+          messages: conversation,
+          tools: hostTools?.definitions ?? [],
+          executeTool: runTool
+            ? async (toolCall) => {
+                const outcome = await runTool(toolCall)
+                const folded = foldOllamaHostToolOutcome(turnState, {
+                  toolName: toolCall.name,
+                  ok: outcome.ok,
+                  result: outcome.result
+                })
+                turnState = folded.state
+                productiveThisTurn = productiveThisTurn || folded.productive
+                sessionMemory = upsertOllamaSessionMemory(sessionMemory, {
+                  toolName: toolCall.name,
+                  argsSummary: JSON.stringify(toolCall.arguments).slice(0, 120),
+                  ok: outcome.ok,
+                  resultSummary: outcome.result.slice(0, toolLimits.toolResultMaxChars)
+                })
+                this.sessionMemoryByThreadModel.set(memoryKey, sessionMemory)
+                return outcome
               }
-              this.sessionMemoryByThreadModel.set(
-                memoryKey,
-                upsertOllamaSessionMemory(sessionMemory, trajectoryEntry)
-              )
-              return result
-            }
-          : undefined,
-        onContentDelta: (delta, full) => {
-          assistantText = full
-          this.options.runPort.updateRun({
-            runId: request.runId,
-            phase: 'streaming',
-            updatedAt: new Date().toISOString()
-          })
-          this.options.runPort.publishRunEvent(request.target, {
-            type: 'run.content',
-            runId: request.runId,
-            threadId: request.threadId,
-            text: delta,
-            at: new Date().toISOString()
-          })
-        }
-      })
+            : undefined,
+          onContentDelta: (delta, full) => {
+            assistantText = joinOllamaAssistantSegments([...assistantSegments, full])
+            this.options.runPort.updateRun({
+              runId: request.runId,
+              phase: 'streaming',
+              updatedAt: new Date().toISOString()
+            })
+            this.options.runPort.publishRunEvent(request.target, {
+              type: 'run.content',
+              runId: request.runId,
+              threadId: request.threadId,
+              text: delta,
+              at: new Date().toISOString()
+            })
+          }
+        })
 
+        if (result.content.trim()) assistantSegments.push(result.content)
+        if (result.usage?.promptTokens !== undefined) {
+          promptTokens = (promptTokens ?? 0) + result.usage.promptTokens
+        }
+        if (result.usage?.completionTokens !== undefined) {
+          completionTokens = (completionTokens ?? 0) + result.usage.completionTokens
+        }
+        if (active.cancelled || result.toolCalls.length === 0) break
+
+        turnState = closeOllamaHostToolTurn(turnState, { productive: productiveThisTurn })
+        if (ollamaHostToolCeilingReached(turnState)) {
+          ceilingFired = true
+          break
+        }
+
+        conversation.push({
+          role: 'assistant',
+          content: result.content,
+          tool_calls: result.toolCalls.map((toolCall) => ({
+            function: { name: toolCall.name, arguments: toolCall.arguments }
+          }))
+        })
+        conversation.push(...result.toolResults)
+        // Re-measure context pressure against the GROWN conversation: one
+        // read_file result can be larger than the whole window on a small local
+        // model, and this is the same budget the first turn was built under.
+        conversation.splice(
+          0,
+          conversation.length,
+          ...this.compressForPressure({
+            messages: conversation,
+            memory: sessionMemory,
+            contextLimit
+          })
+        )
+      }
+
+      if (ceilingFired) assistantSegments.push(ollamaHostToolCeilingContent())
       if (active.cancelled) {
         status = 'cancelled'
       } else {
-        assistantText = result.content
-        usage = result.usage ? this.usageFromResult(result.usage) : undefined
+        assistantText = joinOllamaAssistantSegments(assistantSegments)
+        usage = this.usageFromResult({
+          ...(promptTokens !== undefined ? { promptTokens } : {}),
+          ...(completionTokens !== undefined ? { completionTokens } : {})
+        })
       }
     } catch (error) {
       if (active.cancelled) {
