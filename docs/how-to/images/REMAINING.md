@@ -85,10 +85,17 @@ against a live window. Verify at recapture rather than trusting either state:
   blank content area. Two consequences: a CDP driver must select the renderer
   target explicitly, because the *first* page target is whichever Canvas is open;
   and any shot needing dock chrome **and** live surface content in one frame has
-  to be taken at OS level, not over CDP. `emulator-canvas` was therefore captured
-  from the Canvas target directly and its caption no longer claims dock chrome,
-  and `canvas-browser` shows the address bar with an empty browser — which is
-  also the safest frame under the privacy rule.
+  to be taken at OS level, not over CDP. **`fromSurface: true` does not fix
+  this** — it was tried against a Canvas Browser with `example.com` genuinely
+  loaded (the tab and address bar both render the URL) and the content area still
+  came back blank, at native size and under a device-metrics override alike. Do
+  not spend time re-testing it. `emulator-canvas` was therefore captured from the
+  Canvas target directly and its caption no longer claims dock chrome, and
+  `canvas-browser` shows the address bar with an empty browser — which is also
+  the safest frame under the privacy rule.
+- `canvas-multiview-pane` is blocked by the same boundary: a Canvas surface
+  placed in a Multiview pane is still its own page target, so the pane renders
+  with empty content in any CDP capture. It needs an OS-level screenshot.
 - **Capture Canvas docks at 1700px window width or wider.** At 1397px the dock is
   376px and the Mesh Canvas import row overruns it by 43px, collapsing the
   description to one word per line and clipping a button. At 1700px the dock is
@@ -111,8 +118,10 @@ against a live window. Verify at recapture rather than trusting either state:
   bare verify instance.** Ollama is running locally (its API answers on 11434),
   but Provider Tools lists the `TaskWraith-local` gateway as **unavailable** and
   Refresh does not change it. The page's own hint explains why: Ollama tools
-  require a workspace thread so paths can be scoped by TaskWraith. Open a
-  workspace-backed chat before capturing. Show the gateway profile — the direct
+  require a workspace thread so paths can be scoped by TaskWraith — but that was
+  tested and did **not** resolve it: from a thread bound to `Test 1/master` the
+  gateway still reports unavailable, and its settings block offers no connect or
+  retry action. Something beyond the workspace binding is needed. Show the gateway profile — the direct
   tool list plus capability search/invoke — without exposing local endpoints or
   paths, and do not caption a tool count; the profile version changes and a
   pinned number rots silently.
