@@ -129,8 +129,16 @@ describe('validateMcpToolArgumentsBeforeApproval', () => {
     ).toMatchObject({ ok: false, code: 'invalid_arguments' })
   })
 
+  // Was pinned on read_file, which turned out to be the wrong exemplar: every
+  // spelling read_file's handler reads (file_path, filePath) IS coalesced before
+  // this check, so validating it can only reject a call that would have failed.
+  // It joined the validated set on 2026-09-03. The guard itself still matters,
+  // so it now names tools that genuinely accept an uncoalesced spelling.
   it('does not impose new schema enforcement on compatibility-heavy direct tools', () => {
-    expect(validateMcpToolArgumentsBeforeApproval('read_file', {}, definitions)).toEqual({
+    expect(validateMcpToolArgumentsBeforeApproval('create_directory', {}, definitions)).toEqual({
+      ok: true
+    })
+    expect(validateMcpToolArgumentsBeforeApproval('workspace_search', {}, definitions)).toEqual({
       ok: true
     })
   })
@@ -216,5 +224,101 @@ describe('pre-approval validation integration contracts', () => {
     expect(source).toContain(
       'historyClearAdmissionBlocked(route.appRunId, payload.workspace, route.appChatId)'
     )
+  })
+})
+
+describe('validateMcpToolArgumentsBeforeApproval — workspace I/O coverage', () => {
+  it('rejects a name-only read_file with the populated object to retry with', () => {
+    const result = validateMcpToolArgumentsBeforeApproval('read_file', {}, definitions)
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'invalid_arguments',
+      issues: [{ path: '#/path', keyword: 'required' }]
+    })
+    if (result.ok) return
+    expect(result.message).toContain('"path":"src/main/thing.ts"')
+  })
+
+  it('names every missing field when a write_file call is half-populated', () => {
+    const result = validateMcpToolArgumentsBeforeApproval(
+      'write_file',
+      { path: 'src/main/thing.ts' },
+      definitions
+    )
+
+    // Without this the call reaches the user as an approval prompt and then
+    // TRUNCATES the file: the handler reads `String(args.content ?? '')`.
+    expect(result).toMatchObject({ ok: false, code: 'invalid_arguments' })
+    if (result.ok) return
+    expect(result.message).toContain("Required argument 'content' is missing.")
+  })
+
+  it('rejects an empty replace and lists all three required fields', () => {
+    const result = validateMcpToolArgumentsBeforeApproval('replace', {}, definitions)
+
+    if (result.ok) throw new Error('expected rejection')
+    expect(result.issues.map((issue) => issue.path)).toEqual([
+      '#/path',
+      '#/old_string',
+      '#/new_string'
+    ])
+  })
+
+  it('surfaces the examples todo_write and canvas_key already carried', () => {
+    for (const tool of ['todo_write', 'canvas_key'] as const) {
+      const result = validateMcpToolArgumentsBeforeApproval(tool, {}, definitions)
+      if (result.ok) throw new Error(`expected ${tool} to be rejected`)
+      expect(result.message).toContain('Retry with a populated object such as')
+    }
+  })
+
+  it('passes a fully populated call through untouched', () => {
+    expect(
+      validateMcpToolArgumentsBeforeApproval(
+        'replace',
+        { path: 'a.ts', old_string: 'a', new_string: 'b' },
+        definitions
+      )
+    ).toEqual({ ok: true })
+    expect(
+      validateMcpToolArgumentsBeforeApproval(
+        'run_shell_command',
+        { command: 'npm test' },
+        definitions
+      )
+    ).toEqual({ ok: true })
+  })
+
+  // NO-NARROWING GUARD. Each of these tools reads an argument spelling that
+  // TOOL_ARGUMENT_ALIAS_GROUPS does not coalesce, so schema-validating it here
+  // would reject an invocation that executes today. They are excluded from
+  // PRE_APPROVAL_SCHEMA_VALIDATED_TOOLS for exactly that reason; this test is
+  // what fails if someone widens the list by traffic instead of by audit.
+  it('does not validate tools whose handlers accept uncoalesced argument spellings', () => {
+    expect(
+      validateMcpToolArgumentsBeforeApproval(
+        'create_directory',
+        { directory: 'src/new' },
+        definitions
+      )
+    ).toEqual({ ok: true })
+    expect(
+      validateMcpToolArgumentsBeforeApproval('workspace_search', { pattern: 'needle' }, definitions)
+    ).toEqual({ ok: true })
+    expect(
+      validateMcpToolArgumentsBeforeApproval(
+        'move_path',
+        { source: 'a.ts', destination: 'b.ts' },
+        definitions
+      )
+    ).toEqual({ ok: true })
+    expect(
+      validateMcpToolArgumentsBeforeApproval(
+        'ensemble_poll_response',
+        { poll_id: 'p1', choice: 'yes' },
+        definitions
+      )
+    ).toEqual({ ok: true })
   })
 })

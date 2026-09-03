@@ -37,6 +37,7 @@ import {
   compactGatewayV13ToolDefinitionsForTransport,
   compactGatewayV15MeshToolDefinitionsForTransport,
   compactGatewayV17ToolDefinitionsForTransport,
+  stripGatewaySchemaExamplesForTransport,
   GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
   GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
   GATEWAY_V8_ADDED_TOOL_NAMES,
@@ -1884,9 +1885,17 @@ export function handleMcpJsonRpcMessage(
       gatewaySubsetOnly && directTools.some((tool) => tool.name === 'image_view')
         ? compactGatewayV17ToolDefinitionsForTransport(profileCompactedTools)
         : profileCompactedTools
-    const baseTools = gatewaySubsetOnly
-      ? [...imageViewCompactedTools, ...gatewayToolDefinitions()]
+    // Schema examples exist for the pre-approval repair message, which reads the
+    // canonical catalogue — not this wire. Gateway transports are the ones with
+    // a 40,000-char ceiling, so they ship without them. Applies to frozen
+    // receipts too: none of the stripped tools carried an example before, so
+    // every existing gateway transport stays byte-identical.
+    const exampleStrippedTools = gatewaySubsetOnly
+      ? stripGatewaySchemaExamplesForTransport(imageViewCompactedTools)
       : imageViewCompactedTools
+    const baseTools = gatewaySubsetOnly
+      ? [...exampleStrippedTools, ...gatewayToolDefinitions()]
+      : exampleStrippedTools
     const tools = auditSubset ? [...baseTools, ...auditToolDefinitions()] : baseTools
     writeMcpResponse(id, { tools }, transport, stdout)
     return

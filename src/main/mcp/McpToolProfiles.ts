@@ -1065,6 +1065,40 @@ export function compactGatewayV15MeshToolDefinitionsForTransport<
   )
 }
 
+/**
+ * Schema `examples` earn their bytes in the PRE-APPROVAL repair message, which
+ * reads the canonical catalogue (`mcpToolDefinitions()`), never the compacted
+ * wire. So the tools below carry an example canonically for the repair hint and
+ * ship without one on every gateway transport, where the 40,000-char ceiling is
+ * measured. None of them carried an example before 2026-09-03, which is what
+ * makes this safe to apply to FROZEN receipts too: stripping a key that was
+ * never on the wire leaves v1..v19 byte-identical to what they already sent.
+ *
+ * `ensemble_bossman_control` is deliberately absent — its example predates this
+ * and is part of the v1 wire.
+ */
+const TRANSPORT_EXAMPLE_FREE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'read_file',
+  'write_file',
+  'replace',
+  'run_shell_command',
+  'delete_path',
+  'ask_user_question'
+])
+
+/** Drop `examples` for gateway transports; the canonical catalogue keeps them. */
+export function stripGatewaySchemaExamplesForTransport<
+  T extends GatewayV8MeshTransportToolDefinition
+>(definitions: readonly T[]): T[] {
+  return definitions.map((definition) => {
+    if (!TRANSPORT_EXAMPLE_FREE_TOOL_NAMES.has(definition.name)) return definition
+    const schema = definition.inputSchema
+    if (!schema || !('examples' in schema)) return definition
+    const { examples: _examples, ...rest } = schema
+    return { ...definition, inputSchema: rest }
+  })
+}
+
 /** v17-only wire compaction; membership, schemas, and runtime behavior stay unchanged. */
 export function compactGatewayV17ToolDefinitionsForTransport<
   T extends GatewayV8MeshTransportToolDefinition

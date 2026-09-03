@@ -52,7 +52,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             description: 'Optional workspace-relative or in-workspace absolute cwd.'
           }
         },
-        required: ['command']
+        required: ['command'],
+        examples: [{ command: 'npm test' }]
       }
     },
     {
@@ -70,7 +71,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           path: { type: 'string' },
           content: { type: 'string' }
         },
-        required: ['path', 'content']
+        required: ['path', 'content'],
+        examples: [{ path: 'src/main/thing.ts', content: 'export const thing = 1' }]
       }
     },
     {
@@ -91,7 +93,10 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           new_string: { type: 'string' },
           replace_all: { type: 'boolean' }
         },
-        required: ['path', 'old_string', 'new_string']
+        required: ['path', 'old_string', 'new_string'],
+        examples: [
+          { path: 'src/main/thing.ts', old_string: 'const a = 1', new_string: 'const a = 2' }
+        ]
       }
     },
     {
@@ -132,7 +137,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           path: { type: 'string', description: 'Workspace-relative file or empty directory path.' },
           intent: { type: 'string', description: 'Short reason for the deletion.' }
         },
-        required: ['path']
+        required: ['path'],
+        examples: [{ path: 'tmp/scratch.txt', intent: 'Remove scratch file' }]
       }
     },
     {
@@ -212,7 +218,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               'Maximum number of lines to return. Defaults to 2000 (capped at 5000) when only offset is set. Omit both offset and limit to read the whole file.'
           }
         },
-        required: ['path']
+        required: ['path'],
+        examples: [{ path: 'src/main/thing.ts' }]
       }
     },
     {
@@ -3403,7 +3410,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               'Optional sub-paragraph (≤ 240 chars) of additional context shown beneath the question. Use for "why I\'m asking" framing.'
           }
         },
-        required: ['question']
+        required: ['question'],
+        examples: [{ question: 'Which database should I target?', options: ['Postgres', 'SQLite'] }]
       }
     },
     {

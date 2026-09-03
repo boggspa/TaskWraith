@@ -125,6 +125,7 @@ import {
   compactGatewayV13ToolDefinitionsForTransport,
   compactGatewayV15MeshToolDefinitionsForTransport,
   compactGatewayV17ToolDefinitionsForTransport,
+  stripGatewaySchemaExamplesForTransport,
   filterTaskWraithMcpToolDefinitionsForProfile,
   isCoreMcpAdvertisedTool,
   isGatewayMcpAdvertisedTool,
@@ -672,6 +673,102 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
         .filter(([, chars]) => chars >= 40_000)
         .map(([name]) => name)
     ).toEqual(['gatewayChars'])
+  })
+
+  // Schema `examples` are read by validateMcpToolArgumentsBeforeApproval out of
+  // the CANONICAL catalogue (mcpToolDefinitions()), never out of a transport.
+  // So they can be paid for once, on the full surface, and stripped everywhere
+  // the 40,000-char ceiling is measured. This is the test that keeps the two
+  // halves honest: add an example without extending the strip set and the
+  // gateway transports start paying for a hint they never deliver.
+  describe('schema examples never reach a gateway transport', () => {
+    const EXAMPLE_BEARING_WORKSPACE_TOOLS = [
+      'read_file',
+      'write_file',
+      'replace',
+      'run_shell_command',
+      'delete_path',
+      'ask_user_question'
+    ] as const
+
+    const withoutExamples = <T extends { name: string; inputSchema?: Record<string, unknown> }>(
+      definitions: readonly T[]
+    ): T[] =>
+      definitions.map((definition) => {
+        if (!EXAMPLE_BEARING_WORKSPACE_TOOLS.includes(definition.name as never)) return definition
+        if (!definition.inputSchema || !('examples' in definition.inputSchema)) return definition
+        const { examples: _examples, ...rest } = definition.inputSchema
+        return { ...definition, inputSchema: rest }
+      })
+
+    it('carries the example canonically, which is where the repair hint reads it', () => {
+      const definitions = createTaskWraithMcpToolDefinitions()
+      for (const name of EXAMPLE_BEARING_WORKSPACE_TOOLS) {
+        const definition = definitions.find((entry) => entry.name === name)
+        expect(Array.isArray(definition?.inputSchema?.examples)).toBe(true)
+      }
+    })
+
+    it('spends zero transport bytes on every gateway profile', () => {
+      const definitions = createTaskWraithMcpToolDefinitions()
+      const transport = (names: readonly string[], transform = (d: typeof definitions) => d) =>
+        JSON.stringify({
+          tools: [
+            ...stripGatewaySchemaExamplesForTransport(
+              transform(definitions.filter((entry) => names.includes(entry.name)))
+            ),
+            ...gatewayToolDefinitions()
+          ]
+        })
+
+      const compactFresh = (d: typeof definitions) =>
+        compactGatewayV17ToolDefinitionsForTransport(
+          compactGatewayV13ToolDefinitionsForTransport(d)
+        )
+
+      // A catalogue in which these examples were never authored is the baseline
+      // every frozen receipt was calibrated against. Byte-identical means v1..v19
+      // send exactly what they sent before the examples existed.
+      const baseline = (names: readonly string[], transform = (d: typeof definitions) => d) =>
+        JSON.stringify({
+          tools: [
+            ...withoutExamples(
+              transform(definitions.filter((entry) => names.includes(entry.name)))
+            ),
+            ...gatewayToolDefinitions()
+          ]
+        })
+
+      for (const [label, names, transform] of [
+        ['immutable v1', GATEWAY_MCP_DIRECT_TOOLS, (d: typeof definitions) => d],
+        ['fresh v17', GATEWAY_V17_MCP_DIRECT_TOOLS, compactFresh],
+        ['solo v1', GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS, compactFresh]
+      ] as const) {
+        expect(`${label}:${transport(names, transform).length}`).toBe(
+          `${label}:${baseline(names, transform).length}`
+        )
+        // Not a blanket "no examples" check: ensemble_bossman_control's example
+        // predates this and IS part of the v1 wire. Only the payloads authored
+        // for the pre-approval repair hint must be absent.
+        for (const payload of [
+          'src/main/thing.ts',
+          'npm test',
+          'tmp/scratch.txt',
+          'Which database should I target?'
+        ]) {
+          expect(`${label}:${transport(names, transform).includes(payload)}`).toBe(`${label}:false`)
+        }
+      }
+    })
+
+    it('keeps the example on the full surface, where no ceiling is measured', () => {
+      const definitions = createTaskWraithMcpToolDefinitions()
+      const full = JSON.stringify({
+        tools: definitions.filter((entry) => FULL_MCP_ADVERTISE_TOOLS.includes(entry.name as never))
+      })
+      expect(full).toContain('"examples"')
+      expect(full).toContain('src/main/thing.ts')
+    })
   })
 
   it('compacts only Mesh and Sketch prose for the combined v8 transport', () => {

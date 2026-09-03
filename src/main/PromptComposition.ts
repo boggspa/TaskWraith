@@ -207,7 +207,10 @@ export function resolveContextBudget(
 // (per-turn, gate-free, adjacent to the decision point). Resumed sessions do
 // not need a version bump to receive the new placement — the standalone block
 // is injected every UltraTask turn regardless of preamble inheritance.
-export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v12'
+// Bumped v12 -> v13 for the tool-argument completeness line. The version is the
+// re-injection key, so a chat that already cached v12 would otherwise never see
+// it; every other lane pays one extra preamble injection on its next turn.
+export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v13'
 
 /**
  * Standalone one-shot hint re-injected on a RESUMED session (where the full
@@ -648,6 +651,23 @@ function buildUltraTaskStandaloneNote(provider: ProviderId): string {
   ].join('\n')
 }
 
+/**
+ * Lanes that reliably emit a name-only tool call (`{}`) on their first attempt
+ * and then repair from the rejection. The probe costs the user a real approval
+ * prompt on any tool outside PRE_APPROVAL_SCHEMA_VALIDATED_TOOLS, so it is
+ * cheaper to spend one preamble line than to let the lane discover the schema
+ * by trial. Provider-keyed on purpose: this is a per-lane accommodation, not a
+ * statement about tool use in general, and no other seat pays for it.
+ */
+function providerNeedsToolArgumentCompletenessNote(provider: ProviderId): boolean {
+  return provider === 'mistral'
+}
+
+function toolArgumentCompletenessNote(provider: ProviderId): string {
+  const readTool = taskWraithToolNameForProvider(provider, 'read_file')
+  return `Send every tool call with its arguments already populated: a call with an empty or partial object is rejected before it runs, and the rejection is not a schema lookup. Read the tool's required list first and fill each entry — ${readTool}({ path: 'src/main/thing.ts' }), not ${readTool}({}).`
+}
+
 function buildTaskWraithRuntimePreamble(args: {
   provider: ProviderId
   providerLabel: string
@@ -681,6 +701,9 @@ function buildTaskWraithRuntimePreamble(args: {
     `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this ${args.providerLabel} workspace run has access to the TaskWraith MCP server.`,
     'Route workspace reads, edits, git, and checks through TaskWraith MCP so its approval, path checks, and audit logging govern side effects.',
     `${taskWraithToolNamespaceHint(args.provider)} Examples: ${exampleTools}.`,
+    ...(providerNeedsToolArgumentCompletenessNote(args.provider)
+      ? [toolArgumentCompletenessNote(args.provider)]
+      : []),
     `For tests, builds, Git, npm, and other shell work, call ${shellTool} when it is listed. A native Bash/Shell/terminal refusal can be a containment route rather than a denial of the current shell permission: do not retry the native tool; call ${shellTool} once. Only if that MCP call is unavailable or denied should you report the exact blocker.`,
     ...(args.coreMcpProfile ? [TASKWRAITH_CORE_MCP_PROFILE_NOTE] : []),
     ...(args.gatewayMcpProfile ? [TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE] : []),
