@@ -613,6 +613,17 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
   })
 
+  it('offers a free Devin plan only SWE-1.6 Slow, and every family otherwise', () => {
+    const ungated = getStaticProviderModels('devin')
+    const gated = getStaticProviderModels('devin', { devinFreePlan: true })
+    const paid = getStaticProviderModels('devin', { devinFreePlan: false })
+    expect(ungated.length).toBeGreaterThan(1)
+    expect(ungated.map((m) => m.id)).toContain('claude-opus-5')
+    expect(gated.map((m) => m.id)).toEqual(['swe-1-6-slow'])
+    // Fail-open: an unknown plan must never narrow a paying seat's catalogue.
+    expect(paid.length).toBe(ungated.length)
+  })
+
   it('orders a live catalog onto the canonical ladder, not catalog order', () => {
     // A live `model/list` may list rungs in any order. `persistent` sits above
     // `ultracode` and below `ultratask`; catalog order must not decide that.

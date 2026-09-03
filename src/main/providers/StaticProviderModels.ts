@@ -84,10 +84,18 @@ import {
   devinReasoningEfforts,
   normalizeDevinModelId
 } from '../../shared/devinModelCatalog'
+import { filterDevinModelsForPlan } from '../../shared/devinPlanAccess'
 
 export interface StaticProviderModelOptions {
   includePreviewModels?: boolean
   now?: Date
+  /**
+   * True only when a Devin-owned plan blob positively reported the free tier
+   * (see DevinUsage). A free Devin plan may run only SWE-1.6 Slow, so the rest
+   * of the catalogue is withheld. Omitted/undefined leaves the catalogue
+   * whole — the gate is fail-open by design.
+   */
+  devinFreePlan?: boolean
 }
 
 export interface CodexModelContextConfig {
@@ -1326,7 +1334,11 @@ function staticRowsForProvider(provider: ProviderId, options: StaticProviderMode
     case 'muse':
       return MUSE_STATIC_MODELS
     case 'devin':
-      return DEVIN_STATIC_MODELS
+      // A free Devin plan may dispatch only SWE-1.6 Slow. Offering the other
+      // 24 families would advertise rows the account cannot run; withholding
+      // them on an UNKNOWN plan would strip a paying seat, so the filter acts
+      // only on a positively observed free plan.
+      return filterDevinModelsForPlan(DEVIN_STATIC_MODELS, { freePlan: options.devinFreePlan })
     case 'pi':
       return piStaticModelRows(options.now)
     case 'antigravity':

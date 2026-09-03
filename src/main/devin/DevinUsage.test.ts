@@ -229,3 +229,60 @@ describe('module constants and helpers', () => {
     expect(snapshot.source).toBe('devin-state-vscdb')
   })
 })
+
+describe('Devin free-plan detection', () => {
+  // Field names and values transcribed from the real
+  // `windsurf.reactSettings.cachedPlanInfoData:user-*` row on 2026-09-03.
+  const devinFreeBlob = {
+    planName: 'Free',
+    billingStrategy: 'quota',
+    isDevinUser: true,
+    isFreeOrTrial: true,
+    isDevinFree: true,
+    teamsTier: 19,
+    dailyRemainingPercent: 52,
+    weeklyRemainingPercent: 0,
+    dailyResetAtUnix: 1787472000,
+    weeklyResetAtUnix: 1787472000,
+    hideDailyQuota: false,
+    hideWeeklyQuota: false
+  }
+
+  it('reads the free tier off a Devin-owned plan blob', () => {
+    expect(parseDevinPlanInfoBlob(devinFreeBlob).freePlan).toBe(true)
+    expect(buildDevinUsageSnapshot(devinFreeBlob, '2026-09-03T00:00:00.000Z').freePlan).toBe(true)
+  })
+
+  it('reports a paid Devin plan as not free', () => {
+    const paid = { ...devinFreeBlob, planName: 'Core', isDevinFree: false, isFreeOrTrial: false }
+    expect(parseDevinPlanInfoBlob(paid).freePlan).toBe(false)
+  })
+
+  it('ignores the co-resident Windsurf plan row entirely', () => {
+    // The same state DB caches `windsurf.settings.cachedPlanInfo`, which said
+    // `Pro` while the Devin row said `Free`. It carries neither Devin flag, so
+    // it must not decide the gate in EITHER direction.
+    const windsurf = {
+      planName: 'Pro',
+      billingStrategy: 'quota',
+      usage: { messages: -1, usedMessages: 0 },
+      quotaUsage: { dailyRemainingPercent: 0, weeklyRemainingPercent: 0 },
+      teamsTier: 16
+    }
+    const parsed = parseDevinPlanInfoBlob(windsurf)
+    expect(parsed.planName).toBe('Pro')
+    expect(parsed.freePlan).toBeUndefined()
+    expect(buildDevinUsageSnapshot(windsurf, '2026-09-03T00:00:00.000Z').freePlan).toBeUndefined()
+  })
+
+  it('accepts a Free plan name only alongside the Devin discriminator', () => {
+    expect(parseDevinPlanInfoBlob({ planName: 'Free', isDevinUser: true }).freePlan).toBe(true)
+    expect(parseDevinPlanInfoBlob({ planName: 'Free' }).freePlan).toBeUndefined()
+  })
+
+  it('leaves freePlan absent when there is no plan shape at all', () => {
+    expect(parseDevinPlanInfoBlob({ nothing: true }).freePlan).toBeUndefined()
+    expect(parseDevinPlanInfoBlob(null).freePlan).toBeUndefined()
+  })
+})
+

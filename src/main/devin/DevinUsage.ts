@@ -60,6 +60,12 @@ export interface DevinUsageSnapshot {
   fetchedAt: string
   /** Plan display name from the cached plan info (for example `Core`). */
   planType?: string
+  /**
+   * True when the Devin plan is the free tier, which may run only SWE-1.6
+   * Slow. Undefined when no Devin-owned plan blob was readable — consumers
+   * must treat that as "ungated", never as free.
+   */
+  freePlan?: boolean
 }
 
 /** macOS path of the Devin desktop client's global-storage SQLite DB. */
@@ -134,6 +140,13 @@ function epochMsToIso(value: unknown): string | undefined {
 export interface DevinParsedPlanInfo {
   windows: DevinUsageWindow[]
   planName?: string
+  /**
+   * True/false only when a DEVIN-owned plan blob said so; undefined when the
+   * row belongs to a sibling product. The same state DB also caches a Windsurf
+   * plan (observed 2026-09-03: `planName: 'Pro'` on the Windsurf row while the
+   * Devin row said `Free`), so plan name alone is not a safe discriminator.
+   */
+  freePlan?: boolean
 }
 
 /**
@@ -157,6 +170,13 @@ export function parseDevinPlanInfoBlob(payload: unknown): DevinParsedPlanInfo {
     typeof planInfo.planName === 'string' && planInfo.planName.trim()
       ? planInfo.planName.trim()
       : undefined
+  // Devin-owned rows carry `isDevinUser`/`isDevinFree`; the co-resident
+  // Windsurf row carries neither, so its plan name must not reach the gate.
+  const devinOwned = planInfo.isDevinUser === true || typeof planInfo.isDevinFree === 'boolean'
+  const freePlan = devinOwned
+    ? planInfo.isDevinFree === true || planName?.toLowerCase() === 'free'
+    : undefined
+
   const quotaUsage = record(planInfo.quotaUsage)
   const usage = record(planInfo.usage)
   const endResetIso = epochMsToIso(planInfo.endTimestamp)
@@ -212,7 +232,11 @@ export function parseDevinPlanInfoBlob(payload: unknown): DevinParsedPlanInfo {
     })
   }
 
-  return { windows, ...(planName ? { planName } : {}) }
+  return {
+    windows,
+    ...(planName ? { planName } : {}),
+    ...(freePlan === undefined ? {} : { freePlan })
+  }
 }
 
 /** True when a row's JSON parses to something carrying a plan-info shape. */
@@ -225,7 +249,7 @@ export function buildDevinUsageSnapshot(
   payload: unknown,
   fetchedAtIso: string
 ): DevinUsageSnapshot {
-  const { windows, planName } = parseDevinPlanInfoBlob(payload)
+  const { windows, planName, freePlan } = parseDevinPlanInfoBlob(payload)
   return {
     provider: 'devin',
     source: DEVIN_USAGE_SOURCE,
@@ -233,7 +257,8 @@ export function buildDevinUsageSnapshot(
     balances: [],
     configured: true,
     fetchedAt: fetchedAtIso,
-    ...(planName ? { planType: planName } : {})
+    ...(planName ? { planType: planName } : {}),
+    ...(freePlan === undefined ? {} : { freePlan })
   }
 }
 
