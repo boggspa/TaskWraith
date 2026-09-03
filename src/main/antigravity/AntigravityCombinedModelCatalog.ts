@@ -22,6 +22,11 @@ import {
   type AuthenticatedAgyModelDiscoveryDependencies
 } from './AntigravityModelDiscovery'
 import { antigravityAgyStaticModels, offerableAgyModels } from './AntigravityAgyStaticModels'
+import {
+  antigravityAcpStaticModels,
+  isAntigravityAcpCatalogModelId,
+  toAntigravityAcpModelId
+} from './AntigravityAcpStaticModels'
 import { resolveAgyCliBinary } from './AntigravityCli'
 import { writeAntigravityCatalogCache } from '../../shared/antigravityCatalogCache.node'
 
@@ -104,11 +109,26 @@ export function isAntigravityGeminiApiModelId(value: unknown): value is string {
  * `AntigravityAgyDiscoveryProvenance`. Kept because "is an agy row offered" is
  * still a real question, e.g. the `gemini-api:`-prefix invariant on fallback
  * rows depends on it.
+ *
+ * OFFICIAL-ACP ROWS ARE EXCLUDED, and that exclusion is load-bearing. Its one
+ * consumer, `isAuthenticatedAgyRateLimitConnection`, gates a `/usage` probe
+ * that SPAWNS the legacy ban-risk agy CLI. When the transport switch is on,
+ * every agy-lane row is emitted `antigravity-acp:`-namespaced — so without
+ * this exclusion a user who deliberately moved off the agy CLI would still
+ * have it launched behind their back by a quota refresh. Consequence to keep
+ * in mind: the authenticated quota meter closes for an ACP-only catalogue
+ * (it falls back to the unauthenticated path). That is the intended trade
+ * until the ACP lane reports its own quota.
  */
 export function hasAuthenticatedAgyCatalogRow(
   models: readonly AntigravityCombinedCatalogModel[] | null | undefined
 ): boolean {
-  return Boolean(models?.some((model) => !isAntigravityGeminiApiModelId(model.id)))
+  return Boolean(
+    models?.some(
+      (model) =>
+        !isAntigravityGeminiApiModelId(model.id) && !isAntigravityAcpCatalogModelId(model.id)
+    )
+  )
 }
 
 /**
@@ -144,6 +164,11 @@ export function isAuthenticatedAgyRateLimitConnection(
  * Gemini API-key lane is admitted by a configured dedicated secret store
  * alone and does not require opt-in — its own internal Gemini-API data-use
  * disclosure check still applies inside `discoverGeminiApi`.
+ *
+ * The `antigravityUseAcp` transport switch is deliberately NOT a third
+ * admission. It only re-namespaces the rows the agy opt-in already admitted,
+ * onto the official-ACP lane, so the same models are offered exactly once
+ * either way and the switch alone can never widen what is on offer.
  */
 export async function discoverAuthenticatedAntigravityCombinedModels(
   settings:
@@ -152,6 +177,7 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
         | 'antigravityEnabled'
         | 'antigravityOptInAcceptedAt'
         | 'antigravityGeminiApiDisclosureAcceptedAt'
+        | 'antigravityUseAcp'
       >
     | null
     | undefined,
@@ -163,6 +189,11 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
   }
 
   const agyAdmitted = isAntigravityOptInEnabled(settings)
+  // The transport switch selects WHICH binary runs the same account's models;
+  // it is never an admission of its own. Consent still governs: the switch can
+  // only re-namespace rows the ban-risk opt-in already admitted, so flipping it
+  // on an un-consented install still offers nothing.
+  const acpAdmitted = agyAdmitted && settings.antigravityUseAcp === true
   const secretStore = deps.getSecretStore()
   const apiAdmitted = Boolean(secretStore)
   if (!agyAdmitted && !apiAdmitted) {
@@ -237,12 +268,29 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
     agy.status === 'ok'
       ? agy.value
       : agyBinary.status === 'ok' && Boolean(agyBinary.value?.binaryPath)
-        ? offerableAgyModels(antigravityAgyStaticModels())
+        ? acpAdmitted
+          ? antigravityAcpStaticModels()
+          : offerableAgyModels(antigravityAgyStaticModels())
         : []
   for (const model of agyRows) {
-    if (!isSafeModelRow(model) || seen.has(model.id)) continue
-    seen.add(model.id)
-    rows.push({ id: model.id, label: model.label })
+    if (!isSafeModelRow(model)) continue
+    // The ONE place the transport switch changes the catalogue: with the
+    // switch on, agy-lane rows are emitted in the official-ACP namespace so
+    // dispatch quarantines them onto the Google-published ACP binary. With it
+    // off, ids are byte-identical to before this lane existed. This is a
+    // re-namespacing, NOT an additional source: the user sees one row per
+    // model either way, never the same model twice.
+    //
+    // A `gemini-api:` id is never re-namespaced even if the agy lane somehow
+    // produced one; that namespace owns its own dispatch arm and must keep it.
+    // Re-validated after projection because the prefix lengthens the id.
+    const projected =
+      acpAdmitted && !isAntigravityGeminiApiModelId(model.id)
+        ? { id: toAntigravityAcpModelId(model.id), label: model.label }
+        : { id: model.id, label: model.label }
+    if (!isSafeModelRow(projected) || seen.has(projected.id)) continue
+    seen.add(projected.id)
+    rows.push(projected)
     if (rows.length >= MAX_CATALOG_MODELS) break
   }
   const apiRows =
