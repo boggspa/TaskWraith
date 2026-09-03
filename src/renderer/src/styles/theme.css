@@ -302,6 +302,8 @@
    * confused with: liquid dE 9.3, and openrouter dE 9.5 — #E02948 stays the
    * generic OpenRouter fallback rather than becoming Inkling's colour. */
   --provider-thinkingmachines-color: #C24E68;
+  /* Tencent corporate blue — matches the Hunyuan / Hy4 brand identity. */
+  --provider-tencent-color: #3458B0;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill

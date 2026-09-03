@@ -48,7 +48,8 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
   'openrouter/z-ai': { label: 'Z.ai', hueClass: 'zai' },
   'openrouter/poolside': { label: 'Poolside', hueClass: 'poolside' },
   'openrouter/nvidia': { label: 'NVIDIA', hueClass: 'nvidia' },
-  'openrouter/thinkingmachines': { label: 'Thinking Machines', hueClass: 'thinkingmachines' }
+  'openrouter/thinkingmachines': { label: 'Thinking Machines', hueClass: 'thinkingmachines' },
+  'openrouter/tencent': { label: 'Tencent', hueClass: 'tencent' }
 }
 
 /**
@@ -109,7 +110,8 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
   'openrouter/poolside/laguna-s-2.1': 'Laguna S 2.1',
   'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free': 'Nemotron 3 Ultra',
   'openrouter/thinkingmachines/inkling:free': 'Inkling',
-  'openrouter/thinkingmachines/inkling-small:free': 'Inkling Small'
+  'openrouter/thinkingmachines/inkling-small:free': 'Inkling Small',
+  'openrouter/tencent/hy4-preview': 'Hy4 Preview'
 }
 
 /**

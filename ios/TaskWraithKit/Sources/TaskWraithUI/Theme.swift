@@ -212,6 +212,7 @@ public enum TWTheme {
         // a chip strip. The blue band is full, so Inkling wears a rose of its
         // own: dE 9.28 from liquid and 9.50 from the openrouter fallback.
         case "thinkingmachines": return 0xC24E68
+        case "tencent": return 0x3458B0
         default: return chroma1Hex
         }
     }
