@@ -2371,6 +2371,16 @@ const api = {
       projectId: string
       referenceIds: string[]
     }
+    /**
+     * Rewind-from-message ("Edit & resend from here") restart hints.
+     * Steer-mode only; MAIN sanitizes both fields and re-resolves the seat id
+     * against its canonical roster, so these are advisory routing hints, not
+     * authority.
+     */
+    rewind?: {
+      resumeFromParticipantId?: string
+      suppressPromptEcho?: boolean
+    }
   }) => ipcRenderer.invoke('run-ensemble-round', payload),
   steerQueuedEnsemblePrompt: (payload: {
     chatId: string

@@ -2484,6 +2484,13 @@ declare global {
         exactPickerParticipantId?: string
         /** P1 F6 — Use-next Project reference selection for this round. */
         projectReferenceContextSelection?: ProjectReferenceContextSelection
+        /** Rewind-from-message ("Edit & resend from here") restart hints;
+         * steer-mode only, advisory — MAIN sanitizes and re-resolves against
+         * its canonical roster. */
+        rewind?: {
+          resumeFromParticipantId?: string
+          suppressPromptEcho?: boolean
+        }
       }) => Promise<{ status: string; roundId?: string }>
       steerQueuedEnsemblePrompt: (payload: {
         chatId: string
