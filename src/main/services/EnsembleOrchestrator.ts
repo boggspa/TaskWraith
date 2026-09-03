@@ -245,10 +245,16 @@ import {
 import { buildCursorPathBCompactionSummary } from './CursorContextPressureRecovery'
 import {
   formatAssistantGroupMentionRoutingNotice,
+  formatAssistantParticipantMentionRoutingNotice,
   resolveAssistantMentionRoutingPlan,
   resolveBackgroundMentionRouting,
-  resolveEnsembleCommunicationAudience
+  resolveEnsembleCommunicationAudience,
+  selectUnreportedDisabledTargetNotices
 } from './EnsembleGroupMentionRouting'
+import {
+  findDisabledBossmanTargets,
+  formatDisabledBossmanTargetMessage
+} from './EnsembleBossmanTargetAvailability'
 import { resolveEnsembleUserFanoutTargets } from './EnsembleUserFanout'
 import { EnsembleChatFlushScheduler } from './ensembleChatFlushScheduler'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
@@ -1554,6 +1560,7 @@ export interface EnsembleBossmanControlResult {
     | 'summon_limit'
     | 'summon_target_active'
     | 'summon_target_disabled'
+    | 'bossman_target_disabled'
     | 'summon_target_pending'
     | 'summon_self_target'
     | 'missing_required_field'
@@ -3816,6 +3823,14 @@ interface ActiveRoundRuntime {
    */
   workspaceChurnBaseline?: WorkspaceChurnSample | null
   unreachableParticipantIds?: Set<string>
+  /**
+   * `<speaker>:<disabled target>` pairs already told, once, that a tagged seat
+   * is switched off. The notice exists to stop a seat re-tagging an
+   * unreachable peer every turn — repeating it every turn instead would
+   * persist one status row per turn AND re-inject each copy into every seat's
+   * tagged transcript. A different speaker still gets told once.
+   */
+  disabledMentionNoticeKeys?: Set<string>
   orchestrationMode: EnsembleOrchestrationMode
   fanoutPolicy?: EnsembleFanoutPolicy
   concurrentMode?: boolean
@@ -10032,6 +10047,10 @@ export class EnsembleOrchestrator {
       }
       const participant = this.findRuntimeParticipant(runtime, input.targetParticipantId)
       if (!participant) return this.invalidBossmanTarget(action, runtime.roundId)
+      const assignBlocked = this.disabledBossmanTargetResult(runtime, action, authorityLabel, [
+        participant.id
+      ])
+      if (assignBlocked) return assignBlocked
       const assignment = {
         id: input.assignmentId || this.nextBossmanControlId('assign'),
         goalId: this.deps.getChat(runtime.chatId)?.activeGoal?.id,
@@ -10237,6 +10256,10 @@ export class EnsembleOrchestrator {
           runtime.roundId,
           'set_review_gate requires targetParticipantId and scope.'
         )
+      const gateBlocked = this.disabledBossmanTargetResult(runtime, action, authorityLabel, [
+        reviewer.id
+      ])
+      if (gateBlocked) return gateBlocked
       const gateChat = this.deps.getChat(runtime.chatId)
       const gate = {
         id: input.gateId || this.nextBossmanControlId('gate'),
@@ -10455,6 +10478,14 @@ export class EnsembleOrchestrator {
           )
           .map((roundParticipant) => roundParticipant.participantId)
       )
+      // A named-but-disabled voter is counted in the quorum denominator and is
+      // never routed, so the poll can never reach a verdict. The implicit
+      // roster path below filters `enabled` already; only the explicit list
+      // can carry a switched-off seat this far.
+      const pollBlocked = participantIds.length
+        ? this.disabledBossmanTargetResult(runtime, action, authorityLabel, participantIds)
+        : null
+      if (pollBlocked) return pollBlocked
       const pollTargetIds = participantIds.length
         ? participantIds
         : (this.deps.getChat(runtime.chatId)?.ensemble?.participants || [])
@@ -11897,16 +11928,32 @@ export class EnsembleOrchestrator {
     // business continues first, then each summoned seat casts its ballot.
     const pollSummons: EnsembleParticipant[] = []
     const seen = new Set<string>()
+    // Why a target was passed over. Every skip below used to be a bare
+    // `continue`, and the closing status only fires when something routed — so
+    // routing an all-disabled target list said NOTHING, and the authority was
+    // left believing its work had been handed on.
+    const skipped: string[] = []
     for (const participantId of participantIds) {
       if (seen.has(participantId)) continue
       seen.add(participantId)
-      const participant = chat.ensemble.participants.find(
-        (entry) => entry.id === participantId && entry.enabled
-      )
+      const participant = chat.ensemble.participants.find((entry) => entry.id === participantId)
       if (!participant) continue
-      if (runtime.unreachableParticipantIds?.has(participant.id)) continue
-      if (this.activeBossmanQuarantine(chat, runtime.roundId, participant.id)) continue
-      if (this.participantFanoutDispatchState(runtime, participant.id)) continue
+      if (!participant.enabled) {
+        skipped.push(`${participantDisplayName(participant)} (disabled)`)
+        continue
+      }
+      if (runtime.unreachableParticipantIds?.has(participant.id)) {
+        skipped.push(`${participantDisplayName(participant)} (unreachable this round)`)
+        continue
+      }
+      if (this.activeBossmanQuarantine(chat, runtime.roundId, participant.id)) {
+        skipped.push(`${participantDisplayName(participant)} (quarantined)`)
+        continue
+      }
+      if (this.participantFanoutDispatchState(runtime, participant.id)) {
+        skipped.push(`${participantDisplayName(participant)} (already in a fan-out lane)`)
+        continue
+      }
       const status = this.activeRoundParticipantStatus(runtime, participant.id)
       const pendingIndex = remaining.findIndex((entry) => entry.id === participant.id)
       if (pendingIndex >= 0) {
@@ -11927,7 +11974,10 @@ export class EnsembleOrchestrator {
         //     counted in the poll denominator.
         //   - Everyone past their turn (answered/yielded/sleeping) or mid-turn
         //     gets a budget-free vote-only summons appended behind the queue.
-        if (status === 'failed' || status === 'skipped' || status === 'cancelled') continue
+        if (status === 'failed' || status === 'skipped' || status === 'cancelled') {
+          skipped.push(`${participantDisplayName(participant)} (${status} this round)`)
+          continue
+        }
         const directives =
           runtime.pollVoteDirectiveByParticipantId ??
           (runtime.pollVoteDirectiveByParticipantId = new Map())
@@ -11950,7 +12000,21 @@ export class EnsembleOrchestrator {
           { allowAnsweredParticipant: true, allowYieldedParticipant: true }
         )
         if (continuation.appended) continue
+        skipped.push(
+          `${participantDisplayName(participant)} (${this.describeContinuationDecline(continuation)})`
+        )
+        continue
       }
+      // Falling out of the loop means the seat is past its turn (answered,
+      // yielded, sleeping) or mid-flight, and this caller asked for no
+      // continuation. `assign_work` routes with no options at all, so this is
+      // the COMMON skip in a long round — leaving it unrecorded is the same
+      // silence the disabled case had.
+      skipped.push(
+        `${participantDisplayName(participant)} (${
+          status ? `already ${status} this round` : 'not part of this round'
+        })`
+      )
     }
     for (let index = routed.length - 1; index >= 0; index -= 1) {
       remaining.unshift(routed[index])
@@ -11963,6 +12027,12 @@ export class EnsembleOrchestrator {
         runtime.chatId,
         runtime.roundId,
         `${statusMessage} Routed next: ${routedLabels.concat(summonsLabels).join(', ')}.`
+      )
+    } else if (skipped.length > 0) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${statusMessage} Routed no one — every target was passed over: ${skipped.join(', ')}. No turn was appended.`
       )
     }
     return routed.length + pollSummons.length
@@ -12030,6 +12100,33 @@ export class EnsembleOrchestrator {
       roundId,
       message,
       error: 'missing_required_field'
+    }
+  }
+
+  /**
+   * Refuse a Boss/Captain action whose target seat the user has switched off.
+   *
+   * Existence guards (`invalidBossmanTarget`) pass for a disabled seat because
+   * it is still on the roster, and `routeBossmanTargets` then drops it — so
+   * without this the authority gets `ok: true` for work that never runs.
+   * Returns null when every target can actually be reached.
+   */
+  private disabledBossmanTargetResult(
+    runtime: ActiveRoundRuntime,
+    action: EnsembleBossmanControlAction,
+    authorityLabel: string,
+    targetParticipantIds: readonly string[]
+  ): EnsembleBossmanControlResult | null {
+    const participants = this.deps.getChat(runtime.chatId)?.ensemble?.participants || []
+    const disabled = findDisabledBossmanTargets(participants, targetParticipantIds)
+    if (disabled.length === 0) return null
+    return {
+      ok: false,
+      tool: 'ensemble_bossman_control',
+      action,
+      roundId: runtime.roundId,
+      message: formatDisabledBossmanTargetMessage(authorityLabel, action, disabled),
+      error: 'bossman_target_disabled'
     }
   }
 
@@ -17987,6 +18084,22 @@ export class EnsembleOrchestrator {
             runtime.chatId,
             runtime.roundId,
             formatAssistantGroupMentionRoutingNotice(notice)
+          )
+        }
+        // A tag naming a seat the user switched off resolves to nothing, and
+        // silence reads to the speaker exactly like prose — so it tags again
+        // next turn. Say so instead; the status lands in every seat's tagged
+        // transcript, which is the only channel that reaches the speaker.
+        const freshDisabledNotices = selectUnreportedDisabledTargetNotices(
+          assistantMentionRoutingPlan.participantNotices,
+          participant.id,
+          runtime.disabledMentionNoticeKeys ?? (runtime.disabledMentionNoticeKeys = new Set())
+        )
+        for (const notice of freshDisabledNotices) {
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            formatAssistantParticipantMentionRoutingNotice(notice)
           )
         }
       }

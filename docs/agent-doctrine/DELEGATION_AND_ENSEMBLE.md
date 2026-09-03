@@ -199,6 +199,14 @@ promoted together to the front of the remaining queue. An ambiguous alias is
 skipped with a warning, and self-mentions are filtered (you can narrate "I,
 Codex, think…" without looping yourself back to the front).
 
+An alias naming a seat the user has switched off routes nothing and is reported
+as its own round-status notice. The roster block above your transcript lists
+only enabled seats, but the transcript still carries a switched-off seat's
+earlier turns — so without that notice a seat re-tags an unreachable peer every
+turn, which is exactly what one overnight run did. Read the notice as a routing
+fact rather than a failure: the seat is off by the user's choice. Route to an
+enabled seat or ask the user to re-enable it; tagging it again cannot reach it.
+
 Mentioning an ordinary participant that already reached a terminal status does
 not re-summon it. The active authority is the exception:
 the Boss—or the Captain once the Boss is unavailable—may be re-summoned after

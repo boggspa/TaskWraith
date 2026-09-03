@@ -8906,6 +8906,164 @@ Next action:
     expect(result.error).toBe('summon_target_disabled')
   })
 
+  /**
+   * A Boss that gets `ok: true` for work handed to a switched-off seat has no
+   * way to learn the work will never run — `routeBossmanTargets` drops the
+   * target silently. These pin the same refusal `summon_participant` has always
+   * made, for the branches that never got it.
+   */
+  async function disabledTargetHarness(): Promise<ReturnType<typeof makeHarness>> {
+    const initialChat = makeChat()
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')!.enabled =
+      false
+    return harness
+  }
+
+  it('rejects Boss assign_work when the target participant is disabled', async () => {
+    const harness = await disabledTargetHarness()
+
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'assign_work',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      objective: 'Take the migration.'
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('bossman_target_disabled')
+    expect(result.message).toContain('disabled')
+    expect(harness.chat.ensemble?.bossmanControlState?.assignments || []).toHaveLength(0)
+  })
+
+  it('rejects a Boss review gate whose reviewer is disabled', async () => {
+    const harness = await disabledTargetHarness()
+
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'set_review_gate',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      scope: 'Verify the migration before completion.',
+      reason: 'Gate on a seat that cannot answer.'
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('bossman_target_disabled')
+  })
+
+  it('rejects an explicitly targeted Boss poll that names a disabled voter', async () => {
+    const harness = await disabledTargetHarness()
+
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'create_poll',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      participantIds: ['codex'],
+      question: 'Ship it?',
+      options: ['yes', 'no']
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('bossman_target_disabled')
+    expect(harness.chat.ensemble?.bossmanControlState?.polls || []).toHaveLength(0)
+  })
+
+  it('says so in the round when Boss routing reaches none of its targets', async () => {
+    const harness = await disabledTargetHarness()
+
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'request_status',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      participantIds: ['codex'],
+      prompt: 'Where are you up to?'
+    })
+
+    expect(result.ok).toBe(true)
+    const statuses = harness.chat.messages
+      .filter((message) => message.metadata?.kind === 'ensembleRoundStatus')
+      .map((message) => message.content)
+    expect(statuses.some((content) => /routed no one|reached no/i.test(content))).toBe(true)
+    expect(statuses.some((content) => content.includes('disabled'))).toBe(true)
+  })
+
+  it('still routes a Boss assignment to an enabled seat while a disabled one exists', async () => {
+    const harness = await disabledTargetHarness()
+
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'assign_work',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'claude',
+      objective: 'Take the migration.'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(harness.chat.ensemble?.bossmanControlState?.assignments || []).toHaveLength(1)
+  })
+
+  it('does not claim it routed no one when a target was actually routed', async () => {
+    const harness = await disabledTargetHarness()
+
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'request_status',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      participantIds: ['claude'],
+      prompt: 'Where are you up to?'
+    })
+
+    expect(
+      harness.chat.messages.some((message) => /routed no one/i.test(message.content))
+    ).toBe(false)
+  })
+
+  /**
+   * The headline case: a seat tags a peer the user switched off mid-run. The
+   * alias resolves to nothing, so before this the round said NOTHING and the
+   * speaker re-tagged the dead seat every turn.
+   */
+  it('tells a seat, once per round, that the peer it tagged is switched off', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.activeGoal = { ...buildActiveGoal('goal-continuous'), status: 'completed' }
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')!.enabled =
+      false
+
+    const route = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'content',
+      text: '@Worker please take the migration.'
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 10 }
+    })
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) => message.content.includes('switched off'))
+      ).toBe(true)
+    )
+    const notices = harness.chat.messages.filter((message) =>
+      message.content.includes('switched off')
+    )
+    expect(notices).toHaveLength(1)
+    expect(notices[0].content).toContain('@Worker')
+  })
+
   it('rejects Boss summon after the per-target round cap', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.orchestrationMode = 'continuous'

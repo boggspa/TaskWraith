@@ -5,6 +5,7 @@ import {
   isParticipantMention,
   isUserMentionToken,
   resolvePhraseToParticipant,
+  type MentionMatch,
   type GroupMentionMatch,
   type ParticipantMentionMatch
 } from './EnsembleMentionAlias'
@@ -33,6 +34,8 @@ export interface AssistantMentionRoutingPlan {
   participantMatches: ParticipantMentionMatch[]
   /** Group tokens deliberately left presentation-only at this boundary. */
   groupNotices: AssistantGroupMentionRoutingNotice[]
+  /** Direct aliases that named a real but switched-off seat. */
+  participantNotices: AssistantParticipantMentionRoutingNotice[]
   /** A permitted @Captains/@Management expansion must stay collective. */
   hasAuthorityGroupRoute: boolean
 }
@@ -47,6 +50,71 @@ export function formatAssistantGroupMentionRoutingNotice(
     return `@-mention: ${notice.token} is outside this user-targeted round; no group turns appended.`
   }
   return `@-mention: ${notice.token} matched no enabled eligible peer seats; no turns appended.`
+}
+
+/**
+ * Why a direct `@seat` alias resolved to a real roster seat that still cannot
+ * take a turn. Kept separate from the group-notice union on purpose: that
+ * union's formatter falls through to its last branch, so widening it is a
+ * silent-wrong-message hazard.
+ */
+export type AssistantParticipantMentionRoutingNoticeReason = 'disabled_target'
+
+export interface AssistantParticipantMentionRoutingNotice {
+  /** The alias the speaking seat actually wrote, `@` included. */
+  token: string
+  participantId: string
+  /** Display name for the seat, matching the orchestrator's own fallback. */
+  role: string
+  reason: AssistantParticipantMentionRoutingNoticeReason
+}
+
+/**
+ * A seat that tags a switched-off peer gets told so. Without this the alias
+ * simply fails to resolve and NOTHING is appended, which reads to the speaker
+ * exactly like prose — so it tags again on its next turn, and again. Say the
+ * seat's name, say the cause is the user's toggle rather than a failure, and
+ * name the next move, or the notice just decorates the same loop.
+ */
+export function formatAssistantParticipantMentionRoutingNotice(
+  notice: AssistantParticipantMentionRoutingNotice
+): string {
+  switch (notice.reason) {
+    case 'disabled_target':
+      return (
+        `@-mention: ${notice.token} names ${notice.role}, a seat the user has switched off; ` +
+        'it cannot take a turn, so no turn appended. Route to an enabled seat, or ask the user ' +
+        'to re-enable it — tagging it again will not reach it.'
+      )
+  }
+}
+
+/**
+ * Narrow a turn's disabled-target notices to the ones this speaker has not
+ * already been told about in this round, recording them as reported.
+ *
+ * The notice exists to stop a seat re-tagging a switched-off peer every turn.
+ * Emitting it every turn would persist one status row per turn AND re-inject
+ * every copy into every seat's tagged transcript on each later dispatch — a
+ * quieter loop that costs more context than the silent one did. A DIFFERENT
+ * speaker still gets told once: it has not seen the notice addressed to it.
+ *
+ * `reported` is mutated, and is owned by the round runtime so the memory dies
+ * with the round.
+ */
+export function selectUnreportedDisabledTargetNotices(
+  notices: readonly AssistantParticipantMentionRoutingNotice[],
+  speakerParticipantId: string,
+  reported: Set<string>
+): AssistantParticipantMentionRoutingNotice[] {
+  const fresh: AssistantParticipantMentionRoutingNotice[] = []
+  for (const notice of notices) {
+    const key = `${speakerParticipantId}:${notice.participantId}`
+    if (reported.has(key)) continue
+    reported.add(key)
+    fresh.push(notice)
+  }
+  return fresh
 }
 
 export interface BackgroundMentionRoutingPlan {
@@ -122,6 +190,7 @@ export function resolveAssistantMentionRoutingPlan(input: {
   )
   const participantMatches: ParticipantMentionMatch[] = []
   const groupNotices: AssistantGroupMentionRoutingNotice[] = []
+  const participantNotices = resolveDisabledTargetMentionNotices(input, matches)
   const noticeKeys = new Set<string>()
   const groupExclusions = new Set(input.excludedGroupParticipantIds || [])
   groupExclusions.add(input.callerParticipantId)
@@ -170,7 +239,65 @@ export function resolveAssistantMentionRoutingPlan(input: {
     }
   }
 
-  return { participantMatches, groupNotices, hasAuthorityGroupRoute }
+  return { participantMatches, groupNotices, participantNotices, hasAuthorityGroupRoute }
+}
+
+/**
+ * Second, DIAGNOSTIC-ONLY resolution pass over the full roster.
+ *
+ * The enabled-only pass above stays the sole routing authority. Resolving
+ * routes against the whole roster instead would be a regression twice over:
+ * a disabled seat's alias set is byte-identical to its enabled one, so it can
+ * win a LONGER longest-prefix match away from an enabled seat, and — because
+ * the alias index is built in roster-array order — it can also displace an
+ * enabled peer into `ambiguousAmong` and turn a clean route into an ambiguity
+ * warning. Running a throwaway second pass and reporting only what it alone
+ * saw buys the notice without touching either behaviour.
+ *
+ * Suppression is keyed on the exact SPAN an alias consumed, never on `atIndex`
+ * alone. The two passes can resolve different numbers of words at the same
+ * `@`: with an enabled `Codex` and a disabled `Codex Reviewer`, the
+ * authoritative pass fails longest-prefix at two words, falls back to one, and
+ * routes the enabled `Codex` — at the same offset the full pass resolves the
+ * disabled two-word seat. An `atIndex`-only key would read that as "already
+ * routed" and stay silent, which is the worse failure: the wrong seat answers
+ * a message addressed by name to a switched-off one.
+ */
+function resolveDisabledTargetMentionNotices(
+  input: {
+    text: string
+    participants: readonly EnsembleParticipant[]
+    callerParticipantId: string
+  },
+  routedMatches: readonly MentionMatch[]
+): AssistantParticipantMentionRoutingNotice[] {
+  if (!input.participants.some((participant) => participant.enabled === false)) return []
+  const routedSpans = new Set(
+    routedMatches.map((match) => `${match.atIndex}:${match.consumedLength}`)
+  )
+  const notices: AssistantParticipantMentionRoutingNotice[] = []
+  const seen = new Set<string>()
+  for (const match of findAllMentions(
+    input.text,
+    [...input.participants],
+    new Set([input.callerParticipantId])
+  )) {
+    if (!isParticipantMention(match)) continue
+    if (match.participant.enabled !== false) continue
+    // The authoritative pass consumed this exact alias and routed a turn for
+    // it, so there is nothing to report. A match at the same offset but a
+    // DIFFERENT length is a different alias and still needs its notice.
+    if (routedSpans.has(`${match.atIndex}:${match.consumedLength}`)) continue
+    if (seen.has(match.participant.id)) continue
+    seen.add(match.participant.id)
+    notices.push({
+      token: `@${match.text}`,
+      participantId: match.participant.id,
+      role: match.participant.role || match.participant.provider,
+      reason: 'disabled_target'
+    })
+  }
+  return notices
 }
 
 /**
