@@ -1897,6 +1897,20 @@ import {
   dispatchAntigravityCombinedMode,
   isAntigravityGeminiApiModelCandidate
 } from './antigravity/AntigravityCombinedModeDispatch'
+import {
+  createAntigravityAcpBinaryResolver,
+  type AntigravityAcpResolvedBinary
+} from './antigravity/AntigravityAcpBinaryResolver'
+import {
+  createAntigravityAcpClient,
+  createAntigravityAcpTurnAbortController,
+  type AntigravityAcpRunHandle
+} from './antigravity/AntigravityAcpClient'
+import {
+  createAntigravityAcpDownloadArchive,
+  createAntigravityAcpExtractArchive,
+  createAntigravityAcpSpawnProcess
+} from './antigravity/AntigravityAcpInstallTransport'
 import { isAntigravityGeminiApiKeyConfigured } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { resolveAgyCliBinary } from './antigravity/AntigravityCli'
 import { runAntigravityAgySeatSummary } from './antigravity/AntigravityAgySeatCompactionLifecycle'
@@ -35729,8 +35743,200 @@ async function runAntigravityProvider(
         runManager.confirmTerminalStatus(runId, status)
       }
     },
-    runAgyProvider: runAntigravityAgyProvider
+    runAgyProvider: runAntigravityAgyProvider,
+    // S5: the official-ACP third arm. The switch dep is read fresh per run and
+    // makes the S4 gate live; the provider re-checks the two-part opt-in at
+    // spawn time and fails closed, so wiring it unconditionally is safe.
+    isAcpTransportEnabled: () => AppStore.getSettings().antigravityUseAcp === true,
+    runOfficialAcpProvider: runAntigravityOfficialAcpProvider
   })
+}
+
+/**
+ * Official-ACP AntiGravity lane composition (S5): the third dispatch arm's
+ * provider. Assembles the binary resolver from the install-transport
+ * factories, enforces pin-on-first-install provenance through the resolver,
+ * and delegates the turn to the Antigravity ACP client over the
+ * provider-neutral AcpTurnClient. Lane logic (namespace quarantine, terminal
+ * ordering) stays in AntigravityCombinedModeDispatch; resolver/client
+ * invariants stay in their own modules with their own tests.
+ *
+ * Launch authority: the two-part opt-in is re-checked HERE, at spawn time —
+ * the Settings transport switch alone is never sufficient to launch. Every
+ * refusal settles the already-registered run visibly and returns without
+ * throwing, so the dispatch lane's generic recovery never overwrites the
+ * specific honest copy (pin-mismatch hashes, missing consent, platform).
+ */
+async function runAntigravityOfficialAcpProvider(
+  event: Electron.IpcMainInvokeEvent,
+  payload: AgentRunPayload,
+  route: AgentRunRoute
+): Promise<void> {
+  const failVisible = (message: string): void => {
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'antigravity',
+      route,
+      message,
+      setupRequired: true,
+      fallback: false
+    })
+  }
+  if (!isAntigravityOptInEnabled(AppStore.getSettings())) {
+    failVisible(
+      'AntiGravity is not enabled. Accept the AntiGravity opt-in in Settings -> Providers before using the official ACP transport. The binary was not launched.'
+    )
+    return
+  }
+  const cwd = typeof payload.workspace === 'string' ? payload.workspace.trim() : ''
+  if (!cwd) {
+    failVisible(
+      'The official AntiGravity ACP transport currently requires a workspace-scoped run. The binary was not launched.'
+    )
+    return
+  }
+  let resolved: AntigravityAcpResolvedBinary
+  try {
+    resolved = await createAntigravityAcpBinaryResolver({
+      installRoot: join(app.getPath('userData'), 'antigravity-acp'),
+      downloadArchive: createAntigravityAcpDownloadArchive(),
+      extractArchive: createAntigravityAcpExtractArchive()
+    }).resolve()
+  } catch (error) {
+    // Every resolver error already carries fixed honest copy naming exactly
+    // what refused (pin mismatch hashes included) and that nothing launched.
+    failVisible(
+      error instanceof Error
+        ? error.message
+        : 'The official Antigravity ACP binary could not be resolved. The binary was not launched.'
+    )
+    return
+  }
+  const client = createAntigravityAcpClient({
+    appVersion: app.getVersion(),
+    spawnProcess: createAntigravityAcpSpawnProcess(resolved.binaryPath, resolved.args)
+  })
+  // Thin per-run projection modeled on the other ACP seats' compat lines,
+  // deliberately minimal: no usage estimation, thinking projection, or
+  // session resume yet. No onPermissionRequest is wired, so ACP tool calls
+  // run default-DENY and the client's recovery prompt keeps the turn alive —
+  // a TaskWraith permission bridge is a deliberate follow-up.
+  let stopReason = 'success'
+  let toolSeq = 0
+  let finished = false
+  const finishTurn = (code: number | null, turnComplete: boolean): void => {
+    if (finished) return
+    finished = true
+    const failed = !turnComplete || stopReason !== 'success'
+    try {
+      if (failed) {
+        sendAgentCompatError(
+          event.sender,
+          'antigravity',
+          stopReason !== 'success'
+            ? `AntiGravity stopped before finishing this turn (stopReason: ${stopReason}). It may not have produced an answer or written files.`
+            : 'AntiGravity stopped before finishing this turn. It may not have produced an answer or written files.',
+          route
+        )
+      }
+      sendAgentCompatLine(
+        event.sender,
+        'antigravity',
+        {
+          type: 'result',
+          status: failed ? 'failed' : 'success',
+          provider: 'antigravity',
+          fallback: false
+        },
+        route
+      )
+      // Order is load-bearing: the renderer seals a run only on the exit
+      // event and finishRun releases persistence authority — exit BEFORE finish.
+      sendAgentCompatExit(event.sender, 'antigravity', failed ? 1 : (code ?? 0), route)
+    } finally {
+      if (route.appRunId) {
+        try {
+          runManager.finish(route.appRunId, failed ? 'failed' : 'completed')
+        } finally {
+          runManager.confirmTerminalStatus(route.appRunId, failed ? 'failed' : 'completed')
+        }
+      }
+    }
+  }
+  let handle: AntigravityAcpRunHandle
+  try {
+    handle = client.runTurn({
+      prompt: payload.prompt,
+      cwd,
+      onEvent: (evt) => {
+        if (evt.type === 'content' && evt.text) {
+          sendAgentCompatLine(
+            event.sender,
+            'antigravity',
+            { type: 'content', text: evt.text, provider: 'antigravity' },
+            route
+          )
+        } else if (evt.type === 'tool_use') {
+          sendAgentCompatLine(
+            event.sender,
+            'antigravity',
+            {
+              type: 'tool_use',
+              tool_id: evt.toolId || `antigravity-acp-tool-${++toolSeq}`,
+              tool_name: evt.toolName || 'tool',
+              tool_kind: evt.toolKind,
+              parameters: evt.toolInput || {},
+              provider: 'antigravity'
+            },
+            route
+          )
+        } else if (evt.type === 'tool_result') {
+          sendAgentCompatLine(
+            event.sender,
+            'antigravity',
+            {
+              type: 'tool_result',
+              tool_id: evt.toolId || `antigravity-acp-tool-${toolSeq || ++toolSeq}`,
+              tool_name: evt.toolName,
+              tool_kind: evt.toolKind,
+              parameters: evt.toolResultInput || evt.toolInput || {},
+              status: evt.toolStatus || 'success',
+              output: evt.toolOutput || '',
+              provider: 'antigravity'
+            },
+            route
+          )
+        } else if (evt.type === 'result') {
+          // Terminal ACP stop reason; the canonical result line is
+          // synthesized at close, so remember an abnormal reason here.
+          const normalized = normalizeGrokStopReason(evt.status)
+          if (normalized !== 'success') stopReason = normalized
+        } else if (evt.type === 'provider_warning' && evt.text) {
+          sendAgentCompatError(event.sender, 'antigravity', evt.text, route)
+        }
+      },
+      onClose: (code, turnComplete) => {
+        finishTurn(code, turnComplete)
+      }
+    })
+  } catch (error) {
+    try {
+      sendAgentCompatError(
+        event.sender,
+        'antigravity',
+        `AntiGravity ACP could not start: ${error instanceof Error ? error.message : String(error)}`,
+        route
+      )
+    } catch {
+      // The settlement path below is projection-independent.
+    }
+    finishTurn(null, false)
+    return
+  }
+  if (route.appRunId) {
+    runManager.attachAbortController(route.appRunId, createAntigravityAcpTurnAbortController(handle))
+  }
+  await handle.closed
 }
 
 /**
