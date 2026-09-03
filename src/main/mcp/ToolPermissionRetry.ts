@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
 import { redactPermissionOpportunityIdsForDurableStorage } from '../../shared/permissionOpportunityRedaction'
 import type { TaskWraithMcpToolDefinition } from '../McpToolCatalog'
-import { isReadOnlyShellCommand } from '../grok/GrokReadOnlyShell'
 import type { AgentApprovalAction } from '../store/types'
 import {
   canonicalTaskWraithToolName,
@@ -774,8 +773,9 @@ const DIRECT_USER_ACCEPT_ACTIONS = new Set<AgentApprovalAction>([
  *
  * `automaticApproval` is supplied only after the central approval orchestrator
  * returned true without opening a decision modal. The command/cwd still remain
- * in that orchestrator's durable approval receipt. Read-only shell commands do
- * not need this mutation escape hatch and stay on their ordinary path.
+ * in that orchestrator's durable approval receipt. The command's own shape is
+ * deliberately not part of this answer — see the body for why a read-only
+ * command needs the same claim-less admission a write command gets.
  */
 export function approvedShellAuthorityAuthorizesUnscopedShell(input: {
   toolName: TaskWraithMcpToolName
@@ -796,12 +796,21 @@ export function approvedShellAuthorityAuthorizesUnscopedShell(input: {
   }
   const command = input.arguments.command
   if (typeof command !== 'string' || !command.trim()) return false
-  // A read-only ONE-SHOT needs no mutation escape hatch, but a read-looking
-  // command started as a PERSISTENT process is still an opaque long-lived
-  // child (`tail -f`, a watcher, a server). Classifying it as read-only would
-  // route it back into claim derivation and re-create the dead end.
+  // A read-looking command started as a PERSISTENT process is still an opaque
+  // long-lived child (`tail -f`, a watcher, a server), so the background tool
+  // carries this authority whatever the command looks like.
   if (input.toolName === 'start_background_process') return true
-  return !isReadOnlyShellCommand(command)
+  // The one-shot shell carries it unconditionally too. Read-only commands were
+  // excluded here on the theory that a read needs no mutation escape hatch —
+  // but claim derivation admits run_shell_command with NO claims only for the
+  // SINGLE-SEGMENT workspace-inspection forms (WorkspaceMutationClaims.ts). A
+  // provably read-only CHAIN (`git status --porcelain -- x && wc -l x`) is
+  // neither inspection-eligible nor claim-derivable, so the exclusion routed an
+  // already-approved read into claim derivation, whose refusal came back to the
+  // user as a tool_permission_retry approval card. A read claims nothing, so a
+  // claim-less admission is at least as appropriate for it as for the write
+  // commands that already carry this same authority.
+  return true
 }
 
 export interface ToolPermissionRetryOrchestrationResult<TResult> {

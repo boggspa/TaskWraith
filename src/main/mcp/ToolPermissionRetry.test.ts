@@ -397,7 +397,8 @@ describe('retry guidance and preserved hard guards', () => {
     ).toBe(false)
 
     // A read-only command still spawns a persistent, opaque process, so the
-    // background tool keeps its authority where the one-shot shell does not.
+    // background tool keeps its authority — and so does the one-shot shell,
+    // whose claims a read cannot express either.
     expect(
       approvedShellAuthorityAuthorizesUnscopedShell({
         toolName: 'start_background_process',
@@ -411,6 +412,40 @@ describe('retry guidance and preserved hard guards', () => {
         toolName: 'run_shell_command',
         arguments: { command: 'grep -r needle .' },
         allowed: true,
+        automaticApproval: true
+      })
+    ).toBe(true)
+  })
+
+  it('carries claim-less shell authority for a read-only command derivation cannot admit', () => {
+    // deriveWorkspaceMutationClaims admits run_shell_command with NO claims only
+    // for the SINGLE-SEGMENT workspace-inspection forms; a provably read-only
+    // CHAIN is not inspection-eligible and its claims can never be derived. So
+    // withholding this authority from every read-only command dead-ended the
+    // chain in claim derivation, and an allowed `git status` came back to the
+    // user as a tool_permission_retry approval card.
+    expect(
+      approvedShellAuthorityAuthorizesUnscopedShell({
+        toolName: 'run_shell_command',
+        arguments: {
+          command: "git status --porcelain -- src/a.ts && echo '---' && wc -l src/a.ts",
+          cwd: '/repo'
+        },
+        allowed: true,
+        automaticApproval: true
+      })
+    ).toBe(true)
+
+    // The authority is still the approval, not the command shape: no resolved
+    // or direct approval means no claim-less admission.
+    expect(
+      approvedShellAuthorityAuthorizesUnscopedShell({
+        toolName: 'run_shell_command',
+        arguments: {
+          command: "git status --porcelain -- src/a.ts && echo '---' && wc -l src/a.ts",
+          cwd: '/repo'
+        },
+        allowed: false,
         automaticApproval: true
       })
     ).toBe(false)
@@ -1118,6 +1153,9 @@ describe('one-off marker and approval receipt', () => {
         decision: { action: 'acceptForSession', decisionSource: 'system' }
       })
     ).toBe(true)
+    // A read-only command is covered by the same authority: it claims nothing,
+    // and claim derivation can only refuse it unless it is one of the
+    // single-segment workspace-inspection forms.
     expect(
       approvedShellAuthorityAuthorizesUnscopedShell({
         ...base,
@@ -1125,7 +1163,7 @@ describe('one-off marker and approval receipt', () => {
         automaticApproval: true,
         decision: { action: 'accept', decisionSource: 'user' }
       })
-    ).toBe(false)
+    ).toBe(true)
     expect(
       approvedShellAuthorityAuthorizesUnscopedShell({
         ...base,
