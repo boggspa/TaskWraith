@@ -147,7 +147,7 @@ export function codexModelSupportsLightReasoning(modelId?: string | null): boole
   const id = String(modelId || '')
     .trim()
     .toLowerCase()
-  return /^gpt-5(?:[.-]|$)/.test(id) && !id.startsWith('preview:')
+  return /^gpt-[56](?:[.-]|$)/.test(id) && !id.startsWith('preview:')
 }
 
 // The CLI's discovery row for the Spark preview has appeared with only the
@@ -169,6 +169,7 @@ export function codexModelSupportsMaxReasoning(modelId?: string | null): boolean
     .trim()
     .toLowerCase()
   return (
+    id === 'gpt-6-astra' ||
     id === 'gpt-5.6-sol' ||
     id === 'gpt-5.6-terra' ||
     id === 'gpt-5.6-luna' ||
@@ -194,6 +195,7 @@ export function codexModelSupportsUltracodeReasoning(modelId?: string | null): b
     .trim()
     .toLowerCase()
   return (
+    id === 'gpt-6-astra' ||
     id === 'gpt-5.6-sol' ||
     id === 'gpt-5.6-terra' ||
     id === 'preview:openai:gpt-5.6:sol' ||
@@ -350,6 +352,15 @@ export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOpti
 // live list when missing (the id-dedupe prefers the CLI's row the day it
 // appears). This replaces the retired preview-catalog append for the trio.
 export const CODEX_STAGED_ROLLOUT_MODEL_IDS: ReadonlySet<string> = new Set([
+  // GPT-6 Astra (launched 2026-09-03). Codex CLI 0.153.1 bundles the catalog
+  // entry, but the app-server withholds the row from `model/list` entirely
+  // while rollout is per-organisation — verified 2026-09-03 against 0.153.1:
+  // neither `includeHidden: false` nor `true` returns it. `thread/start`
+  // nonetheless ACCEPTS the id and echoes it back, which is exactly what the
+  // release note promises ("configurable ... without showing it in the model
+  // picker"), so the append offers a model the seat can really select. The
+  // CLI's own row wins the id-dedupe the day discovery starts returning it.
+  'gpt-6-astra',
   'gpt-5.6-sol',
   'gpt-5.6-terra',
   'gpt-5.6-luna'
@@ -424,6 +435,25 @@ export function mergeCodexLiveModelRows<
 // exists on Sol + Terra only — codexReasoningEffortsForModel appends those two
 // tiers per the codexModelSupports* predicates.
 export const CODEX_STATIC_MODELS = [
+  {
+    // Official metadata from the upstream catalog (codex-rs/models-manager/
+    // models.json at 0.153.1): hyphenated display name, the "most capable"
+    // description verbatim, LOW default (confirmed live — a thread/start on
+    // gpt-6-astra echoes effort 'low'), the `fast` service tier, and the full
+    // low..ultra ladder. Deliberately NOT isDefault: upstream shipped Astra
+    // "without changing the default model", and GPT-5.5 stays the default.
+    id: 'gpt-6-astra',
+    label: 'GPT-6-Astra',
+    description: 'Our most capable model for complex, demanding work.',
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-6-astra', [
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' }
+    ]),
+    defaultReasoningEffort: 'low',
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
+  },
   {
     id: 'gpt-5.6-sol',
     label: 'GPT-5.6-Sol',

@@ -87,13 +87,22 @@ describe('Codex provider model defaults', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   })
 
-  it('leads the picker with the GPT-5.6 trio (above 5.5) but keeps 5.5 the default', () => {
+  it('leads the picker with Astra then the GPT-5.6 trio, keeping 5.5 the default', () => {
     const ids = CODEX_DEFAULT_MODELS.map((model) => model.id)
-    // Trio sits at the very top, in Sol → Terra → Luna order, above 5.5.
-    expect(ids.slice(0, 3)).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+    // Astra leads from 2026-09-03; the trio follows in Sol → Terra → Luna order.
+    expect(ids.slice(0, 4)).toEqual(['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+    expect(ids.indexOf('gpt-6-astra')).toBeLessThan(ids.indexOf('gpt-5.5'))
     expect(ids.indexOf('gpt-5.6-sol')).toBeLessThan(ids.indexOf('gpt-5.5'))
     // The default must NOT follow the reorder to position 0 — it stays 5.5.
     expect(CODEX_DEFAULT_MODEL).toBe('gpt-5.5')
+  })
+
+  it('offers Astra the full low..ultracode ladder in the pre-IPC fallback', () => {
+    const byId = new Map(CODEX_DEFAULT_MODELS.map((model) => [model.id, model]))
+    expect(
+      byId.get('gpt-6-astra')?.supportedReasoningEfforts?.map((o) => o.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    expect(byId.get('gpt-6-astra')?.defaultReasoningEffort).toBe('low')
   })
 
   it('keeps active GPT-5.4 fallbacks without a retirement warning', () => {

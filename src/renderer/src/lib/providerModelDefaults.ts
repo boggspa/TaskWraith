@@ -75,6 +75,25 @@ const CODEX_DEFAULT_MODEL_ROWS = activeCodexModelRows([
   // Sol + Terra only. This is the pre-IPC fallback list — the authoritative
   // rows come from the main process (CODEX_STATIC_MODELS + live model/list).
   {
+    // GPT-6 Astra (2026-09-03). Offered ahead of live discovery — the CLI
+    // bundles the catalog entry but withholds the row from `model/list` while
+    // rollout is per-organisation, and `thread/start` accepts the id anyway.
+    // Not the default: upstream shipped it without moving the default model.
+    id: 'gpt-6-astra',
+    label: 'GPT-6-Astra',
+    description: 'Our most capable model for complex, demanding work.',
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' },
+      { reasoningEffort: 'max' },
+      { reasoningEffort: 'ultracode' }
+    ],
+    defaultReasoningEffort: 'low',
+    additionalSpeedTiers: ['fast']
+  },
+  {
     id: 'gpt-5.6-sol',
     label: 'GPT-5.6-Sol',
     description: 'Latest frontier agentic coding model.',

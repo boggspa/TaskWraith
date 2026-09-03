@@ -451,8 +451,38 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     const models = getStaticProviderModels('codex') as StaticModelShape[]
     expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
     const ids = models.map((model) => model.id)
-    expect(ids.slice(0, 3)).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+    // GPT-6 Astra leads from 2026-09-03 but must NOT take the default: upstream
+    // shipped it "without changing the default model".
+    expect(ids.slice(0, 4)).toEqual([
+      'gpt-6-astra',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna'
+    ])
+    expect(ids.indexOf('gpt-6-astra')).toBeLessThan(ids.indexOf('gpt-5.5'))
     expect(ids.indexOf('gpt-5.6-sol')).toBeLessThan(ids.indexOf('gpt-5.5'))
+  })
+
+  it('offers GPT-6 Astra with its official ladder without taking the default', () => {
+    const models = getStaticProviderModels('codex') as StaticModelShape[]
+    const astra = models.find((model) => model.id === 'gpt-6-astra')
+    expect(astra).toBeDefined()
+    expect(astra?.label).toBe('GPT-6-Astra')
+    expect(astra?.defaultReasoningEffort).toBe('low')
+    // Upstream ladder is low..max plus `ultra`, which TaskWraith carries as its
+    // internal `ultracode` token — and the canonical ladder decides the order,
+    // not the order the tiers happen to be appended in.
+    expect(astra?.supportedReasoningEfforts?.map((e) => e.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(astra?.isDefault).toBeFalsy()
+    expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
+    expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has('gpt-6-astra')).toBe(true)
   })
 
   it('advertises Light/low reasoning on GPT-5 Codex models', () => {
@@ -721,6 +751,7 @@ describe('mergeCodexLiveModelRows', () => {
     })
     expect(merged?.map((model) => model.id)).toEqual([
       'gpt-5.5',
+      'gpt-6-astra',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',
@@ -748,6 +779,7 @@ describe('mergeCodexLiveModelRows', () => {
 
   it('appends nothing extra once live discovery carries every managed row', () => {
     const live = [
+      { id: 'gpt-6-astra' },
       { id: 'gpt-5.6-sol' },
       { id: 'gpt-5.6-terra' },
       { id: 'gpt-5.6-luna' },
@@ -759,8 +791,9 @@ describe('mergeCodexLiveModelRows', () => {
     const merged = mergeCodexLiveModelRows(live, staticFallback, {
       includePreviewAppends: true
     })
-    expect(merged).toHaveLength(7)
+    expect(merged).toHaveLength(8)
     expect(merged?.map((model) => model.id)).toEqual([
+      'gpt-6-astra',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',

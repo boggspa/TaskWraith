@@ -8864,6 +8864,10 @@ async function previewModelAccessProvenForPayload(payload: AgentRunPayload): Pro
 // This is the single choke point the renderer picker AND the iOS broadcast
 // both read, so ordering it here fixes both platforms.
 const CODEX_PICKER_LEAD_ORDER = [
+  // GPT-6 Astra leads from its 2026-09-03 launch. An id absent from this list
+  // ranks last, so a TaskWraith-appended row would otherwise sink below the
+  // generation it supersedes.
+  'gpt-6-astra',
   'gpt-5.6-sol',
   'gpt-5.6-terra',
   'gpt-5.6-luna',
