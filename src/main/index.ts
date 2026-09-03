@@ -4371,6 +4371,32 @@ function createHostCommandProjectionScope(input: {
 }
 
 /**
+ * `enforced` means containment was ASKED FOR and could not be delivered, so
+ * every brokered shell command, run_task, and background process is refused.
+ * The refusal text is actionable, but it only arrives at the first tool call —
+ * until then a host that simply cannot be contained looks like a working
+ * configuration. Warn once per (reason, workspace). The line still arrives at
+ * the FIRST plan resolution rather than at launch — it is not a preflight — but
+ * it names the cause once instead of repeating for every tool call, and it
+ * reaches the host log, where the refusal text only ever reaches the agent.
+ */
+const warnedUnenforceableShellSandboxes = new Set<string>()
+function warnOnceOnUnenforceableShellSandbox(
+  plan: ShellSandboxPlan,
+  workspacePath: string | null
+): void {
+  if (plan.sandboxed || !plan.enforced) return
+  const key = `${plan.reason}:${plan.detail || ''}:${workspacePath || ''}`
+  if (warnedUnenforceableShellSandboxes.has(key)) return
+  warnedUnenforceableShellSandboxes.add(key)
+  console.warn(
+    `[shell-sandbox] containment is enabled but cannot be applied (${plan.reason}${
+      plan.detail ? `: ${plan.detail}` : ''
+    }) for workspace ${workspacePath || '<none>'}; brokered shell commands, run_task, and background processes will be refused in it.`
+  )
+}
+
+/**
  * Resolve the Seatbelt for a brokered agent shell. One call per projection
  * scope, so every tool that spawns inside that scope inherits the same decision.
  */
@@ -4378,6 +4404,7 @@ function brokeredShellSandboxPlan(input: {
   globalScopeRun: boolean
   workspacePath?: string | null
   appChatId?: string | null
+  appRunId?: string | null
   provider: ProviderId
   effectivePermissions?: EffectiveRunPermissions | null
 }): ShellSandboxPlan {
@@ -4386,12 +4413,26 @@ function brokeredShellSandboxPlan(input: {
   // re-grant it — otherwise enabling containment silently revokes a capability
   // the user deliberately gave, and the two systems disagree with no way to see
   // which one refused.
-  const grants = input.appChatId
-    ? executableExternalPathGrantsForChat(AppStore.getChat(input.appChatId), input.provider).filter(
-        (grant) => grant.access === 'write'
-      )
-    : []
-  return resolveShellSandboxPlan({
+  //
+  // BOTH accessors are required, and each is the authority for what the other
+  // fails closed on. The chat accessor drops `thisRun` grants by design ("with
+  // no run id, `thisRun` grants also fail closed"), so reading it alone left the
+  // narrowest, most deliberate grant a user can give out of the profile and the
+  // kernel denied the write. The run accessor is the authority for exact
+  // `thisRun` attachment but returns nothing outside a live matching run. Merge
+  // them and de-duplicate on the (kind, path) pair the profile consumes — the
+  // same grant legitimately appears in both lists.
+  const chat = input.appChatId ? AppStore.getChat(input.appChatId) : null
+  const grantsByProfileTarget = new Map<string, ExternalPathGrant>()
+  for (const grant of [
+    ...executableExternalPathGrantsForChat(chat, input.provider),
+    ...executableExternalPathGrantsForRun(chat, input.appRunId)
+  ].filter((grant) => grant.access === 'write')) {
+    const target = `${grant.kind}:${grant.path}`
+    if (!grantsByProfileTarget.has(target)) grantsByProfileTarget.set(target, grant)
+  }
+  const grants = [...grantsByProfileTarget.values()]
+  const plan = resolveShellSandboxPlan({
     platform: process.platform,
     enabled: shellSandboxEnabled(),
     fullAccessGranted: isFullShellAccessGranted(input.effectivePermissions),
@@ -4406,6 +4447,8 @@ function brokeredShellSandboxPlan(input: {
       .map((grant) => grant.path),
     homePath: os.homedir()
   })
+  warnOnceOnUnenforceableShellSandbox(plan, input.workspacePath ?? null)
+  return plan
 }
 
 /**
@@ -40862,6 +40905,7 @@ async function executeGeminiMcpTool(
           globalScopeRun: context.scope === 'global',
           workspacePath: context.scope === 'global' ? null : workspacePath,
           appChatId: workspaceExecutionContext.appChatId,
+          appRunId: workspaceExecutionContext.appRunId,
           provider: parentProvider,
           effectivePermissions: context.effectivePermissions
         })
@@ -41056,6 +41100,7 @@ async function executeGeminiMcpTool(
           globalScopeRun: context.scope === 'global',
           workspacePath: context.scope === 'global' ? null : workspacePath,
           appChatId: workspaceExecutionContext.appChatId,
+          appRunId: workspaceExecutionContext.appRunId,
           provider: parentProvider,
           effectivePermissions: context.effectivePermissions
         })

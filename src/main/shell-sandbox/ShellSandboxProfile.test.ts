@@ -13,6 +13,11 @@ import {
 
 const identityRealpath = (value: string): string => value
 
+// The module contributes the plausible temp roots itself, so the seams are
+// pinned here: an un-pinned unit test would otherwise assert against whatever
+// os.tmpdir()/TMPDIR happen to be on the host running the suite.
+const FAKE_TMPDIR = '/var/folders/zz/T'
+
 function plan(overrides: Record<string, unknown> = {}) {
   return resolveShellSandboxPlan({
     platform: 'darwin',
@@ -21,6 +26,8 @@ function plan(overrides: Record<string, unknown> = {}) {
     workspacePath: '/Users/dev/projects/app',
     homePath: '/Users/dev',
     realpath: identityRealpath,
+    tmpdir: () => FAKE_TMPDIR,
+    env: {},
     ...overrides
   })
 }
@@ -179,6 +186,86 @@ describe('resolveShellSandboxPlan — the contained plan', () => {
   })
 })
 
+// The caller resolves os.tmpdir() in the MAIN process, but the command runs
+// under `/bin/zsh -lc` — a LOGIN shell, which sources .zshenv/.zprofile and can
+// reassign TMPDIR first. A profile that allows only the main process's view
+// denies the directory the child actually writes to, and the build tool that
+// honours $TMPDIR fails with an error naming neither the sandbox nor TMPDIR.
+describe('resolveShellSandboxPlan — temp roots the login shell may actually use', () => {
+  it('allows the process temp root even when the caller passes none', () => {
+    const result = plan({ writableRoots: [] })
+    if (!result.sandboxed) throw new Error('expected a contained plan')
+    expect(result.profile).toContain(`(allow file-write* (subpath "${FAKE_TMPDIR}"))`)
+  })
+
+  it('allows a TMPDIR the caller never saw', () => {
+    const result = plan({ writableRoots: [], env: { TMPDIR: '/Users/dev/tmp' } })
+    if (!result.sandboxed) throw new Error('expected a contained plan')
+    expect(result.profile).toContain('(allow file-write* (subpath "/Users/dev/tmp"))')
+  })
+
+  // Seatbelt matches the REAL path, so a lexical /tmp rule silently never fires.
+  it('allows /tmp by its real path, not the symlink the profile names', () => {
+    const result = plan({
+      writableRoots: [],
+      realpath: (value: string) => (value === '/tmp' ? '/private/tmp' : value)
+    })
+    if (!result.sandboxed) throw new Error('expected a contained plan')
+    expect(result.profile).toContain('(allow file-write* (subpath "/private/tmp"))')
+    expect(result.profile).not.toContain('(allow file-write* (subpath "/tmp"))')
+  })
+
+  // Contributed roots go through the SAME funnel as caller-supplied ones. A temp
+  // root of / or $HOME would re-grant everything `(deny file-write*)` just took
+  // while the plan still reported `sandboxed: true`.
+  it('still refuses a temp root that would re-open the tree', () => {
+    for (const unsafe of ['/', '/Users', '/Users/dev']) {
+      const result = plan({ writableRoots: [], tmpdir: () => unsafe, env: { TMPDIR: unsafe } })
+      if (!result.sandboxed) throw new Error('expected a contained plan')
+      expect(result.profile).not.toContain(`(allow file-write* (subpath "${unsafe}"))`)
+    }
+  })
+
+  it('drops a relative or empty TMPDIR instead of resolving it against cwd', () => {
+    for (const TMPDIR of ['', '   ', 'relative/tmp']) {
+      const result = plan({ writableRoots: [], env: { TMPDIR } })
+      if (!result.sandboxed) throw new Error('expected a contained plan')
+      expect(result.profile).not.toContain('relative/tmp')
+      expect(result.profile.match(/\(allow file-write\* \(subpath/g)).toHaveLength(2)
+    }
+  })
+
+  // The live caller already passes os.tmpdir(), so the contributed set overlaps
+  // it by construction. Duplicate allow lines are harmless to the kernel and a
+  // reliable sign the funnel was bypassed.
+  it('emits one allow line when the caller already passed the same temp root', () => {
+    const result = plan({ writableRoots: [FAKE_TMPDIR], env: { TMPDIR: FAKE_TMPDIR } })
+    if (!result.sandboxed) throw new Error('expected a contained plan')
+    const allows = result.profile.match(
+      /\(allow file-write\* \(subpath "\/var\/folders\/zz\/T"\)\)/g
+    )
+    expect(allows).toHaveLength(1)
+  })
+
+  // The seams above are test-only. This one omits them so the DEFAULTS —
+  // os.tmpdir() and process.env — are proven wired rather than assumed.
+  it('reads the real process temp root when no seam is injected', () => {
+    const result = resolveShellSandboxPlan({
+      platform: 'darwin',
+      enabled: true,
+      fullAccessGranted: false,
+      workspacePath: '/Users/dev/projects/app',
+      homePath: '/Users/dev',
+      // Only /tmp is rewritten, so the expectation below names the root the
+      // funnel emits on any host this suite runs on, macOS or Linux CI.
+      realpath: (value: string) => (value === '/tmp' ? '/private/tmp' : value)
+    })
+    if (!result.sandboxed) throw new Error('expected a contained plan')
+    const real = tmpdir() === '/tmp' ? '/private/tmp' : tmpdir()
+    expect(result.profile).toContain(`(allow file-write* (subpath ${sbplQuote(real)}))`)
+  })
+})
+
 // The unit tests above prove the profile TEXT. Only the kernel can prove the
 // profile is valid SBPL and that it actually contains a write, so this runs the
 // real thing. Skipped off darwin.
@@ -192,14 +279,20 @@ afterAll(() => {
 describeLive('sandbox-exec, for real', () => {
   const workspace = mkdtempSync(join(tmpdir(), 'tw-sandbox-ws-'))
   const outside = mkdtempSync(join(tmpdir(), 'tw-sandbox-out-'))
-  liveRoots.push(workspace, outside)
+  const tempRoot = mkdtempSync(join(tmpdir(), 'tw-sandbox-tmp-'))
+  liveRoots.push(workspace, outside, tempRoot)
 
   const contained = resolveShellSandboxPlan({
     platform: 'darwin',
     enabled: true,
     fullAccessGranted: false,
     workspacePath: workspace,
-    writableRoots: [tmpdir()].filter(() => false),
+    // `outside` is itself a directory under the real temp root, which this
+    // module now contributes on its own. Point the temp seams at a SIBLING of
+    // it so the escape tests below still test an escape — and so the allowed
+    // temp root can be written to on purpose, one test further down.
+    tmpdir: () => tempRoot,
+    env: { TMPDIR: tempRoot },
     homePath: join(outside, 'home')
   })
 
@@ -222,6 +315,14 @@ describeLive('sandbox-exec, for real', () => {
 
   it('allows a write inside the workspace', () => {
     const target = join(workspace, 'inside.txt')
+    expect(run(`printf ok > ${JSON.stringify(target)}`).status).toBe(0)
+    expect(readFileSync(target, 'utf8')).toBe('ok')
+  })
+
+  // The kernel's word on the contributed temp root: the profile TEXT could name
+  // it and still be matching a path nothing writes to.
+  it('allows a write into the contributed temp root', () => {
+    const target = join(tempRoot, 'temp.txt')
     expect(run(`printf ok > ${JSON.stringify(target)}`).status).toBe(0)
     expect(readFileSync(target, 'utf8')).toBe('ok')
   })
@@ -344,10 +445,17 @@ describe('index.ts containment wiring', () => {
     expect(indexSource).toContain('sandboxArgv: sandboxPlan.wrap')
   })
 
+  // Scoped to the resolver body, not the whole file. `grant.access === 'write'`
+  // occurs five times in index.ts, so a file-wide toContain passed even with the
+  // filter deleted from THIS function — the same vacuous-assertion trap that let
+  // a deleted refusal guard slip through an earlier round.
   it('feeds user-granted external write paths into the profile', () => {
-    expect(indexSource).toContain('externalWritableDirectories:')
-    expect(indexSource).toContain('externalWritableFiles:')
-    expect(indexSource).toContain("grant.access === 'write'")
+    const start = indexSource.indexOf('function brokeredShellSandboxPlan(')
+    const body = indexSource.slice(start, indexSource.indexOf('\nfunction ', start + 1))
+    expect(start).toBeGreaterThan(-1)
+    expect(body).toContain('externalWritableDirectories:')
+    expect(body).toContain('externalWritableFiles:')
+    expect(body).toContain("grant.access === 'write'")
   })
 
   it('attaches a plan to every brokered-mcp projection scope', () => {
@@ -397,5 +505,20 @@ describe('BackgroundProcessRegistry containment wiring', () => {
   it('forwards the sandbox transform on both spawn branches', () => {
     const forwards = registrySource.split('sandboxArgv: options.sandboxArgv').length - 1
     expect(forwards).toBe(2)
+  })
+})
+
+describe('contributed temp roots — disclosed widening', () => {
+  // /tmp is not a per-user directory. Including it lets a contained shell write
+  // somewhere every account on the machine can read and pre-create, which is a
+  // real widening of the write surface rather than a neutral convenience. It is
+  // kept because cross-platform tooling names /tmp literally, but the header has
+  // to say so — an undisclosed widening is the exact failure this module's
+  // "describe the boundary precisely" rule exists to prevent.
+  it('discloses that /tmp is world-shared in the module header', () => {
+    const source = readFileSyncNode(new URL('./ShellSandboxProfile.ts', import.meta.url), 'utf8')
+    const header = source.slice(0, source.indexOf('import '))
+    expect(header).toContain('WORLD-SHARED')
+    expect(header).toContain('/private/tmp')
   })
 })

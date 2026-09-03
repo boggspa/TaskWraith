@@ -4,10 +4,22 @@
 // is described more strongly than it behaves is worse than none:
 //
 //   WRITES  — hard-contained. `(deny file-write*)` follows `(allow default)`,
-//             and only the workspace subpath plus the process temp roots are
-//             allowed back. This is the property `NativeWorkspaceToolGate`'s
+//             and only the workspace subpath plus the temp roots are allowed
+//             back. This is the property `NativeWorkspaceToolGate`'s
 //             `runtimeSandboxed` flag is asking about, and the one this module
 //             is willing to assert.
+//             The temp roots are the PLAUSIBLE set — `os.tmpdir()`, `TMPDIR` as
+//             the main process sees it, and `/tmp` — contributed by this module
+//             rather than by the caller, because the command runs under
+//             `/bin/zsh -lc`: a LOGIN shell, which sources `.zshenv` and
+//             `.zprofile` before the command. Note `/tmp` resolves to the
+//             WORLD-SHARED `/private/tmp`, not a per-user directory: including
+//             it is a deliberate widening of the write surface, taken because
+//             cross-platform tooling names it literally. RESIDUAL: a login profile that
+//             OVERWRITES `TMPDIR` to some other path is NOT covered, because
+//             that value cannot be known without first running the login shell.
+//             A tool honouring such a `$TMPDIR` is denied, and the error names
+//             neither the sandbox nor TMPDIR.
 //   READS   — broad, minus a denylist of high-value secrets (SSH/AWS/GnuPG/
 //             keychains/cloud + shell credentials). Best-effort by construction:
 //             a denylist cannot enumerate every secret on a user's disk. Do NOT
@@ -27,6 +39,7 @@
 // reason; nothing here may become a hard requirement on Windows or Linux.
 
 import { existsSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
 export type ShellSandboxUnavailableReason =
@@ -76,7 +89,11 @@ export interface ShellSandboxPlanInput {
    * as its own named exemption instead of masquerading as a missing root.
    */
   globalScopeRun?: boolean
-  /** Additional writable roots (temp dirs). Non-absolute entries are dropped. */
+  /**
+   * Additional writable roots. Non-absolute entries are dropped. The plausible
+   * temp roots are contributed by this module on top of whatever is passed here,
+   * so a caller cannot forget them — see `contributedTempRoots`.
+   */
   writableRoots?: readonly string[]
   /**
    * Directories the USER granted write access to outside the workspace
@@ -96,6 +113,10 @@ export interface ShellSandboxPlanInput {
   homePath: string
   /** Injected for tests; defaults to `realpathSync`. */
   realpath?: (value: string) => string
+  /** Injected for tests; defaults to `os.tmpdir`. */
+  tmpdir?: () => string
+  /** Injected for tests; defaults to `process.env`. Only `TMPDIR` is read. */
+  env?: { readonly TMPDIR?: string }
   /** Injected for tests; defaults to a real `existsSync` on SANDBOX_EXEC_PATH. */
   sandboxBinaryAvailable?: () => boolean
 }
@@ -181,6 +202,33 @@ function safeRealpath(value: string, realpath: (input: string) => string): strin
       current = parent
     }
   }
+}
+
+/**
+ * Temp roots this module contributes ON TOP OF whatever the caller passed.
+ *
+ * The caller resolves `os.tmpdir()` in the MAIN process, but the command runs
+ * under `/bin/zsh -lc` — a LOGIN shell, which sources `.zshenv`/`.zprofile` and
+ * can reassign `TMPDIR` before the command ever starts. Allowing only the main
+ * process's view then denies the directory the child actually writes to, and a
+ * build tool that honours `$TMPDIR` fails with a permission error naming neither
+ * the sandbox nor TMPDIR. Contributing the plausible set here rather than at the
+ * call site keeps every caller correct without a contract change.
+ *
+ * This widens nothing on its own: each candidate goes through the same
+ * `safeRealpath` → `isUnsafeWritableRoot` → de-duplication funnel as a
+ * caller-supplied root, so a temp root of `/` or `$HOME` is still refused.
+ */
+function contributedTempRoots(input: ShellSandboxPlanInput): string[] {
+  return [
+    (input.tmpdir || tmpdir)(),
+    (input.env || process.env).TMPDIR || '',
+    // What a login profile is most likely to name literally. On macOS `/tmp` is
+    // a symlink to `/private/tmp`, and Seatbelt matches the REAL path, so this
+    // is only useful once `safeRealpath` has followed it — which is also what
+    // lifts it past the one-segment `isUnsafeWritableRoot` refusal.
+    '/tmp'
+  ]
 }
 
 export function buildWorkspaceSandboxProfile(input: {
@@ -277,6 +325,7 @@ export function resolveShellSandboxPlan(input: ShellSandboxPlanInput): ShellSand
   const writableRoots: string[] = []
   for (const candidate of [
     ...(input.writableRoots || []),
+    ...contributedTempRoots(input),
     ...(input.externalWritableDirectories || [])
   ]) {
     const trimmed = (candidate || '').trim()
