@@ -55,8 +55,12 @@ const {
   stableNodePath,
   dirtyEntries,
   advanceHeartbeats,
-  MAX_LEASE_MS
+  MAX_LEASE_MS,
+  buildTimerPlist,
+  TIMER_INTERVAL_SECONDS
 } = require('./work-guard.cjs') as {
+  buildTimerPlist: (root: string, nodeBin: string) => string
+  TIMER_INTERVAL_SECONDS: number
   HEARTBEAT_STALE_MS: number
   ORPHAN_WARN_MS: number
   claimToMatcher: (claim: string) => (file: string) => boolean
@@ -863,5 +867,40 @@ describe('runtime marker dialect', () => {
     )
     const marker = markerFor(root, file)
     expect(marker.matchers.some((match) => match('anywhere/at/all.ts'))).toBe(true)
+  })
+})
+
+describe('launchd timer plist', () => {
+  // The agent ran fine (exit 0, 19 runs) while the pre-commit hook still said
+  // "timer looks dead — snapshots are NOT being taken". Measured cause: the
+  // job was declared `ProcessType: Background`, launchd's lowest band, where
+  // CPU/IO are throttled and the interval timer is aggressively coalesced. The
+  // 300s StartInterval was landing every 11.7-26.5min (measured over 20
+  // consecutive refs/wip snapshots; the FLOOR was 11.7min, never near 5min).
+  // TICK_STALE_MS is 20min, so the longer gaps tripped the staleness warning
+  // and — the part that actually matters — the real snapshot cadence was
+  // 2.4-5x longer than designed, leaving that much more uncommitted work
+  // unsnapshotted in a repo where several agents share one tree.
+  const plist = () => buildTimerPlist('/repo', '/opt/homebrew/bin/node')
+
+  it('does not put the snapshot timer in launchd’s throttled Background band', () => {
+    expect(plist()).not.toContain('<string>Background</string>')
+  })
+
+  it('declares the interval the staleness threshold is calibrated against', () => {
+    expect(plist()).toContain(`<key>StartInterval</key><integer>${TIMER_INTERVAL_SECONDS}</integer>`)
+  })
+
+  it('keeps the staleness threshold a clear multiple of the interval', () => {
+    // Ties the two constants together: changing one without the other either
+    // cries wolf on every commit or hides a genuinely dead timer for hours.
+    expect(TICK_STALE_MS).toBeGreaterThanOrEqual(TIMER_INTERVAL_SECONDS * 1000 * 4)
+  })
+
+  it('still points launchd at the repo it snapshots', () => {
+    const xml = plist()
+    expect(xml).toContain('<key>WorkingDirectory</key><string>/repo</string>')
+    expect(xml).toContain('<string>/opt/homebrew/bin/node</string>')
+    expect(xml).toContain('<key>RunAtLoad</key><true/>')
   })
 })

@@ -85,6 +85,10 @@ const TICK_FILE = 'tick.json'
  * ticks — long enough not to cry wolf over a sleeping laptop, short enough
  * that a broken daemon surfaces the same working day.
  */
+// launchd fires the tick this often. Kept next to TICK_STALE_MS on purpose:
+// the staleness threshold is only meaningful as a multiple of the interval,
+// and work-guard.test.ts pins that relationship so the two cannot drift apart.
+const TIMER_INTERVAL_SECONDS = 300
 const TICK_STALE_MS = 20 * 60 * 1000
 
 // Human / manual claim markers only. Runtime-derived projections use the
@@ -921,12 +925,29 @@ function cmdCheck(root, now) {
  * agent on someone's machine should be an explicit act, not a side effect of
  * checking out a branch.
  */
-function cmdTimer(root) {
+/**
+ * Build the LaunchAgent plist. Split out of `cmdTimer` so its shape is
+ * testable — the ProcessType below was wrong for two months with nothing to
+ * catch it.
+ *
+ * ProcessType is deliberately NOT `Background`. That is launchd's lowest band:
+ * CPU and I/O are throttled and the interval timer is aggressively coalesced.
+ * Measured on this repo over 20 consecutive `refs/wip` snapshots, a 300s
+ * StartInterval was actually landing every 11.7-26.5 minutes — the FLOOR was
+ * 11.7min, never close to 5. Because TICK_STALE_MS is 20 minutes, the longer
+ * gaps made `status` and the pre-commit hook report a dead timer while the job
+ * was in fact succeeding every time (exit 0). The warning was a true positive
+ * for the wrong thing: the timer was alive but snapshotting 2.4-5x less often
+ * than designed, which in a tree several agents share is that much more
+ * uncommitted work left unprotected.
+ *
+ * `Standard` is the default band and simply asks launchd not to defer a job
+ * that runs for a second or two every five minutes.
+ */
+function buildTimerPlist(root, nodeBin) {
   const label = 'com.taskwraith.work-guard'
-  const nodeBin = stableNodePath(process.execPath, realpathProbe)
   const logDir = path.join(root, SIDECAR_DIR)
-  process.stdout.write(
-    `<?xml version="1.0" encoding="UTF-8"?>
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -938,15 +959,18 @@ function cmdTimer(root) {
     <string>tick</string>
   </array>
   <key>WorkingDirectory</key><string>${root}</string>
-  <key>StartInterval</key><integer>300</integer>
+  <key>StartInterval</key><integer>${TIMER_INTERVAL_SECONDS}</integer>
   <key>RunAtLoad</key><true/>
-  <key>ProcessType</key><string>Background</string>
+  <key>ProcessType</key><string>Standard</string>
   <key>StandardOutPath</key><string>${path.join(logDir, 'tick.log')}</string>
   <key>StandardErrorPath</key><string>${path.join(logDir, 'tick.log')}</string>
 </dict>
 </plist>
 `
-  )
+}
+
+function cmdTimer(root) {
+  process.stdout.write(buildTimerPlist(root, stableNodePath(process.execPath, realpathProbe)))
   return 0
 }
 
@@ -1019,6 +1043,8 @@ module.exports = {
   pruneSnapshots,
   SNAPSHOT_KEEP_MS,
   TICK_STALE_MS,
+  TIMER_INTERVAL_SECONDS,
+  buildTimerPlist,
   timerHealth,
   writeTickRecord,
   stableNodePath,
