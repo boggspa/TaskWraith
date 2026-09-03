@@ -1468,6 +1468,57 @@ describe('OpenRouter usage meter', () => {
     expect(html).toContain('>~$3.00</td>')
   })
 
+  it('shows the Devin column in the compact grid with daily/weekly in X1/X2', () => {
+    const devinWindow = (id: string, label: string, usedPercent: number) => ({
+      id,
+      label,
+      runs: 0,
+      totalTokens: 0,
+      limitLabel: `${100 - usedPercent}% remaining · local Devin state`,
+      usedPercent,
+      remainingPercent: 100 - usedPercent,
+      limitWindowSeconds: id === 'devin-daily' ? 86400 : 604800
+    })
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[
+          quotaEntry({
+            provider: 'devin',
+            windows: [
+              devinWindow('devin-daily', 'Daily quota (Core)', 60),
+              devinWindow('devin-weekly', 'Weekly quota (Core)', 20)
+            ]
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('>Devin</th>')
+    expect(html).toContain('>60%</td>')
+    expect(html).toContain('>20%</td>')
+  })
+
+  it('maps the Devin daily/weekly windows to 6/7 division dashes end to end', () => {
+    // The exact window shape the hook emits for a Core plan: the daily lane
+    // must resolve to 6 ticks (24h Devin-gated band) and the weekly lane to
+    // 7 (weekly band). This is the assertion that finally feeds the mapper's
+    // Devin branches real windows instead of fixtures.
+    expect(
+      quotaSegmentCount('devin', {
+        id: 'devin-daily',
+        label: 'Daily quota (Core)',
+        limitWindowSeconds: 86400
+      })
+    ).toBe(6)
+    expect(
+      quotaSegmentCount('devin', {
+        id: 'devin-weekly',
+        label: 'Weekly quota (Core)',
+        limitWindowSeconds: 604800
+      })
+    ).toBe(7)
+  })
+
   it('maps the OpenRouter credit window to four division dashes without a mapper change', () => {
     // 'Credit used' already resolves to 4 via the credit regex — this pins
     // the new lane to that mapping so a mapper edit cannot silently undash it.

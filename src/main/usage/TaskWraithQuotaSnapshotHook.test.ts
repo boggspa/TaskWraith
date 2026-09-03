@@ -253,6 +253,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       getMuseConfigured: () => true,
       getMuseMonthlySpendCapUsd: () => 15,
       fetchImpl,
+      readDevinPlanInfoRows: async () => [],
       now: () => NOW
     })
 
@@ -294,7 +295,8 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         planType: 'Muse local estimate',
         windows: []
       }),
-      expect.objectContaining({ provider: 'openrouter', configured: false, windows: [] })
+      expect.objectContaining({ provider: 'openrouter', configured: false, windows: [] }),
+      expect.objectContaining({ provider: 'devin', configured: false, windows: [] })
     ])
     expect(JSON.stringify(snapshots)).not.toContain('ds-secret')
     expect(JSON.stringify(snapshots)).not.toContain('cerebras-secret')
@@ -311,6 +313,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       getMuseConfigured: () => false,
       getMuseMonthlySpendCapUsd: () => undefined,
       fetchImpl,
+      readDevinPlanInfoRows: async () => [],
       now: () => NOW
     })
 
@@ -318,7 +321,8 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       expect.objectContaining({ provider: 'deepseek', configured: false, windows: [] }),
       expect.objectContaining({ provider: 'cerebras', configured: false, windows: [] }),
       expect.objectContaining({ provider: 'meta', configured: false, windows: [] }),
-      expect.objectContaining({ provider: 'openrouter', configured: false, windows: [] })
+      expect.objectContaining({ provider: 'openrouter', configured: false, windows: [] }),
+      expect.objectContaining({ provider: 'devin', configured: false, windows: [] })
     ])
     expect(fetchImpl).not.toHaveBeenCalled()
   })
@@ -436,6 +440,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       getMuseConfigured: () => false,
       getMuseMonthlySpendCapUsd: () => undefined,
       readUsageWebSession,
+      readDevinPlanInfoRows: async () => [],
       now: () => NOW
     })
 
@@ -464,6 +469,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         ])
       }),
       expect.objectContaining({ provider: 'openrouter', configured: false, windows: [] }),
+      expect.objectContaining({ provider: 'devin', configured: false, windows: [] }),
       expect.objectContaining({
         provider: 'mimo',
         planType: 'Lite Monthly Plan',
@@ -620,6 +626,9 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       readUsageWebSession: vi.fn(async (provider: string) =>
         provider === 'muse' ? (deps.web ?? null) : null
       ),
+      // Pin the Devin lane off: these Muse tests assert per-lane shapes and
+      // must not depend on the host's Devin state DB.
+      readDevinPlanInfoRows: async () => [],
       ...(deps.cli !== undefined && deps.cli !== null
         ? { readMuseSubscriptionCli: () => deps.cli }
         : {}),
@@ -916,6 +925,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       getMuseConfigured: () => false,
       getMuseMonthlySpendCapUsd: () => undefined,
       fetchImpl: vi.fn(),
+      readDevinPlanInfoRows: async () => [],
       now: () => NOW
     })
 
@@ -927,7 +937,8 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       }),
       expect.objectContaining({ provider: 'cerebras', configured: false }),
       expect.objectContaining({ provider: 'meta', configured: false }),
-      expect.objectContaining({ provider: 'openrouter', configured: false })
+      expect.objectContaining({ provider: 'openrouter', configured: false }),
+      expect.objectContaining({ provider: 'devin', configured: false })
     ])
   })
 
@@ -991,6 +1002,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         getMuseConfigured: () => false,
         getMuseMonthlySpendCapUsd: () => undefined,
         fetchImpl,
+        readDevinPlanInfoRows: async () => [],
         now: () => NOW
       })
 
@@ -999,7 +1011,8 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         expect.objectContaining({ provider: 'deepseek', configured: true, windows: [], error }),
         expect.objectContaining({ provider: 'cerebras', configured: false }),
         expect.objectContaining({ provider: 'meta', configured: false }),
-        expect.objectContaining({ provider: 'openrouter', configured: false })
+        expect.objectContaining({ provider: 'openrouter', configured: false }),
+        expect.objectContaining({ provider: 'devin', configured: false })
       ])
     }
 
@@ -1160,6 +1173,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         getApiUsageBilling: () => undefined,
         getMuseConfigured: () => false,
         getMuseMonthlySpendCapUsd: () => undefined,
+        readDevinPlanInfoRows: async () => [],
         now: () => NOW,
         ...overrides
       })
@@ -1250,5 +1264,110 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       })
     )
     expect(snapshots[3]?.windows[0]?.limitLabel).toContain('$50.00')
+  })
+
+  function devinHook(rows: string[], platform: NodeJS.Platform = 'darwin') {
+    return createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1 } }),
+      getApiUsageBilling: () => undefined,
+      getMuseConfigured: () => false,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readDevinPlanInfoRows: async () => rows,
+      devinPlatform: platform,
+      now: () => NOW
+    })
+  }
+
+  function devinPlanInfoRow(overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      planName: 'Core',
+      hideDailyQuota: false,
+      hideWeeklyQuota: false,
+      quotaUsage: {
+        dailyRemainingPercent: 40,
+        dailyResetAtUnix: Math.floor(Date.parse('2026-09-04T00:00:00.000Z') / 1000),
+        weeklyRemainingPercent: 80,
+        weeklyResetAtUnix: Math.floor(Date.parse('2026-09-07T01:00:00.000Z') / 1000)
+      },
+      ...overrides
+    })
+  }
+
+  it('projects Devin daily and weekly windows from injected plan-info rows', async () => {
+    const read = devinHook([devinPlanInfoRow()])
+
+    const devin = (await read()).find((snapshot) => snapshot.provider === 'devin')
+    expect(devin).toEqual(
+      expect.objectContaining({
+        provider: 'devin',
+        configured: true,
+        fetchedAt: new Date(NOW).toISOString(),
+        stale: false,
+        planType: 'Core',
+        windows: [
+          expect.objectContaining({
+            id: 'devin-daily',
+            label: 'Daily quota (Core)',
+            usedPercent: 60,
+            remainingPercent: 40,
+            resetAt: '2026-09-04T00:00:00.000Z',
+            limitWindowSeconds: 24 * 60 * 60
+          }),
+          expect.objectContaining({
+            id: 'devin-weekly',
+            label: 'Weekly quota (Core)',
+            usedPercent: 20,
+            remainingPercent: 80,
+            resetAt: '2026-09-07T01:00:00.000Z',
+            limitWindowSeconds: 7 * 24 * 60 * 60
+          })
+        ]
+      })
+    )
+  })
+
+  it('emits an unconfigured Devin lane instead of a fabricated meter', async () => {
+    // No rows: Devin not installed / never signed in.
+    const missing = (await devinHook([])()).find((snapshot) => snapshot.provider === 'devin')
+    expect(missing).toEqual(
+      expect.objectContaining({ provider: 'devin', configured: false, windows: [] })
+    )
+
+    // Both hide flags set: the plan has no such windows at all — still no
+    // 0% meter, and rows that carry no plan shape are skipped the same way.
+    const hidden = (
+      await devinHook([
+        devinPlanInfoRow({ hideDailyQuota: true, hideWeeklyQuota: true }),
+        JSON.stringify({ apiKey: 'devin-secret', account: 'someone' })
+      ])()
+    ).find((snapshot) => snapshot.provider === 'devin')
+    expect(hidden?.windows).toEqual([])
+    expect(hidden?.configured).toBe(false)
+    expect(JSON.stringify(hidden)).not.toContain('devin-secret')
+  })
+
+  it('keeps the Devin lane off non-macOS platforms without touching the DB', async () => {
+    const reader = vi.fn(async () => [devinPlanInfoRow()])
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1 } }),
+      getApiUsageBilling: () => undefined,
+      getMuseConfigured: () => false,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readDevinPlanInfoRows: reader,
+      devinPlatform: 'linux',
+      now: () => NOW
+    })
+
+    const devin = (await read()).find((snapshot) => snapshot.provider === 'devin')
+    expect(devin).toEqual(
+      expect.objectContaining({ provider: 'devin', configured: false, windows: [] })
+    )
+    expect(reader).not.toHaveBeenCalled()
   })
 })

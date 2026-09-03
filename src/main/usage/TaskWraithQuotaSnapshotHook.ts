@@ -21,7 +21,16 @@ import type {
   UsageWebSessionReading
 } from '../../shared/usageWebSession'
 import type { MuseSubscriptionUsageReading } from '../muse/MuseSubscriptionUsage'
+import {
+  DEVIN_PLAN_INFO_SQL,
+  devinStateDbCandidates,
+  loadDevinUsageSnapshot,
+  type DevinUsageSnapshot
+} from '../devin/DevinUsage'
 import { readUsageWebSessionReading } from '../providers/UsageWebSessionClient'
+import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 
 const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
 const DEEPSEEK_RESPONSE_LIMIT_BYTES = 1024 * 1024
@@ -58,6 +67,18 @@ export interface TaskWraithQuotaSnapshotHookDependencies {
     | null
     | undefined
     | Promise<MuseSubscriptionUsageReading | null | undefined>
+  /**
+   * Injectable Devin state-DB row reader (tests). When absent, the hook uses
+   * a read-only /usr/bin/sqlite3 query of the Devin desktop client's local
+   * state DB as its default — Devin is a read-only local file Devin already
+   * wrote, so unlike the Muse CLI probe it perturbs nothing and belongs on
+   * the automatic snapshot path. A Devin lane with no production caller
+   * would be dead code, so this default (not an unsupplied socket) is what
+   * keeps the lane live.
+   */
+  readDevinPlanInfoRows?: () => Promise<string[]>
+  /** Injectable platform for the Devin darwin gate (tests). */
+  devinPlatform?: NodeJS.Platform
   fetchImpl?: FetchLike
   now?: () => number
   deepSeekCacheTtlMs?: number
@@ -727,6 +748,124 @@ function openrouterSnapshot(
   }
 }
 
+const DEVIN_SQLITE_TIMEOUT_MS = 5_000
+const DEVIN_SQLITE_MAX_BUFFER_BYTES = 4 * 1024 * 1024
+
+/**
+ * Production default for `readDevinPlanInfoRows`: query the first readable
+ * Devin state DB candidate (live file, then its `.backup`) with the
+ * reference app's plan-info key families, read-only, mirroring the
+ * MuseSessionLog sqlite3 pattern (URI read-only first, `-readonly` flag
+ * fallback). Never throws and never blocks a missing DB: anything unreadable
+ * resolves to no rows, which the lane renders as an unconfigured tombstone.
+ */
+function defaultDevinPlanInfoRows(): Promise<string[]> {
+  return new Promise((resolve) => {
+    try {
+      if (process.platform !== 'darwin') {
+        resolve([])
+        return
+      }
+      const home = process.env.HOME || homedir() || ''
+      if (!home) {
+        resolve([])
+        return
+      }
+      const candidate = devinStateDbCandidates(home).find((path) => {
+        try {
+          return existsSync(path)
+        } catch {
+          return false
+        }
+      })
+      if (!candidate) {
+        resolve([])
+        return
+      }
+      const opts = { timeout: DEVIN_SQLITE_TIMEOUT_MS, maxBuffer: DEVIN_SQLITE_MAX_BUFFER_BYTES }
+      const finish = (output: unknown): void => {
+        resolve(
+          String(output ?? '')
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+        )
+      }
+      execFile(
+        '/usr/bin/sqlite3',
+        [`file:${candidate}?mode=ro&immutable=1`, DEVIN_PLAN_INFO_SQL],
+        opts,
+        (uriErr, uriStdout) => {
+          if (!uriErr) {
+            finish(uriStdout)
+            return
+          }
+          execFile(
+            '/usr/bin/sqlite3',
+            ['-readonly', candidate, DEVIN_PLAN_INFO_SQL],
+            opts,
+            (err, stdout) => {
+              if (err) {
+                resolve([])
+                return
+              }
+              finish(stdout)
+            }
+          )
+        }
+      )
+    } catch {
+      resolve([])
+    }
+  })
+}
+
+/**
+ * Project the committed Devin module's snapshot onto the hook's window
+ * contract. The module's `limitWindowSeconds` values (86400 daily, 604800
+ * weekly) are what the mapper's Devin-gated bands need for the 6/7 dashes;
+ * they pass through untouched. An unconfigured read or a read with no
+ * windows (both hide flags set) becomes an unconfigured lane — never a
+ * fabricated 0% meter.
+ */
+function devinSnapshot(snapshot: DevinUsageSnapshot): QuotaSnapshotHookSnapshot {
+  if (!snapshot.configured || snapshot.windows.length === 0) {
+    return {
+      provider: 'devin',
+      source: 'taskwraith-native',
+      configured: false,
+      fetchedAt: snapshot.fetchedAt,
+      stale: false,
+      ...(snapshot.error ? { error: snapshot.error } : {}),
+      windows: [],
+      balances: []
+    }
+  }
+  return {
+    provider: 'devin',
+    source: 'taskwraith-native',
+    configured: true,
+    fetchedAt: snapshot.fetchedAt,
+    stale: false,
+    ...(snapshot.planType ? { planType: snapshot.planType } : {}),
+    windows: snapshot.windows.map((window) => {
+      const remainingPercent = Math.max(0, Math.min(100, 100 - window.usedPercent))
+      return {
+        id: window.id,
+        label: window.label,
+        usedPercent: window.usedPercent,
+        remainingPercent,
+        limitLabel: `${remainingPercent}% remaining · local Devin state`,
+        ...(window.resetAt ? { resetAt: window.resetAt } : {}),
+        ...(window.limitWindowSeconds !== undefined
+          ? { limitWindowSeconds: window.limitWindowSeconds }
+          : {})
+      }
+    }),
+    balances: []
+  }
+}
+
 /**
  * The Muse Code subscription meters: the "Current usage" and "Weekly limit"
  * percent windows, with resets and the plan name. The browser import
@@ -1094,7 +1233,13 @@ export function createTaskWraithQuotaSnapshotHook(
       maybeCli && typeof (maybeCli as { then?: unknown }).then === 'function'
         ? await Promise.resolve(maybeCli as MuseSubscriptionUsageReading | null).catch(() => null)
         : (maybeCli as MuseSubscriptionUsageReading | null)
-    const [deepSeek, museConfigured, [cerebrasWeb, metaWeb, museWeb, qwenWeb, mimoWeb]] =
+    // The Devin reader resolves here (property access only — no await), and
+    // `loadDevinUsageSnapshot` is invoked synchronously inside the Promise.all
+    // construction below, so the DeepSeek fetch dispatch timing pinned by the
+    // "joins concurrent balance reads" test is undisturbed.
+    const devinReader = dependencies.readDevinPlanInfoRows ?? defaultDevinPlanInfoRows
+    const devinPlatform = dependencies.devinPlatform ?? process.platform
+    const [deepSeek, museConfigured, [cerebrasWeb, metaWeb, museWeb, qwenWeb, mimoWeb], devinUsage] =
       await Promise.all([
         deepSeekKey
           ? readDeepSeek(deepSeekKey, apiUsageBilling.deepseek, readAt)
@@ -1118,7 +1263,12 @@ export function createTaskWraithQuotaSnapshotHook(
           readWebSession('muse').catch(() => null),
           readWebSession('qwen').catch(() => null),
           readWebSession('mimo').catch(() => null)
-        ])
+        ]),
+        loadDevinUsageSnapshot({
+          readPlanInfoRows: devinReader,
+          now: () => readAt,
+          platform: devinPlatform
+        }).catch(() => null)
       ])
 
     const metaAnchorValue = metaWeb?.capturedAt ?? apiUsageBilling.meta?.anchorUpdatedAt
@@ -1175,6 +1325,7 @@ export function createTaskWraithQuotaSnapshotHook(
             readAt
           )
         : emptySnapshot('openrouter', readAt, false),
+      devinUsage ? devinSnapshot(devinUsage) : emptySnapshot('devin', readAt, false),
       ...(museWeb || hasMuseSubscriptionCliMeters(museCliReading)
         ? [museSubscriptionSnapshot(museWeb, readAt, museCliReading)]
         : []),

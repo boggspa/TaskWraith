@@ -12,7 +12,8 @@ export const QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS = [
   'muse',
   'mimo',
   'qwen',
-  'openrouter'
+  'openrouter',
+  'devin'
 ] as const
 
 export type QuotaSnapshotHookProviderId = (typeof QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS)[number]

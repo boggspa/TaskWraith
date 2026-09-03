@@ -608,7 +608,8 @@ function compactCellsForEntry(
     provider === 'openrouter' ||
     provider === 'meta' ||
     provider === 'mimo' ||
-    provider === 'qwen'
+    provider === 'qwen' ||
+    provider === 'devin'
   ) {
     assign('extraOne', entry?.windows?.[0])
     assign('extraTwo', entry?.windows?.[1])
@@ -756,7 +757,8 @@ export function CompactModelUsageGrid({
     ...(entriesByProvider.has('muse') ? (['muse'] as const) : []),
     ...(entriesByProvider.has('deepseek') ? (['deepseek'] as const) : []),
     ...(entriesByProvider.has('cerebras') ? (['cerebras'] as const) : []),
-    ...(entriesByProvider.has('openrouter') ? (['openrouter'] as const) : [])
+    ...(entriesByProvider.has('openrouter') ? (['openrouter'] as const) : []),
+    ...(entriesByProvider.has('devin') ? (['devin'] as const) : [])
   ]
   const rows = COMPACT_USAGE_ROWS
   const cellsByProvider = new Map(
