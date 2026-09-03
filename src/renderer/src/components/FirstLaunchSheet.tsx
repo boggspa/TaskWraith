@@ -934,10 +934,10 @@ export function FirstLaunchSheet({
           <p className="first-launch-sheet-section-helper">
             <strong>Get one provider working first</strong> — Ensemble shines with two or more.
             Toggle Ensemble on an idle top-level chat to add multiple provider participants while
-            preserving its transcript. Turn mode keeps one active speaker at a time; Continuous mode
-            keeps going while actual work remains, but returns control instead of burning hops on a
-            no-work, all-yielded consensus. Queued provider/model changes close the current pass
-            before the next one starts.
+            preserving its transcript. Leave Fan-Out Off to keep one active speaker at a time;
+            rounds keep going while actual work remains, but return control instead of burning
+            hops on a no-work, all-yielded consensus. Queued provider/model changes close the
+            current pass before the next one starts.
           </p>
           <p className="first-launch-sheet-prose">
             Stage roles shape the hand-off: Scouts investigate in parallel first, Workers take
