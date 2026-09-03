@@ -49,8 +49,8 @@ export const FIRST_RUN_ENSEMBLE_TASK: FirstRunEnsembleTask = {
   prompt: FIRST_RUN_PROMPT_LINES.join('\n'),
   recommendedSetup: [
     'Use an Ensemble with three or four enabled seats.',
-    'Choose Turn mode so the hand-offs remain easy to follow.',
-    'Before sending, choose the Read-only permission role for every seat; the copied prompt cannot set permissions.',
+    'Leave Fan-Out Off so seats run one at a time and hand-offs stay easy to follow.',
+    'Before sending, set every seat\'s permission preset to Ask; the copied prompt cannot set permissions.',
     'Run it against a scratch repository or a project you are comfortable inspecting.'
   ],
   expectedSignals: [
