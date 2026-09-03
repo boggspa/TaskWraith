@@ -2,7 +2,7 @@
 
 90 screenshots, one per feature guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
 
-Current inventory, reconciled 2026-09-03 (second pass): **60 captured, 30 pending**, over 90 feature guide pages. Every page is covered by exactly one of an embedded image or a `screenshot-pending` marker. Two superseded PNGs are retained on disk without a referencing page; see [`REMAINING.md`](REMAINING.md), which also grades the captures that are on disk but stale.
+Current inventory, reconciled 2026-09-03 (second pass): **61 captured, 29 pending**, over 90 feature guide pages. Every page is covered by exactly one of an embedded image or a `screenshot-pending` marker. Two superseded PNGs are retained on disk without a referencing page; see [`REMAINING.md`](REMAINING.md), which also grades the captures that are on disk but stale.
 
 The current refresh uses latest-source development apps, not an installed release build. Existing captures can be replaced in place without changing the inventory count.
 

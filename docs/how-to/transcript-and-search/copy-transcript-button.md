@@ -8,7 +8,7 @@ Exports the current chat so you can paste it elsewhere or share it. Offers Markd
 ## Where to find it
 In the composer's bottom row, next to the timecode, Goal button, and layout picker. Disabled when no chat is selected, the chat is archived, or it has no messages.
 
-<!-- screenshot-pending: Composer telemetry row showing the copy transcript button -->
+![Composer telemetry row showing the copy transcript button](../images/transcript-and-search__copy-transcript-button.png)
 
 ## How to use it
 1. Click the copy transcript icon to open the popover.

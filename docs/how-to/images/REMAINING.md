@@ -1,6 +1,6 @@
 # Shot list — remaining captures
 
-Inventory reconciled 2026-09-03 (second pass): **60 of 90 captured; 30 pending**.
+Inventory reconciled 2026-09-03 (second pass): **61 of 90 captured; 29 pending**.
 
 The first pass reported 61 captured / 28 pending over an 89-page baseline. That
 set did not reconcile against the tree: the baseline missed a page entirely, two
@@ -33,45 +33,42 @@ invariant here; "every page is accounted for" is.
 Two bonus composer variations in `composer-variations/` are not part of the
 90-shot baseline.
 
+The 2026-09-03 recaptures were taken from an isolated verify instance at
+viewport 1500x980 (sidebar) / 1760x1100 (composer), `deviceScaleFactor: 2`,
+**agent-aura intensity subtle** and the **`interface-claude` composer shell**.
+Match those when replacing further shots: the `interface-chatgpt` shell clamps
+the model label to 39px of the 67px it needs, so "Claude Opus" renders "Op…" at
+every window width, and the cinematic aura washes the sidebar in bright cyan.
+
 Capture replacements are being made against latest-source development apps. Use only the authorized `Test 1` through `Test 4` workspaces for live state, keep full private paths and unrelated content out of frame, and treat pairing QR codes and secrets as non-publishable. Personal agent/task metrics, usage telemetry, and demo transcripts are acceptable.
 
 ## Captured but stale — recapture without changing the pending count
 
-These pages **do** have an image, so they are not part of the 30 pending and
+These pages **do** have an image, so they are not part of the 29 pending and
 must not be added to it — the pending set is defined as pages carrying a
 `screenshot-pending` marker, and it has to keep matching that marker set
 exactly. They are listed here because the capture on disk shows retired UI,
 which is worse than an honest gap: the page reads as done.
 
-Every surviving capture dates from either 2026-07-09 or 2026-07-18, so all 60
-are at least seven weeks behind the renderer. The entries below are the ones
-with an identified invalidating commit; absence from this list is not evidence
-a capture is current.
+Apart from the four taken on 2026-09-03, every capture dates from either
+2026-07-09 or 2026-07-18, so 57 of the 61 are at least seven weeks behind the
+renderer. The entries below are the ones with an identified invalidating commit;
+absence from this list is not evidence a capture is current.
 
-**Proven stale** — the retired UI is confirmed absent from source today:
+**Recaptured 2026-09-03** — `chats-and-threads__chat-types` (now shows
+**Channels**, verified: zero `Shared` occurrences in the live sidebar),
+`getting-started__welcome-screen` (heading-only hero, confirming `262c5668d`),
+`composer__provider-model-permissions-pickers` (all four chips render in full),
+and a first capture for `transcript-and-search__copy-transcript-button`.
 
-- `chats-and-threads__chat-types` — captured 2026-07-18, three weeks before the
-  Channels rename (`c3001deac`, 2026-08-11). It still shows a **"Shared"**
-  sidebar section; `>Shared<` has zero occurrences in `Sidebar.tsx` today. The
-  page's prose and alt text have been corrected to "Channels", so the image is
-  now the only thing still asserting the old label.
-- `getting-started__welcome-screen` — captured 2026-07-18. `262c5668d`
-  (2026-08-30) dropped the welcome-hero subtitle; the empty-thread hero is
-  heading-only now, so the capture shows body text that no longer renders.
-
-**Suspected stale from the commit record** — the change is named in a commit
-that postdates the capture, but the exact framing has not been re-checked
+**Still suspected stale from the commit record** — the change is named in a
+commit that postdates the capture, but the exact framing has not been re-checked
 against a live window. Verify at recapture rather than trusting either state:
 
 - `getting-started__first-launch-sheet` — captured 2026-07-18. `378984605`
   (2026-08-30) replaced the historical Gemini card in First Launch with a themed
   Muse card. Note that other Gemini copy legitimately survives in the sheet for
   historical reporting, so only the card itself should have changed.
-- `composer__provider-model-permissions-pickers` — captured 2026-07-09, before
-  four separate label passes: `b9d887e6b` title-case provider headers,
-  `af75d0dae` Ollama Cloud row branding, `b59a34bba` OpenRouter "Free" suffix
-  dropped, and `b6794a47c` Fable 5.1 added with Fable 5 relabelled "Legacy". A
-  July picker capture can show none of these.
 - `transcript-and-search__transcript-message-stream` — captured 2026-07-09,
   before `bf27ead64` (expanded-card redesign: bare row, rim on card) and
   `c5dcb4f6e` (animated code-block rim removed).
@@ -106,7 +103,6 @@ against a live window. Verify at recapture rather than trusting either state:
   now (transcript fleet cards and sub-thread chips, per the removal commit) and
   captured there, or the marker stays permanently unfillable.
 - `transcript-and-search__agent-question-cards`
-- `transcript-and-search__copy-transcript-button`
 - `transcript-and-search__proposed-plan-cards`
 - `transcript-and-search__queued-messages-row`
 
