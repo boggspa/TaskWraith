@@ -352,6 +352,9 @@ interface SettingsPanelProps {
   antigravityOptInAcceptedAt?: number | null
   antigravityGeminiApiDisclosureAcceptedAt?: number | null
   antigravityGeminiApiMonthlySpendCapUsd?: number | null
+  /** Transport switch for the consented AntiGravity lane: false/absent =
+   * legacy `agy` CLI, true = official ACP binary. Recorded only in S2. */
+  antigravityUseAcp?: boolean
   museMonthlySpendCapUsd?: number | null
   userName?: string
   claudeBinaryPath: string
@@ -491,6 +494,7 @@ interface SettingsPanelProps {
     antigravityOptInAcceptedAt?: number | null
     antigravityGeminiApiDisclosureAcceptedAt?: number | null
     antigravityGeminiApiMonthlySpendCapUsd?: number | null
+    antigravityUseAcp?: boolean
     museMonthlySpendCapUsd?: number | null
     userName?: string
     claudeBinaryPath?: string
@@ -4035,6 +4039,7 @@ export function SettingsPanel({
   antigravityOptInAcceptedAt = null,
   antigravityGeminiApiDisclosureAcceptedAt = null,
   antigravityGeminiApiMonthlySpendCapUsd = null,
+  antigravityUseAcp = false,
   museMonthlySpendCapUsd,
   userName = '',
   claudeBinaryPath,
@@ -7751,6 +7756,7 @@ export function SettingsPanel({
                     acceptedAt={antigravityOptInAcceptedAt}
                     geminiApiDisclosureAcceptedAt={antigravityGeminiApiDisclosureAcceptedAt}
                     geminiApiMonthlySpendCapUsd={antigravityGeminiApiMonthlySpendCapUsd}
+                    antigravityUseAcp={antigravityUseAcp}
                     onChange={onChange}
                     onOpenLogin={onProviderLogin ? () => onProviderLogin('antigravity') : undefined}
                     onOpenUpgrade={

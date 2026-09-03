@@ -58,6 +58,54 @@ describe('AntigravityOptInCard', () => {
     expect(html).not.toContain('apiKey')
   })
 
+  it('hides the transport switch until consent is recorded', () => {
+    const html = renderToStaticMarkup(
+      <AntigravityOptInCard enabled={false} acceptedAt={null} onChange={() => {}} />
+    )
+
+    expect(html).not.toContain('antigravity-use-acp')
+    expect(html).not.toContain('Transport (existing CLI preserved)')
+  })
+
+  it('defaults to the preserved legacy CLI transport after consent', () => {
+    const html = renderToStaticMarkup(
+      <AntigravityOptInCard
+        enabled
+        acceptedAt={1_769_000_000_000}
+        onChange={() => {}}
+      />
+    )
+
+    expect(html).toContain('Transport (existing CLI preserved)')
+    expect(html).toContain('Use the official ACP binary instead of the legacy agy CLI')
+    expect(html).toContain('Legacy agy CLI selected')
+    // The existing format stays: the agy handoff is still offered untouched.
+    expect(html).toContain('<code>agy</code>')
+    expect(html).toContain('Open Terminal to sign in')
+    const input = html.match(/<input[^>]*data-testid="antigravity-use-acp"[^>]*>/)?.[0]
+    expect(input).toBeDefined()
+    expect(input).not.toContain('checked')
+  })
+
+  it('reflects an ACP preference without claiming the lane runs yet', () => {
+    const html = renderToStaticMarkup(
+      <AntigravityOptInCard
+        enabled
+        acceptedAt={1_769_000_000_000}
+        antigravityUseAcp
+        onChange={() => {}}
+      />
+    )
+
+    const input = html.match(/<input[^>]*data-testid="antigravity-use-acp"[^>]*>/)?.[0]
+    expect(input).toBeDefined()
+    expect(input).toContain('checked')
+    expect(html).toContain('It is not connected yet')
+    expect(html).toContain('both stay behind the risk acceptance recorded above')
+    // No softening: the ban-risk consent gate copy is unchanged.
+    expect(html).toContain('Risk acceptance recorded')
+  })
+
   it('presents the API-key lane as normal BYO-key setup without AGY risk framing', () => {
     const html = renderToStaticMarkup(
       <AntigravityOptInCard enabled={false} acceptedAt={null} onChange={() => {}} />

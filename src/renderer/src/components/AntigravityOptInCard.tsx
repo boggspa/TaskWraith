@@ -23,11 +23,16 @@ export function createAntigravityOptInPatch(now = Date.now()): AntigravityOptInP
 interface AntigravityOptInCardProps {
   enabled: boolean
   acceptedAt?: number | null
+  /** Transport switch: false/absent = legacy `agy` CLI; true = official ACP
+   * binary. Rendered only after consent is recorded; stays behind the same
+   * two-part opt-in. Recorded only in S2 — dispatch does not read it yet. */
+  antigravityUseAcp?: boolean
   onChange: (partial: {
     antigravityEnabled?: boolean
     antigravityOptInAcceptedAt?: number | null
     antigravityGeminiApiDisclosureAcceptedAt?: number | null
     antigravityGeminiApiMonthlySpendCapUsd?: number | null
+    antigravityUseAcp?: boolean
   }) => void
   onOpenLogin?: () => void
   onOpenUpgrade?: () => void
@@ -133,7 +138,10 @@ function safeMutationMessage(result: AntigravityGeminiApiSecretMutationResult): 
  * anything. The Gemini API (BYO key) lane is a normal auth card: saving a
  * valid key is sufficient to enable it, with no ban-risk framing, only the
  * separate (non-ban-risk) Gemini data-use/billing disclosure. The card
- * header/status reflect whichever lane is actually admitted.
+ * header/status reflect whichever lane is actually admitted. Inside the
+ * consented agy lane a transport switch records legacy-CLI vs. official-ACP
+ * preference (`antigravityUseAcp`); it changes no behavior until the ACP
+ * lane is wired.
  */
 export function AntigravityOptInCard({
   enabled,
@@ -143,7 +151,8 @@ export function AntigravityOptInCard({
   onOpenUpgrade,
   upgradeState = 'idle',
   geminiApiDisclosureAcceptedAt = null,
-  geminiApiMonthlySpendCapUsd = null
+  geminiApiMonthlySpendCapUsd = null,
+  antigravityUseAcp = false
 }: AntigravityOptInCardProps): React.JSX.Element {
   const [riskAcknowledged, setRiskAcknowledged] = useState(false)
   const [geminiApiAcknowledged, setGeminiApiAcknowledged] = useState(
@@ -392,6 +401,26 @@ export function AntigravityOptInCard({
               Could not open the upgrade terminal.
             </p>
           ) : null}
+          <section
+            className="settings-antigravity-transport-section"
+            aria-labelledby="antigravity-transport-heading"
+          >
+            <h4 id="antigravity-transport-heading">Transport (existing CLI preserved)</h4>
+            <label className="settings-antigravity-transport-switch">
+              <input
+                type="checkbox"
+                data-testid="antigravity-use-acp"
+                checked={antigravityUseAcp === true}
+                onChange={(event) => onChange({ antigravityUseAcp: event.target.checked })}
+              />
+              <span>Use the official ACP binary instead of the legacy agy CLI</span>
+            </label>
+            <p className="settings-provider-auth-footnote">
+              {antigravityUseAcp === true
+                ? 'ACP selected: the official agy_acp_server binary lane. It is not connected yet, so runs still use the legacy CLI until that lane lands — both stay behind the risk acceptance recorded above.'
+                : 'Legacy agy CLI selected. Both options stay behind the risk acceptance recorded above.'}
+            </p>
+          </section>
         </>
       )}
 
