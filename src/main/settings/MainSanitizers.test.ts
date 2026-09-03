@@ -1216,6 +1216,16 @@ describe('MainSanitizers settings patches', () => {
     ).toBe(null)
   })
 
+  it('persists+coerces the AntiGravity ACP transport switch (inert, default legacy)', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    // Boolean coercion, mirroring antigravityEnabled.
+    expect(sanitizeSettingsPatch({ antigravityUseAcp: true }).antigravityUseAcp).toBe(true)
+    expect(sanitizeSettingsPatch({ antigravityUseAcp: false }).antigravityUseAcp).toBe(false)
+    // Absent key stays absent — readers treat it as false (legacy agy CLI lane).
+    expect('antigravityUseAcp' in sanitizeSettingsPatch({})).toBe(false)
+  })
+
   it('persists only a finite positive Gemini API disclosure timestamp', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

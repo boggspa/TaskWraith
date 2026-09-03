@@ -182,6 +182,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'antigravityOptInAcceptedAt',
   'antigravityGeminiApiDisclosureAcceptedAt',
   'antigravityGeminiApiMonthlySpendCapUsd',
+  'antigravityUseAcp',
   'museMonthlySpendCapUsd',
   'codexUsageCredential',
   'storeLocalChatHistory',
@@ -2287,6 +2288,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
         typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 1_000_000
           ? value
           : null
+    }
+    if ('antigravityUseAcp' in sanitized) {
+      const value = sanitized.antigravityUseAcp
+      sanitized.antigravityUseAcp = typeof value === 'boolean' ? value : Boolean(value)
     }
     return sanitized as Partial<AppSettings>
   }

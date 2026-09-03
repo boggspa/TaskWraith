@@ -2652,6 +2652,12 @@ export interface AppSettings {
    * and never blocks a run — TaskWraith cannot see actual billing, so the hard
    * cap belongs in the user's Google Cloud billing budget. null/absent = no cap. */
   antigravityGeminiApiMonthlySpendCapUsd?: number | null
+  /** Transport switch for the AntiGravity seat: false/absent = legacy `agy`
+   * CLI lane; true = official ACP binary lane (`agy_acp_server.par`/`.exe`
+   * over stdio). Inert in S1 — no dispatch, catalog, or UI reads it yet.
+   * Stays behind the existing two-part opt-in; default false preserves the
+   * existing format. */
+  antigravityUseAcp?: boolean
   /**
    * Soft calendar-month budget (USD) for Muse Code projected API-equivalent
    * spend. Advisory only — fills the Model Usage meter from the 1st and never
