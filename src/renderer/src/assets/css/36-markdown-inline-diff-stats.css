@@ -12,3 +12,24 @@
 .message-markdown-pro .markdown-inline-diff-stat.is-deletion {
   color: var(--diff-stat-del-color, #ec3d35);
 }
+
+/* The check-result idioms agents relay from command output share this
+ * treatment. The count, the label and the negation all stay in the text, so
+ * colour is emphasis and never the only carrier of the verdict. Pass and fail
+ * reuse the live Appearance diff colours so one control tints every measured
+ * outcome; warnings and skips take the caution tone instead of the failure one. */
+.message-markdown-pro .markdown-inline-check-outcome {
+  font-variant-numeric: tabular-nums;
+}
+
+.message-markdown-pro .markdown-inline-check-outcome.is-pass {
+  color: var(--diff-stat-add-color, #2db777);
+}
+
+.message-markdown-pro .markdown-inline-check-outcome.is-fail {
+  color: var(--diff-stat-del-color, #ec3d35);
+}
+
+.message-markdown-pro .markdown-inline-check-outcome.is-skip {
+  color: var(--warning, #f5a623);
+}
