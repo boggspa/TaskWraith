@@ -8975,7 +8975,40 @@ Next action:
     expect(harness.chat.ensemble?.bossmanControlState?.polls || []).toHaveLength(0)
   })
 
+  /**
+   * Quarantine is the vehicle here because it is a skip reason routing still
+   * accepts: a disabled target is now refused before routing, so it can no
+   * longer reach this path. Quarantine stays open on purpose — the Boss can
+   * lift it and get an answer, unlike a seat the user switched off.
+   */
   it('says so in the round when Boss routing reaches none of its targets', async () => {
+    const harness = await disabledTargetHarness()
+
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'quarantine_participant',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        targetParticipantId: 'claude',
+        reason: 'Parked while the migration lands.'
+      })
+    ).resolves.toMatchObject({ ok: true })
+
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'request_status',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      participantIds: ['claude'],
+      prompt: 'Where are you up to?'
+    })
+
+    expect(result.ok).toBe(true)
+    const statuses = harness.chat.messages
+      .filter((message) => message.metadata?.kind === 'ensembleRoundStatus')
+      .map((message) => message.content)
+    expect(statuses.some((content) => /routed no one/i.test(content))).toBe(true)
+    expect(statuses.some((content) => content.includes('quarantined'))).toBe(true)
+  })
+
+  it('refuses a Boss status request when nothing it names can ever answer', async () => {
     const harness = await disabledTargetHarness()
 
     const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
@@ -8985,12 +9018,87 @@ Next action:
       prompt: 'Where are you up to?'
     })
 
-    expect(result.ok).toBe(true)
-    const statuses = harness.chat.messages
-      .filter((message) => message.metadata?.kind === 'ensembleRoundStatus')
-      .map((message) => message.content)
-    expect(statuses.some((content) => /routed no one|reached no/i.test(content))).toBe(true)
-    expect(statuses.some((content) => content.includes('disabled'))).toBe(true)
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('bossman_target_disabled')
+    expect(harness.chat.ensemble?.bossmanControlState?.statusRequests || []).toHaveLength(0)
+  })
+
+  /**
+   * A mixed check-in stays accepted — rejecting it would cost the Boss the
+   * reachable half — but the request must still drain. Before this, the open
+   * record waited forever on a target that can never run, and the continuous
+   * roster kept re-admitting that seat every pass.
+   */
+  it('closes a Boss status request once its only reachable target has answered', async () => {
+    const harness = await disabledTargetHarness()
+
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'request_status',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      participantIds: ['claude', 'codex'],
+      question: 'Are you blocked?'
+    })
+    expect(harness.chat.ensemble?.bossmanControlState?.statusRequests || []).toHaveLength(1)
+    expect(harness.chat.ensemble?.bossmanControlState?.statusRequests?.[0]?.status).toBe('open')
+
+    await expect(
+      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'skip_intervention'
+      })
+    ).resolves.toMatchObject({ ok: true })
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.bossmanControlState?.statusRequests?.[0]?.status).toBe('closed')
+    )
+  })
+
+  it('tells the user when the background seat they tagged is switched off', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.participants = [
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 1,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'scout',
+        provider: 'grok',
+        enabled: false,
+        role: 'Scout',
+        instructions: 'Scout.',
+        order: 2,
+        stageRole: 'background',
+        permissionPresetId: 'read_only'
+      }
+    ]
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: '@Scout collect the traces.',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) =>
+          message.content.includes('a background seat that is switched off')
+        )
+      ).toBe(true)
+    )
+    expect(
+      harness.chat.messages.find((message) =>
+        message.content.includes('a background seat that is switched off')
+      )?.content
+    ).toContain('@Scout')
   })
 
   it('still routes a Boss assignment to an enabled seat while a disabled one exists', async () => {

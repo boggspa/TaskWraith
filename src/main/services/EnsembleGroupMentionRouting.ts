@@ -122,6 +122,13 @@ export interface BackgroundMentionRoutingPlan {
   participantIds: Set<string>
   /** Direct participant aliases that still require user disambiguation. */
   ambiguities: ParticipantMentionMatch[]
+  /**
+   * Direct aliases that named a background seat the user has switched off.
+   * Reported rather than dropped: naming a BG seat is an explicit request for
+   * a lane, and silently launching none looks identical to launching one that
+   * produced nothing.
+   */
+  disabledTargets: ParticipantMentionMatch[]
 }
 
 function orderedGroupParticipants(input: {
@@ -394,6 +401,8 @@ export function resolveBackgroundMentionRouting(input: {
 }): BackgroundMentionRoutingPlan {
   const participantIds = new Set<string>()
   const ambiguities: ParticipantMentionMatch[] = []
+  const disabledTargets: ParticipantMentionMatch[] = []
+  const seenDisabled = new Set<string>()
 
   for (const match of findAllMentions(input.text, [...input.participants])) {
     if (isGroupMention(match)) {
@@ -414,10 +423,15 @@ export function resolveBackgroundMentionRouting(input: {
       ambiguities.push(match)
       continue
     }
-    if (match.participant.stageRole === 'background' && match.participant.enabled !== false) {
+    if (match.participant.stageRole !== 'background') continue
+    if (match.participant.enabled !== false) {
       participantIds.add(match.participant.id)
+      continue
     }
+    if (seenDisabled.has(match.participant.id)) continue
+    seenDisabled.add(match.participant.id)
+    disabledTargets.push(match)
   }
 
-  return { participantIds, ambiguities }
+  return { participantIds, ambiguities, disabledTargets }
 }

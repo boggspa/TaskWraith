@@ -206,6 +206,11 @@ earlier turns — so without that notice a seat re-tags an unreachable peer ever
 turn, which is exactly what one overnight run did. Read the notice as a routing
 fact rather than a failure: the seat is off by the user's choice. Route to an
 enabled seat or ask the user to re-enable it; tagging it again cannot reach it.
+You are told once per round per peer, not once per turn.
+
+Punctuation between two mentions no longer hides the second one. `@Luna.@Bob`
+used to resolve neither when `@Luna` did not resolve — the capture swallowed the
+following `@` — so a tag could be lost with no trace. Both are read now.
 
 Mentioning an ordinary participant that already reached a terminal status does
 not re-summon it. The active authority is the exception:
@@ -243,7 +248,9 @@ runs only when explicitly delegated.
 - A unique `@Background`, `@Role`, or `@Model` mention attempts to launch that
   participant in a detached lane while foreground rotation continues.
   Concurrent lanes must be enabled, the seat must not already be active, and
-  admission/budget checks must pass.
+  admission/budget checks must pass. Naming a BG seat the user has switched off
+  launches nothing and says so in a round status: silently skipping it looked
+  identical to a lane that ran and produced nothing.
 - **`@BG` is no longer one of those — it is a roster GROUP token** (shipped in
   v1.9.6; it was source-ahead of v1.9.5).
   `src/shared/ensembleGroupMention.ts` defines seven provider-neutral

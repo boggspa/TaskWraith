@@ -889,3 +889,65 @@ describe('resolveYieldTargetDetail self detection', () => {
     expect(detail.kind).toBe('unresolved')
   })
 })
+
+describe('unresolved mentions do not swallow the next one', () => {
+  const bob = participant({ id: 'bob', provider: 'claude', role: 'Bob' })
+
+  it('finds a mention that directly follows an unresolvable one', () => {
+    // `.` is in BOTH the boundary set and the per-chunk class, so the regex
+    // captures `@Luna.` whole and lands lastIndex ON the next `@` — where no
+    // boundary can precede it. Luna is absent from the roster here, standing
+    // in for the real case: a seat the user switched off, filtered out before
+    // alias matching.
+    const all = findAllMentions('ask @Luna.@Bob will follow up', [bob])
+
+    expect(all.map((match) => match.kind)).toEqual(['participant'])
+    expect(all[0].kind === 'participant' && all[0].participant.id).toBe('bob')
+    expect('ask @Luna.@Bob will follow up'[all[0].atIndex]).toBe('@')
+  })
+
+  it('finds a mention that directly follows a user alias', () => {
+    const all = findAllMentions('@user.@Bob take it', [bob])
+
+    expect(all.map((match) => match.kind)).toEqual(['user', 'participant'])
+    expect(all[1].kind === 'participant' && all[1].participant.id).toBe('bob')
+  })
+
+  it('still refuses an email address, which has no boundary before the @', () => {
+    expect(findAllMentions('@Nobody see foo@bar.com', [bob])).toEqual([])
+    expect(findAllMentions('write to bob@example.com today', [bob])).toEqual([])
+  })
+
+  it('terminates on repeated unresolvable mentions', () => {
+    expect(findAllMentions('@x.@y.@z', [bob])).toEqual([])
+    expect(findAllMentions('@a@a@a', [bob])).toEqual([])
+  })
+})
+
+describe('DM routing across a punctuation-adjacent mention', () => {
+  const luna = participant({ id: 'luna', provider: 'codex', role: 'Luna', enabled: false })
+  const bob = participant({ id: 'bob', provider: 'claude', role: 'Bob' })
+
+  it('routes to the reachable seat when the one before it is switched off', () => {
+    // Before the rewind fix `@Luna.` swallowed `@Bob`, so this resolved to
+    // nothing and the send opened the WHOLE panel. Addressing one live seat is
+    // the narrower, more faithful reading of what the user typed.
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: '@Luna.@Bob take it',
+        participants: [luna, bob]
+      })
+    ).toEqual({ kind: 'target', participantId: 'bob', source: 'plain' })
+  })
+
+  it('treats two reachable punctuation-adjacent seats as a panel round', () => {
+    const ada = participant({ id: 'ada', provider: 'grok', role: 'Ada' })
+
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: '@Ada.@Bob take it',
+        participants: [ada, bob]
+      })
+    ).toEqual({ kind: 'multiple' })
+  })
+})

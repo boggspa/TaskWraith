@@ -471,10 +471,15 @@ export function findAllMentions(
     // aliases (no `@you and codex` ambiguity) — keeps the resolver
     // predictable.
     const firstWordRaw = phrase.split(/\s+/)[0] || ''
-    const firstWordNormalised = normalizeAlias(firstWordRaw.replace(TRAILING_PUNCT_RE, ''))
+    // The alias with any trailing sentence punctuation removed. That
+    // punctuation is part of the regex capture (`.` is in the chunk class as
+    // well as the boundary set) but never part of the alias, so every branch
+    // that resumes scanning must resume BEFORE it.
+    const firstWordAlias = firstWordRaw.replace(TRAILING_PUNCT_RE, '')
+    const firstWordNormalised = normalizeAlias(firstWordAlias)
     const groupMention = resolveEnsembleGroupMentionToken(firstWordNormalised)
     if (groupMention) {
-      const consumedText = firstWordRaw.replace(TRAILING_PUNCT_RE, '')
+      const consumedText = firstWordAlias
       matches.push({
         kind: 'group',
         group: groupMention.id,
@@ -492,16 +497,31 @@ export function findAllMentions(
         consumedLength: 1 + firstWordRaw.length, // `@` + the matched alias
         text: firstWordRaw
       })
-      MENTION_REGEX.lastIndex = atIndex + 1 + firstWordRaw.length
+      // Resume after the alias WITHOUT its trailing punctuation, as the group
+      // branch above does. Keeping the punctuation would park lastIndex past a
+      // boundary character that a following `@` needs — see the unresolved
+      // branch below for the full explanation.
+      MENTION_REGEX.lastIndex = atIndex + 1 + firstWordAlias.length
       continue
     }
 
     if (!aliasMap) continue
     const resolved = resolveMentionPhrase(phrase, aliasMap, excludeIds)
     if (!resolved) {
-      // Don't advance lastIndex artificially — the regex's own forward
-      // movement is sufficient (it consumed at least the `@` + first
-      // chunk). The next iteration will pick up further candidates.
+      // Resume immediately after the first chunk's alias, exactly as the group
+      // and user branches do.
+      //
+      // Leaving lastIndex where the regex put it is NOT harmless, which the
+      // comment here used to claim. The regex consumes up to four chunks, and
+      // `.` sits in both BOUNDARY_CHARS and the per-chunk class — so
+      // `@Luna.@Bob` is captured whole and lastIndex lands exactly ON the
+      // second `@`. A mention must be preceded by a boundary character, `^`
+      // only matches index 0 (no `m` flag), and exec starts AT lastIndex, so
+      // that `@Bob` can never match: one seat failing to resolve silently
+      // swallowed the NEXT seat's mention. Stripping the punctuation is what
+      // makes this work — with it, the rewind lands on the natural end of the
+      // capture and changes nothing.
+      MENTION_REGEX.lastIndex = atIndex + 1 + firstWordAlias.length
       continue
     }
     matches.push({

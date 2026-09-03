@@ -255,6 +255,10 @@ import {
   findDisabledBossmanTargets,
   formatDisabledBossmanTargetMessage
 } from './EnsembleBossmanTargetAvailability'
+import {
+  isBossmanStatusTargetSettled,
+  isBossmanStatusTargetUnanswerable
+} from './EnsembleStatusRequestSettlement'
 import { resolveEnsembleUserFanoutTargets } from './EnsembleUserFanout'
 import { EnsembleChatFlushScheduler } from './ensembleChatFlushScheduler'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
@@ -10177,6 +10181,24 @@ export class EnsembleOrchestrator {
           runtime.roundId,
           'request_status requires prompt or question.'
         )
+      // A MIXED check-in stays accepted — rejecting it would cost the Boss
+      // the reachable half, and the extended settle predicate now drains it
+      // when that half answers. Refuse only when NOTHING named can ever reply,
+      // because that request would otherwise stay open for the life of the
+      // chat and keep the dead seat in the continuous roster.
+      if (
+        participantIds.length > 0 &&
+        participantIds.every((participantId) =>
+          isBossmanStatusTargetUnanswerable(
+            this.findRuntimeParticipant(runtime, participantId) ?? undefined
+          )
+        )
+      ) {
+        return (
+          this.disabledBossmanTargetResult(runtime, action, authorityLabel, participantIds) ??
+          this.invalidBossmanTarget(action, runtime.roundId)
+        )
+      }
       const request = {
         id: this.nextBossmanControlId('status'),
         targetParticipantIds: participantIds.length ? participantIds : undefined,
@@ -11880,26 +11902,22 @@ export class EnsembleOrchestrator {
     ) {
       return
     }
+    const rosterParticipants = chat?.ensemble?.participants || []
     this.updateBossmanControlState(runtime, (state) => {
       const requests = state.statusRequests || []
       let changed = false
       const nextRequests = requests.map((request) => {
         if (request.status !== 'open') return request
         const targets = request.targetParticipantIds || []
+        // An untargeted request asks the whole panel and is closed by the
+        // authority, never here.
         if (targets.length === 0 || !targets.includes(run.participant.id)) return request
-        const allTargetsSettled = targets.every((participantId) => {
-          const participant = roundParticipants.find(
-            (entry) => entry.participantId === participantId
+        const allTargetsSettled = targets.every((participantId) =>
+          isBossmanStatusTargetSettled(
+            roundParticipants.find((entry) => entry.participantId === participantId)?.status,
+            rosterParticipants.find((entry) => entry.id === participantId)
           )
-          return (
-            participant?.status === 'answered' ||
-            participant?.status === 'yielded' ||
-            participant?.status === 'skipped' ||
-            participant?.status === 'failed' ||
-            participant?.status === 'cancelled' ||
-            participant?.status === 'unreachable'
-          )
-        })
+        )
         if (!allTargetsSettled) return request
         changed = true
         return { ...request, status: 'closed' as const }
@@ -16487,6 +16505,18 @@ export class EnsembleOrchestrator {
           `@-mention: \`@${mention.text}\` was ambiguous (${candidates
             .map((participant) => participantDisplayName(participant))
             .join(', ')}). No background lane launched. Use a unique @role, @model, or @id.`
+        )
+      }
+      // Naming a BG seat IS the request for a lane, so dropping a switched-off
+      // one silently is indistinguishable from launching a lane that produced
+      // nothing. This round status is read by the human, not a seat.
+      for (const mention of backgroundMentionResolution.disabledTargets) {
+        this.appendRoundStatus(
+          chatId,
+          roundId,
+          `@-mention: \`@${mention.text}\` names ${participantDisplayName(
+            mention.participant
+          )}, a background seat that is switched off. No background lane launched — enable the seat to use it.`
         )
       }
       const configuredCaptainParticipantIds = Array.isArray(chat.ensemble.captainParticipantIds)

@@ -285,6 +285,36 @@ describe('resolveBackgroundMentionRouting', () => {
     expect(plan.ambiguities).toEqual([])
   })
 
+  it('reports a direct background alias that names a switched-off seat', () => {
+    const plan = resolveBackgroundMentionRouting({
+      text: '@disabled-bg collect the traces.',
+      participants: backgroundRoster
+    })
+
+    expect(plan.participantIds.size).toBe(0)
+    expect(plan.ambiguities).toEqual([])
+    expect(plan.disabledTargets.map((match) => match.participant.id)).toEqual(['disabled-bg'])
+  })
+
+  it('reports one switched-off background seat however often it is named', () => {
+    const plan = resolveBackgroundMentionRouting({
+      text: '@disabled-bg start, and @disabled-bg report when done.',
+      participants: backgroundRoster
+    })
+
+    expect(plan.disabledTargets).toHaveLength(1)
+  })
+
+  it('stays silent about switched-off seats when a group token expands normally', () => {
+    const plan = resolveBackgroundMentionRouting({
+      text: '@BG collect traces.',
+      participants: backgroundRoster
+    })
+
+    expect([...plan.participantIds]).toEqual(['grok-bg', 'grok-bg-2'])
+    expect(plan.disabledTargets).toEqual([])
+  })
+
   it('keeps ambiguous direct provider aliases unresolved', () => {
     const plan = resolveBackgroundMentionRouting({
       text: '@grok collect traces.',
