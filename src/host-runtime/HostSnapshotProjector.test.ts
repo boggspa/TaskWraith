@@ -306,6 +306,50 @@ describe('HostSnapshotProjector', () => {
     expect(result.value.health.connectionPhase).toBe('live')
   })
 
+  it('carries the failure reason through the allowlist instead of stripping it', () => {
+    // This projector drops any field it does not explicitly name, so an
+    // unlisted failureReason dies here — one layer below where the reason was
+    // already being lost, and just as invisibly.
+    const input = baseInput()
+    input.runs = [
+      {
+        ...input.runs[0]!,
+        providerOutcome: 'failed',
+        errorCode: 'provider_failed',
+        failureReason: 'Provider running state recovered after Host restart.'
+      }
+    ]
+    const result = projectHostSnapshot(input)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.runs[0]).toMatchObject({
+      errorCode: 'provider_failed',
+      failureReason: 'Provider running state recovered after Host restart.'
+    })
+  })
+
+  it('omits a run whose failure reason exceeds the wire bound instead of publishing it', () => {
+    // One malformed row must not poison the snapshot — the same contract the
+    // seat/goal rows already follow — but an unbounded reason must never reach
+    // a client either.
+    const input = baseInput()
+    input.runs = [
+      {
+        ...input.runs[0]!,
+        runId: 'run-oversized',
+        providerOutcome: 'failed',
+        failureReason: 'z'.repeat(HOST_PROTOCOL_MAX_WARNING + 1)
+      }
+    ]
+    const result = projectHostSnapshot(input)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.runs.map((run) => run.runId)).not.toContain('run-oversized')
+    expect(
+      result.value.warnings.some((warning) => warning.warningId === 'projection_rows_omitted:runs')
+    ).toBe(true)
+  })
+
   it('omits tokens/cost for unavailable usage instead of publishing zero', () => {
     const result = projectHostSnapshot(
       baseInput({

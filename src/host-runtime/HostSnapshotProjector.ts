@@ -740,6 +740,16 @@ function projectRun(raw: HostRunProjection, index: number): HostDecodeResult<Hos
   if (!isOptionalId(raw.modelId)) {
     return { ok: false, error: `${label}.modelId is invalid` }
   }
+  // This projector is an allowlist: a field it does not name is silently
+  // stripped, so omitting these two here would drop the failure reason again
+  // one layer below where it was already lost.
+  //
+  // Their LENGTH is deliberately not re-checked here. Every projected snapshot
+  // goes through decodeHostSnapshot below, which already bounds both fields and
+  // omits an offending row with a projection_rows_omitted warning. A second
+  // copy of the bound here would be unreachable — it survived deletion with the
+  // whole suite green, which is how it was caught — and a guard that cannot
+  // fail is a comment that lies about being enforcement.
   const out: HostRunProjection = {
     runId: raw.runId,
     threadId: raw.threadId,
@@ -749,6 +759,8 @@ function projectRun(raw: HostRunProjection, index: number): HostDecodeResult<Hos
   if (raw.startedAt !== undefined) out.startedAt = raw.startedAt
   if (raw.endedAt !== undefined) out.endedAt = raw.endedAt
   if (raw.modelId !== undefined) out.modelId = raw.modelId
+  if (raw.errorCode !== undefined) out.errorCode = raw.errorCode
+  if (raw.failureReason !== undefined) out.failureReason = raw.failureReason
   if (raw.usage !== undefined) {
     const usage = projectUsage(raw.usage, `${label}.usage`)
     if (!usage.ok) return usage

@@ -11,6 +11,7 @@ import {
   HOST_PROTOCOL_MAX_GOAL_OBJECTIVE,
   HOST_PROTOCOL_MAX_SHORT,
   HOST_WARNING_PROJECTION_WINDOWED,
+  hostRunFailureReason,
   type HostHealthProjection,
   type HostParticipantProjection,
   type HostProviderModelProjection,
@@ -212,6 +213,13 @@ function projectProfileRuns(threads: readonly ProfileThread[]): {
     (thread.runs ?? []).map((run, index): ProfileRunProjectionCandidate => {
       const startedAt = timestamp(run.startedAt)
       const endedAt = timestamp(run.endedAt)
+      // The reason a run failed is recorded on the row but used to stop here,
+      // so every client could only ever render a bare `provider:failed` — the
+      // "fails with nothing evidently wrong" report. Compose it once, with the
+      // shared rule that yields undefined (never '') when there is nothing to
+      // say, so an empty summary list stays ABSENT rather than projecting a
+      // blank reason a client would render as a dangling separator.
+      const failureReason = hostRunFailureReason(run.warningSummaries)
       return {
         key: `${thread.appChatId.length}:${thread.appChatId}:${run.runId.length}:${run.runId}:${index}`,
         row: {
@@ -222,6 +230,8 @@ function projectProfileRuns(threads: readonly ProfileThread[]): {
           ...(startedAt !== undefined ? { startedAt } : {}),
           ...(endedAt !== undefined ? { endedAt } : {}),
           ...(run.requestedModel ? { modelId: run.requestedModel } : {}),
+          ...(run.errorCode ? { errorCode: run.errorCode } : {}),
+          ...(failureReason ? { failureReason } : {}),
           ...(profileRunUsage(run) ? { usage: profileRunUsage(run) } : {})
         },
         active: runIsActive(run),

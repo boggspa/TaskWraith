@@ -573,3 +573,54 @@ it('omits a goal the decoder would reject rather than poisoning the thread row',
   expect(donor.threads).toHaveLength(1)
   expect(donor.threads[0]?.goal).toBeUndefined()
 })
+
+it('projects WHY a run failed, so a client never renders a bare provider:failed', () => {
+  // The reason was always on the run row and always stopped here. Without this
+  // the wire fields exist but are permanently undefined — a contract with no
+  // producer — and the user keeps seeing a failure with no explanation.
+  const profile = mkdtempSync(join(tmpdir(), 'host-profile-failure-reason-'))
+  const workspace = mkdtempSync(join(tmpdir(), 'host-profile-failure-reason-ws-'))
+  paths.push(profile, workspace)
+  const store = new HostProfileDomainStore({
+    profilePath: profile,
+    authority: { assertProfileAuthority: () => {} },
+    idFactory: () => 'thread-fail'
+  })
+  const registered = store.registerWorkspace({ path: workspace, displayName: 'Workspace' })
+  const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+  store.configureThread({ threadId: thread.appChatId, providerId: 'codex', modelId: 'gpt-5.6' })
+  const chatFile = join(profile, 'chats', `${thread.appChatId}.json`)
+  const raw = JSON.parse(readFileSync(chatFile, 'utf8')) as Record<string, unknown>
+  raw.runs = [
+    {
+      runId: 'run-reasoned',
+      status: 'failed',
+      errorCode: 'provider_failed',
+      warningSummaries: ['ACP session cannot apply selected model "grok-4.6": not advertised']
+    },
+    // A failed run with nothing to say must project NO reason at all rather
+    // than an empty one, or the client renders a dangling separator.
+    { runId: 'run-silent', status: 'failed', warningSummaries: [] },
+    { runId: 'run-blank', status: 'failed', warningSummaries: ['   '] }
+  ]
+  writeFileSync(chatFile, JSON.stringify(raw))
+  chmodSync(chatFile, 0o600)
+
+  const donor = projectHostProfileDomainSnapshot({
+    store,
+    health: { hostStatus: 'ok', connectionPhase: 'live', supervised: true, freshness: 'live' },
+    providers: []
+  })
+
+  const reasoned = donor.runs.find((run) => run.runId === 'run-reasoned')
+  expect(reasoned?.errorCode).toBe('provider_failed')
+  expect(reasoned?.failureReason).toBe(
+    'ACP session cannot apply selected model "grok-4.6": not advertised'
+  )
+  expect(donor.runs.find((run) => run.runId === 'run-silent')?.failureReason).toBeUndefined()
+  expect(donor.runs.find((run) => run.runId === 'run-blank')?.failureReason).toBeUndefined()
+  // The remaining two hops are pinned where they live: the allowlist hop in
+  // HostSnapshotProjector.test.ts and the wire hop in hostProtocol.test.ts.
+  // Decoding a donor here would only assert that a donor lacks a protocol
+  // version, which is true and says nothing about the reason surviving.
+})
