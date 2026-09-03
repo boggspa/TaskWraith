@@ -182,7 +182,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('Delegate a focused worker')
     expect(html).toContain('live token + projected-cost tally')
     expect(html).toContain('BG seats skip ordinary rotation')
-    expect(html).toContain('returns control instead of burning hops')
+    expect(html).toContain('return control instead of burning hops')
     expect(html).toContain('choose individual saved panels')
     expect(html).toContain('namespaced workspace tools')
     expect(html).toContain('repository-local hooks, filters')
@@ -262,7 +262,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('<em>Ollama</em>')
     expect(html).not.toContain('<em>Gemini</em>')
     expect(html).toContain('Toggle Ensemble while the thread is idle')
-    expect(html).toContain('Turn / Continuous in the composer')
+    expect(html).toContain('Fan-Out, Isolate and Turns in the composer')
     expect(html).toContain('detached read-only work')
   })
 

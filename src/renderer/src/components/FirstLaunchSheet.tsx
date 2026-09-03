@@ -986,7 +986,7 @@ export function FirstLaunchSheet({
             </div>
             <div className="first-launch-sheet-ensemble-footer">
               <span>Toggle Ensemble while the thread is idle</span>
-              <span>Turn / Continuous in the composer</span>
+              <span>Fan-Out, Isolate and Turns in the composer</span>
             </div>
           </div>
           <FirstRunEnsembleTaskCard />
