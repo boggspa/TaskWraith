@@ -124,13 +124,19 @@ function scriptedSpawn(script: {
 }
 
 /** Fake process that never exits on its own; kill() settles exit, as a real signal would. */
-function wedgedSpawn(script: { readonly stdout?: readonly string[] } = {}): {
+function wedgedSpawn(
+  script: {
+    readonly stdout?: readonly string[]
+    readonly stderr?: readonly string[]
+  } = {}
+): {
   spawn: HostNodeClaudeSpawn
   killed: string[]
 } {
   const killed: string[] = []
   const spawn: HostNodeClaudeSpawn = (input) => {
     for (const chunk of script.stdout ?? []) input.onStdout(chunk)
+    for (const chunk of script.stderr ?? []) input.onStderr(chunk)
     let settleExit: (exit: { code: number | null; signal: string | null }) => void = () => {}
     const handle: HostNodeClaudeSpawnHandle = {
       kill(signal) {
@@ -144,6 +150,20 @@ function wedgedSpawn(script: { readonly stdout?: readonly string[] } = {}): {
     return handle
   }
   return { spawn, killed }
+}
+
+function captureHostStderrWrites(): { writes: string[]; restore: () => void } {
+  const writes: string[] = []
+  const spy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    writes.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
+    return true
+  })
+  return {
+    writes,
+    restore: () => {
+      spy.mockRestore()
+    }
+  }
 }
 
 function providerWith(
@@ -667,6 +687,66 @@ describe('HostNodeClaudeProvider run', () => {
     expect(runPort.transcripts.some((entry) => entry.text.includes('DEBUG:'))).toBe(false)
   })
 
+  it('records a JSON result error as the failed-run reason when stderr is empty', async () => {
+    const runPort = new FakeRunPort()
+    const quota = "You've hit your usage limit for claude-fable-5-1. Try again later."
+    const { spawn } = scriptedSpawn({
+      stdout: [
+        `${JSON.stringify({
+          type: 'result',
+          subtype: 'error_during_execution',
+          is_error: true,
+          session_id: 'session-9',
+          result: quota
+        })}\n`
+      ],
+      exitCode: 1
+    })
+    await providerWith(runPort, spawn).run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hi',
+      target: TARGET
+    })
+    expect(runPort.finish?.status).toBe('failed')
+    expect(runPort.finish?.errorCode).toBe('provider_failed')
+    expect(runPort.finish?.warningSummaries).toEqual([quota])
+    expect(runPort.finish?.warningSummaries).not.toContain('Claude reported stderr during the run.')
+  })
+
+  it('records a JSON result error as the failed-run reason when stderr is telemetry-only', async () => {
+    const runPort = new FakeRunPort()
+    const quota = "You've hit your usage limit for claude-fable-5-1. Try again later."
+    const { spawn } = scriptedSpawn({
+      stdout: [
+        `${JSON.stringify({
+          type: 'result',
+          subtype: 'error_during_execution',
+          is_error: true,
+          session_id: 'session-9',
+          result: quota
+        })}\n`
+      ],
+      stderr: [
+        'INFO: warming up\n',
+        'DEBUG:vibe:x\n',
+        'Sentry is attempting to send 2 pending events\n'
+      ],
+      exitCode: 1
+    })
+    await providerWith(runPort, spawn).run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hi',
+      target: TARGET
+    })
+    expect(runPort.finish?.status).toBe('failed')
+    expect(runPort.finish?.warningSummaries).toEqual([quota])
+    expect(runPort.finish?.warningSummaries).not.toContain('Claude reported stderr during the run.')
+    expect(runPort.transcripts.some((entry) => entry.text.includes('DEBUG:'))).toBe(false)
+    expect(runPort.transcripts.some((entry) => entry.text.includes('Sentry'))).toBe(false)
+  })
+
   it('reports setup failure without launching when the binary is missing', async () => {
     const runPort = new FakeRunPort()
     const { spawn, captured } = scriptedSpawn({ stdout: SUCCESS_STREAM })
@@ -747,20 +827,43 @@ describe('HostNodeClaudeProvider run', () => {
   it('fails a wedged child at the turn deadline with a legible watchdog summary', async () => {
     // The observed production failure: the claude child neither exits nor
     // errors, pinning the run at "running" forever. The watchdog must convert
-    // that into a failed run carrying the evidence tail.
+    // that into a failed run that says WHY (deadline, SIGTERM then SIGKILL).
+    // Raw stdout/stderr tails are Host-log diagnostics, not projected warnings:
+    // stdout is the JSON event stream and would leak assistant/tool payloads.
     const runPort = new FakeRunPort()
-    const { spawn, killed } = wedgedSpawn({ stdout: ['partial-output-marker\n'] })
-    const result = await providerWith(runPort, spawn, resourcePort(), {
-      turnDeadlineMs: 40
-    }).run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hi', target: TARGET })
-    expect(result.status).toBe('failed')
-    // SIGTERM closed the child, so the SIGKILL grace timer never fired.
-    expect(killed).toEqual(['SIGTERM'])
-    expect(runPort.finish?.status).toBe('failed')
-    expect(runPort.finish?.errorCode).toBe('provider_failed')
-    const summary = (runPort.finish?.warningSummaries ?? []).join('\n')
-    expect(summary).toContain('turn deadline')
-    expect(summary).toContain('partial-output-marker')
+    const hostLog = captureHostStderrWrites()
+    const { spawn, killed } = wedgedSpawn({
+      stdout: ['partial-output-marker\n'],
+      stderr: ['raw-stderr-secret\n']
+    })
+    try {
+      const result = await providerWith(runPort, spawn, resourcePort(), {
+        turnDeadlineMs: 40
+      }).run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hi', target: TARGET })
+      expect(result.status).toBe('failed')
+      // SIGTERM closed the child, so the SIGKILL grace timer never fired.
+      expect(killed).toEqual(['SIGTERM'])
+      expect(runPort.finish?.status).toBe('failed')
+      expect(runPort.finish?.errorCode).toBe('provider_failed')
+      const summaries = runPort.finish?.warningSummaries ?? []
+      const summary = summaries.join('\n')
+      expect(summary).toContain('turn deadline')
+      expect(summary).toContain('SIGTERM')
+      expect(summary).toContain('SIGKILL')
+      // Stdout is the JSON event stream: it must not ride the projected warning.
+      expect(summary).not.toContain('partial-output-marker')
+      expect(summary).not.toContain('stdout tail:')
+      expect(summary).not.toContain('stderr tail:')
+      // Meaningful stderr still surfaces as its own failed-run reason (lane D),
+      // not interpolated into the deadline sentence.
+      expect(summaries).toContain('raw-stderr-secret')
+      const logged = hostLog.writes.join('')
+      expect(logged).toContain('taskwraith-host:')
+      expect(logged).toContain('partial-output-marker')
+      expect(logged).toContain('raw-stderr-secret')
+    } finally {
+      hostLog.restore()
+    }
   })
 
   it('never signals a child that completes before the turn deadline', async () => {

@@ -363,6 +363,8 @@ export interface HostNodeClaudeResultSummary {
   readonly isError: boolean
   readonly usage?: HostProviderRunUsage
   readonly finalText?: string
+  /** Present when the CLI's `result` event is an error and carried a string. */
+  readonly errorMessage?: string
 }
 
 function usageFromClaudeResult(value: unknown): HostProviderRunUsage | undefined {
@@ -399,7 +401,7 @@ function usageFromClaudeResult(value: unknown): HostProviderRunUsage | undefined
 const CLAUDE_TURN_DEADLINE_ENV = 'TASKWRAITH_TURN_DEADLINE_MS'
 const CLAUDE_TURN_DEADLINE_DEFAULT_MS = 300_000
 const CLAUDE_TURN_KILL_GRACE_MS = 4_000
-/** Bounded evidence tail carried into the watchdog's failure summary. */
+/** Bounded evidence tail written to Host stderr on a watchdog kill, never the wire. */
 const CLAUDE_TURN_OUTPUT_TAIL_CHARS = 500
 
 function resolveClaudeTurnDeadlineMs(override: number | undefined): number {
@@ -415,6 +417,29 @@ function boundedOutputTail(text: string): string {
   return text.length <= CLAUDE_TURN_OUTPUT_TAIL_CHARS
     ? text
     : text.slice(text.length - CLAUDE_TURN_OUTPUT_TAIL_CHARS)
+}
+
+function flattenDiagnosticTail(text: string): string {
+  const flattened = text.replace(/\s+/g, ' ').trim()
+  return flattened || '(empty)'
+}
+
+/**
+ * Deadline-kill stdout/stderr belong in the Host stderr log (fd 2 of the
+ * standalone Host, captured by hostStderrLog.ts), not in projected warnings.
+ * Claude stdout is the JSON event stream; interpolating it onto the wire
+ * paints assistant text and tool payloads on every connected client.
+ */
+function logClaudeDeadlineTails(input: {
+  readonly runId: string
+  readonly stdoutTail: string
+  readonly stderrTail: string
+}): void {
+  process.stderr.write(
+    `taskwraith-host: claude run ${input.runId} deadline exceeded; ` +
+      `stdout tail: ${flattenDiagnosticTail(input.stdoutTail)} · ` +
+      `stderr tail: ${flattenDiagnosticTail(input.stderrTail)}\n`
+  )
 }
 
 type ActiveClaudeRun = {
@@ -743,9 +768,13 @@ export class HostNodeClaudeProvider implements HostNodeProviderInstance {
       if (exceeded) {
         warnings.add(
           `Claude run exceeded the ${this.turnDeadlineMs}ms turn deadline; the wedged child ` +
-            `was terminated (SIGTERM, then SIGKILL after a ${CLAUDE_TURN_KILL_GRACE_MS}ms grace). ` +
-            `stdout tail: ${stdoutTail.trim() || '(empty)'} · stderr tail: ${stderrTail.trim() || '(empty)'}`
+            `was terminated (SIGTERM, then SIGKILL after a ${CLAUDE_TURN_KILL_GRACE_MS}ms grace).`
         )
+        logClaudeDeadlineTails({
+          runId: request.runId,
+          stdoutTail,
+          stderrTail
+        })
       }
 
       const status: HostProviderRunTerminalStatus = active.cancelled
@@ -754,12 +783,18 @@ export class HostNodeClaudeProvider implements HostNodeProviderInstance {
           ? 'completed'
           : 'failed'
 
+      const jsonErrorReason =
+        settled?.isError && settled.errorMessage?.trim()
+          ? boundedText(settled.errorMessage, HOST_PROVIDER_RUN_MAX_WARNING_CHARS)
+          : ''
+      if (jsonErrorReason) warnings.add(jsonErrorReason)
+
       if (sawStderr) {
-        warnings.add(
-          status === 'failed' && stderrMeaningful
-            ? boundedText(stderrMeaningful, HOST_PROVIDER_RUN_MAX_WARNING_CHARS)
-            : 'Claude reported stderr during the run.'
-        )
+        if (status === 'failed' && stderrMeaningful) {
+          warnings.add(boundedText(stderrMeaningful, HOST_PROVIDER_RUN_MAX_WARNING_CHARS))
+        } else if (!jsonErrorReason) {
+          warnings.add('Claude reported stderr during the run.')
+        }
       }
 
       const finalText = boundedText(
@@ -888,13 +923,16 @@ export class HostNodeClaudeProvider implements HostNodeProviderInstance {
     if (type === 'result') {
       const sessionId = isCanonicalIdentifier(json.session_id) ? json.session_id : undefined
       const usage = usageFromClaudeResult(json.usage)
+      const isError = json.is_error === true || json.subtype !== 'success'
+      const resultText = typeof json.result === 'string' ? json.result : ''
       return {
         text: '',
         result: {
           ...(sessionId ? { sessionId } : {}),
-          isError: json.is_error === true || json.subtype !== 'success',
+          isError,
           ...(usage ? { usage } : {}),
-          ...(typeof json.result === 'string' ? { finalText: json.result } : {})
+          ...(resultText ? { finalText: resultText } : {}),
+          ...(isError && resultText.trim() ? { errorMessage: resultText } : {})
         }
       }
     }
