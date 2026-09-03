@@ -346,9 +346,13 @@ describe('HostNodeClaudeProvider argv', () => {
     expect(claudePermissionModeFor('auto_edit')).toBe('acceptEdits')
     expect(claudePermissionModeFor('read_only')).toBe('plan')
     expect(claudePermissionModeFor('plan')).toBe('plan')
-    // The App's `default` is an SDK token with no CLI equivalent, and its
-    // "prompt the user" meaning cannot be honoured headlessly.
-    expect(claudePermissionModeFor('default')).toBe('plan')
+    // Both editing postures reach this mapping as `default` — the control the
+    // user sees is labelled "Accept Edits" / "Full WS Access" — so it must
+    // yield an editing token. Answering an explicit choice to edit with `plan`
+    // is an override of user intent rather than a safety property, and it left
+    // no selectable Claude posture in the TUI that could modify a file. The
+    // App's own claudePermissionModeForApproval maps it the same way.
+    expect(claudePermissionModeFor('default')).toBe('acceptEdits')
     // The important case: anything unrecognised must clamp to plan.
     expect(claudePermissionModeFor('something-new')).toBe('plan')
     expect(claudePermissionModeFor('')).toBe('plan')

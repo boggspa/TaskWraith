@@ -264,19 +264,34 @@ export const CLAUDE_CLI_PERMISSION_MODES: readonly string[] = [
 ]
 
 /**
- * Fail-closed posture mapping onto the CLI vocabulary.
+ * Posture mapping onto the CLI vocabulary. Plan is chosen, never inferred.
  *
  * A headless `-p` run has no interactive permission prompt, and this Host has
  * no provider-proven interaction resume (the CLI exposes no
- * `--permission-prompt-tool`; `canUseTool` is SDK-only), so any posture that
- * would require per-tool approval degrades to `plan` rather than silently
- * escalating. That deliberately includes the App's `default`: its SDK meaning
- * ("permissions work normally", i.e. prompt the user) cannot be honoured
- * headlessly, and there is no CLI token for it.
+ * `--permission-prompt-tool`; `canUseTool` is SDK-only). That genuinely limits
+ * how an approval-seeking posture can be honoured — but it is not licence to
+ * overrule an explicit choice to edit, which is what degrading every unproven
+ * mode to `plan` amounted to. The user picks `default` from a control labelled
+ * "Accept Edits" and `workspace_write` from one labelled "Full WS Access"
+ * (both reach here as approvalMode `default`, per HostProfileDomainStore);
+ * answering either with `--permission-mode plan` produced a session that
+ * structurally could not modify a file while presenting as one that could.
+ *
+ * So `plan` is returned for the explicit `plan` posture, for `read_only`
+ * ("Ask" — it cannot prompt headlessly, so it must not write), and for any
+ * mode this Host does not recognise. That last case is the fail-closed clamp
+ * and it is load-bearing: a new or misspelled mode must never fall through
+ * into an editing token. It is enumerated rather than defaulted for exactly
+ * that reason.
+ *
+ * This aligns the standalone Host with the App's own
+ * `claudePermissionModeForApproval` (src/main/providers/StaticProviderModels.ts),
+ * where `plan` is likewise the explicit case, so the TUI and the desktop agree
+ * on what a posture means instead of diverging on the same label.
  */
 export function claudePermissionModeFor(approvalMode: string, verifiedFullAccess = false): string {
   if (verifiedFullAccess) return 'bypassPermissions'
-  if (approvalMode === 'auto_edit') return 'acceptEdits'
+  if (approvalMode === 'auto_edit' || approvalMode === 'default') return 'acceptEdits'
   return 'plan'
 }
 
