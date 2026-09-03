@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   antigravityDisplayName,
   antigravityEffortForModelId,
+  antigravityReasoningLadderOptions,
+  antigravityUltraTaskTargetId,
   antigravityVariantGroupForModel,
   groupAntigravityModelRows
 } from './antigravityAgyModelGrouping'
@@ -135,5 +137,99 @@ describe('antigravityModelGrouping', () => {
       { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 (Antigravity)' }
     ])
     expect(rows[0].label).toBe('Sonnet 4.6 (Antigravity)')
+  })
+})
+
+/** Verbatim `agy models` result observed 2026-09-03 (the app's on-disk cache),
+ * as the picker receives it: bare wire ids, labels equal to the CLI's own. */
+const LIVE_CATALOGUE = [
+  { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' },
+  { id: 'gemini-3.8-flash-medium', label: 'Gemini 3.8 Flash (Medium)' },
+  { id: 'gemini-3.8-flash-low', label: 'Gemini 3.8 Flash (Low)' },
+  { id: 'gemini-3.1-pro-high', label: 'Gemini 3.1 Pro (High)' },
+  { id: 'gemini-3.1-pro-low', label: 'Gemini 3.1 Pro (Low)' },
+  { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (Thinking)' },
+  { id: 'claude-opus-4-6-thinking', label: 'Claude Opus 4.6 (Thinking)' },
+  { id: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Medium)' },
+  { id: 'gemini-api:gemini-3.8-flash', label: '3.8 Flash' }
+]
+
+describe('antigravity reasoning ladder options', () => {
+  it('offers a variant family its variants with UltraTask on top', () => {
+    expect(antigravityReasoningLadderOptions(LIVE_CATALOGUE, 'gemini-3.8-flash-low', true)).toEqual(
+      [
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High' },
+        { value: 'ultraTask', label: 'UltraTask' }
+      ]
+    )
+    // A family that ships without a Medium is still a movable ladder.
+    expect(
+      antigravityReasoningLadderOptions(LIVE_CATALOGUE, 'gemini-3.1-pro-high', true).map(
+        (option) => option.value
+      )
+    ).toEqual(['low', 'high', 'ultraTask'])
+  })
+
+  it('gives a fixed-reasoning row its own Thinking stop, never a fake Off', () => {
+    // These models cannot stop reasoning. Offering `off` (or dropping the stop
+    // entirely) left the ladder with UltraTask as its ONLY stop, which the
+    // picker renders as an inert locked rail — the shipped bug.
+    for (const modelId of ['claude-sonnet-4-6', 'claude-opus-4-6-thinking']) {
+      const options = antigravityReasoningLadderOptions(LIVE_CATALOGUE, modelId, true)
+      expect(options).toEqual([
+        { value: 'on', label: 'Thinking' },
+        { value: 'ultraTask', label: 'UltraTask' }
+      ])
+      expect(options.some((option) => option.value === 'off')).toBe(false)
+    }
+    expect(antigravityReasoningLadderOptions(LIVE_CATALOGUE, 'gpt-oss-120b-medium', true)).toEqual([
+      { value: 'medium', label: 'Medium' },
+      { value: 'ultraTask', label: 'UltraTask' }
+    ])
+  })
+
+  it('keeps a fixed-reasoning stop even when UltraTask is unsupported', () => {
+    expect(antigravityReasoningLadderOptions(LIVE_CATALOGUE, 'claude-sonnet-4-6', false)).toEqual([
+      { value: 'on', label: 'Thinking' }
+    ])
+    expect(
+      antigravityReasoningLadderOptions(LIVE_CATALOGUE, 'gemini-3.8-flash-high', false).map(
+        (option) => option.value
+      )
+    ).toEqual(['low', 'medium', 'high'])
+  })
+
+  it('seeds an Off bottom stop only where the model has no reasoning of its own', () => {
+    // The gemini-api lane carries no effort convention, so UltraTask alone
+    // would be the ladder's single (locked) stop without a bottom stop.
+    expect(
+      antigravityReasoningLadderOptions(LIVE_CATALOGUE, 'gemini-api:gemini-3.8-flash', true)
+    ).toEqual([
+      { value: 'off', label: 'Off' },
+      { value: 'ultraTask', label: 'UltraTask' }
+    ])
+    expect(
+      antigravityReasoningLadderOptions(LIVE_CATALOGUE, 'gemini-api:gemini-3.8-flash', false)
+    ).toEqual([])
+  })
+
+  it('maps UltraTask onto the family ceiling, and onto itself when fixed', () => {
+    expect(antigravityUltraTaskTargetId(LIVE_CATALOGUE, 'gemini-3.8-flash-low')).toBe(
+      'gemini-3.8-flash-high'
+    )
+    // Derived from the family, not the literal `-high` suffix: a family whose
+    // ceiling is Medium still has a target.
+    expect(
+      antigravityUltraTaskTargetId(
+        [{ id: 'gemini-4-flash-low' }, { id: 'gemini-4-flash-medium' }],
+        'gemini-4-flash-low'
+      )
+    ).toBe('gemini-4-flash-medium')
+    expect(antigravityUltraTaskTargetId(LIVE_CATALOGUE, 'claude-sonnet-4-6')).toBe(
+      'claude-sonnet-4-6'
+    )
+    expect(antigravityUltraTaskTargetId(LIVE_CATALOGUE, 'gemini-api:gemini-3.8-flash')).toBeNull()
   })
 })

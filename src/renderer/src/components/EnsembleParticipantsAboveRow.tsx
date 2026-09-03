@@ -109,7 +109,11 @@ import { getProviderName } from './Sidebar'
 import { EnsembleBriefEditor } from './EnsembleBriefEditor'
 import { PillButton } from './PillButton'
 import { SegmentedControl } from './SegmentedControl'
-import { FAST_MODEL_IDS, antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
+import {
+  FAST_MODEL_IDS,
+  antigravityEffortForModelId,
+  antigravityReasoningLadderOptions
+} from '../../../shared/antigravityAgyModelGrouping'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 
 // 1.0.4-AR2 — global ceiling raised from 6 → 8 so the panel can host
@@ -376,12 +380,21 @@ export function getEnsembleAddReasoningOptions(
     providerGroups.find((group) => group.provider === provider)?.modelOptions || []
   const modelOption = findEnsembleAddModelOption(provider, model, modelOptions)
   let baseOptions: CombinedModelPickerReasoningOption[]
-  if (provider === 'antigravity' && modelOption?.antigravityVariants) {
-    baseOptions = modelOption.antigravityVariants.map((variant) => ({
-      value: variant.effort,
-      label: reasoningOptionLabel(provider, variant.effort)
-    }))
-  } else if (modelOption?.supportedReasoningEfforts) {
+  if (provider === 'antigravity') {
+    // AntiGravity owns its whole ladder in the shared helper, UltraTask
+    // included: a variant family lists its variants and a fixed-reasoning row
+    // (claude-sonnet-4-6, claude-opus-4-6-thinking, gpt-oss-120b-medium) lists
+    // its ONE real Thinking/Medium stop rather than falling through to the
+    // generic injection below, which offered those models a fake Off instead.
+    // The grouped row carries the family's variants; the row id itself covers
+    // the fixed-reasoning case, which has none.
+    return antigravityReasoningLadderOptions(
+      [{ id: model }, ...(modelOption?.antigravityVariants ?? [])],
+      model,
+      modelOption?.ultraTaskSupported === true
+    )
+  }
+  if (modelOption?.supportedReasoningEfforts) {
     baseOptions = modelOption.supportedReasoningEfforts.map((option) => {
       const value = normalizeReasoningOptionValue(option.reasoningEffort)
       return {

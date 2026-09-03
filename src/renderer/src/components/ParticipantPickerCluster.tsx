@@ -32,6 +32,7 @@ import { isCursorGrokModelId } from '../../../shared/grok45Models'
 import {
   FAST_MODEL_IDS,
   antigravityEffortForModelId,
+  antigravityReasoningLadderOptions,
   antigravityVariantGroupForModel,
   groupAntigravityModelRows
 } from '../../../shared/antigravityAgyModelGrouping'
@@ -210,10 +211,6 @@ export function ParticipantPickerCluster({
     onPatch(buildParticipantProviderModelPatch(participant, provider, model))
   }
 
-  const antigravityVariantGroup =
-    participant.provider === 'antigravity'
-      ? antigravityVariantGroupForModel(antigravityModels, selectedModelId)
-      : null
   const selectedReasoning =
     participant.provider === 'antigravity'
       ? resolved.reasoningEffort === 'ultraTask'
@@ -223,19 +220,19 @@ export function ParticipantPickerCluster({
         ? resolveKimiReasoningPickerSelection(selectedModelId, resolved.reasoningEffort)
         : resolved.reasoningEffort
   const selectedModelOption = modelOptions.find((option) => option.id === selectedModelId)
-  const baseReasoningOptions =
+  // AntiGravity owns its whole ladder (UltraTask included) in the shared
+  // helper: a variant family lists its variants, and a fixed-reasoning row
+  // (claude-sonnet-4-6, gpt-oss-120b-medium) lists its ONE real stop instead of
+  // the fake Off this used to seed for a model that cannot stop reasoning.
+  const reasoningOptions =
     participant.provider === 'antigravity'
-      ? (antigravityVariantGroup?.variants.map((variant) => ({
-          value: variant.effort,
-          label: variant.effort.charAt(0).toUpperCase() + variant.effort.slice(1)
-        })) ?? [])
-      : getEnsembleReasoningOptions(
-          participant.provider,
+      ? antigravityReasoningLadderOptions(
+          antigravityModels,
           selectedModelId,
-          selectedModelOption
+          selectedModelOption?.ultraTaskSupported === true
         )
-  const reasoningOptions = [...baseReasoningOptions]
-  if (selectedModelOption?.ultraTaskSupported === true) {
+      : [...getEnsembleReasoningOptions(participant.provider, selectedModelId, selectedModelOption)]
+  if (participant.provider !== 'antigravity' && selectedModelOption?.ultraTaskSupported === true) {
     if (reasoningOptions.length === 0) {
       reasoningOptions.push({ value: 'off', label: 'Off' })
     }

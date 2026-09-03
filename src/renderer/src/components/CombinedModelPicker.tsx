@@ -799,7 +799,11 @@ const PI_LADDER_INDICES: Readonly<Record<string, number>> = {
  * belong on the ladder. K2.7 Coding's fixed `on` value rides the first active
  * stop; K3's Low/High/Max values use the ordinary effort ladder. Pi needs seven
  * distinct ordinary stops because Inkling exposes BOTH Off and Minimal, so its
- * vocabulary spans indices 0…6 while UltraTask remains index 7. Muse Meta
+ * vocabulary spans indices 0…6 while UltraTask remains index 7. AntiGravity's
+ * fixed-reasoning rows (claude-sonnet-4-6, claude-opus-4-6-thinking) carry the
+ * same `on` token and ride the first active stop too — without that mapping the
+ * Thinking stop resolved to NO index at all, was dropped from the ladder, and
+ * left those models with UltraTask as their single (therefore locked) stop. Muse Meta
  * `/effort` parks `minimal` at Off (0), `ultra` at Ultracode (6), and
  * `ultratask` at UltraTask (7) without rewriting those wire tokens onto other
  * providers' catalogs.
@@ -811,7 +815,7 @@ export function ladderIndexForOption(provider: ProviderId, value: string): numbe
       ? PI_LADDER_INDICES[token]!
       : null
   }
-  if (provider === 'kimi' || provider === 'ollama') {
+  if (provider === 'kimi' || provider === 'ollama' || provider === 'antigravity') {
     const token = value.trim().toLowerCase()
     if (token === 'off') return 0
     if (token === 'on') return 1

@@ -239,6 +239,17 @@ export function groupAntigravityModelRows(
   })
 }
 
+/** Ladder label for one antigravity stop. The fixed-reasoning rows carry `on`,
+ * which reads as "Thinking" — it is a mode, not an effort level. */
+export function antigravityEffortLabel(effort: AntigravityReasoningEffort): string {
+  return effort === 'on' ? 'Thinking' : effort.charAt(0).toUpperCase() + effort.slice(1)
+}
+
+export interface AntigravityReasoningLadderOption {
+  value: string
+  label: string
+}
+
 /** The variant family containing `modelId`, or null for suffix-less models. */
 export function antigravityVariantGroupForModel(
   options: ReadonlyArray<CatalogueOptionLike>,
@@ -249,4 +260,58 @@ export function antigravityVariantGroupForModel(
     if (group.variants.some((variant) => variant.id === modelId)) return group
   }
   return null
+}
+
+/**
+ * The wire model UltraTask rides on for `modelId`. A variant family maps onto
+ * its HIGHEST present variant (its ceiling — `-high` today, but derived rather
+ * than hardcoded so a family that ships without one still has a target); a
+ * fixed-reasoning row is already at its ceiling and maps onto itself. Null when
+ * the model has no reasoning of its own for UltraTask to sit on top of.
+ */
+export function antigravityUltraTaskTargetId(
+  options: ReadonlyArray<CatalogueOptionLike>,
+  modelId: string
+): string | null {
+  const group = antigravityVariantGroupForModel(options, modelId)
+  if (group) return group.variants[group.variants.length - 1]?.id ?? null
+  return antigravityEffortForModelId(modelId) ? modelId : null
+}
+
+/**
+ * The reasoning stops one AntiGravity model offers. The composer and both seat
+ * editors all derive their ladder here so the stop a picker shows is always the
+ * stop that dispatches.
+ *
+ * - A variant family (`gemini-3.8-flash-low|-medium|-high`) offers its present
+ *   variants; choosing one swaps the concrete wire id.
+ * - A fixed-reasoning row (`claude-sonnet-4-6`, `claude-opus-4-6-thinking`,
+ *   `gpt-oss-120b-medium`) offers its ONE real stop, labelled Thinking/Medium.
+ *   It is deliberately NOT seeded with an `off` bottom stop: these models
+ *   cannot stop reasoning, so an Off stop would be a lie.
+ * - Anything with no reasoning of its own (the `gemini-api:` lane, the Fast
+ *   rows) offers nothing; UltraTask alone still gets an `off` bottom stop so it
+ *   stays opt-in rather than becoming the ladder's only — and therefore locked
+ *   — value.
+ */
+export function antigravityReasoningLadderOptions(
+  options: ReadonlyArray<CatalogueOptionLike>,
+  modelId: string,
+  ultraTaskSupported: boolean
+): AntigravityReasoningLadderOption[] {
+  const group = antigravityVariantGroupForModel(options, modelId)
+  const fixedEffort = group ? null : antigravityEffortForModelId(modelId)
+  const stops: AntigravityReasoningLadderOption[] = group
+    ? group.variants.map((variant) => ({
+        value: variant.effort,
+        label: antigravityEffortLabel(variant.effort)
+      }))
+    : fixedEffort
+      ? [{ value: fixedEffort, label: antigravityEffortLabel(fixedEffort) }]
+      : []
+  if (!ultraTaskSupported) return stops
+  const ultraTaskStop = { value: 'ultraTask', label: 'UltraTask' }
+  return antigravityUltraTaskTargetId(options, modelId)
+    ? [...stops, ultraTaskStop]
+    : [{ value: 'off', label: 'Off' }, ultraTaskStop]
 }

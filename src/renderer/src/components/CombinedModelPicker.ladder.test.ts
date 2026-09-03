@@ -167,6 +167,54 @@ describe('buildLadderModel', () => {
   })
 })
 
+describe('antigravity ladder', () => {
+  // Ground truth: `agy models` prints one bare wire id per reasoning variant
+  // for the Gemini families, and a single fixed-reasoning id for the Claude /
+  // GPT-OSS rows (labels "… (Thinking)" / "… (Medium)").
+  const GEMINI_OPTIONS = [
+    { value: 'low', label: 'Low' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'high', label: 'High' },
+    { value: 'ultraTask', label: 'UltraTask' }
+  ]
+  const THINKING_OPTIONS = [
+    { value: 'on', label: 'Thinking' },
+    { value: 'ultraTask', label: 'UltraTask' }
+  ]
+
+  it("places AntiGravity's fixed `on` stop on the ladder", () => {
+    // Without this the Thinking stop resolved to NO index, was dropped by
+    // buildLadderModel, and left UltraTask as the ladder's only stop.
+    expect(ladderIndexForOption('antigravity', 'on')).toBe(1)
+    expect(ladderIndexForOption('antigravity', 'low')).toBe(1)
+    expect(ladderIndexForOption('antigravity', 'medium')).toBe(2)
+    expect(ladderIndexForOption('antigravity', 'high')).toBe(3)
+    expect(ladderIndexForOption('antigravity', 'ultraTask')).toBe(7)
+  })
+
+  it('keeps a fixed-Thinking model movable between Thinking and UltraTask', () => {
+    const ladder = buildLadderModel('antigravity', THINKING_OPTIONS)
+    expect(ladder.enabledIndices).toEqual([1, 7])
+    expect(ladder.labelByIndex[1]).toBe('Thinking')
+    // Two stops = a real slider. One stop is the locked/inert presentation,
+    // which is what claude-sonnet-4-6 and claude-opus-4-6-thinking shipped as.
+    expect(
+      resolveReasoningLadderAvailability('antigravity', 'claude-sonnet-4-6', ladder).mutable
+    ).toBe(true)
+    expect(clampedLadderIndex('antigravity', 'on', ladder)).toBe(1)
+    expect(clampedLadderIndex('antigravity', 'ultraTask', ladder)).toBe(7)
+  })
+
+  it('keeps UltraTask reachable at the top of a Gemini family ladder', () => {
+    const ladder = buildLadderModel('antigravity', GEMINI_OPTIONS)
+    expect(ladder.enabledIndices).toEqual([1, 2, 3, 7])
+    expect(ladder.valueByIndex[7]).toBe('ultraTask')
+    expect(
+      resolveReasoningLadderAvailability('antigravity', 'gemini-3.8-flash-high', ladder).mutable
+    ).toBe(true)
+  })
+})
+
 describe('nearestEnabledLadderIndex (drag snap)', () => {
   it('breaks exact ties to the higher stop, matching iOS', () => {
     expect(nearestEnabledLadderIndex(4, [3, 5])).toBe(5)

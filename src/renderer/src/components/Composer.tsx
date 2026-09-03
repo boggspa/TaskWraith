@@ -185,6 +185,8 @@ import {
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import {
   antigravityEffortForModelId,
+  antigravityReasoningLadderOptions,
+  antigravityUltraTaskTargetId,
   antigravityVariantGroupForModel,
   groupAntigravityModelRows
 } from '../../../shared/antigravityAgyModelGrouping'
@@ -605,6 +607,37 @@ export function composerModelSupportsUltraTask(
 ): boolean {
   const model = modelOptions?.find((option) => option.id === modelId)
   return model?.ultraTaskSupported === true
+}
+
+/**
+ * Whether UltraTask is the AntiGravity selection this composer is editing.
+ *
+ * UltraTask has no AntiGravity wire id — it rides the family ceiling and is
+ * carried by an explicit marker — so the marker has to be read back from the
+ * same place the edit was written. A bound ensemble seat keeps it in its OWN
+ * `reasoningEffort`; a queued provider change (a busy chat defers every
+ * provider-scoped patch) keeps it in the pending metadata; only a live solo
+ * edit lands in the chat's own providerMetadata. Reading chat metadata alone
+ * meant a seat edit and a deferred patch were never read back at all, and the
+ * ladder snapped straight back to the ceiling's own effort — UltraTask could
+ * not be selected on a Gemini family no matter how many times it was picked.
+ */
+export function resolveAntigravityUltraTaskSelection(input: {
+  /** True when the composer is editing a bound AntiGravity ensemble seat. */
+  seatBound: boolean
+  seatReasoningEffort?: string | null
+  pendingUltraTaskSelected?: unknown
+  chatUltraTaskSelected?: unknown
+}): boolean {
+  if (input.seatBound) {
+    return (
+      String(input.seatReasoningEffort ?? '')
+        .trim()
+        .toLowerCase() === 'ultratask'
+    )
+  }
+  if (typeof input.pendingUltraTaskSelected === 'boolean') return input.pendingUltraTaskSelected
+  return input.chatUltraTaskSelected === true
 }
 
 // Appending UltraTask to an EMPTY base ladder would make it the ladder's only
@@ -3929,6 +3962,18 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               : typeof soloPendingProviderMetadata?.cursorFastMode === 'boolean'
                                 ? soloPendingProviderMetadata.cursorFastMode
                                 : cursorFastMode
+                          // Same seat / pending / chat precedence as every effort above;
+                          // see resolveAntigravityUltraTaskSelection for why the marker
+                          // cannot be read from the chat metadata alone.
+                          const effectiveAntigravityUltraTaskSelected =
+                            resolveAntigravityUltraTaskSelection({
+                              seatBound: ensembleResolved?.provider === 'antigravity',
+                              seatReasoningEffort: ensembleResolved?.reasoningEffort,
+                              pendingUltraTaskSelected:
+                                soloPendingProviderMetadata?.antigravityUltraTaskSelected,
+                              chatUltraTaskSelected:
+                                currentChat?.providerMetadata?.antigravityUltraTaskSelected
+                            })
                           const shouldUpdateLiveComposerState =
                             !ensembleBinding &&
                             (!soloPendingProviderChange ||
@@ -4040,102 +4085,32 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               effectiveCursorReasoning || GROK_45_DEFAULT_REASONING_EFFORT
                           } else if (effectiveProvider === 'antigravity') {
                             // Effort lives IN the concrete wire id
-                            // (gemini-3.6-flash-high); the slider lists the
-                            // family's present variants and selecting one
-                            // swaps the selected model id (see
-                            // handleCombinedReasoningChange). Suffix-less
-                            // models (claude-sonnet-4-6) get no slider.
-                            const variantGroup = antigravityVariantGroupForModel(
+                            // (gemini-3.6-flash-high) rather than a separate
+                            // persisted setting, and which stops a row offers
+                            // (variant family, single fixed-reasoning stop, or
+                            // UltraTask alone) is owned by the shared helper so
+                            // this surface and both seat editors cannot drift.
+                            // Selecting a stop swaps the concrete id — see
+                            // handleCombinedReasoningChange.
+                            combinedReasoningOptions = antigravityReasoningLadderOptions(
                               effectiveModelOptionsRaw,
-                              effectiveSelectedModel
+                              effectiveSelectedModel,
+                              composerModelSupportsUltraTask(
+                                effectiveModelOptionsRaw,
+                                effectiveSelectedModel
+                              )
                             )
-                            if (variantGroup) {
-                              combinedReasoningOptions = variantGroup.variants.map((variant) => ({
-                                value: variant.effort,
-                                label:
-                                  variant.effort.charAt(0).toUpperCase() + variant.effort.slice(1)
-                              }))
-                              // UltraTask maps onto the family's High variant:
-                              // selecting it swaps the wire model id to the
-                              // -high suffix (the highest real effort), then
-                              // the UltraTask delegate-wave principle applies
-                              // on top. See handleCombinedReasoningChange.
-                              if (
-                                combinedReasoningOptions.some(
-                                  (option) => option.value === 'high'
-                                ) &&
-                                !combinedReasoningOptions.some(
-                                  (option) => option.value === 'ultraTask'
-                                )
-                              ) {
-                                combinedReasoningOptions = [
-                                  ...combinedReasoningOptions,
-                                  { value: 'ultraTask', label: 'UltraTask' }
-                                ]
-                              }
-                              combinedSelectedReasoning =
-                                antigravityEffortForModelId(effectiveSelectedModel) || ''
-                              // UltraTask has no dedicated wire id on
-                              // Antigravity: selecting it swaps to the family's
-                              // -high variant and persists an explicit marker
-                              // in chat metadata so presentation keeps showing
-                              // UltraTask instead of elastic-snapping back to
-                              // High on the next render/reload.
-                              if (
-                                currentChat?.providerMetadata?.antigravityUltraTaskSelected ===
-                                  true &&
-                                combinedSelectedReasoning === 'high' &&
-                                combinedReasoningOptions.some(
-                                  (option) => option.value === 'ultraTask'
-                                )
-                              ) {
-                                combinedSelectedReasoning = 'ultraTask'
-                              }
-                            } else {
-                              // Fixed-effort quota-bound hardcoded rows
-                              // (gemini-3.1-pro-thinking, claude-sonnet-4-6,
-                              // gpt-oss-120b-medium): no -high/-medium/-low
-                              // variant family exists, but the model's own
-                              // effort IS the family ceiling. Offer that as
-                              // the base stop with UltraTask mapped onto it
-                              // so these models aren't left off the ladder.
-                              const antigravityFixedEffort =
-                                antigravityEffortForModelId(effectiveSelectedModel)
-                              if (
-                                antigravityFixedEffort &&
-                                composerModelSupportsUltraTask(
-                                  effectiveModelOptionsRaw,
-                                  effectiveSelectedModel
-                                )
-                              ) {
-                                combinedReasoningOptions = [
-                                  {
-                                    value: antigravityFixedEffort,
-                                    label:
-                                      antigravityFixedEffort === 'on'
-                                        ? 'Thinking'
-                                        : antigravityFixedEffort.charAt(0).toUpperCase() +
-                                          antigravityFixedEffort.slice(1)
-                                  },
-                                  { value: 'ultraTask', label: 'UltraTask' }
-                                ]
-                                // Selection lives in the wire id for
-                                // Antigravity; a fixed-effort model is already
-                                // at its ceiling, so UltraTask keeps the same
-                                // id (see handleCombinedReasoningChange).
-                                combinedSelectedReasoning = antigravityFixedEffort
-                                // Persisted UltraTask marker: the fixed-effort
-                                // model IS the family ceiling, so the wire id
-                                // never changes — presentation reads the marker
-                                // instead (see handleCombinedReasoningChange).
-                                if (
-                                  currentChat?.providerMetadata
-                                    ?.antigravityUltraTaskSelected === true
-                                ) {
-                                  combinedSelectedReasoning = 'ultraTask'
-                                }
-                              }
-                            }
+                            // UltraTask has no dedicated wire id: it rides the
+                            // family ceiling and persists an explicit marker, so
+                            // presentation keeps showing UltraTask instead of
+                            // elastic-snapping back to the ceiling's own effort.
+                            combinedSelectedReasoning =
+                              effectiveAntigravityUltraTaskSelected &&
+                              combinedReasoningOptions.some(
+                                (option) => option.value === 'ultraTask'
+                              )
+                                ? 'ultraTask'
+                                : antigravityEffortForModelId(effectiveSelectedModel) || ''
                           } else if (
                             effectiveProvider === 'mistral' ||
                             effectiveProvider === 'pi'
@@ -4603,19 +4578,23 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               // which concrete variant id of the family is
                               // selected, so dispatch/persistence/pricing keep
                               // seeing real wire ids. UltraTask maps onto the
-                              // family's High variant (its highest real
-                              // effort); the UltraTask delegate-wave principle
-                              // applies on top of that wire model.
-                              const variantGroup = antigravityVariantGroupForModel(
-                                effectiveModelOptionsRaw,
-                                effectiveSelectedModel
-                              )
-                              const target = variantGroup?.variants.find(
-                                (variant) =>
-                                  variant.effort === (value === 'ultraTask' ? 'high' : value)
-                              )
-                              if (target && target.id !== effectiveSelectedModel) {
-                                handleCombinedModelChange(target.id)
+                              // family ceiling (a fixed-reasoning row is
+                              // already at its own ceiling, so its id is
+                              // unchanged); the UltraTask delegate-wave
+                              // principle applies on top of that wire model.
+                              const targetId =
+                                value === 'ultraTask'
+                                  ? antigravityUltraTaskTargetId(
+                                      effectiveModelOptionsRaw,
+                                      effectiveSelectedModel
+                                    )
+                                  : (antigravityVariantGroupForModel(
+                                      effectiveModelOptionsRaw,
+                                      effectiveSelectedModel
+                                    )?.variants.find((variant) => variant.effort === value)?.id ??
+                                    null)
+                              if (targetId && targetId !== effectiveSelectedModel) {
+                                handleCombinedModelChange(targetId)
                               }
                               // UltraTask lives only in presentation: swap the
                               // wire id to -high above, then persist an explicit
