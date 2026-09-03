@@ -15,7 +15,8 @@ import {
   HOST_APPROVAL_DECIDE_DECISIONS,
   HOST_PROTOCOL_MAX_WARNING,
   HOST_QUESTION_ANSWER_DECISIONS,
-  TASKWRAITH_DESKTOP_HOST_ACTOR
+  TASKWRAITH_DESKTOP_HOST_ACTOR,
+  hostRunFailureNotice
 } from '../shared/hostProtocol'
 import {
   decodeHostWorkspaceGitReadResult,
@@ -1407,12 +1408,34 @@ export class HostNodeDomainPorts {
       if (!thread.provider || !composedProviderIds.has(thread.provider)) continue
       for (const run of thread.runs ?? []) {
         if (run.provider !== thread.provider || run.status !== 'running') continue
+        const warningSummaries = ['Provider running state recovered after Host restart.']
+        // This path writes the run row DIRECTLY and never goes through
+        // writeFinish, so it used to skip writeFinish's transcript notice
+        // entirely: a Host restart reaped a healthy in-flight turn and the user
+        // saw a FAILED with no reason anywhere. The reason was always recorded
+        // on the row — it just had no way to reach a human. Publish the same
+        // notice writeFinish would have, so a restart explains itself.
+        const notice = hostRunFailureNotice(warningSummaries)
+        if (notice) {
+          try {
+            this.options.store.appendTranscript({
+              threadId: thread.appChatId,
+              runId: run.runId,
+              role: 'system',
+              content: notice,
+              timestamp: endedAt
+            })
+          } catch {
+            // The terminal run write below is the authority; a notice never
+            // blocks recovery, exactly as in writeFinish.
+          }
+        }
         this.options.store.updateRun({
           threadId: thread.appChatId,
           runId: run.runId,
           status: 'failed',
           endedAt,
-          warningSummaries: ['Provider running state recovered after Host restart.'],
+          warningSummaries,
           errorCode: 'provider_failed'
         })
       }

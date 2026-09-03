@@ -499,6 +499,61 @@ describe('TaskWraith TUI renderer', () => {
     expect(historical).not.toContain('Complete the TaskWraith TUI')
   })
 
+  it('names why a provider run failed instead of a bare provider:failed', () => {
+    // "models and turns randomly fail when there's nothing evidently wrong" —
+    // the overlay used to print `claude:failed` and stop there, because the
+    // reason never crossed the projection wire.
+    const state = createTaskWraithTuiDemoState(Date.UTC(2026, 6, 27, 4, 55, 37))
+    state.overlay = 'missions'
+    const projection = state.hostProjection!
+    projection.runs.push({
+      runId: 'run-failed-1',
+      threadId: state.thread!.thread.id,
+      providerId: 'claude',
+      providerOutcome: 'failed',
+      errorCode: 'provider_failed',
+      failureReason: 'Provider running state recovered after Host restart.'
+    })
+    projection.rounds[0]!.providerRunIds = ['run-failed-1']
+
+    const rendered = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 120,
+        height: 30,
+        ansi: new Ansi('none'),
+        animationEnabled: false
+      })
+    )
+
+    expect(rendered).toContain('claude:failed')
+    expect(rendered).toContain('Provider running state recovered after Host restart.')
+  })
+
+  it('does not print a dangling separator when a run carries no reason', () => {
+    const state = createTaskWraithTuiDemoState(Date.UTC(2026, 6, 27, 4, 55, 37))
+    state.overlay = 'missions'
+    const projection = state.hostProjection!
+    projection.runs.push({
+      runId: 'run-failed-2',
+      threadId: state.thread!.thread.id,
+      providerId: 'claude',
+      providerOutcome: 'failed'
+    })
+    projection.rounds[0]!.providerRunIds = ['run-failed-2']
+
+    const rendered = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 120,
+        height: 30,
+        ansi: new Ansi('none'),
+        animationEnabled: false
+      })
+    )
+
+    expect(rendered).toContain('claude:failed')
+    expect(rendered).not.toContain('claude:failed ·')
+  })
+
   it('renders the model lens for solo threads and Host-projected ensembles', () => {
     const now = Date.UTC(2026, 6, 27, 4, 55, 37)
     const solo = createTaskWraithTuiDemoState(now)

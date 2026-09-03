@@ -1993,6 +1993,44 @@ describe('HostNodeDomainPorts', () => {
     ])
   })
 
+  it('tells the user WHY a recovered run failed instead of a reasonless FAILED', () => {
+    // This path writes the run row directly and never reaches writeFinish, so
+    // it used to record the reason and publish nothing: a Host restart reaped a
+    // healthy in-flight turn and the transcript said only FAILED. That is the
+    // user's "fails with nothing evidently wrong" verbatim.
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    store.updateRun({
+      threadId: thread.appChatId,
+      runId: 'run-reaped',
+      status: 'running',
+      provider: 'muse',
+      requestedModel: 'muse-spark-1.2',
+      startedAt: '2026-08-24T05:00:00.000Z'
+    })
+
+    new HostNodeDomainPorts(domainOptions)
+
+    const notices = (store.getThread(thread.appChatId)?.messages ?? []).filter(
+      (message) => message.role === 'system' && message.content.startsWith('Run failed')
+    )
+    expect(notices).toHaveLength(1)
+    expect(notices[0]?.content).toBe(
+      'Run failed · Provider running state recovered after Host restart.'
+    )
+    expect(notices[0]?.runId).toBe('run-reaped')
+    // Never a dangling separator with nothing after it.
+    expect(notices[0]?.content.endsWith('· ')).toBe(false)
+  })
+
   it('reports provider auth honestly without inventing an authenticated state', async () => {
     const { domain, manualBegin } = open({ credential: false, manual: true })
     await expect(domain.providerAuthStatus('muse')).resolves.toEqual({

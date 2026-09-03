@@ -7,6 +7,9 @@ import {
   HOST_PROTOCOL_VERSION,
   HOST_PROJECTION_VERSION,
   HOST_PROTOCOL_MAX_TRANSCRIPT_PREVIEW,
+  HOST_PROTOCOL_MAX_WARNING,
+  hostRunFailureNotice,
+  hostRunFailureReason,
   HOST_QUESTION_ANSWER_MAX_CHARS,
   HOST_RECEIPT_STATUSES,
   HOST_THREAD_RECORD_TRANSFER_MAX_BYTES,
@@ -1504,5 +1507,74 @@ describe('Host protocol Wave 2D-1 read frames', () => {
       )
       expect(decoded.ok).toBe(true)
     }
+  })
+
+  describe('run failure legibility', () => {
+    // The Host always knew why a run failed; the reason stopped at this wire,
+    // so clients could only render a bare `provider:failed`.
+    it('composes one reason from the summaries a run actually carried', () => {
+      expect(hostRunFailureReason(['model not advertised'])).toBe('model not advertised')
+      expect(hostRunFailureReason(['first', 'second'])).toBe('first · second')
+    })
+
+    it('returns undefined rather than an empty string when there is nothing to say', () => {
+      // '' would concatenate into a dangling `Run failed · ` — the bug in
+      // miniature, and the reason this returns undefined instead.
+      expect(hostRunFailureReason(undefined)).toBeUndefined()
+      expect(hostRunFailureReason([])).toBeUndefined()
+      expect(hostRunFailureReason([''])).toBeUndefined()
+      expect(hostRunFailureReason(['   ', '\t'])).toBeUndefined()
+      expect(hostRunFailureNotice([''])).toBeUndefined()
+    })
+
+    it('drops blank entries instead of joining them into empty separators', () => {
+      expect(hostRunFailureReason(['alpha', '  ', 'beta'])).toBe('alpha · beta')
+    })
+
+    it('bounds an over-long reason without ending mid-separator', () => {
+      const reason = hostRunFailureReason(['x'.repeat(50), 'y'.repeat(50)], 20)
+      expect(reason).toBeDefined()
+      expect((reason as string).length).toBeLessThanOrEqual(20)
+      expect(reason?.endsWith('…')).toBe(true)
+      expect(reason?.endsWith('· ')).toBe(false)
+    })
+
+    it('prefixes the transcript notice once, in one place', () => {
+      expect(hostRunFailureNotice(['provider exited with code 1'])).toBe(
+        'Run failed · provider exited with code 1'
+      )
+    })
+
+    it('carries errorCode and failureReason across the wire', () => {
+      const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 1 })
+      snapshot.runs.push({
+        runId: 'run-1',
+        threadId: 'thread-1',
+        providerId: 'claude',
+        providerOutcome: 'failed',
+        errorCode: 'provider_failed',
+        failureReason: 'Provider running state recovered after Host restart.'
+      })
+      const decoded = decodeHostSnapshot(JSON.parse(JSON.stringify(snapshot)))
+      expect(decoded.ok).toBe(true)
+      if (decoded.ok) {
+        expect(decoded.value.runs[0]).toMatchObject({
+          errorCode: 'provider_failed',
+          failureReason: 'Provider running state recovered after Host restart.'
+        })
+      }
+    })
+
+    it('rejects an unbounded failureReason rather than trusting the sender', () => {
+      const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 1 })
+      snapshot.runs.push({
+        runId: 'run-1',
+        threadId: 'thread-1',
+        providerId: 'claude',
+        providerOutcome: 'failed',
+        failureReason: 'z'.repeat(HOST_PROTOCOL_MAX_WARNING + 1)
+      })
+      expect(decodeHostSnapshot(JSON.parse(JSON.stringify(snapshot))).ok).toBe(false)
+    })
   })
 })

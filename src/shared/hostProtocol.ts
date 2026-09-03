@@ -254,6 +254,60 @@ export interface HostRoundProjection {
   providerRunIds: string[]
 }
 
+/** Separator between individual warning summaries in a composed reason. */
+export const HOST_RUN_FAILURE_REASON_SEPARATOR = ' · '
+
+/**
+ * Compose one bounded reason from a run's warning summaries, or `undefined`
+ * when there is genuinely nothing to say.
+ *
+ * WHY THIS IS SHARED, AND WHY IT RETURNS undefined
+ * ------------------------------------------------
+ * Three surfaces needed this sentence and each built it differently, which is
+ * how the reason went missing: `writeFinish` joined the summaries and wrote a
+ * transcript notice, `recoverInterruptedRuns` wrote the same fields to the
+ * store and no notice at all, and the projection carried neither. One
+ * composition rule removes that class.
+ *
+ * Returning `''` is the trap this deliberately avoids: an empty reason
+ * concatenated into a sentence produced a dangling `Run failed · ` with
+ * nothing after the separator. `undefined` forces every caller to decide.
+ *
+ * Blank and whitespace-only entries are dropped rather than joined, so a
+ * summary array of `['']` cannot render as a separator with no words.
+ */
+export function hostRunFailureReason(
+  warningSummaries: readonly string[] | undefined,
+  maxLength = HOST_PROTOCOL_MAX_WARNING
+): string | undefined {
+  if (!warningSummaries || warningSummaries.length === 0) return undefined
+  const parts: string[] = []
+  for (const summary of warningSummaries) {
+    if (typeof summary !== 'string') continue
+    const trimmed = summary.trim()
+    if (trimmed) parts.push(trimmed)
+  }
+  if (parts.length === 0) return undefined
+  const joined = parts.join(HOST_RUN_FAILURE_REASON_SEPARATOR)
+  if (joined.length <= maxLength) return joined
+  // A truncated reason must still read as a sentence and must never end
+  // mid-separator, or the wire cap turns a diagnosis into a riddle.
+  return `${joined.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`
+}
+
+/**
+ * The transcript notice a failed run publishes, or `undefined` when no reason
+ * is available. Keeping the prefix here stops a second surface from inventing
+ * a slightly different sentence for the same event.
+ */
+export function hostRunFailureNotice(
+  warningSummaries: readonly string[] | undefined,
+  maxLength = HOST_PROTOCOL_MAX_WARNING
+): string | undefined {
+  const reason = hostRunFailureReason(warningSummaries, maxLength)
+  return reason ? `Run failed${HOST_RUN_FAILURE_REASON_SEPARATOR}${reason}` : undefined
+}
+
 export interface HostRunProjection {
   runId: string
   threadId: string
@@ -264,6 +318,25 @@ export interface HostRunProjection {
   endedAt?: number
   modelId?: string
   usage?: HostUsageObservation
+  /**
+   * Machine-readable failure classification, when the Host recorded one.
+   *
+   * Deliberately a bounded free string rather than a closed union: the Host's
+   * own `errorCode` vocabulary grows, and a client that hard-fails an unknown
+   * code would black out the very surface meant to explain the failure.
+   */
+  errorCode?: string
+  /**
+   * Human-readable reason this run failed, already composed and bounded.
+   *
+   * The Host has always known this — it lives on the run row as
+   * `warningSummaries` — but it stopped at the wire, so a client could only
+   * render a bare `provider:failed`. That is exactly the "fails with nothing
+   * evidently wrong" report. Sent pre-joined so every client shows the same
+   * sentence instead of inventing its own; never an empty string, because a
+   * blank reason renders as a dangling separator.
+   */
+  failureReason?: string
 }
 
 export interface HostMissionProjection {
@@ -2485,6 +2558,12 @@ function decodeHostRunProjection(
   if (!isOptionalString(value.modelId, HOST_PROTOCOL_MAX_ID)) {
     return { ok: false, error: `${label}.modelId is invalid` }
   }
+  if (!isOptionalString(value.errorCode, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.errorCode is invalid` }
+  }
+  if (!isOptionalString(value.failureReason, HOST_PROTOCOL_MAX_WARNING)) {
+    return { ok: false, error: `${label}.failureReason is invalid` }
+  }
   let usage: HostUsageObservation | undefined
   if (value.usage !== undefined) {
     const decodedUsage = decodeHostUsageObservation(value.usage)
@@ -2500,6 +2579,8 @@ function decodeHostRunProjection(
   if (startedAt.value !== undefined) run.startedAt = startedAt.value
   if (endedAt.value !== undefined) run.endedAt = endedAt.value
   if (value.modelId !== undefined) run.modelId = value.modelId
+  if (value.errorCode !== undefined) run.errorCode = value.errorCode
+  if (value.failureReason !== undefined) run.failureReason = value.failureReason
   if (usage !== undefined) run.usage = usage
   return { ok: true, value: run }
 }

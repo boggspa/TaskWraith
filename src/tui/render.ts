@@ -1169,7 +1169,16 @@ function renderMissionsOverlay(
         const providerOutcomes = activeRound.providerRunIds
           .map((runId) => projection.runs.find((run) => run.runId === runId))
           .filter((run): run is (typeof projection.runs)[number] => Boolean(run))
-          .map((run) => `${run.providerId}:${run.providerOutcome}`)
+          // A bare `claude:failed` is the whole "it failed and nothing is
+          // evidently wrong" complaint. When the Host sent a reason, show it —
+          // the reason is already bounded and pre-composed at the wire, and it
+          // is only ever absent, never blank, so this cannot render a dangling
+          // separator.
+          .map((run) =>
+            run.failureReason
+              ? `${run.providerId}:${run.providerOutcome} · ${run.failureReason}`
+              : `${run.providerId}:${run.providerOutcome}`
+          )
         if (providerOutcomes.length) {
           lines.push(
             overlayValue(

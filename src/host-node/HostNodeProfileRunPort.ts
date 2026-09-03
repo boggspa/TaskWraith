@@ -1,5 +1,6 @@
 import { lstatSync, realpathSync, statSync } from 'node:fs'
 
+import { hostRunFailureNotice } from '../shared/hostProtocol'
 import type {
   HostProfileDomainStore,
   HostProfileThread
@@ -440,23 +441,18 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
     // client renders — the TUI showed a bare FAILED. Publish it once as a Host
     // notice on the transcript. Providers that already wrote their own notice
     // pass no summaries and add nothing here.
-    const reason =
-      input.status === 'failed'
-        ? input.warningSummaries
-            .map((summary) => summary.trim())
-            .filter(Boolean)
-            .join(' · ')
-        : ''
+    const notice =
+      input.status === 'failed' ? hostRunFailureNotice(input.warningSummaries) : undefined
     const alreadyTerminal = (this.options.store.getThread(threadId)?.runs ?? []).some(
       (run) => run.runId === input.runId && run.status === input.status
     )
-    if (reason && !alreadyTerminal) {
+    if (notice && !alreadyTerminal) {
       try {
         this.options.store.appendTranscript({
           threadId,
           runId: input.runId,
           role: 'system',
-          content: `Run failed · ${reason}`,
+          content: notice,
           timestamp: input.finishedAt
         })
       } catch {
