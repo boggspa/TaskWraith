@@ -1,5 +1,8 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcess } from 'node:child_process'
+import { fstatSync, mkdtempSync, openSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -464,5 +467,82 @@ describe('TUI Host process manager', () => {
         resolveLaunchCommand: async () => command()
       })
     ).rejects.toThrow(/exit code 2/)
+  })
+
+  describe('Host stderr capture', () => {
+    // The Host is spawned detached and unref'd, and it writes no run events, so
+    // fd 2 is the only place a Host-side failure ever explains itself. Sending
+    // it to 'ignore' is what makes a failed turn look like "nothing evidently
+    // wrong". These pin the fd to a log file — never the inherited terminal,
+    // which a stray line would corrupt mid-frame.
+    async function launchCapturing(
+      openHostStderrLog: (userDataPath: string) => number | null,
+      enableFullAccessPresence = false
+    ) {
+      const child = new FakeChild()
+      const spawn = vi.fn().mockReturnValue(child.asChildProcess())
+      const result = await ensureTuiHostAvailable({
+        userDataPath: '/profiles/stderr',
+        profile: 'production' as const,
+        enableFullAccessPresence,
+        ...(enableFullAccessPresence
+          ? { createFullAccessSecret: () => Buffer.alloc(32, 0xcd) }
+          : {}),
+        openHostStderrLog,
+        probe: vi
+          .fn<() => Promise<TuiHostAuthenticatedProbe | void>>()
+          .mockRejectedValueOnce(new Error('offline'))
+          .mockResolvedValue(authenticatedProbe()),
+        spawn,
+        resolveLaunchCommand: async () => command(),
+        delay: vi.fn().mockResolvedValue(undefined)
+      })
+      if (result.kind === 'launched') result.fullAccessPresence?.dispose()
+      return spawn
+    }
+
+    it('routes Host stderr to the opened log fd instead of discarding it', async () => {
+      const spawn = await launchCapturing(vi.fn().mockReturnValue(77))
+
+      expect(spawn.mock.calls[0]?.[2]?.stdio).toEqual(['ignore', 'ignore', 77])
+    })
+
+    it('keeps the log fd on stderr while Full Access still owns fd 3', async () => {
+      const spawn = await launchCapturing(vi.fn().mockReturnValue(78), true)
+
+      // fd 3 is the bootstrap secret channel; capturing stderr must not
+      // displace it, and Full Access must not cost the user diagnostics.
+      expect(spawn.mock.calls[0]?.[2]?.stdio).toEqual(['ignore', 'ignore', 78, 'pipe'])
+    })
+
+    it('opens the log against the profile that owns the Host', async () => {
+      const open = vi.fn().mockReturnValue(79)
+      await launchCapturing(open)
+
+      expect(open).toHaveBeenCalledWith('/profiles/stderr')
+    })
+
+    it('still launches the Host when the log cannot be opened', async () => {
+      const spawn = await launchCapturing(vi.fn().mockReturnValue(null))
+
+      // Fail-open: a profile we cannot write must never cost the user a turn.
+      expect(spawn.mock.calls[0]?.[2]?.stdio).toEqual(['ignore', 'ignore', 'ignore'])
+    })
+
+    it('closes the parent copy of the fd so relaunches cannot leak one each', async () => {
+      // spawn dups the fd into the child, so the parent's copy is ours to close.
+      // A long-lived TUI that relaunches the Host would otherwise leak per launch.
+      const scratch = mkdtempSync(join(tmpdir(), 'tw-host-stderr-fd-'))
+      const fd = openSync(join(scratch, 'stderr.log'), 'a')
+      try {
+        expect(() => fstatSync(fd)).not.toThrow()
+
+        await launchCapturing(vi.fn().mockReturnValue(fd))
+
+        expect(() => fstatSync(fd)).toThrow(/EBADF/)
+      } finally {
+        rmSync(scratch, { recursive: true, force: true })
+      }
+    })
   })
 })

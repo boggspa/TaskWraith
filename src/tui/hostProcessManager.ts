@@ -22,6 +22,7 @@ import {
   type TuiFullAccessPresence,
   type TuiFullAccessHostProcessBinding
 } from './fullAccessConsent'
+import { closeHostStderrLogFd, openHostStderrLogFd } from './hostStderrLog'
 
 const DEFAULT_START_TIMEOUT_MS = 120_000
 const DEFAULT_POLL_MS = 250
@@ -93,6 +94,12 @@ export interface EnsureTuiHostAvailableInput extends ResolveTuiHostLaunchCommand
   readonly resolveLaunchCommand?: () => Promise<TuiHostLaunchCommand | null>
   readonly spawn?: TuiHostSpawn
   readonly createFullAccessSecret?: () => Buffer
+  /**
+   * Opens the append-mode fd the spawned Host writes stderr to, or returns
+   * `null` to fall back to `'ignore'`. Injectable so tests can prove the fd
+   * reaches `stdio[2]` without touching a real profile directory.
+   */
+  readonly openHostStderrLog?: (userDataPath: string) => number | null
   readonly now?: () => number
   readonly delay?: (milliseconds: number) => Promise<void>
   /**
@@ -553,6 +560,14 @@ async function ensureTuiHostAvailableOnce(
     else candidate.fill(0)
   }
   let child: ChildProcess
+  // The Host is detached and unref'd, so anything it writes to fd 2 outlives
+  // this call with no reader. Sending that to a log FILE (never the inherited
+  // terminal, which a stray line would corrupt mid-frame) is the only durable
+  // explanation a failed Host-side turn ever gets: the Host writes no run
+  // events, and its receipt ring is shared with the desktop renderer.
+  // Fail-open — a log we cannot open must not stop the Host from starting.
+  const stderrLogFd = (input.openHostStderrLog ?? openHostStderrLogFd)(input.userDataPath)
+  const stderrTarget = stderrLogFd ?? 'ignore'
   try {
     child = spawn(command.executable, command.args, {
       cwd: command.cwd,
@@ -564,12 +579,18 @@ async function ensureTuiHostAvailableOnce(
         : command.env,
       detached: true,
       shell: false,
-      stdio: bootstrapSecret ? ['ignore', 'ignore', 'ignore', 'pipe'] : 'ignore',
+      stdio: bootstrapSecret
+        ? ['ignore', 'ignore', stderrTarget, 'pipe']
+        : ['ignore', 'ignore', stderrTarget],
       windowsHide: true
     })
   } catch (error) {
     bootstrapSecret?.fill(0)
     throw error
+  } finally {
+    // spawn dups the fd into the child; the parent's copy would otherwise leak
+    // once per launch. Closing here is safe even on the throwing path above.
+    closeHostStderrLogFd(stderrLogFd)
   }
   const outcome: {
     spawnError: Error | null
