@@ -8,7 +8,7 @@ A drafting tool inside a Project's reference shelf. Pick the references you care
 <!-- screenshot-pending: Project library dock showing the Studio row and a generated draft with Save to library and Discard -->
 
 ## Where to find it
-Select **Work**, choose a Project, then open the **Refs** tab in the right dock. The **Studio** row sits under the reference list, headed **Project library**.
+Select **Work**, choose a Project, then open the **Refs** tab in the right dock. Under the **Project library** header, the **Studio** row sits above the reference list.
 
 ## How to use it
 1. Click **Use next** on the references you want the draft built from. Studio stays disabled until at least one is selected.

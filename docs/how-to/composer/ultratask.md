@@ -19,7 +19,7 @@ Click the **model chip** under the prompt box. **UltraTask** is the highest stop
 ## Tips & related
 - **UltraTask only appears on models that support it.** If the ladder stops at Max or Ultracode, that model cannot run it — switch models rather than looking for a setting.
 - It uses the highest reasoning your chosen model offers, so expect it to be slower and more expensive than a normal turn.
-- Three scouts run by default, and a run can use between two and six.
-- The worker gets the same permission level as the chat. UltraTask never grants itself more access than you gave it — if the chat is read-only, the whole job stays read-only.
+- TaskWraith decides how many scouts to run. There is no setting for it, so nothing to tune.
+- Every stage inherits the chat's permission level. UltraTask never grants itself more access than you gave it — set the permissions chip to **Ask** and the whole job stays look-only.
 - [Provider, Model, and Permissions Pickers](provider-model-permissions-pickers.md) — the ladder UltraTask sits on top of.
 - [Model Catalogue](../../MODEL_CATALOGUE.md) — which models offer which reasoning levels.
