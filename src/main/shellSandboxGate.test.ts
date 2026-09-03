@@ -9,23 +9,22 @@ afterEach(() => {
 })
 
 describe('shellSandboxEnabled', () => {
-  // Default ON since the live canary passed. An unset flag must CONTAIN.
-  it('is on when unset', () => {
+  // Held OFF while the reviewed grant/TMPDIR defects are open: turning it on
+  // would silently deny writes the user authorized.
+  it('is off when unset', () => {
     delete process.env.TASKWRAITH_SHELL_SANDBOX
-    expect(shellSandboxEnabled()).toBe(true)
+    expect(shellSandboxEnabled()).toBe(false)
   })
 
-  it('turns off only for an explicit opt-out', () => {
-    for (const value of ['0', 'false', 'no', 'off', 'OFF', ' off ']) {
+  it('stays off for anything that is not an explicit opt-in', () => {
+    for (const value of ['', '0', 'false', 'no', 'off', 'maybe', ' ']) {
       process.env.TASKWRAITH_SHELL_SANDBOX = value
       expect(`${value}:${shellSandboxEnabled()}`).toBe(`${value}:false`)
     }
   })
 
-  // An unrecognised value must not silently disable containment: the safe
-  // reading of a typo is "the operator wanted the sandbox", not "run open".
-  it('stays on for an empty or unrecognised value', () => {
-    for (const value of ['', ' ', '1', 'true', 'yes', 'on', 'maybe', 'disabled']) {
+  it('turns on for the accepted spellings', () => {
+    for (const value of ['1', 'true', 'TRUE', 'yes', 'on', ' on ']) {
       process.env.TASKWRAITH_SHELL_SANDBOX = value
       expect(`${value}:${shellSandboxEnabled()}`).toBe(`${value}:true`)
     }
