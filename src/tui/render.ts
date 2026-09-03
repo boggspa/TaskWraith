@@ -2252,21 +2252,27 @@ function renderHud(
   return joinLeftRight(left, right, width)
 }
 
-function selectedPermissionPostureId(state: TaskWraithTuiState): string {
+/**
+ * The tier the next turn will actually run under, or undefined when none
+ * resolves. These paths deliberately do not fall back to `default`: once a
+ * posture lookup has run and come back empty, naming a tier anyway states a
+ * capability the Host has not offered, and permissionLabel renders the honest
+ * placeholder instead. The final `default` is different — it is the resting
+ * state before any offers exist, not a resolution that failed.
+ */
+function selectedPermissionPostureId(state: TaskWraithTuiState): string | undefined {
   const threadPermission = state.thread?.context.permission
   if (threadPermission) return threadPermission
   const cold = state.coldStart
   if (cold?.kind === 'configure') {
-    return cold.offers.postures[state.coldStartPostureIndex ?? 0]?.postureId ?? 'default'
+    return cold.offers.postures[state.coldStartPostureIndex ?? 0]?.postureId
   }
   if (state.homeTune) {
-    return (
-      resolveTuiHomePosture(
-        state.homeTune.providers,
-        state.homeTune.modelIndex,
-        state.homePermission
-      )?.postureId ?? 'default'
-    )
+    return resolveTuiHomePosture(
+      state.homeTune.providers,
+      state.homeTune.modelIndex,
+      state.homePermission
+    )?.postureId
   }
   return 'default'
 }

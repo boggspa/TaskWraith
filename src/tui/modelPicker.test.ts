@@ -5,6 +5,7 @@ import {
   findTuiModelChoiceIndex,
   nextAvailableTuiPosture,
   resolveTuiHomePosture,
+  resolveTuiHomePostureDetail,
   tuiModelChoices
 } from './modelPicker'
 
@@ -113,5 +114,35 @@ describe('combined TUI model picker', () => {
         postureId: 'workspace_write'
       })
     ).toBeUndefined()
+  })
+
+  it('reports a lapsed Home tier instead of quietly substituting Accept Edits', () => {
+    // The user picked Full WS Access while it was offered and a later refresh
+    // withdrew it. Home's own thread creation looks for that exact posture and
+    // refuses when it is gone, so resolving to `default` here advertised a tier
+    // the very next send would decline.
+    const withdrawn: TuiHomeTuneProvider[] = [
+      {
+        ...providers[0],
+        offers: {
+          ...providers[0].offers,
+          postures: providers[0].offers.postures.map((posture) =>
+            posture.postureId === 'workspace_write' ? { ...posture, available: false } : posture
+          )
+        }
+      }
+    ]
+    const selection = { providerId: 'codex', postureId: 'workspace_write' }
+
+    const lapsed = resolveTuiHomePostureDetail(withdrawn, 0, selection)
+    expect(lapsed.posture).toBeUndefined()
+    expect(lapsed.downgradedFrom).toBe('workspace_write')
+    expect(resolveTuiHomePosture(withdrawn, 0, selection)).toBeUndefined()
+
+    // A provider the user never chose a tier for is a resting state rather than
+    // a discarded choice, so it still resolves to the standard edit posture.
+    const untouched = resolveTuiHomePostureDetail(withdrawn, 0)
+    expect(untouched.posture?.postureId).toBe('default')
+    expect(untouched.downgradedFrom).toBeUndefined()
   })
 })

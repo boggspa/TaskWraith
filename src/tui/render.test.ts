@@ -377,6 +377,44 @@ describe('TaskWraith TUI renderer', () => {
     expect(render(state)).not.toContain('Shift+Tab permissions')
   })
 
+  it('never paints a permission tier the Host has withdrawn', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const home = loadedHomeState()
+    // The remembered Shift+Tab pick has lapsed since it was made. Naming any
+    // tier now is a claim the next send cannot honour, and `default` is the
+    // worst of them: it paints "Accept Edits" on a provider that has just
+    // stopped offering the tier the user actually chose.
+    home.homePermission = { providerId: 'codex', postureId: 'workspace_write' }
+    const tune = home.homeTune!
+    home.homeTune = {
+      ...tune,
+      providers: [
+        {
+          ...tune.providers[0],
+          offers: {
+            ...tune.providers[0].offers,
+            postures: tune.providers[0].offers.postures.map((posture) =>
+              posture.postureId === 'workspace_write' ? { ...posture, available: false } : posture
+            )
+          }
+        }
+      ]
+    }
+    const rendered = stripAnsi(
+      renderTaskWraithTui(home, {
+        width: 110,
+        height: 24,
+        ansi: new Ansi('none'),
+        now,
+        animationEnabled: false
+      })
+    )
+    // Anchors the two negatives below against a Home frame that really drew.
+    expect(rendered).toContain('Shift+Tab permissions')
+    expect(rendered).not.toContain('Full WS Access')
+    expect(rendered).not.toContain('Accept Edits')
+  })
+
   it('paints both composer rules and the permission label with the resolved tier colour', () => {
     const dark = resolveTuiTheme('wraith-night')
     const light = resolveTuiTheme('wraith-day')

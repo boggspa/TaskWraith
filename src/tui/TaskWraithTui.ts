@@ -119,7 +119,7 @@ import { TUI_MOTION, detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from
 import {
   findTuiModelChoiceIndex,
   nextAvailableTuiPosture,
-  resolveTuiHomePosture,
+  resolveTuiHomePostureDetail,
   tuiModelChoices,
   type TuiModelChoice
 } from './modelPicker'
@@ -2764,11 +2764,12 @@ export class TaskWraithTui {
       this.render()
       return
     }
-    const current = resolveTuiHomePosture(
+    const resolved = resolveTuiHomePostureDetail(
       home.providers,
       home.modelIndex,
       this.state.homePermission
     )
+    const current = resolved.posture
     const posture = nextAvailableTuiPosture(choice.provider.offers.postures, current?.postureId)
     if (!posture) {
       this.setNotice('No permission tier is available for the Home model.', 'warning', 3_000)
@@ -2779,11 +2780,21 @@ export class TaskWraithTui {
       providerId: choice.provider.status.providerId,
       postureId: posture.postureId
     }
+    // A lapsed explicit pick is named rather than quietly replaced. Without
+    // this the tier the user chose simply stopped being in effect, and the
+    // next Shift+Tab looked like it had skipped a tier on its own.
+    const lapsed = resolved.downgradedFrom
+      ? `${
+          choice.provider.offers.postures.find(
+            (candidate) => candidate.postureId === resolved.downgradedFrom
+          )?.label ?? resolved.downgradedFrom
+        } is no longer offered · `
+      : ''
     this.setNotice(
       posture.postureId === current?.postureId
-        ? `${posture.label} is the only available permission tier.`
-        : `Next thread · ${posture.label}`,
-      posture.requiresExplicitConsent ? 'warning' : 'good',
+        ? `${lapsed}${posture.label} is the only available permission tier.`
+        : `${lapsed}Next thread · ${posture.label}`,
+      posture.requiresExplicitConsent || resolved.downgradedFrom ? 'warning' : 'good',
       3_000
     )
     this.render()

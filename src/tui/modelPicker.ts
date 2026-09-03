@@ -46,26 +46,56 @@ export function findTuiModelChoiceIndex(
   return choices.findIndex((choice) => choice.model.modelId === modelId)
 }
 
+/** Home's resolved permission tier, plus the explicit choice it could not honour. */
+export interface TuiHomePostureResolution {
+  readonly posture: HostPermissionPostureOffer | undefined
+  /** The Shift+Tab posture the user picked for this provider that is no longer offered. */
+  readonly downgradedFrom?: string
+}
+
 /**
  * Resolve Home's permission chip against the currently selected provider.
- * An explicit Shift+Tab choice wins only while that exact posture remains
- * available; otherwise Home falls back to the Host's standard edit posture.
+ *
+ * An explicit Shift+Tab choice wins while that exact posture is still offered.
+ * When it has since lapsed, this reports the discard rather than quietly
+ * swapping in the standard edit posture, because Home does not actually run
+ * that substitution: prepareDefaultThreadForPrompt looks for the explicit
+ * posture alone and refuses the send with "no longer available · choose
+ * another tier". Answering the chip with `default` therefore advertised a tier
+ * the very next Enter would decline — the display and the behaviour disagreed,
+ * and only the display looked fine.
+ *
+ * A provider the user never picked a tier for is a different case and still
+ * falls back to the standard edit posture; that is a genuine resting state,
+ * not a discarded choice.
  */
+export function resolveTuiHomePostureDetail(
+  providers: readonly TuiHomeTuneProvider[],
+  modelIndex: number,
+  selection?: TuiHomePermissionSelection
+): TuiHomePostureResolution {
+  const choice = tuiModelChoices(providers)[modelIndex]
+  if (!choice) return { posture: undefined }
+  const postures = choice.provider.offers.postures
+  const requested =
+    selection?.providerId === choice.provider.status.providerId ? selection.postureId : undefined
+  if (requested) {
+    const explicit = postures.find(
+      (posture) => posture.postureId === requested && posture.available
+    )
+    return explicit ? { posture: explicit } : { posture: undefined, downgradedFrom: requested }
+  }
+  return {
+    posture: postures.find((posture) => posture.postureId === 'default' && posture.available)
+  }
+}
+
 export function resolveTuiHomePosture(
   providers: readonly TuiHomeTuneProvider[],
   modelIndex: number,
   selection?: TuiHomePermissionSelection
 ): HostPermissionPostureOffer | undefined {
-  const choice = tuiModelChoices(providers)[modelIndex]
-  if (!choice) return undefined
-  const postures = choice.provider.offers.postures
-  const explicit =
-    selection?.providerId === choice.provider.status.providerId
-      ? postures.find((posture) => posture.postureId === selection.postureId && posture.available)
-      : undefined
-  return (
-    explicit ?? postures.find((posture) => posture.postureId === 'default' && posture.available)
-  )
+  return resolveTuiHomePostureDetail(providers, modelIndex, selection).posture
 }
 
 export function nextAvailableTuiPosture(
