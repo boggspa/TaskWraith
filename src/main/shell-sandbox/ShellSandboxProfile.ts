@@ -26,7 +26,7 @@
 // macOS-only. Every other platform resolves to an unsandboxed plan with a stated
 // reason; nothing here may become a hard requirement on Windows or Linux.
 
-import { realpathSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
 export type ShellSandboxUnavailableReason =
@@ -35,10 +35,26 @@ export type ShellSandboxUnavailableReason =
   | 'full_access_granted'
   | 'no_workspace_root'
   | 'unsafe_workspace_root'
+  | 'sandbox_binary_unavailable'
+
+/** Absolute path to the Seatbelt driver. Apple has deprecated it, so its absence
+ *  is a real state to handle rather than a theoretical one. */
+export const SANDBOX_EXEC_PATH = '/usr/bin/sandbox-exec'
 
 export type ShellSandboxPlan =
   | { sandboxed: true; profile: string; wrap: (command: readonly string[]) => string[] }
-  | { sandboxed: false; reason: ShellSandboxUnavailableReason; detail?: string }
+  | {
+      sandboxed: false
+      /**
+       * True when containment was ASKED FOR and could not be delivered. The
+       * caller must refuse to run rather than silently falling back to an
+       * uncontained shell — a gate that degrades open is worse than no gate,
+       * because the operator believes writes are confined and they are not.
+       */
+      enforced: boolean
+      reason: ShellSandboxUnavailableReason
+      detail?: string
+    }
 
 export interface ShellSandboxPlanInput {
   platform: NodeJS.Platform
@@ -54,10 +70,17 @@ export interface ShellSandboxPlanInput {
   workspacePath?: string | null
   /** Additional writable roots (temp dirs). Non-absolute entries are dropped. */
   writableRoots?: readonly string[]
-  /** Home directory used to site the secret denylist. */
-  homePath?: string | null
+  /**
+   * Home directory used to site the secret denylist and to refuse a home-rooted
+   * writable root. REQUIRED: when it was optional, omitting it silently skipped
+   * the home guard and let the whole home directory become writable while the
+   * plan still reported `sandboxed: true`.
+   */
+  homePath: string
   /** Injected for tests; defaults to `realpathSync`. */
   realpath?: (value: string) => string
+  /** Injected for tests; defaults to a real `existsSync` on SANDBOX_EXEC_PATH. */
+  sandboxBinaryAvailable?: () => boolean
 }
 
 /**
@@ -107,9 +130,9 @@ export function sbplQuote(value: string): string {
  * `(deny file-write*)` line just took away, which is worse than running
  * unsandboxed because it reports as contained.
  */
-function isUnsafeWritableRoot(candidate: string, homePath: string | null): boolean {
-  if (candidate === '/' || candidate === '') return true
-  if (homePath && candidate === homePath) return true
+function isUnsafeWritableRoot(candidate: string, homePath: string): boolean {
+  if (candidate === '') return true
+  if (candidate === homePath) return true
   // A two-segment absolute path ("/Users", "/private") is a system tier, not a
   // workspace. Anything deeper is the user's own directory layout.
   return candidate.split('/').filter(Boolean).length < 2
@@ -179,22 +202,48 @@ export function buildWorkspaceSandboxProfile(input: {
 
 /** Decide whether this run gets a Seatbelt, and build the wrapper if so. */
 export function resolveShellSandboxPlan(input: ShellSandboxPlanInput): ShellSandboxPlan {
+  // Every branch above the gate is a legitimate reason NOT to contain, so all of
+  // them report `enforced: false` — the caller runs the command normally.
   if (input.platform !== 'darwin') {
-    return { sandboxed: false, reason: 'platform_unsupported', detail: input.platform }
+    return {
+      sandboxed: false,
+      enforced: false,
+      reason: 'platform_unsupported',
+      detail: input.platform
+    }
   }
-  if (!input.enabled) return { sandboxed: false, reason: 'gate_disabled' }
-  if (input.fullAccessGranted) return { sandboxed: false, reason: 'full_access_granted' }
+  if (!input.enabled) return { sandboxed: false, enforced: false, reason: 'gate_disabled' }
+  if (input.fullAccessGranted) {
+    return { sandboxed: false, enforced: false, reason: 'full_access_granted' }
+  }
 
   const rawWorkspace = (input.workspacePath || '').trim()
   if (!rawWorkspace || !isAbsolute(rawWorkspace)) {
-    return { sandboxed: false, reason: 'no_workspace_root' }
+    return { sandboxed: false, enforced: false, reason: 'no_workspace_root' }
+  }
+
+  // Past this point the gate is on, the posture is contained, and there IS a
+  // workspace — so containment was asked for. A failure from here is enforced.
+  const binaryAvailable = input.sandboxBinaryAvailable || (() => existsSync(SANDBOX_EXEC_PATH))
+  if (!binaryAvailable()) {
+    return {
+      sandboxed: false,
+      enforced: true,
+      reason: 'sandbox_binary_unavailable',
+      detail: SANDBOX_EXEC_PATH
+    }
   }
 
   const realpath = input.realpath || realpathSync
-  const home = input.homePath ? safeRealpath(input.homePath, realpath) : null
+  const home = safeRealpath(input.homePath, realpath)
   const workspaceRoot = safeRealpath(rawWorkspace, realpath)
   if (isUnsafeWritableRoot(workspaceRoot, home)) {
-    return { sandboxed: false, reason: 'unsafe_workspace_root', detail: workspaceRoot }
+    return {
+      sandboxed: false,
+      enforced: true,
+      reason: 'unsafe_workspace_root',
+      detail: workspaceRoot
+    }
   }
 
   const writableRoots: string[] = []
@@ -207,19 +256,25 @@ export function resolveShellSandboxPlan(input: ShellSandboxPlanInput): ShellSand
     writableRoots.push(resolved)
   }
 
-  const deniedReadPaths = home
-    ? SHELL_SANDBOX_DENIED_READ_RELPATHS.map((relative) => `${home}/${relative}`).filter(
-        // A secret path that sits INSIDE the workspace is not denied: the agent
-        // is already authorized to read the workspace, and a deny here would be
-        // a confusing partial refusal rather than a boundary.
-        (path) => !path.startsWith(`${workspaceRoot}/`) && path !== workspaceRoot
-      )
-    : []
+  const deniedReadPaths = SHELL_SANDBOX_DENIED_READ_RELPATHS.map(
+    (relative) => `${home}/${relative}`
+  ).filter((path) => {
+    // A secret path INSIDE the workspace is not denied: the agent is already
+    // authorized to read the workspace, so a deny would be a confusing partial
+    // refusal rather than a boundary.
+    if (path === workspaceRoot || path.startsWith(`${workspaceRoot}/`)) return false
+    // A secret path that CONTAINS the workspace must not be denied either, or the
+    // agent loses read access to its own files. A workspace of
+    // `~/.config/gh/mytool` sits under the `~/.config/gh` deny, and a subpath
+    // deny there makes every read in the workspace fail.
+    if (workspaceRoot.startsWith(`${path}/`)) return false
+    return true
+  })
 
   const profile = buildWorkspaceSandboxProfile({ workspaceRoot, writableRoots, deniedReadPaths })
   return {
     sandboxed: true,
     profile,
-    wrap: (command) => ['/usr/bin/sandbox-exec', '-p', profile, ...command]
+    wrap: (command) => [SANDBOX_EXEC_PATH, '-p', profile, ...command]
   }
 }

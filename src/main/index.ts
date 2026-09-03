@@ -4314,13 +4314,6 @@ interface HostCommandRunOptions {
   environment?: Readonly<Record<string, string>>
   /** Main-owned hardening: remove inherited helper/config variables before spawn. */
   unsetEnvironment?: readonly string[]
-  /**
-   * Opt-IN Seatbelt for the agent shell. Only the brokered run_shell_command
-   * path supplies one: internal host commands (release reruns, local-server
-   * launches, version probes) are TaskWraith's own work, not agent-authored
-   * argv, and confining them would break the app rather than an agent.
-   */
-  sandbox?: ShellSandboxPlan
 }
 
 type HostCommandRunArgument = number | HostCommandRunOptions
@@ -4331,6 +4324,14 @@ interface HostCommandProjectionScope {
   readonly appChatId?: string
   readonly workspaceId?: string
   readonly workspacePath?: string
+  /**
+   * Seatbelt decision for every shell this scope spawns. It lives on the SCOPE,
+   * not on a per-call option, because the agent reaches a shell through more
+   * than one tool: run_shell_command, run_task, and start_background_process all
+   * execute inside one brokered-mcp scope. An opt-in argument contained whichever
+   * call site remembered to pass it and silently left the others as an escape.
+   */
+  readonly shellSandbox?: ShellSandboxPlan
   readonly operations: Set<HostCommandOperationController>
 }
 
@@ -4342,6 +4343,7 @@ function createHostCommandProjectionScope(input: {
   appChatId?: string | null
   workspaceId?: string | null
   workspacePath?: string | null
+  shellSandbox?: ShellSandboxPlan
 }): HostCommandProjectionScope | null {
   const appRunId = input.appRunId?.trim() || undefined
   const appChatId = input.appChatId?.trim() || undefined
@@ -4363,8 +4365,27 @@ function createHostCommandProjectionScope(input: {
     ...(appChatId ? { appChatId } : {}),
     ...(workspaceId ? { workspaceId } : {}),
     ...(workspacePath ? { workspacePath } : {}),
+    ...(input.shellSandbox ? { shellSandbox: input.shellSandbox } : {}),
     operations: new Set<HostCommandOperationController>()
   }
+}
+
+/**
+ * Resolve the Seatbelt for a brokered agent shell. One call per projection
+ * scope, so every tool that spawns inside that scope inherits the same decision.
+ */
+function brokeredShellSandboxPlan(input: {
+  workspacePath?: string | null
+  effectivePermissions?: EffectiveRunPermissions | null
+}): ShellSandboxPlan {
+  return resolveShellSandboxPlan({
+    platform: process.platform,
+    enabled: shellSandboxEnabled(),
+    fullAccessGranted: isFullShellAccessGranted(input.effectivePermissions),
+    workspacePath: input.workspacePath ?? null,
+    writableRoots: [os.tmpdir()],
+    homePath: os.homedir()
+  })
 }
 
 function runWithHostCommandProjectionScope<T>(
@@ -4445,12 +4466,17 @@ function releaseApprovalFromLease(input: {
 }
 
 const backgroundProcessRegistry = new BackgroundProcessRegistry({
-  spawnProcess: (command, cwd) => {
+  spawnProcess: (command, cwd, authority) => {
     const shellCommand =
       process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh')
     const shellArgs =
       process.platform === 'win32' ? ['-NoProfile', '-Command', command] : ['-lc', command]
-    return spawn(shellCommand, shellArgs, {
+    // A background shell is still an agent shell. Without this it was the one
+    // door left uncontained, because it never routes through runHostCommand.
+    const [spawnBinary, ...spawnArgs] = authority?.sandboxArgv
+      ? authority.sandboxArgv([shellCommand, ...shellArgs])
+      : [shellCommand, ...shellArgs]
+    return spawn(spawnBinary, spawnArgs, {
       cwd,
       shell: false,
       detached: true,
@@ -9054,10 +9080,17 @@ const workspaceToolExecutors = createWorkspaceToolExecutors({
         source: 'approvedBackgroundProcess',
         workspacePath: cwd
       })
+      const sandboxPlan = hostCommandProjectionContext.getStore()?.shellSandbox
+      if (sandboxPlan && !sandboxPlan.sandboxed && sandboxPlan.enforced) {
+        throw new Error(
+          `TaskWraith could not contain this background command (${sandboxPlan.reason}). The workspace shell sandbox is enabled, so it was not started.`
+        )
+      }
       return backgroundProcessRegistry.start(command, cwd, {
         ...options,
         ...(workspaceId ? { workspaceId } : {}),
-        ...(releaseApproval ? { releaseApproval } : {})
+        ...(releaseApproval ? { releaseApproval } : {}),
+        ...(sandboxPlan?.sandboxed ? { sandboxArgv: sandboxPlan.wrap } : {})
       })
     },
     listBackgroundProcesses: (filter) => backgroundProcessRegistry.list(filter),
@@ -15248,8 +15281,8 @@ function runHostCommand(
     const commandEnvironment = typeof options === 'number' ? undefined : options.environment
     const unsetCommandEnvironment =
       typeof options === 'number' ? undefined : options.unsetEnvironment
-    const sandboxPlan = typeof options === 'number' ? undefined : options.sandbox
     const projectionScope = hostCommandProjectionContext.getStore()
+    const sandboxPlan = projectionScope?.shellSandbox
     const operationSource = projectionScope?.source ?? 'internal-host-command'
     const historyOperation = hostCommandOperations.register(
       {
@@ -15301,6 +15334,17 @@ function runHostCommand(
       )
     ) {
       resolveWithoutChild('TaskWraith is clearing history; this command was not started.')
+      return
+    }
+    // Containment was asked for and could not be delivered. Running anyway would
+    // leave the operator believing writes are confined while they are not, so
+    // refuse instead of silently degrading open.
+    if (sandboxPlan && !sandboxPlan.sandboxed && sandboxPlan.enforced) {
+      resolveWithoutChild(
+        `TaskWraith could not contain this shell command (${sandboxPlan.reason}${
+          sandboxPlan.detail ? `: ${sandboxPlan.detail}` : ''
+        }). The workspace shell sandbox is enabled, so the command was not run.`
+      )
       return
     }
     const blockedReleaseCommand =
@@ -40781,7 +40825,11 @@ async function executeGeminiMcpTool(
         source: 'brokered-mcp',
         appRunId: workspaceExecutionContext.appRunId,
         appChatId: workspaceExecutionContext.appChatId,
-        workspacePath: workspaceExecutionContext.workspacePath
+        workspacePath: workspaceExecutionContext.workspacePath,
+        shellSandbox: brokeredShellSandboxPlan({
+          workspacePath: context.scope === 'global' ? null : workspacePath,
+          effectivePermissions: context.effectivePermissions
+        })
       })
       await workspaceExecutionContext.assertMutationAuthorized?.()
       // The brokered MCP shell is the route most agents actually use, and it
@@ -40852,15 +40900,7 @@ async function executeGeminiMcpTool(
           : runHostCommand(executionCommand, executionCwd, {
               ...(shellReleaseApproval ? { releaseApproval: shellReleaseApproval } : {}),
               ...(executionEnvironment ? { environment: executionEnvironment } : {}),
-              ...(unsetExecutionEnvironment ? { unsetEnvironment: unsetExecutionEnvironment } : {}),
-              sandbox: resolveShellSandboxPlan({
-                platform: process.platform,
-                enabled: shellSandboxEnabled(),
-                fullAccessGranted: isFullShellAccessGranted(context.effectivePermissions),
-                workspacePath: context.scope === 'global' ? null : workspacePath,
-                writableRoots: [os.tmpdir()],
-                homePath: os.homedir()
-              })
+              ...(unsetExecutionEnvironment ? { unsetEnvironment: unsetExecutionEnvironment } : {})
             })
       )
       text = formatHostCommandResult(result)
@@ -40976,7 +41016,11 @@ async function executeGeminiMcpTool(
         source: 'brokered-mcp',
         appRunId: workspaceExecutionContext.appRunId,
         appChatId: workspaceExecutionContext.appChatId,
-        workspacePath: workspaceExecutionContext.workspacePath
+        workspacePath: workspaceExecutionContext.workspacePath,
+        shellSandbox: brokeredShellSandboxPlan({
+          workspacePath: context.scope === 'global' ? null : workspacePath,
+          effectivePermissions: context.effectivePermissions
+        })
       })
       const result = await runWithHostCommandProjectionScope(hostCommandProjection, () =>
         workspaceToolExecutors.executeWorkspaceMcpTool(

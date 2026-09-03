@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { readFileSync as readFileSyncNode } from 'node:fs'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
   buildWorkspaceSandboxProfile,
@@ -239,5 +240,101 @@ describeLive('sandbox-exec, for real', () => {
     execFileSync('/bin/mkdir', ['-p', join(outside, 'home', '.ssh')])
     writeFileSync(secret, 'PRIVATE KEY')
     expect(run(`cat ${JSON.stringify(secret)}`).status).not.toBe(0)
+  })
+})
+
+describe('resolveShellSandboxPlan — fail closed, never degrade open', () => {
+  // A legitimate reason not to contain: the caller runs the command normally.
+  it('marks every legitimate exemption unenforced', () => {
+    for (const overrides of [
+      { platform: 'linux' as NodeJS.Platform },
+      { enabled: false },
+      { fullAccessGranted: true },
+      { workspacePath: null }
+    ]) {
+      const result = plan(overrides)
+      expect(result).toMatchObject({ sandboxed: false, enforced: false })
+    }
+  })
+
+  // Containment was ASKED FOR and cannot be delivered. Falling back to an
+  // uncontained shell would leave the operator believing writes are confined.
+  it('enforces when sandbox-exec is missing', () => {
+    const result = plan({ sandboxBinaryAvailable: () => false })
+    expect(result).toMatchObject({
+      sandboxed: false,
+      enforced: true,
+      reason: 'sandbox_binary_unavailable'
+    })
+  })
+
+  it('enforces rather than exempting an unsafe workspace root', () => {
+    expect(plan({ workspacePath: '/Users' })).toMatchObject({
+      sandboxed: false,
+      enforced: true,
+      reason: 'unsafe_workspace_root'
+    })
+  })
+
+  // Order matters: the binary check must sit BELOW the gate, or a host without
+  // sandbox-exec would refuse to run any command even with the feature off.
+  it('does not enforce a missing binary when the gate is off', () => {
+    expect(plan({ enabled: false, sandboxBinaryAvailable: () => false })).toMatchObject({
+      sandboxed: false,
+      enforced: false,
+      reason: 'gate_disabled'
+    })
+  })
+})
+
+describe('resolveShellSandboxPlan — denylist must not deny the workspace', () => {
+  // A workspace nested under a denied directory would otherwise be denied to
+  // ITSELF: `(deny file-read* (subpath "~/.config/gh"))` covers
+  // `~/.config/gh/mytool`, so every read in the agent's own workspace fails.
+  it('drops a secret deny that contains the workspace', () => {
+    const result = plan({ workspacePath: '/Users/dev/.config/gh/mytool' })
+    if (!result.sandboxed) throw new Error('expected a contained plan')
+    expect(result.profile).not.toContain('(deny file-read* (subpath "/Users/dev/.config/gh"))')
+    // Unrelated secrets are still denied.
+    expect(result.profile).toContain('(deny file-read* (subpath "/Users/dev/.ssh"))')
+  })
+
+  it('still denies a sibling secret that merely shares a prefix string', () => {
+    const result = plan({ workspacePath: '/Users/dev/.sshnot' })
+    if (!result.sandboxed) throw new Error('expected a contained plan')
+    expect(result.profile).toContain('(deny file-read* (subpath "/Users/dev/.ssh"))')
+  })
+})
+
+// Source-level contract. The review found that wiring the Seatbelt into ONE
+// call site left run_task and start_background_process as uncontained doors;
+// these assertions fail if the decision drifts back to a per-call opt-in.
+describe('index.ts containment wiring', () => {
+  const indexSource = readFileSyncNode(new URL('../index.ts', import.meta.url), 'utf8')
+
+  it('reads the plan from the projection scope, not a per-call argument', () => {
+    expect(indexSource).toContain('const sandboxPlan = projectionScope?.shellSandbox')
+    // The old opt-in field must be gone: it contained whichever call site
+    // remembered to pass it and silently left the rest open.
+    expect(indexSource).not.toContain('sandbox?: ShellSandboxPlan\n}')
+  })
+
+  // BOTH spawn families must refuse: runHostCommand (run_shell_command,
+  // run_task) and the background registry. Asserting mere presence passed while
+  // one of the two was deleted, because the guard reads identically at each.
+  it('refuses at every spawn family when containment could not be delivered', () => {
+    const guards = indexSource.split('!sandboxPlan.sandboxed && sandboxPlan.enforced').length - 1
+    expect(guards).toBe(2)
+  })
+
+  it('contains the background-process spawn, which never routes through runHostCommand', () => {
+    expect(indexSource).toContain('authority?.sandboxArgv')
+    expect(indexSource).toContain('sandboxArgv: sandboxPlan.wrap')
+  })
+
+  it('attaches a plan to every brokered-mcp projection scope', () => {
+    const brokered = indexSource.split("source: 'brokered-mcp'").length - 1
+    const attached = indexSource.split('shellSandbox: brokeredShellSandboxPlan(').length - 1
+    expect(`brokered:${brokered} attached:${attached}`).toBe(`brokered:2 attached:2`)
   })
 })

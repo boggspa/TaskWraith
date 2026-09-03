@@ -30,6 +30,13 @@ export interface BackgroundProcessStartOptions {
   releaseApproval?: ReleaseCommandCheckOptions
   /** Exact opaque owner issued by workspace-lock admission for this process. */
   workspaceLockOwnerId?: string
+  /**
+   * Optional argv transform applied at spawn. The registry stays sandbox-
+   * agnostic and just carries it: the composition root decides whether a
+   * background shell is contained, and this is how that decision reaches a
+   * spawn site that does not route through runHostCommand.
+   */
+  sandboxArgv?: (argv: readonly string[]) => string[]
   workspaceLockLifecycle?: BackgroundProcessWorkspaceLockLifecycle
 }
 
@@ -58,7 +65,10 @@ export interface BackgroundProcessRegistryDependencies {
   spawnProcess: (
     command: string,
     cwd: string,
-    authority?: { workspaceLockOwnerId?: string }
+    authority?: {
+      workspaceLockOwnerId?: string
+      sandboxArgv?: (argv: readonly string[]) => string[]
+    }
   ) => ChildProcess
   spawnGatedProcess?: (
     command: string,
@@ -239,7 +249,8 @@ export class BackgroundProcessRegistry {
         child = gatedProcess.child
       } else {
         child = this.deps.spawnProcess(command, cwd, {
-          workspaceLockOwnerId: options.workspaceLockOwnerId
+          workspaceLockOwnerId: options.workspaceLockOwnerId,
+          ...(options.sandboxArgv ? { sandboxArgv: options.sandboxArgv } : {})
         })
       }
     } catch (error) {
