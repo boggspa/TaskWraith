@@ -260,6 +260,11 @@ import { providerPlanNameFromSnapshot } from './lib/providerPlanName'
 import { openInteractiveProviderLogin } from './lib/providerLoginRefresh'
 import type { AgentApprovalAction, AgentApprovalRequest } from './lib/agentApprovalTypes'
 import { locatePendingApproval, shouldDismissAgentApproval } from './lib/agentApprovalLifecycle'
+import {
+  approvalLatencyNow,
+  recordApprovalClickToAckFrom,
+  recordApprovalRendererReceipt
+} from './lib/approvalLatencyMetrics'
 import { formatScheduledRunTime, toDateTimeLocalValue } from './lib/dateTimeFormat'
 import { buildReviewCurrentDiffPrompt } from './lib/reviewDiffPrompt'
 import { normalizeExternalPathGrants } from './lib/normalizeExternalPathGrants'
@@ -12538,6 +12543,8 @@ function App(): React.JSX.Element {
     }
     const presentLiveApprovalRequest = (request: AgentApprovalRequest): void => {
       const handlers = appEventHandlersRef.current
+      // Wave-3 instrumentation: stamp renderer receipt/scheduling time (not modal paint).
+      recordApprovalRendererReceipt(request.id)
       const targetChatId = resolveApprovalChatId(request)
       if (targetChatId) approvalRecovery?.recordLive({ chatId: targetChatId, approval: request })
       // 1.0.4-AK4 — queue when an approval is already pending for
@@ -20508,12 +20515,21 @@ function App(): React.JSX.Element {
           message?: string
           commandRule?: { id: string; executablePath: string; fingerprint: string }
         } = false
+    const approvalClickStartMs = approvalLatencyNow()
     try {
       responseAccepted = await window.api.respondAgentApproval(
         requestId,
         action,
         noteForDecision,
         commandRuleOfferIdOverride
+      )
+      // Wave-3 instrumentation: click-to-durable-ACK duration. Recorded only
+      // after the await settles; never implies acceptance before the ACK.
+      recordApprovalClickToAckFrom(
+        requestId,
+        action,
+        approvalClickStartMs,
+        shouldDismissAgentApproval(responseAccepted) ? 'acked' : 'not-acked'
       )
       if (!shouldDismissAgentApproval(responseAccepted)) {
         const rejectionMessage =
@@ -20568,6 +20584,8 @@ function App(): React.JSX.Element {
         )
       }
     } catch (error) {
+      // Wave-3 instrumentation: the IPC itself threw — still close the timing.
+      recordApprovalClickToAckFrom(requestId, action, approvalClickStartMs, 'error')
       setRawLogs((prev) => [
         ...prev,
         { type: 'stderr', content: `Failed to send approval response: ${redactLog(String(error))}` }
