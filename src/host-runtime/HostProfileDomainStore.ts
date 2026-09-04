@@ -1595,9 +1595,25 @@ export class HostProfileDomainStore {
     } else if ((current.persistenceRevision ?? 0) !== input.expectedRevision) {
       throw new Error('Thread persistence revision mismatch')
     }
+    const incomingRevision =
+      Number.isSafeInteger(decoded.persistenceRevision) &&
+      (decoded.persistenceRevision as number) >= 0
+        ? (decoded.persistenceRevision as number)
+        : null
+    let persistenceRevision: number
+    if (current === null) {
+      persistenceRevision = 0
+    } else if (incomingRevision !== null && incomingRevision < input.expectedRevision) {
+      throw new Error('Invalid record persistence revision: cannot move backwards')
+    } else if (incomingRevision !== null && incomingRevision > input.expectedRevision) {
+      persistenceRevision = incomingRevision
+    } else {
+      // Legacy complete snapshots either omit this field or echo their CAS base.
+      persistenceRevision = this.nextRevision(current)
+    }
     const next: HostProfileThread = {
       ...decoded,
-      persistenceRevision: current === null ? 0 : this.nextRevision(current),
+      persistenceRevision,
       updatedAt: this.now()
     }
     this.writeThread(next)

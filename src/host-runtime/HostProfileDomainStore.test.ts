@@ -805,7 +805,7 @@ describe('HostProfileDomainStore', () => {
     })
   })
 
-  it('updates a thread record via optimistic persist and advances the Host-owned revision', () => {
+  it('preserves legacy +1 revision semantics when the incoming revision equals the CAS base', () => {
     const { store } = open()
     const thread = store.createThread({ scope: 'global', title: 'Before' })
     const record = {
@@ -837,6 +837,77 @@ describe('HostProfileDomainStore', () => {
     const reloaded = store.getThread(thread.appChatId)
     expect(reloaded?.title).toBe('After')
     expect(reloaded?.persistenceRevision).toBe(1)
+  })
+
+  it('preserves legacy +1 revision semantics when an existing record omits its revision', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Before' })
+    const record = { ...thread, title: 'Legacy update' }
+    delete record.persistenceRevision
+
+    const persisted = store.persistThreadRecord({
+      threadId: thread.appChatId,
+      record,
+      expectedRevision: 0
+    })
+
+    expect(persisted).toMatchObject({
+      title: 'Legacy update',
+      persistenceRevision: 1
+    })
+  })
+
+  it('persists an exact monotonic target revision jump and preserves it across reopen', () => {
+    const { profile, authority, store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Before jump' })
+
+    const persisted = store.persistThreadRecord({
+      threadId: thread.appChatId,
+      record: { ...thread, title: 'After jump', persistenceRevision: 20 },
+      expectedRevision: 0
+    })
+
+    expect(persisted.persistenceRevision).toBe(20)
+    const reopened = new HostProfileDomainStore({ profilePath: profile, authority })
+    expect(reopened.getThread(thread.appChatId)).toMatchObject({
+      title: 'After jump',
+      persistenceRevision: 20
+    })
+  })
+
+  it('rejects an incoming persistence revision that backdates the CAS-matched record', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Before' })
+    const current = store.configureThread({ threadId: thread.appChatId, title: 'Current' })
+
+    expect(() =>
+      store.persistThreadRecord({
+        threadId: thread.appChatId,
+        record: { ...current, title: 'Backdated', persistenceRevision: 0 },
+        expectedRevision: 1
+      })
+    ).toThrow('cannot move backwards')
+    expect(store.getThread(thread.appChatId)).toMatchObject({
+      title: 'Current',
+      persistenceRevision: 1
+    })
+  })
+
+  it('rejects a monotonic target revision when the expected CAS revision is stale', () => {
+    const { store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Before' })
+
+    expect(() =>
+      store.persistThreadRecord({
+        threadId: thread.appChatId,
+        record: { ...thread, title: 'Lost race', persistenceRevision: 20 },
+        expectedRevision: 1
+      })
+    ).toThrow('revision mismatch')
+    expect(store.getThread(thread.appChatId)).toMatchObject({
+      title: 'Before',
+      persistenceRevision: 0
+    })
   })
 
   it('preserves ensemble state across a later updateRun after persistThreadRecord', () => {
