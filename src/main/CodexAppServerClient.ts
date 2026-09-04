@@ -26,6 +26,7 @@ import {
   requireAbsoluteCodexHome
 } from './codex/CodexHome'
 import { isCodexAppServerThreadId } from './CodexSessionIdentity'
+import { providerRuntimeVersion } from '../shared/providerContextPolicy'
 import { waitForProviderOperationSettlement } from './run/ProviderOperationRegistry'
 export { isCodexAppServerThreadId }
 export {
@@ -692,6 +693,12 @@ export class CodexAppServerClient {
 
   supportsNativeGoalControl(): boolean {
     return codexInitializeAdvertisesNativeGoalControl(this.initializeResult)
+  }
+
+  getRuntimeVersion(): string | undefined {
+    const init = isRecord(this.initializeResult) ? this.initializeResult : {}
+    const server = isRecord(init.serverInfo) ? init.serverInfo : {}
+    return providerRuntimeVersion(server.version) || providerRuntimeVersion(init.userAgent)
   }
 
   setNotificationHandler(handler: ((message: any) => void) | null) {

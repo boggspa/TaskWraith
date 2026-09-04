@@ -345,6 +345,16 @@ export function resolveContextWindow(
   return 200_000
 }
 
+/** Catalogue capacity only; an unknown model must not inherit a diagnostic claim. */
+export function knownModelContextWindow(modelId: string): number | undefined {
+  if (['default', 'auto', 'cli-default', 'opus', 'sonnet', 'haiku'].includes(modelId))
+    return undefined
+  const canonical = modelId.replace(/\[1m\]$/i, '-1m')
+  return Object.prototype.hasOwnProperty.call(CONTEXT_WINDOWS_BY_MODEL, canonical)
+    ? CONTEXT_WINDOWS_BY_MODEL[canonical]
+    : undefined
+}
+
 export function contextPercent(used: number, window: number): number {
   if (!(window > 0)) return 0
   return Math.min(100, Math.max(0, (used / window) * 100))

@@ -7,6 +7,7 @@ import type {
 import { CONTEXT_COMPACTION_MESSAGE_KIND } from '../../../shared/contextCompaction'
 import { formatContextTokens } from '../../../shared/contextWindows'
 import { getProviderName } from './Sidebar'
+import { ContextCompactionDetails } from './ContextCompactionDetails'
 
 /**
  * Context-compaction transcript row — the durable record of a provider (or the
@@ -171,6 +172,7 @@ export function ContextCompactionCard({
       {failed && telemetry.error && (
         <div className="context-compaction-row-error">{telemetry.error}</div>
       )}
+      <ContextCompactionDetails policy={telemetry.contextPolicy} />
     </div>
   )
 }

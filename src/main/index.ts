@@ -1308,6 +1308,9 @@ import {
   type ClaudeEnvironmentAuthoritySnapshot
 } from './providers/ClaudeRuntimeEnvironment'
 import { settleClaudeSdkTerminal } from './providers/ClaudeSdkRunLifecycle'
+import type { ClaudeContextPreference } from './providers/ClaudeContextPreference'
+import { ProviderContextDiagnostics } from './providers/ProviderContextDiagnostics'
+import { formatProviderContextPolicy } from '../shared/providerContextPolicy'
 import {
   buildBridgeApnsPusherFromSettings,
   cancelGeminiOAuthLogin,
@@ -14169,6 +14172,17 @@ function emitRunEventsChanged(record: {
  * open segment here and write ONE consolidated record when it closes.
  */
 const reasoningLedgerCoalescer = new ReasoningLedgerCoalescer()
+const providerContextDiagnostics = new ProviderContextDiagnostics((owner, policy) =>
+  appendDurableRunEventForRoute(
+    policy.provider,
+    owner,
+    'lifecycle',
+    'raw',
+    formatProviderContextPolicy(policy),
+    { type: 'context_policy', contextPolicy: policy }
+  ),
+  (owner, provider) => providerRunPersistenceAuthorized(provider, owner)
+)
 
 function appendDurableRunEvent(input: RunEventInput): void {
   if (channelAgentRunIsolationRegistry.isRunIsolated(input.runId)) return
@@ -20045,10 +20059,13 @@ function emitClaudeContextCompactionEvent(state: CliProviderStreamState, event: 
   const key = contextCompactionDedupeKey(signal)
   if (seen.has(key)) return
   seen.add(key)
-  emitContextCompactionCompatLine(state.sender, state.provider, signal, state)
+  emitContextCompactionCompatLine(
+    state.sender, state.provider, providerContextDiagnostics.enrich(state, signal), state
+  )
 }
 
 function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
+  providerContextDiagnostics.observeClaude(state, event)
   if (state.provider === 'grok') {
     handleGrokStreamEvent(state, event)
     return
@@ -20331,6 +20348,7 @@ async function runCliProviderProcess(
   payload: AgentRunPayload,
   options: {
     fallback: boolean
+    contextPreference?: ClaudeContextPreference
     requireExistingRun?: boolean
     warning?: string
     /** Published rate row for a launch-time service tier that is not retained
@@ -20518,6 +20536,10 @@ async function runCliProviderProcess(
     await releaseWorkspaceLockSetupGuardian()
     return transportClose.operation
   }
+  if (provider === 'claude') {
+    providerContextDiagnostics.configureClaude(state, model, options.contextPreference)
+  }
+
   // Pretrack cleanup before any init/warning projector can throw after the
   // provider state adopted the coordinator-owned starting session.
   let transportOperation: Promise<void>
@@ -21776,6 +21798,7 @@ async function tryRunClaudeSdk(
     }
     return true
   }
+  providerContextDiagnostics.configureClaude(state, model, environmentAuthority.contextPreference)
   const transportClose = createProviderTransportCloseOperation()
   let transportOperation: Promise<void>
   try {
@@ -22524,6 +22547,7 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     return
   }
   await runCliProviderProcess(event, 'claude', environmentAuthority.binaryPath, args, payload, {
+    contextPreference: environmentAuthority.contextPreference,
     fallback: true,
     requireExistingRun: true,
     warning: claudeUsageWarning
@@ -29295,7 +29319,9 @@ function emitCodexContextCompaction(
     }
   }
   if (!pendingManual || maintenanceCompactionRegistry.canWrite(pendingManual.reservation)) {
-    emitContextCompactionCompatLine(state.sender, 'codex', { kind, telemetry }, state)
+    emitContextCompactionCompatLine(
+      state.sender, 'codex', providerContextDiagnostics.enrich(state, { kind, telemetry }), state
+    )
   }
 }
 
@@ -31636,6 +31662,7 @@ function handleCodexNotification(message: any) {
 
   if (message.method === 'thread/tokenUsage/updated') {
     state.tokenUsage = params.tokenUsage || params.usage || params
+    providerContextDiagnostics.observeCodex(state, state.tokenUsage)
     // Per-occurrence budget kill: Codex's live token signal.
     if (state.appRunId) workflowBudgetRegistry.onUsage(state.appRunId, state.tokenUsage)
     const codexStats = codexUsageToStats(state.tokenUsage)
@@ -34014,6 +34041,9 @@ async function runCodexAppServerWithClient(
       return
     }
     setActiveCodexRunState(codexState)
+    providerContextDiagnostics.configureCodex(
+      codexState, codexState.model, client.getRuntimeVersion(), threadLaunchPlan.threadConfig
+    )
     void emitProviderCapabilityWarnings(
       event.sender,
       'codex',

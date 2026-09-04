@@ -32,6 +32,7 @@
  */
 
 import { formatContextTokens } from './contextWindows'
+import type { ProviderContextPolicy } from './providerContextPolicy'
 
 export type ContextCompactionTrigger = 'auto' | 'manual'
 
@@ -49,6 +50,8 @@ export interface ContextCompactionTelemetry {
   /** Provider-assigned id for THIS compaction event (Claude frame `uuid`,
    * Codex `contextCompaction` item id) — the deterministic card/dedupe key. */
   eventUuid?: string
+  /** Frozen launch configuration plus provider-reported limits for this run. */
+  contextPolicy?: ProviderContextPolicy
 }
 
 export type ContextCompactionSignalKind = 'started' | 'completed' | 'failed'
