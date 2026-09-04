@@ -32,6 +32,7 @@ describe('codexModelContextConfig', () => {
   }
 
   it('returns the explicit 1M config for long-context Codex models', () => {
+    expect(codexModelContextConfig('gpt-6-astra')).toEqual(longContextConfig)
     expect(codexModelContextConfig('gpt-5.5')).toEqual(longContextConfig)
     expect(codexModelContextConfig('gpt-5.4')).toEqual(longContextConfig)
     // GPT-5.6 trio (GA) — same long-context override as gpt-5.5 for parity.

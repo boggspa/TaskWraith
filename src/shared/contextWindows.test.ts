@@ -132,6 +132,11 @@ describe('resolveContextWindow provider-specific Grok windows', () => {
     expect(resolveContextWindow('cursor', 'grok-4.6', 384_000)).toBe(384_000)
   })
 
+  it('uses Astra capacity only until the runtime reports its working window', () => {
+    expect(resolveContextWindow('codex', 'gpt-6-astra')).toBe(1_050_000)
+    expect(resolveContextWindow('codex', 'gpt-6-astra', 258_400)).toBe(258_400)
+  })
+
   it('keeps live Ollama limits ahead of the global model table', () => {
     expect(resolveContextWindow('ollama', 'grok-4.5', undefined, 192_000)).toBe(192_000)
   })

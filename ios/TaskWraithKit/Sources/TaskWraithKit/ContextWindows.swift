@@ -28,6 +28,7 @@ public enum ContextWindows {
         "gemini-api:gemini-2.5-flash-lite": 1_048_576,
         "gemini-api:gemini-2.0-flash": 1_048_576,
         // Codex
+        "gpt-6-astra": 1_050_000,
         // GPT-5.6 trio (GA 2026-07-09): official raw API window is 1,050,000 on
         // all three — mirrors src/shared/contextWindows.ts.
         "gpt-5.6-sol": 1_050_000,

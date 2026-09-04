@@ -2,6 +2,27 @@ import { describe, expect, it } from 'vitest'
 import { buildCodexAppServerThreadLaunchPlan } from './CodexAppServerThreadLaunchPlan'
 
 describe('Codex app-server immutable thread launch plan', () => {
+  it.each([null, 'astra-session'])(
+    'requests Astra long context on fresh/resumed seats (%s)',
+    (resumableThreadId) => {
+      const plan = buildCodexAppServerThreadLaunchPlan({
+        model: 'gpt-6-astra',
+        reasoningEffort: 'high',
+        serviceTier: null,
+        workspacePath: '/workspace',
+        approvalPolicy: 'never',
+        sandbox: 'read-only',
+        resumableThreadId
+      })
+
+      expect(plan.request.method).toBe(resumableThreadId ? 'thread/resume' : 'thread/start')
+      expect(plan.request.params.config).toMatchObject({
+        model_context_window: 1_050_000,
+        model_auto_compact_token_limit: 850_000
+      })
+    }
+  )
+
   it('builds the exact fresh thread/start request with optional fields preserved', () => {
     const plan = buildCodexAppServerThreadLaunchPlan({
       model: 'gpt-5.6-terra',

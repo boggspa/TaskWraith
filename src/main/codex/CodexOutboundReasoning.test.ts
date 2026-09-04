@@ -6,6 +6,13 @@ import {
   resolvePersistedCodexModelSelection
 } from './CodexOutboundReasoning'
 
+const longContextArgs = [
+  '-c',
+  'model_context_window=1050000',
+  '-c',
+  'model_auto_compact_token_limit=850000'
+]
+
 describe('resolvePersistedCodexModelSelection', () => {
   it('recovers the trimmed concrete model from a persisted custom chat', () => {
     expect(
@@ -47,7 +54,7 @@ describe('resolveCodexOutboundReasoning', () => {
         model_auto_compact_token_limit: 850_000,
         model_reasoning_effort: 'medium'
       },
-      execConfigArgs: ['-c', 'model_reasoning_effort="medium"']
+      execConfigArgs: ['-c', 'model_reasoning_effort="medium"', ...longContextArgs]
     })
   })
 
@@ -57,7 +64,7 @@ describe('resolveCodexOutboundReasoning', () => {
       summary: 'auto',
       turnParams: { effort: 'xhigh', summary: 'auto' },
       threadConfig: { model_reasoning_effort: 'xhigh' },
-      execConfigArgs: ['-c', 'model_reasoning_effort="xhigh"']
+      execConfigArgs: ['-c', 'model_reasoning_effort="xhigh"', ...longContextArgs]
     })
   })
 
@@ -77,7 +84,7 @@ describe('resolveCodexOutboundReasoning', () => {
       summary: undefined,
       turnParams: { effort: 'none' },
       threadConfig: { model_reasoning_effort: 'none' },
-      execConfigArgs: ['-c', 'model_reasoning_effort="none"']
+      execConfigArgs: ['-c', 'model_reasoning_effort="none"', ...longContextArgs]
     })
   })
 
@@ -91,6 +98,19 @@ describe('resolveCodexOutboundReasoning', () => {
         model_reasoning_effort: 'medium'
       },
       persistExtendedHistory: true
+    })
+  })
+
+  it('preserves Astra context policy in the exec fallback as well as thread config', () => {
+    const reasoning = resolveCodexOutboundReasoning('gpt-6-astra', 'high')
+    expect(reasoning.execConfigArgs).toEqual([
+      '-c',
+      'model_reasoning_effort="high"',
+      ...longContextArgs
+    ])
+    expect(buildCodexThreadResumeRequest('astra-session', reasoning).config).toMatchObject({
+      model_context_window: 1_050_000,
+      model_auto_compact_token_limit: 850_000
     })
   })
 

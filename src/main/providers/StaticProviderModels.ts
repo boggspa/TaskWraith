@@ -107,6 +107,12 @@ export const CODEX_LONG_CONTEXT_WINDOW = 1_050_000
 export const CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT = 850_000
 
 const CODEX_MODEL_CONTEXT_CONFIGS: Readonly<Record<string, CodexModelContextConfig>> = {
+  // Request the long-context policy explicitly; the native runtime may report
+  // a smaller effective window, which must remain authoritative in telemetry.
+  'gpt-6-astra': {
+    model_context_window: CODEX_LONG_CONTEXT_WINDOW,
+    model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
+  },
   'gpt-5.5': {
     model_context_window: CODEX_LONG_CONTEXT_WINDOW,
     model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT

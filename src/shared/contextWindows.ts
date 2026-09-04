@@ -113,6 +113,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'openrouter/thinkingmachines/inkling:free': 1_048_576,
   'openrouter/thinkingmachines/inkling-small:free': 1_048_576,
   // Codex
+  'gpt-6-astra': 1_050_000,
   // GPT-5.6 trio (GA 2026-07-09): official raw API window is 1,050,000 on all
   // three (developers.openai.com; TaskWraith's context-config override raises
   // the CLI working window to match — see CODEX_MODEL_CONTEXT_CONFIGS).
