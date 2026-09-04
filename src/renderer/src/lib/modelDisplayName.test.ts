@@ -59,6 +59,14 @@ describe('humaniseModelId', () => {
   })
 
   describe('Codex (GPT)', () => {
+    it('uses the Astra catalog label across full, compact, and table displays', () => {
+      expect(humaniseModelId('codex', 'gpt-6-astra')).toBe('GPT-6-Astra')
+      expect(humaniseModelId('codex', 'GPT-6-Astra')).toBe('GPT-6-Astra')
+      expect(humaniseModelIdCompact('codex', 'gpt-6-astra')).toBe('GPT-6-Astra')
+      expect(humaniseModelIdTableCell('codex', 'gpt-6-astra')).toBe('GPT-6-Astra')
+      expect(canonicalModelIdForProvider('codex', 'gpt-6-astra')).toBe('gpt-6-astra')
+    })
+
     it('maps gpt ids preserving the "GPT-X.Y" capitalisation', () => {
       expect(humaniseModelId('codex', 'gpt-5.5')).toBe('GPT-5.5')
       expect(humaniseModelId('codex', 'gpt-5.4')).toBe('GPT-5.4')
