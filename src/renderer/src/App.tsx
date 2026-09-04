@@ -465,11 +465,6 @@ import { StartupAuthorityBanner } from './components/StartupAuthorityBanner'
 import { buildWorkflowCreatorTrigger } from './components/WorkflowCreator'
 import type { UnattendedElevationLevel } from '../../main/UnattendedPostureGate'
 import { ApprovalModeElevationSheet } from './components/ApprovalModeElevationSheet'
-import { UsageHeatmap } from './components/UsageHeatmap'
-import { DailyActivityHeatmap } from './components/DailyActivityHeatmap'
-import { WorkspaceActivityHeatmap } from './components/WorkspaceActivityHeatmap'
-import { type WelcomeHeatmapSlot } from './components/WelcomeHeatmaps'
-import { TokenUsageChart } from './components/TokenUsageChart'
 import { useAppearance } from './hooks/useAppearance'
 import { usePanelPresence } from './hooks/usePanelPresence'
 import { useExternalPathRepoMetadataByPath } from './hooks/useExternalPathRepoMetadata'
@@ -774,6 +769,7 @@ import {
   summarizeAuditBundleVerification,
   summarizeAuditRetentionPurge
 } from './app/appAuditAndPermissionHelpers'
+import { buildWelcomeHeatmapSlots } from './app/welcomeHeatmapSlots'
 import {
   shouldBuildWelcomeUsageDashboardData,
   shouldRenderWelcome,
@@ -1165,117 +1161,6 @@ const EMPTY_CONTEXT_COMPACTION_PROGRESS: readonly ContextCompactionProgressEvent
 // clampContextTurns moved to `src/main/PromptComposition.ts` and re-exported below.
 
 const EMPTY_WELCOME_USAGE_DASHBOARD_DATA = buildWelcomeUsageDashboardData([], [], '30d', 0)
-const EMPTY_WELCOME_HEATMAP_SLOTS: WelcomeHeatmapSlot[] = []
-
-interface WelcomeHeatmapSlotsConfig {
-  workspaceActivityPath?: string
-  showUsageDashboard: boolean
-  taskwraithActivityEnabled: boolean
-  externalActivityEnabled: boolean
-  refreshKey: number
-  usageRecords: UsageRecord[]
-}
-
-function buildWelcomeHeatmapSlots({
-  workspaceActivityPath,
-  showUsageDashboard,
-  taskwraithActivityEnabled,
-  externalActivityEnabled,
-  refreshKey,
-  usageRecords
-}: WelcomeHeatmapSlotsConfig): WelcomeHeatmapSlot[] {
-  if (!workspaceActivityPath && !showUsageDashboard) return EMPTY_WELCOME_HEATMAP_SLOTS
-
-  const slots: WelcomeHeatmapSlot[] = []
-  if (workspaceActivityPath) {
-    slots.push({
-      key: 'workspace',
-      node: (
-        <WorkspaceActivityHeatmap
-          workspacePath={workspaceActivityPath}
-          dayCount={90}
-          refreshKey={refreshKey}
-          className="usage-heatmap--welcome-standalone"
-        />
-      )
-    })
-  }
-  if (showUsageDashboard && taskwraithActivityEnabled) {
-    slots.push({
-      key: 'taskwraith',
-      node: (
-        <UsageHeatmap
-          dayCount={90}
-          refreshKey={refreshKey}
-          records={usageRecords}
-          title="TaskWraith Activity"
-          showProviderFilter
-          className="usage-heatmap--welcome-standalone"
-        />
-      )
-    })
-  }
-  if (showUsageDashboard && externalActivityEnabled) {
-    slots.push({
-      key: 'external',
-      node: (
-        <UsageHeatmap
-          dayCount={90}
-          refreshKey={refreshKey}
-          usageSource="external"
-          supplementalTaskWraithRecords={usageRecords}
-          title="External Activity"
-          showProviderFilter
-          className="usage-heatmap--welcome-standalone"
-        />
-      )
-    })
-  }
-  if (showUsageDashboard) {
-    slots.push({
-      key: 'taskwraith-tokens',
-      node: (
-        <TokenUsageChart
-          title="TaskWraith Tokens"
-          records={usageRecords}
-          dayCount={90}
-          refreshKey={refreshKey}
-          showProviderFilter
-          className="token-usage-chart--welcome"
-        />
-      )
-    })
-    slots.push({
-      key: 'external-tokens',
-      node: (
-        <TokenUsageChart
-          title="External Tokens"
-          source="external"
-          supplementalTaskWraithRecords={usageRecords}
-          dayCount={90}
-          refreshKey={refreshKey}
-          showProviderFilter
-          className="token-usage-chart--welcome"
-        />
-      )
-    })
-    // The only slot in the cycle that reaches past 90 days: it reads the
-    // persisted daily rollup rather than the scan window, one cell per day.
-    slots.push({
-      key: 'external-year',
-      node: (
-        <DailyActivityHeatmap
-          title="External Activity · Year"
-          supplementalTaskWraithRecords={usageRecords}
-          refreshKey={refreshKey}
-          showProviderFilter
-          className="daily-heatmap--welcome-standalone"
-        />
-      )
-    })
-  }
-  return slots.length > 0 ? slots : EMPTY_WELCOME_HEATMAP_SLOTS
-}
 
 // Prompt-composition helpers moved to `src/main/PromptComposition.ts` (Phase B3 step 1).
 // Re-exported below from the canonical module so existing call sites keep working
