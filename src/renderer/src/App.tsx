@@ -205,7 +205,6 @@ import type {
   RunRecoveryRecord,
   ProductOperationsStatus,
   ProductUpdateChannel,
-  AuditRetentionPurgeResult,
   ProductAuditBundleExportRequest,
   ProductAuditBundleVerificationResult,
   ChatWorkflowMode,
@@ -764,6 +763,17 @@ import {
   scheduleAfterPaint,
   streamFlushItemKey
 } from './app/appScheduleAndCopyHelpers'
+import type { AuditBundleExportScope } from './app/appAuditAndPermissionHelpers'
+import {
+  approvalModeToPermissionPreset,
+  auditBundleExportScopeLabel,
+  contextCompactionProgressKey,
+  isPermissionPresetId,
+  permissionPresetToApprovalMode,
+  shareUnchangedMessageObjects,
+  summarizeAuditBundleVerification,
+  summarizeAuditRetentionPurge
+} from './app/appAuditAndPermissionHelpers'
 import {
   shouldBuildWelcomeUsageDashboardData,
   shouldRenderWelcome,
@@ -1122,49 +1132,6 @@ interface WorkspaceBoardCaptureInput {
 
 /** Fresh per-document identity; used only to reject stale ACKs after reload. */
 const RENDERER_CHAT_UPDATE_EPOCH = createRendererChatUpdateEpoch()
-type AuditBundleExportScope = 'all' | 'workspace' | 'chat' | 'run'
-
-function summarizeAuditRetentionPurge(result: AuditRetentionPurgeResult): string {
-  if (!result.ok) return `failed: ${result.error || 'unknown error'}`
-  const receipt = result.receipt
-  if (!receipt) return 'completed without a receipt'
-  const totals = Object.values(receipt.counts).reduce(
-    (acc, counts) => ({
-      scanned: acc.scanned + counts.scanned,
-      retained: acc.retained + counts.retained,
-      deleted: acc.deleted + counts.deleted
-    }),
-    { scanned: 0, retained: 0, deleted: 0 }
-  )
-  const verb = receipt.dryRun ? 'would delete' : 'deleted'
-  const mode = receipt.dryRun ? 'dry-run' : 'purge'
-  const disabledNote = receipt.enabled ? '' : ' (retention disabled; forced dry-run)'
-
-  return `${mode}${disabledNote}: scanned ${totals.scanned}, retained ${totals.retained}, ${verb} ${totals.deleted}`
-}
-
-function auditBundleExportScopeLabel(scope: AuditBundleExportScope): string {
-  switch (scope) {
-    case 'workspace':
-      return 'current workspace'
-    case 'chat':
-      return 'current thread'
-    case 'run':
-      return 'current run'
-    default:
-      return 'full local'
-  }
-}
-
-function summarizeAuditBundleVerification(result: ProductAuditBundleVerificationResult): string {
-  if (!result.ok) {
-    const reason = result.verification?.reason || result.error || 'verification failed'
-    return `failed: ${reason}`
-  }
-  const evidence = result.manifest?.tamperEvidence || 'unknown evidence'
-  const keyId = result.verification?.keyId ? `, key ${result.verification.keyId}` : ''
-  return `verified (${evidence}${keyId})`
-}
 
 const FX_BURST_DURATION_MS = 1150
 const CHAT_SWITCH_USAGE_REFRESH_INTERVAL_MS = 30_000
@@ -1184,12 +1151,6 @@ type ContextCompactionProgressState = ContextCompactionProgressEvent & {
 }
 
 const EMPTY_CONTEXT_COMPACTION_PROGRESS: readonly ContextCompactionProgressEvent[] = []
-
-function contextCompactionProgressKey(
-  event: Pick<ContextCompactionProgressEvent, 'chatId' | 'participantId' | 'provider'>
-): string {
-  return `${event.chatId}:${event.participantId || event.provider || 'chat'}`
-}
 
 // Per-provider palette CORE constants live in
 // src/renderer/src/lib/ComposerSlashCommands.ts and are resolved through
@@ -1354,51 +1315,7 @@ type SideChatSeedContext = {
   originRunId?: string
   transcriptVisibility?: NonNullable<ChatRecord['sideChatContext']>['transcriptVisibility']
 }
-function permissionPresetToApprovalMode(preset?: string): string {
-  if (preset === 'read_only') return 'plan'
-  if (preset === 'plan') return 'plan'
-  if (preset === 'workspace_write' || preset === 'full_access') return 'auto_edit'
-  return 'default'
-}
-
-function approvalModeToPermissionPreset(
-  approvalMode: string,
-  workflowMode: ChatWorkflowMode
-): PermissionPresetId {
-  if (approvalMode === 'plan') {
-    return workflowMode === 'plan' ? 'plan' : 'read_only'
-  }
-  if (approvalMode === 'auto_edit') return 'workspace_write'
-  return 'default'
-}
-
-function isPermissionPresetId(value: unknown): value is PermissionPresetId {
-  return (
-    value === 'read_only' ||
-    value === 'plan' ||
-    value === 'default' ||
-    value === 'workspace_write' ||
-    value === 'full_access' ||
-    value === 'custom'
-  )
-}
-
 const EMPTY_DIFF_FILE_SUMMARIES: DiffFileSummary[] = []
-
-function shareUnchangedMessageObjects(
-  previous: readonly ChatMessage[],
-  next: readonly ChatMessage[]
-): ChatMessage[] {
-  let changed = false
-  const shared = next.map((message, index) => {
-    const prior = previous[index]
-    if (!prior || prior === message || prior.id !== message.id) return message
-    if (!deepEqual(prior, message)) return message
-    changed = true
-    return prior
-  })
-  return changed ? shared : (next as ChatMessage[])
-}
 
 interface LiveToolFileSummaryState {
   chatId: string
