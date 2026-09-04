@@ -19754,7 +19754,7 @@ export class EnsembleOrchestrator {
         this.appendRoundStatus(
           runtime.chatId,
           runtime.roundId,
-          `${label} host queue · ${acceptedLaneRuns.length - hostQueuedCount} admitted now, ${hostQueuedCount} waiting; ${occupancy.active}/${occupancy.maxActive} Ensemble slots active across chats. Providers and seats remain available.`
+          `${label} host queue · ${acceptedLaneRuns.length - hostQueuedCount} admitted now, ${hostQueuedCount} waiting; ${occupancy.active}/${occupancy.maxActive} Ensemble slots active across chats. Up to ${occupancy.maxActivePerChat} active per chat; chats below ${occupancy.fairSharePerChat} get priority as slots free up. Providers and seats remain available.`
         )
       }
     } catch (error) {

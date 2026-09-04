@@ -30,26 +30,24 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('EnsembleHostAdmissionRuntime', () => {
-  it('paces concurrent heavyweight builds one scheduled macrotask at a time', async () => {
+  it('paces 30 concurrent heavyweight builds one scheduled macrotask at a time', async () => {
     const tasks = taskQueue()
     const runtime = new EnsembleHostAdmissionRuntime({ scheduleBuildTurn: tasks.schedule })
     const order: number[] = []
-    const turns = [1, 2, 3].map((value) =>
+    const turns = Array.from({ length: 30 }, (_, index) => index + 1).map((value) =>
       runtime.waitForBuildTurn().then(() => {
         order.push(value)
       })
     )
 
-    await flushMicrotasks()
-    tasks.runOne()
-    await flushMicrotasks()
-    expect(order).toEqual([1])
-    tasks.runOne()
-    await flushMicrotasks()
-    expect(order).toEqual([1, 2])
-    tasks.runOne()
+    for (let index = 0; index < 30; index += 1) {
+      await flushMicrotasks()
+      tasks.runOne()
+      await flushMicrotasks()
+      expect(order).toEqual(Array.from({ length: index + 1 }, (_, value) => value + 1))
+    }
     await Promise.all(turns)
-    expect(order).toEqual([1, 2, 3])
+    expect(order).toHaveLength(30)
   })
 
   it('owns reservation, synchronous claim and idempotent release bookkeeping', async () => {

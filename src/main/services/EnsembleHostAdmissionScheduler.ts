@@ -8,9 +8,11 @@ import type { ProviderId } from '../store/types'
  * should be materialized only after the reservation is admitted.
  */
 
-export const DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS = 8
-export const DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_FOREGROUND_RUNS = 6
-export const DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS_PER_CHAT = 3
+export const DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS = 30
+// Leave six slots available to leaf work even when fan-out owners are waiting.
+export const DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_FOREGROUND_RUNS = 24
+export const DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS_PER_CHAT = 10
+export const DEFAULT_ENSEMBLE_HOST_FAIR_SHARE_PER_CHAT = 3
 export const DEFAULT_ENSEMBLE_HOST_MAX_QUEUED_RUNS = 256
 
 const MAX_IDENTIFIER_CHARS = 512
@@ -38,6 +40,7 @@ export interface EnsembleHostAdmissionIdentity extends EnsembleHostAdmissionRequ
 export interface EnsembleHostAdmissionOccupancy {
   readonly maxActive: number
   readonly maxActivePerChat: number
+  readonly fairSharePerChat: number
   readonly maxForeground: number
   readonly maxForegroundPerChat: number
   readonly reservedLaneSlots: number
@@ -160,18 +163,20 @@ export interface EnsembleHostAdmissionSnapshot {
 
 export interface EnsembleHostAdmissionSchedulerOptions {
   readonly maxActive?: number
-  /**
-   * Emergency first-wave fairness bound. A busy chat queues beyond this share
-   * instead of consuming every process-wide slot before sibling chats reserve.
-   * Queued work is never dropped and drains as that chat's leases settle.
-   */
+  /** Hard per-chat ceiling, including foreground owners and leaf work. */
   readonly maxActivePerChat?: number
+  /**
+   * Chats below this share have priority over chats borrowing spare capacity.
+   * Borrowing is paced and never preempts an active run.
+   */
+  readonly fairSharePerChat?: number
   readonly maxForeground?: number
   readonly maxQueued?: number
   readonly now?: () => number
   /**
-   * Releases drain at most one waiter per scheduled turn. Production defaults
-   * to setImmediate; tests may inject a deterministic task queue.
+   * Releases and spare-capacity borrowing drain at most one waiter per
+   * scheduled turn. Production defaults to setImmediate; tests may inject a
+   * deterministic task queue.
    */
   readonly schedule?: (task: () => void) => void
 }
@@ -306,6 +311,7 @@ function removeFromOrder<T>(order: T[], value: T): void {
 export class EnsembleHostAdmissionScheduler {
   private readonly maxActive: number
   private readonly maxActivePerChat: number
+  private readonly fairSharePerChat: number
   private readonly maxForeground: number
   private readonly maxForegroundPerChat: number
   private readonly maxQueued: number
@@ -354,6 +360,14 @@ export class EnsembleHostAdmissionScheduler {
     )
     if (this.maxActivePerChat > this.maxActive) {
       throw new Error('Ensemble host per-chat active-run capacity cannot exceed total capacity.')
+    }
+    this.fairSharePerChat = requirePositiveInteger(
+      options.fairSharePerChat ??
+        Math.min(DEFAULT_ENSEMBLE_HOST_FAIR_SHARE_PER_CHAT, this.maxActivePerChat),
+      'Ensemble host per-chat fair share'
+    )
+    if (this.fairSharePerChat > this.maxActivePerChat) {
+      throw new Error('Ensemble host per-chat fair share cannot exceed per-chat capacity.')
     }
     this.maxForegroundPerChat = Math.max(1, this.maxActivePerChat - 1)
     this.maxForeground = requirePositiveInteger(
@@ -406,7 +420,9 @@ export class EnsembleHostAdmissionScheduler {
 
     // When a prior release already scheduled a paced drain, this reservation
     // joins that fair queue instead of bypassing it and bursting synchronously.
-    if (!this.drainScheduled) this.drainAvailable()
+    // Only the initial fair share can start synchronously. Borrowing must yield
+    // so other chats can reserve before a large wave takes the spare slots.
+    if (!this.drainScheduled) this.drainAvailable(false)
 
     if (waiter.state === 'queued' && this.queuedByRunId.size > this.maxQueued) {
       this.removeQueuedWaiter(waiter)
@@ -429,6 +445,7 @@ export class EnsembleHostAdmissionScheduler {
     this.metricsState.reservations += 1
     if (waiter.state === 'queued') this.metricsState.initiallyQueued += 1
     this.recordHighWaterMarks()
+    this.scheduleDrain()
     return {
       kind: 'reserved',
       initialState: waiter.state === 'admitted' ? 'admitted' : 'queued',
@@ -717,12 +734,6 @@ export class EnsembleHostAdmissionScheduler {
     this.scheduleDrain()
   }
 
-  private canAdmit(waiter: QueuedWaiter): boolean {
-    if (this.activeByRunId.size >= this.maxActive) return false
-    if (this.activeCountForChat(waiter.identity.chatId) >= this.maxActivePerChat) return false
-    return waiter.identity.kind === 'lane' || this.activeForeground < this.maxForeground
-  }
-
   private activeCountForChat(chatId: string): number {
     let count = 0
     for (const active of this.activeByRunId.values()) {
@@ -739,11 +750,14 @@ export class EnsembleHostAdmissionScheduler {
     return count
   }
 
-  private eligibleWaiter(provider: ProviderQueue, chatId: string): QueuedWaiter | undefined {
+  private eligibleWaiter(
+    provider: ProviderQueue,
+    activeForegroundForChat: number
+  ): QueuedWaiter | undefined {
     const lane = provider.lanes[0]
     const foreground =
       this.activeForeground < this.maxForeground &&
-      this.activeForegroundCountForChat(chatId) < this.maxForegroundPerChat
+      activeForegroundForChat < this.maxForegroundPerChat
         ? provider.foreground[0]
         : undefined
     if (!lane) return foreground
@@ -751,41 +765,44 @@ export class EnsembleHostAdmissionScheduler {
     return lane.sequence < foreground.sequence ? lane : foreground
   }
 
-  private takeNextEligible(): QueuedWaiter | undefined {
+  private peekNextEligible(allowBorrow = true): QueuedWaiter | undefined {
     if (this.activeByRunId.size >= this.maxActive) return undefined
-    for (const chatId of this.chatOrder) {
-      const chat = this.chats.get(chatId)
-      if (!chat) continue
-      for (const providerId of chat.providerOrder) {
-        const provider = chat.providers.get(providerId)
-        if (!provider) continue
-        const waiter = this.eligibleWaiter(provider, chatId)
-        if (!waiter || !this.canAdmit(waiter)) continue
-        if (!this.removeQueuedWaiter(waiter)) continue
-        const remainingChat = this.chats.get(chatId)
-        if (remainingChat) {
-          rotateToBack(remainingChat.providerOrder, providerId)
-          rotateToBack(this.chatOrder, chatId)
+    const limits = [this.fairSharePerChat]
+    if (allowBorrow && this.fairSharePerChat < this.maxActivePerChat) {
+      limits.push(this.maxActivePerChat)
+    }
+    // Exhaust eligible work below the fair share before lending unused slots.
+    // Keep the existing chat/provider rotation and FIFO order within each tier.
+    for (const limit of limits) {
+      for (const chatId of this.chatOrder) {
+        const chat = this.chats.get(chatId)
+        if (!chat || this.activeCountForChat(chatId) >= limit) continue
+        const activeForegroundForChat = this.activeForegroundCountForChat(chatId)
+        for (const providerId of chat.providerOrder) {
+          const provider = chat.providers.get(providerId)
+          if (!provider) continue
+          const waiter = this.eligibleWaiter(provider, activeForegroundForChat)
+          if (waiter) return waiter
         }
-        return waiter
       }
     }
     return undefined
   }
 
-  private hasEligibleWaiter(): boolean {
-    if (this.activeByRunId.size >= this.maxActive) return false
-    for (const chatId of this.chatOrder) {
-      const chat = this.chats.get(chatId)
-      if (!chat) continue
-      for (const providerId of chat.providerOrder) {
-        const provider = chat.providers.get(providerId)
-        if (!provider) continue
-        const waiter = this.eligibleWaiter(provider, chatId)
-        if (waiter && this.canAdmit(waiter)) return true
-      }
+  private takeNextEligible(allowBorrow = true): QueuedWaiter | undefined {
+    const waiter = this.peekNextEligible(allowBorrow)
+    if (!waiter || !this.removeQueuedWaiter(waiter)) return undefined
+    const { chatId, provider } = waiter.identity
+    const remainingChat = this.chats.get(chatId)
+    if (remainingChat) {
+      rotateToBack(remainingChat.providerOrder, provider)
+      rotateToBack(this.chatOrder, chatId)
     }
-    return false
+    return waiter
+  }
+
+  private hasEligibleWaiter(): boolean {
+    return this.peekNextEligible() !== undefined
   }
 
   private admit(waiter: QueuedWaiter): void {
@@ -839,9 +856,9 @@ export class EnsembleHostAdmissionScheduler {
     return true
   }
 
-  private drainAvailable(): void {
+  private drainAvailable(allowBorrow = true): void {
     while (!this.shuttingDown) {
-      const waiter = this.takeNextEligible()
+      const waiter = this.takeNextEligible(allowBorrow)
       if (!waiter) return
       this.admit(waiter)
     }
@@ -878,6 +895,7 @@ export class EnsembleHostAdmissionScheduler {
     return {
       maxActive: this.maxActive,
       maxActivePerChat: this.maxActivePerChat,
+      fairSharePerChat: this.fairSharePerChat,
       maxForeground: this.maxForeground,
       maxForegroundPerChat: this.maxForegroundPerChat,
       reservedLaneSlots: this.maxActive - this.maxForeground,

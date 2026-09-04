@@ -148,7 +148,7 @@ vi.mock('../EnsemblePrompt', async (importOriginal) => {
 // ensemble metadata + tool activities so the tagged-transcript projection
 // does its real walks: tool-activity indexing, filtering, per-seat windowing).
 // ---------------------------------------------------------------------------
-const LANE_COUNT = 20
+const LANE_COUNT = 30
 const MESSAGE_COUNT = 400
 const RUN_COUNT = 50
 
@@ -309,7 +309,7 @@ function makeSettings(): AppSettings {
 
 describe('fan-out main-thread burst (RED bench)', () => {
   it(
-    'measures the synchronous per-lane build burst of a 20-seat wave',
+    'keeps a 30-seat wave responsive with one heavyweight build per event-loop turn',
     { timeout: 120_000 },
     async () => {
       const participants = makeParticipants()
@@ -376,7 +376,7 @@ describe('fan-out main-thread burst (RED bench)', () => {
       // Opening serial pass dispatches exactly the Boss (bossmanParticipantId set).
       orchestrator.startRound({
         chatId: 'ensemble-chat',
-        prompt: 'Lead dispatches one twenty-lane wave.',
+        prompt: 'Lead dispatches one thirty-lane wave.',
         event: { sender: {} as Electron.WebContents }
       })
       await vi.waitFor(() => expect(dispatched).toHaveLength(1), { timeout: 15_000 })
@@ -595,8 +595,8 @@ describe('fan-out main-thread burst (RED bench)', () => {
       // --- Structural facts that are TRUE today -------------------------
       expect(wave.ok).toBe(true)
       expect(wave.laneIds).toHaveLength(LANE_COUNT)
-      expect(wave.hostAdmission).toMatchObject({ admitted: 3, queued: 17, capacity: 8 })
-      // The receipt records a real queued tail instead of waiting for all 20
+      expect(wave.hostAdmission).toMatchObject({ admitted: 3, queued: 27, capacity: 30 })
+      // The receipt records a real queued tail instead of waiting for all 30
       // lanes. Immediately admitted mocks may already settle and release more
       // slots while the receipt is forming, so only the strict "not all built"
       // boundary is deterministic here; the held-adapter integration test pins

@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
+import { reconcileStaleChatRuns } from '../ChatRunReconciler'
 import type { AgentRunPayload, RunDispatchObserver } from '../run/AgentRunTypes'
 import type { AppSettings, ChatRecord, EnsembleParticipant, ProviderId } from '../store/types'
-import { EnsembleHostAdmissionScheduler } from './EnsembleHostAdmissionScheduler'
+import {
+  EnsembleHostAdmissionScheduler,
+  type EnsembleHostAdmissionSchedulerOptions
+} from './EnsembleHostAdmissionScheduler'
 import { EnsembleOrchestrator } from './EnsembleOrchestrator'
 import type { EnsembleOrchestratorDeps } from './EnsembleOrchestratorTypes'
 
@@ -60,7 +64,7 @@ function settings(): AppSettings {
   } as AppSettings
 }
 
-function controlledScheduler(options: { maxActive: number; maxForeground: number }): {
+function controlledScheduler(options: EnsembleHostAdmissionSchedulerOptions = {}): {
   scheduler: EnsembleHostAdmissionScheduler
   runOne: () => void
   scheduledCount: () => number
@@ -154,66 +158,108 @@ function finish(
 }
 
 describe('EnsembleOrchestrator host-wide admission', () => {
-  it('admits a worker from each of three 20-seat chats before any held dispatch completes', async () => {
-    const admission = controlledScheduler({ maxActive: 8, maxForeground: 6 })
-    const chats = ['fair-a', 'fair-b', 'fair-c'].map((chatId) =>
-      chat(
-        chatId,
-        [
-          participant(`${chatId}-boss`, 'codex', 1, `${chatId} Boss`),
-          ...Array.from({ length: 20 }, (_, index) =>
-            participant(
-              `${chatId}-worker-${index}`,
-              index % 2 === 0 ? 'claude' : 'grok',
-              index + 2,
-              `${chatId} Worker ${index}`
+  it.each([8, 30])(
+    'fills %i host slots fairly across three 20-seat chats with held dispatches',
+    async (capacity) => {
+      const admission = controlledScheduler(
+        capacity === 30 ? {} : { maxActive: 8, maxForeground: 6 }
+      )
+      const chats = ['fair-a', 'fair-b', 'fair-c'].map((chatId) =>
+        chat(
+          chatId,
+          [
+            participant(`${chatId}-boss`, 'codex', 1, `${chatId} Boss`),
+            ...Array.from({ length: 20 }, (_, index) =>
+              participant(
+                `${chatId}-worker-${index}`,
+                index % 2 === 0 ? 'claude' : 'grok',
+                index + 2,
+                `${chatId} Worker ${index}`
+              )
             )
-          )
-        ],
-        { bossId: `${chatId}-boss`, fanoutPolicy: 'read_only' }
+          ],
+          { bossId: `${chatId}-boss`, fanoutPolicy: 'read_only' }
+        )
       )
-    )
-    const testHarness = harness(chats, admission)
+      const testHarness = harness(chats, admission)
 
-    for (const chatId of ['fair-a', 'fair-b', 'fair-c']) {
-      testHarness.orchestrator.startRound({
-        chatId,
-        prompt: `Run ${chatId}.`,
-        event: { sender: {} as Electron.WebContents }
+      for (const chatId of ['fair-a', 'fair-b', 'fair-c']) {
+        testHarness.orchestrator.startRound({
+          chatId,
+          prompt: `Run ${chatId}.`,
+          event: { sender: {} as Electron.WebContents }
+        })
+      }
+      await vi.waitFor(() => expect(testHarness.dispatched).toHaveLength(3))
+
+      const fanouts = testHarness.dispatched.map((root) => {
+        const targetChat = chats.find((entry) => entry.appChatId === root.appChatId)!
+        return testHarness.orchestrator.fanoutForRun(root.appRunId, {
+          targets: targetChat.ensemble!.participants.slice(1).map((entry) => entry.role),
+          prompt: 'Hold every worker dispatch for the fairness check.'
+        })
       })
+      await Promise.all(fanouts)
+      while (admission.scheduledCount() > 0) admission.runOne()
+      await vi.waitFor(() => expect(testHarness.dispatched).toHaveLength(capacity))
+
+      const lanePayloads = testHarness.dispatched.filter((payload) => payload.ensembleRun?.laneId)
+      expect(testHarness.dispatched).toHaveLength(capacity)
+      expect(new Set(lanePayloads.map((payload) => payload.appChatId))).toEqual(
+        new Set(['fair-a', 'fair-b', 'fair-c'])
+      )
+      expect(testHarness.orchestrator.getHostAdmissionSnapshot().occupancy).toMatchObject({
+        active: capacity,
+        queued: 63 - capacity
+      })
+      expect(
+        testHarness.orchestrator.getHostAdmissionSnapshot().metrics.peakActive
+      ).toBeLessThanOrEqual(capacity)
+      if (capacity === 30) {
+        expect(testHarness.orchestrator.getHostAdmissionSnapshot().byChat).toEqual(
+          ['fair-a', 'fair-b', 'fair-c'].map((chatId) => ({ chatId, active: 10, queued: 11 }))
+        )
+        expect(testHarness.preparedRunIds).toHaveLength(30)
+        for (const targetChat of testHarness.chats.values()) {
+          expect(
+            targetChat.messages.some((message) =>
+              message.content.includes('Up to 10 active per chat; chats below 3 get priority')
+            )
+          ).toBe(true)
+        }
+        // Queued runs have no provider process yet. Exact Ensemble ownership
+        // must protect them through repeated sweeps, however long they wait.
+        const waitingChats = [...testHarness.chats.values()]
+        const isOwned = (runId: string): boolean =>
+          testHarness.orchestrator.getParticipantIdForRun(runId) !== null
+        for (const minute of [2, 4, 10]) {
+          const nowIso = `2026-09-04T18:${String(minute).padStart(2, '0')}:00.000Z`
+          const retained = reconcileStaleChatRuns(waitingChats, isOwned, nowIso, {
+            minAgeMs: 30_000
+          })
+          expect(retained.settlements).toEqual([])
+          expect(retained.chats).toEqual([])
+        }
+        // The same persisted rows are real orphans after a restart loses all
+        // in-memory ownership; queue status alone must not make them immortal.
+        const orphaned = reconcileStaleChatRuns(
+          waitingChats,
+          () => false,
+          '2026-09-04T18:10:00.000Z',
+          { minAgeMs: 30_000 }
+        )
+        expect(orphaned.settlements).toHaveLength(63)
+      }
+
+      await Promise.all(
+        ['fair-a', 'fair-b', 'fair-c'].map((chatId) =>
+          testHarness.orchestrator.cancelRound(chatId, 'fairness test cleanup')
+        )
+      )
+      for (const payload of testHarness.dispatched) testHarness.settle(payload.appRunId || '')
+      await admission.scheduler.whenIdle()
     }
-    await vi.waitFor(() => expect(testHarness.dispatched).toHaveLength(3))
-
-    const fanouts = testHarness.dispatched.map((root) => {
-      const targetChat = chats.find((entry) => entry.appChatId === root.appChatId)!
-      return testHarness.orchestrator.fanoutForRun(root.appRunId, {
-        targets: targetChat.ensemble!.participants.slice(1).map((entry) => entry.role),
-        prompt: 'Hold every worker dispatch for the fairness check.'
-      })
-    })
-    await Promise.all(fanouts)
-
-    const lanePayloads = testHarness.dispatched.filter((payload) => payload.ensembleRun?.laneId)
-    expect(testHarness.dispatched).toHaveLength(8)
-    expect(new Set(lanePayloads.map((payload) => payload.appChatId))).toEqual(
-      new Set(['fair-a', 'fair-b', 'fair-c'])
-    )
-    expect(testHarness.orchestrator.getHostAdmissionSnapshot().occupancy).toMatchObject({
-      active: 8,
-      queued: 55
-    })
-    expect(
-      testHarness.orchestrator.getHostAdmissionSnapshot().metrics.peakActive
-    ).toBeLessThanOrEqual(8)
-
-    await Promise.all(
-      ['fair-a', 'fair-b', 'fair-c'].map((chatId) =>
-        testHarness.orchestrator.cancelRound(chatId, 'fairness test cleanup')
-      )
-    )
-    for (const payload of testHarness.dispatched) testHarness.settle(payload.appRunId || '')
-    await admission.scheduler.whenIdle()
-  })
+  )
 
   it('settles every seeded lane when fan-out preparation fails after admission', async () => {
     const admission = controlledScheduler({ maxActive: 2, maxForeground: 1 })
