@@ -18,6 +18,7 @@ import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
 import type { ProviderUsageSummary } from '../ProviderUsageStatus'
 import type { AgentRunPayload, RunDispatchObserver } from '../run/AgentRunTypes'
 import type { RunPermissionPostureContext } from '../RunPermissionPosture'
+import type { AuthoredChatTranscriptMutation } from '../store/ChatRecordMutation'
 import type {
   ActiveGoal,
   ActiveGoalStatus,
@@ -197,7 +198,10 @@ export interface ParticipantProbeResult {
 
 export interface EnsembleOrchestratorDeps {
   getChat: (chatId: string) => ChatRecord | null
-  saveChat: (chat: ChatRecord) => void
+  saveChat: (
+    chat: ChatRecord,
+    options?: { authoredTranscript?: AuthoredChatTranscriptMutation }
+  ) => void
   getSettings: () => AppSettings
   /**
    * Resolved user instruction layers (global custom-instructions document +

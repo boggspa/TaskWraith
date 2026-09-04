@@ -445,6 +445,73 @@ describe('chat update transport', () => {
     })
   })
 
+  it('round-trips a main-authored identity-anchored middle insertion as v2 ops', () => {
+    const first = chat(1, [message('a', 'A'), message('c', 'C')])
+    const next = chat(2, [message('a', 'A'), message('b', 'B'), message('c', 'C')])
+    const snapshot = buildChatUpdateDelivery({
+      deliveryId: 'insert-before-seed',
+      revision: 1,
+      chat: first,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    const seeded = applyChatUpdateDelivery(snapshot)
+    if (!seeded.ok) throw new Error(seeded.reason)
+    const delta: ChatUpdateProducerDelta = {
+      ...producerDelta(first, next),
+      transcriptOps: [{ op: 'insertBefore', beforeId: 'c', messages: [message('b', 'B')] }],
+      changedMessageCount: 1
+    }
+
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'insert-before-patch',
+      revision: 2,
+      chat: next,
+      baseline: seeded.baseline,
+      producerDelta: delta,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+
+    expect(delivery.kind).toBe('patch')
+    if (delivery.kind !== 'patch' || delivery.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+      throw new Error('expected v2 patch')
+    }
+    expect(delivery.transcriptOps).toEqual(delta.transcriptOps)
+    expect(delivery.messages).toBeUndefined()
+    expect(applyChatUpdateDelivery(delivery, seeded.baseline)).toMatchObject({
+      ok: true,
+      baseline: { chat: next }
+    })
+  })
+
+  it('rejects an identity-anchored insertion with an invalid anchor or message identity', () => {
+    const messages = [message('a', 'A'), message('c', 'C')]
+
+    expect(
+      applyChatTranscriptOps(messages, [
+        { op: 'insertBefore', beforeId: 'missing', messages: [message('b', 'B')] }
+      ])
+    ).toBeNull()
+    expect(
+      applyChatTranscriptOps(messages, [
+        { op: 'insertBefore', beforeId: '', messages: [message('b', 'B')] }
+      ])
+    ).toBeNull()
+    expect(
+      applyChatTranscriptOps(messages, [
+        { op: 'insertBefore', beforeId: 'c', messages: [message('a', 'collision')] }
+      ])
+    ).toBeNull()
+    expect(
+      applyChatTranscriptOps(messages, [
+        {
+          op: 'insertBefore',
+          beforeId: 'c',
+          messages: [message('b', 'B'), message('b', 'duplicate')]
+        }
+      ])
+    ).toBeNull()
+  })
+
   it('preserves transcript identity for metadata-only v2 patches', () => {
     const messages = Array.from({ length: 700 }, (_, index) => message(`m-${index}`, `${index}`))
     const first = chat(1, messages)
@@ -545,6 +612,63 @@ describe('chat update transport', () => {
     expect(applyChatUpdateDelivery(delivery, { revision: 1, chat: first })).toMatchObject({
       ok: true,
       baseline: { chat: third }
+    })
+  })
+
+  it('composes append, insertBefore, and update operations in producer order', () => {
+    const first = chat(1, [message('a', 'A'), message('c', 'C')])
+    const second = chat(2, [message('a', 'A'), message('c', 'C'), message('d', 'D')])
+    const third = chat(3, [
+      message('a', 'A'),
+      message('b', 'B'),
+      message('c', 'C'),
+      message('d', 'D')
+    ])
+    const fourth = chat(4, [
+      message('a', 'A'),
+      message('b', 'B2'),
+      message('c', 'C'),
+      message('d', 'D')
+    ])
+    const insertion: ChatUpdateProducerDelta = {
+      ...producerDelta(second, third),
+      transcriptOps: [{ op: 'insertBefore', beforeId: 'c', messages: [message('b', 'B')] }],
+      changedMessageCount: 1
+    }
+    const firstComposition = composeChatUpdateProducerDeltas(
+      producerDelta(first, second),
+      insertion
+    )
+    if (!firstComposition) throw new Error('expected first composition')
+    const composed = composeChatUpdateProducerDeltas(firstComposition, producerDelta(third, fourth))
+    if (!composed) throw new Error('expected complete composition')
+
+    expect(composed.transcriptOps).toEqual([
+      { op: 'append', messages: [message('d', 'D')] },
+      { op: 'insertBefore', beforeId: 'c', messages: [message('b', 'B')] },
+      { op: 'update', id: 'b', message: message('b', 'B2') }
+    ])
+    expect(composed.transcriptIdsUnique).toBe(true)
+
+    const snapshot = buildChatUpdateDelivery({
+      deliveryId: 'composed-insert-seed',
+      revision: 1,
+      chat: first,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    const seeded = applyChatUpdateDelivery(snapshot)
+    if (!seeded.ok) throw new Error(seeded.reason)
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'composed-insert-patch',
+      revision: 2,
+      chat: fourth,
+      baseline: seeded.baseline,
+      producerDelta: composed,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(applyChatUpdateDelivery(delivery, seeded.baseline)).toMatchObject({
+      ok: true,
+      baseline: { chat: fourth }
     })
   })
 

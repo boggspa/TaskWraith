@@ -219,6 +219,7 @@ export class ChatUpdateProjectionTracker {
         chatId: after.appChatId,
         persistenceRevision: derived.batch.revision,
         retainedBytes: tracked.state.retainedBytes,
+        transcriptIdsUnique: tracked.transcriptIdsUnique,
         recordHash: rollHash(priorState.recordHash, 'record', {
           revision: derived.batch.revision,
           operations: recordOperations
@@ -276,7 +277,24 @@ export class ChatUpdateProjectionTracker {
           ) {
             throw new Error('Tracked message splice is out of bounds')
           }
-          const removedIds = tracked.messageIds.splice(
+          const removedIds = tracked.messageIds.slice(
+            operation.index,
+            operation.index + operation.deleteCount
+          )
+          const removedIdSet = new Set(removedIds)
+          const insertedIds = new Set<string>()
+          for (const message of operation.messages) {
+            const id = message?.id
+            if (
+              !id ||
+              insertedIds.has(id) ||
+              (tracked.messageBytesById.has(id) && !removedIdSet.has(id))
+            ) {
+              throw new Error('Tracked message splice introduced an ambiguous id')
+            }
+            insertedIds.add(id)
+          }
+          tracked.messageIds.splice(
             operation.index,
             operation.deleteCount,
             ...operation.messages.map((message) => message.id)

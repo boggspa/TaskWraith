@@ -65,6 +65,23 @@ describe('rendererChatTranscriptMutation', () => {
     ).toBeNull()
   })
 
+  it('keeps main-authored insertBefore outside the renderer mutation authority', () => {
+    expect(
+      parseRendererChatTranscriptMutationRequest({
+        version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+        chatId: 'chat-1',
+        baseRevision: 3,
+        transcriptOps: [
+          {
+            op: 'insertBefore',
+            beforeId: 'anchor',
+            messages: [message('inserted', 'main-owned lane placement')]
+          }
+        ]
+      })
+    ).toBeNull()
+  })
+
   it('decodes the rewind pair: anchor update followed by truncateFrom', () => {
     const updated = message('anchor', 'edited prompt')
     const request = {

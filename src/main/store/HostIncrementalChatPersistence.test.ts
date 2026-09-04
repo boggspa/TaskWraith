@@ -31,6 +31,11 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  CHAT_UPDATE_PROTOCOL_V2,
+  applyChatUpdateDelivery,
+  buildChatUpdateDelivery
+} from '../../shared/chatUpdateTransport'
 import type {
   HostThreadRecordPersistInput,
   HostThreadRecordPersistPort
@@ -189,6 +194,7 @@ describe('Stage 2 — incremental persistence on the Host write path', () => {
 
   it('keeps a running chat on the normal boundary: the mutation line lands in the journal', async () => {
     const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
+    const { chatUpdateProducerEnvelopeFor } = await import('../../shared/chatUpdateTransport')
     const chatId = 'chat-host-mutation-running'
     const previous = durableChat(chatId, 3, [
       { runId: 'run-1', startedAt: '2026-09-01T00:00:00.000Z', status: 'running' }
@@ -198,12 +204,10 @@ describe('Stage 2 — incremental persistence on the Host write path', () => {
     const m3 = message('m3', 'assistant', 'Streaming delta')
     const author = new ChatTranscriptMutationAuthor(previous.messages.length)
     author.append([m3])
-    AppStore.saveChat(
-      { ...previous, messages: [...previous.messages, m3] },
-      {
-        authoredTranscript: author.finish()
-      }
-    )
+    const input = { ...previous, messages: [...previous.messages, m3] }
+    const saved = AppStore.saveChat(input, {
+      authoredTranscript: author.finish()
+    })
 
     expect(enqueued).toHaveLength(1)
     expect(enqueued[0].expectedRevision).toBe(3)
@@ -228,14 +232,48 @@ describe('Stage 2 — incremental persistence on the Host write path', () => {
     expect(batch.baseRevision).toBe(3)
     expect(batch.revision).toBe(4)
     expect(batch.operations.some((operation) => operation.type === 'messages_splice')).toBe(true)
+
+    const envelope = chatUpdateProducerEnvelopeFor(saved)
+    expect(envelope?.delta).toMatchObject({
+      chatId,
+      basePersistenceRevision: 3,
+      persistenceRevision: 4,
+      transcriptOps: [{ op: 'append', messages: [m3] }]
+    })
+    expect(chatUpdateProducerEnvelopeFor(input)).toBe(envelope)
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'host-authored-delta',
+      revision: 2,
+      chat: saved,
+      baseline: { revision: 1, chat: previous },
+      producerState: envelope?.state,
+      producerDelta: envelope?.delta ?? undefined,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(delivery).toMatchObject({
+      kind: 'patch',
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2,
+      transcriptOps: [{ op: 'append', messages: [m3] }]
+    })
+    expect('messages' in delivery).toBe(false)
+    const applied = applyChatUpdateDelivery(delivery, { revision: 1, chat: previous })
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) throw new Error(applied.reason)
+    expect(JSON.parse(JSON.stringify(applied.baseline.chat))).toEqual(
+      JSON.parse(JSON.stringify(saved))
+    )
   })
 
   it('leaves a non-mutation Host save whole-record-only', async () => {
     const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
+    const { chatUpdateProducerEnvelopeFor } = await import('../../shared/chatUpdateTransport')
     const chatId = 'chat-host-whole-only'
     seedDurableChat(profilePath, durableChat(chatId, 3))
 
-    AppStore.saveChat({ ...durableChat(chatId, 3), title: 'Renamed without mutation' })
+    const saved = AppStore.saveChat({
+      ...durableChat(chatId, 3),
+      title: 'Renamed without mutation'
+    })
 
     expect(enqueued).toHaveLength(1)
     expect(enqueued[0].expectedRevision).toBe(3)
@@ -244,6 +282,7 @@ describe('Stage 2 — incremental persistence on the Host write path', () => {
     expect(stats.mutationBatchesAppended).toBe(0)
     expect(stats.seeds).toBe(0)
     expect(stats.baselineChecks).toBe(0)
+    expect(chatUpdateProducerEnvelopeFor(saved)?.delta).toBeNull()
   })
 
   it('repairs the journal baseline when a non-mutation Host save advanced the record between mutations', async () => {

@@ -4,7 +4,10 @@ import { createInterface } from 'readline'
 import { isDeepStrictEqual } from 'util'
 import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { adoptSupersededMaxWaveAgents } from './maxWaveAgentsDefault'
-import { attachChatUpdateProducerEnvelope } from '../../shared/chatUpdateTransport'
+import {
+  attachChatUpdateProducerEnvelope,
+  chatUpdateProducerEnvelopeFor
+} from '../../shared/chatUpdateTransport'
 import { assertAuthoritativeChatForSave } from './assertAuthoritativeChatForSave'
 import { escalateSummaryChatForSave } from './escalateSummaryChatForSave'
 import {
@@ -7551,6 +7554,8 @@ export class AppStore {
           (writerAdmission) => this.saveChatAdmitted(titledChat, options, writerAdmission)
         )
       : this.saveChatThroughHost(titledChat, options)
+    const producerEnvelope = chatUpdateProducerEnvelopeFor(saved)
+    if (producerEnvelope) attachChatUpdateProducerEnvelope(chat, producerEnvelope)
     chat.persistenceRevision = saved.persistenceRevision
     chat.updatedAt = saved.updatedAt
     observeComposerContinuationPersisted(saved.appChatId)
@@ -7673,13 +7678,6 @@ export class AppStore {
       record: normalizedChat
     })
     hostPersistShadowChatIds.add(normalizedChat.appChatId)
-    const chatUpdateProjection: ChatUpdateProjectionObservation = {
-      state: chatUpdateProjectionTracker.seed(normalizedChat),
-      delta: null
-    }
-    attachChatUpdateProducerEnvelope(normalizedChat, chatUpdateProjection)
-    attachChatUpdateProducerEnvelope(chat, chatUpdateProjection)
-    chat.persistenceRevision = normalizedChat.persistenceRevision
     noteHostPersistIntent(previousChatForFeedback, normalizedChat)
     hostPersistUnconfirmedChatIds.add(normalizedChat.appChatId)
     hostThreadRecordPersist().enqueue({
@@ -7694,14 +7692,28 @@ export class AppStore {
     // whole-record-only. Best-effort by construction: the authoritative
     // enqueue already happened, and a mirror failure repairs its baseline at
     // the next mutation save.
-    if (options.authoredTranscript) {
-      persistIncrementalChatForHostSave(
-        previousChatForFeedback,
-        normalizedChat,
-        deriveSaveFlushReason(normalizedChat),
-        options.authoredTranscript
-      )
-    }
+    const incrementalResult = options.authoredTranscript
+      ? persistIncrementalChatForHostSave(
+          previousChatForFeedback,
+          normalizedChat,
+          deriveSaveFlushReason(normalizedChat),
+          options.authoredTranscript
+        )
+      : null
+    const chatUpdateProjection: ChatUpdateProjectionObservation =
+      previousChatForFeedback && incrementalResult?.derived
+        ? chatUpdateProjectionTracker.observe(
+            previousChatForFeedback,
+            normalizedChat,
+            incrementalResult.derived
+          )
+        : {
+            state: chatUpdateProjectionTracker.seed(normalizedChat),
+            delta: null
+          }
+    attachChatUpdateProducerEnvelope(normalizedChat, chatUpdateProjection)
+    attachChatUpdateProducerEnvelope(chat, chatUpdateProjection)
+    chat.persistenceRevision = normalizedChat.persistenceRevision
     // Stage 3: mirror EVERY Host-routed save (not just authored ones) so the
     // preferred v2 read stays in sync with the authoritative record while the
     // Host persist queue drains asynchronously. Flag-gated no-op otherwise.

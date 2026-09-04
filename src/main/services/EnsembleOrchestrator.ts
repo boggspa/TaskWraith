@@ -119,6 +119,8 @@ import type {
 } from '../store/types'
 import { resolveEnsembleFanoutIsolationPolicy } from '../store/types'
 import type { SeatChangeSeatState } from '../store/types'
+import { ChatTranscriptMutationAuthor } from '../store/ChatTranscriptMutationAuthoring'
+import type { AuthoredChatTranscriptMutation } from '../store/ChatRecordMutation'
 import {
   coalesceSeatChangeMessages,
   coalesceSeatParticipantAddedMessages,
@@ -1008,17 +1010,16 @@ function isRunTimelineMessage(message: ChatMessage, run: ActiveParticipantRun): 
   )
 }
 
-function insertRunTimelineMessages(
+function runTimelineInsertionIndex(
   messages: ChatMessage[],
   desiredMessages: ChatMessage[],
   run: ActiveParticipantRun,
   preferredInsertionIndex: number | null = null,
   runDispatchOrder?: Map<string, number>
-): ChatMessage[] {
-  if (desiredMessages.length === 0) return messages
+): number {
+  if (desiredMessages.length === 0) return messages.length
   if (preferredInsertionIndex !== null) {
-    const index = Math.max(0, Math.min(preferredInsertionIndex, messages.length))
-    return [...messages.slice(0, index), ...desiredMessages, ...messages.slice(index)]
+    return Math.max(0, Math.min(preferredInsertionIndex, messages.length))
   }
   if (!run.laneId) {
     // First flush of a serial participant: append at the tail, EXCEPT above
@@ -1028,20 +1029,15 @@ function insertRunTimelineMessages(
     // lanes; every lane flush (most visibly the completion batch) would keep
     // piling in above the Boss's live message. Lanes dispatched BEFORE this
     // run (a settled recon wave) stay above it — that IS the chronology.
-    if (!runDispatchOrder) return [...messages, ...desiredMessages]
+    if (!runDispatchOrder) return messages.length
     const ownDispatchIndex = runDispatchOrder.get(run.runId)
-    if (ownDispatchIndex === undefined) return [...messages, ...desiredMessages]
+    if (ownDispatchIndex === undefined) return messages.length
     const insertionIndex = messages.findIndex((message) => {
       if (!isRoundLaneTimelineMessage(message, run.roundId)) return false
       const laneDispatchIndex = message.runId ? runDispatchOrder.get(message.runId) : undefined
       return laneDispatchIndex !== undefined && laneDispatchIndex > ownDispatchIndex
     })
-    if (insertionIndex < 0) return [...messages, ...desiredMessages]
-    return [
-      ...messages.slice(0, insertionIndex),
-      ...desiredMessages,
-      ...messages.slice(insertionIndex)
-    ]
+    return insertionIndex < 0 ? messages.length : insertionIndex
   }
   // First flush of a fan-out lane: keep sibling lanes in participant order,
   // but only within the round's tail lane cluster so the slot-in can never
@@ -1071,12 +1067,7 @@ function insertRunTimelineMessages(
       break
     }
   }
-  if (insertionIndex < 0) return [...messages, ...desiredMessages]
-  return [
-    ...messages.slice(0, insertionIndex),
-    ...desiredMessages,
-    ...messages.slice(insertionIndex)
-  ]
+  return insertionIndex < 0 ? messages.length : insertionIndex
 }
 
 /** Push a content fragment into the run's timeline, merging into
@@ -3217,7 +3208,11 @@ export class EnsembleOrchestrator {
    * redirected through this overlay so intermediate flushRun calls mutate one
    * in-memory chat and only the final commit hits deps.saveChat.
    */
-  private flushChatOverlay: { chatId: string; chat: ChatRecord } | null = null
+  private flushChatOverlay: {
+    chatId: string
+    chat: ChatRecord
+    transcriptAuthor?: ChatTranscriptMutationAuthor | null
+  } | null = null
   private bossmanPollTimeoutsById = new Map<
     string,
     {
@@ -4122,7 +4117,11 @@ export class EnsembleOrchestrator {
     return { selectedIndex: index, selected }
   }
 
-  private saveChatWithCheckpoint(chat: ChatRecord, reason: SessionCheckpointReason): void {
+  private saveChatWithCheckpoint(
+    chat: ChatRecord,
+    reason: SessionCheckpointReason,
+    options: { authoredTranscript?: AuthoredChatTranscriptMutation } = {}
+  ): void {
     // A multi-lane flush holds an in-memory overlay so sibling flushes share
     // one save. Any other writer (seat change, round status, …) that persists
     // during that window must advance the overlay too — otherwise the flush
@@ -4130,8 +4129,12 @@ export class EnsembleOrchestrator {
     // drop the mutation's transcript row or revive wiped lane cards.
     if (this.flushChatOverlay?.chatId === chat.appChatId) {
       this.flushChatOverlay.chat = chat
+      // Any save outside the overlay owner's final composed commit advances the
+      // persistence base underneath its author. Discard that optimistic chain;
+      // the ordinary baseline recovery path is safer than emitting stale ops.
+      if (!options.authoredTranscript) this.flushChatOverlay.transcriptAuthor = null
     }
-    this.deps.saveChat(chat)
+    this.deps.saveChat(chat, options)
     if (chat.ensemble?.activeRound?.status !== 'running') return
     // T3b: skip checkpoint persist for participant-updated while round is
     // running — checkpoints persist only at D2 lifecycle boundaries.
@@ -20872,6 +20875,21 @@ export class EnsembleOrchestrator {
         ? this.flushChatOverlay.chat
         : this.deps.getChat(run.chatId)
     if (!chat?.ensemble) return
+    const flushOverlay = this.flushChatOverlay?.chatId === run.chatId ? this.flushChatOverlay : null
+    let transcriptAuthor = flushOverlay
+      ? (flushOverlay.transcriptAuthor ?? null)
+      : new ChatTranscriptMutationAuthor(chat.messages.length)
+    const recordTranscriptMutation = (
+      mutate: (author: ChatTranscriptMutationAuthor) => void
+    ): void => {
+      if (!transcriptAuthor) return
+      try {
+        mutate(transcriptAuthor)
+      } catch {
+        transcriptAuthor = null
+        if (flushOverlay) flushOverlay.transcriptAuthor = null
+      }
+    }
     // Chat-level authority, resolved HERE because it does not live on the
     // participant: a lane card cannot derive Boss/Captain from the seat alone.
     // Written onto the row so it stays historically true — a seat that was the
@@ -21115,31 +21133,64 @@ export class EnsembleOrchestrator {
       desiredMessages.map((message) => [message.id, message] as const)
     )
     let retainedExistingTimelineMessage = false
-    messages = messages.flatMap((message) => {
-      if (!isRunTimelineMessage(message, run)) return [message]
+    let currentMessageIndex = 0
+    const reconciledMessages: ChatMessage[] = []
+    for (const message of messages) {
+      if (!isRunTimelineMessage(message, run)) {
+        reconciledMessages.push(message)
+        currentMessageIndex += 1
+        continue
+      }
       const replacement = desiredMessageById.get(message.id)
-      if (!replacement) return []
+      if (!replacement) {
+        recordTranscriptMutation((author) => author.delete(currentMessageIndex, message.id))
+        continue
+      }
       desiredMessageById.delete(message.id)
       retainedExistingTimelineMessage = true
-      return [replacement]
-    })
+      if (!plainDataEqual(message, replacement)) {
+        recordTranscriptMutation((author) => author.update(replacement))
+      }
+      reconciledMessages.push(replacement)
+      currentMessageIndex += 1
+    }
+    messages = reconciledMessages
     const newTimelineMessages = desiredMessages.filter((message) =>
       desiredMessageById.has(message.id)
     )
     // Dispatch chronology for the first-flush placement rules: chat.runs is
     // appended per seeded run, so its array order IS the dispatch order.
     const runDispatchOrder = new Map(chat.runs.map((chatRun, index) => [chatRun.runId, index]))
-    messages = retainedExistingTimelineMessage
-      ? [...messages, ...newTimelineMessages]
-      : run.releaseOwnedFanoutTranscriptAtTail
-        ? [...messages, ...newTimelineMessages]
-        : insertRunTimelineMessages(
+    const insertionIndex =
+      retainedExistingTimelineMessage || run.releaseOwnedFanoutTranscriptAtTail
+        ? messages.length
+        : runTimelineInsertionIndex(
             messages,
             newTimelineMessages,
             run,
             preferredInsertionIndex,
             runDispatchOrder
           )
+    if (newTimelineMessages.length > 0) {
+      if (insertionIndex === messages.length) {
+        recordTranscriptMutation((author) => author.append(newTimelineMessages))
+      } else {
+        const beforeId = messages[insertionIndex]?.id
+        if (beforeId) {
+          recordTranscriptMutation((author) =>
+            author.insertBefore(insertionIndex, beforeId, newTimelineMessages)
+          )
+        } else {
+          transcriptAuthor = null
+          if (flushOverlay) flushOverlay.transcriptAuthor = null
+        }
+      }
+      messages = [
+        ...messages.slice(0, insertionIndex),
+        ...newTimelineMessages,
+        ...messages.slice(insertionIndex)
+      ]
+    }
 
     // Status card for yielded / failed / skipped, appended after
     // the timeline messages so it reads as a coda. Unchanged from
@@ -21193,8 +21244,12 @@ export class EnsembleOrchestrator {
         }
       }
       if (existingStatusIdx >= 0) {
+        if (!previousStatus || !plainDataEqual(previousStatus, statusMsg)) {
+          recordTranscriptMutation((author) => author.update(statusMsg))
+        }
         messages[existingStatusIdx] = statusMsg
       } else {
+        recordTranscriptMutation((author) => author.append([statusMsg]))
         messages = [...messages, statusMsg]
       }
     }
@@ -21346,7 +21401,9 @@ export class EnsembleOrchestrator {
     if (this.flushChatOverlay?.chatId === run.chatId) {
       this.flushChatOverlay.chat = nextChat
     } else {
-      this.saveChatWithCheckpoint(nextChat, 'participant-updated')
+      this.saveChatWithCheckpoint(nextChat, 'participant-updated', {
+        ...(transcriptAuthor ? { authoredTranscript: transcriptAuthor.finish() } : {})
+      })
     }
     if (shouldMergeTerminalTokenTotals) run.terminalTokenTotalsApplied = true
     if (run.releaseOwnedFanoutTranscriptAtTail && newTimelineMessages.length > 0) {
@@ -21381,11 +21438,20 @@ export class EnsembleOrchestrator {
     const base = this.deps.getChat(chatId)
     if (!base?.ensemble) return
     const priorOverlay = this.flushChatOverlay
-    this.flushChatOverlay = { chatId, chat: base }
+    this.flushChatOverlay = {
+      chatId,
+      chat: base,
+      transcriptAuthor: new ChatTranscriptMutationAuthor(base.messages.length)
+    }
     try {
       for (const run of runs) this.flushRun(run)
       const result = this.flushChatOverlay.chat
-      if (result !== base) this.saveChatWithCheckpoint(result, 'participant-updated')
+      const transcriptAuthor = this.flushChatOverlay.transcriptAuthor
+      if (result !== base) {
+        this.saveChatWithCheckpoint(result, 'participant-updated', {
+          ...(transcriptAuthor ? { authoredTranscript: transcriptAuthor.finish() } : {})
+        })
+      }
     } finally {
       this.flushChatOverlay = priorOverlay
     }

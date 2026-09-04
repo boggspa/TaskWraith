@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EnsembleChatFlushScheduler } from './ensembleChatFlushScheduler'
 import { EnsembleOrchestrator } from './EnsembleOrchestrator'
+import { applyChatTranscriptOps } from '../../shared/chatUpdateTransport'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
+import type { AuthoredChatTranscriptMutation } from '../store/ChatRecordMutation'
 import type { AppSettings, ChatRecord, EnsembleParticipant } from '../store/types'
 
 describe('EnsembleChatFlushScheduler', () => {
@@ -152,9 +154,13 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
         }
       }
     }
-    const saveChat = vi.fn((next: ChatRecord) => {
-      chat = next
-    })
+    let savedTranscriptMutation: AuthoredChatTranscriptMutation | undefined
+    const saveChat = vi.fn(
+      (next: ChatRecord, options?: { authoredTranscript?: AuthoredChatTranscriptMutation }) => {
+        savedTranscriptMutation = options?.authoredTranscript
+        chat = next
+      }
+    )
     const orchestrator = new EnsembleOrchestrator({
       getChat: () => chat,
       saveChat,
@@ -178,13 +184,17 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
     const internal = orchestrator as unknown as {
       runsByRunId: Map<string, any>
       scheduleFlush: (run: any) => void
+      flushRun: (run: any) => void
     }
+    const runs: any[] = []
     for (let i = 0; i < participants.length; i += 1) {
       const runId = `run-${i + 1}`
       const run = {
         runId,
         chatId: 'ensemble-chat',
         roundId: 'round-1',
+        laneId: `lane-${i + 1}`,
+        fanoutWaveId: 'wave-1',
         participant: participants[i],
         timeline: [{ kind: 'content', text: `lane-${i + 1}` }],
         content: `lane-${i + 1}`,
@@ -192,8 +202,11 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
         toolActivities: []
       }
       internal.runsByRunId.set(runId, run)
-      internal.scheduleFlush(run)
+      runs.push(run)
     }
+    // Higher-order lane arrives first. The later low-order lanes must slot in
+    // ahead of it without degrading the producer batch to a transcript diff.
+    for (const index of [2, 0, 1]) internal.scheduleFlush(runs[index])
 
     expect(saveChat).not.toHaveBeenCalled()
     vi.advanceTimersByTime(250)
@@ -201,5 +214,53 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
     expect(chat.messages.some((m) => String(m.content).includes('lane-1'))).toBe(true)
     expect(chat.messages.some((m) => String(m.content).includes('lane-2'))).toBe(true)
     expect(chat.messages.some((m) => String(m.content).includes('lane-3'))).toBe(true)
+    expect(savedTranscriptMutation?.transcriptOps?.map((operation) => operation.op)).toEqual([
+      'append',
+      'insertBefore',
+      'insertBefore'
+    ])
+    expect(applyChatTranscriptOps([], savedTranscriptMutation?.transcriptOps || [])).toEqual(
+      chat.messages
+    )
+    expect(chat.messages.map((message) => message.metadata?.ensembleParticipantId)).toEqual([
+      'p1',
+      'p2',
+      'p3'
+    ])
+
+    const firstFlushMessages = chat.messages
+    runs[0].timeline = [{ kind: 'content', text: 'lane-1 updated' }]
+    runs[0].content = 'lane-1 updated'
+    runs[2].timeline = []
+    runs[2].content = ''
+    internal.scheduleFlush(runs[0])
+    internal.scheduleFlush(runs[2])
+    vi.advanceTimersByTime(250)
+
+    expect(saveChat).toHaveBeenCalledTimes(2)
+    expect(savedTranscriptMutation?.transcriptOps?.map((operation) => operation.op)).toEqual([
+      'update',
+      'delete'
+    ])
+    expect(
+      applyChatTranscriptOps(firstFlushMessages, savedTranscriptMutation?.transcriptOps || [])
+    ).toEqual(chat.messages)
+    expect(chat.messages.map((message) => message.metadata?.ensembleParticipantId)).toEqual([
+      'p1',
+      'p2'
+    ])
+
+    const beforeSingleFlush = chat.messages
+    runs[1].timeline = [{ kind: 'content', text: 'lane-2 updated alone' }]
+    runs[1].content = 'lane-2 updated alone'
+    internal.flushRun(runs[1])
+
+    expect(saveChat).toHaveBeenCalledTimes(3)
+    expect(savedTranscriptMutation?.transcriptOps?.map((operation) => operation.op)).toEqual([
+      'update'
+    ])
+    expect(
+      applyChatTranscriptOps(beforeSingleFlush, savedTranscriptMutation?.transcriptOps || [])
+    ).toEqual(chat.messages)
   })
 })

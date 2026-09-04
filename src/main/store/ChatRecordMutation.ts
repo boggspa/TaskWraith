@@ -1,6 +1,9 @@
 import type { ChatMessage, ChatRecord, ChatRun, ThreadTitleProvenance, ToolActivity } from './types'
 import { isPlaceholderThreadTitle } from '../../shared/threadTitles'
-import { buildChatTranscriptOps, type ChatTranscriptOp } from '../../shared/chatUpdateTransport'
+import {
+  buildChatTranscriptOps,
+  type ChatUpdateTranscriptOp
+} from '../../shared/chatUpdateTransport'
 
 export const CHAT_RECORD_MUTATION_FORMAT = 'taskwraith-chat-mutation' as const
 export const CHAT_RECORD_MUTATION_VERSION = 1 as const
@@ -77,7 +80,7 @@ export interface ChatRecordMutationBatch {
 export interface DerivedChatRecordMutation {
   batch: ChatRecordMutationBatch
   /** null means the edit needs a recovery snapshot on the renderer wire. */
-  transcriptOps: ChatTranscriptOp[] | null
+  transcriptOps: ChatUpdateTranscriptOp[] | null
   changedMessageCount: number
 }
 
@@ -97,7 +100,7 @@ export type ChatTranscriptMutationOperation = Extract<
 
 export interface AuthoredChatTranscriptMutation {
   operations: ChatTranscriptMutationOperation[]
-  transcriptOps: ChatTranscriptOp[] | null
+  transcriptOps: ChatUpdateTranscriptOp[] | null
   changedMessageCount: number
 }
 
@@ -335,7 +338,7 @@ export function deriveChatRecordMutationWithProjection(
   )
   if (hasPatch(recordPatch)) operations.push({ type: 'record_patch', ...recordPatch })
 
-  let transcriptOps: ChatTranscriptOp[] | null
+  let transcriptOps: ChatUpdateTranscriptOp[] | null
   let changedMessageCount: number
   if (options.authoredTranscript) {
     if (
@@ -358,7 +361,9 @@ export function deriveChatRecordMutationWithProjection(
     transcriptOps = buildChatTranscriptOps(before.messages, after.messages)
     changedMessageCount =
       transcriptOps?.reduce((count, operation) => {
-        if (operation.op === 'append') return count + operation.messages.length
+        if (operation.op === 'append' || operation.op === 'insertBefore') {
+          return count + operation.messages.length
+        }
         return count + 1
       }, 0) ??
       (messageStructure.splice

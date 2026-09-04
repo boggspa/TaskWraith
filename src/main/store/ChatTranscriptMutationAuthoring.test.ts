@@ -77,6 +77,42 @@ describe('ChatTranscriptMutationAuthor', () => {
     expect(applyChatRecordMutation(before, derived.batch)).toEqual(after)
   })
 
+  it('authors an identity-anchored middle insertion for durable and renderer replay', () => {
+    const before = chat([message('a', 'A'), message('c', 'C')], 1)
+    const inserted = message('b', 'B')
+    const after = chat([before.messages[0], inserted, before.messages[1]], 2)
+    const author = new ChatTranscriptMutationAuthor(before.messages.length)
+    author.insertBefore(1, 'c', [inserted])
+    const derived = deriveChatRecordMutationWithProjection(before, after, {
+      authoredTranscript: author.finish()
+    })
+
+    expect(derived.transcriptOps).toEqual([
+      { op: 'insertBefore', beforeId: 'c', messages: [inserted] }
+    ])
+    expect(derived.changedMessageCount).toBe(1)
+    expect(derived.batch.operations).toContainEqual({
+      type: 'messages_splice',
+      index: 1,
+      deleteCount: 0,
+      messages: [inserted]
+    })
+    expect(applyChatRecordMutation(before, derived.batch)).toEqual(after)
+    expect(applyChatTranscriptOps(before.messages, derived.transcriptOps!)).toEqual(after.messages)
+  })
+
+  it('rejects insertBefore without a live anchor or with duplicate inserted identities', () => {
+    const author = new ChatTranscriptMutationAuthor(2)
+
+    expect(() => author.insertBefore(2, 'tail', [message('b', 'B')])).toThrow(
+      'requires an existing anchor'
+    )
+    expect(() => author.insertBefore(1, '', [message('b', 'B')])).toThrow('requires an anchor id')
+    expect(() =>
+      author.insertBefore(1, 'c', [message('b', 'B'), message('b', 'duplicate')])
+    ).toThrow('requires unique message ids')
+  })
+
   it('derives an authored append without reading historical message elements', () => {
     const historical = Array.from({ length: 28_000 }, (_, index) =>
       message(`message-${index}`, `history-${index}`)

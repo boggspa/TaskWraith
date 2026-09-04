@@ -11038,8 +11038,11 @@ function saveAndBroadcastChat(chat: ChatRecord, options: ChatSaveOptions = {}): 
   return saved
 }
 
-function saveEnsembleChatWithScheduledHeartbeat(chat: ChatRecord): ChatRecord {
-  const saved = saveAndBroadcastChat(chat)
+function saveEnsembleChatWithScheduledHeartbeat(
+  chat: ChatRecord,
+  options: ChatSaveOptions = {}
+): ChatRecord {
+  const saved = saveAndBroadcastChat(chat, options)
   const round = saved.ensemble?.activeRound
   if (!round || round.status !== 'running') return saved
   const owner = scheduledOccurrenceOwners.lookupEnsembleRound(round.roundId)

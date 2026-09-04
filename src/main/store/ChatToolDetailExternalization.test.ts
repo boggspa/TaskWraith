@@ -367,7 +367,20 @@ describe('authored mutation substitution', () => {
         }
       ],
       transcriptOps: [
-        { op: 'append', messages: [] },
+        {
+          op: 'insertBefore',
+          beforeId: 'message-anchor',
+          messages: [
+            {
+              id: 'message-live',
+              role: 'tool',
+              content: '',
+              timestamp: '2026-08-18T00:00:00.000Z',
+              runId: 'run-live',
+              toolActivities: [activity]
+            }
+          ]
+        },
         {
           op: 'update',
           id: 'message-live',
@@ -407,6 +420,9 @@ describe('authored mutation substitution', () => {
     const spliceOp = result.operations[1]
     if (spliceOp.type !== 'messages_splice') throw new Error('expected messages_splice')
     expect(spliceOp.messages[0].toolActivities![0].rawResultEvent).toBeUndefined()
+    const insertBeforeOp = result.transcriptOps![0]
+    if (insertBeforeOp.op !== 'insertBefore') throw new Error('expected insertBefore op')
+    expect(insertBeforeOp.messages[0].toolActivities![0].rawResultEvent).toBeUndefined()
     const updateOp = result.transcriptOps![1]
     if (updateOp.op !== 'update') throw new Error('expected update op')
     expect(updateOp.message.toolActivities![0].rawResultEvent).toBeUndefined()

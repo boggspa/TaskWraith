@@ -43,6 +43,19 @@ export type ChatTranscriptOp =
    */
   | { op: 'truncateFrom'; id: string }
 
+/**
+ * Main-authored delivery vocabulary.
+ *
+ * Renderer-authored transcript mutations deliberately stay on the narrower
+ * {@link ChatTranscriptOp} surface. Ensemble fan-out owns deterministic lane
+ * ordering in main, so it may additionally place a newly materialised lane
+ * immediately before an existing identity without degrading to a whole-list
+ * splice. The anchor is resolved after every preceding operation in the batch.
+ */
+export type ChatUpdateTranscriptOp =
+  | ChatTranscriptOp
+  | { op: 'insertBefore'; beforeId: string; messages: ChatMessage[] }
+
 export interface ChatUpdateSubRevisions {
   ensembleRevision: number
   runsRevision: number
@@ -79,8 +92,8 @@ export interface ChatUpdateProducerDelta extends ChatUpdateProducerState {
   recordMask: string[]
   recordDelta: Partial<ChatUpdateRecord>
   recordCleared?: string[]
-  /** null means the producer observed an edit that append/update/delete cannot express. */
-  transcriptOps: ChatTranscriptOp[] | null
+  /** null means the producer observed an edit the main delivery vocabulary cannot express. */
+  transcriptOps: ChatUpdateTranscriptOp[] | null
   changedMessageCount: number
 }
 
@@ -160,7 +173,7 @@ export interface ChatUpdatePatchDeliveryV2 {
   recordCleared?: string[]
   /** Retained for dual-read when transcriptOps is absent or incomplete. */
   messages?: ChatUpdateMessageSplice
-  transcriptOps?: ChatTranscriptOp[]
+  transcriptOps?: ChatUpdateTranscriptOp[]
   ensembleRevision?: number
   runsRevision?: number
   recordHash?: string
@@ -308,6 +321,9 @@ export function composeChatUpdateProducerDeltas(
     ensembleRevision: second.ensembleRevision,
     runsRevision: second.runsRevision,
     recordHash: second.recordHash,
+    ...(second.transcriptIdsUnique !== undefined
+      ? { transcriptIdsUnique: second.transcriptIdsUnique }
+      : {}),
     ...(transcriptHash ? { transcriptHash } : {}),
     retainedBytes: second.retainedBytes
   }
@@ -462,7 +478,7 @@ export function hasUniqueChatMessageIds(messages: readonly ChatMessage[]): boole
 }
 
 export type ChatTranscriptHashOperation =
-  | { kind: 'ops'; persistenceRevision: number; operations: readonly ChatTranscriptOp[] }
+  | { kind: 'ops'; persistenceRevision: number; operations: readonly ChatUpdateTranscriptOp[] }
   | { kind: 'splice'; persistenceRevision: number; splice: ChatUpdateMessageSplice }
 
 /**
@@ -587,7 +603,7 @@ export function buildChatTranscriptOps(
 
 export function applyChatTranscriptOps(
   messages: readonly ChatMessage[],
-  ops: readonly ChatTranscriptOp[]
+  ops: readonly ChatUpdateTranscriptOp[]
 ): ChatMessage[] | null {
   // A v2 patch can carry an empty ops list when only record metadata changed.
   // Preserve the baseline array so metadata-only deliveries do not turn into
@@ -609,6 +625,29 @@ export function applyChatTranscriptOps(
         if (!message?.id || indexById.has(message.id)) return null
         indexById.set(message.id, next.length)
         next.push(message)
+      }
+      continue
+    }
+    if (op.op === 'insertBefore') {
+      if (
+        typeof op.beforeId !== 'string' ||
+        op.beforeId.length === 0 ||
+        !Array.isArray(op.messages) ||
+        op.messages.length === 0
+      ) {
+        return null
+      }
+      const index = indexById.get(op.beforeId)
+      if (index === undefined) return null
+      const insertedIds = new Set<string>()
+      for (const message of op.messages) {
+        const id = message?.id
+        if (!id || indexById.has(id) || insertedIds.has(id)) return null
+        insertedIds.add(id)
+      }
+      next.splice(index, 0, ...op.messages)
+      for (let cursor = index; cursor < next.length; cursor += 1) {
+        indexById.set(next[cursor].id, cursor)
       }
       continue
     }
