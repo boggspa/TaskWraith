@@ -731,6 +731,29 @@ describe('resolveEnsembleParticipantSettings', () => {
 })
 
 describe('getEnsembleModelDefaults (existing helper)', () => {
+  it('keeps Astra Max and Ultra available in the participant reasoning picker', () => {
+    const options = getEnsembleReasoningOptions('codex', 'gpt-6-astra')
+    expect(options.filter((option) => !option.disabled).map((option) => option.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(options.find((option) => option.value === 'max')?.label).toBe('Max')
+    expect(options.find((option) => option.value === 'ultracode')?.label).toBe('Ultra')
+    expect(getEnsembleReasoningOptions('codex', ' GPT-6-Astra ')).toEqual(options)
+  })
+
+  it.each(['max', 'ultracode'])(
+    'preserves Astra %s when resolving a saved participant',
+    (effort) => {
+      const saved = participant({ model: 'gpt-6-astra', reasoningEffort: effort })
+      expect(resolveEnsembleParticipantSettings(saved).reasoningEffort).toBe(effort)
+    }
+  )
+
   // Sanity check that the previously-existing model-options helper is
   // untouched by the F2 consolidation. The chip picker reads
   // `defaultModelId` here should match the concrete model persisted by

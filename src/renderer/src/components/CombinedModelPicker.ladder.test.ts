@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { getEnsembleReasoningOptions } from '../lib/ensembleProviderDefaults'
 import {
   CombinedModelPicker,
   ReasoningLadderSlider,
@@ -74,6 +75,31 @@ describe('reasoning ladder mapping', () => {
 })
 
 describe('buildLadderModel', () => {
+  it.each([
+    ['max', 5, 'Max'],
+    ['ultracode', 6, 'Ultra']
+  ] as const)(
+    'keeps Astra %s selectable without snapping down to Extra High',
+    (effort, index, label) => {
+      const ladder = buildLadderModel('codex', getEnsembleReasoningOptions('codex', 'gpt-6-astra'))
+      expect(nearestEnabledLadderIndex(index, ladder.enabledIndices)).toBe(index)
+      expect(ladder.valueByIndex[index]).toBe(effort)
+      expect(clampedLadderIndex('codex', effort, ladder)).toBe(index)
+      const markup = renderToStaticMarkup(
+        createElement(ReasoningLadderSlider, {
+          provider: 'codex',
+          ladder,
+          selectedReasoning: effort,
+          onSelectReasoning: () => undefined,
+          onInteract: () => undefined
+        })
+      )
+      expect(markup).toContain(`aria-valuenow="${index}"`)
+      expect(markup).toContain(`aria-valuetext="${label}"`)
+      expect(markup).not.toContain('aria-disabled="true"')
+    }
+  )
+
   it('enables every Muse tier from minimal through ultra on stops [0,1,2,3,4,5,6]', () => {
     const ladder = buildLadderModel('muse', [
       { value: 'minimal', label: 'Minimal' },

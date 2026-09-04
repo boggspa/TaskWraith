@@ -109,10 +109,9 @@ const CODEX_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'high', label: codexReasoningDisplayLabel('high') },
   { value: 'xhigh', label: codexReasoningDisplayLabel('xhigh') }
 ]
-// Official GPT-5.6 tiers (2026-07-09): `max` on all three trio models; the top
-// `ultra` tier (internal token 'ultracode', displayed "Ultra") on Sol + Terra
-// only — Luna stops at max.
-const CODEX_TRIO_FULL_REASONING: CombinedModelPickerReasoningOption[] = [
+// Astra, Sol, and Terra expose Max and Ultra (internal token 'ultracode');
+// Luna stops at Max.
+const CODEX_FULL_REASONING: CombinedModelPickerReasoningOption[] = [
   ...CODEX_REASONING,
   { value: 'max', label: codexReasoningDisplayLabel('max') },
   { value: 'ultracode', label: codexReasoningDisplayLabel('ultracode') }
@@ -653,17 +652,20 @@ export function getEnsembleReasoningOptions(
   switch (provider) {
     case 'codex': {
       // Mirrors main's codexModelSupportsMaxReasoning / -UltracodeReasoning
-      // (official 2026-07-09 tiers): Sol + Terra get max + ultra('ultracode');
+      // tiers: Astra, Sol, and Terra get max + ultra('ultracode');
       // Luna gets max only; everything else stops at xhigh. Stale
       // pre-un-gate placeholder ids count as their concrete slugs.
-      const codexModel = String(modelId || '').toLowerCase()
+      const codexModel = String(modelId || '')
+        .trim()
+        .toLowerCase()
       if (
+        codexModel === 'gpt-6-astra' ||
         codexModel === 'gpt-5.6-sol' ||
         codexModel === 'gpt-5.6-terra' ||
         codexModel === 'preview:openai:gpt-5.6:sol' ||
         codexModel === 'preview:openai:gpt-5.6:terra'
       ) {
-        return CODEX_TRIO_FULL_REASONING
+        return CODEX_FULL_REASONING
       }
       if (codexModel === 'gpt-5.6-luna' || codexModel === 'preview:openai:gpt-5.6:luna') {
         return CODEX_TRIO_MAX_REASONING
