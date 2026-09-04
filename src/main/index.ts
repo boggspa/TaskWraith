@@ -172,11 +172,9 @@ import {
 } from './PathScope'
 import { stripAnsi, appendLimitedOutput, asRecord } from './gemini/GeminiCapabilityParsing'
 import {
-  GEMINI_CAPABILITY_KINDS,
   GEMINI_CAPABILITY_COMMANDS,
   type GeminiCapabilityKind,
-  type GeminiCapabilitySection,
-  type GeminiCapabilitiesState
+  type GeminiCapabilitySection
 } from './geminiCapabilityTypes'
 import {
   mcpJson,
@@ -2064,6 +2062,7 @@ import { registerComposeRunHandlers } from './ipc/composeRunHandlers'
 import { registerAgentQuestionHandlers } from './ipc/agentQuestionHandlers'
 import { registerBlackboardPollHandlers } from './ipc/blackboardPollHandlers'
 import { registerWindowAttachmentHandlers } from './ipc/windowAttachmentHandlers'
+import { registerGeminiCliHandlers } from './ipc/geminiCliHandlers'
 import { registerApnsHandlers } from './ipc/apnsHandlers'
 import { registerImageGenerationHandlers } from './ipc/imageGenerationHandlers'
 import { registerMediaAssetHandlers } from './ipc/mediaAssetHandlers'
@@ -58377,67 +58376,18 @@ if (isGeminiMcpBridgeProcess) {
       authorizeLocalPath: authorizeRendererLocalPath
     })
 
-    // Gemini Version
-    ipcMain.handle('get-gemini-version', async () => {
-      const resolved = await resolveCliProviderBinary('gemini')
-      if (!resolved.binaryPath) return 'unknown'
-      const geminiBinaryPath = resolved.binaryPath
-
-      return new Promise((resolve) => {
-        const proc: ChildProcess = spawn(geminiBinaryPath, ['--version'], {
-          shell: false,
-          env: createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, geminiBinaryPath)
-        })
-        let stdout = ''
-        proc.stdout?.on('data', (data) => {
-          stdout += data.toString()
-        })
-        proc.on('close', (code) => {
-          if (code !== 0 || !stdout.trim()) resolve('unknown')
-          else resolve(stdout.trim())
-        })
-        proc.on('error', () => {
-          resolve('unknown')
-        })
-      })
-    })
-
-    ipcMain.handle(
-      'get-gemini-capabilities',
-      async (event, workspace?: string): Promise<GeminiCapabilitiesState> => {
-        assertMainRendererSender(event)
-        const capabilityWorkspace = await resolveCapabilityWorkspace(workspace)
-        await repairKnownStaleGeminiMcpBridgeConfigs(capabilityWorkspace).catch(() => {})
-        const capabilitySections = await Promise.all(
-          GEMINI_CAPABILITY_KINDS.map((kind) =>
-            readGeminiCapabilitySection(kind, capabilityWorkspace)
-          )
-        )
-
-        return {
-          refreshedAt: new Date().toISOString(),
-          workspace: capabilityWorkspace,
-          sections: capabilitySections.reduce(
-            (acc, section) => {
-              acc[section.kind] = section
-              return acc
-            },
-            {} as Record<GeminiCapabilityKind, GeminiCapabilitySection>
-          )
-        }
-      }
-    )
-
-    ipcMain.handle('get-gemini-mcp-bridge-status', async () =>
-      getGeminiMcpBridgeStatus({ autoRepairIfEnabled: true })
-    )
-    ipcMain.handle('install-gemini-mcp-bridge', async (event) => {
-      assertMainRendererSender(event)
-      return installGeminiMcpBridge()
-    })
-    ipcMain.handle('set-gemini-mcp-bridge-enabled', async (event, enabled: boolean) => {
-      assertMainRendererSender(event)
-      return setGeminiMcpBridgeEnabled(Boolean(enabled))
+    // Gemini CLI version, capability discovery, MCP bridge, and session
+    // listing. See src/main/ipc/geminiCliHandlers.ts; channel behavior and
+    // relative channel order are unchanged.
+    registerGeminiCliHandlers({
+      assertMainRendererSender,
+      resolveCapabilityWorkspace,
+      repairKnownStaleGeminiMcpBridgeConfigs,
+      readGeminiCapabilitySection,
+      getGeminiMcpBridgeStatus,
+      installGeminiMcpBridge,
+      setGeminiMcpBridgeEnabled,
+      listGeminiSessions
     })
     ipcMain.handle('run-approved-host-command', async (event, requestId: string) => {
       const normalizedRequestId = requireNonEmptyString(requestId, 'Request id')
@@ -58448,11 +58398,6 @@ if (isGeminiMcpBridgeProcess) {
         }
       }
       return runApprovedHostCommand(normalizedRequestId)
-    })
-
-    ipcMain.handle('list-gemini-sessions', async (event) => {
-      assertMainRendererSender(event)
-      return listGeminiSessions()
     })
 
     // C4: `read-image-preview` reads a local image and returns a data URL.
