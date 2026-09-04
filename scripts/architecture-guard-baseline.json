@@ -56,10 +56,6 @@
     },
     {
       "from": "src/renderer/src/components/SettingsPanel.tsx",
-      "to": "src/main/PlaintextSecretPolicy"
-    },
-    {
-      "from": "src/renderer/src/components/SettingsPanel.tsx",
       "to": "src/main/TaskWraithMcpTools"
     },
     {
