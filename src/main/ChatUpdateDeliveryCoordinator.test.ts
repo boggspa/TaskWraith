@@ -15,6 +15,11 @@ import {
   resolveEmitProtocolVersionForTest,
   type ChatUpdateDeliveryTarget
 } from './ChatUpdateDeliveryCoordinator'
+import {
+  estimateChatUpdateSnapshotBytes,
+  resolveChatUpdateAckTimeoutMs,
+  resolveSnapshotRetryDelayMs
+} from './ChatUpdateSnapshotAckPolicy'
 
 function message(id: string, content: string): ChatMessage {
   return { id, role: 'assistant', content, timestamp: '2026-07-18T00:00:00.000Z' }
@@ -286,22 +291,33 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(coordinator.statsForTarget(sink.id).inFlight).toBe(1)
   })
 
-  it('releases an unacknowledged delivery and resyncs the latest pending chat', () => {
+  it('keeps the patch timeout and its immediate latest-pending resync unchanged', () => {
     vi.useFakeTimers()
     const sink = target()
     const coordinator = new ChatUpdateDeliveryCoordinator({
       minDeliveryIntervalMs: 0,
       ackTimeoutMs: 250
     })
-    coordinator.enqueue(sink, chat(1, ['one']))
-    coordinator.enqueue(sink, chat(2, ['latest']))
+    const [seed, patch, latest] = projectSequence(
+      chat(1, ['one']),
+      chat(2, ['one', 'patch']),
+      chat(3, ['one', 'patch', 'latest'])
+    )
+    coordinator.enqueue(sink, seed)
+    coordinator.acknowledge(sink.id, {
+      deliveryId: sink.deliveries[0].deliveryId,
+      applied: true
+    })
+    coordinator.enqueue(sink, patch)
+    expect(sink.deliveries[1].kind).toBe('patch')
+    coordinator.enqueue(sink, latest)
 
     vi.advanceTimersByTime(250)
 
-    expect(sink.deliveries).toHaveLength(2)
-    expect(sink.deliveries[1].kind).toBe('snapshot')
-    if (sink.deliveries[1].kind !== 'snapshot') throw new Error('Expected snapshot')
-    expect(sink.deliveries[1].chat.updatedAt).toBe(2)
+    expect(sink.deliveries).toHaveLength(3)
+    expect(sink.deliveries[2].kind).toBe('snapshot')
+    if (sink.deliveries[2].kind !== 'snapshot') throw new Error('Expected snapshot')
+    expect(sink.deliveries[2].chat.updatedAt).toBe(3)
     vi.useRealTimers()
   })
 
@@ -648,19 +664,60 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     now += 1
   })
 
-  it('retries one timed-out delivery as a snapshot even when no newer update is queued', () => {
+  it('backs off timed-out snapshots and coalesces a newer update into the retry', () => {
     vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-04T00:00:00.000Z'))
     const sink = target()
     const coordinator = new ChatUpdateDeliveryCoordinator({
       minDeliveryIntervalMs: 0,
       ackTimeoutMs: 250
     })
     coordinator.enqueue(sink, chat(1, ['one']))
-    vi.advanceTimersByTime(250)
+    const first = sink.deliveries[0]
+    const firstAckTimeout = resolveChatUpdateAckTimeoutMs({
+      kind: first.kind,
+      configuredTimeoutMs: 250,
+      snapshotBytes: estimateChatUpdateSnapshotBytes(first)
+    })
+    const firstRetryDelay = resolveSnapshotRetryDelayMs({
+      consecutiveTimeouts: 1,
+      ackTimeoutMs: firstAckTimeout
+    })
+
+    vi.advanceTimersByTime(firstAckTimeout)
+    // The timeout retains a retry, but must not immediately enqueue another
+    // full structured clone into the already-slow renderer.
+    expect(sink.deliveries).toHaveLength(1)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 1 })
+
+    coordinator.enqueue(sink, {
+      ...chat(2, ['newest while cooling']),
+      // Terminal updates are urgent and cancel the ordinary cadence timer. They
+      // still must not bypass the snapshot retry circuit.
+      runs: [{ runId: 'r1', startedAt: '2026-09-04T00:00:00.000Z', status: 'completed' }]
+    })
+    vi.advanceTimersByTime(firstRetryDelay - 1)
+    expect(sink.deliveries).toHaveLength(1)
+    vi.advanceTimersByTime(1)
     expect(sink.deliveries).toHaveLength(2)
     expect(sink.deliveries[1].kind).toBe('snapshot')
-    vi.advanceTimersByTime(250)
+    if (sink.deliveries[1].kind !== 'snapshot') throw new Error('Expected snapshot')
+    expect(sink.deliveries[1].chat.updatedAt).toBe(2)
+
+    const secondAckTimeout = resolveChatUpdateAckTimeoutMs({
+      kind: sink.deliveries[1].kind,
+      configuredTimeoutMs: 250,
+      snapshotBytes: estimateChatUpdateSnapshotBytes(sink.deliveries[1])
+    })
+    const secondRetryDelay = resolveSnapshotRetryDelayMs({
+      consecutiveTimeouts: 2,
+      ackTimeoutMs: secondAckTimeout
+    })
+    vi.advanceTimersByTime(secondAckTimeout)
+    vi.advanceTimersByTime(secondRetryDelay - 1)
     expect(sink.deliveries).toHaveLength(2)
+    vi.advanceTimersByTime(1)
+    expect(sink.deliveries).toHaveLength(3)
     vi.useRealTimers()
   })
 })

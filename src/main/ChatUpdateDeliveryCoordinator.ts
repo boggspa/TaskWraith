@@ -16,6 +16,11 @@ import {
   type ChatUpdateProtocolVersion,
   type CompactChatUpdateBaseline
 } from '../shared/chatUpdateTransport'
+import {
+  estimateChatUpdateSnapshotBytes,
+  resolveChatUpdateAckTimeoutMs,
+  resolveSnapshotRetryDelayMs
+} from './ChatUpdateSnapshotAckPolicy'
 
 export interface ChatUpdateDeliveryTarget {
   id: number
@@ -86,6 +91,10 @@ interface TargetChatState {
   timer?: ReturnType<typeof setTimeout>
   ackTimer?: ReturnType<typeof setTimeout>
   consecutiveRejects: number
+  /** Consecutive full snapshots that exhausted their size-aware ACK window. */
+  consecutiveSnapshotTimeouts: number
+  /** Earliest time another snapshot recovery may be sent for this chat. */
+  snapshotRetryNotBefore: number
   lastSentAt: number
   lastTouchedAt: number
   /** Latest accepted receipt; render receipts are telemetry and never gate send. */
@@ -318,6 +327,8 @@ export class ChatUpdateDeliveryCoordinator {
         deliveryEpoch: this.deliveryEpochForTarget(target.id),
         nextRevision: 0,
         consecutiveRejects: 0,
+        consecutiveSnapshotTimeouts: 0,
+        snapshotRetryNotBefore: Number.NEGATIVE_INFINITY,
         lastSentAt: Number.NEGATIVE_INFINITY,
         lastTouchedAt: this.now()
       }
@@ -530,6 +541,8 @@ export class ChatUpdateDeliveryCoordinator {
           : {})
       }
       state.consecutiveRejects = 0
+      state.consecutiveSnapshotTimeouts = 0
+      state.snapshotRetryNotBefore = Number.NEGATIVE_INFINITY
     } else {
       // Degradation: the renderer could not apply the patch (or the revision /
       // hash did not match), so the baseline is gone and the next delivery must
@@ -773,12 +786,23 @@ export class ChatUpdateDeliveryCoordinator {
       this.clearTarget(state.target.id)
       return
     }
-    const elapsed = this.now() - state.lastSentAt
+    const now = this.now()
+    const elapsed = now - state.lastSentAt
     // Terminal/error state must never sit behind the normal 10 Hz stream
     // cadence. It still keeps the same one-in-flight bound, so urgency cannot
     // fan a slow renderer into an unbounded queue.
-    const delay =
+    const cadenceDelay =
       state.pending.priority === 'urgent' ? 0 : Math.max(0, this.minDeliveryIntervalMs - elapsed)
+    // A timed-out snapshot leaves the renderer in an unknown, usually
+    // memory-pressured state. Keep coalescing the newest pending canonical chat,
+    // but do not let a new producer update bypass the retry circuit. A valid
+    // patch baseline proves this is no longer a snapshot retry and therefore
+    // keeps ordinary patch behavior unchanged.
+    const snapshotRetryDelay =
+      !state.acknowledged || !state.baselineChat
+        ? Math.max(0, state.snapshotRetryNotBefore - now)
+        : 0
+    const delay = Math.max(cadenceDelay, snapshotRetryDelay)
     if (delay > 0) {
       state.timer = this.setTimer(() => {
         state.timer = undefined
@@ -831,6 +855,12 @@ export class ChatUpdateDeliveryCoordinator {
       ...delivery,
       deliveryEpoch: state.deliveryEpoch
     }
+    const snapshotBytes = estimateChatUpdateSnapshotBytes(epochDelivery)
+    const deliveryAckTimeoutMs = resolveChatUpdateAckTimeoutMs({
+      kind: epochDelivery.kind,
+      configuredTimeoutMs: this.ackTimeoutMs,
+      ...(epochDelivery.kind === 'snapshot' ? { snapshotBytes } : {})
+    })
     const deliveryEnsembleRevision =
       'ensembleRevision' in epochDelivery ? epochDelivery.ensembleRevision : undefined
     const deliveryRunsRevision =
@@ -873,7 +903,7 @@ export class ChatUpdateDeliveryCoordinator {
     this.deliveryIndex.set(deliveryId, { targetId: state.target.id, chatId: state.chatId })
     try {
       state.target.send(CHAT_UPDATE_CHANNEL, epochDelivery)
-      if (this.ackTimeoutMs > 0) {
+      if (deliveryAckTimeoutMs > 0) {
         state.ackTimer = this.setTimer(() => {
           state.ackTimer = undefined
           if (state.inFlight?.deliveryId !== deliveryId) return
@@ -890,7 +920,31 @@ export class ChatUpdateDeliveryCoordinator {
           state.baselineRevision = undefined
           state.lastAccepted = undefined
           state.consecutiveRejects += 1
-          if (state.consecutiveRejects === 1 && !state.pending) {
+          if (epochDelivery.kind === 'snapshot') {
+            state.consecutiveSnapshotTimeouts += 1
+            state.snapshotRetryNotBefore =
+              this.now() +
+              resolveSnapshotRetryDelayMs({
+                consecutiveTimeouts: state.consecutiveSnapshotTimeouts,
+                ackTimeoutMs: deliveryAckTimeoutMs
+              })
+            // A timeout is not evidence that the canonical update can be
+            // discarded. Retain this exact snapshot when nothing newer exists;
+            // otherwise the existing latest-wins pending slot already carries
+            // the record we must eventually deliver.
+            if (!state.pending) {
+              state.pending = {
+                revision: state.nextRevision + 1,
+                chat: next.chat,
+                producer: next.producer,
+                retainedBytes: next.retainedBytes,
+                priority: next.priority
+              }
+              state.nextRevision += 1
+            }
+          } else if (state.consecutiveRejects === 1 && !state.pending) {
+            // Patch behavior is unchanged: one immediate snapshot repairs a
+            // renderer that lost its acknowledged patch baseline.
             state.pending = {
               revision: state.nextRevision + 1,
               chat: next.chat,
@@ -903,7 +957,7 @@ export class ChatUpdateDeliveryCoordinator {
           state.lastTouchedAt = this.now()
           this.maybeSend(state)
           this.pruneTarget(state.target.id)
-        }, this.ackTimeoutMs)
+        }, deliveryAckTimeoutMs)
         ;(state.ackTimer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.()
       }
     } catch {
