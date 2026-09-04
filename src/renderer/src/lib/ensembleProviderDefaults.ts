@@ -297,6 +297,7 @@ function museReasoningOptions(
 
 const CODEX_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'gpt-5.5', label: 'GPT-5.5' },
+  { id: 'gpt-6-astra', label: 'GPT-6-Astra' },
   // GPT-5.6 trio — GA 2026-07-09, official hyphenated display names. Dispatch
   // errors cleanly if the user's account hasn't been ramped into the staged
   // rollout yet (the id is simply absent from that account's live model/list).

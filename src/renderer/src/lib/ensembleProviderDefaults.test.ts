@@ -731,6 +731,18 @@ describe('resolveEnsembleParticipantSettings', () => {
 })
 
 describe('getEnsembleModelDefaults (existing helper)', () => {
+  it('offers Astra with its reasoning controls before live model discovery', () => {
+    const defaults = getEnsembleModelDefaults('codex')
+    const astra = defaults.modelOptions.find((option) => option.id === 'gpt-6-astra')
+    expect(astra).toMatchObject({ label: 'GPT-6-Astra', ultraTaskSupported: true })
+    expect(astra?.disabled).not.toBe(true)
+    expect(
+      getEnsembleReasoningOptions('codex', astra?.id, astra).map((option) => option.value)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    expect(defaults.defaultModelId).toBe('gpt-5.5')
+    expect(defaults.modelOptions[0]?.id).toBe(defaults.defaultModelId)
+  })
+
   it('keeps Astra Max and Ultra available in the participant reasoning picker', () => {
     const options = getEnsembleReasoningOptions('codex', 'gpt-6-astra')
     expect(options.filter((option) => !option.disabled).map((option) => option.value)).toEqual([
