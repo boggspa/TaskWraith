@@ -626,12 +626,6 @@ import { resolveAppDriveEnsembleAuthority } from './appDrive/AppDriveEnsembleAut
 import { AppDriveLeaseRegistry } from './appDrive/AppDriveLease'
 import { AppDriveLeaseRuntime } from './appDrive/AppDriveLeaseRuntime'
 import { AppDriveSessionReportStore } from './appDrive/AppDriveSessionReport'
-import {
-  appDrivePreviewFrameFromDaemon,
-  shouldRequestPreviewFrame,
-  type AppDrivePreviewFrameResult,
-  type AppDrivePreviewFrameSource
-} from './nativeWindow/AppDrivePreviewFrame'
 import { requestCanvasConsequentialConfirmation } from './canvas/CanvasConsequentialDialog'
 import { createNativeWindowClickAuditClaim } from './nativeWindow/NativeWindowClickAudit'
 import { AuditService } from './services/AuditService'
@@ -1124,7 +1118,7 @@ import {
   type PdfRenderedPageAttachment
 } from './services/PdfAttachmentRenderService'
 // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots (pure store logic).
-import { StickyAppWatchStoreController, type StickyAppWatchSnapshot } from './stickyAppWatch'
+import { StickyAppWatchStoreController } from './stickyAppWatch'
 import {
   AppSettings,
   WorkspaceRecord,
@@ -2069,6 +2063,7 @@ import { registerContextCompactionHandlers } from './ipc/contextCompactionHandle
 import { registerComposeRunHandlers } from './ipc/composeRunHandlers'
 import { registerAgentQuestionHandlers } from './ipc/agentQuestionHandlers'
 import { registerBlackboardPollHandlers } from './ipc/blackboardPollHandlers'
+import { registerWindowAttachmentHandlers } from './ipc/windowAttachmentHandlers'
 import { registerApnsHandlers } from './ipc/apnsHandlers'
 import { registerImageGenerationHandlers } from './ipc/imageGenerationHandlers'
 import { registerMediaAssetHandlers } from './ipc/mediaAssetHandlers'
@@ -56823,150 +56818,15 @@ if (isGeminiMcpBridgeProcess) {
       return { ok: true }
     })
 
-    // Screen Watch is observation-first. The coordinator owns the private
-    // daemon scope and may offer a separate, exact-run View & Control decision
-    // only after the user picks one canonical window.
-    ipcMain.handle('attach-window:pick', async (event, chatId: string) => {
-      const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
-      assertRendererChatScope(event, canonicalChatId)
-      const nativeCapabilities = getNativeCapabilitySnapshot()
-      if (!nativeCapabilities.screenWatch.available) {
-        throw new Error(
-          nativeCapabilities.screenWatch.reason || 'Screen Watch is unavailable on this host.'
-        )
-      }
-      const coordinator = nativeWindowCoordinatorRef
-      if (!coordinator) throw new Error('Native-window coordination is not ready.')
-      return coordinator.pick(canonicalChatId)
-    })
-
-    ipcMain.handle('attach-window:detach', async (event, chatId: string, generation: number) => {
-      const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
-      assertRendererChatScope(event, canonicalChatId)
-      if (!Number.isSafeInteger(generation) || generation <= 0) {
-        throw new Error('Attachment generation must be a positive integer.')
-      }
-      const coordinator = nativeWindowCoordinatorRef
-      if (!coordinator) throw new Error('Native-window coordination is not ready.')
-      const detached = await coordinator.detach(canonicalChatId, generation)
-      return {
-        detached,
-        status: coordinator.statusForChat(canonicalChatId)
-      }
-    })
-
-    ipcMain.handle(
-      'attach-window:control-session',
-      async (event, chatId: string, action: string) => {
-        const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
-        assertRendererChatScope(event, canonicalChatId)
-        if (
-          action !== 'pause' &&
-          action !== 'resume' &&
-          action !== 'takeover' &&
-          action !== 'stop'
-        ) {
-          throw new Error('Unknown App Drive session action.')
-        }
-        const coordinator = nativeWindowCoordinatorRef
-        if (!coordinator) throw new Error('Native-window coordination is not ready.')
-        return coordinator.controlSession(canonicalChatId, action)
-      }
-    )
-
-    ipcMain.handle('attach-window:status', (event, chatId: string) => {
-      const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
-      assertRendererChatScope(event, canonicalChatId)
-      const coordinator = nativeWindowCoordinatorRef
-      if (!coordinator) throw new Error('Native-window coordination is not ready.')
-      return coordinator.statusForChat(canonicalChatId)
-    })
-
-    // App Drive dock preview. The user's own view of the window they attached,
-    // rendered locally — this mints no lease, admits no action, consumes no
-    // step budget, and sends nothing to a provider. It is NOT secret-redacted;
-    // see AppDrivePreviewFrame before putting any redaction claim on this
-    // surface. Refusals are returned, never thrown: an absent frame is the
-    // ordinary state while a stream warms up.
-    ipcMain.handle(
-      'attach-window:preview-frame',
-      async (event, chatId: string): Promise<AppDrivePreviewFrameResult> => {
-        const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
-        assertRendererChatScope(event, canonicalChatId)
-        const coordinator = nativeWindowCoordinatorRef
-        if (!coordinator) return { ok: false, reason: 'no_attachment' }
-        // getForChat applies the live protected-host check and can revoke the
-        // attachment, so read it before the access envelope: if it cleared,
-        // observationAccessForChat returns null and this fails closed.
-        const attachment = coordinator.getForChat(canonicalChatId)
-        const access = attachment ? coordinator.observationAccessForChat(canonicalChatId) : null
-        if (!attachment || !access) return { ok: false, reason: 'no_attachment' }
-        if (!shouldRequestPreviewFrame({ observation: attachment })) {
-          return { ok: false, reason: 'no_frame' }
-        }
-        const daemon = bridgeDaemonRef
-        if (!daemon?.status().running) return { ok: false, reason: 'no_frame' }
-        let source: AppDrivePreviewFrameSource
-        try {
-          source = await daemon.request<AppDrivePreviewFrameSource>(
-            'appwatch.latestFrame',
-            access,
-            { timeoutMs: 10_000 }
-          )
-        } catch {
-          // A dock preview never surfaces daemon errors as a failed IPC — the
-          // panel just keeps showing its placeholder.
-          return { ok: false, reason: 'no_frame' }
-        }
-        // Re-read the attachment after the await: a frame captured under a
-        // superseded generation must not be projected under the new target.
-        const current = coordinator.getForChat(canonicalChatId)
-        if (!current || current.generation !== attachment.generation) {
-          return { ok: false, reason: 'no_attachment' }
-        }
-        return appDrivePreviewFrameFromDaemon({ source, generation: current.generation })
-      }
-    )
-
-    // M11 (1.0.7) — sticky AppWatch. The renderer stashes a chat's attachment
-    // metadata on auto-detach and asks for it back when the user returns to the
-    // owning chat (to offer "Resume watching <app>"). Persisted so it survives a
-    // restart. macOS can't silently re-grant a window (SCContentSharingPicker is
-    // interactive), so this is metadata for the resume affordance, never a live
-    // grant.
-    ipcMain.handle('sticky-appwatch:get', async (event, chatId: string) => {
-      const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
-      assertRendererChatScope(event, canonicalChatId)
-      return { snapshot: await stickyAppWatchStoreController.get(canonicalChatId) }
-    })
-    ipcMain.handle(
-      'sticky-appwatch:stash',
-      async (
-        event,
-        input: {
-          chatId: string
-          windowMeta: StickyAppWatchSnapshot['windowMeta']
-          attachedAt: string
-          wasStreaming: boolean
-        }
-      ) => {
-        const canonicalChatId = requireNonEmptyString(input?.chatId, 'Chat')
-        assertRendererChatScope(event, canonicalChatId)
-        await stickyAppWatchStoreController.stash({
-          chatId: canonicalChatId,
-          windowMeta: input?.windowMeta,
-          attachedAt: String(input?.attachedAt || new Date().toISOString()),
-          wasStreaming: Boolean(input?.wasStreaming),
-          stashedAt: new Date().toISOString()
-        })
-        return { ok: true }
-      }
-    )
-    ipcMain.handle('sticky-appwatch:clear', async (event, chatId: string) => {
-      const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
-      assertRendererChatScope(event, canonicalChatId)
-      await stickyAppWatchStoreController.clear(canonicalChatId)
-      return { ok: true }
+    // Screen Watch / App Drive window attachment plus sticky-AppWatch resume
+    // metadata. Channels, argument validation, and registration order are
+    // unchanged; see src/main/ipc/windowAttachmentHandlers.ts.
+    registerWindowAttachmentHandlers({
+      assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
+      getNativeCapabilities: () => getNativeCapabilitySnapshot(),
+      getNativeWindowCoordinator: () => nativeWindowCoordinatorRef,
+      getBridgeDaemon: () => bridgeDaemonRef,
+      stickyAppWatchStore: stickyAppWatchStoreController
     })
 
     registerAgentQuestionHandlers({
