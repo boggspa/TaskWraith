@@ -48,7 +48,55 @@ describe('sub-thread long-lived worker main-process integration', () => {
     expectContains(drain, 'resolveSubThreadWorkerPermissions(')
     expectContains(drain, "presetId: 'read_only'")
     expectContains(drain, 'runCoordinatorRef.dispatch(')
+    expectContains(drain, 'ensembleDelegatedRunAdmission.start({')
+    expectContains(drain, 'persistedParentRun:')
     expectContains(drain, 'sessionTrust: false')
+  })
+
+  it('shares bounded host admission across every Ensemble-originated child launch', () => {
+    const delegation = sourceBetween(
+      "} else if (toolName === 'delegate_to_subthread') {",
+      "} else if (toolName === 'ultra_task') {"
+    )
+    const wave = sourceBetween(
+      "} else if (toolName === 'delegate_wave') {",
+      'const finalRichResult = richResult as McpToolExecutionResult | null'
+    )
+    const drain = sourceBetween(
+      'async function maybeDrainSubThreadWorkerQueue(',
+      'function recoverSubThreadWorkerQueues()'
+    )
+
+    expectContains(delegation, 'resolveEnsembleDelegatedRunOrigin({')
+    expectContains(delegation, 'resolveHostAdmissionRunOrigin(')
+    expectContains(delegation, 'parentIsEnsemble && !ensembleDelegationOrigin')
+    expectContains(delegation, 'ensembleDelegatedRunAdmission.start({')
+    expectContains(delegation, 'delegatedPostureStillCurrent()')
+    expectContains(wave, 'prepareSpawn: () => {')
+    expectContains(wave, 'parentWaveIsEnsemble && !ensembleWaveOrigin')
+    expectContains(wave, 'ensembleDelegatedRunAdmission.start({')
+    expectContains(wave, 'delegatedPostureStillCurrent()')
+    expectContains(drain, 'ensembleDelegatedRunAdmission.start({')
+    expectContains(drain, 'delegatedPostureStillCurrent()')
+    expectContains(indexSource, 'hostAdmissionRuntime: ensembleHostAdmissionRuntime')
+    expectContains(indexSource, 'ensembleDelegatedRunAdmission.cancelBeforeDispatch(')
+    expectContains(indexSource, 'ensembleDelegatedRunAdmission.list()')
+    expectContains(indexSource, 'containBackgroundSubThreadDispatchRejection(')
+    expectContains(indexSource, 'targetChats.has(entry.parentChatId)')
+    expectContains(indexSource, 'chatIds.has(entry.parentChatId)')
+    expectContains(indexSource, 'confirmDispatchingTransportGone(')
+  })
+
+  it('routes child-only Ensemble awaits by main-owned run lookup when context identity is absent', () => {
+    const awaitBranch = sourceBetween(
+      "} else if (toolName === 'ensemble_await') {",
+      "} else if (toolName === 'ensemble_lane_result') {"
+    )
+
+    expectContains(awaitBranch, 'resolveHostAdmissionRunOrigin(')
+    expectContains(awaitBranch, 'ensembleAwaitOrigin ||')
+    expectContains(awaitBranch, "ensembleAwaitParentChat?.chatKind === 'ensemble'")
+    expectContains(awaitBranch, 'ensembleParent: Boolean(')
   })
 
   it('fails closed for workers queued by a scheduled parent without waking that parent', () => {
@@ -76,9 +124,7 @@ describe('sub-thread long-lived worker main-process integration', () => {
       "} else if (toolName === 'delegate_to_subthread') {",
       'const finalRichResult = richResult as McpToolExecutionResult | null'
     )
-    const guard = delegation.indexOf(
-      'wasScheduledOccurrenceRunIdObserved(context.appRunId)'
-    )
+    const guard = delegation.indexOf('wasScheduledOccurrenceRunIdObserved(context.appRunId)')
 
     expect(guard).toBeGreaterThanOrEqual(0)
     expect(guard).toBeLessThan(delegation.indexOf('resolveSubThreadRecall('))

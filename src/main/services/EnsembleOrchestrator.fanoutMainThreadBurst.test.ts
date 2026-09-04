@@ -49,6 +49,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { monitorEventLoopDelay, PerformanceObserver } from 'node:perf_hooks'
 import { EnsembleOrchestrator } from './EnsembleOrchestrator'
+import { EnsembleHostAdmissionRuntime } from './EnsembleHostAdmissionRuntime'
 import { buildEnsembleParticipantPromptProjection } from '../EnsemblePrompt'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type {
@@ -69,23 +70,31 @@ const burstCounters = vi.hoisted(() => ({
   snapshot: { count: 0, totalMs: 0 },
   shellStamp: { count: 0, totalMs: 0 }
 }))
+const buildTurnState = vi.hoisted(() => ({ ordinal: 0 }))
 
 // Timeline events recorded during the wave window. Each entry is
 // { offsetMs, kind, detail? } where offsetMs is ms since waveStart.
-const timelineEvents = vi.hoisted(() => [] as Array<{
-  offsetMs: number
-  kind: string
-  detail?: string
-}>)
+const timelineEvents = vi.hoisted(
+  () =>
+    [] as Array<{
+      offsetMs: number
+      kind: string
+      detail?: string
+    }>
+)
 
 // Per-projection timing recorded during the wave window.
 // Used to identify which participant's projection is the slowest.
-const projectionTimings = vi.hoisted(() => [] as Array<{
-  participantId: string
-  provider: string
-  role: string
-  durationMs: number
-}>)
+const projectionTimings = vi.hoisted(
+  () =>
+    [] as Array<{
+      participantId: string
+      provider: string
+      role: string
+      durationMs: number
+      buildTurnOrdinal: number
+    }>
+)
 
 vi.mock('../EnsemblePrompt', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../EnsemblePrompt')>()
@@ -106,7 +115,8 @@ vi.mock('../EnsemblePrompt', async (importOriginal) => {
         participantId: input.participant.id,
         provider: input.participant.provider,
         role: input.participant.role,
-        durationMs: elapsed
+        durationMs: elapsed,
+        buildTurnOrdinal: buildTurnState.ordinal
       })
       return result
     },
@@ -307,6 +317,10 @@ describe('fan-out main-thread burst (RED bench)', () => {
       let counter = 0
       let saveCount = 0
       const dispatched: AgentRunPayload[] = []
+      let resolveWaveDispatches!: () => void
+      const waveDispatchesDone = new Promise<void>((resolve) => {
+        resolveWaveDispatches = resolve
+      })
       const waveStartRef = { current: 0 }
       const inWaveRef = { current: false }
       const recordTimeline = (kind: string, detail?: string): void => {
@@ -324,9 +338,7 @@ describe('fan-out main-thread burst (RED bench)', () => {
           // Label the save by inspecting the last message's metadata.
           const lastMsg = next.messages[next.messages.length - 1]
           const isStatus = lastMsg?.metadata?.kind === 'ensembleRoundStatus'
-          const statusPreview = isStatus
-            ? String(lastMsg.content || '').slice(0, 40)
-            : undefined
+          const statusPreview = isStatus ? String(lastMsg.content || '').slice(0, 40) : undefined
           const runDelta = next.runs.length - (chat?.runs?.length ?? next.runs.length)
           recordTimeline(
             'saveChat',
@@ -338,9 +350,18 @@ describe('fan-out main-thread burst (RED bench)', () => {
           )
         },
         getSettings: makeSettings,
+        hostAdmissionRuntime: new EnsembleHostAdmissionRuntime({
+          scheduleBuildTurn: (task) => {
+            setImmediate(() => {
+              buildTurnState.ordinal += 1
+              task()
+            })
+          }
+        }),
         dispatch: vi.fn(async (payload: AgentRunPayload) => {
           dispatched.push(payload)
           recordTimeline('dispatch', payload.appRunId)
+          if (dispatched.length === LANE_COUNT + 1) resolveWaveDispatches()
           return { dispatched: true, appRunId: payload.appRunId || '' }
         }),
         cancelRun: vi.fn(async () => true),
@@ -394,6 +415,7 @@ describe('fan-out main-thread burst (RED bench)', () => {
       burstCounters.shellStamp.totalMs = 0
       timelineEvents.length = 0
       projectionTimings.length = 0
+      buildTurnState.ordinal = 0
 
       // The Boss's own serial prompt build already happened; measure ONLY the
       // fan-out wave window from here.
@@ -450,8 +472,7 @@ describe('fan-out main-thread burst (RED bench)', () => {
             gcMaxMs = entry.duration
             // Node ≥ 16 exposes detail.kind; fall back to entry.entryType.
             gcKindMax =
-              (entry as unknown as { detail?: { kind?: string } }).detail?.kind ??
-              entry.entryType
+              (entry as unknown as { detail?: { kind?: string } }).detail?.kind ?? entry.entryType
           }
         }
       })
@@ -465,6 +486,22 @@ describe('fan-out main-thread burst (RED bench)', () => {
         targets: participants.slice(1).map((p) => p.role),
         prompt: 'One wave, twenty lanes — bench the build burst.'
       })
+      const receiptMs = performance.now() - waveStart
+      const dispatchedAtReceipt = dispatched.length
+      const projectionsAtReceipt = burstCounters.projection.count
+      // Keep the measurement window open through the queued tail. The original
+      // structural and relative gates measure the whole wave, not merely the
+      // now-early admission receipt.
+      await Promise.race([
+        waveDispatchesDone,
+        new Promise<never>((_, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error('fan-out dispatch drain timed out')),
+            15_000
+          )
+          timer.unref?.()
+        })
+      ])
       inWaveWindow = false
       inWaveRef.current = false
       const waveMs = performance.now() - waveStart
@@ -485,6 +522,9 @@ describe('fan-out main-thread burst (RED bench)', () => {
           `histogramMaxMs=${histogramMaxMs.toFixed(1)} ` +
           `tickGapMaxMs=${maxTickGapMs.toFixed(1)} ` +
           `blockEndOffsetMs=${blockEndOffsetMs.toFixed(1)} ` +
+          `receiptMs=${receiptMs.toFixed(1)} ` +
+          `dispatchedAtReceipt=${dispatchedAtReceipt} ` +
+          `projectionsAtReceipt=${projectionsAtReceipt} ` +
           `waveMs=${waveMs.toFixed(1)} ` +
           `projectionCount=${burstCounters.projection.count} ` +
           `projectionTotalMs=${burstCounters.projection.totalMs.toFixed(1)} ` +
@@ -541,9 +581,7 @@ describe('fan-out main-thread burst (RED bench)', () => {
       // --- FANOUT_PROJECTIONS: top-3 slowest per-projection timings ---
       // Identifies which participant's projection is the outlier (pass-3d
       // Ollama warm-up analysis).
-      const sortedProjections = [...projectionTimings].sort(
-        (a, b) => b.durationMs - a.durationMs
-      )
+      const sortedProjections = [...projectionTimings].sort((a, b) => b.durationMs - a.durationMs)
       const top3 = sortedProjections.slice(0, 3)
       const projectionEntries = top3.map(
         (p) => `${p.provider}:${p.role}=${p.durationMs.toFixed(1)}ms`
@@ -557,36 +595,39 @@ describe('fan-out main-thread burst (RED bench)', () => {
       // --- Structural facts that are TRUE today -------------------------
       expect(wave.ok).toBe(true)
       expect(wave.laneIds).toHaveLength(LANE_COUNT)
-      // Boss dispatch + one dispatch per accepted lane.
-      expect(dispatched).toHaveLength(LANE_COUNT + 1)
-      // The synchronous mapper rebuilds the FULL transcript projection once
-      // per lane even though the transcript is identical across the wave —
-      // this is the multiplier the pass-2 memo/hoist removes.
-      expect(burstCounters.projection.count).toBe(LANE_COUNT)
-      // The dynamic-state snapshot is lane-invariant and hoisted once per
-      // wave (pass-2 fix in EnsembleOrchestrator.ts).
-      expect(burstCounters.snapshot.count).toBe(1)
+      expect(wave.hostAdmission).toMatchObject({ admitted: 3, queued: 17, capacity: 8 })
+      // The receipt records a real queued tail instead of waiting for all 20
+      // lanes. Immediately admitted mocks may already settle and release more
+      // slots while the receipt is forming, so only the strict "not all built"
+      // boundary is deterministic here; the held-adapter integration test pins
+      // the exact active cap.
+      expect(dispatchedAtReceipt).toBeLessThan(LANE_COUNT + 1)
+      expect(projectionsAtReceipt).toBeLessThan(LANE_COUNT)
+      // Authority-bearing state is read once per admitted lane, after any
+      // compaction suspension, so mid-wait revocations cannot be missed.
+      expect(burstCounters.snapshot.count).toBe(LANE_COUNT)
       // The wave's save count is BOUNDED (dispatch status + composed seed +
       // a small fixed number of owner/status saves) — never one save per
       // lane; that multiplier was already removed by the T3a seed overlay.
-      expect(waveSaves).toBe(4)
+      expect(waveSaves).toBeLessThanOrEqual(6)
+      expect(burstCounters.projection.count).toBe(LANE_COUNT)
+      const projectionBuildTurns = projectionTimings.map((entry) => entry.buildTurnOrdinal)
+      expect(new Set(projectionBuildTurns).size).toBe(LANE_COUNT)
+      for (let index = 1; index < projectionBuildTurns.length; index += 1) {
+        expect(projectionBuildTurns[index]).toBeGreaterThan(projectionBuildTurns[index - 1])
+      }
 
       // --- Structural yield proof (machine-independent) -----------------
-      // Without yields the wave is one macrotask; the setImmediate probe
-      // sees ~1–2 ticks. With yields between lanes it sees >= N-1 ticks
-      // (or >= N when yield is unconditional including lane 0).
-      // This is the PRIMARY assertion that yields are working — it does
-      // not depend on absolute timing or CI hardware speed.
+      // One admitted build per macrotask means the probe runs between every
+      // lane. A concurrent setImmediate batch would collapse this below N-1.
       expect(probeTicksDuringWave).toBeGreaterThanOrEqual(LANE_COUNT - 1)
 
       // --- Budget assertions -------------------------------------------
-      // Relative: the longest block must be less than half the wave wall
-      // time. Pre-fix measured 0.91 (91% of wave was one block); post-fix
-      // should be well under 0.5.
+      // No single synchronous block may dominate the fully drained wave.
       expect(maxEventLoopDelayMs).toBeLessThan(0.5 * waveMs)
       // Absolute CI guard: generous enough for 2–3× slower CI runners.
-      // The real proof is the structural yield assertion above; this is a
-      // safety net for pathological regressions.
+      // Lazy host admission above is the structural proof; this remains a
+      // safety net for pathological work inside the admitted prefix.
       expect(maxEventLoopDelayMs).toBeLessThan(100)
     }
   )

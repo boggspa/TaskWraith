@@ -49,10 +49,24 @@ import type { SubThreadMailbox, SubThreadMailboxOutcome } from '../SubThreadMail
 import type { TrustedSessionScope } from '../TrustedSessionGrants'
 import type { WorkspaceChurnSample } from '../WorkspaceChurn'
 import type { CursorTransportLiveness } from './EnsembleCursorCompletionWatchdog'
+import type {
+  EnsembleHostAdmissionScheduler,
+  EnsembleHostAdmissionSchedulerOptions,
+  EnsembleHostAdmissionSnapshot
+} from './EnsembleHostAdmissionScheduler'
+import type { EnsembleHostAdmissionRuntime } from './EnsembleHostAdmissionRuntime'
 import type { HostSeatCompactionProvider } from './EnsembleSeatRuntimePosture'
 import type { ProjectReferenceExtractLoader } from './ProjectReferenceContextService'
 
 export type EnsembleRunMode = 'normal' | 'queue' | 'steer'
+
+export interface EnsembleHostAdmissionRunOrigin {
+  readonly parentRunId: string
+  readonly parentChatId: string
+  readonly roundId: string
+  readonly participantId: string
+  readonly laneId?: string
+}
 
 /**
  * Rewind-from-message ("Edit & resend from here") restart hints for a
@@ -204,6 +218,16 @@ export interface EnsembleOrchestratorDeps {
   ) => void
   getSettings: () => AppSettings
   /**
+   * Process-wide Ensemble admission. Production constructs one scheduler for
+   * the singleton orchestrator; tests may inject either an instance or bounds.
+   */
+  hostAdmissionScheduler?: EnsembleHostAdmissionScheduler
+  hostAdmissionSchedulerOptions?: EnsembleHostAdmissionSchedulerOptions
+  /** Shared production runtime; injected so delegated Ensemble children use the same cap. */
+  hostAdmissionRuntime?: EnsembleHostAdmissionRuntime
+  /** In-memory metrics only; callers decide whether and how to project them. */
+  onHostAdmissionSnapshot?: (snapshot: EnsembleHostAdmissionSnapshot) => void
+  /**
    * Resolved user instruction layers (global custom-instructions document +
    * workspace TASKWRAITH.md) for participant briefings. The digest also
    * feeds `computeEnsemblePromptShellStamp`, so an instructions edit
@@ -280,6 +304,14 @@ export interface EnsembleOrchestratorDeps {
   shouldPersistProviderSessionForRun?: (runId: string) => boolean
   releaseProviderSessionPersistenceDecision?: (runId: string) => void
   cancelRun: (provider: ProviderId, runId?: string) => Promise<boolean>
+  /**
+   * Authoritative RunManager proof that an exact provider transport remains
+   * active/attached. Used only after exact cancellation succeeds; absence of
+   * this seam or an unknown/live result retains the host lease.
+   */
+  hasLiveRunTransport?: (runId: string) => boolean
+  /** Test/host bound for a cancellation facade that never settles. */
+  exactCancellationProofTimeoutMs?: number
   /** Test override for the superseded-transport reap grace window. */
   supersededTransportReapGraceMs?: number
   /**
@@ -498,10 +530,17 @@ export interface EnsembleFanoutAllInput {
 export interface EnsembleFanoutAllResult {
   ok: boolean
   tool: 'ensemble_fanout_all'
-  status?: 'dispatched'
+  status?: 'dispatched' | 'queued'
   message: string
   laneIds?: string[]
   participantIds?: string[]
+  hostAdmission?: {
+    admitted: number
+    queued: number
+    active: number
+    capacity: number
+    waiting: number
+  }
   error?:
     | 'no_active_run'
     | 'not_ensemble'
@@ -512,6 +551,7 @@ export interface EnsembleFanoutAllResult {
     | 'not_authorized'
     | 'explicit_targets_required'
     | 'budget_exhausted'
+    | 'host_capacity'
     | 'too_many_concurrent_fanouts'
     | 'dispatch_failed'
 }
@@ -521,11 +561,18 @@ export interface EnsembleFanoutResult {
   tool: 'ensemble_fanout'
   mode: EnsembleFanoutMode
   targetStage?: EnsembleFanoutTargetStage
-  status?: 'dispatched' | 'completed'
+  status?: 'dispatched' | 'queued' | 'completed'
   message: string
   laneIds?: string[]
   participantIds?: string[]
   laneIntents?: Array<{ laneId: string; participantId: string; intent: 'read' | 'write' }>
+  hostAdmission?: {
+    admitted: number
+    queued: number
+    active: number
+    capacity: number
+    waiting: number
+  }
   error?:
     | 'no_active_run'
     | 'not_ensemble'
@@ -541,6 +588,7 @@ export interface EnsembleFanoutResult {
     | 'invalid_write_scope'
     | 'write_lanes_disabled'
     | 'budget_exhausted'
+    | 'host_capacity'
     | 'too_many_concurrent_fanouts'
     | 'dispatch_failed'
 }
@@ -661,6 +709,7 @@ export interface EnsembleAwaitResult {
     | 'invalid_wave'
     | 'invalid_execution'
     | 'no_targets'
+    | 'host_capacity'
   lanes?: EnsembleAwaitLaneStatus[]
   subThreads?: EnsembleAwaitSubThreadStatus[]
   waves?: EnsembleAwaitWaveStatus[]

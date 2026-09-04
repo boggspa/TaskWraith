@@ -811,6 +811,12 @@ import {
   EnsembleOrchestrator,
   type ParticipantProbeResult
 } from './services/EnsembleOrchestrator'
+import { EnsembleHostAdmissionRuntime } from './services/EnsembleHostAdmissionRuntime'
+import {
+  EnsembleDelegatedRunAdmission,
+  resolveEnsembleDelegatedRunOrigin,
+  type EnsembleDelegatedRunAdmissionSnapshot
+} from './services/EnsembleDelegatedRunAdmission'
 import { cursorTransportLivenessFromRunSession } from './services/EnsembleCursorCompletionWatchdog'
 import {
   ensembleDmTargetResolutionError,
@@ -4277,6 +4283,10 @@ function emitAutoFailoverNotice(notice: AutoFailoverNotice): void {
     console.warn(`[auto-failover] ${notice.kind} for ${notice.failedProvider}`)
   }
 }
+const ensembleHostAdmissionRuntime = new EnsembleHostAdmissionRuntime()
+const ensembleDelegatedRunAdmission = new EnsembleDelegatedRunAdmission(
+  ensembleHostAdmissionRuntime
+)
 let ensembleOrchestratorRef: EnsembleOrchestrator | null = null
 let wakeupTimerServiceRef: WakeupTimerService | null = null
 let blackboardExpiryServiceRef: BlackboardExpiryService | null = null
@@ -9105,6 +9115,39 @@ function hasActiveStreamingTaskWraithRun(): boolean {
   )
 }
 
+function hasEnsembleHostAdmissionWork(): boolean {
+  const occupancy = ensembleHostAdmissionRuntime.snapshot().occupancy
+  return occupancy.active > 0 || occupancy.queued > 0
+}
+
+function hasLiveProviderTransportForHostAdmission(runId: string): boolean {
+  const session = runManager.get(runId)
+  return Boolean(
+    (session && isActiveRunSessionStatus(session.status)) ||
+    providerAdapterRunsInFlight.get(runId) ||
+    providerTransportOperations.get(runId)
+  )
+}
+
+function effectiveRunPermissionsForLiveParent(
+  runId: string,
+  fallback: EffectiveRunPermissions | undefined
+): EffectiveRunPermissions | undefined {
+  const session = runManager.get(runId)
+  if (!session || !isActiveRunSessionStatus(session.status)) return fallback
+  return (
+    (session.state as { effectivePermissions?: EffectiveRunPermissions } | undefined)
+      ?.effectivePermissions ?? fallback
+  )
+}
+
+function sameEffectiveRunPermissions(
+  left: EffectiveRunPermissions,
+  right: EffectiveRunPermissions | undefined
+): boolean {
+  return Boolean(right && JSON.stringify(left) === JSON.stringify(right))
+}
+
 const appShellStatsService = new AppShellStatsService({
   getAppMetrics: () => app.getAppMetrics(),
   getTotalMemoryBytes: () => os.totalmem(),
@@ -12166,6 +12209,18 @@ function finalizeBackgroundSubThreadTranscript(
   }
 }
 
+function containBackgroundSubThreadDispatchRejection(runId: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error)
+  try {
+    finalizeBackgroundSubThreadTranscript(runId, 'failed', message)
+  } catch (finalizeError) {
+    console.error(
+      `[SubThread] failed to contain background dispatch rejection for runId=${runId}:`,
+      finalizeError
+    )
+  }
+}
+
 /**
  * A parent can terminalize between seeding a child transcript and the
  * fire-and-forget RunCoordinator dispatch. Do not start that zombie child;
@@ -12365,7 +12420,7 @@ async function maybeDrainSubThreadWorkerQueue(subThreadId: string): Promise<void
       let providerPrompts: { prompt: string; resumeFallbackPrompt?: string }
       try {
         providerPrompts = await composeDelegatedProviderPrompts({
-          provider: chat.provider,
+          provider: event.targetProvider,
           subThread: chat,
           prompt: event.prompt,
           approvalMode,
@@ -12428,6 +12483,49 @@ async function maybeDrainSubThreadWorkerQueue(subThreadId: string): Promise<void
         effectivePermissions: workerPermissions.effectivePermissions,
         providerSessionId: resumeSessionId
       }
+      const parentChat = AppStore.getChat(event.parentChatId)
+      if (!parentChat) {
+        finalizeBackgroundSubThreadTranscript(
+          subThreadRunId,
+          'failed',
+          'Queued worker dispatch lost its parent chat; refusing an unmetered fallback.'
+        )
+        redrain = true
+        return
+      }
+      const persistedEnsembleDelegationOrigin = resolveEnsembleDelegatedRunOrigin({
+        parentRunId: event.parentRunId,
+        parentChatId: event.parentChatId,
+        persistedParentRun: event.parentRunId
+          ? parentChat?.runs.find((run) => run.runId === event.parentRunId)
+          : undefined
+      })
+      const parentSession = event.parentRunId ? runManager.get(event.parentRunId) : undefined
+      const parentRunActive = Boolean(
+        parentSession &&
+        parentSession.appChatId === event.parentChatId &&
+        isActiveRunSessionStatus(parentSession.status)
+      )
+      const activeEnsembleDelegationOrigin = event.parentRunId
+        ? (ensembleOrchestratorRef?.resolveHostAdmissionRunOrigin(
+            event.parentRunId,
+            event.parentChatId
+          ) ?? undefined)
+        : undefined
+      const ensembleDelegationOrigin =
+        activeEnsembleDelegationOrigin ||
+        (!parentRunActive ? persistedEnsembleDelegationOrigin : undefined)
+      const parentIsEnsemble =
+        parentChat?.chatKind === 'ensemble' || Boolean(parentChat?.ensemble)
+      if (parentIsEnsemble && !ensembleDelegationOrigin) {
+        finalizeBackgroundSubThreadTranscript(
+          subThreadRunId,
+          'failed',
+          'Queued worker dispatch lost its exact Ensemble host-admission origin; retry from a live foreground seat.'
+        )
+        redrain = true
+        return
+      }
       try {
         runPayload.effectivePermissionsSignature = signRunPosture(
           runPayload.approvalMode,
@@ -12443,6 +12541,26 @@ async function maybeDrainSubThreadWorkerQueue(subThreadId: string): Promise<void
         redrain = true
         return
       }
+      const delegatedPostureStillCurrent = (): boolean => {
+        const currentReadOnly = resolveEffectiveRunPermissions({
+          provider: event.targetProvider,
+          workspacePath: chat.workspacePath,
+          model: delegationSettings.requestedModel,
+          settings: AppStore.getSettings(),
+          presetId: 'read_only'
+        })
+        const current = resolveSubThreadWorkerPermissions({
+          parentPermissions: event.effectivePermissions,
+          readOnlyPermissions: currentReadOnly
+        })
+        return (
+          current.ok &&
+          sameEffectiveRunPermissions(
+            workerPermissions.effectivePermissions,
+            current.effectivePermissions
+          )
+        )
+      }
       const sender = mainWindow?.webContents
       if (!sender || sender.isDestroyed() || !runCoordinatorRef) {
         const reason = !runCoordinatorRef
@@ -12452,8 +12570,56 @@ async function maybeDrainSubThreadWorkerQueue(subThreadId: string): Promise<void
         redrain = true
         return
       }
+      let completeAdmissionConsumer: (() => void) | undefined
       try {
-        const result = await runCoordinatorRef.dispatch(runPayload, { sender })
+        const admission = ensembleDelegationOrigin
+          ? ensembleDelegatedRunAdmission.start({
+              origin: ensembleDelegationOrigin,
+              childRunId: subThreadRunId,
+              childChatId: chat.appChatId,
+              provider: chat.provider,
+              parentRunActive,
+              mayStart: () =>
+                Boolean(AppStore.getChat(chat.appChatId)) &&
+                !historyClearAdmissionBlocked(
+                  ensembleDelegationOrigin.parentRunId,
+                  parentChat.workspacePath,
+                  ensembleDelegationOrigin.parentChatId
+                ) &&
+                !historyClearAdmissionBlocked(
+                  subThreadRunId,
+                  chat.workspacePath,
+                  chat.appChatId
+                ) &&
+                delegatedPostureStillCurrent() &&
+                backgroundSubThreadDispatchMayStart(subThreadRunId),
+              dispatch: () => runCoordinatorRef!.dispatch(runPayload, { sender })
+            })
+          : null
+        if (admission && !admission.ok) {
+          const status =
+            admission.code === 'shutting_down' ||
+            admission.code === 'cancelled_before_reservation'
+              ? 'cancelled'
+              : 'failed'
+          finalizeBackgroundSubThreadTranscript(subThreadRunId, status, admission.message)
+          redrain = true
+          return
+        }
+        if (admission?.ok) completeAdmissionConsumer = admission.completeConsumer
+        const admittedCompletion = admission?.ok ? await admission.completion : null
+        if (admittedCompletion?.kind === 'cancelled') {
+          finalizeBackgroundSubThreadTranscript(
+            subThreadRunId,
+            'cancelled',
+            admittedCompletion.reason
+          )
+          redrain = true
+          return
+        }
+        const result = admittedCompletion?.result
+          ? admittedCompletion.result
+          : await runCoordinatorRef.dispatch(runPayload, { sender })
         if (!result.dispatched) {
           finalizeBackgroundSubThreadTranscript(
             subThreadRunId,
@@ -12469,6 +12635,8 @@ async function maybeDrainSubThreadWorkerQueue(subThreadId: string): Promise<void
           error instanceof Error ? error.message : String(error)
         )
         redrain = true
+      } finally {
+        completeAdmissionConsumer?.()
       }
       return
     }
@@ -34620,12 +34788,104 @@ async function terminateExactProviderSession(
   return true
 }
 
+async function terminateAndJoinEnsembleDelegatedRun(
+  entry: EnsembleDelegatedRunAdmissionSnapshot,
+  reason: string
+): Promise<boolean> {
+  const sessionBefore = runManager.get(entry.runId)
+  const alreadyTerminal = Boolean(
+    sessionBefore && !isActiveRunSessionStatus(sessionBefore.status)
+  )
+  const cancelled = await cancelProviderRun(entry.provider, entry.runId)
+  const terminalClaimed = Boolean(runManager.getClaimedTerminalStatus(entry.runId))
+  const settledWithoutTransport =
+    entry.phase === 'settled' &&
+    !sessionBefore &&
+    providerTransportOperations.get(entry.runId) === undefined
+  const cancellationAccepted =
+    cancelled || alreadyTerminal || terminalClaimed || settledWithoutTransport
+  const operations = [
+    providerAdapterRunsInFlight.get(entry.runId),
+    providerTransportOperations.get(entry.runId)
+  ].filter((operation): operation is Promise<void> => Boolean(operation))
+  const operationSettlements = await Promise.all(
+    operations.map((operation) => waitForProviderOperationSettlement(operation, 10_000))
+  )
+  const transportSettled = operationSettlements.every(Boolean)
+  const transportGone = !hasLiveProviderTransportForHostAdmission(entry.runId)
+  if (cancellationAccepted && transportSettled && transportGone) {
+    ensembleDelegatedRunAdmission.confirmDispatchingTransportGone(entry.runId, reason)
+  }
+  const wrapperSettled = await waitForProviderOperationSettlement(
+    entry.settlement.then(() => undefined),
+    10_000
+  )
+  return cancellationAccepted && transportSettled && transportGone && wrapperSettled
+}
+
+async function reconcileEnsembleDelegatedRunAfterCancellation(
+  runId: string,
+  reason: string
+): Promise<void> {
+  const entry = ensembleDelegatedRunAdmission
+    .list()
+    .find((candidate) => candidate.runId === runId && candidate.phase === 'dispatching')
+  if (!entry) return
+  const operations = [
+    providerAdapterRunsInFlight.get(runId),
+    providerTransportOperations.get(runId)
+  ].filter((operation): operation is Promise<void> => Boolean(operation))
+  const settled = await Promise.all(
+    operations.map((operation) => waitForProviderOperationSettlement(operation, 10_000))
+  )
+  if (settled.some((value) => !value)) {
+    return
+  }
+  if (hasLiveProviderTransportForHostAdmission(runId)) return
+  ensembleDelegatedRunAdmission.confirmDispatchingTransportGone(runId, reason)
+}
+
+async function shutdownAndJoinEnsembleDelegatedRuns(): Promise<void> {
+  // Calling the async method begins its shutdown synchronously: it rejects new
+  // reservations and cancels every prelaunch entry before the snapshot below.
+  const prelaunchShutdown = ensembleDelegatedRunAdmission.shutdownBeforeDispatch()
+  const entries = ensembleDelegatedRunAdmission.list()
+  const results = await Promise.allSettled([
+    prelaunchShutdown,
+    ...entries.map(async (entry) => {
+      if (
+        !(await terminateAndJoinEnsembleDelegatedRun(
+          entry,
+          'App shutdown proved the delegated provider transport closed.'
+        ))
+      ) {
+        throw new Error(`Delegated provider run ${entry.runId} did not quiesce on shutdown.`)
+      }
+    })
+  ])
+  const failures = results.flatMap((result) =>
+    result.status === 'rejected' ? [result.reason] : []
+  )
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'Delegated Ensemble child shutdown failed.')
+  }
+}
+
 /** Abort the exact provider transport and join the adapter's close/cleanup
  * promise before a destructive-history receipt can be written. */
 async function terminateProviderRunForHistory(
   provider: ProviderId,
   runId: string
 ): Promise<boolean> {
+  const delegatedAdmission = ensembleDelegatedRunAdmission
+    .list()
+    .find((entry) => entry.runId === runId && entry.provider === provider)
+  if (delegatedAdmission) {
+    return terminateAndJoinEnsembleDelegatedRun(
+      delegatedAdmission,
+      'History deletion proved the delegated provider transport closed.'
+    )
+  }
   const session = runManager.get(runId)
   const adapterOperation = providerAdapterRunsInFlight.get(runId)
   const transportOperation = providerTransportOperations.get(runId)
@@ -34797,6 +35057,20 @@ async function cancelProviderRun(
   provider: ProviderId = 'gemini',
   runId?: string
 ): Promise<boolean> {
+  const backgroundState = runId ? backgroundSubThreadTranscripts.get(runId) : undefined
+  const prelaunchReason =
+    backgroundState?.cancellationRequested?.reason ||
+    'Sub-thread cancellation requested before provider dispatch.'
+  if (
+    runId &&
+    ensembleDelegatedRunAdmission.cancelBeforeDispatch(runId, provider, prelaunchReason)
+  ) {
+    if (backgroundState && !backgroundState.finalized) {
+      backgroundState.cancellationRequested ??= { reason: prelaunchReason, at: Date.now() }
+      backgroundSubThreadDispatchMayStart(runId)
+    }
+    return true
+  }
   const queuedJob = runId ? AppStore.getRunQueueJob(runId) : null
   if (
     queuedJob &&
@@ -34868,7 +35142,19 @@ async function cancelProviderRun(
     if (!runManager.claimTerminalStatus(session.runId, 'cancelled')) return false
     approvalService?.cancelForRun(session.runId, 'run-cancel-requested')
     cancelPendingAgentQuestionsForRun(session.runId, 'run-cancel-requested')
-    return terminateExactProviderSession(provider, session.runId, 'cancelled')
+    const cancelled = await terminateExactProviderSession(provider, session.runId, 'cancelled')
+    if (cancelled) {
+      void reconcileEnsembleDelegatedRunAfterCancellation(
+        session.runId,
+        'Exact cancellation proved the delegated provider transport closed.'
+      ).catch((error) => {
+        console.warn(
+          `[ensemble-admission] delegated cancellation reconciliation failed for runId=${session.runId}:`,
+          error
+        )
+      })
+    }
+    return cancelled
   }
 
   // Provider-global process/controller handles cannot prove chat or occurrence
@@ -41524,10 +41810,25 @@ async function executeGeminiMcpTool(
       text = mcpEnsembleJson(result)
     } else if (toolName === 'ensemble_await') {
       markDispatchHandled('ensemble-control')
+      const ensembleAwaitOrigin = context.appRunId
+        ? ensembleOrchestratorRef?.resolveHostAdmissionRunOrigin(
+            context.appRunId,
+            context.appChatId
+          )
+        : null
+      const ensembleAwaitParentChat = context.appChatId
+        ? AppStore.getChat(context.appChatId)
+        : null
       const result = await dispatchEnsembleAwaitTool(
         {
           runId: context.appRunId,
           parentChatId: context.appChatId,
+          ensembleParent: Boolean(
+            ensembleAwaitOrigin ||
+              context.ensembleRun ||
+              ensembleAwaitParentChat?.chatKind === 'ensemble' ||
+              ensembleAwaitParentChat?.ensemble
+          ),
           args
         },
         {
@@ -43151,6 +43452,24 @@ async function executeGeminiMcpTool(
         throw new Error('Sub-thread delegation was cancelled because the parent chat changed.')
       }
       assertParentChatRelationshipCreationAllowed(parentChatId)
+      const contextEnsembleDelegationOrigin = resolveEnsembleDelegatedRunOrigin({
+        parentRunId: context.appRunId,
+        parentChatId,
+        activeIdentity: context.ensembleRun
+      })
+      const parentIsEnsemble =
+        parentAfterApproval.chatKind === 'ensemble' || Boolean(parentAfterApproval.ensemble)
+      const ensembleDelegationOrigin = parentIsEnsemble
+        ? (ensembleOrchestratorRef?.resolveHostAdmissionRunOrigin(
+            context.appRunId || '',
+            parentChatId
+          ) ?? undefined)
+        : contextEnsembleDelegationOrigin
+      if (parentIsEnsemble && !ensembleDelegationOrigin) {
+        throw new Error(
+          'delegate_to_subthread: the active Ensemble parent lost its exact host-admission origin; no child was created. Finish this turn and retry from a live foreground seat.'
+        )
+      }
       // Phase J2: in recall mode we DON'T create a new chat record —
       // we reuse the resolved existing sub-thread. In spawn mode the
       // existing AppStore.createSubThread path runs as before.
@@ -43407,6 +43726,29 @@ async function executeGeminiMcpTool(
         subThreadEffectivePermissions,
         runPostureContextFromPayload(runPayload)
       )
+      const delegatedPostureStillCurrent = (): boolean => {
+        const currentReadOnly = resolveEffectiveRunPermissions({
+          provider: providerArg,
+          workspacePath: subThread.workspacePath,
+          model: delegationSettings.requestedModel,
+          settings: AppStore.getSettings(),
+          presetId: 'read_only'
+        })
+        const current = resolveSubThreadWorkerPermissions({
+          parentPermissions: effectiveRunPermissionsForLiveParent(
+            context.appRunId || '',
+            context.effectivePermissions
+          ),
+          readOnlyPermissions: currentReadOnly
+        })
+        return (
+          current.ok &&
+          sameEffectiveRunPermissions(
+            subThreadEffectivePermissions,
+            current.effectivePermissions
+          )
+        )
+      }
       // RunCoordinator.dispatch now accepts the structural
       // `RunDispatchEvent` shape (just `{ sender }`); no cast required.
       // The previous `as IpcMainInvokeEvent` cast silently widened the
@@ -43414,7 +43756,59 @@ async function executeGeminiMcpTool(
       // `runCoordinatorRef`) invisible — surfaced now via
       // `surfaceSubThreadDispatchFailure`.
       const dispatchEvent: { sender: Electron.WebContents } = { sender: context.sender }
-      void (async () => {
+      const ensembleChildAdmission =
+        ensembleDelegationOrigin && runCoordinatorRef
+          ? ensembleDelegatedRunAdmission.start({
+              origin: ensembleDelegationOrigin,
+              childRunId: subThreadRunId,
+              childChatId: subThread.appChatId,
+              provider: providerArg,
+              parentRunActive: Boolean(
+                isActiveRunSessionStatus(
+                  runManager.get(ensembleDelegationOrigin.parentRunId)?.status || 'cancelled'
+                )
+              ),
+              mayStart: () =>
+                Boolean(AppStore.getChat(subThread.appChatId)) &&
+                !historyClearAdmissionBlocked(
+                  ensembleDelegationOrigin.parentRunId,
+                  parentAfterApproval.workspacePath,
+                  ensembleDelegationOrigin.parentChatId
+                ) &&
+                !historyClearAdmissionBlocked(
+                  subThreadRunId,
+                  subThread.workspacePath,
+                  subThread.appChatId
+                ) &&
+                delegatedPostureStillCurrent() &&
+                backgroundSubThreadDispatchMayStart(subThreadRunId),
+              dispatch: () => runCoordinatorRef!.dispatch(runPayload, dispatchEvent)
+            })
+          : null
+      if (ensembleChildAdmission && !ensembleChildAdmission.ok) {
+        const status =
+          ensembleChildAdmission.code === 'shutting_down' ||
+          ensembleChildAdmission.code === 'cancelled_before_reservation'
+            ? 'cancelled'
+            : 'failed'
+        finalizeBackgroundSubThreadTranscript(
+          subThreadRunId,
+          status,
+          ensembleChildAdmission.message
+        )
+        if (status === 'failed') {
+          surfaceSubThreadDispatchFailure({
+            subThread,
+            parentChatId,
+            parentProvider,
+            parentRunId: context.appRunId,
+            parentSender: context.sender,
+            reason: ensembleChildAdmission.message
+          })
+        }
+        throw new Error(`delegate_to_subthread: ${ensembleChildAdmission.message}`)
+      }
+      const backgroundDispatchOperation = (async () => {
         if (!backgroundSubThreadDispatchMayStart(subThreadRunId)) return
         if (!runCoordinatorRef) {
           finalizeBackgroundSubThreadTranscript(
@@ -43433,7 +43827,20 @@ async function executeGeminiMcpTool(
           return
         }
         try {
-          const result = await runCoordinatorRef.dispatch(runPayload, dispatchEvent)
+          const admittedCompletion = ensembleChildAdmission?.ok
+            ? await ensembleChildAdmission.completion
+            : null
+          if (admittedCompletion?.kind === 'cancelled') {
+            finalizeBackgroundSubThreadTranscript(
+              subThreadRunId,
+              'cancelled',
+              admittedCompletion.reason
+            )
+            return
+          }
+          const result = admittedCompletion?.result
+            ? admittedCompletion.result
+            : await runCoordinatorRef.dispatch(runPayload, dispatchEvent)
           if (!result.dispatched) {
             finalizeBackgroundSubThreadTranscript(
               subThreadRunId,
@@ -43464,20 +43871,32 @@ async function executeGeminiMcpTool(
             reason: err instanceof Error ? err.message : String(err)
           })
         }
-      })()
+      })().catch((error) => containBackgroundSubThreadDispatchRejection(subThreadRunId, error))
+      if (ensembleChildAdmission?.ok) {
+        void backgroundDispatchOperation.then(
+          ensembleChildAdmission.completeConsumer,
+          ensembleChildAdmission.completeConsumer
+        )
+      }
       // seedAgentDrivenSubThreadTranscript persisted the selected model controls;
       // do not immediately overwrite its renderer projection with the stale
       // pre-seed createSubThread record.
       broadcastChatUpdated(AppStore.getChat(subThread.appChatId) ?? subThread)
       // Phase J2: tool_result text honestly describes spawn vs recall.
+      const queuedForHostCapacity =
+        ensembleChildAdmission?.ok && ensembleChildAdmission.initialState === 'queued'
       text = isRecall
         ? `Continued ${providerArg} sub-thread "${subThread.title}" (id=${subThread.appChatId}). ` +
-          `Sent your prompt as a follow-up turn with ${delegatedRunDescription}` +
+          (queuedForHostCapacity
+            ? `Queued your prompt for bounded host capacity with ${delegatedRunDescription}`
+            : `Sent your prompt as a follow-up turn with ${delegatedRunDescription}`) +
           (returnResult
             ? '; the next assistant message will return to this parent transcript as an untrusted sub-thread result on completion.'
             : '. Navigate to the sub-thread in the sidebar to follow progress.')
         : `Spawned ${providerArg} sub-thread "${subThread.title}" (id=${subThread.appChatId}). ` +
-          `Running in the background with ${delegatedRunDescription}` +
+          (queuedForHostCapacity
+            ? `Queued for bounded host capacity with ${delegatedRunDescription}`
+            : `Running in the background with ${delegatedRunDescription}`) +
           (returnResult
             ? '; its final result will return to this parent transcript as an untrusted sub-thread result on completion.'
             : '. Navigate to the sub-thread in the sidebar to follow progress.') +
@@ -43691,6 +44110,19 @@ async function executeGeminiMcpTool(
       // on each worker and the auto-claim below. Empty on a solo chat, where
       // there is no panel and a claim would coordinate nothing.
       const waveSpawnedBy = ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || ''
+      const contextEnsembleWaveOrigin = resolveEnsembleDelegatedRunOrigin({
+        parentRunId: context.appRunId,
+        parentChatId,
+        activeIdentity: context.ensembleRun
+      })
+      const parentWaveIsEnsemble =
+        parentChatForWave.chatKind === 'ensemble' || Boolean(parentChatForWave.ensemble)
+      const ensembleWaveOrigin = parentWaveIsEnsemble
+        ? (ensembleOrchestratorRef?.resolveHostAdmissionRunOrigin(
+            context.appRunId || '',
+            parentChatId
+          ) ?? undefined)
+        : contextEnsembleWaveOrigin
       const parentChatRelation = (parentChatForWave as { parentChatRelation?: unknown })
         .parentChatRelation
       if (
@@ -43807,6 +44239,13 @@ async function executeGeminiMcpTool(
             )
           }
           assertParentChatRelationshipCreationAllowed(parentChatId)
+        },
+        prepareSpawn: () => {
+          if (parentWaveIsEnsemble && !ensembleWaveOrigin) {
+            throw new Error(
+              'delegate_wave: the active Ensemble parent lost its exact host-admission origin; no child was created. Finish this turn and retry from a live foreground seat.'
+            )
+          }
         },
         resolveWorkerSettings: (worker) => {
           const delegationSettings = resolveSubThreadDelegationRunSettings({
@@ -43994,27 +44433,92 @@ async function executeGeminiMcpTool(
             subThreadEffectivePermissions,
             runPostureContextFromPayload(runPayload)
           )
-          const dispatchEvent: { sender: Electron.WebContents } = { sender: context.sender }
-          void (async () => {
-            if (!backgroundSubThreadDispatchMayStart(subThreadRunId)) return
-            if (!runCoordinatorRef) {
-              finalizeBackgroundSubThreadTranscript(
-                subThreadRunId,
-                'failed',
-                'RunCoordinator is not initialised yet — the app may still be starting up.'
+          const delegatedPostureStillCurrent = (): boolean => {
+            const currentReadOnly = resolveEffectiveRunPermissions({
+              provider: worker.provider,
+              workspacePath: subThread.workspacePath,
+              model: workerSettings.requestedModel,
+              settings: AppStore.getSettings(),
+              presetId: 'read_only'
+            })
+            const current = resolveSubThreadWorkerPermissions({
+              parentPermissions: effectiveRunPermissionsForLiveParent(
+                context.appRunId || '',
+                context.effectivePermissions
+              ),
+              readOnlyPermissions: currentReadOnly,
+              isolation
+            })
+            return (
+              current.ok &&
+              sameEffectiveRunPermissions(
+                subThreadEffectivePermissions,
+                current.effectivePermissions
               )
-              surfaceSubThreadDispatchFailure({
-                subThread,
-                parentChatId,
-                parentProvider,
-                parentRunId: context.appRunId,
-                parentSender: context.sender,
-                reason: 'RunCoordinator is not initialised yet — the app may still be starting up.'
+            )
+          }
+          const dispatchEvent: { sender: Electron.WebContents } = { sender: context.sender }
+          if (!runCoordinatorRef) {
+            const reason = 'RunCoordinator is not initialised yet — the app may still be starting up.'
+            finalizeBackgroundSubThreadTranscript(subThreadRunId, 'failed', reason)
+            await deleteChatErasureAware(subThread.appChatId).catch(() => false)
+            throw new Error(`delegate_wave: ${reason}`)
+          }
+          const childAdmission = ensembleWaveOrigin
+            ? ensembleDelegatedRunAdmission.start({
+                origin: ensembleWaveOrigin,
+                childRunId: subThreadRunId,
+                childChatId: subThread.appChatId,
+                provider: worker.provider,
+                parentRunActive: Boolean(
+                  isActiveRunSessionStatus(
+                    runManager.get(ensembleWaveOrigin.parentRunId)?.status || 'cancelled'
+                  )
+                ),
+                mayStart: () =>
+                  Boolean(AppStore.getChat(subThread.appChatId)) &&
+                  !historyClearAdmissionBlocked(
+                    ensembleWaveOrigin.parentRunId,
+                    parentChatForWave.workspacePath,
+                    ensembleWaveOrigin.parentChatId
+                  ) &&
+                  !historyClearAdmissionBlocked(
+                    subThreadRunId,
+                    subThread.workspacePath,
+                    subThread.appChatId
+                  ) &&
+                  delegatedPostureStillCurrent() &&
+                  backgroundSubThreadDispatchMayStart(subThreadRunId),
+                dispatch: () => runCoordinatorRef!.dispatch(runPayload, dispatchEvent)
               })
-              return
-            }
+            : null
+          if (childAdmission && !childAdmission.ok) {
+            const status =
+              childAdmission.code === 'shutting_down' ||
+              childAdmission.code === 'cancelled_before_reservation'
+                ? 'cancelled'
+                : 'failed'
+            finalizeBackgroundSubThreadTranscript(subThreadRunId, status, childAdmission.message)
+            await deleteChatErasureAware(subThread.appChatId).catch(() => false)
+            throw new Error(`delegate_wave: ${childAdmission.message}`)
+          }
+          const backgroundDispatchOperation = (async () => {
+            if (!backgroundSubThreadDispatchMayStart(subThreadRunId)) return
             try {
-              const result = await runCoordinatorRef.dispatch(runPayload, dispatchEvent)
+              const admittedCompletion = childAdmission?.ok
+                ? await childAdmission.completion
+                : null
+              if (admittedCompletion?.kind === 'cancelled') {
+                finalizeBackgroundSubThreadTranscript(
+                  subThreadRunId,
+                  'cancelled',
+                  admittedCompletion.reason
+                )
+                return
+              }
+              const result = admittedCompletion?.result
+                ? admittedCompletion.result
+                : await runCoordinatorRef!.dispatch(runPayload, dispatchEvent)
               if (!result.dispatched) {
                 finalizeBackgroundSubThreadTranscript(
                   subThreadRunId,
@@ -44045,13 +44549,22 @@ async function executeGeminiMcpTool(
                 reason: err instanceof Error ? err.message : String(err)
               })
             }
-          })()
+          })().catch((error) => containBackgroundSubThreadDispatchRejection(subThreadRunId, error))
+          if (childAdmission?.ok) {
+            void backgroundDispatchOperation.then(
+              childAdmission.completeConsumer,
+              childAdmission.completeConsumer
+            )
+          }
           broadcastChatUpdated(AppStore.getChat(subThread.appChatId) ?? subThread)
           return {
             subThreadId: subThread.appChatId,
             provider: worker.provider,
             title: subThread.title,
-            runId: subThreadRunId
+            runId: subThreadRunId,
+            ...(childAdmission?.ok
+              ? { hostAdmissionInitialState: childAdmission.initialState }
+              : {})
           }
         },
         rollbackWorker: async (child) => {
@@ -44060,7 +44573,19 @@ async function executeGeminiMcpTool(
           try {
             if (child.runId) {
               cancelPendingAgentQuestionsForRun(child.runId, 'delegate-wave-rollback')
-              void providerAdapters.require(child.provider).cancel(child.runId)
+              const backgroundState = backgroundSubThreadTranscripts.get(child.runId)
+              if (backgroundState && !backgroundState.finalized) {
+                backgroundState.cancellationRequested = {
+                  reason: 'Delegate wave rolled back before every worker could start.',
+                  at: Date.now()
+                }
+              }
+              void cancelProviderRun(child.provider, child.runId).catch((error) => {
+                console.warn(
+                  `[delegate_wave] rollback cancellation failed for runId=${child.runId}:`,
+                  error
+                )
+              })
             }
           } catch {
             // Best-effort cancel.
@@ -53725,6 +54250,24 @@ if (isGeminiMcpBridgeProcess) {
           })
         }
       }
+      for (const entry of ensembleDelegatedRunAdmission.list()) {
+        if (runManager.get(entry.runId)) continue
+        if (
+          workspaceId &&
+          !chatIds.has(entry.childChatId) &&
+          !chatIds.has(entry.parentChatId)
+        ) {
+          continue
+        }
+        targets.push({
+          id: historyDeletionTargetId('provider-run', entry.runId),
+          kind: 'provider-run',
+          runId: entry.runId,
+          provider: entry.provider,
+          chatId: entry.childChatId,
+          ...(workspaceId ? { workspaceId } : {})
+        })
+      }
       targets.push(
         {
           id: historyDeletionTargetId('canvas', scopeIdentity),
@@ -53790,6 +54333,21 @@ if (isGeminiMcpBridgeProcess) {
             chatId: session.appChatId
           })
         }
+      }
+      for (const entry of ensembleDelegatedRunAdmission.list()) {
+        if (
+          runManager.get(entry.runId) ||
+          (!targetChats.has(entry.childChatId) && !targetChats.has(entry.parentChatId))
+        ) {
+          continue
+        }
+        targets.push({
+          id: historyDeletionTargetId('provider-run', entry.runId),
+          kind: 'provider-run',
+          runId: entry.runId,
+          provider: entry.provider,
+          chatId: entry.childChatId
+        })
       }
       for (const chatId of chatIds) {
         targets.push(
@@ -54992,12 +55550,37 @@ if (isGeminiMcpBridgeProcess) {
       hasActiveWork: () =>
         getActiveTaskWraithThreadCount() > 0 ||
         hasActiveStreamingTaskWraithRun() ||
+        hasEnsembleHostAdmissionWork() ||
         [...bridgeRunTranscripts.keys()].some((runId) => isChatRunLive(runId)),
       quit: () => app.quit()
     })
 
     const quitPersistence = createQuitPersistenceCoordinator({
-      flush: () => AppStore.flushAllChatSaves(),
+      flush: async () => {
+        const failures: unknown[] = []
+        try {
+          const admissionDrains = await Promise.allSettled([
+            shutdownAndJoinEnsembleDelegatedRuns(),
+            ensembleOrchestratorRef
+              ? ensembleOrchestratorRef.shutdownHostAdmission()
+              : Promise.resolve(ensembleHostAdmissionRuntime.shutdown())
+          ])
+          for (const result of admissionDrains) {
+            if (result.status === 'rejected') failures.push(result.reason)
+          }
+        } catch (error) {
+          failures.push(error)
+        } finally {
+          try {
+            await AppStore.flushAllChatSaves()
+          } catch (error) {
+            failures.push(error)
+          }
+        }
+        if (failures.length > 0) {
+          throw new AggregateError(failures, 'Quit admission and chat persistence drain failed.')
+        }
+      },
       requestQuit: () => app.quit(),
       onDrainError: (error) => console.error('Failed to flush pending chat saves on quit', error)
     })
@@ -57319,7 +57902,7 @@ if (isGeminiMcpBridgeProcess) {
         canvas,
         retained.codexAdmission.completion,
         retained.soloWakeup?.completion,
-        retained.hostCommandCompletion
+        retained.hostCommandCompletion,
       ]).then(() => undefined)
     }
     const finishChatHistoryMutation = (chatId: string): void => {
@@ -57442,12 +58025,24 @@ if (isGeminiMcpBridgeProcess) {
         AppStore.previewHistoryDeletionScope({ kind, rootChatId }).chatIds,
       listProviderRuns: (chatIds) => {
         const targetChats = new Set(chatIds)
-        return RUN_MANAGER_PROVIDERS.flatMap((provider) =>
+        const runs = RUN_MANAGER_PROVIDERS.flatMap((provider) =>
           runManager
             .getActiveByProvider(provider)
             .filter((session) => Boolean(session.appChatId && targetChats.has(session.appChatId)))
             .map((session) => ({ provider, runId: session.runId }))
         )
+        const seenRunIds = new Set(runs.map((run) => run.runId))
+        for (const entry of ensembleDelegatedRunAdmission.list()) {
+          if (
+            seenRunIds.has(entry.runId) ||
+            (!targetChats.has(entry.childChatId) && !targetChats.has(entry.parentChatId))
+          ) {
+            continue
+          }
+          seenRunIds.add(entry.runId)
+          runs.push({ provider: entry.provider, runId: entry.runId })
+        }
+        return runs
       },
       listMaintenanceCompactions: (chatIds) =>
         maintenanceCompactionRegistry.list({ kind: 'chat', chatIds }),
@@ -60757,6 +61352,7 @@ if (isGeminiMcpBridgeProcess) {
       saveChat: saveEnsembleChatWithScheduledHeartbeat,
       persistChatBarrier: (chatId) => AppStore.awaitChatRecordPersisted(chatId),
       getSettings: () => AppStore.getSettings(),
+      hostAdmissionRuntime: ensembleHostAdmissionRuntime,
       getChildChats: (chatId) => AppStore.getChildChats(chatId),
       getSubThreadMailbox: (chatId) => AppStore.getSubThreadMailbox(chatId),
       // S16 — an approved external contribution is delivered at that person's
@@ -60937,6 +61533,7 @@ if (isGeminiMcpBridgeProcess) {
       shouldPersistProviderSessionForRun,
       releaseProviderSessionPersistenceDecision,
       cancelRun: (provider, runId) => cancelEnsembleParticipantRun(provider, runId),
+      hasLiveRunTransport: hasLiveProviderTransportForHostAdmission,
       getProviderRunTransportLiveness: (runId) =>
         cursorTransportLivenessFromRunSession(runManager.get(runId)),
       hasPendingProviderRunApprovals: (runId) => {
@@ -63173,7 +63770,9 @@ if (isGeminiMcpBridgeProcess) {
       process.env.IOS_REMOTE_TRUE
     ).shouldRun
     const keepActiveRunsAlive =
-      getActiveTaskWraithThreadCount() > 0 || hasActiveStreamingTaskWraithRun()
+      getActiveTaskWraithThreadCount() > 0 ||
+      hasActiveStreamingTaskWraithRun() ||
+      hasEnsembleHostAdmissionWork()
     if (keepBridgeAlive || keepActiveRunsAlive) {
       console.log(
         keepBridgeAlive

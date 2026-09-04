@@ -9,6 +9,7 @@ import {
   type ParticipantProbeResult,
   clampAwaitTimeoutSeconds
 } from './EnsembleOrchestrator'
+import { EnsembleHostAdmissionRuntime } from './EnsembleHostAdmissionRuntime'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { DiscordContextSnapshot } from '../channels/DiscordContextService'
 import type {
@@ -460,6 +461,9 @@ function makeHarness(
     getChat: () => chat,
     saveChat,
     getSettings: options.getSettings ?? makeSettings,
+    hostAdmissionRuntime: new EnsembleHostAdmissionRuntime({
+      scheduleBuildTurn: (task) => task()
+    }),
     dispatch,
     cancelRun,
     ...(options.supersededTransportReapGraceMs !== undefined
@@ -897,8 +901,7 @@ describe('EnsembleOrchestrator', () => {
         prompt: 'Reproduce the Cursor yield stop.',
         event: { sender: {} as Electron.WebContents }
       })
-      for (let i = 0; i < 20; i += 1) await Promise.resolve()
-      expect(harness.dispatched).toHaveLength(1)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
       expect(
         (
           harness.orchestrator as unknown as {
@@ -943,8 +946,7 @@ describe('EnsembleOrchestrator', () => {
       )
 
       vi.advanceTimersByTime(30_000)
-      for (let i = 0; i < 20; i += 1) await Promise.resolve()
-      expect(harness.dispatched).toHaveLength(2)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
       expect(harness.dispatched[1].provider).toBe('claude')
       expect(harness.cancelRun).toHaveBeenCalledWith('cursor', harness.dispatched[0].appRunId)
       expect(
@@ -968,8 +970,7 @@ describe('EnsembleOrchestrator', () => {
       )
       expect(bossSelection).toMatchObject({ ok: true, action: 'select_participants' })
       completeDispatchedRun(harness, 1)
-      for (let i = 0; i < 20; i += 1) await Promise.resolve()
-      expect(harness.dispatched).toHaveLength(3)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
       expect(harness.dispatched[2].provider).toBe('codex')
       completeDispatchedRun(harness, 2)
       for (let i = 0; i < 20; i += 1) await Promise.resolve()
@@ -1028,8 +1029,7 @@ describe('EnsembleOrchestrator', () => {
         prompt: 'Keep working through the stuck Cursor seat.',
         event: { sender: {} as Electron.WebContents }
       })
-      for (let i = 0; i < 20; i += 1) await Promise.resolve()
-      expect(harness.dispatched).toHaveLength(1)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
       expect(harness.dispatched[0].provider).toBe('cursor')
       const firstRunId = harness.dispatched[0].appRunId
 
@@ -1123,8 +1123,7 @@ describe('EnsembleOrchestrator', () => {
         prompt: 'Queue a Cursor reviewer behind a busy writer.',
         event: { sender: {} as Electron.WebContents }
       })
-      for (let i = 0; i < 20; i += 1) await Promise.resolve()
-      expect(harness.dispatched).toHaveLength(1)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
       expect(harness.dispatched[0].provider).toBe('cursor')
       const firstRunId = harness.dispatched[0].appRunId
 
@@ -1234,8 +1233,7 @@ describe('EnsembleOrchestrator', () => {
         prompt: 'Reproduce a streamed Cursor yield.',
         event: { sender: {} as Electron.WebContents }
       })
-      for (let i = 0; i < 20; i += 1) await Promise.resolve()
-      expect(harness.dispatched).toHaveLength(1)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
       const route = {
         appRunId: harness.dispatched[0].appRunId,
@@ -1833,12 +1831,14 @@ describe('EnsembleOrchestrator', () => {
       type: 'result',
       status: 'success'
     })
-    await Promise.resolve()
     expect(harness.dispatched).toHaveLength(2)
-    const finalState = harness.chat.ensemble?.activeRound?.participants.find(
-      (participant) => participant.participantId === 'antigravity'
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.ensemble?.activeRound?.participants.find(
+          (participant) => participant.participantId === 'antigravity'
+        )?.status
+      ).toBe('answered')
     )
-    expect(finalState?.status).toBe('answered')
   })
 
   it('does not retry an AntiGravity refusal backed by an explicit denied tool result', async () => {
@@ -1888,13 +1888,14 @@ describe('EnsembleOrchestrator', () => {
       type: 'result',
       status: 'success'
     })
-    await Promise.resolve()
-
     expect(harness.dispatched).toHaveLength(1)
-    const state = harness.chat.ensemble?.activeRound?.participants.find(
-      (participant) => participant.participantId === 'antigravity'
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.ensemble?.activeRound?.participants.find(
+          (participant) => participant.participantId === 'antigravity'
+        )?.status
+      ).toBe('answered')
     )
-    expect(state?.status).toBe('answered')
     expect(
       harness.chat.messages.some((message) =>
         message.content.includes('Host evidence correction: no permission-denied tool result')
@@ -7050,16 +7051,23 @@ Next action:
         concurrentMode: true
       })
 
-      // Fan-out pass parks in the Promise.all seat-compaction barrier (ollama-a).
+      // The affected lane parks behind its admitted compaction. Independent
+      // siblings may dispatch, but this exact lane must not cross the adapter.
       await vi.waitFor(() => expect(resolveCompaction).toBeDefined())
-      expect(harness.dispatched).toHaveLength(0) // lanes not seeded yet
+      expect(
+        harness.dispatched.some((payload) => payload.ensembleRun?.participantId === 'ollama-a')
+      ).toBe(false)
+      const dispatchedBeforeCancel = harness.dispatched.length
 
       await harness.orchestrator.cancelRound('ensemble-chat', 'cancelled')
 
       // Unblock — the pass must NOT seed/dispatch zombie lanes.
       resolveCompaction?.()
       await new Promise((r) => setTimeout(r, 20))
-      expect(harness.dispatched).toHaveLength(0)
+      expect(harness.dispatched).toHaveLength(dispatchedBeforeCancel)
+      expect(
+        harness.dispatched.some((payload) => payload.ensembleRun?.participantId === 'ollama-a')
+      ).toBe(false)
     } finally {
       if (previous === undefined) delete process.env.TASKWRAITH_CONCURRENT_LANES
       else process.env.TASKWRAITH_CONCURRENT_LANES = previous
@@ -7114,7 +7122,9 @@ Next action:
       })
 
       await vi.waitFor(() => expect(resolveCompaction).toBeDefined())
-      expect(harness.dispatched).toHaveLength(0)
+      expect(
+        harness.dispatched.some((payload) => payload.ensembleRun?.participantId === 'ollama-a')
+      ).toBe(false)
       expect(progressEvents).toContainEqual(
         expect.objectContaining({
           chatId: 'ensemble-chat',
@@ -16633,7 +16643,7 @@ Next action:
     expect(
       harness.chat.messages.filter((message) =>
         message.content?.startsWith(
-          'Automatic read stage · 2 participant(s) dispatched concurrently'
+          'Automatic read stage · 2 participant(s) requested; preparing under bounded host admission'
         )
       )
     ).toHaveLength(2)
@@ -21455,9 +21465,13 @@ Next action:
     expect(harness.dispatched[3].ensembleRun?.participantId).toBe('boss')
     expect(harness.dispatched[3].ensembleRun?.laneId).toBeUndefined()
     expect(harness.cancelRun).not.toHaveBeenCalledWith('codex', bossRunId)
-    expect(
-      harness.chat.runs?.find((run) => run.runId === harness.dispatched[2].appRunId)?.status
-    ).toBe('running')
+    await vi.waitFor(
+      () =>
+        expect(
+          harness.chat.runs?.find((run) => run.runId === harness.dispatched[2].appRunId)?.status
+        ).toBe('running'),
+      { timeout: 1000 }
+    )
 
     await harness.orchestrator.cancelRound('ensemble-chat', 'Test complete.')
   })
@@ -22374,7 +22388,9 @@ Next action:
         'local_scout',
         'approved_patcher'
       ])
-      expect(harness.chat.messages.at(-1)?.content).toContain('2 Ollama lane(s)')
+      expect(
+        harness.chat.messages.some((message) => message.content.includes('2 Ollama lane(s)'))
+      ).toBe(true)
     } finally {
       if (previous === undefined) {
         delete process.env.TASKWRAITH_CONCURRENT_LANES
@@ -22432,9 +22448,11 @@ Next action:
       // Legacy concurrentMode boolean now admits as On ('all'); the roster has
       // only one writer, so dispatch behavior is unchanged from read fan-out.
       expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('all')
-      const initialLanes = Object.values(harness.chat.ensemble?.activeRound?.lanes || {})
-      expect(initialLanes).toHaveLength(2)
-      expect(initialLanes.map((lane) => lane.status).sort()).toEqual(['running', 'running'])
+      await vi.waitFor(() => {
+        const initialLanes = Object.values(harness.chat.ensemble?.activeRound?.lanes || {})
+        expect(initialLanes).toHaveLength(2)
+        expect(initialLanes.map((lane) => lane.status).sort()).toEqual(['running', 'running'])
+      })
       expect(harness.chat.ensemble?.activeRound?.activeParticipantId).toBeUndefined()
       expect(harness.dispatched[0].ensembleRun?.laneId).toBeTruthy()
       expect(harness.dispatched[1].ensembleRun?.laneId).toBeTruthy()
@@ -23866,7 +23884,9 @@ describe('staged fan-out (stageRole)', () => {
     expect(harness.dispatched[2].provider).toBe('claude')
     expect(harness.dispatched[2].effectivePermissions?.presetId).toBe('workspace_write')
     const waveNote = harness.chat.messages.find((message) =>
-      message.content?.includes('Automatic read stage · 2 participant(s) dispatched concurrently')
+      message.content?.includes(
+        'Automatic read stage · 2 participant(s) requested; preparing under bounded host admission'
+      )
     )
     expect(waveNote).toBeTruthy()
   })
@@ -25924,6 +25944,9 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
       getChat: () => chat,
       saveChat: () => undefined,
       getSettings: () => settings,
+      hostAdmissionRuntime: new EnsembleHostAdmissionRuntime({
+        scheduleBuildTurn: (task) => task()
+      }),
       dispatch: vi.fn(async (payload: AgentRunPayload) => ({
         dispatched: true,
         appRunId: payload.appRunId || ''
@@ -26100,7 +26123,7 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
     expect(h.compactSeatContext).toHaveBeenCalledTimes(2)
   })
 
-  it('treats a completed round prompt as ordinary post-round projection context', () => {
+  it('treats a completed round prompt as ordinary post-round projection context', async () => {
     const h = harness({
       participants: [participant({ id: 'kimi', provider: 'kimi' })],
       runs: []
@@ -26126,12 +26149,14 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
 
     h.fire('completed')
 
-    expect(h.compactSeatContext).toHaveBeenCalledWith({
-      chatId: 'ensemble-chat',
-      participantId: 'kimi',
-      provider: 'kimi',
-      trigger: 'auto'
-    })
+    await vi.waitFor(() =>
+      expect(h.compactSeatContext).toHaveBeenCalledWith({
+        chatId: 'ensemble-chat',
+        participantId: 'kimi',
+        provider: 'kimi',
+        trigger: 'auto'
+      })
+    )
   })
 
   it('does not rank generic usage as automatic compaction evidence', () => {

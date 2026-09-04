@@ -56,6 +56,7 @@ describe('window-all-closed headless continuity', () => {
     const handler = windowAllClosedHandler()
     expect(handler).toContain('getActiveTaskWraithThreadCount() > 0')
     expect(handler).toContain('hasActiveStreamingTaskWraithRun()')
+    expect(handler).toContain('hasEnsembleHostAdmissionWork()')
     expect(handler).toContain('keepActiveRunsAlive')
     expect(handler).toContain('keepBridgeAlive || keepActiveRunsAlive')
     // Early return must precede the destructive teardown symbols.
@@ -133,6 +134,8 @@ describe('window-all-closed headless continuity', () => {
     )
     expect(streamingCheck).toContain('RUN_MANAGER_PROVIDERS.flatMap')
     expect(streamingCheck).toContain('hasStreamingRemoteRunSessions')
+    expect(indexSource).toContain('hasEnsembleHostAdmissionWork()')
+    expect(indexSource).toContain('occupancy.active > 0 || occupancy.queued > 0')
   })
 
   it('does not cancel provider runs or approvals when the renderer closes or crashes', () => {

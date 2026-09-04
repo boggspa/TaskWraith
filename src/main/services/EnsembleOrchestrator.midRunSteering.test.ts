@@ -7,6 +7,7 @@ import type {
   EnsembleSideMessageSteeringResult
 } from '../steering/EnsembleSideMessageSteering'
 import { EnsembleOrchestrator, type EnsembleDispatchPromptEvidence } from './EnsembleOrchestrator'
+import { EnsembleHostAdmissionRuntime } from './EnsembleHostAdmissionRuntime'
 import { deriveActiveEnsembleWorkingPresentations } from '../../renderer/src/lib/workingIndicatorPresentation'
 
 const CHAT_ID = 'ensemble-chat'
@@ -132,6 +133,9 @@ function makeHarness(
         ensembleModeEnabled: true,
         chatContextTurns: 8
       }) as AppSettings,
+    hostAdmissionRuntime: new EnsembleHostAdmissionRuntime({
+      scheduleBuildTurn: (task) => task()
+    }),
     dispatch: vi.fn(async (payload: AgentRunPayload, _event, _observer, evidence) => {
       dispatched.push(payload)
       promptEvidence.push(evidence)
@@ -483,7 +487,9 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       (message) => message.metadata?.kind === 'midRunSteering' && message.content === userPrompt
     )
     const dispatchRowIndex = harness.chat.messages.findIndex((message) =>
-      message.content.startsWith('User Fan-Out · 2 participant(s) dispatched concurrently')
+      message.content.startsWith(
+        'User Fan-Out · 2 participant(s) requested; preparing under bounded host admission'
+      )
     )
     expect(userRowIndex).toBeGreaterThanOrEqual(0)
     expect(dispatchRowIndex).toBeGreaterThan(userRowIndex)
@@ -581,13 +587,10 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('owner')
 
-    const olderWave = await harness.orchestrator.fanoutForRun(
-      harness.dispatched[0].appRunId,
-      {
-        targets: ['Work1'],
-        prompt: 'Keep inspecting while the owner continues.'
-      }
-    )
+    const olderWave = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Work1'],
+      prompt: 'Keep inspecting while the owner continues.'
+    })
     expect(olderWave.ok).toBe(true)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     stream(harness, 1, 'OLDER-WORK1-LANE.')
@@ -612,7 +615,9 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     const dispatchIndex = harness.chat.messages.findIndex(
       (message) =>
         message.metadata?.kind === 'ensembleRoundStatus' &&
-        message.content.startsWith('User Fan-Out · 1 participant(s) dispatched concurrently')
+        message.content.startsWith(
+          'User Fan-Out · 1 participant(s) requested; preparing under bounded host admission'
+        )
     )
     expect(dispatchIndex).toBeGreaterThanOrEqual(0)
     const dispatchWaveId = harness.chat.messages[dispatchIndex].metadata?.ensembleFanoutWaveId
@@ -628,9 +633,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       message.content.includes('NEW-ORCHESTRATOR-LANE.')
     )
     expect(newLaneIndex).toBeGreaterThan(dispatchIndex)
-    expect(harness.chat.messages[newLaneIndex].metadata?.ensembleFanoutWaveId).toBe(
-      dispatchWaveId
-    )
+    expect(harness.chat.messages[newLaneIndex].metadata?.ensembleFanoutWaveId).toBe(dispatchWaveId)
 
     complete(harness, 2)
     complete(harness, 1)
@@ -683,9 +686,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       harness.dispatched.slice(1).map((payload) => payload.ensembleRun?.participantId)
     ).toEqual(['claude', 'observer', 'grok-bg'])
     expect(
-      harness.dispatched.filter(
-        (payload) => payload.ensembleRun?.participantId === 'codex'
-      )
+      harness.dispatched.filter((payload) => payload.ensembleRun?.participantId === 'codex')
     ).toHaveLength(1)
     expect(
       harness.promptEvidence
@@ -769,7 +770,9 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(harness.appendMidRunSteering).toHaveBeenCalledOnce()
     expect(harness.cancelRun).not.toHaveBeenCalled()
     expect(
-      harness.chat.messages.some((message) => message.content.startsWith('User Fan-Out ·'))
+      harness.chat.messages.some((message) =>
+        message.content.startsWith('User Fan-Out provider dispatch started')
+      )
     ).toBe(false)
 
     complete(harness, 0)
@@ -823,6 +826,11 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     // The old derivation required BOTH, so the `fanoutPolicy` clause is what
     // actually dropped this seat. Assert both halves so a future change to
     // either one cannot quietly restore the hole.
+    await vi.waitFor(() =>
+      expect(Object.values(harness.chat.ensemble?.activeRound?.lanes || {})[0]?.status).toBe(
+        'running'
+      )
+    )
     const round = harness.chat.ensemble?.activeRound
     expect(round?.concurrentMode).toBe(true)
     expect(round?.fanoutPolicy).toBe('off')
@@ -1241,7 +1249,9 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(harness.dispatched[2].ensembleRun?.participantId).toBe('captain-b')
     expect(
-      harness.dispatched.slice(0, 3).some((payload) => payload.ensembleRun?.participantId === 'worker')
+      harness.dispatched
+        .slice(0, 3)
+        .some((payload) => payload.ensembleRun?.participantId === 'worker')
     ).toBe(false)
     await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
   })
@@ -1710,7 +1720,9 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       ).toHaveLength(2)
     )
     expect(
-      harness.chat.messages.some((message) => message.content.startsWith('User Fan-Out ·'))
+      harness.chat.messages.some((message) =>
+        message.content.startsWith('User Fan-Out provider dispatch started')
+      )
     ).toBe(false)
 
     releaseCompaction()
@@ -1838,7 +1850,9 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(harness.dispatched).toHaveLength(1)
     expect(
-      harness.chat.messages.some((message) => message.content.startsWith('User Fan-Out ·'))
+      harness.chat.messages.some((message) =>
+        message.content.startsWith('User Fan-Out provider dispatch started')
+      )
     ).toBe(false)
   })
 })

@@ -526,14 +526,23 @@ describe('SubThreadDelegateWave pure helpers', () => {
       waveId: 'wave-x',
       children: [
         { subThreadId: 'sub-1', provider: 'codex' },
-        { subThreadId: 'sub-2', provider: 'claude' }
+        {
+          subThreadId: 'sub-2',
+          provider: 'claude',
+          hostAdmissionInitialState: 'queued'
+        }
       ]
     })
     expect(shaped).toEqual({
       waveId: 'wave-x',
       children: [
         { subThreadId: 'sub-1', provider: 'codex', status: 'spawned' },
-        { subThreadId: 'sub-2', provider: 'claude', status: 'spawned' }
+        {
+          subThreadId: 'sub-2',
+          provider: 'claude',
+          status: 'queued',
+          hostAdmissionInitialState: 'queued'
+        }
       ]
     })
   })
@@ -688,6 +697,60 @@ describe('SubThreadDelegateWave pure helpers', () => {
     ])
     // Spawn-failure rollback must refund the reserved wave slots (not leave N burned).
     expect(budget.consumed).toBe(2)
+    expect(budget.netConsumed).toBe(0)
+  })
+
+  it('runs the final parent gate only after approval and before the first child spawn', async () => {
+    const events: string[] = []
+    const budget = trackingBudgetPorts()
+    const outcome = await executeDelegateWaveTool({
+      args: twoWorkers(),
+      parentChatId,
+      parentAppRunId,
+      parentProviderLabel: 'Codex',
+      maxWorkers: 8,
+      isAllowedProvider,
+      isBossOrCaptain: false,
+      permissionPresetId: 'default',
+      budgetRemaining: 10,
+      tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
+      releaseBudgetSlots: budget.releaseBudgetSlots,
+      findLiveEphemeralFleet: () => null,
+      budgetCap: 20,
+      requestApproval: async () => {
+        events.push('approved')
+        return true
+      },
+      assertParentStillValid: () => events.push('parent-valid'),
+      prepareSpawn: () => {
+        events.push('parent-admitted')
+        throw new Error('foreground capacity is full')
+      },
+      resolveWorkerSettings: () => ({
+        ok: true,
+        value: {
+          requestedModel: 'cli-default',
+          runPayload: {},
+          providerMetadataPatch: {}
+        }
+      }),
+      spawnWorker: async ({ worker }) => {
+        events.push(`spawn:${worker.provider}`)
+        return {
+          subThreadId: `sub-${worker.provider}`,
+          provider: worker.provider,
+          title: `Sub-thread (${worker.provider})`,
+          runId: `run-${worker.provider}`
+        }
+      },
+      rollbackWorker: () => undefined,
+      providerLabel: (provider) => provider,
+      createWaveId: () => 'wave-parent-admission',
+      nowMs
+    })
+
+    expect(outcome).toMatchObject({ ok: false, text: 'foreground capacity is full' })
+    expect(events).toEqual(['approved', 'parent-valid', 'parent-admitted'])
     expect(budget.netConsumed).toBe(0)
   })
 

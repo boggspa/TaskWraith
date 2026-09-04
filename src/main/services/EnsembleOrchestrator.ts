@@ -192,7 +192,12 @@ import {
 import { collectExternalPathGrantsFromMetadata } from '../store/ExternalPathGrants'
 import { resolveImagePathsForProvider } from '../ProviderImageAttachmentSupport'
 import { resolveHealthEntryPresentation } from '../../shared/ollamaBrandTable'
-import { OllamaLocalAdmissionPolicy } from '../ollama/OllamaLocalAdmissionPolicy'
+import {
+  localOllamaModelKey,
+  OllamaLocalAdmissionPolicy
+} from '../ollama/OllamaLocalAdmissionPolicy'
+import type { EnsembleHostAdmissionSnapshot } from './EnsembleHostAdmissionScheduler'
+import { EnsembleHostAdmissionRuntime } from './EnsembleHostAdmissionRuntime'
 import {
   CONTEXT_AUTO_COMPACT_COOLDOWN_MS,
   CONTEXT_COMPACTION_MESSAGE_KIND,
@@ -405,6 +410,7 @@ import type {
   EnsembleFanoutMode,
   EnsembleFanoutResult,
   EnsembleFanoutTargetStage,
+  EnsembleHostAdmissionRunOrigin,
   EnsembleImageAttachment,
   EnsembleImageThumbnail,
   EnsembleLaneResultInput,
@@ -460,6 +466,7 @@ export type {
   EnsembleFanoutMode,
   EnsembleFanoutResult,
   EnsembleFanoutTargetStage,
+  EnsembleHostAdmissionRunOrigin,
   EnsembleImageAttachment,
   EnsembleImageThumbnail,
   EnsembleLaneResultInput,
@@ -575,6 +582,7 @@ const TERMINAL_RUN_TOOL_TOMBSTONE_LIMIT = 256
  * pathological case ran 2.5 minutes.
  */
 export const SUPERSEDED_TRANSPORT_REAP_GRACE_MS = 15_000
+const DEFAULT_EXACT_CANCELLATION_PROOF_TIMEOUT_MS = 2_000
 
 /**
  * Per-run chronological event log. Each entry preserves the order
@@ -643,6 +651,11 @@ interface ActiveParticipantRun {
   chatId: string
   roundId: string
   runId: string
+  /** Immutable host-queue receipt retained for fan-out result accounting. */
+  hostAdmissionInitialState?: 'admitted' | 'queued'
+  hostAdmissionQueuedForMs?: number
+  localAdmissionQueuedForMs?: number
+  ownedAdmissionQueueDelayMs?: number
   /**
    * Main-side provider admission state for this exact run id. History deletion
    * uses this after joining an in-flight dispatch receipt: a cancellation that
@@ -1205,12 +1218,6 @@ function clampLaneResultMaxChars(value: unknown): number {
 
 function delayMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-// One macrotask turn: gives IPC, timers, and other seats' events a slot
-// between the per-lane payload builds of a wide fan-out wave.
-function yieldToEventLoop(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve))
 }
 
 function normalizeFanoutTargetStage(value: unknown): EnsembleFanoutTargetStage | null | undefined {
@@ -3235,9 +3242,15 @@ export class EnsembleOrchestrator {
     }
   >()
   private queuedPromptIdCounter = 0
+  private hostMaintenanceRunCounter = 0
 
   /** Failed-run overflow evidence waiting for the seat's settled maintenance seam. */
   private pendingSeatOverflowEvidence = new Map<string, PendingSeatOverflowEvidence>()
+
+  /** One host-wide queue for every chat owned by this orchestrator instance. */
+  private readonly hostAdmission: EnsembleHostAdmissionRuntime
+  private readonly hostAdmissionFinalizers = new Set<Promise<boolean>>()
+  private hostAdmissionStopping = false
 
   /**
    * Bounds how many DISTINCT local Ollama models a round loads at once.
@@ -3279,7 +3292,241 @@ export class EnsembleOrchestrator {
     }
   }
 
-  constructor(private deps: EnsembleOrchestratorDeps) {}
+  constructor(private deps: EnsembleOrchestratorDeps) {
+    this.hostAdmission =
+      deps.hostAdmissionRuntime ??
+      new EnsembleHostAdmissionRuntime({
+        scheduler: deps.hostAdmissionScheduler,
+        schedulerOptions: deps.hostAdmissionSchedulerOptions,
+        onSnapshot: deps.onHostAdmissionSnapshot
+      })
+  }
+
+  getHostAdmissionSnapshot(): EnsembleHostAdmissionSnapshot {
+    return this.hostAdmission.snapshot()
+  }
+
+  awaitHostAdmissionIdle(): Promise<void> {
+    return this.hostAdmission.whenIdle()
+  }
+
+  /** Main-authoritative origin for delegated admission and child-only awaits. */
+  resolveHostAdmissionRunOrigin(
+    runId: string,
+    expectedChatId?: string
+  ): EnsembleHostAdmissionRunOrigin | null {
+    const normalizedRunId = typeof runId === 'string' ? runId.trim() : ''
+    if (!normalizedRunId) return null
+    const run = this.runsByRunId.get(normalizedRunId)
+    if (
+      !run ||
+      run.terminalFinalized ||
+      run.dispatchCancellationRequested ||
+      (expectedChatId && run.chatId !== expectedChatId)
+    ) {
+      return null
+    }
+    const runtime = this.roundsByChatId.get(run.chatId)
+    if (
+      !runtime ||
+      runtime.cancelled ||
+      runtime.roundId !== run.roundId ||
+      !this.ownsRunningRound(runtime)
+    ) {
+      return null
+    }
+    return {
+      parentRunId: run.runId,
+      parentChatId: run.chatId,
+      roundId: run.roundId,
+      participantId: run.participant.id,
+      ...(run.laneId ? { laneId: run.laneId } : {})
+    }
+  }
+
+  /** Host shutdown fences new work, cancels exact live runs, and joins callbacks before flush. */
+  async shutdownHostAdmission(): Promise<ReturnType<EnsembleHostAdmissionRuntime['shutdown']>> {
+    this.hostAdmissionStopping = true
+    const runtimes = [...this.roundsByChatId.values()]
+    const result = this.hostAdmission.shutdown()
+    const errors: unknown[] = []
+    const cancellationResults = await Promise.allSettled(
+      runtimes.map((runtime) =>
+        this.cancelRound(runtime.chatId, 'App shutdown.', runtime.roundId, false)
+      )
+    )
+    for (const cancellation of cancellationResults) {
+      if (cancellation.status === 'rejected') errors.push(cancellation.reason)
+    }
+    for (const run of [...this.runsByRunId.values()]) {
+      if (run.transportDispatchState || run.terminalFinalized) continue
+      try {
+        this.finalizeRun(run, 'cancelled', 'Host shutdown before provider dispatch.')
+      } catch (error) {
+        errors.push(error)
+        try {
+          this.cancelHostAdmission(run, 'Host shutdown before provider dispatch.')
+          this.releaseHostAdmission(run)
+          run.completion?.('cancelled')
+        } catch (cleanupError) {
+          errors.push(cleanupError)
+        }
+      }
+    }
+    await this.hostAdmission.awaitPendingClaims()
+    while (this.hostAdmissionFinalizers.size > 0) {
+      await Promise.allSettled([...this.hostAdmissionFinalizers])
+    }
+    const drainResults = await Promise.allSettled([
+      this.hostAdmission.whenIdle(),
+      ...runtimes.map((runtime) =>
+        this.joinHistoryRoundActivities(
+          runtime,
+          new Set(this.exactRoundRuns(runtime.chatId, runtime.roundId))
+        )
+      )
+    ])
+    for (const drain of drainResults) {
+      if (drain.status === 'rejected') errors.push(drain.reason)
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, 'Ensemble host admission shutdown completed with errors.')
+    }
+    return result
+  }
+
+  private reserveHostAdmission(
+    run: ActiveParticipantRun,
+    kind: 'foreground' | 'lane',
+    preserveInitialReceipt = false
+  ): boolean {
+    const result = this.hostAdmission.reserve({
+      runId: run.runId,
+      chatId: run.chatId,
+      roundId: run.roundId,
+      participantId: run.participant.id,
+      provider: run.participant.provider,
+      kind
+    })
+    if (result.kind === 'rejected') {
+      const reason = `${result.message} Host admission: ${result.occupancy.active}/${result.occupancy.maxActive} active, ${result.occupancy.queued}/${result.occupancy.maxQueued} queued.`
+      this.appendRoundStatus(run.chatId, run.roundId, reason)
+      this.finalizeRun(run, result.code === 'shutting_down' ? 'cancelled' : 'failed', reason)
+      return false
+    }
+    if (!preserveInitialReceipt) run.hostAdmissionInitialState = result.initialState
+    if (result.initialState === 'queued' && !run.laneId) {
+      const occupancy = result.occupancy
+      this.appendRoundStatus(
+        run.chatId,
+        run.roundId,
+        `${participantDisplayName(run.participant)} queued for host capacity · ${occupancy.active}/${occupancy.maxActive} active, ${occupancy.queued} waiting. The provider and seat remain available; dispatch starts automatically when capacity frees.`
+      )
+    }
+    return true
+  }
+
+  private async claimHostAdmission(run: ActiveParticipantRun): Promise<boolean> {
+    const operation = (async (): Promise<boolean> => {
+      const outcome = await this.hostAdmission.claim(run.runId)
+      if (!outcome.ok) {
+        if (this.runsByRunId.get(run.runId) === run && !run.terminalFinalized) {
+          this.finalizeRun(run, 'cancelled', outcome.reason)
+        }
+        return false
+      }
+      this.recordAdmissionQueueDelay(run, 'host', outcome.queuedForMs)
+      return true
+    })()
+    this.hostAdmissionFinalizers.add(operation)
+    try {
+      return await operation
+    } finally {
+      this.hostAdmissionFinalizers.delete(operation)
+    }
+  }
+
+  private cancelHostAdmission(run: ActiveParticipantRun, reason: string): boolean {
+    return this.hostAdmission.cancel(run.runId, reason)
+  }
+
+  private recordAdmissionQueueDelay(
+    run: ActiveParticipantRun,
+    kind: 'host' | 'local',
+    queuedForMs: number
+  ): void {
+    const bounded = Math.max(0, queuedForMs)
+    if (kind === 'host') {
+      run.hostAdmissionQueuedForMs = Math.max(run.hostAdmissionQueuedForMs || 0, bounded)
+    } else {
+      run.localAdmissionQueuedForMs = Math.max(run.localAdmissionQueuedForMs || 0, bounded)
+    }
+    const total = (run.hostAdmissionQueuedForMs || 0) + (run.localAdmissionQueuedForMs || 0)
+    const pendingIds = [run.runId]
+    const visited = new Set<string>()
+    while (pendingIds.length > 0) {
+      const childId = pendingIds.shift()!
+      if (visited.has(childId)) continue
+      visited.add(childId)
+      for (const owner of this.runsByRunId.values()) {
+        if (!owner.ownedFanoutRunIds?.has(childId)) continue
+        owner.ownedAdmissionQueueDelayMs = Math.max(
+          owner.ownedAdmissionQueueDelayMs || 0,
+          total
+        )
+        pendingIds.push(owner.runId)
+      }
+    }
+  }
+
+  private promoteNestedHostOwner(
+    run: ActiveParticipantRun,
+    operation:
+      | 'ensemble_fanout'
+      | 'ensemble_fanout_all'
+      | 'ensemble_await'
+      | 'approval_review'
+  ):
+    | { ok: true }
+    | {
+        ok: false
+        message: string
+        code: 'run_not_active' | 'run_not_claimed' | 'foreground_capacity'
+        retryable: boolean
+        occupancy: EnsembleHostAdmissionSnapshot['occupancy']
+      } {
+    if (!run.laneId) {
+      const occupancy = this.hostAdmission.snapshot().occupancy
+      if (
+        occupancy.reservedLaneSlots < 1 ||
+        occupancy.maxForegroundPerChat >= occupancy.maxActivePerChat
+      ) {
+        return {
+          ok: false,
+          code: 'foreground_capacity',
+          retryable: true,
+          occupancy,
+          message: `${operation}: Host admission has no reserved leaf capacity for descendant work. Finish this turn and retry after the capacity limits reserve at least one global and per-chat leaf slot; no descendant work was reserved.`
+        }
+      }
+      return { ok: true }
+    }
+    const promotion = this.hostAdmission.promoteToForeground(run.runId)
+    if (promotion.ok) return { ok: true }
+    return {
+      ok: false,
+      code: promotion.code,
+      retryable: promotion.retryable,
+      occupancy: promotion.occupancy,
+      message: promotion.retryable
+        ? `${operation}: ${promotion.message} The same claimed leaf cannot free the owner quota while it waits; finish this lane and retry from a later foreground turn.`
+        : `${operation}: ${promotion.message}`
+    }
+  }
+
+  private releaseHostAdmission(run: ActiveParticipantRun): void {
+    this.hostAdmission.release(run.runId)
+  }
 
   /**
    * Apply user-owned round controls to the canonical chat and, when present,
@@ -3667,7 +3914,10 @@ export class EnsembleOrchestrator {
   private trackRoundActivity(runtime: ActiveRoundRuntime, activity: Promise<void>): Promise<void> {
     const activities = runtime.roundActivities ?? new Set<Promise<void>>()
     runtime.roundActivities = activities
-    const tracked = activity.finally(() => {
+    const guarded = activity.catch((error) => {
+      this.failUnexpectedRound(runtime, error)
+    })
+    const tracked = guarded.finally(() => {
       activities.delete(tracked)
       if (activities.size === 0) runtime.roundActivities = undefined
     })
@@ -3759,9 +4009,36 @@ export class EnsembleOrchestrator {
   }
 
   private async requestExactRunCancellation(run: ActiveParticipantRun): Promise<boolean> {
-    const cancelled = await this.deps.cancelRun(run.participant.provider, run.runId)
-    if (cancelled === true) run.transportCancellationConfirmed = true
-    return cancelled
+    const cancelOperation = Promise.resolve()
+      .then(() => this.deps.cancelRun(run.participant.provider, run.runId))
+      .then(
+        (cancelled) => ({ kind: 'settled' as const, cancelled }),
+        (error: unknown) => ({ kind: 'rejected' as const, error })
+      )
+    const timeoutMs = Math.max(
+      1,
+      this.deps.exactCancellationProofTimeoutMs ??
+        DEFAULT_EXACT_CANCELLATION_PROOF_TIMEOUT_MS
+    )
+    const outcome = await Promise.race([
+      cancelOperation,
+      new Promise<{ kind: 'timeout' }>((resolve) => {
+        const timer = setTimeout(() => resolve({ kind: 'timeout' }), timeoutMs)
+        timer.unref?.()
+      })
+    ])
+    if (outcome.kind === 'settled' && outcome.cancelled === true) {
+      run.transportCancellationConfirmed = true
+    }
+    // The cancellation facade itself can wedge. Once the exact request has
+    // been issued, authoritative absence from every RunManager/transport
+    // registry is sufficient proof that no provider can still consume the
+    // lease. Unknown/live retains it; there is no blind TTL release.
+    if (!run.dispatchSettled && this.deps.hasLiveRunTransport?.(run.runId) === false) {
+      this.markRunDispatchSettled(run)
+    }
+    if (outcome.kind === 'rejected') throw outcome.error
+    return outcome.kind === 'settled' && outcome.cancelled === true
   }
 
   private requestExactHistoryTransportTermination(run: ActiveParticipantRun): Promise<boolean> {
@@ -3809,6 +4086,13 @@ export class EnsembleOrchestrator {
    */
   private terminallyReleaseRunForHistory(run: ActiveParticipantRun, reason: string): void {
     this.stopCursorCompletionWatchdog(run)
+    this.cancelHostAdmission(run, reason)
+    if (!run.transportDispatchState || run.transportDispatchState === 'rejected') {
+      this.releaseHostAdmission(run)
+    }
+    // This history-only path intentionally bypasses finalizeRun, so it must
+    // also abort an Ollama waiter that never reached provider dispatch.
+    this.localAdmission().releaseRun(run.runId, this.liveRunSeats())
     this.chatFlushScheduler.cancelRun(run.chatId, run.runId)
     if (run.flushTimer) {
       clearTimeout(run.flushTimer)
@@ -5212,7 +5496,6 @@ export class EnsembleOrchestrator {
       if (
         run.chatId === chatId &&
         run.roundId === roundId &&
-        !run.laneId &&
         this.hasOwnedFanoutWork(run)
       ) {
         activeRunIds.add(run.runId)
@@ -5373,9 +5656,7 @@ export class EnsembleOrchestrator {
       )
     if (!active) return false
     const ownerWasTerminal = active.terminalFinalized === true
-    const ownedLanes = [...(active.ownedFanoutRunIds || [])]
-      .map((runId) => this.runsByRunId.get(runId))
-      .filter((run): run is ActiveParticipantRun => Boolean(run?.laneId))
+    const ownedLanes = this.ownedFanoutDescendants(active)
     // Finalise/suppress first, then terminally cancel every lane this owner is
     // awaiting so the serial loop can advance without a provider callback.
     active.dispatchCancellationRequested = true
@@ -5420,7 +5701,14 @@ export class EnsembleOrchestrator {
     const writeRuns = activeRuns.filter((run) => activeLaneForRun(run)?.intent === 'write')
     if (writeRuns.length > 0) return false
 
-    const readRuns = activeRuns.filter((run) => activeLaneForRun(run)?.intent === 'read')
+    const readRoots = activeRuns.filter((run) => activeLaneForRun(run)?.intent === 'read')
+    const readRuns = [
+      ...new Map(
+        readRoots
+          .flatMap((run) => [run, ...this.ownedFanoutDescendants(run)])
+          .map((run) => [run.runId, run] as const)
+      ).values()
+    ]
     if (readRuns.length === 0) return false
 
     const reason = 'Read fan-out skipped by user.'
@@ -5479,8 +5767,15 @@ export class EnsembleOrchestrator {
     if (!run) return false
 
     const reason = 'Fan-out lane skipped by user.'
-    this.finalizeRun(run, 'cancelled', reason)
-    runtime.activeScoutRunIds?.delete(run.runId)
+    const runsToCancel = [...this.ownedFanoutDescendants(run).reverse(), run]
+    for (const cancelledRun of runsToCancel) {
+      this.finalizeRun(
+        cancelledRun,
+        'cancelled',
+        cancelledRun === run ? reason : 'Owning fan-out lane was skipped by user.'
+      )
+      runtime.activeScoutRunIds?.delete(cancelledRun.runId)
+    }
     if (runtime.activeScoutRunIds?.size === 0) {
       runtime.activeScoutRunIds = undefined
     }
@@ -5490,7 +5785,13 @@ export class EnsembleOrchestrator {
       runtime.roundId,
       `Fan-out lane skipped · ${who} stopped; remaining lanes continue.`
     )
-    await this.deps.cancelRun(run.participant.provider, run.runId).catch(() => undefined)
+    await Promise.all(
+      runsToCancel.map((cancelledRun) =>
+        this.deps
+          .cancelRun(cancelledRun.participant.provider, cancelledRun.runId)
+          .catch(() => undefined)
+      )
+    )
     return true
   }
 
@@ -9859,6 +10160,11 @@ export class EnsembleOrchestrator {
     ) {
       return Promise.resolve(null)
     }
+    if (!this.promoteNestedHostOwner(requester, 'approval_review').ok) {
+      // The human approval remains fully actionable. Do not reserve a review
+      // descendant behind a leaf that cannot safely become its owner.
+      return Promise.resolve(null)
+    }
 
     const authorityRole = authorityResolution.role === 'boss' ? 'boss' : 'captain'
     const authorityLabel = authorityRole === 'boss' ? 'Boss' : 'Captain'
@@ -9926,6 +10232,8 @@ export class EnsembleOrchestrator {
       [authority],
       {
         prompt,
+        sourceRunId: requester.runId,
+        retainSourceOwnership: true,
         promptAuthority: 'orchestrator',
         forceReadOnlyDispatch: true,
         label: `${authorityLabel} approval review`,
@@ -11978,6 +12286,30 @@ export class EnsembleOrchestrator {
     let lanes = laneSnapshot()
     let mailboxEvents = this.deps.getSubThreadMailbox?.(run.chatId)?.events || []
     let childChats = this.deps.getChildChats?.(run.chatId) || []
+    const childIds = new Set(childChats.map((child) => child.appChatId))
+    const unknownSubThreadIds = (requestedSubThreadIds || []).filter(
+      (subThreadId) => !childIds.has(subThreadId)
+    )
+    if (unknownSubThreadIds.length > 0) {
+      return invalid(
+        'invalid_sub_thread',
+        `ensemble_await: sub-thread target(s) do not belong to this parent chat: ${unknownSubThreadIds.join(', ')}.`
+      )
+    }
+    const knownWaveIds = new Set(
+      childChats
+        .map((child) => child.delegationContext?.joinPolicy?.groupId?.trim())
+        .filter((waveId): waveId is string => Boolean(waveId))
+    )
+    const unknownWaveIds = (requestedWaveIds || []).filter(
+      (waveId) => !knownWaveIds.has(waveId)
+    )
+    if (unknownWaveIds.length > 0) {
+      return invalid(
+        'invalid_wave',
+        `ensemble_await: wave target(s) do not belong to this parent chat: ${unknownWaveIds.join(', ')}.`
+      )
+    }
 
     const report = (): EnsembleAwaitLaneStatus[] =>
       awaitedIds.map((laneId) => {
@@ -12012,6 +12344,11 @@ export class EnsembleOrchestrator {
     }
 
     const isCancelled = () => runtime?.cancelled || false
+
+    if (!allSettled()) {
+      const hostOwner = this.promoteNestedHostOwner(run, 'ensemble_await')
+      if (!hostOwner.ok) return invalid('host_capacity', hostOwner.message)
+    }
 
     while (!allSettled() && this.deps.now() < deadline && !isCancelled()) {
       await delayMs(ENSEMBLE_AWAIT_POLL_INTERVAL_MS)
@@ -12445,6 +12782,18 @@ export class EnsembleOrchestrator {
       mode === 'locked_writers' && !targetStage
         ? 'Locked writer fan-out'
         : fanoutTargetStageLabel(targetStage)
+    const hostOwner = this.promoteNestedHostOwner(run, 'ensemble_fanout')
+    if (!hostOwner.ok) {
+      this.appendRoundStatus(run.chatId, run.roundId, hostOwner.message)
+      return {
+        ok: false,
+        tool: 'ensemble_fanout',
+        mode,
+        ...(targetStage ? { targetStage } : {}),
+        message: hostOwner.message,
+        error: 'host_capacity'
+      }
+    }
     const previousTranscriptBoundary = run.ownedFanoutTranscriptBoundary
     const previousForceNextTimelineContentEntry = run.forceNextTimelineContentEntry
     let acceptedOwnedFanout = false
@@ -12506,8 +12855,21 @@ export class EnsembleOrchestrator {
           `${participantDisplayName(acceptedRun.participant)}: ${acceptedRun.laneIntent === 'write' ? 'write' : 'read'}`
         )
         .join(', ')
+      const hostQueuedCount = acceptedRuns.filter(
+        (acceptedRun) =>
+          acceptedRun.hostAdmissionInitialState === 'queued' ||
+          Boolean(localOllamaModelKey(acceptedRun.participant))
+      ).length
+      const hostSnapshot = this.hostAdmission.snapshot().occupancy
+      const hostAdmission = {
+        admitted: acceptedRuns.length - hostQueuedCount,
+        queued: hostQueuedCount,
+        active: hostSnapshot.active,
+        capacity: hostSnapshot.maxActive,
+        waiting: hostSnapshot.queued
+      }
       if (acceptedTargets.length === 0) {
-        const message = `${label} was not dispatched: no target passed preflight and reached provider-adapter invocation. The target remains eligible for serial rotation.`
+        const message = `${label} was not accepted by host admission. The target remains eligible for serial rotation.`
         if (!runtime.cancelled) this.appendRoundStatus(run.chatId, run.roundId, message)
         return {
           ok: false,
@@ -12537,11 +12899,12 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_fanout',
         mode,
         ...(targetStage ? { targetStage } : {}),
-        status: 'dispatched',
+        status: hostQueuedCount > 0 ? 'queued' : 'dispatched',
         laneIds,
         laneIntents,
         participantIds: acceptedTargets.map((participant) => participant.id),
-        message: `${label} dispatched: ${laneIds.length} lane(s) entered provider setup.${laneIntentReceipt ? ` Lane intent receipt: ${laneIntentReceipt}.` : ''}${rejectedCount > 0 ? ` ${rejectedCount} target(s) were rejected before adapter invocation and remain eligible for serial rotation.` : ''}${this.ignoredIsolationOverrideNote(chat, isolation)} Results and any asynchronous setup failures will appear in the transcript; this tool returns after adapter invocation so the caller does not time out while lanes are working.`
+        hostAdmission,
+        message: `${label} accepted by bounded host admission: ${hostAdmission.admitted} lane(s) dispatched now, ${hostAdmission.queued} queued or coordinating local capacity.${laneIntentReceipt ? ` Lane intent receipt: ${laneIntentReceipt}.` : ''}${rejectedCount > 0 ? ` ${rejectedCount} target(s) were not accepted and remain eligible for serial rotation.` : ''}${this.ignoredIsolationOverrideNote(chat, isolation)} Results and any asynchronous setup failures will appear in the transcript; queued lanes start automatically without blocking this tool call.`
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'ensemble_fanout: dispatch failed.'
@@ -12759,6 +13122,16 @@ export class EnsembleOrchestrator {
     }
 
     const label = 'Full fan-out'
+    const hostOwner = this.promoteNestedHostOwner(run, 'ensemble_fanout_all')
+    if (!hostOwner.ok) {
+      this.appendRoundStatus(run.chatId, run.roundId, hostOwner.message)
+      return {
+        ok: false,
+        tool: 'ensemble_fanout_all',
+        message: hostOwner.message,
+        error: 'host_capacity'
+      }
+    }
     const previousTranscriptBoundary = run.ownedFanoutTranscriptBoundary
     const previousForceNextTimelineContentEntry = run.forceNextTimelineContentEntry
     let acceptedOwnedFanout = false
@@ -12799,8 +13172,21 @@ export class EnsembleOrchestrator {
       const laneIds = acceptedRuns
         .map((acceptedRun) => acceptedRun.laneId)
         .filter((laneId): laneId is string => Boolean(laneId))
+      const hostQueuedCount = acceptedRuns.filter(
+        (acceptedRun) =>
+          acceptedRun.hostAdmissionInitialState === 'queued' ||
+          Boolean(localOllamaModelKey(acceptedRun.participant))
+      ).length
+      const hostSnapshot = this.hostAdmission.snapshot().occupancy
+      const hostAdmission = {
+        admitted: acceptedRuns.length - hostQueuedCount,
+        queued: hostQueuedCount,
+        active: hostSnapshot.active,
+        capacity: hostSnapshot.maxActive,
+        waiting: hostSnapshot.queued
+      }
       if (acceptedTargets.length === 0) {
-        const message = `${label} was not dispatched: no target provider accepted a lane. The targets remain eligible for serial rotation.`
+        const message = `${label} was not accepted by host admission. The targets remain eligible for serial rotation.`
         if (!runtime.cancelled) this.appendRoundStatus(run.chatId, run.roundId, message)
         return {
           ok: false,
@@ -12826,10 +13212,11 @@ export class EnsembleOrchestrator {
       return {
         ok: true,
         tool: 'ensemble_fanout_all',
-        status: 'dispatched',
+        status: hostQueuedCount > 0 ? 'queued' : 'dispatched',
         laneIds,
         participantIds: acceptedTargets.map((participant) => participant.id),
-        message: `${label} dispatched: ${laneIds.length} reader lane(s) started under each participant's own permission posture.${rejectedCount > 0 ? ` ${rejectedCount} target(s) did not accept dispatch and remain eligible for serial rotation.` : ''}${this.ignoredIsolationOverrideNote(chat, isolation)} Results will appear in the transcript; this tool returns after dispatch so the caller does not time out while lanes are working.`
+        hostAdmission,
+        message: `${label} accepted by bounded host admission: ${hostAdmission.admitted} reader lane(s) dispatched now, ${hostAdmission.queued} queued or coordinating local capacity.${rejectedCount > 0 ? ` ${rejectedCount} target(s) were not accepted and remain eligible for serial rotation.` : ''}${this.ignoredIsolationOverrideNote(chat, isolation)} Results will appear in the transcript; queued lanes start automatically without blocking this tool call.`
       }
     } catch (error) {
       const message =
@@ -15959,6 +16346,7 @@ export class EnsembleOrchestrator {
       promptOverride?: string
     } = {}
   ): Promise<void> {
+    if (this.hostAdmissionStopping) return
     if (this.deps.persistChatBarrier) {
       // Durability barrier: the round-started save (and every queued save
       // before it) must have landed in the Host profile before the first
@@ -16247,7 +16635,7 @@ export class EnsembleOrchestrator {
     // every attempt unreachable, we emit a final "no reachable
     // participants left" note so the user knows to re-launch.
     while (remaining.length > 0) {
-      if (runtime.cancelled) break
+      if (runtime.cancelled || this.hostAdmissionStopping) break
       const chat = this.deps.getChat(runtime.chatId)
       if (!chat?.ensemble) break
       for (const participantId of runtime.userFanoutSerialParticipantIds || []) {
@@ -16407,7 +16795,24 @@ export class EnsembleOrchestrator {
       // against the old one would strand the turn in an abandoned session.
       // Await it (bounded by the lane's own 240s timeout) and refresh the
       // session/summary fields the compaction may have rewritten.
-      await this.awaitSeatCompactionBeforeDispatch(runtime.chatId, participant)
+      if (this.deps.awaitPendingSeatCompaction || this.deps.compactSeatContext) {
+        const seatMaintenance = await this.runHostAdmittedSeatMaintenance(
+          runtime.chatId,
+          runtime.roundId,
+          participant,
+          () => this.awaitSeatCompactionBeforeDispatch(runtime.chatId, participant),
+          () => this.ownsRunningRound(runtime)
+        )
+        if (!seatMaintenance.ok) {
+          if (!this.ownsRunningRound(runtime) || this.hostAdmissionStopping) break
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            `${participantDisplayName(participant)} could not prepare its seat under host capacity: ${seatMaintenance.reason}`
+          )
+          continue
+        }
+      }
       // Re-check cancellation AFTER the await. The loop-top `runtime.cancelled`
       // check (and the `await completion` between participants) guard every other
       // suspension point, but seat compaction can block here for seconds while a
@@ -16452,7 +16857,7 @@ export class EnsembleOrchestrator {
       // retain the frozen role/stage seat snapshot for scheduled wakeups and
       // active-round audit semantics (a later live roster edit must not
       // rewrite the identity of an already-scheduled participant).
-      const dispatchChat = this.deps.getChat(runtime.chatId)
+      let dispatchChat = this.deps.getChat(runtime.chatId)
       const refreshedParticipant = dispatchChat?.ensemble?.participants?.find(
         (candidate) => candidate.id === participant.id
       )
@@ -16480,6 +16885,69 @@ export class EnsembleOrchestrator {
       const completion = new Promise<EnsembleParticipantStatus>((resolve) => {
         run.completion = resolve
       })
+      // Acquire local-model eligibility before the process-wide lease. Holding
+      // a global slot while an Ollama model waits would let local pressure
+      // occupy all eight slots and starve unrelated hosted providers.
+      try {
+        await this.localAdmission().admit(run.runId, participant)
+        this.recordAdmissionQueueDelay(
+          run,
+          'local',
+          this.localAdmission().effectiveDeadline(0, [run.runId])
+        )
+      } catch {
+        if (this.runsByRunId.get(run.runId) === run) {
+          this.finalizeRun(
+            run,
+            'cancelled',
+            'Round cancelled while waiting for local model capacity.'
+          )
+        }
+        runtime.activeRunId = undefined
+        continue
+      }
+      if (!this.reserveHostAdmission(run, 'foreground')) {
+        runtime.activeRunId = undefined
+        continue
+      }
+      if (!(await this.claimHostAdmission(run))) {
+        runtime.activeRunId = undefined
+        continue
+      }
+      await this.hostAdmission.waitForBuildTurn()
+      if (
+        this.runsByRunId.get(run.runId) !== run ||
+        run.terminalFinalized ||
+        !this.ownsRunningRound(runtime)
+      ) {
+        this.releaseHostAdmission(run)
+        runtime.activeRunId = undefined
+        continue
+      }
+      const admittedChat = this.deps.getChat(runtime.chatId)
+      const admittedParticipant = admittedChat?.ensemble?.participants.find(
+        (candidate) => candidate.id === participant.id
+      )
+      if (
+        !admittedChat?.ensemble ||
+        !admittedParticipant?.enabled ||
+        admittedParticipant.provider !== participant.provider ||
+        (admittedParticipant.model || '') !== (participant.model || '')
+      ) {
+        const reason = `${participantDisplayName(participant)} changed or was disabled while waiting for host capacity; retry from the current roster.`
+        this.finalizeRun(run, 'cancelled', reason)
+        runtime.activeRunId = undefined
+        continue
+      }
+      dispatchChat = admittedChat
+      participant = {
+        ...admittedParticipant,
+        role: participant.role,
+        instructions: participant.instructions,
+        order: participant.order,
+        stageRole: participant.stageRole
+      }
+      run.participant = participant
       const runScopedExternalPathGrants =
         this.deps.issueRunScopedExternalGrants?.({
           chat: dispatchChat,
@@ -16491,7 +16959,7 @@ export class EnsembleOrchestrator {
         ...runScopedExternalPathGrants,
         ...(runtime.externalPathGrants || [])
       ]
-      const permissions = this.resolveParticipantPermissions(
+      let permissions = this.resolveParticipantPermissions(
         dispatchChat,
         participant,
         participantExternalPathGrants,
@@ -16514,9 +16982,10 @@ export class EnsembleOrchestrator {
       // The persisted `chat.ensemble.selfReflective` toggle (future
       // UI control) takes precedence so an explicit pre-set isn't
       // accidentally overridden by a non-discuss round.
+      const admittedEnsemble = dispatchChat.ensemble!
       const baseEnsembleConfigForRound: EnsembleConfig = runtime.selfReflective
-        ? { ...dispatchChat.ensemble, selfReflective: true }
-        : dispatchChat.ensemble
+        ? { ...admittedEnsemble, selfReflective: true }
+        : admittedEnsemble
       const ensembleConfigForRound: EnsembleConfig = options.finalSynthesisTurn
         ? { ...baseEnsembleConfigForRound, synthesizerParticipantId: participant.id }
         : baseEnsembleConfigForRound
@@ -16576,6 +17045,15 @@ export class EnsembleOrchestrator {
       // prompt is composed — so the numbers describe the tree the seat is about
       // to act on, not the tree as it stood when the round opened.
       const workspaceChurnStanza = await this.resolveWorkspaceChurnStanza(runtime, dispatchChat)
+      if (
+        this.runsByRunId.get(run.runId) !== run ||
+        run.terminalFinalized ||
+        !this.ownsRunningRound(runtime)
+      ) {
+        this.releaseHostAdmission(run)
+        runtime.activeRunId = undefined
+        continue
+      }
       // `resolveWorkspaceChurnStanza` is an actual async boundary. A user steer
       // can append a durable row while git is being sampled, so refresh ONLY
       // the transcript-facing chat state afterwards. Permission/role/config
@@ -16585,6 +17063,48 @@ export class EnsembleOrchestrator {
         ? { ...dispatchChat, messages: latestPromptChat.messages }
         : dispatchChat
       const skillHookContext = await this.resolveParticipantSkillHookContext(promptChat)
+      if (
+        this.runsByRunId.get(run.runId) !== run ||
+        run.terminalFinalized ||
+        !this.ownsRunningRound(runtime)
+      ) {
+        this.releaseHostAdmission(run)
+        runtime.activeRunId = undefined
+        continue
+      }
+      const launchChat = this.deps.getChat(runtime.chatId)
+      const launchParticipant = launchChat?.ensemble?.participants.find(
+        (candidate) => candidate.id === participant.id
+      )
+      if (
+        !launchChat?.ensemble ||
+        !launchParticipant?.enabled ||
+        launchParticipant.provider !== participant.provider ||
+        (launchParticipant.model || '') !== (participant.model || '') ||
+        launchParticipant.linkedProviderSessionId !== participant.linkedProviderSessionId ||
+        launchChat.scope !== dispatchChat.scope ||
+        launchChat.workspacePath !== dispatchChat.workspacePath
+      ) {
+        const reason = `${participantDisplayName(participant)} changed or was disabled during dispatch preparation; retry from the current roster.`
+        this.finalizeRun(run, 'cancelled', reason)
+        runtime.activeRunId = undefined
+        continue
+      }
+      participant = {
+        ...launchParticipant,
+        role: participant.role,
+        instructions: participant.instructions,
+        order: participant.order,
+        stageRole: participant.stageRole
+      }
+      run.participant = participant
+      dispatchChat = launchChat
+      permissions = this.resolveParticipantPermissions(
+        dispatchChat,
+        participant,
+        participantExternalPathGrants,
+        { ensembleLaneId: run.laneId }
+      )
       // Poll-response turn (1.0.4-AN extension): consume this seat's pending
       // vote-only directive, if any, and lead the prompt with it so the routed
       // turn is scoped to casting the poll vote. Recorded by
@@ -16805,23 +17325,17 @@ export class EnsembleOrchestrator {
         run.promptDynamicStateVersion = dynamicStateSnapshot.version
         run.ensemblePromptUsageTelemetry = promptUsageTelemetry
         run.injectedBlackboardEntryIds = injectedBlackboardEntryIds
-        if (!run.terminalFinalized) this.startCursorCompletionWatchdog(run)
-      }
-      // Local seats share one runner and one pool of VRAM, so a round may only
-      // hold as many distinct Ollama models as the host says it holds. Hosted
-      // providers never reach the gate and are not delayed by a byte.
-      try {
-        await this.localAdmission().admit(run.runId, participant)
-      } catch {
-        // The only thing that aborts an admission is this run finalizing while
-        // it was still queued, which is a cancellation before dispatch.
-        if (this.runsByRunId.get(run.runId) === run) {
-          this.finalizeRun(
-            run,
-            'cancelled',
-            'Round cancelled while waiting for local model capacity.'
-          )
+        if (!run.terminalFinalized) {
+          this.flushRun(run)
+          this.startCursorCompletionWatchdog(run)
         }
+      }
+      if (
+        this.runsByRunId.get(run.runId) !== run ||
+        run.terminalFinalized ||
+        !this.ownsRunningRound(runtime)
+      ) {
+        this.markRunDispatchSettled(run)
         runtime.activeRunId = undefined
         continue
       }
@@ -17713,6 +18227,7 @@ export class EnsembleOrchestrator {
       }
     }
 
+    if (this.hostAdmissionStopping) return
     const chatAfterCheck = this.deps.getChat(runtime.chatId)
 
     // Continuous-mode autonomous continuation. When the serial loop drained with
@@ -17796,11 +18311,17 @@ export class EnsembleOrchestrator {
     // Recomputed each wave because a lane that is STILL queued keeps earning
     // extension. The anchor itself never moves, so a round with no queueing
     // gets byte-identical timeout behaviour.
-    const deadlineAt = (): number =>
-      this.localAdmission().effectiveDeadline(baseDeadline, [
-        run.runId,
-        ...(run.ownedFanoutRunIds || [])
-      ])
+    const deadlineAt = (): number => {
+      const runIds = [run.runId, ...(run.ownedFanoutRunIds || [])]
+      const liveDeadline = this.hostAdmission.effectiveDeadline(
+        this.localAdmission().effectiveDeadline(baseDeadline, runIds),
+        runIds
+      )
+      const ownRecordedDelay =
+        (run.hostAdmissionQueuedForMs || 0) + (run.localAdmissionQueuedForMs || 0)
+      const recordedDelay = Math.max(ownRecordedDelay, run.ownedAdmissionQueueDelayMs || 0)
+      return Math.max(liveDeadline, baseDeadline + recordedDelay)
+    }
     while (!runtime.cancelled) {
       const settlements = [
         ...(run.pendingFanoutDispatches || []),
@@ -17855,12 +18376,27 @@ export class EnsembleOrchestrator {
     return Boolean(run.pendingFanoutDispatches?.size || run.ownedFanoutSettlements?.size)
   }
 
+  private ownedFanoutDescendants(root: ActiveParticipantRun): ActiveParticipantRun[] {
+    const descendants: ActiveParticipantRun[] = []
+    const seen = new Set<string>()
+    const pending = [...(root.ownedFanoutRunIds || [])]
+    while (pending.length > 0) {
+      const runId = pending.shift()!
+      if (seen.has(runId)) continue
+      seen.add(runId)
+      const run = this.runsByRunId.get(runId)
+      if (!run) continue
+      descendants.push(run)
+      pending.push(...(run.ownedFanoutRunIds || []))
+    }
+    return descendants
+  }
+
   private hasPendingOwnedFanoutSettlements(chatId: string, roundId: string): boolean {
     return [...this.runsByRunId.values()].some(
       (run) =>
         run.chatId === chatId &&
         run.roundId === roundId &&
-        !run.laneId &&
         this.hasOwnedFanoutWork(run)
     )
   }
@@ -17983,6 +18519,10 @@ export class EnsembleOrchestrator {
    * already closed the round.
    */
   private maybeResumeDeferredDrain(chatId: string): void {
+    if (this.hostAdmissionStopping) {
+      this.deferredLaneDrainByChatId.delete(chatId)
+      return
+    }
     const runtime = this.deferredLaneDrainByChatId.get(chatId)
     if (!runtime) return
     const round = this.deps.getChat(chatId)?.ensemble?.activeRound
@@ -18226,6 +18766,7 @@ export class EnsembleOrchestrator {
    * round for restart/orphan recovery only.
    */
   private finalizeDrainedRound(runtime: ActiveRoundRuntime): void {
+    if (this.hostAdmissionStopping) return
     // A second drain tail may arrive after the first one completed and cleared
     // this runtime. It owns neither another terminal projection nor teardown.
     if (!this.ownsRunningRound(runtime)) return
@@ -18609,18 +19150,19 @@ export class EnsembleOrchestrator {
       }
       const chat = this.deps.getChat(runtime.chatId)
       if (!chat?.ensemble || runtime.cancelled) return acceptedParticipantIds
-      const acceptedRuns: ActiveParticipantRun[] = []
+      const adapterAcceptedRuns: ActiveParticipantRun[] = []
       await this.runParallelFanoutPass(runtime, chat, participants, {
         prompt,
         label: 'User Fan-Out',
         promptAuthority: 'user',
         userPromptSourceMessageId: sourceMessageId,
         deriveLaneIntentFromPermissions: true,
-        acceptedRuns,
+        adapterAcceptedRuns,
         waitForCompletion: false,
+        waitForDispatchStarts: true,
         completionDisposition: 'background'
       })
-      for (const acceptedRun of acceptedRuns) {
+      for (const acceptedRun of adapterAcceptedRuns) {
         acceptedParticipantIds.add(acceptedRun.participant.id)
       }
       if (acceptedParticipantIds.size > 0) {
@@ -18897,21 +19439,36 @@ export class EnsembleOrchestrator {
        * to the chat policy ('any' defaults to the shared checkout). */
       isolation?: EnsembleFanoutIsolation
       onCompleteRuns?: (runs: ActiveParticipantRun[]) => void
+      /** Runs that crossed the provider adapter boundary, distinct from host reservation. */
+      adapterAcceptedRuns?: ActiveParticipantRun[]
       acceptedRuns?: ActiveParticipantRun[]
+      /** Wait for every queued lane to reach provider entry or reject, but not completion. */
+      waitForDispatchStarts?: boolean
       waitForCompletion?: boolean
       completionDisposition?: 'serial' | 'caller' | 'background'
+      /** Background work that is still a true descendant of sourceRunId. */
+      retainSourceOwnership?: boolean
       /** Keep a host-owned background lane from changing the seat's normal turn chip. */
       preserveParticipantRoundStatus?: boolean
     } = {}
   ): Promise<string[]> {
     if (participants.length === 0) return []
     const sourceRun =
-      options.sourceRunId && options.completionDisposition !== 'background'
+      options.sourceRunId &&
+      (options.completionDisposition !== 'background' || options.retainSourceOwnership)
         ? this.runsByRunId.get(options.sourceRunId)
         : undefined
-    const sourceOwner = sourceRun && !sourceRun.laneId ? sourceRun : undefined
+    const sourceOwner =
+      sourceRun &&
+      (!sourceRun.laneId ||
+        this.hostAdmission.isForeground(sourceRun.runId) ||
+        this.hasOwnedFanoutWork(sourceRun))
+        ? sourceRun
+        : undefined
     const dispatchWasCancelled = (): boolean =>
-      runtime.cancelled || sourceOwner?.dispatchCancellationRequested === true
+      this.hostAdmissionStopping ||
+      runtime.cancelled ||
+      sourceOwner?.dispatchCancellationRequested === true
     const mode = options.mode || 'read_only'
     if (mode === 'locked_writers' && !concurrentWriteLanesEnabled()) {
       throw new Error('Locked writer fan-out requires TASKWRAITH_CONCURRENT_WRITE_LANES.')
@@ -18921,25 +19478,9 @@ export class EnsembleOrchestrator {
     // grant; targets without one are runtime-clamped to read-only. That
     // demotion never widens a user-granted permission tier.
     if (!runtime.activeScoutRunIds) runtime.activeScoutRunIds = new Set<string>()
-    // Wave 3 — same seat-compaction barrier as the serial path, for every
-    // fan-out lane (a Kimi/Grok lane can be mid-compaction too).
-    await Promise.all(
-      participants.map((participant) =>
-        this.awaitSeatCompactionBeforeDispatch(runtime.chatId, participant)
-      )
-    )
-    // Same cancellation re-check as the serial loop: the seat-compaction barrier
-    // above can block for seconds, and a Stop/steer landing in that window sets
-    // `runtime.cancelled` while `activeScoutRunIds` is still empty (lanes not yet
-    // seeded), so `cancelRound` interrupts nothing. Without this guard the pass
-    // would seed + dispatch zombie fan-out lanes that speak to completion after
-    // the cancel. The post-`Promise.all(completionPromises)` check further down
-    // fires only AFTER the lanes have already run — too late.
-    if (dispatchWasCancelled()) return []
-    // Permission settings can change while a seat is compacting. Freeze the
-    // post-barrier participant + intent plan, then admit that exact plan before
-    // seeding any run so a late permission upgrade cannot mint an unscoped
-    // writer lane between an earlier preflight and provider dispatch.
+    // Freeze the lightweight participant + intent plan before seeding. Provider
+    // compaction is intentionally deferred until this exact lane owns a host
+    // slot; otherwise a 25-seat wave can launch 25 compactions outside the cap.
     const dispatchPlanChat = this.deps.getChat(runtime.chatId) || chat
     const forceReadOnlyForParticipant = (participantId: string): boolean =>
       options.forceReadOnlyDispatch ||
@@ -19028,10 +19569,10 @@ export class EnsembleOrchestrator {
       runtime.chatId,
       runtime.roundId,
       writeIntentCount > 0
-        ? `${label} · ${lanePlans.length} participant(s) dispatched concurrently (${readIntentCount} read / ${writeIntentCount} write-intent).${isolationNote}${ollamaRamNote}`
+        ? `${label} · ${lanePlans.length} participant(s) requested; preparing under bounded host admission (${readIntentCount} read / ${writeIntentCount} write-intent).${isolationNote}${ollamaRamNote}`
         : options.forceReadOnlyDispatch
-          ? `${label} · ${lanePlans.length} participant(s) dispatched concurrently (host-clamped reader lanes).${ollamaRamNote}`
-          : `${label} · ${lanePlans.length} participant(s) dispatched concurrently (read-only seat lanes).${ollamaRamNote}`,
+          ? `${label} · ${lanePlans.length} participant(s) requested; preparing under bounded host admission (host-clamped reader lanes).${ollamaRamNote}`
+          : `${label} · ${lanePlans.length} participant(s) requested; preparing under bounded host admission (read-only seat lanes).${ollamaRamNote}`,
       {
         fanoutCategory,
         fanoutLabel: label,
@@ -19105,12 +19646,9 @@ export class EnsembleOrchestrator {
     // dispatch attempt. That was visible to MCP callers as a tool timeout even
     // though the fan-out had launched successfully.
     const dispatchStartPromises: Array<Promise<void>> = []
+    const immediatelyAdmittedDispatchStarts: Array<Promise<void>> = []
     const acceptedLaneRuns: ActiveParticipantRun[] = []
-    // One shared resolve for the pass — SessionStart fires once per workspace,
-    // so the hook context is resolved once above the per-lane loop.
-    const fanoutSkillHookContext = await this.resolveParticipantSkillHookContext(
-      this.deps.getChat(runtime.chatId) || chat
-    )
+    let adapterDispatchNoted = false
 
     // Pre-assign every lane's completion resolver synchronously, BEFORE the
     // first event-loop yield below. The history-deletion detach path drops the
@@ -19126,59 +19664,104 @@ export class EnsembleOrchestrator {
           run.completion = resolve
         })
     )
-
-    // Lane-invariant wave inputs, computed once. The loop below yields to the
-    // event loop between lanes; without freezing these, a mid-wave chat save
-    // could make `deps.getChat` return a newer object and later lanes would
-    // build from a different snapshot than earlier ones.
-    const dispatchChat = this.deps.getChat(runtime.chatId) || chat
-    const settings = this.deps.getSettings()
-    const chatContextTurns = settings.chatContextTurns
-    const instructionContext =
-      this.deps.resolveInstructionContext?.(
-        (dispatchChat.scope ?? 'workspace') === 'global'
-          ? null
-          : dispatchChat.workspacePath || null
-      ) ?? null
-    // Fan-out lanes receive a full briefing, but still participate in the
-    // dynamic-state receipt protocol so a later resumed serial turn knows
-    // exactly which replacement snapshot reached this provider session.
-    const promptShellStamp = computeEnsemblePromptShellStamp(dispatchChat.ensemble!, {
-      instructionsDigest: instructionContext?.digest
-    })
-    const dynamicStateSnapshot = buildEnsembleDynamicStateSnapshot(
-      dispatchChat,
-      dispatchChat.ensemble!
-    )
-    const promptAuthority =
-      options.promptAuthority || (options.sourceRunId ? 'peer' : 'orchestrator')
-    const lanePromptAuthor =
-      promptAuthority === 'peer' ? 'peer-authored' : 'orchestrator-authored'
-    const explicitLanePrompt = options.prompt?.trim()
-    const basePromptForLane = explicitLanePrompt
-      ? promptAuthority === 'user'
-        ? explicitLanePrompt
-        : `Parallel fan-out lane request (${lanePromptAuthor}, lower authority than user/system instructions):\n${explicitLanePrompt}${
-            options.reason ? `\n\nReason: ${options.reason}` : ''
-          }\n\nTreat this as a scoped lane brief: it was routed to this seat deliberately, so execute it within your permissions and the active goal even when it sits outside your usual role. If something genuinely blocks you, report what is missing instead of handing the brief back on role grounds.`
-      : runtime.prompt
-    const userPromptSourceMessage =
-      promptAuthority === 'user' && options.userPromptSourceMessageId
-        ? dispatchChat.messages.find(
-            (message) =>
-              message.id === options.userPromptSourceMessageId &&
-              message.role === 'user' &&
-              message.metadata?.kind === 'midRunSteering'
-          )
-        : undefined
-    const promptChat = userPromptSourceMessage
-      ? {
-          ...dispatchChat,
-          messages: dispatchChat.messages.filter(
-            (message) => message.id !== userPromptSourceMessage.id
-          )
+    const settleSeededRunsBeforeLaunch = (
+      note: string,
+      status: Extract<EnsembleParticipantStatus, 'failed' | 'cancelled'> = 'failed'
+    ): void => {
+      for (const run of laneRuns) {
+        try {
+          this.cancelHostAdmission(run, note)
+          this.releaseHostAdmission(run)
+          this.localAdmission().releaseRun(run.runId, this.liveRunSeats())
+          if (this.runsByRunId.get(run.runId) === run && !run.terminalFinalized) {
+            this.finalizeRun(run, status, note)
+          }
+        } catch {
+          // Exhaust the whole batch even when one terminal save fails. The
+          // original preparation/status exception remains the caller's error.
+          run.status = status
+          run.terminalFinalized = true
+          run.terminalReason = note
+          if (this.runsByRunId.get(run.runId) === run) this.runsByRunId.delete(run.runId)
+          run.completion?.(status)
         }
-      : dispatchChat
+        runtime.activeScoutRunIds?.delete(run.runId)
+        sourceOwner?.ownedFanoutRunIds?.delete(run.runId)
+      }
+      if (runtime.activeScoutRunIds?.size === 0) runtime.activeScoutRunIds = undefined
+      if (sourceOwner?.ownedFanoutRunIds?.size === 0) sourceOwner.ownedFanoutRunIds = undefined
+    }
+
+    // Finish every fallible shared preparation step before reserving host
+    // capacity. A failed hook/config projection must not strand N unclaimed
+    // leases or N unresolved completion promises.
+    const sharedPreparation = await (async () => {
+      const fanoutSkillHookContext = await this.resolveParticipantSkillHookContext(
+        this.deps.getChat(runtime.chatId) || chat
+      )
+      const promptAuthority =
+        options.promptAuthority || (options.sourceRunId ? 'peer' : 'orchestrator')
+      const lanePromptAuthor =
+        promptAuthority === 'peer' ? 'peer-authored' : 'orchestrator-authored'
+      const explicitLanePrompt = options.prompt?.trim()
+      const basePromptForLane = explicitLanePrompt
+        ? promptAuthority === 'user'
+          ? explicitLanePrompt
+          : `Parallel fan-out lane request (${lanePromptAuthor}, lower authority than user/system instructions):\n${explicitLanePrompt}${
+              options.reason ? `\n\nReason: ${options.reason}` : ''
+            }\n\nTreat this as a scoped lane brief: it was routed to this seat deliberately, so execute it within your permissions and the active goal even when it sits outside your usual role. If something genuinely blocks you, report what is missing instead of handing the brief back on role grounds.`
+        : runtime.prompt
+      return {
+        fanoutSkillHookContext,
+        promptAuthority,
+        lanePromptAuthor,
+        explicitLanePrompt,
+        basePromptForLane
+      }
+    })().catch((error) => {
+      const note = `${label} shared preparation failed before host admission: ${error instanceof Error ? error.message : String(error)}`
+      settleSeededRunsBeforeLaunch(note)
+      throw error
+    })
+    const {
+      fanoutSkillHookContext,
+      promptAuthority,
+      lanePromptAuthor,
+      explicitLanePrompt,
+      basePromptForLane
+    } = sharedPreparation
+
+    if (dispatchWasCancelled() || !this.ownsRunningRound(runtime)) {
+      settleSeededRunsBeforeLaunch('Round cancelled during shared fan-out preparation.', 'cancelled')
+      return []
+    }
+
+    // Admission is lightweight and whole-wave: reserve every lane only after
+    // shared preparation succeeds, but before any per-seat prompt is built.
+    try {
+      for (const run of laneRuns) {
+        // Every auxiliary lane starts as a leaf. A lane is promoted atomically
+        // only if it later attempts nested fan-out or a nonterminal lane wait.
+        if (!this.reserveHostAdmission(run, 'lane')) continue
+        acceptedLaneRuns.push(run)
+        options.acceptedRuns?.push(run)
+      }
+      const hostQueuedCount = acceptedLaneRuns.filter(
+        (run) => run.hostAdmissionInitialState === 'queued'
+      ).length
+      if (hostQueuedCount > 0) {
+        const occupancy = this.hostAdmission.snapshot().occupancy
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          `${label} host queue · ${acceptedLaneRuns.length - hostQueuedCount} admitted now, ${hostQueuedCount} waiting; ${occupancy.active}/${occupancy.maxActive} Ensemble slots active across chats. Providers and seats remain available.`
+        )
+      }
+    } catch (error) {
+      const note = `${label} failed after host reservation but before lane launch: ${error instanceof Error ? error.message : String(error)}`
+      settleSeededRunsBeforeLaunch(note)
+      throw error
+    }
 
     // Build lanes one at a time, yielding to the event loop before EVERY lane
     // (including the first) so an N-seat wave no longer occupies the main
@@ -19191,9 +19774,172 @@ export class EnsembleOrchestrator {
     // always runs to completion so every pre-assigned completion promise
     // above still resolves.
     for (let laneIndex = 0; laneIndex < laneRuns.length; laneIndex += 1) {
-      await yieldToEventLoop()
       const run = laneRuns[laneIndex]
-      const participant = run.participant
+      if (!run.hostAdmissionInitialState) continue
+      const withdrawAcceptedRun = (): void => {
+        const acceptedIndex = acceptedLaneRuns.indexOf(run)
+        if (acceptedIndex >= 0) acceptedLaneRuns.splice(acceptedIndex, 1)
+        const outputIndex = options.acceptedRuns?.indexOf(run) ?? -1
+        if (outputIndex >= 0) options.acceptedRuns?.splice(outputIndex, 1)
+      }
+      const dispatchStart = (async () => {
+        let participant = run.participant
+        if (localOllamaModelKey(participant)) {
+          // The whole-wave receipt reserved this lane up front. Give that
+          // unclaimed host slot back before awaiting scarce local-model
+          // capacity, then rejoin the fair host queue after the local ticket is
+          // held. This consistent local→host order prevents capacity inversion.
+          this.cancelHostAdmission(run, 'Coordinating local and host admission.')
+          try {
+            await this.localAdmission().admit(run.runId, participant)
+            this.recordAdmissionQueueDelay(
+              run,
+              'local',
+              this.localAdmission().effectiveDeadline(0, [run.runId])
+            )
+          } catch {
+            if (this.runsByRunId.get(run.runId) === run) {
+              this.finalizeRun(
+                run,
+                'cancelled',
+                'Fan-out lane cancelled while waiting for local model capacity.'
+              )
+            }
+            withdrawAcceptedRun()
+            return
+          }
+          if (
+            dispatchWasCancelled() ||
+            this.runsByRunId.get(run.runId) !== run ||
+            run.terminalFinalized
+          ) {
+            if (this.runsByRunId.get(run.runId) === run && !run.terminalFinalized) {
+              this.finalizeRun(
+                run,
+                'cancelled',
+                runtime.cancelled
+                  ? 'Round cancelled before fan-out host admission.'
+                  : 'Owning participant was skipped before fan-out host admission.'
+              )
+            }
+            withdrawAcceptedRun()
+            return
+          }
+          if (!this.reserveHostAdmission(run, 'lane', true)) {
+            withdrawAcceptedRun()
+            return
+          }
+        }
+        if (!(await this.claimHostAdmission(run))) {
+          withdrawAcceptedRun()
+          return
+        }
+        let dispatchOperationOwnsAdmission = false
+        try {
+          await this.hostAdmission.waitForBuildTurn()
+          if (
+            dispatchWasCancelled() ||
+            this.runsByRunId.get(run.runId) !== run ||
+            run.terminalFinalized
+          ) {
+            if (this.runsByRunId.get(run.runId) === run && !run.terminalFinalized) {
+              this.finalizeRun(
+                run,
+                'cancelled',
+                runtime.cancelled
+                  ? 'Round cancelled before fan-out dispatch.'
+                  : 'Owning participant was skipped before fan-out dispatch.'
+              )
+            }
+            withdrawAcceptedRun()
+            return
+          }
+          // Compaction may invoke a provider and must therefore live behind the
+          // same claimed host slot as the turn it prepares. Pace the compaction
+          // start, then take a second build turn so several completed
+          // compactions cannot resume prompt projection in one check phase.
+          await this.awaitSeatCompactionBeforeDispatch(runtime.chatId, run.participant)
+          await this.hostAdmission.waitForBuildTurn()
+          if (
+            dispatchWasCancelled() ||
+            this.runsByRunId.get(run.runId) !== run ||
+            run.terminalFinalized
+          ) {
+            if (this.runsByRunId.get(run.runId) === run && !run.terminalFinalized) {
+              this.finalizeRun(
+                run,
+                'cancelled',
+                runtime.cancelled
+                  ? 'Round cancelled during fan-out compaction.'
+                  : 'Owning participant was skipped during fan-out compaction.'
+              )
+            }
+            withdrawAcceptedRun()
+            return
+          }
+          // Everything authority-bearing is live-read after the compaction
+          // suspension. A permission/settings/isolation revocation that lands
+          // while this lane waits must constrain the payload that actually
+          // crosses the adapter boundary.
+          const dispatchChat = this.deps.getChat(runtime.chatId)
+          const currentParticipant = dispatchChat?.ensemble?.participants.find(
+            (candidate) => candidate.id === participant.id
+          )
+          if (!dispatchChat?.ensemble || !currentParticipant?.enabled) {
+            if (this.runsByRunId.get(run.runId) === run && !run.terminalFinalized) {
+              this.finalizeRun(
+                run,
+                'cancelled',
+                'Fan-out seat was removed or disabled during compaction.'
+              )
+            }
+            withdrawAcceptedRun()
+            return
+          }
+          participant = {
+            ...participant,
+            permissionPresetId: currentParticipant.permissionPresetId,
+            permissionOverrides: currentParticipant.permissionOverrides,
+            runtimeProfileId: currentParticipant.runtimeProfileId,
+            linkedProviderSessionId: currentParticipant.linkedProviderSessionId,
+            contextCompactionSummary: currentParticipant.contextCompactionSummary,
+            promptShellVersion: currentParticipant.promptShellVersion,
+            promptDynamicStateVersion: currentParticipant.promptDynamicStateVersion,
+            taskWraithMcpProfileReceipt: currentParticipant.taskWraithMcpProfileReceipt
+          }
+          run.participant = participant
+          const settings = this.deps.getSettings()
+          const chatContextTurns = settings.chatContextTurns
+          const instructionContext =
+            this.deps.resolveInstructionContext?.(
+              (dispatchChat.scope ?? 'workspace') === 'global'
+                ? null
+                : dispatchChat.workspacePath || null
+            ) ?? null
+          const promptShellStamp = computeEnsemblePromptShellStamp(dispatchChat.ensemble, {
+            instructionsDigest: instructionContext?.digest
+          })
+          const dynamicStateSnapshot = buildEnsembleDynamicStateSnapshot(
+            dispatchChat,
+            dispatchChat.ensemble
+          )
+          const userPromptSourceMessage =
+            promptAuthority === 'user' && options.userPromptSourceMessageId
+              ? dispatchChat.messages.find(
+                  (message) =>
+                    message.id === options.userPromptSourceMessageId &&
+                    message.role === 'user' &&
+                    message.metadata?.kind === 'midRunSteering'
+                )
+              : undefined
+          const promptChat = userPromptSourceMessage
+            ? {
+                ...dispatchChat,
+                messages: dispatchChat.messages.filter(
+                  (message) => message.id !== userPromptSourceMessage.id
+                )
+              }
+            : dispatchChat
       const forceReadOnly = forceReadOnlyForParticipant(participant.id)
       const runScopedExternalPathGrants =
         this.deps.issueRunScopedExternalGrants?.({
@@ -19219,6 +19965,24 @@ export class EnsembleOrchestrator {
             participantExternalPathGrants,
             isBackgroundParticipant(participant) ? { disallowTrustedSession: true } : {}
           )
+      const revalidatedLaneIntent = resolveEnsembleFanoutLaneIntent({
+        mode,
+        permissionReadOnly: permissions.readOnly,
+        deriveLaneIntentFromPermissions: options.deriveLaneIntentFromPermissions
+      })
+      if (run.laneIntent === 'write' && revalidatedLaneIntent === 'read') {
+        run.laneIntent = 'read'
+        run.approvedWriteScopes = undefined
+      }
+      const liveIsolationPolicy = resolveEnsembleFanoutIsolationPolicy(
+        dispatchChat.ensemble.fanoutIsolation
+      )
+      const liveFanoutIsolation: EnsembleFanoutIsolation =
+        liveIsolationPolicy === 'any' ? (options.isolation ?? 'off') : liveIsolationPolicy
+      const isolateCurrentWriteLane =
+        liveFanoutIsolation === 'worktree' &&
+        run.laneIntent === 'write' &&
+        dispatchChat.scope !== 'global'
       const readerIntentBoundary =
         run.laneIntent === 'read'
           ? forceReadOnly
@@ -19235,7 +19999,9 @@ export class EnsembleOrchestrator {
         config: dispatchChat.ensemble!,
         participant,
         currentPrompt: promptForLane,
-        ...(userPromptSourceMessage ? { currentPromptMessageId: userPromptSourceMessage.id } : {}),
+        ...(userPromptSourceMessage
+          ? { currentPromptMessageId: userPromptSourceMessage.id }
+          : {}),
         currentPromptLabel: explicitLanePrompt
           ? promptAuthority === 'user'
             ? 'Current user-directed fan-out request:'
@@ -19319,7 +20085,9 @@ export class EnsembleOrchestrator {
       const payload: AgentRunPayload = {
         provider: participant.provider,
         scope: dispatchChat.scope === 'global' ? 'global' : 'workspace',
-        ...(dispatchChat.scope === 'global' ? {} : { workspace: dispatchChat.workspacePath || '' }),
+        ...(dispatchChat.scope === 'global'
+          ? {}
+          : { workspace: dispatchChat.workspacePath || '' }),
         prompt: promptWithDiscordContext,
         imagePaths: this.imagePathsForParticipantDispatch(runtime, participant),
         appRunId: run.runId,
@@ -19367,22 +20135,7 @@ export class EnsembleOrchestrator {
         ...(kimiThinking !== undefined ? { kimiThinking } : {}),
         ...ollamaRunControls
       }
-      dispatchStartPromises.push(
-        (async () => {
-          if (dispatchWasCancelled()) {
-            if (this.runsByRunId.get(run.runId) === run) {
-              this.finalizeRun(
-                run,
-                'cancelled',
-                runtime.cancelled
-                  ? 'Round cancelled before fan-out dispatch.'
-                  : 'Owning participant was skipped before fan-out dispatch.'
-              )
-            }
-            return
-          }
-
-          if (isolateWriteLanes && run.laneIntent === 'write' && run.laneId) {
+          if (isolateCurrentWriteLane && run.laneId) {
             // Allocate this lane's isolated worktree before the provider sees
             // the payload. Fail CLOSED on allocation errors: silently falling
             // back to the shared checkout would defeat the isolation the user
@@ -19418,6 +20171,7 @@ export class EnsembleOrchestrator {
               if (this.runsByRunId.get(run.runId) === run) {
                 this.finalizeRun(run, 'failed', note)
               }
+              withdrawAcceptedRun()
               return
             }
             // Worktree allocation can take real time (git worktree add).
@@ -19432,40 +20186,11 @@ export class EnsembleOrchestrator {
                     : 'Owning participant was skipped before fan-out dispatch.'
                 )
               }
+              withdrawAcceptedRun()
               return
             }
           }
 
-          // The wide-fan-out case this gate exists for. Queueing here is what
-          // turns a sixteen-seat local round from load/evict thrash into a slow
-          // success; a lane past capacity waits its turn rather than failing.
-          try {
-            await this.localAdmission().admit(run.runId, participant)
-          } catch {
-            if (this.runsByRunId.get(run.runId) === run) {
-              this.finalizeRun(
-                run,
-                'cancelled',
-                'Fan-out lane cancelled while waiting for local model capacity.'
-              )
-            }
-            return
-          }
-          // Waiting for capacity can take real time, exactly like the worktree
-          // allocation above. Re-check cancellation before handing the payload
-          // to a provider.
-          if (dispatchWasCancelled()) {
-            if (this.runsByRunId.get(run.runId) === run) {
-              this.finalizeRun(
-                run,
-                'cancelled',
-                runtime.cancelled
-                  ? 'Round cancelled before fan-out dispatch.'
-                  : 'Owning participant was skipped before fan-out dispatch.'
-              )
-            }
-            return
-          }
           run.transportDispatchState = 'pending'
           await new Promise<void>((resolveDispatchStart) => {
             let dispatchStartSettled = false
@@ -19481,21 +20206,32 @@ export class EnsembleOrchestrator {
               try {
                 run.transportDispatchState = 'accepted'
                 if (!dispatchWasCancelled()) {
-                  acceptedLaneRuns.push(run)
-                  options.acceptedRuns?.push(run)
-                  this.startCursorCompletionWatchdog(run)
+                  if (!options.adapterAcceptedRuns?.includes(run)) {
+                    options.adapterAcceptedRuns?.push(run)
+                  }
                   // The lane becomes a candidate once main has passed every
                   // preflight and invoked its provider adapter. Provider setup and
                   // terminal outcome remain asynchronous transcript evidence.
                   run.promptShellStamp = promptShellStamp
                   run.promptDynamicStateVersion = dynamicStateSnapshot.version
                   run.ensemblePromptUsageTelemetry = promptUsageTelemetry
+                  if (!adapterDispatchNoted) {
+                    adapterDispatchNoted = true
+                    this.appendRoundStatus(
+                      runtime.chatId,
+                      runtime.roundId,
+                      `${label} provider dispatch started · ${participantDisplayName(participant)} crossed the adapter boundary; remaining accepted lanes continue through host admission.`
+                    )
+                  }
+                  this.scheduleFlush(run)
+                  this.startCursorCompletionWatchdog(run)
                 }
               } finally {
                 settleDispatchStart()
               }
             }
             const handleDispatchRejection = async (error: unknown): Promise<void> => {
+              withdrawAcceptedRun()
               run.transportDispatchState = 'unknown'
               if (dispatchWasCancelled()) {
                 // Dispatch may have crossed into the provider adapter before it
@@ -19531,6 +20267,7 @@ export class EnsembleOrchestrator {
                 run.transportDispatchState = 'rejected'
               }
               if (dispatchWasCancelled()) {
+                withdrawAcceptedRun()
                 if (dispatched.dispatched || adapterInvoked) {
                   // A Stop/Skip may have called cancel before the dispatch facade
                   // registered the provider run. Repeat against the accepted id.
@@ -19549,6 +20286,7 @@ export class EnsembleOrchestrator {
               }
 
               if (!dispatched.dispatched) {
+                withdrawAcceptedRun()
                 if (this.runsByRunId.get(run.runId) === run) {
                   const note = dispatched.failureMessage
                     ? formatDispatchFailureNote(
@@ -19565,6 +20303,7 @@ export class EnsembleOrchestrator {
 
             let dispatchOperation: ReturnType<EnsembleOrchestratorDeps['dispatch']>
             try {
+              dispatchOperationOwnsAdmission = true
               dispatchOperation = this.deps.dispatch(
                 payload,
                 { sender: runtime.sender },
@@ -19585,18 +20324,42 @@ export class EnsembleOrchestrator {
                 settleDispatchStart()
               })
           })
-        })()
-      )
+        } catch (error) {
+          withdrawAcceptedRun()
+          const note = `${participantDisplayName(run.participant)} fan-out preparation failed: ${error instanceof Error ? error.message : String(error)}`
+          if (this.runsByRunId.get(run.runId) === run && !run.terminalFinalized) {
+            this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
+            this.finalizeRun(run, 'failed', note)
+          }
+        } finally {
+          if (!dispatchOperationOwnsAdmission) this.markRunDispatchSettled(run)
+        }
+      })()
+      dispatchStartPromises.push(dispatchStart)
+      if (
+        run.hostAdmissionInitialState === 'admitted' &&
+        !localOllamaModelKey(run.participant)
+      ) {
+        immediatelyAdmittedDispatchStarts.push(dispatchStart)
+      }
     }
 
     const laneIds = laneRuns
       .map((run) => run.laneId)
       .filter((laneId): laneId is string => Boolean(laneId))
 
-    // Wait for dispatch attempts, not lane completion, so agent-facing MCP
-    // callers get a real dispatch receipt while serial orchestrator fan-out can
-    // still wait for lane completion below.
-    await Promise.all(dispatchStartPromises)
+    // Queued launches remain part of round-activity joining, but an explicit
+    // fan-out receipt returns after lightweight host reservation rather than
+    // waiting minutes for every lane to reach provider setup.
+    const dispatchStartsSettled = this.trackRoundActivity(
+      runtime,
+      Promise.all(dispatchStartPromises).then(() => undefined)
+    )
+    if (options.waitForCompletion !== false || options.waitForDispatchStarts === true) {
+      await dispatchStartsSettled
+    } else {
+      await Promise.all(immediatelyAdmittedDispatchStarts)
+    }
     if (sourceOwner?.ownedFanoutRunIds) {
       const acceptedRunIds = new Set(acceptedLaneRuns.map((run) => run.runId))
       for (const run of laneRuns) {
@@ -19754,7 +20517,7 @@ export class EnsembleOrchestrator {
       promptMessageId,
       requestedModel: participant.model || 'cli-default',
       approvalMode: participant.permissionPresetId || 'default',
-      status: 'running',
+      status: 'queued',
       ensembleRoundId: runtime.roundId,
       ensembleParticipantId: participant.id,
       ensembleParticipantStatus: 'running',
@@ -19818,19 +20581,16 @@ export class EnsembleOrchestrator {
                 setActive: !options.laneId
               }),
           options.laneId
-            ? transitionLane(
-                createLane({
-                  laneId: options.laneId,
-                  participantId: participant.id,
-                  provider: participant.provider,
-                  intent: options.laneIntent || 'read',
-                  approvedWriteScopes: options.approvedWriteScopes,
-                  runId,
-                  providerSessionId: participant.linkedProviderSessionId || null,
-                  nowIso: startedAt
-                }),
-                { status: 'running', nowIso: startedAt }
-              )
+            ? createLane({
+                laneId: options.laneId,
+                participantId: participant.id,
+                provider: participant.provider,
+                intent: options.laneIntent || 'read',
+                approvedWriteScopes: options.approvedWriteScopes,
+                runId,
+                providerSessionId: participant.linkedProviderSessionId || null,
+                nowIso: startedAt
+              })
             : undefined
         ),
         updatedAt: startedAt
@@ -20257,6 +21017,7 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     chat: ChatRecord
   ): EnsembleParticipant[] | null {
+    if (this.hostAdmissionStopping) return null
     // A completed round snapshot remains available after its runtime is
     // cleared. Never let a late serial/fan-out drain mutate hop counters or
     // announce a pass from that stale snapshot.
@@ -20618,6 +21379,7 @@ export class EnsembleOrchestrator {
 
   private markRunDispatchSettled(run: ActiveParticipantRun): void {
     run.dispatchSettled = true
+    this.releaseHostAdmission(run)
     if (run.supersededTransportReapTimer) {
       clearTimeout(run.supersededTransportReapTimer)
       run.supersededTransportReapTimer = undefined
@@ -20644,9 +21406,7 @@ export class EnsembleOrchestrator {
     const timer = setTimeout(() => {
       run.supersededTransportReapTimer = undefined
       if (run.dispatchSettled) return
-      void Promise.resolve(this.deps.cancelRun(run.participant.provider, run.runId)).catch(
-        () => undefined
-      )
+      void this.requestExactRunCancellation(run).catch(() => undefined)
     }, grace)
     timer.unref?.()
     run.supersededTransportReapTimer = timer
@@ -20658,6 +21418,13 @@ export class EnsembleOrchestrator {
     reason?: string
   ): void {
     this.stopCursorCompletionWatchdog(run)
+    this.cancelHostAdmission(run, reason || `Run ${status} before host dispatch.`)
+    // A claimed slot with no open transport is safe to return immediately.
+    // Pending/accepted/unknown dispatches retain it until their exact promise
+    // settles through markRunDispatchSettled.
+    if (!run.transportDispatchState || run.transportDispatchState === 'rejected') {
+      this.releaseHostAdmission(run)
+    }
     // All 27 terminal call sites funnel through here and this runs ahead of the
     // `terminalFinalized` early return, so it is the one place a local
     // admission slot is handed back exactly once — on completion, cancellation,
@@ -21276,7 +22043,11 @@ export class EnsembleOrchestrator {
         actualModel: run.actualModel || existingRun.actualModel,
         providerThreadId: run.providerSessionId || existingRun.providerThreadId,
         stats: run.stats || existingRun.stats,
-        status: effectiveFinal ? statusToRunStatus(run.status) : existingRun.status || 'running',
+        status: effectiveFinal
+          ? statusToRunStatus(run.status)
+          : run.transportDispatchState === 'accepted'
+            ? 'running'
+            : existingRun.status || 'queued',
         endedAt: effectiveFinal ? timestamp : existingRun.endedAt,
         ensembleParticipantStatus: visibleStatus,
         ...(effectiveFinal && run.status === 'sleeping'
@@ -22299,6 +23070,31 @@ export class EnsembleOrchestrator {
     })
   }
 
+  private runHostAdmittedSeatMaintenance<T>(
+    chatId: string,
+    roundId: string | undefined,
+    participant: EnsembleParticipant,
+    task: () => Promise<T> | T,
+    shouldRun: () => boolean = () => true
+  ): Promise<
+    | { readonly ok: true; readonly value: T; readonly queuedForMs: number }
+    | { readonly ok: false; readonly reason: string }
+  > {
+    const runId = `ensemble-maintenance-${this.deps.now()}-${++this.hostMaintenanceRunCounter}`
+    return this.hostAdmission.runMaintenance(
+      {
+        runId,
+        chatId,
+        ...(roundId ? { roundId } : {}),
+        participantId: participant.id,
+        provider: participant.provider,
+        kind: 'lane'
+      },
+      task,
+      () => !this.hostAdmissionStopping && shouldRun()
+    )
+  }
+
   /**
    * Await an in-flight host seat compaction for this participant, then refresh
    * the roster object's session/summary fields from the persisted chat — the
@@ -22375,7 +23171,14 @@ export class EnsembleOrchestrator {
     if (!participant) return
     const request = this.buildAutoCompactSeatRequest(chatId, participant)
     if (!request) return
-    void compactSeatContext(request).catch(() => {
+    const roundId = this.deps.getChat(chatId)?.ensemble?.activeRound?.roundId
+    void this.runHostAdmittedSeatMaintenance(
+      chatId,
+      roundId,
+      participant,
+      () => compactSeatContext(request),
+      () => Boolean(this.deps.getChat(chatId)?.ensemble)
+    ).catch(() => {
       // Best-effort maintenance; pre-dispatch compaction remains the safety net.
     })
   }
@@ -22516,12 +23319,14 @@ export class EnsembleOrchestrator {
     chatId: string,
     status: Extract<EnsembleRoundState['status'], 'completed' | 'cancelled' | 'failed'>
   ): void {
+    if (this.hostAdmissionStopping) return
     if (status !== 'completed') return
     const compactSeatContext = this.deps.compactSeatContext
     if (!compactSeatContext) return
     if (this.deps.getSettings().hostAutoCompactEnabled === false) return
     setTimeout(() => {
       try {
+        if (this.hostAdmissionStopping) return
         if (this.deps.getSettings().hostAutoCompactEnabled === false) return
         const chat = this.deps.getChat(chatId)
         if (!chat?.ensemble) return
@@ -22584,12 +23389,26 @@ export class EnsembleOrchestrator {
         }
         if (!worst) return
         this.seatAutoCompactLastAttemptAt.set(worst.participant.id, this.deps.now())
-        void compactSeatContext({
+        void this.runHostAdmittedSeatMaintenance(
           chatId,
-          participantId: worst.participant.id,
-          provider: worst.participant.provider as HostSeatCompactionProvider,
-          trigger: 'auto'
-        }).catch(() => {
+          chat.ensemble.activeRound?.roundId,
+          worst.participant,
+          () =>
+            compactSeatContext({
+              chatId,
+              participantId: worst!.participant.id,
+              provider: worst!.participant.provider as HostSeatCompactionProvider,
+              trigger: 'auto'
+            }),
+          () => {
+            const latest = this.deps.getChat(chatId)
+            return Boolean(
+              latest?.ensemble &&
+                !this.roundsByChatId.has(chatId) &&
+                !isEnsembleRoundDispatchLive(latest.ensemble.activeRound)
+            )
+          }
+        ).catch(() => {
           // Best-effort: the lane cards its own failures; cooldown holds.
         })
       } catch {

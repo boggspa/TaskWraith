@@ -461,6 +461,36 @@ describe('dispatchEnsembleAwaitTool', () => {
     expect(harness.orchestrator.awaitLanesForRun).not.toHaveBeenCalled()
   })
 
+  it('routes an Ensemble child-only join through the parent-promotion owner', async () => {
+    const result = {
+      ok: true,
+      tool: 'ensemble_await' as const,
+      status: 'settled' as const,
+      message: 'settled'
+    }
+    const awaitLanesForRun = vi.fn(async () => result)
+    const harness = deps({ orchestrator: { awaitLanesForRun } })
+
+    await expect(
+      dispatchEnsembleAwaitTool(
+        {
+          runId: 'ensemble-run',
+          parentChatId: 'parent-chat',
+          ensembleParent: true,
+          args: { waveIds: ['wave-1'], subThreadIds: ['child-1'], timeoutSeconds: 30 }
+        },
+        harness
+      )
+    ).resolves.toBe(result)
+    expect(awaitLanesForRun).toHaveBeenCalledWith('ensemble-run', {
+      laneIds: undefined,
+      subThreadIds: ['child-1'],
+      waveIds: ['wave-1'],
+      timeoutSeconds: 30
+    })
+    expect(harness.delay).not.toHaveBeenCalled()
+  })
+
   it('polls until the wave mailbox results arrive', async () => {
     let currentMailbox = mailbox()
     const harness = deps({

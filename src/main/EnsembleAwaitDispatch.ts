@@ -67,6 +67,8 @@ interface EnsembleAwaitDispatcher {
 export interface DispatchEnsembleAwaitToolInput {
   runId?: string
   parentChatId?: string
+  /** Main-derived caller identity; never accepted from tool arguments. */
+  ensembleParent?: boolean
   args: Record<string, unknown>
 }
 
@@ -476,7 +478,9 @@ export async function dispatchEnsembleAwaitTool(
     : null
   if (unreturnableResult) return unreturnableResult
 
-  if (laneIds === undefined && hasChildTargets) {
+  const ensembleChildOnlyJoin =
+    input.ensembleParent === true && laneIds === undefined && executionIds === undefined
+  if (laneIds === undefined && hasChildTargets && !ensembleChildOnlyJoin) {
     return awaitSubThreadTargets(input, deps, subThreadIds, waveIds, executionIds, timeoutSeconds)
   }
   // The lane path is the Ensemble orchestrator's own implementation and has no

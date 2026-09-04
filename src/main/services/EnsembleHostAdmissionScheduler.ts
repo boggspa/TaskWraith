@@ -10,6 +10,7 @@ import type { ProviderId } from '../store/types'
 
 export const DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS = 8
 export const DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_FOREGROUND_RUNS = 6
+export const DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS_PER_CHAT = 3
 export const DEFAULT_ENSEMBLE_HOST_MAX_QUEUED_RUNS = 256
 
 const MAX_IDENTIFIER_CHARS = 512
@@ -36,7 +37,9 @@ export interface EnsembleHostAdmissionIdentity extends EnsembleHostAdmissionRequ
 
 export interface EnsembleHostAdmissionOccupancy {
   readonly maxActive: number
+  readonly maxActivePerChat: number
   readonly maxForeground: number
+  readonly maxForegroundPerChat: number
   readonly reservedLaneSlots: number
   readonly maxQueued: number
   readonly active: number
@@ -100,6 +103,20 @@ export type EnsembleHostAdmissionReservationResult =
   | EnsembleHostAdmissionReservation
   | EnsembleHostAdmissionRejection
 
+export type EnsembleHostAdmissionPromotionResult =
+  | {
+      readonly ok: true
+      readonly promoted: boolean
+      readonly occupancy: EnsembleHostAdmissionOccupancy
+    }
+  | {
+      readonly ok: false
+      readonly code: 'run_not_active' | 'run_not_claimed' | 'foreground_capacity'
+      readonly retryable: boolean
+      readonly message: string
+      readonly occupancy: EnsembleHostAdmissionOccupancy
+    }
+
 export interface EnsembleHostAdmissionMetrics {
   readonly requests: number
   readonly reservations: number
@@ -112,6 +129,8 @@ export interface EnsembleHostAdmissionMetrics {
   readonly duplicateRejected: number
   readonly overflowRejected: number
   readonly shutdownRejected: number
+  readonly promotedToForeground: number
+  readonly promotionRejected: number
   readonly admittedQueueWaitMs: number
   readonly cancelledQueueWaitMs: number
   readonly maxAdmittedQueueWaitMs: number
@@ -141,6 +160,12 @@ export interface EnsembleHostAdmissionSnapshot {
 
 export interface EnsembleHostAdmissionSchedulerOptions {
   readonly maxActive?: number
+  /**
+   * Emergency first-wave fairness bound. A busy chat queues beyond this share
+   * instead of consuming every process-wide slot before sibling chats reserve.
+   * Queued work is never dropped and drains as that chat's leases settle.
+   */
+  readonly maxActivePerChat?: number
   readonly maxForeground?: number
   readonly maxQueued?: number
   readonly now?: () => number
@@ -176,6 +201,7 @@ interface ActiveAdmission {
   readonly token: symbol
   readonly admittedAt: number
   readonly waiter: QueuedWaiter
+  kind: EnsembleHostAdmissionKind
   claimed: boolean
 }
 
@@ -191,6 +217,8 @@ interface MutableMetrics {
   duplicateRejected: number
   overflowRejected: number
   shutdownRejected: number
+  promotedToForeground: number
+  promotionRejected: number
   admittedQueueWaitMs: number
   cancelledQueueWaitMs: number
   maxAdmittedQueueWaitMs: number
@@ -272,12 +300,14 @@ function removeFromOrder<T>(order: T[], value: T): void {
  * each provider/kind queue remains FIFO. Foreground work cannot consume the
  * reserved lane slots, preventing foreground fan-out owners from occupying
  * every slot while waiting for children that can never start. Callers must
- * classify any run allowed to synchronously await child lanes as foreground,
- * even when that owner is presented as a lane elsewhere.
+ * atomically promote a claimed lane before it reserves or waits on descendants;
+ * ordinary auxiliary runs remain leaves and keep the reserved capacity usable.
  */
 export class EnsembleHostAdmissionScheduler {
   private readonly maxActive: number
+  private readonly maxActivePerChat: number
   private readonly maxForeground: number
+  private readonly maxForegroundPerChat: number
   private readonly maxQueued: number
   private readonly now: () => number
   private readonly scheduleTask: (task: () => void) => void
@@ -298,6 +328,8 @@ export class EnsembleHostAdmissionScheduler {
     duplicateRejected: 0,
     overflowRejected: 0,
     shutdownRejected: 0,
+    promotedToForeground: 0,
+    promotionRejected: 0,
     admittedQueueWaitMs: 0,
     cancelledQueueWaitMs: 0,
     maxAdmittedQueueWaitMs: 0,
@@ -315,6 +347,15 @@ export class EnsembleHostAdmissionScheduler {
       options.maxActive ?? DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS,
       'Ensemble host active-run capacity'
     )
+    this.maxActivePerChat = requirePositiveInteger(
+      options.maxActivePerChat ??
+        Math.min(DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS_PER_CHAT, this.maxActive),
+      'Ensemble host per-chat active-run capacity'
+    )
+    if (this.maxActivePerChat > this.maxActive) {
+      throw new Error('Ensemble host per-chat active-run capacity cannot exceed total capacity.')
+    }
+    this.maxForegroundPerChat = Math.max(1, this.maxActivePerChat - 1)
     this.maxForeground = requirePositiveInteger(
       options.maxForeground ??
         Math.min(DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_FOREGROUND_RUNS, this.maxActive),
@@ -405,6 +446,80 @@ export class EnsembleHostAdmissionScheduler {
   stateForRun(runId: string): EnsembleHostAdmissionRunState | undefined {
     if (this.activeByRunId.has(runId)) return 'active'
     return this.queuedByRunId.has(runId) ? 'queued' : undefined
+  }
+
+  isForeground(runId: string): boolean {
+    return this.activeByRunId.get(runId)?.kind === 'foreground'
+  }
+
+  /**
+   * Sticky on-demand promotion for a claimed lane that is about to own/wait on
+   * descendants. Promotion never evicts work and remains until lease release.
+   */
+  promoteToForeground(runId: string): EnsembleHostAdmissionPromotionResult {
+    const active = this.activeByRunId.get(runId)
+    if (!active) {
+      this.metricsState.promotionRejected += 1
+      return {
+        ok: false,
+        code: 'run_not_active',
+        retryable: false,
+        message: 'The run no longer owns an active host-admission slot.',
+        occupancy: this.occupancy()
+      }
+    }
+    if (!active.claimed) {
+      this.metricsState.promotionRejected += 1
+      return {
+        ok: false,
+        code: 'run_not_claimed',
+        retryable: true,
+        message: 'The run has not claimed its host-admission slot yet.',
+        occupancy: this.occupancy()
+      }
+    }
+    if (
+      this.maxForeground >= this.maxActive ||
+      this.maxForegroundPerChat >= this.maxActivePerChat
+    ) {
+      this.metricsState.promotionRejected += 1
+      return {
+        ok: false,
+        code: 'foreground_capacity',
+        retryable: true,
+        message:
+          'Host admission has no reserved leaf capacity for descendant work. Finish this turn and retry after the capacity limits reserve at least one global and per-chat leaf slot; no descendant work was reserved.',
+        occupancy: this.occupancy()
+      }
+    }
+    if (active.kind === 'foreground') {
+      return { ok: true, promoted: false, occupancy: this.occupancy() }
+    }
+    if (this.activeForeground >= this.maxForeground) {
+      this.metricsState.promotionRejected += 1
+      return {
+        ok: false,
+        code: 'foreground_capacity',
+        retryable: true,
+        message: `Host foreground-owner capacity is full (${this.activeForeground}/${this.maxForeground}). Finish this lane and retry from a later foreground turn; no descendant work was reserved.`,
+        occupancy: this.occupancy()
+      }
+    }
+    const activeForegroundForChat = this.activeForegroundCountForChat(active.identity.chatId)
+    if (activeForegroundForChat >= this.maxForegroundPerChat) {
+      this.metricsState.promotionRejected += 1
+      return {
+        ok: false,
+        code: 'foreground_capacity',
+        retryable: true,
+        message: `Host foreground-owner capacity for this chat is full (${activeForegroundForChat}/${this.maxForegroundPerChat}). Finish this lane and retry from a later foreground turn; one per-chat slot remains reserved for leaf work and no descendant work was reserved.`,
+        occupancy: this.occupancy()
+      }
+    }
+    active.kind = 'foreground'
+    this.activeForeground += 1
+    this.metricsState.promotedToForeground += 1
+    return { ok: true, promoted: true, occupancy: this.occupancy() }
   }
 
   cancelQueued(runId: string, reason?: string): boolean {
@@ -595,7 +710,7 @@ export class EnsembleHostAdmissionScheduler {
   private cancelUnclaimed(active: ActiveAdmission): void {
     if (active.claimed || this.activeByRunId.get(active.identity.runId) !== active) return
     this.activeByRunId.delete(active.identity.runId)
-    if (active.identity.kind === 'foreground') this.activeForeground -= 1
+    if (active.kind === 'foreground') this.activeForeground -= 1
     active.waiter.state = 'cancelled'
     this.metricsState.cancelledUnclaimed += 1
     this.notifyIdle()
@@ -604,13 +719,33 @@ export class EnsembleHostAdmissionScheduler {
 
   private canAdmit(waiter: QueuedWaiter): boolean {
     if (this.activeByRunId.size >= this.maxActive) return false
+    if (this.activeCountForChat(waiter.identity.chatId) >= this.maxActivePerChat) return false
     return waiter.identity.kind === 'lane' || this.activeForeground < this.maxForeground
   }
 
-  private eligibleWaiter(provider: ProviderQueue): QueuedWaiter | undefined {
+  private activeCountForChat(chatId: string): number {
+    let count = 0
+    for (const active of this.activeByRunId.values()) {
+      if (active.identity.chatId === chatId) count += 1
+    }
+    return count
+  }
+
+  private activeForegroundCountForChat(chatId: string): number {
+    let count = 0
+    for (const active of this.activeByRunId.values()) {
+      if (active.identity.chatId === chatId && active.kind === 'foreground') count += 1
+    }
+    return count
+  }
+
+  private eligibleWaiter(provider: ProviderQueue, chatId: string): QueuedWaiter | undefined {
     const lane = provider.lanes[0]
     const foreground =
-      this.activeForeground < this.maxForeground ? provider.foreground[0] : undefined
+      this.activeForeground < this.maxForeground &&
+      this.activeForegroundCountForChat(chatId) < this.maxForegroundPerChat
+        ? provider.foreground[0]
+        : undefined
     if (!lane) return foreground
     if (!foreground) return lane
     return lane.sequence < foreground.sequence ? lane : foreground
@@ -624,7 +759,7 @@ export class EnsembleHostAdmissionScheduler {
       for (const providerId of chat.providerOrder) {
         const provider = chat.providers.get(providerId)
         if (!provider) continue
-        const waiter = this.eligibleWaiter(provider)
+        const waiter = this.eligibleWaiter(provider, chatId)
         if (!waiter || !this.canAdmit(waiter)) continue
         if (!this.removeQueuedWaiter(waiter)) continue
         const remainingChat = this.chats.get(chatId)
@@ -646,7 +781,7 @@ export class EnsembleHostAdmissionScheduler {
       for (const providerId of chat.providerOrder) {
         const provider = chat.providers.get(providerId)
         if (!provider) continue
-        const waiter = this.eligibleWaiter(provider)
+        const waiter = this.eligibleWaiter(provider, chatId)
         if (waiter && this.canAdmit(waiter)) return true
       }
     }
@@ -664,6 +799,7 @@ export class EnsembleHostAdmissionScheduler {
       token,
       admittedAt,
       waiter,
+      kind: waiter.identity.kind,
       claimed: false
     })
     if (waiter.identity.kind === 'foreground') this.activeForeground += 1
@@ -696,7 +832,7 @@ export class EnsembleHostAdmissionScheduler {
     const active = this.activeByRunId.get(runId)
     if (!active || active.token !== token) return false
     this.activeByRunId.delete(runId)
-    if (active.identity.kind === 'foreground') this.activeForeground -= 1
+    if (active.kind === 'foreground') this.activeForeground -= 1
     this.metricsState.released += 1
     this.notifyIdle()
     this.scheduleDrain()
@@ -741,7 +877,9 @@ export class EnsembleHostAdmissionScheduler {
     }
     return {
       maxActive: this.maxActive,
+      maxActivePerChat: this.maxActivePerChat,
       maxForeground: this.maxForeground,
+      maxForegroundPerChat: this.maxForegroundPerChat,
       reservedLaneSlots: this.maxActive - this.maxForeground,
       maxQueued: this.maxQueued,
       active: this.activeByRunId.size,

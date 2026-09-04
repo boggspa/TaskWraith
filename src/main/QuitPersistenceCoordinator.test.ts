@@ -124,6 +124,15 @@ describe('quit persistence main-process wiring', () => {
 
     const persistenceGate = indexSource.slice(coordinator, willQuit)
     expect(persistenceGate).toContain('AppStore.flushAllChatSaves()')
+    expect(persistenceGate).toContain('shutdownAndJoinEnsembleDelegatedRuns()')
+    expect(persistenceGate).toContain('ensembleOrchestratorRef.shutdownHostAdmission()')
+    expect(persistenceGate).toContain('Promise.allSettled([')
+    expect(persistenceGate.indexOf('shutdownAndJoinEnsembleDelegatedRuns()')).toBeLessThan(
+      persistenceGate.indexOf('AppStore.flushAllChatSaves()')
+    )
+    expect(indexSource).toContain('ensembleDelegatedRunAdmission.shutdownBeforeDispatch()')
+    expect(indexSource).toContain('terminateAndJoinEnsembleDelegatedRun(')
+    expect(indexSource).toContain('entry.settlement.then(() => undefined)')
     expect(persistenceGate).toContain("app.on('will-quit', quitPersistence.handle)")
 
     const teardown = indexSource.slice(willQuit, indexSource.indexOf('\n    })', willQuit))
