@@ -15,6 +15,10 @@ import { createHash } from 'node:crypto'
 import { isPiModelRetired } from '../shared/piModelLifecycle'
 import { resolveOllamaReasoningSupport } from '../shared/ollamaReasoning'
 import { resolvePiReasoningSupport } from '../shared/piReasoning'
+import {
+  MUSE_META_REASONING_EFFORT_LABELS,
+  museReasoningEffortsForModel
+} from '../shared/museReasoning'
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../shared/retiredProviders'
 import {
   DEVIN_DEFAULT_MODEL_ID,
@@ -73,14 +77,13 @@ const KIMI_REASONING = [
   { reasoningId: 'max', label: 'Max', available: true }
 ] as const
 
-const MUSE_REASONING = [
-  { reasoningId: 'minimal', label: 'Minimal', available: true },
-  { reasoningId: 'low', label: 'Low', available: true },
-  { reasoningId: 'medium', label: 'Medium', available: true },
-  { reasoningId: 'high', label: 'High', available: true },
-  { reasoningId: 'xhigh', label: 'Extra High', available: true },
-  { reasoningId: 'ultra', label: 'Ultra', available: true }
-] as const
+function museReasoning(modelId: string) {
+  return museReasoningEffortsForModel(modelId).map((reasoningId) => ({
+    reasoningId,
+    label: MUSE_META_REASONING_EFFORT_LABELS[reasoningId],
+    available: true
+  }))
+}
 
 const POSTURES: readonly HostPermissionPostureOffer[] = [
   {
@@ -416,15 +419,23 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       // Newest first, mirroring the CLI's own picker; Spark 1.2 stays the
       // default (the on-disk catalogue still flags it `is_current`).
       models: [
-        model('muse-spark-1.3', 'Muse Spark 1.3', MUSE_REASONING),
+        model('muse-spark-1.3', 'Muse Spark 1.3', museReasoning('muse-spark-1.3')),
         {
-          ...model('muse-spark-1.3-contributor', 'Muse Contributor Spark 1.3', MUSE_REASONING),
+          ...model(
+            'muse-spark-1.3-contributor',
+            'Muse Contributor Spark 1.3',
+            museReasoning('muse-spark-1.3-contributor')
+          ),
           detail:
             'Discounted tokens; content, including inter-session messages, may be used for product improvement.'
         },
-        model('muse-spark-1.2', 'Muse Spark 1.2', MUSE_REASONING, true),
+        model('muse-spark-1.2', 'Muse Spark 1.2', museReasoning('muse-spark-1.2'), true),
         {
-          ...model('muse-spark-1.2-contributor', 'Muse Contributor Spark 1.2', MUSE_REASONING),
+          ...model(
+            'muse-spark-1.2-contributor',
+            'Muse Contributor Spark 1.2',
+            museReasoning('muse-spark-1.2-contributor')
+          ),
           detail:
             'Discounted tokens; content, including inter-session messages, may be used for product improvement.'
         }

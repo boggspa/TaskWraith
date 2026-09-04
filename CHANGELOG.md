@@ -20,10 +20,12 @@ context needed to answer.
   and leads New Additions with it.
 - **Muse Spark 1.3 and Muse Contributor Spark 1.3.** Meta's newest Spark joins
   the Muse seat in every picker — provider/model/reasoning, Ensemble add
-  participant, the standalone Host, TUI, and iOS offers — with the full
-  Minimal-to-Ultra ladder and 1.2's pricing ($1.25/$4.25 per Mtok; Contributor
-  $0.10/$0.20 with the product-improvement data-use notice). Muse Spark 1.2
-  stays the seat default, and New Additions leads Muse with 1.3.
+  participant, the standalone Host, TUI, and iOS offers. Regular Spark 1.3
+  gains Meta's newly public Max tier between Extra High and Ultra; the
+  Contributor route and Spark 1.2 retain their existing ladders. Pricing stays
+  at $1.25/$4.25 per Mtok (Contributor $0.10/$0.20 with the
+  product-improvement data-use notice). Muse Spark 1.2 stays the seat default,
+  and New Additions leads Muse with 1.3.
 
 ### Updates and Restart
 

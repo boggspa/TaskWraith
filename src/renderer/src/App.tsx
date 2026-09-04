@@ -1104,15 +1104,6 @@ import {
 
 /** Matches MuseCliArgs MUSE_DEFAULT_REASONING_EFFORT (renderer-safe). */
 const MUSE_DEFAULT_REASONING_EFFORT = 'high'
-const MUSE_REASONING_EFFORT_ALLOWLIST = new Set([
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'ultra',
-  'ultraTask'
-])
 
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
 
@@ -6702,7 +6693,7 @@ function App(): React.JSX.Element {
           : providerDefaultReasoning,
       museReasoningEffort:
         typeof metadata.museReasoningEffort === 'string' &&
-        MUSE_REASONING_EFFORT_ALLOWLIST.has(metadata.museReasoningEffort)
+        providerReasoningEfforts.has(metadata.museReasoningEffort)
           ? metadata.museReasoningEffort
           : MUSE_DEFAULT_REASONING_EFFORT,
       mistralReasoningEffort:

@@ -263,7 +263,7 @@ describe('reasoningDisplayLabel', () => {
     ).toBe('High')
   })
 
-  it('Muse Meta /effort labels match the slider ladder (including xhigh)', () => {
+  it('Muse Meta /effort labels match the slider ladder (including xhigh and max)', () => {
     const base = {
       provider: 'muse' as const,
       composerStyle: 'codex' as const,
@@ -273,6 +273,7 @@ describe('reasoningDisplayLabel', () => {
     expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'minimal' })).toBe('Minimal')
     expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'low' })).toBe('Low')
     expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'xhigh' })).toBe('Extra High')
+    expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'max' })).toBe('Max')
     expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'ultra' })).toBe('Ultra')
     expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'none' })).toBe('')
   })

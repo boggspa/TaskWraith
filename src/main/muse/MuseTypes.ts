@@ -5,6 +5,11 @@
  * the adapter / probe / sibling modules compilable in isolation.
  */
 
+import type { MuseMetaReasoningEffort } from '../../shared/museReasoning'
+
+export { MUSE_META_REASONING_EFFORTS } from '../../shared/museReasoning'
+export type { MuseMetaReasoningEffort } from '../../shared/museReasoning'
+
 /** Stable seat key used in Muse-local descriptors until ProviderId lands. */
 export const MUSE_PROVIDER_KEY = 'muse' as const
 export type MuseProviderKey = typeof MUSE_PROVIDER_KEY
@@ -15,17 +20,6 @@ export type MuseTransportId = typeof MUSE_TRANSPORT_ID
 
 /** Expected Muse tool-surface schema version (HANDOFF / wave-1 D+C). */
 export const MUSE_EXPECTED_TOOL_SURFACE_VERSION = '2' as const
-
-/** Reasoning efforts accepted for `--provider meta` (never `none`). */
-export const MUSE_META_REASONING_EFFORTS = [
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'ultra'
-] as const
-export type MuseMetaReasoningEffort = (typeof MUSE_META_REASONING_EFFORTS)[number]
 
 /**
  * Argv tokens the seat builder must never emit.

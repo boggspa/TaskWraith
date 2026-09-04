@@ -20,6 +20,7 @@ import {
   museWriteCapable,
   normalizeMuseReasoningEffort
 } from './MuseCliArgs'
+import { MUSE_META_REASONING_EFFORTS } from './MuseTypes'
 
 const homes = {
   xdgConfigHome: '/tmp/muse-seat/config',
@@ -49,12 +50,14 @@ describe('muse constants + policy', () => {
 
   it('excludes none from the meta-compatible effort ladder', () => {
     expect(MUSE_REASONING_EFFORTS).not.toContain('none')
+    expect(MUSE_REASONING_EFFORTS).toBe(MUSE_META_REASONING_EFFORTS)
     expect([...MUSE_REASONING_EFFORTS]).toEqual([
       'minimal',
       'low',
       'medium',
       'high',
       'xhigh',
+      'max',
       'ultra'
     ])
   })
@@ -98,11 +101,22 @@ describe('normalizeMuseReasoningEffort', () => {
     expect(normalizeMuseReasoningEffort('off')).toBe('minimal')
   })
 
-  it('passes the meta ladder through', () => {
+  it('passes the meta ladder through for the Max-capable model', () => {
     for (const effort of MUSE_REASONING_EFFORTS) {
-      expect(normalizeMuseReasoningEffort(effort)).toBe(effort)
-      expect(normalizeMuseReasoningEffort(` ${effort.toUpperCase()} `)).toBe(effort)
+      expect(normalizeMuseReasoningEffort(effort, 'muse-spark-1.3')).toBe(effort)
+      expect(normalizeMuseReasoningEffort(` ${effort.toUpperCase()} `, 'muse-spark-1.3')).toBe(
+        effort
+      )
     }
+  })
+
+  it('keeps Max distinct on Spark 1.3 and clamps it elsewhere', () => {
+    expect(normalizeMuseReasoningEffort('max', 'muse-spark-1.3')).toBe('max')
+    expect(normalizeMuseReasoningEffort('max', 'muse-spark-1.3-contributor')).toBe('ultra')
+    expect(normalizeMuseReasoningEffort('max', 'muse-spark-1.2')).toBe('ultra')
+    expect(normalizeMuseReasoningEffort('max')).toBe('ultra')
+    expect(normalizeMuseReasoningEffort('ultracode')).toBe('ultra')
+    expect(normalizeMuseReasoningEffort('ultratask')).toBe('ultra')
   })
 
   it('defaults unknown / empty to high rather than forwarding', () => {
@@ -129,6 +143,18 @@ describe('buildMuseExecArgv', () => {
     expect(args.join(' ')).toContain('--sandbox-network proxy-only')
     expect(args).toContain('--disable-web-tools')
     expect(args[args.length - 1]).toBe('summarize the repo')
+  })
+
+  it('emits Max only for regular Spark 1.3 and clamps stale Max elsewhere', () => {
+    const wireEffort = (model: string): string => {
+      const args = buildMuseExecArgv({ ...base, model, reasoningEffort: 'max' })
+      const effortIndex = args.indexOf('--reasoning-effort')
+      return args[effortIndex + 1]!
+    }
+
+    expect(wireEffort('muse-spark-1.3')).toBe('max')
+    expect(wireEffort('muse-spark-1.3-contributor')).toBe('ultra')
+    expect(wireEffort('muse-spark-1.2')).toBe('ultra')
   })
 
   it('NEVER emits --yolo, --disable-sandbox, or --no-session-log', () => {

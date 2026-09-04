@@ -405,7 +405,7 @@ describe('resolveReasoningEffortForSeatChange', () => {
     ).toBe('ultracode')
   })
 
-  it('preserves Muse wire ultra/minimal and rank-snaps Codex ultra→ultracode', () => {
+  it('preserves Muse wire max/ultra/minimal and rank-snaps Codex ultra→ultracode', () => {
     expect(
       resolveReasoningEffortForSeatChange({
         provider: 'muse',
@@ -427,6 +427,20 @@ describe('resolveReasoningEffortForSeatChange', () => {
         previousEffort: 'xhigh'
       })
     ).toBe('xhigh')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'muse',
+        model: 'muse-spark-1.3',
+        previousEffort: 'max'
+      })
+    ).toBe('max')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'muse',
+        model: 'muse-spark-1.2',
+        previousEffort: 'max'
+      })
+    ).toBe('ultra')
     // Legacy Muse seats may still carry Codex-shaped ultracode from the old
     // ultra→ultracode rewrite — snap back to Muse wire ultra.
     expect(
@@ -1142,15 +1156,32 @@ describe('muse reasoning options', () => {
     expect(defaults.defaultModelId).toBe('muse-spark-1.2')
   })
 
-  it('includes xhigh between high and ultra (Meta /effort ladder)', () => {
-    expect(getEnsembleReasoningOptions('muse').map((option) => option.value)).toEqual([
+  it('adds Max only to regular Spark 1.3 while preserving every existing tier', () => {
+    expect(
+      getEnsembleReasoningOptions('muse', 'muse-spark-1.3').map((option) => option.value)
+    ).toEqual([
       'minimal',
       'low',
       'medium',
       'high',
       'xhigh',
+      'max',
       'ultra'
     ])
+    for (const modelId of [
+      'muse-spark-1.3-contributor',
+      'muse-spark-1.2',
+      'muse-spark-1.2-contributor'
+    ]) {
+      expect(getEnsembleReasoningOptions('muse', modelId).map((option) => option.value)).toEqual([
+        'minimal',
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'ultra'
+      ])
+    }
   })
 })
 

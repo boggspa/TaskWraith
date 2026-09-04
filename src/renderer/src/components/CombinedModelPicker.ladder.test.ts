@@ -44,16 +44,17 @@ describe('reasoning ladder mapping', () => {
     expect(ladderIndexForOption('codex', 'turbo')).toBeNull()
   })
 
-  it('maps Muse Meta /effort onto the shared ladder (minimal→xhigh→ultra→ultraTask)', () => {
-    // Muse's CLI ladder is minimal|low|medium|high|xhigh|ultra. Minimal parks
-    // at Off (0); ultra parks at the Ultracode stop (6) with value "ultra"
-    // (not Codex's "ultracode"); ultraTask parks at UltraTask stop (7).
-    // xhigh must not be dropped.
+  it('maps Muse Meta /effort onto the shared ladder (minimal→xhigh→max→ultra→ultraTask)', () => {
+    // Muse's CLI ladder is minimal|low|medium|high|xhigh|max|ultra. Minimal
+    // parks at Off (0); Max keeps its distinct stop (5); ultra parks at the
+    // Ultracode stop (6) with value "ultra" (not Codex's "ultracode");
+    // ultraTask parks at UltraTask stop (7). Neither xhigh nor max may drop.
     expect(ladderIndexForOption('muse', 'minimal')).toBe(0)
     expect(ladderIndexForOption('muse', 'low')).toBe(1)
     expect(ladderIndexForOption('muse', 'medium')).toBe(2)
     expect(ladderIndexForOption('muse', 'high')).toBe(3)
     expect(ladderIndexForOption('muse', 'xhigh')).toBe(4)
+    expect(ladderIndexForOption('muse', 'max')).toBe(5)
     expect(ladderIndexForOption('muse', 'ultra')).toBe(6)
     expect(ladderIndexForOption('muse', 'ultraTask')).toBe(7)
     // Muse-scoped synonyms must not remap a foreign provider's minimal/ultra.
@@ -73,29 +74,30 @@ describe('reasoning ladder mapping', () => {
 })
 
 describe('buildLadderModel', () => {
-  it('enables Muse minimal/low/medium/high/xhigh/ultra on stops [0,1,2,3,4,6]', () => {
+  it('enables every Muse tier from minimal through ultra on stops [0,1,2,3,4,5,6]', () => {
     const ladder = buildLadderModel('muse', [
       { value: 'minimal', label: 'Minimal' },
       { value: 'low', label: 'Low' },
       { value: 'medium', label: 'Medium' },
       { value: 'high', label: 'High' },
       { value: 'xhigh', label: 'Extra High' },
+      { value: 'max', label: 'Max' },
       { value: 'ultra', label: 'Ultra' }
     ])
-    expect(ladder.enabledIndices).toEqual([0, 1, 2, 3, 4, 6])
+    expect(ladder.enabledIndices).toEqual([0, 1, 2, 3, 4, 5, 6])
     expect(ladder.valueByIndex).toEqual({
       0: 'minimal',
       1: 'low',
       2: 'medium',
       3: 'high',
       4: 'xhigh',
+      5: 'max',
       6: 'ultra'
     })
     expect(ladder.valueByIndex[6]).toBe('ultra')
     expect(ladder.valueByIndex[6]).not.toBe('ultracode')
-    // Intentional Max hole: drag/clamp near index 5 snaps to Ultra (tie→higher).
-    expect(nearestEnabledLadderIndex(5, ladder.enabledIndices)).toBe(6)
-    expect(clampedLadderIndex('muse', 'max', ladder)).toBe(6)
+    expect(nearestEnabledLadderIndex(5, ladder.enabledIndices)).toBe(5)
+    expect(clampedLadderIndex('muse', 'max', ladder)).toBe(5)
     expect(clampedLadderIndex('muse', 'ultracode', ladder)).toBe(6)
   })
 

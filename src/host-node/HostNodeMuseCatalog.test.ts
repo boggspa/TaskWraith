@@ -36,8 +36,18 @@ it('offers both Spark 1.3 and 1.2 routes with the exact bounded reasoning and po
   expect(offers.models[1]?.detail).toMatch(/content.*product improvement/i)
   expect(offers.models[2]?.detail).toBeUndefined()
   expect(offers.models[3]?.detail).toMatch(/content.*product improvement/i)
-  for (const model of offers.models) {
-    expect(model.reasoning.map((item) => item.reasoningId)).toEqual(HOST_NODE_MUSE_REASONING)
+  expect(offers.models[0]?.reasoning.map((item) => item.reasoningId)).toEqual(
+    HOST_NODE_MUSE_REASONING
+  )
+  for (const model of offers.models.slice(1)) {
+    expect(model.reasoning.map((item) => item.reasoningId)).toEqual([
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'ultra'
+    ])
   }
   expect(offers.postures.map((posture) => posture.postureId)).toEqual([
     'plan',
@@ -86,6 +96,7 @@ it('offers both Spark 1.3 and 1.2 routes with the exact bounded reasoning and po
     'Medium',
     'High',
     'Extra High',
+    'Max',
     'Ultra'
   ])
 })

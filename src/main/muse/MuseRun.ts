@@ -190,7 +190,7 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
   const temporaryRoot = requireNonEmpty(input.temporaryRoot, 'temporaryRoot')
   const sessionId = resolveMuseExecSessionId(input.sessionId)
   const writeCapable = museWriteCapable(input.approvalMode)
-  const effort = normalizeMuseReasoningEffort(input.reasoningEffort)
+  const effort = normalizeMuseReasoningEffort(input.reasoningEffort, input.model)
   const apiKeyStdin = Boolean(input.apiKey && input.apiKey.length > 0)
   const ultraTaskDelegationAutoAllow = input.ultraTaskDelegationAutoAllow === true
   const warnings: string[] = []

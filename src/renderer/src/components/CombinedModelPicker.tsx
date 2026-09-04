@@ -804,9 +804,9 @@ const PI_LADDER_INDICES: Readonly<Record<string, number>> = {
  * same `on` token and ride the first active stop too — without that mapping the
  * Thinking stop resolved to NO index at all, was dropped from the ladder, and
  * left those models with UltraTask as their single (therefore locked) stop. Muse Meta
- * `/effort` parks `minimal` at Off (0), `ultra` at Ultracode (6), and
- * `ultratask` at UltraTask (7) without rewriting those wire tokens onto other
- * providers' catalogs.
+ * `/effort` parks `minimal` at Off (0), keeps `max` on Max (5), parks `ultra`
+ * at Ultracode (6), and parks `ultratask` at UltraTask (7) without rewriting
+ * those wire tokens onto other providers' catalogs.
  */
 export function ladderIndexForOption(provider: ProviderId, value: string): number | null {
   if (provider === 'pi') {

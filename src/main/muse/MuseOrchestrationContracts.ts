@@ -15,6 +15,7 @@ import type {
   MuseTokenUsage,
   NormalizedMuseRunEvent
 } from './MuseTypes'
+import { normalizeMuseReasoningEffort } from './MuseCliArgs'
 
 export interface MuseCliArgsInput {
   readonly workspacePath: string
@@ -29,7 +30,7 @@ export interface MuseCliArgsInput {
 /** W2A: pure argv builder (`muse exec --json …`). */
 export interface MuseCliArgsModule {
   buildExecArgv(input: MuseCliArgsInput): readonly string[]
-  normalizeEffort(raw: string | null | undefined): MuseMetaReasoningEffort
+  normalizeEffort(raw: string | null | undefined, model?: string | null): MuseMetaReasoningEffort
 }
 
 export interface MuseIsolatedHomeCreateInput {
@@ -181,20 +182,8 @@ export function createMuseOrchestrationStubs(
 
   const stubs: MuseOrchestrationModules = {
     cliArgs: {
-      normalizeEffort(raw) {
-        const value = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
-        if (
-          value === 'minimal' ||
-          value === 'low' ||
-          value === 'medium' ||
-          value === 'high' ||
-          value === 'xhigh' ||
-          value === 'ultra'
-        ) {
-          return value
-        }
-        // TaskWraith `none` and unknown → meta-safe minimal (never emit none).
-        return 'minimal'
+      normalizeEffort(raw, model) {
+        return normalizeMuseReasoningEffort(raw, model)
       },
       buildExecArgv(input) {
         const argv: string[] = [
@@ -378,7 +367,7 @@ export function buildMuseLaunchPlan(
     typeof request.sessionId === 'string' && request.sessionId.trim()
       ? request.sessionId.trim()
       : request.runId
-  const effort = modules.cliArgs.normalizeEffort(request.reasoningEffort)
+  const effort = modules.cliArgs.normalizeEffort(request.reasoningEffort, request.model)
   const apiKeyStdin = Boolean(request.apiKey && request.apiKey.length > 0)
   const home =
     options.isolatedHome ??

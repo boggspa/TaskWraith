@@ -306,7 +306,7 @@ function normalizeReasoningEffort(
       'ultratask'
     ])
     return valid.has(raw)
-      ? { ok: true, value: normalizeMuseReasoningEffort(raw) }
+      ? { ok: true, value: normalizeMuseReasoningEffort(raw, modelId) }
       : invalidReasoningEffort(provider, raw, [...valid])
   }
 

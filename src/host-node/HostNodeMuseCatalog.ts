@@ -8,19 +8,17 @@ import {
   type HostProviderStatusProjection
 } from '../shared/hostSetupProtocol'
 import type { HostProviderModelProjection } from '../shared/hostProtocol'
+import {
+  MUSE_META_REASONING_EFFORT_LABELS,
+  MUSE_META_REASONING_EFFORTS,
+  museReasoningEffortsForModel
+} from '../shared/museReasoning'
 
 export const HOST_NODE_MUSE_MODEL_ID = 'muse-spark-1.2'
 export const HOST_NODE_MUSE_CONTRIBUTOR_MODEL_ID = 'muse-spark-1.2-contributor'
 export const HOST_NODE_MUSE_SPARK_1_3_MODEL_ID = 'muse-spark-1.3'
 export const HOST_NODE_MUSE_SPARK_1_3_CONTRIBUTOR_MODEL_ID = 'muse-spark-1.3-contributor'
-export const HOST_NODE_MUSE_REASONING = [
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'ultra'
-] as const
+export const HOST_NODE_MUSE_REASONING = MUSE_META_REASONING_EFFORTS
 
 const postures = [
   {
@@ -61,15 +59,6 @@ const postures = [
       'Unavailable in the standalone Host because Muse deliberately keeps its sandbox enabled.'
   }
 ]
-const reasoningLabels: Readonly<Record<(typeof HOST_NODE_MUSE_REASONING)[number], string>> = {
-  minimal: 'Minimal',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'Extra High',
-  ultra: 'Ultra'
-}
-
 // Newest first, mirroring the CLI's own picker; Spark 1.2 stays the default
 // (the on-disk catalogue still flags it `is_current`).
 const museModels = [
@@ -100,9 +89,9 @@ export function hostNodeMuseOffers(available = true): HostProviderOffersProjecti
   const models: HostProviderModelOffer[] = museModels.map((model) => ({
     ...model,
     available,
-    reasoning: HOST_NODE_MUSE_REASONING.map((reasoningId) => ({
+    reasoning: museReasoningEffortsForModel(model.modelId).map((reasoningId) => ({
       reasoningId,
-      label: reasoningLabels[reasoningId],
+      label: MUSE_META_REASONING_EFFORT_LABELS[reasoningId],
       available
     }))
   }))

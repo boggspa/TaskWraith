@@ -116,7 +116,15 @@ describe('HostProviderCatalog', () => {
     expect(muse!.models[0].default).toBeUndefined()
     expect(muse!.models.find((model) => model.default === true)?.modelId).toBe('muse-spark-1.2')
     expect(muse!.models[0].available).toBe(true)
-    expect(muse!.models[0].reasoning.length).toBe(6)
+    expect(muse!.models[0].reasoning.map((reasoning) => reasoning.reasoningId)).toEqual([
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra'
+    ])
     expect(muse!.postures.slice(0, 4).every((p) => p.available)).toBe(true)
     expect(muse!.postures[4]).toMatchObject({
       postureId: 'full_access',
@@ -223,7 +231,16 @@ describe('HostProviderCatalog', () => {
     expect(entry!.models[1]?.detail).toMatch(/content.*product improvement/i)
     expect(entry!.models[2]?.detail).toBeUndefined()
     expect(entry!.models[3]?.detail).toMatch(/content.*product improvement/i)
-    for (const model of entry!.models) {
+    expect(entry!.models[0]?.reasoning.map((r) => r.reasoningId)).toEqual([
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra'
+    ])
+    for (const model of entry!.models.slice(1)) {
       expect(model.reasoning.map((r) => r.reasoningId)).toEqual([
         'minimal',
         'low',

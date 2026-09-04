@@ -64,6 +64,10 @@ import {
 } from '../../../shared/kimiModels'
 import { activePiModelRows } from '../../../shared/piModelLifecycle'
 import {
+  MUSE_META_REASONING_EFFORT_LABELS,
+  museReasoningEffortsForModel
+} from '../../../shared/museReasoning'
+import {
   DEVIN_DEFAULT_MODEL_ID,
   DEVIN_MODEL_CATALOG,
   DEVIN_REASONING_EFFORT_LABELS,
@@ -279,16 +283,18 @@ function devinReasoningOptions(
   }))
 }
 
-// Muse Spark effort ladder (HANDOFF #4 / Meta `/effort`): minimal→ultra,
-// including xhigh. Never `none` — meta rejects it (maps to minimal at argv).
-const MUSE_REASONING: CombinedModelPickerReasoningOption[] = [
-  { value: 'minimal', label: 'Minimal' },
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'xhigh', label: 'Extra High' },
-  { value: 'ultra', label: 'Ultra' }
-]
+// Muse Spark effort ladder (Meta `/effort`). Never `none` — meta rejects it
+// (maps to minimal at argv). The shared resolver inserts Max only for regular
+// Spark 1.3, matching the provider-published model catalog; existing Ultra
+// remains available on every route.
+function museReasoningOptions(
+  modelId: string | null | undefined
+): CombinedModelPickerReasoningOption[] {
+  return museReasoningEffortsForModel(modelId).map((value) => ({
+    value,
+    label: MUSE_META_REASONING_EFFORT_LABELS[value]
+  }))
+}
 
 const CODEX_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'gpt-5.5', label: 'GPT-5.5' },
@@ -695,7 +701,7 @@ export function getEnsembleReasoningOptions(
         })
       )
     case 'muse':
-      return MUSE_REASONING
+      return museReasoningOptions(modelId)
     case 'devin':
       return devinReasoningOptions(modelId)
     default:
@@ -1562,7 +1568,7 @@ export function getEnsembleModelDefaults(
     case 'muse':
       return {
         modelOptions: MUSE_MODELS,
-        reasoningOptions: MUSE_REASONING,
+        reasoningOptions: museReasoningOptions('muse-spark-1.2'),
         defaultReasoning: 'high',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'muse-spark-1.2'

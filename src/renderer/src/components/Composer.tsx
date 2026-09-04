@@ -143,7 +143,8 @@ import {
   buildProviderModelChangeParticipantPatch,
   buildSameProviderModelChangeParticipantPatch,
   getEnsembleReasoningOptions,
-  resolveEnsembleParticipantSettings
+  resolveEnsembleParticipantSettings,
+  resolveReasoningEffortForSeatChange
 } from '../lib/ensembleProviderDefaults'
 import {
   MAX_IMAGE_ATTACHMENTS,
@@ -4159,7 +4160,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 combinedReasoningOptions[0]?.value ||
                                 ''
                           } else if (effectiveProvider === 'muse') {
-                            // Muse Spark → minimal…ultra ladder (never none).
+                            // Muse Spark → minimal…max…ultra ladder (never none).
                             // Solo persists museReasoningEffort; default high
                             // matches MuseCliArgs MUSE_DEFAULT_REASONING_EFFORT.
                             combinedReasoningOptions = getEnsembleReasoningOptions(
@@ -4344,6 +4345,21 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 setDevinReasoningEffort(nextReasoning)
                               }
                               metadataPatch.devinReasoningEffort = nextReasoning
+                            }
+                            if (effectiveProvider === 'muse') {
+                              const nextReasoning =
+                                resolveReasoningEffortForSeatChange({
+                                  provider: 'muse',
+                                  model: nextModel,
+                                  previousEffort: effectiveMuseReasoning,
+                                  modelMetadata: effectiveModelOptionsRaw.find(
+                                    (model) => model.id === nextModel
+                                  )
+                                }) || MUSE_DEFAULT_REASONING_EFFORT
+                              if (shouldUpdateLiveComposerState) {
+                                setMuseReasoningEffort(nextReasoning)
+                              }
+                              metadataPatch.museReasoningEffort = nextReasoning
                             }
                             if (effectiveProvider === 'grok') {
                               if (isGrokReasoningModelId(nextModel)) {

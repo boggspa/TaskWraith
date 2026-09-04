@@ -169,7 +169,7 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
   claudeReasoningEffort?: string | null
   /** Grok-specific reasoning effort override. Valid only for supported Grok models. */
   grokReasoningEffort?: string | null
-  /** Muse-specific reasoning effort override (minimal|low|medium|high|xhigh|ultra). */
+  /** Muse-specific reasoning effort override (minimal|low|medium|high|xhigh|max|ultra). */
   museReasoningEffort?: string | null
   /** Ollama boolean thinking (`off`/`on`) or GPT-OSS effort level. */
   ollamaReasoningEffort?: string | null

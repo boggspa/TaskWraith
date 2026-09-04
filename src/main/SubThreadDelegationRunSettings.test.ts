@@ -245,10 +245,10 @@ describe('resolveSubThreadDelegationRunSettings', () => {
       {
         request: {
           provider: 'muse' as const,
-          model: 'muse-spark-1.2',
+          model: 'muse-spark-1.3',
           reasoningEffort: 'max'
         },
-        effort: 'ultra',
+        effort: 'max',
         metadataKey: 'museReasoningEffort'
       },
       {

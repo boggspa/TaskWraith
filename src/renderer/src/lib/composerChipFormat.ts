@@ -55,7 +55,7 @@ export interface ComposerChipContext {
   kimiThinkingEnabled?: boolean
   /** K3 thinking effort token (low/high/max). */
   kimiReasoningEffort?: string
-  /** Muse Spark reasoning effort (minimal→ultra; never none). */
+  /** Muse Spark reasoning effort (minimal→max→ultra; never none). */
   museReasoningEffort?: string
   /** Mistral thinking effort token (off/low/medium/high/max). */
   mistralReasoningEffort?: string
@@ -489,6 +489,7 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
     if (value === 'medium') return 'Medium'
     if (value === 'high') return 'High'
     if (value === 'xhigh' || value === 'extra') return 'Extra High'
+    if (value === 'max') return 'Max'
     if (value === 'ultra' || value === 'ultracode') return 'Ultra'
     if (value === 'ultratask') return 'UltraTask'
     return value.charAt(0).toUpperCase() + value.slice(1)

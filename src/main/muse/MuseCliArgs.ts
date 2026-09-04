@@ -13,6 +13,14 @@
 //   * Env helpers relocate XDG_* (+ optional HOME/MUSE_AUTH_PATH) and stamp
 //     MUSE_NO_AUTO_UPDATE=1. Home lease / skill pin are out of this module.
 
+import { randomUUID } from 'node:crypto'
+
+import {
+  MUSE_META_REASONING_EFFORTS,
+  museModelSupportsMaxReasoning,
+  type MuseMetaReasoningEffort
+} from '../../shared/museReasoning'
+
 /** Launcher on PATH; resolves/execs muse-bin-* beside itself. */
 export const MUSE_BINARY_NAME = 'muse'
 
@@ -34,22 +42,13 @@ export const MUSE_BUILD_SHA_PIN = '427a430436'
 export const MUSE_META_API_KEY_ENV = 'META_API_KEY'
 
 /** Intentionally no `none` — meta/Spark rejects it. */
-export const MUSE_REASONING_EFFORTS = [
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'ultra'
-] as const
+export const MUSE_REASONING_EFFORTS = MUSE_META_REASONING_EFFORTS
 
-export type MuseReasoningEffort = (typeof MUSE_REASONING_EFFORTS)[number]
+export type MuseReasoningEffort = MuseMetaReasoningEffort
 
 export type MuseSandboxNetworkMode = 'restricted' | 'enabled' | 'proxy-only'
 
 export const MUSE_DEFAULT_SANDBOX_NETWORK: MuseSandboxNetworkMode = 'proxy-only'
-
-import { randomUUID } from 'node:crypto'
 
 /** Muse `--session-id` must be a UUID; TaskWraith appRunIds are not. */
 const MUSE_SESSION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -164,14 +163,19 @@ export function museWriteCapable(approvalMode: string | null | undefined): boole
  * unsupported effort aborts the turn).
  */
 export function normalizeMuseReasoningEffort(
-  effort: string | null | undefined
+  effort: string | null | undefined,
+  model?: string | null
 ): MuseReasoningEffort {
   const raw = typeof effort === 'string' ? effort.trim().toLowerCase() : ''
   if (!raw) return MUSE_DEFAULT_REASONING_EFFORT
   if (raw === 'none' || raw === 'off') return 'minimal'
   // TaskWraith's top-of-ladder tier clamps to Muse's highest effort rather
   // than falling to the default (a silent downgrade).
-  if (raw === 'ultratask' || raw === 'ultracode' || raw === 'max') return 'ultra'
+  if (raw === 'ultratask' || raw === 'ultracode') return 'ultra'
+  // Max is currently provider-published only for regular Spark 1.3. Preserve
+  // the old top-tier clamp for stale/manual Max selections on every other
+  // model instead of sending a model-invalid wire value.
+  if (raw === 'max' && !museModelSupportsMaxReasoning(model)) return 'ultra'
   if ((MUSE_REASONING_EFFORTS as readonly string[]).includes(raw)) {
     return raw as MuseReasoningEffort
   }
@@ -223,7 +227,7 @@ export function buildMuseExecArgv(input: BuildMuseExecArgvInput): string[] {
     '--session-id',
     sessionId,
     '--reasoning-effort',
-    normalizeMuseReasoningEffort(input.reasoningEffort),
+    normalizeMuseReasoningEffort(input.reasoningEffort, input.model),
     '--sandbox-network',
     resolveSandboxNetwork(input.sandboxNetwork)
   ]

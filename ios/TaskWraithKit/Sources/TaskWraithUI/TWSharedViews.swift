@@ -2354,8 +2354,8 @@ private func twNormalizeLadderEffort(_ effort: String) -> String {
 
 /// Map a wire effort onto the provider's seven-stop ladder. Pi uses its native
 /// Off→Max ordering (including a distinct Minimal stop); Muse Meta parks
-/// `minimal` at Off (0) and `ultra` at Ultracode (6) without rewriting those
-/// tokens for other providers.
+/// `minimal` at Off (0), keeps `max` at Max (5), and parks `ultra` at
+/// Ultracode (6) without rewriting those tokens for other providers.
 func twLadderIndex(for effort: String?, provider: String? = nil) -> Int? {
     guard let effort else { return nil }
     let token = effort.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -2372,7 +2372,8 @@ func twLadderIndex(for effort: String?, provider: String? = nil) -> Int? {
 }
 /// Canonical wire token for a ladder stop. Pi preserves its distinct
 /// Off→Minimal→Low→…→Max ordering. Muse Meta uses `minimal`/`ultra`
-/// (never `off`/`ultracode`) at the shared floor/ceiling indices.
+/// (never `off`/`ultracode`) at the shared floor/ceiling indices and keeps
+/// its native `max` token at index 5.
 func twLadderWireEffort(index: Int, provider: String?) -> String {
     if provider?.lowercased() == "pi" {
         return twPiReasoningEfforts[max(0, min(twPiReasoningEfforts.count - 1, index))]
