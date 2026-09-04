@@ -86,6 +86,7 @@ import {
   type HostThreadRecordPersistInput,
   type HostThreadRecordPersistPort
 } from '../host/HostThreadRecordPersistCommand'
+import { HostChatCompatibilityPersistence } from './HostChatCompatibilityPersistence'
 import {
   createDesktopHostWorkspaceRecordClient,
   type HostWorkspaceRecordPort
@@ -181,8 +182,7 @@ import {
   MemoryProposalPack,
   MemoryProposal,
   SubThreadJoinPolicy,
-  ContinuationTitleApplyRequest,
-  ToolActivity
+  ContinuationTitleApplyRequest
 } from './types'
 import { canonicalizeExternalPathGrantMetadata } from './ExternalPathGrants'
 import { pickWorkflowRunTemplateFields } from './WorkflowRunTemplate'
@@ -350,11 +350,9 @@ import { chatPathForId, isSafeChatId } from '../ChatPath'
 import { compactChatForPersist } from './ChatCompaction'
 import {
   MAX_TERMINAL_TOOL_DETAIL_RUNS_PER_SAVE,
-  TOOL_DETAIL_EXTERNALIZATION_GENERATION,
-  authoredMutationMentionsActivityIds,
-  externalizeToolActivityDetails,
-  substituteToolActivitiesInAuthoredMutation
+  TOOL_DETAIL_EXTERNALIZATION_GENERATION
 } from './ChatToolDetailExternalization'
+import { prepareChatForPersistence } from './ChatPersistencePreparation'
 import {
   ToolActivityDetailBatchWriter,
   hydrateToolActivityDetails,
@@ -519,14 +517,30 @@ function noteHostPersistIntent(base: ChatRecord | null, desired: ChatRecord): vo
 }
 
 function acknowledgeHostPersisted(input: HostThreadRecordPersistInput): void {
+  hostChatCompatibilityPersistence?.acknowledgeRevision(
+    input.chatId,
+    chatPersistenceRevision(input.record)
+  )
   const state = hostPersistRebaseByChatId.get(input.chatId)
-  if (!state) return
+  if (!state) {
+    hostPersistUnconfirmedChatIds.delete(input.chatId)
+    return
+  }
   const persistedRevision = chatPersistenceRevision(input.record)
   if (persistedRevision >= chatPersistenceRevision(state.desired)) {
     hostPersistRebaseByChatId.delete(input.chatId)
+    hostPersistUnconfirmedChatIds.delete(input.chatId)
     return
   }
   if (persistedRevision >= chatPersistenceRevision(state.base)) state.base = input.record
+  // The cache contains a newer journal-backed record. Do not repeatedly parse
+  // the now-known-older Host file on every hot getChat call; the next explicit
+  // materialization re-arms reconciliation.
+  if (hostChatCompatibilityPersistence?.hasSubmitted(input.chatId)) {
+    hostPersistShadowChatIds.add(input.chatId)
+  } else {
+    hostPersistShadowChatIds.delete(input.chatId)
+  }
 }
 
 /**
@@ -537,6 +551,8 @@ function acknowledgeHostPersisted(input: HostThreadRecordPersistInput): void {
  * test can inject a fake port before the first save.
  */
 let hostThreadRecordPersistPort: HostThreadRecordPersistPort | null = null
+let hostChatCompatibilityPersistence: HostChatCompatibilityPersistence | null = null
+let hostChatCompatibilityPersistPort: HostThreadRecordPersistPort | null = null
 const hostThreadRecordPersist = (): HostThreadRecordPersistPort => {
   if (!hostThreadRecordPersistPort) {
     hostThreadRecordPersistPort = createDesktopHostThreadRecordPersistClient({
@@ -549,48 +565,60 @@ const hostThreadRecordPersist = (): HostThreadRecordPersistPort => {
   return hostThreadRecordPersistPort
 }
 
+const hostChatCompatibility = (): HostChatCompatibilityPersistence => {
+  const port = hostThreadRecordPersist()
+  if (!hostChatCompatibilityPersistence || hostChatCompatibilityPersistPort !== port) {
+    hostChatCompatibilityPersistence = new HostChatCompatibilityPersistence(port)
+    hostChatCompatibilityPersistPort = port
+  }
+  return hostChatCompatibilityPersistence
+}
+
+/** Publish one latest compatibility checkpoint and mark only that brief Host flight as shadowed. */
+function materializeHostChatCompatibility(chatId: string): boolean {
+  const materialized = hostChatCompatibility().materialize(chatId)
+  if (materialized) hostPersistShadowChatIds.add(chatId)
+  return materialized
+}
+
 /**
  * One in-flight drain per chat, shared by every awaiter (the orchestrator's
  * pre-dispatch gate and the IPC call-site barrier must observe the SAME
  * outcome; two independent drains would race to consume the lane's first
  * error). The memo entry is dropped as soon as the drain settles.
  */
-const chatRecordPersistBarriers = new Map<string, Promise<void>>()
-const chatRecordConflictRecoveryBarriers = new Map<string, Promise<void>>()
+const chatRecordConflictRecoveryBarriers = new Map<
+  string,
+  { targetSequence: number; promise: Promise<void>; token: object }
+>()
 
 /**
- * Chats with Host-queue persistence work not yet confirmed durable. The
- * shutdown drain reports this count when it cannot finish, so a quit-time
- * loss is named rather than silent.
+ * Chats whose latest full Host compatibility checkpoint is staged or in
+ * flight. Their incremental journal is independently durable; this set names
+ * compatibility lag in shutdown diagnostics.
  */
 const hostPersistUnconfirmedChatIds = new Set<string>()
 
 /**
- * Chats whose dirty cache entry came from the Host-routed save branch. The
- * legacy coalescer dirty marker is transient by construction (the deferred
- * write re-anchors the stat when it lands); the Host branch has no such
- * callback, so readChatRecordCached reconciles these ids against the real
- * file instead of serving the shadow forever. That keeps Host-side writes —
+ * Chats with a materialized Host compatibility record. The legacy coalescer
+ * dirty marker is transient by construction (its deferred callback re-anchors
+ * the stat). Host compatibility flights instead remain dirty until their
+ * acknowledgement or read path re-anchors against the real file. That keeps Host-side writes —
  * solo run lifecycle, thread.configure — visible to desktop reads and keeps
  * the next save's expectedRevision honest (no revision-conflict loop).
  */
 const hostPersistShadowChatIds = new Set<string>()
 
 const barrierChatRecordPersist = (chatId: string): Promise<void> => {
-  const existing = chatRecordPersistBarriers.get(chatId)
-  if (existing) return existing
-  const barrier = hostThreadRecordPersist()
-    .drain(chatId)
-    .then(() => {
+  // Materialize synchronously so a barrier requested at a trust/dispatch edge
+  // cannot observe an empty Host lane while the latest record is still staged.
+  materializeHostChatCompatibility(chatId)
+  const compatibility = hostChatCompatibility()
+  return compatibility.barrier(chatId).then(() => {
+    if (!compatibility.hasUnconfirmed(chatId)) {
       hostPersistUnconfirmedChatIds.delete(chatId)
-    })
-    .finally(() => {
-      if (chatRecordPersistBarriers.get(chatId) === barrier) {
-        chatRecordPersistBarriers.delete(chatId)
-      }
-    })
-  chatRecordPersistBarriers.set(chatId, barrier)
-  return barrier
+    }
+  })
 }
 
 /**
@@ -648,8 +676,8 @@ async function drainHostRecordPersistQueueOnShutdown(timeoutMs?: number): Promis
   // settlement after a lost race can never surface as an unhandled rejection
   // while the process is trying to exit.
   let drainFailure: unknown
-  const drain = hostThreadRecordPersist()
-    .drainAll()
+  const drain = hostChatCompatibility()
+    .shutdown()
     .then(
       () => 'drained' as const,
       (error: unknown) => {
@@ -669,8 +697,8 @@ async function drainHostRecordPersistQueueOnShutdown(timeoutMs?: number): Promis
     }
     console.error(
       `[persist] Host chat persistence did not fully drain before shutdown ` +
-        `(${outcome}); ${hostPersistUnconfirmedChatIds.size} chat(s) may have transcript ` +
-        `that was not persisted:`,
+        `(${outcome}); ${hostPersistUnconfirmedChatIds.size} chat(s) retain a recoverable ` +
+        `incremental checkpoint whose Host compatibility record was not confirmed:`,
       outcome === 'failed' ? drainFailure : new Error(`drain exceeded ${bound} ms`)
     )
   } finally {
@@ -1308,11 +1336,10 @@ function persistIncrementalChatAdmitted(
  * `saveChatThroughHost`, so the legacy-admitted `persistIncrementalChat`
  * above is never reached: ID/revision mutations would persist only as whole
  * Host records and the T4 journal would be write-dead after the cutover.
- * This mirror keeps the journal durable on that path. The complete record
- * still rides the Host persist queue — the authoritative write, enqueued by
- * the caller BEFORE this runs — and a save carrying authored ID operations
- * also appends its mutation batch to the main-owned sideband journal.
- * Non-mutation saves stay whole-record-only.
+ * This path keeps the journal durable and derives one mutation for every save,
+ * with authored transcript operations used when supplied. The complete record
+ * is staged separately as a latest-wins compatibility checkpoint; normal D1
+ * saves do not publish a Host transfer.
  *
  * A mirror failure never affects the Host write. The journal self-heals at
  * the next mutation save exactly like the legacy dual-write's V2-failure
@@ -1338,17 +1365,17 @@ function persistIncrementalChatForHostSave(
       authoredTranscript
     )
   } catch {
-    // Side-band only: the authoritative whole record is already enqueued on
-    // the Host persist queue. persist() dropped its verified-baseline marker
-    // on failure, so the next mutation save re-establishes the baseline.
+    // The caller must immediately materialize the staged Host compatibility
+    // record. persist() dropped its verified-baseline marker on failure, so the
+    // next mutation save re-establishes the journal baseline.
     return null
   }
 }
 
 /**
  * Stage 3 — segmented-store mirror. Best-effort by construction: the
- * authoritative legacy/Host write has already happened (or is enqueued), so a
- * mirror failure never fails the save; the next mirror re-anchors its
+ * incremental journal is already durable (or a full Host fallback is staged),
+ * so a mirror failure never fails the save; the next mirror re-anchors its
  * baseline exactly like the Stage 2 journal. A no-op while the flag is off.
  */
 function mirrorSegmentedChatStore(
@@ -6369,6 +6396,13 @@ export class AppStore {
           if (onDiskRaw) {
             const onDisk = this.normalizeChatRecord(onDiskRaw)
             if (chatPersistenceRevision(onDisk) >= chatPersistenceRevision(cached.record)) {
+              const onDiskRevision = chatPersistenceRevision(onDisk)
+              hostChatCompatibilityPersistence?.acknowledgeRevision(chatId, onDiskRevision)
+              const intent = hostPersistRebaseByChatId.get(chatId)
+              if (intent && onDiskRevision >= chatPersistenceRevision(intent.desired)) {
+                hostPersistRebaseByChatId.delete(chatId)
+                hostPersistUnconfirmedChatIds.delete(chatId)
+              }
               const record = chatComposerSelectionOverlayStore.apply(onDisk)
               this.chatRecordCache.set(chatId, {
                 mtimeMs: stat.mtimeMs,
@@ -7758,24 +7792,25 @@ export class AppStore {
   }
 
   /**
-   * Host-owned-gate persistence path. Updates the in-memory projection
-   * synchronously (cache, input-object revision stamp, broadcast envelope) and
-   * enqueues the complete record for the Host's `thread.record.persist`
-   * command. The enqueue never throws; durability is raised at explicit
-   * barriers (`awaitChatRecordPersisted`) so a genuine persistence failure
-   * still surfaces loudly at round start instead of silently at 85 call sites.
+   * Host-owned-gate persistence path. The main-owned incremental journal is the
+   * hot durability path; one latest complete record is retained by reference as
+   * a Host compatibility checkpoint. Normal stream saves never serialize that
+   * full record. Initial creation, journal failure, approval/terminal saves and
+   * explicit barriers materialize it through `thread.record.persist`.
+   *
+   * Durability is raised at explicit barriers (`awaitChatRecordPersisted`) so a
+   * genuine persistence failure still surfaces loudly at round start instead
+   * of silently at 85 call sites.
    * A revision conflict is not such a failure: the barrier rebases onto the
    * Host record and, failing that, re-anchors this optimistic revision to the
    * Host's so the NEXT save can land. The stamp below only ever advances, so
    * without that re-anchor one rejected write wedges the chat forever.
    *
-   * Revision contract: the Host owns the counter (persistThreadRecord writes 0
-   * on create and previous+1 on update), so the enqueued record is stamped
-   * with the value this compare-and-swap will write, and expectedRevision is
-   * the revision the caller last observed. Host-native lifecycle/configuration
-   * writes may advance the record concurrently; the durability barrier rebases
-   * this accumulated Desktop intent onto that newer source within a strict
-   * retry bound.
+   * Revision contract: creation writes 0. Updates normally advance by one, but
+   * a coalesced compatibility checkpoint may publish the exact greater logical
+   * revision after matching the older Host CAS base. Host-native lifecycle or
+   * configuration writes may advance the record concurrently; the durability
+   * barrier rebases this accumulated Desktop intent within a strict retry bound.
    */
   private static saveChatThroughHost(chat: ChatRecord, options: ChatSaveOptions = {}): ChatRecord {
     this.assertHistoryMutationAllowed({
@@ -7829,7 +7864,24 @@ export class AppStore {
           : { ensemble: this.withoutChatListEnsembleProjectionFlag(chat.ensemble!) }
         : {})
     }
-    const normalizedChat = this.normalizeChatRecord(chatWithMainOwnedFields)
+    const preparation = prepareChatForPersistence({
+      chat: chatWithMainOwnedFields,
+      previous: previousChatForFeedback,
+      authoredTranscript: options.authoredTranscript,
+      authoredTranscriptEligible: true,
+      createDetailBatch: () => new ToolActivityDetailBatchWriter(runArtifactsDir),
+      readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
+      persistDetailCheckpoint: (checkpoint) => {
+        this.appendRunEvent(
+          toolActivityDetailCheckpointInput(chatWithMainOwnedFields, checkpoint),
+          {
+            durability: 'strict'
+          }
+        )
+      },
+      maxTerminalRunsPerPass: MAX_TERMINAL_TOOL_DETAIL_RUNS_PER_SAVE
+    })
+    const normalizedChat = this.normalizeChatRecord(preparation.chat)
     normalizedChat.updatedAt = Date.now()
     const expectedRevision = chatPersistenceRevision(previousChatForFeedback)
     normalizedChat.persistenceRevision = previousChatForFeedback === null ? 0 : expectedRevision + 1
@@ -7841,35 +7893,38 @@ export class AppStore {
     if (deletedChatIds.has(normalizedChat.appChatId)) {
       return previousChatForFeedback || normalizedChat
     }
+    const flushReason = deriveSaveFlushReason(normalizedChat)
+    // Persist BEFORE staging/materializing the complete Host record. On a D1
+    // save this is the only filesystem work: a small mutation append, never a
+    // synchronous full-record transfer artifact.
+    const incrementalResult = persistIncrementalChatForHostSave(
+      previousChatForFeedback,
+      normalizedChat,
+      flushReason,
+      preparation.authoredTranscript
+    )
     // In-memory projection: this process reads the new record immediately.
     this.chatRecordCache.set(normalizedChat.appChatId, {
       mtimeMs: -1,
       size: -1,
       record: normalizedChat
     })
-    hostPersistShadowChatIds.add(normalizedChat.appChatId)
     noteHostPersistIntent(previousChatForFeedback, normalizedChat)
-    hostPersistUnconfirmedChatIds.add(normalizedChat.appChatId)
-    hostThreadRecordPersist().enqueue({
+    const compatibility = hostChatCompatibility()
+    const stageResult = compatibility.stage({
       chatId: normalizedChat.appChatId,
       record: normalizedChat,
       expectedRevision
     })
-    // Stage 2: keep the T4 incremental journal durable after the Host
-    // cutover. A save carrying authored ID/revision mutations appends its
-    // batch to the main-owned sideband journal in addition to the
-    // whole-record Host enqueue above; non-mutation saves stay
-    // whole-record-only. Best-effort by construction: the authoritative
-    // enqueue already happened, and a mirror failure repairs its baseline at
-    // the next mutation save.
-    const incrementalResult = options.authoredTranscript
-      ? persistIncrementalChatForHostSave(
-          previousChatForFeedback,
-          normalizedChat,
-          deriveSaveFlushReason(normalizedChat),
-          options.authoredTranscript
-        )
-      : null
+    if (stageResult === 'staged' || stageResult === 'replaced') {
+      hostPersistUnconfirmedChatIds.add(normalizedChat.appChatId)
+    }
+    const materializeNow =
+      previousChatForFeedback === null ||
+      incrementalResult === null ||
+      preparation.externalizationFailed ||
+      flushReason !== 'normal'
+    if (materializeNow) materializeHostChatCompatibility(normalizedChat.appChatId)
     const chatUpdateProjection: ChatUpdateProjectionObservation =
       previousChatForFeedback && incrementalResult?.derived
         ? chatUpdateProjectionTracker.observe(
@@ -7887,7 +7942,11 @@ export class AppStore {
     // Stage 3: mirror EVERY Host-routed save (not just authored ones) so the
     // preferred v2 read stays in sync with the authoritative record while the
     // Host persist queue drains asynchronously. Flag-gated no-op otherwise.
-    mirrorSegmentedChatStore(previousChatForFeedback, normalizedChat, options.authoredTranscript)
+    mirrorSegmentedChatStore(
+      previousChatForFeedback,
+      normalizedChat,
+      preparation.authoredTranscript
+    )
     return normalizedChat
   }
 
@@ -7966,63 +8025,25 @@ export class AppStore {
         : {})
     }
 
-    // Tool detail leaves the hot chat record before historical compaction:
-    // whole runs at terminal, and sealed jumbo activities mid-run (T5 hot
-    // case — the raw payload otherwise rides every flush of a live ensemble).
-    // One append-only artifact is fsync'd per run, then a strict run-event
-    // checkpoint binds the byte segment. If either durable step fails, retain
-    // the original full activity rows and retry on a later save.
-    let externalizedChat = chatWithMainOwnedFields
-    let externalizedActivitiesById: ReadonlyMap<string, ToolActivity> = new Map()
-    let externalizationOpRequiredIds: ReadonlySet<string> = new Set()
-    try {
-      const detailWriter = new ToolActivityDetailBatchWriter(runArtifactsDir)
-      const externalization = externalizeToolActivityDetails(
-        chatWithMainOwnedFields,
-        (runId, activity) => detailWriter.stage(runId, activity),
-        {
-          previousChat: previousChatForFeedback,
-          readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
-          maxTerminalRunsPerPass: MAX_TERMINAL_TOOL_DETAIL_RUNS_PER_SAVE
-        }
-      )
-      const checkpoints = detailWriter.commit()
-      for (const checkpoint of checkpoints) {
+    const preparation = prepareChatForPersistence({
+      chat: chatWithMainOwnedFields,
+      previous: previousChatForFeedback,
+      authoredTranscript: options.authoredTranscript,
+      authoredTranscriptEligible: reconciledMessages === rendererMessages,
+      createDetailBatch: () => new ToolActivityDetailBatchWriter(runArtifactsDir),
+      readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
+      persistDetailCheckpoint: (checkpoint) => {
         this.appendRunEvent(
           toolActivityDetailCheckpointInput(chatWithMainOwnedFields, checkpoint),
           {
             durability: 'strict'
           }
         )
-      }
-      externalizedChat = externalization.chat
-      externalizedActivitiesById = externalization.strippedActivitiesById
-      externalizationOpRequiredIds = externalization.opRequiredActivityIds
-    } catch (error) {
-      console.error('Failed to externalize tool activity detail', error)
-    }
-
-    // Persisted-chat compaction (Step 4): historical runs shed remaining raw
-    // tool events so chat files stay parse-fast and save-cheap.
-    const compactedChat = compactChatForPersist(externalizedChat)
-    // Exact producer operations are valid only while the save pipeline kept
-    // the producer's transcript intact. Externalization is the one sanctioned
-    // rewrite: its strips are substituted into the authored ops so journal
-    // replay reproduces the stripped record, and any strip the ops cannot
-    // express (a stage without an authoring op, a terminal fold) rejects the
-    // authored chain instead. A stale renderer merge or a one-time historical
-    // compaction still falls back to the proven diff derivation.
-    const authoredCandidate =
-      options.authoredTranscript &&
-      reconciledMessages === rendererMessages &&
-      compactedChat.messages === externalizedChat.messages &&
-      authoredMutationMentionsActivityIds(options.authoredTranscript, externalizationOpRequiredIds)
-        ? options.authoredTranscript
-        : undefined
-    const authoredTranscript = authoredCandidate
-      ? substituteToolActivitiesInAuthoredMutation(authoredCandidate, externalizedActivitiesById)
-      : undefined
-    const normalizedChat = this.normalizeChatRecord(compactedChat)
+      },
+      maxTerminalRunsPerPass: MAX_TERMINAL_TOOL_DETAIL_RUNS_PER_SAVE
+    })
+    const authoredTranscript = preparation.authoredTranscript
+    const normalizedChat = this.normalizeChatRecord(preparation.chat)
     normalizedChat.updatedAt = Date.now()
     normalizedChat.persistenceRevision = chatPersistenceRevision(previousChatForFeedback) + 1
     if (deletedChatIds.has(normalizedChat.appChatId) && !fs.existsSync(chatPath)) {
@@ -8342,12 +8363,17 @@ export class AppStore {
     this.chatRecordCache.set(chatId, { mtimeMs: -1, size: -1, record: rebased })
     hostPersistShadowChatIds.add(chatId)
     hostPersistUnconfirmedChatIds.add(chatId)
+    const recovered = { chatId, record: rebased, expectedRevision }
+    // Internal client recovery updates the submitted entry in place; recovery
+    // after a surfaced drain error replaces the restored pending entry. Either
+    // way, no pre-rebase snapshot may remain queued for a later overwrite.
+    hostChatCompatibilityPersistence?.rebase(recovered)
     try {
       hostPersistConflictRecoveryListener?.(rebased)
     } catch {
       // Persistence recovery is authoritative; renderer reseeding is additive.
     }
-    return { chatId, record: rebased, expectedRevision }
+    return recovered
   }
 
   /**
@@ -8358,6 +8384,10 @@ export class AppStore {
    * turns a single conflict into a permanent one.
    */
   private static releaseHostPersistShadow(chatId: string): void {
+    // The failed barrier restored its submitted checkpoint to the pending slot.
+    // Drop that stale pre-rebase record before the next save establishes a new
+    // lineage from the Host's actual revision.
+    hostChatCompatibilityPersistence?.discard(chatId)
     hostPersistRebaseByChatId.delete(chatId)
     const cached = this.chatRecordCache.get(chatId)
     if (!cached || cached.mtimeMs !== -1) return
@@ -8401,14 +8431,20 @@ export class AppStore {
    * outcome.
    */
   static awaitChatRecordPersisted(chatId: string): Promise<void> {
+    const compatibility = hostChatCompatibility()
+    const targetSequence = compatibility.latestSequence(chatId)
     const existing = chatRecordConflictRecoveryBarriers.get(chatId)
-    if (existing) return existing
-    const recovery = this.awaitChatRecordPersistedWithRecovery(chatId).finally(() => {
-      if (chatRecordConflictRecoveryBarriers.get(chatId) === recovery) {
-        chatRecordConflictRecoveryBarriers.delete(chatId)
-      }
-    })
-    chatRecordConflictRecoveryBarriers.set(chatId, recovery)
+    if (existing && existing.targetSequence >= targetSequence) return existing.promise
+    const predecessor = existing?.promise.catch(() => undefined) ?? Promise.resolve()
+    const token = {}
+    const recovery = predecessor
+      .then(() => this.awaitChatRecordPersistedWithRecovery(chatId))
+      .finally(() => {
+        if (chatRecordConflictRecoveryBarriers.get(chatId)?.token === token) {
+          chatRecordConflictRecoveryBarriers.delete(chatId)
+        }
+      })
+    chatRecordConflictRecoveryBarriers.set(chatId, { targetSequence, promise: recovery, token })
     return recovery
   }
 
@@ -8416,7 +8452,7 @@ export class AppStore {
     for (let attempt = 0; ; attempt += 1) {
       try {
         await barrierChatRecordPersist(chatId)
-        if (hostThreadRecordPersist().pending(chatId) === 0) {
+        if (!hostChatCompatibility().hasUnconfirmed(chatId)) {
           hostPersistRebaseByChatId.delete(chatId)
         }
         return
@@ -8450,7 +8486,8 @@ export class AppStore {
           error
         )
         if (!recovered) throw error
-        hostThreadRecordPersist().enqueue(recovered)
+        const compatibility = hostChatCompatibility()
+        if (!compatibility.hasUnconfirmed(chatId)) compatibility.stage(recovered)
       }
     }
   }
@@ -8464,20 +8501,22 @@ export class AppStore {
   /** Test seam: swap the Host persist port and drop any memoized barriers. */
   static setHostThreadRecordPersistPortForTests(port: HostThreadRecordPersistPort | null): void {
     hostThreadRecordPersistPort = port
-    chatRecordPersistBarriers.clear()
+    hostChatCompatibilityPersistence = null
+    hostChatCompatibilityPersistPort = null
     chatRecordConflictRecoveryBarriers.clear()
     hostPersistRebaseByChatId.clear()
+    hostPersistUnconfirmedChatIds.clear()
+    hostPersistShadowChatIds.clear()
     hostPersistConflictRecoveryListener = null
   }
 
   /**
    * T3a-1: Flush ALL pending chat persistence at shutdown (will-quit).
    * Legacy-gate-open: synchronously flush the coalescer as before. Host-owned
-   * gate: the legacy coalescer is empty by construction, but the Host persist
-   * queue may still hold queued records — drain it, bounded so a hung Host
-   * cannot hold the process open. A drain failure or timeout is reported
-   * loudly (with the still-unconfirmed chat count) and quit proceeds; at
-   * shutdown nothing else can be done, and the loss must never be silent.
+   * gate: first fold and fsync the incremental journal, then materialize every
+   * latest compatibility record and drain the Host queue, bounded so a hung
+   * Host cannot hold the process open. A drain failure or timeout is reported
+   * loudly and quit proceeds; the incremental checkpoint remains recoverable.
    */
   static async flushAllChatSaves(options?: { hostDrainTimeoutMs?: number }): Promise<void> {
     if (legacyStoreCanWrite()) {
@@ -8486,6 +8525,8 @@ export class AppStore {
       segmentedChatStore.checkpointAll()
       return
     }
+    incrementalChatPersistence.checkpointAll()
+    segmentedChatStore.checkpointAll()
     await drainHostRecordPersistQueueOnShutdown(options?.hostDrainTimeoutMs)
   }
 
@@ -9058,6 +9099,10 @@ export class AppStore {
    * (NON-NEGOTIABLE #4), so they are removed directly.
    */
   private static purgeChatJournalArtifactsHostOwned(chatId: string): void {
+    // A staged full-record checkpoint is another resurrection source even
+    // before it reaches the Host client's queue. Erasure must retire it with
+    // every journal artifact.
+    hostChatCompatibilityPersistence?.discard(chatId)
     chatUpdateProjectionTracker.drop(chatId)
     // Stage 3: erase the segmented-store copy too — a deleted transcript must
     // not survive in any durable copy (NON-NEGOTIABLE #4). Purge is
@@ -9077,11 +9122,11 @@ export class AppStore {
     if (intent.kind === 'truncate') {
       const chatId = intent.rootChatId!
       const chatPath = chatPathForId(chatsDir, chatId)
-      // Drain the per-chat queue before rewriting: a still-queued persist
-      // would otherwise land AFTER the truncated record and resurrect the old
-      // content. The drain also anchors the on-disk revision this persist
-      // builds on.
-      await hostThreadRecordPersist().drain(chatId)
+      // A compatibility record may still be staged without any Host queue
+      // entry. Materialize and drain it before reading the record to scrub, or
+      // truncation would preserve stale chrome and a later checkpoint could
+      // resurrect the old transcript.
+      await this.awaitChatRecordPersisted(chatId)
       const stored = readJsonStrictIfPresent(chatPath)
       if (stored === null) return
       const chat = chatComposerSelectionOverlayStore.apply(
@@ -9102,11 +9147,18 @@ export class AppStore {
       this.chatRecordCache.delete(chatId)
       hostPersistShadowChatIds.delete(chatId)
       hostPersistRebaseByChatId.delete(chatId)
+      hostChatCompatibilityPersistence?.discard(chatId)
       const verified = readJsonStrictIfPresent(chatPath) as ChatRecord | null
       if (verified && chatContainsTruncatableHistory(this.normalizeChatRecord(verified))) {
         throw new Error('Truncated chat still contains a durable history or orchestration source.')
       }
       return
+    }
+    // Fence every target before removing any journal bytes. prepareDelete
+    // discards staged records and drains already-submitted ones; the Host
+    // delete port then supersedes anything remaining in its own lane.
+    for (const chatId of intent.chatIds) {
+      await hostChatCompatibility().prepareDelete(chatId)
     }
     if (intent.kind === 'global') {
       // Same desktop-side retirement order as the legacy step, minus the

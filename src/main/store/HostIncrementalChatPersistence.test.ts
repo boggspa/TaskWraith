@@ -6,12 +6,11 @@
  * `persistIncrementalChat` is never reached — the T4 journal would be
  * write-dead. These tests pin the re-home:
  *
- *  - a mutation save (authoredTranscript) enqueues the whole record on the
- *    Host persist queue AND appends its mutation batch to the main-owned
- *    sideband journal (`chat-journal-v2`);
- *  - a non-mutation save stays whole-record-only;
- *  - the journal repairs its baseline when a non-mutation Host save advanced
- *    the record between two mutation saves;
+ *  - every Host-owned save appends its mutation to the main-owned sideband
+ *    journal (`chat-journal-v2`);
+ *  - normal streaming saves retain one latest full compatibility record and
+ *    publish no Host transfer until an explicit barrier;
+ *  - terminal and fallback saves materialize immediately;
  *  - the legacy admitted path is unchanged while the gate is open;
  *  - the Stage 1a save guard keeps admitting authored-mutation saves on the
  *    Host path (every saveChat below with authoredTranscript must not throw).
@@ -36,6 +35,7 @@ import {
   applyChatUpdateDelivery,
   buildChatUpdateDelivery
 } from '../../shared/chatUpdateTransport'
+import { buildChatMarkdownTranscript } from '../TranscriptMarkdownExport'
 import type {
   HostThreadRecordPersistInput,
   HostThreadRecordPersistPort
@@ -53,6 +53,11 @@ interface WiredStore {
   AppStore: typeof import('./index').AppStore
   profilePath: string
   enqueued: HostThreadRecordPersistInput[]
+  persistPort: HostThreadRecordPersistPort & {
+    enqueue: ReturnType<typeof vi.fn>
+    drain: ReturnType<typeof vi.fn>
+    drainAll: ReturnType<typeof vi.fn>
+  }
 }
 
 async function importStoreWithHostOwnedGate(options?: {
@@ -94,7 +99,7 @@ async function importStoreWithHostOwnedGate(options?: {
     pending: vi.fn(() => 0)
   }
   AppStore.setHostThreadRecordPersistPortForTests(persistPort)
-  return { AppStore, profilePath, enqueued }
+  return { AppStore, profilePath, enqueued, persistPort }
 }
 
 function message(id: string, role: ChatMessage['role'], content: string): ChatMessage {
@@ -143,6 +148,13 @@ function readJournalCheckpoint(
   return JSON.parse(
     readFileSync(join(profilePath, 'chat-journal-v2', `${chatId}.checkpoint.json`), 'utf8')
   ) as { revision: number; record: ChatRecord }
+}
+
+async function waitForLength(values: readonly unknown[], length: number): Promise<void> {
+  for (let attempt = 0; attempt < 20 && values.length < length; attempt += 1) {
+    await Promise.resolve()
+  }
+  expect(values).toHaveLength(length)
 }
 
 describe('Stage 2 — incremental persistence on the Host write path', () => {
@@ -209,8 +221,8 @@ describe('Stage 2 — incremental persistence on the Host write path', () => {
       authoredTranscript: author.finish()
     })
 
-    expect(enqueued).toHaveLength(1)
-    expect(enqueued[0].expectedRevision).toBe(3)
+    // D1 is journal-only: no full-record transfer is even enqueued.
+    expect(enqueued).toHaveLength(0)
     const stats = AppStore.getIncrementalChatPersistenceStats()
     expect(stats.mutationBatchesAppended).toBe(1)
     expect(stats.terminalCheckpoints).toBe(0)
@@ -262,36 +274,297 @@ describe('Stage 2 — incremental persistence on the Host write path', () => {
     expect(JSON.parse(JSON.stringify(applied.baseline.chat))).toEqual(
       JSON.parse(JSON.stringify(saved))
     )
+
+    await AppStore.awaitChatRecordPersisted(chatId)
+    expect(enqueued).toHaveLength(1)
+    expect(enqueued[0].expectedRevision).toBe(3)
+    expect(enqueued[0].record).toBe(saved)
   })
 
-  it('leaves a non-mutation Host save whole-record-only', async () => {
+  it('chains a barrier requested for a newer D1 revision behind the active barrier', async () => {
+    const { AppStore, profilePath, enqueued, persistPort } = await importStoreWithHostOwnedGate()
+    const chatId = 'chat-host-newer-barrier'
+    const previous = durableChat(chatId, 3, [
+      { runId: 'run-1', startedAt: '2026-09-01T00:00:00.000Z', status: 'running' }
+    ])
+    seedDurableChat(profilePath, previous)
+    const releases: Array<() => void> = []
+    persistPort.drain.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve)
+        })
+    )
+
+    const firstSaved = AppStore.saveChat({ ...previous, title: 'First D1' })
+    const firstBarrier = AppStore.awaitChatRecordPersisted(chatId)
+    await waitForLength(releases, 1)
+    expect(enqueued).toHaveLength(1)
+
+    const latestSaved = AppStore.saveChat({ ...firstSaved, title: 'Second D1' })
+    const latestBarrier = AppStore.awaitChatRecordPersisted(chatId)
+    expect(latestBarrier).not.toBe(firstBarrier)
+
+    releases.shift()!()
+    await firstBarrier
+    await waitForLength(releases, 1)
+    expect(enqueued).toHaveLength(2)
+    expect(enqueued[1].record).toBe(latestSaved)
+    releases.shift()!()
+    await latestBarrier
+  })
+
+  it('derives a chrome-only mutation for a non-authored D1 save and defers its Host record', async () => {
     const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
     const { chatUpdateProducerEnvelopeFor } = await import('../../shared/chatUpdateTransport')
     const chatId = 'chat-host-whole-only'
-    seedDurableChat(profilePath, durableChat(chatId, 3))
+    const previous = durableChat(chatId, 3, [
+      { runId: 'run-1', startedAt: '2026-09-01T00:00:00.000Z', status: 'running' }
+    ])
+    seedDurableChat(profilePath, previous)
 
     const saved = AppStore.saveChat({
-      ...durableChat(chatId, 3),
+      ...previous,
       title: 'Renamed without mutation'
     })
 
-    expect(enqueued).toHaveLength(1)
-    expect(enqueued[0].expectedRevision).toBe(3)
-    expect(journalV2Files(profilePath, chatId)).toEqual([])
+    expect(enqueued).toHaveLength(0)
+    expect(journalV2Files(profilePath, chatId)).toEqual([
+      `${chatId}.checkpoint.json`,
+      `${chatId}.mutations.jsonl`
+    ])
     const stats = AppStore.getIncrementalChatPersistenceStats()
-    expect(stats.mutationBatchesAppended).toBe(0)
+    expect(stats.mutationBatchesAppended).toBe(1)
     expect(stats.seeds).toBe(0)
-    expect(stats.baselineChecks).toBe(0)
-    expect(chatUpdateProducerEnvelopeFor(saved)?.delta).toBeNull()
+    expect(stats.baselineChecks).toBe(1)
+    expect(chatUpdateProducerEnvelopeFor(saved)?.delta).toMatchObject({
+      chatId,
+      basePersistenceRevision: 3,
+      persistenceRevision: 4
+    })
   })
 
-  it('repairs the journal baseline when a non-mutation Host save advanced the record between mutations', async () => {
+  it('externalizes repeated sealed jumbo tool detail without publishing a full Host record until barrier', async () => {
     const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
-    const chatId = 'chat-host-baseline-repair'
-    const previous = durableChat(chatId, 3)
+    const chatId = 'chat-host-tool-heavy'
+    let current = durableChat(chatId, 3, [
+      { runId: 'run-1', startedAt: '2026-09-01T00:00:00.000Z', status: 'running' }
+    ])
+    seedDurableChat(profilePath, current)
+    const expectedRaw: Array<{ command: string; output: string }> = []
+
+    for (let index = 0; index < 6; index += 1) {
+      const raw = {
+        command: `tool-command-${index}`,
+        output: `tool-output-${index}-${'x'.repeat(70_000)}`
+      }
+      expectedRaw.push(raw)
+      const toolMessage: ChatMessage = {
+        id: `tool-message-${index}`,
+        role: 'tool',
+        content: '',
+        timestamp: `2026-09-01T00:00:0${index}.000Z`,
+        runId: 'run-1',
+        toolActivities: [
+          {
+            id: `tool-activity-${index}`,
+            toolName: 'run_shell_command',
+            displayName: 'Ran command',
+            category: 'shell',
+            status: 'success',
+            endedAt: `2026-09-01T00:00:0${index}.500Z`,
+            parameters: { command: raw.command },
+            rawResultEvent: { output: raw.output }
+          }
+        ]
+      }
+      const author = new ChatTranscriptMutationAuthor(current.messages.length)
+      author.append([toolMessage])
+      current = AppStore.saveChat(
+        { ...current, messages: [...current.messages, toolMessage] },
+        { authoredTranscript: author.finish() }
+      )
+
+      const compact = current.messages.at(-1)?.toolActivities?.[0]
+      expect(compact?.detailRef).toBeDefined()
+      expect(compact?.parameters).toBeUndefined()
+      expect(compact?.rawResultEvent).toBeUndefined()
+      expect(enqueued).toHaveLength(0)
+    }
+
+    const detailArtifact = join(
+      profilePath,
+      'run-artifacts',
+      'run-1',
+      'tool-activity-details.jsonl'
+    )
+    expect(existsSync(detailArtifact)).toBe(true)
+    const refs = current.messages.flatMap((entry) =>
+      (entry.toolActivities ?? []).flatMap((activity) =>
+        activity.detailRef ? [activity.detailRef] : []
+      )
+    )
+    expect(refs).toHaveLength(6)
+    const hydrated = await AppStore.getToolActivityDetails(refs)
+    expect(hydrated).toHaveLength(6)
+    expect(
+      hydrated.map((entry) => ({
+        command: String((entry.activity.parameters as { command?: unknown })?.command),
+        output: String((entry.activity.rawResultEvent as { output?: unknown })?.output)
+      }))
+    ).toEqual(expectedRaw)
+
+    const hydratedById = new Map(hydrated.map((entry) => [entry.ref.activityId, entry.activity]))
+    const hydratedChat: ChatRecord = {
+      ...current,
+      messages: current.messages.map((entry) => ({
+        ...entry,
+        ...(entry.toolActivities
+          ? {
+              toolActivities: entry.toolActivities.map((activity) =>
+                hydratedById.has(activity.id)
+                  ? { ...hydratedById.get(activity.id)!, detailRef: activity.detailRef }
+                  : activity
+              )
+            }
+          : {})
+      }))
+    }
+    const exportOptions = { copiedAt: '2026-09-04T00:10:00.000Z' }
+    expect(buildChatMarkdownTranscript(hydratedChat, exportOptions)).toEqual(
+      buildChatMarkdownTranscript(current, exportOptions)
+    )
+
+    await AppStore.awaitChatRecordPersisted(chatId)
+    expect(enqueued).toHaveLength(1)
+    expect(enqueued[0].expectedRevision).toBe(3)
+    expect(enqueued[0].record.persistenceRevision).toBe(current.persistenceRevision)
+    expect(
+      enqueued[0].record.messages
+        .flatMap((entry) => entry.toolActivities ?? [])
+        .every((activity) => activity.rawResultEvent === undefined)
+    ).toBe(true)
+  })
+
+  it('materializes an approval transition immediately instead of leaving it in the D1 slot', async () => {
+    const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
+    const chatId = 'chat-host-approval'
+    const previous = durableChat(chatId, 3, [
+      { runId: 'run-1', startedAt: '2026-09-01T00:00:00.000Z', status: 'running' }
+    ])
     seedDurableChat(profilePath, previous)
 
-    // Mutation save: journal seeded at 3, batch lands 3 -> 4 (terminal checkpoint).
+    const saved = AppStore.saveChat({
+      ...previous,
+      ensemble: {
+        enabled: true,
+        maxParticipants: 1,
+        participants: [],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          startedAt: '2026-09-01T00:00:00.000Z',
+          participants: [],
+          lanes: {
+            'lane-1': {
+              laneId: 'lane-1',
+              participantId: 'participant-1',
+              provider: 'codex',
+              intent: 'write',
+              status: 'awaiting-approval',
+              approvalsQueued: 1,
+              startedAt: '2026-09-01T00:00:00.000Z'
+            }
+          }
+        }
+      } as never
+    })
+
+    expect(enqueued).toHaveLength(1)
+    expect(enqueued[0]).toMatchObject({ chatId, expectedRevision: 3 })
+    expect(enqueued[0].record).toBe(saved)
+    expect(AppStore.getIncrementalChatPersistenceStats().boundaryMix.approval).toBe(1)
+  })
+
+  it('falls back to an immediate full Host checkpoint when the incremental journal fails', async () => {
+    const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
+    const chatId = 'chat-host-journal-failure'
+    const previous = durableChat(chatId, 3, [
+      { runId: 'run-1', startedAt: '2026-09-01T00:00:00.000Z', status: 'running' }
+    ])
+    seedDurableChat(profilePath, previous)
+    mkdirSync(join(profilePath, 'chat-journal-v2', `${chatId}.mutations.jsonl`), {
+      recursive: true
+    })
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const saved = AppStore.saveChat({ ...previous, title: 'Fallback title' })
+      expect(enqueued).toHaveLength(1)
+      expect(enqueued[0]).toMatchObject({ chatId, expectedRevision: 3 })
+      expect(enqueued[0].record).toBe(saved)
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
+  it('keeps inline D4 bytes and materializes the full record when detail archival fails', async () => {
+    const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
+    const chatId = 'chat-host-detail-failure'
+    const previous = durableChat(chatId, 3, [
+      { runId: 'run-1', startedAt: '2026-09-01T00:00:00.000Z', status: 'running' }
+    ])
+    seedDurableChat(profilePath, previous)
+    mkdirSync(join(profilePath, 'run-artifacts', 'run-1', 'tool-activity-details.jsonl'), {
+      recursive: true
+    })
+    const toolMessage: ChatMessage = {
+      id: 'tool-message-failure',
+      role: 'tool',
+      content: '',
+      timestamp: '2026-09-01T00:00:01.000Z',
+      runId: 'run-1',
+      toolActivities: [
+        {
+          id: 'tool-activity-failure',
+          toolName: 'run_shell_command',
+          displayName: 'Ran command',
+          category: 'shell',
+          status: 'success',
+          endedAt: '2026-09-01T00:00:01.500Z',
+          parameters: { command: 'preserve me' },
+          rawResultEvent: { output: 'y'.repeat(70_000) }
+        }
+      ]
+    }
+    const author = new ChatTranscriptMutationAuthor(previous.messages.length)
+    author.append([toolMessage])
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const saved = AppStore.saveChat(
+        { ...previous, messages: [...previous.messages, toolMessage] },
+        { authoredTranscript: author.finish() }
+      )
+
+      expect(enqueued).toHaveLength(1)
+      expect(enqueued[0].record).toBe(saved)
+      const activity = saved.messages.at(-1)?.toolActivities?.[0]
+      expect(activity?.detailRef).toBeUndefined()
+      expect(activity?.parameters).toEqual({ command: 'preserve me' })
+      expect((activity?.rawResultEvent as { output?: string })?.output).toHaveLength(70_000)
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
+  it('coalesces authored and derived D1 saves into one revision-jumping Host checkpoint', async () => {
+    const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
+    const chatId = 'chat-host-baseline-repair'
+    const previous = durableChat(chatId, 3, [
+      { runId: 'run-1', startedAt: '2026-09-01T00:00:00.000Z', status: 'running' }
+    ])
+    seedDurableChat(profilePath, previous)
+
+    // Mutation save: journal seeds at 3, then appends 3 -> 4.
     const m3 = message('m3', 'assistant', 'First mutation')
     const author1 = new ChatTranscriptMutationAuthor(previous.messages.length)
     author1.append([m3])
@@ -301,12 +574,10 @@ describe('Stage 2 — incremental persistence on the Host write path', () => {
     ) as ChatRecord
     expect(first.persistenceRevision).toBe(4)
 
-    // Non-mutation save: the Host whole-record write advances to 5; the
-    // journal stays at 4 by design (whole-record-only).
-    AppStore.saveChat({ ...first, title: 'Chrome-only change' })
+    // A non-authored chrome change advances through the same journal.
+    const second = AppStore.saveChat({ ...first, title: 'Chrome-only change' })
 
-    // The next mutation save must re-anchor the journal onto revision 5 and
-    // then append 5 -> 6 instead of replaying against the stale base.
+    // The next authored mutation continues the uninterrupted revision chain.
     const current = AppStore.getChat(chatId)!
     const m4 = message('m4', 'assistant', 'Second mutation')
     const author2 = new ChatTranscriptMutationAuthor(current.messages.length)
@@ -317,15 +588,18 @@ describe('Stage 2 — incremental persistence on the Host write path', () => {
     ) as ChatRecord
 
     expect(saved.persistenceRevision).toBe(6)
-    expect(enqueued).toHaveLength(3)
-    expect(enqueued.map((input) => input.expectedRevision)).toEqual([3, 4, 5])
+    expect(second.persistenceRevision).toBe(5)
+    expect(enqueued).toHaveLength(0)
     const stats = AppStore.getIncrementalChatPersistenceStats()
-    expect(stats.mutationBatchesAppended).toBe(2)
-    expect(stats.baselineRepairs).toBeGreaterThanOrEqual(1)
+    expect(stats.mutationBatchesAppended).toBe(3)
+    expect(stats.baselineRepairs).toBe(0)
     expect(stats.parityMismatches).toBe(0)
-    const checkpoint = readJournalCheckpoint(profilePath, chatId)
-    expect(checkpoint.revision).toBe(6)
-    expect(checkpoint.record.messages.map((entry) => entry.id)).toEqual(['m1', 'm2', 'm3', 'm4'])
+
+    await AppStore.awaitChatRecordPersisted(chatId)
+    expect(enqueued).toHaveLength(1)
+    expect(enqueued[0].expectedRevision).toBe(3)
+    expect(enqueued[0].record.persistenceRevision).toBe(6)
+    expect(enqueued[0].record.messages.map((entry) => entry.id)).toEqual(['m1', 'm2', 'm3', 'm4'])
   })
 
   it('keeps the legacy admitted incremental path live while the gate is open', async () => {

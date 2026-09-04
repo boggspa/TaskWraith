@@ -34,6 +34,7 @@ interface WiredStore {
   chatsDir: string
   deleted: ErasureDeleteInput[]
   persisted: HostThreadRecordPersistInput[]
+  enqueued: HostThreadRecordPersistInput[]
   persistPort: HostThreadRecordPersistPort & {
     deleteRecord: ReturnType<typeof vi.fn>
     persist: ReturnType<typeof vi.fn>
@@ -108,46 +109,60 @@ async function importStoreWithHostOwnedGate(
   }
   const deleted: ErasureDeleteInput[] = []
   const persisted: HostThreadRecordPersistInput[] = []
+  const enqueued: HostThreadRecordPersistInput[] = []
   // Faithful Host-mimicking port: persist applies the real persistThreadRecord
   // revision contract to the tmp profile (create=0, update=previous+1), and
   // delete removes the file — so the transaction's read-backs see exactly what
   // a real Host would leave behind.
+  const applyPersist = (input: HostThreadRecordPersistInput): void => {
+    const filePath = join(chatsDir, `${input.chatId}.json`)
+    const currentRaw = existsSync(filePath)
+      ? (JSON.parse(readFileSync(filePath, 'utf8')) as { persistenceRevision?: number })
+      : null
+    const currentRevision =
+      currentRaw && Number.isSafeInteger(currentRaw.persistenceRevision)
+        ? (currentRaw.persistenceRevision as number)
+        : 0
+    if (currentRaw === null && input.expectedRevision !== 0) {
+      throw new Error('Thread is not found')
+    }
+    if (currentRaw !== null && currentRevision !== input.expectedRevision) {
+      throw new Error('Thread persistence revision mismatch')
+    }
+    const requestedRevision = input.record.persistenceRevision
+    const nextRevision =
+      currentRaw === null
+        ? 0
+        : Number.isSafeInteger(requestedRevision) && requestedRevision! > currentRevision
+          ? requestedRevision
+          : currentRevision + 1
+    const next = {
+      ...(input.record as unknown as Record<string, unknown>),
+      persistenceRevision: nextRevision
+    }
+    writeFileSync(filePath, JSON.stringify(next))
+    chmodSync(filePath, 0o600)
+  }
   const persistPort = {
     persist: vi.fn(async (input: HostThreadRecordPersistInput) => {
       persisted.push(input)
-      const filePath = join(chatsDir, `${input.chatId}.json`)
-      const currentRaw = existsSync(filePath)
-        ? (JSON.parse(readFileSync(filePath, 'utf8')) as { persistenceRevision?: number })
-        : null
-      const currentRevision =
-        currentRaw && Number.isSafeInteger(currentRaw.persistenceRevision)
-          ? (currentRaw.persistenceRevision as number)
-          : 0
-      if (currentRaw === null && input.expectedRevision !== 0) {
-        throw new Error('Thread is not found')
-      }
-      if (currentRaw !== null && currentRevision !== input.expectedRevision) {
-        throw new Error('Thread persistence revision mismatch')
-      }
-      const next = {
-        ...(input.record as unknown as Record<string, unknown>),
-        persistenceRevision: currentRaw === null ? 0 : currentRevision + 1
-      }
-      writeFileSync(filePath, JSON.stringify(next))
-      chmodSync(filePath, 0o600)
+      applyPersist(input)
       return {} as never
     }),
     deleteRecord: vi.fn(async (input: ErasureDeleteInput) => {
       deleted.push(input)
       rmSync(join(chatsDir, `${input.chatId}.json`), { force: true })
     }),
-    enqueue: vi.fn(),
+    enqueue: vi.fn((input: HostThreadRecordPersistInput) => {
+      enqueued.push(input)
+      applyPersist(input)
+    }),
     drain: vi.fn(async () => {}),
     drainAll: vi.fn(async () => {}),
     pending: vi.fn(() => 0)
   }
   AppStore.setHostThreadRecordPersistPortForTests(persistPort as HostThreadRecordPersistPort)
-  return { AppStore, profilePath, chatsDir, deleted, persisted, persistPort }
+  return { AppStore, profilePath, chatsDir, deleted, persisted, enqueued, persistPort }
 }
 
 describe('HostChatErasureWiring', () => {
@@ -168,6 +183,31 @@ describe('HostChatErasureWiring', () => {
     // Tombstone: a late save for the deleted chat must not resurrect it.
     AppStore.saveChat(minimalChatRecord('chat-del', 3) as never)
     expect(persisted).toHaveLength(0)
+  })
+
+  it('discards a staged D1 compatibility record before delete so it cannot resurrect the chat', async () => {
+    const { AppStore, chatsDir, deleted, enqueued } = await importStoreWithHostOwnedGate([
+      { id: 'chat-del-pending', revision: 2 }
+    ])
+    const current = AppStore.getChat('chat-del-pending')!
+    AppStore.saveChat({
+      ...current,
+      title: 'Never materialize me',
+      runs: [
+        {
+          runId: 'run-pending',
+          startedAt: '2026-08-28T00:00:00.000Z',
+          status: 'running'
+        }
+      ]
+    })
+    expect(enqueued).toHaveLength(0)
+
+    await AppStore.deleteChatViaHost('chat-del-pending')
+
+    expect(enqueued).toHaveLength(0)
+    expect(deleted).toEqual([{ chatId: 'chat-del-pending', expectedRevision: 2 }])
+    expect(existsSync(join(chatsDir, 'chat-del-pending.json'))).toBe(false)
   })
 
   it('(b) routes truncate through thread.record.persist with the scrubbed complete record', async () => {
@@ -197,6 +237,55 @@ describe('HostChatErasureWiring', () => {
     }
     expect(onDisk.messages).toEqual([])
     expect(onDisk.persistenceRevision).toBe(6)
+  })
+
+  it('materializes journal-ahead D1 state before truncating the Host record', async () => {
+    const { AppStore, chatsDir, enqueued, persisted } = await importStoreWithHostOwnedGate([
+      { id: 'chat-trunc-pending', revision: 5 }
+    ])
+    const current = AppStore.getChat('chat-trunc-pending')!
+    AppStore.saveChat({
+      ...current,
+      title: 'Latest title before truncate',
+      runs: [
+        {
+          runId: 'run-pending',
+          startedAt: '2026-08-28T00:00:00.000Z',
+          status: 'running'
+        }
+      ]
+    })
+    expect(enqueued).toHaveLength(0)
+
+    const truncated = await AppStore.truncateChatHistoryViaHost('chat-trunc-pending')
+
+    expect(enqueued).toHaveLength(1)
+    expect(enqueued[0]).toMatchObject({ chatId: 'chat-trunc-pending', expectedRevision: 5 })
+    expect(enqueued[0].record).toMatchObject({
+      title: 'Latest title before truncate',
+      persistenceRevision: 6
+    })
+    expect(persisted).toHaveLength(1)
+    expect(persisted[0]).toMatchObject({ chatId: 'chat-trunc-pending', expectedRevision: 6 })
+    expect(persisted[0].record).toMatchObject({
+      title: 'Latest title before truncate',
+      persistenceRevision: 7,
+      messages: [],
+      runs: []
+    })
+    expect(truncated?.title).toBe('Latest title before truncate')
+    const onDisk = JSON.parse(readFileSync(join(chatsDir, 'chat-trunc-pending.json'), 'utf8')) as {
+      title: string
+      persistenceRevision: number
+      messages: unknown[]
+      runs: unknown[]
+    }
+    expect(onDisk).toMatchObject({
+      title: 'Latest title before truncate',
+      persistenceRevision: 7,
+      messages: [],
+      runs: []
+    })
   })
 
   it('(c) clears one workspace through repeated thread.record.delete only for that scope', async () => {

@@ -174,6 +174,8 @@ describe('HostEnsemblePersistWiring', () => {
     ).toBe(0)
     // The renderer-facing object carries the same stamp.
     expect(chat.persistenceRevision).toBe(0)
+    // Settle creation before a later terminal compatibility checkpoint.
+    await AppStore.awaitChatRecordPersisted(chat.appChatId)
     // A second save builds on the persisted revision (lockstep with the Host).
     AppStore.saveChat({ ...chat, title: 'Renamed ensemble' })
     expect(enqueued).toHaveLength(2)

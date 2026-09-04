@@ -199,6 +199,91 @@ describe('HostChatCompatibilityPersistence', () => {
     })
   })
 
+  it('rebases a submitted lineage in place and discards a newer stale pending slot', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { enqueued, persistence } = harness({ drain: vi.fn(() => held) })
+    persistence.stage(input('chat-1', 7, 3))
+    const barrier = persistence.barrier('chat-1')
+    await Promise.resolve()
+    persistence.stage(input('chat-1', 8, 7))
+    const recovered = input('chat-1', 5, 4)
+
+    expect(persistence.rebase(recovered)).toBe(true)
+    expect(persistence.snapshot()).toMatchObject({
+      pendingChatIds: [],
+      submittedChatIds: ['chat-1']
+    })
+    expect(enqueued[0].record.persistenceRevision).toBe(7)
+
+    release()
+    await barrier
+    expect(persistence.hasUnconfirmed('chat-1')).toBe(false)
+    expect(persistence.stage(input('chat-1', 6, 5))).toBe('staged')
+  })
+
+  it('rebases a failed-drain pending lineage for the next barrier', async () => {
+    const drain = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('revision conflict'))
+      .mockResolvedValue(undefined)
+    const { enqueued, persistence } = harness({ drain })
+    persistence.stage(input('chat-1', 9, 3))
+    await expect(persistence.barrier('chat-1')).rejects.toThrow('revision conflict')
+
+    const recovered = input('chat-1', 5, 4)
+    expect(persistence.rebase(recovered)).toBe(true)
+    await persistence.barrier('chat-1')
+
+    expect(enqueued).toHaveLength(2)
+    expect(enqueued[1]).toBe(recovered)
+    expect(persistence.hasUnconfirmed('chat-1')).toBe(false)
+  })
+
+  it('discards only a pending record and never claims an enqueued record was cancelled', () => {
+    const { persistence } = harness()
+    persistence.stage(input('chat-pending', 4, 3))
+    expect(persistence.hasUnconfirmed('chat-pending')).toBe(true)
+    expect(persistence.discard('chat-pending')).toBe(true)
+    expect(persistence.hasUnconfirmed('chat-pending')).toBe(false)
+    expect(persistence.discard('chat-pending')).toBe(false)
+
+    persistence.stage(input('chat-submitted', 4, 3))
+    persistence.materialize('chat-submitted')
+    expect(persistence.discard('chat-submitted')).toBe(false)
+    expect(persistence.hasUnconfirmed('chat-submitted')).toBe(true)
+  })
+
+  it('releases a submitted slot on an exact or newer Host revision acknowledgement', () => {
+    const { persistence } = harness()
+    persistence.stage(input('chat-1', 7, 3))
+    persistence.materialize('chat-1')
+
+    expect(persistence.acknowledgeRevision('chat-1', 6)).toBe(false)
+    expect(persistence.hasUnconfirmed('chat-1')).toBe(true)
+    expect(persistence.acknowledgeRevision('chat-1', 9)).toBe(true)
+    expect(persistence.hasUnconfirmed('chat-1')).toBe(false)
+    expect(persistence.stage(input('chat-1', 10, 9))).toBe('staged')
+  })
+
+  it('materializes a requested terminal successor as soon as its predecessor is acknowledged', () => {
+    const { enqueued, persistence } = harness()
+    persistence.stage(input('chat-1', 4, 3))
+    persistence.materialize('chat-1')
+    const terminal = input('chat-1', 7, 4)
+    persistence.stage(terminal)
+
+    expect(persistence.materialize('chat-1')).toBe(false)
+    expect(enqueued).toHaveLength(1)
+    expect(persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+
+    expect(enqueued).toHaveLength(2)
+    expect(enqueued[1].record).toBe(terminal.record)
+    expect(enqueued[1].expectedRevision).toBe(4)
+  })
+
   it('fences delete, discards pending work, drains submitted work, and is idempotent', async () => {
     let release!: () => void
     const held = new Promise<void>((resolve) => {
@@ -288,6 +373,21 @@ describe('HostChatCompatibilityPersistence', () => {
     await shutdown
     expect(port.drain).toHaveBeenCalledTimes(1)
     expect(drainAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('drains a successor staged behind an unacknowledged checkpoint before closing', async () => {
+    const { enqueued, port, persistence } = harness()
+    persistence.stage(input('chat-1', 4, 3))
+    persistence.materialize('chat-1')
+    const latest = input('chat-1', 8, 4)
+    persistence.stage(latest)
+
+    await persistence.shutdown()
+
+    expect(enqueued).toHaveLength(2)
+    expect(enqueued[1].record).toBe(latest.record)
+    expect(port.drainAll).toHaveBeenCalledTimes(2)
+    expect(persistence.hasUnconfirmed('chat-1')).toBe(false)
   })
 
   it('restores every unconfirmed reference when the shutdown drain fails', async () => {

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -17,6 +17,7 @@ afterEach(() => {
 
 interface WiredStore {
   AppStore: typeof import('../store/index').AppStore
+  profilePath: string
   persistPort: HostThreadRecordPersistPort & {
     enqueue: ReturnType<typeof vi.fn>
     drain: ReturnType<typeof vi.fn>
@@ -62,7 +63,7 @@ async function importStore(options?: { hostOwnGate?: boolean }): Promise<WiredSt
     pending: vi.fn(() => 0)
   }
   AppStore.setHostThreadRecordPersistPortForTests(persistPort)
-  return { AppStore, persistPort, enqueued }
+  return { AppStore, profilePath, persistPort, enqueued }
 }
 
 function chatRecord(appChatId: string): Record<string, unknown> {
@@ -88,15 +89,45 @@ function chatRecord(appChatId: string): Record<string, unknown> {
   }
 }
 
+function seedRunningChat(profilePath: string, appChatId: string): Record<string, unknown> {
+  const record = {
+    ...chatRecord(appChatId),
+    persistenceRevision: 3,
+    runs: [
+      {
+        runId: 'run-1',
+        startedAt: '2026-08-28T00:00:00.000Z',
+        status: 'running'
+      }
+    ]
+  }
+  const chatsDir = join(profilePath, 'chats')
+  mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
+  writeFileSync(join(chatsDir, `${appChatId}.json`), JSON.stringify(record), { mode: 0o600 })
+  return record
+}
+
 describe('HostPersistDrainShutdown', () => {
-  it('drains the Host persist queue on the shutdown flush when the gate is Host-owned', async () => {
-    const { AppStore, persistPort } = await importStore()
-    AppStore.saveChat(chatRecord('chat-shutdown-drain') as never)
+  it('checkpoints D1, materializes its latest Host record, then drains at shutdown', async () => {
+    const { AppStore, profilePath, persistPort, enqueued } = await importStore()
+    const chatId = 'chat-shutdown-drain'
+    const seeded = seedRunningChat(profilePath, chatId)
+    AppStore.saveChat({ ...seeded, title: 'Latest journal-backed title' } as never)
+    expect(enqueued).toHaveLength(0)
+
     await AppStore.flushAllChatSaves()
-    // RED-first evidence: at HEAD 9dcd59d16 flushAllChatSaves returned
-    // immediately (`if (!legacyStoreCanWrite()) return`) and drainAll was never
-    // called — the queued record was silently lost at quit.
+
+    expect(enqueued).toHaveLength(1)
+    expect(enqueued[0]).toMatchObject({ chatId, expectedRevision: 3 })
+    expect(enqueued[0].record).toMatchObject({
+      title: 'Latest journal-backed title',
+      persistenceRevision: 4
+    })
     expect(persistPort.drainAll).toHaveBeenCalledTimes(1)
+    expect(existsSync(join(profilePath, 'chat-journal-v2', `${chatId}.checkpoint.json`))).toBe(true)
+    expect(existsSync(join(profilePath, 'chat-journal-v2', `${chatId}.mutations.jsonl`))).toBe(
+      false
+    )
   })
 
   it('bounds the shutdown drain so a hung Host cannot hold the process open, and reports the unconfirmed records', async () => {

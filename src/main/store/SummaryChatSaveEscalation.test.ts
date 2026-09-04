@@ -316,9 +316,10 @@ describe.each([
     if (hostOwnGate) {
       expect(store.enqueued).toHaveLength(1)
       expect(store.enqueued[0].expectedRevision).toBe(3)
-      // Exactly a chrome-only full-record Host save: whole-record-only, no
-      // sideband journal batch (compare HostIncrementalChatPersistence).
-      expect(journalV2Files(store.profilePath, chatId)).toEqual([])
+      // Host saves now share the incremental path. This terminal chrome save
+      // folds its mutation into a checkpoint before materializing the complete
+      // Host compatibility record.
+      expect(journalV2Files(store.profilePath, chatId)).toEqual([`${chatId}.checkpoint.json`])
     }
   })
 

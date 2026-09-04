@@ -54,6 +54,7 @@ interface ChatCompatibilityState {
   durableSequence: number
   durableRevision: number | null
   settlement: Promise<void> | null
+  materializeAfterSubmitted: boolean
   activeBarrier: ActiveBarrier | null
   deletePromise: Promise<void> | null
   deleting: boolean
@@ -96,6 +97,7 @@ function createState(): ChatCompatibilityState {
     durableSequence: 0,
     durableRevision: null,
     settlement: null,
+    materializeAfterSubmitted: false,
     activeBarrier: null,
     deletePromise: null,
     deleting: false,
@@ -170,19 +172,122 @@ export class HostChatCompatibilityPersistence {
   materialize(chatId: string): boolean {
     validateChatId(chatId)
     const state = this.states.get(chatId)
-    if (!state || state.deleting || state.deleted || state.submitted || !state.pending) return false
+    if (!state || state.deleting || state.deleted || !state.pending) return false
+    if (state.submitted) {
+      state.materializeAfterSubmitted = true
+      return false
+    }
 
     const entry = state.pending
     state.pending = null
     state.submitted = entry
+    state.materializeAfterSubmitted = false
     try {
       this.port.enqueue(entry.input)
       return true
     } catch (error) {
       state.submitted = null
       this.restoreUnconfirmed(state, entry)
+      state.materializeAfterSubmitted = true
       throw error
     }
+  }
+
+  /**
+   * Replace a coordinator-owned unconfirmed lineage after Host CAS recovery.
+   * The recovery record already contains every staged Desktop intent, so any
+   * newer pending slot is subsumed and must not survive to overwrite it later.
+   * Returns false when the Host operation was not owned by this coordinator.
+   */
+  rebase(input: HostThreadRecordPersistInput): boolean {
+    validateInput(input)
+    const state = this.states.get(input.chatId)
+    if (!state) return false
+
+    if (state.submitted) {
+      const latestSequence = Math.max(
+        state.submitted.sequence,
+        state.pending?.sequence ?? state.submitted.sequence
+      )
+      // Mutate the existing entry rather than replacing it: settleSubmitted
+      // captured this identity before the injected drain entered Host recovery.
+      state.submitted.input = input
+      state.submitted.sequence = latestSequence
+      state.pending = null
+      state.materializeAfterSubmitted = false
+      return true
+    }
+
+    if (!state.pending) return false
+    state.pending = { input, sequence: state.pending.sequence }
+    return true
+  }
+
+  /**
+   * Drop only work that has not crossed the injected enqueue boundary. An
+   * already-submitted record must be drained or superseded by the Host delete
+   * port; reporting it discarded here would create a resurrection race.
+   */
+  discard(chatId: string): boolean {
+    validateChatId(chatId)
+    const state = this.states.get(chatId)
+    if (!state || state.submitted || !state.pending) return false
+    state.pending = null
+    state.materializeAfterSubmitted = false
+    return true
+  }
+
+  hasUnconfirmed(chatId: string): boolean {
+    validateChatId(chatId)
+    const state = this.states.get(chatId)
+    return Boolean(state?.pending || state?.submitted)
+  }
+
+  hasSubmitted(chatId: string): boolean {
+    validateChatId(chatId)
+    return Boolean(this.states.get(chatId)?.submitted)
+  }
+
+  latestSequence(chatId: string): number {
+    validateChatId(chatId)
+    const state = this.states.get(chatId)
+    return Math.max(
+      state?.durableSequence ?? 0,
+      state?.submitted?.sequence ?? 0,
+      state?.pending?.sequence ?? 0
+    )
+  }
+
+  /**
+   * Observe an exact Host success (or a newer Host record read) without waiting
+   * for a later explicit drain. This releases the submitted slot so a terminal
+   * save can materialize its successor even when no barrier occurred between
+   * the two saves.
+   */
+  acknowledgeRevision(chatId: string, revision: number): boolean {
+    validateChatId(chatId)
+    if (!Number.isSafeInteger(revision) || revision < 0) {
+      throw new TypeError('Host compatibility acknowledgement requires a valid revision.')
+    }
+    const state = this.states.get(chatId)
+    if (!state) return false
+    const submitted = state.submitted
+    if (!submitted) {
+      if (!state.pending) state.durableRevision = revision
+      return false
+    }
+    if (revision < persistenceRevision(submitted.input)) return false
+    state.durableSequence = Math.max(state.durableSequence, submitted.sequence)
+    state.durableRevision = revision
+    state.submitted = null
+    if (state.materializeAfterSubmitted && state.pending && !state.deleting && !state.deleted) {
+      try {
+        this.materialize(chatId)
+      } catch {
+        // materialize restored the pending reference; a barrier/shutdown retries.
+      }
+    }
+    return true
   }
 
   /**
@@ -232,6 +337,7 @@ export class HostChatCompatibilityPersistence {
 
     state.deleting = true
     state.pending = null
+    state.materializeAfterSubmitted = false
     const operation = (async () => {
       try {
         if (state.submitted) await this.settleSubmitted(chatId, state)
@@ -239,6 +345,7 @@ export class HostChatCompatibilityPersistence {
         // The external history-mutation fence should already block producers;
         // repeat the discard so a misbehaving re-entrant caller cannot survive.
         state.pending = null
+        state.materializeAfterSubmitted = false
         state.deleted = true
       } catch (error) {
         state.pending = null
@@ -321,6 +428,13 @@ export class HostChatCompatibilityPersistence {
         state.durableSequence = Math.max(state.durableSequence, submitted.sequence)
         state.durableRevision = persistenceRevision(submitted.input)
         state.submitted = null
+        if (state.materializeAfterSubmitted && state.pending && !state.deleting && !state.deleted) {
+          try {
+            this.materialize(chatId)
+          } catch {
+            // The pending reference was restored; a later barrier retries it.
+          }
+        }
       })
       .catch((error) => {
         if (state.submitted === submitted) {
@@ -364,28 +478,34 @@ export class HostChatCompatibilityPersistence {
     )
     if (active.length > 0) await Promise.all(active)
 
-    for (const [chatId, state] of this.states) {
-      if (!state.deleting && !state.deleted) this.materialize(chatId)
-    }
-    try {
-      await this.port.drainAll()
-      for (const state of this.states.values()) {
-        const submitted = state.submitted
-        if (!submitted) continue
-        state.durableSequence = Math.max(state.durableSequence, submitted.sequence)
-        state.durableRevision = persistenceRevision(submitted.input)
-        state.submitted = null
+    for (;;) {
+      for (const [chatId, state] of this.states) {
+        if (!state.deleting && !state.deleted) this.materialize(chatId)
       }
-      this.closed = true
-    } catch (error) {
-      for (const state of this.states.values()) {
-        const submitted = state.submitted
-        if (!submitted) continue
-        state.submitted = null
-        this.restoreUnconfirmed(state, submitted)
+      try {
+        await this.port.drainAll()
+        for (const state of this.states.values()) {
+          const submitted = state.submitted
+          if (!submitted) continue
+          state.durableSequence = Math.max(state.durableSequence, submitted.sequence)
+          state.durableRevision = persistenceRevision(submitted.input)
+          state.submitted = null
+        }
+      } catch (error) {
+        for (const state of this.states.values()) {
+          const submitted = state.submitted
+          if (!submitted) continue
+          state.submitted = null
+          this.restoreUnconfirmed(state, submitted)
+        }
+        throw error
       }
-      throw error
+      const remaining = [...this.states.values()].some(
+        (state) => !state.deleting && !state.deleted && (state.pending || state.submitted)
+      )
+      if (!remaining) break
     }
+    this.closed = true
   }
 }
 
