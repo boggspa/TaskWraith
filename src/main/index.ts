@@ -10522,6 +10522,14 @@ function isChatRunLive(runId: string | undefined | null): boolean {
   // transcript probe below (finalize stamps activity).
   const session = runManager.get(id)
   if (session && isActiveRunSessionStatus(session.status)) return true
+  // Ensemble ownership outranks every probe below. seedParticipantRun persists an
+  // active ChatRun and registers the run id BEFORE its async preparation (observed
+  // up to ~9 minutes), while RunManager ownership only begins later in
+  // RunCoordinator. In that window no probe below can see an owner, so the sweep
+  // settled runs that were legitimately preparing. This cannot pin a dead run:
+  // getParticipantIdForRun returns null once a run is terminalFinalized, and the
+  // map is in-memory only, so startup recovery still settles a genuine orphan once.
+  if (ensembleOrchestratorRef?.getParticipantIdForRun(id) != null) return true
   const bridgeState = bridgeRunTranscripts.get(id)
   // OWNERSHIP first, activity second. A transcript whose status has left
   // 'running' has been CLAIMED by a finalizer whose terminal flush is still
@@ -10596,7 +10604,12 @@ function settleOrphanedRunQueueJobsProjection(
   }
   const settlements = reconcileOrphanedRunQueueJobs(
     candidates.filter((job) => !job.chatId || !fencedChatIds.has(job.chatId)),
-    terminalRunStatusById
+    terminalRunStatusById,
+    {
+      isRunLive: (runId) =>
+        ensembleOrchestratorRef?.getParticipantIdForRun(runId) != null ||
+        isActiveRunSessionStatus(runManager.get(runId)?.status ?? 'cancelled')
+    }
   )
   for (const settlement of settlements) {
     getRunRepository().transitionRunQueueJob(settlement.runId, settlement.nextStatus, {
