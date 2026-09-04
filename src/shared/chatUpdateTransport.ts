@@ -62,6 +62,18 @@ export interface ChatUpdateSubRevisions {
   recordHash: string
 }
 
+/**
+ * Byte totals for the three exact values serialized to produce chat
+ * sub-revisions. These are deliberately named after their inputs, rather than
+ * calling any of them a transcript: the inputs are ensemble, runs, and the
+ * non-message record.
+ */
+export interface ChatUpdateRevisionInputBytes {
+  ensemble: number
+  runs: number
+  nonMessageRecord: number
+}
+
 export interface ChatUpdateProducerState extends ChatUpdateSubRevisions {
   chatId: string
   persistenceRevision: number
@@ -437,16 +449,48 @@ function stableTranscriptDigest(value: unknown): string {
   return `${first.toString(16).padStart(8, '0')}${second.toString(16).padStart(8, '0')}`
 }
 
-function fingerprintNumber(value: unknown): number {
-  return Number.parseInt(fnv1aHex(stableStringify(value)), 16)
+/** UTF-8 byte length without allocating a Buffer in renderer-shared code. */
+export function utf8ByteLength(text: string): number {
+  let bytes = 0
+  for (let index = 0; index < text.length; index += 1) {
+    const codeUnit = text.charCodeAt(index)
+    if (codeUnit < 0x80) {
+      bytes += 1
+    } else if (codeUnit < 0x800) {
+      bytes += 2
+    } else if (
+      codeUnit >= 0xd800 &&
+      codeUnit <= 0xdbff &&
+      index + 1 < text.length &&
+      text.charCodeAt(index + 1) >= 0xdc00 &&
+      text.charCodeAt(index + 1) <= 0xdfff
+    ) {
+      bytes += 4
+      index += 1
+    } else {
+      bytes += 3
+    }
+  }
+  return bytes
 }
 
-export function computeChatSubRevisions(chat: ChatRecord): ChatUpdateSubRevisions {
+export function computeChatSubRevisions(
+  chat: ChatRecord,
+  byteSink?: ChatUpdateRevisionInputBytes
+): ChatUpdateSubRevisions {
   const record = chatRecordWithoutMessages(chat)
+  const ensembleInput = stableStringify(record.ensemble ?? null)
+  const runsInput = stableStringify(record.runs ?? [])
+  const nonMessageRecordInput = stableStringify(record)
+  if (byteSink) {
+    byteSink.ensemble = utf8ByteLength(ensembleInput)
+    byteSink.runs = utf8ByteLength(runsInput)
+    byteSink.nonMessageRecord = utf8ByteLength(nonMessageRecordInput)
+  }
   return {
-    ensembleRevision: fingerprintNumber(record.ensemble ?? null),
-    runsRevision: fingerprintNumber(record.runs ?? []),
-    recordHash: fnv1aHex(stableStringify(record))
+    ensembleRevision: Number.parseInt(fnv1aHex(ensembleInput), 16),
+    runsRevision: Number.parseInt(fnv1aHex(runsInput), 16),
+    recordHash: fnv1aHex(nonMessageRecordInput)
   }
 }
 

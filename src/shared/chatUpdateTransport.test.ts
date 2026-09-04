@@ -15,6 +15,7 @@ import {
   hasUniqueChatMessageIds,
   isChatUpdateDelivery,
   normalizeChatUpdateAck,
+  utf8ByteLength,
   type ChatUpdateProducerDelta
 } from './chatUpdateTransport'
 
@@ -833,6 +834,28 @@ describe('chat update transport', () => {
     expect(again.recordHash).toMatch(/^[0-9a-f]{8}$/)
     expect(Number.isSafeInteger(again.ensembleRevision)).toBe(true)
     expect(Number.isSafeInteger(again.runsRevision)).toBe(true)
+  })
+
+  it('reports the exact byte inputs used for sub-revisions without changing them', () => {
+    const sample = chat(3, [message('a', 'é🙂')], {
+      ensemble: { participants: [{ id: 'p1' }] } as ChatRecord['ensemble']
+    })
+    const bytes = { ensemble: 0, runs: 0, nonMessageRecord: 0 }
+
+    expect(computeChatSubRevisions(sample, bytes)).toEqual(computeChatSubRevisions(sample))
+    expect(bytes).toMatchObject({
+      ensemble: expect.any(Number),
+      runs: expect.any(Number),
+      nonMessageRecord: expect.any(Number)
+    })
+    expect(bytes.ensemble).toBeGreaterThan(0)
+    expect(bytes.runs).toBeGreaterThan(0)
+    expect(bytes.nonMessageRecord).toBeGreaterThan(bytes.ensemble)
+  })
+
+  it('measures UTF-8 text without allocating a Node-only Buffer', () => {
+    expect(utf8ByteLength('Aé🙂')).toBe(7)
+    expect(utf8ByteLength('')).toBe(0)
   })
 
   it('rejects unknown protocol versions while accepting both dual-read versions', () => {

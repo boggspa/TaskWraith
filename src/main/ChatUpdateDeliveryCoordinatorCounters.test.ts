@@ -233,4 +233,41 @@ describe('ChatUpdateDeliveryCoordinator protocol counters', () => {
     snapshot.ackRejectReasons.rendererApplyFailure = 99
     expect(coordinator.protocolCounters().ackRejectReasons).toEqual({})
   })
+
+  it('keeps serialized-byte diagnostics absent unless explicitly enabled', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+
+    coordinator.enqueue(sink, chat(1, ['one']))
+
+    expect(coordinator.protocolCounters().serializedBytes).toBeUndefined()
+  })
+
+  it('records categorized serialized-byte totals only when explicitly enabled', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2,
+      measureSerializedBytes: true
+    })
+
+    coordinator.enqueue(sink, chat(1, ['one']))
+
+    const totals = coordinator.protocolCounters().serializedBytes
+    expect(totals).toMatchObject({
+      envelope: expect.any(Number),
+      peak: expect.any(Number),
+      ensemble: expect.any(Number),
+      runs: expect.any(Number),
+      nonMessageRecord: expect.any(Number),
+      messages: expect.any(Number)
+    })
+    expect(totals?.envelope).toBeGreaterThan(0)
+    expect(totals?.peak).toBe(totals?.envelope)
+    expect(totals?.nonMessageRecord).toBeGreaterThan(0)
+    expect(totals?.messages).toBeGreaterThan(0)
+  })
 })

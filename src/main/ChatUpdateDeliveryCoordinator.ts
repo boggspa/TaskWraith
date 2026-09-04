@@ -14,7 +14,9 @@ import {
   type ChatUpdateDelivery,
   type ChatUpdateProducerEnvelope,
   type ChatUpdateProtocolVersion,
-  type CompactChatUpdateBaseline
+  type CompactChatUpdateBaseline,
+  type ChatUpdateRevisionInputBytes,
+  utf8ByteLength
 } from '../shared/chatUpdateTransport'
 import {
   estimateChatUpdateSnapshotBytes,
@@ -159,6 +161,25 @@ export interface ChatUpdateProtocolCounters {
   ackRejections: number
   /** Rejected ACKs tallied by each failing validation check. */
   ackRejectReasons: Record<string, number>
+  /** Present only when serialized-byte diagnostics were explicitly enabled. */
+  serializedBytes?: ChatUpdateSerializedByteTotals
+}
+
+/**
+ * Cumulative serialized-byte samples for a coordinator.
+ *
+ * `ensemble`, `runs`, and `nonMessageRecord` are the exact sub-revision
+ * inputs. They are not three transcripts. `envelope` is the serialized IPC
+ * delivery, `messages` is the canonical message-list input, and `peak` is the
+ * largest single delivery envelope observed in this measurement window.
+ */
+export interface ChatUpdateSerializedByteTotals {
+  envelope: number
+  peak: number
+  ensemble: number
+  runs: number
+  nonMessageRecord: number
+  messages: number
 }
 
 export interface ChatUpdateDeliveryCoordinatorOptions {
@@ -168,6 +189,12 @@ export interface ChatUpdateDeliveryCoordinatorOptions {
   ackTimeoutMs?: number
   /** Bounds acknowledged baselines retained for patch generation per renderer. */
   maxTrackedChatsPerTarget?: number
+  /**
+   * Opt-in diagnostic only. When enabled, records serialized delivery/input
+   * byte totals; when unset it performs no diagnostic serialization or byte
+   * walk.
+   */
+  measureSerializedBytes?: boolean
   /**
    * Wire protocol for buildChatUpdateDelivery. Default remains v1; set to 2
    * (or TASKWRAITH_CHAT_UPDATE_PROTOCOL=2) to emit compact field-mask patches.
@@ -293,6 +320,7 @@ export class ChatUpdateDeliveryCoordinator {
     delayMs: number
   ) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (timer: ReturnType<typeof setTimeout>) => void
+  private readonly serializedBytes?: ChatUpdateSerializedByteTotals
   private deliverySequence = 0
   private readonly counters: ChatUpdateProtocolCounters = {
     snapshots: 0,
@@ -313,6 +341,9 @@ export class ChatUpdateDeliveryCoordinator {
     this.now = options.now ?? Date.now
     this.setTimer = options.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs))
     this.clearTimer = options.clearTimer ?? ((timer) => clearTimeout(timer))
+    this.serializedBytes = options.measureSerializedBytes
+      ? { envelope: 0, peak: 0, ensemble: 0, runs: 0, nonMessageRecord: 0, messages: 0 }
+      : undefined
   }
 
   enqueue(target: ChatUpdateDeliveryTarget, chat: ChatRecord): void {
@@ -706,7 +737,8 @@ export class ChatUpdateDeliveryCoordinator {
     return {
       ...this.counters,
       // Copy the reason map so callers cannot mutate internal tallies.
-      ackRejectReasons: { ...this.counters.ackRejectReasons }
+      ackRejectReasons: { ...this.counters.ackRejectReasons },
+      ...(this.serializedBytes ? { serializedBytes: { ...this.serializedBytes } } : {})
     }
   }
 
@@ -893,7 +925,19 @@ export class ChatUpdateDeliveryCoordinator {
       'runsRevision' in epochDelivery ? epochDelivery.runsRevision : undefined
     // ACK fingerprint is the SENT chat's content hash, never the producer
     // rolling op-hash on the wire. Echoing that roll made every ACK match.
-    const contentSub = computeChatSubRevisions(next.chat)
+    const revisionInputBytes: ChatUpdateRevisionInputBytes | undefined = this.serializedBytes
+      ? { ensemble: 0, runs: 0, nonMessageRecord: 0 }
+      : undefined
+    const contentSub = computeChatSubRevisions(next.chat, revisionInputBytes)
+    if (this.serializedBytes && revisionInputBytes) {
+      const envelope = utf8ByteLength(JSON.stringify(epochDelivery) ?? '')
+      this.serializedBytes.envelope += envelope
+      this.serializedBytes.peak = Math.max(this.serializedBytes.peak, envelope)
+      this.serializedBytes.ensemble += revisionInputBytes.ensemble
+      this.serializedBytes.runs += revisionInputBytes.runs
+      this.serializedBytes.nonMessageRecord += revisionInputBytes.nonMessageRecord
+      this.serializedBytes.messages += utf8ByteLength(JSON.stringify(next.chat.messages) ?? '')
+    }
     const recordHash = contentSub.recordHash
     const compactBaseline: CompactChatUpdateBaseline = {
       revision: next.revision,
