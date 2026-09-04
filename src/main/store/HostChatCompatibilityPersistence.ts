@@ -232,8 +232,7 @@ export class HostChatCompatibilityPersistence {
 
     state.deleting = true
     state.pending = null
-    let operation: Promise<void>
-    operation = (async () => {
+    const operation = (async () => {
       try {
         if (state.submitted) await this.settleSubmitted(chatId, state)
         else await this.port.drain(chatId)
@@ -243,7 +242,10 @@ export class HostChatCompatibilityPersistence {
         state.deleted = true
       } catch (error) {
         state.pending = null
-        if (state.deletePromise === operation) state.deletePromise = null
+        // No competing delete can replace this promise: prepareDelete returns
+        // the existing one above. Clearing unconditionally keeps the failure
+        // retryable and avoids a self-reference during initialization.
+        state.deletePromise = null
         throw error
       }
     })()
