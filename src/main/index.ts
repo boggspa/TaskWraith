@@ -2478,6 +2478,11 @@ import { CreativeApprovalGate } from './CreativeApprovalGate'
 import { assignAgentIdentityFromSeed } from './AgentIdentitySeed'
 import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
 import { ChatUpdateDeliveryCoordinator } from './ChatUpdateDeliveryCoordinator'
+import {
+  ChatUpdateInterestRouter,
+  type ChatListItemResolver
+} from './ChatUpdateInterestRouter'
+import { registerChatUpdateInterestHandlers } from './ipc/chatUpdateInterestHandlers'
 import { RendererResponsivenessTracker } from './RendererResponsivenessTracker'
 import { RendererCrashRecovery } from './RendererCrashRecovery'
 import {
@@ -2533,6 +2538,10 @@ setAntigravityAgyOptInEnabledProbe(() => isAntigravityOptInEnabled(AppStore.getS
 let mainWindow: BrowserWindow | null = null
 let deferredProjectReferenceReconciler: DeferredProjectReferenceReconciler | null = null
 const chatUpdateDeliveryCoordinator = new ChatUpdateDeliveryCoordinator()
+const chatUpdateInterestRouter = new ChatUpdateInterestRouter({
+  delivery: chatUpdateDeliveryCoordinator,
+  store: AppStore
+})
 const rendererResponsivenessTracker = new RendererResponsivenessTracker({
   createIncidentId: () => randomUUID()
 })
@@ -11450,11 +11459,22 @@ function broadcastChatUpdated(chat: ChatRecord): void {
   broadcastChatUpdatedExcept(chat)
 }
 
+function clearChatUpdateTarget(targetId: number): void {
+  chatUpdateInterestRouter.clearTarget(targetId)
+}
+
+function clearDeletedChatUpdateState(chatId: string): void {
+  if (!chatId) return
+  chatUpdateInterestRouter.clearChat(chatId)
+}
+
 function broadcastChatUpdatedExcept(chat: ChatRecord, excludedSenderId?: number): void {
+  const resolveCompactProjection =
+    chatUpdateInterestRouter.createBroadcastProjectionResolver(chat)
   if (mainWindow?.webContents.id !== excludedSenderId) {
-    enqueueChatUpdated(mainWindow, chat)
+    enqueueChatUpdated(mainWindow, chat, resolveCompactProjection)
   }
-  broadcastChatPopoutUpdateExcept(chat, excludedSenderId)
+  broadcastChatPopoutUpdateExcept(chat, excludedSenderId, resolveCompactProjection)
   broadcastChatOwnedWorkspacePopoutRefresh(chat.appChatId, 'chat-updated')
   canvasPopoutWindowManager.broadcast(
     'canvas-popout-chat-updated',
@@ -11464,30 +11484,16 @@ function broadcastChatUpdatedExcept(chat: ChatRecord, excludedSenderId?: number)
   markHumanCollaborationProjectionDirty?.(chat.appChatId)
 }
 
-function enqueueChatUpdated(target: BrowserWindow | null | undefined, chat: ChatRecord): void {
-  if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return
-  const webContents = target.webContents
-  chatUpdateDeliveryCoordinator.enqueue(
-    {
-      id: webContents.id,
-      isDestroyed: () => target.isDestroyed() || webContents.isDestroyed(),
-      send: (channel, payload) => webContents.send(channel, payload)
-    },
-    chat
-  )
+function enqueueChatUpdated(
+  target: BrowserWindow | null | undefined,
+  chat: ChatRecord,
+  resolveCompactProjection?: ChatListItemResolver
+): void {
+  chatUpdateInterestRouter.enqueue(target, chat, resolveCompactProjection)
 }
 
 function reseedChatUpdated(target: BrowserWindow | null | undefined, chat: ChatRecord): void {
-  if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return
-  const webContents = target.webContents
-  chatUpdateDeliveryCoordinator.reseed(
-    {
-      id: webContents.id,
-      isDestroyed: () => target.isDestroyed() || webContents.isDestroyed(),
-      send: (channel, payload) => webContents.send(channel, payload)
-    },
-    chat
-  )
+  chatUpdateInterestRouter.reseed(target, chat)
 }
 
 function broadcastHostPersistRecoverySnapshot(chat: ChatRecord): void {
@@ -11549,7 +11555,11 @@ function broadcastChatPopoutUpdate(chat: ChatRecord): void {
   broadcastChatPopoutUpdateExcept(chat)
 }
 
-function broadcastChatPopoutUpdateExcept(chat: ChatRecord, excludedSenderId?: number): void {
+function broadcastChatPopoutUpdateExcept(
+  chat: ChatRecord,
+  excludedSenderId?: number,
+  resolveCompactProjection?: ChatListItemResolver
+): void {
   if (!chat?.appChatId || workspacePopoutWindows.size === 0) return
   const key = `chat:${chat.appChatId}`
   const win = workspacePopoutWindows.get(key)
@@ -11562,7 +11572,7 @@ function broadcastChatPopoutUpdateExcept(chat: ChatRecord, excludedSenderId?: nu
     // be spuriously denied until the window is reopened.
     owner.workspacePath = chat.workspacePath || undefined
   }
-  enqueueChatUpdated(win, chat)
+  enqueueChatUpdated(win, chat, resolveCompactProjection)
 }
 
 function maybeAppendAuditTranscriptMessage(run: AuditRunRecord): void {
@@ -16050,11 +16060,17 @@ function recordScheduledOccurrenceChildBinding(input: {
  * same branch plus collaboration-share handling; use it where it is in scope.
  */
 async function deleteChatErasureAware(chatId: string): Promise<void> {
+  const affectedChatIds = AppStore.previewHistoryDeletionScope({
+    kind: 'chat',
+    rootChatId: chatId
+  }).chatIds
   if (AppStore.legacyStoreWritesOpen()) {
     AppStore.deleteChat(chatId)
+    for (const affectedChatId of affectedChatIds) clearDeletedChatUpdateState(affectedChatId)
     return
   }
   await AppStore.deleteChatViaHost(chatId)
+  for (const affectedChatId of affectedChatIds) clearDeletedChatUpdateState(affectedChatId)
 }
 
 function wasDurableScheduledRunIdObserved(runId: string): boolean {
@@ -45907,6 +45923,11 @@ if (isGeminiMcpBridgeProcess) {
         broadcastPendingCatalog: requestRemoteProviderModelsRefresh
       })
     })
+    registerChatUpdateInterestHandlers({
+      router: chatUpdateInterestRouter,
+      isMainRendererSender,
+      workspacePopoutOwnerForSender
+    })
     ipcMain.on(CHAT_UPDATE_ACK_CHANNEL, (event, value: unknown) => {
       const ack = normalizeChatUpdateAck(value)
       if (!ack) return
@@ -54407,15 +54428,22 @@ if (isGeminiMcpBridgeProcess) {
       })
 
     const clearBroadChatHistory = (workspaceId?: string): Promise<void> =>
-      broadHistoryDeletionCoordinator.run(
-        workspaceId
-          ? {
-              kind: 'workspace',
-              workspaceId,
-              quiescenceTargets: broadHistoryDeletionTargets(workspaceId)
-            }
-          : { kind: 'global', quiescenceTargets: broadHistoryDeletionTargets() }
-      )
+      (async () => {
+        // Capture the exact renderer-projection scope before the durable commit
+        // removes its list rows. Cleanup happens only after success, so a failed
+        // deletion keeps both history and its live delivery baselines intact.
+        const clearedChatIds = AppStore.getChatList(workspaceId).map((chat) => chat.appChatId)
+        await broadHistoryDeletionCoordinator.run(
+          workspaceId
+            ? {
+                kind: 'workspace',
+                workspaceId,
+                quiescenceTargets: broadHistoryDeletionTargets(workspaceId)
+              }
+            : { kind: 'global', quiescenceTargets: broadHistoryDeletionTargets() }
+        )
+        for (const chatId of clearedChatIds) clearDeletedChatUpdateState(chatId)
+      })()
 
     const recoverPendingHistoryDeletionBeforeRunQueue = async (): Promise<void> => {
       const pending = AppStore.getPendingHistoryDeletion()
@@ -55272,8 +55300,10 @@ if (isGeminiMcpBridgeProcess) {
       })
       window.webContents.on('did-start-loading', () => {
         // A reload creates a fresh renderer-side patch baseline. Discard any
-        // in-flight delivery so the next update is a self-contained snapshot.
-        chatUpdateDeliveryCoordinator.clearTarget(webContentsId)
+        // in-flight delivery and interest handshake so the next update is a
+        // legacy-compatible self-contained snapshot until the new document
+        // publishes its replacement interests.
+        clearChatUpdateTarget(webContentsId)
       })
       window.on('unresponsive', () => {
         const incident = rendererResponsivenessTracker.begin(webContentsId)
@@ -55322,7 +55352,7 @@ if (isGeminiMcpBridgeProcess) {
       window.once('closed', () => {
         rendererCrashRecovery.dispose()
         rendererDiagnosticRecorder.clearTarget(webContentsId)
-        chatUpdateDeliveryCoordinator.clearTarget(webContentsId)
+        clearChatUpdateTarget(webContentsId)
         rendererResponsivenessTracker.clear(webContentsId)
       })
       window.webContents.on('render-process-gone', (_event, details) => {
@@ -55347,7 +55377,7 @@ if (isGeminiMcpBridgeProcess) {
                 { reason: details.reason, exitCode: details.exitCode }
               )
             : null
-        chatUpdateDeliveryCoordinator.clearTarget(webContentsId)
+        clearChatUpdateTarget(webContentsId)
         rendererResponsivenessTracker.clear(webContentsId)
         if (details.reason === 'clean-exit') {
           return
@@ -57578,6 +57608,7 @@ if (isGeminiMcpBridgeProcess) {
     })
     const deleteChatWithLifecycle = async (chatId: string): Promise<string[]> => {
       const result = await scopedHistoryDeletionCoordinator.run('chat', chatId)
+      for (const deletedChatId of result.chatIds) clearDeletedChatUpdateState(deletedChatId)
       return result.chatIds
     }
     const truncateChatWithLifecycle = async (chatId: string): Promise<ChatRecord | null> => {
@@ -57641,11 +57672,7 @@ if (isGeminiMcpBridgeProcess) {
       broadcastThreadList,
       broadcastChatUpdated,
       adoptRendererChatMutation: (senderId, chat, basePersistenceRevision) =>
-        chatUpdateDeliveryCoordinator.adoptRendererMutation(
-          senderId,
-          chat,
-          basePersistenceRevision
-        ),
+        chatUpdateInterestRouter.adoptRendererMutation(senderId, chat, basePersistenceRevision),
       broadcastChatUpdatedExcept,
       broadcastChatPopoutUpdate,
       pushRemoteTaskCardDelta,

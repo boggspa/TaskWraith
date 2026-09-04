@@ -801,6 +801,7 @@ import {
 } from './lib/chatHydrationRuntime'
 import { shouldRetainReactChatOnFlush } from './lib/chatChromeIdentity'
 import { bindChatTranscriptStore } from './lib/useChatTranscript'
+import { useChatUpdateInterestRuntime } from './hooks/useChatUpdateInterestRuntime'
 import { RawLogPresentationQueue } from './lib/rawLogPresentationQueue'
 import {
   applyParticipantPermissionsToEnsemble,
@@ -6293,6 +6294,15 @@ function App(): React.JSX.Element {
         ? activeRunChatSnapshotRef.current
         : null)
     if (current && !isChatSummaryRecord(current)) return current
+    const installedPage = chatHydrationRuntime.transcriptStore.get(shell.appChatId)
+    if (
+      current &&
+      isTranscriptPagedShell(current) &&
+      installedPage &&
+      installedPage.updatedAt > page.updatedAt
+    ) {
+      return current
+    }
     const committed: ChatRecord = mergeChatRecordValue(current ?? undefined, shell)
     chatByIdRef.current.set(committed.appChatId, committed)
     chatHydrationRuntime.transcriptStore.ingestPage(page)
@@ -6301,6 +6311,35 @@ function App(): React.JSX.Element {
     setCurrentChat((prev) => (prev?.appChatId === committed.appChatId ? committed : prev))
     return committed
   }
+
+  const chatUpdateInterestRuntime = useChatUpdateInterestRuntime({
+    chats,
+    currentChat,
+    setChats,
+    setCurrentChat,
+    chatByIdRef,
+    activeRunChatIdRef,
+    activeRunChatSnapshotRef,
+    clearedChatIdsRef,
+    pendingMainChatUpdatesRef,
+    pendingChatFlushRef,
+    pendingChatRenderReceiptsRef,
+    hydrationRuntime: chatHydrationRuntime,
+    isChatPopoutWindow,
+    chatPopoutChatId: chatPopoutChatIdRef.current,
+    paneChatIds: isMultiviewSplit ? multiview.paneChatIds : [],
+    paneScrollRefs: multiview.paneRefs,
+    sideChatId,
+    currentAutoFollowRef: autoFollowRef,
+    fullResidencyChatIds: [
+      ...Object.entries(pendingAgentApprovalByChatId)
+        .filter(([, approval]) => Boolean(approval))
+        .map(([chatId]) => chatId),
+      ...Object.entries(pendingApprovalQueueByChatId)
+        .filter(([, approvals]) => approvals.length > 0)
+        .map(([chatId]) => chatId)
+    ]
+  })
 
   // Stage 1b parity for SECONDARY chat surfaces. Built once and driven through
   // a ref: `createSurfaceChatHydrator` owns a per-chat single-flight map, so a
@@ -12860,6 +12899,24 @@ function App(): React.JSX.Element {
           diagnosticCounters.received += 1
           if (delivery.kind === 'snapshot') diagnosticCounters.snapshots += 1
           else diagnosticCounters.patches += 1
+          if (chatUpdateInterestRuntime.shouldRejectFullDelivery(delivery.chatId)) {
+            // A legacy full frame was already in flight when this document
+            // changed to paged/summary-only interest. Release it without ever
+            // reconstructing or retaining its ChatRecord in renderer state.
+            chatUpdateBaselineByIdRef.current.delete(delivery.chatId)
+            if (typeof window.api.ackChatUpdated === 'function') {
+              window.api.ackChatUpdated(
+                buildChatUpdateAck({
+                  delivery,
+                  applied: false,
+                  phase: 'accepted',
+                  rendererEpoch: RENDERER_CHAT_UPDATE_EPOCH
+                })
+              )
+              diagnosticCounters.acksSent += 1
+            }
+            return
+          }
           const baselines = chatUpdateBaselineByIdRef.current
           const acknowledge = (wasApplied: boolean, appliedBaseline?: ChatUpdateBaseline): void => {
             if (!wasApplied) baselines.delete(delivery.chatId)
@@ -13191,6 +13248,10 @@ function App(): React.JSX.Element {
       )
     }
 
+    // Register compact invalidations only after every legacy/full delivery
+    // listener above is live; register() then publishes the first replacement
+    // snapshot, closing the boot race without losing an explicit-full frame.
+    addIpcSubscription(chatUpdateInterestRuntime.register())
     ipcUnsubscriptions.unshift(() => {
       approvalRecovery?.cancel()
       for (const timer of contextCompactionProgressTimersRef.current.values()) {

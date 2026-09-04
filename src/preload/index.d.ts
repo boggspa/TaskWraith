@@ -143,6 +143,10 @@ import type { EnsembleUserRosterMutationInput } from '../main/EnsembleUserRoster
 import type { EnsembleUserRosterMutationResult } from '../main/services/EnsembleOrchestrator'
 import type { ChatUpdateAck, ChatUpdateDelivery } from '../shared/chatUpdateTransport'
 import type {
+  ChatUpdateInterestSnapshot,
+  ChatUpdateInvalidation
+} from '../shared/chatUpdateInterest'
+import type {
   RendererDiagnosticClientSample,
   RendererErrorBoundaryReport
 } from '../shared/rendererDiagnostics'
@@ -723,6 +727,7 @@ declare global {
   interface Window {
     api: {
       hostPlatform: NodeJS.Platform
+      pagedChatLiveUpdatesEnabled: boolean
       getRuntimeVersions: () => NodeJS.ProcessVersions
       terminal: {
         create: (workspacePath: string, sessionId: string, cliId?: string) => Promise<void>
@@ -3187,6 +3192,10 @@ declare global {
       ) => () => void
       onChatUpdated: (callback: (delivery: ChatUpdateDelivery) => void) => () => void
       ackChatUpdated: (ack: ChatUpdateAck) => void
+      setChatUpdateInterests: (snapshot: ChatUpdateInterestSnapshot) => void
+      onChatUpdateInvalidated: (
+        callback: (invalidation: ChatUpdateInvalidation) => void
+      ) => () => void
       /** Agent-set theme tokens changed in main; re-apply without a reload. */
       onAgentThemeTokensChanged: (callback: (tokens: Record<string, string>) => void) => () => void
       /**

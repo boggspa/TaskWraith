@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, ChatRecord } from './store/types'
 import {
@@ -576,6 +578,43 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     ).toBe(true)
   })
 
+  it('releases one target/chat lane without disturbing sibling baselines', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    const sibling = { ...chat(1, ['sibling']), appChatId: 'chat-2' }
+    coordinator.enqueue(sink, chat(1, ['drop me']))
+    coordinator.enqueue(sink, sibling)
+    const droppedDelivery = sink.deliveries.find((delivery) => delivery.chatId === 'chat-1')!
+    const siblingDelivery = sink.deliveries.find((delivery) => delivery.chatId === 'chat-2')!
+
+    expect(coordinator.clearChat(sink.id, 'chat-1')).toBe(true)
+    expect(coordinator.statsForTarget(sink.id).trackedChats).toBe(1)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: droppedDelivery.deliveryId,
+        applied: true
+      })
+    ).toBe(false)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: siblingDelivery.deliveryId,
+        applied: true
+      })
+    ).toBe(true)
+  })
+
+  it('releases a deleted chat from every renderer target', () => {
+    const first = target(7)
+    const second = target(8)
+    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    coordinator.enqueue(first, chat(1, ['first']))
+    coordinator.enqueue(second, chat(1, ['second']))
+
+    expect(coordinator.clearChatEverywhere('chat-1')).toBe(2)
+    expect(coordinator.statsForTarget(first.id).trackedChats).toBe(0)
+    expect(coordinator.statsForTarget(second.id).trackedChats).toBe(0)
+  })
+
   it('records a render receipt without making rendering another transport gate', () => {
     let now = 5_000
     const sink = target()
@@ -719,6 +758,56 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     vi.advanceTimersByTime(1)
     expect(sink.deliveries).toHaveLength(3)
     vi.useRealTimers()
+  })
+})
+
+describe('paged chat live-update wiring', () => {
+  const source = (path: string): string => readFileSync(join(process.cwd(), path), 'utf8')
+
+  it('registers the bounded interest handshake and preserves the environment escape hatch', () => {
+    const main = source('src/main/index.ts')
+    const router = source('src/main/ChatUpdateInterestRouter.ts')
+    const handlers = source('src/main/ipc/chatUpdateInterestHandlers.ts')
+    expect(router).toContain("PAGED_CHAT_LIVE_UPDATES_ENV = 'TASKWRAITH_PAGED_CHAT_LIVE_UPDATES'")
+    expect(main).toContain('new ChatUpdateInterestRouter({')
+    expect(main).toContain('registerChatUpdateInterestHandlers({')
+    expect(handlers).toContain('normalizeChatUpdateInterestSnapshot(value)')
+    expect(handlers).toContain('workspacePopoutOwnerForSender(event.sender.id)')
+    expect(handlers).toContain('replaceTargetSnapshot(targetId, authorized)')
+  })
+
+  it('routes full interests through ACK delivery and compact interests through invalidation', () => {
+    const router = source('src/main/ChatUpdateInterestRouter.ts')
+    expect(router).toContain("if (this.modeFor(target.id, chat.appChatId) === 'full')")
+    expect(router).toContain('target.send(CHAT_UPDATE_INVALIDATION_CHANNEL, invalidation)')
+    expect(router).toContain('this.delivery.enqueue(target, chat)')
+    expect(router).toContain('this.delivery.reseed(target, chat)')
+    expect(router).toContain('this.projectCompactChat(chat)')
+  })
+
+  it('bridges replacement interests and invalidations through preload', () => {
+    const preload = source('src/preload/index.ts')
+    const declarations = source('src/preload/index.d.ts')
+    expect(preload).toContain('setChatUpdateInterests:')
+    expect(preload).toContain('onChatUpdateInvalidated:')
+    expect(preload).toContain('ipcRenderer.send(CHAT_UPDATE_INTEREST_CHANNEL, snapshot)')
+    expect(preload).toContain('pagedChatLiveUpdatesEnabled:')
+    expect(declarations).toContain('setChatUpdateInterests:')
+    expect(declarations).toContain('onChatUpdateInvalidated:')
+  })
+
+  it('installs the renderer invalidation listener before publishing its first snapshot', () => {
+    const renderer = source('src/renderer/src/App.tsx')
+    const runtime = source('src/renderer/src/hooks/useChatUpdateInterestRuntime.ts')
+    expect(renderer.indexOf('chatUpdateInterestRuntime.register()')).toBeGreaterThan(
+      renderer.indexOf('window.api.onChatUpdated')
+    )
+    expect(runtime.indexOf('this.bridge.onChatUpdateInvalidated!')).toBeLessThan(
+      runtime.indexOf('this.publishPending()')
+    )
+    expect(runtime).toContain('new PagedChatUpdateRefreshCoordinator({')
+    expect(runtime).toContain('includeShell: true')
+    expect(runtime).toContain('projectRendererChatListItem(summary, previousSummary)')
   })
 })
 

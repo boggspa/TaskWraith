@@ -149,6 +149,12 @@ import {
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
 import {
+  CHAT_UPDATE_INTEREST_CHANNEL,
+  CHAT_UPDATE_INVALIDATION_CHANNEL,
+  type ChatUpdateInterestSnapshot,
+  type ChatUpdateInvalidation
+} from '../shared/chatUpdateInterest'
+import {
   SYSTEM_ACCENT_COLOR_CHANGED_CHANNEL,
   SYSTEM_ACCENT_COLOR_CHANNEL
 } from '../shared/systemAccentColor'
@@ -541,6 +547,7 @@ function stickyAppWatchOk(value: unknown): { ok: boolean } {
 // Custom APIs for renderer
 const api = {
   hostPlatform: process.platform,
+  pagedChatLiveUpdatesEnabled: process.env.TASKWRAITH_PAGED_CHAT_LIVE_UPDATES !== '0',
   getRuntimeVersions: () => ({ ...(process?.versions || {}) }),
   terminal: {
     create: (workspacePath, sessionId, cliId) =>
@@ -3105,6 +3112,14 @@ const api = {
     return () => ipcRenderer.removeListener('chat-updated', wrapped)
   },
   ackChatUpdated: (ack: ChatUpdateAck) => ipcRenderer.send(CHAT_UPDATE_ACK_CHANNEL, ack),
+  setChatUpdateInterests: (snapshot: ChatUpdateInterestSnapshot) =>
+    ipcRenderer.send(CHAT_UPDATE_INTEREST_CHANNEL, snapshot),
+  onChatUpdateInvalidated: (callback: (invalidation: ChatUpdateInvalidation) => void) => {
+    const wrapped = (_event: unknown, invalidation: ChatUpdateInvalidation): void =>
+      callback(invalidation)
+    ipcRenderer.on(CHAT_UPDATE_INVALIDATION_CHANNEL, wrapped)
+    return () => ipcRenderer.removeListener(CHAT_UPDATE_INVALIDATION_CHANNEL, wrapped)
+  },
   /** Agent-set theme tokens changed in main; re-apply without a reload. */
   onAgentThemeTokensChanged: (callback: (tokens: Record<string, string>) => void) => {
     const wrapped = (_event: unknown, tokens: Record<string, string>): void => callback(tokens)
@@ -3374,6 +3389,7 @@ const api = {
     ipcRenderer.removeAllListeners('audit-run-changed')
     ipcRenderer.removeAllListeners('usage-changed')
     ipcRenderer.removeAllListeners('chat-updated')
+    ipcRenderer.removeAllListeners(CHAT_UPDATE_INVALIDATION_CHANNEL)
     ipcRenderer.removeAllListeners('participant-working-telemetry')
     ipcRenderer.removeAllListeners('human-collaboration-updated')
     ipcRenderer.removeAllListeners('human-collaboration-runtime-projection-update')

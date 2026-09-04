@@ -590,6 +590,32 @@ export class ChatUpdateDeliveryCoordinator {
   }
 
   /**
+   * Release one target/chat transport lane when that renderer drops full-record
+   * interest. Any late ACK is ignored because disposeState removes its delivery
+   * id from the global index; other chats in the renderer keep their baselines.
+   */
+  clearChat(targetId: number, chatId: string): boolean {
+    if (!chatId) return false
+    const states = this.statesByTarget.get(targetId)
+    const state = states?.get(chatId)
+    if (!states || !state) return false
+    this.disposeState(state)
+    states.delete(chatId)
+    if (states.size === 0) this.statesByTarget.delete(targetId)
+    return true
+  }
+
+  /** Release a deleted chat's retained snapshots from every renderer target. */
+  clearChatEverywhere(chatId: string): number {
+    if (!chatId) return 0
+    let cleared = 0
+    for (const targetId of [...this.statesByTarget.keys()]) {
+      if (this.clearChat(targetId, chatId)) cleared += 1
+    }
+    return cleared
+  }
+
+  /**
    * Drop one chat's optimistic revision history and send its canonical record
    * as an urgent snapshot. Used when Host CAS recovery reanchors persistence
    * below revisions main had already projected optimistically.

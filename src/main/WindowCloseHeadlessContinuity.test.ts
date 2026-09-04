@@ -136,14 +136,19 @@ describe('window-all-closed headless continuity', () => {
   })
 
   it('does not cancel provider runs or approvals when the renderer closes or crashes', () => {
+    const chatUpdateTargetCleanup = sourceBetween(
+      'function clearChatUpdateTarget(targetId: number): void {',
+      'function clearDeletedChatUpdateState(chatId: string): void {'
+    )
     const browserWindowLifecycle = sourceBetween(
       "app.on('browser-window-created', (_, window) => {",
       '    // Phase E3: Bridge Networking'
     )
 
+    expect(chatUpdateTargetCleanup).toContain('chatUpdateInterestRouter.clearTarget(targetId)')
     expect(browserWindowLifecycle).toContain("window.once('closed'")
     expect(browserWindowLifecycle).toContain("window.webContents.on('render-process-gone'")
-    expect(browserWindowLifecycle).toContain('chatUpdateDeliveryCoordinator.clearTarget')
+    expect(browserWindowLifecycle).toContain('clearChatUpdateTarget')
     expect(browserWindowLifecycle).toContain('rendererResponsivenessTracker.clear')
     expect(browserWindowLifecycle).toContain('rendererCrashRecovery.show')
     expect(browserWindowLifecycle).toContain('activeRunCount: getActiveTaskWraithThreadCount()')
@@ -155,7 +160,7 @@ describe('window-all-closed headless continuity', () => {
       renderGoneHandler
     )
     const deliveryClearAfterDiagnostic = browserWindowLifecycle.indexOf(
-      'chatUpdateDeliveryCoordinator.clearTarget',
+      'clearChatUpdateTarget',
       terminalDiagnostic
     )
     expect(renderGoneHandler).toBeGreaterThan(0)
