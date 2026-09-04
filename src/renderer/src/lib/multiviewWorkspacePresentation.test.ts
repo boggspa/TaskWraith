@@ -4,6 +4,10 @@ import { updatePathKeyedWorkspaceSnapshot } from './multiviewWorkspacePresentati
 
 const source = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
 const layoutSource = readFileSync(new URL('../app/views/MainAppLayout.tsx', import.meta.url), 'utf8')
+const windowAttachmentSource = readFileSync(
+  new URL('../app/windowAttachmentState.ts', import.meta.url),
+  'utf8'
+)
 
 function slice(start: string, end: string): string {
   const startIndex = source.indexOf(start)
@@ -11,6 +15,12 @@ function slice(start: string, end: string): string {
   expect(startIndex, `missing source marker: ${start}`).toBeGreaterThanOrEqual(0)
   expect(endIndex, `missing source marker: ${end}`).toBeGreaterThan(startIndex)
   return source.slice(startIndex, endIndex)
+}
+
+function sliceToEnd(start: string, haystack: string): string {
+  const startIndex = haystack.indexOf(start)
+  expect(startIndex, `missing source marker: ${start}`).toBeGreaterThanOrEqual(0)
+  return haystack.slice(startIndex)
 }
 
 describe('Multiview focused workspace presentation', () => {
@@ -212,7 +222,10 @@ describe('Multiview focused workspace presentation', () => {
     expect(attachmentStatus).toContain('reconcileAttachedWindowStatus(chatId, status)')
     expect(attachmentStatus).toContain('currentChatIdRef.current !== chatId')
 
-    const stickyProjection = slice('function stickyAppWatchStashInput(', 'function App()')
+    const stickyProjection = sliceToEnd(
+      'function stickyAppWatchStashInput(',
+      windowAttachmentSource
+    )
     expect(stickyProjection).toContain('title: attachment.windowMeta.title')
     expect(stickyProjection).toContain('bundleID: attachment.windowMeta.bundleID')
     expect(stickyProjection).toContain('applicationName: attachment.windowMeta.applicationName')
