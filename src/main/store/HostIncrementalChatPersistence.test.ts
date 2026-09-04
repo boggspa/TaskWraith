@@ -89,7 +89,7 @@ async function importStoreWithHostOwnedGate(options?: {
     if (!owned) throw new Error('test gate did not become host-owned')
   }
   const enqueued: HostThreadRecordPersistInput[] = []
-  const persistPort: HostThreadRecordPersistPort = {
+  const persistPort: WiredStore['persistPort'] = {
     persist: vi.fn(),
     enqueue: vi.fn((input: HostThreadRecordPersistInput) => {
       enqueued.push(input)
