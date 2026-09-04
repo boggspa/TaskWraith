@@ -237,6 +237,17 @@ describe('Claude environment authority', () => {
     expect(sdkEnv.TASKWRAITH_MCP_AUDIT).toBe('1')
   })
 
+  it('freezes the compaction preference into the shared SDK/CLI environment', () => {
+    const readSettings = vi.fn(() => '{"autoCompactWindow":650000}')
+    const authority = prepareClaudeEnvironmentAuthority(authorityInput(), dependencies(), {
+      readSettings
+    })
+    expect(authority.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('650000')
+    expect(authority.contextPreference).toEqual({ source: 'user-settings', windowTokens: 650_000 })
+    expect(Object.isFrozen(authority.contextPreference)).toBe(true)
+    expect(readSettings).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps one logical run immutable while a later run observes an intentional secret rotation', () => {
     let currentValue = 'first-test-value'
     const resolveSecret = vi.fn(() => currentValue)
