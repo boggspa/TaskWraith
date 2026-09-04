@@ -1031,3 +1031,55 @@ Two constraints for anyone migrating a further call site:
 ### Committing this file
 
 `docs/` is **gitignored-but-tracked** here: `.gitignore:45` matches `docs/`, yet this file is in the index (`git ls-files` resolves it). Two consequences for the committer — stage it by **explicit pathspec**, using `git add -f docs/performance/taskwraith-performance-epic-adr.md` (repo convention) or a private index, and note that `git check-ignore` on this path reports *not ignored* unless you pass `--no-index`, because it consults the index first. Never rely on a bulk add.
+
+---
+
+## Amendment — 2026-09-04: Renderer Residency Audit corrections and landing order
+
+This is a clarification amendment, not a re-plan. It **appends** — no earlier or frozen section is rewritten. It folds the user's seven review corrections to the Renderer Residency Audit into this ADR. Sources are the user's in-session review notes of 2026-09-04; the externally hosted audit artifact itself is **not cited** here because it is not retrievable from this environment (JS-gated viewer). Every code citation below was re-verified against the checkout on this date (`HEAD 57d07913b`).
+
+### What the audit gets right (adopted)
+
+- **Central thesis:** the full `ChatRecord` must stop being both the streaming unit and the residency unit.
+- **The LRU finding is real** (see correction 3 for the precise statement).
+- **Host `delta: null` localization** at `src/main/store/index.ts:7676-7678` is exact.
+- **Approval-ledger observation:** the live ledger is ~4.21 MiB / 1,028 rows (user-reported measurement), and requests and decisions synchronously parse, rewrite, and fsync the entire file (`writeApprovalLedger` at `src/main/store/index.ts:778` → full-file `writeJson` at `src/main/store/index.ts:2811`).
+- Its feature-preservation language and measurable acceptance gates are adopted as the model for the gates in §G below.
+
+### The seven corrections (mandatory edits to the audit's claims)
+
+1. **One chat-id pin, not twenty transcripts.** "A 20-lane fan-out pins 20 transcripts" is false. All lanes share one chat ID and the renderer deduplicates active pins by chat ID (`activeRunChatIds` built from `activeRunsRef.current.values()` keyed by chatId, `src/renderer/src/App.tsx:11495-11502`). A fan-out pins **one** increasingly large transcript plus 20 lane/run/prompt states.
+2. **The wire envelope is ensemble + runs + non-message record, not three transcripts.** `computeChatSubRevisions` (`src/shared/chatUpdateTransport.ts:428-434`) fingerprints `record.ensemble`, `record.runs`, and `chatRecordWithoutMessages(chat)`. Still wasteful; state it precisely.
+3. **Demotion fails to release the primary full record.** It does release the secondary transcript-store, transport-baseline, and raw-log entries (`RendererChatRetention.dropMany`, `src/renderer/src/lib/rendererChatRetention.ts:66-74`). But it never mutates React `chats`, and the next reconcile re-seeds every record from that React state (`src/renderer/src/lib/reconcileChatRefMap.ts:91-100`, effect at `src/renderer/src/App.tsx:11495-11510`) — resurrecting the full record. The real fix belongs to the canonical renderer-store phase (phase 6), not to `reconcileChatRefMap` alone.
+4. **The Host `delta: null` fix is necessary but insufficient.** Fan-out calls `saveChat(chat)` without authored transcript operations (`saveChatWithCheckpoint`, `src/main/services/EnsembleOrchestrator.ts:4125`), so merely consuming the discarded incremental result provides no fan-out deltas: `flushRun` must **author** the composed operation batch itself, or another full-record diff remains.
+5. **Reject notify-before-persist.** The durable ordering is deliberate and stays: `recordApprovalLedgerRequest` runs **before** `publishRendererApprovalRequest` / `safeSendToSender('agent-approval-request')` (`src/main/run/ApprovalOrchestration.ts:369-374`), and privileged resume is fail-closed without a durable decision (`resolveApprovalLedgerResponseStrict`, `src/main/services/AuditService.ts:95`). The correct fix is an O(1) fsynced append — `append request → show prompt → append decision → resume execution` — plus a "Submitting…" affordance after click. The UI must not claim acceptance before the durable decision ACK.
+6. **Ledger "rank 1 stall" is plausible, not measured.** Do not rank it over transport deserialization and full-history flush work until request-to-modal and click-to-dismiss timings exist (phase 1 instrumentation).
+7. **The §1 table row "Renderer physical ~4.4 GB" is a historical crash point, not a threshold.** A later renderer peaked at **7.94 GiB without exiting**. There is no deterministic abort threshold, and none may be added to code. The hydration budgets (`TASKWRAITH_MAX_HYDRATED_CHAT_BYTES` / `APP_MAX_HYDRATED_MESSAGE_BYTES`, 512 MiB default, `src/renderer/src/lib/chatHydrationRuntime.ts:14-18`) are demotion budgets, not process abort gates.
+
+### Instrumentation vs migration (distinct classes, distinct waves)
+
+| Kind | Meaning | Existing pattern |
+| --- | --- | --- |
+| **Instrumentation** | Measure only. Default off. No format, authority, or ACK change. | `PERF_PRELOAD_PROBE=1` → `persistenceProbes.ts` (already classifies `'approval-ledger'`); `EventLoopLagMeter` / `get-main-perf-snapshot` |
+| **Migration** | New on-disk authority, dual-read, rollback. Default off. | `TASKWRAITH_CHAT_STORE_V2` — exact `'1'` only (`SegmentedChatStore.ts:60,81`), dark by default |
+
+A canonical renderer store (phase 6) is a **migration-class** change and gets its own compatibility flag; no such flag exists in the tree yet. No probe may alter approval ordering, demotion behavior, or IPC semantics.
+
+### Landing order (user-preferred, adopted)
+
+1. Honest instrumentation: IPC-byte, ledger-latency, and retained-memory probes (default-off).
+2. Safe pruning / popover equality / "Submitting…" feedback fixes — behavior-only, no format change.
+3. Replace the approval ledger's full-file rewrite with a versioned append-event log, preserving the §5.2 durability ordering exactly (true append + fsync before ACK; the `.json` file becomes a periodic snapshot, not the hot path; torn last lines recover).
+4. Define operation authority, durability barriers, and ACK/recovery semantics.
+5. Fan-out authors one composed operation batch per flush, carried through transport and persistence (corrects correction 4's gap).
+6. Canonical renderer store: shells in React state so demotion actually releases the primary record (correction 3), behind a new compatibility flag.
+7. Compatibility-flag rollout and rollback hardening for the above.
+
+### Acceptance gates (each phase must state these before landing)
+
+- **Durability:** the §5.2 classes still hold; nothing actionable is exposed before its durable append; crash between append and ACK is replay-safe.
+- **Replay / idempotency:** replaying the append log or composed operation batch twice yields the same state.
+- **NACK / timeout / CAS:** every mutation path keeps a defined NACK, timeout, and compare-and-swap behavior; no silent overwrite of a newer authority.
+- **Sidebar / popout parity:** both render surfaces show the same record state for the same chat at the same revision.
+- **Mixed protocol / rollback:** flag-off builds behave exactly as today; dual-read survives a torn tail and rolls back without data loss.
+- **Latency evidence:** request-to-modal and click-to-dismiss (durable ACK) timings reported as p50 / p95 / p99 before any stall ranking or threshold claim is made.
