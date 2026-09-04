@@ -222,6 +222,11 @@ import { createCodexLiveSteerTransport } from './codex/CodexLiveSteerTransport'
 import { isCodexUserInputRequestMethod } from './codex/CodexUserInput'
 import { collectCodexUserInput } from './codex/CodexUserInputBridge'
 import { buildCodexAppServerThreadLaunchPlan } from './codex/CodexAppServerThreadLaunchPlan'
+import {
+  CODEX_THREAD_UNSUBSCRIBE_METHOD,
+  buildCodexThreadMcpRouteEnv,
+  isCodexThreadUnsubscribeResult
+} from './codex/CodexThreadMcpRouteEnv'
 import { concurrentWriteLanesEnabled, ensembleWakeupsEnabled } from './featureGates'
 import {
   GEMINI_MCP_SERVER_NAME,
@@ -33474,7 +33479,13 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
         )
         client = runClientLease.client
         bindCodexRunClient(runId, client, runClientLease.lifecycleLease)
-        await runCodexAppServerWithClient(event, payload, client, lockBinding.bindSpawnedProcess)
+        await runCodexAppServerWithClient(
+          event,
+          payload,
+          client,
+          codexTaskWraithMcpAdvertised,
+          lockBinding.bindSpawnedProcess
+        )
       } finally {
         try {
           if (client && runClientLease) {
@@ -33496,6 +33507,7 @@ async function runCodexAppServerWithClient(
   event: Electron.IpcMainInvokeEvent,
   payload: AgentRunPayload,
   client: CodexAppServerClient,
+  codexTaskWraithMcpAdvertised: boolean,
   bindSpawnedProcess?: (process: CodexAppServerSpawnedProcess) => Promise<void>
 ) {
   const mainOwnedContextIsolated = isMainOwnedContextIsolatedPayload(payload)
@@ -33629,7 +33641,13 @@ async function runCodexAppServerWithClient(
     workspacePath: payload.workspace!,
     approvalPolicy,
     sandbox: sandboxControls.sandbox,
-    resumableThreadId
+    resumableThreadId,
+    mcpRouteEnv: buildCodexThreadMcpRouteEnv({
+      mcpBridgeEnabled: codexTaskWraithMcpAdvertised,
+      appRunId: payload.appRunId,
+      appChatId: payload.appChatId,
+      workspacePath: payload.workspace
+    })
   })
   const model = threadLaunchPlan.model
   const codexReasoning = threadLaunchPlan.reasoning
@@ -33646,6 +33664,27 @@ async function runCodexAppServerWithClient(
     return
   }
   try {
+    if (resumableThreadId && codexTaskWraithMcpAdvertised) {
+      // codex-cli keeps a loaded thread's original MCP env even when a later
+      // thread/resume supplies a new per-thread config. Unsubscribe is the
+      // idempotent unload fence that makes the resumed bridge child inherit
+      // this run's exact route instead of the previous turn's stale run id.
+      const unsubscribe = await client.request(
+        CODEX_THREAD_UNSUBSCRIBE_METHOD,
+        { threadId: resumableThreadId },
+        30_000
+      )
+      if (!isCodexThreadUnsubscribeResult(unsubscribe)) {
+        throw new Error('Codex app-server returned an invalid thread/unsubscribe result.')
+      }
+      // Cancellation or history deletion may have landed while the unload
+      // fence was awaiting its ACK. Never revive that stale continuation.
+      if (!providerTransportLaunchAuthorized('codex', payload, route)) {
+        admissionReservation?.releaseBeforeAdmission()
+        settleDeniedProviderTransportLaunch(route)
+        return
+      }
+    }
     threadResponse = await client.request(
       threadLaunchPlan.request.method,
       threadLaunchPlan.request.params,

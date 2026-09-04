@@ -81,3 +81,50 @@ describe('Codex app-server immutable thread launch plan', () => {
     })
   })
 })
+
+describe('Codex thread launch plan per-thread MCP route env', () => {
+  const mcpRouteEnv = {
+    TASKWRAITH_PARENT_PROVIDER: 'codex',
+    TASKWRAITH_RUN_ID: 'run-1',
+    TASKWRAITH_CHAT_ID: 'chat-1'
+  }
+
+  it.each([
+    { resumableThreadId: null, method: 'thread/start' },
+    {
+      resumableThreadId: '7b057c8b-33fa-4eca-9efe-3313a83669f4',
+      method: 'thread/resume'
+    }
+  ])('carries the route override on $method', ({ resumableThreadId, method }) => {
+    const plan = buildCodexAppServerThreadLaunchPlan({
+      model: 'gpt-5.6-terra',
+      reasoningEffort: 'high',
+      serviceTier: null,
+      workspacePath: '/workspace',
+      approvalPolicy: 'never',
+      sandbox: 'read-only',
+      resumableThreadId,
+      mcpRouteEnv
+    })
+
+    expect(plan.request.method).toBe(method)
+    expect(plan.request.params.config).toMatchObject({
+      model_reasoning_effort: 'high',
+      'mcp_servers.TaskWraith.env': mcpRouteEnv
+    })
+    expect(plan.reasoning.threadConfig).not.toHaveProperty('mcp_servers.TaskWraith.env')
+  })
+
+  it('omits the route override when the caller supplies none', () => {
+    const plan = buildCodexAppServerThreadLaunchPlan({
+      model: 'gpt-5.6-terra',
+      reasoningEffort: 'high',
+      serviceTier: null,
+      workspacePath: '/workspace',
+      approvalPolicy: 'never',
+      sandbox: 'read-only',
+      resumableThreadId: null
+    })
+    expect(plan.request.params.config).not.toHaveProperty('mcp_servers.TaskWraith.env')
+  })
+})

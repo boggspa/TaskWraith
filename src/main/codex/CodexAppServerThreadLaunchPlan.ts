@@ -4,6 +4,9 @@ import {
   type CodexOutboundReasoning
 } from './CodexOutboundReasoning'
 import { normalizeCodexModel } from '../providers/StaticProviderModels'
+import { CODEX_THREAD_MCP_ROUTE_CONFIG_KEY } from './CodexThreadMcpRouteEnv'
+
+export type CodexThreadConfigValue = string | number | Readonly<Record<string, string>>
 
 export type CodexAppServerApprovalPolicy = 'never' | 'on-request'
 // Mirrors the host-node transport's posture union (HostNodeCodexProvider).
@@ -17,7 +20,7 @@ export type CodexAppServerThreadRequest =
       params: Readonly<{
         cwd: string
         model: string
-        config: Readonly<Record<string, string | number>>
+        config: Readonly<Record<string, CodexThreadConfigValue>>
         serviceTier?: string
         approvalPolicy: CodexAppServerApprovalPolicy
         sandbox: CodexAppServerSandboxMode
@@ -29,7 +32,7 @@ export type CodexAppServerThreadRequest =
       method: 'thread/resume'
       params: Readonly<{
         threadId: string
-        config: Readonly<Record<string, string | number>>
+        config: Readonly<Record<string, CodexThreadConfigValue>>
         persistExtendedHistory: true
       }>
     }>
@@ -41,7 +44,7 @@ export interface CodexAppServerThreadLaunchPlan {
   readonly reasoning: CodexOutboundReasoning
   readonly reasoningEffort: string
   readonly reasoningSummary: string | null
-  readonly threadConfig: Readonly<Record<string, string | number>>
+  readonly threadConfig: Readonly<Record<string, CodexThreadConfigValue>>
   readonly serviceTier: string | null
   readonly request: CodexAppServerThreadRequest
   /** Scheduled launch evidence authorizes no transport reroute. */
@@ -57,6 +60,8 @@ export interface CodexAppServerThreadLaunchPlanInput {
   readonly sandbox: CodexAppServerSandboxMode
   /** Final post-continuity thread id, or null for a fresh thread. */
   readonly resumableThreadId: string | null
+  /** Per-thread TaskWraith MCP bridge environment. Thread launch only. */
+  readonly mcpRouteEnv?: Readonly<Record<string, string>> | null
 }
 
 /**
@@ -72,12 +77,16 @@ export function buildCodexAppServerThreadLaunchPlan(
 ): CodexAppServerThreadLaunchPlan {
   const model = normalizeCodexModel(input.model)
   const resolvedReasoning = resolveCodexOutboundReasoning(model, input.reasoningEffort)
-  const threadConfigValue = { ...resolvedReasoning.threadConfig }
+  const reasoningThreadConfig = Object.freeze({ ...resolvedReasoning.threadConfig })
+  const threadConfigValue: Record<string, CodexThreadConfigValue> = {
+    ...reasoningThreadConfig,
+    ...(input.mcpRouteEnv ? { [CODEX_THREAD_MCP_ROUTE_CONFIG_KEY]: input.mcpRouteEnv } : {})
+  }
   const threadConfig = Object.freeze(threadConfigValue)
   const reasoning: CodexOutboundReasoning = {
     ...resolvedReasoning,
     turnParams: Object.freeze({ ...resolvedReasoning.turnParams }),
-    threadConfig: threadConfigValue,
+    threadConfig: reasoningThreadConfig,
     execConfigArgs: Object.freeze([...resolvedReasoning.execConfigArgs]) as string[]
   }
   Object.freeze(reasoning)
@@ -85,7 +94,7 @@ export function buildCodexAppServerThreadLaunchPlan(
     ? (() => {
         const resumeRequest = buildCodexThreadResumeRequest(input.resumableThreadId!, {
           ...reasoning,
-          threadConfig: threadConfigValue
+          threadConfig: reasoningThreadConfig
         })
         return Object.freeze({
           method: 'thread/resume' as const,
