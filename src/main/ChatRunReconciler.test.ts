@@ -713,6 +713,109 @@ describe('reconcileOrphanedRunQueueJobs', () => {
     expect(settlements).toHaveLength(1)
     expect('chatId' in settlements[0]).toBe(false)
   })
+
+  describe('exact live-ownership witness', () => {
+    it('settles exactly as before when no witness is supplied', () => {
+      const jobs = [
+        { runId: 'run-failed', status: 'active', chatId: 'chat-1' },
+        { runId: 'run-success', status: 'starting', chatId: 'chat-1' }
+      ]
+      expect(reconcileOrphanedRunQueueJobs(jobs, terminal)).toEqual(
+        reconcileOrphanedRunQueueJobs(jobs, terminal, {})
+      )
+      expect(reconcileOrphanedRunQueueJobs(jobs, terminal)).toHaveLength(2)
+    })
+
+    it('spares a job whose run is still owned, across every candidate status', () => {
+      const settlements = reconcileOrphanedRunQueueJobs(
+        [
+          { runId: 'run-failed', status: 'starting', chatId: 'chat-1' },
+          { runId: 'run-failed', status: 'active', chatId: 'chat-1' },
+          { runId: 'run-failed', status: 'cancelling', chatId: 'chat-1' }
+        ],
+        terminal,
+        { isRunLive: (runId) => runId === 'run-failed' }
+      )
+      expect(settlements).toEqual([])
+    })
+
+    it('outranks a terminal-looking seal of ANY status, not just failed', () => {
+      // The seed-then-prepare gap can leave a false 'failed' seal, but a live
+      // owner also outranks 'success'/'cancelled': the queue job is not
+      // orphaned bookkeeping while someone is still responsible for the run.
+      expect(
+        reconcileOrphanedRunQueueJobs(
+          [
+            { runId: 'run-success', status: 'active', chatId: 'chat-1' },
+            { runId: 'run-failed', status: 'active', chatId: 'chat-1' },
+            { runId: 'run-cancelled', status: 'cancelling', chatId: 'chat-2' }
+          ],
+          terminal,
+          { isRunLive: () => true }
+        )
+      ).toEqual([])
+    })
+
+    it('still settles the exact runs the witness disowns, sparing only its own', () => {
+      const settlements = reconcileOrphanedRunQueueJobs(
+        [
+          { runId: 'run-failed', status: 'active', chatId: 'chat-1' },
+          { runId: 'run-success', status: 'active', chatId: 'chat-1' },
+          { runId: 'run-cancelled', status: 'cancelling', chatId: 'chat-2' }
+        ],
+        terminal,
+        { isRunLive: (runId) => runId === 'run-failed' }
+      )
+      expect(settlements.map((settlement) => settlement.runId)).toEqual([
+        'run-success',
+        'run-cancelled'
+      ])
+      expect(settlements.map((settlement) => settlement.nextStatus)).toEqual([
+        'completed',
+        'cancelled'
+      ])
+    })
+
+    it('asks the witness only about jobs that would otherwise settle now', () => {
+      const asked: string[] = []
+      reconcileOrphanedRunQueueJobs(
+        [
+          // Not a candidate status — a future prompt, never a run mirror.
+          { runId: 'run-success', status: 'queued', chatId: 'chat-1' },
+          { runId: 'run-success', status: 'completed', chatId: 'chat-1' },
+          // Candidate status, but the run itself is still active/unknown.
+          { runId: 'run-live', status: 'active', chatId: 'chat-1' },
+          { runId: 'run-unknown', status: 'active', chatId: 'chat-1' },
+          // The only job that reaches the ownership question.
+          { runId: 'run-failed', status: 'active', chatId: 'chat-1' }
+        ],
+        terminal,
+        {
+          isRunLive: (runId) => {
+            asked.push(runId)
+            return false
+          }
+        }
+      )
+      expect(asked).toEqual(['run-failed'])
+    })
+
+    it('settles a disowned run once the owner is gone, so a real orphan still clears', () => {
+      const job = [{ runId: 'run-failed', status: 'active', chatId: 'chat-1' }]
+      // Preparation still in flight — spared.
+      expect(reconcileOrphanedRunQueueJobs(job, terminal, { isRunLive: () => true })).toEqual([])
+      // Owner released (or the process restarted, dropping in-memory owners).
+      expect(reconcileOrphanedRunQueueJobs(job, terminal, { isRunLive: () => false })).toEqual([
+        {
+          runId: 'run-failed',
+          chatId: 'chat-1',
+          previousStatus: 'active',
+          nextStatus: 'failed',
+          runStatus: 'failed'
+        }
+      ])
+    })
+  })
 })
 
 describe('queueJobStatusForTerminalRunStatus', () => {

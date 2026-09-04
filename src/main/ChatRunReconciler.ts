@@ -421,9 +421,41 @@ export function queueJobStatusForTerminalRunStatus(
   return 'failed'
 }
 
+export interface ReconcileOrphanedRunQueueJobsOptions {
+  /**
+   * EXACT live-ownership witness for a run id, consulted immediately before a
+   * job would be settled. Return true only while a real owner still holds the
+   * run — an active RunManager session, or an Ensemble participant run that is
+   * seeded and not yet terminal-finalized.
+   *
+   * This exists because a terminal-looking ChatRun is not proof the work
+   * stopped. A run is seeded and persisted `running` before its lengthy async
+   * preparation, and RunManager ownership begins only later; a sweep during
+   * that gap can settle the ChatRun to 'failed' while the provider is still
+   * legitimately preparing. The next sweep would then read that false seal as
+   * authoritative and settle the queue job too, turning one bookkeeping error
+   * into a cascade. Live ownership therefore OUTRANKS a terminal-looking
+   * ChatRun here, whatever that seal says.
+   *
+   * Two rules for whoever supplies this:
+   *
+   * 1. NEVER answer from the run-queue job itself. The job is the thing being
+   *    reconciled, so using it as its own witness makes a stranded job
+   *    immortal — precisely the wedge this reconciler exists to clear.
+   * 2. Answer from IN-MEMORY owners only. They vanish on restart, so startup
+   *    recovery still settles a genuine orphan exactly once; a durable witness
+   *    would survive the crash that orphaned the job and never release it.
+   *
+   * Omitted, behaviour is unchanged: every caller that predates this option
+   * keeps settling purely on the ChatRun seal.
+   */
+  isRunLive?: (runId: string) => boolean
+}
+
 export function reconcileOrphanedRunQueueJobs(
   jobs: ReadonlyArray<OrphanedRunQueueJobLike>,
-  terminalRunStatusById: ReadonlyMap<string, string>
+  terminalRunStatusById: ReadonlyMap<string, string>,
+  options: ReconcileOrphanedRunQueueJobsOptions = {}
 ): OrphanedRunQueueJobSettlement[] {
   const settlements: OrphanedRunQueueJobSettlement[] = []
   for (const job of jobs) {
@@ -434,6 +466,10 @@ export function reconcileOrphanedRunQueueJobs(
     // already `active`; accepting that row as a terminal seal false-fails the
     // job underneath a provider turn that is still making progress.
     if (!runStatus || isActiveChatRunStatus(runStatus)) continue
+    // Asked last, and only for a job that would otherwise settle now: the
+    // witness can be a live map lookup, and a job that is not a settlement
+    // candidate needs no owner check at all.
+    if (options.isRunLive?.(job.runId)) continue
     settlements.push({
       runId: job.runId,
       ...(job.chatId ? { chatId: job.chatId } : {}),
