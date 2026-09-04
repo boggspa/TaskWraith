@@ -1,9 +1,5 @@
-import { useCallback, useSyncExternalStore } from 'react'
-import {
-  ChatTranscriptStore,
-  EMPTY_CHAT_TRANSCRIPT_PAYLOAD,
-  type ChatTranscriptPayload
-} from './chatTranscriptStore'
+import { startTransition, useLayoutEffect, useMemo, useState } from 'react'
+import { ChatTranscriptStore, type ChatTranscriptPayload } from './chatTranscriptStore'
 import {
   requestLatestTranscriptPage,
   requestNewerTranscriptPage,
@@ -105,14 +101,55 @@ export function revealChatTranscriptMessage(
 }
 
 /**
- * Narrow transcript subscription for one chat.
- * Returns the shared empty payload when `chatId` is nullish or unset.
+ * A presentation snapshot, deliberately separate from the authoritative store.
+ * useSyncExternalStore forces stream notifications into React's synchronous
+ * lane, even inside startTransition. That makes transcript rendering (and App
+ * / pane rendering for paged chats) block composer input during active runs.
+ * State updates let React interrupt this work for typing and coalesce a burst
+ * to its latest snapshot. Imperative store reads remain immediately current.
  */
 export function useChatTranscript(chatId: string | null | undefined): ChatTranscriptPayload {
-  const subscribe = useCallback(
-    (listener: () => void) => subscribeChatTranscript(chatId, listener),
-    [chatId]
-  )
-  const getSnapshot = useCallback(() => getChatTranscriptSnapshot(chatId), [chatId])
-  return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY_CHAT_TRANSCRIPT_PAYLOAD)
+  const store = getChatTranscriptStore()
+  const scope = chatId || null
+  // A -> B -> A must create a new subscription identity: pending work from
+  // the first visit to A can still be replayed by React after the return.
+  const source = useMemo(() => ({ store, scope }), [store, scope])
+  const [presentation, setPresentation] = useState(() => ({
+    source,
+    payload: store.getSnapshot(scope)
+  }))
+
+  // Navigation is urgent: never paint chat A's deferred transcript under chat
+  // B's title or let a queued A update revive it after a switch/clear.
+  const scopeChanged = presentation.source !== source
+  const payload = scopeChanged ? store.getSnapshot(scope) : presentation.payload
+  if (scopeChanged) setPresentation({ source, payload })
+
+  useLayoutEffect(() => {
+    const { store, scope } = source
+    let subscribed = true
+    const update = (): void => {
+      if (!subscribed) return
+      const next = store.getSnapshot(scope)
+      startTransition(() => {
+        setPresentation((previous) => {
+          if (previous.source !== source || previous.payload === next) {
+            return previous
+          }
+          return { source, payload: next }
+        })
+      })
+    }
+    const unsubscribe = store.subscribe(scope, update)
+    // Close the render-to-subscribe race, including writes from sibling layout
+    // effects. No polling or timeout: every notification schedules the latest
+    // immutable payload, including final output when the stream stops.
+    update()
+    return () => {
+      subscribed = false
+      unsubscribe()
+    }
+  }, [source])
+
+  return payload
 }
