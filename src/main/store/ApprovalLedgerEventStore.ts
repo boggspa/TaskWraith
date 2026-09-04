@@ -4,10 +4,17 @@ import * as path from 'path'
 import {
   capApprovalLedgerRecords,
   createApprovalLedgerRecord,
+  expireApprovalLedgerRecord,
+  filterApprovalLedgerRecords,
   recoverExpiredApprovalLedgerRecords,
   resolveApprovalLedgerRecord
 } from '../ApprovalLedger'
-import type { AgentApprovalAction, ApprovalLedgerRecord, ApprovalLedgerRequestInput } from './types'
+import type {
+  AgentApprovalAction,
+  ApprovalLedgerFilter,
+  ApprovalLedgerRecord,
+  ApprovalLedgerRequestInput
+} from './types'
 
 export const APPROVAL_LEDGER_EVENT_FORMAT = 'taskwraith-approval-ledger-event' as const
 export const APPROVAL_LEDGER_SNAPSHOT_FORMAT = 'taskwraith-approval-ledger-snapshot' as const
@@ -442,6 +449,26 @@ export class ApprovalLedgerEventStore {
     return cloneJson(this.projection())
   }
 
+  getFilteredRecords(filter: ApprovalLedgerFilter = {}): ApprovalLedgerRecord[] {
+    return cloneJson(filterApprovalLedgerRecords(this.projection(), filter))
+  }
+
+  recoverExpired(): boolean {
+    this.ensureInitialized()
+    const records = this.projection()
+    const recovered = recoverExpiredApprovalLedgerRecords(records, this.now().toISOString())
+    const capped = capApprovalLedgerRecords(recovered)
+    const changed =
+      capped.length !== records.length || capped.some((record, index) => record !== records[index])
+    if (!changed) return false
+    this.appendOperation({
+      kind: 'replace_projection',
+      baseProjectionHash: projectionHash(records),
+      records: capped
+    })
+    return true
+  }
+
   put(input: ApprovalLedgerRequestInput): ApprovalLedgerRecord {
     this.ensureInitialized()
     const created = createApprovalLedgerRecord(input, this.now().toISOString())
@@ -472,10 +499,22 @@ export class ApprovalLedgerEventStore {
     this.ensureInitialized()
     const existing = this.records.get(approvalId)
     if (!existing || existing.status !== 'pending') return null
+    const decidedAt = this.now().toISOString()
+    const expiresAt = existing.expiration?.expiresAt
+    if (expiresAt && !(Date.parse(expiresAt) > Date.parse(decidedAt))) {
+      const expired = expireApprovalLedgerRecord(existing, decidedAt, 'pending_timeout')
+      this.appendOperation({
+        kind: 'put',
+        approvalId,
+        baseRecordHash: recordHash(existing),
+        record: expired
+      })
+      return null
+    }
     const record = resolveApprovalLedgerRecord(
       existing,
       action,
-      this.now().toISOString(),
+      decidedAt,
       decisionSource,
       extraMetadata
     )

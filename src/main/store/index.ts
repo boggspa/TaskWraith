@@ -332,6 +332,11 @@ import {
   recoverExpiredApprovalLedgerRecords,
   resolveApprovalLedgerRecord
 } from '../ApprovalLedger'
+import {
+  ApprovalLedgerEventStore,
+  approvalLedgerEventStorePaths,
+  type ApprovalLedgerEventStoreStats
+} from './ApprovalLedgerEventStore'
 import { filterRunRecoveryRecords, recoverRunQueueJobsAfterStartup } from '../RunRecovery'
 import {
   createWorkspaceChangeSet,
@@ -768,17 +773,49 @@ const writeRunQueueJobs = (jobs: RunQueueJob[]): void =>
 const runRecoveryPath = path.join(userDataPath, 'run-recovery.json')
 const workspaceChangesPath = path.join(userDataPath, 'workspace-changes.json')
 const approvalLedgerPath = path.join(userDataPath, 'approval-ledger.json')
+const approvalLedgerEventPaths = approvalLedgerEventStorePaths(userDataPath)
+const APPROVAL_LEDGER_EVENT_COMPACT_AFTER_MUTATIONS = 256
+let approvalLedgerEventStore: ApprovalLedgerEventStore | null = null
+let approvalLedgerEventMutationsSinceCompact = 0
 const messageFeedbackLedgerPath = path.join(userDataPath, 'thumbs-ledger.json')
 const auditBundleVerificationReceiptsPath = path.join(
   userDataPath,
   'audit-bundle-verifications.json'
 )
 const auditRetentionPurgesPath = path.join(userDataPath, 'audit-retention-purges.json')
-// Single choke point for approval-ledger writes: cap retained non-live history
-// (capApprovalLedgerRecords) so the full synchronous rewrite on every approval
-// event stays bounded. Live records (pending + active session/workspace grants)
-// are always kept.
-const writeApprovalLedger = (records: ApprovalLedgerRecord[]): void =>
+// Escape hatch for rollback: `0` restores the byte-compatible v1 array store.
+// Event persistence is otherwise default-on and instantiated only on first use.
+function approvalLedgerEventsEnabled(): boolean {
+  return process.env.TASKWRAITH_APPROVAL_LEDGER_EVENTS !== '0'
+}
+
+function getApprovalLedgerEventStore(): ApprovalLedgerEventStore {
+  if (!approvalLedgerEventStore) {
+    approvalLedgerEventStore = new ApprovalLedgerEventStore({ userDataPath })
+    approvalLedgerEventMutationsSinceCompact = approvalLedgerEventStore.stats().replayedEvents
+  }
+  return approvalLedgerEventStore
+}
+
+function noteApprovalLedgerEventMutation(store: ApprovalLedgerEventStore, beforeSequence: number) {
+  const appended = Math.max(0, store.stats().sequence - beforeSequence)
+  if (appended === 0) return
+  approvalLedgerEventMutationsSinceCompact += appended
+  if (approvalLedgerEventMutationsSinceCompact < APPROVAL_LEDGER_EVENT_COMPACT_AFTER_MUTATIONS)
+    return
+  // The just-appended D3 event is already durable. Compaction is maintenance:
+  // its failure must not turn a successfully persisted approval into a false
+  // negative or cause every subsequent approval to retry the full rewrite.
+  approvalLedgerEventMutationsSinceCompact = 0
+  try {
+    store.compact()
+  } catch (error) {
+    console.error('Failed to compact approval ledger event store', error)
+  }
+}
+
+// Byte-compatible v1 writer used only when the event-store escape is disabled.
+const writeApprovalLedgerLegacy = (records: ApprovalLedgerRecord[]): void =>
   writeJson(approvalLedgerPath, capApprovalLedgerRecords(records))
 const writeMessageFeedbackLedger = (records: MessageFeedbackReceipt[]): void =>
   writeJson(messageFeedbackLedgerPath, capMessageFeedbackReceipts(records))
@@ -3419,6 +3456,121 @@ function rewriteArrayHistoryStore(
   }
 }
 
+function isApprovalLedgerManagedArtifactName(name: string, includeCanonical: boolean): boolean {
+  const bases = new Set(
+    Object.values(approvalLedgerEventPaths).map((filePath) => path.basename(filePath))
+  )
+  if (includeCanonical && bases.has(name)) return true
+  for (const base of bases) {
+    if (!name.startsWith(`${base}.`)) continue
+    const suffix = name.slice(base.length + 1)
+    if (
+      suffix.startsWith('corrupt-') ||
+      suffix.startsWith('claimed-') ||
+      suffix.startsWith('spill-') ||
+      suffix.startsWith('quarantine-') ||
+      suffix.startsWith('retired-') ||
+      suffix.endsWith('.tmp')
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+function removeApprovalLedgerManagedArtifactsStrict(includeCanonical: boolean): void {
+  let names: string[] = []
+  try {
+    names = fs.readdirSync(userDataPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  removePathsStrict(
+    names
+      .filter((name) => isApprovalLedgerManagedArtifactName(name, includeCanonical))
+      .map((name) => ({
+        targetPath: path.join(userDataPath, name),
+        label: `approval ledger artifact ${name}`
+      }))
+  )
+  directoryFsyncQueue.schedule(userDataPath)
+}
+
+function purgeApprovalLedgerHistoryStrict(): void {
+  if (approvalLedgerEventStore) {
+    approvalLedgerEventStore.purge()
+  } else {
+    // A global clear is authoritative even when an uninitialized legacy or v2
+    // artifact is malformed. Do not parse private bytes merely to erase them.
+    removeApprovalLedgerManagedArtifactsStrict(true)
+  }
+  approvalLedgerEventStore = null
+  approvalLedgerEventMutationsSinceCompact = 0
+}
+
+function rewriteApprovalLedgerHistory(intent: HistoryDeletionIntent): void {
+  if (intent.kind === 'global') {
+    purgeApprovalLedgerHistoryStrict()
+    return
+  }
+  if (!approvalLedgerEventsEnabled()) {
+    rewriteArrayHistoryStore(approvalLedgerPath, 'approval ledger history', intent)
+    return
+  }
+  const store = getApprovalLedgerEventStore()
+  const stored = store.getRecords()
+  const retained = stored.filter((record) => !historyRecordMatches(record, intent))
+  if (retained.length !== stored.length) store.replaceProjection(retained)
+  // Physical privacy boundary: publish the filtered snapshot before retiring
+  // the WAL that may still contain the removed rows, then refresh the rollback
+  // mirror. `compact` has exactly that crash-safe ordering.
+  store.compact()
+  approvalLedgerEventMutationsSinceCompact = 0
+  removeApprovalLedgerManagedArtifactsStrict(false)
+
+  if (store.getRecords().some((record) => historyRecordMatches(record, intent))) {
+    throw new Error('Approval ledger event projection still contains deletion-scope records.')
+  }
+  const legacy = readJsonStrictIfPresent(approvalLedgerPath)
+  if (
+    legacy !== null &&
+    (!Array.isArray(legacy) || legacy.some((record) => historyRecordMatches(record, intent)))
+  ) {
+    throw new Error('Approval ledger rollback mirror still contains deletion-scope records.')
+  }
+}
+
+function approvalLedgerRecordsForHistoryDeletion(intent: HistoryDeletionIntent): unknown[] {
+  if (!approvalLedgerEventsEnabled()) {
+    const stored = readJsonStrictIfPresent(approvalLedgerPath)
+    if (stored === null) return []
+    if (!Array.isArray(stored)) {
+      if (intent.kind === 'global') return []
+      throw new Error('Approval ledger is not an array; scoped deletion cannot preserve siblings.')
+    }
+    return stored
+  }
+  const hasV2Authority =
+    approvalLedgerEventStore !== null ||
+    fs.existsSync(approvalLedgerEventPaths.snapshot) ||
+    fs.existsSync(approvalLedgerEventPaths.events)
+  if (hasV2Authority) {
+    try {
+      return getApprovalLedgerEventStore().getRecords()
+    } catch (error) {
+      if (intent.kind === 'global') return []
+      throw error
+    }
+  }
+  const stored = readJsonStrictIfPresent(approvalLedgerPath)
+  if (stored === null) return []
+  if (!Array.isArray(stored)) {
+    if (intent.kind === 'global') return []
+    throw new Error('Approval ledger is not an array; scoped deletion cannot preserve siblings.')
+  }
+  return stored
+}
+
 function chatContainsTruncatableHistory(chat: ChatRecord): boolean {
   const ensemble = chat.ensemble
   const delegation = chat.delegationContext
@@ -4986,6 +5138,24 @@ export class AppStore {
     this.orphanSubThreadReapCandidates.clear()
     this.historyDeletionRunning = false
     historyDeletionFailureStepsForTests.clear()
+    approvalLedgerEventStore = null
+    approvalLedgerEventMutationsSinceCompact = 0
+  }
+
+  static resetApprovalLedgerEventStoreForTests(): void {
+    approvalLedgerEventStore = null
+    approvalLedgerEventMutationsSinceCompact = 0
+  }
+
+  static compactApprovalLedgerEventStoreForTests(): ApprovalLedgerRecord[] | null {
+    if (!approvalLedgerEventsEnabled()) return null
+    const compacted = getApprovalLedgerEventStore().compact()
+    approvalLedgerEventMutationsSinceCompact = 0
+    return compacted
+  }
+
+  static getApprovalLedgerEventStoreStatsForTests(): ApprovalLedgerEventStoreStats | null {
+    return approvalLedgerEventStore?.stats() ?? null
   }
 
   static clearChatRecordCacheForTests(): void {
@@ -8675,11 +8845,10 @@ export class AppStore {
     draft.workflowIds = [...targetWorkflowIds].sort()
     draft.workflowExecutionIds = [...targetWorkflowExecutionIds].sort()
 
-    // Snapshot queued/recovery/approval run ids before any store is rewritten.
+    // Snapshot queued/recovery run ids before any store is rewritten.
     for (const [filePath, label] of [
       [runQueuePath, 'run queue'],
-      [runRecoveryPath, 'run recovery'],
-      [approvalLedgerPath, 'approval ledger']
+      [runRecoveryPath, 'run recovery']
     ] as const) {
       const stored = readJsonStrictIfPresent(filePath)
       if (stored === null) continue
@@ -8694,6 +8863,14 @@ export class AppStore {
         const runId = objectRecord(record)?.runId
         if (typeof runId === 'string' && runId) runIds.add(runId)
       }
+    }
+    // The v1 mirror is intentionally stale between coarse checkpoints. When
+    // event persistence is authoritative, inventory the folded projection so
+    // a scoped clear cannot miss a newly appended approval or its run.
+    for (const record of approvalLedgerRecordsForHistoryDeletion(draft)) {
+      if (!historyRecordMatches(record, draft, { includeRunIds: false })) continue
+      const runId = objectRecord(record)?.runId
+      if (typeof runId === 'string' && runId) runIds.add(runId)
     }
 
     const mailboxValue = readJsonStrictIfPresent(subThreadMailboxesPath)
@@ -9110,7 +9287,7 @@ export class AppStore {
       return
     }
     if (step === 'approval-ledger') {
-      rewriteArrayHistoryStore(approvalLedgerPath, 'approval ledger history', intent)
+      rewriteApprovalLedgerHistory(intent)
       return
     }
     if (step === 'message-feedback') {
@@ -11158,7 +11335,14 @@ export class AppStore {
       })
       recordScan('approvalLedger', approvalRecords.length, retainedApprovals.length)
       if (!dryRun && retainedApprovals.length !== approvalRecords.length) {
-        writeApprovalLedger(retainedApprovals)
+        if (approvalLedgerEventsEnabled()) {
+          const store = getApprovalLedgerEventStore()
+          const beforeSequence = store.stats().sequence
+          store.replaceProjection(retainedApprovals)
+          noteApprovalLedgerEventMutation(store, beforeSequence)
+        } else {
+          writeApprovalLedgerLegacy(retainedApprovals)
+        }
       }
 
       const workspaceChanges = this.readWorkspaceChangeSetsCached()
@@ -13613,11 +13797,25 @@ export class AppStore {
 
   // Approval ledger
   static getApprovalLedger(filter: ApprovalLedgerFilter = {}): ApprovalLedgerRecord[] {
+    if (approvalLedgerEventsEnabled()) {
+      const store = getApprovalLedgerEventStore()
+      const beforeSequence = store.stats().sequence
+      store.recoverExpired()
+      noteApprovalLedgerEventMutation(store, beforeSequence)
+      return store.getFilteredRecords(filter)
+    }
     const records = this.recoverExpiredApprovalLedger()
     return filterApprovalLedgerRecords(records, filter)
   }
 
   static recordApprovalRequest(input: ApprovalLedgerRequestInput): ApprovalLedgerRecord {
+    if (approvalLedgerEventsEnabled()) {
+      const store = getApprovalLedgerEventStore()
+      const beforeSequence = store.stats().sequence
+      const record = store.put(input)
+      noteApprovalLedgerEventMutation(store, beforeSequence)
+      return record
+    }
     const records = this.recoverExpiredApprovalLedger()
     const record = createApprovalLedgerRecord(input)
     const index = records.findIndex((item) => item.approvalId === record.approvalId)
@@ -13631,7 +13829,7 @@ export class AppStore {
     } else {
       records.push(record)
     }
-    writeApprovalLedger(records)
+    writeApprovalLedgerLegacy(records)
     return index >= 0 ? records[index] : record
   }
 
@@ -13641,6 +13839,13 @@ export class AppStore {
     decisionSource: 'user' | 'system' = 'user',
     extraMetadata: Record<string, unknown> = {}
   ): ApprovalLedgerRecord | null {
+    if (approvalLedgerEventsEnabled()) {
+      const store = getApprovalLedgerEventStore()
+      const beforeSequence = store.stats().sequence
+      const resolved = store.resolve(approvalId, action, decisionSource, extraMetadata)
+      noteApprovalLedgerEventMutation(store, beforeSequence)
+      return resolved
+    }
     const records = this.recoverExpiredApprovalLedger()
     const index = records.findIndex((record) => record.approvalId === approvalId)
     // A renderer/phone response is valid only while the durable row is still
@@ -13655,7 +13860,7 @@ export class AppStore {
       extraMetadata
     )
     records[index] = updated
-    writeApprovalLedger(records)
+    writeApprovalLedgerLegacy(records)
     return updated
   }
 
@@ -13668,11 +13873,28 @@ export class AppStore {
   }): ApprovalLedgerRecord[] {
     const records = this.recoverExpiredApprovalLedger()
     const updated = expireScopedApprovalLedgerRecords(records, filter)
-    writeApprovalLedger(updated)
+    if (approvalLedgerEventsEnabled()) {
+      const changed = updated.some((record, index) => record !== records[index])
+      if (changed) {
+        const store = getApprovalLedgerEventStore()
+        const beforeSequence = store.stats().sequence
+        store.replaceProjection(updated)
+        noteApprovalLedgerEventMutation(store, beforeSequence)
+      }
+    } else {
+      writeApprovalLedgerLegacy(updated)
+    }
     return updated
   }
 
   static recoverExpiredApprovalLedger(): ApprovalLedgerRecord[] {
+    if (approvalLedgerEventsEnabled()) {
+      const store = getApprovalLedgerEventStore()
+      const beforeSequence = store.stats().sequence
+      store.recoverExpired()
+      noteApprovalLedgerEventMutation(store, beforeSequence)
+      return store.getRecords()
+    }
     const stored = readJson<ApprovalLedgerRecord[] | unknown>(approvalLedgerPath, [])
     const records = Array.isArray(stored) ? stored : []
     const recovered = recoverExpiredApprovalLedgerRecords(records)
@@ -13684,7 +13906,7 @@ export class AppStore {
       capped.length !== records.length ||
       capped.some((record, index) => record !== records[index])
     if (changed) {
-      writeApprovalLedger(capped)
+      writeApprovalLedgerLegacy(capped)
     }
     return capped
   }
