@@ -313,15 +313,16 @@ export class HostChatCompatibilityPersistence {
     }
 
     const predecessor = state.activeBarrier?.promise.catch(() => undefined) ?? Promise.resolve()
-    let active: ActiveBarrier
-    const promise = predecessor
-      .then(() => this.drainThrough(chatId, state, targetSequence))
-      .finally(() => {
-        if (state.activeBarrier === active) state.activeBarrier = null
-      })
-    active = { targetSequence, promise }
+    const active: ActiveBarrier = {
+      targetSequence,
+      promise: predecessor
+        .then(() => this.drainThrough(chatId, state, targetSequence))
+        .finally(() => {
+          if (state.activeBarrier === active) state.activeBarrier = null
+        })
+    }
     state.activeBarrier = active
-    return promise
+    return active.promise
   }
 
   /**
@@ -420,8 +421,7 @@ export class HostChatCompatibilityPersistence {
     const submitted = state.submitted
     if (!submitted) return Promise.resolve()
 
-    let settlement: Promise<void>
-    settlement = Promise.resolve()
+    const settlement = Promise.resolve()
       .then(() => this.port.drain(chatId))
       .then(() => {
         if (state.submitted !== submitted) return
