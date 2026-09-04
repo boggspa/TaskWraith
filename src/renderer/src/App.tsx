@@ -751,6 +751,15 @@ import { useWatchedPrController } from './app/hooks/useWatchedPrController'
 import type { AttachedWindowSnapshot, ResumeAppWatchSnapshot } from './app/windowAttachmentState'
 import { attachedWindowFromStatus, stickyAppWatchStashInput } from './app/windowAttachmentState'
 import {
+  appendMessageContentToPromptDraft,
+  compactShortcutHint,
+  hasGitSnapshotSubscriptionApi,
+  runIdFromStreamFlushItemKey,
+  scheduleAfterNextPaint,
+  scheduleAfterPaint,
+  streamFlushItemKey
+} from './app/appScheduleAndCopyHelpers'
+import {
   shouldBuildWelcomeUsageDashboardData,
   shouldRenderWelcome,
   isReusableWelcomeChat
@@ -1114,19 +1123,9 @@ interface WorkspaceBoardCaptureInput {
   provenance?: WorkspaceBoardProvenance
 }
 
-const STREAM_FLUSH_ITEM_KEY_SEPARATOR = '\u0000'
 /** Fresh per-document identity; used only to reject stale ACKs after reload. */
 const RENDERER_CHAT_UPDATE_EPOCH = createRendererChatUpdateEpoch()
 type AuditBundleExportScope = 'all' | 'workspace' | 'chat' | 'run'
-
-function streamFlushItemKey(runId: string, itemId?: string): string {
-  return `${runId}${STREAM_FLUSH_ITEM_KEY_SEPARATOR}${itemId || ''}`
-}
-
-function runIdFromStreamFlushItemKey(key: string): string {
-  const separatorIndex = key.indexOf(STREAM_FLUSH_ITEM_KEY_SEPARATOR)
-  return separatorIndex >= 0 ? key.slice(0, separatorIndex) : key
-}
 
 function summarizeAuditRetentionPurge(result: AuditRetentionPurgeResult): string {
   if (!result.ok) return `failed: ${result.error || 'unknown error'}`
@@ -1198,18 +1197,6 @@ function contextCompactionProgressKey(
 // Per-provider palette CORE constants live in
 // src/renderer/src/lib/ComposerSlashCommands.ts and are resolved through
 // paletteCoreForProvider() so App routing stays aligned with the slash menu.
-
-function compactShortcutHint(keys: string[]): string {
-  if (keys.length === 0 || keys[0] === 'Unassigned') return ''
-  return keys
-    .map((key) => {
-      if (key === 'Cmd/Ctrl') return '⌘'
-      if (key === 'Shift') return '⇧'
-      if (key === 'Alt') return '⌥'
-      return key
-    })
-    .join('')
-}
 
 // sanitizeContextText moved to `src/main/PromptComposition.ts` and re-exported below.
 
@@ -1399,59 +1386,7 @@ function isPermissionPresetId(value: unknown): value is PermissionPresetId {
   )
 }
 
-function scheduleAfterPaint(callback: () => void, timeout = 700): () => void {
-  if (typeof window === 'undefined') return () => {}
-  const win = window as Window & {
-    requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number
-    cancelIdleCallback?: (handle: number) => void
-  }
-  let cancelled = false
-  const run = () => {
-    if (!cancelled) callback()
-  }
-  if (typeof win.requestIdleCallback === 'function') {
-    const handle = win.requestIdleCallback(run, { timeout })
-    return () => {
-      cancelled = true
-      win.cancelIdleCallback?.(handle)
-    }
-  }
-  let timeoutHandle: number | null = null
-  const rafHandle = window.requestAnimationFrame(() => {
-    timeoutHandle = window.setTimeout(run, 0)
-  })
-  return () => {
-    cancelled = true
-    window.cancelAnimationFrame(rafHandle)
-    if (timeoutHandle !== null) window.clearTimeout(timeoutHandle)
-  }
-}
-
-function scheduleAfterNextPaint(callback: () => void): () => void {
-  if (typeof window === 'undefined') return () => {}
-  let cancelled = false
-  let timeoutHandle: number | null = null
-  const rafHandle = window.requestAnimationFrame(() => {
-    timeoutHandle = window.setTimeout(() => {
-      if (!cancelled) callback()
-    }, 0)
-  })
-  return () => {
-    cancelled = true
-    window.cancelAnimationFrame(rafHandle)
-    if (timeoutHandle !== null) window.clearTimeout(timeoutHandle)
-  }
-}
-
 const EMPTY_DIFF_FILE_SUMMARIES: DiffFileSummary[] = []
-
-function appendMessageContentToPromptDraft(previous: string, content: string): string {
-  const addition = content.trim()
-  if (!addition) return previous
-  if (!previous.trim()) return addition
-  const separator = previous.endsWith('\n\n') ? '' : previous.endsWith('\n') ? '\n' : '\n\n'
-  return `${previous}${separator}${addition}`
-}
 
 function shareUnchangedMessageObjects(
   previous: readonly ChatMessage[],
@@ -1488,12 +1423,6 @@ interface OllamaModelInstallPrompt {
   command: string | null
   status: 'missing' | 'offline' | 'unknown'
   error?: string
-}
-
-function hasGitSnapshotSubscriptionApi(): boolean {
-  return (
-    typeof (window.api as { gitSubscribeSnapshot?: unknown }).gitSubscribeSnapshot === 'function'
-  )
 }
 
 function App(): React.JSX.Element {
