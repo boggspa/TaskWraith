@@ -31,6 +31,13 @@ function deferred<T>() {
 }
 
 describe('SerializedChatPersistence', () => {
+  function retainedLineageChatIds(persistence: SerializedChatPersistence): string[] {
+    const internals = persistence as unknown as {
+      acceptedLineageByChatId: Map<string, unknown>
+    }
+    return Array.from(internals.acceptedLineageByChatId.keys())
+  }
+
   function createCasRemote(initial: ChatRecord) {
     let canonical = structuredClone(initial)
     const saveRemote = vi.fn(async (record: ChatRecord) => {
@@ -47,6 +54,61 @@ describe('SerializedChatPersistence', () => {
     })
     return { saveRemote, canonical: () => structuredClone(canonical) }
   }
+
+  it('releases the accepted full-record lineage after the final save drains', async () => {
+    const largeMessage = {
+      id: 'message-1',
+      role: 'user' as const,
+      content: 'Large canonical transcript',
+      timestamp: 'now'
+    }
+    const remote = createCasRemote(
+      chat('chat-1', 7, {
+        messages: [largeMessage]
+      })
+    )
+    const persistence = new SerializedChatPersistence(remote.saveRemote)
+
+    await persistence.save(chat('chat-1', 7, { title: 'Accepted title', messages: [largeMessage] }))
+
+    expect(retainedLineageChatIds(persistence)).toEqual([])
+  })
+
+  it('retains lineage while an older sibling remains queued, then releases it', async () => {
+    const remote = createCasRemote(
+      chat('chat-1', 7, { title: 'Base title', messages: [], updatedAt: 10 })
+    )
+    const secondStarted = deferred<void>()
+    const releaseSecond = deferred<void>()
+    let callCount = 0
+    const saveRemote = vi.fn(async (record: ChatRecord) => {
+      callCount += 1
+      if (callCount === 2) {
+        secondStarted.resolve()
+        await releaseSecond.promise
+      }
+      return remote.saveRemote(record)
+    })
+    const persistence = new SerializedChatPersistence(saveRemote)
+
+    const first = persistence.save(chat('chat-1', 7, { title: 'Accepted title' }))
+    const queuedSibling = persistence.save(
+      chat('chat-1', 7, { title: 'Base title', pinnedNotes: 'Queued sibling' })
+    )
+
+    await first
+    await secondStarted.promise
+    expect(retainedLineageChatIds(persistence)).toEqual(['chat-1'])
+    expect(saveRemote.mock.calls[1][0]).toMatchObject({
+      persistenceRevision: 8,
+      title: 'Accepted title',
+      pinnedNotes: 'Queued sibling'
+    })
+
+    releaseSecond.resolve()
+    await queuedSibling
+    expect(retainedLineageChatIds(persistence)).toEqual([])
+  })
 
   it('three-way rebases disjoint title and message mutations so both survive', async () => {
     const remote = createCasRemote(

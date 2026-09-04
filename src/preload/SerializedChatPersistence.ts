@@ -299,6 +299,15 @@ export class SerializedChatPersistence {
 
     const lineage = this.acceptedLineageByChatId.get(chatId)
     if (!lineage) return
+    // Accepted records exist only to rebase snapshots that were already queued
+    // from an older revision. Once the last pending revision drains there is no
+    // descendant left that can consume this lineage, so retaining `canonical`
+    // would pin one complete ChatRecord (including its transcript) for the
+    // lifetime of every renderer preload.
+    if (!counts || counts.size === 0) {
+      this.acceptedLineageByChatId.delete(chatId)
+      return
+    }
     const canonicalRevision = persistenceRevision(lineage.canonical)
     for (const knownRevision of lineage.basesByRevision.keys()) {
       if (knownRevision !== canonicalRevision && !counts?.has(knownRevision)) {
