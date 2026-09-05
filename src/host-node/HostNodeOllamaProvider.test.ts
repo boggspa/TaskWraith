@@ -347,6 +347,27 @@ describe('HostNodeOllamaProvider run path', () => {
     mockFetchCatalog.mockResolvedValue(mockCatalog([{ id: OLLAMA_MODEL_ID }]))
   })
 
+  it.each([
+    ['off', false],
+    ['on', true],
+    ['low', 'low']
+  ] as const)('dispatches selected effort %s as think %s', async (reasoningId, think) => {
+    const offered = OLLAMA_OFFERS.models.find((model) =>
+      model.reasoning.some((option) => option.reasoningId === reasoningId)
+    )!
+    mockFetchCatalog.mockResolvedValue(mockCatalog([{ id: offered.modelId }]))
+    mockRunChatLoop.mockResolvedValue({ content: 'done', toolCalls: [], toolResults: [] })
+    const runPort = new FakeRunPort()
+    runPort.thread = threadFixture({ modelId: offered.modelId, reasoningId })
+    await provider(resourcePort(), runPort).run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: TARGET
+    })
+    expect(mockRunChatLoop).toHaveBeenCalledWith(expect.objectContaining({ think }))
+  })
+
   it('runs a chat completion and records the full lifecycle', async () => {
     mockRunChatLoop.mockImplementation(async (options) => {
       options.onContentDelta?.('Hello from Ollama', 'Hello from Ollama')

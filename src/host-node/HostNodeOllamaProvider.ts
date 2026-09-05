@@ -14,6 +14,7 @@
 import { hostProviderOffers } from '../host-shared/HostProviderCatalog'
 import {
   isOllamaReasoningToken,
+  isOllamaThinkingLevel,
   normalizeOllamaReasoningEffort,
   resolveOllamaReasoningSupport
 } from '../shared/ollamaReasoning'
@@ -520,6 +521,14 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
       active.directCloud = directCloud
       const transportBaseUrl = directCloud ? OLLAMA_CLOUD_API_BASE_URL : this.baseUrl
       const transportModelId = directCloud ? ollamaCloudBaseModelId(thread.modelId) : thread.modelId
+      const think =
+        thread.reasoningId === 'off'
+          ? false
+          : thread.reasoningId === 'on'
+            ? true
+            : isOllamaThinkingLevel(thread.reasoningId)
+              ? thread.reasoningId
+              : undefined
       const memoryKey = `${request.threadId}:${thread.modelId}`
       let sessionMemory =
         this.sessionMemoryByThreadModel.get(memoryKey) ??
@@ -562,6 +571,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
           ...(directCloud && this.cloudApiKey ? { apiKey: this.cloudApiKey } : {}),
           signal: abortController.signal,
           model: transportModelId,
+          ...(think !== undefined ? { think } : {}),
           messages: conversation,
           tools: hostTools?.definitions ?? [],
           executeTool: runTool

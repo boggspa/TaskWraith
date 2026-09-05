@@ -11,6 +11,7 @@
  */
 
 import { taskWraithModelLabel } from '../../shared/taskWraithProviderPresentation'
+import type { OllamaThinkingLevel } from '../../shared/ollamaReasoning'
 import {
   isOllamaCloudModelId,
   normalizeOllamaModelKey,
@@ -114,6 +115,7 @@ export interface OllamaChatMessage {
 export interface OllamaChatRequest {
   model: string
   messages: OllamaChatMessage[]
+  think?: boolean | OllamaThinkingLevel
   stream?: boolean
   format?: 'json' | Record<string, unknown>
   options?: {

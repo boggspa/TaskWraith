@@ -25,6 +25,7 @@ export interface OllamaChatLoopOptions {
   signal: AbortSignal
   model: string
   messages: OllamaChatMessage[]
+  think?: OllamaChatRequest['think']
   temperature?: number
   numCtx?: number
   numPredict?: number
@@ -94,6 +95,7 @@ export async function runOllamaChatLoop(
     model: options.model,
     messages: options.messages,
     stream: true,
+    ...(options.think !== undefined ? { think: options.think } : {}),
     ...(options.format ? { format: options.format } : {}),
     ...(options.tools && options.tools.length > 0 ? { tools: options.tools } : {}),
     options: {
