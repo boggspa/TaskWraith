@@ -23,11 +23,13 @@ import {
 import { applyHostSnapshotDeltas } from '../shared/hostSnapshotApply'
 import type { HostDomainDeltaPublishResult, HostDomainEffectDto } from './HostDomainDeltaPublisher'
 import { diffHostSnapshotDomainEffects } from './HostSnapshotDomainEffectDiff'
+import type { HostProjectionOperationRunner } from './HostProjectionSerialQueue'
 
 export const HOST_PROJECTION_RECONCILE_INTERVAL_MS = 1_000
 const MAX_STABILIZE_ATTEMPTS = 3
 
 export interface HostProjectionReconcilerOptions {
+  readonly runProjectionOperation?: HostProjectionOperationRunner
   readonly captureSnapshot: () => unknown | Promise<unknown>
   readonly fetchDeltas: (
     position: HostCursorPosition
@@ -137,6 +139,7 @@ function publishedEnvelopes(result: HostDomainDeltaPublishResult) {
 }
 
 export class HostProjectionReconciler {
+  private readonly runProjectionOperation: HostProjectionOperationRunner
   private readonly captureSnapshot: HostProjectionReconcilerOptions['captureSnapshot']
   private readonly fetchDeltas: HostProjectionReconcilerOptions['fetchDeltas']
   private readonly publishEffects: HostProjectionReconcilerOptions['publishEffects']
@@ -163,6 +166,7 @@ export class HostProjectionReconciler {
       throw new Error('HostProjectionReconciler requires publishEffects')
     }
     this.captureSnapshot = options.captureSnapshot
+    this.runProjectionOperation = options.runProjectionOperation ?? ((operation) => operation())
     this.fetchDeltas = options.fetchDeltas
     this.publishEffects = options.publishEffects
     this.intervalMs =
@@ -211,7 +215,7 @@ export class HostProjectionReconciler {
   reconcileNow(): Promise<HostProjectionReconcileResult> {
     if (!this.running) return Promise.resolve({ kind: 'stopped' })
     if (this.inFlight) return this.inFlight
-    const run = this.performReconcile().finally(() => {
+    const run = this.runProjectionOperation(() => this.performReconcile()).finally(() => {
       if (this.inFlight === run) this.inFlight = null
     })
     this.inFlight = run

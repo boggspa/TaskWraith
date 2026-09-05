@@ -7,6 +7,7 @@
  * No production singleton or composition-root wiring in this module.
  */
 
+import type { HostProjectionOperationRunner } from './HostProjectionSerialQueue'
 import {
   decodeHostCommand,
   decodeHostCommandReceipt,
@@ -259,6 +260,7 @@ export interface HostDeferredAskPorts {
  * without this module importing them.
  */
 export interface AppStoreHostAuthorityPorts {
+  readonly runProjectionOperation?: HostProjectionOperationRunner
   readonly runtime: HostRuntimeBootstrap
   readonly snapshotDonor: AppStoreHostAuthoritySnapshotDonor
   readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
@@ -407,6 +409,7 @@ function projectFoundReceipt(
  * missing mode/permit or hostOwnedStateMayHaveAdvanced rejects construction.
  */
 export class AppStoreHostAuthority implements HostAuthority {
+  private readonly runProjectionOperation: HostProjectionOperationRunner
   private readonly runtime: HostRuntimeBootstrap
   private readonly snapshotDonor: AppStoreHostAuthoritySnapshotDonor
   private readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
@@ -479,6 +482,7 @@ export class AppStoreHostAuthority implements HostAuthority {
     ) {
       throw new Error('AppStoreHostAuthority requires complete injected ports')
     }
+    this.runProjectionOperation = ports.runProjectionOperation ?? ((operation) => operation())
     this.runtime = ports.runtime
     this.mode = options.mode
     this.standaloneLease =
@@ -786,6 +790,13 @@ export class AppStoreHostAuthority implements HostAuthority {
   }
 
   async command(
+    context: HostAuthorityCallContext,
+    command: HostCommand
+  ): Promise<HostAuthorityResult<HostCommandReceipt>> {
+    return this.runProjectionOperation(() => this.executeCommand(context, command))
+  }
+
+  private async executeCommand(
     context: HostAuthorityCallContext,
     command: HostCommand
   ): Promise<HostAuthorityResult<HostCommandReceipt>> {

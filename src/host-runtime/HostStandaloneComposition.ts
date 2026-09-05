@@ -33,6 +33,7 @@ import {
   type HostProjectionReconcileResult
 } from './HostProjectionReconciler'
 import { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
+import { createHostProjectionSerialQueue } from './HostProjectionSerialQueue'
 import { HostSession, type HostSessionHostIdentity, type HostSessionIdFactory } from './HostSession'
 
 export interface HostStandaloneCompositionInput {
@@ -101,12 +102,16 @@ export function createHostStandaloneComposition(
   // invokes lease.assertHeld before the runtime opens any files.
   const activationPermit = createHostStandaloneAuthorityActivationPermit(input.lease)
   const runtime = new HostRuntimeBootstrap({ hostDataDir: input.runtimePath })
+  // The observer requires one journal position across its before/after pair.
+  // Background reconciliation must publish outside that command's window.
+  const runProjectionOperation = createHostProjectionSerialQueue()
   let stopped = false
   let reconciler: HostProjectionReconciler | null = null
   const shutdown = async (): Promise<void> => {
     if (stopped) return
     stopped = true
     await reconciler?.stop()
+    await runProjectionOperation(async () => undefined)
     runtime.flush()
     await input.onShutdown?.()
   }
@@ -117,6 +122,7 @@ export function createHostStandaloneComposition(
     ...(input.now ? { now: input.now } : {}),
     ports: {
       runtime,
+      runProjectionOperation,
       snapshotDonor: input.snapshotDonor,
       authorityEvaluator: input.authorityEvaluator,
       commandExecutor: input.commandExecutor,
@@ -150,6 +156,7 @@ export function createHostStandaloneComposition(
     client: { clientId: 'host-reconciler', clientClass: 'desktop', clientVersion: '0.0.0' }
   }
   reconciler = new HostProjectionReconciler({
+    runProjectionOperation,
     captureSnapshot: async () => {
       const result = await authority.snapshot(internalContext)
       if (!result.ok) throw new Error(`standalone_snapshot_${result.error}`)

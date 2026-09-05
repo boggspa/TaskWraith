@@ -77,6 +77,63 @@ function input(runtimePath: string, lease: { assertHeld(): void }) {
 }
 
 describe('HostStandaloneComposition', () => {
+  it.each(['succeeded', 'failed'] as const)(
+    'keeps a %s command receipt coherent when reconciliation runs during execution',
+    async (status) => {
+      const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-observation-'))
+      paths.push(runtimePath)
+      const defaults = input(runtimePath, { assertHeld: vi.fn() })
+      let title = 'Before'
+      let release!: () => void
+      const paused = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const executor = vi.fn(async () => {
+        title = 'After'
+        await paused
+        return { status }
+      })
+      const composition = createHostStandaloneComposition({
+        ...defaults,
+        snapshotDonor: () => ({
+          ...defaults.snapshotDonor(),
+          threads: [
+            {
+              id: 'thread-1',
+              workspaceId: null,
+              title,
+              chatKind: 'single' as const,
+              archived: false,
+              pinned: false,
+              updatedAt: 1,
+              messageCount: 0
+            }
+          ]
+        }),
+        commandExecutor: executor
+      })
+      try {
+        await composition.startProjectionReconciliation()
+        const pending = composition.authority.command(context, command())
+        await vi.waitFor(() => expect(executor).toHaveBeenCalledOnce())
+        const reconciliation = composition.reconcileProjection()
+        // Let the background pass reach publication before releasing the command.
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        release()
+        await expect(pending).resolves.toMatchObject({ ok: true, value: { status } })
+        await reconciliation
+        expect(executor).toHaveBeenCalledOnce()
+        await expect(composition.authority.snapshot(context)).resolves.toMatchObject({
+          ok: true,
+          value: { threads: [expect.objectContaining({ title: 'After' })] }
+        })
+      } finally {
+        release()
+        await composition.shutdown()
+      }
+    }
+  )
+
   it('asserts the lease before opening the sole runtime and recovers receipt state after restart', async () => {
     const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-'))
     paths.push(runtimePath)
