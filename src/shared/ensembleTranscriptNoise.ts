@@ -10,6 +10,8 @@ const ROUTINE_SUCCESS_NOTICES = [
   /^Routed next: .+\.$/,
   /^@-mention: .+ is (?:Boss|active Captain) and takes routing priority over advisory participant mentions\.$/,
   /^@-mention: .+ promoted to speak next\.$/,
+  /^(?:User Fan-Out|Locked writer fan-out|Automatic read stage|Scout fan-out|Worker fan-out|Review fan-out|Background|Background fan-out|Ensemble fan-out|Parallel fan-out|Full fan-out) host queue · \d+ admitted now, \d+ waiting; \d+\/\d+ Ensemble slots active across chats\.(?: Up to \d+ active per chat; chats below \d+ get priority as slots free up\.)? Providers and seats remain available\.$/,
+  /^(?:User Fan-Out|Locked writer fan-out|Automatic read stage|Scout fan-out|Worker fan-out|Review fan-out|Background|Background fan-out|Ensemble fan-out|Parallel fan-out|Full fan-out) provider dispatch started · .+ crossed the adapter boundary; remaining accepted lanes continue through host admission\.$/,
   /^(?:User Fan-Out|Locked writer fan-out|Automatic read stage|Scout fan-out|Worker fan-out|Review fan-out|Background fan-out|Ensemble fan-out|Parallel fan-out|Full fan-out) · \d+ participant\(s\) dispatched concurrently \((?:\d+ read \/ \d+ write-intent|host-clamped reader lanes|read-only seat lanes|read-clamped lanes)\)\.(?: .*)?$/,
   /^(?:User Fan-Out|Locked writer fan-out|Scout fan-out|Worker fan-out|Review fan-out|Background fan-out|Ensemble fan-out|Parallel fan-out|Full fan-out) complete · \d+ lane\(s\) returned(?: to the caller)?\.$/,
   /^Automatic read stage complete · returning to serial writer step\.$/,

@@ -43,4 +43,22 @@ describe('hideRedundantEnsembleTranscriptNotices', () => {
     const input = [header, lane, failure]
     expect(hideRedundantEnsembleTranscriptNotices(input)).toBe(input)
   })
+
+  it('hides persisted queue and adapter notices while retaining the lane card and failure', () => {
+    const queue = row('queue', {
+      role: 'system',
+      content:
+        'User Fan-Out host queue · 0 admitted now, 1 waiting; 5/30 Ensemble slots active across chats. Up to 10 active per chat; chats below 3 get priority as slots free up. Providers and seats remain available.',
+      metadata: { kind: 'ensembleRoundStatus' }
+    })
+    const dispatch = row('dispatch', {
+      role: 'system',
+      content:
+        'Locked writer fan-out provider dispatch started · Work4 crossed the adapter boundary; remaining accepted lanes continue through host admission.',
+      metadata: { kind: 'ensembleRoundStatus' }
+    })
+    const input = [queue, header, dispatch, lane, failure]
+    expect(hideRedundantEnsembleTranscriptNotices(input)).toEqual([header, lane, failure])
+    expect(input).toHaveLength(5)
+  })
 })

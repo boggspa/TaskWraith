@@ -10,6 +10,12 @@ describe('redundant Ensemble transcript notices', () => {
     'Routed next: Claude.',
     '@-mention: Codex / Boss is Boss and takes routing priority over advisory participant mentions.',
     '@-mention: Worker, Reviewer promoted to speak next.',
+    'User Fan-Out host queue · 0 admitted now, 1 waiting; 5/30 Ensemble slots active across chats. Up to 10 active per chat; chats below 3 get priority as slots free up. Providers and seats remain available.',
+    'User Fan-Out host queue · 0 admitted now, 1 waiting; 5/8 Ensemble slots active across chats. Providers and seats remain available.',
+    'Parallel fan-out host queue · 3 admitted now, 17 waiting; 30/30 Ensemble slots active across chats. Up to 10 active per chat; chats below 3 get priority as slots free up. Providers and seats remain available.',
+    'User Fan-Out provider dispatch started · Work1 crossed the adapter boundary; remaining accepted lanes continue through host admission.',
+    'Locked writer fan-out provider dispatch started · Work4 crossed the adapter boundary; remaining accepted lanes continue through host admission.',
+    'Background provider dispatch started · Scout crossed the adapter boundary; remaining accepted lanes continue through host admission.',
     'User Fan-Out complete · 2 lane(s) returned.',
     'Review fan-out complete · 2 lane(s) returned to the caller.',
     'Background fan-out complete · 2 lane(s) returned.',
@@ -45,6 +51,19 @@ describe('redundant Ensemble transcript notices', () => {
   })
 
   it('preserves exceptional and untrusted look-alike rows', () => {
+    for (const content of [
+      'User Fan-Out dispatch failed without interrupting the round: server unavailable',
+      'Work1 fan-out lane failed before dispatch: provider exited with code 1',
+      'Ensemble host queue is full (256 waiting). This run was not accepted; providers and seats remain available. Retry after capacity frees.',
+      'User Fan-Out provider dispatch started · Work1 crossed the adapter boundary; remaining accepted lanes continue through host admission. Provider failed afterwards.'
+    ]) {
+      expect(isRedundantEnsembleTranscriptNotice(notice(content))).toBe(false)
+    }
+    const dispatchNotice =
+      'User Fan-Out provider dispatch started · Work1 crossed the adapter boundary; remaining accepted lanes continue through host admission.'
+    expect(
+      isRedundantEnsembleTranscriptNotice({ ...notice(dispatchNotice), role: 'assistant' })
+    ).toBe(false)
     expect(
       isRedundantEnsembleTranscriptNotice(
         notice('User Fan-Out complete · 1 lane(s) returned, 1 failed (Reviewer — timeout).')

@@ -3727,6 +3727,38 @@ describe('collapsed one-liner super-groups', () => {
 })
 
 describe('routine Ensemble transcript receipts', () => {
+  it('hides fan-out queue and adapter notices without leaving a system-notice group', () => {
+    const notices = [
+      'User Fan-Out host queue · 0 admitted now, 1 waiting; 5/30 Ensemble slots active across chats. Up to 10 active per chat; chats below 3 get priority as slots free up. Providers and seats remain available.',
+      'User Fan-Out provider dispatch started · Work1 crossed the adapter boundary; remaining accepted lanes continue through host admission.',
+      'Locked writer fan-out provider dispatch started · Work4 crossed the adapter boundary; remaining accepted lanes continue through host admission.'
+    ]
+    const messages: ChatMessage[] = [
+      ...notices.map(
+        (content, index): ChatMessage => ({
+          id: `routine-fanout-${index}`,
+          role: 'system',
+          content,
+          timestamp: `2026-09-05T00:43:0${index}.000Z`,
+          metadata: { kind: 'ensembleRoundStatus' }
+        })
+      ),
+      {
+        id: 'reply',
+        role: 'assistant',
+        content: 'MUSE_REPLY_MARKER',
+        timestamp: '2026-09-05T00:43:05.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+    expect(html).toContain('MUSE_REPLY_MARKER')
+    expect(html).not.toContain('host queue')
+    expect(html).not.toContain('provider dispatch started')
+    expect(html).not.toContain('system notices')
+  })
+
   it('hides historical success notices whose effect is already visible', () => {
     const messages: ChatMessage[] = [
       { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
