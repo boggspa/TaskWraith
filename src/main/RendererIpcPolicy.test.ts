@@ -264,10 +264,14 @@ describe('RendererIpcPolicy', () => {
   it('keeps picker and detached OS file drops on main/preload-minted attachment capabilities', () => {
     const preload = readFileSync(join(process.cwd(), 'src/preload/index.ts'), 'utf8')
     const main = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const imageAttachmentPreview = readFileSync(
+      join(process.cwd(), 'src/main/ipc/imageAttachmentPreviewHandlers.ts'),
+      'utf8'
+    )
 
     expect(main).toContain("ipcMain.handle('select-image-files'")
-    expect(main).toContain('for (const filePath of filePaths)')
-    expect(main).toContain('authorizeImagePreviewPath(filePath, {')
+    expect(imageAttachmentPreview).toContain('for (const filePath of filePaths)')
+    expect(imageAttachmentPreview).toContain('authorizeImagePreviewPath(filePath, {')
     expect(preload).toContain("ipcRenderer.send('authorize-dropped-attachment', filePath)")
     expect(main).toContain("ipcMain.on('authorize-dropped-attachment'")
   })
@@ -294,6 +298,10 @@ describe('RendererIpcPolicy', () => {
   it('requires a preload-minted trusted one-shot intent for host clipboard image reads', () => {
     const preload = readFileSync(join(process.cwd(), 'src/preload/index.ts'), 'utf8')
     const main = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const imageAttachmentPreview = readFileSync(
+      join(process.cwd(), 'src/main/ipc/imageAttachmentPreviewHandlers.ts'),
+      'utf8'
+    )
 
     expect(ipcChannelRequiresMainRenderer('save-clipboard-image-attachment')).toBe(false)
     expect(preload).toContain("window.addEventListener(\n  'paste'")
@@ -303,9 +311,10 @@ describe('RendererIpcPolicy', () => {
       "ipcRenderer.invoke('save-clipboard-image-attachment', appChatId, intent.token)"
     )
     expect(main).toContain("ipcMain.on('authorize-clipboard-paste-intent'")
-    expect(main).toContain('saveClipboardImageFromTrustedPaste({')
-    expect(main).toContain('assetStore: getTranscriptMediaAssetStore()')
+    expect(imageAttachmentPreview).toContain('saveClipboardImageFromTrustedPaste({')
+    expect(imageAttachmentPreview).toContain('assetStore: deps.getTranscriptMediaAssetStore()')
     expect(main).not.toContain('taskwraith-paste-')
+    expect(imageAttachmentPreview).not.toContain('taskwraith-paste-')
   })
 
   it('keeps sandboxed preload code free of unsupported Node crypto/util imports', () => {

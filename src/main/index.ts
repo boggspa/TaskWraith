@@ -275,7 +275,6 @@ import {
 import { applyChatPopoutWindowPresentation } from './ChatPopoutWindowPresentation'
 import { AttachmentCapabilityRegistry } from './AttachmentCapabilityRegistry'
 import { ClipboardPasteIntentRegistry } from './ClipboardPasteIntentRegistry'
-import { saveClipboardImageFromTrustedPaste } from './ClipboardImagePasteHandler'
 import {
   dispatchWithAuthorizedAttachmentPaths,
   resolveAuthorizedRendererAttachmentPaths
@@ -2017,6 +2016,14 @@ import {
   type EnsembleRoundHandlerDeps,
   type RunEnsembleRoundPayload
 } from './ipc/ensembleRoundHandlers'
+import {
+  handleAuthorizeClipboardPasteIntent,
+  handleAuthorizeDroppedAttachment,
+  handleReadImagePreview,
+  handleSaveClipboardImageAttachment,
+  handleSelectImageFiles,
+  type ImageAttachmentPreviewHandlerDeps
+} from './ipc/imageAttachmentPreviewHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
 import { registerFanoutCandidateHandlers } from './ipc/fanoutCandidateHandlers'
 import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGrantHandlers'
@@ -10974,7 +10981,6 @@ function safeSendToSender(
 
 let transcriptMediaAssetStore: TranscriptMediaAssetStore | null = null
 const MAX_AUTHORIZED_IMAGE_PREVIEW_PATHS = 500
-const IMAGE_PREVIEW_MAX_BYTES = 40 * 1024 * 1024
 const attachmentCapabilityRegistry = new AttachmentCapabilityRegistry(
   MAX_AUTHORIZED_IMAGE_PREVIEW_PATHS
 )
@@ -59101,29 +59107,12 @@ if (isGeminiMcpBridgeProcess) {
       return runApprovedHostCommand(normalizedRequestId)
     })
 
-    // C4: `read-image-preview` reads a local image and returns a data URL.
-    // Left open it is an arbitrary-image disclosure primitive — a future
-    // viewer that routes an agent-supplied `![](/Users/you/Pictures/x.jpg)`
-    // path through it would leak private images. Jail it to an allowlist of
-    // paths the USER explicitly attached. The composer authorizes every
-    // attachment (picker / drag-drop / paste) before its thumbnail renders;
-    // nothing else authorizes, so agent/transcript paths are rejected. Paths
-    // are stored realpath-resolved (symlink-safe) and bounded.
     ipcMain.on('authorize-dropped-attachment', (event, rawPath: unknown) => {
-      // This event is emitted only inside preload immediately after
-      // webUtils.getPathForFile succeeds for an OS-backed File object. The
-      // context-isolated renderer has no generic ipcRenderer surface with which
-      // to forge this channel.
-      authorizeImagePreviewPath(rawPath, {
-        sender: event.sender,
-        mainAuthority: isMainRendererSender(event)
-      })
+      handleAuthorizeDroppedAttachment(imageAttachmentPreviewDeps(), event, rawPath)
     })
 
     ipcMain.on('authorize-clipboard-paste-intent', (event, token: unknown) => {
-      if (clipboardPasteIntentRegistry.issue(event.sender.id, token)) {
-        registerRendererCapabilityCleanup(event.sender)
-      }
+      handleAuthorizeClipboardPasteIntent(imageAttachmentPreviewDeps(), event, token)
     })
 
     ipcMain.handle('composer-audio:transcribe', async (_event, rawInput: unknown) =>
@@ -59131,177 +59120,45 @@ if (isGeminiMcpBridgeProcess) {
     )
 
     ipcMain.handle('select-image-files', async (event) => {
-      if (!mainWindow) return []
-      const result = await dialog.showOpenDialog(mainWindow, {
-        title: 'Select attachments',
-        properties: ['openFile', 'multiSelections']
-      })
-
-      if (result.canceled) {
-        return []
-      }
-      const filePaths = result.filePaths || []
-      for (const filePath of filePaths) {
-        authorizeImagePreviewPath(filePath, {
-          sender: event.sender,
-          mainAuthority: isMainRendererSender(event)
-        })
-      }
-      return filePaths
+      return handleSelectImageFiles(imageAttachmentPreviewDeps(), event)
     })
 
     ipcMain.handle(
       'save-clipboard-image-attachment',
       async (event, rawAppChatId: unknown, token: unknown) => {
-        const appChatId = requireNonEmptyString(rawAppChatId, 'Clipboard attachment chat id')
-        assertRendererChatScope(event, appChatId)
-        const chat = AppStore.getChat(appChatId)
-        if (!chat || historyClearAdmissionBlocked(undefined, chat.workspacePath, chat.appChatId)) {
-          return []
-        }
-        return saveClipboardImageFromTrustedPaste({
-          appChatId,
-          senderId: event.sender.id,
-          token,
-          consumeIntent: (senderId, candidate) =>
-            clipboardPasteIntentRegistry.consume(senderId, candidate),
-          readImage: () => clipboard.readImage(),
-          assetStore: getTranscriptMediaAssetStore(),
-          authorizePath: (filePath) =>
-            authorizeImagePreviewPath(filePath, {
-              sender: event.sender,
-              mainAuthority: isMainRendererSender(event),
-              appChatId
-            })
-        })
+        return handleSaveClipboardImageAttachment(
+          imageAttachmentPreviewDeps(),
+          event,
+          rawAppChatId,
+          token
+        )
       }
     )
 
-    const readImageViaMacImageServices = async (
-      real: string,
-      reservation: RegenerableHistoryByteReservation
-    ): Promise<ReturnType<typeof nativeImage.createEmpty> | null> => {
-      if (process.platform !== 'darwin') return null
-      if (!regenerableHistoryByteStore.isCurrent(reservation)) return null
-      const tempDir = await fs.mkdtemp(join(reservation.root, '.image-preview-'))
-      const outPath = join(tempDir, 'preview.png')
-      try {
-        await new Promise<void>((resolvePromise, rejectPromise) => {
-          execFile(
-            '/usr/bin/sips',
-            ['-s', 'format', 'png', real, '--out', outPath],
-            { timeout: 15000, maxBuffer: 1024 * 1024 },
-            (error) => {
-              if (error) {
-                rejectPromise(error)
-                return
-              }
-              resolvePromise()
-            }
-          )
-        })
-        if (!regenerableHistoryByteStore.isCurrent(reservation)) return null
-        const img = nativeImage.createFromPath(outPath)
-        return img.isEmpty() ? null : img
-      } catch {
-        return null
-      } finally {
-        await fs.rm(tempDir, { recursive: true, force: true })
+    ipcMain.handle('read-image-preview', async (event, rawPath: unknown) => {
+      return handleReadImagePreview(imageAttachmentPreviewDeps(), event, rawPath)
+    })
+
+    function imageAttachmentPreviewDeps(): ImageAttachmentPreviewHandlerDeps {
+      return {
+        getMainWindow: () => mainWindow,
+        authorizeImagePreviewPath: (rawPath, options) =>
+          authorizeImagePreviewPath(rawPath, options),
+        isMainRendererSender: (event) => isMainRendererSender(event),
+        clipboardPasteIntentRegistry,
+        registerRendererCapabilityCleanup: (sender) => registerRendererCapabilityCleanup(sender),
+        assertRendererChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
+        getChat: (chatId) => AppStore.getChat(chatId),
+        historyClearAdmissionBlocked: (runId, workspacePath, chatId) =>
+          historyClearAdmissionBlocked(runId, workspacePath, chatId),
+        getTranscriptMediaAssetStore: () => getTranscriptMediaAssetStore(),
+        attachmentCapabilityRegistry,
+        regenerableHistoryByteStore,
+        endRegenerableHistoryByteReservation: (reservation) =>
+          endRegenerableHistoryByteReservation(reservation),
+        prunePdfAttachmentRenderCacheOnce: (cacheDir) => prunePdfAttachmentRenderCacheOnce(cacheDir)
       }
     }
-
-    // Composer attachment thumbnail. A raw file:// path can't be shown by the
-    // renderer (non-file origin + webSecurity), so read the image here and hand
-    // back a downscaled PNG data URL the <img> can actually load.
-    ipcMain.handle('read-image-preview', async (event, rawPath: unknown) => {
-      try {
-        if (typeof rawPath !== 'string' || !rawPath) return null
-        const filePath = rawPath.startsWith('file://') ? fileURLToPath(rawPath) : rawPath
-        // C4 jail: only serve paths the user explicitly authorized as
-        // attachments (see authorizeImagePreviewPath). realpath both sides so a
-        // symlink can't smuggle an unauthorized target past the allowlist.
-        let real: string
-        try {
-          real = await fs.realpath(filePath)
-        } catch {
-          return null
-        }
-        if (
-          !attachmentCapabilityRegistry.isAuthorizedForRenderer(event.sender.id, real, {
-            includeMainAuthority: isMainRendererSender(event)
-          })
-        ) {
-          return null
-        }
-        const stat = await fs.lstat(real)
-        if (!stat.isFile()) return null
-        let img = nativeImage.createEmpty()
-        if (isPdfAttachmentPath(real)) {
-          const reservation = regenerableHistoryByteStore.begin('pdf')
-          try {
-            await prunePdfAttachmentRenderCacheOnce(reservation.root)
-            if (!regenerableHistoryByteStore.isCurrent(reservation)) return null
-            const rendered = await renderPdfAttachmentPages(
-              [{ path: real, name: basename(real) }],
-              { cacheDir: reservation.root }
-            )
-            if (!regenerableHistoryByteStore.isCurrent(reservation)) return null
-            const firstPage = rendered.rendered[0]?.path
-            if (!firstPage) return null
-            img = nativeImage.createFromPath(firstPage)
-            if (img.isEmpty()) {
-              try {
-                img = nativeImage.createFromBuffer(await fs.readFile(firstPage))
-              } catch {
-                img = nativeImage.createEmpty()
-              }
-            }
-            if (img.isEmpty()) {
-              img =
-                (await readImageViaMacImageServices(firstPage, reservation)) ??
-                nativeImage.createEmpty()
-            }
-            if (!regenerableHistoryByteStore.isCurrent(reservation)) return null
-          } finally {
-            endRegenerableHistoryByteReservation(reservation)
-          }
-        } else {
-          if (stat.size > IMAGE_PREVIEW_MAX_BYTES) return null
-          img = nativeImage.createFromPath(real)
-          if (img.isEmpty()) {
-            try {
-              img = nativeImage.createFromBuffer(await fs.readFile(real))
-            } catch {
-              img = nativeImage.createEmpty()
-            }
-          }
-          if (img.isEmpty()) {
-            const reservation = regenerableHistoryByteStore.begin('media')
-            try {
-              img =
-                (await readImageViaMacImageServices(real, reservation)) ?? nativeImage.createEmpty()
-              if (!regenerableHistoryByteStore.isCurrent(reservation)) return null
-            } finally {
-              endRegenerableHistoryByteReservation(reservation)
-            }
-          }
-        }
-        if (img.isEmpty()) return null
-        // Downscale large images so a screenshot isn't a multi-MB base64.
-        const size = img.getSize()
-        const scale = Math.min(1, 640 / Math.max(1, size.width), 320 / Math.max(1, size.height))
-        const thumb =
-          scale < 1
-            ? img.resize({
-                width: Math.max(1, Math.round(size.width * scale)),
-                height: Math.max(1, Math.round(size.height * scale))
-              })
-            : img
-        return thumb.toDataURL()
-      } catch {
-        return null
-      }
-    })
 
     registerMediaAssetHandlers({
       isRecord,

@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+const imageAttachmentPreviewSource = readFileSync(
+  new URL('./ipc/imageAttachmentPreviewHandlers.ts', import.meta.url),
+  'utf8'
+)
 
 function between(start: string, end: string): string {
   const startAt = source.indexOf(start)
@@ -9,6 +13,14 @@ function between(start: string, end: string): string {
   expect(startAt, `missing start anchor: ${start}`).toBeGreaterThanOrEqual(0)
   expect(endAt, `missing end anchor: ${end}`).toBeGreaterThan(startAt)
   return source.slice(startAt, endAt)
+}
+
+function betweenIn(haystack: string, start: string, end: string): string {
+  const startAt = haystack.indexOf(start)
+  const endAt = haystack.indexOf(end, startAt + start.length)
+  expect(startAt, `missing start anchor: ${start}`).toBeGreaterThanOrEqual(0)
+  expect(endAt, `missing end anchor: ${end}`).toBeGreaterThan(startAt)
+  return haystack.slice(startAt, endAt)
 }
 
 describe('regenerable history-byte main integration', () => {
@@ -102,17 +114,23 @@ describe('regenerable history-byte main integration', () => {
   })
 
   it('materializes PDF previews while their cache lease is live', () => {
-    const preview = between(
+    // The preview bodies live in ./ipc/imageAttachmentPreviewHandlers.ts; the
+    // registration stays in index.ts as a thin delegate (see module header).
+    expect(source).toContain("ipcMain.handle('read-image-preview'")
+    const preview = betweenIn(
+      imageAttachmentPreviewSource,
       'const readImageViaMacImageServices = async (',
-      'registerMediaAssetHandlers({'
+      'export async function handleReadImagePreview'
     )
-    const handler = between(
-      "ipcMain.handle('read-image-preview'",
-      'registerMediaAssetHandlers({'
+    const handlerStart = imageAttachmentPreviewSource.indexOf(
+      'export async function handleReadImagePreview'
     )
-    const pdfPreview = between(
+    expect(handlerStart).toBeGreaterThanOrEqual(0)
+    const handler = imageAttachmentPreviewSource.slice(handlerStart)
+    const pdfPreview = betweenIn(
+      imageAttachmentPreviewSource,
       'if (isPdfAttachmentPath(real)) {',
-      '} else {\n          if (stat.size > IMAGE_PREVIEW_MAX_BYTES)'
+      '} else {\n      if (stat.size > IMAGE_PREVIEW_MAX_BYTES)'
     )
     const beginAt = pdfPreview.indexOf("regenerableHistoryByteStore.begin('pdf')")
     const renderAt = pdfPreview.indexOf('await renderPdfAttachmentPages(')
@@ -130,7 +148,9 @@ describe('regenerable history-byte main integration', () => {
     expect(preview).toContain('await fs.rm(tempDir, { recursive: true, force: true })')
     expect(preview).not.toContain('taskwraith-image-preview-')
     expect(preview).not.toContain("join(os.tmpdir(), 'taskwraith-image-preview-')")
-    expect(handler).toContain('readImageViaMacImageServices(firstPage, reservation)')
+    expect(handler).toContain(
+      'readImageViaMacImageServices(firstPage, reservation, historyByteStore)'
+    )
     expect(handler).toContain("regenerableHistoryByteStore.begin('media')")
   })
 
