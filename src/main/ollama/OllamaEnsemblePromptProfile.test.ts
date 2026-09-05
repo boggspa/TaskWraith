@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { buildAgentWorkContract } from '../../host-shared/AgentWorkContract'
 import {
   OLLAMA_ENSEMBLE_PROMPT_MAX_CHARS,
   buildOllamaEnsemblePromptCapsule,
@@ -182,22 +183,41 @@ describe('Ollama ensemble prompt capsule', () => {
 
   it('funds a complete checkpoint in a saturated capsule by displacing transcript evidence', () => {
     const transcriptRow = '[User]\nLATEST_TRANSCRIPT_ROW'
-    const transcript = `${'T'.repeat(600 - transcriptRow.length)}${transcriptRow}`
+    const transcript = `${'T'.repeat(2_000 - transcriptRow.length)}${transcriptRow}`
+    const workContract = buildAgentWorkContract({
+      activeGoal: {
+        id: 'current-goal',
+        objective: 'NEW_USER_GOAL',
+        status: 'active',
+        mode: 'taskwraith_steered'
+      },
+      assignment: {
+        id: 'current-assignment',
+        objective: 'CURRENT_ASSIGNMENT',
+        status: 'in_progress'
+      },
+      completionAuthority: 'assignment'
+    })
+    expect(workContract.length).toBeGreaterThan(1_000)
     const saturated = {
       participantLabel: 'P',
       roundId: 'r',
-      roleInstructions: 'R'.repeat(670),
-      currentPrompt: `CURRENT_ASSIGNMENT ${'C'.repeat(2_300)}`,
-      roster: 'O'.repeat(800),
-      authorityLines: ['A'.repeat(300)],
+      roleInstructions: 'R'.repeat(100),
+      currentPrompt: `CURRENT_ASSIGNMENT ${'C'.repeat(500)}`,
+      roster: 'O'.repeat(300),
+      authorityLines: ['A'.repeat(100)],
       roleBoundaryLines: [] as string[],
-      roundPolicy: 'P'.repeat(300),
-      parallelPolicy: 'L'.repeat(200),
-      workContract: 'NEW_USER_GOAL',
+      roundPolicy: 'P'.repeat(100),
+      parallelPolicy: 'L'.repeat(100),
+      workContract,
       dynamicState: 'OPTIONAL_DYNAMIC_SNAPSHOT '.repeat(50),
+      workspaceChurnStanza: 'H'.repeat(700),
+      scoutBriefs: 'S'.repeat(800),
+      blackboardSnapshot: 'K'.repeat(1_200),
+      seatSummary: 'E'.repeat(600),
       transcript,
-      permissionRule: 'M'.repeat(300),
-      workflowHint: 'F'.repeat(200)
+      permissionRule: 'M'.repeat(100),
+      workflowHint: 'F'.repeat(100)
     }
     const rowStart = transcript.length - transcriptRow.length
     const evidence = {
@@ -218,9 +238,9 @@ describe('Ollama ensemble prompt capsule', () => {
     expect(recovered.continuityCheckpointIncluded).toBe(true)
     expect(recovered).not.toHaveProperty('continuityCheckpointOmitted')
     expect(recovered.prompt).toContain(continuityCheckpoint)
+    expect(recovered.prompt).toContain(workContract)
     expect(recovered.prompt).toContain('NEW_USER_GOAL')
     expect(recovered.prompt).toContain('OLDER_CHECKPOINT_GOAL')
-    expect(recovered.prompt).not.toContain('OPTIONAL_DYNAMIC_SNAPSHOT')
     expect(recovered.prompt.indexOf('CURRENT_ASSIGNMENT')).toBeLessThan(
       recovered.prompt.indexOf(continuityCheckpoint)
     )

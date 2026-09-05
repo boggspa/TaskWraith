@@ -333,7 +333,7 @@ export function buildOllamaEnsemblePromptCapsuleProjection(
         ]
       : []),
     ...(continuityCheckpoint && workContract
-      ? [{ text: '' }, { text: section('Current work contract:', workContract, 1_000) }]
+      ? [{ text: '' }, { text: `Current work contract:\n${workContract}` }]
       : []),
     ...(dynamicState
       ? [

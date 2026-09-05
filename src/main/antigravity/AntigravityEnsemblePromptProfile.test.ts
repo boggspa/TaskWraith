@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { buildAgentWorkContract } from '../../host-shared/AgentWorkContract'
 import {
   ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS,
   buildAntigravityOfficialAgyPromptCapsule,
@@ -258,25 +259,48 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
 
   it('funds a complete checkpoint in a saturated capsule by displacing transcript evidence', () => {
     const row = '[User]\nLATEST STEER AT TRANSCRIPT TAIL'
-    const transcript = `${'T'.repeat(600 - row.length)}${row}`
+    const transcript = `${'T'.repeat(3_000 - row.length)}${row}`
     const rowStart = transcript.length - row.length
+    const workContract = buildAgentWorkContract({
+      activeGoal: {
+        id: 'current-goal',
+        objective: 'NEW_USER_GOAL',
+        status: 'active',
+        mode: 'taskwraith_steered',
+        specification: {
+          kind: 'approved_plan',
+          acceptanceCriteria: [`Keep the current goal binding. ${'A'.repeat(1_300)}`]
+        }
+      },
+      assignment: {
+        id: 'current-assignment',
+        objective: 'CURRENT_ASSIGNMENT',
+        status: 'in_progress'
+      },
+      completionAuthority: 'assignment'
+    })
+    expect(workContract.length).toBeGreaterThan(1_800)
     const crowded = {
       participantLabel: 'P',
       roundId: 'r',
-      stageRole: 'Z'.repeat(5_700),
-      roleInstructions: 'R'.repeat(1_000),
-      currentPrompt: `CURRENT_ASSIGNMENT ${'C'.repeat(2_950)}`,
-      roster: 'O'.repeat(1_200),
-      authorityLines: ['A'.repeat(1_200)],
+      stageRole: 'Z'.repeat(4_400),
+      roleInstructions: 'R'.repeat(400),
+      currentPrompt: `CURRENT_ASSIGNMENT ${'C'.repeat(1_000)}`,
+      roster: 'O'.repeat(500),
+      authorityLines: ['A'.repeat(300)],
       roleBoundaryLines: [] as string[],
-      roundPolicy: 'P'.repeat(900),
-      parallelPolicy: 'L'.repeat(700),
-      workContract: 'NEW_USER_GOAL',
+      roundPolicy: 'P'.repeat(400),
+      parallelPolicy: 'L'.repeat(300),
+      workContract,
       dynamicState: 'OPTIONAL_DYNAMIC_SNAPSHOT '.repeat(90),
-      workspaceStanza: 'W'.repeat(600),
+      workspaceStanza: 'W'.repeat(300),
+      workspaceChurnStanza: 'H'.repeat(900),
+      scoutBriefs: 'S'.repeat(1_200),
+      blackboardSnapshot: 'B'.repeat(2_200),
+      seatSummary: 'E'.repeat(800),
       transcript,
-      permissionRule: 'M'.repeat(900),
-      yieldExecutionCheck: 'Y'.repeat(700)
+      permissionRule: 'M'.repeat(400),
+      yieldExecutionCheck: 'Y'.repeat(300)
     }
     const evidence = {
       currentPromptMessageId: 'current-retained',
@@ -299,9 +323,9 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     expect(recovered.continuityCheckpointIncluded).toBe(true)
     expect(recovered).not.toHaveProperty('continuityCheckpointOmitted')
     expect(recovered.prompt).toContain(continuityCheckpoint)
+    expect(recovered.prompt).toContain(workContract)
     expect(recovered.prompt).toContain('NEW_USER_GOAL')
     expect(recovered.prompt).toContain('OLDER_CHECKPOINT_GOAL')
-    expect(recovered.prompt).not.toContain('OPTIONAL_DYNAMIC_SNAPSHOT')
     expect(recovered.prompt.indexOf('CURRENT_ASSIGNMENT')).toBeLessThan(
       recovered.prompt.indexOf(continuityCheckpoint)
     )

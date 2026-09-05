@@ -293,7 +293,7 @@ export function buildAntigravityOfficialAgyPromptCapsuleProjection(
     { text: '' },
     { text: section('Parallel policy:', input.parallelPolicy, 700) },
     ...(continuityCheckpoint && workContract
-      ? [{ text: '' }, { text: section('Current work contract:', workContract, 1_800) }]
+      ? [{ text: '' }, { text: `Current work contract:\n${workContract}` }]
       : []),
     {
       text: '',
