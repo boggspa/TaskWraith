@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { resolve } from 'node:path'
 import { statsAreEstimated } from '../../shared/tokenEstimate'
 import { isPlaceholderThreadTitle } from '../../shared/threadTitles'
 import { plainDataEqual } from '../../shared/chatUpdateTransport'
@@ -198,6 +198,17 @@ import {
   participantLabel,
   stripToolNamespace
 } from './EnsembleToolActivity'
+import {
+  formatWriteScope,
+  isPlainRecord,
+  isVagueUserPreflightScope,
+  normalizeConcurrentWriteScopes,
+  pathIsInsideOrSame,
+  scopeIsInsideWorkspace,
+  toWorkspaceRelative,
+  writeScopeAllowsResource,
+  writeScopesMayOverlap
+} from './EnsembleWriteScopePaths'
 import {
   CONTEXT_AUTO_COMPACT_COOLDOWN_MS,
   CONTEXT_COMPACTION_MESSAGE_KIND,
@@ -1380,10 +1391,6 @@ function dedupeParticipants(participants: EnsembleParticipant[]): EnsemblePartic
   return out
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
-}
-
 function pickRawWriteScopesForParticipant(
   rawScopes: unknown,
   participant: EnsembleParticipant
@@ -1404,101 +1411,6 @@ function pickRawWriteScopesForParticipant(
     if (keys.includes(stripLeadingAt(key).toLowerCase())) return value
   }
   return undefined
-}
-
-function normalizeConcurrentWriteScopes(
-  rawScopes: unknown,
-  approvedBy: ConcurrentLaneWriteScope['approvedBy'],
-  approvedAt: string
-): ConcurrentLaneWriteScope[] {
-  const rawList = Array.isArray(rawScopes) ? rawScopes : [rawScopes]
-  const scopes: ConcurrentLaneWriteScope[] = []
-  for (const raw of rawList.slice(0, 24)) {
-    const scope = normalizeConcurrentWriteScope(raw, approvedBy, approvedAt)
-    if (scope) scopes.push(scope)
-  }
-  return scopes
-}
-
-function normalizeConcurrentWriteScope(
-  raw: unknown,
-  approvedBy: ConcurrentLaneWriteScope['approvedBy'],
-  approvedAt: string
-): ConcurrentLaneWriteScope | null {
-  if (typeof raw === 'string') {
-    const value = raw.trim()
-    if (!value || value.includes('\0')) return null
-    if (/^workspace$/i.test(value)) return { kind: 'workspace', approvedBy, approvedAt }
-    return {
-      kind: value.includes('*') ? 'glob' : 'path',
-      path: value,
-      approvedBy,
-      approvedAt
-    }
-  }
-  if (!isPlainRecord(raw)) return null
-  const kindRaw = String(raw.kind || raw.type || '')
-    .trim()
-    .toLowerCase()
-  const path = typeof raw.path === 'string' ? raw.path.trim() : ''
-  const reason = typeof raw.reason === 'string' && raw.reason.trim() ? raw.reason.trim() : undefined
-  if (kindRaw === 'workspace') {
-    return { kind: 'workspace', approvedBy, approvedAt, ...(reason ? { reason } : {}) }
-  }
-  if ((kindRaw === 'path' || kindRaw === 'glob') && path && !path.includes('\0')) {
-    return {
-      kind: kindRaw,
-      path,
-      approvedBy,
-      approvedAt,
-      ...(reason ? { reason } : {})
-    }
-  }
-  if (!kindRaw && path && !path.includes('\0')) {
-    return {
-      kind: path.includes('*') ? 'glob' : 'path',
-      path,
-      approvedBy,
-      approvedAt,
-      ...(reason ? { reason } : {})
-    }
-  }
-  return null
-}
-
-function pathIsInsideOrSame(rootPath: string, targetPath: string): boolean {
-  const root = resolve(rootPath)
-  const target = resolve(targetPath)
-  if (root === target) return true
-  const rel = relative(root, target)
-  return Boolean(rel && !rel.startsWith('..') && !isAbsolute(rel))
-}
-
-function resolveScopePath(workspacePath: string, scopePath: string): string {
-  return isAbsolute(scopePath) ? resolve(scopePath) : resolve(workspacePath, scopePath)
-}
-
-function writeScopeAllowsResource(
-  scope: ConcurrentLaneWriteScope,
-  workspacePath: string,
-  resourcePath: string
-): boolean {
-  if (scope.kind === 'workspace') return true
-  if (!scope.path) return false
-  if (scope.kind === 'path') {
-    const target = resolveScopePath(workspacePath, scope.path)
-    return pathIsInsideOrSame(target, resourcePath)
-  }
-  const wildcardIndex = scope.path.indexOf('*')
-  const staticPrefix = wildcardIndex === -1 ? scope.path : scope.path.slice(0, wildcardIndex)
-  const normalizedPrefix = staticPrefix.replace(/[\\/]+$/, '')
-  const target = resolveScopePath(workspacePath, normalizedPrefix || '.')
-  return pathIsInsideOrSame(target, resourcePath)
-}
-
-function toWorkspaceRelative(workspacePath: string, resourcePath: string): string {
-  const rel = relative(resolve(workspacePath), resolve(resourcePath))
-  return rel && !rel.startsWith('..') ? rel.split(sep).join('/') : resolve(resourcePath)
 }
 
 function extractJsonFromContent(content: string, marker: string): unknown {
@@ -1535,54 +1447,6 @@ function sanitizedStringList(value: unknown, maxItems = 12, maxLength = 80): str
 
 function rawClaimScopes(raw: Record<string, unknown>): unknown {
   return raw.writeScopes ?? raw.write_scopes ?? raw.scopes ?? raw.paths ?? raw.globs
-}
-
-function isVagueUserPreflightScope(scope: ConcurrentLaneWriteScope): boolean {
-  if (scope.kind === 'workspace') return true
-  const normalized = (scope.path || '').trim().replace(/\\/g, '/').replace(/^\.\//, '')
-  return (
-    !normalized ||
-    normalized === '.' ||
-    normalized === '/' ||
-    normalized === '*' ||
-    normalized === '**' ||
-    normalized === '**/*'
-  )
-}
-
-function scopeStaticRoot(workspacePath: string, scope: ConcurrentLaneWriteScope): string | null {
-  if (scope.kind === 'workspace') return resolve(workspacePath)
-  if (!scope.path) return null
-  if (scope.kind === 'path') return resolveScopePath(workspacePath, scope.path)
-  const wildcardIndex = scope.path.indexOf('*')
-  const staticPrefix = wildcardIndex === -1 ? scope.path : scope.path.slice(0, wildcardIndex)
-  const normalizedPrefix = (() => {
-    if (wildcardIndex < 0 || /[\\/]$/.test(staticPrefix)) return staticPrefix.replace(/[\\/]+$/, '')
-    const slashIndex = Math.max(staticPrefix.lastIndexOf('/'), staticPrefix.lastIndexOf('\\'))
-    return slashIndex >= 0 ? staticPrefix.slice(0, slashIndex).replace(/[\\/]+$/, '') : '.'
-  })()
-  return resolveScopePath(workspacePath, normalizedPrefix || '.')
-}
-
-function scopeIsInsideWorkspace(workspacePath: string, scope: ConcurrentLaneWriteScope): boolean {
-  const root = scopeStaticRoot(workspacePath, scope)
-  return Boolean(root && pathIsInsideOrSame(workspacePath, root))
-}
-
-function writeScopesMayOverlap(
-  workspacePath: string,
-  left: ConcurrentLaneWriteScope,
-  right: ConcurrentLaneWriteScope
-): boolean {
-  if (left.kind === 'workspace' || right.kind === 'workspace') return true
-  const leftRoot = scopeStaticRoot(workspacePath, left)
-  const rightRoot = scopeStaticRoot(workspacePath, right)
-  if (!leftRoot || !rightRoot) return true
-  return pathIsInsideOrSame(leftRoot, rightRoot) || pathIsInsideOrSame(rightRoot, leftRoot)
-}
-
-function formatWriteScope(scope: ConcurrentLaneWriteScope): string {
-  return scope.kind === 'workspace' ? 'workspace' : `${scope.kind}:${scope.path || ''}`
 }
 
 function parseConcurrentWriteScopeClaim(
