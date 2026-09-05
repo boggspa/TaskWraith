@@ -19645,7 +19645,6 @@ export class EnsembleOrchestrator {
     const dispatchStartPromises: Array<Promise<void>> = []
     const immediatelyAdmittedDispatchStarts: Array<Promise<void>> = []
     const acceptedLaneRuns: ActiveParticipantRun[] = []
-    let adapterDispatchNoted = false
 
     // Pre-assign every lane's completion resolver synchronously, BEFORE the
     // first event-loop yield below. The history-deletion detach path drops the
@@ -19742,17 +19741,6 @@ export class EnsembleOrchestrator {
         if (!this.reserveHostAdmission(run, 'lane')) continue
         acceptedLaneRuns.push(run)
         options.acceptedRuns?.push(run)
-      }
-      const hostQueuedCount = acceptedLaneRuns.filter(
-        (run) => run.hostAdmissionInitialState === 'queued'
-      ).length
-      if (hostQueuedCount > 0) {
-        const occupancy = this.hostAdmission.snapshot().occupancy
-        this.appendRoundStatus(
-          runtime.chatId,
-          runtime.roundId,
-          `${label} host queue · ${acceptedLaneRuns.length - hostQueuedCount} admitted now, ${hostQueuedCount} waiting; ${occupancy.active}/${occupancy.maxActive} Ensemble slots active across chats. Up to ${occupancy.maxActivePerChat} active per chat; chats below ${occupancy.fairSharePerChat} get priority as slots free up. Providers and seats remain available.`
-        )
       }
     } catch (error) {
       const note = `${label} failed after host reservation but before lane launch: ${error instanceof Error ? error.message : String(error)}`
@@ -20212,14 +20200,6 @@ export class EnsembleOrchestrator {
                   run.promptShellStamp = promptShellStamp
                   run.promptDynamicStateVersion = dynamicStateSnapshot.version
                   run.ensemblePromptUsageTelemetry = promptUsageTelemetry
-                  if (!adapterDispatchNoted) {
-                    adapterDispatchNoted = true
-                    this.appendRoundStatus(
-                      runtime.chatId,
-                      runtime.roundId,
-                      `${label} provider dispatch started · ${participantDisplayName(participant)} crossed the adapter boundary; remaining accepted lanes continue through host admission.`
-                    )
-                  }
                   this.scheduleFlush(run)
                   this.startCursorCompletionWatchdog(run)
                 }

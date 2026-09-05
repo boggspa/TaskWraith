@@ -223,9 +223,9 @@ describe('EnsembleOrchestrator host-wide admission', () => {
         for (const targetChat of testHarness.chats.values()) {
           expect(
             targetChat.messages.some((message) =>
-              message.content.includes('Up to 10 active per chat; chats below 3 get priority')
+              /host queue ·|provider dispatch started/.test(message.content)
             )
-          ).toBe(true)
+          ).toBe(false)
         }
         // Queued runs have no provider process yet. Exact Ensemble ownership
         // must protect them through repeated sweeps, however long they wait.
