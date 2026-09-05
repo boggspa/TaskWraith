@@ -294,6 +294,8 @@ import { RevealingMarkdownMessage } from './RevealingMarkdownMessage'
 import { ProposedPlanCard } from './ProposedPlanCard'
 import type { ProposedPlanState } from '../lib/proposedPlan'
 import { MessageActionsChip } from './MessageActionsChip'
+import { CopyEntireTurnButton } from './CopyEntireTurnButton'
+import { useTranscriptTurnCopy } from '../lib/useTranscriptTurnCopy'
 import { PillButton } from './PillButton'
 import {
   TranscriptMessageContextMenu,
@@ -1688,6 +1690,7 @@ function TranscriptMessageFooter({
   copyContent,
   align,
   onCopyMessage,
+  onCopyEntireTurn,
   onAddMessageToPrompt,
   onTogglePinMessage,
   onMessageFeedback,
@@ -1701,6 +1704,7 @@ function TranscriptMessageFooter({
   copyContent?: string
   align: 'start' | 'end'
   onCopyMessage: (messageId: string, content: string) => void
+  onCopyEntireTurn?: (message: ChatMessage) => Promise<void>
   onAddMessageToPrompt?: (messageId: string, content: string) => void
   onTogglePinMessage?: (messageId: string) => void
   onMessageFeedback?: (messageId: string, vote: 'up' | 'down', details?: MessageFeedbackDetails) => void
@@ -1728,6 +1732,7 @@ function TranscriptMessageFooter({
       {hasActionContent && (
         <MessageActionsChip
           onCopy={() => onCopyMessage(message.id, copyContent)}
+          onCopyEntireTurn={onCopyEntireTurn ? () => onCopyEntireTurn(message) : undefined}
           onAddToPrompt={
             onAddMessageToPrompt && copyContent.trim()
               ? () => onAddMessageToPrompt(message.id, copyContent)
@@ -1753,6 +1758,11 @@ function TranscriptMessageFooter({
           copied={copied}
           label={label}
         />
+      )}
+      {!hasActionContent && onCopyEntireTurn && (
+        <div className="message-actions-chip">
+          <CopyEntireTurnButton onCopy={() => onCopyEntireTurn(message)} />
+        </div>
       )}
       {timestamp && (
         <time
@@ -2862,6 +2872,7 @@ export const TranscriptPanel = memo(
     })
     const storeReady = Boolean(chatId && getChatTranscriptStore().has(chatId))
     const resolvedMessages = storeReady ? storeTranscript.messages : messages
+    const onCopyEntireTurn = useTranscriptTurnCopy(currentChat, resolvedMessages)
     const liveOwnedExecutionIds = useMemo(
       () =>
         new Set(
@@ -5750,6 +5761,7 @@ export const TranscriptPanel = memo(
                 onOpenExecutionMapForThread,
                 onOpenSideChatFromRun,
                 onCopyMessage,
+                onCopyEntireTurn,
                 onAddMessageToPrompt,
                 onTogglePinMessage,
                 onMessageFeedback,
@@ -7161,6 +7173,12 @@ export const TranscriptPanel = memo(
                   message={msg}
                   label={footerLabel}
                   copyContent={footerCopyContent}
+                  onCopyEntireTurn={
+                    messageById.has(msg.id) ||
+                    groupedTranscriptMessageIds(msg).some((id) => messageById.has(id))
+                      ? onCopyEntireTurn
+                      : undefined
+                  }
                   align={msg.role === 'user' ? 'end' : 'start'}
                   onCopyMessage={onCopyMessage}
                   onAddMessageToPrompt={onAddMessageToPrompt}

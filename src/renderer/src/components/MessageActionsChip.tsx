@@ -1,3 +1,5 @@
+import { CopyEntireTurnButton } from './CopyEntireTurnButton'
+
 /**
  * 1.0.4-AQ4 — small message action group. Initially rendered as a
  * hover-only bubble overlay; now used as the inline footer action row
@@ -16,6 +18,7 @@
  */
 function MessageActionsChip({
   onCopy,
+  onCopyEntireTurn,
   onAddToPrompt,
   onTogglePin,
   onThumbsUp,
@@ -28,6 +31,7 @@ function MessageActionsChip({
   label
 }: {
   onCopy: () => void
+  onCopyEntireTurn?: () => Promise<void>
   onAddToPrompt?: () => void
   onTogglePin?: () => void
   /** Thumbs feedback (assistant messages only — the host gates rendering). */
@@ -139,6 +143,7 @@ function MessageActionsChip({
           </svg>
         )}
       </button>
+      {onCopyEntireTurn && <CopyEntireTurnButton onCopy={onCopyEntireTurn} />}
       {onAddToPrompt && (
         <button
           type="button"
