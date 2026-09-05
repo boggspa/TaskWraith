@@ -430,7 +430,6 @@ export async function runMuseProviderFromIpc(
   deps.registerCancel?.(runId, cancel)
 
   const run = deps.runMuseProvider ?? runMuseProvider
-  let emittedTerminalResult = false
   const startedAt = deps.now?.() ?? Date.now()
   const museSessionId = resolveMuseExecSessionId(payload.providerSessionId)
   const thinking = createMuseThinkingTranscript(runId)
@@ -467,6 +466,10 @@ export async function runMuseProviderFromIpc(
       spawn: deps.spawn,
       shouldCancel: () => cancelled,
       onEvent: (museEvent) => {
+        // Publish completion once the session tail has supplied final text and
+        // usage. The stdout terminal envelope alone has neither usage nor the
+        // rich result payload the shared close-out/transcript consumers need.
+        if (museEvent.type === 'terminal') return
         if (museEvent.type === 'thinking') {
           for (const compat of thinking.project(museEvent)) {
             deps.sendCompatLine(event.sender, compat, route)
@@ -476,30 +479,28 @@ export async function runMuseProviderFromIpc(
         const compat = museExecEventToCompatPayload(museEvent, { model: payload.model })
         if (!compat) return
         thinking.observe(compat)
-        if (compat.type === 'result') emittedTerminalResult = true
         deps.sendCompatLine(event.sender, compat, route)
       }
     })
 
-    if (!emittedTerminalResult) {
-      const failed = outcome.status !== 'success'
-      const failureText = failed ? formatMuseFailureResultText(outcome) : undefined
-      deps.sendCompatLine(
-        event.sender,
-        {
-          type: 'result',
-          status: outcome.status === 'cancelled' ? 'cancelled' : failed ? 'failed' : 'success',
-          subtype: failed ? 'error' : 'success',
-          provider: 'muse',
-          ...(failureText ? { result: failureText } : {}),
-          stats: {
-            ...(outcome.providerStats || {}),
-            duration_ms: Date.now() - startedAt
-          }
-        },
-        route
-      )
-    }
+    const failed = outcome.status !== 'success'
+    const resultText =
+      (failed ? formatMuseFailureResultText(outcome) : undefined) || outcome.assistantText
+    deps.sendCompatLine(
+      event.sender,
+      {
+        type: 'result',
+        status: outcome.status === 'cancelled' ? 'cancelled' : failed ? 'failed' : 'success',
+        subtype: failed ? 'error' : 'success',
+        provider: 'muse',
+        ...(resultText ? { result: resultText } : {}),
+        stats: {
+          ...(outcome.providerStats || {}),
+          duration_ms: Date.now() - startedAt
+        }
+      },
+      route
+    )
 
     // Order is load-bearing: the exit must be published while main still holds
     // this run's persistence authority (see `MuseIpcBridgeDeps.sendExit`).

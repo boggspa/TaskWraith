@@ -255,6 +255,58 @@ describe('runMuseProviderFromIpc', () => {
     }
   })
 
+  it('publishes final answer and measured usage once, after all Thinking and tool events', async () => {
+    const sendCompatLine = vi.fn()
+    await runMuseProviderFromIpc(
+      event,
+      basePayload(),
+      baseDeps({
+        sendCompatLine,
+        runMuseProvider: async (input) => {
+          input.onEvent?.({
+            type: 'terminal',
+            payloadType: 'run.terminal.completed',
+            terminal: 'completed',
+            text: 'Verified 23.',
+            raw: {}
+          })
+          expect(sendCompatLine.mock.calls.some((call) => call[1].type === 'result')).toBe(false)
+          input.onEvent?.({
+            type: 'thinking',
+            payloadType: 'runtime.session',
+            thinkingId: 'summary',
+            thinkingCumulative: true,
+            text: 'Verify both files.',
+            raw: {}
+          })
+          return successOutcome({
+            assistantText: 'Verified 23.',
+            providerStats: {
+              ...successOutcome().providerStats,
+              input_tokens: 100,
+              output_tokens: 30,
+              total_tokens: 130,
+              reasoning_tokens: 20
+            }
+          })
+        }
+      })
+    )
+    const payloads = sendCompatLine.mock.calls.map((call) => call[1])
+    expect(payloads.filter((payload) => payload.type === 'result')).toEqual([
+      expect.objectContaining({
+        type: 'result',
+        result: 'Verified 23.',
+        stats: expect.objectContaining({
+          input_tokens: 100,
+          output_tokens: 30,
+          reasoning_tokens: 20
+        })
+      })
+    ])
+    expect(payloads.at(-1).type).toBe('result')
+  })
+
   it('fails closed with a clear error when the Muse binary is missing', async () => {
     const settleSetupFailure = vi.fn()
     const runMuseProvider = vi.fn()
