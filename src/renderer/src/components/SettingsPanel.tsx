@@ -300,29 +300,14 @@ import type {
   RuntimeProfileFormState,
   RuntimeProfileSecretValues
 } from './settings/runtimeProfileForm'
+import { isManagedPolicySettingLocked, managedPolicySettingList } from './settings/managedPolicy'
+import type { ManagedPolicyStatus } from './settings/managedPolicy'
 // Re-export the previously exported form-state type so existing importers of
 // `./SettingsPanel` keep working.
 export type { RuntimeProfileFormState } from './settings/runtimeProfileForm'
 
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
-type ManagedPolicyStatus = Record<string, unknown>
 type AuditBundleExportScope = 'all' | 'workspace' | 'chat' | 'run'
-function managedPolicySettingList(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.map((entry) => String(entry || '').trim()).filter(Boolean)
-    : []
-}
-
-function isManagedPolicySettingLocked(
-  status: ManagedPolicyStatus | null | undefined,
-  setting: string
-): boolean {
-  if (status?.active !== true) return false
-  return (
-    managedPolicySettingList(status.lockedSettings).includes(setting) ||
-    managedPolicySettingList(status.enforcedSettings).includes(setting)
-  )
-}
 
 interface SettingsPanelProps {
   mode: AppearanceMode
