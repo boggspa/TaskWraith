@@ -26,6 +26,7 @@ describe('redundant Ensemble transcript notices', () => {
     'Full fan-out · 2 participant(s) dispatched concurrently (read-clamped lanes).',
     'Locked writer fan-out: Orchestrator requested 2 lane(s). Boss dispatch: two disjoint write slices for transcript-hide task after scout recon converged',
     'Full fan-out: Advisor requested 2 reader lane(s) under their own permission postures.',
+    'Parallel mode requested but fewer than two read-pass participants were available; continuing serially.',
     'Locked writer fan-out requested but TASKWRAITH_CONCURRENT_WRITE_LANES=0; continuing with serial writers.',
     'Locked writer fan-out needs at least two writer-capable participants with no intervening serial participants after the read-only fan-out step; continuing serially.',
     'Locked writer fan-out requires the assigned Boss to call ensemble_fanout with explicit writeScopes; continuing with serial writers.',

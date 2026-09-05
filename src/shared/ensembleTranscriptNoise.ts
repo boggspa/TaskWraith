@@ -16,6 +16,7 @@ const ROUTINE_SUCCESS_NOTICES = [
   /^(?:User Fan-Out|Locked writer fan-out|Scout fan-out|Worker fan-out|Review fan-out|Background fan-out|Ensemble fan-out|Parallel fan-out|Full fan-out) complete · \d+ lane\(s\) returned(?: to the caller)?\.$/,
   /^Automatic read stage complete · returning to serial writer step\.$/,
   /^(?:Locked writer|Scout|Worker|Review|Background|Ensemble|Parallel|Full) fan-out: .+ requested \d+ (?:reader )?lane\(s\)(?: under their own permission postures)?\.(?: .*)?$/,
+  /^Parallel mode requested but fewer than two read-pass participants were available; continuing serially\.$/,
   /^Locked writer fan-out .+; continuing (?:with serial writers|serially)\.$/,
   /^(?:Boss|Captain) selection arrived after this pass's seats dispatched — queued to apply once when the next Continuous pass forms\.$/,
   /^Yield target "[^"]+" was not routed: .+\.$/
