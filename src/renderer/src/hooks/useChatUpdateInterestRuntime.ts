@@ -27,6 +27,12 @@ import {
   PagedChatUpdateRefreshCoordinator,
   type PagedChatUpdateRefreshCommit
 } from '../lib/PagedChatUpdateRefreshCoordinator'
+import {
+  PagedChatPresentationCoalescer,
+  publishCoalescedChatList,
+  publishCoalescedCurrentChat,
+  type PagedChatPresentationScheduling
+} from '../lib/PagedChatPresentationCoalescer'
 import { preserveOptimisticEnsembleQueue } from '../lib/queuedMessageRows'
 import { projectRendererChatListItem } from '../state/rendererChatListProjection'
 
@@ -157,12 +163,18 @@ export class ChatUpdateInterestRuntime {
   private handshakePublished = false
   private started = false
   private getState: () => ChatUpdateInterestRuntimeState
+  private readonly presentation: PagedChatPresentationCoalescer
 
   constructor(
     private readonly bridge: ChatUpdateInterestBridge,
-    state: ChatUpdateInterestRuntimeState | (() => ChatUpdateInterestRuntimeState)
+    state: ChatUpdateInterestRuntimeState | (() => ChatUpdateInterestRuntimeState),
+    options?: { presentationScheduling?: PagedChatPresentationScheduling }
   ) {
     this.getState = typeof state === 'function' ? state : () => state
+    this.presentation = new PagedChatPresentationCoalescer(
+      (chatIds) => this.applyPresentationFlush(chatIds),
+      options?.presentationScheduling
+    )
   }
 
   setState(state: ChatUpdateInterestRuntimeState): void {
@@ -212,6 +224,9 @@ export class ChatUpdateInterestRuntime {
     this.unsubscribe = null
     this.coordinator?.dispose()
     this.coordinator = null
+    // Publish any commit accepted since the last frame before going quiet,
+    // leaving no armed presentation timers behind.
+    this.presentation.flushNow()
     this.deferredPagedInvalidations.clear()
     this.publishedModes.clear()
     this.publishedSignature = null
@@ -296,13 +311,25 @@ export class ChatUpdateInterestRuntime {
     if (state.activeRunChatIdRef.current === chat.appChatId) {
       state.activeRunChatSnapshotRef.current = chat
     }
-    state.setChats((previous) => {
-      const existing = previous.find((candidate) => candidate.appChatId === chat.appChatId)
-      if (existing === chat) return previous
-      return [chat, ...previous.filter((candidate) => candidate.appChatId !== chat.appChatId)].sort(
-        (left, right) => right.updatedAt - left.updatedAt
+    // Canonical refs are current immediately; React publication is coalesced
+    // per frame with chrome identity retention, mirroring the full-delivery
+    // path (App.tsx flushCoalescedChats) instead of replacing and re-sorting
+    // the global list once per accepted page.
+    this.presentation.schedule(chat.appChatId)
+  }
+
+  private applyPresentationFlush(chatIds: ReadonlySet<string>): void {
+    const state = this.getState()
+    const resolveCanonical = (chatId: string): ChatRecord | undefined =>
+      state.chatByIdRef.current.get(chatId)
+    try {
+      state.setChats((previous) => publishCoalescedChatList(previous, chatIds, resolveCanonical))
+      state.setCurrentChat((previous) =>
+        publishCoalescedCurrentChat(previous, chatIds, resolveCanonical)
       )
-    })
+    } catch {
+      // A renderer state transition may have made the surface disappear.
+    }
   }
 
   private dropPendingFullAliases(chatId: string): void {
@@ -377,7 +404,6 @@ export class ChatUpdateInterestRuntime {
     state.hydrationRuntime.transcriptStore.replaceChatTranscriptWindow(page)
     state.hydrationRuntime.byteLru.touch(chatId)
     this.replaceChatRecord(committed)
-    state.setCurrentChat((previous) => (previous?.appChatId === chatId ? committed : previous))
   }
 }
 

@@ -11,6 +11,7 @@ import type {
   TranscriptPageRequest
 } from '../../../shared/transcriptPage'
 import { createChatHydrationRuntime } from '../lib/chatHydrationRuntime'
+import { isChatSummaryRecord } from '../lib/chatRecordMerge'
 import {
   buildChatUpdateInterestSurfaceSnapshot,
   ChatUpdateInterestRuntime,
@@ -82,6 +83,8 @@ function page(chatId: string, revision = 3): TranscriptPage {
 function stateHarness(initialChats: ChatRecord[], initialCurrent: ChatRecord | null = null) {
   let chats = initialChats
   let currentChat = initialCurrent
+  let setChatsCalls = 0
+  let setCurrentChatCalls = 0
   const chatByIdRef = { current: new Map(initialChats.map((chat) => [chat.appChatId, chat])) }
   const activeRunChatIdRef = { current: null as string | null }
   const activeRunChatSnapshotRef = { current: null as ChatRecord | null }
@@ -95,9 +98,11 @@ function stateHarness(initialChats: ChatRecord[], initialCurrent: ChatRecord | n
     chats,
     currentChat,
     setChats: (action) => {
+      setChatsCalls += 1
       chats = typeof action === 'function' ? action(chats) : action
     },
     setCurrentChat: (action) => {
+      setCurrentChatCalls += 1
       currentChat = typeof action === 'function' ? action(currentChat) : action
     },
     chatByIdRef,
@@ -127,7 +132,13 @@ function stateHarness(initialChats: ChatRecord[], initialCurrent: ChatRecord | n
     hydrationRuntime,
     currentAutoFollowRef,
     chats: () => chats,
-    currentChat: () => currentChat
+    currentChat: () => currentChat,
+    setChatsCallCount: () => setChatsCalls,
+    setCurrentChatCallCount: () => setCurrentChatCalls,
+    resetPublicationCounts: () => {
+      setChatsCalls = 0
+      setCurrentChatCalls = 0
+    }
   }
 }
 
@@ -357,5 +368,289 @@ describe('ChatUpdateInterestRuntime', () => {
     runtime.retryDeferredPagedInvalidations()
     await vi.advanceTimersByTimeAsync(50)
     expect(fetchPage).toHaveBeenCalledOnce()
+  })
+})
+
+describe('coalesced paged presentation publication', () => {
+  let invalidationHandler: ((value: ChatUpdateInvalidation) => void) | null
+
+  beforeEach(() => {
+    invalidationHandler = null
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function pagedBridge(
+    fetch: (request: TranscriptPageRequest) => TranscriptPage | null
+  ): ChatUpdateInterestBridge {
+    return {
+      onChatUpdateInvalidated: (handler) => {
+        invalidationHandler = handler
+        return () => undefined
+      },
+      setChatUpdateInterests: () => undefined,
+      getChatTranscriptPage: async (request) => fetch(request)
+    }
+  }
+
+  /** Shell whose chrome stays byte-identical across revisions unless overridden. */
+  function stableShell(
+    chatId: string,
+    revision: number,
+    overrides: Partial<ChatShell> = {}
+  ): ChatShell {
+    return {
+      ...summary(chatId, 2_000),
+      runsSummary: [{ runId: `${chatId}-run-1`, provider: 'codex', diffFileCount: 0 }],
+      updatedAt: revision,
+      persistenceRevision: revision,
+      transcriptPaged: true,
+      ...overrides
+    } as ChatShell
+  }
+
+  function stablePage(
+    chatId: string,
+    revision: number,
+    overrides?: Partial<ChatShell>
+  ): TranscriptPage {
+    return { ...page(chatId, revision), shell: stableShell(chatId, revision, overrides) }
+  }
+
+  async function settleDebouncedFetch(): Promise<void> {
+    await vi.advanceTimersByTimeAsync(50)
+    await Promise.resolve()
+  }
+
+  it('coalesces a paged burst across chats into one publication while refs stay current', async () => {
+    const ids = ['alpha', 'beta', 'gamma']
+    const initialPages = ids.map((chatId) => stablePage(chatId, 2))
+    const shells = initialPages.map((initialPage) => initialPage.shell!)
+    const harness = stateHarness([...shells], shells[0])
+    for (const initialPage of initialPages) {
+      harness.hydrationRuntime.transcriptStore.ingestPage(initialPage)
+    }
+    const runtime = new ChatUpdateInterestRuntime(
+      pagedBridge((request) =>
+        stablePage(request.chatId, 5, {
+          runsSummary: [
+            {
+              runId: `${request.chatId}-run-1`,
+              provider: 'codex',
+              diffFileCount: 0,
+              endedAt: '2026-09-05T00:00:00.000Z'
+            }
+          ]
+        })
+      ),
+      harness.getState
+    )
+    runtime.setPendingSnapshot(
+      createChatUpdateInterestSnapshot(ids.map((chatId) => ({ chatId, mode: 'paged' as const })))
+    )
+    runtime.start()
+    harness.resetPublicationCounts()
+
+    for (const chatId of ids) {
+      invalidationHandler!(buildChatUpdateInvalidation(summary(chatId, 2_000))!)
+    }
+    await settleDebouncedFetch()
+
+    // Canonical refs and the transcript store are byte-exact current immediately…
+    for (const chatId of ids) {
+      expect((harness.chatByIdRef.current.get(chatId) as ChatShell).persistenceRevision).toBe(5)
+      expect(harness.hydrationRuntime.transcriptStore.get(chatId)?.messages[0]?.id).toBe(
+        `${chatId}-tail`
+      )
+    }
+    // …while presentation publishes once for the whole burst, not once per page.
+    expect(harness.setChatsCallCount()).toBe(0)
+    expect(harness.setCurrentChatCallCount()).toBe(0)
+
+    await vi.advanceTimersByTimeAsync(16)
+    expect(harness.setChatsCallCount()).toBe(1)
+    expect(harness.setCurrentChatCallCount()).toBe(1)
+    expect(harness.chats()).toHaveLength(3)
+    for (const chatId of ids) {
+      const published = harness.chats().find((chat) => chat.appChatId === chatId) as ChatShell
+      expect(published.persistenceRevision).toBe(5)
+      expect(published.runsSummary?.[0]?.endedAt).toBe('2026-09-05T00:00:00.000Z')
+    }
+    expect((harness.currentChat() as ChatShell).persistenceRevision).toBe(5)
+  })
+
+  it('retains list and current identity on volatile-only churn yet publishes real changes', async () => {
+    const first = stablePage('large', 3)
+    const initialChats = [first.shell!]
+    const harness = stateHarness(initialChats, first.shell!)
+    harness.hydrationRuntime.transcriptStore.ingestPage(first)
+    let nextShell = (): TranscriptPage => stablePage('large', 4)
+    const runtime = new ChatUpdateInterestRuntime(
+      pagedBridge(() => nextShell()),
+      harness.getState
+    )
+    runtime.setPendingSnapshot(
+      createChatUpdateInterestSnapshot([{ chatId: 'large', mode: 'paged' }])
+    )
+    runtime.start()
+    harness.resetPublicationCounts()
+
+    // Cycle 1: only updatedAt/persistenceRevision change (fresh IPC objects).
+    invalidationHandler!(buildChatUpdateInvalidation(summary('large', 2_000))!)
+    await settleDebouncedFetch()
+    await vi.advanceTimersByTimeAsync(16)
+    expect(harness.setChatsCallCount()).toBe(1)
+    // Canonical ref advanced; React identity retained for unchanged chrome.
+    expect((harness.chatByIdRef.current.get('large') as ChatShell).persistenceRevision).toBe(4)
+    expect(harness.chats()).toBe(initialChats)
+    expect(harness.chats()[0]).toBe(first.shell)
+    expect(harness.currentChat()).toBe(first.shell)
+
+    // Cycle 2: run status flips — chrome must publish a fresh identity.
+    nextShell = () =>
+      stablePage('large', 5, {
+        runsSummary: [
+          {
+            runId: 'large-run-1',
+            provider: 'codex',
+            diffFileCount: 0,
+            endedAt: '2026-09-05T00:00:00.000Z'
+          }
+        ]
+      })
+    invalidationHandler!(buildChatUpdateInvalidation(summary('large', 2_000))!)
+    await settleDebouncedFetch()
+    await vi.advanceTimersByTimeAsync(16)
+    const afterStatus = harness.chats()[0] as ChatShell
+    expect(afterStatus).not.toBe(first.shell)
+    expect(afterStatus.persistenceRevision).toBe(5)
+    expect(afterStatus.runsSummary?.[0]?.endedAt).toBe('2026-09-05T00:00:00.000Z')
+    expect((harness.currentChat() as ChatShell).persistenceRevision).toBe(5)
+
+    // Cycle 3: an ensemble queue appears — queue changes must publish too.
+    nextShell = () =>
+      stablePage('large', 6, {
+        runsSummary: [
+          {
+            runId: 'large-run-1',
+            provider: 'codex',
+            diffFileCount: 0,
+            endedAt: '2026-09-05T00:00:00.000Z'
+          }
+        ],
+        chatKind: 'ensemble',
+        ensemble: {
+          participants: [],
+          activeRound: { roundId: 'round-1', status: 'running', queuedPrompts: ['queued later'] }
+        } as unknown as ChatRecord['ensemble']
+      } as Partial<ChatShell>)
+    invalidationHandler!(buildChatUpdateInvalidation(summary('large', 2_000))!)
+    await settleDebouncedFetch()
+    await vi.advanceTimersByTimeAsync(16)
+    const afterQueue = harness.chats()[0] as ChatRecord
+    expect(afterQueue).not.toBe(afterStatus)
+    expect(afterQueue.ensemble?.activeRound?.queuedPrompts).toEqual(['queued later'])
+  })
+
+  it('does not resurrect a chat deleted between commit and presentation flush', async () => {
+    const first = stablePage('doomed', 3)
+    const harness = stateHarness([first.shell!], first.shell!)
+    harness.hydrationRuntime.transcriptStore.ingestPage(first)
+    const runtime = new ChatUpdateInterestRuntime(
+      pagedBridge(() =>
+        stablePage('doomed', 4, {
+          runsSummary: [
+            {
+              runId: 'doomed-run-1',
+              provider: 'codex',
+              diffFileCount: 0,
+              endedAt: '2026-09-05T00:00:00.000Z'
+            }
+          ]
+        })
+      ),
+      harness.getState
+    )
+    runtime.setPendingSnapshot(
+      createChatUpdateInterestSnapshot([{ chatId: 'doomed', mode: 'paged' }])
+    )
+    runtime.start()
+
+    invalidationHandler!(buildChatUpdateInvalidation(summary('doomed', 2_000))!)
+    await settleDebouncedFetch()
+    // Simulate App's deletion path landing between commit and flush.
+    harness.chatByIdRef.current.delete('doomed')
+    harness.getState().setChats(() => [])
+    harness.getState().setCurrentChat(() => null)
+    harness.resetPublicationCounts()
+
+    await vi.advanceTimersByTimeAsync(200)
+    expect(harness.chats()).toEqual([])
+    expect(harness.currentChat()).toBeNull()
+  })
+
+  it('publishes pending presentation exactly once on stop and leaves no armed timers', async () => {
+    const first = stablePage('large', 3)
+    const harness = stateHarness([first.shell!], first.shell!)
+    harness.hydrationRuntime.transcriptStore.ingestPage(first)
+    const runtime = new ChatUpdateInterestRuntime(
+      pagedBridge(() =>
+        stablePage('large', 4, {
+          runsSummary: [
+            {
+              runId: 'large-run-1',
+              provider: 'codex',
+              diffFileCount: 0,
+              endedAt: '2026-09-05T00:00:00.000Z'
+            }
+          ]
+        })
+      ),
+      harness.getState
+    )
+    runtime.setPendingSnapshot(
+      createChatUpdateInterestSnapshot([{ chatId: 'large', mode: 'paged' }])
+    )
+    runtime.start()
+
+    invalidationHandler!(buildChatUpdateInvalidation(summary('large', 2_000))!)
+    await settleDebouncedFetch()
+    harness.resetPublicationCounts()
+
+    runtime.stop()
+    expect(harness.setChatsCallCount()).toBe(1)
+    expect((harness.chats()[0] as ChatShell).persistenceRevision).toBe(4)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(harness.setChatsCallCount()).toBe(1)
+    expect(harness.setCurrentChatCallCount()).toBe(1)
+  })
+
+  it('coalesces background summary invalidations while refs project immediately', async () => {
+    const a = fullChat('bg-a', 4)
+    const b = fullChat('bg-b', 4)
+    const harness = stateHarness([a, b])
+    const runtime = new ChatUpdateInterestRuntime(
+      pagedBridge(() => null),
+      harness.getState
+    )
+    runtime.start()
+    harness.resetPublicationCounts()
+
+    invalidationHandler!(buildChatUpdateInvalidation(summary('bg-a', 5))!)
+    invalidationHandler!(buildChatUpdateInvalidation(summary('bg-b', 5))!)
+
+    // Canonical refs hold lean projections immediately…
+    expect(isChatSummaryRecord(harness.chatByIdRef.current.get('bg-a'))).toBe(true)
+    expect(isChatSummaryRecord(harness.chatByIdRef.current.get('bg-b'))).toBe(true)
+    // …and the burst publishes once, not once per summary.
+    expect(harness.setChatsCallCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(16)
+    expect(harness.setChatsCallCount()).toBe(1)
+    expect(harness.chats()).toHaveLength(2)
+    expect(harness.chats().every((chat) => isChatSummaryRecord(chat))).toBe(true)
   })
 })
