@@ -158,8 +158,56 @@ function finish(
 }
 
 describe('EnsembleOrchestrator host-wide admission', () => {
+  it('starts all six automatic readers with one other host slot occupied', async () => {
+    const admission = controlledScheduler()
+    const readers = Array.from({ length: 6 }, (_, index) => ({
+      ...participant(`reader-${index}`, 'codex', index + 1, `Reader ${index}`),
+      stageRole: 'scout' as const,
+      permissionPresetId: 'read_only' as const
+    }))
+    const testHarness = harness(
+      [
+        chat('holder-chat', [participant('holder', 'claude', 1)]),
+        chat('automatic-readers', readers, { fanoutPolicy: 'read_only' })
+      ],
+      admission
+    )
+    testHarness.orchestrator.startRound({
+      chatId: 'holder-chat',
+      prompt: 'Hold one host slot.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(testHarness.dispatched).toHaveLength(1))
+    testHarness.orchestrator.startRound({
+      chatId: 'automatic-readers',
+      prompt: 'Run the six readers.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(testHarness.dispatched).toHaveLength(7))
+    expect(admission.scheduler.snapshot().occupancy).toMatchObject({
+      maxActive: 30,
+      active: 7,
+      queued: 0
+    })
+    expect(admission.scheduler.snapshot().metrics.initiallyQueued).toBe(0)
+    expect(admission.scheduledCount()).toBe(0)
+    expect(
+      testHarness.chats
+        .get('automatic-readers')
+        ?.messages.some((message) => /host queue ·|provider dispatch started/.test(message.content))
+    ).toBe(false)
+
+    await Promise.all(
+      ['holder-chat', 'automatic-readers'].map((chatId) =>
+        testHarness.orchestrator.cancelRound(chatId, 'Admission test cleanup.')
+      )
+    )
+    for (const payload of testHarness.dispatched) testHarness.settle(payload.appRunId || '')
+    await admission.scheduler.whenIdle()
+  })
+
   it.each([8, 30])(
-    'fills %i host slots fairly across three 20-seat chats with held dispatches',
+    'fills %i host slots without imposing a per-chat wave limit',
     async (capacity) => {
       const admission = controlledScheduler(
         capacity === 30 ? {} : { maxActive: 8, maxForeground: 6 }
@@ -205,9 +253,7 @@ describe('EnsembleOrchestrator host-wide admission', () => {
 
       const lanePayloads = testHarness.dispatched.filter((payload) => payload.ensembleRun?.laneId)
       expect(testHarness.dispatched).toHaveLength(capacity)
-      expect(new Set(lanePayloads.map((payload) => payload.appChatId))).toEqual(
-        new Set(['fair-a', 'fair-b', 'fair-c'])
-      )
+      expect(lanePayloads).toHaveLength(capacity - 3)
       expect(testHarness.orchestrator.getHostAdmissionSnapshot().occupancy).toMatchObject({
         active: capacity,
         queued: 63 - capacity
@@ -216,9 +262,11 @@ describe('EnsembleOrchestrator host-wide admission', () => {
         testHarness.orchestrator.getHostAdmissionSnapshot().metrics.peakActive
       ).toBeLessThanOrEqual(capacity)
       if (capacity === 30) {
-        expect(testHarness.orchestrator.getHostAdmissionSnapshot().byChat).toEqual(
-          ['fair-a', 'fair-b', 'fair-c'].map((chatId) => ({ chatId, active: 10, queued: 11 }))
-        )
+        expect(testHarness.orchestrator.getHostAdmissionSnapshot().byChat).toEqual([
+          { chatId: 'fair-a', active: 21, queued: 0 },
+          { chatId: 'fair-b', active: 8, queued: 13 },
+          { chatId: 'fair-c', active: 1, queued: 20 }
+        ])
         expect(testHarness.preparedRunIds).toHaveLength(30)
         for (const targetChat of testHarness.chats.values()) {
           expect(

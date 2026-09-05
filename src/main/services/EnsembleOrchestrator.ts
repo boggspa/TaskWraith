@@ -3499,16 +3499,13 @@ export class EnsembleOrchestrator {
       } {
     if (!run.laneId) {
       const occupancy = this.hostAdmission.snapshot().occupancy
-      if (
-        occupancy.reservedLaneSlots < 1 ||
-        occupancy.maxForegroundPerChat >= occupancy.maxActivePerChat
-      ) {
+      if (occupancy.reservedLaneSlots < 1) {
         return {
           ok: false,
           code: 'foreground_capacity',
           retryable: true,
           occupancy,
-          message: `${operation}: Host admission has no reserved leaf capacity for descendant work. Finish this turn and retry after the capacity limits reserve at least one global and per-chat leaf slot; no descendant work was reserved.`
+          message: `${operation}: Host admission has no reserved leaf capacity for descendant work. Finish this turn and retry after the capacity limits reserve at least one host slot for leaf work; no descendant work was reserved.`
         }
       }
       return { ok: true }

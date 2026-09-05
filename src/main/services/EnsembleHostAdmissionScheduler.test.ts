@@ -3,8 +3,6 @@ import type { ProviderId } from '../store/types'
 import {
   DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_FOREGROUND_RUNS,
   DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS,
-  DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS_PER_CHAT,
-  DEFAULT_ENSEMBLE_HOST_FAIR_SHARE_PER_CHAT,
   DEFAULT_ENSEMBLE_HOST_MAX_QUEUED_RUNS,
   EnsembleHostAdmissionScheduler,
   type EnsembleHostAdmissionLease,
@@ -81,8 +79,8 @@ describe('EnsembleHostAdmissionScheduler capacity', () => {
 
   it('refuses descendant ownership when custom limits reserve no leaf capacity', async () => {
     for (const options of [
-      { maxActive: 1, maxForeground: 1, maxActivePerChat: 1 },
-      { maxActive: 2, maxForeground: 2, maxActivePerChat: 2 }
+      { maxActive: 1, maxForeground: 1 },
+      { maxActive: 2, maxForeground: 2 }
     ]) {
       const scheduler = new EnsembleHostAdmissionScheduler(options)
       const root = await admittedLease(
@@ -98,7 +96,7 @@ describe('EnsembleHostAdmissionScheduler capacity', () => {
     }
   })
 
-  it('defaults to 30 active runs, ten per chat, 24 foreground owners, six leaf slots and 256 waiters', async () => {
+  it('defaults to 30 active runs, 24 foreground owners, six leaf slots and 256 waiters', async () => {
     const tasks = createTaskQueue()
     const scheduler = new EnsembleHostAdmissionScheduler({ schedule: tasks.schedule })
     const active: EnsembleHostAdmissionLease[] = []
@@ -133,10 +131,7 @@ describe('EnsembleHostAdmissionScheduler capacity', () => {
     expect(blockedLane).toMatchObject({ kind: 'reserved', initialState: 'queued' })
     expect(scheduler.snapshot().occupancy).toEqual({
       maxActive: DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS,
-      maxActivePerChat: DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS_PER_CHAT,
-      fairSharePerChat: DEFAULT_ENSEMBLE_HOST_FAIR_SHARE_PER_CHAT,
       maxForeground: DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_FOREGROUND_RUNS,
-      maxForegroundPerChat: 9,
       reservedLaneSlots: 6,
       maxQueued: DEFAULT_ENSEMBLE_HOST_MAX_QUEUED_RUNS,
       active: 30,
@@ -238,8 +233,6 @@ describe('EnsembleHostAdmissionScheduler capacity', () => {
     const tasks = createTaskQueue()
     const scheduler = new EnsembleHostAdmissionScheduler({
       maxActive: 8,
-      maxActivePerChat: 8,
-      fairSharePerChat: 8,
       maxForeground: 6,
       maxQueued: 16,
       schedule: tasks.schedule
@@ -289,47 +282,43 @@ describe('EnsembleHostAdmissionScheduler capacity', () => {
     })
   })
 
-  it('reserves a per-chat leaf slot when a root and two lanes attempt nested ownership', async () => {
+  it('allows one chat to own descendants up to the global owner bound', async () => {
     const tasks = createTaskQueue()
-    const scheduler = new EnsembleHostAdmissionScheduler({
-      maxActivePerChat: 3,
-      schedule: tasks.schedule
-    })
+    const scheduler = new EnsembleHostAdmissionScheduler({ schedule: tasks.schedule })
     const root = await admittedLease(scheduler.reserve(request('root', { kind: 'foreground' })))
-    const firstOwner = await admittedLease(scheduler.reserve(request('owner-a')))
-    const secondOwner = await admittedLease(scheduler.reserve(request('owner-b')))
-
-    expect(scheduler.promoteToForeground('owner-a')).toMatchObject({
-      ok: true,
-      promoted: true
-    })
-    expect(scheduler.promoteToForeground('owner-b')).toMatchObject({
+    const owners: EnsembleHostAdmissionLease[] = []
+    for (let index = 0; index < 23; index += 1) {
+      const owner = await admittedLease(scheduler.reserve(request(`owner-${index}`)))
+      owners.push(owner)
+      expect(scheduler.promoteToForeground(owner.identity.runId)).toMatchObject({
+        ok: true,
+        promoted: true
+      })
+    }
+    const child = scheduler.reserve(request('nested-child'))
+    expect(child).toMatchObject({ kind: 'reserved', initialState: 'admitted' })
+    const childLease = await admittedLease(child)
+    expect(scheduler.promoteToForeground(childLease.identity.runId)).toMatchObject({
       ok: false,
       code: 'foreground_capacity',
       retryable: true
     })
-
-    const child = scheduler.reserve(request('nested-child'))
-    expect(child).toMatchObject({ kind: 'reserved', initialState: 'queued' })
-    secondOwner.release()
-    tasks.runOne()
-    const childLease = await admittedLease(child)
     expect(scheduler.snapshot().occupancy).toMatchObject({
-      active: 3,
-      activeForeground: 2,
+      active: 25,
+      activeForeground: 24,
       activeLanes: 1,
       queued: 0
     })
 
     childLease.release()
-    firstOwner.release()
+    for (const owner of owners) owner.release()
     root.release()
     await scheduler.whenIdle()
   })
 })
 
 describe('EnsembleHostAdmissionScheduler fairness', () => {
-  it('fills 30 slots across three busy chats with at most ten each and paced borrowing', async () => {
+  it('admits every free host slot immediately and queues only the excess', async () => {
     const tasks = createTaskQueue()
     const scheduler = new EnsembleHostAdmissionScheduler({ schedule: tasks.schedule })
     const reservations: EnsembleHostAdmissionReservation[] = []
@@ -340,23 +329,15 @@ describe('EnsembleHostAdmissionScheduler fairness', () => {
       }
     }
 
-    // The first chat can take only its initial share in the reservation stack.
-    expect(scheduler.snapshot().occupancy).toMatchObject({ active: 3, queued: 57 })
-    for (let active = 4; active <= 30; active += 1) {
-      expect(tasks.size()).toBe(1)
-      tasks.runOne()
-      const snapshot = scheduler.snapshot()
-      expect(snapshot.occupancy.active).toBe(active)
-      expect(snapshot.byChat.every((entry) => entry.active <= 10)).toBe(true)
-      if (active === 9) expect(snapshot.byChat.every((entry) => entry.active === 3)).toBe(true)
-    }
+    expect(reservations.slice(0, 30).every((entry) => entry.initialState === 'admitted')).toBe(true)
+    expect(reservations.slice(30).every((entry) => entry.initialState === 'queued')).toBe(true)
     expect(tasks.size()).toBe(0)
     const snapshot = scheduler.snapshot()
     expect(snapshot.occupancy).toMatchObject({ active: 30, queued: 30 })
     expect(snapshot.byChat).toEqual([
-      { chatId: 'chat-a', active: 10, queued: 10 },
+      { chatId: 'chat-a', active: 20, queued: 0 },
       { chatId: 'chat-b', active: 10, queued: 10 },
-      { chatId: 'chat-c', active: 10, queued: 10 }
+      { chatId: 'chat-c', active: 0, queued: 20 }
     ])
 
     const activeLeases: EnsembleHostAdmissionLease[] = []
@@ -374,55 +355,69 @@ describe('EnsembleHostAdmissionScheduler fairness', () => {
     await scheduler.whenIdle()
   })
 
-  it('lets one busy chat borrow up to ten slots while retaining its queued tail', async () => {
-    const tasks = createTaskQueue()
-    const scheduler = new EnsembleHostAdmissionScheduler({ schedule: tasks.schedule })
-    for (let index = 0; index < 20; index += 1) {
-      reservation(scheduler.reserve(request(`solo-${index}`)))
+  it.each([4, 6, 12, 30])(
+    'admits all %i lanes in one chat without an initial-share limit',
+    async (count) => {
+      const tasks = createTaskQueue()
+      const scheduler = new EnsembleHostAdmissionScheduler({ schedule: tasks.schedule })
+      for (let index = 0; index < count; index += 1) {
+        expect(scheduler.reserve(request(`solo-${index}`))).toMatchObject({
+          initialState: 'admitted'
+        })
+      }
+      expect(scheduler.snapshot().occupancy).toMatchObject({ active: count, queued: 0 })
+      expect(tasks.size()).toBe(0)
+      scheduler.shutdown()
+      await scheduler.whenIdle()
     }
-    expect(scheduler.snapshot().occupancy).toMatchObject({ active: 3, queued: 17 })
-    for (let index = 0; index < 7; index += 1) tasks.runOne()
-    expect(scheduler.snapshot().occupancy).toMatchObject({ active: 10, queued: 10 })
-    expect(tasks.size()).toBe(0)
-    scheduler.shutdown()
-    await scheduler.whenIdle()
-  })
+  )
 
-  it('gives a late chat its initial share before refilling older borrowers without preemption', async () => {
+  it('rotates queued chats as slots free without preempting the active pool', async () => {
     const tasks = createTaskQueue()
     const scheduler = new EnsembleHostAdmissionScheduler({ schedule: tasks.schedule })
-    const pending: EnsembleHostAdmissionReservation[] = []
-    for (const chatId of ['chat-a', 'chat-b', 'chat-c']) {
-      for (let index = 0; index < 12; index += 1) {
-        pending.push(reservation(scheduler.reserve(request(`${chatId}-${index}`, { chatId }))))
-      }
-    }
-    while (tasks.size() > 0) tasks.runOne()
     const leases: EnsembleHostAdmissionLease[] = []
-    for (const held of pending) {
-      if (scheduler.stateForRun(held.identity.runId) === 'active') {
-        leases.push(await admittedLease(held))
+    for (let index = 0; index < 30; index += 1) {
+      leases.push(await admittedLease(scheduler.reserve(request(`holder-${index}`))))
+    }
+    const pending = new Map<string, EnsembleHostAdmissionReservation>()
+    for (const chatId of ['chat-a', 'chat-b']) {
+      for (let index = 1; index <= 2; index += 1) {
+        const runId = `${chatId}-${index}`
+        pending.set(runId, reservation(scheduler.reserve(request(runId, { chatId }))))
       }
     }
-    expect(leases).toHaveLength(30)
-    const late = Array.from({ length: 3 }, (_, index) =>
-      reservation(scheduler.reserve(request(`late-${index}`, { chatId: 'chat-late' })))
-    )
-    expect(scheduler.snapshot().occupancy).toMatchObject({ active: 30, queued: 9 })
+    expect(scheduler.snapshot().occupancy).toMatchObject({ active: 30, queued: 4 })
     expect(leases.every((lease) => scheduler.stateForRun(lease.identity.runId) === 'active')).toBe(
       true
     )
-
-    for (let index = 0; index < 3; index += 1) {
+    const order = ['chat-a-1', 'chat-b-1', 'chat-a-2', 'chat-b-2']
+    for (let index = 0; index < order.length; index += 1) {
       leases[index].release()
       tasks.runOne()
-      leases.push(await admittedLease(late[index]))
-      expect(
-        scheduler.snapshot().byChat.find((entry) => entry.chatId === 'chat-late')?.active
-      ).toBe(index + 1)
-      expect(scheduler.stateForRun('chat-a-10')).toBe('queued')
+      expect(scheduler.stateForRun(order[index])).toBe('active')
+      leases.push(await admittedLease(pending.get(order[index])!))
+      expect(scheduler.snapshot().occupancy.active).toBe(30)
     }
-    scheduler.shutdown()
+    for (const lease of leases) lease.release()
+    await scheduler.whenIdle()
+  })
+
+  it('fills free capacity for a new fan-out even while a release drain is pending', async () => {
+    const tasks = createTaskQueue()
+    const scheduler = new EnsembleHostAdmissionScheduler({ schedule: tasks.schedule })
+    const leases: EnsembleHostAdmissionLease[] = []
+    for (let index = 0; index < 30; index += 1) {
+      leases.push(await admittedLease(scheduler.reserve(request(`holder-${index}`))))
+    }
+    const older = reservation(scheduler.reserve(request('older-waiter')))
+    leases[0].release()
+    leases[1].release()
+    expect(tasks.size()).toBe(1)
+    const incoming = reservation(scheduler.reserve(request('new-wave')))
+    expect(incoming.initialState).toBe('admitted')
+    leases.push(await admittedLease(older), await admittedLease(incoming))
+    expect(scheduler.snapshot().occupancy).toMatchObject({ active: 30, queued: 0 })
+    tasks.runOne()
     for (const lease of leases) lease.release()
     await scheduler.whenIdle()
   })

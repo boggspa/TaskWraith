@@ -595,12 +595,13 @@ describe('fan-out main-thread burst (RED bench)', () => {
       // --- Structural facts that are TRUE today -------------------------
       expect(wave.ok).toBe(true)
       expect(wave.laneIds).toHaveLength(LANE_COUNT)
-      expect(wave.hostAdmission).toMatchObject({ admitted: 3, queued: 27, capacity: 30 })
-      // The receipt records a real queued tail instead of waiting for all 30
-      // lanes. Immediately admitted mocks may already settle and release more
-      // slots while the receipt is forming, so only the strict "not all built"
-      // boundary is deterministic here; the held-adapter integration test pins
-      // the exact active cap.
+      // Every lane first reserves a host slot. The six Ollama lanes then give
+      // theirs back while acquiring provider-local model tickets; that separate
+      // model constraint must not be mistaken for a host first-wave limit.
+      expect(orchestrator.getHostAdmissionSnapshot().metrics.peakActive).toBe(30)
+      expect(wave.hostAdmission).toMatchObject({ admitted: 24, queued: 6, capacity: 30 })
+      // Hosted lanes reserve capacity immediately, but heavyweight builds still
+      // yield. The receipt must return before the whole wave is built.
       expect(dispatchedAtReceipt).toBeLessThan(LANE_COUNT + 1)
       expect(projectionsAtReceipt).toBeLessThan(LANE_COUNT)
       // Authority-bearing state is read once per admitted lane, after any

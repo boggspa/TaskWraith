@@ -11,8 +11,6 @@ import type { ProviderId } from '../store/types'
 export const DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS = 30
 // Leave six slots available to leaf work even when fan-out owners are waiting.
 export const DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_FOREGROUND_RUNS = 24
-export const DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS_PER_CHAT = 10
-export const DEFAULT_ENSEMBLE_HOST_FAIR_SHARE_PER_CHAT = 3
 export const DEFAULT_ENSEMBLE_HOST_MAX_QUEUED_RUNS = 256
 
 const MAX_IDENTIFIER_CHARS = 512
@@ -39,10 +37,7 @@ export interface EnsembleHostAdmissionIdentity extends EnsembleHostAdmissionRequ
 
 export interface EnsembleHostAdmissionOccupancy {
   readonly maxActive: number
-  readonly maxActivePerChat: number
-  readonly fairSharePerChat: number
   readonly maxForeground: number
-  readonly maxForegroundPerChat: number
   readonly reservedLaneSlots: number
   readonly maxQueued: number
   readonly active: number
@@ -163,20 +158,13 @@ export interface EnsembleHostAdmissionSnapshot {
 
 export interface EnsembleHostAdmissionSchedulerOptions {
   readonly maxActive?: number
-  /** Hard per-chat ceiling, including foreground owners and leaf work. */
-  readonly maxActivePerChat?: number
-  /**
-   * Chats below this share have priority over chats borrowing spare capacity.
-   * Borrowing is paced and never preempts an active run.
-   */
-  readonly fairSharePerChat?: number
   readonly maxForeground?: number
   readonly maxQueued?: number
   readonly now?: () => number
   /**
-   * Releases and spare-capacity borrowing drain at most one waiter per
-   * scheduled turn. Production defaults to setImmediate; tests may inject a
-   * deterministic task queue.
+   * Releases drain at most one waiter per scheduled turn. New fan-out requests
+   * can immediately fill free host slots. Production defaults to setImmediate;
+   * tests may inject a deterministic task queue.
    */
   readonly schedule?: (task: () => void) => void
 }
@@ -310,10 +298,7 @@ function removeFromOrder<T>(order: T[], value: T): void {
  */
 export class EnsembleHostAdmissionScheduler {
   private readonly maxActive: number
-  private readonly maxActivePerChat: number
-  private readonly fairSharePerChat: number
   private readonly maxForeground: number
-  private readonly maxForegroundPerChat: number
   private readonly maxQueued: number
   private readonly now: () => number
   private readonly scheduleTask: (task: () => void) => void
@@ -353,23 +338,6 @@ export class EnsembleHostAdmissionScheduler {
       options.maxActive ?? DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS,
       'Ensemble host active-run capacity'
     )
-    this.maxActivePerChat = requirePositiveInteger(
-      options.maxActivePerChat ??
-        Math.min(DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_RUNS_PER_CHAT, this.maxActive),
-      'Ensemble host per-chat active-run capacity'
-    )
-    if (this.maxActivePerChat > this.maxActive) {
-      throw new Error('Ensemble host per-chat active-run capacity cannot exceed total capacity.')
-    }
-    this.fairSharePerChat = requirePositiveInteger(
-      options.fairSharePerChat ??
-        Math.min(DEFAULT_ENSEMBLE_HOST_FAIR_SHARE_PER_CHAT, this.maxActivePerChat),
-      'Ensemble host per-chat fair share'
-    )
-    if (this.fairSharePerChat > this.maxActivePerChat) {
-      throw new Error('Ensemble host per-chat fair share cannot exceed per-chat capacity.')
-    }
-    this.maxForegroundPerChat = Math.max(1, this.maxActivePerChat - 1)
     this.maxForeground = requirePositiveInteger(
       options.maxForeground ??
         Math.min(DEFAULT_ENSEMBLE_HOST_MAX_ACTIVE_FOREGROUND_RUNS, this.maxActive),
@@ -418,11 +386,10 @@ export class EnsembleHostAdmissionScheduler {
     }
     this.enqueue(waiter)
 
-    // When a prior release already scheduled a paced drain, this reservation
-    // joins that fair queue instead of bypassing it and bursting synchronously.
-    // Only the initial fair share can start synchronously. Borrowing must yield
-    // so other chats can reserve before a large wave takes the spare slots.
-    if (!this.drainScheduled) this.drainAvailable(false)
+    // Fan-out lanes reserve every free host slot, including while a release
+    // drain is pending. This is lightweight bookkeeping: the runtime still
+    // builds only one heavyweight prompt per event-loop turn.
+    if (!this.drainScheduled || identity.kind === 'lane') this.drainAvailable()
 
     if (waiter.state === 'queued' && this.queuedByRunId.size > this.maxQueued) {
       this.removeQueuedWaiter(waiter)
@@ -495,17 +462,14 @@ export class EnsembleHostAdmissionScheduler {
         occupancy: this.occupancy()
       }
     }
-    if (
-      this.maxForeground >= this.maxActive ||
-      this.maxForegroundPerChat >= this.maxActivePerChat
-    ) {
+    if (this.maxForeground >= this.maxActive) {
       this.metricsState.promotionRejected += 1
       return {
         ok: false,
         code: 'foreground_capacity',
         retryable: true,
         message:
-          'Host admission has no reserved leaf capacity for descendant work. Finish this turn and retry after the capacity limits reserve at least one global and per-chat leaf slot; no descendant work was reserved.',
+          'Host admission has no reserved leaf capacity for descendant work. Finish this turn and retry after the capacity limits reserve at least one host slot for leaf work; no descendant work was reserved.',
         occupancy: this.occupancy()
       }
     }
@@ -519,17 +483,6 @@ export class EnsembleHostAdmissionScheduler {
         code: 'foreground_capacity',
         retryable: true,
         message: `Host foreground-owner capacity is full (${this.activeForeground}/${this.maxForeground}). Finish this lane and retry from a later foreground turn; no descendant work was reserved.`,
-        occupancy: this.occupancy()
-      }
-    }
-    const activeForegroundForChat = this.activeForegroundCountForChat(active.identity.chatId)
-    if (activeForegroundForChat >= this.maxForegroundPerChat) {
-      this.metricsState.promotionRejected += 1
-      return {
-        ok: false,
-        code: 'foreground_capacity',
-        retryable: true,
-        message: `Host foreground-owner capacity for this chat is full (${activeForegroundForChat}/${this.maxForegroundPerChat}). Finish this lane and retry from a later foreground turn; one per-chat slot remains reserved for leaf work and no descendant work was reserved.`,
         occupancy: this.occupancy()
       }
     }
@@ -734,63 +687,32 @@ export class EnsembleHostAdmissionScheduler {
     this.scheduleDrain()
   }
 
-  private activeCountForChat(chatId: string): number {
-    let count = 0
-    for (const active of this.activeByRunId.values()) {
-      if (active.identity.chatId === chatId) count += 1
-    }
-    return count
-  }
-
-  private activeForegroundCountForChat(chatId: string): number {
-    let count = 0
-    for (const active of this.activeByRunId.values()) {
-      if (active.identity.chatId === chatId && active.kind === 'foreground') count += 1
-    }
-    return count
-  }
-
-  private eligibleWaiter(
-    provider: ProviderQueue,
-    activeForegroundForChat: number
-  ): QueuedWaiter | undefined {
+  private eligibleWaiter(provider: ProviderQueue): QueuedWaiter | undefined {
     const lane = provider.lanes[0]
     const foreground =
-      this.activeForeground < this.maxForeground &&
-      activeForegroundForChat < this.maxForegroundPerChat
-        ? provider.foreground[0]
-        : undefined
+      this.activeForeground < this.maxForeground ? provider.foreground[0] : undefined
     if (!lane) return foreground
     if (!foreground) return lane
     return lane.sequence < foreground.sequence ? lane : foreground
   }
 
-  private peekNextEligible(allowBorrow = true): QueuedWaiter | undefined {
+  private peekNextEligible(): QueuedWaiter | undefined {
     if (this.activeByRunId.size >= this.maxActive) return undefined
-    const limits = [this.fairSharePerChat]
-    if (allowBorrow && this.fairSharePerChat < this.maxActivePerChat) {
-      limits.push(this.maxActivePerChat)
-    }
-    // Exhaust eligible work below the fair share before lending unused slots.
-    // Keep the existing chat/provider rotation and FIFO order within each tier.
-    for (const limit of limits) {
-      for (const chatId of this.chatOrder) {
-        const chat = this.chats.get(chatId)
-        if (!chat || this.activeCountForChat(chatId) >= limit) continue
-        const activeForegroundForChat = this.activeForegroundCountForChat(chatId)
-        for (const providerId of chat.providerOrder) {
-          const provider = chat.providers.get(providerId)
-          if (!provider) continue
-          const waiter = this.eligibleWaiter(provider, activeForegroundForChat)
-          if (waiter) return waiter
-        }
+    for (const chatId of this.chatOrder) {
+      const chat = this.chats.get(chatId)
+      if (!chat) continue
+      for (const providerId of chat.providerOrder) {
+        const provider = chat.providers.get(providerId)
+        if (!provider) continue
+        const waiter = this.eligibleWaiter(provider)
+        if (waiter) return waiter
       }
     }
     return undefined
   }
 
-  private takeNextEligible(allowBorrow = true): QueuedWaiter | undefined {
-    const waiter = this.peekNextEligible(allowBorrow)
+  private takeNextEligible(): QueuedWaiter | undefined {
+    const waiter = this.peekNextEligible()
     if (!waiter || !this.removeQueuedWaiter(waiter)) return undefined
     const { chatId, provider } = waiter.identity
     const remainingChat = this.chats.get(chatId)
@@ -856,9 +778,9 @@ export class EnsembleHostAdmissionScheduler {
     return true
   }
 
-  private drainAvailable(allowBorrow = true): void {
+  private drainAvailable(): void {
     while (!this.shuttingDown) {
-      const waiter = this.takeNextEligible(allowBorrow)
+      const waiter = this.takeNextEligible()
       if (!waiter) return
       this.admit(waiter)
     }
@@ -894,10 +816,7 @@ export class EnsembleHostAdmissionScheduler {
     }
     return {
       maxActive: this.maxActive,
-      maxActivePerChat: this.maxActivePerChat,
-      fairSharePerChat: this.fairSharePerChat,
       maxForeground: this.maxForeground,
-      maxForegroundPerChat: this.maxForegroundPerChat,
       reservedLaneSlots: this.maxActive - this.maxForeground,
       maxQueued: this.maxQueued,
       active: this.activeByRunId.size,
