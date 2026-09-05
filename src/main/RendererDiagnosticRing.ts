@@ -14,6 +14,10 @@ import {
   sanitizeRendererErrorBoundaryReport,
   type RendererDiagnosticCause,
   type RendererDiagnosticClientSample,
+  type RendererDiagnosticClientSampleStatus,
+  type RendererDiagnosticGpuMemoryStatus,
+  type RendererDiagnosticLaneMemoryStatus,
+  type RendererDiagnosticMetricsStatus,
   type RendererDiagnosticRingFile,
   type RendererDiagnosticSample,
   type RendererErrorBoundaryReport
@@ -49,6 +53,7 @@ export interface RendererDiagnosticRecorderOptions extends RendererDiagnosticRin
   now?: () => Date
   getAppMetrics?: () => ProcessMetric[]
   getMainMemoryUsage?: () => MainMemoryUsageSnapshot | null | undefined
+  getMainPid?: () => number | null | undefined
   /**
    * Coalesces getAppMetrics bursts: samples recorded within this window share
    * one process snapshot. 0 disables sharing. Defaults to 1_000ms.
@@ -74,6 +79,27 @@ function kibibytesToBytes(value: unknown): number | undefined {
   const kibibytes = optionalNonNegativeInteger(value)
   if (kibibytes === undefined) return undefined
   return Math.min(Number.MAX_SAFE_INTEGER, kibibytes * 1024)
+}
+
+function boundedPid(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined
+  return Math.min(Number.MAX_SAFE_INTEGER, Math.floor(value))
+}
+
+/** Bounds the persisted GPU identity list so one sample cannot grow the ring. */
+const MAX_GPU_PID_ENTRIES = 8
+
+/**
+ * Accepts only entries safe to read pid/type/memory from. Malformed entries are
+ * counted by the caller so a junk row cannot poison aggregation or masquerade
+ * as a healthy empty snapshot.
+ */
+function wellFormedMetricEntry(entry: unknown): ProcessMetric | undefined {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return undefined
+  const candidate = entry as Partial<ProcessMetric>
+  if (typeof candidate.pid !== 'number' || !Number.isFinite(candidate.pid)) return undefined
+  if (!candidate.memory || typeof candidate.memory !== 'object') return undefined
+  return entry as ProcessMetric
 }
 
 function normalizedCapacity(value: number | undefined): number {
@@ -199,17 +225,23 @@ export function rendererDiagnosticTargetFromWindow(
   }
 }
 
+type MetricsSnapshotOutcome = 'ok' | 'failed' | 'invalid' | 'missing'
+
 /** Combines renderer-owned V8 state with main-owned RSS, disk, and IPC state. */
 export class RendererDiagnosticRecorder {
   readonly ring: RendererDiagnosticRing
-  private readonly latestClientByTarget = new Map<number, RendererDiagnosticClientSample>()
+  private readonly latestClientByTarget = new Map<
+    number,
+    { client: RendererDiagnosticClientSample; rendererPid: number }
+  >()
   private readonly latestSampleByTarget = new Map<number, RendererDiagnosticSample>()
   private readonly now: () => Date
   private readonly metricsSnapshotTtlMs: number
   private metricsSnapshot: {
     atMs: number
     metrics: ProcessMetric[]
-    unavailable: boolean
+    malformedEntries: number
+    outcome: MetricsSnapshotOutcome
   } | null = null
 
   constructor(private readonly options: RendererDiagnosticRecorderOptions) {
@@ -220,8 +252,11 @@ export class RendererDiagnosticRecorder {
 
   recordClientSample(target: RendererDiagnosticTarget, input: unknown): RendererDiagnosticSample {
     const client = sanitizeRendererDiagnosticClientSample(input)
-    this.latestClientByTarget.set(target.webContentsId, client)
-    return this.record(target, 'interval', client)
+    this.latestClientByTarget.set(target.webContentsId, {
+      client,
+      rendererPid: target.rendererPid
+    })
+    return this.record(target, 'interval', client, undefined, undefined, 'fresh')
   }
 
   recordLifecycleSample(
@@ -229,23 +264,44 @@ export class RendererDiagnosticRecorder {
     cause: RendererLifecycleDiagnosticCause,
     crash?: { reason?: string; exitCode?: number }
   ): RendererDiagnosticSample {
-    const client =
-      this.latestClientByTarget.get(target.webContentsId) ??
-      sanitizeRendererDiagnosticClientSample(undefined)
-    return this.record(target, cause, client, crash)
+    const cached = this.cachedClientFor(target)
+    return this.record(target, cause, cached.client, crash, undefined, cached.status)
   }
 
   recordErrorBoundary(target: RendererDiagnosticTarget, input: unknown): RendererDiagnosticSample {
-    const client =
-      this.latestClientByTarget.get(target.webContentsId) ??
-      sanitizeRendererDiagnosticClientSample(undefined)
+    const cached = this.cachedClientFor(target)
     return this.record(
       target,
       'error-boundary',
-      client,
+      cached.client,
       undefined,
-      sanitizeRendererErrorBoundaryReport(input)
+      sanitizeRendererErrorBoundaryReport(input),
+      cached.status
     )
+  }
+
+  /**
+   * Reuses the last-known client sample only when it belongs to the same
+   * renderer. After a restart the same webContentsId hosts a new PID whose heap
+   * and DOM values are unknown until its first client sample arrives; reusing
+   * the dead renderer's values would misattribute them to the new PID. A target
+   * PID of 0 means the PID is unavailable (e.g. after render-process-gone), so
+   * the terminal sample keeps last-known values.
+   */
+  private cachedClientFor(target: RendererDiagnosticTarget): {
+    client: RendererDiagnosticClientSample
+    status: Exclude<RendererDiagnosticClientSampleStatus, 'fresh'>
+  } {
+    const cached = this.latestClientByTarget.get(target.webContentsId)
+    if (
+      cached &&
+      (target.rendererPid === 0 ||
+        cached.rendererPid === 0 ||
+        cached.rendererPid === target.rendererPid)
+    ) {
+      return { client: cached.client, status: 'reused' }
+    }
+    return { client: sanitizeRendererDiagnosticClientSample(undefined), status: 'none' }
   }
 
   recordWindowLifecycleSample(
@@ -267,22 +323,91 @@ export class RendererDiagnosticRecorder {
     cause: RendererDiagnosticCause,
     client: RendererDiagnosticClientSample,
     crash?: { reason?: string; exitCode?: number },
-    errorBoundary?: RendererErrorBoundaryReport
+    errorBoundary?: RendererErrorBoundaryReport,
+    clientStatus: RendererDiagnosticClientSampleStatus = 'none'
   ): RendererDiagnosticSample {
     const previous = this.latestSampleByTarget.get(target.webContentsId)
     const rendererPid = target.rendererPid || previous?.rendererPid || 0
     const sameRenderer = !target.rendererPid || target.rendererPid === previous?.rendererPid
+    // Fresh arrivals are trusted for the target renderer even across a PID
+    // change; reused cache is trusted only for its own PID (see
+    // cachedClientFor). Anything else falls back to same-renderer carry.
+    const clientIsCurrent = clientStatus !== 'none'
+    const trustClient = clientIsCurrent || sameRenderer
     const metricsSnapshot = this.snapshotAppMetrics()
+    const metricsFailed =
+      metricsSnapshot.outcome === 'failed' || metricsSnapshot.outcome === 'invalid'
+    const metricsHealthy = metricsSnapshot.outcome === 'ok'
     const metric = rendererPid
       ? this.safeRead(
           () => metricsSnapshot.metrics.find((entry) => entry.pid === rendererPid),
           undefined
         )
       : undefined
-    const gpuTotals = this.safeRead(() => this.gpuMemoryTotals(metricsSnapshot.metrics), {})
+    const gpuTotals = this.safeRead(() => this.gpuMemoryTotals(metricsSnapshot.metrics), {
+      pids: [] as number[]
+    })
     const mainUsage = this.mainMemoryUsage()
-    const mainRssBytes = optionalNonNegativeInteger(mainUsage?.rss)
-    const mainHeapUsedBytes = optionalNonNegativeInteger(mainUsage?.heapUsed)
+    const mainPid = this.mainPid()
+
+    const rendererRssFresh = kibibytesToBytes(metric?.memory.workingSetSize)
+    const rendererPeakFresh = kibibytesToBytes(metric?.memory.peakWorkingSetSize)
+    const rendererPrivateFresh = kibibytesToBytes(metric?.memory.privateBytes)
+    const rendererRssBytes =
+      rendererRssFresh ?? (sameRenderer ? previous?.rendererRssBytes : undefined)
+    const rendererPeakRssBytes =
+      rendererPeakFresh ?? (sameRenderer ? previous?.rendererPeakRssBytes : undefined)
+    const rendererPrivateBytes =
+      rendererPrivateFresh ?? (sameRenderer ? previous?.rendererPrivateBytes : undefined)
+    const rendererCarriedAny =
+      (rendererRssBytes !== undefined && rendererRssFresh === undefined) ||
+      (rendererPeakRssBytes !== undefined && rendererPeakFresh === undefined) ||
+      (rendererPrivateBytes !== undefined && rendererPrivateFresh === undefined)
+    const rendererMemoryStatus: RendererDiagnosticLaneMemoryStatus =
+      rendererRssBytes === undefined &&
+      rendererPeakRssBytes === undefined &&
+      rendererPrivateBytes === undefined
+        ? 'missing'
+        : rendererCarriedAny
+          ? 'carried'
+          : 'fresh'
+
+    const gpuRssBytes = gpuTotals.rssBytes ?? (metricsFailed ? previous?.gpuRssBytes : undefined)
+    const gpuPrivateBytes =
+      gpuTotals.privateBytes ?? (metricsFailed ? previous?.gpuPrivateBytes : undefined)
+    const gpuPids =
+      gpuTotals.pids.length > 0 ? gpuTotals.pids : metricsFailed ? previous?.gpuPids : undefined
+    const gpuMemoryStatus: RendererDiagnosticGpuMemoryStatus = metricsHealthy
+      ? gpuTotals.pids.length > 0
+        ? 'fresh'
+        : 'absent'
+      : metricsFailed
+        ? gpuRssBytes !== undefined || gpuPrivateBytes !== undefined || gpuPids !== undefined
+          ? 'carried'
+          : 'missing'
+        : 'missing'
+
+    const mainRssFresh = optionalNonNegativeInteger(mainUsage?.rss)
+    const mainHeapFresh = optionalNonNegativeInteger(mainUsage?.heapUsed)
+    const mainRssBytes = mainRssFresh ?? previous?.mainRssBytes
+    const mainHeapUsedBytes = mainHeapFresh ?? previous?.mainHeapUsedBytes
+    const mainCarriedAny =
+      (mainRssBytes !== undefined && mainRssFresh === undefined) ||
+      (mainHeapUsedBytes !== undefined && mainHeapFresh === undefined)
+    const mainMemoryStatus: RendererDiagnosticLaneMemoryStatus =
+      mainRssBytes === undefined && mainHeapUsedBytes === undefined
+        ? 'missing'
+        : mainCarriedAny
+          ? 'carried'
+          : 'fresh'
+    const mainPidValue = mainPid ?? previous?.mainPid
+
+    const metricsStatus: RendererDiagnosticMetricsStatus = metricsSnapshot.cached
+      ? 'cached'
+      : metricsSnapshot.outcome === 'ok'
+        ? 'fresh'
+        : metricsSnapshot.outcome
+
     const activeChatIdHash = client.activeChatId
       ? createHash('sha256').update(client.activeChatId).digest('hex').slice(0, 16)
       : undefined
@@ -303,61 +428,44 @@ export class RendererDiagnosticRecorder {
       windowId: target.windowId || previous?.windowId || 0,
       webContentsId: target.webContentsId,
       rendererPid,
-      ...(kibibytesToBytes(metric?.memory.workingSetSize) !== undefined
-        ? { rendererRssBytes: kibibytesToBytes(metric?.memory.workingSetSize) }
-        : sameRenderer && previous?.rendererRssBytes !== undefined
-          ? { rendererRssBytes: previous.rendererRssBytes }
-          : {}),
-      ...(kibibytesToBytes(metric?.memory.peakWorkingSetSize) !== undefined
-        ? { rendererPeakRssBytes: kibibytesToBytes(metric?.memory.peakWorkingSetSize) }
-        : sameRenderer && previous?.rendererPeakRssBytes !== undefined
-          ? { rendererPeakRssBytes: previous.rendererPeakRssBytes }
-          : {}),
-      ...(kibibytesToBytes(metric?.memory.privateBytes) !== undefined
-        ? { rendererPrivateBytes: kibibytesToBytes(metric?.memory.privateBytes) }
-        : sameRenderer && previous?.rendererPrivateBytes !== undefined
-          ? { rendererPrivateBytes: previous.rendererPrivateBytes }
-          : {}),
-      ...(client.v8HeapUsedBytes !== undefined
+      ...(rendererRssBytes !== undefined ? { rendererRssBytes } : {}),
+      ...(rendererPeakRssBytes !== undefined ? { rendererPeakRssBytes } : {}),
+      ...(rendererPrivateBytes !== undefined ? { rendererPrivateBytes } : {}),
+      ...(client.v8HeapUsedBytes !== undefined && trustClient
         ? { v8HeapUsedBytes: client.v8HeapUsedBytes }
         : sameRenderer && previous?.v8HeapUsedBytes !== undefined
           ? { v8HeapUsedBytes: previous.v8HeapUsedBytes }
           : {}),
-      ...(client.v8HeapTotalBytes !== undefined
+      ...(client.v8HeapTotalBytes !== undefined && trustClient
         ? { v8HeapTotalBytes: client.v8HeapTotalBytes }
         : sameRenderer && previous?.v8HeapTotalBytes !== undefined
           ? { v8HeapTotalBytes: previous.v8HeapTotalBytes }
           : {}),
-      ...(client.v8HeapLimitBytes !== undefined
+      ...(client.v8HeapLimitBytes !== undefined && trustClient
         ? { v8HeapLimitBytes: client.v8HeapLimitBytes }
         : sameRenderer && previous?.v8HeapLimitBytes !== undefined
           ? { v8HeapLimitBytes: previous.v8HeapLimitBytes }
           : {}),
-      ...(client.domNodeCount !== undefined
+      ...(client.domNodeCount !== undefined && trustClient
         ? { rendererDomNodeCount: client.domNodeCount }
         : sameRenderer && previous?.rendererDomNodeCount !== undefined
           ? { rendererDomNodeCount: previous.rendererDomNodeCount }
           : {}),
-      ...(gpuTotals.rssBytes !== undefined
-        ? { gpuRssBytes: gpuTotals.rssBytes }
-        : metricsSnapshot.unavailable && previous?.gpuRssBytes !== undefined
-          ? { gpuRssBytes: previous.gpuRssBytes }
-          : {}),
-      ...(gpuTotals.privateBytes !== undefined
-        ? { gpuPrivateBytes: gpuTotals.privateBytes }
-        : metricsSnapshot.unavailable && previous?.gpuPrivateBytes !== undefined
-          ? { gpuPrivateBytes: previous.gpuPrivateBytes }
-          : {}),
-      ...(mainRssBytes !== undefined
-        ? { mainRssBytes }
-        : previous?.mainRssBytes !== undefined
-          ? { mainRssBytes: previous.mainRssBytes }
-          : {}),
-      ...(mainHeapUsedBytes !== undefined
-        ? { mainHeapUsedBytes }
-        : previous?.mainHeapUsedBytes !== undefined
-          ? { mainHeapUsedBytes: previous.mainHeapUsedBytes }
-          : {}),
+      ...(gpuRssBytes !== undefined ? { gpuRssBytes } : {}),
+      ...(gpuPrivateBytes !== undefined ? { gpuPrivateBytes } : {}),
+      ...(gpuPids !== undefined ? { gpuPids } : {}),
+      ...(mainRssBytes !== undefined ? { mainRssBytes } : {}),
+      ...(mainHeapUsedBytes !== undefined ? { mainHeapUsedBytes } : {}),
+      ...(mainPidValue !== undefined ? { mainPid: mainPidValue } : {}),
+      metricsStatus,
+      metricsSnapshotAgeMs: boundedNonNegativeInteger(metricsSnapshot.ageMs),
+      ...(metricsSnapshot.malformedEntries > 0
+        ? { metricsMalformedEntries: metricsSnapshot.malformedEntries }
+        : {}),
+      rendererMemoryStatus,
+      gpuMemoryStatus,
+      mainMemoryStatus,
+      clientSampleStatus: clientStatus,
       ...(activeChatIdHash ? { activeChatIdHash } : {}),
       activeChatMessageCount: client.activeChatMessageCount,
       ...(activeChatPersistedBytes !== undefined
@@ -406,7 +514,10 @@ export class RendererDiagnosticRecorder {
 
   private snapshotAppMetrics(): {
     metrics: ProcessMetric[]
-    unavailable: boolean
+    malformedEntries: number
+    outcome: MetricsSnapshotOutcome
+    cached: boolean
+    ageMs: number
   } {
     let atMs = Number.NaN
     try {
@@ -417,33 +528,61 @@ export class RendererDiagnosticRecorder {
     const cached = this.metricsSnapshot
     if (cached && this.metricsSnapshotTtlMs > 0 && Number.isFinite(atMs)) {
       const ageMs = atMs - cached.atMs
-      if (ageMs >= 0 && ageMs < this.metricsSnapshotTtlMs) return cached
+      if (ageMs >= 0 && ageMs < this.metricsSnapshotTtlMs) {
+        return {
+          metrics: cached.metrics,
+          malformedEntries: cached.malformedEntries,
+          outcome: cached.outcome,
+          cached: true,
+          ageMs
+        }
+      }
     }
     let metrics: ProcessMetric[] = []
-    let unavailable = false
+    let malformedEntries = 0
+    let outcome: MetricsSnapshotOutcome = 'ok'
     try {
       const read = this.options.getAppMetrics?.()
-      if (Array.isArray(read)) metrics = read
-      else if (read !== undefined) unavailable = true
+      if (read === undefined) {
+        outcome = 'missing'
+      } else if (!Array.isArray(read)) {
+        outcome = 'invalid'
+        this.options.onError?.(
+          'Renderer diagnostic sampling failed.',
+          new Error('getAppMetrics returned a non-array snapshot.')
+        )
+      } else {
+        for (const entry of read) {
+          const wellFormed = wellFormedMetricEntry(entry)
+          if (wellFormed) metrics.push(wellFormed)
+          else malformedEntries += 1
+        }
+      }
     } catch (error) {
-      unavailable = true
+      outcome = 'failed'
+      metrics = []
+      malformedEntries = 0
       this.options.onError?.('Renderer diagnostic sampling failed.', error)
     }
-    const snapshot = { atMs, metrics, unavailable }
+    const snapshot = { atMs, metrics, malformedEntries, outcome }
     this.metricsSnapshot = Number.isFinite(atMs) ? snapshot : null
-    return snapshot
+    return { ...snapshot, cached: false, ageMs: 0 }
   }
 
   private gpuMemoryTotals(metrics: ProcessMetric[]): {
     rssBytes?: number
     privateBytes?: number
+    pids: number[]
   } {
     let rssKiB = 0
     let privateKiB = 0
     let rssSeen = false
     let privateSeen = false
+    const pids: number[] = []
     for (const entry of metrics) {
       if (entry.type !== 'GPU') continue
+      const pid = boundedPid(entry.pid)
+      if (pid !== undefined) pids.push(pid)
       const rss = optionalNonNegativeInteger(entry.memory.workingSetSize)
       if (rss !== undefined) {
         rssKiB += rss
@@ -455,9 +594,13 @@ export class RendererDiagnosticRecorder {
         privateSeen = true
       }
     }
+    pids.sort((a, b) => a - b)
     return {
       ...(rssSeen ? { rssBytes: Math.min(Number.MAX_SAFE_INTEGER, rssKiB * 1024) } : {}),
-      ...(privateSeen ? { privateBytes: Math.min(Number.MAX_SAFE_INTEGER, privateKiB * 1024) } : {})
+      ...(privateSeen
+        ? { privateBytes: Math.min(Number.MAX_SAFE_INTEGER, privateKiB * 1024) }
+        : {}),
+      pids: pids.slice(0, MAX_GPU_PID_ENTRIES)
     }
   }
 
@@ -467,6 +610,15 @@ export class RendererDiagnosticRecorder {
         return this.options.getMainMemoryUsage() ?? undefined
       }
       return process.memoryUsage()
+    }, undefined)
+  }
+
+  private mainPid(): number | undefined {
+    return this.safeRead(() => {
+      if (this.options.getMainPid) {
+        return boundedPid(this.options.getMainPid() ?? undefined)
+      }
+      return boundedPid(process.pid)
     }, undefined)
   }
 

@@ -79,6 +79,35 @@ export interface RendererErrorBoundaryReport {
   componentStack?: string
 }
 
+/**
+ * Outcome of the getAppMetrics acquisition behind one sample.
+ * - fresh: read from Electron for this sample.
+ * - cached: reused TTL-shared snapshot (see metricsSnapshotAgeMs).
+ * - failed: the reader threw.
+ * - invalid: the reader returned a non-array value.
+ * - missing: no reader configured or the reader returned undefined.
+ */
+export type RendererDiagnosticMetricsStatus = 'fresh' | 'cached' | 'failed' | 'invalid' | 'missing'
+
+/** Freshness of one memory lane: fresh read, last-known carry, or no value. */
+export type RendererDiagnosticLaneMemoryStatus = 'fresh' | 'carried' | 'missing'
+
+/**
+ * Freshness of the GPU lane. 'absent' is a healthy signal (snapshot read fine,
+ * Electron reported no GPU row); 'missing' means the read itself failed or the
+ * reader is unavailable, so absence cannot be claimed.
+ */
+export type RendererDiagnosticGpuMemoryStatus = 'fresh' | 'carried' | 'absent' | 'missing'
+
+/**
+ * Provenance of the renderer-owned client values in one sample.
+ * - fresh: arrived from the renderer with this sample.
+ * - reused: last-known client values for the same renderer PID.
+ * - none: no client values (none received yet, or the cached client belongs to
+ *   a different renderer PID after a restart).
+ */
+export type RendererDiagnosticClientSampleStatus = 'fresh' | 'reused' | 'none'
+
 export interface RendererDiagnosticSample {
   schemaVersion: typeof RENDERER_DIAGNOSTIC_SCHEMA_VERSION
   sampledAt: string
@@ -99,6 +128,27 @@ export interface RendererDiagnosticSample {
   /** Main-process RSS and V8 heap; separates main-side growth from renderers. */
   mainRssBytes?: number
   mainHeapUsedBytes?: number
+  /**
+   * PIDs of the GPU-process rows aggregated into gpuRssBytes/gpuPrivateBytes.
+   * Sorted ascending and bounded; a PID change beside a bytes discontinuity
+   * marks a GPU restart rather than growth. Carried last-known on failed reads.
+   */
+  gpuPids?: number[]
+  /** Main-process PID; constant within a run, carried last-known on failed reads. */
+  mainPid?: number
+  /**
+   * Freshness/identity evidence so cached or carried values cannot masquerade
+   * as fresh readings. All optional: pre-extension v1 samples omit them.
+   */
+  metricsStatus?: RendererDiagnosticMetricsStatus
+  /** Age of the getAppMetrics snapshot behind this sample; 0 read it fresh. */
+  metricsSnapshotAgeMs?: number
+  /** Malformed getAppMetrics entries skipped for this sample; set only when > 0. */
+  metricsMalformedEntries?: number
+  rendererMemoryStatus?: RendererDiagnosticLaneMemoryStatus
+  gpuMemoryStatus?: RendererDiagnosticGpuMemoryStatus
+  mainMemoryStatus?: RendererDiagnosticLaneMemoryStatus
+  clientSampleStatus?: RendererDiagnosticClientSampleStatus
   activeChatIdHash?: string
   activeChatMessageCount: number
   activeChatPersistedBytes?: number
