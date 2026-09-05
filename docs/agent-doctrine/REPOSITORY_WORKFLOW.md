@@ -344,13 +344,25 @@ exact recovery path instead of adopting or deleting them.
    forbidden — `TW_ALLOW_CLAIMED=1` exists for a live claim you know to be
    wrong.
 
-### Prefer a worktree; it cannot go stale
+### Honor the user's workspace choice
 
-For anything larger than a quick fix, work in a `git worktree` on its own
-branch. Collision becomes structurally impossible, and `git worktree list` is
-a registry that reflects reality rather than intent, so it cannot drift. This
-is strictly better than any marker and is already normal here. When a task is
-explicitly out of the current release, a worktree is the answer, not a marker.
+Shared checkout is a supported workflow, including substantial tasks and
+concurrent agents. Honor the user's explicit branch and workspace choice.
+Task size, concurrency, or a preference for pull requests does not authorize
+creating a branch, worktree, or remote environment.
+
+TaskWraith's Isolate picker governs the chat's fan-out lanes: **Shared** pins
+the live checkout and its current branch; **Worktrees** pins isolated writer
+lanes; **Any** lets the authorized orchestrator choose per dispatch. Do not
+silently substitute one for another. The picker does not change unrelated
+chats, and an explicit user instruction also governs work outside fan-out.
+
+In Shared mode, keep claims narrow, recheck the contents before editing, and
+commit explicit contributions through private indexes. Coordinate overlapping
+work and preserve peer changes. In Worktrees mode, separate working files
+prevent direct overwrite collisions, but integration still requires review and
+verification. When work must stay out of a release, explain the isolation
+tradeoff and follow the user's choice; do not switch the workspace on your own.
 
 ### Committing
 
