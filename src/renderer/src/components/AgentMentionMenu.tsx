@@ -156,6 +156,9 @@ export function composerEnsembleGroupMentionCandidates(
   })
 }
 
+const EMPTY_MENTION_CANDIDATES: ComposerMentionCandidate[] = []
+const EMPTY_CHILD_THREADS: ChildAgentThread[] = []
+
 function nameFromPath(path: string): string {
   const trimmed = path.trim().replace(/\/+$/, '')
   return trimmed.split('/').pop() || trimmed
@@ -252,17 +255,23 @@ export function AgentMentionMenu({
     }
   }, [open, workspacePath, triggerKind])
 
+  // Every derivation below is gated on `open`: while the popover is closed it
+  // must not walk the transcript (deriveChildAgentThreads is O(messages)) or
+  // re-filter on each chat identity change, and the highlight reset below
+  // must not schedule a state update per parent render (measured 2026-09-05:
+  // it was the first setState after every commit in an idle 3-pane multiview).
   const activeSubagents = useMemo<ChildAgentThread[]>(() => {
-    if (!chat || !provider) return []
+    if (!open || !chat || !provider) return EMPTY_CHILD_THREADS
     // Paged shell: never derive child threads from the shell's empty arrays or
     // the bounded page — the escalation effect above requests full hydration
     // and this recomputes on the hydrated record.
     if (isTranscriptPagedShell(chat)) return []
     const all = deriveChildAgentThreads(provider, chat.appChatId, chat.messages || [], chat)
     return all.filter((thread) => thread.state === 'running' || thread.state === 'queued')
-  }, [chat, provider])
+  }, [chat, open, provider])
 
   const candidates = useMemo<ComposerMentionCandidate[]>(() => {
+    if (!open) return EMPTY_MENTION_CANDIDATES
     // `-@` file trigger surfaces workspace files + external grants
     // only. Sub-agents / participants are never in scope here — they
     // need `@`.
@@ -345,6 +354,7 @@ export function AgentMentionMenu({
     })
     return subagentCandidates
   }, [
+    open,
     triggerKind,
     chat?.chatKind,
     chat?.ensemble,
@@ -356,8 +366,8 @@ export function AgentMentionMenu({
   ])
 
   const filtered = useMemo(
-    () => filterComposerMentionCandidates(candidates, query),
-    [candidates, query]
+    () => (open ? filterComposerMentionCandidates(candidates, query) : EMPTY_MENTION_CANDIDATES),
+    [candidates, open, query]
   )
 
   useEffect(() => {
@@ -379,6 +389,7 @@ export function AgentMentionMenu({
   }, [open, anchorRef, query])
 
   useEffect(() => {
+    if (!open) return
     let cancelled = false
     queueMicrotask(() => {
       if (!cancelled) setHighlight(0)
@@ -386,7 +397,7 @@ export function AgentMentionMenu({
     return () => {
       cancelled = true
     }
-  }, [filtered])
+  }, [filtered, open])
 
   useEffect(() => {
     if (!open) return

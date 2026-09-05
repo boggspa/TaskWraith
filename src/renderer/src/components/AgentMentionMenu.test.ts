@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   composerEnsembleGroupMentionCandidates,
@@ -193,5 +195,29 @@ describe('composerMentionParticipantColor', () => {
     expect(composerMentionParticipantColor({ provider: 'codex', model: 'gpt-5.5' })).toBe(
       'var(--provider-codex-color, var(--accent))'
     )
+  })
+})
+
+describe('AgentMentionMenu idle cost', () => {
+  const source = readFileSync(
+    fileURLToPath(new URL('./AgentMentionMenu.tsx', import.meta.url)),
+    'utf8'
+  )
+
+  it('derives candidates and resets the highlight only while the popover is open', () => {
+    // A closed menu must not walk the transcript or schedule a state update
+    // on every parent render (it was the first setState after each commit in
+    // an idle 3-pane multiview, 2026-09-05).
+    expect(source).toContain('if (!open || !chat || !provider) return EMPTY_CHILD_THREADS')
+    expect(source).toContain('if (!open) return EMPTY_MENTION_CANDIDATES')
+    expect(source).toContain(
+      '() => (open ? filterComposerMentionCandidates(candidates, query) : EMPTY_MENTION_CANDIDATES)'
+    )
+    const highlightEffect = source.indexOf('if (!cancelled) setHighlight(0)')
+    expect(highlightEffect).toBeGreaterThan(-1)
+    const guard = source.lastIndexOf('if (!open) return', highlightEffect)
+    expect(guard).toBeGreaterThan(-1)
+    expect(highlightEffect - guard).toBeLessThan(200)
+    expect(source).toContain('}, [filtered, open])')
   })
 })
