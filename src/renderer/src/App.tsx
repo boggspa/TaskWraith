@@ -144,7 +144,6 @@ import {
   type ContextCompactionProgressEvent,
   type ContextCompactionProvenance
 } from '../../shared/contextCompaction'
-import type { TaskWraithPluginActivationSnapshot } from '../../shared/plugins/PluginTypes'
 import { normalizeDiffStatColors } from '../../shared/diffStatColors'
 import { normalizeThemeAccentColor } from '../../shared/themeAccentColor'
 import {
@@ -741,6 +740,7 @@ import { githubWatchDisabledReason } from './lib/watchedPrUi'
 import { useWatchedPrController } from './app/hooks/useWatchedPrController'
 import { useEnsembleRosterPresetBridge } from './app/hooks/useEnsembleRosterPresetBridge'
 import { useCollaborationChatIds } from './app/hooks/useCollaborationChatIds'
+import { usePluginActivation } from './app/hooks/usePluginActivation'
 import type { AttachedWindowSnapshot, ResumeAppWatchSnapshot } from './app/windowAttachmentState'
 import { attachedWindowFromStatus, stickyAppWatchStashInput } from './app/windowAttachmentState'
 import {
@@ -1379,8 +1379,7 @@ function App(): React.JSX.Element {
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
   const [scheduledQueueWakeTick, setScheduledQueueWakeTick] = useState(0)
   const [runtimeProfiles, setRuntimeProfiles] = useState<RuntimeProfile[]>([])
-  const [pluginActivation, setPluginActivation] =
-    useState<TaskWraithPluginActivationSnapshot | null>(null)
+  const { pluginActivation, setPluginActivation } = usePluginActivation()
   /** Live `/skill-*` prompt-templates from effective user/workspace skills. */
   const [skillSlashPromptTemplates, setSkillSlashPromptTemplates] = useState<
     PromptTemplateCommand[]
@@ -1389,27 +1388,6 @@ function App(): React.JSX.Element {
     Record<string, string>
   >({})
   const [handoffCards, setHandoffCards] = useState<HandoffCard[]>([])
-
-  const refreshPluginActivation = useCallback(async (): Promise<void> => {
-    if (typeof window.api?.getPluginActivation !== 'function') return
-    try {
-      setPluginActivation(await window.api.getPluginActivation())
-    } catch {
-      setPluginActivation(null)
-    }
-  }, [])
-
-  useEffect(() => {
-    const handlePluginActivationChanged = (): void => {
-      void refreshPluginActivation()
-    }
-    window.addEventListener('taskwraith-plugin-activation-changed', handlePluginActivationChanged)
-    return () =>
-      window.removeEventListener(
-        'taskwraith-plugin-activation-changed',
-        handlePluginActivationChanged
-      )
-  }, [refreshPluginActivation])
 
   // Model & Mode Selectors
   // Seed the user-facing default to a live provider; sticky last-used (persisted
