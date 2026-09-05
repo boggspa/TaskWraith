@@ -153,10 +153,61 @@ describe('Ollama ensemble prompt capsule', () => {
       evidence
     )
 
-    expect(attempted).toEqual(baseline)
+    expect(attempted.prompt).toBe(baseline.prompt)
+    expect(attempted.suppliedMessageIds).toEqual(baseline.suppliedMessageIds)
     expect(attempted).not.toHaveProperty('continuityCheckpointIncluded')
+    expect(attempted.continuityCheckpointOmitted).toBe(
+      'required-contract-and-checkpoint-exceed-budget'
+    )
     expect(attempted.prompt).not.toContain('<checkpoint>')
     expect(attempted.prompt.length).toBeLessThanOrEqual(OLLAMA_ENSEMBLE_PROMPT_MAX_CHARS)
     expect(attempted.prompt).toContain('CURRENT_ASSIGNMENT')
+  })
+
+  it('funds a complete checkpoint in a saturated capsule by displacing transcript evidence', () => {
+    const transcriptRow = '[User]\nLATEST_TRANSCRIPT_ROW'
+    const transcript = `${'old transcript '.repeat(350)}\n${transcriptRow}`
+    const saturated = {
+      ...BASE,
+      currentPrompt: 'CURRENT_ASSIGNMENT remains first.',
+      dynamicState: 'D'.repeat(1_000),
+      workspaceStanza: 'Round subject: /workspace/project',
+      workspaceChurnStanza: 'H'.repeat(700),
+      scoutBriefs: 'S'.repeat(800),
+      blackboardSnapshot: 'B'.repeat(1_200),
+      seatSummary: 'E'.repeat(600),
+      transcript
+    }
+    const rowStart = transcript.length - transcriptRow.length
+    const evidence = {
+      currentPromptMessageId: 'current-assignment',
+      transcriptRows: [
+        { messageId: 'displaced-transcript-row', start: rowStart, end: transcript.length }
+      ]
+    }
+    const baseline = buildOllamaEnsemblePromptCapsuleProjection(saturated, evidence)
+    expect(baseline.prompt).toHaveLength(OLLAMA_ENSEMBLE_PROMPT_MAX_CHARS)
+    const continuityCheckpoint = `<checkpoint>${'Q'.repeat(1_560)}</checkpoint>`
+    const recovered = buildOllamaEnsemblePromptCapsuleProjection(
+      { ...saturated, continuityCheckpoint },
+      evidence
+    )
+
+    expect(recovered.prompt.length).toBeLessThanOrEqual(OLLAMA_ENSEMBLE_PROMPT_MAX_CHARS)
+    expect(recovered.continuityCheckpointIncluded).toBe(true)
+    expect(recovered).not.toHaveProperty('continuityCheckpointOmitted')
+    expect(recovered.prompt).toContain(continuityCheckpoint)
+    expect(recovered.prompt.indexOf('CURRENT_ASSIGNMENT')).toBeLessThan(
+      recovered.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(recovered.prompt.indexOf('Do this turn:')).toBeLessThan(
+      recovered.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(recovered.prompt.indexOf('Round subject: /workspace/project')).toBeLessThan(
+      recovered.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(recovered.prompt).not.toContain('LATEST_TRANSCRIPT_ROW')
+    expect(recovered.suppliedMessageIds).toContain('current-assignment')
+    expect(recovered.suppliedMessageIds).not.toContain('displaced-transcript-row')
   })
 })

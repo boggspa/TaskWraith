@@ -226,7 +226,7 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     expect(projection.prompt).not.toMatch(/tw_checkpoint|tw_history_(?:search|read)/)
   })
 
-  it('omits an overflowing checkpoint without changing prompt or row evidence', () => {
+  it('funds a complete checkpoint in a saturated capsule by displacing transcript evidence', () => {
     const row = '[User]\nLATEST STEER AT TRANSCRIPT TAIL'
     const transcript = `${'old transcript '.repeat(400)}\n\n${row}`
     const rowStart = transcript.length - row.length
@@ -235,7 +235,7 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
       roundId: 'round-checkpoint-overflow',
       stageRole: 'Z'.repeat(4_000),
       roleInstructions: 'R'.repeat(1_000),
-      currentPrompt: `CURRENT_ASSIGNMENT ${'C'.repeat(3_000)}`,
+      currentPrompt: `CURRENT_ASSIGNMENT ${'C'.repeat(2_950)}`,
       roster: 'O'.repeat(1_200),
       authorityLines: ['A'.repeat(1_200)],
       roleBoundaryLines: [] as string[],
@@ -259,18 +259,58 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     }
     const baseline = buildAntigravityOfficialAgyPromptCapsuleProjection(crowded, evidence)
     expect(baseline.prompt).toHaveLength(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
-    const attempted = buildAntigravityOfficialAgyPromptCapsuleProjection(
+    const continuityCheckpoint = `<checkpoint>${'X'.repeat(1_560)}</checkpoint>`
+    const recovered = buildAntigravityOfficialAgyPromptCapsuleProjection(
       {
         ...crowded,
-        continuityCheckpoint: `<checkpoint>${'X'.repeat(2_300)}</checkpoint>`
+        continuityCheckpoint
       },
       evidence
     )
 
-    expect(attempted).toEqual(baseline)
+    expect(recovered.prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
+    expect(recovered.continuityCheckpointIncluded).toBe(true)
+    expect(recovered).not.toHaveProperty('continuityCheckpointOmitted')
+    expect(recovered.prompt).toContain(continuityCheckpoint)
+    expect(recovered.prompt.indexOf('CURRENT_ASSIGNMENT')).toBeLessThan(
+      recovered.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(recovered.prompt.indexOf('Permission and native-tool boundary:')).toBeLessThan(
+      recovered.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(recovered.suppliedMessageIds).toContain('current-retained')
+    expect(recovered.suppliedMessageIds).not.toContain('tail-cut-by-outer-cap')
+  })
+
+  it('reports why a checkpoint cannot fit beside the required contract', () => {
+    const requiredHeavy = {
+      participantLabel: 'AntiGravity / Reviewer #p7',
+      roundId: 'round-required-overflow',
+      stageRole: 'Z'.repeat(18_000),
+      roleInstructions: 'Review the current implementation.',
+      currentPrompt: 'CURRENT_ASSIGNMENT remains first.',
+      roster: '1. AntiGravity / Reviewer',
+      authorityLines: [] as string[],
+      roleBoundaryLines: [] as string[],
+      roundPolicy: 'Review once.',
+      parallelPolicy: 'Serial.',
+      dynamicState: '',
+      transcript: '',
+      permissionRule: 'Use only tools listed by this run.',
+      yieldExecutionCheck: 'Return a bounded review.'
+    }
+    const baseline = buildAntigravityOfficialAgyPromptCapsuleProjection(requiredHeavy)
+    const attempted = buildAntigravityOfficialAgyPromptCapsuleProjection({
+      ...requiredHeavy,
+      continuityCheckpoint: `<checkpoint>${'X'.repeat(1_560)}</checkpoint>`
+    })
+
+    expect(attempted.prompt).toBe(baseline.prompt)
+    expect(attempted.suppliedMessageIds).toEqual(baseline.suppliedMessageIds)
     expect(attempted).not.toHaveProperty('continuityCheckpointIncluded')
+    expect(attempted.continuityCheckpointOmitted).toBe(
+      'required-contract-and-checkpoint-exceed-budget'
+    )
     expect(attempted.prompt).not.toContain('<checkpoint>')
-    expect(attempted.prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
-    expect(attempted.prompt).toContain('CURRENT_ASSIGNMENT')
   })
 })
