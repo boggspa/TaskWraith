@@ -95,7 +95,12 @@ export function ActiveRunsSection({
   const [jobs, setJobs] = useState<RunQueueJob[]>([])
   const [localCollapsed, setLocalCollapsed] = useState(false)
   const collapsed = controlledCollapsed ?? localCollapsed
-  const nowTick = useSharedNowTick()
+  // Idle gate: with nothing queued or running there are no elapsed labels to
+  // advance, so the section neither joins the shared 1s tick (a Sync-lane
+  // rerender every second) nor refetches the run queue on it. The chats /
+  // runningKey / focus refreshes below still run, so a newly queued job
+  // re-arms the tick on its next poll.
+  const nowTick = useSharedNowTick(jobs.length > 0 || runningChatIds.length > 0)
   const hasObservedTick = useRef(false)
   const workChatIdSet = useMemo(() => new Set(workChatIds), [workChatIds])
   const runningKey = runningChatIds.join('|')
@@ -106,9 +111,12 @@ export function ActiveRunsSection({
       const result = await window.api.getRunQueueJobs({
         statuses: ACTIVE_STATUSES as unknown as RunQueueJobStatus[]
       })
-      setJobs(Array.isArray(result) ? result : [])
+      const next = Array.isArray(result) ? result : []
+      // Keep the empty identity stable: an empty poll must not schedule a
+      // render when the section already shows nothing.
+      setJobs((current) => (current.length === 0 && next.length === 0 ? current : next))
     } catch {
-      setJobs([])
+      setJobs((current) => (current.length === 0 ? current : []))
     }
   }, [])
 

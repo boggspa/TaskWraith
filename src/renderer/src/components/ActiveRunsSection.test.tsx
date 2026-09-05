@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ChatRecord, ProviderId, RunQueueJob } from '../../../main/store/types'
@@ -416,5 +418,26 @@ describe('deriveVisibleActiveRunEntries', () => {
     expect(
       deriveVisibleActiveRunEntries({ jobs: [], chats: [unresolved], surface: 'code' })
     ).toEqual([])
+  })
+})
+
+describe('ActiveRunsSection idle cost', () => {
+  const source = readFileSync(
+    fileURLToPath(new URL('./ActiveRunsSection.tsx', import.meta.url)),
+    'utf8'
+  )
+
+  it('joins the shared 1s tick only while something is queued or running', () => {
+    // The tick is a useSyncExternalStore, so every subscriber pays a Sync-lane
+    // rerender per second; an idle sidebar must not, and must not refetch the
+    // run queue on it either (measured 2026-09-05).
+    expect(source).toContain('useSharedNowTick(jobs.length > 0 || runningChatIds.length > 0)')
+  })
+
+  it('keeps an empty job list referentially stable across empty polls', () => {
+    expect(source).toContain(
+      'setJobs((current) => (current.length === 0 && next.length === 0 ? current : next))'
+    )
+    expect(source).toContain('setJobs((current) => (current.length === 0 ? current : []))')
   })
 })
