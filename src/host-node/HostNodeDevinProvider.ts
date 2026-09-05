@@ -260,10 +260,12 @@ function acpPermissionResponse(
   return {
     jsonrpc: '2.0',
     id: rpcId,
-    result:
-      decision !== 'cancel' && optionId
-        ? { outcome: 'selected', optionId }
-        : { outcome: 'cancelled' }
+    result: {
+      outcome:
+        decision !== 'cancel' && optionId
+          ? { outcome: 'selected', optionId }
+          : { outcome: 'cancelled' }
+    }
   }
 }
 

@@ -797,8 +797,13 @@ describe('HostNodeMistralProvider', () => {
     await vi.waitFor(() =>
       expect(sent.filter((frame) => frame.includes('"id":"permission-1"'))).toHaveLength(1)
     )
-    expect(sent.join('')).toContain('"outcome":"selected"')
-    expect(sent.join('')).toContain('"optionId":"allow-once"')
+    expect(
+      sent.map((frame) => JSON.parse(frame)).find((frame) => frame.id === 'permission-1')
+    ).toEqual({
+      jsonrpc: '2.0',
+      id: 'permission-1',
+      result: { outcome: { outcome: 'selected', optionId: 'allow-once' } }
+    })
     expect(instance.cancel('run-1')).toBe(true)
     child.emit('close', 0)
     await expect(running).resolves.toMatchObject({ status: 'cancelled' })

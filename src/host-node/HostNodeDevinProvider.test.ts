@@ -577,7 +577,8 @@ describe('HostNodeDevinProvider', () => {
 
   it.each([
     ['accept', 'allow-once'],
-    ['decline', 'reject-once']
+    ['decline', 'reject-once'],
+    ['cancel', undefined]
   ] as const)(
     'registers an ACP permission on a write seat and answers %s with the %s option exactly once',
     async (decision, optionId) => {
@@ -616,7 +617,13 @@ describe('HostNodeDevinProvider', () => {
       })
       await vi.waitFor(() => expect(responsesTo(sent, 'permission-1')).toHaveLength(1))
       expect(responsesTo(sent, 'permission-1')).toEqual([
-        { jsonrpc: '2.0', id: 'permission-1', result: { outcome: 'selected', optionId } }
+        {
+          jsonrpc: '2.0',
+          id: 'permission-1',
+          result: {
+            outcome: optionId ? { outcome: 'selected', optionId } : { outcome: 'cancelled' }
+          }
+        }
       ])
       expect(instance.cancel('run-1')).toBe(true)
       child.emit('close', 0)
@@ -640,7 +647,7 @@ describe('HostNodeDevinProvider', () => {
         {
           jsonrpc: '2.0',
           id: 'permission-mutate',
-          result: { outcome: 'selected', optionId: 'reject-once' }
+          result: { outcome: { outcome: 'selected', optionId: 'reject-once' } }
         }
       ])
       expect(interactions.register).not.toHaveBeenCalled()
