@@ -366,6 +366,57 @@ tradeoff and follow the user's choice; do not switch the workspace on your own.
 
 ### Committing
 
+#### Host-managed shared contributions
+
+When the host advertises `git_commit(mode="contribution")`, mediated
+`write_file` and `replace` calls can capture a contribution before changing the
+file. A successful result says **"Contribution recorded; intent claim active."**
+The host maintains that path's short intent lease and current execution owner;
+do not add a duplicate manual marker for the same captured edit. If the result
+reports missing capture or a missing intent claim, maintain a manual claim for
+continued work and use an explicit private-index patch. Native tools, shell
+edits, and `apply_patch` still use their existing claim/commit workflows.
+
+Capture covers regular text files up to 5 MiB that Git does not exclude;
+already-tracked files remain eligible even when an ignore pattern matches.
+Ignored writes remain available without adding their contents to recovery refs.
+Contributions are scoped to the task, provider, participant, and lane that made
+them. Previously dirty bytes do not become that task's contribution: the patch
+contains only its captured before/after delta. A later intervening edit or an
+ambiguous chain requires review rather than guessing ownership.
+
+To commit the complete captured file set without constructing a patch:
+
+```json
+{
+  "mode": "contribution",
+  "paths": ["src/Thing.ts", "src/Thing.test.ts"],
+  "message": "fix: preserve the selected workspace"
+}
+```
+
+Pass that object to `git_commit`. The host uses a private index, checks the
+declared paths and HEAD, then advances shared staging by only the committed
+patch. This preserves peer staging, including separate hunks in the same file.
+Use the explicit `private_index` mode for a subset or an uncaptured edit.
+
+**Workspace Stats → Contributions → Review** exposes the recorded patch and
+local Commit, Undo, and Recover actions. Each action rechecks the preview's
+generation after acquiring exact file and Git metadata locks. Changed or
+unreadable files require fresh review. Recovery snapshots live under local
+`refs/taskwraith/contributions/`; settlement releases their pins. Internal
+snapshot plumbing does not execute repository hooks. Normal commits retain
+their configured hooks and overrides. None of these actions pushes anything.
+
+`run_task` also returns an observed-input verification receipt. Workspace Stats
+marks a passing check stale when its inputs change. These receipts cover
+tracked and nonignored inputs, HEAD, and the observed runtime version/platform;
+they are live-checkout observations, not immutable build attestations or proof
+about external dependencies. Incomplete sampling never becomes a passing
+receipt and never denies the requested task. Release checks below still apply.
+
+#### Explicit Git operations
+
 - **Stage by explicit path. Never `git add -A`, `git add .`, or `-u`.** Other
   sessions' files live in this tree and bulk staging sweeps them into your
   commit. Diff-audit what you staged before committing.
