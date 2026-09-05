@@ -296,6 +296,7 @@ import type { ProposedPlanState } from '../lib/proposedPlan'
 import { MessageActionsChip } from './MessageActionsChip'
 import { CopyEntireTurnButton } from './CopyEntireTurnButton'
 import { useTranscriptTurnCopy } from '../lib/useTranscriptTurnCopy'
+import { adjacentSeatChangeStacks, transcriptSpeakerContinuations } from '../lib/transcriptEventLayout'
 import { PillButton } from './PillButton'
 import {
   TranscriptMessageContextMenu,
@@ -2873,6 +2874,10 @@ export const TranscriptPanel = memo(
     const storeReady = Boolean(chatId && getChatTranscriptStore().has(chatId))
     const resolvedMessages = storeReady ? storeTranscript.messages : messages
     const onCopyEntireTurn = useTranscriptTurnCopy(currentChat, resolvedMessages)
+    const seatChangeStackPositions = useMemo(
+      () => adjacentSeatChangeStacks(resolvedMessages),
+      [resolvedMessages]
+    )
     const liveOwnedExecutionIds = useMemo(
       () =>
         new Set(
@@ -4536,6 +4541,20 @@ export const TranscriptPanel = memo(
       suppressedReplyMessageIds,
       projectedRowLookup
     ])
+    const speakerContinuationRowKeys = useMemo(() => {
+      const headerMessages = new Map<string, ChatMessage>()
+      for (const group of superGroupByRowKey.values()) {
+        if (group.headerMessage && !expandedSuperGroups.has(group.leadRowKey)) {
+          headerMessages.set(group.leadRowKey, group.headerMessage)
+        }
+      }
+      return transcriptSpeakerContinuations(
+        projectedRows.map((row) => ({ rowKey: row.rowKey, msg: displayMessages[row.index] })),
+        currentChat?.runs || [],
+        hiddenRowKeys,
+        headerMessages
+      )
+    }, [projectedRows, displayMessages, currentChat?.runs, hiddenRowKeys, superGroupByRowKey, expandedSuperGroups])
     const [pendingFocusTarget, setPendingFocusTarget] = useState<{
       messageId: string
       rowKey?: string
@@ -5226,6 +5245,8 @@ export const TranscriptPanel = memo(
             />
           )}
           {renderedRows.map(({ msg, rowKey, index }) => {
+            const speakerContinuation = speakerContinuationRowKeys.has(rowKey)
+            const seatChangeStackPosition = seatChangeStackPositions.get(msg.id)
             const isDelegationCard = isSubThreadDelegationMessage(msg)
             const isFleetWaveCard = isFleetWaveMessage(msg)
             const isReturnCard = isSubThreadReturnMessage(msg)
@@ -5713,6 +5734,8 @@ export const TranscriptPanel = memo(
               liveActivityViewport,
               liveActivityViewportActive: liveViewportActive,
               virtualized: virtualizeEnabled,
+              speakerContinuation,
+              seatChangeStackPosition,
               ...(fanoutLaneSlot ? { fanoutLaneSlot } : {}),
               ...(fanoutLaneCompact ? { fanoutLaneCompact } : {}),
               isGlobal,
@@ -5798,7 +5821,9 @@ export const TranscriptPanel = memo(
                 key={`message-block-${rowKey}`}
                 className={`transcript-message-block${
                   isSideChatSeedMessage ? ' is-side-chat-seed' : ''
-                }${isPinnedMessageTarget ? ' is-pinned-message-target' : ''}${
+                }${speakerContinuation ? ' is-speaker-continuation' : ''}${
+                  isPinnedMessageTarget ? ' is-pinned-message-target' : ''
+                }${
                   // Hidden super-group members keep their block mounted (row
                   // ordinals + measurement stability) but must contribute ZERO
                   // layout space — without this class each empty block donated
@@ -5823,6 +5848,7 @@ export const TranscriptPanel = memo(
                 }
                 data-vrow-id={rowKey}
                 data-message-id={msg.id}
+                data-seat-change-stack={seatChangeStackPosition}
                 // Placement (which grid column) AND measurement (whether a zero
                 // offsetTop delta is real) both key off this one attribute, so
                 // the two can never disagree about where a lane sits.

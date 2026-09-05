@@ -4699,3 +4699,72 @@ describe('delivered external contribution rows', () => {
     expect(html).toContain('Out of position')
   })
 })
+
+describe('transcript event layout', () => {
+  function openingTag(html: string, id: string): string {
+    return html.match(new RegExp(`<div[^>]*data-message-id="${id}"[^>]*>`))?.[0] || ''
+  }
+
+  it('suppresses repeated owner labels across prose and activities, preserving provider markup', () => {
+    const events: ChatMessage[] = [
+      { ...msg(0), id: 'first', role: 'assistant', runId: 'run-a' },
+      {
+        ...msg(1),
+        id: 'activity',
+        role: 'tool',
+        runId: 'run-a',
+        content: '',
+        toolActivities: [
+          {
+            id: 'read',
+            toolName: 'read_file',
+            displayName: 'Read file',
+            category: 'read',
+            status: 'success'
+          }
+        ]
+      },
+      { ...msg(2), id: 'answer', role: 'assistant', runId: 'run-a' },
+      { ...msg(3), id: 'other', role: 'assistant', runId: 'run-b' }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages: events, virtualize: false })} />
+    )
+    expect(openingTag(html, 'first')).not.toContain('is-speaker-continuation')
+    expect(openingTag(html, 'activity')).toContain('is-speaker-continuation')
+    expect(openingTag(html, 'answer')).toContain('is-speaker-continuation')
+    expect(openingTag(html, 'other')).not.toContain('is-speaker-continuation')
+    expect(html).toContain('message-meta provider-claude')
+    expect(html).toContain('aria-label="Copy Entire Turn"')
+  })
+
+  it.each([false, true])(
+    'joins adjacent seat rows with independent controls (virtualize=%s)',
+    (virtualize) => {
+      const events: ChatMessage[] = ['model', 'brief', 'disabled'].map((id) => ({
+        ...msg(0),
+        id,
+        role: 'system',
+        metadata: {
+          seatChange: {
+            participantId: id,
+            label: id,
+            before: { provider: 'codex', model: 'gpt-5.5' },
+            after: { provider: 'codex', model: 'gpt-5.5' },
+            appliedAt: '2026-01-01T00:00:00Z',
+            ...(id === 'brief' ? { briefUpdated: true } : {}),
+            ...(id === 'disabled' ? { enabledChangedTo: false } : {})
+          }
+        }
+      }))
+      const html = renderToStaticMarkup(
+        <TranscriptPanel {...makeProps({ messages: events, virtualize })} />
+      )
+      expect(openingTag(html, 'model')).toContain('data-seat-change-stack="start"')
+      expect(openingTag(html, 'brief')).toContain('data-seat-change-stack="middle"')
+      expect(openingTag(html, 'disabled')).toContain('data-seat-change-stack="end"')
+      expect((html.match(/class="seat-change-row"/g) || []).length).toBe(3)
+      expect((html.match(/Show the previous seat configuration/g) || []).length).toBe(3)
+    }
+  )
+})

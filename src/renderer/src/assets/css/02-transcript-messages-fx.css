@@ -4563,6 +4563,43 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   gap: var(--space-xs);
 }
 
+/* Keep the frozen attribution in the DOM for provider theme selectors, while
+ * showing its label only at the start of a speaker's consecutive events. */
+.transcript-message-block.is-speaker-continuation > .message-group > .message-meta,
+.transcript-message-block.is-speaker-continuation > .activity-timeline > .activity-stack-speaker-header,
+.transcript-message-block.is-speaker-continuation > .collapsed-activity-stack > .activity-stack-speaker-header {
+  display: none;
+}
+
+/* A contiguous seat-edit stack keeps the original virtual rows and controls.
+ * Its shared edge/background joins them into one event without reparenting
+ * a disclosure when another seat update arrives at the live tail. */
+.transcript-message-block[data-seat-change-stack] {
+  border-inline-start: 1px solid var(--surface-border);
+  background: color-mix(in srgb, var(--surface-1) 30%, transparent);
+  padding: 2px 10px;
+  gap: 0;
+}
+.transcript-message-block[data-seat-change-stack="start"] {
+  border-radius: 8px 8px 0 0;
+}
+.transcript-message-block[data-seat-change-stack="end"] {
+  border-radius: 0 0 8px 8px;
+}
+.transcript-message-block[data-seat-change-stack] > .seat-change-message {
+  margin: 0;
+}
+.transcript-inner:not(.transcript-virtualized) > .transcript-message-block:is(
+  [data-seat-change-stack="middle"], [data-seat-change-stack="end"]
+) {
+  margin-top: calc(-1 * var(--space-lg));
+}
+.transcript-inner.transcript-virtualized > .transcript-message-block:is(
+  [data-seat-change-stack="start"], [data-seat-change-stack="middle"]
+) {
+  margin-bottom: 0;
+}
+
 .transcript-history-page-boundary {
   align-items: center;
   padding: var(--space-xs) 0;

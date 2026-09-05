@@ -24,6 +24,8 @@ export interface TranscriptRowRenderSignature {
    * threshold crossing flips EARLIER rows in the run: the sixth lane's arrival
    * must re-render the cached first five, or they keep the full band. */
   fanoutLaneCompact?: boolean
+  speakerContinuation?: boolean
+  seatChangeStackPosition?: string
   isGlobal?: boolean
   sideChatSeed: boolean
   highlighted: boolean
@@ -352,6 +354,8 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.fanoutLaneSlot !== next.fanoutLaneSlot) return false
   if (prev.fanoutLaneCompact !== next.fanoutLaneCompact) return false
   if (prev.isGlobal !== next.isGlobal) return false
+  if (prev.speakerContinuation !== next.speakerContinuation) return false
+  if (prev.seatChangeStackPosition !== next.seatChangeStackPosition) return false
   if (prev.sideChatSeed !== next.sideChatSeed) return false
   if (prev.highlighted !== next.highlighted) return false
   if (prev.copied !== next.copied) return false

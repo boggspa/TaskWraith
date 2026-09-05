@@ -64,6 +64,17 @@ const signature = (
 })
 
 describe('transcriptRowRenderCache', () => {
+  it('invalidates headers and stack edges when neighboring transcript events change', () => {
+    expect(
+      transcriptRowRenderSignatureEqual(signature(), signature({ speakerContinuation: true }))
+    ).toBe(false)
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ seatChangeStackPosition: 'end' }),
+        signature({ seatChangeStackPosition: 'middle' })
+      )
+    ).toBe(false)
+  })
   it('keeps equivalent chat records cache-compatible for stable rows', () => {
     const first = transcriptChatRenderSignature(chat())
     const second = transcriptChatRenderSignature(chat({ messages: [{ ...message }] }))
