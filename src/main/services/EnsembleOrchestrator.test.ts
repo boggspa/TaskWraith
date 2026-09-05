@@ -8286,7 +8286,7 @@ Next action:
     ).toBe('skipped')
   })
 
-  it('lets a later Continuous-pass Boss keep an explicit subset and skips every other pending seat', async () => {
+  it('lets a later Continuous-pass Boss omit other pending seats without making them unavailable', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     initialChat.ensemble!.orchestrationMode = 'continuous'
@@ -8327,7 +8327,7 @@ Next action:
       harness.chat.ensemble?.activeRound?.participants.find(
         (participant) => participant.participantId === 'kimi'
       )?.status
-    ).toBe('skipped')
+    ).toBe('idle')
     expectYielded(
       harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Worker should continue.')
     )
@@ -8392,7 +8392,7 @@ Next action:
       harness.chat.ensemble?.activeRound?.participants.find(
         (participant) => participant.participantId === 'grok'
       )?.status
-    ).toBe('skipped')
+    ).toBe('idle')
     expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!))
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].ensembleRun?.participantId).toBe('kimi')
@@ -8705,7 +8705,7 @@ Next action:
       harness.chat.ensemble?.activeRound?.participants.find(
         (participant) => participant.participantId === 'kimi'
       )?.status
-    ).toBe('skipped')
+    ).toBe('idle')
     expectYielded(
       harness.orchestrator.markYielded(
         harness.dispatched[0].appRunId!,

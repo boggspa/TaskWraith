@@ -1066,11 +1066,30 @@ function renderEnsembleYieldTitle(
   // activity was constructed by the renderer-side path without an
   // orchestrator participant context).
   const display = activity.displayName || ''
-  const actorMatch = display.match(/^(.+?)\s+yielding\b/i)
+  const actorMatch = display.match(/^(.+?)\s+(?:yielding|yielded)\b/i)
   const actor = actorMatch && !actorMatch[1].toLowerCase().includes('_') ? actorMatch[1] : ''
+  const receipt = activity.rawResultEvent as { result?: { action?: string } } | undefined
+  // The bounded summary survives persistence when full tool details move out.
+  const held =
+    receipt?.result?.action === 'held_for_active_fanout' ||
+    activity.resultSummary?.startsWith('Fan-out handoff held:')
+  const incomplete = activity.status === 'error' ? 'failed' : held ? 'held' : undefined
+  const verb = activity.status === 'success' ? 'yielded' : 'yielding'
+  const label = incomplete
+    ? 'Handoff'
+    : actor
+      ? `${actor} ${verb}`
+      : verb === 'yielded'
+        ? 'Yielded'
+        : 'Yielding'
 
   if (!target) {
-    return <>{actor ? `${actor} yielding` : 'Yielding'}</>
+    return (
+      <>
+        {label}
+        {incomplete ? ` ${incomplete}` : ''}
+      </>
+    )
   }
 
   const chip = (
@@ -1085,8 +1104,8 @@ function renderEnsembleYieldTitle(
 
   return (
     <>
-      {actor ? `${actor} yielding to ` : 'Yielding to '}
-      {chip}
+      {label} to {chip}
+      {incomplete ? ` ${incomplete}` : ''}
     </>
   )
 }

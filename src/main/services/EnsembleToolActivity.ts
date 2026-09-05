@@ -428,6 +428,13 @@ export function buildEnsembleToolActivity(
   }
 }
 
+function completedYieldDisplayName(displayName: string, status: ToolActivityStatus): string {
+  return displayName.replace(
+    /\b(?:yielding|yielded)\b/i,
+    status === 'success' ? 'yielded' : 'failed to yield'
+  )
+}
+
 export function pairEnsembleToolResult(
   activity: ToolActivity,
   event: any,
@@ -464,8 +471,8 @@ export function pairEnsembleToolResult(
   const returnedImageCount = imageView ? imageViewCountFromResult(event) : undefined
   const displayName = imageView
     ? IMAGE_VIEW_DISPLAY_NAME
-    : status === 'success' && stripToolNamespace(activity.toolName) === 'ensemble_yield'
-      ? activity.displayName.replace(/\byielding\b/i, 'yielded')
+    : stripToolNamespace(activity.toolName) === 'ensemble_yield'
+      ? completedYieldDisplayName(activity.displayName, status)
       : activity.displayName
   const resultRecord =
     event?.result && typeof event.result === 'object' && !Array.isArray(event.result)
@@ -511,8 +518,8 @@ export function pairEnsembleToolResult(
   const filePath = activity.filePath || resultFilePath || singleDiffFilePath(diffSummary)
   const resolvedDisplayName = imageView
     ? IMAGE_VIEW_DISPLAY_NAME
-    : status === 'success' && stripToolNamespace(toolName) === 'ensemble_yield'
-      ? activity.displayName.replace(/\byielding\b/i, 'yielded')
+    : stripToolNamespace(toolName) === 'ensemble_yield'
+      ? completedYieldDisplayName(activity.displayName, status)
       : activity.filePath || !filePath
         ? displayName
         : getEnsembleToolDisplayName(toolName, resultPresentation.parameters)

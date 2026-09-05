@@ -158,12 +158,79 @@ describe('liveActivityRevision', () => {
 })
 
 describe('ActivityStack ensemble_yield rendering', () => {
+  it('keeps an in-flight handoff in the present tense', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[makeEnsembleYieldActivity({ status: 'running' })]}
+        provider="codex"
+      />
+    )
+
+    expect(html).toContain('Captain K yielding to')
+  })
+
+  it('shows a rejected handoff as failed instead of yielding to a healthy-looking target', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeEnsembleYieldActivity({
+            status: 'error',
+            displayName: 'Validator yielding to Advisor',
+            parameters: { target: 'Advisor' },
+            resultSummary: 'Yield target was not routed (blocked_status).'
+          })
+        ]}
+        provider="codex"
+      />
+    )
+
+    expect(html).toContain('Handoff to')
+    expect(html).toContain('@Advisor')
+    expect(html).toContain('failed')
+    expect(html).not.toContain('yielding to')
+    expect(html).not.toContain('Yielding to')
+  })
+
+  it('uses completed wording for a successful handoff and preserves its actor', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[makeEnsembleYieldActivity({ displayName: 'Captain K yielded to Gems' })]}
+        provider="codex"
+      />
+    )
+
+    expect(html).toContain('Captain K yielded to')
+    expect(html).not.toContain('Yielding to')
+  })
+
+  it.each([true, false])('shows a held fan-out handoff with raw details present=%s', (withDetails) => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeEnsembleYieldActivity({
+            resultSummary: 'Fan-out handoff held: lanes are still settling.',
+            ...(withDetails
+              ? { rawResultEvent: { result: { ok: true, action: 'held_for_active_fanout' } } }
+              : {})
+          })
+        ]}
+        provider="codex"
+      />
+    )
+
+    expect(html).toContain('Handoff to')
+    expect(html).toContain('@Gems')
+    expect(html).toContain('held')
+    expect(html).not.toContain('yielding to')
+    expect(html).not.toContain('yielded to')
+  })
+
   it('humanizes the Codex-style mcp_TaskWraith_ensemble_yield tool name', () => {
     const html = renderToStaticMarkup(
       <ActivityStack activities={[makeEnsembleYieldActivity()]} provider="codex" />
     )
 
-    expect(html).toContain('yielding to')
+    expect(html).toContain('yielded to')
     expect(html).toContain('@Gems')
     expect(html).not.toContain('mcp_TaskWraith_ensemble_yield')
   })
@@ -181,7 +248,7 @@ describe('ActivityStack ensemble_yield rendering', () => {
       />
     )
 
-    expect(html).toContain('yielding to')
+    expect(html).toContain('yielded to')
     expect(html).toContain('@Gems')
     expect(html).not.toContain('mcp__TaskWraith__ensemble_yield')
   })
@@ -199,7 +266,7 @@ describe('ActivityStack ensemble_yield rendering', () => {
       />
     )
 
-    expect(html.toLowerCase()).toContain('yielding to')
+    expect(html.toLowerCase()).toContain('yielded to')
     expect(html).toContain('@Gems')
   })
 
@@ -251,7 +318,7 @@ describe('ActivityStack ensemble_yield rendering', () => {
     expect(html).not.toContain('@ensemble-participant-4')
     // Actor half and the provider tint both survive the swap, and the
     // model's own words stay reachable on hover.
-    expect(html).toContain('DSeekWork yielding to')
+    expect(html).toContain('DSeekWork yielded to')
     expect(html).toContain('provider-gemini')
     expect(html).toContain('title="ensemble-participant-4"')
   })
@@ -309,7 +376,7 @@ describe('ActivityStack ensemble_yield rendering', () => {
       />
     )
 
-    expect(html).toContain('Yielding to')
+    expect(html).toContain('Yielded to')
     expect(html).toContain('@Gems')
     expect(html).not.toContain('mcp_TaskWraith_ensemble_yield')
   })
@@ -334,7 +401,7 @@ describe('ActivityStack ensemble_yield rendering', () => {
       />
     )
 
-    expect(html).toContain('Yielding to')
+    expect(html).toContain('Yielded to')
     expect(html).toContain('@Captain K')
     expect(html).not.toMatch(/<strong[^>]*>Captain K<\/strong>/)
     expect(html).not.toContain('mcp_TaskWraith_ensemble_yield')

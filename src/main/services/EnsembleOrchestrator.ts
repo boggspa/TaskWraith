@@ -20,7 +20,10 @@ import {
 } from '../UltraTaskDelegationConsent'
 import { isTaskWraithMcpProfileReceiptForSession } from '../mcp/McpSessionProfileFence'
 import { taskWraithMcpAdvertisedToolNamesForProfile } from '../mcp/McpToolProfiles'
-import { ENSEMBLE_SUPERSEDED_RUN_TOOL_MESSAGE } from '../EnsembleYieldToolResult'
+import {
+  buildEnsembleYieldActivityCompletion,
+  ENSEMBLE_SUPERSEDED_RUN_TOOL_MESSAGE
+} from '../EnsembleYieldToolResult'
 import { resolveRuntimeProfileIdForScope } from '../RuntimeProfileResolution'
 import {
   unattendedElevationPresetId,
@@ -4746,21 +4749,7 @@ export class EnsembleOrchestrator {
       )
       if (fanoutHandoffHold) {
         this.appendRoundStatus(run.chatId, run.roundId, fanoutHandoffHold.message)
-        this.completePendingYieldActivity(run, reason, target, {
-          content: fanoutHandoffHold.message,
-          result: {
-            ok: true,
-            tool: 'ensemble_yield',
-            action: 'held_for_active_fanout',
-            ...(reason ? { reason } : {}),
-            ...(target ? { target } : {}),
-            activeLaneCount: fanoutHandoffHold.activeLaneCount,
-            eligibleManagerParticipantIds: fanoutHandoffHold.eligibleManagerParticipantIds,
-            ...(fanoutHandoffHold.suggestedAliases.length
-              ? { suggestedAliases: fanoutHandoffHold.suggestedAliases }
-              : {})
-          }
-        })
+        this.completeYieldActivity(run, reason, target, fanoutHandoffHold)
         return fanoutHandoffHold
       }
     }
@@ -4812,7 +4801,7 @@ export class EnsembleOrchestrator {
           ? `Authority routing checkpoint: ${participantDisplayName(run.participant)} must make a targeted routing decision or explicitly skip this tagged intervention before yielding.`
           : `Authority routing checkpoint: ${participantDisplayName(run.participant)} must select pending participants, route with a targeted yield/@mention/fan-out, or explicitly preserve the queue before yielding this Continuous pass.`
       )
-      return {
+      const outcome: EnsembleYieldOutcome = {
         kind: 'authority_routing_decision_required',
         pass: checkpoint.pass,
         requirement:
@@ -4820,6 +4809,8 @@ export class EnsembleOrchestrator {
             ? 'tagged_intervention'
             : 'later_pass_selection'
       }
+      this.completeYieldActivity(run, reason, target, outcome)
+      return outcome
     }
     run.status = 'yielded'
     let routing: EnsembleYieldRoutingResult | undefined
@@ -4852,7 +4843,7 @@ export class EnsembleOrchestrator {
       }
     }
 
-    this.completePendingYieldActivity(run, reason, target)
+    this.completeYieldActivity(run, reason, target, { kind: 'yielded', routing })
     this.finalizeRun(run, 'yielded', reason || 'Participant yielded.')
     // An accepted foreground yield-to-user closes the round now instead of
     // waiting out the provider transport ("Finalizing turn" limbo); see
@@ -5366,31 +5357,24 @@ export class EnsembleOrchestrator {
     stack.pop()
   }
 
-  private completePendingYieldActivity(
+  private completeYieldActivity(
     run: ActiveParticipantRun,
-    reason?: string,
-    target?: string,
-    override?: { content: string; result: Record<string, unknown> }
+    reason: string | undefined,
+    target: string | undefined,
+    outcome: EnsembleYieldOutcome
   ): void {
     if (!run.toolActivities || run.toolActivities.length === 0) return
     for (let index = run.toolActivities.length - 1; index >= 0; index -= 1) {
       const activity = run.toolActivities[index]
       if (stripToolNamespace(activity.toolName) !== 'ensemble_yield') continue
-      if (activity.status !== 'running' && activity.status !== 'pending') return
-      const content = override?.content || reason || (target ? `Yielded to ${target}.` : 'Yielded.')
+      // A streamed provider acknowledgement may have already paired this
+      // activity. The host's routing receipt still owns its final outcome.
       run.toolActivities[index] = pairEnsembleToolResult(
         activity,
         {
           type: 'tool_result',
           tool_id: activity.id,
-          success: true,
-          content,
-          result: override?.result || {
-            ok: true,
-            tool: 'ensemble_yield',
-            ...(reason ? { reason } : {}),
-            ...(target ? { target } : {})
-          }
+          ...buildEnsembleYieldActivityCompletion({ outcome, reason, target })
         },
         this.deps.nowIso()
       )
@@ -7809,19 +7793,13 @@ export class EnsembleOrchestrator {
       }
     }
 
-    const reason = input.reason || `${authorityLabel} kept this participant for the current pass.`
     // A live selection is the authority's newest intent; drop any stale queue.
     runtime.queuedAuthoritySelection = undefined
+    // Selection trims this pass's queue, not the seat's availability. Marking
+    // omitted seats 'skipped' blocked later explicit yields and Captain
+    // failover for the rest of the round. Preserve their actual run status,
+    // matching queued selections; explicit skip_participant remains distinct.
     remaining.splice(0, remaining.length, ...selection.selected)
-    for (const participant of selection.skipped) {
-      this.updateParticipantState(
-        runtime.chatId,
-        runtime.roundId,
-        participant.id,
-        'skipped',
-        `${authorityLabel} did not select this participant for pass ${runtime.continuationPass}. ${reason}`
-      )
-    }
     this.markAuthorityRoutingDecision(caller, 'selected')
     const kept = selection.selected.map((participant) => participantDisplayName(participant))
     const skipped = selection.skipped.map((participant) => participantDisplayName(participant))
