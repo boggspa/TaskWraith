@@ -24,8 +24,10 @@ export class DesktopWindowRegistry {
   }
 
   add(window: BrowserWindow): void {
+    const hasSelectedWindow = Boolean(this.selected())
     this.entries.set(window.id, window)
-    this.select(window)
+    // Keep approvals on the visible window while another renderer is loading.
+    if (!hasSelectedWindow) this.select(window)
     const senderId = window.webContents.id
     window.on('focus', () => this.select(window))
     window.webContents.on('did-start-loading', () => this.ready.delete(senderId))

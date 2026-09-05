@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { runApplicationMenuCommand, type ApplicationMenuActions } from './applicationMenuActions'
+import {
+  resolveApplicationMenuWorkspace,
+  runApplicationMenuCommand,
+  type ApplicationMenuActions
+} from './applicationMenuActions'
 
 function actions(activeTab: ApplicationMenuActions['activeTab']): ApplicationMenuActions {
   return {
@@ -15,6 +19,14 @@ function actions(activeTab: ApplicationMenuActions['activeTab']): ApplicationMen
 }
 
 describe('application menu renderer actions', () => {
+  it('uses the project preference, current workspace, then the most recently opened workspace', () => {
+    const first = { id: 'first', path: '/first', lastOpenedAt: 1 }
+    const recent = { id: 'recent', path: '/recent', lastOpenedAt: 2 }
+    expect(resolveApplicationMenuWorkspace([first, recent], recent, 'first')).toBe(first)
+    expect(resolveApplicationMenuWorkspace([first, recent], first)).toBe(first)
+    expect(resolveApplicationMenuWorkspace([first, recent], null)).toBe(recent)
+    expect(resolveApplicationMenuWorkspace([], null)).toBeNull()
+  })
   it.each(['projects', 'threads'] as const)('creates a workspace chat in %s', (tab) => {
     const target = actions(tab)
     runApplicationMenuCommand('new-chat', target)

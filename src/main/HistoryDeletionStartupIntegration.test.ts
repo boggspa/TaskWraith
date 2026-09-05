@@ -77,8 +77,8 @@ describe('history deletion startup integration', () => {
   })
 
   it('defers ordinary ownership reconciliation until after first paint under a capture hold', () => {
-    const readyToShowStart = indexSource.indexOf("mainWindow.on('ready-to-show', () => {")
-    const readyToShowEnd = indexSource.indexOf("mainWindow.on('resize'", readyToShowStart)
+    const readyToShowStart = indexSource.indexOf("window.on('ready-to-show', () => {")
+    const readyToShowEnd = indexSource.indexOf("window.on('resize'", readyToShowStart)
     const readyToShowSource = indexSource.slice(readyToShowStart, readyToShowEnd)
     const startupStart = indexSource.indexOf(
       '// A crash after durable history prepare must replay every unreceipted'

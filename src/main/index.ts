@@ -35,11 +35,10 @@ import {
   systemPreferences,
   net
 } from 'electron'
-import type {
-  BrowserWindowConstructorOptions,
-  IpcMainInvokeEvent,
-  MenuItemConstructorOptions
-} from 'electron'
+import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent } from 'electron'
+import { DesktopWindowRegistry } from './DesktopWindowRegistry'
+import { installApplicationMenu } from './ApplicationMenu'
+import { UpdateDialogWindow } from './UpdateDialogWindow'
 import { detectExternalPath } from './services/ExternalPathDetector'
 import {
   classifyNativeWorkspacePreflightDecision,
@@ -2558,6 +2557,10 @@ setAntigravityGeminiApiKeyConfiguredProbe(
 setAntigravityAgyOptInEnabledProbe(() => isAntigravityOptInEnabled(AppStore.getSettings()))
 
 let mainWindow: BrowserWindow | null = null
+const desktopWindows = new DesktopWindowRegistry((window) => {
+  mainWindow = window
+})
+let refreshApplicationMenu: (() => void) | null = null
 let deferredProjectReferenceReconciler: DeferredProjectReferenceReconciler | null = null
 const chatUpdateDeliveryCoordinator = new ChatUpdateDeliveryCoordinator()
 const chatUpdateInterestRouter = new ChatUpdateInterestRouter({
@@ -2600,9 +2603,7 @@ type RendererFilesystemCapability = 'external-grant' | 'git' | 'workspace-diff' 
 type RendererSenderEvent = Pick<IpcMainInvokeEvent, 'sender'>
 
 function isMainRendererSender(event: RendererSenderEvent): boolean {
-  return Boolean(
-    mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.id === event.sender.id
-  )
+  return desktopWindows.ownsSender(event.sender.id)
 }
 
 function assertMainRendererSender(event: RendererSenderEvent): void {
@@ -2628,8 +2629,8 @@ function workspacePopoutOwnerForSender(senderId: number): WorkspacePopoutAuthori
 }
 
 /**
- * Main renderer owns the whole desktop surface. Every secondary renderer is a
- * least-authority popout and may address only the chat/workspace recorded when
+ * Registered app windows own the complete desktop surface. Utility renderers
+ * remain scoped popouts and may address only the chat/workspace recorded when
  * main created that exact BrowserWindow. Payload chat IDs and paths are never
  * themselves proof of ownership.
  */
@@ -3162,7 +3163,7 @@ remoteQuestionRegistry.subscribe((event) => {
     !mainWindow.isDestroyed() &&
     !mainWindow.webContents.isDestroyed()
   ) {
-    mainWindow.webContents.send('agent-question-cancelled', {
+    desktopWindows.broadcast('agent-question-cancelled', {
       questionId: record.questionId,
       appChatId: record.threadId || '',
       reason:
@@ -3325,7 +3326,7 @@ function isSessionYoloEffective(): boolean {
 
 function broadcastSessionYoloState(): void {
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-    mainWindow.webContents.send('agentic-yolo-state', getSessionYoloMode())
+    desktopWindows.broadcast('agentic-yolo-state', getSessionYoloMode())
   }
 }
 
@@ -3470,7 +3471,7 @@ function setTrustedSession(scope: TrustedSessionScope, enabled: boolean): Truste
 }
 
 const NATIVE_GLASS_VIBRANCY: BrowserWindowConstructorOptions['vibrancy'] = 'sidebar'
-let appliedNativeGlassState: string | null = null
+const appliedNativeGlassStates = new WeakMap<BrowserWindow, string>()
 // MCP server registration name advertised to every provider's MCP client.
 // This becomes the namespace prefix the agent sees in its tool list:
 // `TaskWraith__delegate_to_subthread`, `mcp__TaskWraith__git_status`, etc.
@@ -4770,7 +4771,7 @@ function notifyNativeWindowDaemonGone(): void {
 }
 
 function publishNativeWindowRendererEvent(event: NativeWindowCoordinatorRendererEvent): void {
-  safeSendToWebContents(mainWindow, 'attached-window-changed', event)
+  desktopWindows.broadcast('attached-window-changed', event)
 }
 
 const desktopToolExecutors = createDesktopToolExecutors({
@@ -4816,7 +4817,7 @@ const desktopToolExecutors = createDesktopToolExecutors({
         return
       }
     }
-    safeSendToWebContents(mainWindow, channel, payload)
+    desktopWindows.broadcast(channel, payload)
   },
   logger: console
 })
@@ -4852,7 +4853,7 @@ const webLoginService = new WebLoginService({
   // user, so it has to be excellent at saying so. Fan the change out; the
   // renderer badges the Work > Logins tab.
   onStatusChanged: (site) => {
-    safeSendToWebContents(mainWindow, 'web-login:changed', site)
+    desktopWindows.broadcast('web-login:changed', site)
   },
   // The OLD shared Canvas Browser jar - one cookie store every site and every
   // canvas shared. Existing users are sitting in it right now, so the feature
@@ -4906,7 +4907,7 @@ const meshSceneService = new MeshSceneService({
   uuid: () => randomUUID(),
   now: () => new Date().toISOString(),
   broadcast: (event: MeshSceneEvent) => {
-    safeSendToWebContents(mainWindow, 'mesh-scene-event', event)
+    desktopWindows.broadcast('mesh-scene-event', event)
     canvasPopoutWindowManager.broadcast('mesh-scene-event', event, event.chatId)
   }
 })
@@ -4999,7 +5000,7 @@ const simulatorToolExecutors = createSimulatorToolExecutors({
       kind: 'agent.presented',
       ...event
     }
-    safeSendToWebContents(mainWindow, 'simulator-canvas-event', payload)
+    desktopWindows.broadcast('simulator-canvas-event', payload)
     canvasPopoutWindowManager.broadcast('simulator-canvas-event', payload, event.chatId)
   }
 })
@@ -5197,11 +5198,11 @@ const canvasService = new CanvasService({
   uuid: () => randomUUID(),
   now: () => new Date().toISOString(),
   broadcast: (event: CanvasEventRecord) => {
-    safeSendToWebContents(mainWindow, 'canvas-event', event)
+    desktopWindows.broadcast('canvas-event', event)
     canvasPopoutWindowManager.broadcast('canvas-event', event, event.chatId)
   },
   broadcastNavState: (payload) => {
-    safeSendToWebContents(mainWindow, 'canvas-nav-state', payload)
+    desktopWindows.broadcast('canvas-nav-state', payload)
     canvasPopoutWindowManager.broadcast('canvas-nav-state', payload, payload.chatId)
   },
   historyParticipants: [meshSceneService],
@@ -9177,7 +9178,7 @@ const appShellStatsService = new AppShellStatsService({
 })
 
 appShellStatsService.onChange((snapshot) => {
-  safeSendToWebContents(mainWindow, 'app-shell-stats-changed', snapshot)
+  desktopWindows.broadcast('app-shell-stats-changed', snapshot)
 })
 
 function getRunRepository(): RunRepository {
@@ -9196,7 +9197,7 @@ function getRunRepository(): RunRepository {
 }
 
 function emitProjectReferenceProposalsChanged(projectId: string): void {
-  safeSendToWebContents(mainWindow, 'project-reference-proposals-changed', { projectId })
+  desktopWindows.broadcast('project-reference-proposals-changed', { projectId })
 }
 
 const projectReferenceProposalService = new ProjectReferenceProposalService({
@@ -9395,7 +9396,7 @@ function emitRunQueueChanged(): void {
 }
 
 function emitWorkspaceBoardsChanged(): void {
-  safeSendToWebContents(mainWindow, 'workspace-boards-changed', {
+  desktopWindows.broadcast('workspace-boards-changed', {
     boards: AppStore.getWorkspaceBoards(),
     cards: AppStore.getWorkspaceBoardCards()
   })
@@ -9403,7 +9404,7 @@ function emitWorkspaceBoardsChanged(): void {
 }
 
 function emitEvidencePacksChanged(): void {
-  safeSendToWebContents(mainWindow, 'evidence-packs-changed', {
+  desktopWindows.broadcast('evidence-packs-changed', {
     packs: AppStore.getEvidencePacks(),
     ledger: AppStore.getCapabilityLedgerSnapshot()
   })
@@ -11548,8 +11549,10 @@ function clearDeletedChatUpdateState(chatId: string): void {
 function broadcastChatUpdatedExcept(chat: ChatRecord, excludedSenderId?: number): void {
   const resolveCompactProjection =
     chatUpdateInterestRouter.createBroadcastProjectionResolver(chat)
-  if (mainWindow?.webContents.id !== excludedSenderId) {
-    enqueueChatUpdated(mainWindow, chat, resolveCompactProjection)
+  for (const window of desktopWindows.all()) {
+    if (window.webContents.id !== excludedSenderId) {
+      enqueueChatUpdated(window, chat, resolveCompactProjection)
+    }
   }
   broadcastChatPopoutUpdateExcept(chat, excludedSenderId, resolveCompactProjection)
   broadcastChatOwnedWorkspacePopoutRefresh(chat.appChatId, 'chat-updated')
@@ -11574,7 +11577,7 @@ function reseedChatUpdated(target: BrowserWindow | null | undefined, chat: ChatR
 }
 
 function broadcastHostPersistRecoverySnapshot(chat: ChatRecord): void {
-  reseedChatUpdated(mainWindow, chat)
+  for (const window of desktopWindows.all()) reseedChatUpdated(window, chat)
   const popout = workspacePopoutWindows.get(`chat:${chat.appChatId}`)
   if (popout) reseedChatUpdated(popout, chat)
   markHumanCollaborationProjectionDirty?.(chat.appChatId)
@@ -11583,7 +11586,7 @@ function broadcastHostPersistRecoverySnapshot(chat: ChatRecord): void {
 AppStore.setHostPersistConflictRecoveryListener(broadcastHostPersistRecoverySnapshot)
 
 function broadcastContextCompactionProgress(event: ContextCompactionProgressEvent): void {
-  safeSendToWebContents(mainWindow, 'context-compaction-progress', event)
+  desktopWindows.broadcast('context-compaction-progress', event)
   if (!event.chatId || workspacePopoutWindows.size === 0) return
   const win = workspacePopoutWindows.get(`chat:${event.chatId}`)
   if (!win || win.isDestroyed()) return
@@ -11596,7 +11599,7 @@ function broadcastContextCompactionProgress(event: ContextCompactionProgressEven
  * avoiding a chat merge and full transcript invalidation for every snapshot.
  */
 function broadcastParticipantWorkingTelemetry(event: ParticipantWorkingTelemetryEvent): void {
-  safeSendToWebContents(mainWindow, 'participant-working-telemetry', event)
+  desktopWindows.broadcast('participant-working-telemetry', event)
   if (!event.chatId || workspacePopoutWindows.size === 0) return
   const win = workspacePopoutWindows.get(`chat:${event.chatId}`)
   if (!win || win.isDestroyed()) return
@@ -14176,7 +14179,7 @@ function emitRunEventsChanged(record: {
   // run-event log, which itself fires from socket data callbacks
   // (CLI providers) and timer-driven flushes. Without the guard
   // we get `Render frame was disposed` spam during window-close.
-  safeSendToWebContents(mainWindow, 'run-events-changed', {
+  desktopWindows.broadcast('run-events-changed', {
     runId: record.runId,
     chatId: record.chatId,
     workspaceId: record.workspaceId,
@@ -16089,8 +16092,8 @@ function failScheduledEnsembleOccurrenceAndAbort(
 
 function publishScheduledOccurrenceSettlement(): void {
   try {
-    mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
-    mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
+    desktopWindows.broadcast('scheduled-tasks-changed', AppStore.getScheduledTasks())
+    desktopWindows.broadcast('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
   } catch (error) {
     console.error(
       '[scheduled-occurrence] durable settlement renderer publication failed',
@@ -16487,7 +16490,7 @@ async function dispatchDueScheduledLoopHeadless(
   // window); the iOS push rebuilds RemoteWorkflow from the freshly-cached def fields.
   const broadcastWorkflowProgress = (force = false): void => {
     if (mainWindow && !mainWindow.webContents.isDestroyed()) {
-      mainWindow.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
+      desktopWindows.broadcast('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
     }
     // For important transitions (run-start reset + completion), force an immediate
     // full projection; per-iteration calls stay coalesced by the broadcaster.
@@ -17345,12 +17348,12 @@ function emitDueScheduledTasks() {
       console.error('[scheduled-occurrence] workflow materialization failed', error)
     }
     try {
-      mainWindow?.webContents.send(
+      desktopWindows.broadcast(
         'workflow-definitions-changed',
         AppStore.getWorkflowDefinitions()
       )
       if (materialized.length > 0) {
-        mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
+        desktopWindows.broadcast('scheduled-tasks-changed', AppStore.getScheduledTasks())
       }
     } catch (error) {
       console.warn('[scheduled-occurrence] initial scheduler broadcast failed', error)
@@ -17443,11 +17446,11 @@ function emitDueScheduledTasks() {
   } finally {
     if (dueTaskCount > 0) {
       try {
-        mainWindow?.webContents.send(
+        desktopWindows.broadcast(
           'workflow-definitions-changed',
           AppStore.getWorkflowDefinitions()
         )
-        mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
+        desktopWindows.broadcast('scheduled-tasks-changed', AppStore.getScheduledTasks())
       } catch (error) {
         console.warn('[scheduled-occurrence] terminal scheduler broadcast failed', error)
       }
@@ -45399,7 +45402,7 @@ const applyNativeGlassToWindow = (targetWindow: BrowserWindow, settings: AppSett
     ? resolvePopoutBackgroundColor(false)
     : '#1e1e1e'
   const nextState = `${useGlassWindow ? NATIVE_GLASS_VIBRANCY : windowsMaterial || 'off'}:${settings.appearanceMode}:${settings.reduceTransparency ? 'reduced' : 'normal'}`
-  if (targetWindow === mainWindow && appliedNativeGlassState === nextState) {
+  if (appliedNativeGlassStates.get(targetWindow) === nextState) {
     return
   }
   if (isWindows) {
@@ -45413,9 +45416,7 @@ const applyNativeGlassToWindow = (targetWindow: BrowserWindow, settings: AppSett
     targetWindow.setVibrancy(null)
     targetWindow.setBackgroundColor(solidBackground)
   }
-  if (targetWindow === mainWindow) {
-    appliedNativeGlassState = nextState
-  }
+  appliedNativeGlassStates.set(targetWindow, nextState)
 }
 
 function windowBoundsAreVisible(bounds: AppSettings['windowBounds']): boolean {
@@ -45445,15 +45446,15 @@ function resolveInitialWindowPlacement(settings: AppSettings) {
 let windowBoundsSaveTimer: ReturnType<typeof setTimeout> | null = null
 let lastPersistedWindowBoundsJson = ''
 
-function persistMainWindowBounds(): void {
-  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) return
-  const bounds = mainWindow.getNormalBounds()
+function persistMainWindowBounds(targetWindow: BrowserWindow | null = mainWindow): void {
+  if (!targetWindow || targetWindow.isDestroyed() || targetWindow.isMinimized()) return
+  const bounds = targetWindow.getNormalBounds()
   const windowBounds = {
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
-    isMaximized: mainWindow.isMaximized()
+    isMaximized: targetWindow.isMaximized()
   }
   const nextJson = JSON.stringify(windowBounds)
   if (nextJson === lastPersistedWindowBoundsJson) return
@@ -45461,11 +45462,11 @@ function persistMainWindowBounds(): void {
   AppStore.updateSettings({ windowBounds })
 }
 
-function schedulePersistMainWindowBounds(): void {
+function schedulePersistMainWindowBounds(targetWindow: BrowserWindow): void {
   if (windowBoundsSaveTimer) clearTimeout(windowBoundsSaveTimer)
   windowBoundsSaveTimer = setTimeout(() => {
     windowBoundsSaveTimer = null
-    persistMainWindowBounds()
+    persistMainWindowBounds(targetWindow)
   }, 1000)
 }
 
@@ -45535,7 +45536,7 @@ function installExternalUsageScanPipeline(): void {
     if (externalUsageUpdatePingTimer) return
     externalUsageUpdatePingTimer = setTimeout(() => {
       externalUsageUpdatePingTimer = null
-      mainWindow?.webContents.send('external-usage-updated')
+      desktopWindows.broadcast('external-usage-updated')
       remoteUsageRollupTrigger?.()
     }, 1_000)
     externalUsageUpdatePingTimer.unref?.()
@@ -45550,7 +45551,7 @@ function installWorkspaceActivityScanPipeline(): void {
     createWorkspaceActivityWorkerDriver(join(__dirname, 'workspaceActivityWorker.js'))
   )
   setWorkspaceActivityUpdateListener((snapshot) => {
-    mainWindow?.webContents.send('workspace-activity-updated', {
+    desktopWindows.broadcast('workspace-activity-updated', {
       workspacePath: snapshot.workspacePath,
       dayCount: snapshot.dayCount
     })
@@ -45623,7 +45624,7 @@ function scheduleExternalUsagePrewarmAfterFirstPaint(): void {
   setTimeout(startExternalUsagePrewarmOnce, EXTERNAL_USAGE_PREWARM_BACKSTOP_MS).unref?.()
 }
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   startupMilestones.mark('create-window')
   if (tuiHeadlessHostSession.isHeadless) {
     tuiHeadlessHostSession.promoteToDesktop()
@@ -45638,7 +45639,7 @@ function createWindow(): void {
   const nativeVibrancy = resolveNativeVibrancy(useGlassWindow)
   const initialPlacement = resolveInitialWindowPlacement(settings)
 
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: initialPlacement.width,
     height: initialPlacement.height,
     ...(initialPlacement.x !== undefined ? { x: initialPlacement.x } : {}),
@@ -45665,16 +45666,17 @@ function createWindow(): void {
     }
   })
 
-  attachSpellcheckContextTracking(mainWindow)
+  desktopWindows.add(window)
+  attachSpellcheckContextTracking(window)
 
   if (initialPlacement.isMaximized) {
-    mainWindow.maximize()
+    window.maximize()
   }
 
-  mainWindow.on('ready-to-show', () => {
+  window.on('ready-to-show', () => {
     startupMilestones.mark('ready-to-show')
     startupMilestones.report()
-    mainWindow?.show()
+    window?.show()
     deferredProjectReferenceReconciler?.scheduleAfterFirstPaint()
     managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
     emitDueScheduledTasks()
@@ -45687,45 +45689,47 @@ function createWindow(): void {
     startupAuthorityRecoveryRef?.startAutomaticRetries()
     scheduleWorkspaceLockHistoryCompaction()
   })
-  mainWindow.on('resize', schedulePersistMainWindowBounds)
-  mainWindow.on('move', schedulePersistMainWindowBounds)
-  mainWindow.on('maximize', persistMainWindowBounds)
-  mainWindow.on('unmaximize', persistMainWindowBounds)
-  mainWindow.on('minimize', updateAppShellStatsPollingMode)
-  mainWindow.on('restore', updateAppShellStatsPollingMode)
-  mainWindow.on('show', updateAppShellStatsPollingMode)
-  mainWindow.on('hide', updateAppShellStatsPollingMode)
-  mainWindow.on('close', () => {
-    teardownCanvasSurfacesForWindowClose()
+  window.on('resize', () => schedulePersistMainWindowBounds(window))
+  window.on('move', () => schedulePersistMainWindowBounds(window))
+  window.on('maximize', () => persistMainWindowBounds(window))
+  window.on('unmaximize', () => persistMainWindowBounds(window))
+  window.on('minimize', updateAppShellStatsPollingMode)
+  window.on('restore', updateAppShellStatsPollingMode)
+  window.on('show', updateAppShellStatsPollingMode)
+  window.on('hide', updateAppShellStatsPollingMode)
+  window.on('close', () => {
+    void canvasEmbedIpcAuthority.closeRenderer(window.webContents.id).catch((error) => {
+      console.warn('[canvas] window-close cleanup failed:', error)
+    })
     if (windowBoundsSaveTimer) {
       clearTimeout(windowBoundsSaveTimer)
       windowBoundsSaveTimer = null
     }
-    persistMainWindowBounds()
+    persistMainWindowBounds(window)
   })
-  mainWindow.on('closed', () => {
-    appShellStatsService.stop()
-    mainWindow = null
+  window.on('closed', () => {
+    if (desktopWindows.all().length === 0) appShellStatsService.stop()
+    else updateAppShellStatsPollingMode()
   })
-  mainWindow.on('focus', () => {
-    if (mainWindow) {
-      applyNativeGlassToWindow(mainWindow, AppStore.getSettings())
+  window.on('focus', () => {
+    if (window) {
+      applyNativeGlassToWindow(window, AppStore.getSettings())
     }
     updateAppShellStatsPollingMode()
   })
-  mainWindow.on('blur', () => {
-    if (mainWindow) {
-      applyNativeGlassToWindow(mainWindow, AppStore.getSettings())
+  window.on('blur', () => {
+    if (window) {
+      applyNativeGlassToWindow(window, AppStore.getSettings())
     }
     updateAppShellStatsPollingMode()
   })
 
-  mainWindow.webContents.setWindowOpenHandler((details) => {
+  window.webContents.setWindowOpenHandler((details) => {
     openSafeShellTargetDetached(details.url)
     return { action: 'deny' }
   })
 
-  mainWindow.webContents.on('console-message', (details) => {
+  window.webContents.on('console-message', (details) => {
     rendererConsoleBuffer.push({
       timestamp: new Date().toISOString(),
       level: consoleMessageLevelToNumber(details.level),
@@ -45748,10 +45752,10 @@ function createWindow(): void {
   // navigation: hash / query-string changes still pass through; full
   // navigations are cancelled and routed to the OS via `shell.*`.
   // Belt-and-braces with the renderer's per-link `onClick` handler.
-  mainWindow.webContents.on('will-navigate', (event, url) => {
+  window.webContents.on('will-navigate', (event, url) => {
     try {
       const target = new URL(url)
-      const currentURL = mainWindow?.webContents.getURL()
+      const currentURL = window?.webContents.getURL()
       const current = currentURL ? new URL(currentURL) : null
       // Allow same-document navigations (hash change, search params).
       // pathname + origin + protocol must all match to count as same-doc.
@@ -45772,10 +45776,11 @@ function createWindow(): void {
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    window.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    window.loadFile(join(__dirname, '../renderer/index.html'))
   }
+  return window
 }
 
 // A second launch can arrive while the first instance is still awaiting boot
@@ -46114,7 +46119,7 @@ async function dockSideChatPopout(
   })
 
   const sourceWindow = BrowserWindow.fromWebContents(event.sender)
-  if (sourceWindow && sourceWindow !== mainWindow && !sourceWindow.isDestroyed()) {
+  if (sourceWindow && !isMainRendererSender(event) && !sourceWindow.isDestroyed()) {
     sourceWindow.close()
   }
   return { ok: true }
@@ -46409,11 +46414,7 @@ if (isGeminiMcpBridgeProcess) {
       { urls: ['twmedia://asset/*'] },
       createTwMediaRequestGate({
         resolveWebContentsAuthority: (webContentsId) => {
-          if (
-            mainWindow &&
-            !mainWindow.isDestroyed() &&
-            mainWindow.webContents.id === webContentsId
-          ) {
+          if (desktopWindows.ownsSender(webContentsId)) {
             return { kind: 'main' }
           }
           const owner = workspacePopoutOwnerForSender(webContentsId)
@@ -46472,7 +46473,7 @@ if (isGeminiMcpBridgeProcess) {
       getChatUpdateTargetStats: (webContentsId) =>
         chatUpdateDeliveryCoordinator.statsForTarget(webContentsId),
       getChatUpdateProtocolCounters: () => chatUpdateDeliveryCoordinator.protocolCounters(),
-      shouldRecordWindow: (window) => window === mainWindow,
+      shouldRecordWindow: (window) => desktopWindows.ownsSender(window.webContents.id),
       onError: (message, error) => {
         console.warn(
           `[renderer-diagnostics] ${message}`,
@@ -46586,107 +46587,6 @@ if (isGeminiMcpBridgeProcess) {
     installExternalUsageScanPipeline()
     installWorkspaceActivityScanPipeline()
     scheduleExternalUsagePrewarmAfterFirstPaint()
-
-    /*
-     * F4 (1.0.3) — explicit application menu.
-     *
-     * Suppresses the recurring NSMenu warning:
-     *   "representedObject is not a WeakPtrToElectronMenuModelAsNSObject"
-     *
-     * Investigation finding: TaskWraith never constructed an application
-     * menu (no `Menu.buildFromTemplate` / `setApplicationMenu` calls
-     * anywhere in src/). Electron auto-generated a default macOS
-     * menu bar, and its internal NSMenu bridge emits the warning
-     * during that auto-construction — verified by ruling out every
-     * other menu surface (no dock menu, no tray menu, no context
-     * menus in main).
-     *
-     * Fix: build an explicit standard macOS menu using Electron's
-     * built-in roles (no custom click handlers, no representedObject
-     * fields, no non-standard MenuItem props). The role-based items
-     * use Electron's own bridge representation, which the NSMenu
-     * shim accepts without warning. We get the standard
-     * TaskWraith / File / Edit / View / Window / Help menus back,
-     * just sourced from us explicitly rather than
-     * auto-generated.
-     */
-    const appMenuTemplate: MenuItemConstructorOptions[] = [
-      {
-        label: app.name,
-        submenu: [
-          { role: 'about' },
-          { type: 'separator' },
-          { role: 'services' },
-          { type: 'separator' },
-          { role: 'hide' },
-          { role: 'hideOthers' },
-          { role: 'unhide' },
-          { type: 'separator' },
-          { role: 'quit' }
-        ]
-      },
-      {
-        label: 'File',
-        submenu: [{ role: 'close' }]
-      },
-      {
-        label: 'Edit',
-        submenu: [
-          { role: 'undo' },
-          { role: 'redo' },
-          { type: 'separator' },
-          { role: 'cut' },
-          { role: 'copy' },
-          { role: 'paste' },
-          { role: 'pasteAndMatchStyle' },
-          { role: 'delete' },
-          { role: 'selectAll' },
-          { type: 'separator' },
-          {
-            label: 'Speech',
-            submenu: [{ role: 'startSpeaking' }, { role: 'stopSpeaking' }]
-          }
-        ]
-      },
-      {
-        label: 'View',
-        submenu: [
-          { role: 'reload' },
-          { role: 'forceReload' },
-          { role: 'toggleDevTools' },
-          { type: 'separator' },
-          { role: 'resetZoom' },
-          { role: 'zoomIn' },
-          { role: 'zoomOut' },
-          { type: 'separator' },
-          { role: 'togglefullscreen' }
-        ]
-      },
-      {
-        label: 'Window',
-        submenu: [
-          { role: 'minimize' },
-          { role: 'zoom' },
-          { type: 'separator' },
-          { role: 'front' },
-          { type: 'separator' },
-          { role: 'window' }
-        ]
-      },
-      {
-        label: 'Help',
-        submenu: []
-      }
-    ]
-    try {
-      const appMenu = Menu.buildFromTemplate(appMenuTemplate)
-      Menu.setApplicationMenu(appMenu)
-    } catch (error) {
-      console.warn(
-        '[main] Failed to install custom application menu — falling back to Electron defaults:',
-        error
-      )
-    }
 
     // Phase K3 — wire the creative-action approval gate to the renderer.
     // Broadcasts pending requests to the focused window; resolves
@@ -47396,7 +47296,7 @@ if (isGeminiMcpBridgeProcess) {
           if (notice.kind === 'execution-terminal' || notice.kind === 'execution-progressed') {
             deliverSettledExecutionResult(notice.executionId)
           }
-          safeSendToWebContents(mainWindow, 'execution-graph-changed', notice)
+          desktopWindows.broadcast('execution-graph-changed', notice)
           requestThrottledRemoteProjectionSnapshot()
         }
       })
@@ -47507,7 +47407,7 @@ if (isGeminiMcpBridgeProcess) {
       ipcMain,
       isMainRendererSender,
       onSessionChanged: () => {
-        mainWindow?.webContents.send('usage-changed')
+        desktopWindows.broadcast('usage-changed')
       }
     })
     // The lanes that turn those sessions into quota readings. Both read the
@@ -51277,7 +51177,7 @@ if (isGeminiMcpBridgeProcess) {
               concurrencyPolicy: 'skip',
               limits: { maxRunsPerDay: 24, maxConsecutiveFailures: 3 }
             })
-            mainWindow?.webContents.send(
+            desktopWindows.broadcast(
               'workflow-definitions-changed',
               AppStore.getWorkflowDefinitions()
             )
@@ -53043,13 +52943,13 @@ if (isGeminiMcpBridgeProcess) {
         AppStore.materializeWorkflowNow(id, nowMs, scheduledAttachmentPersistence.resolve),
       ensureScheduledTaskSignedPosture,
       broadcastWorkflowDefinitionsChanged: () => {
-        mainWindow?.webContents.send(
+        desktopWindows.broadcast(
           'workflow-definitions-changed',
           AppStore.getWorkflowDefinitions()
         )
       },
       broadcastScheduledTasksChanged: () => {
-        mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
+        desktopWindows.broadcast('scheduled-tasks-changed', AppStore.getScheduledTasks())
       },
       broadcastRemoteProjectionSnapshot: requestThrottledRemoteProjectionSnapshot,
       emitDueScheduledTasks,
@@ -54058,7 +53958,7 @@ if (isGeminiMcpBridgeProcess) {
         hostAdmin: hostChannelAdmin,
         publishToMain: (event) => {
           if (!mainWindow || mainWindow.isDestroyed()) return
-          mainWindow.webContents.send(CHANNEL_IPC_CHANGED_EVENT, event)
+          desktopWindows.broadcast(CHANNEL_IPC_CHANGED_EVENT, event)
         },
         publishToChat: (chatId, event) => {
           const win = workspacePopoutWindows.get(`chat:${chatId}`)
@@ -54151,7 +54051,7 @@ if (isGeminiMcpBridgeProcess) {
           if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
             return
           }
-          mainWindow.webContents.send(CHANNEL_MEMBER_IPC_CHANGED_EVENT, event)
+          desktopWindows.broadcast(CHANNEL_MEMBER_IPC_CHANGED_EVENT, event)
         },
         logger: (line) => console.warn(line)
       })
@@ -56063,7 +55963,7 @@ if (isGeminiMcpBridgeProcess) {
             ? { metadata: rendererDiagnosticMetadata(rendererDiagnostic) }
             : {})
         })
-        if (window === mainWindow) {
+        if (desktopWindows.ownsSender(webContentsId)) {
           rendererCrashRecovery.show({
             reason: details.reason,
             exitCode: details.exitCode,
@@ -56350,7 +56250,7 @@ if (isGeminiMcpBridgeProcess) {
     localServersServiceRef = localServersService
     localServersService.subscribe((snapshot) => {
       try {
-        mainWindow?.webContents.send('local-servers-changed', snapshot)
+        desktopWindows.broadcast('local-servers-changed', snapshot)
       } catch {
         // Window may be gone — ignore.
       }
@@ -56374,7 +56274,7 @@ if (isGeminiMcpBridgeProcess) {
       controller: hostLifecycle,
       assertMainRendererSender,
       publishChanged: (snapshot) =>
-        safeSendToWebContents(mainWindow, HOST_LIFECYCLE_CHANGED_CHANNEL, snapshot)
+        desktopWindows.broadcast(HOST_LIFECYCLE_CHANGED_CHANNEL, snapshot)
     })
     const pluginHost = new PluginHost({
       userDataPath: app.getPath('userData'),
@@ -56563,7 +56463,7 @@ if (isGeminiMcpBridgeProcess) {
         )
       })
       try {
-        mainWindow?.webContents.send('launch-attempts-changed', snapshot)
+        desktopWindows.broadcast('launch-attempts-changed', snapshot)
       } catch {
         // Window may be gone — ignore.
       }
@@ -56714,7 +56614,7 @@ if (isGeminiMcpBridgeProcess) {
         }
       }
       try {
-        mainWindow?.webContents.send('update-status-changed', snapshot)
+        desktopWindows.broadcast('update-status-changed', snapshot)
       } catch {
         // Window may be destroyed during a long-running download — ignore.
       }
@@ -56745,6 +56645,7 @@ if (isGeminiMcpBridgeProcess) {
               enabled: resolveAutoUpdateEnabled(settings)
             })
           }
+          if ('keyCommandBindings' in sanitizedPatch) refreshApplicationMenu?.()
           if (sanitizedPatch.bridgeDaemonEnabled !== undefined) {
             reconcileBridgeDaemonFromSettings()
           }
@@ -57332,7 +57233,7 @@ if (isGeminiMcpBridgeProcess) {
           return result
         },
         publishProjection: (sessionId, projection) => {
-          mainWindow?.webContents.send('human-collaboration-runtime-projection-update', {
+          desktopWindows.broadcast('human-collaboration-runtime-projection-update', {
             sessionId,
             projection
           })
@@ -57868,7 +57769,7 @@ if (isGeminiMcpBridgeProcess) {
     // facade reconciles its optimistic snapshot from this event. The payload
     // is the full registry state: { projects, workProfiles }.
     AppStore.setProjectsChangeListener((state) => {
-      safeSendToWebContents(mainWindow, 'projects-changed', state)
+      desktopWindows.broadcast('projects-changed', state)
     })
     registerWorkspaceActivityHandlers({
       requireRegisteredWorkspace,
@@ -58483,7 +58384,7 @@ if (isGeminiMcpBridgeProcess) {
       })
     }
     const broadcastHumanCollaborationUpdate = (chatId: string): void => {
-      mainWindow?.webContents.send('human-collaboration-updated', { chatId })
+      desktopWindows.broadcast('human-collaboration-updated', { chatId })
       broadcastThreadUpdate(chatId)
       publishCollaborationProjection(chatId)
     }
@@ -58643,7 +58544,7 @@ if (isGeminiMcpBridgeProcess) {
       getExternalUsageCached: (options) =>
         getExternalUsageCached(options ? { maxAgeMs: options.maxAgeMs } : {}),
       onUsageChanged: () => {
-        mainWindow?.webContents.send('usage-changed')
+        desktopWindows.broadcast('usage-changed')
       },
       getChats: () => AppStore.getChats(),
       getWorkspaces: () => AppStore.getWorkspaces(),
@@ -58822,22 +58723,22 @@ if (isGeminiMcpBridgeProcess) {
       sanitizeWorkspaceBoardCardForSave,
       sanitizeWorkspaceBoardCardPatch,
       broadcastScheduledTasksChanged: () => {
-        mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
+        desktopWindows.broadcast('scheduled-tasks-changed', AppStore.getScheduledTasks())
       },
       broadcastWorkflowDefinitionsChanged: () => {
-        mainWindow?.webContents.send(
+        desktopWindows.broadcast(
           'workflow-definitions-changed',
           AppStore.getWorkflowDefinitions()
         )
       },
       broadcastWorkspaceBoardsChanged: () => {
-        mainWindow?.webContents.send('workspace-boards-changed', {
+        desktopWindows.broadcast('workspace-boards-changed', {
           boards: AppStore.getWorkspaceBoards(),
           cards: AppStore.getWorkspaceBoardCards()
         })
       },
       broadcastEvidencePacksChanged: () => {
-        mainWindow?.webContents.send('evidence-packs-changed', {
+        desktopWindows.broadcast('evidence-packs-changed', {
           packs: AppStore.getEvidencePacks(),
           ledger: AppStore.getCapabilityLedgerSnapshot()
         })
@@ -59089,7 +58990,7 @@ if (isGeminiMcpBridgeProcess) {
         return startupAuthorityRecoveryRef.retryNow()
       },
       forEachRendererWindow: (visit) => {
-        if (mainWindow) visit(mainWindow)
+        for (const window of desktopWindows.all()) visit(window)
         for (const win of workspacePopoutWindows.values()) visit(win)
       }
     })
@@ -59103,6 +59004,7 @@ if (isGeminiMcpBridgeProcess) {
       isAppearanceMode,
       getMainWindow: () => mainWindow,
       forEachWorkspacePopoutWindow: (visit) => {
+        for (const window of desktopWindows.all()) if (window !== mainWindow) visit(window)
         for (const win of workspacePopoutWindows.values()) {
           visit(win)
         }
@@ -61674,7 +61576,7 @@ if (isGeminiMcpBridgeProcess) {
         }
         maybeAppendAuditTranscriptMessage(run)
         // Live-update push to the renderer (Slice C: 'audit-run-changed').
-        safeSendToWebContents(mainWindow, 'audit-run-changed', run)
+        desktopWindows.broadcast('audit-run-changed', run)
       },
       now: () => new Date().toISOString(),
       uuid: () => randomUUID()
@@ -62595,7 +62497,7 @@ if (isGeminiMcpBridgeProcess) {
           },
           sendTimeoutToRenderer: (snapshot) => {
             try {
-              mainWindow?.webContents.send('agent-approval-timeout', snapshot)
+              desktopWindows.broadcast('agent-approval-timeout', snapshot)
             } catch {
               // Window destroyed — caller's already wrapped this in try/catch.
             }
@@ -63181,6 +63083,19 @@ if (isGeminiMcpBridgeProcess) {
     // `run-agent` and `run-ensemble-round` are now registered. If a second
     // instance asked to show the app during startup, flush that request instead
     // of creating a duplicate window below.
+    const updateDialog = new UpdateDialogWindow({
+      preloadPath: join(__dirname, '../preload/index.js'),
+      rendererFile: join(__dirname, '../renderer/updater.html'),
+      rendererUrl: is.dev ? process.env['ELECTRON_RENDERER_URL'] : undefined,
+      updateService,
+      openExternal: openSafeShellTargetDetached
+    })
+    refreshApplicationMenu = installApplicationMenu({
+      windows: desktopWindows,
+      createWindow,
+      openUpdates: () => updateDialog.open(),
+      getKeyBindings: () => AppStore.getSettings().keyCommandBindings
+    })
     const openedForDeferredSecondInstance = startupWindowGate.release(createWindow)
     if (!openedForDeferredSecondInstance && !tuiHeadlessHostSession.isHeadless) createWindow()
     const packagedEmulatorSmokeHandled = await startPackagedEmulatorSmoke({
@@ -63204,7 +63119,7 @@ if (isGeminiMcpBridgeProcess) {
       void startGeminiMcpBroker().catch((error) => {
         console.error('Failed to restart Gemini MCP broker on app activation', error)
       })
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+      if (desktopWindows.all().length === 0) createWindow()
     })
   })
 

@@ -1,5 +1,19 @@
 import type { ApplicationMenuCommand } from '../../../shared/applicationMenu'
 
+export function resolveApplicationMenuWorkspace<
+  T extends { id: string; path: string; lastOpenedAt?: number }
+>(workspaces: readonly T[], current: T | null, preferredWorkspaceId?: string): T | null {
+  return (
+    workspaces.find((workspace) => workspace.id === preferredWorkspaceId) ??
+    current ??
+    workspaces.reduce<T | null>(
+      (latest, workspace) =>
+        !latest || (workspace.lastOpenedAt ?? 0) > (latest.lastOpenedAt ?? 0) ? workspace : latest,
+      null
+    )
+  )
+}
+
 export interface ApplicationMenuActions {
   activeTab: 'chat' | 'threads' | 'projects' | 'terminal'
   workspace: { id: string; path: string } | null

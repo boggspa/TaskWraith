@@ -475,7 +475,11 @@ import { useNativeCapabilities } from './hooks/useNativeCapabilities'
 import { useViewportWidth } from './hooks/useViewportWidth'
 import { useChangelog } from './hooks/useChangelog'
 import { useApplicationMenu } from './hooks/useApplicationMenu'
-import { runApplicationMenuCommand, type ApplicationMenuActions } from './lib/applicationMenuActions'
+import {
+  resolveApplicationMenuWorkspace,
+  runApplicationMenuCommand,
+  type ApplicationMenuActions
+} from './lib/applicationMenuActions'
 import { terminalLaunchBus } from './lib/TerminalSidebarStore'
 import { useLaunchAttempts } from './hooks/useLaunchAttempts'
 import { useWorkspaceLaunchTargets } from './hooks/useWorkspaceLaunchTargets'
@@ -20984,15 +20988,30 @@ function App(): React.JSX.Element {
 
   const applicationMenuActions: ApplicationMenuActions = {
     activeTab: sidebarActiveTab,
-    workspace: currentWorkspace,
+    workspace: resolveApplicationMenuWorkspace(
+      workspaces,
+      currentWorkspace,
+      sidebarActiveTab === 'projects' && activeWorkProjectId
+        ? getProjectWorkProfile(activeWorkProjectId)?.preferredWorkspaceId
+        : undefined
+    ),
     newWorkspaceChat: handleNewChat,
     newGlobalChat: handleNewDefaultGlobalChat,
     newTerminal: (workspacePath) => terminalLaunchBus.request(workspacePath),
     openFolder: handleSelectWorkspace,
-    openGeneralSettings: () => openSettingsTab('behavior'),
-    showApp: () => setShowSettings(false)
+    openGeneralSettings: () => {
+      handleDismissChangelogSheet()
+      openSettingsTab('behavior')
+    },
+    showApp: () => {
+      handleDismissChangelogSheet()
+      setShowSettings(false)
+      setActiveProjectGraphId(null)
+    }
   }
-  useApplicationMenu(applicationMenuActions, !isChatPopoutWindow)
+  useApplicationMenu(applicationMenuActions, !isChatPopoutWindow, () => {
+    void window.api.getWorkspaces().then(setWorkspaces).catch(() => {})
+  })
 
   const createNewChatFromKeyboard = (): boolean => {
     if (isChatPopoutWindow) return false

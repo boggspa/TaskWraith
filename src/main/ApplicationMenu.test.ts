@@ -1,14 +1,34 @@
 import type { MenuItemConstructorOptions } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('electron', () => ({ ipcMain: {}, Menu: {} }))
-import { buildApplicationMenuTemplate } from './ApplicationMenu'
+vi.mock('electron', () => ({
+  ipcMain: { on: vi.fn() },
+  Menu: { buildFromTemplate: vi.fn(), setApplicationMenu: vi.fn() }
+}))
+import { Menu } from 'electron'
+import { buildApplicationMenuTemplate, installApplicationMenu } from './ApplicationMenu'
+import { DesktopWindowRegistry } from './DesktopWindowRegistry'
 
 function submenu(item: MenuItemConstructorOptions): MenuItemConstructorOptions[] {
   return item.submenu as MenuItemConstructorOptions[]
 }
 
 describe('application menu', () => {
+  it('keeps desktop startup alive if the native menu cannot be installed', () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.mocked(Menu.buildFromTemplate).mockImplementationOnce(() => {
+      throw new Error('Native menu unavailable')
+    })
+    expect(() =>
+      installApplicationMenu({
+        windows: new DesktopWindowRegistry(),
+        createWindow: vi.fn(),
+        openUpdates: vi.fn()
+      })
+    ).not.toThrow()
+    expect(warning).toHaveBeenCalledOnce()
+    warning.mockRestore()
+  })
   it('routes native commands with the selected window and keeps Close a native window action', () => {
     const actions = { newWindow: vi.fn(), command: vi.fn(), checkForUpdates: vi.fn() }
     const menu = buildApplicationMenuTemplate(actions, 'darwin')
@@ -51,5 +71,17 @@ describe('application menu', () => {
         'Check for Updates…'
       )
     }
+  })
+
+  it('preserves customized and disabled shortcuts without stealing a configured chord', () => {
+    const menu = buildApplicationMenuTemplate(
+      { newWindow() {}, command() {}, checkForUpdates() {} },
+      'darwin',
+      { 'new-chat': { key: 'O', modifiers: ['primary'] }, settings: null }
+    )
+    const file = submenu(menu.find((item) => item.label === 'File')!)
+    expect(file.find((item) => item.label === 'New Chat')?.accelerator).toBe('CmdOrCtrl+O')
+    expect(file.find((item) => item.label === 'Open Folder…')?.accelerator).toBeUndefined()
+    expect(submenu(menu[0]).find((item) => item.label === 'Settings…')?.accelerator).toBeUndefined()
   })
 })
