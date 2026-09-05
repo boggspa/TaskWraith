@@ -33,6 +33,9 @@ export interface OllamaEnsemblePromptCapsuleInput {
   turnBoundary?: string
   roundPolicy: string
   parallelPolicy: string
+  /** Current root goal/assignment contract. With a checkpoint this remains a
+   * required section while `dynamicState` alone may be shed. */
+  workContract?: string
   dynamicState?: string
   workspaceStanza?: string | null
   workspaceChurnStanza?: string
@@ -250,6 +253,13 @@ export function buildOllamaEnsemblePromptCapsuleProjection(
     typeof input.continuityCheckpoint === 'string' && input.continuityCheckpoint.trim()
       ? input.continuityCheckpoint
       : ''
+  const workContract =
+    typeof input.workContract === 'string' && input.workContract.trim() ? input.workContract : ''
+  const dynamicState =
+    !continuityCheckpoint && workContract
+      ? [workContract, input.dynamicState].filter((value) => trimmed(value)).join('\n\n')
+      : input.dynamicState
+  const dynamicStateIsOptional = Boolean(continuityCheckpoint && workContract)
 
   const boundedTranscript = boundedTextEvidence(
     input.transcript,
@@ -322,12 +332,18 @@ export function buildOllamaEnsemblePromptCapsuleProjection(
           }
         ]
       : []),
-    ...(input.dynamicState
+    ...(continuityCheckpoint && workContract
+      ? [{ text: '' }, { text: section('Current work contract:', workContract, 1_000) }]
+      : []),
+    ...(dynamicState
       ? [
-          { text: '', continuitySheddingGroup: 'dynamic-state' as const },
           {
-            text: section('Dynamic ensemble state:', input.dynamicState, 1_000),
-            continuitySheddingGroup: 'dynamic-state' as const
+            text: '',
+            ...(dynamicStateIsOptional ? { continuitySheddingGroup: 'dynamic-state' as const } : {})
+          },
+          {
+            text: section('Dynamic ensemble state:', dynamicState, 1_000),
+            ...(dynamicStateIsOptional ? { continuitySheddingGroup: 'dynamic-state' as const } : {})
           }
         ]
       : []),

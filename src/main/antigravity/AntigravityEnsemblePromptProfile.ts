@@ -31,6 +31,9 @@ export interface AntigravityOfficialAgyPromptCapsuleInput {
   turnBoundary?: string
   roundPolicy: string
   parallelPolicy: string
+  /** Current root goal/assignment contract. With a checkpoint this remains a
+   * required section while `dynamicState` alone may be shed. */
+  workContract?: string
   dynamicState: string
   workspaceStanza?: string | null
   workspaceChurnStanza?: string
@@ -249,6 +252,13 @@ export function buildAntigravityOfficialAgyPromptCapsuleProjection(
     typeof input.continuityCheckpoint === 'string' && input.continuityCheckpoint.trim()
       ? input.continuityCheckpoint
       : ''
+  const workContract =
+    typeof input.workContract === 'string' && input.workContract.trim() ? input.workContract : ''
+  const dynamicState =
+    !continuityCheckpoint && workContract
+      ? [workContract, input.dynamicState].filter((value) => trimmed(value)).join('\n\n')
+      : input.dynamicState
+  const dynamicStateIsOptional = Boolean(continuityCheckpoint && workContract)
 
   const boundedTranscript = boundedTextEvidence(
     input.transcript,
@@ -282,10 +292,16 @@ export function buildAntigravityOfficialAgyPromptCapsuleProjection(
     { text: section('Authority and role boundary:', authority, 1_200) },
     { text: '' },
     { text: section('Parallel policy:', input.parallelPolicy, 700) },
-    { text: '', continuitySheddingGroup: 'dynamic-state' },
+    ...(continuityCheckpoint && workContract
+      ? [{ text: '' }, { text: section('Current work contract:', workContract, 1_800) }]
+      : []),
     {
-      text: section('Dynamic ensemble state:', input.dynamicState, 1_800),
-      continuitySheddingGroup: 'dynamic-state'
+      text: '',
+      ...(dynamicStateIsOptional ? { continuitySheddingGroup: 'dynamic-state' as const } : {})
+    },
+    {
+      text: section('Dynamic ensemble state:', dynamicState, 1_800),
+      ...(dynamicStateIsOptional ? { continuitySheddingGroup: 'dynamic-state' as const } : {})
     },
     ...(input.workspaceStanza
       ? [{ text: '' }, { text: section('Workspace subject:', input.workspaceStanza, 600) }]

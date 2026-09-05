@@ -81,6 +81,36 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     expect(prompt).toContain('only if your runtime actually lists them')
   })
 
+  it('recombines split work and dynamic state without changing a no-checkpoint prompt', () => {
+    const workContract = 'NEW_USER_GOAL: preserve the accepted request.'
+    const dynamicState = 'Optional dynamic snapshot.'
+    const base = {
+      participantLabel: 'AntiGravity / Work3 #p8',
+      roundId: 'round-split-state',
+      roleInstructions: 'Seal the borders.',
+      currentPrompt: 'Stitch the eastern gate.',
+      roster: '1. AntiGravity / Work3',
+      authorityLines: [] as string[],
+      roleBoundaryLines: [] as string[],
+      roundPolicy: 'Review once.',
+      parallelPolicy: 'Serial.',
+      transcript: '[Codex / Worker] prior context',
+      permissionRule: 'Use only the tools listed by this run.',
+      yieldExecutionCheck: 'Return a bounded result.'
+    }
+    const legacy = buildAntigravityOfficialAgyPromptCapsuleProjection({
+      ...base,
+      dynamicState: `${workContract}\n\n${dynamicState}`
+    })
+    const split = buildAntigravityOfficialAgyPromptCapsuleProjection({
+      ...base,
+      workContract,
+      dynamicState
+    })
+
+    expect(split).toEqual(legacy)
+  })
+
   it('preserves row identity through keep-tail and outer capsule bounds', () => {
     const repeatedRow = '[User]\nIDENTICAL STEERING TEXT'
     const filler = 'older context '.repeat(500)
@@ -228,12 +258,12 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
 
   it('funds a complete checkpoint in a saturated capsule by displacing transcript evidence', () => {
     const row = '[User]\nLATEST STEER AT TRANSCRIPT TAIL'
-    const transcript = `${'old transcript '.repeat(400)}\n\n${row}`
+    const transcript = `${'T'.repeat(600 - row.length)}${row}`
     const rowStart = transcript.length - row.length
     const crowded = {
-      participantLabel: 'AntiGravity / GemProWork #p7',
-      roundId: 'round-checkpoint-overflow',
-      stageRole: 'Z'.repeat(4_000),
+      participantLabel: 'P',
+      roundId: 'r',
+      stageRole: 'Z'.repeat(5_700),
       roleInstructions: 'R'.repeat(1_000),
       currentPrompt: `CURRENT_ASSIGNMENT ${'C'.repeat(2_950)}`,
       roster: 'O'.repeat(1_200),
@@ -241,12 +271,9 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
       roleBoundaryLines: [] as string[],
       roundPolicy: 'P'.repeat(900),
       parallelPolicy: 'L'.repeat(700),
-      dynamicState: 'D'.repeat(1_800),
+      workContract: 'NEW_USER_GOAL',
+      dynamicState: 'OPTIONAL_DYNAMIC_SNAPSHOT '.repeat(90),
       workspaceStanza: 'W'.repeat(600),
-      workspaceChurnStanza: 'H'.repeat(900),
-      scoutBriefs: 'S'.repeat(1_200),
-      blackboardSnapshot: 'B'.repeat(2_200),
-      seatSummary: 'E'.repeat(800),
       transcript,
       permissionRule: 'M'.repeat(900),
       yieldExecutionCheck: 'Y'.repeat(700)
@@ -259,7 +286,7 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     }
     const baseline = buildAntigravityOfficialAgyPromptCapsuleProjection(crowded, evidence)
     expect(baseline.prompt).toHaveLength(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
-    const continuityCheckpoint = `<checkpoint>${'X'.repeat(1_560)}</checkpoint>`
+    const continuityCheckpoint = `<checkpoint>OLDER_CHECKPOINT_GOAL ${'X'.repeat(1_537)}</checkpoint>`
     const recovered = buildAntigravityOfficialAgyPromptCapsuleProjection(
       {
         ...crowded,
@@ -272,6 +299,9 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     expect(recovered.continuityCheckpointIncluded).toBe(true)
     expect(recovered).not.toHaveProperty('continuityCheckpointOmitted')
     expect(recovered.prompt).toContain(continuityCheckpoint)
+    expect(recovered.prompt).toContain('NEW_USER_GOAL')
+    expect(recovered.prompt).toContain('OLDER_CHECKPOINT_GOAL')
+    expect(recovered.prompt).not.toContain('OPTIONAL_DYNAMIC_SNAPSHOT')
     expect(recovered.prompt.indexOf('CURRENT_ASSIGNMENT')).toBeLessThan(
       recovered.prompt.indexOf(continuityCheckpoint)
     )

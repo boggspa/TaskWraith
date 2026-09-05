@@ -47,6 +47,22 @@ describe('Ollama ensemble prompt capsule', () => {
     expect(prompt).toContain('re-issue that same tool once with corrected args')
   })
 
+  it('recombines split work and dynamic state without changing a no-checkpoint prompt', () => {
+    const workContract = 'NEW_USER_GOAL: preserve the accepted request.'
+    const dynamicState = 'Optional dynamic snapshot.'
+    const legacy = buildOllamaEnsemblePromptCapsuleProjection({
+      ...BASE,
+      dynamicState: `${workContract}\n\n${dynamicState}`
+    })
+    const split = buildOllamaEnsemblePromptCapsuleProjection({
+      ...BASE,
+      workContract,
+      dynamicState
+    })
+
+    expect(split).toEqual(legacy)
+  })
+
   it('preserves transcript row identity through keep-tail truncation', () => {
     const repeatedRow = '[User]\nIDENTICAL STEERING TEXT'
     const filler = 'older context '.repeat(400)
@@ -166,17 +182,22 @@ describe('Ollama ensemble prompt capsule', () => {
 
   it('funds a complete checkpoint in a saturated capsule by displacing transcript evidence', () => {
     const transcriptRow = '[User]\nLATEST_TRANSCRIPT_ROW'
-    const transcript = `${'old transcript '.repeat(350)}\n${transcriptRow}`
+    const transcript = `${'T'.repeat(600 - transcriptRow.length)}${transcriptRow}`
     const saturated = {
-      ...BASE,
-      currentPrompt: 'CURRENT_ASSIGNMENT remains first.',
-      dynamicState: 'D'.repeat(1_000),
-      workspaceStanza: 'Round subject: /workspace/project',
-      workspaceChurnStanza: 'H'.repeat(700),
-      scoutBriefs: 'S'.repeat(800),
-      blackboardSnapshot: 'B'.repeat(1_200),
-      seatSummary: 'E'.repeat(600),
-      transcript
+      participantLabel: 'P',
+      roundId: 'r',
+      roleInstructions: 'R'.repeat(670),
+      currentPrompt: `CURRENT_ASSIGNMENT ${'C'.repeat(2_300)}`,
+      roster: 'O'.repeat(800),
+      authorityLines: ['A'.repeat(300)],
+      roleBoundaryLines: [] as string[],
+      roundPolicy: 'P'.repeat(300),
+      parallelPolicy: 'L'.repeat(200),
+      workContract: 'NEW_USER_GOAL',
+      dynamicState: 'OPTIONAL_DYNAMIC_SNAPSHOT '.repeat(50),
+      transcript,
+      permissionRule: 'M'.repeat(300),
+      workflowHint: 'F'.repeat(200)
     }
     const rowStart = transcript.length - transcriptRow.length
     const evidence = {
@@ -187,7 +208,7 @@ describe('Ollama ensemble prompt capsule', () => {
     }
     const baseline = buildOllamaEnsemblePromptCapsuleProjection(saturated, evidence)
     expect(baseline.prompt).toHaveLength(OLLAMA_ENSEMBLE_PROMPT_MAX_CHARS)
-    const continuityCheckpoint = `<checkpoint>${'Q'.repeat(1_560)}</checkpoint>`
+    const continuityCheckpoint = `<checkpoint>OLDER_CHECKPOINT_GOAL ${'Q'.repeat(1_537)}</checkpoint>`
     const recovered = buildOllamaEnsemblePromptCapsuleProjection(
       { ...saturated, continuityCheckpoint },
       evidence
@@ -197,13 +218,13 @@ describe('Ollama ensemble prompt capsule', () => {
     expect(recovered.continuityCheckpointIncluded).toBe(true)
     expect(recovered).not.toHaveProperty('continuityCheckpointOmitted')
     expect(recovered.prompt).toContain(continuityCheckpoint)
+    expect(recovered.prompt).toContain('NEW_USER_GOAL')
+    expect(recovered.prompt).toContain('OLDER_CHECKPOINT_GOAL')
+    expect(recovered.prompt).not.toContain('OPTIONAL_DYNAMIC_SNAPSHOT')
     expect(recovered.prompt.indexOf('CURRENT_ASSIGNMENT')).toBeLessThan(
       recovered.prompt.indexOf(continuityCheckpoint)
     )
     expect(recovered.prompt.indexOf('Do this turn:')).toBeLessThan(
-      recovered.prompt.indexOf(continuityCheckpoint)
-    )
-    expect(recovered.prompt.indexOf('Round subject: /workspace/project')).toBeLessThan(
       recovered.prompt.indexOf(continuityCheckpoint)
     )
     expect(recovered.prompt).not.toContain('LATEST_TRANSCRIPT_ROW')
