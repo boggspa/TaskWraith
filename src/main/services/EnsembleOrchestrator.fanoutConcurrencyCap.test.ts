@@ -3,21 +3,8 @@ import { EnsembleOrchestrator } from './EnsembleOrchestrator'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { AppSettings, ChatRecord, EnsembleParticipant } from '../store/types'
 
-/*
- * At most three fan-outs may be in flight at once.
- *
- * Exercised through the real `fanoutForRun` rather than the pure module, because
- * what the cap is worth depends entirely on the join being right: the count comes
- * from the DURABLE lane records crossed with the wave identity on the live runs,
- * and a wrong join fails silently in exactly the direction nobody notices —
- * counting zero waves and capping nothing at all.
- */
-
-const FLUSH_MS = 320
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
+// Fan-out waves share host run capacity. A fourth call must not be refused
+// merely because three earlier waves still have live lanes.
 
 function participant(
   id: string,
@@ -123,11 +110,11 @@ function openLaneCount(harness: Harness): number {
   ).length
 }
 
-describe('concurrent fan-out cap', () => {
-  it(
-    'allows three waves, refuses the fourth, and frees a slot when one settles',
+describe('concurrent fan-outs share the host cap', () => {
+  it.each(['ensemble_fanout', 'ensemble_fanout_all'] as const)(
+    'allows a fourth open wave through %s while host slots are free',
     { timeout: 30_000 },
-    async () => {
+    async (tool) => {
       const harness = makeHarness([
         participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
         participant('claude', 'claude', 'Reviewer', 2, 'workspace_write'),
@@ -137,7 +124,7 @@ describe('concurrent fan-out cap', () => {
       ])
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
-        prompt: 'Lead dispatches more fan-outs than it is allowed to.',
+        prompt: 'Lead dispatches four independent fan-outs.',
         event: { sender: {} as Electron.WebContents }
       })
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
@@ -150,8 +137,6 @@ describe('concurrent fan-out cap', () => {
       expect(first.ok).toBe(true)
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
 
-      // A second wave beside the first is exactly what the cap permits — a
-      // review lane and a work lane running together is the designed shape.
       const second = await harness.orchestrator.fanoutForRun(boss, {
         targets: ['Researcher'],
         prompt: 'Work lane.'
@@ -168,47 +153,32 @@ describe('concurrent fan-out cap', () => {
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
       expect(openLaneCount(harness)).toBe(3)
 
-      const fourth = await harness.orchestrator.fanoutForRun(boss, {
+      const input = {
         targets: ['Scribe'],
-        prompt: 'One wave too many.'
-      })
-      expect(fourth.ok).toBe(false)
-      expect(fourth.error).toBe('too_many_concurrent_fanouts')
-      // The caller has to be told what to do next, or it retries the same call.
-      expect(fourth.message).toContain('ensemble_await')
-      expect(fourth.message).toMatch(/not on participants/i)
-      // Refused means NOT SENT: a fifth provider run would be the accumulation
-      // this whole change exists to stop.
-      await sleep(FLUSH_MS)
-      expect(harness.dispatched).toHaveLength(4)
-
-      // The user watching the transcript should see why a dispatch vanished.
+        prompt: 'Fourth independent wave.'
+      }
+      const fourth =
+        tool === 'ensemble_fanout'
+          ? await harness.orchestrator.fanoutForRun(boss, input)
+          : await harness.orchestrator.fanoutAllForRun(boss, input)
+      expect(fourth.ok).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(5))
+      expect(openLaneCount(harness)).toBe(4)
       expect(
         harness.chat.messages.some(
           (message) =>
-            typeof message.content === 'string' && message.content.includes('ensemble_await')
+            typeof message.content === 'string' && message.content.includes('At most 3 fan-outs')
         )
-      ).toBe(true)
-
-      // Settle the review lane; its wave is gone and the slot comes back.
-      complete(harness, 1)
-      await vi.waitFor(() => expect(openLaneCount(harness)).toBe(2))
-
-      const fifth = await harness.orchestrator.fanoutForRun(boss, {
-        targets: ['Scribe'],
-        prompt: 'Now there is room.'
-      })
-      expect(fifth.ok).toBe(true)
-      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(5))
+      ).toBe(false)
+      for (let index = 1; index <= 4; index += 1) complete(harness, index)
+      await vi.waitFor(() => expect(openLaneCount(harness)).toBe(0))
     }
   )
 
   it(
-    'counts one many-seat fan-out as ONE wave, never one per participant',
+    'accepts a wide fan-out and an additional wave while lanes are still running',
     { timeout: 30_000 },
     async () => {
-      // The cap must never read as a roster limit. Three seats in a single
-      // dispatch is one wave, so a second dispatch still has to be accepted.
       const harness = makeHarness([
         participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
         participant('claude', 'claude', 'Reviewer', 2, 'workspace_write'),
@@ -232,7 +202,6 @@ describe('concurrent fan-out cap', () => {
       expect(wide.laneIds).toHaveLength(3)
       await vi.waitFor(() => expect(openLaneCount(harness)).toBe(3))
 
-      // Three open lanes, but only ONE open wave — so this must be allowed.
       const second = await harness.orchestrator.fanoutForRun(boss, {
         targets: ['Scribe'],
         prompt: 'Second wave.'

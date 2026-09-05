@@ -189,8 +189,7 @@ export function isEphemeralFleetChildSettled(
  * the parent's children, or null.
  *
  * Derived from durable child records, never a counter — a counter has to be
- * right on every cancel, failure, timeout and restart path (see
- * EnsembleFanoutConcurrency for the same principle). Wave identity is
+ * right on every cancel, failure, timeout and restart path. Wave identity is
  * `delegationContext.joinPolicy.groupId`, which parse hard-binds to the
  * waveId.
  *

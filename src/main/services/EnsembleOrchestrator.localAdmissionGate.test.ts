@@ -281,15 +281,13 @@ describe('local Ollama admission gate, wired into dispatch', () => {
   )
 })
 
-describe('fan-out cap refusal names local-capacity backpressure', () => {
+describe('local model pressure does not impose a fan-out wave cap', () => {
   it(
-    'tells a refused fourth call that waves are waiting on local capacity',
+    'accepts a fourth hosted wave while a local model occupies its declared capacity',
     { timeout: 30_000 },
     async () => {
-      // One local slot, and a local lane holding it: the host is saturated, so
-      // open waves drain in turns. A refusal that omits that reads as a
-      // stalled round, and the observed answer to a misread refusal is
-      // shrinking the roster.
+      // The provider's declared local-model ceiling must not become a quota
+      // on independent hosted waves, which still have shared host capacity.
       vi.stubEnv('OLLAMA_MAX_LOADED_MODELS', '1')
       stubReachableOllama()
       const harness = makeHarness([
@@ -301,7 +299,7 @@ describe('fan-out cap refusal names local-capacity backpressure', () => {
       ])
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
-        prompt: 'Lead saturates the local host, then over-dispatches.',
+        prompt: 'Lead uses a local model and several hosted waves.',
         event: { sender: {} as Electron.WebContents }
       })
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
@@ -326,25 +324,18 @@ describe('fan-out cap refusal names local-capacity backpressure', () => {
 
       const fourth = await harness.orchestrator.fanoutForRun(boss, {
         targets: ['Scribe'],
-        prompt: 'One wave too many.'
+        prompt: 'Another hosted lane.'
       })
-      expect(fourth.ok).toBe(false)
-      expect(fourth.error).toBe('too_many_concurrent_fanouts')
-      expect(fourth.message).toContain('waiting on local capacity')
-      expect(fourth.message).toContain('1 of 1')
-      // The anti-roster-shrink copy must survive the addition.
-      expect(fourth.message).toMatch(/do not drop seats/i)
-      expect(fourth.message).toContain('ensemble_await')
+      expect(fourth.ok).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(5))
+      for (let index = 1; index <= 4; index += 1) complete(harness, index)
     }
   )
 
   it(
-    'leaves the refusal byte-clean of capacity talk when no local seat is in play',
+    'accepts a fourth hosted wave when no local seat is in play',
     { timeout: 30_000 },
     async () => {
-      // An all-hosted roster (or a rack of H100s) must read the exact refusal
-      // it read before the admission gate existed — it must not even be told a
-      // gate exists.
       stubReachableOllama()
       const harness = makeHarness([
         participant('lead', 'codex', 'Lead', 1, 'gpt-5.6'),
@@ -355,7 +346,7 @@ describe('fan-out cap refusal names local-capacity backpressure', () => {
       ])
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
-        prompt: 'Hosted roster over-dispatches.',
+        prompt: 'Hosted roster dispatches four waves.',
         event: { sender: {} as Electron.WebContents }
       })
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
@@ -372,12 +363,11 @@ describe('fan-out cap refusal names local-capacity backpressure', () => {
 
       const fourth = await harness.orchestrator.fanoutForRun(boss, {
         targets: ['Helper'],
-        prompt: 'One wave too many.'
+        prompt: 'Another hosted lane.'
       })
-      expect(fourth.ok).toBe(false)
-      expect(fourth.error).toBe('too_many_concurrent_fanouts')
-      expect(fourth.message).not.toContain('waiting on local capacity')
-      expect(fourth.message).not.toContain('model ceiling')
+      expect(fourth.ok).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(5))
+      for (let index = 1; index <= 4; index += 1) complete(harness, index)
     }
   )
 })
