@@ -82,7 +82,7 @@ describe('transcript presentation scheduling', () => {
     const transcriptCommits: ChatTranscriptPayload[] = []
     let committedDraft = ''
     function Transcript() {
-      const transcript = useChatTranscript('chat-a')
+      const transcript = useChatTranscript('chat-a', { deferPresentation: true })
       useLayoutEffect(() => {
         transcriptCommits.push(transcript)
       }, [transcript])
@@ -129,7 +129,7 @@ describe('transcript presentation scheduling', () => {
     publish(store, 'chat-b', 'b')
     const commits: string[] = []
     function Transcript({ chatId }: { chatId: string | null }) {
-      const transcript = useChatTranscript(chatId)
+      const transcript = useChatTranscript(chatId, { deferPresentation: true })
       useLayoutEffect(() => {
         commits.push(`${chatId}:${transcript.messages[0]?.content ?? 'empty'}`)
       }, [chatId, transcript])
@@ -161,7 +161,7 @@ describe('transcript presentation scheduling', () => {
       return null
     }
     function Transcript() {
-      const transcript = useChatTranscript('chat-a')
+      const transcript = useChatTranscript('chat-a', { deferPresentation: true })
       useLayoutEffect(() => {
         committed = transcript
       }, [transcript])
@@ -186,7 +186,7 @@ describe('transcript presentation scheduling', () => {
     publish(store, 'chat-a', 'initial')
     const commits: string[] = []
     function Transcript({ chatId }: { chatId: string }) {
-      const transcript = useChatTranscript(chatId)
+      const transcript = useChatTranscript(chatId, { deferPresentation: true })
       useLayoutEffect(() => {
         commits.push(`${chatId}:${transcript.messages[0]?.content ?? 'empty'}`)
       }, [chatId, transcript])
@@ -217,7 +217,7 @@ describe('transcript presentation scheduling', () => {
     })
     let renders = 0
     function Transcript() {
-      useChatTranscript('chat-a')
+      useChatTranscript('chat-a', { deferPresentation: true })
       renders += 1
       return null
     }
@@ -231,5 +231,30 @@ describe('transcript presentation scheduling', () => {
     expect(released).toHaveBeenCalledTimes(1)
     act(() => publish(store, 'chat-a', 'after unmount'))
     expect(renders).toBe(initialRenders)
+  })
+
+  it('publishes synchronously when presentation is not deferred', () => {
+    const store = new ChatTranscriptStore()
+    bindChatTranscriptStore(store)
+    publish(store, 'chat-a', 'initial')
+    const initial = getChatTranscriptSnapshot('chat-a')
+    const transcriptCommits: ChatTranscriptPayload[] = []
+    function Transcript() {
+      const transcript = useChatTranscript('chat-a')
+      useLayoutEffect(() => {
+        transcriptCommits.push(transcript)
+      }, [transcript])
+      return null
+    }
+    const mountedRoot = installRendererRoot()
+    act(() => mountedRoot.render(<Transcript />))
+    expect(transcriptCommits).toEqual([initial])
+    act(() => {
+      flushSync(() => publish(store, 'chat-a', 'idle update'))
+      // An idle chat's update lands in the same synchronous flush: nothing is
+      // left behind as a transition that unrelated urgent work can starve.
+      expect(transcriptCommits).toEqual([initial, getChatTranscriptSnapshot('chat-a')])
+    })
+    expect(transcriptCommits.at(-1)?.messages[0].content).toBe('idle update')
   })
 })

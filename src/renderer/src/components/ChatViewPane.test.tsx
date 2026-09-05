@@ -700,7 +700,8 @@ describe('ChatViewPane paged-shell chat (Stage 1b parity)', () => {
   })
 
   it('sources the pane transcript from the store window while the chat is paged', () => {
-    expect(paneSource).toContain('useCurrentChatTranscriptWindow(props.chat ?? null)')
+    expect(paneSource).toContain('useCurrentChatTranscriptWindow(props.chat ?? null, {')
+    expect(paneSource).toContain('deferPresentation: props.isThinking === true')
     expect(paneSource).toContain('paneTranscript.paged ? paneTranscript.messages : props.messages')
     expect(paneSource).toContain('runs: paneTranscript.paged ? paneTranscript.runs : undefined')
   })

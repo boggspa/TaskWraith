@@ -1,4 +1,4 @@
-import { startTransition, useLayoutEffect, useMemo, useState } from 'react'
+import { startTransition, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChatTranscriptStore, type ChatTranscriptPayload } from './chatTranscriptStore'
 import {
   requestLatestTranscriptPage,
@@ -100,20 +100,41 @@ export function revealChatTranscriptMessage(
   return store.revealMessage(chatId, messageId)
 }
 
+export interface ChatTranscriptPresentationOptions {
+  /**
+   * Publish store notifications through `startTransition` so React can
+   * interrupt a streaming burst for composer input. Leave it off for an idle
+   * chat: a transition render of a large transcript never completes while
+   * unrelated urgent updates keep landing (renderer pinned at 100% with every
+   * transition lane pending and expired, 2026-09-05), whereas a synchronous
+   * publish always commits.
+   */
+  deferPresentation?: boolean
+}
+
 /**
  * A presentation snapshot, deliberately separate from the authoritative store.
  * useSyncExternalStore forces stream notifications into React's synchronous
  * lane, even inside startTransition. That makes transcript rendering (and App
  * / pane rendering for paged chats) block composer input during active runs.
  * State updates let React interrupt this work for typing and coalesce a burst
- * to its latest snapshot. Imperative store reads remain immediately current.
+ * to its latest snapshot — while a consumer opts in via `deferPresentation`.
+ * Imperative store reads remain immediately current.
  */
-export function useChatTranscript(chatId: string | null | undefined): ChatTranscriptPayload {
+export function useChatTranscript(
+  chatId: string | null | undefined,
+  options?: ChatTranscriptPresentationOptions
+): ChatTranscriptPayload {
   const store = getChatTranscriptStore()
   const scope = chatId || null
   // A -> B -> A must create a new subscription identity: pending work from
   // the first visit to A can still be replayed by React after the return.
   const source = useMemo(() => ({ store, scope }), [store, scope])
+  const deferPresentation = options?.deferPresentation === true
+  const deferPresentationRef = useRef(deferPresentation)
+  useLayoutEffect(() => {
+    deferPresentationRef.current = deferPresentation
+  }, [deferPresentation])
   const [presentation, setPresentation] = useState(() => ({
     source,
     payload: store.getSnapshot(scope)
@@ -131,14 +152,16 @@ export function useChatTranscript(chatId: string | null | undefined): ChatTransc
     const update = (): void => {
       if (!subscribed) return
       const next = store.getSnapshot(scope)
-      startTransition(() => {
+      const publish = (): void => {
         setPresentation((previous) => {
           if (previous.source !== source || previous.payload === next) {
             return previous
           }
           return { source, payload: next }
         })
-      })
+      }
+      if (deferPresentationRef.current) startTransition(publish)
+      else publish()
     }
     const unsubscribe = store.subscribe(scope, update)
     // Close the render-to-subscribe race, including writes from sibling layout

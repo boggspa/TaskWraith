@@ -516,7 +516,9 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
   // the transcript source, and a shell must never present as a welcome pane
   // (App derives pane welcome-ness from `messages.length === 0`, which reads
   // true for every shell). Subscribes only while the chat is actually paged.
-  const paneTranscript = useCurrentChatTranscriptWindow(props.chat ?? null)
+  const paneTranscript = useCurrentChatTranscriptWindow(props.chat ?? null, {
+    deferPresentation: props.isThinking === true
+  })
   const paneMessages = paneTranscript.paged ? paneTranscript.messages : props.messages
   const paneIsWelcomeChat = props.isWelcomeChat && !paneTranscript.paged
   const paneGitSnapshot = useWorkspaceGitSnapshot(props.gitSnapshotStore, props.gitSnapshotPath)

@@ -20025,7 +20025,9 @@ function App(): React.JSX.Element {
   // Read-path rule (paged opens): ONE shared seam for the current chat's
   // transcript: the store's loaded window on a paged shell, the canonical
   // arrays otherwise. Whole-transcript (Class W) features escalate below.
-  const currentChatTranscript = useCurrentChatTranscriptWindow(currentChat)
+  const currentChatTranscript = useCurrentChatTranscriptWindow(currentChat, {
+    deferPresentation: Boolean(currentChat && runningChatIds.has(currentChat.appChatId))
+  })
   // Class W read paths (thread search, pins) escalate ON DEMAND only — a paged thread STAYS PAGED on plain open; plain
   // opens never background-hydrate a paged chat. Compaction, closeout repair, and the mention menu carry
   // their own on-demand triggers (below / in their own modules); mutations auto-escalate through

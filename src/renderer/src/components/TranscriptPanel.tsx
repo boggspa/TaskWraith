@@ -2838,7 +2838,11 @@ export const TranscriptPanel = memo(
     // coalesced flushes; the store is the live messages/runs source for this
     // panel. Props remain the fallback for tests / side panes not yet ingested.
     const chatId = currentChat?.appChatId ?? null
-    const storeTranscript = useChatTranscript(chatId)
+    const storeTranscript = useChatTranscript(chatId, {
+      deferPresentation: Boolean(
+        chatId && Array.isArray(runningChatIds) && runningChatIds.includes(chatId)
+      )
+    })
     const storeReady = Boolean(chatId && getChatTranscriptStore().has(chatId))
     const resolvedMessages = storeReady ? storeTranscript.messages : messages
     const liveOwnedExecutionIds = useMemo(

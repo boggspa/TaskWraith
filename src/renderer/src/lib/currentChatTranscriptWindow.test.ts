@@ -246,7 +246,12 @@ describe('App.tsx read-path source scan (15 audited sites)', () => {
   })
 
   it('wires the shared window hook into App and the mention menu escalation prop', () => {
-    expect(source).toContain('useCurrentChatTranscriptWindow(currentChat)')
+    expect(source).toContain('useCurrentChatTranscriptWindow(currentChat, {')
+    // Deferred (transition) publishing only while the chat streams: an idle
+    // transition render is starved by unrelated urgent commits (2026-09-05).
+    expect(source).toContain(
+      'deferPresentation: Boolean(currentChat && runningChatIds.has(currentChat.appChatId))'
+    )
     expect(mentionMenu).toContain('isTranscriptPagedShell(chat)')
     expect(mentionMenu).toContain('onRequestFullChat')
   })

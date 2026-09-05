@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { ChatMessage, ChatRecord, ChatRun } from '../../../main/store/types'
 import { isTranscriptPagedShell } from '../../../shared/transcriptPage'
-import { useChatTranscript } from './useChatTranscript'
+import { useChatTranscript, type ChatTranscriptPresentationOptions } from './useChatTranscript'
 
 /**
  * Read-path fix for paged opens (Stage 1b follow-up): ONE shared seam for
@@ -78,10 +78,11 @@ export function currentChatTranscriptSubscriptionId(
  * this hook unsubscribes on the same render.
  */
 export function useCurrentChatTranscriptWindow(
-  chat: ChatRecord | null | undefined
+  chat: ChatRecord | null | undefined,
+  options?: ChatTranscriptPresentationOptions
 ): CurrentChatTranscriptWindow {
   const subscriptionId = currentChatTranscriptSubscriptionId(chat)
-  const payload = useChatTranscript(subscriptionId)
+  const payload = useChatTranscript(subscriptionId, options)
   return useMemo(
     () => resolveCurrentChatTranscriptWindow(chat, subscriptionId === null ? null : payload),
     [chat, subscriptionId, payload]
