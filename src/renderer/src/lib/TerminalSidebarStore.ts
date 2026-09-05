@@ -104,19 +104,28 @@ type TerminalLaunchEvent =
   | { type: 'request'; preferredWorkspacePath?: string }
   | { type: 'attach'; workspacePath: string; sessionId: string }
 const launchListeners = new Set<(event: TerminalLaunchEvent) => void>()
+let pendingPickerRequest: Extract<TerminalLaunchEvent, { type: 'request' }> | null = null
 
 export const terminalLaunchBus = {
   emit(workspacePath: string, cliId: TerminalCliId = 'default') {
     launchListeners.forEach((l) => l({ type: 'launch', workspacePath, cliId }))
   },
   request(preferredWorkspacePath?: string) {
-    launchListeners.forEach((l) => l({ type: 'request', preferredWorkspacePath }))
+    const request = { type: 'request' as const, preferredWorkspacePath }
+    // The File menu can dismiss Settings before the workbench mounts.
+    if (launchListeners.size === 0) pendingPickerRequest = request
+    else launchListeners.forEach((l) => l(request))
   },
   emitAttach(workspacePath: string, sessionId: string) {
     launchListeners.forEach((l) => l({ type: 'attach', workspacePath, sessionId }))
   },
   subscribe(listener: (event: TerminalLaunchEvent) => void) {
     launchListeners.add(listener)
+    if (pendingPickerRequest) {
+      const request = pendingPickerRequest
+      pendingPickerRequest = null
+      listener(request)
+    }
     return () => launchListeners.delete(listener)
   }
 }

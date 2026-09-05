@@ -474,6 +474,9 @@ import { useAppVersion } from './hooks/useAppVersion'
 import { useNativeCapabilities } from './hooks/useNativeCapabilities'
 import { useViewportWidth } from './hooks/useViewportWidth'
 import { useChangelog } from './hooks/useChangelog'
+import { useApplicationMenu } from './hooks/useApplicationMenu'
+import { runApplicationMenuCommand, type ApplicationMenuActions } from './lib/applicationMenuActions'
+import { terminalLaunchBus } from './lib/TerminalSidebarStore'
 import { useLaunchAttempts } from './hooks/useLaunchAttempts'
 import { useWorkspaceLaunchTargets } from './hooks/useWorkspaceLaunchTargets'
 import { useScopedIpc } from './hooks/useScopedIpc'
@@ -20979,9 +20982,21 @@ function App(): React.JSX.Element {
     [captureMainTranscriptScrollState, currentChat?.appChatId, isChatPopoutWindow]
   )
 
+  const applicationMenuActions: ApplicationMenuActions = {
+    activeTab: sidebarActiveTab,
+    workspace: currentWorkspace,
+    newWorkspaceChat: handleNewChat,
+    newGlobalChat: handleNewDefaultGlobalChat,
+    newTerminal: (workspacePath) => terminalLaunchBus.request(workspacePath),
+    openFolder: handleSelectWorkspace,
+    openGeneralSettings: () => openSettingsTab('behavior'),
+    showApp: () => setShowSettings(false)
+  }
+  useApplicationMenu(applicationMenuActions, !isChatPopoutWindow)
+
   const createNewChatFromKeyboard = (): boolean => {
     if (isChatPopoutWindow) return false
-    void handleNewDefaultGlobalChat()
+    void runApplicationMenuCommand('new-chat', applicationMenuActions)
     return true
   }
 

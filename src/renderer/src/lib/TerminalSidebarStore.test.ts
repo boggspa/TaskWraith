@@ -82,4 +82,17 @@ describe('terminalSidebarStore', () => {
     ])
     unsubscribe()
   })
+
+  it('delivers a menu picker request after Settings yields to the terminal workbench', () => {
+    terminalLaunchBus.request('/work/menu')
+    const listener = vi.fn()
+    const unsubscribe = terminalLaunchBus.subscribe(listener)
+    expect(listener).toHaveBeenCalledExactlyOnceWith({
+      type: 'request', preferredWorkspacePath: '/work/menu'
+    })
+    unsubscribe()
+    const nextListener = vi.fn()
+    terminalLaunchBus.subscribe(nextListener)()
+    expect(nextListener).not.toHaveBeenCalled()
+  })
 })

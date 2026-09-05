@@ -85,6 +85,14 @@ export default defineConfig(({ mode }) => {
     },
     preload: {},
     renderer: {
+      build: {
+        rollupOptions: {
+          input: {
+            index: resolve('src/renderer/index.html'),
+            updater: resolve('src/renderer/updater.html')
+          }
+        }
+      },
       define: {
         __IOS_REMOTE_TRUE__: JSON.stringify(iosRemoteEnabled),
         __TASKWRAITH_ACTIVITY_REPORTING_CONFIGURED__: JSON.stringify(
