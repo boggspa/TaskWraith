@@ -54,7 +54,7 @@ describe('pagedChatChromeRenderEqual', () => {
         })
       )
     ).toBe(false)
-    expect(pagedChatChromeRenderEqual(shell('a', 3), shell('a', 3, { messageCount: 101 })).toBe(
+    expect(pagedChatChromeRenderEqual(shell('a', 3), shell('a', 3, { messageCount: 101 }))).toBe(
       false
     )
     expect(
