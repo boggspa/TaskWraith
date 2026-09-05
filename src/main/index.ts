@@ -1759,6 +1759,7 @@ import { configureUsageWebSessionStores } from './providers/UsageWebSessionStore
 import { createKimiWebUsageFetcher } from './kimi/KimiWebUsage'
 import { registerMistralApiKeyHandlers } from './ipc/mistralApiKeyHandlers'
 import { registerMistralQuotaHandlers } from './ipc/mistralQuotaHandlers'
+import { registerCodexUsageHandlers } from './ipc/codexUsageHandlers'
 import {
   classifyMistralLimit,
   isMistralRateLimitText,
@@ -59490,17 +59491,10 @@ if (isGeminiMcpBridgeProcess) {
       requestWebUsageRefresh: () => mistralWebUsageLane.maybeRefresh()
     })
 
-    ipcMain.handle('import-codex-usage-credential', async (event, filePath?: string | null) => {
-      return importCodexUsageCredential(event, filePath)
-    })
-
-    ipcMain.handle('clear-codex-usage-credential', async () => {
-      clearCodexUsageCredential()
-      return true
-    })
-
-    ipcMain.handle('get-codex-usage-snapshot', async (_, options?: { force?: unknown }) => {
-      return fetchCodexUsageSnapshot({ force: options?.force === true })
+    registerCodexUsageHandlers({
+      importCodexUsageCredential,
+      clearCodexUsageCredential,
+      fetchCodexUsageSnapshot
     })
 
     // Grok subscription usage. The live `/usage` TUI remains primary, while
