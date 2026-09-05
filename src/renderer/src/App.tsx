@@ -49,6 +49,7 @@ import {
   isAcceptedEnsembleSteerResult
 } from './lib/composerDraftSubmission'
 import { composerDraftState, useComposerDraftChatIds } from './hooks/useComposerDraft'
+import { useChangeGuardedSetter } from './hooks/useChangeGuardedSetter'
 import { resolveSessionLinkRouting } from './lib/participantSessionLink'
 import { fetchForkCapability, forkAgentThreadUniversal } from './lib/universalFork'
 import { resolveRuntimePickerScope } from './lib/participantRuntimeProfile'
@@ -1983,6 +1984,10 @@ function App(): React.JSX.Element {
   const liveToolFileSummaryCacheRef = useRef<Map<string, LiveToolFileSummaryState>>(new Map())
   const [liveToolFileSummaryState, setLiveToolFileSummaryState] =
     useState<LiveToolFileSummaryState | null>(null)
+  // App nearly always has pending lanes, which defeats React's eager same-state
+  // bailout: the summary effect re-set a cached entry on unrelated commits and
+  // scheduled a full App render each time (measured 2026-09-05).
+  const commitLiveToolFileSummaryState = useChangeGuardedSetter(setLiveToolFileSummaryState)
   const [chatContextNotice, setChatContextNotice] = useState<{
     id: string
     message: string
@@ -25267,7 +25272,7 @@ function App(): React.JSX.Element {
     }) || null
   useEffect(() => {
     if (!liveToolFileSummaryChatId || liveToolFileSummaryMessages.length === 0) {
-      setLiveToolFileSummaryState(null)
+      commitLiveToolFileSummaryState(null)
       return
     }
     const cached = liveToolFileSummaryCacheRef.current.get(liveToolFileSummaryChatId)
@@ -25276,10 +25281,10 @@ function App(): React.JSX.Element {
       cached.signature === liveToolFileSummarySignature &&
       cached.workspacePath === liveToolFileSummaryWorkspacePath
     ) {
-      setLiveToolFileSummaryState(cached)
+      commitLiveToolFileSummaryState(cached)
       return
     }
-    setLiveToolFileSummaryState(null)
+    commitLiveToolFileSummaryState(null)
     let cancelled = false
     const cancel = scheduleAfterPaint(() => {
       const summaries = getLiveToolFileDiffSummaries(
@@ -25299,13 +25304,14 @@ function App(): React.JSX.Element {
         const oldestKey = liveToolFileSummaryCacheRef.current.keys().next().value
         if (oldestKey) liveToolFileSummaryCacheRef.current.delete(oldestKey)
       }
-      setLiveToolFileSummaryState(entry)
+      commitLiveToolFileSummaryState(entry)
     })
     return () => {
       cancelled = true
       cancel()
     }
   }, [
+    commitLiveToolFileSummaryState,
     liveToolFileSummaryChatId,
     liveToolFileSummaryMessages,
     liveToolFileSummarySignature,
