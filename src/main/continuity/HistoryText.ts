@@ -31,6 +31,7 @@ function* valueChunks(
   plainString = true,
   parents = new Set<object>()
 ): Generator<string> {
+  if (value === undefined && plainString) return
   state.visited += 1
   if (depth > 24 || state.visited > 65_536) {
     state.omitted = true
@@ -41,10 +42,7 @@ function* valueChunks(
     // Historical providers may wrap their JSON result in a string, including
     // nested result/output/content strings. Parse only bounded envelopes.
     const start = value.slice(0, 256).trimStart()
-    if (
-      (start.startsWith('[') || start.startsWith('{')) &&
-      /"(?:type|content|result|output)"\s*:/.test(start)
-    ) {
+    if (start.startsWith('[') || start.startsWith('{')) {
       if (value.length > JSON_ENVELOPE_MAX_CHARS) {
         state.omitted = true
         yield '"[large encoded tool envelope omitted]"'
@@ -108,7 +106,16 @@ function* valueChunks(
   }
 }
 
-function pageChunks(chunks: Iterable<string>, offset: number, maxBytes: number) {
+function pageChunks(
+  chunks: Iterable<string>,
+  offset: number,
+  maxBytes: number
+): {
+  text: string
+  offset: number
+  nextOffset?: number
+  totalBytes?: number
+} {
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid history offset.')
   const parts: Buffer[] = []
   let traversed = 0

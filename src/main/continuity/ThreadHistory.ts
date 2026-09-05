@@ -16,10 +16,64 @@ export interface ThreadHistorySource extends ThreadHistoryRef {
   status?: ToolActivity['status']
 }
 
+export interface ThreadHistorySearchResult {
+  matches: Array<ThreadHistorySource & { excerpt: string; archived: boolean }>
+  scanned: number
+  skippedDetails: number
+  searchedDetailBytes?: number
+  partialTextRecords: number
+  partialSources: ThreadHistoryRef[]
+  complete: boolean
+  hasMore: boolean
+  nextCursor?: ThreadHistoryRef
+  available?: boolean
+  reason?: string
+}
+
+function boundedSearchReply(reply: ThreadHistorySearchResult): ThreadHistorySearchResult {
+  const bounded = boundedReply(reply)
+  return 'matches' in bounded
+    ? bounded
+    : {
+        matches: [],
+        scanned: 0,
+        skippedDetails: 0,
+        partialTextRecords: 1,
+        partialSources: [],
+        complete: false,
+        hasMore: false,
+        ...bounded
+      }
+}
+
 export type ThreadHistoryDetailReader = (ref: ToolActivityDetailRef) => Promise<ToolActivity | null>
 
 export const HISTORY_SEARCH_MAX_ENTRIES = 200
 export const HISTORY_SEARCH_DETAIL_SCAN_BYTES = 4 * 1024 * 1024
+export const HISTORY_RESPONSE_MAX_BYTES = 16_384
+
+/** Bound the whole JSON response, including escaped text and reference metadata. */
+function boundedReply<T extends object>(reply: T): T | { available: false; reason: string } {
+  if (Buffer.byteLength(JSON.stringify(reply)) <= HISTORY_RESPONSE_MAX_BYTES) return reply
+  const page = reply as T & {
+    text?: string
+    offset?: number
+    nextOffset?: number
+    totalBytes?: number
+  }
+  if (typeof page.text === 'string' && typeof page.offset === 'number') {
+    let text = page.text
+    while (text.length > 0) {
+      text = historyTextPage(text, 0, Math.max(4, Math.floor(Buffer.byteLength(text) / 2))).text
+      const candidate = { ...page, text, nextOffset: page.offset + Buffer.byteLength(text) }
+      delete candidate.totalBytes
+      if (Buffer.byteLength(JSON.stringify(candidate)) <= HISTORY_RESPONSE_MAX_BYTES)
+        return candidate
+      if (Buffer.byteLength(text) <= 4) break
+    }
+  }
+  return { available: false, reason: 'history_reference_exceeds_response_budget' }
+}
 
 function boundedInteger(value: number | undefined, fallback: number, max: number): number {
   return Number.isSafeInteger(value) && value! > 0 ? Math.min(value!, max) : fallback
@@ -112,12 +166,12 @@ export async function readThreadHistory(
     if (request.field && request.field !== 'message') {
       throw new Error('A tool activity reference is required for that field.')
     }
-    return {
+    return boundedReply({
       available: true as const,
       source: { messageId: message.id, runId: message.runId, role: message.role },
       representation: 'stored_message',
       ...historyTextPage(message.content, request.offset, request.maxBytes)
-    }
+    })
   }
   const inline = message.toolActivities?.find((activity) => activity.id === request.activityId)
   if (!inline) return { available: false as const, reason: 'activity_not_found' }
@@ -142,14 +196,14 @@ export async function readThreadHistory(
           representation: field === 'arguments' ? 'captured_arguments' : 'stored_diff'
         }
   if (value.value === undefined) return { available: false as const, reason: 'field_not_captured' }
-  return {
+  return boundedReply({
     available: true as const,
     source: { messageId: message.id, activityId: activity.id, runId: message.runId },
     field,
     archived: Boolean(inline.detailRef),
     representation: value.representation,
     ...historyValuePage(value.value, request.offset, request.maxBytes)
-  }
+  })
 }
 
 export async function searchThreadHistory(
@@ -163,7 +217,7 @@ export async function searchThreadHistory(
     searchDetails?: boolean
   },
   readDetail?: ThreadHistoryDetailReader
-) {
+): Promise<ThreadHistorySearchResult> {
   const query = (request.query || '').trim()
   if (query.length > 200) throw new Error('History search queries are limited to 200 characters.')
   const matcher = query ? new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'iu') : null
@@ -187,6 +241,7 @@ export async function searchThreadHistory(
       hasMore = true
       break
     }
+    const previousRef = lastRef
     lastRef = { messageId: entry.source.messageId, activityId: entry.source.activityId }
     scanned += 1
     if (request.runId && request.runId !== entry.message.runId) continue
@@ -204,6 +259,21 @@ export async function searchThreadHistory(
           .join('\n')
       : preview(entry.message.content, HISTORY_READ_MAX_BYTES)
     if (!entry.activity && body.length < entry.message.content.length) {
+      partialTextRecords += 1
+      if (partialSources.length < 5) partialSources.push(lastRef)
+    }
+    if (
+      entry.activity &&
+      [
+        [entry.activity.toolName, 128],
+        [entry.activity.filePath, 256],
+        [entry.activity.resultSummary, 1024],
+        [entry.activity.outputPreview, 1024]
+      ].some(
+        ([value, limit]) =>
+          typeof value === 'string' && preview(value, limit as number).length < value.length
+      )
+    ) {
       partialTextRecords += 1
       if (partialSources.length < 5) partialSources.push(lastRef)
     }
@@ -271,14 +341,26 @@ export async function searchThreadHistory(
     }
     const bytes = Buffer.byteLength(JSON.stringify(match)) + 1
     if (matchBytes + bytes > 7_168) {
-      partialTextRecords += 1
-      continue
+      if (matches.length === 0)
+        return boundedSearchReply({
+          matches,
+          scanned,
+          skippedDetails,
+          partialTextRecords: partialTextRecords + 1,
+          partialSources: [lastRef],
+          complete: false,
+          hasMore: false
+        })
+      lastRef = previousRef
+      hasMore = true
+      scanned -= 1
+      break
     }
     matchBytes += bytes
     matches.push(match)
   }
   if (!cursorFound) throw new Error('History cursor no longer exists in this task.')
-  return {
+  return boundedSearchReply({
     matches,
     scanned,
     skippedDetails,
@@ -288,5 +370,5 @@ export async function searchThreadHistory(
     searchedDetailBytes: detailBytes,
     hasMore,
     ...(hasMore && lastRef ? { nextCursor: lastRef } : {})
-  }
+  })
 }

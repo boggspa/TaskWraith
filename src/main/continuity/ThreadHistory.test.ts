@@ -131,6 +131,60 @@ describe('thread history retrieval', () => {
 })
 
 describe('thread history lookup', () => {
+  it('does not lose matches when the response budget fills before the requested count', async () => {
+    const messages = Array.from({ length: 30 }, (_, index) => ({
+      ...message,
+      id: `message-${index}`,
+      content: '',
+      toolActivities: [
+        {
+          ...activity,
+          detailRef: undefined,
+          filePath: 'x'.repeat(256),
+          resultSummary: 'a'.repeat(320)
+        }
+      ]
+    }))
+    const found: string[] = []
+    let before: { messageId: string; activityId?: string } | undefined
+    do {
+      const page = await searchThreadHistory(messages, { limit: 10, before })
+      found.push(...page.matches.map((m) => m.messageId))
+      before = page.nextCursor
+    } while (before)
+    expect(new Set(found).size).toBe(30)
+  })
+
+  it('does not invent null output for a tool whose fields were never captured', async () => {
+    const result = await searchThreadHistory(
+      [{ ...message, toolActivities: [{ ...activity, detailRef: undefined }] }],
+      { query: 'null', searchDetails: true }
+    )
+    expect(result.matches).toEqual([])
+  })
+
+  it('marks clipped tool previews partial and bounds oversized source references', async () => {
+    const partial = await searchThreadHistory(
+      [
+        {
+          ...message,
+          toolActivities: [
+            { ...activity, detailRef: undefined, resultSummary: `${'x'.repeat(1500)}needle` }
+          ]
+        }
+      ],
+      { query: 'needle' }
+    )
+    expect(partial.complete).toBe(false)
+    const huge = await readThreadHistory([{ ...message, id: 'x'.repeat(20_000) }], {
+      messageId: 'x'.repeat(20_000),
+      maxBytes: 4
+    })
+    expect(huge).toMatchObject({
+      available: false,
+      reason: 'history_reference_exceeds_response_budget'
+    })
+  })
   it('bounds the response even when stored display metadata is enormous', async () => {
     const result = await searchThreadHistory(
       [{ ...message, toolActivities: [{ ...activity, filePath: 'x'.repeat(20_000) }] }],
