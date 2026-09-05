@@ -41,6 +41,12 @@ claim_block=0
 to_epoch() {
   local iso="$1"
   [ -z "$iso" ] && { printf ''; return 0; }
+  # Python's datetime.isoformat() emits +00:00 rather than Z for UTC.
+  # Normalize only an explicit zero offset; the same lease ceiling still applies.
+  case "$iso" in
+    *+00:00) iso="${iso%+00:00}Z" ;;
+    *+0000) iso="${iso%+0000}Z" ;;
+  esac
   date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null && return 0
   date -u -d "$iso" +%s 2>/dev/null && return 0
   # Runtime markers use JavaScript ISO timestamps, which include fractional

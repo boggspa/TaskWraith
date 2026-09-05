@@ -523,6 +523,20 @@ write_manual_marker "$repo" "$foreign_pid" src/manual.ts
 set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 5)"
 expect_block 'a claim inside its 20m ceiling still blocks' "$repo"
 
+repo="$(new_repo lease-python-utc-offset)"
+stage_file "$repo" src/manual.ts
+write_manual_marker "$repo" "$foreign_pid" src/manual.ts
+set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 2 | sed 's/Z$/.123456+00:00/')"
+set_marker_expires "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_shift 10 | sed 's/Z$/.123456+00:00/')"
+expect_block 'Python UTC offsets and microseconds preserve a live claim' "$repo"
+
+repo="$(new_repo lease-python-utc-capped)"
+stage_file "$repo" src/manual.ts
+write_manual_marker "$repo" "$foreign_pid" src/manual.ts
+set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 25 | sed 's/Z$/+00:00/')"
+set_marker_expires "$repo/.WORK-IN-PROGRESS-manual-test.md" '2099-07-29T00:00:00+00:00'
+expect_allow 'UTC-offset claims still decay at the 20m ceiling' "$repo"
+
 repo="$(new_repo lease-past-ceiling)"
 stage_file "$repo" src/manual.ts
 write_manual_marker "$repo" "$foreign_pid" src/manual.ts
