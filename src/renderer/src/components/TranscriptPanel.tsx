@@ -105,8 +105,6 @@ import {
   buildTranscriptRowKeys,
   projectRows,
   projectRowsAfterSharedPrefix,
-  selectWindow,
-  selectWindowBand,
   virtualWindowBandChanged,
   computeTranscriptScrollSpy,
   decideScrollerBoxRefresh,
@@ -127,6 +125,7 @@ import {
   type VirtualWindow,
   type VirtualWindowBand
 } from '../lib/TranscriptVirtualWindow'
+import { selectTranscriptWindow } from '../lib/transcriptWindowGeometry'
 import {
   buildTranscriptUserGutterMarkers,
   findActiveGutterMarkerKey,
@@ -220,7 +219,8 @@ import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
 import {
   classifyCompactFanoutLaneRows,
   classifyFanoutLaneSlots,
-  resolveFanoutLaneLayout
+  resolveFanoutLaneLayout,
+  type FanoutLaneSlot
 } from '../lib/fanoutLanePairing'
 import { buildFanoutLaneJumpTargets } from '../lib/fanoutLaneJumpTargets'
 import { hideRedundantEnsembleTranscriptNotices } from '../lib/transcriptRedundantNotices'
@@ -1804,7 +1804,7 @@ function TranscriptMessageFooter({
  * the historical observer-feedback loop cannot return.
  */
 /* eslint-disable react-hooks/refs -- Virtualisation intentionally keeps scroll/measurement state in refs for synchronous window selection. */
-function useTranscriptVirtualization(params: {
+export function useTranscriptVirtualization(params: {
   enabled: boolean
   rows: VirtualRow[]
   scrollRef: React.RefObject<HTMLDivElement | null>
@@ -1842,6 +1842,7 @@ function useTranscriptVirtualization(params: {
    * desync the spacers from real layout.
    */
   hiddenRowKeys?: ReadonlySet<string>
+  fanoutLaneSlots?: ReadonlyMap<string, FanoutLaneSlot>
   /**
    * Cut 1b — gutter-owned sink for per-frame spy updates. Invoked from the
    * scroll RAF even when `scrollTick` is held (band unchanged). Must NOT
@@ -1857,7 +1858,7 @@ function useTranscriptVirtualization(params: {
   /**
    * Scroll-spy: the virtual-row index the reading line (top-third of the
    * viewport) currently sits on, derived from the SAME `effectiveScrollTop` +
-   * held `windowHeights` that drive the window — a pure read, never a scroll
+   * current row heights that drive the window — a pure read, never a scroll
    * write. Null on the non-virtualised path. Consumers map it to a user-message
    * marker via `findActiveGutterMarkerKey`. Structural / band-commit path only;
    * mid-band frames reach the gutter via `spySinkRef`.
@@ -1886,6 +1887,7 @@ function useTranscriptVirtualization(params: {
     activeLiveRowKeys,
     expandedRowIds,
     hiddenRowKeys,
+    fanoutLaneSlots,
     spySinkRef
   } = params
 
@@ -1952,13 +1954,16 @@ function useTranscriptVirtualization(params: {
   // loads older rows.
   const hasScrolledRef = useRef(false)
   const skipNextAnchorCorrectionRef = useRef(false)
-  // Cut 1a — mounted-band identity + held-window geometry for the RAF bump gate.
-  // `committedBandRef` is the last published band; held heights/offsets mirror
-  // the hysteresis snapshot `selectWindow` uses (not live measure heights).
+  // Mounted-band identity + current geometry for the RAF bump gate.
   const committedBandRef = useRef<VirtualWindowBand | null>(null)
   const windowHeightsRef = useRef<readonly number[]>(EMPTY_TRANSCRIPT_HEIGHTS)
   const windowHeightOffsetsRef = useRef<readonly number[]>(EMPTY_TRANSCRIPT_HEIGHT_OFFSETS)
   const forcedRowIndexRef = useRef<number | null>(forcedRowIndex ?? null)
+  const fanoutLaneSlotsRef = useRef(fanoutLaneSlots)
+  const committedSelectionRef = useRef<{
+    epoch: object
+    window: VirtualWindow
+  } | null>(null)
   // Cut 2a — Phase-1 deferred while a user gesture is live. Timer re-bumps
   // measure after the settle window so absolute restore can apply once quiet.
   // Keep `deferredPendingRef` true across the timer→bump path: a soft skip
@@ -2073,65 +2078,69 @@ function useTranscriptVirtualization(params: {
   const effectiveScrollTop = forceBottomOnLoad
     ? Math.max(0, totalHeight - viewportRef.current)
     : scrollTopRef.current
-  // 1.0.7 — window selection from a STABLE heights snapshot. This is the core
-  // fix for the ensemble virtualization oscillation. Previously the window was
-  // selected from live `heights`, which recompute on every `measureTick` — so
-  // the instant a mounted row reported its real (large) height, the window
-  // re-selected a smaller span, dropped that very row, re-measured, and limit-
-  // cycled (the ~50ms flicker that settled on the short System rows). The
-  // mounted set must NOT be an input to the computation that re-picks it.
-  //
-  // `windowHeights` is refreshed on scroll/resize (`scrollTick`) and on
-  // *structural* row-set / expansion changes, but is HELD across pure
-  // measurement bumps AND across live-tail projection churn (a new `rows`
-  // array whose rowKeys are unchanged — streaming content rewrites). Live
-  // height values still flow through `heights` into spacers; only the
-  // mounted-window snapshot is held. Within a frame the window is fixed;
-  // Phase-2 measures exactly that window's rows and writes the cache. The
-  // next genuine scroll then re-selects ONCE from now-measured heights.
-  // Standard virtualiser hysteresis: select on scroll, measure within the
-  // selection, never let measurement or content-only rewrites re-trigger
-  // selection.
+  // Retain the committed BAND while measurements settle, not frozen heights.
+  // A frozen height model diverges from the DOM as live cards grow: scrolling
+  // can run past its total and evict every row, leaving only blank spacers.
+  // Current heights drive selection, spacers, anchors, and scroll-spy together.
+  // Measurement can extend coverage but only scroll/topology changes trim it.
   const rowsStructuralKey = structuralRowSetKey(rows)
-  const windowHeights = useMemo(
-    () => heights,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [enabled, rowsStructuralKey, expandedRowIds, scrollTick] // deliberately NOT measureTick / rows / activeLiveRowKeys
+  const disclosureKey = JSON.stringify([
+    [...(expandedRowIds ?? [])].sort(),
+    [...(hiddenRowKeys ?? [])].sort()
+  ])
+  const selectionEpoch = useMemo(
+    () => ({
+      enabled,
+      chatId,
+      rowsStructuralKey,
+      disclosureKey,
+      compactDensity,
+      scrollTick,
+      forcedRowIndex
+    }),
+    [enabled, chatId, rowsStructuralKey, disclosureKey, compactDensity, scrollTick, forcedRowIndex]
   )
-  const windowHeightOffsets = useMemo(
-    () => (enabled ? buildHeightOffsets(windowHeights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
-    [enabled, windowHeights]
-  )
+  const windowHeights = heights
+  const windowHeightOffsets = heightOffsets
   windowHeightsRef.current = windowHeights
   windowHeightOffsetsRef.current = windowHeightOffsets
   forcedRowIndexRef.current = forcedRowIndex ?? null
+  fanoutLaneSlotsRef.current = fanoutLaneSlots
   const virtualWindow: VirtualWindow = enabled
-    ? selectWindow({
+    ? selectTranscriptWindow({
         scrollTop: effectiveScrollTop,
         viewportHeight: viewportRef.current,
         heights: windowHeights,
         heightOffsets: windowHeightOffsets,
         overscanPx: DEFAULT_OVERSCAN_PX,
-        forceIndex: forcedRowIndex
+        forceIndex: forcedRowIndex,
+        rows,
+        fanoutLaneSlots,
+        previous:
+          committedSelectionRef.current?.epoch === selectionEpoch
+            ? committedSelectionRef.current.window
+            : null
       })
     : { startIndex: 0, endIndex: rows.length, topSpacerPx: 0, bottomSpacerPx: 0 }
   // Publish the band we just committed so the next scroll RAF can gate
   // bumpScroll against the mounted window (cut 1a).
-  committedBandRef.current = enabled
-    ? {
-        startIndex: virtualWindow.startIndex,
-        endIndex: virtualWindow.endIndex,
-        forceIndex:
-          typeof forcedRowIndex === 'number' && Number.isInteger(forcedRowIndex)
-            ? forcedRowIndex
-            : null
-      }
-    : null
+  useLayoutEffect(() => {
+    committedBandRef.current = enabled
+      ? {
+          startIndex: virtualWindow.startIndex,
+          endIndex: virtualWindow.endIndex,
+          forceIndex:
+            typeof forcedRowIndex === 'number' && Number.isInteger(forcedRowIndex)
+              ? forcedRowIndex
+              : null
+        }
+      : null
+    committedSelectionRef.current = enabled ? { epoch: selectionEpoch, window: virtualWindow } : null
+  })
 
   // Scroll-spy (structural / band-commit path). Mid-band frames update the
   // gutter through `spySinkRef` with the same pure helper so the rail never
-  // freezes while scrollTick is held. Progress uses LIVE total height;
-  // rowIndex uses HELD window heights + the top-third reading line.
+  // freezes while scrollTick is held. Both use the current measured geometry.
   const spySnap = computeTranscriptScrollSpy({
     enabled,
     scrollTop: effectiveScrollTop,
@@ -2235,17 +2244,19 @@ function useTranscriptVirtualization(params: {
         // mounted band (start/end/force) would change.
         if (
           !wasScrolled ||
-          virtualWindowBandChanged(
-            committedBandRef.current,
-            selectWindowBand({
+          virtualWindowBandChanged(committedBandRef.current, {
+            ...selectTranscriptWindow({
               scrollTop: scrollTopRef.current,
               viewportHeight: viewportRef.current,
               heights: windowHeightsRef.current,
               heightOffsets: windowHeightOffsetsRef.current,
               overscanPx: DEFAULT_OVERSCAN_PX,
-              forceIndex: forcedRowIndexRef.current
-            })
-          )
+              forceIndex: forcedRowIndexRef.current,
+              rows: rowsRef.current,
+              fanoutLaneSlots: fanoutLaneSlotsRef.current
+            }),
+            forceIndex: forcedRowIndexRef.current
+          })
         ) {
           bumpScroll()
         }
@@ -2280,17 +2291,19 @@ function useTranscriptVirtualization(params: {
             viewportChanged: viewportRef.current !== previousViewport,
             bandChanged:
               hasScrolledRef.current &&
-              virtualWindowBandChanged(
-                committedBandRef.current,
-                selectWindowBand({
+              virtualWindowBandChanged(committedBandRef.current, {
+                ...selectTranscriptWindow({
                   scrollTop: scrollTopRef.current,
                   viewportHeight: viewportRef.current,
                   heights: windowHeightsRef.current,
                   heightOffsets: windowHeightOffsetsRef.current,
                   overscanPx: DEFAULT_OVERSCAN_PX,
-                  forceIndex: forcedRowIndexRef.current
-                })
-              )
+                  forceIndex: forcedRowIndexRef.current,
+                  rows: rowsRef.current,
+                  fanoutLaneSlots: fanoutLaneSlotsRef.current
+                }),
+                forceIndex: forcedRowIndexRef.current
+              })
           })
           if (decision.remeasure) bumpMeasure()
           if (decision.rebaselineAnchor) {
@@ -2533,7 +2546,11 @@ function useTranscriptVirtualization(params: {
         measurements.set(key, slot)
         sawNewKey = true
       } else if (Math.abs(prev - slot) > 0.5) {
-        const nextSlot = isActiveLiveRow ? Math.max(prev, slot) : slot
+        // Live cards can shrink when their content settles or a solo lane
+        // becomes a paired lead (whose slot is zero). Retaining the mounted
+        // band makes those real measurements safe; a monotonic max invents
+        // space that the DOM no longer occupies.
+        const nextSlot = slot
         if (Math.abs(prev - nextSlot) > 0.5) {
           measurements.set(key, nextSlot)
           if (isActiveLiveRow && nextSlot > prev) {
@@ -4609,6 +4626,7 @@ export const TranscriptPanel = memo(
       activeLiveRowKeys,
       expandedRowIds: expandedRowIdsWithLiveViewports,
       hiddenRowKeys,
+      fanoutLaneSlots,
       spySinkRef: gutterSpySinkRef
     })
     const virtualHeightOffsets = useMemo(
