@@ -57,7 +57,7 @@ describe('host command route/history integration', () => {
 
     const mcp = between(
       mainSource,
-      'async function executeGeminiMcpTool(',
+      'async function executeUnscopedGeminiMcpTool(',
       'async function startGeminiMcpBroker('
     )
     expect(mcp).toContain("source: 'brokered-mcp'")

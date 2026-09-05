@@ -326,7 +326,7 @@ describe('provider dispatch integration', () => {
 
   it('releases exact mutation ownership before result and media projection', () => {
     const executor = sourceBetween(
-      'async function executeGeminiMcpTool(',
+      'async function executeUnscopedGeminiMcpTool(',
       'async function startGeminiMcpBroker()'
     )
     const dispatchCompletion = executor.indexOf(

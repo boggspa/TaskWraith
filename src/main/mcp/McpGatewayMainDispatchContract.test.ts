@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const indexSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
-const executorStart = indexSource.indexOf('async function executeGeminiMcpTool(')
+function findExecutorStart(source: string): number {
+  const scopedBody = source.indexOf('async function executeUnscopedGeminiMcpTool(')
+  // Historical replay fixtures predate the observation wrapper.
+  return scopedBody >= 0 ? scopedBody : source.indexOf('async function executeGeminiMcpTool(')
+}
+const executorStart = findExecutorStart(indexSource)
 const executorEnd = indexSource.indexOf('\nasync function startGeminiMcpBroker()', executorStart)
 const executorSource = indexSource.slice(executorStart, executorEnd)
 const canonicalDispatchStart = executorSource.indexOf(
@@ -13,6 +18,9 @@ const canonicalDispatchSource = executorSource.slice(canonicalDispatchStart)
 
 describe('main capability gateway dispatch contract', () => {
   it('unwraps the gateway before wrapper-level route, approval, or lock decisions', () => {
+    expect(indexSource).toContain(
+      'const executeGeminiMcpTool = sharedWorkspaceToolExecutor(executeUnscopedGeminiMcpTool)'
+    )
     expect(executorStart).toBeGreaterThan(-1)
     expect(executorEnd).toBeGreaterThan(executorStart)
     expect(canonicalDispatchStart).toBeGreaterThan(-1)
@@ -229,7 +237,7 @@ function loadDispatchSource(): { indexSource: string; canonicalDispatchSource: s
   const source = override
     ? readFileSync(override, 'utf8')
     : readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
-  const start = source.indexOf('async function executeGeminiMcpTool(')
+  const start = findExecutorStart(source)
   const end = source.indexOf('\nasync function startGeminiMcpBroker()', start)
   const executor = source.slice(start, end)
   const coalesce = executor.indexOf('const argumentCoalesce = coalesceToolArguments(')
