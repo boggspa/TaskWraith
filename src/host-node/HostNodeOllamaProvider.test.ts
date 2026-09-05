@@ -21,6 +21,7 @@ import type {
   HostProviderRunUpdate
 } from '../host-runtime/HostProviderRunPort'
 import type { HostRunEventTarget } from '../host-runtime/HostRunEventTarget'
+import { normalizeHostProviderRunEvent } from '../host-runtime/HostProviderRunPort'
 
 const OLLAMA_OFFERS = hostProviderOffers('ollama', true)!
 const TARGET: HostRunEventTarget = { id: 'client-1' }
@@ -87,7 +88,9 @@ class FakeRunPort implements HostProviderRunPort {
     this.cancelCallbacks.get(runId)?.()
   }
   publishRunEvent(_target: HostRunEventTarget, event: HostProviderRunEvent): void {
-    this.events.push(event)
+    const normalized = normalizeHostProviderRunEvent(event)
+    if (!normalized) throw new Error('Host profile run event is invalid')
+    this.events.push(normalized)
   }
 }
 
@@ -370,6 +373,30 @@ describe('HostNodeOllamaProvider run path', () => {
     expect(runPort.finish?.status).toBe('completed')
     expect(runPort.finish?.usage?.inputTokens).toBe(10)
     expect(runPort.finish?.usage?.outputTokens).toBe(5)
+  })
+
+  it('preserves whitespace chunks without publishing invalid empty content events', async () => {
+    mockRunChatLoop.mockImplementation(async (options) => {
+      let full = ''
+      for (const delta of ['\n', 'done', '\n\t', 'verified']) {
+        full += delta
+        options.onContentDelta?.(delta, full)
+      }
+      return { content: full, toolCalls: [], toolResults: [] }
+    })
+    const runPort = new FakeRunPort()
+    const result = await provider(resourcePort(), runPort).run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'verify the file',
+      target: TARGET
+    })
+    expect(result.status).toBe('completed')
+    expect(runPort.events.filter((event) => event.type === 'run.content')).toEqual([
+      expect.objectContaining({ text: '\ndone' }),
+      expect.objectContaining({ text: '\n\tverified' })
+    ])
+    expect(runPort.transcripts.at(-1)?.text).toBe('\ndone\n\tverified')
   })
 
   it('routes a proven direct Cloud model to ollama.com with its base id', async () => {

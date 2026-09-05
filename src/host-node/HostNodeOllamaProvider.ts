@@ -50,6 +50,9 @@ import {
 } from '../host-shared/ollama/OllamaHostToolTurns'
 import type { HostNodeProviderResourcePort } from './HostNodeProviderResources'
 import {
+  HOST_PROVIDER_RUN_MAX_TEXT_CHARS,
+  HOST_PROVIDER_RUN_MAX_WARNING_CHARS,
+  normalizeHostProviderRunPresentationText,
   normalizeHostProviderRunThread,
   type HostProviderRunPort,
   type HostProviderRunThread,
@@ -545,6 +548,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
       // OllamaHostToolTurns are what stop a model that keeps calling tools
       // forever, or keeps hitting the same failure.
       const assistantSegments: string[] = []
+      let pendingContentDelta = ''
       let turnState = createOllamaHostToolTurnState()
       let ceilingFired = false
       let promptTokens: number | undefined
@@ -587,11 +591,20 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
               phase: 'streaming',
               updatedAt: new Date().toISOString()
             })
+            pendingContentDelta += delta
+            const text = normalizeHostProviderRunPresentationText(pendingContentDelta)
+            if (!text) {
+              // A newline can arrive as its own chunk. Keep it for the next
+              // text chunk instead of sending an invalid blank Host event.
+              pendingContentDelta = pendingContentDelta.slice(-HOST_PROVIDER_RUN_MAX_TEXT_CHARS)
+              return
+            }
+            pendingContentDelta = ''
             this.options.runPort.publishRunEvent(request.target, {
               type: 'run.content',
               runId: request.runId,
               threadId: request.threadId,
-              text: delta,
+              text,
               at: new Date().toISOString()
             })
           }
@@ -661,12 +674,19 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     }
 
     const finishedAt = new Date().toISOString()
+    const failureReason =
+      status === 'failed'
+        ? normalizeHostProviderRunPresentationText(
+            assistantText,
+            HOST_PROVIDER_RUN_MAX_WARNING_CHARS
+          )
+        : null
     const finish: HostProviderRunFinish = {
       runId: request.runId,
       status,
       finishedAt,
       ...(usage ? { usage } : {}),
-      warningSummaries: [],
+      warningSummaries: failureReason ? [failureReason] : [],
       ...(errorCode ? { errorCode } : {})
     }
     this.options.runPort.finishRun(finish)
