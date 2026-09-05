@@ -11,6 +11,7 @@ import {
 } from '../shared/providerActionTaxonomy'
 import { isWorkspaceInspectionShellCommand } from './WorkspaceInspectionShell'
 import { workspaceInspectionProgramPlan } from './WorkspaceInspectionProgram'
+import { parseGitCommitSliceRequest } from './mcp/GitCommitSlice'
 import type { ProviderId } from './store/types'
 import type { WorkspaceLockClaimRequest, WorkspaceLockHunk } from './workLocks/WorkspaceLockTypes'
 
@@ -696,6 +697,65 @@ function isDeclaredPatchDryRun(
   return (
     action.catalogTool === 'apply_patch' &&
     (args.dryRun === true || args.check === true || args.preview === true)
+  )
+}
+
+/**
+ * Git serializes on repository metadata, but a writer lane owns the files in
+ * the requested slice, not .git. Keep lane authorization separate from the
+ * metadata mutex returned by deriveWorkspaceMutationClaims.
+ */
+export function deriveGitLaneWritePaths(input: WorkspaceMutationCall): string[] {
+  const context = claimContext(input)
+  const args = normalizedCallArgs(input.args)
+  if (input.action === 'git_commit') {
+    // The executor checks a private-index patch against these declared paths
+    // before committing. Pathspec mode likewise commits only these paths.
+    return parseGitCommitSliceRequest(args).paths.map((path) =>
+      resolveTargetPath(context, path, 'commit path')
+    )
+  }
+  if (input.action !== 'git_stage') {
+    throw new WorkspaceMutationClaimDerivationError(
+      'invalid-call',
+      'Expected a git stage or commit call.'
+    )
+  }
+  if (typeof args.patch === 'string' && args.patch.trim()) {
+    const parsed = parseUnifiedPatch(args.patch)
+    if (parsed.invalid || parsed.files.some((file) => file.invalid)) {
+      throw new WorkspaceMutationClaimDerivationError(
+        'invalid-call',
+        'git_stage requires a valid unified diff to authorize its lane scope.'
+      )
+    }
+    const cwd = resolveTargetPath(
+      context,
+      String(args.cwd || args.working_directory || args.workdir || context.worktreePath),
+      'git_stage cwd'
+    )
+    return [
+      ...new Set(
+        parsed.files
+          .flatMap((file) => [file.oldPath, file.newPath])
+          .filter((path): path is string => typeof path === 'string')
+          .map((path) => resolveTargetPath(context, resolve(cwd, path), 'stage patch path'))
+      )
+    ]
+  }
+  // Match the executor's paths/path aliases and the fact that all/update are
+  // still restricted by an explicit path list when one is supplied.
+  const value = args.paths || (args.path ? [args.path] : [])
+  const paths = (typeof value === 'string' ? [value] : Array.isArray(value) ? value : [])
+    .map((path) => String(path || '').trim())
+    .filter(Boolean)
+  if (paths.length > 0) {
+    return paths.map((path) => resolveTargetPath(context, path, 'stage path'))
+  }
+  if (args.all === true || args.update === true) return [context.worktreePath]
+  throw new WorkspaceMutationClaimDerivationError(
+    'invalid-call',
+    'git_stage requires paths, patch, all=true, or update=true.'
   )
 }
 

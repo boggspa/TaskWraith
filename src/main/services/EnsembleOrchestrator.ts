@@ -35,6 +35,7 @@ import {
   buildEnsembleDynamicStateSnapshot,
   buildEnsembleParticipantPromptProjection,
   computeEnsemblePromptShellStamp,
+  ENSEMBLE_WRITER_GIT_GUIDANCE,
   findUncoveredEnsemblePromptMessageIds,
   getOrderedEnsembleParticipants,
   providerLabel,
@@ -1709,7 +1710,8 @@ function writeScopeAckPrompt(matrixSummary: string): string {
 function writeScopeExecutionPrompt(matrixSummary: string): string {
   return [
     'Locked writer fan-out is authorized by user preflight.',
-    'Stay strictly within your approved write scope. Do not stage or commit. If you need to write outside scope, stop and report the required serial follow-up.',
+    'Stay strictly within your approved write scope. If you need to write outside scope, stop and report the required serial follow-up.',
+    ENSEMBLE_WRITER_GIT_GUIDANCE,
     'Approved scope matrix:',
     matrixSummary
   ].join('\n')
@@ -13556,16 +13558,11 @@ export class EnsembleOrchestrator {
         reason: `Lane ${run.laneId} is not a writer lane and cannot mutate workspace state.`
       }
     }
-    if (
-      input.toolName === 'git_stage' ||
-      input.toolName === 'git_commit' ||
-      input.toolName === 'git_push' ||
-      input.toolName === 'git_create_pr'
-    ) {
+    if (input.toolName === 'git_push' || input.toolName === 'git_create_pr') {
       return {
         ok: false,
         reason:
-          'git stage/commit/push/PR tools are disabled inside parallel writer lanes; finish the lane and publish from a serial owner.'
+          'git push/PR tools are disabled inside parallel writer lanes; finish the lane and publish from a serial owner.'
       }
     }
     const scopes = run.approvedWriteScopes || lane?.approvedWriteScopes || []

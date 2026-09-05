@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { resolveToolDispatchContractStrict } from '../shared/providerActionTaxonomy'
 import type { ChatScope, EnsembleRunIdentity, ProviderId } from './store/types'
 import {
+  deriveGitLaneWritePaths,
   deriveWorkspaceMutationClaims,
   WorkspaceMutationClaimDerivationError
 } from './WorkspaceMutationClaims'
@@ -298,9 +299,12 @@ export class WorkspaceLockMcpAdmissionCoordinator {
     }
     let resourcePaths: readonly string[] | undefined
     try {
-      resourcePaths = (await deriveWorkspaceMutationClaims(mutation)).flatMap((claim) =>
-        claim.targetPath ? [claim.targetPath] : []
-      )
+      resourcePaths =
+        laneId && (input.toolName === 'git_stage' || input.toolName === 'git_commit')
+          ? deriveGitLaneWritePaths(mutation)
+          : (await deriveWorkspaceMutationClaims(mutation)).flatMap((claim) =>
+              claim.targetPath ? [claim.targetPath] : []
+            )
     } catch (error) {
       const reason =
         error instanceof Error

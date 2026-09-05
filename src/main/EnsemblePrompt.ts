@@ -32,6 +32,8 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
 
 const MAX_MESSAGE_CHARS = 4000
 const MAX_TRANSCRIPT_CHARS = 24000
+export const ENSEMBLE_WRITER_GIT_GUIDANCE =
+  'Writer lanes may use listed git_stage and git_commit tools within their approved write scopes. Use explicit paths; prefer git_commit(mode="private_index") with an isolated patch when sharing files or the index, or mode="pathspec" for whole owned files. Audit the slice before committing. Normal approvals and Git metadata locks still apply.'
 import { formatScoutBriefsForPrompt, type ScoutBriefRecord } from './ScoutBrief'
 import { buildUserInstructionBlock } from './PromptComposition'
 import type { ResolvedInstructionContext } from '../shared/instructions/InstructionTypes'
@@ -1425,7 +1427,7 @@ export function buildEnsembleParticipantPromptProjection(
     const compactRoundPolicy = `Continuous round: follow the current assignment, then ${canCompleteRootGoal ? 'complete the root Goal only after every required assignment/gate is finished' : 'report this seat-owned contribution and hand it to the Boss/Captain; do not complete the root Goal'}; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
     const compactParallelPolicy = activeConcurrentMode
       ? hasWriteIntentLane
-        ? 'Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it.'
+        ? `Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it. ${ENSEMBLE_WRITER_GIT_GUIDANCE}`
         : 'Parallel read-only lanes may run concurrently; preserve the assigned role and report findings concisely.'
       : 'Use the normal panel rotation and do not invent an unavailable orchestration tool.'
     const capsuleProjection = buildOllamaEnsemblePromptCapsuleProjection(
@@ -1487,7 +1489,7 @@ export function buildEnsembleParticipantPromptProjection(
     const compactRoundPolicy = `Continuous round: follow the current assignment, then ${canCompleteRootGoal ? 'complete the root Goal only after every required assignment/gate is finished' : 'report this seat-owned contribution and hand it to the Boss/Captain; do not complete the root Goal'}; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
     const compactParallelPolicy = activeConcurrentMode
       ? hasWriteIntentLane
-        ? 'Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it.'
+        ? `Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it. ${ENSEMBLE_WRITER_GIT_GUIDANCE}`
         : 'Parallel read-only lanes may run concurrently; preserve the assigned role and report findings concisely.'
       : 'Use the normal panel rotation and do not invent an unavailable orchestration tool.'
     const capsuleProjection = buildAntigravityOfficialAgyPromptCapsuleProjection(
@@ -1571,6 +1573,7 @@ export function buildEnsembleParticipantPromptProjection(
           : []),
       '',
       workContract,
+      ...(hasWriteIntentLane ? [ENSEMBLE_WRITER_GIT_GUIDANCE] : []),
       ...(includeDynamicState ? ['', dynamicStateSnapshot.block] : []),
       ...(input.scoutBriefs && input.scoutBriefs.length > 0
         ? ['', formatScoutBriefsForPrompt(input.scoutBriefs)]
@@ -1654,6 +1657,7 @@ export function buildEnsembleParticipantPromptProjection(
         ? 'Parallel policy: writer-capable lanes may run concurrently only when Boss- or Captain-authorized with explicit write scopes, or when no Boss is assigned and the host has completed user-enabled write-scope claim + matrix-ack preflight. Workspace-mutating tools must stay inside the approved lane scope and acquire TaskWraith write locks before executing. TaskWraith projects the runtime WIP marker when it acquires that lock; this satisfies repository instructions to raise a marker, so do not create an additional manual marker with a file tool. If a lock or scope conflict blocks your lane, report the conflict and do not retry blindly.'
         : 'Parallel policy: reader-intent fan-out lanes may run concurrently. Their task boundary remains inspection/review even when a seat’s configured permission tier allows more; only locked writer lanes authorize parallel mutation.'
       : 'Parallel policy: use ensemble_fanout for targeted reader-intent fan-out only when it is listed. Otherwise use the normal rotation and a unique @Role/@Model mention to steer the next available participant.',
+    ...(hasWriteIntentLane ? [ENSEMBLE_WRITER_GIT_GUIDANCE] : []),
     ...(workspaceIsolationLine ? [workspaceIsolationLine] : []),
     ...(workspaceStanza ? [workspaceStanza] : []),
     // User instruction layers are part of the INVARIANT shell (they join

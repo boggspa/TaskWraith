@@ -287,6 +287,12 @@ runs only when explicitly delegated.
 writeScopes=...)` path.
 - BG lanes never inherit Full Access and cannot own Boss, Captain, Work
   Session lead/manager, synthesizer, or broad fan-out authority.
+- Authorized writer lanes may use `git_stage` and `git_commit` within their
+  approved write scopes, including `git_commit(mode=private_index)` for an
+  isolated patch or `mode=pathspec` for whole owned files. The lane check uses
+  the slice's paths; the Git metadata mutex still serializes repository
+  operations, and normal approval rules still apply. Follow the private-index
+  and explicit-path rules in [Committing](REPOSITORY_WORKFLOW.md#committing).
 - Normal completion waits for live/reserved BG lanes. Cancellation and failure
   preserve the terminal fast-close semantics and stop those lanes immediately.
 
