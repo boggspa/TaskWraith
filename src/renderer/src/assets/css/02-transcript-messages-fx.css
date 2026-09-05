@@ -4560,7 +4560,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .transcript-message-block {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
 }
 
 .transcript-history-page-boundary {
@@ -5169,12 +5169,38 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  min-height: 24px;
+  min-height: 22px;
   margin-top: -2px;
   color: color-mix(in srgb, var(--text-muted) 86%, transparent);
   font-size: var(--font-size-xs);
   line-height: 1;
   align-self: flex-start;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+/* Reserve the compact footer's height so revealing actions never moves the
+ * transcript. Keyboard focus exposes the same controls as pointer hover. */
+.transcript-message-block:hover > .message-footer,
+.transcript-message-block:focus-within > .message-footer {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.message-footer .message-actions-chip {
+  pointer-events: inherit;
+}
+
+@media (hover: none) {
+  .message-footer {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+[data-reduce-motion="true"] .message-footer {
+  transition: none;
 }
 
 .message-footer-end {
@@ -5189,14 +5215,16 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 .message-footer .message-actions-chip {
   background: transparent;
-  border-color: transparent;
+  border: 0;
+  padding: 0;
+  opacity: 1;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-.message-footer:hover .message-actions-chip,
-.message-footer:focus-within .message-actions-chip {
-  opacity: 1;
+.message-footer .message-actions-chip-button svg {
+  width: 15px;
+  height: 15px;
 }
 
 /* Slice M4 (1.0.3 ship-night): show the participant's short model name
