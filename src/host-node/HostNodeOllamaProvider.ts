@@ -374,13 +374,16 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
   }
 
   private buildMessages(prompt: string, sessionMemory: OllamaSessionMemory): OllamaChatMessage[] {
-    const messages: OllamaChatMessage[] = []
-    if (sessionMemory.workingMemory) {
-      messages.push({
+    const messages: OllamaChatMessage[] = [
+      {
         role: 'system',
-        content: `[Working memory from previous turns]\n${sessionMemory.workingMemory}`
-      })
-    }
+        content:
+          'Use the offered workspace file tools to carry out file requests in this turn. After an edit, read the file back to verify the requested content. Report completion only after successful tool results; an intention, example command, or claimed result does not perform an operation. If the offered tools cannot perform an operation, state that limitation.' +
+          (sessionMemory.workingMemory
+            ? `\n\n[Working memory from previous turns]\n${sessionMemory.workingMemory}`
+            : '')
+      }
+    ]
     messages.push({ role: 'user', content: prompt })
     return messages
   }
