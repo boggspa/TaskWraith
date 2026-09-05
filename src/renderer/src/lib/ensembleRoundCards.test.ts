@@ -491,7 +491,7 @@ describe('buildEnsembleRoundCardRows', () => {
     expect(result.some((entry) => entry.id === 'expanded-fanout-lane')).toBe(false)
   })
 
-  it('folds a settled fan-out wave inside a live round after the next turn begins', () => {
+  it.each([false, true])('folds a live round fan-out (structured receipt: %s)', (structured) => {
     const roundId = 'r-live-fanout'
     const fanoutLane = message('live-fanout-lane', {
       roundId,
@@ -503,6 +503,7 @@ describe('buildEnsembleRoundCardRows', () => {
       metadata: {
         kind: 'ensembleParticipant',
         ensembleLaneId: 'lane-r-live-fanout-scout-1',
+        ensembleFanoutWaveId: 'live-fanout-dispatch',
         ensembleLaneIntent: 'read',
         ensembleStageRole: 'scout',
         ensembleStatus: 'answered'
@@ -521,8 +522,24 @@ describe('buildEnsembleRoundCardRows', () => {
       message('live-fanout-dispatch', {
         roundId,
         role: 'system',
-        content: 'Scout fan-out · 1 read-only participants dispatched concurrently.',
-        metadata: { kind: 'ensembleRoundStatus' }
+        content: structured
+          ? 'Scout fan-out · 1 participant(s) requested; preparing under bounded host admission (read-only seat lanes).'
+          : 'Scout fan-out · 1 read-only participants dispatched concurrently.',
+        metadata: {
+          kind: 'ensembleRoundStatus',
+          ...(structured
+            ? {
+                ensembleFanoutWaveId: 'live-fanout-dispatch',
+                ensembleFanoutDispatch: {
+                  label: 'Scout fan-out',
+                  category: 'orchestrated',
+                  participants: [
+                    { participantId: 'scout-1', provider: 'codex', role: 'Scout', intent: 'read' }
+                  ]
+                }
+              }
+            : {})
+        }
       }),
       fanoutLane,
       nextTurn

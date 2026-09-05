@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatRun } from '../../../main/store/types'
+import { isEnsembleFanoutDispatchPayload } from '../../../shared/ensembleFanoutDispatch'
 import {
   groupedTranscriptMessageIds,
   isEnsembleFanoutResultMessage
@@ -78,6 +79,38 @@ const FANOUT_DISPATCH_STATUS =
 function metadataString(message: ChatMessage, key: string): string | null {
   const value = message.metadata?.[key]
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function readFanoutDispatchStatus(message: ChatMessage): {
+  dispatchLabel: string
+  category: EnsembleFanoutViewportCategory
+  expectedLaneCount: number
+} | null {
+  if (message.role !== 'system' || message.metadata?.kind !== 'ensembleRoundStatus') return null
+  // The receipt now describes host admission as "requested; preparing".
+  // Use its structured dispatch plan so copy changes cannot orphan the
+  // receipt beside a second, lane-inferred disclosure for the same wave.
+  const payload = message.metadata.ensembleFanoutDispatch
+  if (isEnsembleFanoutDispatchPayload(payload)) {
+    return {
+      dispatchLabel: payload.label.trim(),
+      category: payload.category,
+      expectedLaneCount: payload.participants.length
+    }
+  }
+
+  const statusMatch = FANOUT_DISPATCH_STATUS.exec(message.content || '')
+  if (!statusMatch) return null
+  const dispatchLabel = statusMatch[1].trim()
+  return {
+    dispatchLabel,
+    category:
+      metadataString(message, 'ensembleFanoutCategory') === 'user' ||
+      dispatchLabel.toLowerCase() === 'user fan-out'
+        ? 'user'
+        : 'orchestrated',
+    expectedLaneCount: Number(statusMatch[2])
+  }
 }
 
 function isEnsembleFanoutLaneMessage(message: ChatMessage): boolean {
@@ -239,25 +272,15 @@ export function collectEnsembleFanoutViewportGroups(
   // even when transcript order is not.
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index]
-    const statusMatch =
-      message.role === 'system' && message.metadata?.kind === 'ensembleRoundStatus'
-        ? FANOUT_DISPATCH_STATUS.exec(message.content || '')
-        : null
-    if (statusMatch) {
-      const dispatchLabel = statusMatch[1].trim()
+    const dispatch = readFanoutDispatchStatus(message)
+    if (dispatch) {
       const durableWaveId = metadataString(message, 'ensembleFanoutWaveId') || message.id
-      const durableCategory = metadataString(message, 'ensembleFanoutCategory')
       const group: MutableViewportGroup = {
         anchorId: message.id,
         anchorIndex: index,
-        dispatchLabel,
-        category:
-          durableCategory === 'user' || dispatchLabel.toLowerCase() === 'user fan-out'
-            ? 'user'
-            : 'orchestrated',
+        ...dispatch,
         waveId: durableWaveId,
-        expectedLaneCount: Number(statusMatch[2]),
-        stage: stageFromDispatchLabel(dispatchLabel),
+        stage: stageFromDispatchLabel(dispatch.dispatchLabel),
         lanes: [],
         laneRows: []
       }
@@ -475,16 +498,8 @@ function laneIsTerminal(message: ChatMessage, terminalRunIds: ReadonlySet<string
   return TERMINAL_PARTICIPANT_STATUSES.has(metadataString(message, 'ensembleStatus') || '')
 }
 
-function isFanoutDispatchStatus(message: ChatMessage): boolean {
-  return Boolean(
-    message.role === 'system' &&
-    message.metadata?.kind === 'ensembleRoundStatus' &&
-    FANOUT_DISPATCH_STATUS.test(message.content || '')
-  )
-}
-
 function startsLaterTranscriptTurn(message: ChatMessage): boolean {
-  if (isFanoutDispatchStatus(message)) return true
+  if (readFanoutDispatchStatus(message)) return true
   if (metadataString(message, 'ensembleLaneId')) return false
   if (!metadataString(message, 'ensembleParticipantId')) return false
   return (
