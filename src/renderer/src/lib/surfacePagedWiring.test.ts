@@ -17,9 +17,9 @@
  *     unconditional `window.api.getChat`, and resolves the row it already holds
  *     rather than `chatByIdRef` (empty at boot until React commits, which would
  *     make every paged open silently fall through to a full fetch).
- *  3. Pane welcome-ness is shell-aware. App derives it from
- *     `messages.length === 0`, true for EVERY shell, so a pane sharing a paged
- *     chat painted a welcome hero over a real transcript.
+ *  3. Pane welcome-ness is shell-aware and uses the same role-aware predicate
+ *     as the main projection. A paged shell has no messages loaded, while an
+ *     unstarted chat may legitimately contain system-only configuration rows.
  *  4. The linked side chat deliberately stays on FULL hydration. Presenting one
  *     always mutates it (`applySideChatLifecycle`), and `updateChatById` routes
  *     a mutation whose base is a summary record — which a shell is — through the
@@ -102,12 +102,16 @@ describe('pop-out / Compact Companion boot adopts the paged-open policy', () => 
 })
 
 describe('pane welcome-ness is shell-aware', () => {
-  it('never reads a paged shell as a welcome pane, at either derivation site', () => {
-    const welcomeSites = source.match(/const viewerIsWelcomeChat =[\s\S]{0,140}?=== 0/g) ?? []
+  it('uses the role-aware welcome predicate after rejecting paged shells at both sites', () => {
+    const welcomeSites =
+      source.match(
+        /const viewerIsWelcomeChat =\s*!isTranscriptPagedShell\(viewerChat\) &&\s*shouldRenderWelcome\(\{\s*currentChat: viewerChat,\s*messages: viewerChat\.messages \|\| EMPTY_CHAT_MESSAGES,\s*isCurrentChatRunning: viewerIsRunning\s*\}\)/g
+      ) ?? []
+
     expect(welcomeSites).toHaveLength(2)
-    for (const site of welcomeSites) {
-      expect(site).toContain('!isTranscriptPagedShell(viewerChat)')
-    }
+    expect(source).not.toMatch(
+      /const viewerIsWelcomeChat =[\s\S]{0,180}?\(viewerChat\.messages\?\.length \|\| 0\) === 0/
+    )
   })
 })
 

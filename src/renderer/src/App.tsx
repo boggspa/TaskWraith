@@ -29459,7 +29459,12 @@ function App(): React.JSX.Element {
       runQueueJobs
     })
     const viewerIsWelcomeChat =
-      !isTranscriptPagedShell(viewerChat) && (viewerChat.messages?.length || 0) === 0
+      !isTranscriptPagedShell(viewerChat) &&
+      shouldRenderWelcome({
+        currentChat: viewerChat,
+        messages: viewerChat.messages || EMPTY_CHAT_MESSAGES,
+        isCurrentChatRunning: viewerIsRunning
+      })
     const viewerRun = viewerChat.runs?.[viewerChat.runs.length - 1] || null
     // ── Per-pane agent-aura inputs ─────────────────────────────────────────
     // Mirror App's app-global `auraProviderKey` + `runFxStatus` (see ~15834)
@@ -30406,7 +30411,12 @@ function App(): React.JSX.Element {
         runQueueJobs
       })
       const viewerIsWelcomeChat =
-        !isTranscriptPagedShell(viewerChat) && (viewerChat.messages?.length || 0) === 0
+        !isTranscriptPagedShell(viewerChat) &&
+        shouldRenderWelcome({
+          currentChat: viewerChat,
+          messages: viewerChat.messages || EMPTY_CHAT_MESSAGES,
+          isCurrentChatRunning: viewerIsRunning
+        })
       const viewerRun = viewerChat.runs?.[viewerChat.runs.length - 1] || null
       // (Per-pane agent-aura inputs are shell-only and live in
       // `renderMultiviewPaneCell`; the composer ctx doesn't need them.)
