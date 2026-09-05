@@ -60,3 +60,16 @@ export function withDelegatedCheckpoint(input: {
   })
   return plan.action === 'deliver' ? `${plan.block}\n\n${input.prompt}` : input.prompt
 }
+
+/** Prepare the cold candidate before a native adapter can discard an unusable session. */
+export function buildDelegatedContinuityPrompts(
+  input: Parameters<typeof withDelegatedCheckpoint>[0]
+): { prompt: string; resumeFallbackPrompt?: string } {
+  const prompt = withDelegatedCheckpoint(input)
+  if (!input.resumeSessionId || !['codex', 'claude'].includes(input.provider)) return { prompt }
+  const resumeFallbackPrompt = withDelegatedCheckpoint({ ...input, resumeSessionId: undefined })
+  return {
+    prompt,
+    ...(resumeFallbackPrompt !== prompt ? { resumeFallbackPrompt } : {})
+  }
+}

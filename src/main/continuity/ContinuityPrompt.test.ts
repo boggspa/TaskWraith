@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { composeRunPrompt, type ComposeRunPromptInput } from '../PromptComposition'
-import { buildEnsembleParticipantPrompt } from '../EnsemblePrompt'
+import {
+  buildEnsembleParticipantPrompt,
+  buildEnsembleParticipantPromptProjection
+} from '../EnsemblePrompt'
+import { createActiveGoal } from '../GoalState'
 import type { ChatRecord, EnsembleParticipant } from '../store/types'
 import { updateSeatCheckpoint, CONTINUITY_BLOCK_MAX_CHARS } from '../../shared/threadContinuity'
-import { planPromptContinuity } from './ContinuityPrompt'
+import { buildDelegatedContinuityPrompts, planPromptContinuity } from './ContinuityPrompt'
 
 function fixture(): ChatRecord {
   const chat = {
@@ -94,13 +98,37 @@ describe('checkpoint prompt integration', () => {
       composeRunPrompt({ ...input(chat), continuityIsolated: true }).contextualPrompt
     ).not.toContain('CHECKPOINT:')
   })
+  it.each(['codex', 'claude'] as const)(
+    'prepares checkpoint recovery if a delegated %s native session is discarded',
+    (provider) => {
+      const chat = fixture()
+      const plan = planPromptContinuity({ chat, provider, providerSessionId: 'session' })
+      if (plan.action !== 'deliver') throw new Error('Expected recovery')
+      chat.runs.push({
+        runId: 'delivered',
+        provider,
+        providerThreadId: 'session',
+        startedAt: '2026-09-05T12:02:00Z',
+        endedAt: '2026-09-05T12:03:00Z',
+        status: 'success',
+        continuityCheckpointDelivery: plan.delivery
+      })
+      const args = { provider, subThread: chat, prompt: 'Continue.', resumeSessionId: 'session' }
+      const prompts = buildDelegatedContinuityPrompts(args)
+      expect(prompts.prompt).toBe('Continue.')
+      expect(prompts.resumeFallbackPrompt).toContain('CHECKPOINT: inspect replay ordering next.')
+      expect(buildDelegatedContinuityPrompts({ ...args, prompt: '/compact' })).toEqual({
+        prompt: '/compact'
+      })
+    }
+  )
   it('keeps archived tool output outside host-fed prompts', () => {
     const chat = fixture()
     chat.messages.push({
       id: 'tool-row',
-      role: 'tool',
+      role: 'assistant',
       timestamp: '2026-09-05T12:02:00Z',
-      content: 'RAW_TOOL_SENTINEL',
+      content: 'The test command completed.',
       toolActivities: [
         {
           id: 'tool',
@@ -119,6 +147,7 @@ describe('checkpoint prompt integration', () => {
       resumeSessionId: undefined
     })
     expect(composed.contextualPrompt).toContain('CHECKPOINT:')
+    expect(composed.contextualPrompt).toContain('The test command completed.')
     expect(composed.contextualPrompt).not.toContain('RAW_TOOL_SENTINEL')
   })
   it('restores only the current Ensemble seat’s private note', () => {
@@ -152,4 +181,55 @@ describe('checkpoint prompt integration', () => {
     expect(prompt).toContain('SEAT_PRIVATE_NOTE')
     expect(prompt).not.toContain('CHECKPOINT:')
   })
+  it.each(['ollama', 'antigravity'] as const)(
+    'retains the current goal and exact checkpoint inside a crowded %s capsule',
+    (provider) => {
+      const chat = fixture()
+      const participant: EnsembleParticipant = {
+        id: 'seat',
+        provider,
+        role: 'Worker',
+        enabled: true,
+        order: 1,
+        instructions: 'Follow the current assignment.',
+        permissionPresetId: 'read_only'
+      }
+      chat.chatKind = 'ensemble'
+      chat.ensemble = { enabled: true, maxParticipants: 2, participants: [participant] }
+      chat.activeGoal = createActiveGoal(provider, 'NEW_USER_GOAL', {
+        now: new Date('2026-09-05T12:00:00Z'),
+        allowProviderNative: false
+      })
+      const note = `OLDER_CHECKPOINT_GOAL ${'evidence '.repeat(160)}END_CONSTRAINT`
+      chat.continuityCheckpoints = updateSeatCheckpoint(chat, {
+        seatId: 'seat',
+        expectedRevision: 0,
+        text: note,
+        references: [],
+        author: { provider, runId: 'seat-author' },
+        now: '2026-09-05T12:02:00Z'
+      })
+      chat.messages.push({
+        id: 'old-history',
+        role: 'assistant',
+        content: 'OPTIONAL_HISTORY '.repeat(1000),
+        timestamp: '2026-09-05T12:03:00Z'
+      })
+      const projection = buildEnsembleParticipantPromptProjection({
+        chat,
+        config: chat.ensemble,
+        participant,
+        roundId: 'round',
+        currentPrompt: 'Continue the current assignment.',
+        dynamicStateSnapshot: { version: 'crowded', block: 'OPTIONAL_STATE '.repeat(1000) }
+      })
+      expect(projection.prompt).toContain('NEW_USER_GOAL')
+      expect(projection.prompt).toContain(note)
+      expect(projection.prompt.length).toBeLessThanOrEqual(provider === 'ollama' ? 8000 : 20000)
+      expect(projection.transcriptAttribution.continuityCheckpoint).toBe('included')
+      expect(JSON.stringify(projection.transcriptAttribution)).not.toContain(
+        'OLDER_CHECKPOINT_GOAL'
+      )
+    }
+  )
 })

@@ -1470,9 +1470,8 @@ export function buildEnsembleParticipantPromptProjection(
         turnBoundary: advisoryTurnBoundary || undefined,
         roundPolicy: compactRoundPolicy,
         parallelPolicy: compactParallelPolicy,
-        dynamicState: includeDynamicState
-          ? `${workContract}\n\n${dynamicStateSnapshot.block}`
-          : workContract,
+        workContract,
+        dynamicState: includeDynamicState ? dynamicStateSnapshot.block : undefined,
         workspaceStanza,
         workspaceChurnStanza: input.workspaceChurnStanza,
         scoutBriefs,
@@ -1494,7 +1493,8 @@ export function buildEnsembleParticipantPromptProjection(
       capsuleProjection.prompt,
       transcriptProjection,
       projectionInput,
-      capsuleProjection.suppliedMessageIds
+      capsuleProjection.suppliedMessageIds,
+      capsuleProjection
     )
   }
 
@@ -1531,7 +1531,8 @@ export function buildEnsembleParticipantPromptProjection(
         turnBoundary: advisoryTurnBoundary || undefined,
         roundPolicy: compactRoundPolicy,
         parallelPolicy: compactParallelPolicy,
-        dynamicState: `${workContract}\n\n${dynamicStateSnapshot.block}`,
+        workContract,
+        dynamicState: dynamicStateSnapshot.block,
         workspaceStanza,
         workspaceChurnStanza: input.workspaceChurnStanza,
         scoutBriefs,
@@ -1553,7 +1554,8 @@ export function buildEnsembleParticipantPromptProjection(
       capsuleProjection.prompt,
       transcriptProjection,
       projectionInput,
-      capsuleProjection.suppliedMessageIds
+      capsuleProjection.suppliedMessageIds,
+      capsuleProjection
     )
   }
 
@@ -2518,7 +2520,11 @@ function participantPromptProjection(
   prompt: string,
   transcript: TaggedTranscriptProjection,
   input: BuildEnsemblePromptInput,
-  exactSuppliedMessageIds?: readonly string[]
+  exactSuppliedMessageIds?: readonly string[],
+  continuity?: {
+    continuityCheckpointIncluded?: true
+    continuityCheckpointOmitted?: 'required-contract-and-checkpoint-exceed-budget'
+  }
 ): EnsembleParticipantPromptProjection {
   const suppliedMessageIds = exactSuppliedMessageIds
     ? [...exactSuppliedMessageIds]
@@ -2538,6 +2544,15 @@ function participantPromptProjection(
     prompt,
     suppliedMessageIds,
     transcriptAttribution: {
+      ...(continuity?.continuityCheckpointIncluded
+        ? { continuityCheckpoint: 'included' as const }
+        : {}),
+      ...(continuity?.continuityCheckpointOmitted
+        ? {
+            continuityCheckpoint: 'omitted' as const,
+            continuityCheckpointOmission: continuity.continuityCheckpointOmitted
+          }
+        : {}),
       sourceRequestChars: sanitizeText(input.currentPrompt).length,
       transcriptMessageChars: rowChars(suppliedRows),
       transcriptMessageCount: suppliedRows.length,

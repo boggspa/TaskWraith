@@ -5,6 +5,9 @@
  * prompt text, participant prose, and message ids never enter usage.json.
  */
 export interface EnsemblePromptTranscriptAttribution {
+  /** Content-free checkpoint projection outcome; not a claim of provider delivery. */
+  continuityCheckpoint?: 'included' | 'omitted'
+  continuityCheckpointOmission?: 'required-contract-and-checkpoint-exceed-budget'
   /** Sanitized source request length before any provider-specific capsule bound. */
   sourceRequestChars: number
   /** Message-row characters actually retained in this prompt projection. */

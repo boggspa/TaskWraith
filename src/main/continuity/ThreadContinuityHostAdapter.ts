@@ -13,7 +13,7 @@ import {
   type ThreadContinuityContext
 } from '../mcp/ThreadContinuityToolExecutors'
 export { isThreadContinuityToolName } from '../mcp/ThreadContinuityToolExecutors'
-export { withDelegatedCheckpoint } from './ContinuityPrompt'
+export { buildDelegatedContinuityPrompts, withDelegatedCheckpoint } from './ContinuityPrompt'
 
 /** Resolve ownership from a recorded run. Model-supplied identities never enter here. */
 export function resolveContinuityCaller(
