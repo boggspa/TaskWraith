@@ -29,6 +29,27 @@ import {
   type CachedChatScrollState,
   type ChatScrollState
 } from '../../lib/TranscriptScroll'
+import {
+  createTranscriptGeometryReadPhase,
+  type TranscriptGeometryReadPhase
+} from '../../lib/TranscriptGeometryReadBatch'
+
+/**
+ * Same-pass state a pre-paint pin caller hands to the coalesced follow-pin
+ * apply. Valid ONLY for the synchronous pass that created it — the scheduler
+ * never forwards it into the trailing frame.
+ */
+interface FollowPinApplyContext {
+  /** Geometry read phase created by the caller against the same scroller. */
+  phase?: TranscriptGeometryReadPhase
+  /**
+   * Caller already evaluated `disengageIfLiveScrollShowsUserAway` to `false`
+   * in this same synchronous pass. Its inputs (live geometry, native scroll
+   * samples, intent refs) cannot change before the pass returns, so the pin
+   * may skip re-evaluating without weakening the guard.
+   */
+  disengageEvaluatedClear?: boolean
+}
 
 interface UseTranscriptScrollStateBaseInput {
   chatId: string | null
@@ -144,11 +165,13 @@ export function useTranscriptScrollState({
   const lastUserScrollAtRef = useRef(0)
   // Phase E — single outer follow-pin owner. Messages-layout trailing re-pin,
   // content ResizeObserver, and scroll-evaluate gap-close share one rAF slot.
-  const followPinApplyRef = useRef<() => void>(() => {})
-  const followPinSchedulerRef = useRef<ReturnType<typeof createFollowPinScheduler> | null>(null)
+  const followPinApplyRef = useRef<(context?: FollowPinApplyContext) => void>(() => {})
+  const followPinSchedulerRef = useRef<ReturnType<
+    typeof createFollowPinScheduler<FollowPinApplyContext>
+  > | null>(null)
   if (followPinSchedulerRef.current === null) {
-    followPinSchedulerRef.current = createFollowPinScheduler({
-      apply: () => followPinApplyRef.current()
+    followPinSchedulerRef.current = createFollowPinScheduler<FollowPinApplyContext>({
+      apply: (context) => followPinApplyRef.current(context)
     })
   }
   const followPinScheduler = followPinSchedulerRef.current
@@ -380,19 +403,32 @@ export function useTranscriptScrollState({
     })
   }, [])
 
-  const snapScrollToBottom = useCallback((node: HTMLElement) => {
-    const target = expectedBottomScrollTop({
-      scrollHeight: node.scrollHeight,
-      clientHeight: node.clientHeight
-    })
-    if (isExpectedProgrammaticScroll({ expectedScrollTop: target, nextScrollTop: node.scrollTop })) {
-      clearProgrammaticScrollTarget()
-    } else {
-      programmaticScrollTargetRef.current = target
-      scheduleProgrammaticScrollTargetClear()
-    }
-    node.scrollTop = node.scrollHeight
-  }, [clearProgrammaticScrollTarget, scheduleProgrammaticScrollTargetClear])
+  const snapScrollToBottom = useCallback(
+    (node: HTMLElement, phase?: TranscriptGeometryReadPhase) => {
+      // One getter per property: within a synchronous pass the second
+      // node.scrollHeight the write used to re-read cannot differ from the
+      // first, and a caller-owned read phase collapses even these to zero
+      // new DOM reads.
+      const scrollHeight = phase ? phase.readScrollHeight() : node.scrollHeight
+      const clientHeight = phase ? phase.readClientHeight() : node.clientHeight
+      const currentScrollTop = phase ? phase.readScrollTop() : node.scrollTop
+      const target = expectedBottomScrollTop({ scrollHeight, clientHeight })
+      if (
+        isExpectedProgrammaticScroll({ expectedScrollTop: target, nextScrollTop: currentScrollTop })
+      ) {
+        clearProgrammaticScrollTarget()
+      } else {
+        programmaticScrollTargetRef.current = target
+        scheduleProgrammaticScrollTargetClear()
+      }
+      if (phase) {
+        phase.writeScrollTop(scrollHeight)
+      } else {
+        node.scrollTop = scrollHeight
+      }
+    },
+    [clearProgrammaticScrollTarget, scheduleProgrammaticScrollTargetClear]
+  )
 
   // Arm the programmatic-scroll guard for a scroll write the App did NOT
   // issue itself — specifically TranscriptPanel's virtual-window anchor
@@ -433,10 +469,12 @@ export function useTranscriptScrollState({
   // stale pill the next time content grows. Idempotent and cheap, so every
   // geometry seam calls it unconditionally.
   const syncLiveEdgeProximity = useCallback(
-    (scroller?: HTMLElement | null) => {
+    (scroller?: HTMLElement | null, phase?: TranscriptGeometryReadPhase) => {
       const node = scroller ?? transcriptScrollRef.current
       if (!node) return
-      const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight
+      const distanceFromBottom = phase
+        ? phase.readScrollHeight() - phase.readScrollTop() - phase.readClientHeight()
+        : node.scrollHeight - node.scrollTop - node.clientHeight
       if (!Number.isFinite(distanceFromBottom)) return
       const away = distanceFromBottom > LIVE_EDGE_PROXIMITY_PX
       if (!away && unreadFromBottomCountRef.current !== 0) {
@@ -452,8 +490,15 @@ export function useTranscriptScrollState({
   )
 
   const disengageIfLiveScrollShowsUserAway = useCallback(
-    (scroller: HTMLElement): boolean => {
-      const nextScrollTop = scroller.scrollTop
+    (scroller: HTMLElement, phase?: TranscriptGeometryReadPhase): boolean => {
+      // One getter per property per pass. Geometry cannot change inside a
+      // synchronous pass, so the duplicate scrollHeight/clientHeight reads
+      // the helper argument lists used to perform were redundant forced-
+      // layout hazards, not fresher data. scrollTop stays the FIRST read so
+      // forced-flush attribution remains at this measured site.
+      const nextScrollTop = phase ? phase.readScrollTop() : scroller.scrollTop
+      const scrollHeight = phase ? phase.readScrollHeight() : scroller.scrollHeight
+      const clientHeight = phase ? phase.readClientHeight() : scroller.clientHeight
       const hasExplicitScrollAwayIntent = hasExplicitTranscriptScrollAwayIntent({
         userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current,
         scrollbarPointerActive: scrollbarPointerActiveRef.current,
@@ -466,9 +511,9 @@ export function useTranscriptScrollState({
           previousScrollTop: lastNativeScrollTopRef.current,
           nextScrollTop,
           previousScrollHeight: lastNativeScrollHeightRef.current,
-          nextScrollHeight: scroller.scrollHeight,
+          nextScrollHeight: scrollHeight,
           previousClientHeight: lastNativeClientHeightRef.current,
-          nextClientHeight: scroller.clientHeight,
+          nextClientHeight: clientHeight,
           isProgrammatic: isExpectedProgrammaticScroll({
             expectedScrollTop: programmaticScrollTargetRef.current,
             nextScrollTop
@@ -479,8 +524,8 @@ export function useTranscriptScrollState({
           lastRecordedScrollTop: lastTranscriptScrollTopRef.current,
           lastNativeScrollTop: lastNativeScrollTopRef.current,
           currentScrollTop: nextScrollTop,
-          scrollHeight: scroller.scrollHeight,
-          clientHeight: scroller.clientHeight,
+          scrollHeight,
+          clientHeight,
           expectedProgrammaticScrollTop: programmaticScrollTargetRef.current,
           hasExplicitScrollAwayIntent:
             hasExplicitScrollAwayIntent || hasUnclassifiedNativeScrollAwayIntent
@@ -499,8 +544,8 @@ export function useTranscriptScrollState({
       followPinScheduler.cancel()
       lastTranscriptScrollTopRef.current = nextScrollTop
       lastNativeScrollTopRef.current = nextScrollTop
-      lastNativeScrollHeightRef.current = scroller.scrollHeight
-      lastNativeClientHeightRef.current = scroller.clientHeight
+      lastNativeScrollHeightRef.current = scrollHeight
+      lastNativeClientHeightRef.current = clientHeight
       return true
     },
     [clearProgrammaticScrollTarget, followPinScheduler, setAutoFollow]
@@ -510,11 +555,18 @@ export function useTranscriptScrollState({
   // `followPinScheduler` rather than snapping from each geometry seam.
   // Proximity sync runs even when follow is off so content growth below a
   // stationary reader still flips the jump-pill away-gate.
-  followPinApplyRef.current = () => {
+  followPinApplyRef.current = (context?: FollowPinApplyContext) => {
     const node = transcriptScrollRef.current
     if (!node) return
-    syncLiveEdgeProximity(node)
-    if (disengageIfLiveScrollShowsUserAway(node)) return
+    // Every pin pass shares ONE read phase. A same-pass caller hands its own
+    // phase over (plus the proof that disengage already evaluated false with
+    // inputs that cannot have changed); scheduled/trailing frames arrive
+    // without context and read fresh.
+    const phase = context?.phase ?? createTranscriptGeometryReadPhase(node)
+    syncLiveEdgeProximity(node, phase)
+    if (!context?.disengageEvaluatedClear && disengageIfLiveScrollShowsUserAway(node, phase)) {
+      return
+    }
     if (
       !shouldRepinAfterFrame({
         autoFollow: autoFollowRef.current,
@@ -523,8 +575,8 @@ export function useTranscriptScrollState({
     ) {
       return
     }
-    snapScrollToBottom(node)
-    syncLiveEdgeProximity(node)
+    snapScrollToBottom(node, phase)
+    syncLiveEdgeProximity(node, phase)
   }
 
   const beginManualTranscriptJump = useCallback(() => {
@@ -576,12 +628,17 @@ export function useTranscriptScrollState({
     const evaluate = () => {
       rafId = null
       const previousScrollTop = lastTranscriptScrollTopRef.current
-      const nextScrollTop = scroller.scrollTop
-      const distanceFromBottom = scroller.scrollHeight - nextScrollTop - scroller.clientHeight
+      // One read phase per evaluate pass — the proximity sync, re-engage
+      // snap, and gap-close pin below reuse these three getters instead of
+      // re-reading them.
+      const geometryPhase = createTranscriptGeometryReadPhase(scroller)
+      const nextScrollTop = geometryPhase.readScrollTop()
+      const distanceFromBottom =
+        geometryPhase.readScrollHeight() - nextScrollTop - geometryPhase.readClientHeight()
       // Every scroll — user, clamp, or programmatic — can move the viewport
       // across the live-edge band; keep the pill's proximity gate current
       // before any of the early returns below.
-      syncLiveEdgeProximity(scroller)
+      syncLiveEdgeProximity(scroller, geometryPhase)
       if (distanceFromBottom <= STICK_ENGAGE_PX) {
         // The live edge is reached by any means — a jump flight (smooth or
         // snapped short by the messages effect) has arrived.
@@ -624,7 +681,7 @@ export function useTranscriptScrollState({
           // Band re-engage (STICK_REENGAGE_DOWNWARD_PX): the deliberate
           // downward return landed near — but not at — the moving live
           // edge. Complete the gesture so the user is actually pinned.
-          snapScrollToBottom(scroller)
+          snapScrollToBottom(scroller, geometryPhase)
         }
       } else if (
         shouldRepinAfterScrollEvaluation({
@@ -639,7 +696,7 @@ export function useTranscriptScrollState({
         // (layout trailing / content RO); otherwise flush now — evaluate
         // already runs inside its own rAF, so deferring would add a frame.
         if (!followPinScheduler.isPending()) {
-          followPinApplyRef.current()
+          followPinApplyRef.current({ phase: geometryPhase })
         }
       }
       lastTranscriptScrollTopRef.current = nextScrollTop
@@ -933,21 +990,33 @@ export function useTranscriptScrollState({
     }
     const scroller = transcriptScrollRef.current
     if (!scroller) return
+    // ONE geometry read phase for this entire synchronous pass: the direct
+    // disengage evaluation and the pin it authorizes consume the same three
+    // scroller getters, and no scroll event or other writer can interleave
+    // before the pass returns.
+    const geometryPhase = createTranscriptGeometryReadPhase(scroller)
     if (userScrolledAwayInFrameRef.current) {
       incrementUnreadIfNewMessagesArrived()
-      syncLiveEdgeProximity(scroller)
+      syncLiveEdgeProximity(scroller, geometryPhase)
       return
     }
-    if (disengageIfLiveScrollShowsUserAway(scroller)) {
+    if (disengageIfLiveScrollShowsUserAway(scroller, geometryPhase)) {
       incrementUnreadIfNewMessagesArrived()
-      syncLiveEdgeProximity(scroller)
+      syncLiveEdgeProximity(scroller, geometryPhase)
       return
     }
     userScrolledAwayInFrameRef.current = false
     // Pre-paint pin + one coalesced trailing rAF (shared with content RO /
     // evaluate gap-close). `snapScrollToBottom` remains the only scrollTop
-    // write API; the scheduler owns when follow-mode seams may call it.
-    followPinScheduler.pinNowAndScheduleTrailing()
+    // write API; the scheduler owns when follow-mode seams may call it. The
+    // context hands the pin this pass's read phase plus the just-computed
+    // disengage(false): its inputs cannot change inside one synchronous pass
+    // (the scroll-away frame flag was already false on this path, so the
+    // clear above did not alter them).
+    followPinScheduler.pinNowAndScheduleTrailing({
+      phase: geometryPhase,
+      disengageEvaluatedClear: true
+    })
     return () => {
       followPinScheduler.cancel()
     }

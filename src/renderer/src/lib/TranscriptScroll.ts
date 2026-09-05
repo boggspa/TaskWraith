@@ -932,8 +932,8 @@ export function shouldRepinAfterCodeBlockResize(input: {
  * own frame and streaming growth can write `scrollTop` multiple times
  * per paint. Nested LiveActivityViewport scrollers keep their own owner.
  */
-export function createFollowPinScheduler(input: {
-  apply: () => void
+export function createFollowPinScheduler<TContext = void>(input: {
+  apply: (context?: TContext) => void
   requestAnimationFrame?: (callback: FrameRequestCallback) => number
   cancelAnimationFrame?: (handle: number) => void
 }): {
@@ -941,9 +941,12 @@ export function createFollowPinScheduler(input: {
   schedule: () => void
   /**
    * Apply once now (pre-paint layout path), then ensure exactly one
-   * trailing coalesced rAF re-pin is pending for late measure.
+   * trailing coalesced rAF re-pin is pending for late measure. The optional
+   * context reaches ONLY the synchronous apply: it carries same-pass state
+   * (a geometry read phase, a just-computed disengage result) that would be
+   * stale by the trailing frame, so scheduled applies always run without it.
    */
-  pinNowAndScheduleTrailing: () => void
+  pinNowAndScheduleTrailing: (context?: TContext) => void
   /** Drop any pending coalesced frame (manual jump / unmount). */
   cancel: () => void
   /** Test seam: whether a coalesced frame is waiting. */
@@ -964,8 +967,8 @@ export function createFollowPinScheduler(input: {
 
   return {
     schedule,
-    pinNowAndScheduleTrailing: () => {
-      input.apply()
+    pinNowAndScheduleTrailing: (context?: TContext) => {
+      input.apply(context)
       schedule()
     },
     cancel: () => {
