@@ -95,6 +95,31 @@ function usageSessionLine(sequence: number, runId: string, sessionId: string): s
 }
 
 describe('runMuseProvider', () => {
+  it('bounds the private introductory pass and avoids the working-phase execution steer', async () => {
+    const root = tempDir('muse-run-introduction-')
+    let argv: readonly string[] = []
+    const result = await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath: root,
+      prompt: 'Write one acknowledgment.',
+      runId: 'intro',
+      temporaryRoot: root,
+      introductionOnly: true,
+      approvalMode: 'default',
+      resolveSessionLog: async () => ({ row: null, sessionLogPath: null, source: 'missing' }),
+      spawn: (input) => {
+        argv = input.argv
+        return fakeSpawn([stdoutEnvelope({ payload: { text: 'I will verify the totals.' } })])
+      }
+    })
+    expect(argv).toContain('--disable-write')
+    expect(argv).toContain('--disable-shell')
+    expect(argv[argv.indexOf('--max-model-steps') + 1]).toBe('1')
+    expect(argv[argv.indexOf('--reasoning-effort') + 1]).toBe('minimal')
+    expect(argv.at(-1)).toBe('Write one acknowledgment.')
+    expect(result.writeCapable).toBe(false)
+  })
+
   it('keeps the provider answer available when session-log lookups fail', async () => {
     const root = tempDir('muse-run-log-error-')
     const outcome = await runMuseProvider({

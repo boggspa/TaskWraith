@@ -49,6 +49,16 @@ describe('withMuseOpeningSteer', () => {
 })
 
 describe('composeMuseLaunchPrompt', () => {
+  it('continues from a Muse-authored introduction without asking for another announcement', () => {
+    const prompt = composeMuseLaunchPrompt('Verify the totals.', 'I will read both files.')
+    expect(prompt).toContain('your introduction has already been shown')
+    expect(prompt).toContain('Carry out the requested work now with tools')
+    expect(prompt).toContain('I will read both files.')
+    expect(prompt).toContain('Verify the totals.')
+    expect(prompt).not.toContain('give one brief introduction')
+    expect(composeMuseLaunchPrompt('/compact', 'Opening')).toBe('/compact')
+  })
+
   it('applies opening then standing progress guidance on every isolated exec', () => {
     expect(composeMuseLaunchPrompt('Review the failing test.')).toBe(
       withMuseOpeningSteer(withMuseProgressSteer('Review the failing test.'))

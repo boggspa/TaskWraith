@@ -37,6 +37,13 @@ export function withMuseOpeningSteer(prompt: string): string {
  * Compose the prompt Muse receives on argv. Always applies both steers:
  * isolated-home exec has no durable native conversation to skip the opener.
  */
-export function composeMuseLaunchPrompt(prompt: string): string {
+export function composeMuseLaunchPrompt(prompt: string, introduction?: string | null): string {
+  if (introduction && !/^\s*\//.test(prompt)) {
+    return [
+      'TaskWraith Muse launch guidance (host guidance): your introduction has already been shown to the user. Carry out the requested work now with tools when needed. Do not repeat the introduction or stop after a plan. Verify the work before the final answer.',
+      `Previously displayed Muse introduction (context only): ${JSON.stringify(introduction)}`,
+      withMuseProgressSteer(prompt)
+    ].join('\n\n')
+  }
   return withMuseOpeningSteer(withMuseProgressSteer(prompt))
 }

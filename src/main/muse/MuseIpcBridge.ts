@@ -14,6 +14,12 @@ import type { MuseExecNormalizedEvent } from './MuseExecJson'
 import { resolveMuseExecSessionId } from './MuseCliArgs'
 import { createMuseThinkingTranscript } from './MuseThinkingTranscript'
 import {
+  generateMuseIntroduction,
+  museStatsWithIntroduction,
+  type MuseIntroductionInput,
+  type MuseIntroductionResult
+} from './MuseIntroduction'
+import {
   buildMuseTaskWraithMcpSettings,
   type MuseMcpSettings,
   type MuseTaskWraithMcpInvocation
@@ -100,6 +106,7 @@ export interface MuseIpcBridgeDeps {
   ) => Promise<MuseTaskWraithMcpInvocation | null>
   /** Test seam — defaults to the real lifecycle. */
   runMuseProvider?: typeof runMuseProvider
+  generateIntroduction?: (input: MuseIntroductionInput) => Promise<MuseIntroductionResult>
   now?: () => number
 }
 
@@ -449,10 +456,47 @@ export async function runMuseProviderFromIpc(
       route
     )
 
+    const introduction = await (deps.generateIntroduction ?? generateMuseIntroduction)({
+      binaryPath: resolved.binaryPath,
+      workspacePath,
+      prompt,
+      runId,
+      temporaryRoot: deps.getTemporaryRoot(),
+      model: payload.model,
+      apiKey: credential.apiKey,
+      authJsonText: credential.authJsonText,
+      spawn: deps.spawn,
+      shouldCancel: () => cancelled
+    })
+    if (introduction.text && !cancelled) {
+      deps.sendCompatLine(
+        event.sender,
+        {
+          type: 'content',
+          text: `${introduction.text}\n\n`,
+          complete: true,
+          provider: 'muse'
+        },
+        route
+      )
+    }
+    if (introduction.warning && !cancelled) {
+      deps.sendCompatLine(
+        event.sender,
+        {
+          type: 'provider_warning',
+          provider: 'muse',
+          message: introduction.warning
+        },
+        route
+      )
+    }
+
     const outcome = await run({
       binaryPath: resolved.binaryPath,
       workspacePath,
       prompt,
+      introductionText: introduction.text,
       runId,
       temporaryRoot: deps.getTemporaryRoot(),
       sessionId: museSessionId,
@@ -495,7 +539,7 @@ export async function runMuseProviderFromIpc(
         provider: 'muse',
         ...(resultText ? { result: resultText } : {}),
         stats: {
-          ...(outcome.providerStats || {}),
+          ...museStatsWithIntroduction(outcome.providerStats, introduction.stats),
           duration_ms: Date.now() - startedAt
         }
       },

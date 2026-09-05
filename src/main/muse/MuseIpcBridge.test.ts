@@ -87,6 +87,7 @@ function baseDeps(overrides: Partial<MuseIpcBridgeDeps> = {}): MuseIpcBridgeDeps
     getTemporaryRoot: () => temporaryRoot,
     spawn: () => fakeSpawnHandle(0),
     sendCompatLine: vi.fn(),
+    generateIntroduction: async () => ({ text: null }),
     readAuthJsonText: async () =>
       JSON.stringify({ providers: { meta: { api_key: 'k'.repeat(24) } } }),
     readMetaApiKeyEnv: () => null,
@@ -196,6 +197,49 @@ describe('museExecEventToCompatPayload', () => {
 
 describe('runMuseProviderFromIpc', () => {
   const event = { sender: { id: 'webcontents-stub' } }
+
+  it("shows Muse's own opening before automatically starting work and settling only once", async () => {
+    const order: string[] = []
+    const sendCompatLine = vi.fn((_, payload) => {
+      order.push(`emit:${payload.type}`)
+    })
+    const introStats = { ...successOutcome().providerStats, input_tokens: 10, total_tokens: 10 }
+    await runMuseProviderFromIpc(
+      event,
+      basePayload(),
+      baseDeps({
+        sendCompatLine,
+        generateIntroduction: async () => {
+          order.push('generate-introduction')
+          return { text: 'I will read and check the files.', stats: introStats }
+        },
+        runMuseProvider: async (input) => {
+          order.push('start-work')
+          expect(input.introductionText).toBe('I will read and check the files.')
+          expect(sendCompatLine.mock.calls.some((call) => call[1].type === 'result')).toBe(false)
+          return successOutcome()
+        },
+        sendExit: () => {
+          order.push('exit')
+        }
+      })
+    )
+    expect(order).toEqual([
+      'emit:init',
+      'generate-introduction',
+      'emit:content',
+      'start-work',
+      'emit:result',
+      'exit'
+    ])
+    expect(sendCompatLine.mock.calls[1][1]).toMatchObject({
+      type: 'content',
+      text: 'I will read and check the files.\n\n',
+      provider: 'muse',
+      complete: true
+    })
+    expect(sendCompatLine.mock.calls.at(-1)?.[1].stats.input_tokens).toBe(10)
+  })
 
   it('routes reasoning through standard Thinking activities under the same chat and run', async () => {
     const sendCompatLine = vi.fn()
