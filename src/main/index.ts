@@ -2023,6 +2023,12 @@ import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerLicenseNoticeHandlers } from './ipc/licenseNoticeHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleChatHandlers } from './ipc/ensembleChatHandlers'
+import {
+  blackboardQueuedEnsemblePrompt as blackboardQueuedEnsemblePromptImpl,
+  registerEnsembleControlHandlers,
+  type BlackboardQueuedEnsemblePromptResult,
+  type EnsembleControlHandlerDeps
+} from './ipc/ensembleControlHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
 import { registerFanoutCandidateHandlers } from './ipc/fanoutCandidateHandlers'
 import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGrantHandlers'
@@ -62418,69 +62424,40 @@ if (isGeminiMcpBridgeProcess) {
         return liveSteeringCoordinator.cancel(runId)
       }
     )
-    ipcMain.handle(
-      'steer-queued-ensemble-prompt',
-      async (
-        event,
-        payload: {
-          chatId?: string
-          index?: number
-          textPrefix?: string
-          concurrentMode?: boolean
-          fanoutPolicy?: EnsembleFanoutPolicy
-        }
-      ) => {
-        if (AppStore.getSettings().ensembleModeEnabled === false) {
-          throw new Error('Ensemble Mode is disabled.')
-        }
-        const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
-        assertRendererChatScope(event, chatId)
-        const index = Number.isFinite(payload?.index) ? Math.floor(Number(payload.index)) : -1
-        assertScheduledEnsembleInteractiveAvailable(chatId)
-        return (
-          ensembleOrchestratorRef?.steerQueuedPrompt({
-            chatId,
-            index,
-            event,
-            ...(typeof payload?.textPrefix === 'string' ? { textPrefix: payload.textPrefix } : {}),
-            ...(payload?.concurrentMode !== undefined
-              ? { concurrentMode: Boolean(payload.concurrentMode) }
-              : {}),
-            ...(payload?.fanoutPolicy !== undefined ? { fanoutPolicy: payload.fanoutPolicy } : {})
-          }) ?? { status: 'ignored', error: 'Ensemble orchestrator is not initialized.' }
-        )
+    function ensembleControlHandlerDeps(): EnsembleControlHandlerDeps {
+      return {
+        getEnsembleOrchestrator: () => ensembleOrchestratorRef,
+        isEnsembleModeEnabled: () => AppStore.getSettings().ensembleModeEnabled !== false,
+        getChat: (chatId) => AppStore.getChat(chatId),
+        requireNonEmptyString: (value, label) => requireNonEmptyString(value, label),
+        assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
+        assertScheduledEnsembleInteractiveAvailable: (chatId) =>
+          assertScheduledEnsembleInteractiveAvailable(chatId),
+        broadcastChatUpdated: (chat) => broadcastChatUpdated(chat),
+        broadcastThreadUpdate: (chatId, options) => broadcastThreadUpdate(chatId, options),
+        saveAndBroadcastChat: (chat) => {
+          saveAndBroadcastChat(chat)
+        },
+        pushRemoteThreadSnapshot: (chat, workspaceId) => {
+          pushRemoteThreadSnapshot(chat, workspaceId)
+        },
+        pushRemoteTaskCardDelta: (chatId) => pushRemoteTaskCardDelta(chatId),
+        canonicalRemoteWorkspaceId: (workspaceId) => canonicalRemoteWorkspaceId(workspaceId)
       }
-    )
+    }
 
-    ipcMain.handle(
-      'remove-queued-ensemble-prompt',
-      async (
-        event,
-        payload: {
-          chatId?: string
-          index?: number
-          textPrefix?: string
-        }
-      ) => {
-        if (AppStore.getSettings().ensembleModeEnabled === false) {
-          throw new Error('Ensemble Mode is disabled.')
-        }
-        const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
-        assertRendererChatScope(event, chatId)
-        const index = Number.isFinite(payload?.index) ? Math.floor(Number(payload.index)) : -1
-        const result = ensembleOrchestratorRef?.removeQueuedPrompt({
-          chatId,
-          index,
-          ...(typeof payload?.textPrefix === 'string' ? { textPrefix: payload.textPrefix } : {})
-        }) ?? { ok: false, error: 'Ensemble orchestrator is not initialized.' }
-        const updated = AppStore.getChat(chatId)
-        if (updated) broadcastChatUpdated(updated)
-        broadcastThreadUpdate(chatId, { remoteProjectionSnapshot: false })
-        // Queued prompt removal is embedded in the task-card ensemble projection.
-        pushRemoteTaskCardDelta(chatId)
-        return result
-      }
-    )
+    // Hoisted declaration on purpose: the iOS bridge 'blackboard' op calls this
+    // EARLIER in the bootstrap body than the definition site, exactly as the
+    // original in-place helper did. A const would move that call into the TDZ.
+    function blackboardQueuedEnsemblePrompt(input: {
+      chatId: string
+      index: number
+      textPrefix?: string
+    }): BlackboardQueuedEnsemblePromptResult {
+      return blackboardQueuedEnsemblePromptImpl(ensembleControlHandlerDeps(), input)
+    }
+
+    registerEnsembleControlHandlers(ensembleControlHandlerDeps())
 
     ipcMain.handle('cancel-ensemble-round', async (event, chatId?: string) => {
       const canonicalChatId = requireNonEmptyString(chatId, 'Ensemble chat id')
@@ -62687,109 +62664,6 @@ if (isGeminiMcpBridgeProcess) {
           (!updated.workspaceId || updated.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
         if (workspaceId) pushRemoteThreadSnapshot(updated, workspaceId)
         return { ok: true, removedCount }
-      }
-    )
-
-    // Shared by the renderer IPC below and the iOS bridge 'blackboard' op:
-    // consume a queued ensemble prompt into a user-authored blackboard note.
-    // The queue mutation is EXACTLY the Delete path (removeQueuedPrompt keeps
-    // its textPrefix race-guard and restart-orphan recovery) — the live round
-    // is never cancelled or interrupted, and the steer path is untouched.
-    function blackboardQueuedEnsemblePrompt(input: {
-      chatId: string
-      index: number
-      textPrefix?: string
-    }): {
-      ok: boolean
-      entry?: NonNullable<ReturnType<typeof makeBlackboardEntry>>
-      error?: string
-    } {
-      const removal = ensembleOrchestratorRef?.removeQueuedPrompt({
-        chatId: input.chatId,
-        index: input.index,
-        ...(typeof input.textPrefix === 'string' ? { textPrefix: input.textPrefix } : {})
-      }) ?? { ok: false, error: 'Ensemble orchestrator is not initialized.' }
-      if (!removal.ok || !removal.prompt?.trim()) {
-        return {
-          ok: false,
-          error: removal.error || 'Queued item could not be moved to the blackboard.'
-        }
-      }
-      const chat = AppStore.getChat(input.chatId)
-      if (!chat?.ensemble) {
-        return { ok: false, error: 'Blackboard entries require an Ensemble chat.' }
-      }
-      const createdAt = new Date().toISOString()
-      const entry = makeBlackboardEntry({
-        id: `blackboard-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        chatId: chat.appChatId,
-        roundId: chat.ensemble.activeRound?.roundId || 'manual',
-        participantId: 'user',
-        // Millisecond key (unlike the per-second user-note fallback) — rapid
-        // "Add to Blackboard" clicks on several queued messages must not
-        // upsert-collide on (participantId, key, scope).
-        key: `queued-note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        value: removal.prompt,
-        category: 'note',
-        scope: 'session',
-        createdAt
-      })
-      if (!entry) {
-        return { ok: false, error: 'Blackboard entry requires non-empty key and value.' }
-      }
-      const upsert = upsertBlackboardEntry(chat.ensemble.blackboard || [], entry, {
-        currentRoundId: chat.ensemble.activeRound?.roundId || 'manual',
-        tombstones: chat.ensemble.blackboardTombstones,
-        prunedAt: createdAt
-      })
-      if (!upsert.ok) {
-        return {
-          ok: false,
-          error: `${upsert.code}: ${formatBlackboardCapacityNotice(chat.ensemble.blackboard || []) || 'Retire stale notes before posting again.'}`
-        }
-      }
-      const updated: ChatRecord = {
-        ...chat,
-        ensemble: {
-          ...chat.ensemble,
-          blackboard: upsert.entries,
-          blackboardTombstones: upsert.tombstones,
-          updatedAt: createdAt
-        },
-        updatedAt: Date.now()
-      }
-      saveAndBroadcastChat(updated)
-      broadcastThreadUpdate(updated.appChatId, { remoteProjectionSnapshot: false })
-      const workspaceId =
-        canonicalRemoteWorkspaceId(updated.workspaceId) ??
-        (!updated.workspaceId || updated.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
-      if (workspaceId) pushRemoteThreadSnapshot(updated, workspaceId)
-      // Moving a queued prompt changes both the task-card queue and thread blackboard.
-      pushRemoteTaskCardDelta(updated.appChatId)
-      return { ok: true, entry }
-    }
-
-    ipcMain.handle(
-      'blackboard-queued-ensemble-prompt',
-      async (
-        event,
-        payload?: {
-          chatId?: string
-          index?: number
-          textPrefix?: string
-        }
-      ) => {
-        if (AppStore.getSettings().ensembleModeEnabled === false) {
-          throw new Error('Ensemble Mode is disabled.')
-        }
-        const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
-        assertRendererChatScope(event, chatId)
-        const index = Number.isFinite(payload?.index) ? Math.floor(Number(payload?.index)) : -1
-        return blackboardQueuedEnsemblePrompt({
-          chatId,
-          index,
-          ...(typeof payload?.textPrefix === 'string' ? { textPrefix: payload.textPrefix } : {})
-        })
       }
     )
 

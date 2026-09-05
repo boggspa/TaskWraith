@@ -20,7 +20,7 @@ describe('Ensemble DM routing ingress integration', () => {
     const handler = sourceSection(
       mainSource,
       "'run-ensemble-round'",
-      "'steer-queued-ensemble-prompt'"
+      'registerEnsembleControlHandlers('
     )
     const attachmentExpansion = handler.indexOf('authorizeThenExpandAttachmentRecords(')
     const canonicalChatRead = handler.indexOf('const ensembleChat = AppStore.getChat(chatId)')
