@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import { waitForWorkspaceLockStateChange } from './WorkspaceLockAvailability'
 import { bindSharedWorkspaceActor } from './sharedWorkspace/SharedWorkspaceSession'
 
 import { resolveToolDispatchContractStrict } from '../shared/providerActionTaxonomy'
@@ -495,7 +496,7 @@ export class WorkspaceLockMcpAdmissionCoordinator {
   }
 }
 
-async function acquireWorkspaceMutationWhenAvailable(input: {
+export async function acquireWorkspaceMutationWhenAvailable(input: {
   runtime: Partial<Pick<WorkspaceLockRuntime, 'subscribe'>>
   acquire: () => Promise<WorkspaceLockRuntimeAcquireResult>
   stillWanted: () => boolean
@@ -508,27 +509,6 @@ async function acquireWorkspaceMutationWhenAvailable(input: {
     result = await input.acquire()
   }
   return result
-}
-
-function waitForWorkspaceLockStateChange(
-  runtime: Partial<Pick<WorkspaceLockRuntime, 'subscribe'>>,
-  stillWanted: () => boolean
-): Promise<void> {
-  return new Promise((resolveWait) => {
-    let settled = false
-    let subscription: ReturnType<WorkspaceLockRuntime['subscribe']> | null = null
-    const finish = (): void => {
-      if (settled) return
-      settled = true
-      clearInterval(cancelPoll)
-      subscription?.unsubscribe()
-      resolveWait()
-    }
-    const cancelPoll = setInterval(finish, 250)
-    cancelPoll.unref?.()
-    subscription = runtime.subscribe?.({}, () => finish()) || null
-    if (!stillWanted()) finish()
-  })
 }
 
 function exactRunId(value: string | null | undefined): string | null {

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { waitForWorkspaceLockStateChange } from './WorkspaceLockAvailability'
 import { promises as fs } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
@@ -735,33 +736,18 @@ export class WorkspaceLockRuntime {
   }
 
   private waitForMutationAvailability(stillWanted: () => boolean): Promise<void> {
-    return new Promise((resolveWait, rejectWait) => {
-      let settled = false
-      const finish = (error?: unknown): void => {
-        if (settled) return
-        settled = true
-        clearInterval(cancelPoll)
-        this.subscribers.delete(onUpdate)
-        if (error) rejectWait(error)
-        else resolveWait()
-      }
-      const onUpdate: ProjectionSubscriber = () => finish()
-      this.subscribers.add(onUpdate)
-      const cancelPoll = setInterval(() => {
-        if (!stillWanted()) {
-          finish(new Error('Workspace mutation was cancelled while waiting for its exact target.'))
-        } else {
-          // Cross-process fence release precedes the matching durable lease
-          // release by only the executor cleanup boundary. This bounded
-          // recheck also closes a release-before-subscribe race.
-          finish()
+    return waitForWorkspaceLockStateChange({
+      subscribe: (_query, onUpdate) => {
+        this.subscribers.add(onUpdate)
+        return {
+          snapshot: this.lastSnapshot,
+          unsubscribe: () => {
+            this.subscribers.delete(onUpdate)
+            if (!this.subscribers.size) this.stopProjectionPoll()
+          }
         }
-      }, 250)
-      cancelPoll.unref?.()
-      if (!stillWanted()) {
-        finish(new Error('Workspace mutation was cancelled while waiting for its exact target.'))
       }
-    })
+    }, stillWanted)
   }
 
   async releaseRun(runId: string): Promise<WorkspaceLockReleaseResult> {
