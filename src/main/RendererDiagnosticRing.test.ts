@@ -276,4 +276,130 @@ describe('RendererDiagnosticRing', () => {
     const persisted = JSON.parse(fs.readFileSync(filePath, 'utf8'))
     expect(persisted.samples.at(-1).cause).toBe('error-boundary')
   })
+
+  it('attributes GPU, main-process, and DOM memory while sharing one process snapshot', () => {
+    const filePath = testPath()
+    let nowMs = new Date('2026-08-14T21:00:00.000Z').getTime()
+    let metricsCalls = 0
+    const recorder = new RendererDiagnosticRecorder({
+      filePath,
+      now: () => new Date(nowMs),
+      getAppMetrics: () => {
+        metricsCalls += 1
+        return [
+          {
+            pid: 44,
+            type: 'Tab',
+            creationTime: 1,
+            cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+            memory: { workingSetSize: 1_024, peakWorkingSetSize: 2_048, privateBytes: 512 },
+            sandboxed: true,
+            integrityLevel: 'unknown'
+          },
+          {
+            pid: 45,
+            type: 'Tab',
+            creationTime: 1,
+            cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+            memory: { workingSetSize: 512, peakWorkingSetSize: 640, privateBytes: 256 },
+            sandboxed: true,
+            integrityLevel: 'unknown'
+          },
+          {
+            pid: 46,
+            type: 'GPU',
+            creationTime: 1,
+            cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+            memory: { workingSetSize: 2_048, peakWorkingSetSize: 3_072, privateBytes: 1_024 },
+            sandboxed: true,
+            integrityLevel: 'unknown'
+          }
+        ] as Electron.ProcessMetric[]
+      },
+      getMainMemoryUsage: () => ({ rss: 500_000_000, heapUsed: 120_000_000 })
+    })
+
+    const first = recorder.recordClientSample(
+      { windowId: 1, webContentsId: 2, rendererPid: 44 },
+      { activeChatMessageCount: 10, domNodeCount: 12_345, chatUpdates: { received: 1 } }
+    )
+    const second = recorder.recordClientSample(
+      { windowId: 2, webContentsId: 3, rendererPid: 45 },
+      { activeChatMessageCount: 20, chatUpdates: { received: 2 } }
+    )
+
+    expect(first).toMatchObject({
+      rendererRssBytes: 1_024 * 1024,
+      rendererDomNodeCount: 12_345,
+      gpuRssBytes: 2_048 * 1024,
+      gpuPrivateBytes: 1_024 * 1024,
+      mainRssBytes: 500_000_000,
+      mainHeapUsedBytes: 120_000_000
+    })
+    expect(second).toMatchObject({
+      rendererRssBytes: 512 * 1024,
+      gpuRssBytes: 2_048 * 1024,
+      mainRssBytes: 500_000_000
+    })
+    expect(second.rendererDomNodeCount).toBeUndefined()
+    // Both targets sampled in the same tick share one process snapshot.
+    expect(metricsCalls).toBe(1)
+
+    nowMs += 5_000
+    recorder.recordClientSample(
+      { windowId: 1, webContentsId: 2, rendererPid: 44 },
+      { activeChatMessageCount: 11, chatUpdates: { received: 3 } }
+    )
+    expect(metricsCalls).toBe(2)
+  })
+
+  it('carries last-known GPU and main measurements when process sampling fails', () => {
+    const filePath = testPath()
+    let metricsAvailable = true
+    let mainAvailable = true
+    const recorder = new RendererDiagnosticRecorder({
+      filePath,
+      metricsSnapshotTtlMs: 0,
+      getAppMetrics: () => {
+        if (!metricsAvailable) throw new Error('metrics gone')
+        return [
+          {
+            pid: 44,
+            type: 'Tab',
+            creationTime: 1,
+            cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+            memory: { workingSetSize: 1_024 },
+            sandboxed: true,
+            integrityLevel: 'unknown'
+          },
+          {
+            pid: 46,
+            type: 'GPU',
+            creationTime: 1,
+            cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+            memory: { workingSetSize: 2_048, privateBytes: 1_024 },
+            sandboxed: true,
+            integrityLevel: 'unknown'
+          }
+        ] as Electron.ProcessMetric[]
+      },
+      getMainMemoryUsage: () =>
+        mainAvailable ? { rss: 500_000_000, heapUsed: 120_000_000 } : undefined
+    })
+    const target = { windowId: 1, webContentsId: 2, rendererPid: 44 }
+    recorder.recordClientSample(target, { activeChatMessageCount: 1, chatUpdates: {} })
+    metricsAvailable = false
+    mainAvailable = false
+
+    const carried = recorder.recordClientSample(target, {
+      activeChatMessageCount: 2,
+      chatUpdates: {}
+    })
+    expect(carried).toMatchObject({
+      gpuRssBytes: 2_048 * 1024,
+      gpuPrivateBytes: 1_024 * 1024,
+      mainRssBytes: 500_000_000,
+      mainHeapUsedBytes: 120_000_000
+    })
+  })
 })

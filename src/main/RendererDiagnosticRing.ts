@@ -39,10 +39,21 @@ export interface RendererDiagnosticRingOptions {
   onError?: (message: string, error: unknown) => void
 }
 
+export interface MainMemoryUsageSnapshot {
+  rss?: unknown
+  heapUsed?: unknown
+}
+
 export interface RendererDiagnosticRecorderOptions extends RendererDiagnosticRingOptions {
   filePath: string
   now?: () => Date
   getAppMetrics?: () => ProcessMetric[]
+  getMainMemoryUsage?: () => MainMemoryUsageSnapshot | null | undefined
+  /**
+   * Coalesces getAppMetrics bursts: samples recorded within this window share
+   * one process snapshot. 0 disables sharing. Defaults to 1_000ms.
+   */
+  metricsSnapshotTtlMs?: number
   getChatRecordPath?: (chatId: string) => string | null
   getChatUpdateTargetStats?: (webContentsId: number) => ChatUpdateDeliveryStats
   getChatUpdateProtocolCounters?: () => ChatUpdateProtocolCounters
@@ -73,6 +84,13 @@ function normalizedCapacity(value: number | undefined): number {
 function normalizedMaxFileBytes(value: number | undefined): number {
   if (!Number.isFinite(value)) return MAX_RING_FILE_BYTES
   return Math.max(1_024, Math.min(MAX_RING_FILE_BYTES, Math.floor(value!)))
+}
+
+const DEFAULT_METRICS_SNAPSHOT_TTL_MS = 1_000
+
+function normalizedMetricsSnapshotTtlMs(value: number | undefined): number {
+  if (!Number.isFinite(value)) return DEFAULT_METRICS_SNAPSHOT_TTL_MS
+  return Math.max(0, Math.min(60_000, Math.floor(value!)))
 }
 
 function isPersistedDiagnosticSample(value: unknown): value is RendererDiagnosticSample {
@@ -187,9 +205,16 @@ export class RendererDiagnosticRecorder {
   private readonly latestClientByTarget = new Map<number, RendererDiagnosticClientSample>()
   private readonly latestSampleByTarget = new Map<number, RendererDiagnosticSample>()
   private readonly now: () => Date
+  private readonly metricsSnapshotTtlMs: number
+  private metricsSnapshot: {
+    atMs: number
+    metrics: ProcessMetric[]
+    unavailable: boolean
+  } | null = null
 
   constructor(private readonly options: RendererDiagnosticRecorderOptions) {
     this.now = options.now ?? (() => new Date())
+    this.metricsSnapshotTtlMs = normalizedMetricsSnapshotTtlMs(options.metricsSnapshotTtlMs)
     this.ring = new RendererDiagnosticRing(options.filePath, options)
   }
 
@@ -247,7 +272,17 @@ export class RendererDiagnosticRecorder {
     const previous = this.latestSampleByTarget.get(target.webContentsId)
     const rendererPid = target.rendererPid || previous?.rendererPid || 0
     const sameRenderer = !target.rendererPid || target.rendererPid === previous?.rendererPid
-    const metric = this.rendererMetric(rendererPid)
+    const metricsSnapshot = this.snapshotAppMetrics()
+    const metric = rendererPid
+      ? this.safeRead(
+          () => metricsSnapshot.metrics.find((entry) => entry.pid === rendererPid),
+          undefined
+        )
+      : undefined
+    const gpuTotals = this.safeRead(() => this.gpuMemoryTotals(metricsSnapshot.metrics), {})
+    const mainUsage = this.mainMemoryUsage()
+    const mainRssBytes = optionalNonNegativeInteger(mainUsage?.rss)
+    const mainHeapUsedBytes = optionalNonNegativeInteger(mainUsage?.heapUsed)
     const activeChatIdHash = client.activeChatId
       ? createHash('sha256').update(client.activeChatId).digest('hex').slice(0, 16)
       : undefined
@@ -298,6 +333,31 @@ export class RendererDiagnosticRecorder {
         : sameRenderer && previous?.v8HeapLimitBytes !== undefined
           ? { v8HeapLimitBytes: previous.v8HeapLimitBytes }
           : {}),
+      ...(client.domNodeCount !== undefined
+        ? { rendererDomNodeCount: client.domNodeCount }
+        : sameRenderer && previous?.rendererDomNodeCount !== undefined
+          ? { rendererDomNodeCount: previous.rendererDomNodeCount }
+          : {}),
+      ...(gpuTotals.rssBytes !== undefined
+        ? { gpuRssBytes: gpuTotals.rssBytes }
+        : metricsSnapshot.unavailable && previous?.gpuRssBytes !== undefined
+          ? { gpuRssBytes: previous.gpuRssBytes }
+          : {}),
+      ...(gpuTotals.privateBytes !== undefined
+        ? { gpuPrivateBytes: gpuTotals.privateBytes }
+        : metricsSnapshot.unavailable && previous?.gpuPrivateBytes !== undefined
+          ? { gpuPrivateBytes: previous.gpuPrivateBytes }
+          : {}),
+      ...(mainRssBytes !== undefined
+        ? { mainRssBytes }
+        : previous?.mainRssBytes !== undefined
+          ? { mainRssBytes: previous.mainRssBytes }
+          : {}),
+      ...(mainHeapUsedBytes !== undefined
+        ? { mainHeapUsedBytes }
+        : previous?.mainHeapUsedBytes !== undefined
+          ? { mainHeapUsedBytes: previous.mainHeapUsedBytes }
+          : {}),
       ...(activeChatIdHash ? { activeChatIdHash } : {}),
       activeChatMessageCount: client.activeChatMessageCount,
       ...(activeChatPersistedBytes !== undefined
@@ -344,12 +404,70 @@ export class RendererDiagnosticRecorder {
     return this.ring.append(sample)
   }
 
-  private rendererMetric(rendererPid: number): ProcessMetric | undefined {
-    if (!rendererPid) return undefined
-    return this.safeRead(
-      () => this.options.getAppMetrics?.().find((metric) => metric.pid === rendererPid),
-      undefined
-    )
+  private snapshotAppMetrics(): {
+    metrics: ProcessMetric[]
+    unavailable: boolean
+  } {
+    let atMs = Number.NaN
+    try {
+      atMs = this.now().getTime()
+    } catch (error) {
+      this.options.onError?.('Renderer diagnostic sampling failed.', error)
+    }
+    const cached = this.metricsSnapshot
+    if (cached && this.metricsSnapshotTtlMs > 0 && Number.isFinite(atMs)) {
+      const ageMs = atMs - cached.atMs
+      if (ageMs >= 0 && ageMs < this.metricsSnapshotTtlMs) return cached
+    }
+    let metrics: ProcessMetric[] = []
+    let unavailable = false
+    try {
+      const read = this.options.getAppMetrics?.()
+      if (Array.isArray(read)) metrics = read
+      else if (read !== undefined) unavailable = true
+    } catch (error) {
+      unavailable = true
+      this.options.onError?.('Renderer diagnostic sampling failed.', error)
+    }
+    const snapshot = { atMs, metrics, unavailable }
+    this.metricsSnapshot = Number.isFinite(atMs) ? snapshot : null
+    return snapshot
+  }
+
+  private gpuMemoryTotals(metrics: ProcessMetric[]): {
+    rssBytes?: number
+    privateBytes?: number
+  } {
+    let rssKiB = 0
+    let privateKiB = 0
+    let rssSeen = false
+    let privateSeen = false
+    for (const entry of metrics) {
+      if (entry.type !== 'GPU') continue
+      const rss = optionalNonNegativeInteger(entry.memory.workingSetSize)
+      if (rss !== undefined) {
+        rssKiB += rss
+        rssSeen = true
+      }
+      const priv = optionalNonNegativeInteger(entry.memory.privateBytes)
+      if (priv !== undefined) {
+        privateKiB += priv
+        privateSeen = true
+      }
+    }
+    return {
+      ...(rssSeen ? { rssBytes: Math.min(Number.MAX_SAFE_INTEGER, rssKiB * 1024) } : {}),
+      ...(privateSeen ? { privateBytes: Math.min(Number.MAX_SAFE_INTEGER, privateKiB * 1024) } : {})
+    }
+  }
+
+  private mainMemoryUsage(): MainMemoryUsageSnapshot | undefined {
+    return this.safeRead(() => {
+      if (this.options.getMainMemoryUsage) {
+        return this.options.getMainMemoryUsage() ?? undefined
+      }
+      return process.memoryUsage()
+    }, undefined)
   }
 
   private activeChatPersistedBytes(chatId: string | undefined): number | undefined {

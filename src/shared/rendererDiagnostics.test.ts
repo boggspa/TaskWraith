@@ -13,6 +13,7 @@ describe('renderer diagnostics wire shape', () => {
       v8HeapUsedBytes: 1234.8,
       v8HeapTotalBytes: -1,
       v8HeapLimitBytes: Number.POSITIVE_INFINITY,
+      domNodeCount: 98765.4,
       chatUpdates: {
         received: 8,
         snapshots: 2,
@@ -27,6 +28,13 @@ describe('renderer diagnostics wire shape', () => {
     expect(sample.v8HeapUsedBytes).toBe(1234)
     expect(sample.v8HeapTotalBytes).toBeUndefined()
     expect(sample.v8HeapLimitBytes).toBeUndefined()
+    expect(sample.domNodeCount).toBe(98765)
+    expect(
+      sanitizeRendererDiagnosticClientSample({ domNodeCount: -3 }).domNodeCount
+    ).toBeUndefined()
+    expect(
+      sanitizeRendererDiagnosticClientSample({ domNodeCount: Number.NaN }).domNodeCount
+    ).toBeUndefined()
     expect(sample.chatUpdates).toEqual({
       received: 8,
       snapshots: 2,

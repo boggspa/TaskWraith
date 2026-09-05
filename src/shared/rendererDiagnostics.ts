@@ -24,6 +24,8 @@ export interface RendererDiagnosticClientSample {
   v8HeapUsedBytes?: number
   v8HeapTotalBytes?: number
   v8HeapLimitBytes?: number
+  /** Live DOM element count; separates Blink-side growth from V8 heap growth. */
+  domNodeCount?: number
   chatUpdates: RendererChatUpdateClientCounters
 }
 
@@ -90,6 +92,13 @@ export interface RendererDiagnosticSample {
   v8HeapUsedBytes?: number
   v8HeapTotalBytes?: number
   v8HeapLimitBytes?: number
+  rendererDomNodeCount?: number
+  /** Aggregate GPU-process RSS/private bytes; the "heap low, process grows" lane. */
+  gpuRssBytes?: number
+  gpuPrivateBytes?: number
+  /** Main-process RSS and V8 heap; separates main-side growth from renderers. */
+  mainRssBytes?: number
+  mainHeapUsedBytes?: number
   activeChatIdHash?: string
   activeChatMessageCount: number
   activeChatPersistedBytes?: number
@@ -112,6 +121,10 @@ function boundedInteger(value: unknown, maximum: number): number | undefined {
 
 function boundedCounter(value: unknown): number {
   return boundedInteger(value, MAX_COUNTER) ?? 0
+}
+
+function boundedOptionalCounter(value: unknown): number | undefined {
+  return boundedInteger(value, MAX_COUNTER)
 }
 
 function boundedBytes(value: unknown): number | undefined {
@@ -173,6 +186,9 @@ export function sanitizeRendererDiagnosticClientSample(
       : {}),
     ...(boundedBytes(source.v8HeapLimitBytes) !== undefined
       ? { v8HeapLimitBytes: boundedBytes(source.v8HeapLimitBytes) }
+      : {}),
+    ...(boundedOptionalCounter(source.domNodeCount) !== undefined
+      ? { domNodeCount: boundedOptionalCounter(source.domNodeCount) }
       : {}),
     chatUpdates: {
       received: boundedCounter(rawCounters.received),
