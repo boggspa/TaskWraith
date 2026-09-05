@@ -155,6 +155,7 @@ export interface AcpTurnOptions {
    * `session/prompt` this turn writes — the initial prompt, the
    * resume-fallback recovery prompt when a resume rejects (selected INSIDE
    * this client, invisible to the call site), and mid-turn steer injections.
+   * `steer` also covers recovery follow-ups that retain this session's context.
    * Evidence only: never awaited, and a throwing hook must not affect the
    * turn (calls are wrapped).
    */
@@ -849,6 +850,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   // whatever actually failed.
   let inFlightPromptText = ''
   let inFlightPromptImages: AcpPromptImageContent[] = []
+  let inFlightPromptKind: 'initial' | 'retry' | 'steer' = 'initial'
   let activePromptAssistantText = ''
   let activePromptAssistantTextWasTruncated = false
   let transientPromptRetries = 0
@@ -947,6 +949,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     activePromptRpcId = promptRpcId
     inFlightPromptText = text
     inFlightPromptImages = [...images]
+    inFlightPromptKind = kind
     activePromptAssistantText = ''
     activePromptAssistantTextWasTruncated = false
     if (options.onWirePrompt) {
@@ -1120,6 +1123,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
             : 3000
     const retryText = inFlightPromptText
     const retryImages = [...inFlightPromptImages]
+    const retryKind = inFlightPromptKind === 'steer' ? 'steer' : 'retry'
     // The old rpc id already received its error response; sendPrompt allocates
     // a fresh one against the same sessionId.
     options.onEvent({
@@ -1133,7 +1137,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       () => {
         transientRetryTimer = null
         if (cancelRequested || closed || stdinClosed || turnComplete) return
-        const retryPromptRpcId = sendPrompt(retryText, retryImages, 'retry')
+        const retryPromptRpcId = sendPrompt(retryText, retryImages, retryKind)
         if (activeSteerDelivery && retryPromptRpcId !== null) {
           activeSteerDelivery = { ...activeSteerDelivery, promptRpcId: retryPromptRpcId }
         }
@@ -1656,7 +1660,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
                 // outcome into a fatal participant cancellation.
                 deniedToolRecoveryAttempted = true
                 options.onEvent({ type: 'provider_warning', text: warning })
-                if (sendPrompt(prompt) !== null) continue
+                if (sendPrompt(prompt, [], 'steer') !== null) continue
               }
             }
           }

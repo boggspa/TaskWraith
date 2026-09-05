@@ -1130,7 +1130,9 @@ describe('runAcpTurn — neutral core', () => {
   it('recovers once from a failed tool terminal even without a permission request', async () => {
     const child = new FakeAcpChild()
     const contexts: Array<{ tool?: string | null; output?: string | null }> = []
+    const onWirePrompt = vi.fn()
     baseOptions(child, {
+      onWirePrompt,
       deniedToolRecovery: {
         detect: () => false,
         shouldRecover: (context) => {
@@ -1179,6 +1181,10 @@ describe('runAcpTurn — neutral core', () => {
     const prompts = child.sent().filter((message) => message.method === 'session/prompt')
     expect(prompts).toHaveLength(2)
     expect(JSON.stringify(prompts[1])).toContain('Continue after read_file failed.')
+    expect(onWirePrompt.mock.calls.map(([, selected]) => selected)).toEqual([
+      { sessionId: 's-1', kind: 'initial' },
+      { sessionId: 's-1', kind: 'steer' }
+    ])
 
     child.emit({ jsonrpc: '2.0', id: 5, result: { stopReason: 'end_turn' } })
     await new Promise((resolve) => setTimeout(resolve, 40))
@@ -2123,7 +2129,9 @@ describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prom
 
   it('keeps steer ownership during a transient follow-up retry', async () => {
     const child = new FakeAcpChild()
+    const onWirePrompt = vi.fn()
     const { handle } = baseOptions(child, {
+      onWirePrompt,
       transientPromptRetryLimit: 1,
       transientPromptRetryDelayMs: 0
     })
@@ -2146,6 +2154,11 @@ describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prom
     expect(onDelivered).not.toHaveBeenCalled()
     expect(onRejected).not.toHaveBeenCalled()
     expect(onAmbiguous).not.toHaveBeenCalled()
+    expect(onWirePrompt.mock.calls.map(([, selected]) => selected)).toEqual([
+      { sessionId: 'session-1', kind: 'initial' },
+      { sessionId: 'session-1', kind: 'steer' },
+      { sessionId: 'session-1', kind: 'steer' }
+    ])
 
     const retriedId = promptsSent(child)[2]?.id as number
     child.emit({ jsonrpc: '2.0', id: retriedId, result: { stopReason: 'end_turn' } })

@@ -15994,7 +15994,7 @@ export class EnsembleOrchestrator {
         runtime.discordContextSnapshots
       )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}${projectReferenceAppendix}`
       const resumeFallbackProjection =
-        slimTurn && (participant.provider === 'kimi' || participant.provider === 'codex' || participant.provider === 'claude')
+        providerSessionId && (participant.provider === 'kimi' || participant.provider === 'codex' || participant.provider === 'claude')
           ? buildEnsembleParticipantPromptProjection({
               chat: promptChat,
               config: ensembleConfigForRound,
