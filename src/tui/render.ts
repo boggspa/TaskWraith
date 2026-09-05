@@ -32,6 +32,9 @@ import { permissionToneHex } from './permissionTone'
 import {
   resolveTuiHomePosture,
   tuiModelChoices,
+  modelRequiresApiKey,
+  tuiModelBillingLabel,
+  tuiModelBillingLegend,
   tuiPostureCeilingNote,
   tuiProviderWriteDisclosure
 } from './modelPicker'
@@ -940,10 +943,15 @@ function renderSetupOverlay(
     const postures = cold.offers.postures
     const selectedModel = models[state.coldStartModelIndex ?? 0]
     const reasoning = selectedModel?.reasoning.filter((candidate) => candidate.available) ?? []
+    if (models.some((model) => modelRequiresApiKey(cold.providerId, model.modelId))) {
+      lines.push(borderedLine(ansi.dim(tuiModelBillingLegend(glyphs)), width, ansi, glyphs))
+    }
     lines.push(borderedLine(ansi.dim(' model  ↑/↓'), width, ansi, glyphs))
     lines.push(
       ...renderSetupChoiceWindow(
-        models.map((model) => model.label),
+        models.map((model) =>
+          tuiModelBillingLabel(cold.providerId, model.modelId, model.label, glyphs)
+        ),
         state.coldStartModelIndex ?? 0,
         width,
         ansi,
@@ -1515,6 +1523,12 @@ function renderTuneOverlay(
       )
     } else {
       const choices = tuiModelChoices(home.providers)
+      const keyLegend = choices.some((candidate) =>
+        modelRequiresApiKey(candidate.provider.status.providerId, candidate.model.modelId)
+      )
+      if (keyLegend) {
+        lines.push(borderedLine(ansi.dim(tuiModelBillingLegend(glyphs)), width, ansi, glyphs))
+      }
       const choice = choices[home.modelIndex]
       const provider = choice?.provider
       const model = choice?.model
@@ -1523,7 +1537,7 @@ function renderTuneOverlay(
         model?.modelId,
         model?.label
       )
-      const capacity = Math.max(1, height - 4)
+      const capacity = Math.max(1, height - 4 - (keyLegend ? 1 : 0))
       const start = Math.max(0, home.modelIndex - Math.floor(capacity / 2))
       for (let index = start; index < Math.min(choices.length, start + capacity); index += 1) {
         const candidate = choices[index]
@@ -1535,9 +1549,15 @@ function renderTuneOverlay(
         )
         const providerLabel = terminalLabel(candidate.provider.status.label)
         const modelLabel = terminalLabel(candidate.model.label)
-        const label = modelLabel.toLowerCase().startsWith(providerLabel.toLowerCase())
+        const displayLabel = modelLabel.toLowerCase().startsWith(providerLabel.toLowerCase())
           ? modelLabel
           : `${providerLabel} ${modelLabel}`
+        const label = tuiModelBillingLabel(
+          candidate.provider.status.providerId,
+          candidate.model.modelId,
+          displayLabel,
+          glyphs
+        )
         const current =
           thread?.provider.runtimeProvider === candidate.provider.status.providerId &&
           thread.provider.model === candidate.model.modelId
@@ -1638,7 +1658,13 @@ function renderTuneOverlay(
       )
     )
     const models = offers.models
-    const capacity = Math.max(1, height - 5)
+    const keyLegend = models.some((model) =>
+      modelRequiresApiKey(offers.provider.runtimeProvider, model.id)
+    )
+    if (keyLegend) {
+      lines.push(borderedLine(ansi.dim(tuiModelBillingLegend(glyphs)), width, ansi, glyphs))
+    }
+    const capacity = Math.max(1, height - 5 - (keyLegend ? 1 : 0))
     const safeIndex = Math.max(0, Math.min(state.overlayIndex, models.length - 1))
     const windowStart = Math.max(0, safeIndex - Math.floor(capacity / 2))
     for (
@@ -1648,7 +1674,12 @@ function renderTuneOverlay(
     ) {
       const offer = models[index]
       const selected = index === safeIndex
-      const label = terminalLabel(offer.label ?? offer.id)
+      const label = tuiModelBillingLabel(
+        offers.provider.runtimeProvider,
+        offer.id,
+        terminalLabel(offer.label ?? offer.id),
+        glyphs
+      )
       const body = offer.disabled
         ? ansi.dim(label)
         : ansi.provider(label, offers.provider.accent, Boolean(offer.current))

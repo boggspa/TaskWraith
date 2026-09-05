@@ -3,6 +3,23 @@ import type {
   HostProviderModelOffer
 } from '../shared/hostSetupProtocol'
 import type { TuiHomePermissionSelection, TuiHomeTuneProvider } from './state'
+import { modelRequiresApiKey } from '../shared/apiKeyModelIndicator'
+import type { TuiGlyphSet } from './theme'
+
+export { modelRequiresApiKey }
+
+export function tuiModelBillingLabel(
+  providerId: string,
+  modelId: string,
+  label: string,
+  glyphs: TuiGlyphSet
+): string {
+  return modelRequiresApiKey(providerId, modelId) ? `${glyphs.apiKey} ${label}` : label
+}
+
+export function tuiModelBillingLegend(glyphs: TuiGlyphSet): string {
+  return `${glyphs.apiKey} API key · billed separately`
+}
 
 export interface TuiModelChoice {
   readonly providerIndex: number

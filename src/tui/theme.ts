@@ -98,6 +98,8 @@ export interface TuiGlyphSet {
   seatDisabled: string
   /** A staged model/reasoning change that applies on the next send. */
   pendingChange: string
+  /** A model billed using the user's API key rather than a subscription. */
+  apiKey: string
 
   // Reasoning ladder.
   reasoningOn: string
@@ -152,6 +154,7 @@ export const TUI_GLYPHS_UNICODE: TuiGlyphSet = {
   seatEnabled: '■',
   seatDisabled: '□',
   pendingChange: '→',
+  apiKey: '🔑',
 
   reasoningOn: '✦',
   reasoningOff: '·',
@@ -204,6 +207,7 @@ export const TUI_GLYPHS_ASCII: TuiGlyphSet = {
   seatEnabled: 'x',
   seatDisabled: '.',
   pendingChange: '>',
+  apiKey: 'k',
 
   reasoningOn: '#',
   reasoningOff: '.',
