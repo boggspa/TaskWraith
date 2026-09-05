@@ -69,6 +69,49 @@ function snapshotWithThread(overrides?: Partial<HostSnapshot>): HostSnapshot {
 }
 
 describe('hostProjectionMap', () => {
+  it('shows the newest completed run instead of an older failure regardless of snapshot order', () => {
+    const snapshot = snapshotWithThread({
+      runs: [
+        {
+          runId: 'a-new',
+          threadId: 'thread-1',
+          providerId: 'claude',
+          providerOutcome: 'completed',
+          startedAt: 300,
+          endedAt: 400
+        },
+        {
+          runId: 'z-old',
+          threadId: 'thread-1',
+          providerId: 'claude',
+          providerOutcome: 'failed',
+          startedAt: 100,
+          endedAt: 200
+        }
+      ]
+    })
+    expect(mapHostSnapshotToControlSnapshot(snapshot).threads[0]?.status).toBe('complete')
+    expect(
+      mapHostSnapshotToControlSnapshot({ ...snapshot, runs: [...snapshot.runs].reverse() })
+        .threads[0]?.status
+    ).toBe('complete')
+    expect(
+      mapHostSnapshotToControlSnapshot({
+        ...snapshot,
+        runs: [
+          ...snapshot.runs,
+          {
+            runId: 'b-active',
+            threadId: 'thread-1',
+            providerId: 'claude',
+            providerOutcome: 'running',
+            startedAt: 500
+          }
+        ]
+      }).threads[0]?.status
+    ).toBe('working')
+  })
+
   it('never labels a thread with the provider inventory model when the thread names none', () => {
     // The inventory lists one row per offered model, sorted by id. A thread
     // row that carries no modelId must render as provider-only rather than

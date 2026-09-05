@@ -169,9 +169,18 @@ function threadStatusFromHost(
   const threadRuns = runs.filter((run) => run.threadId === thread.id)
   if (threadRuns.some((run) => run.providerOutcome === 'running')) return 'working'
   if (threadRuns.some((run) => run.providerOutcome === 'requires_action')) return 'needs-input'
-  if (threadRuns.some((run) => run.providerOutcome === 'failed')) return 'failed'
-  if (threadRuns.some((run) => run.providerOutcome === 'cancelled')) return 'cancelled'
-  if (threadRuns.some((run) => run.providerOutcome === 'completed')) return 'complete'
+  // Snapshot order is by identity, not time. An old failure must not override
+  // a later successful run in the current thread badge.
+  const terminal = threadRuns
+    .filter((run) => ['failed', 'cancelled', 'completed'].includes(run.providerOutcome))
+    .reduce<HostRunProjection | undefined>((latest, run) => {
+      const at = run.endedAt ?? run.startedAt ?? 0
+      const latestAt = latest?.endedAt ?? latest?.startedAt ?? 0
+      return !latest || at >= latestAt ? run : latest
+    }, undefined)
+  if (terminal?.providerOutcome === 'failed') return 'failed'
+  if (terminal?.providerOutcome === 'cancelled') return 'cancelled'
+  if (terminal?.providerOutcome === 'completed') return 'complete'
 
   if (thread.missionOutcome === 'active' || thread.missionOutcome === 'blocked') return 'working'
   if (thread.missionOutcome === 'failed') return 'failed'
