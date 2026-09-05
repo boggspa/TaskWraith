@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import type { EffectiveRunPermissions, TaskWraithMcpProfileId } from '../store/types'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
 import { resolveMuseExecSessionId } from './MuseCliArgs'
+import { createMuseThinkingTranscript } from './MuseThinkingTranscript'
 import {
   buildMuseTaskWraithMcpSettings,
   type MuseMcpSettings,
@@ -432,6 +433,7 @@ export async function runMuseProviderFromIpc(
   let emittedTerminalResult = false
   const startedAt = deps.now?.() ?? Date.now()
   const museSessionId = resolveMuseExecSessionId(payload.providerSessionId)
+  const thinking = createMuseThinkingTranscript(runId)
   const ultraTaskDelegationAutoAllow =
     payload.effectivePermissions?.subThreadDelegationAutoAllowSource === 'ultratask'
 
@@ -465,8 +467,15 @@ export async function runMuseProviderFromIpc(
       spawn: deps.spawn,
       shouldCancel: () => cancelled,
       onEvent: (museEvent) => {
+        if (museEvent.type === 'thinking') {
+          for (const compat of thinking.project(museEvent)) {
+            deps.sendCompatLine(event.sender, compat, route)
+          }
+          return
+        }
         const compat = museExecEventToCompatPayload(museEvent, { model: payload.model })
         if (!compat) return
+        thinking.observe(compat)
         if (compat.type === 'result') emittedTerminalResult = true
         deps.sendCompatLine(event.sender, compat, route)
       }

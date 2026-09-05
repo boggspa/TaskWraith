@@ -157,11 +157,16 @@ export interface MuseProviderAdapterDeps {
   createSessionId?: () => string
 }
 
-function mapMuseExecEventToNormalized(event: MuseExecNormalizedEvent): NormalizedMuseRunEvent {
-  if (event.type === 'content') {
+export function mapMuseExecEventToNormalized(
+  event: MuseExecNormalizedEvent
+): NormalizedMuseRunEvent {
+  if (event.type === 'content' || event.type === 'thinking') {
     return {
-      type: 'content',
+      type: event.type,
       text: event.text,
+      ...(event.type === 'thinking'
+        ? { thinkingId: event.thinkingId, thinkingCumulative: event.thinkingCumulative }
+        : {}),
       sessionId: event.sessionId,
       raw: event.raw
     }

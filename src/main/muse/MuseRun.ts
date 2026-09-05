@@ -49,6 +49,7 @@ import {
   type MuseUsageReducer
 } from './MuseUsage'
 import { composeMuseLaunchPrompt } from './MuseLongTurnProgress'
+import { createMuseReasoningProjector } from './MuseReasoningProjection'
 import { MUSE_FORBIDDEN_ARGV_FLAGS, MUSE_METERING_EXCLUSIVE_ARGV_FLAGS } from './MuseTypes'
 
 export interface MuseRunSpawnHandle {
@@ -221,6 +222,9 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
   let usageReducer: MuseUsageReducer | null = null
   const sessionTailers = new Map<string, MuseSessionLogTailer>()
   const pendingSubagentPaths = new Set<string>()
+  const projectReasoning = createMuseReasoningProjector()
+  const pendingSessionEvents: { event: MuseExecNormalizedEvent; recordedAt: number }[] = []
+  let terminalEvent: MuseExecNormalizedEvent | undefined
 
   const emitEvent = (event: MuseExecNormalizedEvent): void => {
     events.push(event)
@@ -240,11 +244,21 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
 
   const ingestSessionEnvelope = (envelope: MuseEnvelope, forUsage: boolean): void => {
     if (forUsage && usageReducer) usageReducer.ingestEnvelope(envelope)
-    for (const toolEvent of projectMuseEnvelopeTools(envelope)) {
-      emitEvent(toolEvent)
+    for (const event of [...projectReasoning(envelope), ...projectMuseEnvelopeTools(envelope)]) {
+      pendingSessionEvents.push({ event, recordedAt: envelope.recorded_at })
     }
     const linked = museLinkedSubagentSessionLogPath(envelope)
     if (linked) pendingSubagentPaths.add(linked)
+  }
+
+  // Stdout and the session log are separate transports. Drain older log
+  // records before assistant text so a polling delay cannot put Thinking
+  // below the answer or collapse reasoning across an intervening tool call.
+  const flushSessionEvents = (through = Infinity): void => {
+    pendingSessionEvents.sort((a, b) => a.recordedAt - b.recordedAt)
+    while (pendingSessionEvents.length && pendingSessionEvents[0].recordedAt <= through) {
+      emitEvent(pendingSessionEvents.shift()!.event)
+    }
   }
 
   const attachSessionLogTailer = (
@@ -304,12 +318,15 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
     const parsed = parseMuseExecJsonChunk(chunk, stdoutCarry)
     stdoutCarry = parsed.carry
     for (const line of parsed.lines) {
+      flushSessionEvents(line.envelope?.recorded_at)
       for (const event of museExecLineToEvents(line)) {
-        emitEvent(event)
+        if (event.type === 'terminal') terminalEvent = event
+        else emitEvent(event)
       }
       // Defensive: if Muse ever emits runtime.session tool commits on stdout,
       // project them the same way as the durable session log.
       if (line.envelope) {
+        for (const reasoning of projectReasoning(line.envelope)) emitEvent(reasoning)
         for (const toolEvent of projectMuseEnvelopeTools(line.envelope)) {
           emitEvent(toolEvent)
         }
@@ -388,7 +405,6 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
       stdin: apiKeyStdin ? (input.apiKey ?? null) : null
     })
 
-    handle.onStdout((chunk) => handleStdoutEvents(chunk))
     handle.onStderr((chunk) => {
       const text = chunk.trim()
       if (text) warnings.push(`muse stderr: ${text.slice(0, 500)}`)
@@ -428,20 +444,41 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
       return result
     })
 
+    let streamWork = Promise.resolve()
+    let streamError: unknown
+    const enqueueStreamWork = (work: () => Promise<void>): void => {
+      streamWork = streamWork.then(work).catch((error: unknown) => {
+        streamError ??= error
+        spawnedHandle.kill('SIGTERM')
+      })
+    }
+    handle.onStdout((chunk) => {
+      enqueueStreamWork(async () => {
+        await attachPromise
+        await pollSessionLogs(mainSessionLogPath)
+        handleStdoutEvents(chunk)
+      })
+    })
+
     pollTimer = setInterval(() => {
       killIfCancelled()
-      void pollSessionLogs(mainSessionLogPath)
+      enqueueStreamWork(async () => {
+        await pollSessionLogs(mainSessionLogPath)
+        flushSessionEvents()
+      })
     }, pollMs)
 
     const waited = await handle.wait()
     exitCode = waited.code
-    if (stdoutCarry.trim()) handleStdoutEvents('\n')
 
     if (pollTimer) {
       clearInterval(pollTimer)
       pollTimer = null
     }
 
+    await streamWork
+    if (streamError) throw streamError
+    if (stdoutCarry.trim()) handleStdoutEvents('\n')
     const sessionLog = await attachPromise
     if (sessionLog.sessionLogPath) {
       attachMainSessionLog(sessionLog.sessionLogPath)
@@ -453,6 +490,8 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
       warnings.push('Muse session.jsonl was not resolved for metering; usage marked unavailable')
       meter = unavailableMuseMeterSnapshot(sessionId)
     }
+    flushSessionEvents()
+    if (terminalEvent) emitEvent(terminalEvent)
 
     for (const tailer of sessionTailers.values()) {
       await tailer.close()

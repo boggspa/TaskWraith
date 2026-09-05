@@ -3,6 +3,7 @@ import { createMuseOrchestrationStubs } from './MuseOrchestrationContracts'
 import {
   createMuseProviderAdapter,
   createStubWiredMuseProviderAdapter,
+  mapMuseExecEventToNormalized,
   museProviderAdapterDescriptor,
   prepareMuseLaunchPlan,
   runMuseOpaqueExec,
@@ -31,6 +32,27 @@ function fakeSpawn(stdoutLines: string[], code = 0): MuseSpawnHandle {
 }
 
 describe('MuseProviderAdapter', () => {
+  it('retains reasoning identity and cumulative text on the normalized adapter route', () => {
+    expect(
+      mapMuseExecEventToNormalized({
+        type: 'thinking',
+        payloadType: 'runtime.session',
+        sessionId: 'session-1',
+        thinkingId: 'native-summary-1',
+        thinkingCumulative: true,
+        text: 'Verify the result.',
+        raw: { kind: 'reasoning_summary_committed' }
+      })
+    ).toEqual({
+      type: 'thinking',
+      sessionId: 'session-1',
+      thinkingId: 'native-summary-1',
+      thinkingCumulative: true,
+      text: 'Verify the result.',
+      raw: { kind: 'reasoning_summary_committed' }
+    })
+  })
+
   describe('museProviderAdapterDescriptor', () => {
     it('declares opaque exec transport without claiming ProviderId', () => {
       const descriptor = museProviderAdapterDescriptor()

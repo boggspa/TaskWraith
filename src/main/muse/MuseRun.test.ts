@@ -95,6 +95,97 @@ function usageSessionLine(sequence: number, runId: string, sessionId: string): s
 }
 
 describe('runMuseProvider', () => {
+  it('orders logged thinking around stdout introductions, tools and the final answer', async () => {
+    const temporaryRoot = tempDir('muse-run-thinking-')
+    const workspacePath = tempDir('muse-ws-thinking-')
+    const sessionLogPath = join(temporaryRoot, 'session.jsonl')
+    const sessionId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+    const logged = (time: number, event: Record<string, unknown>) =>
+      stdoutEnvelope({
+        id: `logged-${time}`,
+        stream: { kind: 'session', id: sessionId },
+        sequence: time,
+        recorded_at: time,
+        payload_type: 'runtime.session',
+        payload: { kind: 'run', run_id: 'native-run', event }
+      })
+    writeFileSync(
+      sessionLogPath,
+      [
+        logged(200, {
+          kind: 'reasoning_summary_delta',
+          message_id: 'thought-1',
+          summary_index: 0,
+          text: 'Inspect the file.'
+        }),
+        logged(210, {
+          kind: 'reasoning_summary_committed',
+          message_id: 'thought-1',
+          text: 'Inspect the file.'
+        }),
+        logged(300, {
+          kind: 'assistant_tool_calls_committed',
+          tool_calls: [{ call_id: 'read-1', name: 'read_file', args: '{"path":"a.txt"}' }]
+        }),
+        logged(400, {
+          kind: 'tool_result_batch_committed',
+          results: [{ tool_call_id: 'read-1', text: 'File contents.' }]
+        }),
+        logged(500, {
+          kind: 'reasoning_summary_committed',
+          message_id: 'thought-2',
+          text: 'Confirm the result.'
+        }),
+        logged(600, {
+          kind: 'reasoning_committed',
+          message_id: 'private-thought',
+          text: '',
+          encrypted_content: 'ciphertext'
+        })
+      ].join('\n') + '\n'
+    )
+    const seen: string[] = []
+    const outcome = await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: 'Inspect a.txt and report the result.',
+      runId: 'thinking-run',
+      sessionId,
+      temporaryRoot,
+      // Simulate stdout arriving while native index discovery is still pending.
+      resolveSessionLog: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        return { row: null, sessionLogPath, source: 'fs-fallback' }
+      },
+      onEvent: (event) => {
+        if (['content', 'thinking', 'tool_use', 'tool_result', 'terminal'].includes(event.type)) {
+          seen.push(`${event.type}:${event.text || event.toolName || event.toolOutput}`)
+        }
+      },
+      spawn: () =>
+        fakeSpawn([
+          stdoutEnvelope({ recorded_at: 100, payload: { text: 'I will inspect a.txt.\n' } }),
+          stdoutEnvelope({ recorded_at: 700, payload: { text: 'Verified.' } }),
+          stdoutEnvelope({
+            recorded_at: 800,
+            payload_type: 'run.terminal.completed',
+            payload: { terminal: 'completed', text: 'I will inspect a.txt.\nVerified.' }
+          })
+        ])
+    })
+    expect(seen).toEqual([
+      'content:I will inspect a.txt.\n',
+      'thinking:Inspect the file.',
+      'tool_use:read_file',
+      'tool_result:File contents.',
+      'thinking:Confirm the result.',
+      'content:Verified.',
+      'terminal:I will inspect a.txt.\nVerified.'
+    ])
+    expect(outcome.assistantText).toBe('I will inspect a.txt.\nVerified.')
+    expect(outcome.assistantText).not.toContain('Inspect the file.')
+  })
+
   it('leases home with skill pin, builds safe argv, pumps stdout, meters jsonl, asserts cron', async () => {
     const temporaryRoot = tempDir('muse-run-')
     const workspacePath = tempDir('muse-ws-')

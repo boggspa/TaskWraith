@@ -197,6 +197,64 @@ describe('museExecEventToCompatPayload', () => {
 describe('runMuseProviderFromIpc', () => {
   const event = { sender: { id: 'webcontents-stub' } }
 
+  it('routes reasoning through standard Thinking activities under the same chat and run', async () => {
+    const sendCompatLine = vi.fn()
+    await runMuseProviderFromIpc(
+      event,
+      basePayload(),
+      baseDeps({
+        sendCompatLine,
+        runMuseProvider: async (input) => {
+          input.onEvent?.({
+            type: 'content',
+            payloadType: 'run.output.delta',
+            text: 'I will inspect the fixture.',
+            raw: {}
+          })
+          const thought = {
+            type: 'thinking' as const,
+            payloadType: 'runtime.session',
+            thinkingId: 'native-message',
+            thinkingCumulative: true,
+            text: 'Check the fixture.',
+            raw: {}
+          }
+          input.onEvent?.(thought)
+          input.onEvent?.(thought)
+          input.onEvent?.({
+            type: 'tool_use',
+            payloadType: 'runtime.session',
+            toolId: 'read-1',
+            toolName: 'read_file',
+            raw: {}
+          })
+          input.onEvent?.({ ...thought, text: 'Check the fixture.\n\nVerify the output.' })
+          return successOutcome()
+        }
+      })
+    )
+    const payloads = sendCompatLine.mock.calls.map((call) => call[1])
+    expect(payloads.map((payload) => payload.type)).toEqual([
+      'init',
+      'content',
+      'tool_use',
+      'tool_result',
+      'tool_use',
+      'tool_use',
+      'tool_result',
+      'result'
+    ])
+    expect(payloads.filter((payload) => payload.tool_name === 'muse_thinking')).toMatchObject([
+      { type: 'tool_use', parameters: { kind: 'reasoning' } },
+      { type: 'tool_result', output: 'Check the fixture.' },
+      { type: 'tool_use', tool_id: expect.stringContaining('-seg2') },
+      { type: 'tool_result', output: '\n\nVerify the output.' }
+    ])
+    for (const call of sendCompatLine.mock.calls) {
+      expect(call[2]).toEqual({ appRunId: 'run-muse-1', appChatId: 'chat-1' })
+    }
+  })
+
   it('fails closed with a clear error when the Muse binary is missing', async () => {
     const settleSetupFailure = vi.fn()
     const runMuseProvider = vi.fn()

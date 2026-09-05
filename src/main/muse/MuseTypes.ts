@@ -54,6 +54,8 @@ export interface NormalizedMuseRunEvent {
     | 'usage'
     | 'provider_warning'
   text?: string
+  thinkingId?: string
+  thinkingCumulative?: boolean
   sessionId?: string
   model?: string
   status?: string
