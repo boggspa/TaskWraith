@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const mainSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+const roundSource = readFileSync(new URL('./ipc/ensembleRoundHandlers.ts', import.meta.url), 'utf8')
 const composerSource = readFileSync(
   new URL('../renderer/src/components/Composer.tsx', import.meta.url),
   'utf8'
@@ -17,17 +18,21 @@ function sourceSection(source: string, startMarker: string, endMarker: string): 
 
 describe('Ensemble DM routing ingress integration', () => {
   it('re-resolves desktop IPC routing from the canonical roster after attachment expansion', () => {
+    // The run-ensemble-round callback body moved to ensembleRoundHandlers.ts;
+    // the ipcMain.handle registration stays in index.ts by design (pinned by
+    // StartupWindowGate + projectReferenceContextDispatch).
+    expect(mainSource).toContain("ipcMain.handle(\n      'run-ensemble-round'")
     const handler = sourceSection(
-      mainSource,
-      "'run-ensemble-round'",
-      'registerEnsembleControlHandlers('
+      roundSource,
+      'export async function handleRunEnsembleRound(',
+      'return ensembleStartResult'
     )
     const attachmentExpansion = handler.indexOf('authorizeThenExpandAttachmentRecords(')
-    const canonicalChatRead = handler.indexOf('const ensembleChat = AppStore.getChat(chatId)')
+    const canonicalChatRead = handler.indexOf('const ensembleChat = deps.getChat(chatId)')
     const authoritativeResolution = handler.indexOf(
       'const dmTargetResolution = resolveEnsembleDmTargetForDispatch({'
     )
-    const roundStart = handler.indexOf('ensembleOrchestratorRef?.startRound({')
+    const roundStart = handler.indexOf('deps.getEnsembleOrchestrator()?.startRound({')
 
     expect(attachmentExpansion).toBeGreaterThanOrEqual(0)
     expect(canonicalChatRead).toBeGreaterThan(attachmentExpansion)

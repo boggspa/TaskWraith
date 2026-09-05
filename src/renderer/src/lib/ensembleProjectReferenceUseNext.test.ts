@@ -16,6 +16,10 @@ const dispatchAcceptance = readFileSync(
 )
 const preloadTypes = readFileSync(new URL('../../../preload/index.d.ts', import.meta.url), 'utf8')
 const mainSource = readFileSync(new URL('../../../main/index.ts', import.meta.url), 'utf8')
+const roundSource = readFileSync(
+  new URL('../../../main/ipc/ensembleRoundHandlers.ts', import.meta.url),
+  'utf8'
+)
 
 describe('P1 F6 ensemble Use-next enablement', () => {
   it('enables ProjectReferencesDockPanel context selection for ensemble chats', () => {
@@ -48,11 +52,11 @@ describe('P1 F6 ensemble Use-next enablement', () => {
     expect(preloadTypes).toContain(
       'projectReferenceContextSelection?: ProjectReferenceContextSelection'
     )
-    const ensembleHandler = mainSource.slice(
-      mainSource.indexOf("'run-ensemble-round'"),
-      mainSource.indexOf("'run-ensemble-round'") + 3500
-    )
-    expect(ensembleHandler).toContain('projectReferenceContextSelection')
+    // The run-ensemble-round callback body (with the selection parse +
+    // thread-through) moved to ensembleRoundHandlers.ts; the ipcMain.handle
+    // registration stays in index.ts by design.
+    expect(mainSource).toContain("ipcMain.handle(\n      'run-ensemble-round'")
+    expect(roundSource).toContain('projectReferenceContextSelection')
     expect(appSource).toContain(
       'projectReferenceContextSelection: request.projectReferenceContextSelection'
     )

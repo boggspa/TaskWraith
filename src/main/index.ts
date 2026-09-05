@@ -277,8 +277,6 @@ import { AttachmentCapabilityRegistry } from './AttachmentCapabilityRegistry'
 import { ClipboardPasteIntentRegistry } from './ClipboardPasteIntentRegistry'
 import { saveClipboardImageFromTrustedPaste } from './ClipboardImagePasteHandler'
 import {
-  authorizeAttachmentRecords,
-  authorizeThenExpandAttachmentRecords,
   dispatchWithAuthorizedAttachmentPaths,
   resolveAuthorizedRendererAttachmentPaths
 } from './RendererAttachmentAuthorization'
@@ -801,10 +799,7 @@ import {
   type ComposerInput,
   type ComposerRunPayload
 } from './services/ComposerService'
-import {
-  DiscordContextService,
-  type DiscordContextSnapshot
-} from './channels/DiscordContextService'
+import { DiscordContextService } from './channels/DiscordContextService'
 import { resolveDiscordContextConfig } from './channels/DiscordContextConfig'
 import {
   clampAwaitTimeoutSeconds,
@@ -846,7 +841,6 @@ import {
 } from './services/ProjectReferenceArtifactStore'
 import { DeferredProjectReferenceReconciler } from './services/DeferredProjectReferenceReconciler'
 import { ProjectReferenceContextAuditService } from './services/ProjectReferenceContextAuditService'
-import { parseProjectReferenceContextSelection } from '../shared/projectReferenceContext'
 import { filterProjectReferenceLegacyArtifactRefsForPendingDeletion } from './services/ProjectReferenceLegacyOwnership'
 import { createProjectReferenceOwnershipWorkerLoader } from './ProjectReferenceOwnershipWorkerScan'
 import { ProjectReferenceProposalService } from './services/ProjectReferenceProposalService'
@@ -1622,7 +1616,6 @@ import {
 } from './DiffService'
 import { isCodexSandboxToolingFailure, isSwiftPmNestedSandboxFailure } from './SandboxFallback'
 import { isPathInsideWorkspace } from './AgenticPolicy'
-import { isDirectoryComposerAttachment } from '../shared/composerAttachment'
 import {
   RunManager,
   canStartRunTransport,
@@ -2029,6 +2022,11 @@ import {
   type BlackboardQueuedEnsemblePromptResult,
   type EnsembleControlHandlerDeps
 } from './ipc/ensembleControlHandlers'
+import {
+  handleRunEnsembleRound,
+  type EnsembleRoundHandlerDeps,
+  type RunEnsembleRoundPayload
+} from './ipc/ensembleRoundHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
 import { registerFanoutCandidateHandlers } from './ipc/fanoutCandidateHandlers'
 import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGrantHandlers'
@@ -62060,209 +62058,8 @@ if (isGeminiMcpBridgeProcess) {
 
     ipcMain.handle(
       'run-ensemble-round',
-      async (
-        event,
-        payload: {
-          chatId?: string
-          prompt?: string
-          mode?: 'normal' | 'queue' | 'steer'
-          concurrentMode?: boolean
-          fanoutPolicy?: EnsembleFanoutPolicy
-          imageAttachments?: Array<{
-            id?: string
-            path?: string
-            name?: string
-            kind?: 'file' | 'directory'
-          }>
-          imageThumbnails?: Array<{
-            dataBase64: string
-            mimeType: string
-            width?: number
-            height?: number
-          }>
-          discordContextSnapshots?: DiscordContextSnapshot[]
-          dmTargetParticipantId?: string
-          exactPickerParticipantId?: string
-          externalPathGrants?: ExternalPathGrant[]
-          scheduledTaskId?: string
-          projectReferenceContextSelection?: unknown
-          /**
-           * Rewind-from-message ("Edit & resend from here") restart hints,
-           * honoured only with `mode: 'steer'` — see
-           * EnsembleRewindRoundOptions on the orchestrator.
-           */
-          rewind?: {
-            resumeFromParticipantId?: unknown
-            suppressPromptEcho?: unknown
-          }
-        }
-      ) => {
-        if (AppStore.getSettings().ensembleModeEnabled === false) {
-          throw new Error('Ensemble Mode is disabled.')
-        }
-        const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
-        assertRendererChatScope(event, chatId)
-        if (Object.prototype.hasOwnProperty.call(payload, 'scheduledTaskId')) {
-          throw new Error(
-            'Renderer scheduled-round dispatch is retired; MAIN owns every occurrence.'
-          )
-        }
-        const imageAttachments = imageAttachmentSnapshots(payload?.imageAttachments)
-        const prompt = typeof payload?.prompt === 'string' ? payload.prompt : ''
-        const projectReferenceContextSelection = parseProjectReferenceContextSelection(
-          payload?.projectReferenceContextSelection
-        )
-        if (
-          Object.prototype.hasOwnProperty.call(payload, 'projectReferenceContextSelection') &&
-          payload.projectReferenceContextSelection != null &&
-          !projectReferenceContextSelection
-        ) {
-          throw new Error('Project reference context selection is invalid.')
-        }
-        // P1 F6 — reference-only Use-next sends are valid for ensemble rounds.
-        if (!prompt.trim() && imageAttachments.length === 0 && !projectReferenceContextSelection) {
-          throw new Error(
-            'Ensemble prompt, attachment, or Project reference selection is required.'
-          )
-        }
-        const folderAttachments = imageAttachments.filter(isDirectoryComposerAttachment)
-        const fileAttachments = imageAttachments.filter(
-          (attachment) => !isDirectoryComposerAttachment(attachment)
-        )
-        const dispatchFolderAttachments = authorizeAttachmentRecords(folderAttachments, (paths) =>
-          resolveRendererAttachmentPaths(event, paths)
-        )
-        const dispatchFileAttachments = await authorizeThenExpandAttachmentRecords(
-          fileAttachments,
-          (paths) => resolveRendererAttachmentPaths(event, paths),
-          (authorizedAttachments) => expandPdfAttachmentsForDispatch(authorizedAttachments, chatId)
-        )
-        const dispatchImageAttachments = [...dispatchFolderAttachments, ...dispatchFileAttachments]
-        // 1.0.4-AT4 — normalize the renderer-supplied grants the
-        // same way solo-run dispatch does. Drops malformed entries
-        // and produces an [] when nothing is granted.
-        const externalPathGrantInput = payload?.externalPathGrants
-        const externalPathGrants = Array.isArray(externalPathGrantInput)
-          ? normalizeExternalPathGrants(externalPathGrantInput as ExternalPathGrant[])
-          : []
-        const discordContextSnapshots = Array.isArray(payload?.discordContextSnapshots)
-          ? payload.discordContextSnapshots
-          : []
-        assertScheduledEnsembleInteractiveAvailable(chatId)
-        const ensembleChat = AppStore.getChat(chatId)
-        if (!ensembleChat?.ensemble) {
-          throw new Error('Ensemble chat not found.')
-        }
-        // MAIN owns participant routing. The renderer's id is advisory because
-        // its roster snapshot can be stale and its historical plain-mention
-        // resolver selected the first seat for duplicate aliases. Re-resolve
-        // the prompt against the current roster. Structured legacy links and a
-        // separately transported picker selection retain exact identity, while
-        // ambiguous or stale targets fail before launch.
-        const dmTargetResolution = resolveEnsembleDmTargetForDispatch({
-          text: prompt,
-          participants: ensembleChat.ensemble.participants,
-          advisoryParticipantId: payload?.dmTargetParticipantId,
-          exactPickerParticipantId: payload?.exactPickerParticipantId
-        })
-        const dmTargetError = ensembleDmTargetResolutionError(
-          dmTargetResolution,
-          ensembleChat.ensemble.participants
-        )
-        if (dmTargetError) throw new Error(dmTargetError)
-        const dmTargetParticipantId =
-          dmTargetResolution.kind === 'target' ? dmTargetResolution.participantId : undefined
-        // Rewind-from-message restart hints (steer-mode only). Both fields are
-        // advisory routing hints, never authority: MAIN re-resolves the seat id
-        // against the canonical roster inside beginRound and fails soft to the
-        // full rotation order, and a resolved DM target already scopes the
-        // round to one seat, which makes a resume anchor meaningless.
-        const rewindInput = payload?.mode === 'steer' ? payload?.rewind : undefined
-        const rewindResumeFromParticipantId =
-          typeof rewindInput?.resumeFromParticipantId === 'string' &&
-          rewindInput.resumeFromParticipantId.trim().length > 0 &&
-          !dmTargetParticipantId
-            ? rewindInput.resumeFromParticipantId.trim()
-            : undefined
-        const rewind =
-          rewindInput &&
-          (rewindResumeFromParticipantId || rewindInput.suppressPromptEcho === true)
-            ? {
-                ...(rewindResumeFromParticipantId
-                  ? { resumeFromParticipantId: rewindResumeFromParticipantId }
-                  : {}),
-                ...(rewindInput.suppressPromptEcho === true
-                  ? { suppressPromptEcho: true as const }
-                  : {})
-              }
-            : undefined
-        // Mid-run steering: any steer into a LIVE round is absorbed — appended
-        // immediately and delivered at the next hop — instead of cancelling
-        // the active speaker and restarting. Attachments / DM / grants /
-        // discord context merge onto the live runtime. Idle chats still
-        // beginRound via startRound below.
-        const steerAbsorbRound = AppStore.getChat(chatId)?.ensemble?.activeRound
-        if (
-          steerAbsorbRound &&
-          midRunSteeringAbsorbEligible({
-            mode: payload?.mode,
-            roundLive: ensembleRoundLiveForSteerAbsorb(chatId, steerAbsorbRound),
-            text: prompt,
-            hasImageAttachments: dispatchImageAttachments.length > 0,
-            hasDmTarget: Boolean(dmTargetParticipantId),
-            hasDiscordContext: discordContextSnapshots.length > 0,
-            hasExternalPathGrants: externalPathGrants.length > 0
-          })
-        ) {
-          const absorbed = ensembleOrchestratorRef?.absorbMidRunSteering({
-            chatId,
-            text: prompt,
-            roundId: steerAbsorbRound.roundId,
-            imageAttachments: dispatchImageAttachments,
-            ...(payload?.imageThumbnails?.length
-              ? { imageThumbnails: payload.imageThumbnails }
-              : {}),
-            ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
-            ...(externalPathGrants.length > 0 ? { externalPathGrants } : {}),
-            ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {})
-          })
-          if (absorbed?.status === 'steered') {
-            // Durability barrier: the absorbed steer row must be persisted
-            // through the Host before this handler reports success.
-            await AppStore.awaitChatRecordPersisted(chatId)
-            return absorbed
-          }
-        }
-        // P1 F6 — Use-next selection is stored on the round runtime and
-        // re-resolved per seat into the Project reference prompt appendix.
-        const ensembleStartResult = ensembleOrchestratorRef?.startRound({
-          chatId,
-          prompt,
-          event,
-          mode: payload?.mode || 'normal',
-          ...(payload?.concurrentMode !== undefined
-            ? {
-                concurrentMode: Boolean(payload.concurrentMode)
-              }
-            : {}),
-          ...(payload?.fanoutPolicy !== undefined ? { fanoutPolicy: payload.fanoutPolicy } : {}),
-          imageAttachments: dispatchImageAttachments,
-          ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
-          ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
-          ...(externalPathGrants.length > 0 ? { externalPathGrants } : {}),
-          ...(projectReferenceContextSelection ? { projectReferenceContextSelection } : {}),
-          ...(rewind ? { rewind } : {})
-        })
-        if (
-          ensembleStartResult?.status === 'started' ||
-          ensembleStartResult?.status === 'steered'
-        ) {
-          // Durability barrier: the round-started record must be persisted
-          // through the Host before this handler reports success.
-          await AppStore.awaitChatRecordPersisted(chatId)
-        }
-        return ensembleStartResult
-      }
+      async (event, payload: RunEnsembleRoundPayload) =>
+        handleRunEnsembleRound(ensembleRoundHandlerDeps(), event, payload)
     )
 
     // ── First-class mid-turn steering (SteeringOrchestrator) ────────────────
@@ -62424,6 +62221,29 @@ if (isGeminiMcpBridgeProcess) {
         return liveSteeringCoordinator.cancel(runId)
       }
     )
+    function ensembleRoundHandlerDeps(): EnsembleRoundHandlerDeps {
+      return {
+        getEnsembleOrchestrator: () => ensembleOrchestratorRef,
+        isEnsembleModeEnabled: () => AppStore.getSettings().ensembleModeEnabled !== false,
+        getChat: (chatId) => AppStore.getChat(chatId),
+        awaitChatRecordPersisted: (chatId) => AppStore.awaitChatRecordPersisted(chatId),
+        requireNonEmptyString: (value, label) => requireNonEmptyString(value, label),
+        assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
+        assertScheduledEnsembleInteractiveAvailable: (chatId) =>
+          assertScheduledEnsembleInteractiveAvailable(chatId),
+        imageAttachmentSnapshots: (value) => imageAttachmentSnapshots(value),
+        resolveRendererAttachmentPaths: (event, rawPaths) =>
+          resolveRendererAttachmentPaths(event, rawPaths),
+        expandPdfAttachmentsForDispatch: <T extends PdfAttachmentLike>(
+          attachments: T[],
+          appChatId: string
+        ) => expandPdfAttachmentsForDispatch(attachments, appChatId),
+        normalizeExternalPathGrants: (grants) => normalizeExternalPathGrants(grants),
+        ensembleRoundLiveForSteerAbsorb: (chatId, round) =>
+          ensembleRoundLiveForSteerAbsorb(chatId, round)
+      }
+    }
+
     function ensembleControlHandlerDeps(): EnsembleControlHandlerDeps {
       return {
         getEnsembleOrchestrator: () => ensembleOrchestratorRef,
