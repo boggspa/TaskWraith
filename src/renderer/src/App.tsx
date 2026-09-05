@@ -740,6 +740,7 @@ import type { CiNotice } from './lib/ciNotice'
 import { githubWatchDisabledReason } from './lib/watchedPrUi'
 import { useWatchedPrController } from './app/hooks/useWatchedPrController'
 import { useEnsembleRosterPresetBridge } from './app/hooks/useEnsembleRosterPresetBridge'
+import { useCollaborationChatIds } from './app/hooks/useCollaborationChatIds'
 import type { AttachedWindowSnapshot, ResumeAppWatchSnapshot } from './app/windowAttachmentState'
 import { attachedWindowFromStatus, stickyAppWatchStashInput } from './app/windowAttachmentState'
 import {
@@ -1335,30 +1336,7 @@ function App(): React.JSX.Element {
       composerDraftState.setDraft(chatId, value),
     []
   )
-  const [collaboratingChatIds, setCollaboratingChatIds] = useState<Set<string>>(new Set())
-  // Full enabled-share list (for the Shares footer popover). Mirrors the Set
-  // above but keeps the participant/mode detail the popover renders.
-  const refreshCollaborationChatIds = useCallback(() => {
-    const channels = window.api.channels
-    if (!channels) return
-    void channels
-      .list()
-      .then((result) => {
-        if (!result.ok) return
-        setCollaboratingChatIds(
-          new Set(
-            result.value
-              .filter((channel) => channel.status === 'active')
-              .map((channel) => channel.chatId)
-          )
-        )
-      })
-      .catch(() => {})
-  }, [])
-  useEffect(() => {
-    refreshCollaborationChatIds()
-    return window.api.channels?.onChanged?.(() => refreshCollaborationChatIds())
-  }, [refreshCollaborationChatIds])
+  const collaboratingChatIds = useCollaborationChatIds()
   const [isRunning, setIsRunning] = useState(false)
   const [queuedRuns, setQueuedRuns] = useState<QueuedRunRequest[]>([])
   const [failedQueuedSteerRunIds, setFailedQueuedSteerRunIds] = useState<Set<string>>(
