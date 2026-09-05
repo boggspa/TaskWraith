@@ -219,7 +219,10 @@ function projectProfileRuns(threads: readonly ProfileThread[]): {
       // shared rule that yields undefined (never '') when there is nothing to
       // say, so an empty summary list stays ABSENT rather than projecting a
       // blank reason a client would render as a dangling separator.
-      const failureReason = hostRunFailureReason(run.warningSummaries)
+      const failureReason =
+        providerOutcome(run.status) === 'failed'
+          ? hostRunFailureReason(run.warningSummaries)
+          : undefined
       return {
         key: `${thread.appChatId.length}:${thread.appChatId}:${run.runId.length}:${run.runId}:${index}`,
         row: {

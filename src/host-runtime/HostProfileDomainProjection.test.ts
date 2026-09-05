@@ -601,7 +601,12 @@ it('projects WHY a run failed, so a client never renders a bare provider:failed'
     // A failed run with nothing to say must project NO reason at all rather
     // than an empty one, or the client renders a dangling separator.
     { runId: 'run-silent', status: 'failed', warningSummaries: [] },
-    { runId: 'run-blank', status: 'failed', warningSummaries: ['   '] }
+    { runId: 'run-blank', status: 'failed', warningSummaries: ['   '] },
+    ...['completed', 'running', 'cancelled'].map((status) => ({
+      runId: `run-warning-${status}`,
+      status,
+      warningSummaries: ['Ignoring an optional plugin icon.']
+    }))
   ]
   writeFileSync(chatFile, JSON.stringify(raw))
   chmodSync(chatFile, 0o600)
@@ -619,6 +624,11 @@ it('projects WHY a run failed, so a client never renders a bare provider:failed'
   )
   expect(donor.runs.find((run) => run.runId === 'run-silent')?.failureReason).toBeUndefined()
   expect(donor.runs.find((run) => run.runId === 'run-blank')?.failureReason).toBeUndefined()
+  for (const status of ['completed', 'running', 'cancelled']) {
+    const run = donor.runs.find((run) => run.runId === `run-warning-${status}`)
+    expect(run?.providerOutcome).toBe(status)
+    expect(run).not.toHaveProperty('failureReason')
+  }
   // The remaining two hops are pinned where they live: the allowlist hop in
   // HostSnapshotProjector.test.ts and the wire hop in hostProtocol.test.ts.
   // Decoding a donor here would only assert that a donor lacks a protocol
