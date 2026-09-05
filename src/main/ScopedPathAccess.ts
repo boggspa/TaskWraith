@@ -8,6 +8,14 @@ import {
   type FileHandle
 } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import {
+  assertSharedWorkspaceReadCurrent,
+  rememberSharedWorkspaceRead,
+  rememberSharedWorkspaceMissing,
+  rememberSharedWorkspaceWrite,
+  sharedWorkspaceFileVersion,
+  SharedWorkspaceStaleReadError
+} from './sharedWorkspace/SharedWorkspaceSession'
 
 import {
   readBoundedLineWindowHandle,
@@ -85,7 +93,7 @@ export async function readScopedRegularFile(
   const directorySnapshot = await snapshotDirectoryChain(rootPath, dirname(targetPath))
   await runTestHook('after_directory_snapshot')
 
-  const pathStat = await requireRegularTarget(targetPath)
+  const pathStat = await requireReadTarget(targetPath)
   const fileHandle = await openNoFollow(targetPath, constants.O_RDONLY)
   try {
     const openedStat = await requireOpenedTarget(
@@ -103,6 +111,7 @@ export async function readScopedRegularFile(
     })
     await assertDirectoryChainStable(directorySnapshot)
     await assertPathMatchesOpenedFile(targetPath, openedStat)
+    rememberSharedWorkspaceRead(targetPath, openedStat, await fileHandle.stat({ bigint: true }), buffer)
     return { buffer, stat: openedStat }
   } finally {
     await fileHandle.close()
@@ -132,7 +141,7 @@ export async function readScopedRegularFileLineWindow(
   const directorySnapshot = await snapshotDirectoryChain(rootPath, dirname(targetPath))
   await runTestHook('after_directory_snapshot')
 
-  const pathStat = await requireRegularTarget(targetPath)
+  const pathStat = await requireReadTarget(targetPath)
   const fileHandle = await openNoFollow(targetPath, constants.O_RDONLY)
   try {
     const openedStat = await requireOpenedTarget(
@@ -151,6 +160,9 @@ export async function readScopedRegularFileLineWindow(
     })
     await assertDirectoryChainStable(directorySnapshot)
     await assertPathMatchesOpenedFile(targetPath, openedStat)
+    if (!result.truncated) {
+      rememberSharedWorkspaceRead(targetPath, openedStat, await fileHandle.stat({ bigint: true }))
+    }
     return result
   } finally {
     await fileHandle.close()
@@ -224,6 +236,7 @@ export async function updateScopedUtf8File(
       sizeLimitErrorMessage: `File exceeds the ${options.maxBytes}-byte edit limit.`
     })
     assertUtf8Text(previousBuffer)
+    assertSharedWorkspaceReadCurrent(targetPath, openedStat, previousBuffer)
     const previousContent = previousBuffer.toString('utf8')
     const content = options.update(previousContent)
     const nextBuffer = encodeUtf8Text(content, options.maxBytes)
@@ -232,6 +245,16 @@ export async function updateScopedUtf8File(
     await assertDirectoryChainStable(directorySnapshot)
     await assertPathMatchesOpenedFile(targetPath, openedStat)
     await options.beforeCommit?.()
+
+    // A peer or native editor may have changed the same inode during approval
+    // or an awaited callback. Verify before truncation; recovery must never
+    // restore our old bytes over a change detected before we wrote anything.
+    if (
+      sharedWorkspaceFileVersion(openedStat) !==
+      sharedWorkspaceFileVersion(await fileHandle.stat({ bigint: true }))
+    ) {
+      throw new SharedWorkspaceStaleReadError(targetPath)
+    }
 
     try {
       await fileHandle.truncate(0)
@@ -243,6 +266,7 @@ export async function updateScopedUtf8File(
       assertSameIdentity(openedStat, savedStat)
       await assertDirectoryChainStable(directorySnapshot)
       await assertPathMatchesOpenedFile(targetPath, savedStat)
+      rememberSharedWorkspaceWrite(targetPath, savedStat, nextBuffer)
       return { content, previousContent, stat: savedStat }
     } catch (error) {
       // A truncate-plus-write sequence is not atomic. If the write or its
@@ -293,6 +317,8 @@ export async function writeScopedUtf8FileWithLegacyCreate(
     if (!(error instanceof ScopedPathTargetMissingError)) throw error
   }
 
+  assertSharedWorkspaceReadCurrent(authority.targetPath, null)
+
   const { rootPath, targetPath } = await normalizePlannedAuthority(authority)
   const targetDirectory = dirname(targetPath)
   const mutationAuthorized = await ensurePlannedDirectoryChain(
@@ -326,6 +352,7 @@ export async function writeScopedUtf8FileWithLegacyCreate(
       assertSameIdentity(openedStat, createdStat)
       await assertDirectoryChainStable(directorySnapshot)
       await assertPathMatchesOpenedFile(targetPath, createdStat)
+      rememberSharedWorkspaceWrite(targetPath, createdStat, contentBuffer)
       return { content: options.content, created: true, stat: createdStat }
     } catch (error) {
       try {
@@ -338,6 +365,15 @@ export async function writeScopedUtf8FileWithLegacyCreate(
     }
   } finally {
     await fileHandle.close()
+  }
+}
+
+async function requireReadTarget(targetPath: string): Promise<BigIntStats> {
+  try {
+    return await requireRegularTarget(targetPath)
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') rememberSharedWorkspaceMissing(targetPath)
+    throw error
   }
 }
 

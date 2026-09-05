@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import { bindSharedWorkspaceActor } from './sharedWorkspace/SharedWorkspaceSession'
 
 import { resolveToolDispatchContractStrict } from '../shared/providerActionTaxonomy'
 import type { ChatScope, EnsembleRunIdentity, ProviderId } from './store/types'
@@ -180,6 +181,7 @@ export class WorkspaceLockMcpAdmissionCoordinator {
   async admit<Context extends WorkspaceLockMcpAdmissionContext = WorkspaceLockMcpAdmissionContext>(
     input: WorkspaceLockMcpAdmissionInput<Context>
   ): Promise<WorkspaceLockMcpAdmission> {
+    bindSharedWorkspaceActor(input.context, input.provider, input.toolName)
     const contract = resolveToolDispatchContractStrict(input.toolName, input.args)
     if (!contract.ok) {
       return this.denied(input.toolName, contract.reason, {
@@ -386,6 +388,7 @@ export class WorkspaceLockMcpAdmissionCoordinator {
       })
     }
 
+    bindSharedWorkspaceActor(input.context, input.provider, input.toolName, acquired.owner.lockOwnerId)
     return {
       ok: true,
       owner: acquired.claims.length ? acquired.owner : undefined,
