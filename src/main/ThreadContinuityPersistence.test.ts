@@ -40,6 +40,32 @@ function withCheckpoint(chat: ChatRecord): ChatRecord {
 }
 
 describe('checkpoint persistence boundaries', () => {
+  it('protects actual adapter receipts from stale or forged renderer snapshots', () => {
+    const initial = {
+      ...fixture(),
+      runs: [
+        {
+          runId: 'r',
+          provider: 'codex' as const,
+          startedAt: '2026-09-05T12:00:00Z',
+          status: 'running'
+        }
+      ]
+    }
+    const first = AppStore.saveChat(initial)
+    const receipt = { key: 'observed', seatId: '__solo__', revision: 1 }
+    const received = AppStore.saveChat(
+      { ...first, runs: [{ ...first.runs[0], continuityCheckpointDelivery: receipt }] },
+      { authoritativeContinuityDelivery: true }
+    )
+    expect(AppStore.saveChat(first).runs[0].continuityCheckpointDelivery).toEqual(receipt)
+    expect(
+      AppStore.saveChat({
+        ...received,
+        runs: [{ ...received.runs[0], continuityCheckpointDelivery: { ...receipt, key: 'forged' } }]
+      }).runs[0].continuityCheckpointDelivery
+    ).toEqual(receipt)
+  })
   beforeEach(() => {
     fs.rmSync(userDataPath, { recursive: true, force: true })
     fs.mkdirSync(userDataPath, { recursive: true })

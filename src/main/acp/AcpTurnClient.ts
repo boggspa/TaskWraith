@@ -158,7 +158,7 @@ export interface AcpTurnOptions {
    * Evidence only: never awaited, and a throwing hook must not affect the
    * turn (calls are wrapped).
    */
-  onWirePrompt?: (text: string) => void
+  onWirePrompt?: (text: string, selected?: { sessionId: string; kind: 'initial' | 'retry' | 'steer' }) => void
   /**
    * Optional provider adapter for live-steer continuity. Some ACP servers roll
    * a cancelled prompt's partial assistant output out of native history. The
@@ -924,7 +924,8 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
 
   const sendPrompt = (
     text: string,
-    images: readonly AcpPromptImageContent[] = []
+    images: readonly AcpPromptImageContent[] = [],
+    kind: 'initial' | 'retry' | 'steer' = 'initial'
   ): number | null => {
     if (cancelRequested || closed || stdinClosed) return null
     deniedPromptRpcId = null
@@ -950,7 +951,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     activePromptAssistantTextWasTruncated = false
     if (options.onWirePrompt) {
       try {
-        options.onWirePrompt(text)
+        options.onWirePrompt(text, { sessionId, kind })
       } catch {
         // Evidence only — a capture failure must never affect the turn.
       }
@@ -1061,7 +1062,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         // A continuity aid must never lose an accepted steering instruction.
       }
     }
-    const promptRpcId = sendPrompt(followUpPrompt, pending.images)
+    const promptRpcId = sendPrompt(followUpPrompt, pending.images, 'steer')
     if (promptRpcId === null) {
       settlePendingSteerRejection(
         pending,
@@ -1132,7 +1133,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       () => {
         transientRetryTimer = null
         if (cancelRequested || closed || stdinClosed || turnComplete) return
-        const retryPromptRpcId = sendPrompt(retryText, retryImages)
+        const retryPromptRpcId = sendPrompt(retryText, retryImages, 'retry')
         if (activeSteerDelivery && retryPromptRpcId !== null) {
           activeSteerDelivery = { ...activeSteerDelivery, promptRpcId: retryPromptRpcId }
         }

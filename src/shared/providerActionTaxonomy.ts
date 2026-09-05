@@ -2424,9 +2424,30 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'host-state',
     'host-resource'
   ),
-  tw_history_search: tool('orchestration', 'mcpTools', 'control.read', 'thread-continuity', 'none', 'none'),
-  tw_history_read: tool('orchestration', 'mcpTools', 'control.read', 'thread-continuity', 'none', 'none'),
-  tw_checkpoint: tool('orchestration', 'mcpTools', 'control.mutate', 'thread-continuity', 'host-state', 'host-resource'),
+  tw_history_search: tool(
+    'orchestration',
+    'mcpTools',
+    'control.read',
+    'thread-continuity',
+    'none',
+    'none'
+  ),
+  tw_history_read: tool(
+    'orchestration',
+    'mcpTools',
+    'control.read',
+    'thread-continuity',
+    'none',
+    'none'
+  ),
+  tw_checkpoint: tool(
+    'orchestration',
+    'mcpTools',
+    'control.mutate',
+    'thread-continuity',
+    'host-state',
+    'host-resource'
+  ),
   tw_recall_find: tool(
     'orchestration',
     'crossThreadRead',

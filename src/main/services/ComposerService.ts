@@ -824,6 +824,8 @@ export class ComposerService {
     const ultraTaskDetectionEffort = promptUltraTaskSelection ? 'ultratask' : null
     const promptInput = {
       provider,
+      continuityChat: chat,
+      continuityIsolated: contextIsolated,
       verbatimPrompt: input.verbatimPrompt === true,
       contextCompactionSummary: chat.contextCompactionSummary || null,
       finalPrompt: contextualFinalPrompt,

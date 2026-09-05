@@ -1024,6 +1024,9 @@ describe('catalogue reachability', () => {
       ...GATEWAY_SOLO_V3_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_SOLO_V3_MCP_HIDDEN_TOOL_NAMES
     ])
+    for (const profile of ['taskwraith-gateway-v20', 'taskwraith-gateway-v20-mesh', 'taskwraith-gateway-solo-v4'] as const) {
+      for (const name of [...taskWraithGatewayDirectToolNamesForProfile(profile), ...taskWraithGatewayHiddenToolNamesForProfile(profile)]) reachable.add(name)
+    }
     const orphans = (TASKWRAITH_MCP_TOOLS as readonly string[]).filter(
       (name) => !reachable.has(name)
     )

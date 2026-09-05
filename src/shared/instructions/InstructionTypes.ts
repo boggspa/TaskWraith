@@ -132,6 +132,8 @@ export interface ResolvedInstructionContext {
 
 /** Envelope layer identifiers, in top-to-bottom composed-prompt order. */
 export type PromptEnvelopeLayerId =
+  | 'continuity_checkpoint'
+  | 'continuity_tools'
   | 'simulator_canvas_hint'
   | 'emulator_canvas_hint'
   | 'browser_canvas_hint'
@@ -159,6 +161,8 @@ export type PromptEnvelopeLayerId =
 export type PromptEnvelopeLayerState = 'applied' | 'skipped' | 'inherited' | 'opaque' | 'redacted'
 
 export interface PromptEnvelopeLayerSnapshot {
+  /** Diagnostic only; actual checkpoint receipts are recorded at adapter invocation. */
+  deliveryKey?: string
   id: PromptEnvelopeLayerId
   label: string
   state: PromptEnvelopeLayerState

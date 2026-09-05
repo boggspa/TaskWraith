@@ -1,3 +1,4 @@
+import { planPromptContinuity } from './continuity/ContinuityPrompt'
 import { resolveOllamaContextBudget } from './ollama/OllamaContextBudget'
 import {
   formatOllamaSessionMemoryForPrompt,
@@ -14,6 +15,7 @@ import { grokAcpEnabled } from './grokGate'
 import type {
   ActiveGoal,
   ChatMessage,
+  ChatRecord,
   NativeSubAgentRequestPolicy,
   ProviderId,
   TaskWraithMcpProfileId
@@ -1352,6 +1354,9 @@ function orderEnvelopeLayers(layers: PromptEnvelopeLayerSnapshot[]): PromptEnvel
 // ============================================================================
 
 export interface ComposeRunPromptInput {
+  continuityChat?: Pick<ChatRecord, 'appChatId' | 'messages' | 'runs' | 'continuityCheckpoints'>
+  continuityIsolated?: boolean
+
   provider: ProviderId
   /** The user's typed prompt (already merged with any pre-existing attachments). */
   finalPrompt: string
@@ -1576,6 +1581,33 @@ export interface ComposeRunPromptResult {
  * the input shape, and side-effecting bookkeeping is returned as data. */
 export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPromptResult {
   const result = composeRunPromptCore(input)
+  if (!input.verbatimPrompt && !input.continuityIsolated && input.taskWraithMcpAdvertised !== false &&
+      !input.resumeSessionId && ['taskwraith-gateway-v20', 'taskwraith-gateway-v20-mesh', 'taskwraith-gateway-solo-v4'].includes(input.taskWraithMcpProfileId || '')) {
+    const hint = 'For long tasks, use capability_search when listed to discover private task checkpoints and selective history reads. Keep raw tool output in history.'
+    result.contextualPrompt = `${hint}\n\n${result.contextualPrompt}`
+    result.envelopeLayers.unshift({ id: 'continuity_tools', label: 'Task history tool discovery', state: 'applied', content: hint })
+  }
+  if (input.continuityChat && !input.verbatimPrompt) {
+    const continuity = planPromptContinuity({
+      chat: input.continuityChat,
+      provider: input.provider,
+      providerSessionId: input.resumeSessionId,
+      nativeSessionResume: input.nativeSessionResume,
+      profileId: input.taskWraithMcpProfileId,
+      mcpAdvertised: input.taskWraithMcpAdvertised,
+      isolated: input.continuityIsolated
+    })
+    if (continuity.action === 'deliver') {
+      result.contextualPrompt = `${continuity.block}\n\n${result.contextualPrompt}`
+      result.envelopeLayers.unshift({
+        id: 'continuity_checkpoint',
+        label: 'Private task checkpoint',
+        state: 'applied',
+        deliveryKey: continuity.delivery.key,
+        content: continuity.block
+      })
+    }
+  }
   // Peer thread messages are acknowledged on the strength of `threadMessageIdsApplied`,
   // so that field must mean "these bodies are in the prompt being returned" — not
   // "we intended to inject them". The block is rebuilt here and matched against the

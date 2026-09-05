@@ -1,4 +1,4 @@
-import type { ChatRecord, ProviderId } from '../main/store/types'
+import type { ChatRecord, ChatRun, ProviderId } from '../main/store/types'
 
 export const SOLO_CONTINUITY_SEAT = '__solo__'
 export const CONTINUITY_TEXT_MAX_CHARS = 1_600
@@ -27,6 +27,26 @@ export interface ContinuityDelivery {
   key: string
   seatId: string
   revision: number
+  sourceId?: string
+  provider?: ProviderId
+  providerSessionId?: string | null
+  boundaryId?: string
+  observedAt?: string
+}
+
+/** Renderer round-trips cannot mint or erase main-owned adapter receipts. */
+export function preserveContinuityRunReceipts(
+  runs: readonly ChatRun[],
+  previous: readonly ChatRun[],
+  authoritative = false
+): ChatRun[] {
+  const prior = new Map(previous.map((run) => [run.runId, run.continuityCheckpointDelivery]))
+  return runs.map((run) => {
+    const receipt = authoritative ? run.continuityCheckpointDelivery : prior.get(run.runId)
+    if (receipt === run.continuityCheckpointDelivery) return run
+    const { continuityCheckpointDelivery: _untrusted, ...rest } = run
+    return receipt ? { ...rest, continuityCheckpointDelivery: receipt } : rest
+  })
 }
 
 export function readSeatCheckpoint(

@@ -36,6 +36,9 @@ import {
   TASKWRAITH_GATEWAY_V17_MESH_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V18_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V18_MESH_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V20_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V20_MESH_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_SOLO_V4_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID,
@@ -80,7 +83,7 @@ describe('resolveTaskWraithMcpProfile', () => {
         profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
         source: 'fresh_gateway_default'
       })
-      expect(TASKWRAITH_GATEWAY_MCP_PROFILE_ID).toBe(TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID)
+      expect(TASKWRAITH_GATEWAY_MCP_PROFILE_ID).toBe(TASKWRAITH_GATEWAY_V20_MCP_PROFILE_ID)
     }
   })
 
@@ -107,12 +110,12 @@ describe('resolveTaskWraithMcpProfile', () => {
     ]) {
       expect(isTaskWraithMcpProfileId(profileId)).toBe(true)
     }
-    expect(TASKWRAITH_GATEWAY_MCP_PROFILE_ID).toBe(TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID)
+    expect(TASKWRAITH_GATEWAY_MCP_PROFILE_ID).toBe(TASKWRAITH_GATEWAY_V20_MCP_PROFILE_ID)
     expect(TASKWRAITH_FRESH_GATEWAY_MESH_MCP_PROFILE_ID).toBe(
-      TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID
+      TASKWRAITH_GATEWAY_V20_MESH_MCP_PROFILE_ID
     )
     expect(TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID).toBe(
-      TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID
+      TASKWRAITH_GATEWAY_SOLO_V4_MCP_PROFILE_ID
     )
     expect(
       resolveTaskWraithMcpProfile({
@@ -154,12 +157,12 @@ describe('resolveTaskWraithMcpProfile', () => {
           meshCanvasParticipantCanRequest: true
         })
       ).toEqual({
-        profileId: TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID,
+        profileId: TASKWRAITH_GATEWAY_SOLO_V4_MCP_PROFILE_ID,
         source: 'fresh_solo_gateway_default'
       })
     }
     expect(TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID).toBe(
-      TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID
+      TASKWRAITH_GATEWAY_SOLO_V4_MCP_PROFILE_ID
     )
   })
 
@@ -350,7 +353,7 @@ describe('resolveTaskWraithMcpProfile', () => {
         meshCanvasParticipantCanRequest: true
       })
     ).toEqual({
-      profileId: TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID,
+      profileId: TASKWRAITH_GATEWAY_V20_MESH_MCP_PROFILE_ID,
       source: 'fresh_gateway_mesh_participant'
     })
     expect(
@@ -359,7 +362,7 @@ describe('resolveTaskWraithMcpProfile', () => {
         meshCanvasParticipantCanRequest: false
       })
     ).toEqual({
-      profileId: TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID,
+      profileId: TASKWRAITH_GATEWAY_V20_MCP_PROFILE_ID,
       source: 'fresh_gateway_default'
     })
     expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID)).toBe(

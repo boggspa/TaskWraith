@@ -9,6 +9,27 @@ import {
 afterEach(() => configureWirePromptCapture(null))
 
 describe('emitWirePromptCapture', () => {
+  it('observes the selected prompt even when raw storage is off and isolates observer failure', () => {
+    const appendForRoute = vi.fn()
+    const onSelectedPrompt = vi.fn(() => {
+      throw new Error('optional receipt failure')
+    })
+    configureWirePromptCapture({ appendForRoute, onSelectedPrompt, storeContent: () => false })
+    emitWirePromptCapture({
+      appRunId: 'r',
+      appChatId: 'chat',
+      provider: 'codex',
+      providerSessionId: 'native',
+      transport: 'codex-app-server',
+      part: 'user',
+      text: 'selected fallback'
+    })
+    expect(onSelectedPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'selected fallback', providerSessionId: 'native' })
+    )
+    expect(appendForRoute).toHaveBeenCalledOnce()
+    expect(appendForRoute.mock.calls[0][3].content).toBeUndefined()
+  })
   it('appends a metadata-only lifecycle payload when raw-event storage is off', () => {
     const appendForRoute = vi.fn()
     configureWirePromptCapture({ appendForRoute, storeContent: () => false })

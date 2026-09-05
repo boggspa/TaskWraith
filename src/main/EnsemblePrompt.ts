@@ -1,3 +1,4 @@
+import { planPromptContinuity } from './continuity/ContinuityPrompt'
 import type {
   ActiveGoal,
   ChatMessage,
@@ -135,6 +136,8 @@ import { buildSkillDiscoveryBlock, type SkillDiscoveryEntry } from './skills/Ski
 export { MAX_ENSEMBLE_PARTICIPANTS }
 
 export interface BuildEnsemblePromptInput {
+  /** This projection seeds a fresh provider context after native resume fails. */
+  continuityColdStart?: boolean
   chat: ChatRecord
   config: EnsembleConfig
   participant: EnsembleParticipant
@@ -1415,6 +1418,21 @@ export function buildEnsembleParticipantPromptProjection(
       }
     : input
 
+  const continuity = planPromptContinuity({
+    chat: input.chat,
+    seatId: input.participant.id,
+    provider: input.participant.provider,
+    providerSessionId: input.continuityColdStart
+      ? undefined
+      : input.participant.linkedProviderSessionId,
+    nativeSessionResume: !input.continuityColdStart && input.participant.kimiAcpNativeSession,
+    // A persisted catalogue is not proof that this transport's broker is active.
+    // The native tool catalogues already describe retrieval; capsules never invent tools.
+    mcpAdvertised: false,
+    isolated: input.chatContextTurns === 0
+  })
+  const continuityCheckpoint = continuity.action === 'deliver' ? continuity.block : undefined
+
   // Ollama locals get a request-first capsule instead of the full Rules
   // encyclopaedia — small models bury the ask under Boss/fan-out prose and
   // then invent peers from workspace fixture markdown.
@@ -1436,6 +1454,7 @@ export function buildEnsembleParticipantPromptProjection(
       : 'Use the normal panel rotation and do not invent an unavailable orchestration tool.'
     const capsuleProjection = buildOllamaEnsemblePromptCapsuleProjection(
       {
+        continuityCheckpoint,
         participantLabel,
         modelLabel: input.participant.model || selfModelLabel,
         selfToken,
@@ -1498,6 +1517,7 @@ export function buildEnsembleParticipantPromptProjection(
       : 'Use the normal panel rotation and do not invent an unavailable orchestration tool.'
     const capsuleProjection = buildAntigravityOfficialAgyPromptCapsuleProjection(
       {
+        continuityCheckpoint,
         participantLabel,
         roundId: input.roundId,
         stageRole: input.participant.stageRole,
@@ -1628,11 +1648,16 @@ export function buildEnsembleParticipantPromptProjection(
       '',
       `Respond now as [${participantLabel}].`
     ].join('\n')
-    return participantPromptProjection(prompt, deltaTranscriptProjection, projectionInput)
+    return participantPromptProjection(
+      continuityCheckpoint ? `${continuityCheckpoint}\n\n${prompt}` : prompt,
+      deltaTranscriptProjection,
+      projectionInput
+    )
   }
 
   const prompt = [
     'TaskWraith Ensemble Mode',
+    ...(input.participant.provider !== 'pi' ? ['For long tasks, use capability_search when listed to discover private task checkpoints and selective history reads. Keep raw tool output in history.'] : []),
     '',
     activeConcurrentMode
       ? `You are ${participantLabel} in an Ensemble round with parallel fan-out lanes. Multiple participants may run at the same time.`
@@ -1941,7 +1966,11 @@ export function buildEnsembleParticipantPromptProjection(
     '',
     `Respond now as [${participantLabel}].`
   ].join('\n')
-  return participantPromptProjection(prompt, transcriptProjection, projectionInput)
+  return participantPromptProjection(
+    continuityCheckpoint ? `${continuityCheckpoint}\n\n${prompt}` : prompt,
+    transcriptProjection,
+    projectionInput
+  )
 }
 
 /**

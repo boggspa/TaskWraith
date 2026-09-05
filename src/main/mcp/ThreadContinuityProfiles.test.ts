@@ -27,7 +27,7 @@ describe('continuity tool profile boundaries', () => {
       'taskwraith-gateway-solo-v4'
     ] as const) {
       expect(isTaskWraithMcpProfileId(current)).toBe(true)
-      expect(taskWraithGatewayDirectToolNamesForProfile(current)).toContain('tw_checkpoint')
+      expect(taskWraithGatewayHiddenToolNamesForProfile(current)).toContain('tw_checkpoint')
       expect(taskWraithGatewayHiddenToolNamesForProfile(current)).toEqual(
         expect.arrayContaining(['tw_history_search', 'tw_history_read'])
       )

@@ -83,7 +83,10 @@ export interface KimiAcpRunOptions {
     fallbackFromResume: boolean
   }) => void
   /** Wire-prompt observation hook — see AcpTurnOptions.onWirePrompt. */
-  onWirePrompt?: (text: string) => void
+  onWirePrompt?: (
+    text: string,
+    selected?: { sessionId: string; kind: 'initial' | 'retry' | 'steer' }
+  ) => void
 }
 
 export type KimiAcpRunHandle = AcpTurnHandle

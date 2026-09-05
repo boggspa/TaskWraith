@@ -4,7 +4,8 @@
 import './devAppName'
 import {
   createThreadContinuityHostTools,
-  isThreadContinuityToolName
+  isThreadContinuityToolName,
+  withDelegatedCheckpoint
 } from './continuity/ThreadContinuityHostAdapter'
 import {
   devInstanceRelayPortOffset,
@@ -1537,7 +1538,7 @@ import {
   createInstructionsSubsystem,
   getInstructionsSubsystem
 } from './instructions/registerInstructionsSubsystem'
-import { configureWirePromptCapture, emitWirePromptCapture } from './run/WirePromptEvents'
+import { configureWirePromptCapture, emitWirePromptCapture, emitCodexWirePrompt } from './run/WirePromptEvents'
 import {
   resolveRunSkillHookContext,
   setRunSkillHookHostDepsBuilder
@@ -6440,7 +6441,7 @@ const threadMessageToolExecutors = createThreadMessageToolExecutors({
 const threadContinuityTools = createThreadContinuityHostTools({
   isIsolatedRun: (runId) =>
     executionGraphOwnsAttemptRunId(runId) || channelAgentRunIsolationRegistry.isRunIsolated(runId),
-  saveCheckpoint: (chat) => saveAndBroadcastChat(chat, { authoritativeContinuityCheckpoints: true })
+  saveCheckpoint: (chat) => saveAndBroadcastChat(chat, { authoritativeContinuityCheckpoints: true, authoritativeContinuityDelivery: true })
 })
 
 const recallToolExecutors = createRecallToolExecutors({
@@ -11830,7 +11831,7 @@ async function composeDelegatedProviderPrompts(args: {
     (args.provider === 'kimi' && !kimiNativeSessionResume) ||
     (args.provider === 'grok' && grokAcpEnabled())
   if (!needsHostTranscriptInjection && !kimiNativeSessionResume) {
-    return { prompt: args.prompt }
+    return { prompt: withDelegatedCheckpoint(args) }
   }
   const settings = AppStore.getSettings()
   const taskWraithMcpAdvertised =
@@ -11868,6 +11869,7 @@ async function composeDelegatedProviderPrompts(args: {
     ) ?? null
   const promptInput = {
     provider: args.provider,
+    continuityChat: args.subThread,
     finalPrompt: args.prompt,
     messages: args.subThread.messages || [],
     chatContextTurns: settings.chatContextTurns,
@@ -21972,6 +21974,7 @@ async function tryRunClaudeSdk(
         transport: 'claude-sdk',
         part: payload.imagePaths?.length ? 'user (image message stream)' : 'user',
         text: claudeDispatchPrompt(payload),
+        providerSessionId: payload.providerSessionId || null,
         transforms: [
           'session-vs-recovery prompt selection (claudeDispatchPrompt)',
           ...(payload.imagePaths?.length ? ['base64 image content blocks appended'] : [])
@@ -22439,6 +22442,7 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     transport: 'claude-cli',
     part: 'argv',
     text: claudeDispatchPrompt(payload),
+    providerSessionId: payload.providerSessionId || null,
     transforms: ['session-vs-recovery prompt selection (claudeDispatchPrompt)']
   })
   const buildBaseArgs = (): string[] => [
@@ -26754,12 +26758,14 @@ async function runKimiAcpProvider(
             // every session/prompt write (initial, recovery, steers).
             onWirePrompt: (() => {
               let attempt = 0
-              return (text: string): void => {
+              return (text: string, selected?: { sessionId: string; kind: 'initial' | 'retry' | 'steer' }): void => {
                 attempt += 1
                 emitWirePromptCapture({
                   appRunId: route.appRunId,
                   appChatId: route.appChatId,
                   provider: 'kimi',
+                  providerSessionId: selected?.sessionId,
+                  promptKind: selected?.kind,
                   transport: 'kimi-acp',
                   part: 'session/prompt',
                   text,
@@ -34088,6 +34094,7 @@ async function runCodexAppServerWithClient(
       await turnOperation
       return
     }
+    emitCodexWirePrompt(route, threadId, payload.prompt)
     const turnStartResult = await client.request(
       'turn/start',
       buildCodexTurnStartRequest(
@@ -51713,6 +51720,7 @@ if (isGeminiMcpBridgeProcess) {
           })
           const bridgePromptInput = {
             provider,
+            continuityChat: chat,
             finalPrompt: providerPrompt,
             messages: priorMessages,
             chatContextTurns: bridgeSettings.chatContextTurns,
@@ -56422,6 +56430,7 @@ if (isGeminiMcpBridgeProcess) {
     // lifecycle/control events; content is included only while raw-event
     // storage is on (same privacy split as the composed prompt envelope).
     configureWirePromptCapture({
+      onSelectedPrompt: threadContinuityTools.recordSelectedPrompt,
       appendForRoute: (provider, route, summary, payload) =>
         appendDurableRunEventForRoute(provider, route, 'lifecycle', 'control', summary, payload),
       storeContent: () => AppStore.getSettings().storeRawEvents === true

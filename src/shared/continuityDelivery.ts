@@ -88,7 +88,6 @@ const SUCCESSFUL_DELIVERY_STATUSES = new Set([
 ])
 
 const PROMPT_TOOL_NAME = /^[a-zA-Z0-9_.:-]{1,96}$/
-const CHECKPOINT_LAYER_ID = 'continuity_checkpoint'
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -223,6 +222,21 @@ export function continuityDeliveryKey(input: {
   return `continuity-v1:${stableFingerprint(source)}`
 }
 
+/** Identifies the exact saved note independently of a later native-session choice. */
+export function continuityCheckpointSourceId(checkpoint: SeatContinuityCheckpoint): string {
+  return `checkpoint-v1:${stableFingerprint(
+    JSON.stringify([
+      checkpoint.chatId,
+      checkpoint.seatId,
+      checkpoint.revision,
+      checkpoint.updatedAt,
+      checkpoint.text,
+      checkpoint.references,
+      checkpoint.cleared === true
+    ])
+  )}`
+}
+
 function displayIdentity(value: string, maxCodePoints = 160): string {
   const codePoints = Array.from(value)
   return JSON.stringify(
@@ -273,14 +287,14 @@ export function formatContinuityCheckpointBlock(
   const prefix = [
     '<taskwraith_private_continuity_checkpoint>',
     'Private, seat-authored, and provisional. Use this for orientation only; the current user request and original evidence take precedence.',
-    `Seat: ${displayIdentity(checkpoint.seatId, 96)} · revision ${checkpoint.revision} · updated ${checkpoint.updatedAt}`,
+    `Source: ${continuityCheckpointSourceId(checkpoint)}`,
     cleared
       ? 'Status: cleared. Disregard any earlier TaskWraith continuity checkpoint for this seat.'
       : 'Checkpoint text (quoted JSON string):'
   ]
   const suffix = [
     ...promptToolHints(tools),
-    'Delivery point: this host-authored turn after the observed context boundary.',
+    'This record is supplied on a host-authored turn; provider compaction runs independently.',
     '</taskwraith_private_continuity_checkpoint>'
   ]
   if (cleared) {
@@ -372,20 +386,7 @@ function runCarriesDelivery(run: ChatRun, delivery: ContinuityDelivery): boolean
   ) {
     return true
   }
-  return Boolean(
-    run.promptEnvelope?.layers?.some((layer) => {
-      const candidate = layer as unknown as {
-        id?: unknown
-        state?: unknown
-        deliveryKey?: unknown
-      }
-      return (
-        candidate.id === CHECKPOINT_LAYER_ID &&
-        candidate.state === 'applied' &&
-        candidate.deliveryKey === delivery.key
-      )
-    })
-  )
+  return false
 }
 
 function authorRunKnowsCheckpoint(input: {
@@ -433,6 +434,19 @@ function hasSuccessfulDelivery(input: {
     : Number.NEGATIVE_INFINITY
   const requiredStart = Math.max(checkpointAt, boundaryAt)
   return input.runs.some((run) => {
+    const observed = run.continuityCheckpointDelivery
+    if (
+      observed?.sourceId === continuityCheckpointSourceId(input.checkpoint) &&
+      observed.seatId === input.delivery.seatId &&
+      observed.revision === input.delivery.revision &&
+      observed.provider === input.provider &&
+      observed.boundaryId === input.boundary?.messageId &&
+      (!observed.providerSessionId || observed.providerSessionId === input.providerSessionId) &&
+      successfulRun(run) &&
+      exactNativeRunContext(run, input.provider, input.providerSessionId)
+    ) {
+      return true
+    }
     if (
       !successfulRun(run) ||
       !exactNativeRunContext(run, input.provider, input.providerSessionId) ||

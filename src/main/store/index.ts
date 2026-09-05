@@ -1,3 +1,4 @@
+import { preserveContinuityRunReceipts } from '../../shared/threadContinuity'
 import * as fs from 'fs'
 import * as path from 'path'
 import { createInterface } from 'readline'
@@ -4945,6 +4946,8 @@ function shadowWorkspaceBoardMissionFacts(
 export interface ChatSaveOptions {
   /** Trusted main-process checkpoint update; renderer saves cannot set this. */
   authoritativeContinuityCheckpoints?: boolean
+  /** Main adapter-observation callback only. */
+  authoritativeContinuityDelivery?: boolean
   /** Exact message operations authored by a trusted main-process producer. */
   authoredTranscript?: AuthoredChatTranscriptMutation
 }
@@ -7649,6 +7652,7 @@ export class AppStore {
     } = chat
     const chatWithMainOwnedFields: ChatRecord = {
       ...rendererOwnedChat,
+      runs: preserveContinuityRunReceipts(chat.runs || [], previousChatForFeedback?.runs || [], options.authoritativeContinuityDelivery),
       continuityCheckpoints: options.authoritativeContinuityCheckpoints
         ? chat.continuityCheckpoints
         : previousChatForFeedback?.continuityCheckpoints,
@@ -7807,6 +7811,7 @@ export class AppStore {
         : rendererMessages
     const chatWithMainOwnedFields: ChatRecord = {
       ...rendererOwnedChat,
+      runs: preserveContinuityRunReceipts(chat.runs || [], previousChatForFeedback?.runs || [], options.authoritativeContinuityDelivery),
       continuityCheckpoints: options.authoritativeContinuityCheckpoints
         ? chat.continuityCheckpoints
         : previousChatForFeedback?.continuityCheckpoints,
