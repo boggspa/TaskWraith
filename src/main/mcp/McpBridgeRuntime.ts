@@ -1,5 +1,4 @@
 import type { ChildProcess } from 'child_process'
-import { withSharedWorkspaceOperation } from '../sharedWorkspace/SharedWorkspaceSession'
 import { mcpBrokerRequestTimeoutMsFor } from './McpBrokerTimeouts'
 import { spawn } from 'child_process'
 import { randomBytes, timingSafeEqual } from 'crypto'
@@ -2943,16 +2942,14 @@ export class McpBridgeRuntime {
         : {}),
       ...(piCredential ? { fixedToolAllowlist: [...piCredential.allowedTools] } : {})
     }
-    const result = await withSharedWorkspaceOperation(() =>
-      this.deps.executeGeminiMcpTool(
-        // Audit tools are a deliberately run-scoped extension to the canonical
-        // catalog. The main executor validates the active audit registry/role.
-        toolName as TaskWraithMcpToolName | CapabilityGatewayToolName,
-        toolArguments,
-        route,
-        parentProvider,
-        callerContext
-      )
+    const result = await this.deps.executeGeminiMcpTool(
+      // Audit tools are a deliberately run-scoped extension to the canonical
+      // catalog. The main executor validates the active audit registry/role.
+      toolName as TaskWraithMcpToolName | CapabilityGatewayToolName,
+      toolArguments,
+      route,
+      parentProvider,
+      callerContext
     )
 
     // ── Strategy B (broker-injection) ──────────────────────────────────

@@ -191,7 +191,7 @@ Stage selected files or all changes in the active workspace.
 
 ## git_commit
 
-Commit one verified logical slice without consuming the shared Git index. Use mode="pathspec" when you own the complete working-tree content of every declared tracked path. Use mode="private_index" with an isolated patch when committing only selected hunks or adding new files. A message-only/bare commit is refused. The result includes the commit SHA and exact committed paths.
+Commit one verified logical slice without consuming the shared Git index. Use mode="pathspec" when you own the complete working-tree content of every declared tracked path. Use mode="private_index" with an isolated patch when committing only selected hunks or adding new files. Use mode="contribution" with the exact captured file set to commit this task’s Git-eligible mediated write_file/replace edits without constructing a patch. A message-only/bare commit is refused. The result includes the commit SHA and exact committed paths.
 
 - Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
 - Required args: message, mode, paths

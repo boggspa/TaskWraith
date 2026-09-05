@@ -38,7 +38,7 @@ function seat<T>(chatId: string, operation: () => T, participantId = 'worker'): 
         ensembleRun: { participantId }
       },
       'codex',
-      'write_file'
+      'read_file'
     )
     return operation()
   })

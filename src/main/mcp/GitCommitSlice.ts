@@ -4,7 +4,7 @@ export const MAX_GIT_COMMIT_SLICE_PATHS = 200
 export const MAX_GIT_COMMIT_SLICE_PATCH_BYTES = 5 * 1024 * 1024
 export const MAX_GIT_COMMIT_SLICE_MESSAGE_CHARS = 10_000
 
-export type GitCommitSliceMode = 'pathspec' | 'private_index'
+export type GitCommitSliceMode = 'pathspec' | 'private_index' | 'contribution'
 
 export interface GitCommitSliceRequest {
   mode: GitCommitSliceMode
@@ -24,14 +24,21 @@ export function parseGitCommitSliceRequest(args: Record<string, unknown>): GitCo
   if (message.includes('\0')) throw new Error('Commit message cannot contain NUL bytes.')
 
   const mode = args.mode
-  if (mode !== 'pathspec' && mode !== 'private_index') {
-    throw new Error('git_commit requires mode="pathspec" or mode="private_index".')
+  if (mode !== 'pathspec' && mode !== 'private_index' && mode !== 'contribution') {
+    throw new Error(
+      'git_commit requires mode="pathspec", mode="private_index", or mode="contribution".'
+    )
   }
 
   const paths = normalizeDeclaredPaths(args.paths)
   const patch = typeof args.patch === 'string' ? args.patch : undefined
   if (mode === 'pathspec' && patch !== undefined) {
     throw new Error('git_commit pathspec mode does not accept patch; use private_index mode.')
+  }
+  if (mode === 'contribution' && patch !== undefined) {
+    throw new Error(
+      'git_commit contribution mode derives its patch from captured edits; omit patch.'
+    )
   }
   if (mode === 'private_index') {
     if (!patch?.trim()) throw new Error('git_commit private_index mode requires a patch.')
@@ -61,7 +68,7 @@ function normalizeDeclaredPaths(value: unknown): string[] {
     if (typeof raw !== 'string' || !raw.trim()) {
       throw new Error('git_commit paths must be non-empty strings.')
     }
-    const path = raw.trim()
+    const path = raw
     if (path.includes('\0')) throw new Error('git_commit paths cannot contain NUL bytes.')
     if (seen.has(path)) continue
     seen.add(path)
@@ -75,10 +82,7 @@ function normalizeDeclaredPaths(value: unknown): string[] {
 }
 
 export function nulSeparatedPaths(value: string): string[] {
-  return value
-    .split('\0')
-    .map((path) => path.trim())
-    .filter(Boolean)
+  return value.split('\0').filter(Boolean)
 }
 
 export function resolveGitReportedPaths(repoRoot: string, paths: readonly string[]): string[] {
@@ -118,7 +122,7 @@ export function assertCommittedPathsCovered(
 }
 
 export function repoRelativePaths(repoRoot: string, absolutePaths: readonly string[]): string[] {
-  return absolutePaths.map((path) => relative(repoRoot, path).replace(/\\/g, '/'))
+  return absolutePaths.map((path) => relative(repoRoot, path).split(sep).join('/'))
 }
 
 function pathCovers(declaredPath: string, actualPath: string): boolean {

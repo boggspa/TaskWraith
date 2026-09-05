@@ -767,7 +767,7 @@ describe('registerGitHandlers', () => {
     expect(deps.gitSnapshotPublisher.unsubscribe).toHaveBeenCalledWith('owned-sub')
   })
 
-  it('fails closed before invoking Git when the renderer scope check rejects', async () => {
+  it.each(['git:snapshot', 'git:shared-workspace', 'git:contribution-preview', 'git:contribution-action'])('fails closed before invoking %s when renderer scope rejects', async channel => {
     const { deps } = createDeps()
     deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
     deps.assertSenderScope.mockImplementationOnce(() => {
@@ -776,7 +776,7 @@ describe('registerGitHandlers', () => {
     registerGitHandlers(deps)
 
     await expect(
-      handlerFor('git:snapshot')(
+      handlerFor(channel)(
         { sender: { id: 22 } },
         { workspacePath: '/repo', chatId: 'chat-1' }
       )
@@ -961,6 +961,10 @@ describe('registerGitHandlers', () => {
       error: 'Git actions require a signed external write grant for this repository.',
       errorCode: 'git_scope_external_write_grant_required'
     })
+    await expect(handlerFor('git:contribution-action')(
+      {},
+      { repoPath: '/granted/repo', chatId: 'chat-1', id: 'a'.repeat(64), generation: 'preview', action: 'undo' }
+    )).resolves.toMatchObject({ ok: false, errorCode: 'git_scope_external_write_grant_required' })
   })
 
   it('requires the originating chat for an external-repository grant', async () => {

@@ -71,6 +71,7 @@ import type {
   GitRevisionDiffTarget
 } from '../main/DiffService'
 import type { WorkProvenanceSnapshot } from '../shared/workProvenance'
+import type { SharedWorkspaceOverview, SharedWorkspaceContributionPreview, SharedWorkspaceActionRequest, SharedWorkspaceActionResult } from '../shared/sharedWorkspace'
 import type {
   GitSnapshotChangedPayload,
   GitSnapshotInvalidationReason,
@@ -883,6 +884,12 @@ const api = {
     ipcRenderer.invoke('git:work-provenance', payload) as Promise<
       GitResult<WorkProvenanceSnapshot>
     >,
+  gitSharedWorkspace: (payload: { repoPath?: string; workspacePath?: string; worktreePath?: string; chatId?: string }) =>
+    ipcRenderer.invoke('git:shared-workspace', payload) as Promise<GitResult<SharedWorkspaceOverview>>,
+  gitContributionPreview: (payload: { repoPath?: string; workspacePath?: string; worktreePath?: string; chatId?: string; id: string }) =>
+    ipcRenderer.invoke('git:contribution-preview', payload) as Promise<GitResult<SharedWorkspaceContributionPreview>>,
+  gitContributionAction: (payload: { repoPath?: string; workspacePath?: string; worktreePath?: string; chatId?: string } & SharedWorkspaceActionRequest) =>
+    ipcRenderer.invoke('git:contribution-action', payload) as Promise<SharedWorkspaceActionResult>,
   gitSubscribeSnapshot: (
     payload: { workspacePath?: string; repoPath?: string; chatId?: string },
     callback: (payload: GitSnapshotChangedPayload) => void

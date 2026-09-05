@@ -290,6 +290,12 @@ import type {
 } from '../main/DiffService'
 import type { WorkProvenanceSnapshot } from '../shared/workProvenance'
 import type {
+  SharedWorkspaceOverview,
+  SharedWorkspaceContributionPreview,
+  SharedWorkspaceActionRequest,
+  SharedWorkspaceActionResult
+} from '../shared/sharedWorkspace'
+import type {
   SimulatorCapabilityStatus,
   SimulatorDeviceInfo,
   SimulatorGestureResult,
@@ -1037,6 +1043,27 @@ declare global {
         worktreePath?: string
         chatId?: string
       }) => Promise<GitResult<WorkProvenanceSnapshot>>
+      gitSharedWorkspace: (payload: {
+        repoPath?: string
+        workspacePath?: string
+        worktreePath?: string
+        chatId?: string
+      }) => Promise<GitResult<SharedWorkspaceOverview>>
+      gitContributionPreview: (payload: {
+        repoPath?: string
+        workspacePath?: string
+        worktreePath?: string
+        chatId?: string
+        id: string
+      }) => Promise<GitResult<SharedWorkspaceContributionPreview>>
+      gitContributionAction: (
+        payload: {
+          repoPath?: string
+          workspacePath?: string
+          worktreePath?: string
+          chatId?: string
+        } & SharedWorkspaceActionRequest
+      ) => Promise<SharedWorkspaceActionResult>
       gitSubscribeSnapshot: (
         payload: {
           workspacePath?: string

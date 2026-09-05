@@ -1,4 +1,8 @@
 import type { IpcMainInvokeEvent, WebContents } from 'electron'
+import {
+  bindSharedWorkspaceActor,
+  withSharedWorkspaceOperation
+} from '../sharedWorkspace/SharedWorkspaceSession'
 import { dirname, isAbsolute, resolve } from 'path'
 import os from 'os'
 import { MAX_EDITOR_FILE_BYTES } from '../index.constants'
@@ -289,6 +293,19 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
   }
 
   async function executeLocalTool(
+    request: OllamaToolExecutionRequest
+  ): Promise<OllamaToolExecutionResult> {
+    return withSharedWorkspaceOperation(() => {
+      const runContext = deps.getAgentToolContext('ollama', {
+        appRunId: request.appRunId,
+        appChatId: request.appChatId
+      })
+      if (runContext) bindSharedWorkspaceActor(runContext, 'ollama', request.toolName)
+      return executeLocalToolInContext(request)
+    })
+  }
+
+  async function executeLocalToolInContext(
     request: OllamaToolExecutionRequest
   ): Promise<OllamaToolExecutionResult> {
     const workspacePath = deps.canonicalPath(

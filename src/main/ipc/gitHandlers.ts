@@ -1,4 +1,8 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { latestSharedWorkspaceVerification } from '../sharedWorkspace/SharedWorkspaceVerification'
+import { listSharedWorkspaceContributions, previewSharedWorkspaceContribution } from '../sharedWorkspace/SharedWorkspaceContributions'
+import { applySharedWorkspaceAction, type SharedWorkspaceActionDependencies } from '../sharedWorkspace/SharedWorkspaceActions'
+import type { SharedWorkspaceActionRequest } from '../../shared/sharedWorkspace'
 import type { ChatRecord, ExternalPathGrant } from '../store/types'
 import type {
   GitCiStatusInput,
@@ -111,6 +115,7 @@ export interface GitHandlersDeps {
   /** Utility-process detailed snapshot reader; legacy/test composition may omit it. */
   gitSnapshot?: (path: string) => Promise<GitResult<GitRepositorySnapshot>>
   workProvenanceService: Pick<WorkProvenanceQueryService, 'query'>
+  sharedWorkspace?: SharedWorkspaceActionDependencies
   gitSnapshotPublisher?: Pick<
     GitSnapshotPublisher,
     'subscribe' | 'unsubscribe' | 'unsubscribeWebContents' | 'invalidatePath' | 'publishSnapshot'
@@ -427,6 +432,40 @@ function worktreeListContainsPath(list: GitWorktreeList, targetPath: string): bo
 }
 
 export function registerGitHandlers(deps: GitHandlersDeps): void {
+  const sharedTarget = async (event: IpcMainInvokeEvent, payload: GitWorkspaceStatsPayload | undefined, write = false) => {
+    const repo = gitPayloadPath(deps, event, payload, write ? 'registered-or-granted-write' : 'registered-or-granted-read')
+    if (!repo.ok) return repo
+    const target = payload?.worktreePath
+    if (!target || deps.canonicalPath(target) === deps.canonicalPath(repo.path)) return repo
+    if (repo.source === 'external') return { ok: false as const, error: EXTERNAL_WORKTREE_SCOPE_ERROR }
+    const worktrees = await deps.gitService.listWorktrees(repo.path)
+    if (!worktrees.ok) return worktrees
+    if (!worktreeListContainsPath(worktrees.data, target)) return { ok: false as const, error: 'Selected path is not a linked worktree for this repository.' }
+    return { ...repo, path: deps.canonicalPath(target) }
+  }
+  ipcMain.handle('git:shared-workspace', async (event, payload?: GitWorkspaceStatsPayload) => {
+    const repo = await sharedTarget(event, payload)
+    if (!repo.ok) return repo
+    try {
+      const [contributions, verification] = await Promise.all([listSharedWorkspaceContributions(repo.path), latestSharedWorkspaceVerification(repo.path)])
+      return { ok: true, data: { ...contributions, verification,
+        coverage: 'Captured Git-eligible TaskWraith file writes and replacements. Native and shell changes may require manual review.' } }
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) } }
+  })
+  ipcMain.handle('git:contribution-preview', async (event, payload?: GitWorkspaceStatsPayload & { id?: string }) => {
+    const repo = await sharedTarget(event, payload)
+    if (!repo.ok) return repo
+    try { return { ok: true, data: await previewSharedWorkspaceContribution(repo.path, String(payload?.id || '')) } }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) } }
+  })
+  ipcMain.handle('git:contribution-action', async (event, payload?: GitWorkspaceStatsPayload & SharedWorkspaceActionRequest) => {
+    const repo = await sharedTarget(event, payload, true)
+    if (!repo.ok) return repo
+    if (!payload || !deps.sharedWorkspace) return { ok: false, error: 'Contribution actions are unavailable.' }
+    return applySharedWorkspaceAction(deps.sharedWorkspace, {
+      root: repo.path, chatId: repo.chatId, id: payload.id, generation: payload.generation, action: payload.action, message: payload.message
+    })
+  })
   type SubscriptionCleanup = {
     cleanup: () => void
     webContentsId: number

@@ -65,6 +65,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { spawn, ChildProcess, execFile } from 'child_process'
 import { createHash, randomBytes, randomUUID } from 'crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { sharedWorkspaceToolExecutor, sharedWorkspaceWriteNotice } from './sharedWorkspace/SharedWorkspaceSession'
 import { promises as fs } from 'fs'
 import * as fsSync from 'fs'
 import * as pty from 'node-pty'
@@ -2790,6 +2791,8 @@ function clearWorkspaceLockMutationAdmissionPoison(expectedReason: string): bool
   workspaceLockMutationAdmissionPoisonReason = null
   return true
 }
+
+const executeGeminiMcpTool = sharedWorkspaceToolExecutor(executeUnscopedGeminiMcpTool)
 
 const workProvenanceRecorder = new WorkProvenanceRecorder({
   logError: (scope, error) => {
@@ -39711,7 +39714,7 @@ function formatIgnoredShellArgumentNotice(ignoredKeys: string[]): string {
   return lines.join('\n')
 }
 
-async function executeGeminiMcpTool(
+async function executeUnscopedGeminiMcpTool(
   toolName: TaskWraithMcpToolName | CapabilityGatewayToolName,
   rawArgs: unknown,
   route?: AgentRunRoute | null,
@@ -43234,7 +43237,7 @@ async function executeGeminiMcpTool(
         beforeCommit: workspaceExecutionContext.assertMutationAuthorized,
         assertStillLive: workspaceExecutionContext.assertMutationStillLive
       })
-      text = `Wrote ${formatScopedPath(workspaceExecutionContext, targetPath)} (${content.length} chars).`
+      text = sharedWorkspaceWriteNotice(`Wrote ${formatScopedPath(workspaceExecutionContext, targetPath)} (${content.length} chars).`)
     } else if (toolName === 'replace') {
       markDispatchHandled('workspace-tools')
       const authority = verifiedDirectMutationAuthority
@@ -43255,7 +43258,7 @@ async function executeGeminiMcpTool(
           ),
         beforeCommit: workspaceExecutionContext.assertMutationAuthorized
       })
-      text = `Edited ${formatScopedPath(workspaceExecutionContext, targetPath)}.`
+      text = sharedWorkspaceWriteNotice(`Edited ${formatScopedPath(workspaceExecutionContext, targetPath)}.`)
     } else if (toolName === 'delegate_to_subthread') {
       markDispatchHandled('subthread-control')
       // Phase F3: agent-driven sub-thread delegation. Spawns a
@@ -59567,6 +59570,7 @@ if (isGeminiMcpBridgeProcess) {
       gitService,
       gitSnapshot,
       workProvenanceService,
+      sharedWorkspace: { getRuntime: () => workspaceLockRuntimeRef, host: { runHostCommand, getTempDir: () => app.getPath('temp') } },
       gitSnapshotPublisher,
       externalPublishReceipts: externalPublishReceiptsForOrigin('desktop-ui'),
       openSafeShellTarget,

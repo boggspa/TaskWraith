@@ -1,4 +1,11 @@
 import { randomBytes } from 'node:crypto'
+import { beginSharedWorkspaceVerification } from '../sharedWorkspace/SharedWorkspaceVerification'
+import { currentSharedWorkspaceActor } from '../sharedWorkspace/SharedWorkspaceSession'
+import {
+  prepareCurrentContribution,
+  touchSharedWorkspaceIntent,
+  settleSharedWorkspaceContribution
+} from '../sharedWorkspace/SharedWorkspaceContributions'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -109,6 +116,8 @@ export interface WorkspaceToolContext {
   cwd: string
   workspacePath?: string
   appChatId?: string
+  /** Host-issued mutation owner for a desktop contribution action; never read from tool args. */
+  workspaceLockOwnerId?: string
   /** Re-check exact run + lock/path authority at the final mutation boundary. */
   assertMutationAuthorized?: () => void | Promise<void>
   /** Cheap post-verification cancellation/history check between mutation phases. */
@@ -1367,6 +1376,10 @@ export async function executeGitCommit(
   const request = parseGitCommitSliceRequest(args)
   const declaredAbsolutePaths = request.paths.map((path) => resolveMcpScopedPath(context, path))
   await context.assertMutationAuthorized?.()
+  const contribution = request.mode === 'contribution'
+    ? await prepareCurrentContribution(cwd, declaredAbsolutePaths)
+    : null
+  if (contribution) request.patch = contribution.patch
 
   const baseHeadResult = await runCommandArgs(deps, ['git', 'rev-parse', 'HEAD'], cwd, 30_000)
   if (hostCommandFailed(baseHeadResult)) {
@@ -1409,7 +1422,11 @@ export async function executeGitCommit(
   const tempRoot = await fs.mkdtemp(join(deps.host.getTempDir(), 'taskwraith-git-commit-'))
   const privateIndexPath = join(tempRoot, 'index')
   const patchPath = join(tempRoot, 'slice.patch')
-  const environment = { GIT_INDEX_FILE: privateIndexPath }
+  const lockOwnerId = context.workspaceLockOwnerId || currentSharedWorkspaceActor()?.lockOwnerId
+  const environment = {
+    GIT_INDEX_FILE: privateIndexPath,
+    ...(lockOwnerId ? { TASKWRAITH_LOCK_OWNER_ID: lockOwnerId } : {})
+  }
   try {
     await fs.writeFile(patchPath, request.patch!, { encoding: 'utf8', mode: 0o600 })
     const readTree = await runCommandArgs(
@@ -1462,7 +1479,7 @@ export async function executeGitCommit(
       nulSeparatedPaths(privateNames.stdout)
     )
     assertCommittedPathsCovered(declaredCoveragePaths, actualAbsolutePaths, {
-      requireDeclaredPaths: request.mode === 'private_index'
+      requireDeclaredPaths: true
     })
 
     const currentHead = await runCommandArgs(deps, ['git', 'rev-parse', 'HEAD'], cwd, 30_000)
@@ -1484,15 +1501,19 @@ export async function executeGitCommit(
     )
     if (hostCommandFailed(commit)) return failedGitCommitSlice(request.mode, 'commit', commit)
 
-    // A private index advances HEAD without updating the shared index. Reset
-    // only the paths that this slice actually committed; unrelated staged work
-    // remains byte-for-byte owned by its original session.
-    const resync = await runCommandArgs(
-      deps,
-      ['git', 'reset', '-q', 'HEAD', '--', ...actualAbsolutePaths],
-      cwd,
-      30_000
-    )
+    if (contribution) {
+      // The commit is already real. A journal outage must not invite a duplicate commit.
+      await settleSharedWorkspaceContribution(cwd, contribution, 'committed').catch(() => {})
+    }
+
+    // Advance the shared index by our patch, preserving peer staging even in
+    // the same file. A path reset would erase those staged hunks. If the patch
+    // is already staged, leave it alone; an ambiguous overlap stays untouched.
+    const resyncCheck = await runCommandArgs(deps,
+      ['git', 'apply', '--cached', '--check', '--binary', '--', patchPath], cwd, 30_000)
+    const resync = !hostCommandFailed(resyncCheck)
+      ? await runCommandArgs(deps, ['git', 'apply', '--cached', '--binary', '--', patchPath], cwd, 30_000)
+      : await runCommandArgs(deps, ['git', 'apply', '--cached', '--reverse', '--check', '--binary', '--', patchPath], cwd, 30_000)
     if (hostCommandFailed(resync)) {
       return failedGitCommitSlice(request.mode, 'resync_shared_index', resync, {
         committed: true
@@ -1894,7 +1915,15 @@ export async function executeRunTask(
   command.push(...taskArgs)
   const timeoutMs = clampInteger(args.timeoutMs, 600_000, 1_000, 30 * 60_000)
   await context?.assertMutationAuthorized?.()
-  const result = await runCommandArgs(deps, command, cwd, timeoutMs, effectiveApproval)
+  await touchSharedWorkspaceIntent(cwd)
+  const verificationRun = await beginSharedWorkspaceVerification(cwd, command)
+  const heartbeat = setInterval(() => { void touchSharedWorkspaceIntent(cwd) }, 5 * 60_000)
+  heartbeat.unref?.()
+  let result: HostCommandResult
+  try { result = await runCommandArgs(deps, command, cwd, timeoutMs, effectiveApproval) }
+  catch (error) { await verificationRun?.finish({exitCode: null, error: 'Task execution failed.'}); throw error }
+  finally { clearInterval(heartbeat) }
+  const verification = await verificationRun?.finish(result)
   return {
     task,
     command,
@@ -1904,7 +1933,8 @@ export async function executeRunTask(
     durationMs: result.durationMs,
     stdout: truncateText(result.stdout),
     stderr: truncateText(result.stderr),
-    summary: summarizeTestOutput(`${result.stdout}\n${result.stderr}`)
+    summary: summarizeTestOutput(`${result.stdout}\n${result.stderr}`),
+    ...(verification ? { verification } : {})
   }
 }
 

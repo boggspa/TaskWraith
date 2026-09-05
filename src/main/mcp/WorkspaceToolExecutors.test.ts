@@ -1,4 +1,4 @@
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -306,7 +306,7 @@ describe('executeGitCommit slices', () => {
     })
   })
 
-  it('builds selected hunks in a private index and resyncs only committed paths', async () => {
+  it('builds selected hunks in a private index and advances shared staging by that patch', async () => {
     const calls: Array<{ command: string[]; options: unknown }> = []
     let headReads = 0
     const deps = makeDeps(async (command, _cwd, options) => {
@@ -345,7 +345,8 @@ describe('executeGitCommit slices', () => {
       context
     )
 
-    const privateCalls = calls.filter((call) =>
+    const commitIndex = calls.findIndex(call => call.command[1] === 'commit')
+    const privateCalls = calls.slice(0, commitIndex + 1).filter((call) =>
       ['read-tree', 'apply', 'diff', 'commit'].includes(call.command[1])
     )
     expect(privateCalls).not.toHaveLength(0)
@@ -354,18 +355,12 @@ describe('executeGitCommit slices', () => {
         environment: { GIT_INDEX_FILE: expect.stringContaining('taskwraith-git-commit-') }
       })
     }
-    const reset = calls.find((call) => call.command[1] === 'reset')
-    expect(reset?.command).toEqual([
-      'git',
-      'reset',
-      '-q',
-      'HEAD',
-      '--',
-      // The reset path is joined with path.join, whose separator is
-      // platform-specific; build the expected fragment the same way.
-      expect.stringContaining(join('taskwraith-git-commit', 'src', 'a.ts'))
-    ])
-    expect(reset?.options).toBe(30_000)
+    expect(calls.some(call => call.command[1] === 'reset')).toBe(false)
+    const resync = calls.slice(commitIndex + 1).filter(call => call.command[1] === 'apply')
+    expect(resync).toHaveLength(2)
+    expect(resync[0].command).toContain('--check')
+    expect(resync[1].command).not.toContain('--check')
+    expect(resync.every(call => call.options === 30_000)).toBe(true)
     expect(result).toMatchObject({
       ok: true,
       mode: 'private_index',

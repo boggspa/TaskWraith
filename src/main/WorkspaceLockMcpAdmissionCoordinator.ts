@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 import { waitForWorkspaceLockStateChange } from './WorkspaceLockAvailability'
-import { bindSharedWorkspaceActor } from './sharedWorkspace/SharedWorkspaceSession'
+import { bindSharedWorkspaceActor, sharedWorkspaceOperationActive } from './sharedWorkspace/SharedWorkspaceSession'
 
 import { resolveToolDispatchContractStrict } from '../shared/providerActionTaxonomy'
 import type { ChatScope, EnsembleRunIdentity, ProviderId } from './store/types'
@@ -182,7 +182,12 @@ export class WorkspaceLockMcpAdmissionCoordinator {
   async admit<Context extends WorkspaceLockMcpAdmissionContext = WorkspaceLockMcpAdmissionContext>(
     input: WorkspaceLockMcpAdmissionInput<Context>
   ): Promise<WorkspaceLockMcpAdmission> {
-    bindSharedWorkspaceActor(input.context, input.provider, input.toolName)
+    let evidenceOwner: string | undefined
+    if (sharedWorkspaceOperationActive() && input.toolName === 'read_file' && input.context.scope === 'workspace' && input.context.appRunId) {
+      try { evidenceOwner = this.deps.getOpaqueOwnerId(this.ownerQuery(input, input.context.appRunId)) || undefined }
+      catch { /* Missing bookkeeping identity does not deny a read. Mutation admission remains authoritative below. */ }
+    }
+    bindSharedWorkspaceActor(input.context, input.provider, input.toolName, evidenceOwner)
     const contract = resolveToolDispatchContractStrict(input.toolName, input.args)
     if (!contract.ok) {
       return this.denied(input.toolName, contract.reason, {

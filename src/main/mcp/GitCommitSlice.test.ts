@@ -77,9 +77,13 @@ function integrationDeps(): WorkspaceToolExecutorDependencies {
 }
 
 describe('parseGitCommitSliceRequest', () => {
+  it('preserves path bytes rather than aliasing whitespace-bearing filenames', () => {
+    expect(parseGitCommitSliceRequest({message: 'exact paths', mode: 'pathspec', paths: [' leading.ts', 'trailing.ts ']}).paths).toEqual([' leading.ts', 'trailing.ts '])
+    expect(nulSeparatedPaths(' leading.ts\0trailing.ts \0')).toEqual([' leading.ts', 'trailing.ts '])
+  })
   it('requires an explicit path-scoped mode and paths', () => {
     expect(() => parseGitCommitSliceRequest({ message: 'unsafe bare commit' })).toThrow(
-      /mode="pathspec" or mode="private_index"/
+      /mode="pathspec".*mode="private_index".*mode="contribution"/
     )
     expect(() =>
       parseGitCommitSliceRequest({ message: 'empty paths', mode: 'pathspec', paths: [] })

@@ -746,6 +746,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         'Commit one verified logical slice without consuming the shared Git index. ' +
         'Use mode="pathspec" when you own the complete working-tree content of every declared tracked path. ' +
         'Use mode="private_index" with an isolated patch when committing only selected hunks or adding new files. ' +
+        'Use mode="contribution" with the exact captured file set to commit this task’s Git-eligible mediated write_file/replace edits without constructing a patch. ' +
         'A message-only/bare commit is refused. The result includes the commit SHA and exact committed paths.',
       annotations: {
         readOnlyHint: false,
@@ -760,9 +761,9 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           message: { type: 'string', minLength: 1, maxLength: 10000 },
           mode: {
             type: 'string',
-            enum: ['pathspec', 'private_index'],
+            enum: ['pathspec', 'private_index', 'contribution'],
             description:
-              'pathspec commits complete owned tracked paths; private_index commits exactly the supplied patch through an isolated index.'
+              'pathspec commits complete owned tracked paths; private_index commits the supplied patch; contribution prepares the current task’s captured edits. Both patch modes use a private index.'
           },
           paths: {
             type: 'array',

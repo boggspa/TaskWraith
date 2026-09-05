@@ -16,6 +16,7 @@ export interface SharedWorkspaceActor {
 interface OperationContext {
   actor?: SharedWorkspaceActor
   toolName?: string
+  capture?: { recorded: boolean; claimed: boolean }
 }
 
 interface ReadVersion {
@@ -29,9 +30,19 @@ const MAX_ACTORS = 256
 const MAX_PATHS_PER_ACTOR = 256
 const READ_RETENTION_MS = 2 * 60 * 60 * 1000
 
+export function sharedWorkspaceOperationActive(): boolean {
+  return operationContext.getStore() !== undefined
+}
+
 /** This context carries evidence, never permission. Main still resolves and authorizes every call. */
 export function withSharedWorkspaceOperation<T>(operation: () => T): T {
   return operationContext.run({}, operation)
+}
+
+export function sharedWorkspaceToolExecutor<Args extends unknown[], Result>(
+  execute: (...args: Args) => Result
+): (...args: Args) => Result {
+  return (...args) => withSharedWorkspaceOperation(() => execute(...args))
 }
 
 /** Called only with the host-resolved context at workspace admission, including reads. */
@@ -72,6 +83,23 @@ export function currentSharedWorkspaceTool(): string | undefined {
   return operationContext.getStore()?.toolName
 }
 
+export function reportSharedWorkspaceCapture(recorded: boolean, claimed: boolean): void {
+  const operation = operationContext.getStore()
+  if (operation?.actor) operation.capture = { recorded, claimed }
+}
+
+export function sharedWorkspaceWriteNotice(text: string): string {
+  const capture = operationContext.getStore()?.capture
+  if (!capture) return text
+  return `${text}\n${
+    capture.recorded
+      ? capture.claimed
+        ? 'Contribution recorded; intent claim active.'
+        : 'Contribution recorded; maintain a manual intent claim for this path.'
+      : 'Contribution not recorded; use a manual claim and an explicit private-index patch.'
+  }`
+}
+
 export class SharedWorkspaceStaleReadError extends Error {
   readonly code = 'WORKSPACE_STALE_READ'
 
@@ -100,7 +128,7 @@ export function rememberSharedWorkspaceRead(
   buffer?: Buffer
 ): void {
   const actor = currentSharedWorkspaceActor()
-  if (!actor) return
+  if (!actor || currentSharedWorkspaceTool() !== 'read_file') return
   if (sharedWorkspaceFileVersion(before) !== sharedWorkspaceFileVersion(after)) {
     throw new SharedWorkspaceStaleReadError(path)
   }
@@ -135,7 +163,8 @@ export function assertSharedWorkspaceReadCurrent(
 
 export function rememberSharedWorkspaceMissing(path: string): void {
   const actor = currentSharedWorkspaceActor()
-  if (actor) remember(actor.key, path, { version: 'missing' })
+  if (actor && currentSharedWorkspaceTool() === 'read_file')
+    remember(actor.key, path, { version: 'missing' })
 }
 
 export function rememberSharedWorkspaceWrite(
