@@ -1762,6 +1762,7 @@ import { createKimiWebUsageFetcher } from './kimi/KimiWebUsage'
 import { registerMistralApiKeyHandlers } from './ipc/mistralApiKeyHandlers'
 import { registerMistralQuotaHandlers } from './ipc/mistralQuotaHandlers'
 import { registerCodexUsageHandlers } from './ipc/codexUsageHandlers'
+import { registerReleaseLeaseHandlers } from './ipc/releaseLeaseHandlers'
 import {
   classifyMistralLimit,
   isMistralRateLimitText,
@@ -57418,27 +57419,7 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
-    // Session release lease. The user grants this when they intend an agent to
-    // publish unattended; it satisfies ReleaseCommandPolicy on every route for
-    // its lifetime, and is capped + revocable.
-    ipcMain.handle(
-      'release-lease-grant',
-      async (
-        _,
-        input: {
-          minutes?: number
-          commandClasses?: 'all' | string[]
-          workspacePath?: string
-          note?: string
-        } = {}
-      ) => releaseAuthorizationLeases.grant({ ...input, origin: 'desktop-ui' })
-    )
-
-    ipcMain.handle('release-lease-status', async () => releaseAuthorizationLeases.active())
-
-    ipcMain.handle('release-lease-revoke', async (_, leaseId?: string) => ({
-      revoked: releaseAuthorizationLeases.revoke(leaseId)
-    }))
+    registerReleaseLeaseHandlers({ leaseRegistry: releaseAuthorizationLeases })
 
     ipcMain.handle('bridge-list-paired-devices', async () => {
       if (!iosRemoteRuntime) return []
