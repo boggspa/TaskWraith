@@ -56,7 +56,11 @@ const SUMMARY_PROJECTION_FIELDS = [
  *  a save would erase what main wrote. Restored from the canonical record only
  *  when the incoming shell has no such key at all — an explicit
  *  `field: undefined` is a caller's deletion and is honoured. */
-const LIST_PROJECTION_SHED_FIELDS = ['ollamaSessionMemory', 'ollamaSessionMemories'] as const
+const LIST_PROJECTION_SHED_FIELDS = [
+  'ollamaSessionMemory',
+  'ollamaSessionMemories',
+  'continuityCheckpoints'
+] as const
 
 type SummaryChatShape = ChatRecord &
   Partial<Pick<ChatListItem, (typeof SUMMARY_PROJECTION_FIELDS)[number] & keyof ChatListItem>> & {

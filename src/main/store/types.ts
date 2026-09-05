@@ -1,3 +1,4 @@
+import type { SeatContinuityCheckpoint, ContinuityDelivery } from '../../shared/threadContinuity'
 import type { TodoItem } from '../TodoList'
 import type { FleetWaveClaim } from '../SubThreadWaveClaims'
 import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
@@ -3960,6 +3961,9 @@ export interface StaleRunSettlementProvenance {
 }
 
 export interface ChatRun {
+  /** Written only when a checkpoint was handed to this run's provider adapter. */
+  continuityCheckpointDelivery?: ContinuityDelivery
+
   runId: string
   /** Persisted-chat compaction schema applied after this run became historical. */
   historyCompactionGeneration?: number
@@ -4298,6 +4302,9 @@ export interface FanoutWorktreeCandidate {
 }
 
 export interface ChatRecord {
+  /** Task-scoped agent notes. Main-owned; excluded from chat-list projections. */
+  continuityCheckpoints?: Record<string, SeatContinuityCheckpoint>
+
   appChatId: string
   scope?: ChatScope
   chatKind?: ChatKind

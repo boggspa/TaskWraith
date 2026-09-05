@@ -3414,6 +3414,7 @@ function chatContainsTruncatableHistory(chat: ChatRecord): boolean {
     chat.taskWraithMcpProfileReceipt ||
     chat.seatGeneration ||
     chat.contextCompactionSummary ||
+    chat.continuityCheckpoints ||
     chat.activeGoal ||
     chat.chatTodos ||
     chat.soloWakeups ||
@@ -4942,6 +4943,8 @@ function shadowWorkspaceBoardMissionFacts(
 }
 
 export interface ChatSaveOptions {
+  /** Trusted main-process checkpoint update; renderer saves cannot set this. */
+  authoritativeContinuityCheckpoints?: boolean
   /** Exact message operations authored by a trusted main-process producer. */
   authoredTranscript?: AuthoredChatTranscriptMutation
 }
@@ -5821,6 +5824,7 @@ export class AppStore {
       ensemble,
       ollamaSessionMemory: _dropOllamaSessionMemory,
       ollamaSessionMemories: _dropOllamaSessionMemories,
+      continuityCheckpoints: _dropContinuityCheckpoints,
       ...listProjection
     } = normalizedChat
     const messages = Array.isArray(normalizedChat.messages)
@@ -5938,6 +5942,7 @@ export class AppStore {
       ensemble,
       ollamaSessionMemory: _dropOllamaSessionMemory,
       ollamaSessionMemories: _dropOllamaSessionMemories,
+      continuityCheckpoints: _dropContinuityCheckpoints,
       ...listProjection
     } = normalized
     return {
@@ -7639,10 +7644,14 @@ export class AppStore {
       watchedPr: _rendererWatchedPr,
       gitWorkflow: _rendererGitWorkflow,
       fanoutWorktreeCandidates: _rendererFanoutWorktreeCandidates,
+      continuityCheckpoints: _rendererContinuityCheckpoints,
       ...rendererOwnedChat
     } = chat
     const chatWithMainOwnedFields: ChatRecord = {
       ...rendererOwnedChat,
+      continuityCheckpoints: options.authoritativeContinuityCheckpoints
+        ? chat.continuityCheckpoints
+        : previousChatForFeedback?.continuityCheckpoints,
       ...(previousChatForFeedback?.threadWorktreeBinding
         ? { threadWorktreeBinding: { ...previousChatForFeedback.threadWorktreeBinding } }
         : {}),
@@ -7784,6 +7793,7 @@ export class AppStore {
       watchedPr: _rendererWatchedPr,
       gitWorkflow: _rendererGitWorkflow,
       fanoutWorktreeCandidates: _rendererFanoutWorktreeCandidates,
+      continuityCheckpoints: _rendererContinuityCheckpoints,
       ...rendererOwnedChat
     } = chat
     const rendererMessages = chat.messages || []
@@ -7797,6 +7807,9 @@ export class AppStore {
         : rendererMessages
     const chatWithMainOwnedFields: ChatRecord = {
       ...rendererOwnedChat,
+      continuityCheckpoints: options.authoritativeContinuityCheckpoints
+        ? chat.continuityCheckpoints
+        : previousChatForFeedback?.continuityCheckpoints,
       messages: reconciledMessages,
       ...(previousChatForFeedback?.threadWorktreeBinding
         ? { threadWorktreeBinding: { ...previousChatForFeedback.threadWorktreeBinding } }
@@ -8823,6 +8836,7 @@ export class AppStore {
       taskWraithMcpProfileReceipt: _dropReceipt,
       seatGeneration: _dropSeatGeneration,
       contextCompactionSummary: _dropContextCompaction,
+      continuityCheckpoints: _dropContinuityCheckpoints,
       linkedGeminiSessionId: _dropGeminiSession,
       linkedProviderSessionId: _dropProviderSession,
       activeGoal: _dropGoal,
