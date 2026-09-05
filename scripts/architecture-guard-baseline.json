@@ -55,10 +55,6 @@
       "to": "src/main/services/EnsembleMentionAlias"
     },
     {
-      "from": "src/renderer/src/components/SettingsPanel.tsx",
-      "to": "src/main/TaskWraithMcpTools"
-    },
-    {
       "from": "src/renderer/src/components/Sidebar.tsx",
       "to": "src/main/remote/RemoteDraftChats"
     },
