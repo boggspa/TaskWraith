@@ -32,6 +32,7 @@ import { CombinedPermissionsPicker } from '../components/CombinedPermissionsPick
 import type { PermissionOption } from '../components/CombinedPermissionsPicker'
 import { buildParticipantReasoningSelectionPatch } from '../components/ParticipantPickerCluster'
 import { ComposerHighlightOverlay } from '../components/ComposerHighlightOverlay'
+import { ComposerPrimaryStack } from './ComposerPrimaryStack'
 import { useComposerDraft } from '../hooks/useComposerDraft'
 import { useComposerSuggestion } from '../hooks/useComposerSuggestion'
 import { useSharedNowTick } from '../hooks/useSharedNowTick'
@@ -582,17 +583,6 @@ export interface ComposerProps {
   /** Hide git/branch above-rows when this Composer has no scoped git state. */
   showWorkspaceGitAboveRows?: boolean
   workspaces: any
-}
-
-function ComposerPrimaryStack({
-  enabled,
-  children
-}: {
-  enabled: boolean
-  children: React.ReactNode
-}): React.JSX.Element {
-  if (!enabled) return <>{children}</>
-  return <div className="composer-primary-stack">{children}</div>
 }
 
 const normalizeComposerWorkflowMode = (value: unknown): ChatWorkflowMode | null =>
