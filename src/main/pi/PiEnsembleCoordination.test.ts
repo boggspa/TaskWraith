@@ -4,6 +4,10 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { TASKWRAITH_MCP_TOOLS } from '../../shared/taskWraithMcpCatalog'
 import {
+  ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE,
+  ENSEMBLE_FANOUT_WRITE_SCOPES_SCHEMA
+} from '../../shared/ensembleFanoutWriteScopes'
+import {
   MCP_BROKER_LONG_POLL_TIMEOUT_MS,
   MCP_BROKER_REQUEST_TIMEOUT_MS
 } from '../mcp/McpBrokerTimeouts'
@@ -61,6 +65,23 @@ function extractRepairForkedToolCalls(
 }
 
 describe('Pi managed Ensemble coordination extension', () => {
+  it('advertises the same writer-map schema as MCP, including its JSON-string compatibility', () => {
+    const prepared = preparePiEnsembleCoordinationExtension({
+      isolatedHomeDir: createCanonicalHome()
+    })
+    const source = readFileSync(prepared.path, 'utf8')
+    const schemaText = /writeScopes: Type\.Optional\(([^\n]+)\),/.exec(source)?.[1]
+    expect(schemaText).toBeDefined()
+    expect(JSON.parse(schemaText!)).toEqual(ENSEMBLE_FANOUT_WRITE_SCOPES_SCHEMA)
+    expect(source).toContain('writeScopes is a writer map')
+    expect(piEnsembleCoordinationReadyPromptAppendix(prepared)).toContain(
+      ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE
+    )
+    expect(piTaskWraithToolsReadyPromptAppendix(prepared)).toContain(
+      ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE
+    )
+  })
+
   it('recognizes only the fixed ensemble coordination broker surface', () => {
     for (const toolName of PI_ENSEMBLE_COORDINATION_TOOL_NAMES) {
       expect(isPiEnsembleCoordinationToolName(toolName)).toBe(true)

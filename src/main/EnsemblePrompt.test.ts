@@ -641,6 +641,9 @@ describe('Ensemble prompt composition', () => {
       '`ensemble_fanout_all` has no writeScopes surface: write-capable seats join under their configured permission tier but receive reader intent'
     )
     expect(prompt).toContain('`ensemble_fanout(mode="locked_writers", writeScopes=...)`')
+    expect(prompt).toContain('writeScopes is a writer map')
+    expect(prompt).toContain('correct the arguments, and retry ensemble_fanout')
+    expect(prompt).toContain('Respect a policy or user denial')
     expect(prompt).not.toContain('active Captain after Boss unavailability')
   })
 

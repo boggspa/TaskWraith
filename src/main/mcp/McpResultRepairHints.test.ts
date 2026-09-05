@@ -35,7 +35,7 @@ describe('attachMcpResultRepairHints', () => {
     })
   })
 
-  it('keeps fan-out targets and prompt while supplying an explicit writer-scope shape', () => {
+  it('keeps fan-out targets and prompt without guessing which target should write', () => {
     const result = attachMcpResultRepairHints({
       toolName: 'ensemble_fanout',
       receivedArguments: {
@@ -48,17 +48,18 @@ describe('attachMcpResultRepairHints', () => {
 
     expect(result).toMatchObject({
       repair: {
+        requiresInput: true,
         retryTemplate: {
           targets: ['Worker', 'Reviewer'],
           prompt: 'Implement only the worker slice.',
           mode: 'locked_writers',
-          writeScopes: { Worker: ['<workspace-relative-path>'] }
+          writeScopes: { '<writer-participant-id>': ['<workspace-relative-path>'] }
         }
       }
     })
   })
 
-  it('repairs invalid writer scopes with caller targets intact', () => {
+  it('preserves caller scopes while explaining how to resolve a rejected writer alias', () => {
     const result = attachMcpResultRepairHints({
       toolName: 'ensemble_fanout',
       receivedArguments: {
@@ -75,7 +76,7 @@ describe('attachMcpResultRepairHints', () => {
         retryTemplate: {
           targets: ['Worker'],
           prompt: 'Edit the worker slice.',
-          writeScopes: { Worker: ['<workspace-relative-path>'] }
+          writeScopes: { Typo: ['src/worker/**'] }
         }
       }
     })

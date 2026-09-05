@@ -2,6 +2,7 @@ import { selectableProviderIds } from './settings/MainSanitizers'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './TaskWraithMcpTools'
 import { ASSIGNABLE_PERMISSION_PRESETS } from './EnsembleRosterMutation'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
+import { ENSEMBLE_FANOUT_WRITE_SCOPES_SCHEMA } from '../shared/ensembleFanoutWriteScopes'
 import { DEFAULT_MAX_WAVE_AGENTS } from '../shared/fleetWave'
 import { CANVAS_EVAL_SCRIPT_CAP } from './canvas/canvasTypes'
 import {
@@ -2612,15 +2613,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             description:
               'Optional typed-stage filter. all targets every typed stage and excludes untyped Any roles; scouts, workers, reviewers, and backgrounds target only that stage.'
           },
-          writeScopes: {
-            oneOf: [
-              { type: 'string' },
-              { type: 'array', items: { type: 'string' } },
-              { type: 'object' }
-            ],
-            description:
-              'Required for mode=locked_writers writer targets. Use participant aliases as keys with path/glob arrays, or "workspace" for an explicit workspace-wide scope.'
-          },
+          writeScopes: ENSEMBLE_FANOUT_WRITE_SCOPES_SCHEMA,
           isolation: {
             type: 'string',
             enum: ['worktree', 'off'],

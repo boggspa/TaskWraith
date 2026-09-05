@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto'
 import { chmodSync, lstatSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import {
+  ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE,
+  ENSEMBLE_FANOUT_WRITE_SCOPES_GUIDANCE,
+  ENSEMBLE_FANOUT_WRITE_SCOPES_SCHEMA
+} from '../../shared/ensembleFanoutWriteScopes'
+import {
   MCP_BROKER_LONG_POLL_TIMEOUT_MS,
   MCP_BROKER_REQUEST_TIMEOUT_MS
 } from '../mcp/McpBrokerTimeouts'
@@ -168,6 +173,7 @@ export function piEnsembleCoordinationReadyPromptAppendix(
     `- Transport: managed Pi extension over the TaskWraith local broker (receipt ${receipt.sourceSha256.slice(0, 12)}).`,
     `- Direct coordination tools: ${receipt.toolNames.map((name) => `\`${name}\``).join(', ')}.`,
     '- This is a narrow coordination surface only. Your native Pi file/shell allowlist is unchanged; do not look for generic MCP, shell, or file tools through this extension.',
+    `- ${ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE}`,
     '- If a coordination call is rejected by its normal policy, report that result and continue with the round; do not probe another transport.'
   ].join('\n')
 }
@@ -212,7 +218,8 @@ export function piTaskWraithToolsReadyPromptAppendix(
       : []),
     ...(coordinationTools.length
       ? [
-          '- Ensemble coordination remains policy-gated and uses the same run-bound server-side allowlist.'
+          '- Ensemble coordination remains policy-gated and uses the same run-bound server-side allowlist.',
+          `- ${ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE}`
         ]
       : []),
     ...(ultraTaskDelegationEnabled
@@ -232,7 +239,7 @@ export function piTaskWraithToolsReadyPromptAppendix(
           '- Mesh Canvas tools edit chat-owned scenes through the same meshCanvas permission gate. Inspect the latest topology revision before each edit and retry stale revisions only after re-inspection.'
         ]
       : []),
-    '- If a call is rejected, report the tool result and continue; do not probe another transport.'
+    '- If a call is rejected by policy, report the tool result and continue; do not probe another transport.'
   ].join('\n')
 }
 
@@ -486,7 +493,7 @@ function descriptionFor(name) {
   const descriptions = {
     ensemble_yield: 'Pass this Ensemble turn to the next or named participant. Optional: target and reason.',
     ensemble_send: 'Send a visible participant-authored note to participant aliases and/or User (User, Human, or You, with or without @). User delivery is durable transcript-only; @All remains roster-only. Required: to and message; optional reason.',
-    ensemble_fanout: 'Ask eligible Ensemble peers to run scoped parallel lanes. Required: prompt; optional targets, reason, mode, targetStage, writeScopes, isolation.',
+    ensemble_fanout: ${JSON.stringify('Ask eligible Ensemble peers to run scoped parallel lanes. Required: prompt; optional targets, reason, mode, targetStage, writeScopes, isolation. ' + ENSEMBLE_FANOUT_WRITE_SCOPES_GUIDANCE)},
     ensemble_poll_response: 'Vote on an active Ensemble poll. Required: pollId and choice; optional rationale.',
     scout_brief: 'Emit structured findings from a parallel scout lane. Required: findings and confidence; optional blockers, recommendations, tags.',
     blackboard_post: 'Post a shared Ensemble entry. Required: key and value; optional attachmentIds, workspaceImagePaths, pollOptions, category, scope, ttlMinutes (whole minutes; omit for durable).',
@@ -552,7 +559,7 @@ function parametersFor(name) {
         reason: optionalText(),
         mode: optionalText(),
         targetStage: optionalText(),
-        writeScopes: Type.Optional(Type.Any()),
+        writeScopes: Type.Optional(${JSON.stringify(ENSEMBLE_FANOUT_WRITE_SCOPES_SCHEMA)}),
         isolation: optionalText()
       })
     case 'ensemble_poll_response':

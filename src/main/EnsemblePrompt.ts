@@ -10,6 +10,10 @@ import type {
 } from './store/types'
 import { resolveEnsembleFanoutIsolationPolicy } from './store/types'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
+import {
+  ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE,
+  ENSEMBLE_FANOUT_WRITE_SCOPES_GUIDANCE
+} from '../shared/ensembleFanoutWriteScopes'
 import { normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
 import { isEnsembleParticipantAuthoredMessage } from '../shared/ensembleParticipantMessage'
 import type { EnsemblePromptTranscriptAttribution } from '../shared/ensemblePromptCostAttribution'
@@ -1756,6 +1760,7 @@ export function buildEnsembleParticipantPromptProjection(
         ]
       : []),
     '- When `ensemble_fanout` is listed, use it for targeted parallel work. Default read_only fan-out is a reader TASK INTENT, not a permission demotion: any eligible target keeps its configured permission tier while the lane remains inspection/review-only. Broad fan-out and locked_writers fan-out may be called by either the assigned Boss or Captain, including while both are available. locked_writers remains feature-gated, requires explicit writeScopes for writer targets, and relies on workspace write locks. `ensemble_fanout_all` has no writeScopes surface: write-capable seats join under their configured permission tier but receive reader intent, so mutations remain blocked. Use `ensemble_fanout(mode="locked_writers", writeScopes=...)` for parallel mutations. Set targetStage to all, scouts, workers, reviewers, or backgrounds for selective stage fan-out; targetStage=all excludes untyped Any roles. A unique `@BG` / `@Background` mention launches the background-stage seat asynchronously without consuming foreground rotation, running that lane under its own configured permissions (peer-delegated background auxiliary lanes may still be host-clamped read-only). When `ensemble_fanout` is absent, use explicit unique mentions and normal rotation instead.',
+    `- When ensemble_fanout is listed: ${ENSEMBLE_FANOUT_WRITE_SCOPES_GUIDANCE} ${ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE}`,
     ...(input.participant.reasoningEffort?.trim().toLowerCase() === 'ultratask'
       ? input.participant.provider === 'muse'
         ? [

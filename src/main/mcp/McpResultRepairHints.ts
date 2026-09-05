@@ -1,9 +1,12 @@
 import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
+import { buildEnsembleFanoutScopeRepair } from './EnsembleFanoutRepair'
 
 export interface McpResultRepairHint {
   why: string
   receivedKeys: string[]
   retryTemplate: Record<string, unknown>
+  /** True when the agent must resolve a target/path before replaying the template. */
+  requiresInput?: boolean
 }
 
 export interface McpResultRepairHintInput {
@@ -52,35 +55,6 @@ function planRetryTemplate(
     return { action: 'set_round_plan', params: { planSummary } }
   }
   return { action: 'set_round_plan', planSummary }
-}
-
-function writerTargetKey(value: unknown): string {
-  if (typeof value === 'string' && value.trim()) return value.trim().replace(/^@+/, '')
-  if (Array.isArray(value)) {
-    const first = value.find(
-      (entry): entry is string => typeof entry === 'string' && Boolean(entry.trim())
-    )
-    if (first) return first.trim().replace(/^@+/, '')
-  }
-  return '<writer-target>'
-}
-
-function fanoutRetryTemplate(
-  received: Record<string, unknown>,
-  normalized: Record<string, unknown>
-): Record<string, unknown> {
-  const targets = firstDefined(normalized, received, ['targets'])
-  const prompt = firstDefined(normalized, received, ['prompt'])
-  const reason = firstDefined(normalized, received, ['reason'])
-  const targetStage = firstDefined(normalized, received, ['targetStage', 'target_stage', 'stage'])
-  return {
-    ...(targets !== undefined ? { targets } : {}),
-    ...(prompt !== undefined ? { prompt } : {}),
-    ...(reason !== undefined ? { reason } : {}),
-    ...(targetStage !== undefined ? { targetStage } : {}),
-    mode: 'locked_writers',
-    writeScopes: { [writerTargetKey(targets)]: ['<workspace-relative-path>'] }
-  }
 }
 
 function scoutBriefRetryTemplate(
@@ -248,9 +222,8 @@ export function attachMcpResultRepairHints(input: McpResultRepairHintInput): unk
     (error === 'missing_write_scope' || error === 'invalid_write_scope')
   ) {
     repair = {
-      why: 'In locked_writers mode, writeScopes keys grant write intent. Omit a target key to dispatch it read-only.',
-      receivedKeys: receivedKeys(received),
-      retryTemplate: fanoutRetryTemplate(received, normalized)
+      ...buildEnsembleFanoutScopeRepair(received, normalized, stringValue(input.result.message)),
+      receivedKeys: receivedKeys(received)
     }
   } else if (input.toolName === 'scout_brief' && error === 'invalid_confidence') {
     repair = {
