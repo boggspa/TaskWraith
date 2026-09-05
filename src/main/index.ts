@@ -2025,6 +2025,11 @@ import {
   type ImageAttachmentPreviewHandlerDeps
 } from './ipc/imageAttachmentPreviewHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
+import {
+  registerEnsembleSkipHandlers,
+  registerEnsembleWakeHandlers,
+  type EnsembleSkipWakeHandlerDeps
+} from './ipc/ensembleSkipWakeHandlers'
 import { registerFanoutCandidateHandlers } from './ipc/fanoutCandidateHandlers'
 import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGrantHandlers'
 import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
@@ -62388,24 +62393,19 @@ if (isGeminiMcpBridgeProcess) {
       return result
     })
 
-    ipcMain.handle('skip-ensemble-participant', async (event, chatId?: string) => {
-      const canonicalChatId = requireNonEmptyString(chatId, 'Ensemble chat id')
-      assertRendererChatScope(event, canonicalChatId)
-      return ensembleOrchestratorRef?.skipActiveParticipant(canonicalChatId)
-    })
+    function ensembleSkipWakeHandlerDeps(): EnsembleSkipWakeHandlerDeps {
+      return {
+        getEnsembleOrchestrator: () => ensembleOrchestratorRef,
+        getWakeupTimerService: () => wakeupTimerServiceRef,
+        findPersistedEnsembleWakeup,
+        savePersistedEnsembleWakeup,
+        requireNonEmptyString,
+        assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
+        isMainRendererSender
+      }
+    }
 
-    ipcMain.handle('skip-ensemble-read-fanout', async (event, chatId?: string) => {
-      const canonicalChatId = requireNonEmptyString(chatId, 'Ensemble chat id')
-      assertRendererChatScope(event, canonicalChatId)
-      return ensembleOrchestratorRef?.skipReadFanout(canonicalChatId)
-    })
-
-    ipcMain.handle('skip-ensemble-fanout-lane', async (event, chatId?: string, laneId?: string) => {
-      const canonicalChatId = requireNonEmptyString(chatId, 'Ensemble chat id')
-      const canonicalLaneId = requireNonEmptyString(laneId, 'Fan-out lane id')
-      assertRendererChatScope(event, canonicalChatId)
-      return ensembleOrchestratorRef?.skipFanoutLane(canonicalChatId, canonicalLaneId)
-    })
+    registerEnsembleSkipHandlers(ensembleSkipWakeHandlerDeps())
 
     registerCheckpointHandlers({
       getSessionCheckpointStore: () => mainRuntimeContext.getSessionCheckpoints(),
@@ -62420,53 +62420,7 @@ if (isGeminiMcpBridgeProcess) {
       assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId)
     })
 
-    // 1.0.5-N7 — User-initiated Wake-Now from the participant chip
-    // overflow. Forwards to the orchestrator's existing wakeup-fired
-    // path; same code path as the timer firing naturally.
-    ipcMain.handle('wake-ensemble-participant-now', async (event, wakeupId?: string) => {
-      const id = requireNonEmptyString(wakeupId, 'Wakeup id')
-      const persisted = findPersistedEnsembleWakeup(id)
-      if (!persisted && !isMainRendererSender(event)) {
-        throw new Error('Renderer cannot resolve wakeup chat authority.')
-      }
-      if (persisted) assertRendererChatScope(event, persisted.chatId)
-      // The timer service holds an in-flight setTimeout; cancel it
-      // first so the timer doesn't fire a duplicate after this user
-      // wake. handleWakeupFired removes the record from
-      // runtime.pendingWakeups, so the timer's onFire callback would
-      // miss anyway — but explicit cancellation keeps the timer
-      // bookkeeping clean.
-      wakeupTimerServiceRef?.cancel(id)
-      return Boolean(ensembleOrchestratorRef?.handleWakeupFired(id))
-    })
-
-    // 1.0.5-N7 — User-initiated Cancel of a pending wakeup. Tries
-    // the in-memory runtime path first; falls back to a direct
-    // persisted-record cancel if the runtime isn't in memory
-    // (e.g. post-restart before recovery armed the timer).
-    ipcMain.handle('cancel-ensemble-participant-wakeup', async (event, wakeupId?: string) => {
-      const id = requireNonEmptyString(wakeupId, 'Wakeup id')
-      const persistedBeforeCancel = findPersistedEnsembleWakeup(id)
-      if (!persistedBeforeCancel && !isMainRendererSender(event)) {
-        throw new Error('Renderer cannot resolve wakeup chat authority.')
-      }
-      if (persistedBeforeCancel) assertRendererChatScope(event, persistedBeforeCancel.chatId)
-      wakeupTimerServiceRef?.cancel(id)
-      const cancelled = ensembleOrchestratorRef?.cancelWakeupById(id, 'cancelled by user')
-      if (cancelled) return { ok: true, cancelled }
-      const persisted = findPersistedEnsembleWakeup(id)
-      if (!persisted || persisted.status !== 'pending') {
-        return { ok: false, error: 'No pending wakeup matches.' }
-      }
-      const fallback = {
-        ...persisted,
-        status: 'cancelled' as const,
-        cancelledAt: new Date().toISOString(),
-        message: 'cancelled by user'
-      }
-      savePersistedEnsembleWakeup(fallback)
-      return { ok: true, cancelled: fallback }
-    })
+    registerEnsembleWakeHandlers(ensembleSkipWakeHandlerDeps())
 
     ipcMain.handle(
       'cancel-agent-run',
