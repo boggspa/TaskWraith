@@ -11,6 +11,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import { MISTRAL_REASONING_EFFORTS } from '../shared/mistralModels'
 
 import { isPiModelRetired } from '../shared/piModelLifecycle'
 import { resolveOllamaReasoningSupport } from '../shared/ollamaReasoning'
@@ -230,6 +231,17 @@ function derivedReasoning(
   }))
 }
 
+function mistralNativeReasoning(): HostProviderModelOffer['reasoning'] {
+  const native = derivedReasoning(MISTRAL_REASONING_EFFORTS.map((entry) => entry.reasoningEffort))
+  // Existing Host threads may have selected xhigh; Vibe normalizes that alias to max.
+  return [
+    ...native,
+    ...STANDARD_REASONING.filter(
+      (entry) => !native.some((option) => option.reasoningId === entry.reasoningId)
+    )
+  ]
+}
+
 function ollamaModel(modelId: string, label: string, isDefault = false): HostProviderModelOffer {
   return model(
     modelId,
@@ -395,16 +407,16 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       displayProvider: 'Mistral',
       shortCode: 'MISTRAL',
       models: [
-        model('devstral-small', 'Devstral Small'),
-        model('mistral-medium-3.5', 'Mistral Medium 3.5', STANDARD_REASONING, true),
-        model('glm-5-2', 'GLM-5.2 (Mistral Hosted)', STANDARD_REASONING),
+        model('devstral-small', 'Devstral Small', mistralNativeReasoning()),
+        model('mistral-medium-3.5', 'Mistral Medium 3.5', mistralNativeReasoning(), true),
+        model('glm-5-2', 'GLM-5.2 (Mistral Hosted)', mistralNativeReasoning()),
         model('mistral-large-2512', 'Mistral Large 3', STANDARD_REASONING),
         model('zai-glm-5-2', 'GLM-5.2 (via Mistral)', STANDARD_REASONING),
         model('codestral-2508', 'Codestral (Aug 2025)', STANDARD_REASONING),
-        model('mistral-small-2603', 'Mistral Small 4', STANDARD_REASONING),
+        model('mistral-small-2603', 'Mistral Small 4', mistralNativeReasoning()),
         model('devstral-2512', 'Devstral 2', STANDARD_REASONING),
         model('labs-leanstral-1-5', 'Leanstral 1.5 (Labs)', STANDARD_REASONING),
-        model('mistral-medium-latest', 'Mistral Medium (Latest)', STANDARD_REASONING),
+        model('mistral-medium-latest', 'Mistral Medium (Latest)', mistralNativeReasoning()),
         model('mistral-medium-2508', 'Mistral Medium 3.1', STANDARD_REASONING),
         model('mistral-medium-2505', 'Mistral Medium 3', STANDARD_REASONING),
         model('ministral-14b-2512', 'Ministral 3 (14B)', STANDARD_REASONING),

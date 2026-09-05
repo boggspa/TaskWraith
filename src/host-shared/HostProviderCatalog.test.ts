@@ -21,6 +21,25 @@ describe('derived reasoning offers', () => {
       .find((offer) => offer.modelId === modelId)
       ?.reasoning.map((option) => option.reasoningId) ?? []
 
+  it('offers native Mistral Off and Max thinking while retaining the legacy xhigh alias', () => {
+    for (const modelId of [
+      'devstral-small',
+      'mistral-medium-3.5',
+      'glm-5-2',
+      'mistral-small-2603',
+      'mistral-medium-latest'
+    ]) {
+      expect(efforts('mistral', modelId), modelId).toEqual([
+        'off',
+        'low',
+        'medium',
+        'high',
+        'max',
+        'xhigh'
+      ])
+    }
+  })
+
   // This surface feeds the Host and the iOS remote picker, so drift from the
   // desktop tables was invisible to every desktop test. Both providers now
   // derive from the same resolvers the desktop uses.
