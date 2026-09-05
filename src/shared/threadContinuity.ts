@@ -16,6 +16,8 @@ export interface SeatContinuityCheckpoint {
   seatId: string
   revision: number
   text: string
+  /** A text-free revision witness prevents stale writes after clear/recreate. */
+  cleared?: true
   references: ContinuityReference[]
   updatedAt: string
   author: { provider: ProviderId; runId: string; providerSessionId?: string }
@@ -41,13 +43,58 @@ export function readSeatCheckpoint(
     value.revision < 1 ||
     typeof value.text !== 'string' ||
     value.text.length > CONTINUITY_TEXT_MAX_CHARS ||
+    JSON.stringify(value.text).length > CONTINUITY_TEXT_MAX_CHARS + 2 ||
     !Array.isArray(value.references) ||
     value.references.length > CONTINUITY_MAX_REFS ||
     !value.author?.runId ||
+    typeof value.updatedAt !== 'string' ||
+    value.updatedAt.length > 40 ||
     !Number.isFinite(Date.parse(value.updatedAt))
   )
     return null
-  return value
+  if (
+    value.references.some(
+      (ref) =>
+        !ref ||
+        typeof ref.messageId !== 'string' ||
+        !ref.messageId ||
+        ref.messageId.length > 160 ||
+        (ref.activityId !== undefined &&
+          (typeof ref.activityId !== 'string' || !ref.activityId || ref.activityId.length > 160))
+    )
+  )
+    return null
+  if (
+    typeof value.author.runId !== 'string' ||
+    value.author.runId.length > 160 ||
+    typeof value.author.provider !== 'string' ||
+    value.author.provider.length > 40 ||
+    (value.author.providerSessionId !== undefined &&
+      (typeof value.author.providerSessionId !== 'string' ||
+        value.author.providerSessionId.length > 160))
+  )
+    return null
+  if (value.cleared && (value.text !== '' || value.references.length > 0)) return null
+  return {
+    schemaVersion: 1,
+    chatId: value.chatId,
+    seatId: value.seatId,
+    revision: value.revision,
+    text: value.text,
+    references: value.references.map((ref) => ({
+      messageId: ref.messageId,
+      ...(ref.activityId ? { activityId: ref.activityId } : {})
+    })),
+    updatedAt: new Date(value.updatedAt).toISOString(),
+    ...(value.cleared ? { cleared: true as const } : {}),
+    author: {
+      provider: value.author.provider,
+      runId: value.author.runId,
+      ...(value.author.providerSessionId
+        ? { providerSessionId: value.author.providerSessionId }
+        : {})
+    }
+  }
 }
 
 /** Author and seat are supplied by the active host run, never by tool arguments. */
@@ -72,13 +119,35 @@ export function updateSeatCheckpoint(
   ) {
     throw new Error('Checkpoint seat is not a participant in this task.')
   }
-  const next = { ...chat.continuityCheckpoints }
+  const next: Record<string, SeatContinuityCheckpoint> = Object.assign(
+    Object.create(null),
+    chat.continuityCheckpoints
+  )
+  const liveSeats = new Set([
+    SOLO_CONTINUITY_SEAT,
+    ...(chat.ensemble?.participants.map((p) => p.id) || [])
+  ])
+  for (const seat of Object.keys(next)) if (!liveSeats.has(seat)) delete next[seat]
   if (input.text === null) {
-    delete next[input.seatId]
-    return Object.keys(next).length ? next : undefined
+    next[input.seatId] = {
+      schemaVersion: 1,
+      chatId: chat.appChatId,
+      seatId: input.seatId,
+      revision: (old?.revision || 0) + 1,
+      text: '',
+      references: [],
+      cleared: true,
+      updatedAt: input.now,
+      author: input.author
+    }
+    return next
   }
   const text = input.text.trim()
-  if (!text || text.length > CONTINUITY_TEXT_MAX_CHARS) {
+  if (
+    !text ||
+    text.length > CONTINUITY_TEXT_MAX_CHARS ||
+    JSON.stringify(text).length > CONTINUITY_TEXT_MAX_CHARS + 2
+  ) {
     throw new Error(`Checkpoint text must contain 1–${CONTINUITY_TEXT_MAX_CHARS} characters.`)
   }
   const references = input.references || []

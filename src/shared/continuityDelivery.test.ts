@@ -317,6 +317,28 @@ describe('continuity delivery planning', () => {
 })
 
 describe('continuity checkpoint prompt block', () => {
+  it('preserves an accepted constraint at the end of the note before allocating references', () => {
+    const note = `${'x'.repeat(1500)} DO NOT change the wire protocol.`
+    const block = formatContinuityCheckpointBlock(checkpoint({ text: note }))
+    expect(block).toContain('DO NOT change the wire protocol.')
+    expect(block.length).toBeLessThanOrEqual(CONTINUITY_BLOCK_MAX_CHARS)
+  })
+  it('omits optional reference framing when qualified tool names consume the remaining budget', () => {
+    const block = formatContinuityCheckpointBlock(
+      checkpoint({
+        seatId: '12345678-1234-1234-1234-123456789abc',
+        text: 'x'.repeat(1600),
+        references: [{ messageId: 'm'.repeat(160), activityId: 'a'.repeat(160) }]
+      }),
+      {
+        checkpoint: 'mcp__taskwraith__tw_checkpoint',
+        historySearch: 'mcp__taskwraith__tw_history_search',
+        historyRead: 'mcp__taskwraith__tw_history_read'
+      }
+    )
+    expect(block).toContain('x'.repeat(1600))
+    expect(block.length).toBeLessThanOrEqual(CONTINUITY_BLOCK_MAX_CHARS)
+  })
   it('bounds the complete block including references and never dereferences tool results', () => {
     const sentinel = 'SECRET_RAW_TOOL_RESULT_MUST_NOT_APPEAR'
     const references = Array.from({ length: 6 }, (_, index) => ({
@@ -324,7 +346,7 @@ describe('continuity checkpoint prompt block', () => {
       activityId: `activity-${index}-${'a'.repeat(142)}`
     }))
     const cp = checkpoint({
-      text: `${'\\\n'.repeat(700)}Keep only the authored next action.`,
+      text: `${'x'.repeat(1500)}Keep only the authored next action.`,
       references
     })
     const toolActivity = {

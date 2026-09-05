@@ -88,7 +88,6 @@ const SUCCESSFUL_DELIVERY_STATUSES = new Set([
 ])
 
 const PROMPT_TOOL_NAME = /^[a-zA-Z0-9_.:-]{1,96}$/
-const REFERENCE_PROMPT_RESERVE = 600
 const CHECKPOINT_LAYER_ID = 'continuity_checkpoint'
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -224,35 +223,6 @@ export function continuityDeliveryKey(input: {
   return `continuity-v1:${stableFingerprint(source)}`
 }
 
-function cleanCheckpointText(value: string): string {
-  return value
-    .replace(/\r\n?/g, '\n')
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ')
-}
-
-function jsonStringWithin(value: string, maxChars: number): string {
-  if (maxChars < 2) return ''
-  const normalized = cleanCheckpointText(value)
-  const complete = JSON.stringify(normalized)
-  if (complete.length <= maxChars) return complete
-  const codePoints = Array.from(normalized)
-  const marker = '… [truncated for prompt]'
-  let low = 0
-  let high = codePoints.length
-  let best = JSON.stringify(marker).length <= maxChars ? JSON.stringify(marker) : '""'
-  while (low <= high) {
-    const middle = Math.floor((low + high) / 2)
-    const candidate = JSON.stringify(`${codePoints.slice(0, middle).join('')}${marker}`)
-    if (candidate.length <= maxChars) {
-      best = candidate
-      low = middle + 1
-    } else {
-      high = middle - 1
-    }
-  }
-  return best
-}
-
 function displayIdentity(value: string, maxCodePoints = 160): string {
   const codePoints = Array.from(value)
   return JSON.stringify(
@@ -324,12 +294,13 @@ export function formatContinuityCheckpointBlock(
   const referenceLines = checkpoint.references.map(referenceLine)
   const emptyQuote = '""'
   const withoutReferences = [...prefix, emptyQuote, ...suffix]
-  const reserve = referenceLines.length > 0 ? REFERENCE_PROMPT_RESERVE : 0
   const quoteBudget = Math.max(
     2,
-    CONTINUITY_BLOCK_MAX_CHARS - (joinedLength(withoutReferences) - emptyQuote.length) - reserve
+    CONTINUITY_BLOCK_MAX_CHARS - (joinedLength(withoutReferences) - emptyQuote.length)
   )
-  const quoted = jsonStringWithin(checkpoint.text, quoteBudget)
+  const quoted = JSON.stringify(checkpoint.text)
+  if (quoted.length > quoteBudget)
+    throw new Error('Checkpoint text exceeds the recovery budget; shorten the note before saving.')
   const selectedReferences: string[] = []
   for (const line of referenceLines) {
     const candidate = [
@@ -371,7 +342,9 @@ export function formatContinuityCheckpointBlock(
           ...(omissionLine ? [omissionLine] : [])
         ]
       : []
-  const block = [...prefix, quoted, ...references, ...suffix].join('\n')
+  let block = [...prefix, quoted, ...references, ...suffix].join('\n')
+  // Reference headings/notices are optional too; never displace accepted note text.
+  if (block.length > CONTINUITY_BLOCK_MAX_CHARS) block = [...prefix, quoted, ...suffix].join('\n')
   if (block.length > CONTINUITY_BLOCK_MAX_CHARS) {
     throw new Error('Continuity checkpoint block exceeded its hard prompt budget.')
   }

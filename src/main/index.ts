@@ -3,6 +3,10 @@
 
 import './devAppName'
 import {
+  createThreadContinuityHostTools,
+  isThreadContinuityToolName
+} from './continuity/ThreadContinuityHostAdapter'
+import {
   devInstanceRelayPortOffset,
   instanceLaunchBootstrapArgs,
   instanceLaunchPosture,
@@ -6430,6 +6434,12 @@ const threadMessageToolExecutors = createThreadMessageToolExecutors({
     const participantId = ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || ''
     return resolveThreadMessageSenderSeat(chat, participantId)
   }
+})
+
+const threadContinuityTools = createThreadContinuityHostTools({
+  isIsolatedRun: (runId) =>
+    executionGraphOwnsAttemptRunId(runId) || channelAgentRunIsolationRegistry.isRunIsolated(runId),
+  saveCheckpoint: (chat) => saveAndBroadcastChat(chat, { authoritativeContinuityCheckpoints: true })
 })
 
 const recallToolExecutors = createRecallToolExecutors({
@@ -41606,6 +41616,9 @@ async function executeGeminiMcpTool(
           parentProvider
         )
       )
+    } else if (isThreadContinuityToolName(toolName)) {
+      markDispatchHandled('thread-continuity')
+      applyRichResult(await threadContinuityTools.execute(toolName, args, context, parentProvider))
     } else if (isRecallMcpToolName(toolName)) {
       markDispatchHandled('cross-thread-recall')
       applyRichResult(

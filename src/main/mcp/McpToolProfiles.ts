@@ -903,6 +903,15 @@ export const GATEWAY_SOLO_V3_MCP_ADVERTISE_TOOLS = Object.freeze([
   ...CAPABILITY_GATEWAY_TOOL_NAMES
 ] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
 
+/** New task continuity tools; all earlier profile memberships stay frozen. */
+export const THREAD_CONTINUITY_MCP_TOOL_NAMES = ['tw_history_search', 'tw_history_read', 'tw_checkpoint'] as const satisfies readonly TaskWraithMcpToolName[]
+export const GATEWAY_V20_MCP_DIRECT_TOOLS = Object.freeze([...GATEWAY_V19_MCP_DIRECT_TOOLS, 'tw_checkpoint'] as const)
+export const GATEWAY_V20_MESH_MCP_DIRECT_TOOLS = Object.freeze([...GATEWAY_V19_MESH_MCP_DIRECT_TOOLS, 'tw_checkpoint'] as const)
+export const GATEWAY_SOLO_V4_MCP_DIRECT_TOOLS = Object.freeze([...GATEWAY_SOLO_V3_MCP_DIRECT_TOOLS, 'tw_checkpoint'] as const)
+export const GATEWAY_V20_MCP_ADVERTISE_TOOLS = Object.freeze([...GATEWAY_V20_MCP_DIRECT_TOOLS, ...CAPABILITY_GATEWAY_TOOL_NAMES])
+export const GATEWAY_V20_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([...GATEWAY_V20_MESH_MCP_DIRECT_TOOLS, ...CAPABILITY_GATEWAY_TOOL_NAMES])
+export const GATEWAY_SOLO_V4_MCP_ADVERTISE_TOOLS = Object.freeze([...GATEWAY_SOLO_V4_MCP_DIRECT_TOOLS, ...CAPABILITY_GATEWAY_TOOL_NAMES])
+
 type GatewayV8MeshTransportToolDefinition = {
   name: string
   description?: string
@@ -1382,6 +1391,9 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
+  if (profileId === 'taskwraith-gateway-v20') return [...GATEWAY_V19_MCP_HIDDEN_TOOL_NAMES, 'tw_history_search', 'tw_history_read']
+  if (profileId === 'taskwraith-gateway-v20-mesh') return [...GATEWAY_V19_MESH_MCP_HIDDEN_TOOL_NAMES, 'tw_history_search', 'tw_history_read']
+  if (profileId === 'taskwraith-gateway-solo-v4') return [...GATEWAY_SOLO_V3_MCP_HIDDEN_TOOL_NAMES, 'tw_history_search', 'tw_history_read']
   if (profileId === 'taskwraith-gateway-solo-v3') {
     return GATEWAY_SOLO_V3_MCP_HIDDEN_TOOL_NAMES
   }
@@ -1430,6 +1442,9 @@ export function taskWraithGatewayHiddenToolNamesForProfile(
 export function taskWraithGatewayDirectToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly TaskWraithMcpToolName[] {
+  if (profileId === 'taskwraith-gateway-v20') return GATEWAY_V20_MCP_DIRECT_TOOLS
+  if (profileId === 'taskwraith-gateway-v20-mesh') return GATEWAY_V20_MESH_MCP_DIRECT_TOOLS
+  if (profileId === 'taskwraith-gateway-solo-v4') return GATEWAY_SOLO_V4_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-solo-v3') return GATEWAY_SOLO_V3_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-solo-v2') return GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-solo-v1') return GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS
@@ -1545,6 +1560,9 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   // v18 directly exposes only opaque host-issued opportunity redemption.
   'taskwraith-gateway-v18': GATEWAY_V18_MCP_ADVERTISE_TOOLS,
   'taskwraith-gateway-v18-mesh': GATEWAY_V18_MESH_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v20': GATEWAY_V20_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v20-mesh': GATEWAY_V20_MESH_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-solo-v4': GATEWAY_SOLO_V4_MCP_ADVERTISE_TOOLS,
   'taskwraith-gateway-v19': GATEWAY_V19_MCP_ADVERTISE_TOOLS,
   'taskwraith-gateway-v19-mesh': GATEWAY_V19_MESH_MCP_ADVERTISE_TOOLS,
   // Solo-v1 preserves v17 eligibility with a lean direct birth catalogue.

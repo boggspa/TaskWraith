@@ -1017,6 +1017,9 @@ export type TaskWraithMcpProfileId =
   // verb. Existing receipts retain v1-v17 exact memberships.
   | 'taskwraith-gateway-v18'
   | 'taskwraith-gateway-v18-mesh'
+  | 'taskwraith-gateway-v20'
+  | 'taskwraith-gateway-v20-mesh'
+  | 'taskwraith-gateway-solo-v4'
   | 'taskwraith-gateway-v19'
   | 'taskwraith-gateway-v19-mesh'
   // Solo-v2 is the lean v18-derived birth catalogue; solo-v1 remains frozen.

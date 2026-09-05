@@ -43,8 +43,22 @@ describe('private seat checkpoints', () => {
   })
   it('clears the checkpoint without creating permanent project memory', () => {
     const saved = { ...chat, continuityCheckpoints: updateSeatCheckpoint(chat, input) }
-    expect(
-      updateSeatCheckpoint(saved, { ...input, expectedRevision: 1, text: null })
-    ).toBeUndefined()
+    const cleared = updateSeatCheckpoint(saved, { ...input, expectedRevision: 1, text: null })
+    expect(cleared?.__solo__).toMatchObject({
+      text: '',
+      references: [],
+      cleared: true,
+      revision: 2
+    })
+    const recreated = updateSeatCheckpoint(
+      { ...chat, continuityCheckpoints: cleared },
+      { ...input, expectedRevision: 2 }
+    )
+    expect(() =>
+      updateSeatCheckpoint(
+        { ...chat, continuityCheckpoints: recreated },
+        { ...input, expectedRevision: 1 }
+      )
+    ).toThrow(/changed/)
   })
 })

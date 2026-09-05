@@ -1,3 +1,4 @@
+import { THREAD_CONTINUITY_TOOL_DEFINITIONS } from './continuity/ThreadContinuityToolDefinitions'
 import { selectableProviderIds } from './settings/MainSanitizers'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './TaskWraithMcpTools'
 import { ASSIGNABLE_PERMISSION_PRESETS } from './EnsembleRosterMutation'
@@ -34,6 +35,7 @@ export interface TaskWraithMcpToolDefinition {
 
 export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinition[] {
   const definitions: TaskWraithMcpToolDefinition[] = [
+    ...THREAD_CONTINUITY_TOOL_DEFINITIONS,
     {
       name: 'run_shell_command',
       description:

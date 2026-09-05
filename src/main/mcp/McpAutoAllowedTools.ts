@@ -119,6 +119,9 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // entries nobody can prune (the author has moved on) is worse than the
   // counter-intuitive-deletion risk, which is recoverable — delete receipts
   // (createBlackboardDeleteReceipt) trace every removal.
+  'tw_history_search',
+  'tw_history_read',
+  'tw_checkpoint',
   'blackboard_post',
   // Blackboard reads are bounded, chat-local, and only mutate the per-entry
   // seenBy marker for the calling participant so slim prompts can omit it.

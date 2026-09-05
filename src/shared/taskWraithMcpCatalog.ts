@@ -361,6 +361,9 @@ export const TASKWRAITH_MCP_TOOLS = [
   // thread/provider/workspace and reads how far it got. Read-only; `find` is
   // NOT auto-allowed and cross-workspace reads are gated by the crossThreadRead
   // approval service. See src/main/mcp/RecallToolExecutors.ts.
+  'tw_history_search',
+  'tw_history_read',
+  'tw_checkpoint',
   'tw_recall_find',
   'tw_recall_read',
   'tw_recall_read_events',
