@@ -187,8 +187,6 @@ import {
   formatUserMcpServerClaudeJsonSnippet,
   formatUserMcpServerCodexTomlSnippet,
   formatUserMcpServerCursorJsonSnippet,
-  formatUserMcpServerEnv,
-  formatUserMcpServerSecretRefs,
   formatUserMcpServersAuditJson,
   formatUserMcpServersClaudeJson,
   formatUserMcpServersCodexToml,
@@ -198,7 +196,6 @@ import {
   isClaudeExportableUserMcpServer,
   isCodexExportableUserMcpServer,
   isCursorExportableUserMcpServer,
-  omitSecretBackedFields,
   parseUserMcpServerEnv,
   parseUserMcpServerSecretLines,
   parseUserMcpServersImportJson,
@@ -271,6 +268,14 @@ import {
   toPauseDateTimeLocal
 } from './settings/settingsPureHelpers'
 import type { FxRateSnapshot } from './settings/settingsPureHelpers'
+import { emptyRuntimeProfileForm, formFromRuntimeProfile } from './settings/runtimeProfileForm'
+import type {
+  RuntimeProfileFormState,
+  RuntimeProfileSecretValues
+} from './settings/runtimeProfileForm'
+// Re-export the previously exported form-state type so existing importers of
+// `./SettingsPanel` keep working.
+export type { RuntimeProfileFormState } from './settings/runtimeProfileForm'
 
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
 type ManagedPolicyStatus = Record<string, unknown>
@@ -859,60 +864,6 @@ export function summariseDevinStatus(status: unknown): ProviderAuthSummary {
     variant: 'partial',
     statusText: 'Devin CLI ready · credential state not observed',
     hint: 'Set WINDSURF_API_KEY or run `devin auth login` if sign-in is incomplete.'
-  }
-}
-
-export type RuntimeProfileFormState = {
-  id: string
-  name: string
-  provider: ProviderId
-  scope: 'workspace' | 'global'
-  workspaceMode: 'local' | 'worktree' | 'container'
-  binaryPath: string
-  envText: string
-  envSecretText: string
-  approvalMode: string
-  networkPolicy: 'inherit' | 'allow' | 'deny'
-  persistence: 'reusable' | 'ephemeral'
-}
-
-type RuntimeProfileSecretValues = {
-  env: Record<string, string>
-}
-
-function emptyRuntimeProfileForm(provider: ProviderId = 'codex'): RuntimeProfileFormState {
-  return {
-    id: '',
-    name: '',
-    provider,
-    scope: 'workspace',
-    workspaceMode: 'local',
-    binaryPath: '',
-    envText: '',
-    envSecretText: '',
-    approvalMode: 'default',
-    networkPolicy: 'inherit',
-    persistence: 'reusable'
-  }
-}
-
-function formatRuntimeProfileSecretRefs(names?: string[]): string {
-  return formatUserMcpServerSecretRefs(names)
-}
-
-function formFromRuntimeProfile(profile: RuntimeProfile): RuntimeProfileFormState {
-  return {
-    id: profile.id,
-    name: profile.name,
-    provider: profile.provider,
-    scope: profile.scope,
-    workspaceMode: profile.workspaceMode,
-    binaryPath: profile.binaryPath || '',
-    envText: formatUserMcpServerEnv(omitSecretBackedFields(profile.env, profile.secretRefs?.env)),
-    envSecretText: formatRuntimeProfileSecretRefs(profile.secretRefs?.env),
-    approvalMode: profile.approvalMode || 'default',
-    networkPolicy: profile.networkPolicy,
-    persistence: profile.persistence
   }
 }
 
