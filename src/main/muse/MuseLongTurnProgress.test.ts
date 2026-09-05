@@ -30,10 +30,11 @@ describe('withMuseProgressSteer', () => {
 })
 
 describe('withMuseOpeningSteer', () => {
-  it('prepends the plan-announcement steer to a fresh-exec prompt', () => {
+  it('keeps progress from replacing tool execution in a fresh-exec prompt', () => {
     const prompt = withMuseOpeningSteer('Set up the migration.')
     expect(prompt).toBe(`${MUSE_OPENING_STEER_NOTE}\n\nSet up the migration.`)
-    expect(prompt).toContain('announce what you plan to do before starting tool calls')
+    expect(prompt).toContain('carry out the requested work in this turn')
+    expect(prompt).toContain('Verify file changes with tools before reporting completion')
   })
 
   it('is idempotent and leaves slash dispatch untouched', () => {

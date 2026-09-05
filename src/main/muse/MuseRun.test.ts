@@ -170,7 +170,7 @@ describe('runMuseProvider', () => {
     expect(outcome.warnings.filter((w) => w.includes('cron')).length).toBe(0)
   })
 
-  it('steers the launch prompt to announce a plan before the first tool call', async () => {
+  it('steers the launch prompt to continue past a plan into tool execution', async () => {
     const temporaryRoot = tempDir('muse-run-steer-')
     const workspacePath = tempDir('muse-ws-steer-')
     let observedArgv: readonly string[] = []
@@ -209,7 +209,7 @@ describe('runMuseProvider', () => {
     const launchPrompt = observedArgv[observedArgv.length - 1]
     expect(outcome.status).toBe('success')
     expect(launchPrompt).toContain('say hi')
-    expect(launchPrompt).toContain('announce what you plan to do before starting tool calls')
+    expect(launchPrompt).toContain('Do not stop after announcing a plan')
     expect(launchPrompt).toContain('phase-based, not per tool or fixed count')
     expect(launchPrompt).toContain('not a final answer, question, yield, handoff, or completion signal')
   })
