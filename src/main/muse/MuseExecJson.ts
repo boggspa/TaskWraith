@@ -48,6 +48,7 @@ export type MuseExecNormalizedType =
   | 'run_started'
   | 'task'
   | 'content'
+  | 'thinking'
   | 'terminal'
   | 'tool_use'
   | 'tool_result'
@@ -60,6 +61,9 @@ export interface MuseExecNormalizedEvent {
   sessionId?: string
   runId?: string
   text?: string
+  /** Session/run/message identity for a provider-authored reasoning summary. */
+  thinkingId?: string
+  thinkingCumulative?: boolean
   terminal?: string
   reason?: string
   sequence?: number
