@@ -364,7 +364,8 @@ import {
   resolveCodexOutboundReasoning,
   resolvePersistedCodexModelSelection
 } from './codex/CodexOutboundReasoning'
-import { resolveCodexMcpRouteHint, type CodexMcpRouteHint } from './codex/CodexMcpRouting'
+import type { CodexMcpRouteHint } from './codex/CodexMcpRouting'
+import { resolveCodexMcpToolRoute } from './codex/CodexMcpRouteRecovery'
 import { BridgeDaemonClient } from './BridgeDaemonClient'
 import {
   startStudioProductionLifecycle,
@@ -28066,15 +28067,31 @@ function pruneCodexMcpRouteHints(nowMs: number): void {
   }
 }
 
-function resolveCodexMcpRouteFromHints(toolName: string, rawArgs: unknown): AgentRunRoute | null {
+function resolveCodexMcpRouteFromHints(
+  toolName: string,
+  rawArgs: unknown,
+  route?: AgentRunRoute | null
+): AgentRunRoute | null {
   const nowMs = Date.now()
   pruneCodexMcpRouteHints(nowMs)
-  return resolveCodexMcpRouteHint({
-    hints: [...pendingCodexMcpRouteHints.values()],
+  return resolveCodexMcpToolRoute({
+    route,
+    hints: pendingCodexMcpRouteHints,
+    sessions: runManager,
     nowMs,
     toolName,
     args: rawArgs,
-    maxAgeMs: CODEX_MCP_ROUTE_HINT_MAX_AGE_MS
+    maxAgeMs: CODEX_MCP_ROUTE_HINT_MAX_AGE_MS,
+    allowsTerminalSession: allowsTerminalCodexNativeGoalSession,
+    onRecovery: (receipt) =>
+      appendDurableRunEventForRoute(
+        'codex',
+        { appRunId: receipt.currentRunId },
+        'lifecycle',
+        'raw',
+        'Recovered resumed Codex MCP route',
+        { eventType: 'codex_mcp_route_recovered', ...receipt }
+      )
   })
 }
 
@@ -33914,10 +33931,10 @@ async function runCodexAppServerWithClient(
   }
   try {
     if (resumableThreadId && codexTaskWraithMcpAdvertised) {
-      // codex-cli keeps a loaded thread's original MCP env even when a later
-      // thread/resume supplies a new per-thread config. Unsubscribe is the
-      // idempotent unload fence that makes the resumed bridge child inherit
-      // this run's exact route instead of the previous turn's stale run id.
+      // Unsubscribe lets an idle native thread reload changed config on
+      // resume, but its ACK is not proof of unload. A retained non-idle thread
+      // can keep the old MCP env; resolveCodexMcpToolRoute recovers that route
+      // only when a live tool-call witness identifies the same resumed seat.
       const unsubscribe = await client.request(
         CODEX_THREAD_UNSUBSCRIBE_METHOD,
         { threadId: resumableThreadId },
@@ -39717,14 +39734,14 @@ async function executeGeminiMcpTool(
   // spellings all converge here BEFORE route hints, the dispatch contract,
   // preflight, approval, and audit read the arguments.
   args = normalizeMcpToolArguments(normalizeEnsembleMcpToolArguments(toolName, args))
-  const effectiveRoute =
-    parentProvider === 'codex' && !route?.appRunId && !route?.appChatId
-      ? resolveCodexMcpRouteFromHints(toolName, args) || route
-      : route
   parentProvider = resolveBrokerParentProvider(
     parentProvider,
-    effectiveRoute?.appRunId ? runManager.get(effectiveRoute.appRunId)?.provider : undefined
+    route?.appRunId ? runManager.get(route.appRunId)?.provider : undefined
   )
+  const effectiveRoute =
+    parentProvider === 'codex'
+      ? resolveCodexMcpRouteFromHints(toolName, args, route) || route
+      : route
 
   if (historyClearAdmissionBlocked(effectiveRoute?.appRunId)) {
     return {

@@ -59,7 +59,7 @@ describe('Codex per-thread MCP route env', () => {
     expect(CODEX_THREAD_UNSUBSCRIBE_METHOD).toBe('thread/unsubscribe')
   })
 
-  it('accepts only the app-server unsubscribe fence statuses', () => {
+  it('accepts only the app-server unsubscribe acknowledgement statuses', () => {
     expect(isCodexThreadUnsubscribeResult({ status: 'unsubscribed' })).toBe(true)
     expect(isCodexThreadUnsubscribeResult({ status: 'notSubscribed' })).toBe(true)
     expect(isCodexThreadUnsubscribeResult({ status: 'notLoaded' })).toBe(true)

@@ -3,8 +3,9 @@
  *
  * The app-server daemon is shared by concurrent Codex runs, but it starts the
  * configured MCP bridge per thread. Stamping the run route on thread/start and
- * thread/resume prevents identical tool calls from becoming ambiguous when
- * several Codex seats are active at once.
+ * thread/resume disambiguates concurrent seats when that bridge is rebuilt.
+ * A retained loaded thread may ignore resume config, so CodexMcpRouteRecovery
+ * also correlates stale routes with exact live native tool-call witnesses.
  */
 
 /** Must match the case-sensitive server name in buildCodexTaskWraithMcpArgs. */
@@ -13,7 +14,7 @@ export const CODEX_THREAD_UNSUBSCRIBE_METHOD = 'thread/unsubscribe'
 
 export type CodexThreadUnsubscribeStatus = 'unsubscribed' | 'notSubscribed' | 'notLoaded'
 
-/** The app-server returns all three as successful, idempotent unload fences. */
+/** These acknowledge subscription state; none guarantees the thread unloaded. */
 export function isCodexThreadUnsubscribeResult(
   value: unknown
 ): value is { status: CodexThreadUnsubscribeStatus } {
