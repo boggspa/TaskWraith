@@ -402,4 +402,263 @@ describe('RendererDiagnosticRing', () => {
       mainHeapUsedBytes: 120_000_000
     })
   })
+
+  it('records GPU absence rather than stale data when a healthy snapshot has no GPU row', () => {
+    const filePath = testPath()
+    let withGpuRow = true
+    const tab = {
+      pid: 44,
+      type: 'Tab',
+      creationTime: 1,
+      cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+      memory: { workingSetSize: 1_024 },
+      sandboxed: true,
+      integrityLevel: 'unknown'
+    }
+    const gpu = {
+      pid: 46,
+      type: 'GPU',
+      creationTime: 1,
+      cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+      memory: { workingSetSize: 2_048, privateBytes: 1_024 },
+      sandboxed: true,
+      integrityLevel: 'unknown'
+    }
+    const recorder = new RendererDiagnosticRecorder({
+      filePath,
+      metricsSnapshotTtlMs: 0,
+      getAppMetrics: () => (withGpuRow ? [tab, gpu] : [tab]) as Electron.ProcessMetric[]
+    })
+    const target = { windowId: 1, webContentsId: 2, rendererPid: 44 }
+    const first = recorder.recordClientSample(target, {
+      activeChatMessageCount: 1,
+      chatUpdates: {}
+    })
+    expect(first.gpuRssBytes).toBe(2_048 * 1024)
+
+    // Same renderer, healthy snapshot, GPU row gone: absence, not carry-forward.
+    withGpuRow = false
+    const absent = recorder.recordClientSample(target, {
+      activeChatMessageCount: 2,
+      chatUpdates: {}
+    })
+    expect(absent.gpuRssBytes).toBeUndefined()
+    expect(absent.gpuPrivateBytes).toBeUndefined()
+    expect(absent.rendererRssBytes).toBe(1_024 * 1024)
+  })
+
+  it('resets renderer-bound lanes on PID restart while global GPU/main lanes continue', () => {
+    const filePath = testPath()
+    const recorder = new RendererDiagnosticRecorder({
+      filePath,
+      metricsSnapshotTtlMs: 0,
+      getAppMetrics: () =>
+        [
+          {
+            pid: 44,
+            type: 'Tab',
+            creationTime: 1,
+            cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+            memory: { workingSetSize: 1_024 },
+            sandboxed: true,
+            integrityLevel: 'unknown'
+          },
+          {
+            pid: 46,
+            type: 'GPU',
+            creationTime: 1,
+            cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+            memory: { workingSetSize: 2_048, privateBytes: 1_024 },
+            sandboxed: true,
+            integrityLevel: 'unknown'
+          }
+        ] as Electron.ProcessMetric[],
+      getMainMemoryUsage: () => ({ rss: 500_000_000, heapUsed: 120_000_000 })
+    })
+    recorder.recordClientSample(
+      { windowId: 1, webContentsId: 2, rendererPid: 44 },
+      {
+        activeChatMessageCount: 1,
+        v8HeapUsedBytes: 777,
+        domNodeCount: 5_000,
+        chatUpdates: {}
+      }
+    )
+
+    // Renderer restarted as pid 99 with no metric row yet: the old renderer's
+    // RSS/V8/DOM must not be attributed to the new PID.
+    const restarted = recorder.recordClientSample(
+      { windowId: 1, webContentsId: 2, rendererPid: 99 },
+      { activeChatMessageCount: 2, chatUpdates: {} }
+    )
+    expect(restarted.rendererPid).toBe(99)
+    expect(restarted.rendererRssBytes).toBeUndefined()
+    expect(restarted.v8HeapUsedBytes).toBeUndefined()
+    expect(restarted.rendererDomNodeCount).toBeUndefined()
+    expect(restarted.gpuRssBytes).toBe(2_048 * 1024)
+    expect(restarted.mainRssBytes).toBe(500_000_000)
+  })
+
+  it('survives a throwing main-memory reader by carrying last-known values', () => {
+    const filePath = testPath()
+    const errors: Array<[string, unknown]> = []
+    let mainThrows = false
+    const recorder = new RendererDiagnosticRecorder({
+      filePath,
+      metricsSnapshotTtlMs: 0,
+      getAppMetrics: () => [],
+      getMainMemoryUsage: () => {
+        if (mainThrows) throw new Error('memory gone')
+        return { rss: 500_000_000, heapUsed: 120_000_000 }
+      },
+      onError: (message, error) => {
+        errors.push([message, error])
+      }
+    })
+    const target = { windowId: 1, webContentsId: 2, rendererPid: 44 }
+    recorder.recordClientSample(target, { activeChatMessageCount: 1, chatUpdates: {} })
+    mainThrows = true
+
+    const carried = recorder.recordClientSample(target, {
+      activeChatMessageCount: 2,
+      chatUpdates: {}
+    })
+    expect(carried).toMatchObject({
+      mainRssBytes: 500_000_000,
+      mainHeapUsedBytes: 120_000_000
+    })
+    expect(errors.length).toBeGreaterThan(0)
+  })
+
+  it('aggregates only GPU-typed rows and converts KiB to bytes', () => {
+    const filePath = testPath()
+    const recorder = new RendererDiagnosticRecorder({
+      filePath,
+      getAppMetrics: () =>
+        [
+          {
+            pid: 10,
+            type: 'Browser',
+            creationTime: 1,
+            cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+            memory: { workingSetSize: 999_999, privateBytes: 888_888 },
+            sandboxed: true,
+            integrityLevel: 'unknown'
+          },
+          {
+            pid: 11,
+            type: 'Utility',
+            creationTime: 1,
+            cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+            memory: { workingSetSize: 777_777, privateBytes: 666_666 },
+            sandboxed: true,
+            integrityLevel: 'unknown'
+          },
+          {
+            pid: 46,
+            type: 'GPU',
+            creationTime: 1,
+            cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+            memory: { workingSetSize: 2_048, privateBytes: 1_024 },
+            sandboxed: true,
+            integrityLevel: 'unknown'
+          },
+          {
+            pid: 47,
+            type: 'GPU',
+            creationTime: 2,
+            cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+            memory: { workingSetSize: 1_024, privateBytes: 512 },
+            sandboxed: true,
+            integrityLevel: 'unknown'
+          }
+        ] as Electron.ProcessMetric[]
+    })
+    const recorded = recorder.recordClientSample(
+      { windowId: 1, webContentsId: 2, rendererPid: 0 },
+      { activeChatMessageCount: 1, chatUpdates: {} }
+    )
+    // Browser + Utility rows excluded; two GPU rows summed; KiB converted.
+    expect(recorded.gpuRssBytes).toBe((2_048 + 1_024) * 1024)
+    expect(recorded.gpuPrivateBytes).toBe((1_024 + 512) * 1024)
+  })
+
+  it('loads a pre-extension ring file and appends extended samples alongside', () => {
+    const filePath = testPath()
+    const legacySample = {
+      schemaVersion: RENDERER_DIAGNOSTIC_SCHEMA_VERSION,
+      sampledAt: new Date(0).toISOString(),
+      cause: 'interval',
+      windowId: 1,
+      webContentsId: 2,
+      rendererPid: 44,
+      rendererRssBytes: 1_048_576,
+      v8HeapUsedBytes: 777,
+      activeChatMessageCount: 3,
+      chatUpdates: {
+        rendererReceived: 1,
+        rendererSnapshots: 0,
+        rendererPatches: 0,
+        rendererApplyFailures: 0,
+        rendererAcksSent: 0,
+        mainSnapshots: 0,
+        mainPatches: 0,
+        mainBaselineDrops: 0,
+        mainProducerDeltaMissing: 0,
+        mainSpliceRecoveries: 0,
+        mainStaleEnqueueDrops: 0,
+        mainAckRejections: 0,
+        mainTrackedChats: 0,
+        mainInFlight: 0,
+        mainPending: 0,
+        mainInFlightAgeMs: 0,
+        mainRenderPending: 0,
+        mainRenderReceiptAgeMs: 0,
+        mainRetainedMessages: 0,
+        mainRetainedBytes: 0
+      }
+    }
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        schemaVersion: RENDERER_DIAGNOSTIC_SCHEMA_VERSION,
+        capacity: 8,
+        samples: [legacySample]
+      })
+    )
+    const recorder = new RendererDiagnosticRecorder({
+      filePath,
+      capacity: 8,
+      getAppMetrics: () =>
+        [
+          {
+            pid: 44,
+            type: 'Tab',
+            creationTime: 1,
+            cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+            memory: { workingSetSize: 2_048, privateBytes: 1_024 },
+            sandboxed: true,
+            integrityLevel: 'unknown'
+          },
+          {
+            pid: 46,
+            type: 'GPU',
+            creationTime: 1,
+            cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0, cumulativeCPUUsage: 0 },
+            memory: { workingSetSize: 4_096 },
+            sandboxed: true,
+            integrityLevel: 'unknown'
+          }
+        ] as Electron.ProcessMetric[]
+    })
+    const recorded = recorder.recordClientSample(
+      { windowId: 1, webContentsId: 2, rendererPid: 44 },
+      { activeChatMessageCount: 4, chatUpdates: {} }
+    )
+    expect(recorded.gpuRssBytes).toBe(4_096 * 1024)
+    const reloaded = new RendererDiagnosticRing(filePath, { capacity: 8 }).snapshot()
+    expect(reloaded.samples).toHaveLength(2)
+    expect(reloaded.samples[0].gpuRssBytes).toBeUndefined()
+    expect(reloaded.samples[1].gpuRssBytes).toBe(4_096 * 1024)
+  })
 })
