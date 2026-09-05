@@ -37,6 +37,9 @@ export interface AntigravityOfficialAgyPromptCapsuleInput {
   scoutBriefs?: string
   blackboardSnapshot?: string
   seatSummary?: string
+  /** Complete, transport-sanitized private checkpoint. Official agy callers
+   * must omit generic MCP hints. The capsule never truncates accepted text. */
+  continuityCheckpoint?: string
   transcript: string
   permissionRule: string
   yieldExecutionCheck: string
@@ -58,6 +61,8 @@ export interface AntigravityOfficialAgyPromptEvidence {
 export interface AntigravityOfficialAgyPromptCapsuleProjection {
   prompt: string
   suppliedMessageIds: string[]
+  /** Presence is the delivery proof; omitted means no checkpoint bytes survived. */
+  continuityCheckpointIncluded?: true
 }
 
 interface PromptEvidenceRange {
@@ -69,6 +74,7 @@ interface PromptEvidenceRange {
 interface PromptPart {
   text: string
   evidence?: PromptEvidenceRange[]
+  continuityCheckpoint?: true
 }
 
 function trimmed(value: unknown): string {
@@ -186,6 +192,10 @@ export function buildAntigravityOfficialAgyPromptCapsuleProjection(
           }
         ]
       : []
+  const continuityCheckpoint =
+    typeof input.continuityCheckpoint === 'string' && input.continuityCheckpoint.trim()
+      ? input.continuityCheckpoint
+      : ''
 
   const boundedTranscript = boundedTextEvidence(
     input.transcript,
@@ -266,9 +276,25 @@ export function buildAntigravityOfficialAgyPromptCapsuleProjection(
       : []),
     { text: '' },
     { text: boundedText(input.yieldExecutionCheck, 700) },
+    // Keep assignment and every required runtime boundary ahead of recovery
+    // context. The all-or-nothing fit check below prevents partial delivery.
+    ...(continuityCheckpoint
+      ? [
+          { text: '', continuityCheckpoint: true as const },
+          { text: continuityCheckpoint, continuityCheckpoint: true as const }
+        ]
+      : []),
     { text: `Respond now as [${boundedText(input.participantLabel, 320)}].` }
   ]
-  const joined = joinPromptParts(parts)
+  const joinedWithCheckpoint = joinPromptParts(parts)
+  const continuityCheckpointIncluded = Boolean(
+    continuityCheckpoint &&
+    joinedWithCheckpoint.prompt.length <= ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS
+  )
+  const joined =
+    continuityCheckpoint && !continuityCheckpointIncluded
+      ? joinPromptParts(parts.filter((part) => !part.continuityCheckpoint))
+      : joinedWithCheckpoint
   const prompt = joined.prompt
 
   let finalPrompt = prompt
@@ -288,5 +314,9 @@ export function buildAntigravityOfficialAgyPromptCapsuleProjection(
     seen.add(range.messageId)
     suppliedMessageIds.push(range.messageId)
   }
-  return { prompt: finalPrompt, suppliedMessageIds }
+  return {
+    prompt: finalPrompt,
+    suppliedMessageIds,
+    ...(continuityCheckpointIncluded ? { continuityCheckpointIncluded: true as const } : {})
+  }
 }

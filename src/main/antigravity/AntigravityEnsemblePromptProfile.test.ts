@@ -186,4 +186,91 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     expect(projection.suppliedMessageIds).toContain('current-retained')
     expect(projection.suppliedMessageIds).not.toContain('tail-cut-by-outer-cap')
   })
+
+  it('accepts a complete hint-free checkpoint after the current assignment', () => {
+    const continuityCheckpoint = [
+      '<taskwraith_private_continuity_checkpoint>',
+      'OFFICIAL_AGY_CHECKPOINT '.repeat(70),
+      '</taskwraith_private_continuity_checkpoint>'
+    ].join('\n')
+    const projection = buildAntigravityOfficialAgyPromptCapsuleProjection({
+      participantLabel: 'AntiGravity / Reviewer #p7',
+      roundId: 'round-continuity',
+      stageRole: 'reviewer',
+      roleInstructions: 'Review the current implementation.',
+      currentPrompt: 'CURRENT_ASSIGNMENT remains ahead of recovery context.',
+      roster: '1. AntiGravity / Reviewer\n2. Codex / Worker',
+      authorityLines: [],
+      roleBoundaryLines: [],
+      roundPolicy: 'Review once.',
+      parallelPolicy: 'Use normal panel rotation.',
+      dynamicState: 'Active goal: verify continuity delivery.',
+      continuityCheckpoint,
+      transcript: '[Codex / Worker]\nImplementation landed.',
+      permissionRule: 'Use only tools listed by this run.',
+      yieldExecutionCheck: 'Return a bounded review.'
+    })
+
+    expect(projection.prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
+    expect(projection.continuityCheckpointIncluded).toBe(true)
+    expect(projection.prompt).toContain(continuityCheckpoint)
+    expect(projection.prompt.indexOf('CURRENT_ASSIGNMENT')).toBeLessThan(
+      projection.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(projection.prompt.indexOf('Permission and native-tool boundary:')).toBeLessThan(
+      projection.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(projection.prompt.indexOf('Return a bounded review.')).toBeLessThan(
+      projection.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(projection.prompt).not.toMatch(/tw_checkpoint|tw_history_(?:search|read)/)
+  })
+
+  it('omits an overflowing checkpoint without changing prompt or row evidence', () => {
+    const row = '[User]\nLATEST STEER AT TRANSCRIPT TAIL'
+    const transcript = `${'old transcript '.repeat(400)}\n\n${row}`
+    const rowStart = transcript.length - row.length
+    const crowded = {
+      participantLabel: 'AntiGravity / GemProWork #p7',
+      roundId: 'round-checkpoint-overflow',
+      stageRole: 'Z'.repeat(4_000),
+      roleInstructions: 'R'.repeat(1_000),
+      currentPrompt: `CURRENT_ASSIGNMENT ${'C'.repeat(3_000)}`,
+      roster: 'O'.repeat(1_200),
+      authorityLines: ['A'.repeat(1_200)],
+      roleBoundaryLines: [] as string[],
+      roundPolicy: 'P'.repeat(900),
+      parallelPolicy: 'L'.repeat(700),
+      dynamicState: 'D'.repeat(1_800),
+      workspaceStanza: 'W'.repeat(600),
+      workspaceChurnStanza: 'H'.repeat(900),
+      scoutBriefs: 'S'.repeat(1_200),
+      blackboardSnapshot: 'B'.repeat(2_200),
+      seatSummary: 'E'.repeat(800),
+      transcript,
+      permissionRule: 'M'.repeat(900),
+      yieldExecutionCheck: 'Y'.repeat(700)
+    }
+    const evidence = {
+      currentPromptMessageId: 'current-retained',
+      transcriptRows: [
+        { messageId: 'tail-cut-by-outer-cap', start: rowStart, end: transcript.length }
+      ]
+    }
+    const baseline = buildAntigravityOfficialAgyPromptCapsuleProjection(crowded, evidence)
+    expect(baseline.prompt).toHaveLength(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
+    const attempted = buildAntigravityOfficialAgyPromptCapsuleProjection(
+      {
+        ...crowded,
+        continuityCheckpoint: `<checkpoint>${'X'.repeat(2_300)}</checkpoint>`
+      },
+      evidence
+    )
+
+    expect(attempted).toEqual(baseline)
+    expect(attempted).not.toHaveProperty('continuityCheckpointIncluded')
+    expect(attempted.prompt).not.toContain('<checkpoint>')
+    expect(attempted.prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
+    expect(attempted.prompt).toContain('CURRENT_ASSIGNMENT')
+  })
 })

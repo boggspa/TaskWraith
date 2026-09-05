@@ -88,4 +88,75 @@ describe('Ollama ensemble prompt capsule', () => {
     expect(prompt).toContain('Prefer one concrete read/search check')
     expect(prompt).not.toContain('small edit, or shell')
   })
+
+  it('accepts a complete checkpoint inside the capsule after the current request', () => {
+    const continuityCheckpoint = [
+      '<taskwraith_private_continuity_checkpoint>',
+      'CHECKPOINT_BODY '.repeat(60),
+      '</taskwraith_private_continuity_checkpoint>'
+    ].join('\n')
+    const projection = buildOllamaEnsemblePromptCapsuleProjection({
+      ...BASE,
+      currentPrompt: 'CURRENT_ASSIGNMENT stays first.',
+      continuityCheckpoint
+    })
+
+    expect(projection.prompt.length).toBeLessThanOrEqual(OLLAMA_ENSEMBLE_PROMPT_MAX_CHARS)
+    expect(projection.continuityCheckpointIncluded).toBe(true)
+    expect(projection.prompt).toContain(continuityCheckpoint)
+    expect(projection.prompt.indexOf('CURRENT_ASSIGNMENT')).toBeLessThan(
+      projection.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(projection.prompt.indexOf('You are a LOCAL model running through Ollama')).toBeLessThan(
+      projection.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(projection.prompt.indexOf('Do this turn:')).toBeLessThan(
+      projection.prompt.indexOf(continuityCheckpoint)
+    )
+  })
+
+  it('omits an entire checkpoint that would overflow and emits no delivery proof', () => {
+    const transcript = `TRANSCRIPT_START\n${'T'.repeat(4_000)}\nTRANSCRIPT_END`
+    const crowded = {
+      ...BASE,
+      currentPrompt: `CURRENT_ASSIGNMENT ${'C'.repeat(2_500)}`,
+      roleInstructions: 'R'.repeat(1_200),
+      roster: 'O'.repeat(1_800),
+      authorityLines: ['A'.repeat(1_200)],
+      roleBoundaryLines: ['B'.repeat(1_200)],
+      dynamicState: 'D'.repeat(1_400),
+      workspaceStanza: 'W'.repeat(900),
+      workspaceChurnStanza: 'H'.repeat(1_000),
+      scoutBriefs: 'S'.repeat(1_200),
+      blackboardSnapshot: 'K'.repeat(1_600),
+      seatSummary: 'E'.repeat(900),
+      transcript,
+      permissionRule: 'P'.repeat(800),
+      workflowHint: 'F'.repeat(700)
+    }
+    const transcriptTail = 'TRANSCRIPT_END'
+    const evidence = {
+      currentPromptMessageId: 'current',
+      transcriptRows: [
+        {
+          messageId: 'transcript-tail',
+          start: transcript.length - transcriptTail.length,
+          end: transcript.length
+        }
+      ]
+    }
+    const baseline = buildOllamaEnsemblePromptCapsuleProjection(crowded, evidence)
+    expect(baseline.prompt).toHaveLength(OLLAMA_ENSEMBLE_PROMPT_MAX_CHARS)
+    const checkpoint = `<checkpoint>${'X'.repeat(2_300)}</checkpoint>`
+    const attempted = buildOllamaEnsemblePromptCapsuleProjection(
+      { ...crowded, continuityCheckpoint: checkpoint },
+      evidence
+    )
+
+    expect(attempted).toEqual(baseline)
+    expect(attempted).not.toHaveProperty('continuityCheckpointIncluded')
+    expect(attempted.prompt).not.toContain('<checkpoint>')
+    expect(attempted.prompt.length).toBeLessThanOrEqual(OLLAMA_ENSEMBLE_PROMPT_MAX_CHARS)
+    expect(attempted.prompt).toContain('CURRENT_ASSIGNMENT')
+  })
 })

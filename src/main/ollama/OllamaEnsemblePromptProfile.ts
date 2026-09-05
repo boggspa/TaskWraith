@@ -39,6 +39,9 @@ export interface OllamaEnsemblePromptCapsuleInput {
   scoutBriefs?: string
   blackboardSnapshot?: string
   seatSummary?: string
+  /** Complete preformatted private checkpoint. Included only when the whole
+   * capsule remains inside its existing transport ceiling. */
+  continuityCheckpoint?: string
   transcript: string
   permissionRule: string
   /** Findings-shaped recon vs plan-owner workflow one-liner. */
@@ -58,6 +61,8 @@ export interface OllamaEnsemblePromptEvidence {
 export interface OllamaEnsemblePromptCapsuleProjection {
   prompt: string
   suppliedMessageIds: string[]
+  /** Presence is the delivery proof; omitted means no checkpoint bytes survived. */
+  continuityCheckpointIncluded?: true
 }
 
 interface PromptEvidenceRange {
@@ -69,6 +74,7 @@ interface PromptEvidenceRange {
 interface PromptPart {
   text: string
   evidence?: PromptEvidenceRange[]
+  continuityCheckpoint?: true
 }
 
 function trimmed(value: unknown): string {
@@ -187,6 +193,10 @@ export function buildOllamaEnsemblePromptCapsuleProjection(
           }
         ]
       : []
+  const continuityCheckpoint =
+    typeof input.continuityCheckpoint === 'string' && input.continuityCheckpoint.trim()
+      ? input.continuityCheckpoint
+      : ''
 
   const boundedTranscript = boundedTextEvidence(
     input.transcript,
@@ -259,6 +269,14 @@ export function buildOllamaEnsemblePromptCapsuleProjection(
           }
         ]
       : []),
+    // Checkpoint follows the request and fixed runtime contract. Lower-priority
+    // state/transcript material comes after it, but only when everything fits.
+    ...(continuityCheckpoint
+      ? [
+          { text: '', continuityCheckpoint: true as const },
+          { text: continuityCheckpoint, continuityCheckpoint: true as const }
+        ]
+      : []),
     ...(input.dynamicState
       ? [{ text: '' }, { text: section('Dynamic ensemble state:', input.dynamicState, 1_000) }]
       : []),
@@ -292,7 +310,14 @@ export function buildOllamaEnsemblePromptCapsuleProjection(
     { text: `Respond now as [${boundedText(input.participantLabel, 320)}].` }
   ]
 
-  const joined = joinPromptParts(parts)
+  const joinedWithCheckpoint = joinPromptParts(parts)
+  const continuityCheckpointIncluded = Boolean(
+    continuityCheckpoint && joinedWithCheckpoint.prompt.length <= OLLAMA_ENSEMBLE_PROMPT_MAX_CHARS
+  )
+  const joined =
+    continuityCheckpoint && !continuityCheckpointIncluded
+      ? joinPromptParts(parts.filter((part) => !part.continuityCheckpoint))
+      : joinedWithCheckpoint
   let finalPrompt = joined.prompt
   let retainedPrefixLength = joined.prompt.length
   const tail = '\n\n[Capsule truncated for local context budget.]\n'
@@ -310,5 +335,9 @@ export function buildOllamaEnsemblePromptCapsuleProjection(
     seen.add(range.messageId)
     suppliedMessageIds.push(range.messageId)
   }
-  return { prompt: finalPrompt, suppliedMessageIds }
+  return {
+    prompt: finalPrompt,
+    suppliedMessageIds,
+    ...(continuityCheckpointIncluded ? { continuityCheckpointIncluded: true as const } : {})
+  }
 }
