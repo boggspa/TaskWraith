@@ -77,6 +77,42 @@ function input(runtimePath: string, lease: { assertHeld(): void }) {
 }
 
 describe('HostStandaloneComposition', () => {
+  it('can cancel a run while another command is waiting for start capacity', async () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-cancel-'))
+    paths.push(runtimePath)
+    let release!: () => void
+    const paused = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const executor = vi.fn(async (received: HostCommand) => {
+      if (received.name !== 'run.cancel') await paused
+      return { status: 'succeeded' as const }
+    })
+    const composition = createHostStandaloneComposition({
+      ...input(runtimePath, { assertHeld: vi.fn() }),
+      commandExecutor: executor
+    })
+    const pending = composition.authority.command(context, command())
+    try {
+      await vi.waitFor(() => expect(executor).toHaveBeenCalledOnce())
+      const cancellation = composition.authority.command(context, {
+        ...command(),
+        commandId: 'cancel-1',
+        idempotencyKey: 'cancel-key-1',
+        name: 'run.cancel'
+      })
+      await vi.waitFor(() => expect(executor).toHaveBeenCalledTimes(2))
+      await expect(cancellation).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'succeeded' }
+      })
+    } finally {
+      release()
+      await pending
+      await composition.shutdown()
+    }
+  })
+
   it.each(['succeeded', 'failed'] as const)(
     'keeps a %s command receipt coherent when reconciliation runs during execution',
     async (status) => {

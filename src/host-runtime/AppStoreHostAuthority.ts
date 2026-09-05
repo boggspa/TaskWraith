@@ -793,6 +793,16 @@ export class AppStoreHostAuthority implements HostAuthority {
     context: HostAuthorityCallContext,
     command: HostCommand
   ): Promise<HostAuthorityResult<HostCommandReceipt>> {
+    // A queued start can be waiting for capacity held by a run that needs a
+    // cancellation or a human reply. Keep those release paths out of the queue;
+    // they still pass through the same validation, policy, and observation.
+    if (
+      command?.name === 'run.cancel' ||
+      command?.name === 'approval.decide' ||
+      command?.name === 'question.answer'
+    ) {
+      return this.executeCommand(context, command)
+    }
     return this.runProjectionOperation(() => this.executeCommand(context, command))
   }
 
