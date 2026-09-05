@@ -741,6 +741,7 @@ import { useWatchedPrController } from './app/hooks/useWatchedPrController'
 import { useEnsembleRosterPresetBridge } from './app/hooks/useEnsembleRosterPresetBridge'
 import { useCollaborationChatIds } from './app/hooks/useCollaborationChatIds'
 import { usePluginActivation } from './app/hooks/usePluginActivation'
+import { useWebSiteLoginAttention } from './app/hooks/useWebSiteLoginAttention'
 import type { AttachedWindowSnapshot, ResumeAppWatchSnapshot } from './app/windowAttachmentState'
 import { attachedWindowFromStatus, stickyAppWatchStashInput } from './app/windowAttachmentState'
 import {
@@ -841,7 +842,6 @@ import {
   type ProjectReferenceCitationOpenRequest
 } from './lib/projectReferenceCitationOpen'
 import type { ProjectReferenceCitationOpenTarget } from './lib/projectReferenceCitations'
-import { countWebSiteLoginsNeedingAttention, type WebSiteLogin } from '../../shared/webSiteLogin'
 import {
   readDockSurface,
   resolveDockSurfaceContext,
@@ -1796,34 +1796,7 @@ function App(): React.JSX.Element {
   const [isPinnedMessagesPanelOpen, setIsPinnedMessagesPanelOpen] = useState(false)
   const [isProjectReferencesPanelOpen, setIsProjectReferencesPanelOpen] = useState(false)
   const [isWebSiteLoginsPanelOpen, setIsWebSiteLoginsPanelOpen] = useState(false)
-  // Saved sessions that have gone stale. TaskWraith cannot re-authenticate for
-  // the user, so the one thing it owes them is saying which site needs them -
-  // surfaced as a badged Work > Logins tab rather than a modal, because this is
-  // never urgent enough to interrupt what they are doing.
-  const [webSiteLoginAttention, setWebSiteLoginAttention] = useState(0)
-  useEffect(() => {
-    const api = window.api as unknown as {
-      listWebSiteLogins?: () => Promise<Array<{ status?: WebSiteLogin['status'] }>>
-      onWebSiteLoginsChanged?: (callback: () => void) => () => void
-    }
-    if (!api?.listWebSiteLogins) return
-    let active = true
-    const refreshAttention = (): void => {
-      void api
-        .listWebSiteLogins?.()
-        .then((sites) => {
-          if (!active) return
-          setWebSiteLoginAttention(countWebSiteLoginsNeedingAttention(sites))
-        })
-        .catch(() => {})
-    }
-    refreshAttention()
-    const unsubscribe = api.onWebSiteLoginsChanged?.(refreshAttention)
-    return () => {
-      active = false
-      unsubscribe?.()
-    }
-  }, [])
+  const webSiteLoginAttention = useWebSiteLoginAttention()
   const [transcriptJumpRequest, setTranscriptJumpRequest] = useState<{
     chatId: string
     messageId: string
