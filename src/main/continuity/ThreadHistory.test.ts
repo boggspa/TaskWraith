@@ -34,6 +34,37 @@ const message: ChatMessage = {
 }
 
 describe('thread history retrieval', () => {
+  it('does not traverse fields beyond the requested result page', async () => {
+    const raw = {
+      output: 'x'.repeat(100_000),
+      get unrelated() {
+        throw new Error('unrequested field was traversed')
+      }
+    }
+    const result = await readThreadHistory(
+      [
+        { ...message, toolActivities: [{ ...activity, detailRef: undefined, rawResultEvent: raw }] }
+      ],
+      { messageId: 'message', activityId: 'tool', maxBytes: 64 }
+    )
+    expect(result).toMatchObject({ available: true, nextOffset: 64 })
+  })
+
+  it('reports arguments that were never captured as unavailable', async () => {
+    const result = await readThreadHistory(
+      [{ ...message, toolActivities: [{ ...activity, detailRef: undefined }] }],
+      { messageId: 'message', activityId: 'tool', field: 'arguments' }
+    )
+    expect(result).toEqual({ available: false, reason: 'field_not_captured' })
+  })
+
+  it('omits media in historical stringified result envelopes', () => {
+    const value = JSON.stringify({
+      type: 'tool_result',
+      result: JSON.stringify({ content: [{ type: 'image', data: 'base64-secret-blob' }] })
+    })
+    expect(historyValueText(value)).not.toContain('base64-secret-blob')
+  })
   it('recovers a result beyond the old 600-character preview in bounded pages', async () => {
     const output = `${'x'.repeat(1_000)}\nExact failure: expected 17, received 3`
     const readDetail = async () => ({ ...activity, rawResultEvent: output })
@@ -83,7 +114,7 @@ describe('thread history retrieval', () => {
       reconstructed += page.text
       if (page.nextOffset === undefined) break
       offset = page.nextOffset
-    } while (true)
+    } while (offset < Buffer.byteLength(text))
     expect(reconstructed).toBe(text)
     expect(() => historyTextPage(text, 2, 4)).toThrow(/boundary/)
   })
@@ -100,6 +131,46 @@ describe('thread history retrieval', () => {
 })
 
 describe('thread history lookup', () => {
+  it('bounds the response even when stored display metadata is enormous', async () => {
+    const result = await searchThreadHistory(
+      [{ ...message, toolActivities: [{ ...activity, filePath: 'x'.repeat(20_000) }] }],
+      {}
+    )
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(8_192)
+  })
+
+  it('uses original Unicode positions and never splits a surrogate pair in an excerpt', async () => {
+    for (const prefix of ['İ'.repeat(1_000), `😀${'a'.repeat(79)}`]) {
+      const result = await searchThreadHistory(
+        [{ ...message, content: `${prefix}needle`, toolActivities: [] }],
+        { query: 'needle' }
+      )
+      expect(result.matches[0].excerpt).toContain('needle')
+      expect(result.matches[0].excerpt).not.toContain('\uFFFD')
+    }
+  })
+
+  it('continues searching intact messages after a detail reader fails', async () => {
+    const result = await searchThreadHistory(
+      [message],
+      { query: 'regression', searchDetails: true },
+      async () => {
+        throw new Error('I/O failure')
+      }
+    )
+    expect(result.skippedDetails).toBe(1)
+    expect(result.matches[0].messageId).toBe('message')
+    expect(result.matches[0].activityId).toBeUndefined()
+  })
+
+  it('reports partial coverage for large messages without scanning their entire bodies', async () => {
+    const result = await searchThreadHistory(
+      [{ ...message, content: `${'x'.repeat(100_000)}needle`, toolActivities: [] }],
+      { query: 'needle' }
+    )
+    expect(result.complete).toBe(false)
+    expect(result.partialSources).toEqual([{ messageId: 'message', activityId: undefined }])
+  })
   it('searches captured result details when requested and returns a source reference', async () => {
     const result = await searchThreadHistory(
       [message],

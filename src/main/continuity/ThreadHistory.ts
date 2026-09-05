@@ -1,4 +1,6 @@
 import type { ChatMessage, ToolActivity, ToolActivityDetailRef } from '../store/types'
+import { historyTextPage, historyValuePage, HISTORY_READ_MAX_BYTES } from './HistoryText'
+export { historyTextPage, historyValueText, HISTORY_READ_MAX_BYTES } from './HistoryText'
 
 export interface ThreadHistoryRef {
   messageId: string
@@ -16,54 +18,11 @@ export interface ThreadHistorySource extends ThreadHistoryRef {
 
 export type ThreadHistoryDetailReader = (ref: ToolActivityDetailRef) => Promise<ToolActivity | null>
 
-export const HISTORY_READ_MAX_BYTES = 8_192
 export const HISTORY_SEARCH_MAX_ENTRIES = 200
 export const HISTORY_SEARCH_DETAIL_SCAN_BYTES = 4 * 1024 * 1024
 
 function boundedInteger(value: number | undefined, fallback: number, max: number): number {
   return Number.isSafeInteger(value) && value! > 0 ? Math.min(value!, max) : fallback
-}
-
-/** Offsets address UTF-8 text bytes, not JSON envelopes or JavaScript characters. */
-export function historyTextPage(text: string, offset = 0, maxBytes = 2_048) {
-  const bytes = Buffer.from(text, 'utf8')
-  if (
-    !Number.isSafeInteger(offset) ||
-    offset < 0 ||
-    offset > bytes.length ||
-    (offset < bytes.length && (bytes[offset] & 0xc0) === 0x80)
-  ) {
-    throw new Error('History offset must address a UTF-8 character boundary in this record.')
-  }
-  const limit = Math.max(4, boundedInteger(maxBytes, 2_048, HISTORY_READ_MAX_BYTES))
-  let end = Math.min(bytes.length, offset + limit)
-  while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end -= 1
-  return {
-    text: bytes.subarray(offset, end).toString('utf8'),
-    offset,
-    totalBytes: bytes.length,
-    ...(end < bytes.length ? { nextOffset: end } : {})
-  }
-}
-
-/** Binary media and opaque reasoning are not useful transcript search material. */
-export function historyValueText(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (value === undefined) return ''
-  return (
-    JSON.stringify(value, (key, item: unknown) => {
-      if (['signature', 'encrypted_content', 'image_url', 'audio_url'].includes(key)) {
-        return undefined
-      }
-      if (item && typeof item === 'object') {
-        const type = (item as { type?: string }).type
-        if (['image', 'audio', 'thinking', 'redacted_thinking'].includes(type || '')) {
-          return { type, omitted: true }
-        }
-      }
-      return item
-    }) || ''
-  )
 }
 
 interface Entry {
@@ -104,13 +63,37 @@ function sameRef(left: ThreadHistoryRef, right: ThreadHistoryRef): boolean {
   return left.messageId === right.messageId && left.activityId === right.activityId
 }
 
-function resultText(activity: ToolActivity): { text: string; representation: string } {
+function resultValue(activity: ToolActivity): { value: unknown; representation: string } {
   if (activity.rawResultEvent !== undefined) {
-    return { text: historyValueText(activity.rawResultEvent), representation: 'captured_result' }
+    return { value: activity.rawResultEvent, representation: 'captured_result' }
   }
   return {
-    text: activity.resultSummary || activity.outputSummary || activity.outputPreview || '',
+    value: activity.resultSummary ?? activity.outputSummary ?? activity.outputPreview,
     representation: 'stored_preview'
+  }
+}
+
+async function safeReadDetail(
+  read: ThreadHistoryDetailReader | undefined,
+  ref: ToolActivityDetailRef
+) {
+  try {
+    return (await read?.(ref)) ?? null
+  } catch {
+    return null
+  }
+}
+
+function preview(text: string | undefined, maxBytes = 320): string {
+  return historyTextPage(text || '', 0, maxBytes).text
+}
+
+function displaySource(source: ThreadHistorySource): ThreadHistorySource {
+  return {
+    ...source,
+    timestamp: preview(source.timestamp, 64),
+    ...(source.toolName ? { toolName: preview(source.toolName, 128) } : {}),
+    ...(source.filePath ? { filePath: preview(source.filePath, 256) } : {})
   }
 }
 
@@ -143,7 +126,7 @@ export async function readThreadHistory(
     if (inline.detailRef.activityId !== inline.id || inline.detailRef.runId !== message.runId) {
       return { available: false as const, reason: 'detail_reference_mismatch' }
     }
-    const archived = await readDetail?.(inline.detailRef)
+    const archived = await safeReadDetail(readDetail, inline.detailRef)
     if (!archived || archived.id !== inline.id) {
       return { available: false as const, reason: 'archived_detail_unavailable' }
     }
@@ -153,20 +136,19 @@ export async function readThreadHistory(
   if (field === 'message') throw new Error('Read the message without an activity reference.')
   const value =
     field === 'result'
-      ? resultText(activity)
+      ? resultValue(activity)
       : {
-          text: historyValueText(
-            field === 'arguments' ? activity.parameters : activity.diffSummary
-          ),
+          value: field === 'arguments' ? activity.parameters : activity.diffSummary,
           representation: field === 'arguments' ? 'captured_arguments' : 'stored_diff'
         }
+  if (value.value === undefined) return { available: false as const, reason: 'field_not_captured' }
   return {
     available: true as const,
     source: { messageId: message.id, activityId: activity.id, runId: message.runId },
     field,
     archived: Boolean(inline.detailRef),
     representation: value.representation,
-    ...historyTextPage(value.text, request.offset, request.maxBytes)
+    ...historyValuePage(value.value, request.offset, request.maxBytes)
   }
 }
 
@@ -182,14 +164,18 @@ export async function searchThreadHistory(
   },
   readDetail?: ThreadHistoryDetailReader
 ) {
-  const query = (request.query || '').trim().toLowerCase()
+  const query = (request.query || '').trim()
   if (query.length > 200) throw new Error('History search queries are limited to 200 characters.')
+  const matcher = query ? new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'iu') : null
   const limit = boundedInteger(request.limit, 5, 10)
   const matches: Array<ThreadHistorySource & { excerpt: string; archived: boolean }> = []
   let cursorFound = !request.before
   let scanned = 0
   let detailBytes = 0
   let skippedDetails = 0
+  let partialTextRecords = 0
+  const partialSources: ThreadHistoryRef[] = []
+  let matchBytes = 2
   let lastRef: ThreadHistoryRef | undefined
   let hasMore = false
   for (const entry of historyEntries(messages)) {
@@ -208,17 +194,21 @@ export async function searchThreadHistory(
     if (request.kind === 'tools' && !entry.activity) continue
     let body = entry.activity
       ? [
-          entry.activity.toolName,
-          entry.activity.filePath,
+          preview(entry.activity.toolName, 128),
+          preview(entry.activity.filePath, 256),
           entry.activity.status,
-          entry.activity.resultSummary,
-          entry.activity.outputPreview
+          preview(entry.activity.resultSummary, 1024),
+          preview(entry.activity.outputPreview, 1024)
         ]
           .filter(Boolean)
           .join('\n')
-      : entry.message.content
+      : preview(entry.message.content, HISTORY_READ_MAX_BYTES)
+    if (!entry.activity && body.length < entry.message.content.length) {
+      partialTextRecords += 1
+      if (partialSources.length < 5) partialSources.push(lastRef)
+    }
     const ref = entry.activity?.detailRef
-    if (query && !body.toLowerCase().includes(query) && request.searchDetails && entry.activity) {
+    if (matcher && !matcher.test(body) && request.searchDetails && entry.activity) {
       if (ref) {
         if (
           !readDetail ||
@@ -229,33 +219,72 @@ export async function searchThreadHistory(
           skippedDetails += 1
         } else {
           detailBytes += ref.byteLength
-          const detail = await readDetail(ref)
+          const detail = await safeReadDetail(readDetail, ref)
           if (detail?.id === entry.activity.id) {
-            body += `\n${historyValueText(detail.parameters)}\n${resultText(detail).text}`
+            const args = historyValuePage(detail.parameters, 0, 2048)
+            const result = historyValuePage(resultValue(detail).value, 0, HISTORY_READ_MAX_BYTES)
+            body += `\n${args.text}\n${result.text}`
+            if (
+              args.nextOffset !== undefined ||
+              result.nextOffset !== undefined ||
+              args.omittedContent ||
+              result.omittedContent
+            ) {
+              partialTextRecords += 1
+              if (partialSources.length < 5) partialSources.push(lastRef)
+            }
           } else skippedDetails += 1
         }
       } else {
-        const text = `${historyValueText(entry.activity.parameters)}\n${resultText(entry.activity).text}`
+        const args = historyValuePage(entry.activity.parameters, 0, 2048)
+        const result = historyValuePage(
+          resultValue(entry.activity).value,
+          0,
+          HISTORY_READ_MAX_BYTES
+        )
+        const text = `${args.text}\n${result.text}`
         const size = Buffer.byteLength(text)
         if (size <= HISTORY_SEARCH_DETAIL_SCAN_BYTES - detailBytes) {
           detailBytes += size
           body += `\n${text}`
+          if (
+            args.nextOffset !== undefined ||
+            result.nextOffset !== undefined ||
+            args.omittedContent ||
+            result.omittedContent
+          ) {
+            partialTextRecords += 1
+            if (partialSources.length < 5) partialSources.push(lastRef)
+          }
         } else skippedDetails += 1
       }
     }
-    const position = query ? body.toLowerCase().indexOf(query) : 0
+    const position = matcher ? (matcher.exec(body)?.index ?? -1) : 0
     if (position < 0) continue
-    matches.push({
-      ...entry.source,
-      excerpt: historyTextPage(body.slice(Math.max(0, position - 80)), 0, 320).text,
+    let start = Math.max(0, position - 80)
+    const code = body.charCodeAt(start)
+    if (code >= 0xdc00 && code <= 0xdfff) start -= 1
+    const match = {
+      ...displaySource(entry.source),
+      excerpt: preview(body.slice(start)),
       archived: Boolean(ref)
-    })
+    }
+    const bytes = Buffer.byteLength(JSON.stringify(match)) + 1
+    if (matchBytes + bytes > 7_168) {
+      partialTextRecords += 1
+      continue
+    }
+    matchBytes += bytes
+    matches.push(match)
   }
   if (!cursorFound) throw new Error('History cursor no longer exists in this task.')
   return {
     matches,
     scanned,
     skippedDetails,
+    partialTextRecords,
+    partialSources,
+    complete: !hasMore && skippedDetails === 0 && partialTextRecords === 0,
     searchedDetailBytes: detailBytes,
     hasMore,
     ...(hasMore && lastRef ? { nextCursor: lastRef } : {})
