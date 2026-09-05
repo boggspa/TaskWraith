@@ -3,6 +3,7 @@ import type { ChatMessage } from '../../../main/store/types'
 import {
   BLACKBOARD_UPDATE_STACK_MAX_ITEMS,
   BLACKBOARD_UPDATE_STACK_WINDOW_MS,
+  blackboardStackItemStateKey,
   projectBlackboardUpdateStacks
 } from './blackboardChangeStack'
 
@@ -88,13 +89,14 @@ describe('projectBlackboardUpdateStacks', () => {
 
     expect(projection.messages).toEqual([first, notice, second, brief, latest])
     const stack = projection.stacks[0]
-    expect(stack?.messages).toEqual([first, second, latest])
-    expect(stack?.memberIndexes).toEqual([0, 2, 4])
+    expect(stack?.messages).toEqual([first, second, brief, latest])
+    expect(stack?.memberIndexes).toEqual([0, 2, 3, 4])
     expect(stack?.leadIndex).toBe(4)
     expect(stack?.latestMessage).toBe(latest)
     expect(stack?.firstMessageId).toBe('fact-1')
     expect(projection.stackByMessageIndex.get(0)).toBe(stack)
     expect(projection.stackByMessageIndex.get(2)).toBe(stack)
+    expect(projection.stackByMessageIndex.get(3)).toBe(stack)
     expect(projection.stackByMessageIndex.get(4)).toBe(stack)
     expect(projection.stackByMessageIndex.has(1)).toBe(false)
   })
@@ -112,17 +114,80 @@ describe('projectBlackboardUpdateStacks', () => {
     expect(projection.stackByMessageIndex.has(2)).toBe(false)
   })
 
-  it('does not bridge explicit round boundaries, pinned updates, or non-update actions', () => {
+  it('does not bridge explicit round boundaries, pinned updates, or pinned briefs', () => {
     const pinned = update('pinned', 20_000, { pinned: true })
     const otherRound = status('round-2-start', 30_000, 'round-2')
     const laterOriginalRound = update('later-round-1', 40_000)
     const brief = scoutBrief('brief', 50_000)
-    const messages = [update('first', 0), pinned, otherRound, laterOriginalRound, brief]
+    brief.metadata!.pinnedAt = T0 + 50_000
+    const messages = [
+      update('first', 0),
+      pinned,
+      scoutBrief('earlier-brief', 25_000),
+      otherRound,
+      laterOriginalRound,
+      brief,
+      update('after-pin', 60_000)
+    ]
 
     const projection = projectBlackboardUpdateStacks(messages)
 
     expect(projection.messages).toBe(messages)
     expect(projection.stacks).toHaveLength(0)
+  })
+
+  it('includes the screenshot sequence with each brief extending the sliding burst', () => {
+    const messages = [
+      update('first', 0),
+      scoutBrief('scout2', 70_000),
+      scoutBrief('scout3', 130_000),
+      update('last', 190_000)
+    ]
+    const projection = projectBlackboardUpdateStacks(messages)
+    expect(projection.stacks).toHaveLength(1)
+    expect(projection.stacks[0].messages).toEqual(messages)
+    expect(projection.stacks[0].leadIndex).toBe(3)
+    expect(projection.stacks[0].firstMessageId).toBe('first')
+  })
+
+  it('groups brief-only bursts and keeps a brief as the latest mixed-stack event', () => {
+    const first = scoutBrief('first', 0),
+      second = scoutBrief('second', 10_000)
+    expect(projectBlackboardUpdateStacks([first, second]).stacks[0].messages).toEqual([
+      first,
+      second
+    ])
+    const messages = [update('post', 0), second]
+    expect(projectBlackboardUpdateStacks(messages).stacks[0].latestMessage).toBe(second)
+  })
+
+  it('keeps polls and cleanups outside the update/brief stack', () => {
+    const poll: ChatMessage = {
+      ...status('poll', 20_000),
+      content: 'Blackboard poll opened: choose (2 choices).'
+    }
+    const cleaned: ChatMessage = {
+      ...status('cleanup', 30_000),
+      content: 'Blackboard cleaned: removed 2 entries.'
+    }
+    const first = update('first', 0),
+      brief = scoutBrief('brief', 40_000)
+    const projection = projectBlackboardUpdateStacks([first, poll, cleaned, brief])
+    expect(projection.stacks[0].messages).toEqual([first, brief])
+    expect(projection.stackByMessageIndex.has(1)).toBe(false)
+    expect(projection.stackByMessageIndex.has(2)).toBe(false)
+  })
+
+  it('retains item disclosure identity when the lead moves, without conflating duplicate ids', () => {
+    const messages = [update('post', 0), scoutBrief('brief', 10_000)]
+    const before = projectBlackboardUpdateStacks(messages).stacks[0]
+    const after = projectBlackboardUpdateStacks([...messages, update('latest', 20_000)]).stacks[0]
+    expect(blackboardStackItemStateKey(before.firstMessageId, 'brief', 1)).toBe(
+      blackboardStackItemStateKey(after.firstMessageId, 'brief', 1)
+    )
+    expect(blackboardStackItemStateKey(before.firstMessageId, 'brief', 1)).not.toBe(
+      blackboardStackItemStateKey(before.firstMessageId, 'brief', 2)
+    )
   })
 
   it('promotes exact legacy updates while leaving malformed carriers visible', () => {

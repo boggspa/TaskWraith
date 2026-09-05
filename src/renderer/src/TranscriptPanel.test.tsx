@@ -4705,6 +4705,54 @@ describe('transcript event layout', () => {
     return html.match(new RegExp(`<div[^>]*data-message-id="${id}"[^>]*>`))?.[0] || ''
   }
 
+  it.each([false, true])(
+    'stacks Blackboard posts and Scout briefs together (virtualize=%s)',
+    (virtualize) => {
+      const start = Date.parse('2026-09-05T18:22:00Z')
+      const events: ChatMessage[] = ['post-one', 'scout-two', 'scout-three', 'post-two'].map(
+        (id, index) => {
+          const timestamp = new Date(start + index * 70_000).toISOString()
+          const attribution = {
+            provider: 'codex',
+            displayProviderLabel: 'Codex',
+            displayHueClass: 'codex',
+            changedAt: timestamp
+          }
+          return {
+            id,
+            role: 'system',
+            content: id,
+            timestamp,
+            metadata: {
+              kind: 'ensembleBlackboardChange',
+              ensembleRoundId: 'round-mixed',
+              blackboardChange:
+                index === 1 || index === 2
+                  ? { ...attribution, action: 'scoutBriefShared', role: `Scout${index + 1}` }
+                  : {
+                      ...attribution,
+                      action: 'updated',
+                      category: 'fact',
+                      key: id,
+                      scope: 'session'
+                    }
+            }
+          }
+        }
+      )
+      const html = renderToStaticMarkup(
+        <TranscriptPanel {...makeProps({ messages: events, virtualize })} />
+      )
+      expect(html).toContain('2 updates · 2 Scout briefs')
+      expect(html).toContain('Show all 4 Blackboard events')
+      expect(countBlocks(html)).toBe(4)
+      expect(openingTag(html, 'post-one')).toContain('is-row-hidden')
+      expect(openingTag(html, 'scout-two')).toContain('is-row-hidden')
+      expect(openingTag(html, 'scout-three')).toContain('is-row-hidden')
+      expect(openingTag(html, 'post-two')).not.toContain('is-row-hidden')
+    }
+  )
+
   it('suppresses repeated owner labels across prose and activities, preserving provider markup', () => {
     const events: ChatMessage[] = [
       { ...msg(0), id: 'first', role: 'assistant', runId: 'run-a' },

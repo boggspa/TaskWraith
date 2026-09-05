@@ -5,6 +5,15 @@ import { resolveBlackboardChangePresentation } from './blackboardChangePresentat
 export const BLACKBOARD_UPDATE_STACK_WINDOW_MS = BLACKBOARD_CHANGE_FRESH_WINDOW_MS
 export const BLACKBOARD_UPDATE_STACK_MAX_ITEMS = 60
 
+/** Stable across lead-row changes and distinct for duplicate imported ids. */
+export function blackboardStackItemStateKey(
+  stackKey: string,
+  messageId: string,
+  index: number
+): string {
+  return JSON.stringify(['blackboard-stack-item', stackKey, messageId, index])
+}
+
 export interface BlackboardUpdateStack {
   /** Original durable rows in transcript order. */
   messages: readonly ChatMessage[]
@@ -39,13 +48,13 @@ function ensembleRoundId(message: ChatMessage): string | null {
 }
 
 /**
- * Lossless desktop projection for rapid Blackboard updates.
+ * Lossless desktop projection for rapid Blackboard updates and Scout briefs.
  *
  * Durable rows stay untouched. Within one contiguous Ensemble round, updates
- * from any provider join a 120-second sliding burst even when ordinary status
- * or Scout-brief rows sit between them. Every source row and row ordinal stays
- * projected; the renderer hides prior members at zero height and lets the
- * newest member own the disclosure.
+ * and brief-sharing notices from any provider join a 120-second sliding burst
+ * even when ordinary status rows sit between them. Every source row and row
+ * ordinal stays projected; the renderer hides prior members at zero height
+ * and lets the newest member own the disclosure.
  */
 export function projectBlackboardUpdateStacks(
   sourceMessages: readonly ChatMessage[]
@@ -80,12 +89,10 @@ export function projectBlackboardUpdateStacks(
       continue
     }
     const presentation = resolveBlackboardChangePresentation(message)
-    if (
-      !roundId ||
-      presentation?.action !== 'updated' ||
-      typeof message.metadata?.pinnedAt === 'number'
-    ) {
-      if (presentation?.action === 'updated') flush()
+    const stackable =
+      presentation?.action === 'updated' || presentation?.action === 'scoutBriefShared'
+    if (!roundId || !stackable || typeof message.metadata?.pinnedAt === 'number') {
+      if (stackable) flush()
       continue
     }
     const timestampMs = Date.parse(presentation.changedAt)

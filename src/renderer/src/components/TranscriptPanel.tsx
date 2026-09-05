@@ -142,6 +142,7 @@ import {
   type TranscriptRowRenderSignature
 } from '../lib/transcriptRowRenderCache'
 import {
+  blackboardStackItemStateKey,
   projectBlackboardUpdateStacks,
   type BlackboardUpdateStack
 } from '../lib/blackboardChangeStack'
@@ -5249,7 +5250,22 @@ export const TranscriptPanel = memo(
                   blackboardUpdateStackInfo.stateKey,
                   blackboardUpdateStackInfo.stack.messages.length,
                   blackboardUpdateStackExpanded ? 'open' : 'closed',
-                  isBlackboardUpdateStackLead ? 'lead' : 'member'
+                  isBlackboardUpdateStackLead ? 'lead' : 'member',
+                  isBlackboardUpdateStackLead
+                    ? blackboardUpdateStackInfo.stack.messages
+                        .map((message, itemIndex) => [
+                          transcriptMessageRenderSignature(message),
+                          copiedId === message.id ? 'copied' : '',
+                          expandedBlackboardUpdateStacks.has(
+                            blackboardStackItemStateKey(
+                              blackboardUpdateStackInfo.stateKey,
+                              message.id,
+                              itemIndex
+                            )
+                          ) ? 'open' : 'closed'
+                        ].join(':'))
+                        .join('|')
+                    : ''
                 ].join(':')
               : ''
             const isFanoutDispatch = isEnsembleFanoutDispatchPayload(
@@ -6230,6 +6246,45 @@ export const TranscriptPanel = memo(
                   <BlackboardChangeRow
                     key={msg.id}
                     message={msg}
+                    stackItemExpanded={
+                      blackboardUpdateStackInfo
+                        ? (messageId, itemIndex) => expandedBlackboardUpdateStacks.has(
+                            blackboardStackItemStateKey(
+                              blackboardUpdateStackInfo.stateKey, messageId, itemIndex
+                            )
+                          )
+                        : undefined
+                    }
+                    onStackItemExpandedChange={
+                      blackboardUpdateStackInfo
+                        ? (messageId, itemIndex, expanded) => setBlackboardUpdateStackExpanded(
+                            blackboardStackItemStateKey(
+                              blackboardUpdateStackInfo.stateKey, messageId, itemIndex
+                            ),
+                            expanded
+                          )
+                        : undefined
+                    }
+                    renderStackItemFooter={
+                      isBlackboardUpdateStackLead ? (message) => (
+                          <TranscriptMessageFooter
+                            message={message}
+                            label="system message"
+                            copyContent={message.content}
+                            align="start"
+                            onCopyMessage={onCopyMessage}
+                            onCopyEntireTurn={onCopyEntireTurn}
+                            onAddMessageToPrompt={onAddMessageToPrompt}
+                            onTogglePinMessage={onTogglePinMessage}
+                            onMessageFeedback={onMessageFeedback}
+                            onDeleteMessage={onDeleteMessage}
+                            onOpenSideChatFromMessage={onOpenSideChatFromMessage}
+                            pinned={typeof message.metadata?.pinnedAt === 'number'}
+                            copied={copiedId === message.id}
+                          />
+                        )
+                      : undefined
+                    }
                     stackMessages={
                       isBlackboardUpdateStackLead
                         ? blackboardUpdateStackInfo?.stack.messages
