@@ -31,6 +31,17 @@ import type { ChatMessage, ChatRun, ProviderId } from './store/types'
 /** `metadata.kind` the desktop card, the remote projection and iOS key on. */
 export const PROVIDER_RUN_FAILURE_METADATA_KIND = 'providerRunFailure'
 
+/** Origin stamp shared by the per-run seal (`ChatRun.staleSettlementProvenance`)
+ * and the batch notice record below. A repair pass must match on this, never
+ * on prose or a bare `exitCode: 1`. */
+export const STALE_RUN_SETTLEMENT_ORIGIN = 'stale-run-reconciler' as const
+
+/** Version of both settlement record shapes. Bump with the interfaces. */
+export const STALE_RUN_SETTLEMENT_SCHEMA_VERSION = 1 as const
+
+/** `metadata` key carrying the batch coverage record on a settlement notice. */
+export const STALE_RUN_SETTLEMENT_METADATA_KEY = 'staleSettlement' as const
+
 /** Same caps the renderer's snippet builder uses, so a main-authored notice
  * can never out-grow a renderer-authored one on the wire. */
 const RUN_FAILURE_LINE_MAX_CHARS = 600
@@ -147,6 +158,25 @@ export interface StaleRunSettlementEntry {
   previousStatus: string
 }
 
+/**
+ * Structured batch record persisted on a settlement notice's metadata under
+ * `STALE_RUN_SETTLEMENT_METADATA_KEY`. The card prose names at most three run
+ * ids (`Runs: a, b, c +N more`); this carries the FULL coverage so one
+ * recovered run can later be removed without hiding genuinely orphaned
+ * siblings. Per-run detail (previous status, which terminal fields the sweep
+ * authored) lives on each run's `staleSettlementProvenance`, not here.
+ * Additive to the `providerRunFailure` card blob — readers that only know the
+ * card shape ignore it.
+ */
+export interface StaleRunSettlementCoverage {
+  schemaVersion: typeof STALE_RUN_SETTLEMENT_SCHEMA_VERSION
+  origin: typeof STALE_RUN_SETTLEMENT_ORIGIN
+  chatId: string
+  settledAt: string
+  coveredRunIds: string[]
+  anchorRunId: string
+}
+
 export interface StaleRunSettlementNoticeInput {
   chatId: string
   /**
@@ -244,14 +274,24 @@ export function buildStaleRunSettlementNotice(input: StaleRunSettlementNoticeInp
     content: runFailureNoticeCopyText(headline, bounded, hint),
     timestamp: input.settledAt,
     runId: anchor.runId,
-    metadata: buildRunFailureNoticeMetadata({
-      ...(sharedProvider ? { provider: sharedProvider } : {}),
-      headline,
-      ...(typeof sharedExitCode === 'number' ? { exitCode: sharedExitCode } : {}),
-      failureAt: input.settledAt,
-      lines: bounded,
-      hint
-    })
+    metadata: {
+      ...buildRunFailureNoticeMetadata({
+        ...(sharedProvider ? { provider: sharedProvider } : {}),
+        headline,
+        ...(typeof sharedExitCode === 'number' ? { exitCode: sharedExitCode } : {}),
+        failureAt: input.settledAt,
+        lines: bounded,
+        hint
+      }),
+      [STALE_RUN_SETTLEMENT_METADATA_KEY]: {
+        schemaVersion: STALE_RUN_SETTLEMENT_SCHEMA_VERSION,
+        origin: STALE_RUN_SETTLEMENT_ORIGIN,
+        chatId: input.chatId,
+        settledAt: input.settledAt,
+        coveredRunIds: settlements.map((entry) => entry.run.runId),
+        anchorRunId: anchor.runId
+      } satisfies StaleRunSettlementCoverage
+    }
   }
 }
 

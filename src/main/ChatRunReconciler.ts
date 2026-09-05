@@ -23,7 +23,11 @@
 // are waiting on wakeups and may legitimately outlive a process session.
 
 import type { ChatMessage, ChatRecord, ChatRun } from './store/types'
-import { buildStaleRunSettlementNotice } from './RunFailureNotice'
+import {
+  STALE_RUN_SETTLEMENT_ORIGIN,
+  STALE_RUN_SETTLEMENT_SCHEMA_VERSION,
+  buildStaleRunSettlementNotice
+} from './RunFailureNotice'
 import type { StaleRunSettlementEntry } from './RunFailureNotice'
 import { isActiveChatRunStatus } from '../shared/chatRunStatus'
 
@@ -80,11 +84,24 @@ export interface ReconcileStaleChatRunsOptions {
 }
 
 export function settleStaleChatRun(run: ChatRun, nowIso: string): ChatRun {
+  // `== null` mirrors the `??` fills below exactly (both fire on null and
+  // undefined), so the authored flags can never disagree with the seal.
+  const authoredEndedAt = run.endedAt == null
+  const authoredExitCode = run.exitCode == null
   return {
     ...run,
     status: CHAT_RUN_STALE_SETTLEMENT_STATUS,
     endedAt: run.endedAt ?? nowIso,
-    exitCode: run.exitCode ?? CHAT_RUN_STALE_EXIT_CODE
+    exitCode: run.exitCode ?? CHAT_RUN_STALE_EXIT_CODE,
+    staleSettlementProvenance: {
+      schemaVersion: STALE_RUN_SETTLEMENT_SCHEMA_VERSION,
+      origin: STALE_RUN_SETTLEMENT_ORIGIN,
+      runId: run.runId,
+      settledAt: nowIso,
+      previousStatus: String(run.status),
+      authoredEndedAt,
+      authoredExitCode
+    }
   }
 }
 

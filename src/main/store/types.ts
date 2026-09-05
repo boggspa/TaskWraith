@@ -3935,6 +3935,30 @@ export interface PinnedMessageGroup {
   chats: PinnedMessageChatGroup[]
 }
 
+/**
+ * Per-run provenance stamped ONLY by `settleStaleChatRun`
+ * (src/main/ChatRunReconciler.ts) at the moment it authors a 'failed' seal.
+ * Lets a later repair pass tell a reconciler-authored synthetic field from a
+ * provider-authored one: `authoredEndedAt`/`authoredExitCode` are true exactly
+ * when THIS settlement wrote the field (mirroring the `??` fill), and
+ * `previousStatus` is the active status the run projected before the sweep.
+ * Never infer any of this from prose or a bare `exitCode: 1` — ordinary
+ * provider failures look identical without this stamp and must never revive.
+ * The sweep's batch record (full covered run ids) lives on the settlement
+ * notice's `metadata.staleSettlement`, not here.
+ */
+export interface StaleRunSettlementProvenance {
+  schemaVersion: 1
+  origin: 'stale-run-reconciler'
+  /** Echo of the stamped run's own id, so repair can verify stamp↔run match. */
+  runId: string
+  /** `settledAt` of the sweep that authored this seal. */
+  settledAt: string
+  previousStatus: string
+  authoredEndedAt: boolean
+  authoredExitCode: boolean
+}
+
 export interface ChatRun {
   runId: string
   /** Persisted-chat compaction schema applied after this run became historical. */
@@ -4036,6 +4060,9 @@ export interface ChatRun {
   ensembleSleepReason?: string
   ensembleSleepResumeWarning?: string
   runAnalyst?: RunAnalystSnapshot
+  /** Present only when the stale-run reconciler authored this run's terminal
+   * seal. Absent on every provider-sealed run, including ordinary failures. */
+  staleSettlementProvenance?: StaleRunSettlementProvenance
 }
 
 export type MessageFeedbackVote = 'up' | 'down'

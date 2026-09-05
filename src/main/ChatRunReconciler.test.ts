@@ -14,7 +14,8 @@ import {
   settleStaleChatRun,
   terminalChatRunSealFromExactSession
 } from './ChatRunReconciler'
-import { staleRunSettlementNoticeId } from './RunFailureNotice'
+import { STALE_RUN_SETTLEMENT_METADATA_KEY, staleRunSettlementNoticeId } from './RunFailureNotice'
+import type { StaleRunSettlementCoverage } from './RunFailureNotice'
 import type { ChatMessage, ChatRecord, ChatRun } from './store/types'
 
 const NOW = '2026-07-20T12:00:00.000Z'
@@ -95,6 +96,44 @@ describe('settleStaleChatRun', () => {
     )
     expect(settled.exitCode).toBe(42)
     expect(settled.endedAt).toBe(OLD)
+  })
+
+  it('stamps provenance naming the seal it authored', () => {
+    const settled = settleStaleChatRun(run({ runId: 'r1', status: 'starting' }), NOW)
+    expect(settled.staleSettlementProvenance).toEqual({
+      schemaVersion: 1,
+      origin: 'stale-run-reconciler',
+      runId: 'r1',
+      settledAt: NOW,
+      previousStatus: 'starting',
+      authoredEndedAt: true,
+      authoredExitCode: true
+    })
+  })
+
+  it('marks only the fields this settlement actually wrote', () => {
+    const settled = settleStaleChatRun(
+      run({ runId: 'r1', status: 'running', endedAt: OLD }),
+      NOW
+    )
+    expect(settled.endedAt).toBe(OLD)
+    expect(settled.exitCode).toBe(CHAT_RUN_STALE_EXIT_CODE)
+    expect(settled.staleSettlementProvenance).toMatchObject({
+      previousStatus: 'running',
+      authoredEndedAt: false,
+      authoredExitCode: true
+    })
+  })
+
+  it('marks nothing authored when the run already sealed its own fields', () => {
+    const settled = settleStaleChatRun(
+      run({ runId: 'r1', exitCode: 42, endedAt: OLD }),
+      NOW
+    )
+    expect(settled.staleSettlementProvenance).toMatchObject({
+      authoredEndedAt: false,
+      authoredExitCode: false
+    })
   })
 })
 
@@ -423,6 +462,60 @@ describe('reconcileStaleChatRuns', () => {
         NOW
       )
       expect(result.chats).toEqual([])
+    })
+
+    it('stamps every settled run and covers every id on the one notice', () => {
+      const result = reconcileStaleChatRuns(
+        [
+          chat('c1', [
+            run({ runId: 'stale-1', status: 'running', provider: 'ollama' }),
+            run({ runId: 'stale-2', status: 'starting', provider: 'codex' }),
+            run({ runId: 'stale-3', status: 'running', provider: 'ollama' }),
+            run({ runId: 'stale-4', status: 'queued', provider: 'codex' })
+          ])
+        ],
+        () => false,
+        NOW
+      )
+      const settled = result.chats[0]
+      expect(settled.runs.map((r) => r.runId)).toEqual(['stale-1', 'stale-2', 'stale-3', 'stale-4'])
+      for (const settledRun of settled.runs) {
+        expect(settledRun.status).toBe(CHAT_RUN_STALE_SETTLEMENT_STATUS)
+        expect(settledRun.staleSettlementProvenance).toMatchObject({
+          schemaVersion: 1,
+          origin: 'stale-run-reconciler',
+          runId: settledRun.runId,
+          settledAt: NOW
+        })
+      }
+      expect(settled.runs[1].staleSettlementProvenance?.previousStatus).toBe('starting')
+      // Four ids, past the three-name prose cap — structure keeps them all.
+      const coverage = settled.messages[0].metadata?.[
+        STALE_RUN_SETTLEMENT_METADATA_KEY
+      ] as StaleRunSettlementCoverage
+      expect(coverage.coveredRunIds).toEqual(['stale-1', 'stale-2', 'stale-3', 'stale-4'])
+      expect(coverage.chatId).toBe('c1')
+      expect(settled.messages[0].content).toContain('+1 more')
+    })
+
+    it('leaves provider-sealed runs unstamped and never re-settles its own seal', () => {
+      const first = reconcileStaleChatRuns(
+        [
+          chat('c1', [
+            run({ runId: 'stale-1', status: 'running' }),
+            run({ runId: 'done-1', status: 'success', exitCode: 0 })
+          ])
+        ],
+        () => false,
+        NOW
+      )
+      const done = first.chats[0].runs.find((r) => r.runId === 'done-1')
+      expect(done?.staleSettlementProvenance).toBeUndefined()
+      // A second sweep over the settled output is a complete no-op: no new
+      // settlements, no second notice, no provenance rewrite.
+      const second = reconcileStaleChatRuns(first.chats, () => false, NOW)
+      expect(second.settlements).toEqual([])
+      expect(second.chats).toEqual([])
     })
   })
 })
