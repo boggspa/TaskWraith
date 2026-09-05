@@ -82,6 +82,38 @@ async function callStdio(input: {
 }
 
 describe('Ensemble control envelope convention — broker dispatch path', () => {
+  it('decodes Pi Qwen writer maps on the authenticated broker route before dispatch', async () => {
+    const { runtime, executeGeminiMcpTool } = brokerHarness()
+    const route = { appRunId: 'pi-fanout', appChatId: 'chat-fanout' }
+    const token = runtime.issuePiEnsembleCoordinationCredential(route)
+    try {
+      for (const key of ['Validator', 'ensemble-participant-20']) {
+        const scopes = { [key]: ['src/one.ts', 'src/two.ts', 'src/three.ts'] }
+        const args = {
+          targets: ['Validator', 'Reviewer'],
+          mode: 'locked_writers',
+          prompt: 'Implement the slice.',
+          isolation: 'off',
+          writeScopes: JSON.stringify(scopes)
+        }
+        const response = await runtime.handleGeminiMcpBrokerRequest({
+          ...route,
+          token,
+          parentProvider: 'pi',
+          tool: 'ensemble_fanout',
+          arguments: args
+        })
+        expect(response).toMatchObject({ ok: true })
+        expect(executeGeminiMcpTool.mock.calls.at(-1)?.slice(0, 2)).toEqual([
+          'ensemble_fanout',
+          { ...args, writeScopes: scopes }
+        ])
+      }
+    } finally {
+      runtime.revokePiEnsembleCoordinationCredential(token)
+    }
+  })
+
   it('delivers planSummary for BOTH names in BOTH shapes (live acceptance matrix)', async () => {
     for (const tool of CONTROL_TOOL_NAMES) {
       const flat = await callBroker(tool, {
@@ -159,6 +191,26 @@ describe('Ensemble control envelope convention — broker dispatch path', () => 
 })
 
 describe('Ensemble control envelope convention — stdio tools/call path', () => {
+  it('decodes stringified fan-out scopes before forwarding a stdio call', async () => {
+    const brokerRequest = await callStdio({
+      env: { TASKWRAITH_MCP_GATEWAY_SUBSET: '1' },
+      name: 'ensemble_fanout',
+      args: {
+        prompt: 'Implement the slice.',
+        targets: ['Worker'],
+        mode: 'locked_writers',
+        write_scopes: '{"Worker":["src/one.ts"]}'
+      }
+    })
+    expect(brokerRequest).toHaveBeenCalledWith(
+      SOCKET,
+      expect.objectContaining({
+        tool: 'ensemble_fanout',
+        arguments: expect.objectContaining({ writeScopes: { Worker: ['src/one.ts'] } })
+      })
+    )
+  })
+
   it('unwraps the envelope for the canonical name on a legacy profile', async () => {
     const brokerRequest = await callStdio({
       env: { TASKWRAITH_MCP_GATEWAY_SUBSET: '1' },

@@ -105,8 +105,24 @@ export const FIRST_CALL_SUCCESS_CORPUS: readonly FirstCallSuccessCase[] = [
       writeScopes: { Work3: ['src/main/services/EnsembleOrchestrator.ts'] }
     }
   },
-  // 7. The latent merge-vs-replace bug: an envelope that omits action must not
-  // drop the outer action.
+  // 7. Pi/Qwen's nested JSON string must retain the exact writer map.
+  {
+    name: 'Pi Qwen JSON-encoded writer map preserves the explicit participant id',
+    toolName: 'ensemble_fanout',
+    input: {
+      targets: ['Validator'],
+      prompt: 'Implement the slice.',
+      mode: 'locked_writers',
+      writeScopes: '{"ensemble-participant-20":["src/one.ts","src/two.ts"]}'
+    },
+    expected: {
+      targets: ['Validator'],
+      prompt: 'Implement the slice.',
+      mode: 'locked_writers',
+      writeScopes: { 'ensemble-participant-20': ['src/one.ts', 'src/two.ts'] }
+    }
+  },
+  // 8. An envelope that omits action must not drop the outer action.
   {
     name: 'outer action survives an envelope that omits it',
     toolName: 'ensemble_control',

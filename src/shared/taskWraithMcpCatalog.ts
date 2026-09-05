@@ -574,6 +574,17 @@ function camelCaseFromSnakeCase(key: string): string {
   return key.replace(/_([a-z0-9])/g, (_match, character: string) => character.toUpperCase())
 }
 
+/** Decode the object transport without choosing writers or changing any scope. */
+export function decodeEnsembleFanoutWriteScopes(value: unknown): unknown {
+  if (typeof value !== 'string' || !value.trimStart().startsWith('{')) return value
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return isPlainRecord(parsed) ? parsed : value
+  } catch {
+    return value
+  }
+}
+
 /**
  * ADDITIVE alias fold: a snake_case key gains its camelCase twin when the twin
  * is absent. The original key is kept, so nothing that already reads the
@@ -621,7 +632,15 @@ export function normalizeEnsembleMcpToolArguments(toolName: string, value: unkno
     }
     record = merged
   }
-  return foldSnakeCaseArgumentAliases(record)
+  record = foldSnakeCaseArgumentAliases(record)
+  if (normalizeTaskWraithToolName(toolName) === 'ensemble_fanout') {
+    // Pi/Qwen can stringify this nested field even after correcting its keys.
+    // Decode before policy/approval/audit at every shared dispatch boundary;
+    // a bare array still needs the caller to name its intended writer.
+    const writeScopes = decodeEnsembleFanoutWriteScopes(record.writeScopes)
+    if (writeScopes !== record.writeScopes) return { ...record, writeScopes }
+  }
+  return record
 }
 
 /**

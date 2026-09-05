@@ -98,6 +98,51 @@ describe('one Ensemble argument convention', () => {
     ).toMatchObject({ laneId: 'lane-camel' })
   })
 
+  it.each(['Validator', 'ensemble-participant-20'])(
+    'decodes JSON-encoded fan-out scopes keyed by %s without changing writer intent',
+    (key) => {
+      const scopes = { [key]: ['src/one.ts', 'src/two.ts', 'src/three.ts'] }
+      const args = Object.freeze({
+        targets: ['Validator', 'Reviewer'],
+        prompt: 'Implement the slice.',
+        mode: 'locked_writers',
+        isolation: 'off',
+        writeScopes: JSON.stringify(scopes)
+      })
+      const normalized = normalizeEnsembleMcpToolArguments('ensemble_fanout', args)
+      expect(normalized).toEqual({ ...args, writeScopes: scopes })
+      expect(args.writeScopes).toBe(JSON.stringify(scopes))
+      expect(normalizeEnsembleMcpToolArguments('ensemble_fanout', normalized)).toBe(normalized)
+    }
+  )
+
+  it('decodes the snake_case scope field after folding aliases', () => {
+    const scopes = { Validator: [{ kind: 'path', path: 'src/one.ts' }] }
+    const args = { write_scopes: JSON.stringify(scopes) }
+    expect(normalizeEnsembleMcpToolArguments('mcp__taskwraith__ensemble_fanout', args)).toEqual({
+      ...args,
+      writeScopes: scopes
+    })
+  })
+
+  it.each(['["src/one.ts"]', ['src/one.ts'], 'workspace', '{broken', 'null', '', null])(
+    'leaves scope input %j to the executor rather than guessing a writer',
+    (writeScopes) => {
+      const args = { targets: ['Validator', 'Reviewer'], writeScopes }
+      expect(normalizeEnsembleMcpToolArguments('ensemble_fanout', args)).toBe(args)
+    }
+  )
+
+  it('does not decode scope-looking fields on other tools or inside nested objects', () => {
+    const args = { writeScopes: '{"Validator":["src/one.ts"]}' }
+    expect(normalizeEnsembleMcpToolArguments('ensemble_fanout_all', args)).toBe(args)
+    expect(normalizeEnsembleMcpToolArguments('write_file', args)).toBe(args)
+    const scopes = { Validator: '{"path":"src/one.ts"}' }
+    expect(
+      normalizeEnsembleMcpToolArguments('ensemble_fanout', { writeScopes: JSON.stringify(scopes) })
+    ).toEqual({ writeScopes: scopes })
+  })
+
   it('folds only the top level so nested strict-schema objects stay byte-identical', () => {
     const normalized = normalizeEnsembleMcpToolArguments('ensemble_roster_edit', {
       action: 'edit_participant',
