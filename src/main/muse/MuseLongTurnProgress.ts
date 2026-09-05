@@ -19,7 +19,7 @@ export function withMuseProgressSteer(prompt: string): string {
 }
 
 export const MUSE_OPENING_STEER_NOTE =
-  'TaskWraith Muse launch guidance (host guidance): carry out the requested work in this turn. Do not stop after announcing a plan. Progress updates belong between meaningful tool phases while work continues. Verify file changes with tools before reporting completion; report any unavailable or failed operation honestly.'
+  'TaskWraith Muse launch guidance (host guidance): carry out the requested work in this turn. When tools are needed, give one brief introduction and issue the first tool call in that same response. Do not stop after announcing a plan. The introduction accompanies tool execution; it is not a final answer or a request for permission. Further progress updates belong between meaningful tool phases while work continues. Verify file changes with tools before reporting completion; report any unavailable or failed operation honestly.'
 
 /**
  * Fresh-exec execution guidance. A progress announcement must lead into tool

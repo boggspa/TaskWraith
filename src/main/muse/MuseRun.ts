@@ -225,6 +225,13 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
   const projectReasoning = createMuseReasoningProjector()
   const pendingSessionEvents: { event: MuseExecNormalizedEvent; recordedAt: number }[] = []
   let terminalEvent: MuseExecNormalizedEvent | undefined
+  const logReadWarnings = new Set<string>()
+  const warnLogRead = (error: unknown): void => {
+    const warning = `Muse session-log read failed: ${error instanceof Error ? error.message : String(error)}`
+    if (logReadWarnings.has(warning)) return
+    logReadWarnings.add(warning)
+    warnings.push(warning)
+  }
 
   const emitEvent = (event: MuseExecNormalizedEvent): void => {
     events.push(event)
@@ -295,22 +302,22 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
 
   const pollSessionLogs = async (mainSessionLogPath: string | null): Promise<void> => {
     for (const tailer of sessionTailers.values()) {
-      await tailer.poll()
+      await tailer.poll().catch(warnLogRead)
     }
     if (mainSessionLogPath) openPendingSubagentTailers(mainSessionLogPath)
     // Newly attached subagent tailers need an immediate poll.
     for (const tailer of sessionTailers.values()) {
-      await tailer.poll()
+      await tailer.poll().catch(warnLogRead)
     }
   }
 
   const flushSessionLogs = async (mainSessionLogPath: string | null): Promise<void> => {
     for (const tailer of sessionTailers.values()) {
-      await tailer.flushFinal()
+      await tailer.flushFinal().catch(warnLogRead)
     }
     if (mainSessionLogPath) openPendingSubagentTailers(mainSessionLogPath)
     for (const tailer of sessionTailers.values()) {
-      await tailer.flushFinal()
+      await tailer.flushFinal().catch(warnLogRead)
     }
   }
 
@@ -444,6 +451,22 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
       return result
     })
 
+    // The launcher/keychain can outlast the first bounded lookup. Keep
+    // discovery alive until the log appears, including one final lookup for
+    // short runs, instead of silently losing all tools, summaries and usage.
+    let nextLogLookupAt = 0
+    const refreshSessionLog = async (force = false): Promise<void> => {
+      await attachPromise
+      if (mainSessionLogPath || (!force && Date.now() < nextLogLookupAt)) return
+      nextLogLookupAt = Date.now() + 1_000
+      try {
+        const result = await resolveSessionLog({ dataHome: museDataHome, sessionId })
+        if (result.sessionLogPath) attachMainSessionLog(result.sessionLogPath)
+      } catch (error) {
+        warnLogRead(error)
+      }
+    }
+
     let streamWork = Promise.resolve()
     let streamError: unknown
     const enqueueStreamWork = (work: () => Promise<void>): void => {
@@ -454,7 +477,7 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
     }
     handle.onStdout((chunk) => {
       enqueueStreamWork(async () => {
-        await attachPromise
+        await refreshSessionLog()
         await pollSessionLogs(mainSessionLogPath)
         handleStdoutEvents(chunk)
       })
@@ -463,6 +486,7 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
     pollTimer = setInterval(() => {
       killIfCancelled()
       enqueueStreamWork(async () => {
+        await refreshSessionLog()
         await pollSessionLogs(mainSessionLogPath)
         flushSessionEvents()
       })
@@ -479,14 +503,13 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
     await streamWork
     if (streamError) throw streamError
     if (stdoutCarry.trim()) handleStdoutEvents('\n')
-    const sessionLog = await attachPromise
-    if (sessionLog.sessionLogPath) {
-      attachMainSessionLog(sessionLog.sessionLogPath)
-      await flushSessionLogs(sessionLog.sessionLogPath)
+    await refreshSessionLog(true)
+    if (mainSessionLogPath) {
+      await flushSessionLogs(mainSessionLogPath)
       meter =
         (usageReducer as MuseUsageReducer | null)?.snapshot() ??
         unavailableMuseMeterSnapshot(sessionId)
-    } else if (sessionLog.source === 'missing') {
+    } else {
       warnings.push('Muse session.jsonl was not resolved for metering; usage marked unavailable')
       meter = unavailableMuseMeterSnapshot(sessionId)
     }

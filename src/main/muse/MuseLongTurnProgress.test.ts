@@ -34,6 +34,10 @@ describe('withMuseOpeningSteer', () => {
     const prompt = withMuseOpeningSteer('Set up the migration.')
     expect(prompt).toBe(`${MUSE_OPENING_STEER_NOTE}\n\nSet up the migration.`)
     expect(prompt).toContain('carry out the requested work in this turn')
+    expect(prompt).toContain(
+      'give one brief introduction and issue the first tool call in that same response'
+    )
+    expect(prompt).toContain('Do not stop after announcing a plan')
     expect(prompt).toContain('Verify file changes with tools before reporting completion')
   })
 

@@ -95,6 +95,34 @@ function usageSessionLine(sequence: number, runId: string, sessionId: string): s
 }
 
 describe('runMuseProvider', () => {
+  it('keeps the provider answer available when session-log lookups fail', async () => {
+    const root = tempDir('muse-run-log-error-')
+    const outcome = await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath: root,
+      prompt: 'Say hello.',
+      runId: 'missing-log-run',
+      temporaryRoot: root,
+      resolveSessionLog: async () => {
+        throw new Error('temporary index failure')
+      },
+      spawn: () =>
+        fakeSpawn([
+          stdoutEnvelope({ payload: { text: 'Hello.' } }),
+          stdoutEnvelope({
+            payload_type: 'run.terminal.completed',
+            payload: { terminal: 'completed', text: 'Hello.' }
+          })
+        ])
+    })
+    expect(outcome.status).toBe('success')
+    expect(outcome.assistantText).toBe('Hello.')
+    expect(outcome.warnings).toContain('Muse session-log read failed: temporary index failure')
+    expect(
+      outcome.warnings.filter((warning) => warning.startsWith('Muse session-log read failed'))
+    ).toHaveLength(1)
+  })
+
   it('orders logged thinking around stdout introductions, tools and the final answer', async () => {
     const temporaryRoot = tempDir('muse-run-thinking-')
     const workspacePath = tempDir('muse-ws-thinking-')
@@ -153,10 +181,13 @@ describe('runMuseProvider', () => {
       sessionId,
       temporaryRoot,
       // Simulate stdout arriving while native index discovery is still pending.
-      resolveSessionLog: async () => {
-        await new Promise((resolve) => setTimeout(resolve, 20))
-        return { row: null, sessionLogPath, source: 'fs-fallback' }
-      },
+      resolveSessionLog: vi
+        .fn()
+        .mockResolvedValueOnce({ row: null, sessionLogPath: null, source: 'missing' })
+        .mockImplementation(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          return { row: null, sessionLogPath, source: 'fs-fallback' }
+        }),
       onEvent: (event) => {
         if (['content', 'thinking', 'tool_use', 'tool_result', 'terminal'].includes(event.type)) {
           seen.push(`${event.type}:${event.text || event.toolName || event.toolOutput}`)
