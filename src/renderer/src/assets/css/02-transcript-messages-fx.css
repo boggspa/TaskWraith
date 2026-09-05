@@ -4594,7 +4594,8 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 ) {
   margin-top: calc(-1 * var(--space-lg));
 }
-.transcript-inner.transcript-virtualized > .transcript-message-block:is(
+/* Outrank the generic virtual-row margin declared below. */
+.transcript-inner.transcript-virtualized > .transcript-message-block[data-seat-change-stack]:is(
   [data-seat-change-stack="start"], [data-seat-change-stack="middle"]
 ) {
   margin-bottom: 0;
