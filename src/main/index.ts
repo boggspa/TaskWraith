@@ -1763,6 +1763,7 @@ import { registerMistralApiKeyHandlers } from './ipc/mistralApiKeyHandlers'
 import { registerMistralQuotaHandlers } from './ipc/mistralQuotaHandlers'
 import { registerCodexUsageHandlers } from './ipc/codexUsageHandlers'
 import { registerReleaseLeaseHandlers } from './ipc/releaseLeaseHandlers'
+import { registerBridgePairedDeviceHandlers } from './ipc/bridgePairedDeviceHandlers'
 import {
   classifyMistralLimit,
   isMistralRateLimitText,
@@ -57421,28 +57422,9 @@ if (isGeminiMcpBridgeProcess) {
 
     registerReleaseLeaseHandlers({ leaseRegistry: releaseAuthorizationLeases })
 
-    ipcMain.handle('bridge-list-paired-devices', async () => {
-      if (!iosRemoteRuntime) return []
-      return iosRemoteRuntime.listPairedDevices()
-    })
-
-    ipcMain.handle('bridge-unpair-device', async (_, iphoneIdentityPubKey: string) => {
-      const key = requireNonEmptyString(iphoneIdentityPubKey, 'Device identity')
-      if (!iosRemoteRuntime) {
-        return {
-          ok: false,
-          error: 'Remote iOS pairing is off — enable it in Settings → Devices, then restart.'
-        }
-      }
-      const target = iosRemoteRuntime
-        .listPairedDevices()
-        .find((device) => device.iphoneIdentityPubKey === key)
-      if (!target) {
-        return { ok: false, error: 'Paired device not found.' }
-      }
-      iosRemoteRuntime.unpair(key)
-      bridgeApnsTokenStoreRef?.remove(target.pairId)
-      return { ok: true }
+    registerBridgePairedDeviceHandlers({
+      getIosRemoteRuntime: () => iosRemoteRuntime,
+      removeApnsToken: (pairId) => bridgeApnsTokenStoreRef?.remove(pairId)
     })
 
     // Screen Watch / App Drive window attachment plus sticky-AppWatch resume
