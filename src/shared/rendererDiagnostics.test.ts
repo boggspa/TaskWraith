@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   RENDERER_DIAGNOSTIC_SAMPLE_INTERVAL_MS,
+  sanitizeBlinkCacheUsage,
   sanitizeRendererDiagnosticClientSample,
   sanitizeRendererErrorBoundaryReport
 } from './rendererDiagnostics'
@@ -71,5 +72,73 @@ describe('renderer diagnostics wire shape', () => {
     expect(report.stack).toHaveLength(4_096)
     expect(report.componentStack).toHaveLength(4_096)
     expect(sanitizeRendererErrorBoundaryReport(null).message).toContain('unknown error')
+  })
+})
+
+describe('blink cache usage sanitizer', () => {
+  it('keeps a valid reading with bounded fields', () => {
+    expect(
+      sanitizeBlinkCacheUsage({
+        images: { count: 42.9, sizeBytes: 1024.8, decodedSizeBytes: 512 },
+        scripts: { count: 0, sizeBytes: 0, decodedSizeBytes: 0 }
+      })
+    ).toEqual({
+      images: { count: 42, sizeBytes: 1024, decodedSizeBytes: 512 },
+      scripts: { count: 0, sizeBytes: 0, decodedSizeBytes: 0 }
+    })
+    // Decoded bytes are not a live subset of cached bytes: no ordering enforced.
+    expect(
+      sanitizeBlinkCacheUsage({ images: { count: 1, sizeBytes: 100, decodedSizeBytes: 5000 } })
+    ).toEqual({ images: { count: 1, sizeBytes: 100, decodedSizeBytes: 5000 } })
+    expect(
+      sanitizeBlinkCacheUsage({ images: { count: 1e30, sizeBytes: 1e30, decodedSizeBytes: 1e30 } })
+    ).toEqual({
+      images: {
+        count: 1_000_000_000,
+        sizeBytes: 16 * 1024 * 1024 * 1024 * 1024,
+        decodedSizeBytes: 16 * 1024 * 1024 * 1024 * 1024
+      }
+    })
+  })
+
+  it('drops malformed categories and fields but keeps valid siblings', () => {
+    expect(
+      sanitizeBlinkCacheUsage({
+        images: { count: 2, sizeBytes: 2048, decodedSizeBytes: 1024 },
+        scripts: 'junk',
+        cssStyleSheets: { count: -1, sizeBytes: Number.NaN },
+        fonts: { count: 1, sizeBytes: -5, decodedSizeBytes: 64 },
+        decodedAudio: { count: 9, sizeBytes: 9, decodedSizeBytes: 9 }
+      })
+    ).toEqual({
+      images: { count: 2, sizeBytes: 2048, decodedSizeBytes: 1024 },
+      fonts: { count: 1, decodedSizeBytes: 64 }
+    })
+  })
+
+  it('treats absent or fully invalid readings as unavailable, never zero', () => {
+    for (const reading of [undefined, null, 'junk', 42, [], {}, { images: 'junk' }]) {
+      expect(sanitizeBlinkCacheUsage(reading)).toBeUndefined()
+    }
+    const backcompat = sanitizeRendererDiagnosticClientSample({
+      activeChatMessageCount: 3,
+      chatUpdates: { received: 1, snapshots: 0, patches: 1, applyFailures: 0, acksSent: 1 }
+    })
+    expect('blinkCacheUsage' in backcompat).toBe(false)
+  })
+
+  it('carries a sanitized reading through the client sample', () => {
+    const sample = sanitizeRendererDiagnosticClientSample({
+      activeChatMessageCount: 3,
+      blinkCacheUsage: {
+        images: { count: 2, sizeBytes: 2048, decodedSizeBytes: 1024 },
+        scripts: { count: -4, sizeBytes: 128, decodedSizeBytes: 64 }
+      },
+      chatUpdates: { received: 1, snapshots: 0, patches: 1, applyFailures: 0, acksSent: 1 }
+    })
+    expect(sample.blinkCacheUsage).toEqual({
+      images: { count: 2, sizeBytes: 2048, decodedSizeBytes: 1024 },
+      scripts: { sizeBytes: 128, decodedSizeBytes: 64 }
+    })
   })
 })

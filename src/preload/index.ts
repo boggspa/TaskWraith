@@ -164,6 +164,7 @@ import type {
   RendererDiagnosticClientSample,
   RendererErrorBoundaryReport
 } from '../shared/rendererDiagnostics'
+import { withBlinkCacheUsage } from './rendererDiagnosticResourceUsage'
 import {
   workLockProjectionUpdateIsStale,
   type WorkLockProjectionChangedEvent,
@@ -2883,7 +2884,10 @@ const api = {
   getProductCrashes: (filter: any = {}) => ipcRenderer.invoke('get-product-crashes', filter),
   recordProductCrash: (input: any) => ipcRenderer.invoke('record-product-crash', input),
   recordRendererDiagnosticSample: (input: RendererDiagnosticClientSample) =>
-    ipcRenderer.invoke('record-renderer-diagnostic-sample', input) as Promise<boolean>,
+    ipcRenderer.invoke(
+      'record-renderer-diagnostic-sample',
+      withBlinkCacheUsage(input)
+    ) as Promise<boolean>,
   recordRendererErrorBoundary: (input: RendererErrorBoundaryReport) =>
     ipcRenderer.invoke('record-renderer-error-boundary', input) as Promise<boolean>,
   exportProductDiagnostics: (path?: string) =>

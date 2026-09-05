@@ -18,6 +18,51 @@ export interface RendererChatUpdateClientCounters {
   acksSent: number
 }
 
+/**
+ * Blink in-memory cache categories reported by Electron's
+ * `webFrame.getResourceUsage()` (Electron 41 `ResourceUsage`). These are cache
+ * metrics — `count` is a cached-entry count (unitless), `sizeBytes` and
+ * `decodedSizeBytes` are byte counts from Blink's per-category cache stats —
+ * not total native memory and not DOM bytes. `sizeBytes` is the category's
+ * total cached bytes; `decodedSizeBytes` is its decoded bytes, mapped from
+ * Electron `MemoryUsageDetails.liveSize`, which Electron v41 maps from Blink's
+ * decoded cache size (`stat.decoded_size`), not a live/reachable subset. No
+ * ordering between the two is assumed. Absent means the reading was
+ * unavailable for that sample, never zero.
+ */
+export const BLINK_CACHE_CATEGORIES = [
+  'images',
+  'scripts',
+  'cssStyleSheets',
+  'xslStyleSheets',
+  'fonts',
+  'other'
+] as const
+
+export type BlinkCacheCategory = (typeof BLINK_CACHE_CATEGORIES)[number]
+
+export interface RendererBlinkCacheCategoryUsage {
+  /** Cached entries in this category (unitless count). */
+  count?: number
+  /** Bytes held by this category's cache (`MemoryUsageDetails.size`). */
+  sizeBytes?: number
+  /**
+   * Decoded bytes for this category. Mapped from Electron
+   * `MemoryUsageDetails.liveSize` (Blink decoded cache size); not a
+   * live/reachable subset, so no decoded<=size ordering is assumed.
+   */
+  decodedSizeBytes?: number
+}
+
+export interface RendererBlinkCacheUsage {
+  images?: RendererBlinkCacheCategoryUsage
+  scripts?: RendererBlinkCacheCategoryUsage
+  cssStyleSheets?: RendererBlinkCacheCategoryUsage
+  xslStyleSheets?: RendererBlinkCacheCategoryUsage
+  fonts?: RendererBlinkCacheCategoryUsage
+  other?: RendererBlinkCacheCategoryUsage
+}
+
 export interface RendererDiagnosticClientSample {
   activeChatId?: string
   activeChatMessageCount: number
@@ -26,6 +71,8 @@ export interface RendererDiagnosticClientSample {
   v8HeapLimitBytes?: number
   /** Live DOM element count; separates Blink-side growth from V8 heap growth. */
   domNodeCount?: number
+  /** Blink cache-category usage; cache metrics, not total native/DOM bytes. */
+  blinkCacheUsage?: RendererBlinkCacheUsage
   chatUpdates: RendererChatUpdateClientCounters
 }
 
@@ -122,6 +169,11 @@ export interface RendererDiagnosticSample {
   v8HeapTotalBytes?: number
   v8HeapLimitBytes?: number
   rendererDomNodeCount?: number
+  /**
+   * Blink cache-category usage for this renderer. Cache metrics only — never
+   * total native memory or DOM bytes. Absent when the reading was unavailable.
+   */
+  blinkCacheUsage?: RendererBlinkCacheUsage
   /** Aggregate GPU-process RSS/private bytes; the "heap low, process grows" lane. */
   gpuRssBytes?: number
   gpuPrivateBytes?: number
@@ -206,6 +258,42 @@ export function sanitizeRendererErrorBoundaryReport(input: unknown): RendererErr
   }
 }
 
+function sanitizeBlinkCacheCategory(value: unknown): RendererBlinkCacheCategoryUsage | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const source = value as Record<string, unknown>
+  const count = boundedOptionalCounter(source.count)
+  const sizeBytes = boundedBytes(source.sizeBytes)
+  const decodedSizeBytes = boundedBytes(source.decodedSizeBytes)
+  if (count === undefined && sizeBytes === undefined && decodedSizeBytes === undefined) {
+    return undefined
+  }
+  return {
+    ...(count !== undefined ? { count } : {}),
+    ...(sizeBytes !== undefined ? { sizeBytes } : {}),
+    ...(decodedSizeBytes !== undefined ? { decodedSizeBytes } : {})
+  }
+}
+
+/**
+ * Bounds one Blink cache-category reading. Only the six known categories
+ * survive; malformed categories or fields are dropped while valid siblings are
+ * kept, and a reading with no valid category becomes undefined (unavailable).
+ */
+export function sanitizeBlinkCacheUsage(input: unknown): RendererBlinkCacheUsage | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
+  const source = input as Record<string, unknown>
+  const usage: RendererBlinkCacheUsage = {}
+  let categories = 0
+  for (const category of BLINK_CACHE_CATEGORIES) {
+    const sanitized = sanitizeBlinkCacheCategory(source[category])
+    if (sanitized) {
+      usage[category] = sanitized
+      categories += 1
+    }
+  }
+  return categories > 0 ? usage : undefined
+}
+
 /** Bounds the untrusted renderer payload before it reaches persistence. */
 export function sanitizeRendererDiagnosticClientSample(
   input: unknown
@@ -224,6 +312,7 @@ export function sanitizeRendererDiagnosticClientSample(
     typeof source.activeChatId === 'string' && source.activeChatId.trim()
       ? source.activeChatId.trim().slice(0, MAX_CHAT_ID_CHARS)
       : undefined
+  const blinkCacheUsage = sanitizeBlinkCacheUsage(source.blinkCacheUsage)
 
   return {
     ...(activeChatId ? { activeChatId } : {}),
@@ -240,6 +329,7 @@ export function sanitizeRendererDiagnosticClientSample(
     ...(boundedOptionalCounter(source.domNodeCount) !== undefined
       ? { domNodeCount: boundedOptionalCounter(source.domNodeCount) }
       : {}),
+    ...(blinkCacheUsage !== undefined ? { blinkCacheUsage } : {}),
     chatUpdates: {
       received: boundedCounter(rawCounters.received),
       snapshots: boundedCounter(rawCounters.snapshots),

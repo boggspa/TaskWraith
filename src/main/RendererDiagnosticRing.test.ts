@@ -1009,4 +1009,86 @@ describe('RendererDiagnosticRing', () => {
     expect(carried.mainPid).toBe(7)
     expect(carried.mainMemoryStatus).toBe('carried')
   })
+
+  it('persists Blink cache-category usage from a client sample into the ring', () => {
+    const filePath = testPath()
+    const recorder = new RendererDiagnosticRecorder({
+      filePath,
+      getAppMetrics: () => []
+    })
+    const target = { windowId: 1, webContentsId: 2, rendererPid: 44 }
+    const blinkCacheUsage = {
+      images: { count: 42, sizeBytes: 12_582_912, decodedSizeBytes: 8_388_608 },
+      scripts: { count: 17, sizeBytes: 4_194_304, decodedSizeBytes: 4_194_304 },
+      cssStyleSheets: { count: 9, sizeBytes: 262_144, decodedSizeBytes: 131_072 },
+      xslStyleSheets: { count: 0, sizeBytes: 0, decodedSizeBytes: 0 },
+      fonts: { count: 5, sizeBytes: 1_048_576, decodedSizeBytes: 524_288 },
+      other: { count: 3, sizeBytes: 65_536, decodedSizeBytes: 65_536 }
+    }
+
+    const recorded = recorder.recordClientSample(target, {
+      activeChatMessageCount: 1,
+      blinkCacheUsage,
+      chatUpdates: {}
+    })
+    expect(recorded.blinkCacheUsage).toEqual(blinkCacheUsage)
+    expect(recorded.clientSampleStatus).toBe('fresh')
+
+    const reloaded = new RendererDiagnosticRing(filePath).snapshot()
+    expect(reloaded.samples).toHaveLength(1)
+    expect(reloaded.samples[0].blinkCacheUsage).toEqual(blinkCacheUsage)
+  })
+
+  it('reuses cache-category usage for the same renderer but not after a restart', () => {
+    const filePath = testPath()
+    const recorder = new RendererDiagnosticRecorder({
+      filePath,
+      getAppMetrics: () => []
+    })
+    const blinkCacheUsage = {
+      images: { count: 42, sizeBytes: 12_582_912, decodedSizeBytes: 8_388_608 }
+    }
+    recorder.recordClientSample(
+      { windowId: 1, webContentsId: 2, rendererPid: 44 },
+      { activeChatMessageCount: 1, blinkCacheUsage, chatUpdates: {} }
+    )
+
+    const sameRenderer = recorder.recordLifecycleSample(
+      { windowId: 1, webContentsId: 2, rendererPid: 44 },
+      'unresponsive'
+    )
+    expect(sameRenderer.blinkCacheUsage).toEqual(blinkCacheUsage)
+    expect(sameRenderer.clientSampleStatus).toBe('reused')
+
+    const restarted = recorder.recordLifecycleSample(
+      { windowId: 1, webContentsId: 2, rendererPid: 99 },
+      'unresponsive'
+    )
+    expect(restarted.blinkCacheUsage).toBeUndefined()
+    expect(restarted.clientSampleStatus).toBe('none')
+  })
+
+  it('sanitizes malformed cache-category usage instead of persisting it', () => {
+    const filePath = testPath()
+    const recorder = new RendererDiagnosticRecorder({
+      filePath,
+      getAppMetrics: () => []
+    })
+
+    const recorded = recorder.recordClientSample(
+      { windowId: 1, webContentsId: 2, rendererPid: 44 },
+      {
+        activeChatMessageCount: 1,
+        blinkCacheUsage: {
+          images: { count: 2, sizeBytes: 2048, decodedSizeBytes: 1024 },
+          scripts: { count: -4, sizeBytes: Number.NaN, decodedSizeBytes: 64 }
+        },
+        chatUpdates: {}
+      }
+    )
+    expect(recorded.blinkCacheUsage).toEqual({
+      images: { count: 2, sizeBytes: 2048, decodedSizeBytes: 1024 },
+      scripts: { decodedSizeBytes: 64 }
+    })
+  })
 })

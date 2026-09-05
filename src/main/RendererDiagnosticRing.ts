@@ -451,6 +451,11 @@ export class RendererDiagnosticRecorder {
         : sameRenderer && previous?.rendererDomNodeCount !== undefined
           ? { rendererDomNodeCount: previous.rendererDomNodeCount }
           : {}),
+      ...(client.blinkCacheUsage !== undefined && trustClient
+        ? { blinkCacheUsage: client.blinkCacheUsage }
+        : sameRenderer && previous?.blinkCacheUsage !== undefined
+          ? { blinkCacheUsage: previous.blinkCacheUsage }
+          : {}),
       ...(gpuRssBytes !== undefined ? { gpuRssBytes } : {}),
       ...(gpuPrivateBytes !== undefined ? { gpuPrivateBytes } : {}),
       ...(gpuPids !== undefined ? { gpuPids } : {}),
