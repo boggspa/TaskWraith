@@ -34,6 +34,7 @@ import { buildParticipantReasoningSelectionPatch } from '../components/Participa
 import { ComposerHighlightOverlay } from '../components/ComposerHighlightOverlay'
 import { ComposerPrimaryStack } from './ComposerPrimaryStack'
 import { useComposerDraft } from '../hooks/useComposerDraft'
+import { useComposerAboveRowsMinimized } from '../hooks/useComposerAboveRowsMinimized'
 import { useComposerSuggestion } from '../hooks/useComposerSuggestion'
 import { useSharedNowTick } from '../hooks/useSharedNowTick'
 import { buildComposerContinuationCheckpoint } from '../lib/composerContinuationCheckpoint'
@@ -1780,7 +1781,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   }, [currentComposerChatId, prompt])
   const [isSendConfirming, setIsSendConfirming] = useState(false)
   const [isComposerDragOver, setIsComposerDragOver] = useState(false)
-  const [areComposerAboveRowsMinimized, setAreComposerAboveRowsMinimized] = useState(false)
+  const [areComposerAboveRowsMinimized, setAreComposerAboveRowsMinimized] =
+    useComposerAboveRowsMinimized({
+      chatId: currentComposerChatId,
+      isEnsemble: isCurrentEnsembleChat,
+      isWelcome: isWelcomeChat,
+      messages: currentChat?.messages
+    })
   const [voiceCaptureState, setVoiceCaptureState] = useState<ComposerVoiceCaptureState>(
     EMPTY_COMPOSER_VOICE_CAPTURE_STATE
   )
