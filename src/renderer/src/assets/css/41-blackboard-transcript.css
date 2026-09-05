@@ -105,11 +105,41 @@
   opacity: 0.76;
 }
 
+.blackboard-change-stack-item > .blackboard-change-message {
+  margin: 0;
+}
+
+.blackboard-change-stack-item:hover > .message-footer,
+.blackboard-change-stack-item:focus-within > .message-footer {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.blackboard-change-stack-chevron {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 10px;
+  transition: transform 120ms ease;
+}
+
+.blackboard-change-message.is-expanded > .blackboard-change-row > .blackboard-change-stack-chevron {
+  transform: rotate(90deg);
+}
+
+.blackboard-change-stack-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .blackboard-change-stack-item .blackboard-change-row {
   gap: 9px;
   padding-block: 2px;
   cursor: default;
   animation: none !important;
+}
+
+.blackboard-change-stack-item .is-scout-brief > .blackboard-change-row {
+  cursor: pointer;
 }
 
 .blackboard-change-stack-item .blackboard-change-key {

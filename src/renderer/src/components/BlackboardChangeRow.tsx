@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type JSX } from 'react'
+import { useState, type CSSProperties, type JSX, type ReactNode } from 'react'
 import type { ChatMessage } from '../../../main/store/types'
 import {
   BLACKBOARD_CHANGE_FRESH_WINDOW_MS,
@@ -163,9 +163,19 @@ function changeAccentStyle(payload: BlackboardChangePresentation): CSSProperties
   return { '--blackboard-change-accent': accent } as CSSProperties
 }
 
-function BlackboardUpdateStackItem({ message }: { message: ChatMessage }): JSX.Element | null {
+function BlackboardUpdateStackItem({
+  message,
+  expanded,
+  onExpandedChange,
+  footer
+}: {
+  message: ChatMessage
+  expanded?: boolean
+  onExpandedChange?: (expanded: boolean) => void
+  footer?: ReactNode
+}): JSX.Element | null {
   const payload = resolveBlackboardChangePresentation(message)
-  if (!payload || payload.action !== 'updated') return null
+  if (!payload) return null
   const label = actionLabel(payload)
   const detail = actionDetail(payload)
   const structured = 'displayProviderLabel' in payload
@@ -179,13 +189,12 @@ function BlackboardUpdateStackItem({ message }: { message: ChatMessage }): JSX.E
           : `${label}: ${detail}`
       }
     >
-      <div className="seat-change-row blackboard-change-row">
-        <ChangeContents
-          payload={payload}
-          label={label}
-          time={formatChangeTime(message.timestamp)}
-        />
-      </div>
+      <BlackboardChangeRow
+        message={message}
+        expanded={expanded}
+        onExpandedChange={onExpandedChange}
+      />
+      {footer}
     </li>
   )
 }
@@ -199,12 +208,18 @@ export function BlackboardChangeRow({
   message,
   stackMessages,
   expanded: controlledExpanded,
-  onExpandedChange
+  onExpandedChange,
+  stackItemExpanded,
+  onStackItemExpandedChange,
+  renderStackItemFooter
 }: {
   message: ChatMessage
   stackMessages?: readonly ChatMessage[]
   expanded?: boolean
   onExpandedChange?: (expanded: boolean) => void
+  stackItemExpanded?: (messageId: string, index: number) => boolean
+  onStackItemExpandedChange?: (messageId: string, index: number, expanded: boolean) => void
+  renderStackItemFooter?: (message: ChatMessage) => ReactNode
 }): JSX.Element | null {
   const payload = resolveBlackboardChangePresentation(message)
   const [localExpanded, setLocalExpanded] = useState(false)
@@ -222,8 +237,23 @@ export function BlackboardChangeRow({
   const structured = 'displayProviderLabel' in payload
   const style = changeAccentStyle(payload)
   const isScoutBrief = payload.action === 'scoutBriefShared'
-  const isUpdateStack =
-    payload.action === 'updated' && Boolean(stackMessages && stackMessages.length > 1)
+  const isUpdateStack = Boolean(stackMessages && stackMessages.length > 1)
+  const stackPayloads = isUpdateStack ? stackMessages!.map(resolveBlackboardChangePresentation) : []
+  const updateCount = stackPayloads.filter((item) => item?.action === 'updated').length
+  const briefs = stackPayloads.filter((item) => item?.action === 'scoutBriefShared')
+  const mixedStack = isUpdateStack && briefs.length > 0
+  const stackNoun = mixedStack ? 'Blackboard events' : 'Blackboard updates'
+  const stackSummary = [
+    updateCount > 0 ? `${updateCount} ${updateCount === 1 ? 'update' : 'updates'}` : '',
+    briefs.length > 0 ? `${briefs.length} Scout ${briefs.length === 1 ? 'brief' : 'briefs'}` : ''
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const stackConfidence = briefs.some((brief) => brief.confidence === 'low')
+    ? 'low'
+    : briefs.some((brief) => brief.confidence === 'medium')
+      ? 'medium'
+      : undefined
   const expanded = controlledExpanded ?? localExpanded
   const toggleExpanded = (): void => {
     const next = !expanded
@@ -243,7 +273,9 @@ export function BlackboardChangeRow({
       role="group"
       aria-label={
         isUpdateStack
-          ? `${stackMessages!.length} Blackboard updates. Latest: ${detail}`
+          ? mixedStack
+            ? `${stackMessages!.length} Blackboard events. ${stackSummary}`
+            : `${stackMessages!.length} Blackboard updates. Latest: ${detail}`
           : isScoutBrief
             ? `${label}: ${detail}`
             : structured
@@ -260,26 +292,49 @@ export function BlackboardChangeRow({
           title={
             isUpdateStack
               ? expanded
-                ? 'Hide individual Blackboard updates'
-                : `Show all ${stackMessages!.length} Blackboard updates`
+                ? `Hide individual ${stackNoun}`
+                : `Show all ${stackMessages!.length} ${stackNoun}`
               : expanded
                 ? 'Hide Scout brief sharing details'
                 : 'Show Scout brief sharing details'
           }
         >
-          <ChangeContents
-            payload={payload}
-            label={label}
-            time={time}
-            addedCount={isUpdateStack ? stackMessages!.length : undefined}
-          />
+          {isUpdateStack && (
+            <span className="blackboard-change-stack-chevron" aria-hidden>
+              ▸
+            </span>
+          )}
+          {mixedStack ? (
+            <>
+              <span className="seat-change-icon blackboard-change-icon" aria-hidden>
+                <ToolFamilyIcon family="blackboard" size={16} className="blackboard-glyph" />
+              </span>
+              <span className="blackboard-change-label">Blackboard activity</span>
+              <span className="blackboard-change-detail blackboard-change-stack-summary">
+                {stackSummary}
+              </span>
+              {stackConfidence && (
+                <span className={`blackboard-scout-brief-caveat is-${stackConfidence}`}>
+                  {stackConfidence === 'low' ? 'Needs verification' : 'Tentative'}
+                </span>
+              )}
+              {time && <span className="seat-change-time blackboard-change-time">{time}</span>}
+            </>
+          ) : (
+            <ChangeContents
+              payload={payload}
+              label={label}
+              time={time}
+              addedCount={isUpdateStack ? updateCount : undefined}
+            />
+          )}
         </button>
       ) : (
         <div className="seat-change-row blackboard-change-row">
           <ChangeContents payload={payload} label={label} time={time} />
         </div>
       )}
-      {isScoutBrief && expanded && (
+      {isScoutBrief && !isUpdateStack && expanded && (
         <div className="seat-change-was blackboard-scout-brief-explanation">
           <span className="seat-change-was-label">shared with</span>
           <span>Session Blackboard</span>
@@ -292,10 +347,20 @@ export function BlackboardChangeRow({
       {isUpdateStack && expanded && (
         <ol
           className="blackboard-change-stack"
-          aria-label={`${stackMessages!.length} individual Blackboard updates, oldest first`}
+          aria-label={`${stackMessages!.length} individual ${stackNoun}, oldest first`}
         >
           {stackMessages!.map((stackMessage, index) => (
-            <BlackboardUpdateStackItem key={`${stackMessage.id}:${index}`} message={stackMessage} />
+            <BlackboardUpdateStackItem
+              key={`${stackMessage.id}:${index}`}
+              message={stackMessage}
+              footer={renderStackItemFooter?.(stackMessage)}
+              expanded={stackItemExpanded?.(stackMessage.id, index)}
+              onExpandedChange={
+                onStackItemExpandedChange
+                  ? (next) => onStackItemExpandedChange(stackMessage.id, index, next)
+                  : undefined
+              }
+            />
           ))}
         </ol>
       )}

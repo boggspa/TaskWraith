@@ -217,6 +217,78 @@ describe('BlackboardChangeRow', () => {
     expect(cssSource).toContain('--blackboard-change-accent: var(--accent)')
   })
 
+  it.each(['updated', 'scoutBriefShared'] as const)(
+    'summarizes mixed posts and briefs when the newest event is %s',
+    (latestAction) => {
+      const updates = [0, 1].map((index) => ({
+        ...messageWithChange('updated'),
+        id: `update-${index}`
+      }))
+      const briefs = [0, 1].map((index) => ({
+        ...messageWithChange('scoutBriefShared'),
+        id: `brief-${index}`
+      }))
+      const events =
+        latestAction === 'updated' ? [updates[0], ...briefs, updates[1]] : [...updates, ...briefs]
+      const html = renderToStaticMarkup(
+        createElement(BlackboardChangeRow, {
+          message: events[3],
+          stackMessages: events,
+          expanded: false
+        })
+      )
+
+      expect(html).toContain('Blackboard activity')
+      expect(html).toContain('2 updates · 2 Scout briefs')
+      expect(html).toContain('Show all 4 Blackboard events')
+      expect(html).not.toContain('+4 Entries')
+      expect(html).not.toContain('blackboard-scout-brief-explanation')
+    }
+  )
+
+  it('retains each brief disclosure independently inside a mixed stack', () => {
+    const update = messageWithChange('updated')
+    const first = { ...messageWithChange('scoutBriefShared'), id: 'first-brief' }
+    const second = { ...messageWithChange('scoutBriefShared'), id: 'second-brief' }
+    const html = renderToStaticMarkup(
+      createElement(BlackboardChangeRow, {
+        message: second,
+        stackMessages: [update, first, second],
+        expanded: true,
+        stackItemExpanded: (id) => id === first.id,
+        renderStackItemFooter: (message) => createElement('button', null, `Copy ${message.id}`)
+      })
+    )
+
+    expect(html).toContain('3 individual Blackboard events, oldest first')
+    expect((html.match(/blackboard-scout-brief-explanation/g) || []).length).toBe(1)
+    expect(html).toContain('Hide Scout brief sharing details')
+    expect(html).toContain('Show Scout brief sharing details')
+    expect(html).toContain('scout5-competitor-research')
+    expect(html).toContain('+1 Entries')
+    expect(html).not.toContain('+3 Entries')
+    expect(html).toContain('Copy first-brief')
+    expect(html).toContain('Copy second-brief')
+  })
+
+  it('keeps brief-only stacks and low-confidence caveats visible in the summary', () => {
+    const first = messageWithChange('scoutBriefShared')
+    const second = { ...messageWithChange('scoutBriefShared'), id: 'second' }
+    if (first.metadata?.blackboardChange?.action === 'scoutBriefShared') {
+      first.metadata.blackboardChange.confidence = 'low'
+    }
+    const html = renderToStaticMarkup(
+      createElement(BlackboardChangeRow, {
+        message: second,
+        stackMessages: [first, second],
+        expanded: false
+      })
+    )
+    expect(html).toContain('2 Scout briefs')
+    expect(html).toContain('Needs verification')
+    expect(html).not.toContain('blackboard-change-entry-delta')
+  })
+
   it('promotes exact legacy update, poll, and cleanup sentences without trusted attribution', () => {
     const updated = renderToStaticMarkup(
       createElement(BlackboardChangeRow, {
