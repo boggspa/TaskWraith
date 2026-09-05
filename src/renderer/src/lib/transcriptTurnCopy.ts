@@ -8,6 +8,57 @@ import type {
 } from '../../../main/store/types'
 import { groupedTranscriptMessageIds } from './transcriptToolMessageGrouping'
 
+function turnRunIds(
+  messages: readonly ChatMessage[],
+  runs: readonly ChatRun[]
+): (string | undefined)[] {
+  const byId = new Map(runs.map((run) => [run.runId, run]))
+  const promptRuns = new Map<string, string>()
+  for (const run of runs) {
+    if (run.promptMessageId && !promptRuns.has(run.promptMessageId)) {
+      promptRuns.set(run.promptMessageId, run.runId)
+    }
+  }
+  let foregroundRunId: string | undefined
+  return messages.map((message) => {
+    const explicit = message.runId || promptRuns.get(message.id)
+    if (message.role === 'user') foregroundRunId = undefined
+    if (explicit) {
+      if (!message.metadata?.ensembleLaneId && !byId.get(explicit)?.ensembleLaneId) {
+        foregroundRunId = explicit
+      }
+      return explicit
+    }
+    if (message.role === 'user') return undefined
+    const timestamp = Date.parse(message.timestamp)
+    const belongsToWindow = (run: ChatRun): boolean => {
+      if (run.ensembleLaneId) return false
+      if (
+        message.metadata?.ensembleRoundId &&
+        run.ensembleRoundId &&
+        message.metadata.ensembleRoundId !== run.ensembleRoundId
+      )
+        return false
+      const startedAt = Date.parse(run.startedAt)
+      const endedAt = run.endedAt ? Date.parse(run.endedAt) : NaN
+      return (
+        (!Number.isFinite(startedAt) || timestamp >= startedAt) &&
+        (!Number.isFinite(endedAt) || timestamp <= endedAt)
+      )
+    }
+    const previous = foregroundRunId ? byId.get(foregroundRunId) : undefined
+    if (foregroundRunId && (!previous || belongsToWindow(previous))) return foregroundRunId
+    // A seat edit can arrive before the foreground run emits its first text.
+    const active = runs.filter(
+      (run) =>
+        Number.isFinite(Date.parse(run.startedAt)) &&
+        Number.isFinite(timestamp) &&
+        belongsToWindow(run)
+    )
+    return active.length === 1 ? active[0].runId : undefined
+  })
+}
+
 /** A turn is one recorded run, including its prompt, even when other seats
  * interleave with it. Legacy messages fall back to the enclosing user turn. */
 export function selectTranscriptTurnMessages(
@@ -19,11 +70,17 @@ export function selectTranscriptTurnMessages(
   const index = messages.findIndex((message) => ids.has(message.id))
   if (index < 0) return []
   const source = messages[index]
-  const runId = source.runId || runs.find((run) => run.promptMessageId === source.id)?.runId
+  const runIds = turnRunIds(messages, runs)
+  const runId = runIds[index]
   if (runId) {
     const promptId = runs.find((run) => run.runId === runId)?.promptMessageId
-    return messages.filter((message) => message.runId === runId || message.id === promptId)
+    return messages.filter(
+      (message, position) => runIds[position] === runId || message.id === promptId
+    )
   }
+  // An idle configuration event has no turn. Don't stretch it across unrelated
+  // recorded runs just because it sits between the same two user prompts.
+  if (runIds.some(Boolean)) return [source]
   let start = index
   while (start > 0 && messages[start].role !== 'user') start -= 1
   let end = index + 1

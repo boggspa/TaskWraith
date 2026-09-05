@@ -27,6 +27,31 @@ const activity: ToolActivity = {
 }
 
 describe('copy entire turn', () => {
+  it('includes unkeyed mid-turn notices without assigning them to a background lane or an ended turn', () => {
+    const timed = (id: string, role: ChatMessage['role'], second: number, runId?: string) => ({
+      ...message(id, role, runId),
+      timestamp: `2026-09-05T14:00:${String(second).padStart(2, '0')}.000Z`
+    })
+    const events = [
+      timed('early seat edit', 'system', 1),
+      timed('start', 'assistant', 2, 'a'),
+      { ...timed('background', 'assistant', 3, 'b'), metadata: { ensembleLaneId: 'lane' } },
+      timed('brief updated', 'system', 4),
+      timed('final', 'assistant', 5, 'a'),
+      timed('idle edit', 'system', 9)
+    ]
+    const recordedRuns: ChatRun[] = [
+      { runId: 'a', startedAt: '2026-09-05T14:00:00Z', endedAt: '2026-09-05T14:00:06Z' },
+      { runId: 'b', startedAt: '2026-09-05T14:00:00Z', ensembleLaneId: 'lane' }
+    ]
+    expect(
+      selectTranscriptTurnMessages(events, events[3], recordedRuns).map((row) => row.id)
+    ).toEqual(['early seat edit', 'start', 'brief updated', 'final'])
+    expect(
+      selectTranscriptTurnMessages(events, events[4], recordedRuns).map((row) => row.id)
+    ).toEqual(['early seat edit', 'start', 'brief updated', 'final'])
+    expect(selectTranscriptTurnMessages(events, events[5], recordedRuns)).toEqual([events[5]])
+  })
   it('includes the prompt and every event in the run without copying an interleaved seat', () => {
     const messages = [
       message('prompt', 'user'),
