@@ -6,6 +6,7 @@ import type {
 } from '../../../main/executionGraph/ExecutionGraphModel'
 import type {
   ExecutionGraphProjection,
+  ExecutionProjectionTone,
   ExecutionStepProjection
 } from '../lib/executionGraphProjection'
 
@@ -92,6 +93,67 @@ function artifactKindLabel(kind: ExecutionArtifactRef['kind']): string {
   }
 }
 
+/* Monoline step-kind marks, drawn in the card's tone colour inside the glyph
+ * slot — the same header anatomy (glyph, name, status pill) as the delegated
+ * wave / workflow orchestration cards, so one reading skill covers both. */
+function StepKindGlyph({ kind }: { kind: ExecutionStepDefinition['kind'] }): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 12 12"
+      width={13}
+      height={13}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.4}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {kind === 'solo_agent' && (
+        <>
+          <circle cx="6" cy="4" r="2.1" />
+          <path d="M2.6 10c0-1.9 1.5-2.9 3.4-2.9s3.4 1 3.4 2.9" />
+        </>
+      )}
+      {kind === 'deterministic_check' && <polyline points="2.6,6.4 5,8.8 9.4,3.4" />}
+      {kind === 'human_gate' && (
+        <>
+          <path d="M4.4 3.4v5.2" />
+          <path d="M7.6 3.4v5.2" />
+        </>
+      )}
+      {kind === 'join' && <path d="M2.6 2.8 6 6.3m3.4-3.5L6 6.3M6 6.3v3.4" />}
+      {kind === 'ensemble_round' && (
+        <>
+          <circle cx="3.1" cy="3.9" r="1.25" />
+          <circle cx="8.9" cy="3.9" r="1.25" />
+          <circle cx="6" cy="8.7" r="1.25" />
+        </>
+      )}
+      {kind === 'output' && <path d="M3.6 10V2.6h4.8L6.9 4.9l1.5 2.3H3.6" />}
+    </svg>
+  )
+}
+
+/* Roll a stage's steps up to one tone + label for the stage header. Dormant
+ * steps carry the muted tone, so they are checked by activation state — a
+ * stage that has not started yet must read "Planned", never "Ended". */
+function stageRollup(steps: readonly ExecutionStepProjection[]): {
+  tone: ExecutionProjectionTone
+  label: string
+} {
+  const tones = new Set(steps.map((step) => step.statusTone))
+  if (tones.has('failure')) return { tone: 'failure', label: 'Failed' }
+  if (tones.has('attention')) return { tone: 'attention', label: 'Needs attention' }
+  if (tones.has('waiting')) return { tone: 'waiting', label: 'Waiting' }
+  if (tones.has('active')) return { tone: 'active', label: 'Running' }
+  const dormant = steps.some((step) => step.activationState === 'dormant')
+  if (tones.has('pending') || dormant) return { tone: 'pending', label: 'Planned' }
+  if (tones.has('success')) return { tone: 'success', label: 'Complete' }
+  return { tone: 'muted', label: 'Ended' }
+}
+
 function StepNode({
   step,
   selected,
@@ -113,13 +175,28 @@ function StepNode({
         data-step-id={step.stepId}
         data-step-activation-id={step.activationId ?? undefined}
       >
-        <span className="execution-map-node-topline">
-          <span className="execution-map-node-kind">{executionStepKindLabel(step.step.kind)}</span>
-          {step.isRuntimeAppended && (
-            <span className="execution-runtime-badge">Added during run</span>
-          )}
+        <span className="execution-map-node-header">
+          <span className="execution-map-node-glyph" aria-hidden="true">
+            <StepKindGlyph kind={step.step.kind} />
+          </span>
+          <span className="execution-map-node-heading">
+            <span className="execution-map-node-kind">
+              {executionStepKindLabel(step.step.kind)}
+              {step.isRuntimeAppended && (
+                <span className="execution-runtime-badge">Added during run</span>
+              )}
+            </span>
+            <span className="execution-map-node-title">{step.step.title}</span>
+          </span>
+          <span className={`execution-status-token tone-${step.statusTone}`}>
+            {step.statusLabel}
+          </span>
         </span>
-        <span className="execution-map-node-title">{step.step.title}</span>
+        {step.statusTone === 'active' && (
+          <span className="execution-map-node-meter" aria-hidden="true">
+            <span />
+          </span>
+        )}
         <span className="execution-map-node-objective">{step.step.objective}</span>
         {step.dependencies.length > 0 && (
           <span className="execution-map-node-dependencies">
@@ -132,9 +209,6 @@ function StepNode({
           <span className={`execution-map-node-note tone-${step.statusTone}`}>{step.blocker}</span>
         )}
         <span className="execution-map-node-footer">
-          <span className={`execution-status-token tone-${step.statusTone}`}>
-            {step.statusLabel}
-          </span>
           <span>{effectLabel(step.step.effect)}</span>
           {step.attempts.length > 0 && (
             <span>
@@ -418,23 +492,41 @@ export function ExecutionMapView({
 
       <div className="execution-map-body">
         <ol className="execution-map-stages" aria-label="Topological execution stages">
-          {projection.stages.map((stage) => (
-            <li key={stage.index} className="execution-map-stage">
-              <section aria-labelledby={`execution-map-${projection.runId}-stage-${stage.index}`}>
-                <h2 id={`execution-map-${projection.runId}-stage-${stage.index}`}>{stage.label}</h2>
-                <ol className="execution-map-stage-steps">
-                  {stage.steps.map((step) => (
-                    <StepNode
-                      key={step.stepId}
-                      step={step}
-                      selected={selectedStep?.stepId === step.stepId}
-                      onSelect={() => handleSelect(step.stepId)}
-                    />
-                  ))}
-                </ol>
-              </section>
-            </li>
-          ))}
+          {projection.stages.map((stage) => {
+            const rollup = stageRollup(stage.steps)
+            const doneCount = stage.steps.filter((step) => step.statusTone === 'success').length
+            return (
+              <li key={stage.index} className={`execution-map-stage tone-${rollup.tone}`}>
+                <section aria-labelledby={`execution-map-${projection.runId}-stage-${stage.index}`}>
+                  <header className="execution-map-stage-header">
+                    <h2 id={`execution-map-${projection.runId}-stage-${stage.index}`}>
+                      {stage.label}
+                    </h2>
+                    {stage.steps.length > 1 && (
+                      <span className="execution-map-stage-count">
+                        {doneCount} of {stage.steps.length} done
+                      </span>
+                    )}
+                    <span
+                      className={`execution-status-token tone-${rollup.tone} execution-map-stage-status`}
+                    >
+                      {rollup.label}
+                    </span>
+                  </header>
+                  <ol className="execution-map-stage-steps">
+                    {stage.steps.map((step) => (
+                      <StepNode
+                        key={step.stepId}
+                        step={step}
+                        selected={selectedStep?.stepId === step.stepId}
+                        onSelect={() => handleSelect(step.stepId)}
+                      />
+                    ))}
+                  </ol>
+                </section>
+              </li>
+            )
+          })}
         </ol>
 
         {selectedStep && <StepInspector step={selectedStep} onOpenThread={onOpenThread} />}

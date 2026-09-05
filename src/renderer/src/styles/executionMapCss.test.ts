@@ -21,17 +21,31 @@ describe('Execution Map CSS contract', () => {
     expect(imports).toHaveLength(1)
   })
 
-  it('lays out semantic stages without a coordinate canvas contract', () => {
+  it('lays out stages top-to-bottom with wrapping step grids, never a sideways scroll', () => {
     const source = css()
 
     expect(source).toContain('.execution-map-stages {')
-    expect(source).toContain('grid-auto-flow: column')
-    expect(source).toContain('grid-auto-columns: minmax(220px, 1fr)')
+    expect(source).toContain('grid-auto-flow: row')
+    expect(source).toContain('overflow-y: auto')
+    expect(source).toContain('repeat(auto-fill, minmax(300px, 1fr))')
+    expect(source).not.toContain('grid-auto-flow: column')
+    expect(source).not.toContain('scroll-snap-type: x')
     expect(source).not.toContain('cursor: grab')
     expect(source).not.toContain('touch-action: none')
   })
 
-  it('collapses topological stages to one ordered column below 900px', () => {
+  it('gives step cards the orchestration-card chassis anatomy', () => {
+    const source = css()
+
+    expect(source).toContain('.execution-map-node-glyph {')
+    expect(source).toContain('.execution-map-node-meter {')
+    expect(source).toContain('.execution-map-stage-header {')
+    expect(source).toContain(
+      '.execution-map-node {\n  position: relative;\n  display: grid;\n  gap: 10px;'
+    )
+  })
+
+  it('collapses the inspector split and step grid to one column below 900px', () => {
     const source = css()
     const breakpoint = source.indexOf('@media (max-width: 900px) {')
     const reducedMotion = source.indexOf('@media (prefers-reduced-motion: reduce) {')
@@ -39,14 +53,16 @@ describe('Execution Map CSS contract', () => {
 
     expect(breakpoint).toBeGreaterThan(-1)
     expect(mobile).toContain('.execution-map-body {\n    grid-template-columns: minmax(0, 1fr)')
-    expect(mobile).toContain('.execution-map-stages {')
-    expect(mobile).toContain('grid-auto-flow: row')
-    expect(mobile).toContain('scroll-snap-type: none')
+    expect(mobile).toContain(
+      '.execution-map-stage-steps {\n    grid-template-columns: minmax(0, 1fr)'
+    )
   })
 
   /* The original stylesheet referenced tokens that do not exist anywhere in
    * theme.css, so every theme silently rendered the hard-coded dark fallbacks.
-   * Chrome must come from the shared surface scale. */
+   * Chrome must come from the shared surface scale — and the pane itself must
+   * paint the content slab chain, because --app-bg alone goes transparent
+   * under native glass and rendered the whole Map see-through. */
   it('draws chrome from the shared theme scale instead of phantom tokens', () => {
     const source = css()
 
@@ -55,7 +71,24 @@ describe('Execution Map CSS contract', () => {
     expect(source).not.toContain('var(--background-primary')
     expect(source).toContain('var(--surface-2)')
     expect(source).toContain('var(--panel-border)')
-    expect(source).toContain('var(--app-bg)')
+    expect(source).toContain(
+      'background: var(--main-pane-opacity-override-bg, var(--content-bg, var(--app-bg)));'
+    )
+    expect(source).toContain('font-family: var(--transcript-font-family, var(--font-sans));')
+  })
+
+  it('styles the run actions as app buttons — accent resume, quiet-danger cancel', () => {
+    const source = css()
+
+    expect(source).toContain('.execution-map-resume-run,\n.execution-map-cancel-run {')
+    expect(source).toMatch(
+      /\.execution-map-resume-run \{\n  border: 1px solid color-mix\(in srgb, var\(--accent\)/
+    )
+    expect(source).toMatch(
+      /\.execution-map-cancel-run \{\n  border: 1px solid color-mix\(in srgb, var\(--danger\)/
+    )
+    expect(source).toContain('.execution-map-resume-run:focus-visible')
+    expect(source).toContain('.execution-map-cancel-run:focus-visible')
   })
 
   it('keeps status, keyboard focus, and reduced-motion states visible', () => {

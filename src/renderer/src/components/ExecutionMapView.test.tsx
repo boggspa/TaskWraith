@@ -190,6 +190,23 @@ describe('ExecutionMapView', () => {
     expect(html).toContain('Open thread')
   })
 
+  it('rolls each stage up to a status token and done count in its header', () => {
+    const html = renderToStaticMarkup(<ExecutionMapView projection={fixture()} />)
+
+    expect(html).toContain('execution-map-stage tone-success')
+    expect(html).toContain('execution-map-stage tone-attention')
+    expect(html).toMatch(/execution-map-stage-status[^>]*>Complete</)
+    expect(html).toMatch(/execution-map-stage-status[^>]*>Needs attention</)
+    expect(html).toContain('0 of 2 done')
+  })
+
+  it('gives step cards the orchestration-card header anatomy with a live meter', () => {
+    const html = renderToStaticMarkup(<ExecutionMapView projection={fixture()} />)
+
+    expect(html).toContain('execution-map-node-glyph')
+    expect(html).toContain('execution-map-node-meter')
+  })
+
   it('labels an attention-needing step with a blocker note', () => {
     const html = renderToStaticMarkup(
       <ExecutionMapView projection={fixture()} selectedStepId="review" onOpenThread={noop} />

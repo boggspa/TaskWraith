@@ -7,6 +7,11 @@
  * surface follows the user's theme like every other pane. Labels stay sentence
  * case and callouts stay tinted panels — no caps-spaced micro-labels and no
  * edge-stripe insets on this surface.
+ *
+ * The Map lays stages out top-to-bottom along a rail and wraps each stage's
+ * steps into an auto-fill grid: the page scrolls vertically only, never
+ * sideways, and step cards share the tinted-chassis anatomy of the delegated
+ * wave / workflow orchestration cards (glyph + name + status pill + meter).
  */
 
 .execution-graph-diagnostics-notice {
@@ -86,9 +91,10 @@
   display: inline-flex;
   align-items: center;
   min-height: 20px;
-  padding: 2px 7px;
-  border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
   border-radius: 999px;
+  background: color-mix(in srgb, currentColor 11%, transparent);
   font-size: 10px;
   font-weight: 650;
   line-height: 1;
@@ -140,7 +146,6 @@
 .execution-stack-header,
 .execution-stack-heading,
 .execution-stack-actions,
-.execution-map-node-topline,
 .execution-map-node-footer,
 .execution-map-header,
 .execution-map-header-leading,
@@ -206,6 +211,44 @@
 .execution-stack-action.is-primary {
   border-color: color-mix(in srgb, var(--accent) 42%, transparent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* Run-level actions match the live execution card's pair: Resume is the
+ * affirmative accent button, Cancel stays a quiet outline that only turns
+ * danger on intent (hover), so the header never shouts red at a healthy run. */
+.execution-map-resume-run,
+.execution-map-cancel-run {
+  appearance: none;
+  -webkit-appearance: none;
+  min-height: 26px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.execution-map-resume-run {
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-primary);
+}
+
+.execution-map-resume-run:hover {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.execution-map-cancel-run {
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.execution-map-cancel-run:hover {
+  border-color: color-mix(in srgb, var(--danger) 60%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
 }
 
 .execution-stack-list,
@@ -307,23 +350,33 @@
 
 /* Read-only topological Execution Map. */
 
+/* Flex column, not fixed grid rows: the issues banner is conditional, and a
+ * row template sized for it mis-slots the body when it is absent. */
 .execution-map-view {
   position: relative;
-  display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
-  gap: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
-  padding: 20px;
+  padding: 20px 22px;
   overflow: hidden;
-  background: var(--app-bg);
+  /* Must stay readable over OS vibrancy: --app-bg goes transparent under
+   * native glass, while --content-bg is the near-opaque slab every other
+   * content pane paints there (and is itself transparent in themes whose
+   * ancestors already paint --app-bg). Same chain as the Thread Home pane. */
+  background: var(--main-pane-opacity-override-bg, var(--content-bg, var(--app-bg)));
   color: var(--text-primary);
+  /* The Map replaces the transcript in its cell, so it follows the user's
+   * Appearance typeface the way the transcript does — the body font is the
+   * fixed UI stack and never carries that setting. */
+  font-family: var(--transcript-font-family, var(--font-sans));
 }
 
-.execution-map-view.is-empty {
-  align-content: start;
+.execution-map-view.is-empty .execution-map-back {
+  align-self: flex-start;
 }
 
 .execution-map-empty-state {
@@ -397,64 +450,132 @@
 
 .execution-map-body {
   display: grid;
+  flex: 1 1 auto;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
   gap: 16px;
   min-width: 0;
   min-height: 0;
 }
 
+/* Stages flow top-to-bottom and the pane scrolls vertically only; a stage's
+ * steps wrap into as many columns as fit, so wide windows use the width
+ * without ever growing a sideways scrollbar. */
 .execution-map-stages {
   display: grid;
-  grid-auto-columns: minmax(220px, 1fr);
-  grid-auto-flow: column;
-  gap: 12px;
+  grid-auto-flow: row;
+  align-content: start;
+  gap: 26px;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  padding: 2px 8px 16px 2px;
+  overflow-y: auto;
   overscroll-behavior: contain;
-  scroll-snap-type: x proximity;
 }
 
 .execution-map-stage {
   position: relative;
   min-width: 0;
-  scroll-snap-align: start;
+  padding-left: 22px;
+}
+
+/* Order rail: a dot per stage, joined by a line that runs through the stage
+ * gap so consecutive stages read as one chain. */
+.execution-map-stage::before {
+  content: '';
+  position: absolute;
+  top: 16px;
+  bottom: -26px;
+  left: 5px;
+  width: 1px;
+  background: var(--panel-border);
+}
+
+.execution-map-stage:last-child::before {
+  display: none;
+}
+
+.execution-map-stage::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 1px;
+  box-sizing: border-box;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--text-tertiary);
+  border-radius: 50%;
+}
+
+.execution-map-stage.tone-active::after {
+  border-color: var(--accent);
+}
+
+.execution-map-stage.tone-waiting::after,
+.execution-map-stage.tone-attention::after {
+  border-color: var(--warning);
+}
+
+.execution-map-stage.tone-success::after {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 45%, transparent);
+}
+
+.execution-map-stage.tone-failure::after {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 45%, transparent);
 }
 
 .execution-map-stage > section {
   display: grid;
   align-content: start;
-  gap: 8px;
-  height: 100%;
+  gap: 12px;
+}
+
+.execution-map-stage-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
 .execution-map-stage h2 {
-  padding: 0 2px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.execution-map-stage-count {
   color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: 620;
+  font-size: 10px;
+}
+
+.execution-map-stage-status {
+  margin-left: auto;
 }
 
 .execution-map-stage-steps {
   display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   align-content: start;
-  gap: 8px;
+  gap: 14px;
 }
 
 .execution-map-node-item {
   position: relative;
 }
 
+/* Step cards wear the orchestration-card chassis: a wash and border mixed
+ * from the card's own tone colour, over the pane's opaque surface. */
 .execution-map-node {
   position: relative;
   display: grid;
-  gap: 7px;
+  gap: 10px;
   width: 100%;
   min-width: 0;
-  padding: 11px;
-  border: 1px solid var(--panel-border);
+  padding: 13px 14px 12px;
+  border: 1px solid color-mix(in srgb, currentColor 26%, transparent);
   border-radius: var(--radius-md);
-  background: var(--surface-2);
+  background: color-mix(in srgb, currentColor 5%, transparent);
   color: var(--text-secondary);
   font: inherit;
   text-align: left;
@@ -466,22 +587,56 @@
 }
 
 .execution-map-node:hover {
-  background: var(--surface-3);
+  background: color-mix(in srgb, currentColor 9%, transparent);
   transform: translateY(-1px);
 }
 
 .execution-map-node.is-selected {
   border-color: color-mix(in srgb, currentColor 55%, transparent);
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent);
 }
 
-.execution-map-node-topline,
+.execution-map-node-header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.execution-map-node-glyph {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: color-mix(in srgb, currentColor 80%, var(--text-primary) 20%);
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.execution-map-node-heading {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
+}
+
+.execution-map-node-header .execution-status-token {
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
 .execution-map-node-footer {
   justify-content: space-between;
   gap: 7px;
 }
 
 .execution-map-node-kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--text-tertiary);
   font-size: 10px;
   font-weight: 620;
@@ -492,6 +647,33 @@
   font-size: 13px;
   font-weight: 660;
   line-height: 1.25;
+}
+
+/* Same in-flight meter the orchestration cards run under their header. */
+.execution-map-node-meter {
+  display: block;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.execution-map-node-meter > span {
+  display: block;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: execution-map-node-meter 1.6s ease-in-out infinite;
+}
+
+@keyframes execution-map-node-meter {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(320%);
+  }
 }
 
 .execution-map-node-objective {
@@ -506,12 +688,12 @@
 
 .execution-map-node-dependencies {
   display: grid;
-  gap: 2px;
-  padding: 6px 7px;
+  gap: 3px;
+  padding: 7px 9px;
   border-radius: var(--radius-sm);
   background: var(--surface-1);
   color: var(--text-tertiary);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .execution-map-node-note {
@@ -530,7 +712,7 @@
 
 .execution-map-node-footer {
   color: var(--text-tertiary);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .execution-map-inspector {
@@ -670,9 +852,11 @@
 
 .execution-stack-action:focus-visible,
 .execution-stack-cancel-step:focus-visible,
-.execution-stack-step-summary:focus-visible,
 .execution-map-back:focus-visible,
 .execution-map-save-workflow:focus-visible,
+.execution-map-resume-run:focus-visible,
+.execution-map-cancel-run:focus-visible,
+.execution-stack-step-summary:focus-visible,
 .execution-map-open-thread:focus-visible,
 .execution-map-node:focus-visible {
   outline: 2px solid var(--accent, #7c9cff);
@@ -691,11 +875,15 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* min-height must release with the scroll: a zero minimum lets the grid
+   * squash this row under the viewport and paint stages over the inspector. */
   .execution-map-stages {
-    grid-auto-columns: auto;
-    grid-auto-flow: row;
+    min-height: auto;
     overflow: visible;
-    scroll-snap-type: none;
+  }
+
+  .execution-map-stage-steps {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .execution-map-inspector {
@@ -735,8 +923,7 @@
   }
 
   .execution-map-header-actions,
-  .execution-map-progress,
-  .execution-map-save-workflow {
+  .execution-map-progress {
     width: 100%;
   }
 }
@@ -749,5 +936,9 @@
 
   .execution-map-node:hover {
     transform: none;
+  }
+
+  .execution-map-node-meter > span {
+    animation: none;
   }
 }
