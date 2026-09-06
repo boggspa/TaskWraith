@@ -460,12 +460,12 @@
 }
 
 [data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > * {
+  .composer-above-bar-stack.composer-above-bar-stack--has-ensemble-rows:not(:empty) > * {
   margin-bottom: 0;
 }
 
 [data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > *:not(:first-child) {
+  .composer-above-bar-stack.composer-above-bar-stack--has-ensemble-rows:not(:empty) > *:not(:first-child) {
   border-top-color: rgba(18, 21, 27, 0.12) !important;
 }
 
@@ -610,13 +610,13 @@
 }
 
 [data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
+  .composer-above-bar-stack.composer-above-bar-stack--has-ensemble-rows:not(:empty)
   > * {
   margin-bottom: 0;
 }
 
 [data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
+  .composer-above-bar-stack.composer-above-bar-stack--has-ensemble-rows:not(:empty)
   > *:not(:first-child) {
   border-top-color: rgba(255, 255, 255, 0.12) !important;
 }
@@ -1403,7 +1403,12 @@
   max-width: 100% !important;
   align-self: stretch;
 }
-[data-composer-style="grok"] .composer-above-bar-stack:has(> :nth-child(2))
+/* `--multi-row` carries `:has(> :nth-child(2))` (two or more element children)
+ * at identical specificity. Converted only where the subject is featureless;
+ * the sibling grok rules below keep `:has()` because their class subjects
+ * already key the invalidation set narrowly.
+ * See src/renderer/src/lib/ComposerAboveBarStyleState.ts. */
+[data-composer-style="grok"] .composer-above-bar-stack.composer-above-bar-stack--multi-row
   > *:not(:first-child):not(.ensemble-roster-preset-picker.is-compact) {
   border-top: 1px solid var(--grok-border);
 }
@@ -1416,7 +1421,7 @@
   gap: 6px;
   min-width: 0;
 }
-[data-composer-style="grok"] .composer-above-bar-stack:has(> :nth-child(2))
+[data-composer-style="grok"] .composer-above-bar-stack.composer-above-bar-stack--multi-row
   > :is(.composer-above-bar, .composer-above-bar-secondary)
   > * {
   margin-left: 0;
@@ -2123,9 +2128,12 @@
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+/* `.composer-area--has-above-stack` carries `:has(.composer-above-bar-stack)`
+ * at identical specificity, for the same featureless-subject reason as the
+ * native shell. See src/renderer/src/lib/ComposerAboveBarStyleState.ts. */
 [data-composer-style="cursor"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > * {
   margin: 0 !important;
@@ -2138,14 +2146,14 @@
 }
 [data-composer-style="cursor"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > * + * {
   border-top: 1px solid var(--cursor-shell-border) !important;
 }
 [data-composer-style="cursor"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > *:first-child {
   border-top-left-radius: var(--cursor-shell-stack-radius) !important;
@@ -2154,7 +2162,7 @@
 }
 [data-composer-style="cursor"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > *:last-child {
   border-bottom-left-radius: var(--cursor-shell-stack-radius) !important;

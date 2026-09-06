@@ -12,6 +12,7 @@ import {
 import { ComposerThreadTimecodeBar } from './ComposerTimecodes'
 import { FONT_STACKS, resolveComposerFontFamily } from '../lib/typefaceOptions'
 import { composerGitActionUsesCommitIcon } from '../lib/composerGitActionIcon'
+import { useComposerAboveBarStyleState } from '../hooks/useComposerAboveBarStyleState'
 import type {
   ComposerStyle,
   ExternalPathGrant,
@@ -353,6 +354,9 @@ export function ComposerShellPreview({
     }
   }
   const aboveRowsFloatAboveStack = composerStyle === 'cursor' || composerStyle === 'codex'
+  // Same hook as the live composer, so preview and product cannot disagree
+  // about the above-bar flag classes. See lib/ComposerAboveBarStyleState.ts.
+  const composerAboveBarStackRef = useComposerAboveBarStyleState<HTMLDivElement>()
   const useGitIconAction = composerGitActionUsesCommitIcon(composerStyle)
   const actionClassName = [
     'composer-above-bar-action',
@@ -455,7 +459,7 @@ export function ComposerShellPreview({
           aria-label={`${meta.providerLabel} composer preview`}
         >
           {aboveRowsFloatAboveStack && workspaceAboveRow}
-          <div className="composer-above-bar-stack">
+          <div ref={composerAboveBarStackRef} className="composer-above-bar-stack">
             {!aboveRowsFloatAboveStack && workspaceAboveRow}
           </div>
           <div className="composer-surface settings-composer-preview-surface">

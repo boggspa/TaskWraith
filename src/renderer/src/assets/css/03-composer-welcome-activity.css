@@ -3948,9 +3948,17 @@
   -webkit-backdrop-filter: none;
 }
 /* Each above-row → flush, chrome-less segment (inherits the frame tone). */
+/* `.composer-area--has-above-stack` carries `:has(.composer-above-bar-stack)`
+ * as a plain class at identical specificity (0,2,0). A `:has()` condition in
+ * front of a FEATURELESS subject (`> *`, `> * + *`, `> *:first-child`) forces
+ * Blink to build a whole-subtree invalidation set anchored at the document
+ * root, so every unrelated transcript insert/delete restyled the whole page.
+ * See src/renderer/src/lib/ComposerAboveBarStyleState.ts for the trace.
+ * `:has()` rules whose subject carries a class stay as they are — Blink keys
+ * those narrowly and they were not in the measured set. */
 [data-composer-style="default"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > * {
   margin: 0;
@@ -3962,7 +3970,7 @@
 /* Hairline divider between adjacent segments (never above the first). */
 [data-composer-style="default"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > * + * {
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
@@ -4029,7 +4037,7 @@
  * participant / queued / Create-PR popovers. */
 [data-composer-style="default"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > *:first-child {
   border-top-left-radius: calc(var(--radius-lg) * 2.45);

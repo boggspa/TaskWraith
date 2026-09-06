@@ -11667,7 +11667,14 @@
   justify-content: flex-start;
   gap: 6px;
 }
-:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
+/* `--has-ensemble-rows` carries the `:has(:is(...))` condition as a class; the
+ * `:not(:empty)` (always true when the flag is set) restores the (0,3,0)
+ * specificity the `:has()` argument contributed. Only the rules whose SUBJECT is
+ * featureless are converted — a featureless subject behind `:has()` is what made
+ * Blink invalidate the whole document. Sibling rules below keep `:has()` because
+ * their class subjects already key the invalidation set narrowly.
+ * See src/renderer/src/lib/ComposerAboveBarStyleState.ts. */
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack.composer-above-bar-stack--has-ensemble-rows:not(:empty)
   > :is(.composer-above-bar, .composer-above-bar-secondary)
   > * {
   margin-left: 0;
@@ -11726,7 +11733,7 @@
   > .ensemble-roster-preset-picker.is-compact:not(:first-child) {
   border-top: 1px solid color-mix(in srgb, var(--composer-border) 60%, transparent);
 }
-:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack.composer-above-bar-stack--has-ensemble-rows:not(:empty)
   > *:not(:first-child):not(.composer-above-bar-secondary):not(
     .ensemble-roster-preset-picker.is-compact
   ) {

@@ -35,6 +35,7 @@ import { ComposerHighlightOverlay } from '../components/ComposerHighlightOverlay
 import { ComposerPrimaryStack } from './ComposerPrimaryStack'
 import { useComposerDraft } from '../hooks/useComposerDraft'
 import { useComposerAboveRowsMinimized } from '../hooks/useComposerAboveRowsMinimized'
+import { useComposerAboveBarStyleState } from '../hooks/useComposerAboveBarStyleState'
 import { useComposerSuggestion } from '../hooks/useComposerSuggestion'
 import { useSharedNowTick } from '../hooks/useSharedNowTick'
 import { buildComposerContinuationCheckpoint } from '../lib/composerContinuationCheckpoint'
@@ -1788,6 +1789,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       isWelcome: isWelcomeChat,
       messages: currentChat?.messages
     })
+  // Keeps the above-bar flag classes in step with the rows actually mounted, so
+  // the composer rules can key on a class instead of a `:has()` condition whose
+  // featureless subject invalidated the whole document on every unrelated
+  // transcript mutation. See lib/ComposerAboveBarStyleState.ts.
+  const composerAboveBarStackRef = useComposerAboveBarStyleState<HTMLDivElement>()
   const [voiceCaptureState, setVoiceCaptureState] = useState<ComposerVoiceCaptureState>(
     EMPTY_COMPOSER_VOICE_CAPTURE_STATE
   )
@@ -2759,7 +2765,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   <>
                     {aboveRowsFloatAboveStack && primaryWorkspaceAboveBar}
                     {aboveRowsFloatAboveStack && externalWorkspaceAboveRows}
-                    <div className={`composer-above-bar-stack ${composerAboveBarStackAuraClass}`}>
+                    <div
+                      ref={composerAboveBarStackRef}
+                      className={`composer-above-bar-stack ${composerAboveBarStackAuraClass}`}
+                    >
                       {!aboveRowsFloatAboveStack && primaryWorkspaceAboveBar}
                       {/* Slice 3 of the external-path-redesign arc. One stacked
                     row per external-path grant. Per-grant repo metadata

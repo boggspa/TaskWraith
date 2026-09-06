@@ -2871,7 +2871,11 @@
  * white surface-2 base + a faint mixed `surface-border` hairline
  * was barely visible. A darker rgba reads as a crisp black hairline
  * against white. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > *:not(:first-child) {
+/* `--has-ensemble-rows` carries the `:has(:is(...))` condition as a class; the
+ * `:not(:empty)` (always true when the flag is set) restores the (0,3,0)
+ * specificity the `:has()` argument contributed, so the cascade is unchanged.
+ * See src/renderer/src/lib/ComposerAboveBarStyleState.ts. */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack.composer-above-bar-stack--has-ensemble-rows:not(:empty) > *:not(:first-child) {
   border-top: 1px solid rgba(18, 21, 27, 0.22) !important;
 }
 
@@ -4883,7 +4887,7 @@
 }
 [data-composer-style="default"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack.fx-agent-aura.fx-status-running
   > * {
   position: relative;
@@ -5038,7 +5042,7 @@
   > :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row)::before,
 [data-composer-style="default"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > *::after {
   display: none !important;
