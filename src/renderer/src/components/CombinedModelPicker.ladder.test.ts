@@ -620,8 +620,10 @@ describe('trigger chip fast-mode rendering', () => {
   const cursorFastProps = {
     provider: 'cursor' as const,
     composerStyle: 'taskwraith' as never,
-    modelOptions: [{ id: 'grok-4.5', label: 'Cursor Grok 4.5' }],
-    selectedModelId: 'grok-4.5',
+    // Cursor's live Grok family is 4.6 — 4.5 was retired upstream and carries
+    // no Cursor reasoning ladder, so it cannot exercise the suffix hue here.
+    modelOptions: [{ id: 'grok-4.6', label: 'Cursor Grok 4.6' }],
+    selectedModelId: 'grok-4.6',
     onSelectModel: () => {},
     reasoningOptions: [
       { value: 'low', label: 'Low' },
@@ -631,7 +633,7 @@ describe('trigger chip fast-mode rendering', () => {
     selectedReasoning: 'high',
     onSelectReasoning: () => {},
     cursorReasoningEffort: 'high',
-    fastModeCapableModelIds: new Set(['grok-4.5']),
+    fastModeCapableModelIds: new Set(['grok-4.6']),
     fastModeEnabled: true,
     onToggleFastMode: () => {}
   }
@@ -646,7 +648,7 @@ describe('trigger chip fast-mode rendering', () => {
     expect(html).toMatch(/composer-combined-picker-trigger-fast[^-][^>]*>Fast</)
     // Cursor needs its Fast tail to retain a visible gap after the reasoning suffix.
     expect(html).toContain('style="margin-left:0"')
-    expect(html).toMatch(/composer-combined-picker-trigger-primary[^>]*>Grok 4\.5</)
+    expect(html).toMatch(/composer-combined-picker-trigger-primary[^>]*>Grok 4\.6</)
     expect(html).toContain('data-selected-reasoning="high"')
   })
 

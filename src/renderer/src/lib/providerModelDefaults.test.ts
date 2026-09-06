@@ -128,9 +128,9 @@ describe('Cursor provider model defaults', () => {
       defaultReasoningEffort: 'high',
       additionalSpeedTiers: ['fast']
     })
-    expect(CURSOR_DEFAULT_MODELS.find((model) => model.id === 'grok-4.5')).toMatchObject({
-      label: 'Cursor Grok 4.5'
-    })
+    // Cursor retired the Grok 4.5 family upstream; offering it would fail the
+    // run outright ("Cannot use this model", exit 1).
+    expect(CURSOR_DEFAULT_MODELS.find((model) => model.id === 'grok-4.5')).toBeUndefined()
   })
 })
 

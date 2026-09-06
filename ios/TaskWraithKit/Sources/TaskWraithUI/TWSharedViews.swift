@@ -2258,8 +2258,8 @@ private let twFastToggleModelIds: Set<String> = [
     "claude-opus-4-8", "claude-opus-4-8-1m",
     "claude-opus-4-7", "claude-opus-4-7-1m",
     "claude-opus-4-6", "claude-opus-4-6-1m",
-    // Cursor Grok
-    "grok-4.6", "cursor-grok-4.5", "grok-4.5",
+    // Cursor Grok (4.5 retired upstream — Cursor's CLI rejects those ids)
+    "grok-4.6",
     // Kimi K2.7 Coding Highspeed
     "kimi-k2.7-code",
 ]

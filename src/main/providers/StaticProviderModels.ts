@@ -9,7 +9,6 @@ import {
   type PreviewModelCatalogEntry
 } from '../../shared/previewModelCatalog'
 import {
-  CURSOR_GROK_45_BASE_MODEL_ID,
   CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
@@ -18,7 +17,8 @@ import {
   GROK_46_MODEL_ID,
   GROK_46_REASONING_EFFORTS,
   cursorGrokBaseModelId,
-  isCursorGrokModelId
+  isCursorGrokModelId,
+  migrateRetiredCursorGrokModelId
 } from '../../shared/grok45Models'
 import { activeCodexModelRows, isCodexModelRetired } from '../../shared/codexModelLifecycle'
 import {
@@ -1244,15 +1244,9 @@ const CURSOR_STATIC_MODELS = [
     additionalSpeedTiers: ['fast'],
     ultraTaskSupported: true
   },
-  {
-    id: CURSOR_GROK_45_BASE_MODEL_ID,
-    label: 'Cursor Grok 4.5',
-    description: 'First-party Cursor model pool - 500K context',
-    supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
-    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
-    additionalSpeedTiers: ['fast'],
-    ultraTaskSupported: true
-  }
+  // Cursor Grok 4.5 is RETIRED — Cursor's own catalogue dropped the family and
+  // rejects every grok-4.5 wire id outright (exit 1, "Cannot use this model").
+  // Persisted seats migrate to 4.6 in normalizeCliProviderModel below.
 ]
 const KIMI_DEFAULT_MODEL = KIMI_K27_MODEL_ID
 // Kimi CLI's --model option resolves configured model aliases, not raw API
@@ -1433,6 +1427,11 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
   if (provider === 'cursor') {
     if (!trimmed || lowered === 'cli-default' || lowered === 'default') return 'composer-2.5-fast'
     if (trimmed.startsWith('composer-')) return trimmed
+    // A seat still pinned to the retired Cursor Grok 4.5 row keeps its Grok
+    // intent by moving to 4.6 (a superset ladder), rather than silently
+    // becoming Composer.
+    const migrated = migrateRetiredCursorGrokModelId(trimmed)
+    if (migrated) return migrated
     if (isCursorGrokModelId(trimmed)) {
       return cursorGrokBaseModelId(trimmed) || 'composer-2.5-fast'
     }

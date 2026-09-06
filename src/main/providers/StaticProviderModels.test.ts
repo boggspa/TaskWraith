@@ -327,7 +327,9 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(gemini).toContain('flash')
     expect(antigravity).not.toEqual(expect.arrayContaining(['flash', 'pro', 'cli-default']))
     expect(grok).toEqual(['grok-4.6', 'grok-4.5', 'grok-composer-2.5-fast'])
-    expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5', 'grok-4.6', 'grok-4.5'])
+    // No grok-4.5: Cursor's catalogue retired the family, and offering an id
+    // cursor-agent rejects costs the whole run (exit 1, "Cannot use this model").
+    expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5', 'grok-4.6'])
   })
 
   it('publishes Grok 4.6 as the 500K Extra High-capable default', () => {
@@ -362,9 +364,7 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
         .find((model) => model.id === 'grok-4.6')
         ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
-    expect(cursor.find((model) => model.id === 'grok-4.5')).toMatchObject({
-      label: 'Cursor Grok 4.5'
-    })
+    expect(cursor.find((model) => model.id === 'grok-4.5')).toBeUndefined()
   })
 
   it('normalizes invalid cross-provider model ids back to provider defaults', () => {
@@ -383,6 +383,26 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     )
   })
 
+  it('migrates every retired Cursor Grok 4.5 wire id onto Grok 4.6', () => {
+    // Cursor dropped the 4.5 family from its catalogue, so a seat still pinned
+    // to one of these fails hard at dispatch. Migrating to 4.6 keeps the user's
+    // Grok intent (superset ladder) instead of silently becoming Composer.
+    for (const retired of [
+      'grok-4.5',
+      'cursor-grok-4.5',
+      'grok-4.5-medium',
+      'grok-4.5-high',
+      'grok-4.5-xhigh',
+      'grok-4.5-fast-medium',
+      'grok-4.5-fast-high',
+      'grok-4.5-fast-xhigh'
+    ]) {
+      expect(normalizeCliProviderModel('cursor', retired)).toBe('grok-4.6')
+    }
+    // The standalone xAI provider is untouched — it still offers Grok 4.5.
+    expect(normalizeCliProviderModel('grok', 'grok-4.5')).toBe('grok-4.5')
+  })
+
   it('uses Grok 4.6 as the default while retaining Grok 4.5 and Composer', () => {
     expect(normalizeCliProviderModel('grok', undefined)).toBe('grok-4.6')
     expect(normalizeCliProviderModel('grok', 'cli-default')).toBe('grok-4.6')
@@ -393,7 +413,6 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     )
     expect(normalizeCliProviderModel('grok', 'composer-2.5-fast')).toBe('grok-4.6')
     expect(normalizeCliProviderModel('grok', 'grok-build')).toBe('grok-4.6')
-    expect(normalizeCliProviderModel('cursor', 'grok-4.5-fast-xhigh')).toBe('grok-4.5')
     expect(normalizeCliProviderModel('cursor', 'grok-4.6')).toBe('grok-4.6')
     expect(normalizeCliProviderModel('cursor', 'cursor-grok-4.6-xhigh-fast')).toBe('grok-4.6')
   })

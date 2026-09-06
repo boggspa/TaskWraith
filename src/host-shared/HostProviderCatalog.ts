@@ -335,8 +335,9 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       models: [
         model('composer-2.5-fast', 'Composer 2.5 Fast', STANDARD_REASONING, true),
         model('composer-2.5', 'Composer 2.5', STANDARD_REASONING),
-        model('cursor-grok-4.6', 'Cursor Grok 4.6', STANDARD_REASONING),
-        model('cursor-grok-4.5', 'Cursor Grok 4.5', STANDARD_REASONING)
+        // Cursor retired the Grok 4.5 family upstream — its CLI rejects every
+        // grok-4.5 wire id outright, so the catalogue must not advertise one.
+        model('cursor-grok-4.6', 'Cursor Grok 4.6', STANDARD_REASONING)
       ],
       authFlows: [{ flowId: 'cursor:login', kind: 'manual', label: 'Sign in', available: true }]
     },

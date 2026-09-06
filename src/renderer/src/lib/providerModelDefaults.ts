@@ -2,7 +2,6 @@ import { isPreviewModelPlaceholder } from '../../../shared/previewModelCatalog'
 import { activeCodexModelRows } from '../../../shared/codexModelLifecycle'
 import type { ProviderId } from '../../../main/store/types'
 import {
-  CURSOR_GROK_45_BASE_MODEL_ID,
   CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
@@ -513,15 +512,9 @@ const CURSOR_DEFAULT_MODEL_ROWS = [
     supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT,
     additionalSpeedTiers: ['fast']
-  },
-  {
-    id: CURSOR_GROK_45_BASE_MODEL_ID,
-    label: 'Cursor Grok 4.5',
-    description: 'First-party Cursor model pool - 500K context',
-    supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
-    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
-    additionalSpeedTiers: ['fast']
   }
+  // Cursor Grok 4.5 is RETIRED — Cursor's catalogue no longer carries the
+  // family and rejects its wire ids outright.
 ] satisfies CodexModelOption[]
 const CURSOR_DEFAULT_MODELS = withCuratedUltraTaskSupport(CURSOR_DEFAULT_MODEL_ROWS)
 const OLLAMA_DEFAULT_MODEL_ROWS = [

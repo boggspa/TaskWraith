@@ -11,7 +11,6 @@ export const GROK_45_REASONING_EFFORTS = [
 ] as const
 
 export const GROK_45_DEFAULT_REASONING_EFFORT = 'high'
-export const CURSOR_GROK_45_BASE_MODEL_ID = GROK_45_MODEL_ID
 
 export const GROK_46_REASONING_EFFORTS = [
   { reasoningEffort: 'low' },
@@ -23,8 +22,20 @@ export const GROK_46_REASONING_EFFORTS = [
 export const GROK_46_DEFAULT_REASONING_EFFORT = 'high'
 export const CURSOR_GROK_46_BASE_MODEL_ID = GROK_46_MODEL_ID
 
-const CURSOR_GROK_45_MODEL_IDS = new Set([
-  CURSOR_GROK_45_BASE_MODEL_ID,
+/**
+ * RETIRED. Cursor resold Grok 4.5 until its catalogue dropped the family
+ * outright: `cursor-agent --list-models` (2026.09.02-c22c1a3) carries only
+ * `cursor-grok-4.6-*`, and passing any id below fails the run hard —
+ * "Cannot use this model: grok-4.5-xhigh", exit 1, before any work happens.
+ *
+ * Kept ONLY to migrate seats that persisted one of these ids (see
+ * {@link migrateRetiredCursorGrokModelId}). This set is Cursor's resale
+ * vocabulary and says nothing about the standalone xAI `grok` provider, which
+ * still offers Grok 4.5 through `GROK_45_MODEL_ID` and
+ * {@link isGrok45ReasoningModelId}.
+ */
+const RETIRED_CURSOR_GROK_45_MODEL_IDS = new Set([
+  GROK_45_MODEL_ID,
   'cursor-grok-4.5',
   'grok-4.5-medium',
   'grok-4.5-high',
@@ -50,12 +61,6 @@ const CURSOR_GROK_46_MODEL_IDS = new Set<string>([
   CURSOR_GROK_46_BASE_MODEL_ID,
   ...CURSOR_GROK_46_WIRE_MODEL_IDS
 ])
-
-const CURSOR_REASONING_TO_MODEL_SUFFIX: Record<string, string> = {
-  low: 'medium',
-  medium: 'high',
-  high: 'xhigh'
-}
 
 export function normalizeGrok45ReasoningEffort(
   value: string | null | undefined,
@@ -83,15 +88,23 @@ export function normalizeGrok46ReasoningEffort(
     : fallback
 }
 
-export function isCursorGrok45ModelId(modelId: string | null | undefined): boolean {
+/**
+ * Map a retired Cursor Grok 4.5 id onto its live successor, or null when the id
+ * is not one. Grok 4.6 keeps the user's Grok intent and its ladder is a
+ * superset of 4.5's (low/medium/high, plus xhigh), so nothing is narrowed;
+ * falling back to Composer instead would silently change which model answers.
+ */
+export function migrateRetiredCursorGrokModelId(
+  modelId: string | null | undefined
+): typeof GROK_46_MODEL_ID | null {
   const id = String(modelId || '').trim().toLowerCase()
-  return CURSOR_GROK_45_MODEL_IDS.has(id)
+  return RETIRED_CURSOR_GROK_45_MODEL_IDS.has(id) ? GROK_46_MODEL_ID : null
 }
 
-/** True for a TaskWraith base id or exact Cursor wire id in either Grok family. */
+/** True for the TaskWraith base id or an exact Cursor Grok wire id. */
 export function isCursorGrokModelId(modelId: string | null | undefined): boolean {
   const id = String(modelId || '').trim().toLowerCase()
-  return CURSOR_GROK_45_MODEL_IDS.has(id) || CURSOR_GROK_46_MODEL_IDS.has(id)
+  return CURSOR_GROK_46_MODEL_IDS.has(id)
 }
 
 export function isGrok45ReasoningModelId(modelId: string | null | undefined): boolean {
@@ -111,73 +124,35 @@ export function isGrokReasoningModelId(modelId: string | null | undefined): bool
   return isGrok45ReasoningModelId(id) || id === GROK_46_MODEL_ID
 }
 
-export function isCursorGrok45ConcreteModelId(modelId: string | null | undefined): boolean {
-  const id = String(modelId || '').trim().toLowerCase()
-  return id.startsWith('grok-4.5') && id !== CURSOR_GROK_45_BASE_MODEL_ID
-}
-
 export function isCursorGrokConcreteModelId(modelId: string | null | undefined): boolean {
   const id = String(modelId || '').trim().toLowerCase()
-  return (
-    isCursorGrok45ConcreteModelId(id) ||
-    (CURSOR_GROK_46_MODEL_IDS.has(id) && id !== CURSOR_GROK_46_BASE_MODEL_ID)
-  )
+  return CURSOR_GROK_46_MODEL_IDS.has(id) && id !== CURSOR_GROK_46_BASE_MODEL_ID
 }
 
 export function cursorGrokBaseModelId(
   modelId: string | null | undefined
-): typeof CURSOR_GROK_45_BASE_MODEL_ID | typeof CURSOR_GROK_46_BASE_MODEL_ID | null {
+): typeof CURSOR_GROK_46_BASE_MODEL_ID | null {
   const id = String(modelId || '').trim().toLowerCase()
-  if (CURSOR_GROK_45_MODEL_IDS.has(id)) return CURSOR_GROK_45_BASE_MODEL_ID
-  if (CURSOR_GROK_46_MODEL_IDS.has(id)) return CURSOR_GROK_46_BASE_MODEL_ID
-  return null
+  return CURSOR_GROK_46_MODEL_IDS.has(id) ? CURSOR_GROK_46_BASE_MODEL_ID : null
 }
 
-export function cursorGrok45ReasoningFromModelId(
-  modelId: string | null | undefined
-): 'low' | 'medium' | 'high' | null {
-  const id = String(modelId || '').trim().toLowerCase()
-  if (!isCursorGrok45ModelId(id)) return null
-  if (id.endsWith('-medium')) return 'low'
-  if (id.endsWith('-high')) return 'medium'
-  if (id.endsWith('-xhigh')) return 'high'
-  return GROK_45_DEFAULT_REASONING_EFFORT
-}
 
 export function cursorGrokReasoningFromModelId(
   modelId: string | null | undefined
 ): 'low' | 'medium' | 'high' | 'xhigh' | null {
   const id = String(modelId || '').trim().toLowerCase()
-  if (CURSOR_GROK_45_MODEL_IDS.has(id)) return cursorGrok45ReasoningFromModelId(id)
   if (!CURSOR_GROK_46_MODEL_IDS.has(id)) return null
   const match = id.match(/^cursor-grok-4\.6-(low|medium|high|xhigh)(?:-fast)?$/)
   return (match?.[1] as 'low' | 'medium' | 'high' | 'xhigh' | undefined) ??
     GROK_46_DEFAULT_REASONING_EFFORT
 }
 
-export function cursorGrok45FastFromModelId(modelId: string | null | undefined): boolean {
-  const id = String(modelId || '').trim().toLowerCase()
-  return isCursorGrok45ModelId(id) && id.includes('-fast-')
-}
 
 export function cursorGrokFastFromModelId(modelId: string | null | undefined): boolean {
   const id = String(modelId || '').trim().toLowerCase()
-  if (CURSOR_GROK_45_MODEL_IDS.has(id)) return cursorGrok45FastFromModelId(id)
   return CURSOR_GROK_46_MODEL_IDS.has(id) && id.endsWith('-fast')
 }
 
-export function resolveCursorGrok45CliModelId(input: {
-  model?: string | null
-  reasoningEffort?: string | null
-  fastModeEnabled?: boolean | null
-}): string | null {
-  const rawModel = String(input.model || '').trim().toLowerCase()
-  if (!isCursorGrok45ModelId(rawModel)) return null
-  if (isCursorGrok45ConcreteModelId(rawModel)) return rawModel
-  const effort = normalizeGrok45ReasoningEffort(input.reasoningEffort)
-  const suffix = CURSOR_REASONING_TO_MODEL_SUFFIX[effort]
-  return input.fastModeEnabled ? `grok-4.5-fast-${suffix}` : `grok-4.5-${suffix}`
-}
 
 export function resolveCursorGrokCliModelId(input: {
   model?: string | null
@@ -185,7 +160,9 @@ export function resolveCursorGrokCliModelId(input: {
   fastModeEnabled?: boolean | null
 }): string | null {
   const rawModel = String(input.model || '').trim().toLowerCase()
-  if (CURSOR_GROK_45_MODEL_IDS.has(rawModel)) return resolveCursorGrok45CliModelId(input)
+  // A retired Grok 4.5 id resolves to NOTHING rather than to a 4.6 guess: the
+  // caller must migrate it first (migrateRetiredCursorGrokModelId) so the
+  // persisted seat and the wire id cannot drift apart.
   if (!CURSOR_GROK_46_MODEL_IDS.has(rawModel)) return null
   if (rawModel !== CURSOR_GROK_46_BASE_MODEL_ID) return rawModel
   const effort = normalizeGrok46ReasoningEffort(input.reasoningEffort)

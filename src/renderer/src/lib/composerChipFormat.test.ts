@@ -59,6 +59,7 @@ describe('shortModelName', () => {
   it('renders Cursor Composer model ids as human labels', () => {
     expect(shortModelName('cursor', '', 'composer-2.5-fast')).toBe('Composer 2.5 Fast')
     expect(shortModelName('cursor', '', 'composer-2.5')).toBe('Composer 2.5')
+    // Retired upstream: a historical row still reads from its stored label.
     expect(shortModelName('cursor', 'Cursor Grok 4.5', 'grok-4.5')).toBe('Grok 4.5')
     expect(shortModelName('cursor', 'Cursor Grok 4.6', 'grok-4.6')).toBe('Grok 4.6')
     for (const modelId of CURSOR_GROK_46_WIRE_MODEL_IDS) {
@@ -391,12 +392,23 @@ describe('reasoningDisplayLabel', () => {
         grokReasoningEffort: 'high'
       })
     ).toBe('')
+    // Cursor's Grok 4.5 resale is retired, so it carries no reasoning ladder;
+    // a historical row keeps its name but shows no effort. 4.6 is the live one.
     expect(
       reasoningDisplayLabel({
         provider: 'cursor',
         composerStyle: 'cursor',
         modelId: 'grok-4.5',
         modelLabel: 'Cursor Grok 4.5',
+        cursorReasoningEffort: 'medium'
+      })
+    ).toBe('')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'cursor',
+        composerStyle: 'cursor',
+        modelId: 'grok-4.6',
+        modelLabel: 'Cursor Grok 4.6',
         cursorReasoningEffort: 'medium'
       })
     ).toBe('Medium')
@@ -729,12 +741,12 @@ describe('formatComposerModelChip', () => {
       formatComposerModelChip({
         provider: 'cursor',
         composerStyle: 'default',
-        modelId: 'grok-4.5',
-        modelLabel: 'Cursor Grok 4.5',
+        modelId: 'grok-4.6',
+        modelLabel: 'Cursor Grok 4.6',
         cursorReasoningEffort: 'high',
         shellFastModeActive: true
       })
-    ).toBe('Grok 4.5 · High Fast')
+    ).toBe('Grok 4.6 · High Fast')
 
     expect(
       formatComposerModelChip({

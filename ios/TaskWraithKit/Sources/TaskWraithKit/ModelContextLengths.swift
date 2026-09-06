@@ -124,8 +124,8 @@ public enum ModelContextLengths {
             return [
                 (id: "composer-2.5",       label: "Composer 2.5"),
                 (id: "composer-2.5-fast",  label: "Composer 2.5 Fast"),
+                // Cursor retired the Grok 4.5 family; its CLI rejects the ids.
                 (id: "grok-4.6",           label: "Cursor Grok 4.6"),
-                (id: "grok-4.5",           label: "Cursor Grok 4.5"),
             ]
         case "antigravity":
             // Gemini-api lane. The `gemini-api:` prefix is load-bearing

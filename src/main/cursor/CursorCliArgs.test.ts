@@ -201,21 +201,23 @@ describe('buildCursorCliArgs', () => {
     ).toContain('--model composer-2.5')
   })
 
-  it('maps Cursor Grok 4.5 reasoning and Fast to concrete Cursor model ids', () => {
-    expect(
-      buildCursorCliArgs({ ...base, model: 'grok-4.5', reasoningEffort: 'low' }).join(' ')
-    ).toContain('--model grok-4.5-medium')
-    expect(
-      buildCursorCliArgs({ ...base, model: 'grok-4.5', reasoningEffort: 'medium' }).join(' ')
-    ).toContain('--model grok-4.5-high')
-    expect(
-      buildCursorCliArgs({
-        ...base,
-        model: 'grok-4.5',
-        reasoningEffort: 'high',
-        fastModeEnabled: true
-      }).join(' ')
-    ).toContain('--model grok-4.5-fast-xhigh')
+  it('drops a retired Grok 4.5 id instead of emitting a model Cursor rejects', () => {
+    // Cursor's catalogue no longer carries the 4.5 family, so there is no wire
+    // id to build. Omitting --model lets Cursor fall back to its own account
+    // default, which is the documented behaviour for any unresolvable id — far
+    // better than emitting one that fails the run outright with exit 1.
+    for (const reasoningEffort of ['low', 'medium', 'high']) {
+      for (const fastModeEnabled of [false, true]) {
+        const args = buildCursorCliArgs({
+          ...base,
+          model: 'grok-4.5',
+          reasoningEffort,
+          fastModeEnabled
+        })
+        expect(args).not.toContain('--model')
+        expect(args.join(' ')).not.toContain('grok-4.5')
+      }
+    }
   })
 
   it('maps Cursor Grok 4.6 reasoning directly and places Fast last', () => {

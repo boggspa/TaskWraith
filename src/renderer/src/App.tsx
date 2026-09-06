@@ -576,7 +576,6 @@ import {
   shortModelName
 } from './lib/composerChipFormat'
 import {
-  CURSOR_GROK_45_BASE_MODEL_ID,
   CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
@@ -22567,12 +22566,7 @@ function App(): React.JSX.Element {
       )
     }
     if (sideComposerProvider === 'cursor') {
-      return new Set([
-        'composer-2.5',
-        'composer-2.5-fast',
-        CURSOR_GROK_46_BASE_MODEL_ID,
-        CURSOR_GROK_45_BASE_MODEL_ID
-      ])
+      return new Set(['composer-2.5', 'composer-2.5-fast', CURSOR_GROK_46_BASE_MODEL_ID])
     }
     if (sideComposerProvider === 'grok') {
       // All Grok CLI models are permanently Fast-mode → Fast ⚡ glyph on every

@@ -31,7 +31,7 @@ struct IosParityFixesTests {
 
         let cursor = model.providerModels["cursor"] ?? []
         #expect(cursor.map(\.id) == [
-            "composer-2.5-fast", "composer-2.5", "grok-4.6", "grok-4.5",
+            "composer-2.5-fast", "composer-2.5", "grok-4.6",
         ])
         #expect(cursor.first(where: { $0.isDefault == true })?.id == "composer-2.5-fast")
         #expect(cursor.first(where: { $0.id == "grok-4.6" })?.label == "Cursor Grok 4.6")
@@ -39,7 +39,8 @@ struct IosParityFixesTests {
             cursor.first(where: { $0.id == "grok-4.6" })?
                 .supportedReasoningEfforts?.map(\.reasoningEffort)
                 == ["low", "medium", "high", "xhigh"])
-        #expect(cursor.first(where: { $0.id == "grok-4.5" })?.label == "Cursor Grok 4.5")
+        // Retired upstream — Cursor offers no Grok 4.5 row any more.
+        #expect(cursor.first(where: { $0.id == "grok-4.5" }) == nil)
 
         let grok = model.providerModels["grok"] ?? []
         #expect(grok.map(\.id) == ["grok-4.6", "grok-4.5", "grok-composer-2.5-fast"])

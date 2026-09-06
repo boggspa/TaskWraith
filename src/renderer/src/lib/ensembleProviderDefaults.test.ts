@@ -286,8 +286,10 @@ describe('normalizeProviderModelSelection', () => {
       thinkingEnabled: undefined,
       serviceTier: undefined
     })
+    // The retired Cursor Grok 4.5 row migrates onto 4.6 rather than keeping a
+    // model id the picker no longer lists and cursor-agent rejects outright.
     expect(normalizeProviderModelSelection('cursor', 'grok-4.5')).toEqual({
-      model: 'grok-4.5',
+      model: 'grok-4.6',
       reasoningEffort: 'high',
       fastModeEnabled: false,
       thinkingEnabled: undefined,
@@ -1067,21 +1069,19 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(grok.fastModeCapableModelIds.has('grok-4.5')).toBe(true)
   })
 
-  it('keeps Cursor Composer default while exposing Grok 4.6 and 4.5 with reasoning/Fast', () => {
+  it('keeps Cursor Composer default while exposing Grok 4.6 with reasoning/Fast', () => {
     const cursor = getEnsembleModelDefaults('cursor')
     expect(cursor.defaultModelId).toBe('composer-2.5-fast')
     expect(cursor.modelOptions.map((o) => o.id)).toEqual([
       'composer-2.5-fast',
       'composer-2.5',
-      'grok-4.6',
-      'grok-4.5'
+      'grok-4.6'
     ])
     expect(cursor.modelOptions.find((option) => option.id === 'grok-4.6')?.label).toBe(
       'Cursor Grok 4.6'
     )
-    expect(cursor.modelOptions.find((option) => option.id === 'grok-4.5')?.label).toBe(
-      'Cursor Grok 4.5'
-    )
+    // Retired upstream — Cursor's catalogue no longer carries the 4.5 family.
+    expect(cursor.modelOptions.find((option) => option.id === 'grok-4.5')).toBeUndefined()
     expect(cursor.reasoningOptions).toEqual([])
     expect(getEnsembleReasoningOptions('cursor', 'composer-2.5')).toEqual([])
     expect(getEnsembleReasoningOptions('cursor', 'composer-2.5-fast')).toEqual([])
@@ -1091,13 +1091,9 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'high',
       'xhigh'
     ])
-    expect(getEnsembleReasoningOptions('cursor', 'grok-4.5').map((o) => o.value)).toEqual([
-      'low',
-      'medium',
-      'high'
-    ])
+    expect(getEnsembleReasoningOptions('cursor', 'grok-4.5')).toEqual([])
     expect(cursor.fastModeCapableModelIds.has('grok-4.6')).toBe(true)
-    expect(cursor.fastModeCapableModelIds.has('grok-4.5')).toBe(true)
+    expect(cursor.fastModeCapableModelIds.has('grok-4.5')).toBe(false)
   })
 
   it('exposes local Ollama models with Qwen 3.5 as the default', () => {

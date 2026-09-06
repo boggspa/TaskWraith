@@ -167,15 +167,16 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "256k")
     }
 
-    @Test("cursor grok-4.5 retains its established 500_000 / 500k window")
-    func cursorGrok45() {
+    @Test("cursor drops the retired grok-4.5 row from the curated catalog")
+    func cursorGrok45Retired() {
+        // Cursor's own catalogue no longer carries the Grok 4.5 family and its
+        // CLI rejects those wire ids outright, so the curated list must not
+        // advertise one. ContextWindows keeps the 500_000 entry so historical
+        // runs still resolve a window (see ContextWindowsTests).
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "cursor" }?
             .models.first { $0.modelId == "grok-4.5" }
-        #expect(row != nil)
-        #expect(row?.label == "Cursor Grok 4.5")
-        #expect(row?.contextWindow == 500_000)
-        #expect(row?.formatted == "500k")
+        #expect(row == nil)
     }
 
     // MARK: - Kimi group

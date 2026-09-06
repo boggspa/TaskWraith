@@ -177,10 +177,8 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     // composer-2.5-fast (Cursor's default = Fast mode) / composer-2.5 → human label.
     if (id === 'composer-2.5-fast') return 'Composer 2.5 Fast'
     if (id === 'composer-2.5') return 'Composer 2.5'
-    const grokBase = cursorGrokBaseModelId(id)
-    if (grokBase && isCursorGrokModelId(id)) {
-      return grokBase === 'grok-4.6' ? 'Grok 4.6' : 'Grok 4.5'
-    }
+    // Cursor's only Grok family is 4.6 — it retired the 4.5 resale rows.
+    if (cursorGrokBaseModelId(id) && isCursorGrokModelId(id)) return 'Grok 4.6'
   }
 
   if (provider === 'grok') {

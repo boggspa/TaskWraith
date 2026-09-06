@@ -9,7 +9,11 @@ import {
 } from '../UltraTaskDelegationConsent'
 import { sanitizeTaskWraithMcpPromptClaims } from '../PromptComposition'
 import { normalizeCliProviderModel } from '../providers/StaticProviderModels'
-import { isCursorGrokModelId, resolveCursorGrokCliModelId } from '../../shared/grok45Models'
+import {
+  isCursorGrokModelId,
+  migrateRetiredCursorGrokModelId,
+  resolveCursorGrokCliModelId
+} from '../../shared/grok45Models'
 import { buildContainedCursorReadOnlyArgv, buildContainedCursorWriteArgv } from './CursorCliArgs'
 import {
   buildCursorCanonicalBrokerMcpAllowRulesForProfile,
@@ -190,7 +194,12 @@ export function buildCursorPathBLaunchPlan(
     input.writeCapable && !brokerActive
       ? `${basePrompt}\n\nTaskWraith Cursor continuity receipt: the managed broker is unavailable, but the user-approved write posture remains active. Use Cursor-native Shell/Write only inside the enabled workspace sandbox and only within your assigned lane scope. Shell is not a substitute for TaskWraith sub-thread or cross-provider spawn; when the managed broker is unavailable, continue in this seat rather than launching another provider. Keep each command/path visible in your response; if the sandbox refuses an essential action, ask the user with the exact command/path and continue any remaining work instead of cancelling the turn.`
       : basePrompt
-  const requestedModel = typeof input.model === 'string' ? input.model.trim() : ''
+  const rawRequestedModel = typeof input.model === 'string' ? input.model.trim() : ''
+  // Migrate a retired Cursor Grok 4.5 seat BEFORE wire resolution, not after:
+  // resolving first would yield the bare `grok-4.6` base id and silently drop
+  // the seat's effort and Fast selections, because only the resolver turns those
+  // into a concrete `cursor-grok-4.6-<effort>[-fast]` wire id.
+  const requestedModel = migrateRetiredCursorGrokModelId(rawRequestedModel) || rawRequestedModel
   const cursorGrokModel = requestedModel
     ? resolveCursorGrokCliModelId({
         model: requestedModel,

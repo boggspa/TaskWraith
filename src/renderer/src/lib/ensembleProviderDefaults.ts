@@ -41,7 +41,6 @@ import {
 import { resolveOllamaReasoningSupport } from '../../../shared/ollamaReasoning'
 import { resolvePiReasoningSupport } from '../../../shared/piReasoning'
 import {
-  CURSOR_GROK_45_BASE_MODEL_ID,
   CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
@@ -50,6 +49,7 @@ import {
   GROK_46_MODEL_ID,
   GROK_46_REASONING_EFFORTS,
   cursorGrokBaseModelId,
+  migrateRetiredCursorGrokModelId,
   isCursorGrokModelId,
   isGrokReasoningModelId
 } from '../../../shared/grok45Models'
@@ -421,14 +421,8 @@ const CURSOR_MODEL_ROWS: CombinedModelPickerModelOption[] = [
     supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT,
     additionalSpeedTiers: ['fast']
-  },
-  {
-    id: CURSOR_GROK_45_BASE_MODEL_ID,
-    label: 'Cursor Grok 4.5',
-    supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
-    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
-    additionalSpeedTiers: ['fast']
   }
+  // Cursor Grok 4.5 is RETIRED — Cursor's catalogue dropped the family.
 ]
 const CURSOR_MODELS = withCuratedUltraTaskSupport(CURSOR_MODEL_ROWS)
 
@@ -581,8 +575,7 @@ const CLAUDE_FAST_CAPABLE = new Set<string>([
 const CURSOR_FAST_CAPABLE = new Set<string>([
   'composer-2.5',
   'composer-2.5-fast',
-  CURSOR_GROK_46_BASE_MODEL_ID,
-  CURSOR_GROK_45_BASE_MODEL_ID
+  CURSOR_GROK_46_BASE_MODEL_ID
 ])
 // All Grok CLI models run permanently in Fast mode. This set only drives the
 // picker's Fast ⚡ glyph — Grok passes no onToggleFastMode, so no toggle row
@@ -611,12 +604,9 @@ function grokReasoningDefaultForModel(
       : GROK_45_DEFAULT_REASONING_EFFORT
   }
   if (provider === 'cursor') {
-    const baseModelId = cursorGrokBaseModelId(modelId)
-    if (baseModelId === CURSOR_GROK_46_BASE_MODEL_ID) {
+    // Cursor's only Grok family is 4.6 now.
+    if (cursorGrokBaseModelId(modelId) === CURSOR_GROK_46_BASE_MODEL_ID) {
       return GROK_46_DEFAULT_REASONING_EFFORT
-    }
-    if (baseModelId === CURSOR_GROK_45_BASE_MODEL_ID) {
-      return GROK_45_DEFAULT_REASONING_EFFORT
     }
   }
   return undefined
@@ -684,10 +674,10 @@ export function getEnsembleReasoningOptions(
       if (!isGrokReasoningModelId(modelId)) return []
       return isDirectGrok46ModelId(modelId) ? GROK_46_REASONING : GROK_45_REASONING
     case 'cursor': {
-      const baseModelId = cursorGrokBaseModelId(modelId)
-      if (baseModelId === CURSOR_GROK_46_BASE_MODEL_ID) return GROK_46_REASONING
-      if (baseModelId === CURSOR_GROK_45_BASE_MODEL_ID) return GROK_45_REASONING
-      return []
+      // Cursor's only Grok family is 4.6 now; 4.5 is retired upstream.
+      return cursorGrokBaseModelId(modelId) === CURSOR_GROK_46_BASE_MODEL_ID
+        ? GROK_46_REASONING
+        : []
     }
     case 'mistral': {
       return isMistralThinkingCapableModel(modelId) ? MISTRAL_THINKING_REASONING : []
@@ -1256,6 +1246,11 @@ export function normalizeProviderModelSelection(
     'reasoningEffort' | 'fastModeEnabled' | 'serviceTier' | 'thinkingEnabled'
   > | null
 ): ProviderModelSelectionFields {
+  // A seat persisted on the retired Cursor Grok 4.5 row would otherwise keep a
+  // model id the picker no longer lists and the CLI rejects outright. Migrate
+  // it to 4.6 here so the composer shows a real selection with a real ladder.
+  const migratedCursorGrok = provider === 'cursor' ? migrateRetiredCursorGrokModelId(model) : null
+  if (migratedCursorGrok) model = migratedCursorGrok
   const cleared: ProviderModelSelectionFields = {
     model,
     reasoningEffort: undefined,

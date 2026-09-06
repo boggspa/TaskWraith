@@ -11,7 +11,6 @@ import {
 } from './providers/StaticProviderModels'
 import { normalizeClaudeEffortFlagForModel } from './ClaudeCliArgs'
 import {
-  isCursorGrok45ModelId,
   isCursorGrokModelId,
   isGrok45ReasoningModelId,
   isGrokReasoningModelId,
@@ -267,8 +266,9 @@ function normalizeReasoningEffort(
     if (!GROK_REASONING_INPUTS.has(raw)) {
       return invalidReasoningEffort(provider, raw, [...GROK_REASONING_INPUTS])
     }
-    const grok45 =
-      provider === 'grok' ? isGrok45ReasoningModelId(modelId) : isCursorGrok45ModelId(modelId)
+    // Only the standalone xAI provider still has a Grok 4.5 ladder; Cursor's
+    // resale of that family is retired, so every Cursor Grok seat is 4.6.
+    const grok45 = provider === 'grok' && isGrok45ReasoningModelId(modelId)
     return {
       ok: true,
       value: grok45 ? normalizeGrok45ReasoningEffort(raw) : normalizeGrok46ReasoningEffort(raw)

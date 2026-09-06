@@ -1,4 +1,8 @@
-import { isCursorGrokModelId, isGrokReasoningModelId } from '../../shared/grok45Models'
+import {
+  isCursorGrokModelId,
+  isGrokReasoningModelId,
+  migrateRetiredCursorGrokModelId
+} from '../../shared/grok45Models'
 import type { ProviderId } from '../store/types'
 import type { TaskWraithMcpProfileId } from '../store/types'
 import {
@@ -1605,10 +1609,17 @@ export function shouldUseCoreMcpProfile(
   provider: ProviderId,
   modelId: string | null | undefined
 ): boolean {
-  if (provider === 'cursor') return isCursorGrokModelId(modelId)
+  // A RETIRED Cursor Grok 4.5 id still narrows the profile. Cursor no longer
+  // offers that family, but this is a capability bound, not a catalogue: the id
+  // can still arrive from a persisted seat before migration, and it is the same
+  // Grok family either way. Widening the tool catalogue on the way past would be
+  // a silent capability change, so `migrateRetiredCursorGrokModelId` is used
+  // here purely as "is this one of ours".
+  const retiredCursorGrok = migrateRetiredCursorGrokModelId(modelId) !== null
+  if (provider === 'cursor') return isCursorGrokModelId(modelId) || retiredCursorGrok
   if (provider === 'grok') {
     if (!String(modelId || '').trim()) return true
-    return isGrokReasoningModelId(modelId) || isCursorGrokModelId(modelId)
+    return isGrokReasoningModelId(modelId) || isCursorGrokModelId(modelId) || retiredCursorGrok
   }
   return false
 }

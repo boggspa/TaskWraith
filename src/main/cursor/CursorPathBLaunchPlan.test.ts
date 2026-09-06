@@ -234,7 +234,10 @@ describe('CursorPathBLaunchPlan', () => {
     )
   })
 
-  it('resolves Cursor Grok reasoning and fast controls into the wire model', () => {
+  it('migrates a retired Grok 4.5 seat onto 4.6 rather than emitting a dead wire id', () => {
+    // Cursor dropped the 4.5 family; a seat still pinned to it would otherwise
+    // dispatch an id its CLI rejects outright. The plan migrates to 4.6, whose
+    // ladder is a superset, so the seat keeps both its Grok intent and effort.
     const plan = buildCursorPathBLaunchPlan(
       input({
         model: 'grok-4.5',
@@ -243,10 +246,13 @@ describe('CursorPathBLaunchPlan', () => {
       })
     )
 
-    expect(plan.wireModel).toBe('grok-4.5-fast-xhigh')
+    // The seat asked for high + Fast; migrating must not quietly drop either,
+    // so it lands on the concrete 4.6 wire id carrying both.
+    expect(plan.wireModel).toBe('cursor-grok-4.6-high-fast')
     expect(plan.reasoningEffort).toBe('high')
     expect(plan.fastMode).toBe(true)
-    expect(plan.argv).toEqual(expect.arrayContaining(['--model', 'grok-4.5-fast-xhigh']))
+    expect(plan.argv).toEqual(expect.arrayContaining(['--model', 'cursor-grok-4.6-high-fast']))
+    expect(plan.argv.join(' ')).not.toContain('grok-4.5')
   })
 
   it('resolves Cursor Grok 4.6 Extra High Fast to its exact wire model', () => {
