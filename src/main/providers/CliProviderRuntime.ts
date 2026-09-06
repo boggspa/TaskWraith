@@ -1,6 +1,7 @@
 import { spawn } from 'child_process'
 import { delimiter, extname, join } from 'path'
 import { cliBinaryNameCandidates, getCliSearchDirs } from './CliSearchDirs'
+import { CapturedOutputBuffer } from './CapturedOutputBuffer'
 import { promises as fs } from 'fs'
 import os from 'os'
 import { GATEWAY_MCP_ADVERTISE_TOOLS } from '../mcp/McpToolProfiles'
@@ -589,8 +590,8 @@ export function captureProcessOutput(
   extraEnv: Record<string, string> = {}
 ): Promise<CapturedProcessOutput> {
   return new Promise((resolveCapture) => {
-    let stdout = ''
-    let stderr = ''
+    const stdout = new CapturedOutputBuffer()
+    const stderr = new CapturedOutputBuffer()
     let settled = false
     const plan = createCliSpawnPlan(command, args)
     const child = spawn(plan.command, plan.args, {
@@ -602,27 +603,37 @@ export function captureProcessOutput(
       if (settled) return
       settled = true
       child.kill()
-      resolveCapture({ stdout, stderr, code: null, timedOut: true, error: 'Timed out.' })
+      resolveCapture({
+        stdout: stdout.value(),
+        stderr: stderr.value(),
+        code: null,
+        timedOut: true,
+        error: 'Timed out.'
+      })
     }, timeoutMs)
     child.stdout?.on('data', (chunk) => {
-      stdout += chunk.toString()
-      if (stdout.length > 80_000) stdout = stdout.slice(-80_000)
+      stdout.push(chunk.toString())
     })
     child.stderr?.on('data', (chunk) => {
-      stderr += chunk.toString()
-      if (stderr.length > 80_000) stderr = stderr.slice(-80_000)
+      stderr.push(chunk.toString())
     })
     child.on('error', (error) => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
-      resolveCapture({ stdout, stderr, code: null, timedOut: false, error: error.message })
+      resolveCapture({
+        stdout: stdout.value(),
+        stderr: stderr.value(),
+        code: null,
+        timedOut: false,
+        error: error.message
+      })
     })
     child.on('close', (code) => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
-      resolveCapture({ stdout, stderr, code, timedOut: false })
+      resolveCapture({ stdout: stdout.value(), stderr: stderr.value(), code, timedOut: false })
     })
   })
 }
