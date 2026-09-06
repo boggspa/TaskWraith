@@ -23,9 +23,15 @@ files:
   # Misc top-level artefacts that have shown up in earlier ships.
   - '!*.zip'
   - '!*.dmg'
+  # Root-level screenshots from doc/QA passes. Top-level only — app icons under
+  # `resources/` and `build/` are untouched.
+  - '!*.png'
   # Local agent/session state from the development loop.
   - '!.claude/**'
   - '!.cursor/**'
+  - '!.cursor-mcp-probe/**'
+  - '!.agents/**'
+  - '!.devin/**'
   - '!.fixpass*'
   - '!.taskwraith-worktrees/**'
   - '!.wsa-*'
@@ -56,12 +62,23 @@ files:
   # exactly why this denylist has to name them.
   - '!.work-guard/**'
   - '!.tmp_vitest/**'
-  - '!test_output.log'
+  # `*.log*` matches root level only (minimatch `*` does not cross `/`), the
+  # same scope as the `!*.zip` / `!*.dmg` entries above. It replaced a
+  # hand-named `!test_output.log`, which `test_output2.log` walked straight
+  # past into the package.
+  - '!*.log*'
   # Dev/CI artefact trees. No runtime code resolves any of these; `resources/`
   # (app icons, Tools.md) is the one sibling that IS load-bearing — do not add
   # it here.
   - '!artifacts/**'
   - '!perf-artifacts/**'
+  # Synthetic Electron userData profiles written by the perf soak harness.
+  # Gitignored and untracked, so — like `.work-guard` above — this denylist is
+  # the only thing keeping them out. They hold chat/checkpoint fixtures, and
+  # each Codex sandbox hardlinks a 210MB argv0 shim under three names, which
+  # asar stores as three full copies: 3.3GB on disk packed as a 12.7GB
+  # app.asar and failed the 500MB afterPack guard on 2026-09-06.
+  - '!perf-homes/**'
   - '!prototypes/**'
   - '!papercuts/**'
   - '!.githooks/**'
@@ -92,7 +109,7 @@ files:
   # so the source tree itself is dead weight in the package.
   - '!relay/**'
   - '!{AGENTS.md,CLAUDE.md,ARCHITECTURE.md,WINDOWS_PARITY_QA.md,TERMS_NOTES.md}'
-  - '!{electron-builder.yml,electron-builder.debug.yml,vitest.config.ts}'
+  - '!{electron-builder*.yml,vitest.config.ts}'
   - '!**/*.tsbuildinfo'
   # TUI and diagnostic Host payloads + official Node runtime ship outside
   # app.asar via top-level extraResources. RunAsNode is fused off on the App
