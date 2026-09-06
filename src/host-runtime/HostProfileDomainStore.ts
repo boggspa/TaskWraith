@@ -60,7 +60,7 @@ export const HOST_PROFILE_CHATS_DIRECTORY = 'chats'
 const PRIVATE_DIRECTORY_MODE = 0o700
 const PRIVATE_FILE_MODE = 0o600
 const MAX_WORKSPACES_BYTES = 4 * 1024 * 1024
-const MAX_CHAT_BYTES = 64 * 1024 * 1024
+export const MAX_CHAT_BYTES = 128 * 1024 * 1024
 const MAX_TEXT = 16_000
 const MAX_RUN_TOOL_ACTIVITIES = 64
 /** Preview length the Host projection has always published. */

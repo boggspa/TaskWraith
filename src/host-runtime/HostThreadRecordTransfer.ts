@@ -43,7 +43,7 @@ export const HOST_THREAD_RECORD_TRANSFER_DIRECTORY = 'host-thread-record-transfe
  * limit. Deliberately far above the local-control line limit: exceeding that
  * limit is the reason this seam exists.
  */
-export const HOST_THREAD_RECORD_TRANSFER_MAX_BYTES = 64 * 1024 * 1024
+export const HOST_THREAD_RECORD_TRANSFER_MAX_BYTES = 128 * 1024 * 1024
 
 const PRIVATE_DIRECTORY_MODE = 0o700
 const PRIVATE_FILE_MODE = 0o600

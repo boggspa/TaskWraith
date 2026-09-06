@@ -18,8 +18,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   HOST_PROFILE_CHATS_DIRECTORY,
   HOST_PROFILE_WORKSPACES_FILENAME,
+  MAX_CHAT_BYTES,
   HostProfileDomainStore
 } from './HostProfileDomainStore'
+import { HOST_THREAD_RECORD_TRANSFER_MAX_BYTES } from './HostThreadRecordTransfer'
+import { HOST_THREAD_RECORD_TRANSFER_MAX_BYTES as PROTOCOL_TRANSFER_MAX_BYTES } from '../shared/hostProtocol'
 import { HostPermissionConsentAuthority } from './HostPermissionConsent'
 import { isPlaceholderThreadTitle } from '../shared/threadTitles'
 
@@ -1121,6 +1124,14 @@ describe('HostProfileDomainStore', () => {
     expect(reloaded?.messages[0].content).toHaveLength(300_000)
   })
 
+  // A record the Host can READ but cannot TRANSFER is unreachable in a way no
+  // single-file test would catch: the quarantine cap and the two transfer caps
+  // are three separate constants that must move together. Raising only one
+  // silently strands every chat in the gap between them.
+  it('keeps the chat-record cap and both thread-record transfer caps in agreement', () => {
+    expect(HOST_THREAD_RECORD_TRANSFER_MAX_BYTES).toBe(MAX_CHAT_BYTES)
+    expect(PROTOCOL_TRANSFER_MAX_BYTES).toBe(MAX_CHAT_BYTES)
+  })
   it('skips a record past the read cap instead of failing the whole listing', () => {
     const { profile, store } = open()
     const kept = store.createThread({ scope: 'global', title: 'kept' })
@@ -1129,7 +1140,7 @@ describe('HostProfileDomainStore', () => {
     // parseable JSON — so any pass that actually READ it would throw.
     truncateSync(
       join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${oversized.appChatId}.json`),
-      65 * 1024 * 1024
+      129 * 1024 * 1024
     )
 
     const listed = store.listThreads()
@@ -1142,7 +1153,7 @@ describe('HostProfileDomainStore', () => {
     const oversized = store.createThread({ scope: 'global' })
     truncateSync(
       join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${oversized.appChatId}.json`),
-      65 * 1024 * 1024
+      129 * 1024 * 1024
     )
 
     store.listThreads()
@@ -1166,7 +1177,7 @@ describe('HostProfileDomainStore', () => {
     const thread = store.createThread({ scope: 'global' })
     const chatPath = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
     const original = readFileSync(chatPath, 'utf8')
-    truncateSync(chatPath, 65 * 1024 * 1024)
+    truncateSync(chatPath, 129 * 1024 * 1024)
     expect(store.listThreads()).toEqual([])
     expect(store.quarantinedThreadIds).toEqual([thread.appChatId])
 
@@ -1190,7 +1201,7 @@ describe('HostProfileDomainStore', () => {
     const thread = store.createThread({ scope: 'global' })
     truncateSync(
       join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`),
-      65 * 1024 * 1024
+      129 * 1024 * 1024
     )
 
     store.listThreads()

@@ -753,7 +753,7 @@ export const HOST_APPROVAL_DECIDE_DECISIONS: readonly HostApprovalDecideDecision
 ] as const
 
 /** Maximum durable thread-record artifact size; matches HostProfileDomainStore. */
-export const HOST_THREAD_RECORD_TRANSFER_MAX_BYTES = 64 * 1024 * 1024
+export const HOST_THREAD_RECORD_TRANSFER_MAX_BYTES = 128 * 1024 * 1024
 
 export interface HostThreadRecordPersistArguments {
   transferId: string
