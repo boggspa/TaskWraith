@@ -16,49 +16,49 @@ function sourceBetween(source: string, startMarker: string, endMarker: string): 
   return source.slice(start, end)
 }
 
-describe('first-turn goal creation guard integration', () => {
-  it('detects first turn and allows update_goal to create and return a goal', () => {
+describe('goal creation via the goal-control tool handler', () => {
+  it('delegates the create decision to GoalControlCreation and keeps no turn guard', () => {
     // Locate the goal control tool handler block in index.ts
     const block = sourceBetween(
       indexSource,
       "toolName === 'goal_update' ||\n      toolName === 'update_goal' ||\n      toolName === 'goal_complete' ||\n      toolName === 'goal_blocked'",
-      'No active TaskWraith goal is set for this chat'
+      'const lifecycleStatus ='
     )
 
-    // Verify first turn calculation
-    expect(block).toContain('const isFirstTurn = (chat?.messages || []).length === 1')
+    // The decision is the extracted module's, wired by one import line.
+    expect(indexSource).toContain(
+      "import { resolveGoalControlCreation } from './GoalControlCreation'"
+    )
+    expect(block).toContain('const creation = resolveGoalControlCreation({ toolName, args, chat })')
 
-    // Verify guard relaxation condition. 0ede2bbf6 (the 1.9.7 lint pass) let
-    // prettier join the guard onto one line — pin the shipped single line.
+    // The turn-position guard is GONE. It could not be satisfied: the agent's
+    // own streamed assistant row is appended and saved before its tool call
+    // reaches this handler, so the app instructed the agent to call update_goal
+    // and then refused it every time (observed on mistral, muse and ollama).
+    expect(block).not.toContain('isFirstTurn')
+    expect(block).not.toContain('messages || []).length === 1')
+
+    // Provenance comes from the decision rather than a hard-coded 'user':
+    // agent-authored objective text must not claim a human owns the wording.
     expect(block).toContain(
-      "if (chat && isFirstTurn && (toolName === 'goal_update' || toolName === 'update_goal')) {"
+      'const newGoal = createActiveGoal(chat!.provider!, creation.objective, {'
     )
+    expect(block).toContain('objectiveSource: creation.objectiveSource')
+    expect(block).not.toContain("objectiveSource: 'user'")
 
-    // Verify objective extraction fallback. The same pass split the fallback
-    // chain across lines, so compare a whitespace-normalised form and stop
-    // being a prettier hostage.
-    const flatBlock = block.replace(/\s+/g, ' ')
-    expect(flatBlock).toContain(
-      "args.objective || args.description || chat.messages[0]?.content || 'Auto-created objective'"
-    )
-
-    // Verify goal creation. 0ede2bbf6 dropped the inline require because
-    // createActiveGoal is already a static top-level import in index.ts, and
-    // narrowed the provider with `!` for typecheck.
-    expect(block).not.toContain("require('./GoalState')")
-    expect(indexSource).toContain('createActiveGoal,')
-    expect(block).toContain('const newGoal = createActiveGoal(chat.provider!, objective, {')
-    expect(block).toContain("objectiveSource: 'user'")
-
-    // Verify goal is saved to store
+    // Goal is saved to the store and broadcast
     expect(block).toContain(
-      'const updatedChat = { ...chat, activeGoal: newGoal, updatedAt: Date.now() }'
+      'const updatedChat = { ...chat!, activeGoal: newGoal, updatedAt: Date.now() }'
     )
     expect(block).toContain('AppStore.saveChat(updatedChat)')
     expect(block).toContain('broadcastChatUpdated(updatedChat)')
 
-    // Verify the new goal is returned to the tool caller
+    // The new goal is returned to the tool caller, and a refusal carries the
+    // module's own message (which names update_goal as the remedy) rather than
+    // a literal re-spelled here.
     expect(block).toContain('text = mcpJson({ ok: true, tool: toolName, goal: newGoal })')
+    expect(block).toContain('error: creation.error')
+    expect(block).not.toContain('No active TaskWraith goal is set for this chat')
   })
 
   it('injects hint on first turn only in PromptComposition', () => {

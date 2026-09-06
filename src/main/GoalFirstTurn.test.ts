@@ -1,168 +1,146 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it } from 'vitest'
+import { resolveGoalControlCreation } from './GoalControlCreation'
 
-// Mock the AppStore and related modules
-vi.mock('./store', () => ({
-  AppStore: {
-    getChat: vi.fn(),
-    saveChat: vi.fn()
-  },
-  broadcastChatUpdated: vi.fn()
-}))
+// This file used to carry a hand-copied simulation of the guard that lived in
+// index.ts, including its `messages.length === 1` condition. The simulation
+// passed while the shipped behaviour was broken, because a copy cannot observe
+// that the real call site reads a chat whose assistant row has already landed.
+// The creation half now exercises the extracted module directly; the second
+// block still models PromptComposition's own heuristic, which is separate.
 
-vi.mock('./GoalState', () => ({
-  createActiveGoal: vi.fn((provider: string, objective: string, options: any) => ({
-    id: `goal-${Date.now()}`,
-    provider,
-    objective,
-    status: 'active',
-    createdAt: Date.now(),
-    objectiveSource: options?.objectiveSource || undefined
-  }))
-}))
+describe('First-turn goal creation via update_goal', () => {
+  const mockChat = (messages: { role?: string; content?: string }[] = []) => ({ messages })
+  const mockMessage = (content: string) => ({ role: 'user' as const, content })
 
-// Import the actual module after mocking
-// import { AppStore } from './store'
-// import { createActiveGoal } from './GoalState'
-
-// We'll test the logic by extracting and testing the relevant code path
-// Since the actual implementation is in index.ts which has many dependencies,
-// we test the core logic in isolation
-
-describe('First-turn goal creation guard relaxation', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
-  const mockChat = (messages: any[] = [], activeGoal: any = null) => ({
-    id: 'test-chat',
-    provider: 'codex' as const,
-    messages,
-    activeGoal,
-    updatedAt: Date.now()
-  })
-
-  const mockMessage = (content: string) => ({
-    id: 'msg-1',
-    role: 'user' as const,
-    content
-  })
-
-  // Simulate the guard relaxation logic from index.ts:39424-39449
-  const shouldCreateGoalOnFirstTurn = (
-    chat: any,
-    toolName: string,
-    args: Record<string, any>
-  ): { shouldCreate: boolean; objective?: string } => {
-    const goal = chat?.activeGoal
-    if (!chat || !goal) {
-      const isFirstTurn = (chat?.messages || []).length === 1
-      if (chat && isFirstTurn && (toolName === 'goal_update' || toolName === 'update_goal')) {
-        const objective = String(
-          args.objective ||
-            args.description ||
-            chat.messages[0]?.content ||
-            'Auto-created objective'
-        )
-        return { shouldCreate: true, objective }
-      }
-    }
-    return { shouldCreate: false }
-  }
-
-  describe('First turn detection', () => {
-    it('detects first turn when only user message exists', () => {
-      const chat = mockChat([mockMessage('Fix the bug in AuthService.ts')], null)
-      const result = shouldCreateGoalOnFirstTurn(chat, 'update_goal', {})
-      expect(result.shouldCreate).toBe(true)
-      expect(result.objective).toBe('Fix the bug in AuthService.ts')
+  describe('Turn position', () => {
+    it('creates when only the user message exists', () => {
+      const result = resolveGoalControlCreation({
+        toolName: 'update_goal',
+        args: {},
+        chat: mockChat([mockMessage('Fix the bug in AuthService.ts')])
+      })
+      expect(result).toEqual({
+        create: true,
+        objective: 'Fix the bug in AuthService.ts',
+        objectiveSource: 'user'
+      })
     })
 
-    it('does not detect first turn when multiple messages exist', () => {
-      const chat = mockChat([mockMessage('First'), mockMessage('Second')], null)
-      const result = shouldCreateGoalOnFirstTurn(chat, 'update_goal', {})
-      expect(result.shouldCreate).toBe(false)
+    it('still creates once the thread has more than one message', () => {
+      // The regression: the agent's own streamed reply lands before its tool
+      // call, so this is what every real attempt actually looked like.
+      const result = resolveGoalControlCreation({
+        toolName: 'update_goal',
+        args: {},
+        chat: mockChat([mockMessage('First'), { role: 'assistant', content: 'Second' }])
+      })
+      expect(result).toMatchObject({ create: true, objective: 'First' })
     })
 
-    it('does not detect first turn when no messages exist', () => {
-      const chat = mockChat([], null)
-      const result = shouldCreateGoalOnFirstTurn(chat, 'update_goal', {})
-      expect(result.shouldCreate).toBe(false)
+    it("creates from the call's own objective when the thread has no messages", () => {
+      const result = resolveGoalControlCreation({
+        toolName: 'update_goal',
+        args: { objective: 'Stated objective' },
+        chat: mockChat([])
+      })
+      expect(result).toMatchObject({ create: true, objective: 'Stated objective' })
     })
   })
 
   describe('Goal tool detection', () => {
-    it('allows goal_update on first turn', () => {
-      const chat = mockChat([mockMessage('Implement feature X')], null)
-      const result = shouldCreateGoalOnFirstTurn(chat, 'goal_update', {})
-      expect(result.shouldCreate).toBe(true)
-      expect(result.objective).toBe('Implement feature X')
+    it('allows goal_update', () => {
+      const result = resolveGoalControlCreation({
+        toolName: 'goal_update',
+        args: {},
+        chat: mockChat([mockMessage('Implement feature X')])
+      })
+      expect(result).toMatchObject({ create: true, objective: 'Implement feature X' })
     })
 
-    it('allows update_goal on first turn', () => {
-      const chat = mockChat([mockMessage('Refactor the module')], null)
-      const result = shouldCreateGoalOnFirstTurn(chat, 'update_goal', {})
-      expect(result.shouldCreate).toBe(true)
-      expect(result.objective).toBe('Refactor the module')
+    it('allows update_goal', () => {
+      const result = resolveGoalControlCreation({
+        toolName: 'update_goal',
+        args: {},
+        chat: mockChat([mockMessage('Refactor the module')])
+      })
+      expect(result).toMatchObject({ create: true, objective: 'Refactor the module' })
     })
 
-    it('does not allow goal_complete on first turn', () => {
-      const chat = mockChat([mockMessage('Complete the task')], null)
-      const result = shouldCreateGoalOnFirstTurn(chat, 'goal_complete', {})
-      expect(result.shouldCreate).toBe(false)
+    it('does not allow goal_complete to create', () => {
+      const result = resolveGoalControlCreation({
+        toolName: 'goal_complete',
+        args: {},
+        chat: mockChat([mockMessage('Complete the task')])
+      })
+      expect(result.create).toBe(false)
     })
 
-    it('does not allow goal_blocked on first turn', () => {
-      const chat = mockChat([mockMessage('Task is blocked')], null)
-      const result = shouldCreateGoalOnFirstTurn(chat, 'goal_blocked', {})
-      expect(result.shouldCreate).toBe(false)
+    it('does not allow goal_blocked to create', () => {
+      const result = resolveGoalControlCreation({
+        toolName: 'goal_blocked',
+        args: {},
+        chat: mockChat([mockMessage('Task is blocked')])
+      })
+      expect(result.create).toBe(false)
     })
   })
 
   describe('Objective extraction', () => {
     it('prefers args.objective when available', () => {
-      const chat = mockChat([mockMessage('Original prompt')], null)
-      const result = shouldCreateGoalOnFirstTurn(chat, 'update_goal', {
-        objective: 'Custom objective'
+      const result = resolveGoalControlCreation({
+        toolName: 'update_goal',
+        args: { objective: 'Custom objective' },
+        chat: mockChat([mockMessage('Original prompt')])
       })
-      expect(result.objective).toBe('Custom objective')
+      expect(result).toMatchObject({ objective: 'Custom objective' })
     })
 
     it('falls back to args.description when objective not available', () => {
-      const chat = mockChat([mockMessage('Original prompt')], null)
-      const result = shouldCreateGoalOnFirstTurn(chat, 'update_goal', {
-        description: 'Description objective'
+      const result = resolveGoalControlCreation({
+        toolName: 'update_goal',
+        args: { description: 'Description objective' },
+        chat: mockChat([mockMessage('Original prompt')])
       })
-      expect(result.objective).toBe('Description objective')
+      expect(result).toMatchObject({ objective: 'Description objective' })
     })
 
-    it('falls back to first message content when neither objective nor description available', () => {
-      const chat = mockChat([mockMessage('First message content')], null)
-      const result = shouldCreateGoalOnFirstTurn(chat, 'update_goal', {})
-      expect(result.objective).toBe('First message content')
+    it('falls back to first message content when neither is available', () => {
+      const result = resolveGoalControlCreation({
+        toolName: 'update_goal',
+        args: {},
+        chat: mockChat([mockMessage('First message content')])
+      })
+      expect(result).toMatchObject({ objective: 'First message content' })
     })
 
-    it('falls back to default when first message is empty', () => {
-      const chat = mockChat([mockMessage('')], null)
-      const result = shouldCreateGoalOnFirstTurn(chat, 'update_goal', {})
-      expect(result.objective).toBe('Auto-created objective')
+    it('falls back to the placeholder when the first message is empty', () => {
+      const result = resolveGoalControlCreation({
+        toolName: 'update_goal',
+        args: {},
+        chat: mockChat([mockMessage('')])
+      })
+      expect(result).toMatchObject({ objective: 'Auto-created objective' })
     })
   })
 
   describe('Existing goal handling', () => {
-    it('does not create goal when activeGoal already exists', () => {
-      const existingGoal = { id: 'existing', objective: 'Existing goal' }
-      const chat = mockChat([mockMessage('New prompt')], existingGoal)
-      const result = shouldCreateGoalOnFirstTurn(chat, 'update_goal', {
-        objective: 'New objective'
+    it('does not create when an activeGoal already exists', () => {
+      const result = resolveGoalControlCreation({
+        toolName: 'update_goal',
+        args: { objective: 'New objective' },
+        chat: mockChat([mockMessage('New prompt')]),
+        hasActiveGoal: true
       })
-      expect(result.shouldCreate).toBe(false)
+      expect(result.create).toBe(false)
     })
 
-    it('does not create goal when chat is null', () => {
-      const result = shouldCreateGoalOnFirstTurn(null, 'update_goal', {
-        objective: 'Some objective'
+    it('does not create when the chat is null', () => {
+      const result = resolveGoalControlCreation({
+        toolName: 'update_goal',
+        args: { objective: 'Some objective' },
+        chat: null
       })
-      expect(result.shouldCreate).toBe(false)
+      expect(result.create).toBe(false)
     })
   })
 })

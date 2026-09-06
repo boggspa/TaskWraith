@@ -2190,6 +2190,7 @@ import {
   shouldMintFreshGoalIdentity,
   updateActiveGoalLifecycle
 } from './GoalState'
+import { resolveGoalControlCreation } from './GoalControlCreation'
 import {
   CODEX_THREAD_GOAL_CLEAR_METHOD,
   CODEX_THREAD_GOAL_SET_METHOD,
@@ -42784,18 +42785,17 @@ async function executeUnscopedGeminiMcpTool(
           error: 'Execution graph attempts cannot read or mutate root-task goal state.'
         })
       } else if (!chat || !goal) {
-        const isFirstTurn = (chat?.messages || []).length === 1
-        if (chat && isFirstTurn && (toolName === 'goal_update' || toolName === 'update_goal')) {
-          const objective = String(
-            args.objective ||
-              args.description ||
-              chat.messages[0]?.content ||
-              'Auto-created objective'
-          )
-          const newGoal = createActiveGoal(chat.provider!, objective, {
-            objectiveSource: 'user'
+        // Creation is decided by GoalControlCreation.ts. It used to require
+        // chat.messages.length === 1 here, which no model could satisfy: the
+        // agent's own streamed reply is appended and saved before its tool call
+        // reaches this handler, so the app told the agent to call update_goal
+        // and then refused it every time.
+        const creation = resolveGoalControlCreation({ toolName, args, chat })
+        if (creation.create) {
+          const newGoal = createActiveGoal(chat!.provider!, creation.objective, {
+            objectiveSource: creation.objectiveSource
           })
-          const updatedChat = { ...chat, activeGoal: newGoal, updatedAt: Date.now() }
+          const updatedChat = { ...chat!, activeGoal: newGoal, updatedAt: Date.now() }
           AppStore.saveChat(updatedChat)
           broadcastChatUpdated(updatedChat)
           text = mcpJson({ ok: true, tool: toolName, goal: newGoal })
@@ -42804,7 +42804,7 @@ async function executeUnscopedGeminiMcpTool(
           text = mcpJson({
             ok: false,
             tool: toolName,
-            error: 'No active TaskWraith goal is set for this chat.'
+            error: creation.error
           })
         }
       } else {

@@ -2633,7 +2633,9 @@ describe('runOllamaProvider streaming', () => {
     expect(rawToolResults).toEqual([
       '{"ok":false,"tool":"update_goal","error":"No active TaskWraith goal is set for this chat."}'
     ])
-    expect(JSON.stringify(chatBodies[1].messages)).toContain('Do NOT call update_goal')
+    expect(JSON.stringify(chatBodies[1].messages)).toContain(
+      'Do NOT call goal_complete or goal_blocked'
+    )
     expect(JSON.stringify(chatBodies[1].messages)).toContain('not todo lists')
     expect(
       lines.filter((line) => line.payload.type === 'content').map((line) => line.payload.text)
@@ -2733,7 +2735,7 @@ describe('runOllamaProvider streaming', () => {
 
     expect(executeTool).toHaveBeenCalledTimes(1)
     expect(chatBodies).toHaveLength(2)
-    expect(chatBodies[1]).toContain('Do NOT call update_goal')
+    expect(chatBodies[1]).toContain('Do NOT call goal_complete or goal_blocked')
     expect(chatBodies[1]).toContain('assigned ensemble slice')
     expect(chatBodies[1]).toContain('role / authority boundary from the capsule')
     expect(
@@ -5291,7 +5293,11 @@ describe('repeated-tool-call guard', () => {
     expect(isOllamaNoActiveGoalToolResult('goal_update', result)).toBe(true)
     expect(isOllamaNoActiveGoalToolResult('read_file', result)).toBe(false)
     const nudge = ollamaNoActiveGoalToolNudge('goal_update')
-    expect(nudge).toContain('Do NOT call update_goal')
+    // update_goal is the REMEDY, not part of the ban: it creates the missing
+    // goal. Only the two lifecycle-only tools are told to stand down.
+    expect(nudge).toContain('Do NOT call goal_complete or goal_blocked')
+    expect(nudge).not.toContain('Do NOT call update_goal')
+    expect(nudge).toContain('call update_goal once WITH an objective')
     expect(nudge).toContain('not todo lists')
     expect(ollamaNoActiveGoalToolNudge('goal_update', { repeated: true })).toContain(
       'already retried'

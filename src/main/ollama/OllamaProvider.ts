@@ -856,8 +856,8 @@ export function ollamaNoActiveGoalToolNudge(
   return appendOllamaStickyAskRemnant(
     [
       prefix,
-      'Do NOT call update_goal, goal_update, goal_complete, or goal_blocked again in this run.',
-      'Those tools only change the lifecycle of an existing TaskWraith goal; they are not todo lists, progress notes, or planning tools. Note: On the very first turn of a chat, you may call update_goal to create the initial goal.',
+      'Do NOT call goal_complete or goal_blocked again in this run.',
+      'Those two only change the lifecycle of an existing TaskWraith goal; they are not todo lists, progress notes, or planning tools. If this thread genuinely needs a durable objective, call update_goal once WITH an objective and it will create one.',
       ...ollamaEnsembleRetryReminder(options),
       options.ensembleRun
         ? 'Continue inside your assigned ensemble slice with the available workspace tools, or give a normal final answer with the next local step.'
