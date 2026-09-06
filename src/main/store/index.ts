@@ -382,6 +382,10 @@ import {
   type ChatComposerSelectionPatchRequest
 } from '../../shared/chatComposerSelectionPatch'
 import { ChatListIndexStore } from './ChatListIndexStore'
+import {
+  CHAT_RECORD_CACHE_MAX_BYTES,
+  selectChatRecordCacheEvictions
+} from './ChatRecordCacheBudget'
 import { collectOrphanSubThreadCandidates } from './OrphanSubThreadScan'
 import { ChatListRebuildMemo } from './ChatListRebuildMemo'
 import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
@@ -5890,6 +5894,38 @@ export class AppStore {
     string,
     { mtimeMs: number; size: number; record: ChatRecord }
   >()
+
+  /** Cache a parsed record and hold the map inside its byte budget.
+   *
+   * Every write goes through here so the bound cannot be bypassed by adding a
+   * new `.set` site. Insertion order is recency order -- `touchChatRecord`
+   * re-inserts on a hit -- so the budget evicts least-recently-used first and
+   * never touches an unflushed (`mtimeMs === -1`) record. */
+  private static rememberChatRecord(
+    chatId: string,
+    entry: { mtimeMs: number; size: number; record: ChatRecord }
+  ): void {
+    this.chatRecordCache.delete(chatId)
+    this.chatRecordCache.set(chatId, entry)
+    if (this.chatRecordCache.size <= 1) return
+    const evictions = selectChatRecordCacheEvictions(
+      [...this.chatRecordCache.entries()].map(([id, held]) => ({
+        chatId: id,
+        size: held.size,
+        mtimeMs: held.mtimeMs
+      })),
+      CHAT_RECORD_CACHE_MAX_BYTES
+    )
+    for (const evicted of evictions) this.chatRecordCache.delete(evicted)
+  }
+
+  /** Move a cache hit to the recency tail so the budget evicts cold records. */
+  private static touchChatRecord(chatId: string): void {
+    const held = this.chatRecordCache.get(chatId)
+    if (!held) return
+    this.chatRecordCache.delete(chatId)
+    this.chatRecordCache.set(chatId, held)
+  }
   /** Serializes only the async binding patch for one chat. Ordinary legacy
    * saveChat callers remain independent, so this is a narrow race guard rather
    * than a new whole-record persistence protocol. */
@@ -5938,7 +5974,7 @@ export class AppStore {
                 hostPersistUnconfirmedChatIds.delete(chatId)
               }
               const record = chatComposerSelectionOverlayStore.apply(onDisk)
-              this.chatRecordCache.set(chatId, {
+              this.rememberChatRecord(chatId, {
                 mtimeMs: stat.mtimeMs,
                 size: stat.size,
                 record
@@ -5965,6 +6001,7 @@ export class AppStore {
     if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
       const record = chatComposerSelectionOverlayStore.apply(cached.record)
       cached.record = record
+      this.touchChatRecord(chatId)
       return record
     }
     // Stage 3 dual-read: assemble the v2 candidate once (flag-gated). Any v2
@@ -5987,7 +6024,7 @@ export class AppStore {
     if (!chat) {
       if (v2Candidate) {
         const record = chatComposerSelectionOverlayStore.apply(v2Candidate)
-        this.chatRecordCache.set(chatId, { mtimeMs: stat.mtimeMs, size: stat.size, record })
+        this.rememberChatRecord(chatId, { mtimeMs: stat.mtimeMs, size: stat.size, record })
         return record
       }
       return null
@@ -6034,7 +6071,7 @@ export class AppStore {
       }
     }
     record = chatComposerSelectionOverlayStore.apply(record)
-    this.chatRecordCache.set(chatId, { mtimeMs: stat.mtimeMs, size: stat.size, record })
+    this.rememberChatRecord(chatId, { mtimeMs: stat.mtimeMs, size: stat.size, record })
     return record
   }
 
@@ -6595,7 +6632,7 @@ export class AppStore {
           const cached = this.chatRecordCache.get(request.chatId)
           if (cached) cached.record = result.chat
           else {
-            this.chatRecordCache.set(request.chatId, {
+            this.rememberChatRecord(request.chatId, {
               mtimeMs: -1,
               size: -1,
               record: result.chat
@@ -7443,7 +7480,7 @@ export class AppStore {
       preparation.authoredTranscript
     )
     // In-memory projection: this process reads the new record immediately.
-    this.chatRecordCache.set(normalizedChat.appChatId, {
+    this.rememberChatRecord(normalizedChat.appChatId, {
       mtimeMs: -1,
       size: -1,
       record: normalizedChat
@@ -7625,7 +7662,7 @@ export class AppStore {
         /* writeJson just succeeded; stat failure is a kernel race */
       }
       if (postStat) {
-        this.chatRecordCache.set(normalizedChat.appChatId, {
+        this.rememberChatRecord(normalizedChat.appChatId, {
           mtimeMs: postStat.mtimeMs,
           size: postStat.size,
           record: normalizedChat
@@ -7641,7 +7678,7 @@ export class AppStore {
       }
       // Optimistic cache with mtimeMs: -1 dirty marker — readChatRecordCached
       // skips the compatibility-file stat and returns V2's current record.
-      this.chatRecordCache.set(normalizedChat.appChatId, {
+      this.rememberChatRecord(normalizedChat.appChatId, {
         mtimeMs: -1,
         size: -1,
         record: normalizedChat
@@ -7691,7 +7728,7 @@ export class AppStore {
                 postStatActual.mtimeMs !== preStatActual.mtimeMs ||
                 postStatActual.size !== preStatActual.size
               if (wrote) {
-                this.chatRecordCache.set(chatId, {
+                this.rememberChatRecord(chatId, {
                   mtimeMs: postStatActual.mtimeMs,
                   size: postStatActual.size,
                   record: normalizedChat
@@ -7904,7 +7941,7 @@ export class AppStore {
     expectedRevision: number
   ): HostThreadRecordPersistInput {
     hostPersistRebaseByChatId.set(chatId, { base, desired: rebased })
-    this.chatRecordCache.set(chatId, { mtimeMs: -1, size: -1, record: rebased })
+    this.rememberChatRecord(chatId, { mtimeMs: -1, size: -1, record: rebased })
     hostPersistShadowChatIds.add(chatId)
     hostPersistUnconfirmedChatIds.add(chatId)
     const recovered = { chatId, record: rebased, expectedRevision }
