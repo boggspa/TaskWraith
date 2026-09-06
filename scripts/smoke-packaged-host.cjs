@@ -173,6 +173,7 @@ function validateHostPayload(hostRoot, label) {
       'MuseLongTurnProgress.js',
       'MuseMcpConfig.js',
       'MuseProbe.js',
+      'MuseReasoningProjection.js',
       'MuseRun.js',
       'MuseSessionLog.js',
       'MuseSkillPin.js',

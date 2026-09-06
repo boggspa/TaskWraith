@@ -41,6 +41,7 @@ const PURE_MUSE_CLOSURE = new Set([
   'MuseLongTurnProgress.ts',
   'MuseMcpConfig.ts',
   'MuseProbe.ts',
+  'MuseReasoningProjection.ts',
   'MuseRun.ts',
   'MuseSessionLog.ts',
   'MuseSkillPin.ts',
