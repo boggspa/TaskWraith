@@ -29,6 +29,19 @@ describe('museMspSubjectToService', () => {
     expect(museMspSubjectToService({ kind: 'network' })).toBe('mcpTools')
   })
 
+  it('maps every kind the MSP schema documents, not just the ones we guessed', () => {
+    // `ApprovalSubject.kind` is an OPEN discriminator; these five are the
+    // documented values (muse schema generate-json-schema, 1.0.3-R2198.1).
+    // None of them may reach the fallthrough.
+    expect(museMspSubjectToService({ kind: 'shell' })).toBe('shellCommands')
+    expect(museMspSubjectToService({ kind: 'fileAccess' })).toBe('fileChanges')
+    expect(museMspSubjectToService({ kind: 'network' })).toBe('mcpTools')
+    expect(museMspSubjectToService({ kind: 'process' })).toBe('shellCommands')
+    // NOT shellCommands: a session grant on shell commands would otherwise
+    // silently cover every native Muse tool call.
+    expect(museMspSubjectToService({ kind: 'tool' })).toBe('mcpTools')
+  })
+
   it('gates a file read as a file change, having no read-only service to use', () => {
     // AgenticServiceId has no read service; the orchestrator's own read-only
     // fast path is what keeps genuine reads cheap.

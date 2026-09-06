@@ -27,10 +27,18 @@ export interface MuseMspApprovalAsk {
 /**
  * MSP approval subject -> agentic service.
  *
- * Mirrors `grokToolKindToService`, including its posture: the DEFAULT is
- * `shellCommands`, the most heavily gated service, so an approval subject this
- * mapping does not recognise is over-gated rather than waved through. A future
- * Muse subject kind therefore fails safe.
+ * The MSP schema documents `ApprovalSubject.kind` as an OPEN discriminator with
+ * five known values — `shell | fileAccess | network | process | tool` — and
+ * says unknown kinds "are rendered generically and never auto-approved by
+ * clients". All five are mapped explicitly below; the fallthrough exists for
+ * the sixth Muse invents.
+ *
+ * The default is `shellCommands`, the most heavily gated service, so an
+ * unrecognised subject is over-gated rather than waved through. Note that
+ * over-gating is not free in one direction: bucketing a generic `tool` under
+ * `shellCommands` would mean a session grant on shell commands silently
+ * covered every native Muse tool, which is why `tool` is mapped to `mcpTools`
+ * rather than left to the default.
  *
  * There is no read-only or network service in `AgenticServiceId`, so a file
  * subject maps to `fileChanges` whatever its `access` says — Muse only raises
@@ -52,6 +60,10 @@ export function museMspSubjectToService(
     case 'network':
     case 'fetch':
     case 'web':
+    // A generic native Muse tool. `mcpTools` is the bucket every other
+    // provider's tool calls land in; leaving it to the shellCommands default
+    // would let a shell grant cover it.
+    case 'tool':
       return 'mcpTools'
     case 'shell':
     case 'command':
