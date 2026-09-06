@@ -19,8 +19,7 @@ export {
   parseAcpPermissionRequest,
   buildAcpPermissionResponse,
   isAcpInboundRequest,
-  buildAcpMethodNotFoundResponse,
-  acpDiffBlockToolInput
+  buildAcpMethodNotFoundResponse
 } from '../grok/GrokAcpProtocol'
 
 export type {

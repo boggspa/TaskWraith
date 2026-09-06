@@ -134,7 +134,7 @@ function acpToolContentToText(value: unknown): string {
  * Only the first diff block is read: one ACP tool call describes one edit, and
  * `locations` — not repeated diff blocks — is how ACP reports multiple targets.
  */
-export function acpDiffBlockToolInput(content: unknown): Record<string, unknown> {
+function acpDiffBlockToolInput(content: unknown): Record<string, unknown> {
   if (!Array.isArray(content)) return {}
   for (const entry of content) {
     const block = asObject(entry)
