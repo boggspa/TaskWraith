@@ -294,6 +294,120 @@ describe('runMuseMspTurn — transcript projection', () => {
     expect(thinking?.thinkingId).toBe('r1')
   })
 
+  it('streams reasoning deltas as thinking, never as the assistant answer', async () => {
+    const { child, events } = start()
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/started',
+      params: {
+        sessionId: 'sess-1',
+        item: { itemId: 'r1', kind: 'reasoning', revision: 1, status: 'inProgress', summary: [] }
+      }
+    })
+    // Absent `field` defaults to `text`. Without routing by item kind this
+    // private reasoning became user-visible content AND was concatenated into
+    // the final answer.
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/delta',
+      params: { sessionId: 'sess-1', itemId: 'r1', delta: 'weighing options' }
+    })
+    expect(events.filter((e) => e.type === 'content')).toHaveLength(0)
+    const thinking = events.filter((e) => e.type === 'thinking')
+    expect(thinking).toHaveLength(1)
+    expect(thinking[0].text).toBe('weighing options')
+    expect(thinking[0].thinkingId).toBe('r1')
+    // Incremental, so the transcript appends instead of restating.
+    expect(thinking[0].thinkingCumulative).toBe(false)
+  })
+
+  it('treats a summary delta as reasoning even for an unannounced item', async () => {
+    const { child, events } = start()
+    await driveToTurn(child)
+    // No item/started, so the kind map is empty — `summary` is unambiguous.
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/delta',
+      params: { sessionId: 'sess-1', itemId: 'r9', field: 'summary', delta: 'private' }
+    })
+    expect(events.filter((e) => e.type === 'content')).toHaveLength(0)
+    expect(events.filter((e) => e.type === 'thinking')[0]?.text).toBe('private')
+  })
+
+  it('keeps an unannounced text delta as the answer', async () => {
+    const { child, events } = start()
+    await driveToTurn(child)
+    // The answer-loss fix must survive kind-routing: an unknown item on a text
+    // field is still the assistant reply.
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/delta',
+      params: { sessionId: 'sess-1', itemId: 'a9', delta: 'the answer' }
+    })
+    expect(events.filter((e) => e.type === 'thinking')).toHaveLength(0)
+    expect(events.filter((e) => e.type === 'content')[0]?.text).toBe('the answer')
+  })
+
+  it('does not restate a summary the deltas already showed', async () => {
+    const { child, events } = start()
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/started',
+      params: {
+        sessionId: 'sess-1',
+        item: { itemId: 'r1', kind: 'reasoning', revision: 1, status: 'inProgress', summary: [] }
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/delta',
+      params: { sessionId: 'sess-1', itemId: 'r1', delta: 'first\nsecond' }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/completed',
+      params: {
+        sessionId: 'sess-1',
+        item: {
+          itemId: 'r1',
+          kind: 'reasoning',
+          revision: 2,
+          status: 'completed',
+          summary: ['first', 'second']
+        }
+      }
+    })
+    // One streamed chunk, no completed restatement on top of it.
+    expect(events.filter((e) => e.type === 'thinking')).toHaveLength(1)
+  })
+
+  it('never puts the raw reasoning item on the diagnostic surface', async () => {
+    const { child, events } = start()
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/completed',
+      params: {
+        sessionId: 'sess-1',
+        item: {
+          itemId: 'r1',
+          kind: 'reasoning',
+          revision: 2,
+          status: 'completed',
+          summary: ['shown summary'],
+          text: 'ENCRYPTED-PRIVATE-REASONING'
+        }
+      }
+    })
+    const thinking = events.find((e) => e.type === 'thinking')
+    expect(thinking?.text).toBe('shown summary')
+    // Same narrowing contract MuseReasoningProjection enforces on the exec lane.
+    expect(JSON.stringify(thinking?.raw)).not.toContain('ENCRYPTED-PRIVATE-REASONING')
+    expect(thinking?.raw).toEqual({ kind: 'reasoning', itemId: 'r1', text: 'shown summary' })
+  })
+
   it('pairs a tool call with its result using the provider call id', async () => {
     const { child, events } = start()
     await driveToTurn(child)

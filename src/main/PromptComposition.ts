@@ -1,4 +1,5 @@
 import { planPromptContinuity } from './continuity/ContinuityPrompt'
+import { museMspSessionResumeEnabled } from './museGate'
 import { resolveOllamaContextBudget } from './ollama/OllamaContextBudget'
 import {
   formatOllamaSessionMemoryForPrompt,
@@ -1581,11 +1582,26 @@ export interface ComposeRunPromptResult {
  * the input shape, and side-effecting bookkeeping is returned as data. */
 export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPromptResult {
   const result = composeRunPromptCore(input)
-  if (!input.verbatimPrompt && !input.continuityIsolated && input.taskWraithMcpAdvertised !== false &&
-      !input.resumeSessionId && ['taskwraith-gateway-v20', 'taskwraith-gateway-v20-mesh', 'taskwraith-gateway-solo-v4'].includes(input.taskWraithMcpProfileId || '')) {
-    const hint = 'For long tasks, use capability_search when listed to discover private task checkpoints and selective history reads. Keep raw tool output in history.'
+  if (
+    !input.verbatimPrompt &&
+    !input.continuityIsolated &&
+    input.taskWraithMcpAdvertised !== false &&
+    !input.resumeSessionId &&
+    [
+      'taskwraith-gateway-v20',
+      'taskwraith-gateway-v20-mesh',
+      'taskwraith-gateway-solo-v4'
+    ].includes(input.taskWraithMcpProfileId || '')
+  ) {
+    const hint =
+      'For long tasks, use capability_search when listed to discover private task checkpoints and selective history reads. Keep raw tool output in history.'
     result.contextualPrompt = `${hint}\n\n${result.contextualPrompt}`
-    result.envelopeLayers.unshift({ id: 'continuity_tools', label: 'Task history tool discovery', state: 'applied', content: hint })
+    result.envelopeLayers.unshift({
+      id: 'continuity_tools',
+      label: 'Task history tool discovery',
+      state: 'applied',
+      content: hint
+    })
   }
   if (input.continuityChat && !input.verbatimPrompt) {
     const continuity = planPromptContinuity({
@@ -1763,11 +1779,18 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   // context-blind turn that *looks* resumed. If the lane ever adopts
   // session/load, this becomes conditional and this comment must change with it.
   const mistralNeedsContextInjection = provider === 'mistral'
-  // Muse opaque `muse exec --json` opens a fresh isolated home + UUID session
-  // each turn. Native Muse session files are not resumed across TaskWraith
-  // turns, so the host must re-inject compact conversation context — same
-  // class as Cursor Path-B / Mistral Vibe ACP.
-  const museNeedsContextInjection = provider === 'muse'
+  // Muse has two transports and they differ here. `muse exec --json` opens a
+  // fresh isolated home + UUID session every turn, so the host must re-inject
+  // compact conversation context — same class as Cursor Path-B / Mistral Vibe
+  // ACP. The MSP lane genuinely resumes (`session/resume` against a durable
+  // per-chat seat), so injecting there re-sends a transcript the provider
+  // already holds and the user pays for it twice.
+  //
+  // Gated on the transport, NOT on `resumeSessionId` alone: the exec lane also
+  // receives a stored session id it never resumes, so `!resumeSessionId` on its
+  // own would produce a context-blind exec turn that merely looks resumed.
+  const museNeedsContextInjection =
+    provider === 'muse' && !(museMspSessionResumeEnabled() && Boolean(resumeSessionId))
   // Devin ACP mirrors the Mistral lane: `devin acp` opens a fresh session each
   // turn (devinSeatSessionsEnabled is hard-false, so there is no provider-side
   // history to defer to) and the host must re-inject compact conversation

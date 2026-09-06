@@ -198,7 +198,11 @@ export function buildMuseMspTurnInput(
 export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRunOutcome> {
   const binaryPath = requireNonEmpty(input.binaryPath, 'binaryPath')
   const workspacePath = requireNonEmpty(input.workspacePath, 'workspacePath')
-  const prompt = requireNonEmpty(input.prompt, 'prompt')
+  // Validated, NOT trimmed: the exec lane sends `input.prompt` verbatim, and a
+  // transport that quietly strips surrounding whitespace makes the two lanes
+  // send different bytes for the same turn.
+  requireNonEmpty(input.prompt, 'prompt')
+  const prompt = input.prompt
   const runId = requireNonEmpty(input.runId, 'runId')
   const now = input.now ?? (() => Date.now())
   const startedAt = now()

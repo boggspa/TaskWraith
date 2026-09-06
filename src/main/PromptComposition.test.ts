@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, afterEach } from 'vitest'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_NOTE,
   TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE,
@@ -98,9 +98,7 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
 
     expect(
       sanitizeTaskWraithMcpPromptClaims(prompt, { advertised: false, coreProfile: false })
-    ).toBe(
-      `${nativeCursorContinuity}\n\n${literalLaterInUserText}\n${fileLiteralLaterInUserText}`
-    )
+    ).toBe(`${nativeCursorContinuity}\n\n${literalLaterInUserText}\n${fileLiteralLaterInUserText}`)
     expect(
       sanitizeTaskWraithMcpPromptClaims(prompt, { advertised: true, coreProfile: false })
     ).toBe(prompt)
@@ -976,6 +974,48 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt).not.toContain('TaskWraith MCP server')
   })
 
+  describe('Muse context injection follows the transport, not the stored id', () => {
+    const priorTurns = [
+      { role: 'user' as const, content: 'earlier question' },
+      { role: 'assistant' as const, content: 'earlier answer' }
+    ]
+    function compose(resumeSessionId?: string): ReturnType<typeof composeRunPrompt> {
+      return composeRunPrompt({
+        instructionContext: null,
+        provider: 'muse',
+        finalPrompt: 'Continue the work.',
+        messages: priorTurns as never,
+        chatContextTurns: 6,
+        codexHandoffsApplied: [],
+        isGlobalRun: false,
+        approvalMode: 'default',
+        providerLabel: 'Muse',
+        ...(resumeSessionId ? { resumeSessionId } : {})
+      })
+    }
+    afterEach(() => {
+      delete process.env.TASKWRAITH_MUSE_MSP
+    })
+
+    it('injects on the exec lane even though it holds a stored session id', () => {
+      // `resolveResumeDecision` hands every non-gemini provider the stored id,
+      // but the exec lane never resumes it. Skipping injection here would make
+      // a context-blind turn that merely looks resumed.
+      delete process.env.TASKWRAITH_MUSE_MSP
+      expect(compose('sess-1').contextTurnsApplied).toBeGreaterThan(0)
+    })
+
+    it('stops injecting once the MSP lane will actually resume the session', () => {
+      process.env.TASKWRAITH_MUSE_MSP = '1'
+      expect(compose('sess-1').contextTurnsApplied).toBe(0)
+    })
+
+    it('still injects on a first MSP turn, which has nothing to resume', () => {
+      process.env.TASKWRAITH_MUSE_MSP = '1'
+      expect(compose().contextTurnsApplied).toBeGreaterThan(0)
+    })
+  })
+
   it('steers Grok write-mode runs to TaskWraith MCP tools', () => {
     const result = composeRunPrompt({
       instructionContext: null,
@@ -1253,7 +1293,9 @@ describe('composeRunPrompt sub-thread returns', () => {
       // Verify step degrades gracefully when the repo has no configured task.
       expect(result.contextualPrompt).toContain('Say when no check exists')
       expect(result.contextualPrompt).toContain('never claim unrun checks passed')
-      expect(result.contextualPrompt).toContain('Land every verified filesystem-changing logical slice')
+      expect(result.contextualPrompt).toContain(
+        'Land every verified filesystem-changing logical slice'
+      )
       expect(result.contextualPrompt).toContain('mode="pathspec"')
       expect(result.contextualPrompt).toContain('mode="private_index"')
       expect(result.contextualPrompt).toContain('Never make a bare shared-index commit')

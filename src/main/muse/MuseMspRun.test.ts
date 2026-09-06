@@ -195,6 +195,19 @@ describe('runMuseMspProvider', () => {
     expect(sent).toContain('hello')
   })
 
+  it('sends the prompt byte-for-byte, matching what the exec lane forwards', async () => {
+    const child = new FakeMspChild()
+    // `runMuseProvider` never trims; a transport that quietly strips
+    // surrounding whitespace makes the two lanes send different bytes for the
+    // same turn, and a whitespace-only prompt throw where exec would run.
+    const pending = run(child, { durableSeat: seat('verbatim'), prompt: '  spaced prompt\n' })
+    await playTurn(child)
+    await pending
+
+    const sent = child.sentMethod('turn/start')?.params.input[0].text as string
+    expect(sent).toContain('  spaced prompt\n')
+  })
+
   it('carries the provider window as the flat totalTokenLimit the meter reads', async () => {
     const child = new FakeMspChild()
     const pending = run(child, { durableSeat: seat('usage') })

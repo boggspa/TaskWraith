@@ -240,6 +240,15 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   let turnTerminal: string | null = null
   let turnError: MuseMspTurnError | null = null
   let sawTurnCompleted = false
+  // itemId -> item.kind, recorded from the item lifecycle so a DELTA can be
+  // routed by the kind of the item it belongs to. Without it a reasoning delta
+  // with an absent `field` (the schema default is `text`) becomes user-visible
+  // assistant text AND is concatenated into the final answer.
+  const itemKinds = new Map<string, string>()
+  // What reasoning text we have already shown per item, so the completed
+  // summary is not restated on top of the deltas that built it — the same
+  // duplicate suppression MuseReasoningProjection applies on the exec lane.
+  const reasoningShown = new Map<string, string>()
   const approvalRequirements = new Map<string, MuseMspApprovalRequirementRef>()
   const settledUserInputs = new Set<string>()
 
@@ -470,12 +479,20 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
             .join('\n')
         : ''
       if (!summary) return null
+      // Already streamed in full by the deltas — restating it would re-render
+      // the whole summary under the answer.
+      if (reasoningShown.get(item.itemId) === summary) return null
+      reasoningShown.set(item.itemId, summary)
       return {
         ...base,
         type: 'thinking',
         text: summary,
         thinkingId: item.itemId,
-        thinkingCumulative: true
+        thinkingCumulative: true,
+        // Narrowed deliberately: `item` carries the model's full reasoning
+        // object. Only the exposed summary belongs on the diagnostic surface,
+        // matching MuseReasoningProjection's `raw` contract.
+        raw: { kind: item.kind, itemId: item.itemId, text: summary }
       }
     }
     if (item.kind === 'toolCall') {
@@ -536,13 +553,38 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         // as a duplicate of the deltas — deltas dropped AND the authoritative
         // final object suppressed is total, silent answer loss.
         const field = params.field === undefined ? 'text' : text(params.field)
+        const itemId = text(params.itemId)
+        const delta = text(params.delta)
+        // Route by the kind of the item this delta belongs to. `summary` is
+        // unambiguously reasoning whatever the kind map says, so an unannounced
+        // item still cannot leak private reasoning as assistant text; an
+        // unknown item on a text field stays content, which is what keeps the
+        // answer-loss fix above intact.
+        const isReasoning = field === 'summary' || itemKinds.get(itemId) === 'reasoning'
+        if (isReasoning) {
+          if (!delta) return
+          reasoningShown.set(itemId, (reasoningShown.get(itemId) || '') + delta)
+          emit({
+            type: 'thinking',
+            payloadType: 'msp.item.delta',
+            payloadKind: 'reasoning',
+            sessionId,
+            runId: activeTurnId,
+            text: delta,
+            thinkingId: itemId,
+            // Incremental, not a restatement.
+            thinkingCumulative: false,
+            raw: { kind: 'reasoning', itemId, text: delta }
+          })
+          return
+        }
         if (field !== 'text') return
         emit({
           type: 'content',
           payloadType: 'msp.item.delta',
           sessionId,
           runId: activeTurnId,
-          text: text(params.delta),
+          text: delta,
           raw: params
         })
         return
@@ -552,6 +594,9 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       case 'item/completed': {
         const item = record(params.item) as unknown as MuseMspItem
         if (!item || !item.itemId) return
+        // Record the kind before anything else: a delta for this item may
+        // arrive next, and routing it correctly depends on knowing the kind.
+        if (item.kind) itemKinds.set(item.itemId, String(item.kind))
         const phase =
           method === 'item/started'
             ? 'started'
