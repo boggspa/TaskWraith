@@ -44,6 +44,7 @@ import {
   buildAcpPermissionResponse,
   isAcpInboundRequest,
   buildAcpMethodNotFoundResponse,
+  acpDiffBlockToolInput,
   type AcpRunEvent,
   type AcpPermissionRequest,
   type AcpPermissionDecision
@@ -564,6 +565,24 @@ function acpToolCallKey(sessionId: unknown, toolCall: Record<string, unknown>): 
   return normalizedSessionId && toolCallId ? `${normalizedSessionId}\u0000${toolCallId}` : ''
 }
 
+/**
+ * Path evidence an ACP agent declared structurally rather than in arguments.
+ *
+ * `locations` is ACP's own statement of what a tool call targets. Vibe
+ * populates it (and a diff block) on a native edit whose permission request
+ * then carries nothing but a tool-call id, so without this the gate sees no
+ * path at all and fails closed on a call the agent described perfectly well.
+ */
+function acpToolCallLocationInput(toolCall: Record<string, unknown>): Record<string, unknown> {
+  const locations = Array.isArray(toolCall.locations) ? toolCall.locations : []
+  for (const entry of locations) {
+    const location = isRecord(entry) ? entry : null
+    const path = location ? nonEmptyString(location.path) : null
+    if (path) return { file_path: path }
+  }
+  return {}
+}
+
 function toolOutputIndicatesFailure(value: string): boolean {
   return (
     /"ok"\s*:\s*false/i.test(value) ||
@@ -772,7 +791,18 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     ) {
       return
     }
-    if (!isRecord(update.rawInput) && !isRecord(update.input) && !isRecord(update._meta)) return
+    // A diff block or `locations` is evidence too: Vibe announces a native
+    // edit with neither rawInput nor _meta, and dropping it here left the
+    // permission request with nothing to correlate against.
+    if (
+      !isRecord(update.rawInput) &&
+      !isRecord(update.input) &&
+      !isRecord(update._meta) &&
+      !Array.isArray(update.content) &&
+      !Array.isArray(update.locations)
+    ) {
+      return
+    }
     const key = acpToolCallKey(params?.sessionId, update)
     if (!key) return
     if (conflictedToolCallKeys.has(key)) return
@@ -802,6 +832,37 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       if (typeof oldest === 'string') pendingToolCalls.delete(oldest)
     }
   }
+  /**
+   * Fill-gaps-only argument recovery, mirroring the merge the transcript path
+   * already uses (`{ ...recoveredInput, ...statedInput }` in GrokAcpProtocol).
+   * Anything the agent actually stated wins every key it set, so recovered
+   * evidence can never contradict the arguments a tool was invoked with - it
+   * can only supply a field that was otherwise absent. The decision still
+   * belongs to the gate; this only stops it being made blind.
+   */
+  const recoveredRawInput = (
+    rawToolCall: Record<string, unknown>,
+    remembered: Record<string, unknown>
+  ): Record<string, unknown> => {
+    const stated = isRecord(rawToolCall.rawInput)
+      ? rawToolCall.rawInput
+      : isRecord(remembered.rawInput)
+        ? remembered.rawInput
+        : isRecord(remembered.input)
+          ? remembered.input
+          : null
+    const recovered = {
+      ...acpToolCallLocationInput(remembered),
+      ...acpDiffBlockToolInput(remembered.content)
+    }
+    // Recovery is for the argument-FREE call only. A tool that stated its
+    // arguments keeps them verbatim and gains nothing: a brokered
+    // delegate_wave / ensemble_fanout / ultra_task / create_goal must never
+    // acquire a stray `file_path` it never sent, because the broker resolves
+    // its dispatch contract from exactly this record.
+    if (stated) return isRecord(rawToolCall.rawInput) ? {} : { rawInput: stated }
+    return Object.keys(recovered).length > 0 ? { rawInput: recovered } : {}
+  }
   const enrichPermissionRequest = (request: AcpPermissionRequest): AcpPermissionRequest => {
     const rawToolCall = request.rawToolCall
     if (!rawToolCall) return request
@@ -825,9 +886,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         ...(rememberedMetadata || requestMetadata
           ? { _meta: { ...rememberedMetadata, ...requestMetadata } }
           : {}),
-        ...(!isRecord(rawToolCall.rawInput) && isRecord(remembered.input)
-          ? { rawInput: remembered.input }
-          : {})
+        ...recoveredRawInput(rawToolCall, remembered)
       }
     }
   }

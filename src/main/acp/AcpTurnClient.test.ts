@@ -941,6 +941,163 @@ describe('runAcpTurn — neutral core', () => {
     expect(requests[1]?.rawToolCall).not.toHaveProperty('rawInput')
   })
 
+  it('recovers a diff-block-only edit into the permission request the gate sees', async () => {
+    const child = new FakeAcpChild()
+    const requests: AcpPermissionRequest[] = []
+    baseOptions(child, {
+      onPermissionRequest: (request) => {
+        requests.push(request)
+        return 'allow'
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    // Vibe announces the edit with NO rawInput/input/_meta. The only evidence
+    // of what it intends to touch is `locations` and the diff block.
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'edit-1',
+          title: 'Edit Panels.swift',
+          kind: 'edit',
+          locations: [{ path: 'workbench/Panels.swift' }],
+          content: [
+            {
+              type: 'diff',
+              path: 'workbench/Panels.swift',
+              oldText: 'let a = 1',
+              newText: 'let a = 2'
+            }
+          ]
+        }
+      }
+    })
+    // ...and the permission request carries ONLY the id, exactly as vibe-acp
+    // sends it: ToolCallUpdate(tool_call_id=...) and nothing else.
+    child.emit({
+      jsonrpc: '2.0',
+      id: 9,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 's-1',
+        toolCall: { toolCallId: 'edit-1' },
+        options: [{ optionId: 'a', name: 'Allow', kind: 'allow_once' }]
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(requests[0]?.rawToolCall).toMatchObject({
+      toolCallId: 'edit-1',
+      rawInput: {
+        file_path: 'workbench/Panels.swift',
+        old_string: 'let a = 1',
+        new_string: 'let a = 2'
+      }
+    })
+  })
+
+  it('leaves a TaskWraith broker tool call untouched by path recovery', async () => {
+    const child = new FakeAcpChild()
+    const requests: AcpPermissionRequest[] = []
+    baseOptions(child, {
+      onPermissionRequest: (request) => {
+        requests.push(request)
+        return 'allow'
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    // Adversarial on purpose: a brokered delegate_wave that ALSO carries
+    // structural path evidence must keep its broker identity and its stated
+    // arguments, or the seat loses ensemble_fanout / delegate_wave /
+    // ultra_task / create_goal to a recovery meant for native edits.
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'wave-1',
+          title: 'TaskWraith_delegate_wave',
+          kind: 'other',
+          rawInput: { tool_name: 'TaskWraith_delegate_wave', waveId: 'w-1' },
+          locations: [{ path: 'unrelated.swift' }],
+          _meta: { tool_name: 'TaskWraith_delegate_wave', effect_kind: 'tool' }
+        }
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 9,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 's-1',
+        toolCall: { toolCallId: 'wave-1' },
+        options: [{ optionId: 'a', name: 'Allow', kind: 'allow_once' }]
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(requests[0]?.rawToolCall).toMatchObject({
+      _meta: { tool_name: 'TaskWraith_delegate_wave', effect_kind: 'tool' },
+      rawInput: { tool_name: 'TaskWraith_delegate_wave', waveId: 'w-1' }
+    })
+    const brokered = requests[0]?.rawToolCall as
+      | { rawInput?: Record<string, unknown> }
+      | undefined
+    expect(brokered?.rawInput).not.toHaveProperty('file_path')
+    expect(Object.keys(brokered?.rawInput ?? {}).sort()).toEqual(['tool_name', 'waveId'])
+  })
+
+  it('never lets recovered evidence overwrite what the agent stated', async () => {
+    const child = new FakeAcpChild()
+    const requests: AcpPermissionRequest[] = []
+    baseOptions(child, {
+      onPermissionRequest: (request) => {
+        requests.push(request)
+        return 'allow'
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'edit-2',
+          kind: 'edit',
+          rawInput: { file_path: 'stated.swift' },
+          locations: [{ path: 'recovered.swift' }],
+          content: [{ type: 'diff', path: 'recovered.swift', newText: 'body' }]
+        }
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 9,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 's-1',
+        toolCall: { toolCallId: 'edit-2' },
+        options: [{ optionId: 'a', name: 'Allow', kind: 'allow_once' }]
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const recovered = requests[0]?.rawToolCall as
+      | { rawInput?: Record<string, unknown> }
+      | undefined
+    expect(recovered?.rawInput?.file_path).toBe('stated.swift')
+  })
+
   it('correlates metadata-only tool_call_update evidence into a sparse permission request', async () => {
     const child = new FakeAcpChild()
     const requests: AcpPermissionRequest[] = []
