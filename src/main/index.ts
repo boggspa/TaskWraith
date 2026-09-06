@@ -37471,7 +37471,16 @@ const mistralAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEv
       // TaskWraith tiers with no Vibe equivalent clamp rather than pass through.
       reasoningEffort: true,
       speedTiers: [],
-      imageAttachments: false,
+      // TRUE, matching the transport: the lane delivers standard ACP image
+      // content blocks once the exact runtime advertises
+      // promptCapabilities.image, and providerDeliversImageAttachments
+      // (ProviderImageAttachmentSupport.ts) says so. This read `false` because
+      // the seat shipped with devstral-small — which cannot take images — as
+      // its only default, and this descriptor is per-PROVIDER: leaving it false
+      // disabled the composer's paperclip for every Mistral model, including
+      // the vision-capable ones, on a transport that works. A model that cannot
+      // take images still rejects visibly before session/prompt.
+      imageAttachments: true,
       contextInjection: true,
       // Every turn opens a fresh session/new. Nothing resumes.
       sessionResumption: false,
