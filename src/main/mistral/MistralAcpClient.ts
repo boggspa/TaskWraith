@@ -465,19 +465,7 @@ export function runMistralAcpTurn(options: MistralAcpRunOptions): MistralAcpRunH
     deniedToolRecovery: {
       detect: isMistralDeniedToolTerminal,
       prompt: mistralToolRecoveryPrompt,
-      // Deliberately NOT the `!assistantTextSeen` clause Devin and Antigravity
-      // still carry. Vibe narrates its plan before it acts, so that clause made
-      // the one-shot unreachable for exactly the turns that need it: the seat
-      // said what it was about to do, had the tool refused, and dead-ended in
-      // prose with the work undone. Grok's shape is substituted instead - gate
-      // on the terminal status, which still keeps a healthy `end_turn` out of
-      // scope. That was the real job of the text clause, because
-      // `toolFailureSeen` is a heuristic output sniff (`"ok": false` and
-      // friends) that a perfectly successful turn can trip. Devin and
-      // Antigravity keep the text clause until their own providers are
-      // measured the same way.
-      shouldRecover: (context) =>
-        context.toolFailureSeen && isMistralDeniedToolTerminal(context.terminalStatus),
+      shouldRecover: (context) => context.toolFailureSeen && !context.assistantTextSeen,
       warning:
         'Mistral stopped after a rejected or failed tool; continuing once so it can finish from available evidence.'
     },
