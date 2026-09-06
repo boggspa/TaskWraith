@@ -130,6 +130,13 @@ import {
   type SidebarThreadOrderState
 } from '../lib/sidebarThreadOrder'
 
+// The masthead ghost SVG is static markup. React compares the
+// `dangerouslySetInnerHTML` prop by object identity on updates, so a fresh
+// `{ __html }` literal per render re-assigns `innerHTML` — replacing the
+// parsed SVG subtree on every Sidebar update. This shared descriptor keeps
+// the markup byte-identical while retaining the existing DOM node.
+const taskwraithGhostMonolineHtml = { __html: taskwraithGhostMonolineSvg }
+
 export interface WorkspaceBoardCreateInput {
   workspaceId?: string
   name?: string
@@ -4669,7 +4676,7 @@ export function Sidebar({
               <span
                 className="sidebar-product-ghost sidebar-product-ghost-monoline"
                 aria-hidden
-                dangerouslySetInnerHTML={{ __html: taskwraithGhostMonolineSvg }}
+                dangerouslySetInnerHTML={taskwraithGhostMonolineHtml}
               />
               TaskWraith
             </span>
