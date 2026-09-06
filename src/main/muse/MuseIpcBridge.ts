@@ -9,12 +9,18 @@ import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:c
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { EffectiveRunPermissions, TaskWraithMcpProfileId } from '../store/types'
+import type {
+  AgenticServiceId,
+  EffectiveRunPermissions,
+  TaskWraithMcpProfileId
+} from '../store/types'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
 import type { AcpChildProcess } from '../acp/AcpTurnClient'
 import { museMspTransportEnabled, museMspSessionResumeEnabled } from '../museGate'
-import { resolveMuseExecSessionId } from './MuseCliArgs'
+import { MUSE_DEFAULT_REASONING_EFFORT, resolveMuseExecSessionId } from './MuseCliArgs'
 import { MUSE_MSP_CLIENT_VERSION } from './MuseMspProtocol'
+import { describeMuseMspApproval } from './MuseMspApproval'
+import { museMeterSnapshotToProviderStats, unavailableMuseMeterSnapshot } from './MuseUsage'
 import { runMuseMspProvider, type MuseMspSpawnInput } from './MuseMspRun'
 import { createMuseThinkingTranscript } from './MuseThinkingTranscript'
 import {
@@ -129,12 +135,40 @@ export interface MuseIpcBridgeDeps {
   ) => { boundaryRoot: string; path: string } | null
   /** `muse serve` child for the MSP lane; defaults to the real child process. */
   spawnMsp?: (input: MuseMspSpawnInput) => AcpChildProcess
+  /**
+   * Raise a TaskWraith approval card and await the verdict.
+   *
+   * Built in the composition root because the orchestrator closes over the run
+   * manager, the permission service and a WebContents sender. Its ABSENCE is
+   * meaningful: without it the MSP lane keeps exec-lane parity (`allowAll`
+   * under the host sandbox) rather than selecting `onRequest` and then denying
+   * everything.
+   */
+  requestApproval?: (input: MuseApprovalAsk) => Promise<boolean>
   /** Test seam — defaults to the real lifecycle. */
   runMuseProvider?: typeof runMuseProvider
   /** Test seam — defaults to the real MSP lifecycle. */
   runMuseMspProvider?: typeof runMuseMspProvider
   generateIntroduction?: (input: MuseIntroductionInput) => Promise<MuseIntroductionResult>
   now?: () => number
+}
+
+export interface MuseApprovalAsk {
+  readonly sender: unknown
+  readonly service: AgenticServiceId
+  readonly method: string
+  readonly title: string
+  readonly body: string
+  readonly toolName: string
+  readonly rawToolCall: Record<string, unknown> | null
+  readonly workspacePath: string
+  /**
+   * Load-bearing. The orchestrator resolves `effectivePermissions`,
+   * `workflowMode`, `ensembleRun` and `appChatId` from the RunManager by run
+   * id; without it the read-only/plan posture clamp silently disappears and the
+   * run behaves as though it had no permission preset at all.
+   */
+  readonly appRunId: string
 }
 
 export type { MuseTaskWraithMcpPreparationInput as MuseIpcMcpPreparationInput } from './MuseTaskWraithMcpBridge'
@@ -259,6 +293,44 @@ type NodeSpawn = (command: string, args: readonly string[], options: SpawnOption
  * same reason it exists on the exec lane — an 'error' on child.stdin with no
  * listener takes down Electron main, not just the turn.
  */
+/**
+ * Whether an MSP outcome is a HOST failure rather than a failed turn.
+ *
+ * `muse serve` only exists from Muse Code 1.0.3; on an older CLI the subcommand
+ * is unknown and the host dies immediately, so a default-ON transport would
+ * turn every turn into a hard failure for those users. A run that never
+ * established a session and never published an event did not fail at the task,
+ * it failed to start — and the exec lane can still do the work.
+ *
+ * Deliberately narrow: once a session exists or anything has streamed, the turn
+ * belongs to the provider and is never silently re-run.
+ */
+export function museMspHostFailedToStart(outcome: MuseRunOutcome): boolean {
+  return outcome.status === 'failed' && !outcome.sessionId && outcome.events.length === 0
+}
+
+/** Startup-shaped failure outcome for a host that never came up. */
+function museFailedStartupOutcome(museSessionId: string): MuseRunOutcome {
+  const meter = unavailableMuseMeterSnapshot(museSessionId)
+  return {
+    status: 'failed',
+    // Empty on purpose: museMspHostFailedToStart keys on it, and a host that
+    // never handshook has no provider session to name.
+    sessionId: '',
+    exitCode: null,
+    assistantText: '',
+    events: [],
+    meter,
+    providerStats: museMeterSnapshotToProviderStats(meter),
+    warnings: [],
+    argv: [],
+    effort: MUSE_DEFAULT_REASONING_EFFORT,
+    writeCapable: false,
+    skillPinHash: '',
+    leasePath: ''
+  }
+}
+
 export function createChildProcessMuseMspSpawn(
   spawnImpl: NodeSpawn = nodeSpawn
 ): (input: MuseMspSpawnInput) => AcpChildProcess {
@@ -445,6 +517,9 @@ export async function runMuseProviderFromIpc(
     return
   }
 
+  // Captured after the guard above: TypeScript loses the non-null narrowing
+  // inside the fallback closure.
+  const binaryPath = resolved.binaryPath
   const credential = await resolveMuseRunCredential(deps, payload)
   if (!credential.present) {
     failSetup(deps, event, payload, MUSE_LOGIN_HINT)
@@ -482,6 +557,7 @@ export async function runMuseProviderFromIpc(
   }
 
   let cancelled = false
+  let museMspStartupError: string | null = null
   const cancel = () => {
     cancelled = true
   }
@@ -573,7 +649,28 @@ export async function runMuseProviderFromIpc(
         ? deps.getSeatHome(route.appChatId, payload.ensembleRun?.participantId || 'solo')
         : null
 
-    const outcome = museMspTransportEnabled()
+    const execRun = (): Promise<MuseRunOutcome> =>
+      run({
+        binaryPath,
+        workspacePath,
+        prompt,
+        introductionText: introduction.text,
+        runId,
+        temporaryRoot: deps.getTemporaryRoot(),
+        sessionId: museSessionId,
+        model: payload.model,
+        reasoningEffort: payload.reasoningEffort,
+        approvalMode: payload.approvalMode,
+        ultraTaskDelegationAutoAllow,
+        apiKey: credential.apiKey,
+        authJsonText: credential.authJsonText,
+        ...(mcpSettings ? { mcpSettings } : {}),
+        spawn: deps.spawn,
+        shouldCancel: () => cancelled,
+        onEvent: emitMuseEvent
+      })
+
+    let outcome = museMspTransportEnabled()
       ? await (deps.runMuseMspProvider ?? runMuseMspProvider)({
           binaryPath: resolved.binaryPath,
           workspacePath,
@@ -601,27 +698,48 @@ export async function runMuseProviderFromIpc(
           ...(mcpSettings ? { mcpSettings } : {}),
           onEvent: emitMuseEvent,
           onWarning: emitMuseWarning,
+          ...(deps.requestApproval
+            ? {
+                onApprovalRequest: async (request) => {
+                  const ask = describeMuseMspApproval(request)
+                  try {
+                    const allowed = await deps.requestApproval!({
+                      sender: event.sender,
+                      service: ask.service,
+                      method: ask.method,
+                      title: ask.title,
+                      body: ask.body,
+                      toolName: ask.toolName,
+                      rawToolCall: ask.rawToolCall,
+                      workspacePath,
+                      appRunId: runId
+                    })
+                    return allowed ? 'allow' : 'deny'
+                  } catch {
+                    // Fail closed on the tool, not on the turn: an orchestrator
+                    // fault must not cancel work the user is mid-way through.
+                    return 'deny'
+                  }
+                }
+              }
+            : {}),
           shouldCancel: () => cancelled
+        }).catch((error): MuseRunOutcome => {
+          // A host that could not be spawned at all lands here rather than in
+          // onClose; record it as a startup failure so the fallback can run.
+          museMspStartupError = error instanceof Error ? error.message : String(error)
+          return museFailedStartupOutcome(museSessionId)
         })
-      : await run({
-          binaryPath: resolved.binaryPath,
-          workspacePath,
-          prompt,
-          introductionText: introduction.text,
-          runId,
-          temporaryRoot: deps.getTemporaryRoot(),
-          sessionId: museSessionId,
-          model: payload.model,
-          reasoningEffort: payload.reasoningEffort,
-          approvalMode: payload.approvalMode,
-          ultraTaskDelegationAutoAllow,
-          apiKey: credential.apiKey,
-          authJsonText: credential.authJsonText,
-          ...(mcpSettings ? { mcpSettings } : {}),
-          spawn: deps.spawn,
-          shouldCancel: () => cancelled,
-          onEvent: emitMuseEvent
-        })
+      : await execRun()
+
+    if (museMspTransportEnabled() && !cancelled && museMspHostFailedToStart(outcome)) {
+      emitMuseWarning(
+        `Muse's MSP session host did not start${
+          museMspStartupError ? ` (${museMspStartupError})` : ''
+        }; running this turn on \`muse exec\` instead. The MSP transport needs Muse Code 1.0.3 or newer.`
+      )
+      outcome = await execRun()
+    }
 
     const failed = outcome.status !== 'success'
     const resultText =

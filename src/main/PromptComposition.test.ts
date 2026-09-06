@@ -1000,8 +1000,9 @@ describe('composeRunPrompt sub-thread returns', () => {
     it('injects on the exec lane even though it holds a stored session id', () => {
       // `resolveResumeDecision` hands every non-gemini provider the stored id,
       // but the exec lane never resumes it. Skipping injection here would make
-      // a context-blind turn that merely looks resumed.
-      delete process.env.TASKWRAITH_MUSE_MSP
+      // a context-blind turn that merely looks resumed. The transport is now
+      // default-ON, so the exec lane has to be pinned explicitly.
+      process.env.TASKWRAITH_MUSE_MSP = '0'
       expect(compose('sess-1').contextTurnsApplied).toBeGreaterThan(0)
     })
 

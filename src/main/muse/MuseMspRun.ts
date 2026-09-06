@@ -128,21 +128,21 @@ function requireNonEmpty(value: string, label: string): string {
 /**
  * TaskWraith approval posture -> MSP `ApprovalMode`.
  *
- * Parity with the exec lane, which has no per-tool wire approval at all and
- * relies on the host sandbox plus the read-only flags for containment. A
- * read-only seat is `denyUnmatched` on top of `--disable-write --disable-shell`
- * so the wire agrees with the host rather than quietly contradicting it.
- *
- * `onRequest` is the mode a real wire-approval plane would select; it is NOT
- * selected here, because a seat whose approvals are answered by the client's
- * default-deny would deny every tool. Threading TaskWraith's approval
- * orchestration into `onApprovalRequest` and switching this to `onRequest` is
- * the follow-up that makes `appManagedApprovals` true for Muse.
+ * A read-only seat is `denyUnmatched` on top of `--disable-write
+ * --disable-shell`, so the wire agrees with the host rather than quietly
+ * contradicting it. A write-capable seat asks TaskWraith per tool
+ * (`onRequest`) when an approval handler is wired, and otherwise falls back to
+ * exec-lane parity (`allowAll` under the host sandbox).
  */
 export function museMspApprovalModeFor(
-  approvalMode: string | null | undefined
+  approvalMode: string | null | undefined,
+  appManagedApprovals = false
 ): MuseMspApprovalMode {
-  return museWriteCapable(approvalMode) ? 'allowAll' : 'denyUnmatched'
+  if (!museWriteCapable(approvalMode)) return 'denyUnmatched'
+  // `onRequest` only once a handler exists to answer: the client denies by
+  // default when `onApprovalRequest` is absent, so selecting it without one
+  // would deny every tool and make a write-capable seat useless.
+  return appManagedApprovals ? 'onRequest' : 'allowAll'
 }
 
 /**
@@ -277,7 +277,7 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
       input: turnInput,
       modelId: input.model || undefined,
       reasoningEffort: museMspReasoningEffortFor(effort),
-      approvalMode: museMspApprovalModeFor(input.approvalMode),
+      approvalMode: museMspApprovalModeFor(input.approvalMode, Boolean(input.onApprovalRequest)),
       resumeSessionId: input.resumeSessionId ?? null,
       onEvent: (event) => {
         events.push(event)

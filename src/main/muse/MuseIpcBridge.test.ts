@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
@@ -197,6 +197,17 @@ describe('museExecEventToCompatPayload', () => {
 
 describe('runMuseProviderFromIpc', () => {
   const event = { sender: { id: 'webcontents-stub' } }
+
+  // These exercise the EXEC lane, and the MSP transport is now default-ON. Pin
+  // the gate off rather than injecting `runMuseMspProvider`: injecting it would
+  // turn a loud failure into a test that passes without exercising the lane it
+  // names.
+  beforeEach(() => {
+    process.env.TASKWRAITH_MUSE_MSP = '0'
+  })
+  afterEach(() => {
+    delete process.env.TASKWRAITH_MUSE_MSP
+  })
 
   it("shows Muse's own opening before automatically starting work and settling only once", async () => {
     const order: string[] = []
@@ -950,6 +961,7 @@ describe('runMuseProviderFromIpc — transport selection', () => {
   })
 
   it('runs the exec lane while the MSP gate is off', async () => {
+    process.env[MSP_ENV] = '0'
     const execRun = vi.fn(async () => successOutcome())
     const mspRun = vi.fn(async () => successOutcome())
     await runMuseProviderFromIpc(
@@ -1016,6 +1028,141 @@ describe('runMuseProviderFromIpc — transport selection', () => {
     )
     expect(mspRun.mock.calls[0][0]).toMatchObject({ resumeSessionId: null })
     expect(mspRun.mock.calls[0][0].durableSeat).toBeUndefined()
+  })
+
+  it('asks TaskWraith per tool, carrying the run id the posture clamp needs', async () => {
+    process.env[MSP_ENV] = '1'
+    const asks: Record<string, unknown>[] = []
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      { prompt: 'hi', workspace: '/ws', appRunId: 'run-77', appChatId: 'chat-1' },
+      baseDeps({
+        runMuseMspProvider: mspRun as never,
+        requestApproval: async (ask) => {
+          asks.push(ask as unknown as Record<string, unknown>)
+          return true
+        }
+      })
+    )
+    const handler = mspRun.mock.calls[0][0].onApprovalRequest as (
+      request: unknown
+    ) => Promise<string>
+    expect(handler).toBeTypeOf('function')
+
+    const verdict = await handler({
+      approvalId: 'a1',
+      toolName: 'run_command',
+      rawArgs: '{"command":"rm -rf /"}',
+      subject: { kind: 'shell', command: 'rm -rf /' }
+    })
+    expect(verdict).toBe('allow')
+    // Without appRunId the orchestrator resolves no session, so
+    // effectivePermissions is undefined and the read-only/plan clamp is gone.
+    expect(asks[0]).toMatchObject({
+      appRunId: 'run-77',
+      service: 'shellCommands',
+      workspacePath: '/ws',
+      rawToolCall: { command: 'rm -rf /' }
+    })
+  })
+
+  it('denies the tool without cancelling the turn when approval throws', async () => {
+    process.env[MSP_ENV] = '1'
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      baseDeps({
+        runMuseMspProvider: mspRun as never,
+        requestApproval: async () => {
+          throw new Error('orchestrator unavailable')
+        }
+      })
+    )
+    const handler = mspRun.mock.calls[0][0].onApprovalRequest as (
+      request: unknown
+    ) => Promise<string>
+    // Fail closed on the TOOL, not on the turn: an orchestrator fault must not
+    // discard work the user is mid-way through.
+    await expect(
+      handler({ approvalId: 'a1', toolName: 't', rawArgs: '{}', subject: { kind: 'shell' } })
+    ).resolves.toBe('deny')
+  })
+
+  it('keeps sandbox-only parity when no approval plane is wired', async () => {
+    process.env[MSP_ENV] = '1'
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      baseDeps({ runMuseMspProvider: mspRun as never })
+    )
+    // Absence is meaningful: the client denies by default, so selecting
+    // onRequest with no handler would deny every tool.
+    expect(mspRun.mock.calls[0][0].onApprovalRequest).toBeUndefined()
+  })
+
+  it('runs the turn on exec when the MSP host cannot start at all', async () => {
+    process.env[MSP_ENV] = '1'
+    const sendCompatLine = vi.fn()
+    const execRun = vi.fn(async () => successOutcome({ assistantText: 'done on exec' }))
+    // `muse serve` arrived in Muse Code 1.0.3; on an older CLI the subcommand
+    // is unknown and the host dies at once. Default-ON must not make every
+    // turn a hard failure for those users.
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) =>
+      successOutcome({ status: 'failed', sessionId: '', events: [] })
+    )
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      baseDeps({
+        sendCompatLine,
+        runMuseProvider: execRun as never,
+        runMuseMspProvider: mspRun as never
+      })
+    )
+    expect(execRun).toHaveBeenCalledTimes(1)
+    const warning = sendCompatLine.mock.calls.find(
+      (call) => call[1].type === 'provider_warning'
+    )?.[1]
+    expect(warning?.message).toContain('muse exec')
+    const result = sendCompatLine.mock.calls.find((call) => call[1].type === 'result')?.[1]
+    expect(result?.status).toBe('success')
+  })
+
+  it('never silently re-runs a turn the provider actually took', async () => {
+    process.env[MSP_ENV] = '1'
+    const execRun = vi.fn(async () => successOutcome())
+    // A session was established, so this failure is the task's, not the host's.
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) =>
+      successOutcome({ status: 'failed', sessionId: 'sess-1', events: [] })
+    )
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      baseDeps({ runMuseProvider: execRun as never, runMuseMspProvider: mspRun as never })
+    )
+    expect(execRun).not.toHaveBeenCalled()
+  })
+
+  it('does not re-run a turn that streamed before failing', async () => {
+    process.env[MSP_ENV] = '1'
+    const execRun = vi.fn(async () => successOutcome())
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) =>
+      successOutcome({
+        status: 'failed',
+        sessionId: '',
+        events: [{ type: 'content', payloadType: 'msp.item.delta', text: 'partial', raw: {} }]
+      })
+    )
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      baseDeps({ runMuseProvider: execRun as never, runMuseMspProvider: mspRun as never })
+    )
+    // Re-running would duplicate work the user already saw.
+    expect(execRun).not.toHaveBeenCalled()
   })
 
   it('publishes the session id the provider actually used on the result line', async () => {

@@ -19,15 +19,22 @@
  * `session/contextUsage` (including the provider's true window size), mid-turn
  * `turn/steer`, a native session goal, and an `approval/*` plane.
  *
- * DEFAULT-OFF while the lane is qualified against a live account. The exec lane
- * is what ships today and what every existing test and receipt describes; a
- * transport swap must be an explicit opt-in until its own qualification lands,
- * because the two lanes differ in containment shape (see the sandbox note on
- * `museMspHostPostureIsPerHost`).
+ * DEFAULT-ON. It is now the better lane on every axis that was measured, and
+ * the exec-only gaps it closes (resume, images, the provider's true context
+ * window, per-tool approvals) are not recoverable on the old transport.
+ *
+ * Safe to default because the swap is not all-or-nothing: `muse serve` arrived
+ * in Muse Code 1.0.3, and on an older CLI the host dies immediately, so
+ * `museMspHostFailedToStart` sends that turn back down the exec lane with a
+ * visible warning rather than failing it. Set TASKWRAITH_MUSE_MSP=0 to pin the
+ * exec lane permanently.
+ *
+ * The two lanes still differ in containment shape — see the sandbox note on
+ * `museMspHostPostureIsPerHost`.
  */
 export function museMspTransportEnabled(): boolean {
   const value = process.env.TASKWRAITH_MUSE_MSP?.trim().toLowerCase()
-  return value === '1' || value === 'true' || value === 'yes' || value === 'on'
+  return value !== '0' && value !== 'false' && value !== 'no' && value !== 'off'
 }
 
 /**
@@ -40,10 +47,9 @@ export function museMspTransportEnabled(): boolean {
  * every turn.
  *
  * It still rides the transport gate: resumption is meaningless on the exec lane,
- * which mints a fresh isolated home per run. When this returns true,
- * `museNeedsContextInjection` in PromptComposition.ts MUST stop being
- * unconditional in the same change, or the host pays for a transcript the
- * provider is already holding.
+ * which mints a fresh isolated home per run. `museNeedsContextInjection` in
+ * PromptComposition.ts is gated on this for that reason — injecting a
+ * transcript the provider already holds is paid for twice.
  */
 export function museMspSessionResumeEnabled(): boolean {
   if (!museMspTransportEnabled()) return false

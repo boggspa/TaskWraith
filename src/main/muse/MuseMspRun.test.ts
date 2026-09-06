@@ -157,11 +157,31 @@ describe('MSP vocabularies', () => {
     expect(museMspReasoningEffortFor('minimal')).toBe('minimal')
   })
 
-  it('denies unmatched tools for a read-only seat', () => {
+  it('denies unmatched tools for a read-only seat, whatever the handler', () => {
     expect(museMspApprovalModeFor('plan')).toBe('denyUnmatched')
     expect(museMspApprovalModeFor('')).toBe('denyUnmatched')
     expect(museMspApprovalModeFor(null)).toBe('denyUnmatched')
+    expect(museMspApprovalModeFor('plan', true)).toBe('denyUnmatched')
+  })
+
+  it('asks per tool only when something can answer', () => {
+    // The client denies by default with no handler, so onRequest without one
+    // would deny every tool and make a write-capable seat useless.
+    expect(museMspApprovalModeFor('default', true)).toBe('onRequest')
+    expect(museMspApprovalModeFor('default', false)).toBe('allowAll')
     expect(museMspApprovalModeFor('default')).toBe('allowAll')
+  })
+
+  it('selects onRequest from the presence of the handler on the run input', async () => {
+    const child = new FakeMspChild()
+    const pending = run(child, {
+      durableSeat: seat('approvals'),
+      approvalMode: 'default',
+      onApprovalRequest: () => 'allow'
+    })
+    await playTurn(child)
+    await pending
+    expect(child.sentMethod('session/start')?.params.approvalMode).toBe('onRequest')
   })
 })
 

@@ -22,16 +22,25 @@ function setEnv(key: (typeof KEYS)[number], value: string | undefined): void {
   else process.env[key] = value
 }
 
-describe('museMspTransportEnabled — default OFF', () => {
-  it('is off when unset, so the shipped exec lane stays the default', () => {
+describe('museMspTransportEnabled — default ON', () => {
+  it('is on when unset: MSP is the shipped transport', () => {
     setEnv('TASKWRAITH_MUSE_MSP', undefined)
-    expect(museMspTransportEnabled()).toBe(false)
+    expect(museMspTransportEnabled()).toBe(true)
   })
 
-  it('is off for an unrecognised value rather than opting in loosely', () => {
-    for (const value of ['', 'maybe', '2', 'off', '0', 'false', 'no']) {
+  it('needs an explicit negative to pin the exec lane', () => {
+    for (const value of ['0', 'false', 'no', 'off', 'OFF', ' off ']) {
       setEnv('TASKWRAITH_MUSE_MSP', value)
       expect(museMspTransportEnabled(), `value ${JSON.stringify(value)}`).toBe(false)
+    }
+  })
+
+  it('stays on for an unrecognised value rather than silently opting out', () => {
+    // A typo in the opt-out must not quietly downgrade the transport; only the
+    // spellings above turn it off.
+    for (const value of ['', 'maybe', '2', 'nope', 'disabled']) {
+      setEnv('TASKWRAITH_MUSE_MSP', value)
+      expect(museMspTransportEnabled(), `value ${JSON.stringify(value)}`).toBe(true)
     }
   })
 
@@ -47,13 +56,13 @@ describe('museMspSessionResumeEnabled — rides the transport gate', () => {
   it('is false whenever the MSP transport is off, whatever its own value says', () => {
     // Resume is meaningless on the exec lane: it mints a fresh isolated home
     // per run, so there is no session to resume.
-    setEnv('TASKWRAITH_MUSE_MSP', undefined)
+    setEnv('TASKWRAITH_MUSE_MSP', '0')
     setEnv('TASKWRAITH_MUSE_MSP_RESUME', '1')
     expect(museMspSessionResumeEnabled()).toBe(false)
   })
 
-  it('defaults ON once the transport is selected', () => {
-    setEnv('TASKWRAITH_MUSE_MSP', '1')
+  it('defaults ON with the transport', () => {
+    setEnv('TASKWRAITH_MUSE_MSP', undefined)
     setEnv('TASKWRAITH_MUSE_MSP_RESUME', undefined)
     expect(museMspSessionResumeEnabled()).toBe(true)
   })

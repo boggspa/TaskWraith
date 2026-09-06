@@ -37597,6 +37597,30 @@ const museIpcCancels = new Map<string, () => void>()
 const museIpcBridgeDeps: MuseIpcBridgeDeps = {
   resolveBinary: async () => resolveCliProviderBinary('muse'),
   getTemporaryRoot: () => app.getPath('temp'),
+  // Per-tool approval for the MSP lane. The exec lane has no wire-approval
+  // plane at all, so this is what makes Muse app-managed rather than
+  // sandbox-only. `appRunId` is threaded deliberately: the orchestrator
+  // resolves the run's effective permissions from it, and without it the
+  // read-only/plan clamp would silently stop applying.
+  requestApproval: async (ask) =>
+    requestAgenticServiceApproval(
+      ask.sender as Electron.WebContents,
+      'muse',
+      ask.service,
+      ask.workspacePath || undefined,
+      {
+        method: ask.method,
+        title: ask.title,
+        body: `${ask.body}\n\nApprove to let Muse run it, or deny to block it.`,
+        preview: buildAcpToolApprovalPreview({
+          toolName: ask.toolName,
+          rawToolCall: ask.rawToolCall,
+          service: ask.service,
+          cwd: ask.workspacePath || undefined
+        }),
+        runId: ask.appRunId
+      }
+    ),
   // Durable per-chat Muse seat, keyed the way Kimi's is: chat plus ensemble
   // participant, so two lanes in one chat never resume into one session.
   getSeatHome: (chatId, participantId) => {

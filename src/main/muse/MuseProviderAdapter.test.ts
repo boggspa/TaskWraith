@@ -60,7 +60,9 @@ describe('MuseProviderAdapter', () => {
       expect(descriptor.transport).toBe('muse-exec-json')
       expect(descriptor.features.agentBenchMcpBridge).toBe(false)
       expect(descriptor.features.providerManagedMcp).toBe(false)
-      expect(descriptor.features.appManagedApprovals).toBe(false)
+      // MSP seats raise TaskWraith approval cards per tool; only a seat pinned
+      // to the exec fallback is sandbox-governed.
+      expect(descriptor.features.appManagedApprovals).toBe(true)
       expect(descriptor.capabilities.reasoningEffort).toBe(true)
     })
   })

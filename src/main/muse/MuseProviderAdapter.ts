@@ -233,8 +233,9 @@ export function museProviderAdapterDescriptor(): MuseProviderAdapterDescriptor {
     features: {
       // Resume via `--session-id` is supported; durable seat policy still open.
       persistentSessions: true,
-      // Native Muse tools are provider-owned; no TW per-tool approval cards in v1.
-      appManagedApprovals: false,
+      // MSP seats raise TaskWraith approval cards per tool; the exec fallback
+      // is governed by the provider sandbox instead.
+      appManagedApprovals: true,
       workspaceGrants: false,
       agentBenchMcpBridge: false,
       // No TaskWraith MCP broker for muse exec in v1.

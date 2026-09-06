@@ -429,7 +429,11 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       capabilitySource: 'mixed',
       features: {
         persistentSessions: true,
-        appManagedApprovals: false,
+        // MSP seats ask TaskWraith per tool (`onRequest` -> requestApproval ->
+        // ApprovalOrchestration). The exec fallback has no wire-approval plane
+        // and relies on the host sandbox, so a seat pinned to
+        // TASKWRAITH_MUSE_MSP=0 is sandbox-governed rather than card-governed.
+        appManagedApprovals: true,
         workspaceGrants: false,
         agentBenchMcpBridge: true,
         providerManagedMcp: true,
@@ -440,7 +444,10 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         approvalModes: ['plan', 'default'],
         reasoningEffort: true,
         speedTiers: [],
-        imageAttachments: false,
+        // MSP `TurnInputPart` image parts. Gated on the transport in
+        // ProviderImageAttachmentSupport, which is what actually decides
+        // delivery; the exec fallback cannot carry images and warns instead.
+        imageAttachments: true,
         contextInjection: true,
         sessionResumption: true,
         perThreadMcp: true,
@@ -453,7 +460,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
           capability: 'approvalModes',
           title: 'Muse uses an isolated, brokered MCP bridge',
           message:
-            'Muse runs via `muse exec --json` under an isolated home. TaskWraith writes its route-bound stdio MCP broker into that disposable settings document before launch, so lifecycle and governed TaskWraith tools are available for this run only. Native Muse tools remain provider-owned and are projected from durable session logs; they do not become TaskWraith per-tool approval cards.'
+            'Muse runs a `muse serve` MSP session host under an isolated per-chat home. TaskWraith writes its route-bound stdio MCP broker into that home before launch, and the home is reduced to session continuity at both ends of every turn, so a broker credential never outlives the run that minted it. Native Muse tool calls are raised as TaskWraith approval cards on this transport. On a Muse CLI older than 1.0.3 the turn falls back to `muse exec --json`, which has no wire-approval plane and is governed by the provider sandbox instead.'
         }
       ]
     }

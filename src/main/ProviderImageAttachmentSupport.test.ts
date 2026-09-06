@@ -29,8 +29,25 @@ describe('providerDeliversImageAttachments', () => {
     )
   })
 
+  it('follows the Muse transport, because only one of its two lanes can carry images', () => {
+    const saved = process.env.TASKWRAITH_MUSE_MSP
+    try {
+      // MSP TurnInputPart image parts.
+      process.env.TASKWRAITH_MUSE_MSP = '1'
+      expect(providerDeliversImageAttachments('muse')).toBe(true)
+      // `muse exec --json` has no image input at all. Claiming true there
+      // would drop every attachment with NO warning — the exact silent
+      // omission this matrix exists to prevent.
+      process.env.TASKWRAITH_MUSE_MSP = '0'
+      expect(providerDeliversImageAttachments('muse')).toBe(false)
+    } finally {
+      if (saved === undefined) delete process.env.TASKWRAITH_MUSE_MSP
+      else process.env.TASKWRAITH_MUSE_MSP = saved
+    }
+  })
+
   it('refuses every lane without one', () => {
-    for (const provider of ['cursor', 'muse', 'devin']) {
+    for (const provider of ['cursor', 'devin']) {
       expect(providerDeliversImageAttachments(provider)).toBe(false)
     }
     expect(providerDeliversImageAttachments('antigravity', 'claude-sonnet-4')).toBe(false)
