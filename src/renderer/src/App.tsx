@@ -37,6 +37,7 @@ import { mergeTranscriptMediaRefs } from './lib/transcriptMediaRefs'
 import {
   coalescePendingChatUpdateRender,
   mergeChatUpdatedForRender,
+  type LocalGoalIntent,
   type PendingChatUpdateRender
 } from './lib/chatUpdateRenderMerge'
 import {
@@ -3441,6 +3442,10 @@ function App(): React.JSX.Element {
   // never clobbers in-flight content (see lib/reconcileChatRefMap + its tests).
   const pendingChatFlushRef = useRef<Set<string>>(new Set())
   const pendingMainChatUpdatesRef = useRef<Map<string, PendingChatUpdateRender>>(new Map())
+  // Goal edits this renderer committed optimistically and main has not confirmed
+  // yet. The chat-update merge defends a goal ONLY while its edit is in flight;
+  // outside that window a delivery is authoritative. See preserveNewerLocalActiveGoal.
+  const pendingGoalIntentRef = useRef<Map<string, LocalGoalIntent>>(new Map())
   const pendingChatRenderReceiptsRef = useRef<Map<string, ChatUpdateRenderReceipt>>(new Map())
   const chatFlushRafRef = useRef<number | null>(null)
   const chatFlushDeadlineRef = useRef<number | null>(null)
@@ -5351,7 +5356,8 @@ function App(): React.JSX.Element {
           messagesChanged: pendingMainUpdate.messagesChanged,
           hasActiveRun: pendingMainUpdate.hasActiveRun,
           hadRecentRun: pendingMainUpdate.hadRecentRun,
-          pendingMarkerIds
+          pendingMarkerIds,
+          localGoalIntent: pendingGoalIntentRef.current.get(chatId) ?? null
         })
         byId.set(chatId, updated)
       }
@@ -19134,9 +19140,24 @@ function App(): React.JSX.Element {
     chatByIdRef.current.set(updated.appChatId, updated)
     setCurrentChat(updated)
     setChats((prev) => mergeChatRecord(prev, updated))
-    void window.api.saveChat(updated).catch((err) => {
-      console.error('[goal] saveChat failed', err)
-    })
+    // Claim the goal for the renderer until this save lands. Deliveries built
+    // before it must not roll the edit back, and deliveries after it carry the
+    // edit themselves, so the claim is released either way once the save
+    // settles.
+    const intent: LocalGoalIntent = nextGoal
+      ? { goalId: nextGoal.id }
+      : { goalId: null, ...(chat.activeGoal ? { clearedGoalId: chat.activeGoal.id } : {}) }
+    const intents = pendingGoalIntentRef.current
+    const chatId = updated.appChatId
+    intents.set(chatId, intent)
+    void window.api
+      .saveChat(updated)
+      .catch((err) => {
+        console.error('[goal] saveChat failed', err)
+      })
+      .finally(() => {
+        if (intents.get(chatId) === intent) intents.delete(chatId)
+      })
   }
 
   const setGoalFromObjective = (

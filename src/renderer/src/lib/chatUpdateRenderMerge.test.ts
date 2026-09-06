@@ -154,7 +154,8 @@ describe('mergeChatUpdatedForRender', () => {
       liveChat: live,
       messagesChanged: false,
       hasActiveRun: true,
-      hadRecentRun: false
+      hadRecentRun: false,
+      localGoalIntent: { goalId: 'goal-1' }
     })
     expect(merged.activeGoal?.id).toBe('goal-1')
   })
@@ -169,9 +170,67 @@ describe('mergeChatUpdatedForRender', () => {
       liveChat: live,
       messagesChanged: false,
       hasActiveRun: false,
-      hadRecentRun: false
+      hadRecentRun: false,
+      localGoalIntent: { goalId: null, clearedGoalId: 'goal-1' }
     })
     expect(merged.activeGoal).toBeUndefined()
+  })
+
+  // The "goal keeps unsetting itself" report: an agent `update_goal` (or any
+  // other main-authored goal write) broadcasts the pre-save object, so it
+  // arrives stamped OLDER than a renderer copy that never held a goal at all.
+  // With no renderer edit in flight there is nothing local to defend, so the
+  // delivery must win — the ambient-stamp comparison deleted it here instead,
+  // and the renderer's next whole-record save made the loss durable.
+  it('adopts a main-authored goal when the renderer holds no pending goal edit', () => {
+    const delivered = { ...chat([message('a', 'agent set the goal')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:00.500Z')
+    delivered.activeGoal = makeGoal('2026-09-01T00:00:00.500Z', 'Agent-authored objective')
+    const live = chat([message('a', 'agent set the goal')])
+    live.updatedAt = Date.parse('2026-09-01T00:00:02.000Z')
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+    expect(merged.activeGoal?.objective).toBe('Agent-authored objective')
+  })
+
+  it('lets a main-authored goal through a local clear of a different goal', () => {
+    const delivered = { ...chat([message('a', 'new objective')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:00.500Z')
+    delivered.activeGoal = { ...makeGoal('2026-09-01T00:00:00.500Z'), id: 'goal-2' }
+    const live = chat([message('a', 'new objective')])
+    live.updatedAt = Date.parse('2026-09-01T00:00:02.000Z')
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false,
+      localGoalIntent: { goalId: null, clearedGoalId: 'goal-1' }
+    })
+    expect(merged.activeGoal?.id).toBe('goal-2')
+  })
+
+  it('adopts a main-side status advance on the goal the renderer just set', () => {
+    const delivered = { ...chat([message('a', 'completed upstream')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:00.500Z')
+    delivered.activeGoal = {
+      ...makeGoal('2026-09-01T00:00:03.000Z'),
+      status: 'completed'
+    } as ActiveGoal
+    const live = { ...chat([message('a', 'completed upstream')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:02.000Z')
+    live.activeGoal = makeGoal('2026-09-01T00:00:01.000Z')
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false,
+      localGoalIntent: { goalId: 'goal-1' }
+    })
+    expect(merged.activeGoal?.status).toBe('completed')
   })
 
   it('lets a newer main-side goal win over the older live copy', () => {

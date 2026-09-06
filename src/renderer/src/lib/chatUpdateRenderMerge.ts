@@ -41,12 +41,25 @@ export function coalescePendingChatUpdateRender(
     : next
 }
 
+/**
+ * A goal edit the renderer committed optimistically and has not yet had
+ * confirmed by main. `goalId` is the objective it intends to be active;
+ * `null` records a Clear, and `clearedGoalId` names what that Clear removed
+ * so a stale echo of it can still be rejected.
+ */
+export interface LocalGoalIntent {
+  goalId: string | null
+  clearedGoalId?: string
+}
+
 export interface ChatUpdateRenderMergeOptions {
   liveChat?: ChatRecord | null
   messagesChanged: boolean
   hasActiveRun: boolean
   hadRecentRun: boolean
   pendingMarkerIds?: ReadonlySet<string>
+  /** Un-persisted renderer goal edit for this chat, when one is in flight. */
+  localGoalIntent?: LocalGoalIntent | null
 }
 
 function mergeLiveMessages(
@@ -148,10 +161,6 @@ function stampToMs(value: unknown): number {
   return 0
 }
 
-function resolveGoalStamp(chat: ChatRecord): number {
-  return Math.max(stampToMs(chat.updatedAt), stampToMs(chat.activeGoal?.updatedAt))
-}
-
 function sameAuthoredGoal(a: ActiveGoal, b: ActiveGoal): boolean {
   return (
     a.id === b.id &&
@@ -167,15 +176,26 @@ function sameAuthoredGoal(a: ActiveGoal, b: ActiveGoal): boolean {
  * A main refresh built BEFORE that save lands — an in-flight ensemble run
  * frame, a sub-thread echo — can arrive afterwards and silently revert the
  * goal the user just set or cleared. That presented as "Set Goal sets it,
- * then unsets it" and needed a second click to stick. When the live record is
- * provably fresher than the delivery, its `activeGoal` wins wholesale,
- * including a deliberate absence after Clear. A genuinely newer main-side
- * goal change (native provider sync, remote companion) still wins because its
- * stamp postdates the local edit.
+ * then unsets it" and needed a second click to stick.
+ *
+ * That first fix compared `max(chat.updatedAt, activeGoal.updatedAt)` on each
+ * side, which reads the wrong clock and lost MAIN-authored goals instead. Main
+ * mutation paths broadcast the very object they handed to `saveChat`, whose
+ * `updatedAt` predates the later stamp the store assigns (store/index.ts), and
+ * `chat.updatedAt` is bumped by every unrelated save during a run. So an agent
+ * `update_goal` arrived stamped OLDER than a renderer copy that had never held
+ * a goal, the guard deleted it here, and the renderer's next whole-record save
+ * persisted the absence over the stored goal — the goal "unset itself".
+ *
+ * The renderer only has a goal opinion worth defending while it holds an edit
+ * of its own that main has not confirmed yet, so that intent is now stated
+ * explicitly rather than inferred from ambient timestamps. With no pending
+ * intent the delivery is authoritative.
  */
 function preserveNewerLocalActiveGoal(
   merged: ChatRecord,
-  liveChat: ChatRecord | null | undefined
+  liveChat: ChatRecord | null | undefined,
+  intent: LocalGoalIntent | null | undefined
 ): ChatRecord {
   if (!liveChat) return merged
   const liveGoal = liveChat.activeGoal
@@ -185,7 +205,20 @@ function preserveNewerLocalActiveGoal(
   // never identity-equal; compare authored content before treating the field
   // as contested.
   if (liveGoal && deliveredGoal && sameAuthoredGoal(liveGoal, deliveredGoal)) return merged
-  if (resolveGoalStamp(liveChat) <= resolveGoalStamp(merged)) return merged
+  if (!intent) return merged
+  if (deliveredGoal) {
+    // A local Clear defends only against an echo of the goal it cleared. A
+    // different id is a newer main-authored objective, not a stale frame.
+    if (intent.goalId === null) {
+      if (deliveredGoal.id !== intent.clearedGoalId) return merged
+    } else if (deliveredGoal.id === intent.goalId) {
+      // Same goal on both sides: the goal's own stamp is an unbiased clock, so
+      // a main-side status advance on it still wins.
+      if (stampToMs(deliveredGoal.updatedAt) >= stampToMs(liveGoal?.updatedAt)) return merged
+    }
+  } else if (intent.goalId === null) {
+    return merged
+  }
   const next = { ...merged }
   if (liveGoal) next.activeGoal = liveGoal
   else delete next.activeGoal
@@ -484,7 +517,7 @@ export function mergeChatUpdatedForRender(
   // can only compare seats once both records agree the thread is an ensemble.
   // See 1.0.5-UI2 on each helper.
   merged = preserveNewerLocalChatKind(merged, liveChat)
-  merged = preserveNewerLocalActiveGoal(merged, liveChat)
+  merged = preserveNewerLocalActiveGoal(merged, liveChat, options.localGoalIntent)
   merged = preserveNewerLocalEnsembleRoster(merged, liveChat)
   merged = preserveNewerLocalComposerSelection(merged, liveChat)
   const pendingMarkerIds = options.pendingMarkerIds
