@@ -2,6 +2,16 @@ node_modules
 dist
 dist-debug
 out
+
+# A stray main-process bundle copied to the repo ROOT. Seen 2026-09-06: a
+# byte-identical copy of out/main/index.js, 482KB of generated CJS, sitting
+# beside its own unresolvable `require("./ChatPath-*.js")` chunk references.
+# `out` above covers the real build directory, so nothing here ignored it and
+# it sat one `git add` away from being committed as source. Anchored with a
+# leading slash so it can only ever match the root artifact: every nested
+# index file is a real source module (8 tracked, all .ts today) and an
+# unanchored `index.js` would silently swallow any future generated one.
+/index.js
 /artifacts/
 .DS_Store
 .eslintcache
