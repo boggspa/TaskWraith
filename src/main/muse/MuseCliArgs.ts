@@ -144,6 +144,61 @@ export const MUSE_NATIVE_TOOL_POLICY = {
 } as const
 
 /**
+ * Native tool policy for the MSP host (`muse serve`).
+ *
+ * Separate from MUSE_NATIVE_TOOL_POLICY rather than a variant of it, because
+ * the containment SHAPE differs and the seal hashes this document:
+ *
+ * - `--workspace` is not a serve flag. Under exec it rooted the run; under MSP
+ *   the workspace is a `session/start` parameter, and it was measured NOT to
+ *   confine reads (a serve session read /etc/hosts outside its workspaceRoot).
+ *   The sandbox flags below are therefore the whole boundary, not a backstop.
+ * - The headless pair (`--disable-approval`, `--user-input-auto-resolve`) is
+ *   absent BY DESIGN: MSP carries approvals on the wire, so this lane answers
+ *   them through TaskWraith rather than suppressing them. Removing that pair is
+ *   a containment change, which is why it gets its own hashed document.
+ * - `--api-key-stdin` is not a serve flag either; the credential reaches the
+ *   host through the projected auth.json in the per-run isolated home.
+ *
+ * Sandbox posture is fixed for the HOST's lifetime — see
+ * `museMspHostPostureIsPerHost` in museGate.ts.
+ */
+export const MUSE_NATIVE_SERVE_TOOL_POLICY = {
+  kind: 'muse-cli-serve',
+  containment: 'host-sandbox-plus-disable-write-shell-plus-wire-approvals',
+  forbiddenFlags: ['--yolo', '--disable-sandbox', '--no-session-log'],
+  readOnlyFlags: ['--disable-write', '--disable-shell'],
+  /** Empty on purpose: approvals ride `approval/requested` / `approval/decide`. */
+  headlessFlags: [],
+  meteringRequiresSessionLog: true
+} as const
+
+export interface MuseServeArgvInput {
+  /** TaskWraith approval mode; a read-only seat adds the read-only flags. */
+  approvalMode?: string | null
+  sandboxNetwork?: MuseSandboxNetworkMode
+  /** Default false — omit `--trust-workspace`. */
+  trustWorkspace?: boolean
+}
+
+/**
+ * Production `muse serve` argv.
+ *
+ * Deliberately short: model, reasoning effort, session id, workspace and the
+ * prompt are all protocol-level under MSP, so an argv that carried them would
+ * be silently ignored rather than rejected. Everything this builder emits is
+ * host-lifetime posture.
+ */
+export function buildMuseServeArgv(input: MuseServeArgvInput = {}): string[] {
+  const args = ['serve', '--sandbox-network', resolveSandboxNetwork(input.sandboxNetwork)]
+  if (!museWriteCapable(input.approvalMode)) {
+    args.push('--disable-write', '--disable-shell')
+  }
+  if (input.trustWorkspace === true) args.push('--trust-workspace')
+  return args
+}
+
+/**
  * Read-only vs write tier from TaskWraith's approval mode.
  *
  * Trim before the 'plan' compare (same as Grok/Mistral): a stray-whitespace

@@ -7,6 +7,7 @@ import {
   MUSE_DEFAULT_REASONING_EFFORT,
   MUSE_DEFAULT_SANDBOX_NETWORK,
   MUSE_META_API_KEY_ENV,
+  MUSE_NATIVE_SERVE_TOOL_POLICY,
   MUSE_NATIVE_TOOL_POLICY,
   MUSE_REASONING_EFFORTS,
   MUSE_TOOL_SURFACE_VERSION_PIN,
@@ -14,6 +15,7 @@ import {
   MUSE_ULTRATASK_REVIEWER_AGENT_OVERLAY,
   MUSE_ULTRATASK_REVIEWER_TOOLS,
   buildMuseExecArgv,
+  buildMuseServeArgv,
   buildMuseSeatEnv,
   isMuseSessionUuid,
   museMetaApiKeyScrubbed,
@@ -320,5 +322,93 @@ describe('buildMuseSeatEnv', () => {
       museNoAutoUpdate: false
     })
     expect(env.MUSE_NO_AUTO_UPDATE).toBe('0')
+  })
+})
+
+describe('buildMuseServeArgv — MSP host posture', () => {
+  it('always pins the sandbox network mode', () => {
+    expect(buildMuseServeArgv()).toContain('--sandbox-network')
+    expect(buildMuseServeArgv()).toContain(MUSE_DEFAULT_SANDBOX_NETWORK)
+    expect(buildMuseServeArgv({ sandboxNetwork: 'restricted' })).toContain('restricted')
+  })
+
+  it('starts with the serve subcommand', () => {
+    expect(buildMuseServeArgv({ approvalMode: 'default' })[0]).toBe('serve')
+  })
+
+  it('adds the read-only pair for a plan seat and omits it for a write seat', () => {
+    const readOnly = buildMuseServeArgv({ approvalMode: 'plan' })
+    expect(readOnly).toContain('--disable-write')
+    expect(readOnly).toContain('--disable-shell')
+    const write = buildMuseServeArgv({ approvalMode: 'default' })
+    expect(write).not.toContain('--disable-write')
+    expect(write).not.toContain('--disable-shell')
+  })
+
+  it('treats a missing approval mode as read-only', () => {
+    // museWriteCapable('') is false; a seat whose mode never arrived must not
+    // come up write-capable.
+    expect(buildMuseServeArgv()).toContain('--disable-write')
+  })
+
+  it('never emits a forbidden flag', () => {
+    const every = [
+      buildMuseServeArgv(),
+      buildMuseServeArgv({ approvalMode: 'default' }),
+      buildMuseServeArgv({ approvalMode: 'plan', trustWorkspace: true }),
+      buildMuseServeArgv({ approvalMode: 'default', sandboxNetwork: 'enabled' })
+    ]
+    for (const args of every) {
+      for (const forbidden of MUSE_NATIVE_SERVE_TOOL_POLICY.forbiddenFlags) {
+        expect(args, `forbidden ${forbidden}`).not.toContain(forbidden)
+      }
+    }
+    // Guard against the assertion above going vacuous if the policy is emptied.
+    expect(MUSE_NATIVE_SERVE_TOOL_POLICY.forbiddenFlags.length).toBeGreaterThan(0)
+  })
+
+  it('omits flags that `muse serve` does not accept', () => {
+    // Model, effort, session id, workspace and the prompt are all protocol
+    // level under MSP. An argv carrying them is IGNORED, not rejected, so a
+    // copy-paste from buildMuseExecArgv would silently run the wrong model.
+    const args = buildMuseServeArgv({ approvalMode: 'default' })
+    for (const flag of [
+      '--workspace',
+      '--model',
+      '--provider',
+      '--reasoning-effort',
+      '--session-id',
+      '--api-key-stdin',
+      '--json',
+      '--disable-approval',
+      '--user-input-auto-resolve'
+    ]) {
+      expect(args, `serve must not carry ${flag}`).not.toContain(flag)
+    }
+  })
+
+  it('only trusts the workspace on an explicit true', () => {
+    expect(buildMuseServeArgv({ trustWorkspace: true })).toContain('--trust-workspace')
+    expect(buildMuseServeArgv({})).not.toContain('--trust-workspace')
+    expect(buildMuseServeArgv({ trustWorkspace: false })).not.toContain('--trust-workspace')
+  })
+})
+
+describe('MUSE_NATIVE_SERVE_TOOL_POLICY', () => {
+  it('is a DISTINCT hashed document from the exec policy', () => {
+    // The seal hashes the policy; if serve reused the exec document, a
+    // containment change would not move the digest.
+    expect(MUSE_NATIVE_SERVE_TOOL_POLICY.kind).not.toBe(MUSE_NATIVE_TOOL_POLICY.kind)
+    expect(MUSE_NATIVE_SERVE_TOOL_POLICY.containment).not.toBe(MUSE_NATIVE_TOOL_POLICY.containment)
+  })
+
+  it('drops the headless pair because MSP answers approvals on the wire', () => {
+    expect(MUSE_NATIVE_TOOL_POLICY.headlessFlags).toContain('--disable-approval')
+    expect(MUSE_NATIVE_SERVE_TOOL_POLICY.headlessFlags).toEqual([])
+  })
+
+  it('keeps metering coupled to the durable session log', () => {
+    expect(MUSE_NATIVE_SERVE_TOOL_POLICY.meteringRequiresSessionLog).toBe(true)
+    expect(MUSE_NATIVE_SERVE_TOOL_POLICY.forbiddenFlags).toContain('--no-session-log')
   })
 })
