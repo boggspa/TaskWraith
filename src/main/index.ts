@@ -2899,6 +2899,13 @@ let stallReconcilerInterval: ReturnType<typeof setInterval> | null = null
 // Startup uses minAgeMs=0; the interval uses a short grace window.
 const CHAT_RUN_RECONCILER_INTERVAL_MS = 2 * 60 * 1000
 const CHAT_RUN_RECONCILER_PERIODIC_MIN_AGE_MS = 30_000
+/** Ticks between whole-corpus re-seeds of the store's open-run list. The list
+ * is maintained incrementally by every read and save, so this only has to
+ * catch records changed by something that never passed through this process
+ * (an external Host write, a crash mid-save). At 2 minutes a tick this is a
+ * re-seed every half hour instead of a full parse every two minutes. */
+const CHAT_RUN_RECONCILER_FULL_SWEEP_EVERY_TICKS = 15
+let chatRunReconcilerSweepTick = 0
 let chatRunReconcilerInterval: ReturnType<typeof setInterval> | null = null
 const stalledOccurrenceEventKeys = new Set<string>()
 let activeGeminiToolContext: GeminiToolContext | null = null
@@ -10674,7 +10681,15 @@ function settleOrphanedRunQueueJobsProjection(
   return settlements.length
 }
 
-function reconcileStaleChatRunsProjection(options: { minAgeMs?: number } = {}): number {
+/**
+ * `scope: 'open-runs'` reconciles only chats the store still lists as holding
+ * an unsettled run. `scope: 'all'` re-reads the whole corpus -- 1.16GB across
+ * 514 files on a real profile -- and exists to re-seed that list, not to run
+ * on a short timer.
+ */
+function reconcileStaleChatRunsProjection(
+  options: { minAgeMs?: number; scope?: 'all' | 'open-runs' } = {}
+): number {
   // A chat inside a prepared (uncommitted) erasure must not be settled or
   // re-projected. Filter fenced chats up front so the sweep continues over the
   // rest of the batch instead of aborting on the saveChat fence throw.
@@ -10702,8 +10717,10 @@ function reconcileStaleChatRunsProjection(options: { minAgeMs?: number } = {}): 
   // needs it.
   settleOrphanedRunQueueJobsProjection(fencedForErasure)
   const nowIso = new Date().toISOString()
+  const sourceChats =
+    options.scope === 'open-runs' ? AppStore.getChatsWithOpenRuns() : AppStore.getChats()
   const { chats, settlements, terminalRecoveries } = reconcileStaleChatRuns(
-    AppStore.getChats().filter((chat) => !fencedForErasure(chat)),
+    sourceChats.filter((chat) => !fencedForErasure(chat)),
     isChatRunLive,
     nowIso,
     {
@@ -55652,8 +55669,12 @@ if (isGeminiMcpBridgeProcess) {
       ) {
         chatRunReconcilerInterval = setInterval(() => {
           try {
+            chatRunReconcilerSweepTick += 1
+            const reseed =
+              chatRunReconcilerSweepTick % CHAT_RUN_RECONCILER_FULL_SWEEP_EVERY_TICKS === 0
             reconcileStaleChatRunsProjection({
-              minAgeMs: CHAT_RUN_RECONCILER_PERIODIC_MIN_AGE_MS
+              minAgeMs: CHAT_RUN_RECONCILER_PERIODIC_MIN_AGE_MS,
+              scope: reseed ? 'all' : 'open-runs'
             })
           } catch (error) {
             console.warn(

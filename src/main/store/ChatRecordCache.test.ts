@@ -345,3 +345,100 @@ describe('chat-list index freshness after save (cold-launch re-parse guard)', ()
     expect(entry.sourceChatSize).toBe(stat.size)
   })
 })
+
+describe('AppStore open-run index', () => {
+  beforeEach(() => {
+    AppStore.resetTransientDeletionGuardsForTests()
+    fs.rmSync(userDataPath, { recursive: true, force: true })
+    fs.mkdirSync(chatsDir, { recursive: true })
+  })
+
+  const withRuns = (chat: ChatRecord, runs: ChatRecord['runs']): ChatRecord =>
+    ({ ...chat, runs }) as ChatRecord
+
+  it('leaves a chat with no runs out of the narrow sweep', () => {
+    AppStore.createChat('ws-1', '/repo')
+    expect(AppStore.getChatsWithOpenRuns()).toEqual([])
+  })
+
+  it('lists a chat whose run is still open', () => {
+    const chat = AppStore.createChat('ws-1', '/repo')
+    AppStore.saveChat(
+      withRuns(chat, [{ runId: 'r1', startedAt: '2026-01-01T00:00:00.000Z', status: 'running' }])
+    )
+    expect(AppStore.getChatsWithOpenRuns().map((c) => c.appChatId)).toEqual([chat.appChatId])
+  })
+
+  it('tombstones the entry when the save that seals the run lands', () => {
+    const chat = AppStore.createChat('ws-1', '/repo')
+    const open = AppStore.saveChat(
+      withRuns(chat, [{ runId: 'r1', startedAt: '2026-01-01T00:00:00.000Z', status: 'running' }])
+    )
+    expect(AppStore.getChatsWithOpenRuns()).toHaveLength(1)
+
+    AppStore.saveChat(
+      withRuns(open, [
+        {
+          runId: 'r1',
+          startedAt: '2026-01-01T00:00:00.000Z',
+          endedAt: '2026-01-01T00:01:00.000Z',
+          status: 'completed'
+        }
+      ])
+    )
+    expect(AppStore.getChatsWithOpenRuns()).toEqual([])
+  })
+
+  it('still lists a stuck run hiding under a newer sealed one', () => {
+    const chat = AppStore.createChat('ws-1', '/repo')
+    AppStore.saveChat(
+      withRuns(chat, [
+        { runId: 'stuck', startedAt: '2026-01-01T00:00:00.000Z', status: 'running' },
+        {
+          runId: 'newer',
+          startedAt: '2026-01-01T00:02:00.000Z',
+          endedAt: '2026-01-01T00:03:00.000Z',
+          status: 'completed'
+        }
+      ])
+    )
+    expect(AppStore.getChatsWithOpenRuns().map((c) => c.appChatId)).toEqual([chat.appChatId])
+  })
+
+  it('narrows the sweep instead of returning the corpus', () => {
+    const open = AppStore.createChat('ws-1', '/repo')
+    AppStore.createChat('ws-1', '/repo')
+    AppStore.createChat('ws-1', '/repo')
+    AppStore.saveChat(
+      withRuns(open, [{ runId: 'r1', startedAt: '2026-01-01T00:00:00.000Z', status: 'running' }])
+    )
+    expect(AppStore.getChats()).toHaveLength(3)
+    expect(AppStore.getChatsWithOpenRuns().map((c) => c.appChatId)).toEqual([open.appChatId])
+  })
+
+  it('drops an entry whose chat record is gone rather than sweeping it forever', () => {
+    const chat = AppStore.createChat('ws-1', '/repo')
+    AppStore.saveChat(
+      withRuns(chat, [{ runId: 'r1', startedAt: '2026-01-01T00:00:00.000Z', status: 'running' }])
+    )
+    expect(AppStore.getChatsWithOpenRuns()).toHaveLength(1)
+
+    // Drop the cached (still-unflushed) instance so the sweep has to go to
+    // disk, then take the record away underneath it. Without the self-heal
+    // the id would stay on the open-run list for the life of the process.
+    const saved = fs.readFileSync(diskPath(chat.appChatId), 'utf-8')
+    AppStore.clearChatRecordCacheForTests()
+    fs.rmSync(diskPath(chat.appChatId), { force: true })
+
+    const onDisk = JSON.parse(saved)
+    expect(AppStore.getChatsWithOpenRuns()).toEqual([])
+
+    // Discriminating check: the id must have been REMOVED, not merely skipped.
+    // Putting the record back must not resurrect it on the narrow sweep -- a
+    // skip-only implementation would start listing it again here. The periodic
+    // whole-corpus re-seed is what legitimately re-adopts a record like this.
+    fs.writeFileSync(diskPath(chat.appChatId), JSON.stringify(onDisk))
+    AppStore.clearChatRecordCacheForTests()
+    expect(AppStore.getChatsWithOpenRuns()).toEqual([])
+  })
+})

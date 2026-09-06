@@ -381,6 +381,7 @@ import {
   applyChatComposerSelectionPatch,
   type ChatComposerSelectionPatchRequest
 } from '../../shared/chatComposerSelectionPatch'
+import { chatHasReconcilableRun } from '../ChatRunReconciler'
 import { ChatListIndexStore } from './ChatListIndexStore'
 import {
   CHAT_RECORD_CACHE_MAX_BYTES,
@@ -5901,10 +5902,22 @@ export class AppStore {
    * new `.set` site. Insertion order is recency order -- `touchChatRecord`
    * re-inserts on a hit -- so the budget evicts least-recently-used first and
    * never touches an unflushed (`mtimeMs === -1`) record. */
+  /** Chats holding at least one run the reconciler could still settle.
+   *
+   * Maintained as a by-product of records passing through the cache, which
+   * every read and every save already does, so it costs no extra I/O. The
+   * startup sweep reads the whole corpus once and thereby seeds it; from then
+   * on the periodic sweep reconciles only these, instead of re-parsing 514
+   * files to discover that ~none of them have open runs. Entries tombstone
+   * themselves: the save that seals a chat's last run removes it here. */
+  private static openRunChatIds = new Set<string>()
+
   private static rememberChatRecord(
     chatId: string,
     entry: { mtimeMs: number; size: number; record: ChatRecord }
   ): void {
+    if (chatHasReconcilableRun(entry.record)) this.openRunChatIds.add(chatId)
+    else this.openRunChatIds.delete(chatId)
     this.chatRecordCache.delete(chatId)
     this.chatRecordCache.set(chatId, entry)
     if (this.chatRecordCache.size <= 1) return
@@ -6167,6 +6180,32 @@ export class AppStore {
       // Unreadable/missing file — let the canonical read resolve it.
     }
     return this.readChatRecordCached(chatId, chatPath)
+  }
+
+  /**
+   * Records for the chats that could still hold an unsettled run.
+   *
+   * The periodic reconciler's narrow source. `getChats()` reads and parses
+   * EVERY chat file -- measured at 1.16GB across 514 files -- which is why
+   * nothing on a timer may call it.
+   */
+  static getChatsWithOpenRuns(): ChatRecord[] {
+    if (this.openRunChatIds.size === 0) return []
+    this.ensureOrphanSubThreadsReaped()
+    if (!fs.existsSync(chatsDir)) return []
+    const chats: ChatRecord[] = []
+    for (const chatId of [...this.openRunChatIds]) {
+      if (this.orphanSubThreadReapCandidates.has(chatId)) continue
+      const chatPath = path.join(chatsDir, `${chatId}.json`)
+      const chat = this.readChatRecordCached(chatId, chatPath)
+      if (!chat) {
+        // The file is gone; nothing will ever settle it.
+        this.openRunChatIds.delete(chatId)
+        continue
+      }
+      chats.push(chat)
+    }
+    return chats.sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
   static getChats(workspaceId?: string, options: { listShells?: boolean } = {}): ChatRecord[] {

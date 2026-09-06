@@ -33,6 +33,33 @@ import { isActiveChatRunStatus } from '../shared/chatRunStatus'
 
 export { isActiveChatRunStatus }
 
+/**
+ * Whether a persisted run is worth reconciling at all.
+ *
+ * Exported because the answer has to be identical in two places: this
+ * reconciler's own per-run loop, and the store's candidate index that decides
+ * which chats the sweep even reads. A copy that drifted would not fail loudly
+ * -- it would silently stop reconciling some class of stuck run -- so there is
+ * exactly one definition.
+ */
+export function chatRunIsReconcilable(run: Pick<ChatRun, 'status' | 'endedAt'>): boolean {
+  if (isActiveChatRunStatus(run.status)) return true
+  // Older desktop runs could be persisted before their renderer-side status
+  // was seeded. Treat only an unended missing-status row as a reconciliation
+  // candidate; an ended legacy row is historical data, not evidence of live
+  // work.
+  return run.status === undefined && !run.endedAt
+}
+
+/** Whether any of a record's runs is worth reconciling. */
+export function chatHasReconcilableRun(chat: { runs?: readonly ChatRun[] }): boolean {
+  const runs = Array.isArray(chat.runs) ? chat.runs : []
+  return runs.some(
+    (run) =>
+      run && typeof run.runId === 'string' && run.runId.trim() !== '' && chatRunIsReconcilable(run)
+  )
+}
+
 /** Terminal status stamped onto a ChatRun settled by this reconciler. */
 export const CHAT_RUN_STALE_SETTLEMENT_STATUS = 'failed' as const
 
@@ -313,12 +340,7 @@ export function reconcileStaleChatRuns(
     const settled: StaleRunSettlementEntry[] = []
     const nextRuns = runs.map((run) => {
       if (!run || typeof run.runId !== 'string' || !run.runId.trim()) return run
-      // Older desktop runs could be persisted before their renderer-side
-      // status was seeded. Treat only an unended missing-status row as a
-      // reconciliation candidate; an ended legacy row is historical data,
-      // not evidence of live work.
-      const isLegacyUnsealedRun = run.status === undefined && !run.endedAt
-      if (!isActiveChatRunStatus(run.status) && !isLegacyUnsealedRun) return run
+      if (!chatRunIsReconcilable(run)) return run
       if (isRunLive(run.runId)) return run
 
       const terminalSeal = terminalChatRunSealFromExactSession(
