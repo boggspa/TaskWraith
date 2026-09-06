@@ -363,7 +363,14 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         }
       }
       if (phase === 'completed') {
-        const failed = item.status !== 'completed' && item.status !== 'succeeded'
+        // `ItemStatus` is an OPEN enum whose known members are inProgress,
+        // completed, failed, cancelled, rejected and timedOut. Terminal is
+        // anything but inProgress, and the schema says an unknown value is
+        // "terminal-unknown, rendered generically" — so only an explicitly
+        // known-good status counts as success, and everything else, including a
+        // status this build has never heard of, surfaces as an error rather
+        // than being quietly presented as a completed tool call.
+        const failed = item.status !== 'completed'
         return {
           ...base,
           type: 'tool_result',
@@ -526,14 +533,19 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   }
 
   const cancelTurn = (): void => {
-    if (!sessionId || !activeTurnId) {
+    if (!sessionId) {
+      // Nothing to cancel yet — the handshake never reached a session.
       endProcess()
       return
     }
+    // `turnId` is OPTIONAL on turn/cancel: only commandId and sessionId are
+    // required. Cancelling without it still stops the session's running turn,
+    // so a lost turn/start response must not cost us the cancel — that would
+    // leave `muse` billing a turn nobody is watching.
     void call('turn/cancel', {
       commandId: mintCommandId(),
       sessionId,
-      turnId: activeTurnId
+      ...(activeTurnId ? { turnId: activeTurnId } : {})
     }).catch(() => undefined)
     endProcess()
   }

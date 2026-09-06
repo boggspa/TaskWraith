@@ -365,6 +365,61 @@ describe('runMuseMspTurn — transcript projection', () => {
     })
   })
 
+  it('treats every non-completed terminal status as an error result', async () => {
+    // ItemStatus is an OPEN enum (inProgress|completed|failed|cancelled|
+    // rejected|timedOut, plus future members). An earlier version of this
+    // client also accepted a guessed `succeeded`, which is not in the schema.
+    const { child, events } = start()
+    await driveToTurn(child)
+    const statuses = ['failed', 'cancelled', 'rejected', 'timedOut', 'somethingNew']
+    for (const status of statuses) {
+      child.emit({
+        jsonrpc: '2.0',
+        method: 'item/completed',
+        params: {
+          sessionId: 'sess-1',
+          item: {
+            itemId: `t-${status}`,
+            kind: 'toolCall',
+            revision: 2,
+            status,
+            tool: 'x',
+            callId: `c-${status}`
+          }
+        }
+      })
+    }
+    const results = events.filter((e) => e.type === 'tool_result')
+    // Pin the count first so the every() below cannot pass vacuously.
+    expect(results).toHaveLength(statuses.length)
+    expect(results.every((e) => e.toolStatus === 'error')).toBe(true)
+  })
+
+  it('cancels using the session alone when the turn id was never captured', async () => {
+    // turnId is OPTIONAL on turn/cancel. A lost turn/start response must not
+    // cost the cancel — that leaves muse billing a turn nobody is watching.
+    const child = new FakeMspChild()
+    const handle = runMuseMspTurn({
+      spawnProcess: () => child,
+      clientVersion: '1.9.7',
+      workspaceRoot: '/ws',
+      input: [{ type: 'text', text: 'hi' }],
+      onEvent: () => {},
+      randomBytes: bytes,
+      endProcessGraceMs: 20
+    })
+    await flush()
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    await flush()
+    child.emit({ jsonrpc: '2.0', id: 2, result: { session: { sessionId: 'sess-9' } } })
+    await flush()
+    handle.cancel()
+    const cancel = child.sentMethod('turn/cancel')
+    expect(cancel?.params).toMatchObject({ sessionId: 'sess-9' })
+    expect(cancel?.params).not.toHaveProperty('turnId')
+    await handle.closed
+  })
+
   it('keeps unparsable tool args instead of dropping the call', async () => {
     const { child, events } = start()
     await driveToTurn(child)

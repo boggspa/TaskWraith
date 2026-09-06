@@ -133,13 +133,23 @@ export interface MuseMspTokenUsage {
   cacheWriteTokens?: number
 }
 
+/** `ItemStatus`. Open: terminal is anything other than `inProgress`, and an
+ * unknown value is terminal-unknown and rendered generically. */
+export type MuseMspItemStatus =
+  | 'inProgress'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'rejected'
+  | 'timedOut'
+  | (string & {})
+
 export interface MuseMspItem {
   itemId: string
   kind: MuseMspItemKind
   /** Strictly monotonic per item; apply rule is replace-iff-higher. */
   revision: number
-  /** Open enum; terminal is anything other than `inProgress`. */
-  status: string
+  status: MuseMspItemStatus
   turnId?: string
   text?: string
   tool?: string
