@@ -33,7 +33,9 @@ import {
   decodeMuseMspFrames,
   encodeMuseMspFrame,
   museMspCommandId,
+  MuseMspRpcError,
   MUSE_MSP_CLIENT_NAME,
+  MUSE_MSP_SCHEMA_FINGERPRINT,
   type MuseMspApprovalChoice,
   type MuseMspApprovalMode,
   type MuseMspApprovalRequest,
@@ -42,7 +44,9 @@ import {
   type MuseMspJsonRpcId,
   type MuseMspReasoningEffort,
   type MuseMspSession,
-  type MuseMspTurnInputPart
+  type MuseMspTurnError,
+  type MuseMspTurnInputPart,
+  type MuseMspUserInputRequest
 } from './MuseMspProtocol'
 
 export type { AcpChildProcess as MuseMspChildProcess } from '../acp/AcpTurnClient'
@@ -57,12 +61,23 @@ export interface MuseMspSessionReadyInfo {
   readonly modelId: string | null
 }
 
+/**
+ * Session-cumulative usage.
+ *
+ * `CumulativeTokenUsage` carries only prompt/output/total, while the sibling
+ * `usage` member is "raw counters verbatim from the durable record" — i.e. THIS
+ * completion. Mixing the two produced three monotonic session figures beside
+ * two that jump around, so the per-call counters ride their own field and any
+ * consumer that wants cumulative cache/reasoning totals must accumulate them.
+ */
 export interface MuseMspUsageSnapshot {
   readonly inputTokens?: number
   readonly outputTokens?: number
   readonly totalTokens?: number
-  readonly cachedTokens?: number
-  readonly reasoningTokens?: number
+  /** This model call only — NOT a session total. */
+  readonly lastCallCachedTokens?: number
+  /** This model call only — NOT a session total. */
+  readonly lastCallReasoningTokens?: number
 }
 
 /** Provider-reported context occupancy. `windowTokens` is the server's own
@@ -96,7 +111,26 @@ export interface MuseMspTurnOptions {
   readonly onApprovalRequest?: (
     request: MuseMspApprovalRequest
   ) => MuseMspApprovalVerdict | Promise<MuseMspApprovalVerdict>
-  readonly onClose?: (code: number | null, terminal: string | null) => void | Promise<void>
+  /**
+   * Absent means the prompt is CANCELLED rather than left open — an unanswered
+   * `userInput` blocks its tool call and the turn never terminates.
+   */
+  readonly onUserInputRequest?: (request: MuseMspUserInputRequest) => void | Promise<void>
+  readonly onClose?: (
+    code: number | null,
+    terminal: string | null,
+    /** Present only when the turn terminal was `failed`; carries the server's
+     * own `retryable` judgment, which the free-text `reason` never does. */
+    error: MuseMspTurnError | null
+  ) => void | Promise<void>
+  /**
+   * Diagnostics the user must see: a denied approval with no handler, a failed
+   * handshake, a dropped-event gap. These are NOT transcript content and must
+   * not ride `onEvent` — `museExecEventToCompatPayload` has no `unknown` arm,
+   * so a warning emitted as a normalized event returns null and is discarded by
+   * the pump. A host wires this to a `provider_warning` compat line.
+   */
+  readonly onWarning?: (message: string) => void
   readonly onRawFrame?: (direction: 'in' | 'out', frame: unknown) => void
   readonly endProcess?: (child: AcpChildProcess) => void
   readonly endProcessGraceMs?: number
@@ -143,12 +177,27 @@ function record(value: unknown): Record<string, unknown> {
  * option matching fails.
  */
 export function selectMuseMspApprovalChoice(
-  choices: readonly MuseMspApprovalChoice[],
+  choices: readonly MuseMspApprovalChoice[] | null | undefined,
   verdict: MuseMspApprovalVerdict
 ): MuseMspApprovalChoice | null {
-  const byDecision = (decision: string): MuseMspApprovalChoice | undefined =>
-    choices.find((choice) => choice.decision === decision && choice.scope === 'once') ||
-    choices.find((choice) => choice.decision === decision)
+  // The server's payload is untrusted shape. An absent or non-array
+  // `availableChoices` used to throw inside a bare `void decideApproval(...)`,
+  // which became an unhandled rejection: no decision, no cancel, no warning —
+  // exactly the silence this lane exists to avoid.
+  if (!Array.isArray(choices)) return null
+  // Narrowest scope first, and `localPersistent` only as a last resort: those
+  // choices carry a `rulePreview`, i.e. picking one AUTHORS a durable policy
+  // rule the user never asked for. Denying persistently is safer than allowing,
+  // but it is still a side effect, so it must be the final fallback rather than
+  // whatever `find` happens to reach.
+  const byDecision = (decision: string): MuseMspApprovalChoice | undefined => {
+    const matching = choices.filter((choice) => choice.decision === decision)
+    return (
+      matching.find((choice) => choice.scope === 'once') ||
+      matching.find((choice) => choice.scope === 'session') ||
+      matching[0]
+    )
+  }
   if (verdict === 'allow') {
     // Only the narrowest grant. `approvedForSession` and
     // `approvedPolicyAmendment` outlive the call TaskWraith actually approved,
@@ -179,8 +228,10 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   let sessionId = ''
   let activeTurnId = ''
   let turnTerminal: string | null = null
+  let turnError: MuseMspTurnError | null = null
   let sawTurnCompleted = false
   const approvalRequirements = new Map<string, MuseMspApprovalRequirementRef>()
+  const settledUserInputs = new Set<string>()
 
   let settleClosed: () => void = () => {}
   const closedPromise = new Promise<void>((resolve) => {
@@ -200,7 +251,11 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   }
 
   const warn = (message: string): void => {
-    emit({ type: 'unknown', payloadType: 'taskwraith.warning', text: message, raw: { message } })
+    try {
+      options.onWarning?.(message)
+    } catch {
+      /* a throwing consumer must never kill the transport */
+    }
   }
 
   const writeFrame = (frame: Record<string, unknown>): void => {
@@ -225,6 +280,14 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   }
 
   const call = (method: string, params?: Record<string, unknown>): Promise<unknown> => {
+    // The close handler drains `pending` exactly once. A call issued after that
+    // drain would never settle, and `start()` issues one on the resume-failure
+    // path — so a host that died mid-resume left start() suspended forever,
+    // settleStartup uncalled, onClose never delivered and `closed` unresolved.
+    // That is the exit-before-finish wedge, reached on the DEFAULT config.
+    if (closed || stdinClosed) {
+      return Promise.reject(new Error(`${method} could not be sent: the Muse host is gone`))
+    }
     const id = nextRpcId++
     const settled = new Promise<unknown>((resolve, reject) => {
       pending.set(id, { resolve, reject, method })
@@ -297,19 +360,80 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       cancelTurn()
       return
     }
+    await sendApprovalDecision(request, choice, true)
+  }
+
+  /**
+   * Send one decision, retrying ONCE on a stale CAS token.
+   *
+   * A rejected decide is not a sent decision. `approvalRequirementStale` is the
+   * expected outcome of racing `approval/updated`, and the refreshed
+   * requirement is already in hand — so retry it. Anything else leaves the tool
+   * call gated forever, so the turn is cancelled rather than left hanging.
+   */
+  const sendApprovalDecision = async (
+    request: MuseMspApprovalRequest,
+    choice: MuseMspApprovalChoice,
+    mayRetry: boolean
+  ): Promise<void> => {
     // Echo the LATEST requirement id: approval/updated can move it, and a stale
     // one is rejected `approvalRequirementStale`.
     const requirementId =
       approvalRequirements.get(request.approvalId) || request.currentRequirementId
-    void call('approval/decide', {
-      commandId: mintCommandId(),
-      sessionId: request.sessionId,
-      approvalId: request.approvalId,
-      requirementId,
-      choiceId: choice.choiceId
-    }).catch((error: Error) => {
-      warn(`Muse rejected the approval decision for "${request.toolName}": ${error.message}`)
-    })
+    try {
+      await call('approval/decide', {
+        commandId: mintCommandId(),
+        sessionId: request.sessionId,
+        approvalId: request.approvalId,
+        requirementId,
+        choiceId: choice.choiceId
+      })
+    } catch (error) {
+      const kind = error instanceof MuseMspRpcError ? error.kind : ''
+      if (kind === 'approvalAlreadyResolved') return
+      if (mayRetry && kind === 'approvalRequirementStale') {
+        await sendApprovalDecision(request, choice, false)
+        return
+      }
+      warn(
+        `Muse rejected the approval decision for "${text(request.toolName)}"; cancelling the turn rather than leaving it gated. ${(error as Error).message}`
+      )
+      cancelTurn()
+    }
+  }
+
+  /**
+   * Settle one `userInput` prompt.
+   *
+   * `autoResolutionMs` is OPTIONAL, so when the host sends none NOTHING times
+   * the prompt out: the gated tool call blocks, `turn/completed` never arrives,
+   * and the turn hangs with no explanation. Cancelling is therefore the
+   * fail-safe — the schema says the tool call then "resolves with a cancelled
+   * result the model sees", which the model can react to. Same asymmetry as
+   * approvals: silence is the worst outcome, not the safe one.
+   */
+  const settleUserInput = (request: MuseMspUserInputRequest): void => {
+    const userInputId = text(request?.userInputId)
+    if (!userInputId || settledUserInputs.has(userInputId)) return
+    settledUserInputs.add(userInputId)
+    const finish = (): void => {
+      void call('userInput/cancel', {
+        commandId: mintCommandId(),
+        sessionId: text(request.sessionId) || sessionId,
+        userInputId,
+        reason: 'TaskWraith answers Muse prompts through its own approval surface.'
+      }).catch(() => undefined)
+    }
+    if (!options.onUserInputRequest) {
+      warn(
+        `Muse asked a question for "${text(request.toolName)}" and TaskWraith has no handler attached; declining so the turn can continue.`
+      )
+      finish()
+      return
+    }
+    void Promise.resolve(options.onUserInputRequest(request))
+      .catch(() => undefined)
+      .finally(finish)
   }
 
   const itemToEvent = (
@@ -382,16 +506,27 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       }
       return null
     }
-    return null
+    // Open enum: the schema requires unknown kinds to render GENERICALLY —
+    // "kind name plus status plus fallbackText" — rather than vanishing. Five
+    // known kinds (userShell, subagent, workflow, reminderChild, compaction)
+    // reach this arm too, so a subagent run or a context compaction is visible
+    // instead of silently absent from the transcript.
+    if (phase !== 'completed') return null
+    const fallback = text(item.fallbackText)
+    if (!fallback) return null
+    return { ...base, type: 'unknown', text: `${String(item.kind)}: ${fallback}` }
   }
 
   const handleNotification = (method: string, params: Record<string, unknown>): void => {
     switch (method) {
       case 'item/delta': {
-        // Only agentMessage text streams as user-visible content; a reasoning
-        // delta is projected on completion so partial summaries never render as
-        // the answer.
-        if (text(params.field) !== 'text') return
+        // `field` is NOT required, and the schema says "absent means `text`".
+        // Treating an absent field as non-text discarded the whole assistant
+        // reply, because item/completed for an agentMessage is suppressed below
+        // as a duplicate of the deltas — deltas dropped AND the authoritative
+        // final object suppressed is total, silent answer loss.
+        const field = params.field === undefined ? 'text' : text(params.field)
+        if (field !== 'text') return
         emit({
           type: 'content',
           payloadType: 'msp.item.delta',
@@ -431,8 +566,25 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         return
       }
       case 'turn/completed': {
+        // A resumed session can carry a still-running prior turn; its terminal
+        // is not ours. Same guard the unqueued arm already applies.
+        const completedTurnId = text(params.turnId)
+        if (completedTurnId && activeTurnId && completedTurnId !== activeTurnId) return
         sawTurnCompleted = true
         turnTerminal = text(params.terminal) || 'completed'
+        // Mid-turn failures arrive HERE and never as a JSON-RPC error, and the
+        // sibling `reason` is documented display-only ("never branch on it").
+        // `error.retryable` is the server's own judgment and the only field a
+        // retry policy may read.
+        const failure = record(params.error)
+        turnError =
+          typeof failure.kind === 'string' && typeof failure.message === 'string'
+            ? {
+                kind: failure.kind,
+                message: failure.message,
+                retryable: failure.retryable === true
+              }
+            : null
         emit({
           type: 'terminal',
           payloadType: 'msp.turn.completed',
@@ -448,14 +600,34 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         endProcess()
         return
       }
+      case 'turn/unqueued': {
+        // A reclaimed submit never launches, so NO turn/started or
+        // turn/completed follows for that turnId. Without this the lane waits
+        // for a terminal that can never arrive and the host idles.
+        if (text(params.turnId) && text(params.turnId) !== activeTurnId) return
+        sawTurnCompleted = true
+        turnTerminal = turnTerminal ?? 'cancelled'
+        emit({
+          type: 'terminal',
+          payloadType: 'msp.turn.unqueued',
+          sessionId,
+          runId: text(params.turnId) || activeTurnId,
+          terminal: 'cancelled',
+          reason: 'The queued Muse turn was reclaimed before it launched.',
+          raw: params
+        })
+        endProcess()
+        return
+      }
       case 'session/tokenUsage': {
         const cumulative = record(params.cumulative)
+        const lastCall = record(params.usage)
         options.onUsage?.({
-          inputTokens: num(cumulative.promptTokens) ?? num(params.promptTokens),
+          inputTokens: num(cumulative.promptTokens),
           outputTokens: num(cumulative.outputTokens),
-          totalTokens: num(cumulative.totalTokens) ?? num(params.totalTokens),
-          cachedTokens: num(record(params.usage).cachedTokens),
-          reasoningTokens: num(record(params.usage).reasoningTokens)
+          totalTokens: num(cumulative.totalTokens),
+          lastCallCachedTokens: num(lastCall.cachedTokens),
+          lastCallReasoningTokens: num(lastCall.reasoningTokens)
         })
         return
       }
@@ -477,7 +649,24 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         const request = params as unknown as MuseMspApprovalRequest
         if (!request?.approvalId) return
         approvalRequirements.set(request.approvalId, request.currentRequirementId)
-        void decideApproval(request)
+        void decideApproval(request).catch(() => cancelTurn())
+        return
+      }
+      case 'approval/resolved': {
+        // Protected delivery. An approval settled by policy, by the LLM judge,
+        // or by another client must prune our CAS map — otherwise the entry
+        // leaks and a later decide echoes a requirement that no longer exists.
+        const approvalId = text(params.approvalId)
+        if (approvalId) approvalRequirements.delete(approvalId)
+        return
+      }
+      case 'userInput/requested': {
+        settleUserInput(params as unknown as MuseMspUserInputRequest)
+        return
+      }
+      case 'userInput/settled': {
+        const userInputId = text(params.userInputId)
+        if (userInputId) settledUserInputs.add(userInputId)
         return
       }
       case 'approval/updated': {
@@ -512,21 +701,35 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       if (!inFlight) return
       pending.delete(frame.id)
       if (frame.error) {
-        const kind = frame.error.data?.kind ? ` (${frame.error.data.kind})` : ''
-        inFlight.reject(new Error(`${inFlight.method} failed${kind}: ${frame.error.message}`))
+        // Keep `data.kind` as STRUCTURED data: the schema's error table marks
+        // -32001 overloaded and -32031 backpressured `retryable: true`, and
+        // flattening the kind into the message makes that undecidable here.
+        inFlight.reject(new MuseMspRpcError(inFlight.method, frame.error))
       } else {
         inFlight.resolve(frame.result)
       }
       return
     }
     if (frame.kind === 'request') {
-      // MSP v1 has no server-to-client requests, but an unanswered id would
-      // wedge the peer, so answer unknown methods rather than ignoring them.
-      writeFrame({
-        jsonrpc: '2.0',
-        id: frame.id,
-        error: { code: -32601, message: `unsupported method ${frame.method}` }
-      })
+      // Server-to-client requests DO exist: `approval/request` and
+      // `userInput/request` share their params with the notification spellings,
+      // and the schema says the full payloads "arrive as re-issued
+      // server-to-client requests right after a session/resume response". A
+      // blanket -32601 left a resumed session's pending approval undecided and
+      // hung the turn. Acknowledge, then settle through the same handlers.
+      writeFrame({ jsonrpc: '2.0', id: frame.id, result: {} })
+      if (frame.method === 'approval/request') {
+        const request = frame.params as unknown as MuseMspApprovalRequest
+        if (request?.approvalId) {
+          approvalRequirements.set(request.approvalId, request.currentRequirementId)
+          void decideApproval(request).catch(() => cancelTurn())
+        }
+        return
+      }
+      if (frame.method === 'userInput/request') {
+        settleUserInput(frame.params as unknown as MuseMspUserInputRequest)
+        return
+      }
       return
     }
     handleNotification(frame.method, frame.params)
@@ -562,7 +765,10 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
     warn(`Muse session host failed: ${error.message}`)
     endProcess()
   })
+  let terminalCloseDelivered = false
   child.on('close', (code: number | null) => {
+    if (terminalCloseDelivered) return
+    terminalCloseDelivered = true
     closed = true
     clearKillBackstop()
     for (const [id, inFlight] of pending) {
@@ -570,15 +776,27 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       inFlight.reject(new Error(`${inFlight.method} did not complete before the Muse host exited`))
     }
     void startupSettled
-      .then(() => options.onClose?.(code, turnTerminal))
+      .then(() => options.onClose?.(code, turnTerminal, turnError))
       .catch(() => undefined)
       .finally(() => settleClosed())
   })
 
   const start = async (): Promise<void> => {
-    await call('initialize', {
-      clientInfo: { name: MUSE_MSP_CLIENT_NAME, version: options.clientVersion }
-    })
+    const initialized = record(
+      await call('initialize', {
+        clientInfo: { name: MUSE_MSP_CLIENT_NAME, version: options.clientVersion }
+      })
+    )
+    // The whole authority argument for the hand-translated types is that the
+    // binary echoes its stable-surface fingerprint here. Not reading it left
+    // MUSE_MSP_SCHEMA_FINGERPRINT as decoration. A mismatch is a warning
+    // condition per the schema, not an error — the lane still runs.
+    const fingerprint = text(record(initialized.schema).fingerprint)
+    if (fingerprint && fingerprint !== MUSE_MSP_SCHEMA_FINGERPRINT) {
+      warn(
+        `This Muse build serves MSP schema ${fingerprint}, not the ${MUSE_MSP_SCHEMA_FINGERPRINT} TaskWraith was built against; re-export the schema if this lane misbehaves.`
+      )
+    }
     notify('initialized')
 
     const resumeId = text(options.resumeSessionId).trim()
@@ -589,14 +807,23 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         const result = record(
           await call('session/resume', {
             commandId: mintCommandId(),
-            sessionId: resumeId
+            sessionId: resumeId,
+            // Without this the host folds and pushes the ENTIRE transcript over
+            // NDJSON on every resume, which we then parse and discard. This repo
+            // has a documented freeze class from exactly that shape of work.
+            excludeItems: true
           })
         )
         session = record(result.session) as unknown as MuseMspSession
         resumed = true
       } catch (error) {
-        // A pruned or foreign session must degrade to a fresh one, never fault
-        // the turn: the stored id is a hint, not a contract.
+        // A pruned or foreign session degrades to a fresh one — the stored id
+        // is a hint, not a contract. But NOT every failure means "gone":
+        // `overloaded`/`backpressured` are retryable, and `sessionInUse` means
+        // another host holds it. Silently starting fresh in those cases resets
+        // the user's Muse history, or forks the conversation behind their back.
+        const rpc = error instanceof MuseMspRpcError ? error : null
+        if (rpc && (rpc.retryable || rpc.kind === 'sessionInUse')) throw error
         warn(
           `Muse could not resume the stored session; starting a fresh one. ${(error as Error).message}`
         )
@@ -656,6 +883,7 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       cancelTurn()
     },
     steer: (input) => {
+      if (closed || stdinClosed) return false
       if (!sessionId || !activeTurnId || sawTurnCompleted || input.length === 0) return false
       void call('turn/steer', {
         commandId: mintCommandId(),

@@ -90,16 +90,21 @@ describe('museMspCommandId — required UUIDv7 on every command', () => {
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   })
 
-  it('encodes the millisecond timestamp in the leading 48 bits', () => {
-    // Two ids minted a second apart must sort in time order — the server
-    // derives a fresh turn's turnId from this handle.
-    // Fill with a NON-ZERO byte: an all-zero random source makes a dropped
-    // timestamp byte invisible, which made an earlier version of this test
-    // vacuous under mutation.
-    const early = museMspCommandId(bytes(0xab), 1_000_000)
-    const later = museMspCommandId(bytes(0xab), 2_000_000)
-    expect(early.replace(/-/g, '') < later.replace(/-/g, '')).toBe(true)
-    expect(early.slice(0, 8)).toBe((1_000_000).toString(16).padStart(12, '0').slice(0, 8))
+  it('encodes the millisecond timestamp across ALL SIX leading bytes', () => {
+    // Fill with a NON-ZERO byte so a dropped timestamp byte is visible, and
+    // assert the full 12-hex prefix: an earlier version checked only
+    // `slice(0, 8)`, which reaches bytes 0-3 and stayed green when bytes 4 and
+    // 5 were deleted.
+    const at = (ms: number): string => museMspCommandId(bytes(0xab), ms).replace(/-/g, '')
+    expect(at(1_000_000).slice(0, 12)).toBe((1_000_000).toString(16).padStart(12, '0'))
+    expect(at(2_000_000).slice(0, 12)).toBe((2_000_000).toString(16).padStart(12, '0'))
+  })
+
+  it('orders two ids minted ONE MILLISECOND apart', () => {
+    // The low timestamp bytes only carry sub-second precision, so a fixture a
+    // thousand seconds apart cannot see them go missing.
+    const at = (ms: number): string => museMspCommandId(bytes(0xab), ms).replace(/-/g, '')
+    expect(at(1_700_000_000_000) < at(1_700_000_000_001)).toBe(true)
   })
 
   it('keeps the version nibble even when the random source is all ones', () => {

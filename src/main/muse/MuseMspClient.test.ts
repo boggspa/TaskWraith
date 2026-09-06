@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AcpChildProcess } from '../acp/AcpTurnClient'
 import { runMuseMspTurn, selectMuseMspApprovalChoice } from './MuseMspClient'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
-import type { MuseMspApprovalChoice } from './MuseMspProtocol'
+import { MUSE_MSP_SCHEMA_FINGERPRINT, type MuseMspApprovalChoice } from './MuseMspProtocol'
 
 /** The ACP suites' fake child, reused verbatim — the client takes the same
  * injected `spawnProcess` seam precisely so this harness is shared. */
@@ -61,11 +61,14 @@ const bytes = (size: number): Uint8Array => Uint8Array.from({ length: size }, (_
 function start(overrides: Record<string, unknown> = {}): {
   child: FakeMspChild
   events: MuseExecNormalizedEvent[]
+  warnings: string[]
   handle: ReturnType<typeof runMuseMspTurn>
 } {
   const child = new FakeMspChild()
   const events: MuseExecNormalizedEvent[] = []
+  const warnings: string[] = []
   const handle = runMuseMspTurn({
+    onWarning: (message: string) => warnings.push(message),
     spawnProcess: () => child,
     clientVersion: '1.9.7',
     workspaceRoot: '/ws',
@@ -78,7 +81,7 @@ function start(overrides: Record<string, unknown> = {}): {
     endProcessGraceMs: 20,
     ...overrides
   } as never)
-  return { child, events, handle }
+  return { child, events, warnings, handle }
 }
 
 /** Drive the handshake to an accepted turn. */
@@ -170,7 +173,7 @@ describe('runMuseMspTurn — session resume', () => {
   it('degrades to a fresh session when the stored one cannot be resumed', async () => {
     // A stored id is a hint, not a contract: a pruned or foreign session must
     // not fault the turn.
-    const { child, events } = start({ resumeSessionId: 'gone' })
+    const { child, warnings } = start({ resumeSessionId: 'gone' })
     await flush()
     child.emit({ jsonrpc: '2.0', id: 1, result: {} })
     await flush()
@@ -181,7 +184,7 @@ describe('runMuseMspTurn — session resume', () => {
     })
     await flush()
     expect(child.sentMethod('session/start')).toBeDefined()
-    expect(events.some((e) => String(e.text).includes('could not resume'))).toBe(true)
+    expect(warnings.some((w) => w.includes('could not resume'))).toBe(true)
   })
 
   it('reports resumed-ness and turn count to the caller', async () => {
@@ -454,10 +457,10 @@ describe('runMuseMspTurn — transcript projection', () => {
   })
 
   it('warns when the host reports a dropped-event gap', async () => {
-    const { child, events } = start()
+    const { child, warnings } = start()
     await driveToTurn(child)
     child.emit({ jsonrpc: '2.0', method: 'view/gap', params: { after: 1, next: 9 } })
-    expect(events.some((e) => String(e.text).includes('dropped pushed session events'))).toBe(true)
+    expect(warnings.some((w) => w.includes('dropped pushed session events'))).toBe(true)
   })
 })
 
@@ -530,6 +533,22 @@ describe('selectMuseMspApprovalChoice — select, never create', () => {
     expect(picked?.decision).toBe('denied')
   })
 
+  it('does not author a durable policy rule when denying', () => {
+    // localPersistent choices carry a rulePreview: picking one writes a
+    // standing rule the user never asked for. Narrowest scope first.
+    const picked = selectMuseMspApprovalChoice(
+      [choice('p', 'denied', 'localPersistent'), choice('s', 'denied', 'session')],
+      'deny'
+    )
+    expect(picked?.scope).toBe('session')
+  })
+
+  it('tolerates a missing or non-array choice list', () => {
+    expect(selectMuseMspApprovalChoice(undefined, 'deny')).toBeNull()
+    expect(selectMuseMspApprovalChoice(null, 'allow')).toBeNull()
+    expect(selectMuseMspApprovalChoice('nope' as never, 'deny')).toBeNull()
+  })
+
   it('falls back to abort when no denial is offered', () => {
     const picked = selectMuseMspApprovalChoice([choice('a', 'abort', 'once')], 'deny')
     expect(picked?.decision).toBe('abort')
@@ -598,12 +617,12 @@ describe('runMuseMspTurn — approvals', () => {
   })
 
   it('DENIES when no approval handler is attached, and says so', async () => {
-    const { child, events } = start()
+    const { child, warnings } = start()
     await driveToTurn(child)
     child.emit(approvalFrame())
     await flush()
     expect(child.sentMethod('approval/decide')?.params.choiceId).toBe('no')
-    expect(events.some((e) => String(e.text).includes('no TaskWraith approval handler'))).toBe(true)
+    expect(warnings.some((w) => w.includes('no TaskWraith approval handler'))).toBe(true)
   })
 
   it('DENIES when the handler throws', async () => {
@@ -626,13 +645,448 @@ describe('runMuseMspTurn — approvals', () => {
 
   it('cancels the turn rather than guessing when no usable choice is offered', async () => {
     const onApprovalRequest = vi.fn().mockResolvedValue('deny')
-    const { child, events } = start({ onApprovalRequest })
+    const { child, warnings } = start({ onApprovalRequest })
     await driveToTurn(child)
     child.emit(approvalFrame({ availableChoices: [] }))
     await flush()
     expect(child.sentMethod('approval/decide')).toBeUndefined()
     expect(child.sentMethod('turn/cancel')).toBeDefined()
-    expect(events.some((e) => String(e.text).includes('no usable choice'))).toBe(true)
+    expect(warnings.some((w) => w.includes('no usable choice'))).toBe(true)
+  })
+})
+
+describe('runMuseMspTurn — schema-fidelity regressions', () => {
+  it('treats an ABSENT delta field as text — the schema default', async () => {
+    // `field` is not required and "absent means text". Dropping those deltas
+    // while also suppressing the completed agentMessage lost the entire answer.
+    const { child, events } = start()
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/delta',
+      params: { sessionId: 'sess-1', itemId: 'i1', delta: 'Orange' }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/completed',
+      params: {
+        sessionId: 'sess-1',
+        item: {
+          itemId: 'i1',
+          kind: 'agentMessage',
+          revision: 2,
+          status: 'completed',
+          text: 'Orange'
+        }
+      }
+    })
+    expect(events.filter((e) => e.type === 'content').map((e) => e.text)).toEqual(['Orange'])
+  })
+
+  it('renders an unhandled item kind generically from fallbackText', async () => {
+    // Open enum: the schema requires unknown kinds to render generically
+    // rather than vanish, and five KNOWN kinds reach the same arm.
+    const { child, events } = start()
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/completed',
+      params: {
+        sessionId: 'sess-1',
+        item: {
+          itemId: 'sa1',
+          kind: 'subagent',
+          revision: 2,
+          status: 'completed',
+          fallbackText: 'reviewer finished in 12s'
+        }
+      }
+    })
+    expect(events.find((e) => String(e.text).includes('reviewer finished'))?.text).toBe(
+      'subagent: reviewer finished in 12s'
+    )
+  })
+
+  it('terminates on turn/unqueued, which is never followed by turn/completed', async () => {
+    const { child, events } = start()
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'turn/unqueued',
+      params: { sessionId: 'sess-1', turnId: 'turn-1', commandId: 'c1' }
+    })
+    expect(events.find((e) => e.type === 'terminal')).toMatchObject({ terminal: 'cancelled' })
+    expect(child.killed.length).toBeGreaterThan(0)
+  })
+
+  it('carries the TurnError, not the display-only reason, to onClose', async () => {
+    const onClose = vi.fn()
+    const { child } = start({ onClose })
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'turn/completed',
+      params: {
+        sessionId: 'sess-1',
+        turnId: 'turn-1',
+        terminal: 'failed',
+        reason: 'something went wrong',
+        error: { kind: 'modelError', message: 'upstream 503', retryable: true }
+      }
+    })
+    await flush()
+    expect(onClose).toHaveBeenCalledWith(0, 'failed', {
+      kind: 'modelError',
+      message: 'upstream 503',
+      retryable: true
+    })
+  })
+
+  it('keeps per-call cache/reasoning counters out of the session totals', async () => {
+    const onUsage = vi.fn()
+    const { child } = start({ onUsage })
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/tokenUsage',
+      params: {
+        sessionId: 'sess-1',
+        cumulative: { promptTokens: 100, outputTokens: 20, totalTokens: 120 },
+        usage: { cachedTokens: 7, reasoningTokens: 3 }
+      }
+    })
+    expect(onUsage).toHaveBeenCalledWith({
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 120,
+      lastCallCachedTokens: 7,
+      lastCallReasoningTokens: 3
+    })
+  })
+
+  it('asks the host to exclude history on resume', async () => {
+    const { child } = start({ resumeSessionId: 'stored-1' })
+    await flush()
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    await flush()
+    expect(child.sentMethod('session/resume')?.params.excludeItems).toBe(true)
+  })
+
+  it('warns when the host serves a different MSP schema fingerprint', async () => {
+    const { child, warnings } = start()
+    await flush()
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { schema: { version: 1, fingerprint: 'sha256:deadbeef' } }
+    })
+    await flush()
+    expect(warnings.some((w) => w.includes('sha256:deadbeef'))).toBe(true)
+  })
+
+  it('does NOT warn when the fingerprint matches', async () => {
+    const { child, warnings } = start()
+    await flush()
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { schema: { version: 1, fingerprint: MUSE_MSP_SCHEMA_FINGERPRINT } }
+    })
+    await flush()
+    expect(warnings.some((w) => w.includes('MSP schema'))).toBe(false)
+  })
+})
+
+describe('runMuseMspTurn — resume failures that are NOT "gone"', () => {
+  const resumeError = (kind: string, code = -32031) => ({
+    jsonrpc: '2.0',
+    id: 2,
+    error: { code, message: kind, data: { kind } }
+  })
+
+  it('does not fork the conversation when the session is held by another host', async () => {
+    // Starting fresh here would silently abandon the user's Muse history.
+    const { child } = start({ resumeSessionId: 'stored-1' })
+    await flush()
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    await flush()
+    child.emit(resumeError('sessionInUse', -32021))
+    await flush()
+    expect(child.sentMethod('session/start')).toBeUndefined()
+  })
+
+  it('does not reset history on a RETRYABLE resume failure', async () => {
+    for (const kind of ['overloaded', 'backpressured']) {
+      const { child } = start({ resumeSessionId: 'stored-1' })
+      await flush()
+      child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+      await flush()
+      child.emit(resumeError(kind))
+      await flush()
+      expect(child.sentMethod('session/start'), kind).toBeUndefined()
+    }
+  })
+
+  it('still degrades to a fresh session when the stored one is genuinely gone', async () => {
+    const { child } = start({ resumeSessionId: 'gone' })
+    await flush()
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    await flush()
+    child.emit(resumeError('sessionNotFound', -32020))
+    await flush()
+    expect(child.sentMethod('session/start')).toBeDefined()
+  })
+})
+
+describe('runMuseMspTurn — lifecycle hardening (review findings)', () => {
+  it('settles when the host dies mid-resume, instead of hanging forever', async () => {
+    // The close handler drains `pending` ONCE. start() issues session/start
+    // after a failed resume, so a call registered post-drain never settled:
+    // start() suspended, settleStartup never ran, onClose never fired and
+    // `closed` never resolved — a wedged run on the default config.
+    const onClose = vi.fn()
+    const { child, handle } = start({ resumeSessionId: 'stored-1', onClose })
+    await flush()
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    await flush()
+    child.finish(1)
+    await handle.closed
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('delivers onClose exactly once even when the terminator re-emits close', async () => {
+    // The fake child closes on kill, so start()'s failure path -> endProcess()
+    // -> kill() -> close re-entry delivered onClose twice. A host maps onClose
+    // to sendAgentCompatExit, so a double delivery double-seals the run.
+    const onClose = vi.fn()
+    const { child, handle } = start({ onClose })
+    await flush()
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      error: { code: -32603, message: 'boom', data: { kind: 'internal' } }
+    })
+    await handle.closed
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports a failed steer once the transport is gone', async () => {
+    const { child, handle } = start()
+    await driveToTurn(child)
+    child.finish(1)
+    await handle.closed
+    expect(handle.steer([{ type: 'text', text: 'too late' }])).toBe(false)
+  })
+
+  it('ignores a foreign turn terminal rather than tearing down our host', async () => {
+    // A resumed session can carry a still-running prior turn.
+    const { child, events } = start()
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'turn/completed',
+      params: { sessionId: 'sess-1', turnId: 'someone-elses-turn', terminal: 'completed' }
+    })
+    expect(events.filter((e) => e.type === 'terminal')).toHaveLength(0)
+    expect(child.killed).toHaveLength(0)
+  })
+})
+
+describe('runMuseMspTurn — approvals that arrive malformed or get rejected', () => {
+  const base = {
+    approvalId: 'ap-2',
+    sessionId: 'sess-1',
+    turnId: 'turn-1',
+    toolName: 'run_shell_command',
+    rawArgs: '{}',
+    subject: { kind: 'shell' },
+    currentRequirementId: { approvalId: 'ap-2', sourceIndex: 0 }
+  }
+
+  it('cancels rather than throwing when availableChoices is missing or not an array', async () => {
+    // This used to throw inside a bare `void decideApproval(...)`, becoming an
+    // unhandled rejection: no decision, no cancel, no warning.
+    for (const availableChoices of [undefined, null, 'nope', {}]) {
+      const { child, warnings } = start({ onApprovalRequest: vi.fn().mockResolvedValue('deny') })
+      await driveToTurn(child)
+      child.emit({
+        jsonrpc: '2.0',
+        method: 'approval/requested',
+        params: { ...base, availableChoices }
+      })
+      await flush()
+      expect(child.sentMethod('turn/cancel'), String(availableChoices)).toBeDefined()
+      expect(warnings.some((w) => w.includes('no usable choice'))).toBe(true)
+    }
+  })
+
+  it('retries ONCE with the refreshed CAS token when the requirement went stale', async () => {
+    const { child } = start({ onApprovalRequest: vi.fn().mockResolvedValue('deny') })
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'approval/requested',
+      params: {
+        ...base,
+        availableChoices: [{ choiceId: 'no', decision: 'denied', label: 'Deny', scope: 'once' }]
+      }
+    })
+    await flush()
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'approval/updated',
+      params: { approvalId: 'ap-2', currentRequirementId: { approvalId: 'ap-2', sourceIndex: 5 } }
+    })
+    const first = child.sent().find((f) => f.method === 'approval/decide')
+    child.emit({
+      jsonrpc: '2.0',
+      id: first!.id,
+      error: { code: -32053, message: 'stale', data: { kind: 'approvalRequirementStale' } }
+    })
+    await flush()
+    const decides = child.sent().filter((f) => f.method === 'approval/decide')
+    expect(decides).toHaveLength(2)
+    expect(decides[1].params.requirementId).toEqual({ approvalId: 'ap-2', sourceIndex: 5 })
+    expect(child.sentMethod('turn/cancel')).toBeUndefined()
+  })
+
+  it('cancels the turn when a decision is rejected for any other reason', async () => {
+    // A REJECTED decide is not a sent decision; leaving it there gates the
+    // tool call forever.
+    const { child, warnings } = start({ onApprovalRequest: vi.fn().mockResolvedValue('deny') })
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'approval/requested',
+      params: {
+        ...base,
+        availableChoices: [{ choiceId: 'no', decision: 'denied', label: 'Deny', scope: 'once' }]
+      }
+    })
+    await flush()
+    const decide = child.sent().find((f) => f.method === 'approval/decide')
+    child.emit({
+      jsonrpc: '2.0',
+      id: decide!.id,
+      error: { code: -32052, message: 'bad choice', data: { kind: 'approvalChoiceInvalid' } }
+    })
+    await flush()
+    expect(child.sentMethod('turn/cancel')).toBeDefined()
+    expect(warnings.some((w) => w.includes('cancelling the turn'))).toBe(true)
+  })
+
+  it('treats an already-resolved approval as settled, not as a failure', async () => {
+    const { child } = start({ onApprovalRequest: vi.fn().mockResolvedValue('deny') })
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'approval/requested',
+      params: {
+        ...base,
+        availableChoices: [{ choiceId: 'no', decision: 'denied', label: 'Deny', scope: 'once' }]
+      }
+    })
+    await flush()
+    const decide = child.sent().find((f) => f.method === 'approval/decide')
+    child.emit({
+      jsonrpc: '2.0',
+      id: decide!.id,
+      error: { code: -32051, message: 'gone', data: { kind: 'approvalAlreadyResolved' } }
+    })
+    await flush()
+    expect(child.sentMethod('turn/cancel')).toBeUndefined()
+  })
+})
+
+describe('runMuseMspTurn — userInput prompts', () => {
+  const userInputFrame = (asRequest = false) => ({
+    jsonrpc: '2.0',
+    ...(asRequest ? { id: 'srv-ui' } : {}),
+    method: asRequest ? 'userInput/request' : 'userInput/requested',
+    params: {
+      userInputId: 'ui-1',
+      sessionId: 'sess-1',
+      turnId: 'turn-1',
+      itemId: 'i9',
+      toolCallId: 'call_1',
+      toolName: 'ask_user',
+      questions: [{ questionId: 'q1', prompt: 'which file?' }]
+    }
+  })
+
+  it('CANCELS an unanswered prompt instead of letting the turn hang', async () => {
+    // autoResolutionMs is optional, so with no handler and no cancel the gated
+    // tool call blocks and turn/completed never arrives.
+    const { child, warnings } = start()
+    await driveToTurn(child)
+    child.emit(userInputFrame())
+    await flush()
+    expect(child.sentMethod('userInput/cancel')?.params).toMatchObject({
+      sessionId: 'sess-1',
+      userInputId: 'ui-1'
+    })
+    expect(warnings.some((w) => w.includes('no handler attached'))).toBe(true)
+  })
+
+  it('settles a prompt delivered as a server-to-client REQUEST', async () => {
+    const { child } = start()
+    await driveToTurn(child)
+    child.emit(userInputFrame(true))
+    await flush()
+    expect(child.sent().find((f) => f.id === 'srv-ui')?.result).toEqual({})
+    expect(child.sentMethod('userInput/cancel')).toBeDefined()
+  })
+
+  it('cancels exactly once even if the prompt is redelivered', async () => {
+    const { child } = start()
+    await driveToTurn(child)
+    child.emit(userInputFrame())
+    child.emit(userInputFrame())
+    await flush()
+    expect(child.sent().filter((f) => f.method === 'userInput/cancel')).toHaveLength(1)
+  })
+})
+
+describe('runMuseMspTurn — approvals re-issued after resume', () => {
+  it('decides an approval delivered as a server-to-client REQUEST', async () => {
+    // After session/resume the host re-issues pending approvals as REQUESTS.
+    // Answering -32601 left them undecided and hung the resumed turn.
+    const onApprovalRequest = vi.fn().mockResolvedValue('deny')
+    const { child } = start({ onApprovalRequest })
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      id: 'srv-ap',
+      method: 'approval/request',
+      params: {
+        approvalId: 'ap-9',
+        sessionId: 'sess-1',
+        turnId: 'turn-1',
+        toolName: 'write_file',
+        rawArgs: '{}',
+        subject: { kind: 'fileAccess' },
+        currentRequirementId: { approvalId: 'ap-9', sourceIndex: 0 },
+        availableChoices: [{ choiceId: 'no', decision: 'denied', label: 'Deny', scope: 'once' }]
+      }
+    })
+    await flush()
+    expect(child.sent().find((f) => f.id === 'srv-ap')?.result).toEqual({})
+    expect(child.sentMethod('approval/decide')?.params).toMatchObject({ approvalId: 'ap-9' })
+  })
+
+  it('prunes the requirement map when an approval resolves elsewhere', async () => {
+    // Policy, the LLM judge, or another client can settle it; the CAS entry
+    // must not leak, or a later decide echoes a dead requirement.
+    const onApprovalRequest = vi.fn().mockResolvedValue('deny')
+    const { child } = start({ onApprovalRequest })
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'approval/resolved',
+      params: { approvalId: 'ap-1', sessionId: 'sess-1', decision: 'approved' }
+    })
+    await flush()
+    expect(child.sentMethod('approval/decide')).toBeUndefined()
   })
 })
 
@@ -675,12 +1129,13 @@ describe('runMuseMspTurn — steering and teardown', () => {
     expect(child.killed.length).toBeGreaterThan(0)
   })
 
-  it('answers an unknown inbound REQUEST so the peer cannot wedge', async () => {
+  it('acknowledges an unknown inbound REQUEST so the peer cannot wedge', async () => {
     const { child } = start()
     await driveToTurn(child)
     child.emit({ jsonrpc: '2.0', id: 'srv-1', method: 'someday/newThing', params: {} })
-    const reply = child.sent().find((f) => f.id === 'srv-1' && f.error)
-    expect(reply?.error.code).toBe(-32601)
+    const reply = child.sent().find((f) => f.id === 'srv-1')
+    expect(reply).toBeDefined()
+    expect(reply?.result).toEqual({})
   })
 
   it('resolves closed only after onClose has settled', async () => {
@@ -708,7 +1163,8 @@ describe('runMuseMspTurn — steering and teardown', () => {
       params: { sessionId: 'sess-1', turnId: 'turn-1', terminal: 'failed' }
     })
     await flush()
-    expect(onClose).toHaveBeenCalledWith(0, 'failed')
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onClose).toHaveBeenCalledWith(0, 'failed', null)
   })
 
   it('SIGKILLs a host that ignores the graceful terminator', async () => {
@@ -725,10 +1181,10 @@ describe('runMuseMspTurn — steering and teardown', () => {
   })
 
   it('rejects in-flight calls when the host exits mid-handshake', async () => {
-    const { child, events, handle } = start()
+    const { child, warnings, handle } = start()
     await flush()
     child.finish(1)
     await handle.closed
-    expect(events.some((e) => String(e.text).includes('did not complete'))).toBe(true)
+    expect(warnings.some((w) => w.includes('did not complete'))).toBe(true)
   })
 })

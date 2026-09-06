@@ -60,8 +60,8 @@ export type MuseMspInboundFrame =
   | { kind: 'request'; id: MuseMspJsonRpcId; method: string; params: Record<string, unknown> }
   | { kind: 'unparsable'; line: string }
 
-/** `ErrorKind` (closed). Only the members this lane acts on are named; the rest
- * ride as strings so an added kind is not a parse failure. */
+/** `ErrorKind` (x-msp-openness: OPEN). Only the members this lane acts on are
+ * named; the rest ride as strings so an added kind is not a parse failure. */
 export type MuseMspErrorKind =
   | 'invalidParams'
   | 'methodNotFound'
@@ -109,7 +109,73 @@ export type MuseMspReasoningEffort = (typeof MUSE_MSP_REASONING_EFFORTS)[number]
  * running turn instead of queueing it. */
 export type MuseMspIfBusy = 'queue' | 'steer' | 'replace'
 
-export type MuseMspTurnTerminal = 'completed' | 'failed' | 'cancelled'
+/** Wire-OPEN for evolution even though the runtime's own vocabulary is closed. */
+export type MuseMspTurnTerminal = 'completed' | 'failed' | 'cancelled' | (string & {})
+
+/**
+ * The two error kinds the schema's own error table marks `retryable: true`
+ * (-32001 overloaded, -32031 backpressured).
+ *
+ * Everything else is the server saying "this will fail again". Treating a
+ * retryable kind as fatal throws away a turn the host expected us to re-offer;
+ * treating a fatal one as retryable burns the user's money in a loop. The
+ * schema decides, not us.
+ */
+export const MUSE_MSP_RETRYABLE_ERROR_KINDS: ReadonlySet<string> = new Set([
+  'overloaded',
+  'backpressured'
+])
+
+export function isMuseMspRetryableErrorKind(kind: string | undefined | null): boolean {
+  return typeof kind === 'string' && MUSE_MSP_RETRYABLE_ERROR_KINDS.has(kind)
+}
+
+/**
+ * `TurnError` — present iff a turn's terminal is `failed`.
+ *
+ * The schema is explicit that mid-turn failures arrive HERE and never as a
+ * JSON-RPC error, and that the sibling free-text `reason` is "display and
+ * diagnostics only; never branch on it". `retryable` is the server's own
+ * judgment and is the only field a retry policy may read.
+ */
+export interface MuseMspTurnError {
+  kind: string
+  message: string
+  retryable: boolean
+}
+
+/** One open `userInput/*` prompt. Unanswered, the gated tool call blocks and
+ * the turn never terminates — `autoResolutionMs` is OPTIONAL, so there is no
+ * guaranteed host-side timeout to rescue us. */
+export interface MuseMspUserInputRequest {
+  userInputId: string
+  sessionId: string
+  turnId: string
+  itemId: string
+  toolCallId: string
+  toolName: string
+  questions: unknown[]
+  autoResolutionMs?: number
+}
+
+/** A JSON-RPC error that keeps `data.kind` as structured data. Flattening the
+ * kind into the message makes every retry decision impossible downstream. */
+export class MuseMspRpcError extends Error {
+  readonly kind: MuseMspErrorKind
+  readonly code: number
+  readonly method: string
+  constructor(method: string, body: MuseMspErrorBody) {
+    const kind = body.data?.kind ?? ''
+    super(`${method} failed${kind ? ` (${kind})` : ''}: ${body.message}`)
+    this.name = 'MuseMspRpcError'
+    this.method = method
+    this.code = body.code
+    this.kind = kind
+  }
+  get retryable(): boolean {
+    return isMuseMspRetryableErrorKind(this.kind)
+  }
+}
 
 export type MuseMspItemKind =
   | 'userMessage'
@@ -168,7 +234,7 @@ export interface MuseMspItem {
 
 /** `ApprovalChoice.scope` — maps onto TaskWraith's once / session / persistent
  * approval scopes. */
-export type MuseMspApprovalChoiceScope = 'once' | 'session' | 'localPersistent'
+export type MuseMspApprovalChoiceScope = 'once' | 'session' | 'localPersistent' | (string & {})
 
 export interface MuseMspApprovalChoice {
   choiceId: string

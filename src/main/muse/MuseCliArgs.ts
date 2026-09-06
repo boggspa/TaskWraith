@@ -147,7 +147,16 @@ export const MUSE_NATIVE_TOOL_POLICY = {
  * Native tool policy for the MSP host (`muse serve`).
  *
  * Separate from MUSE_NATIVE_TOOL_POLICY rather than a variant of it, because
- * the containment SHAPE differs and the seal hashes this document:
+ * the containment SHAPE differs.
+ *
+ * NOTE on the seal: `ProviderLaunchAuthorityDigest` reserves a
+ * `nativeToolPolicySha256` slot and `MuseOrchestrationContracts` carries the
+ * field, but nothing hashes either Muse policy document today — there is no
+ * SealEvidenceMuse. So keeping the documents separate is hygiene that PREPARES
+ * for the digest; it does not yet make a containment change visible in one.
+ * Wire the hash before relying on that property.
+ *
+ * The differences:
  *
  * - `--workspace` is not a serve flag. Under exec it rooted the run; under MSP
  *   the workspace is a `session/start` parameter, and it was measured NOT to
@@ -159,6 +168,15 @@ export const MUSE_NATIVE_TOOL_POLICY = {
  *   a containment change, which is why it gets its own hashed document.
  * - `--api-key-stdin` is not a serve flag either; the credential reaches the
  *   host through the projected auth.json in the per-run isolated home.
+ * - `--no-foreign-personal-context` and `--disable-web-tools`, which the exec
+ *   builder always emits, are NOT serve flags at all (verified against
+ *   `muse serve --help` on 1.0.3-R2198.1). They are therefore absent here
+ *   because they cannot be expressed, not because this lane relaxed them —
+ *   but the effect is the same, so an MSP seat must suppress foreign personal
+ *   context and web tools by another lever (the binary exposes
+ *   `MUSE_ENABLE_WEB_TOOLS` and an experimental foreign-context kill) or
+ *   accept that it is more permissive than exec on both. UNRESOLVED; do not
+ *   describe the two lanes as equivalent until it is settled.
  *
  * Sandbox posture is fixed for the HOST's lifetime — see
  * `museMspHostPostureIsPerHost` in museGate.ts.

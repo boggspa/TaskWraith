@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   museMcpAdvertiseEnabled,
-  museMspHostPostureIsPerHost,
   museMspSessionResumeEnabled,
   museMspTransportEnabled
 } from './museGate'
@@ -82,11 +81,8 @@ describe('museMcpAdvertiseEnabled — default ON', () => {
   })
 })
 
-describe('museMspHostPostureIsPerHost', () => {
-  it('states the per-host sandbox constraint as a checkable fact', () => {
-    // `muse serve` fixes --disable-write/--disable-shell/--sandbox-network for
-    // the host's lifetime; only approvalMode is per-session. A read-only and a
-    // write-capable seat therefore cannot share one host process.
-    expect(museMspHostPostureIsPerHost).toBe(true)
-  })
-})
+// `museMspHostPostureIsPerHost` deliberately has NO test. Asserting
+// `expect(true as const).toBe(true)` can only fail if you edit its own literal,
+// so it would prove nothing about the constraint it records. It is executable
+// doctrine for a future host-pooling implementation to consult, and it earns a
+// real test when something actually branches on it.
