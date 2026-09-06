@@ -106,7 +106,17 @@ export interface MuseMspTurnOptions {
   readonly onSessionReady?: (info: MuseMspSessionReadyInfo) => void
   readonly onUsage?: (usage: MuseMspUsageSnapshot) => void
   readonly onContextUsage?: (context: MuseMspContextSnapshot) => void
-  readonly onGoalChanged?: (goal: unknown) => void
+  /**
+   * DIAGNOSTIC ONLY. TaskWraith owns the objective: `resolveActiveGoalMode`
+   * grants a provider-native goal mode to codex/claude/grok/ollama and lands
+   * every other provider — Muse included — on `taskwraith_steered`, so Muse
+   * receives the goal through the injected `<taskwraith_active_goal>`
+   * block and mutates it through the MCP `goal_*` tools like any other steered
+   * provider. Muse's own `session/goalChanged` is a SECOND, competing steering
+   * source; adopting it would let the model rewrite the objective the user set
+   * without ever passing the goal-control handler. Observe it, never apply it.
+   */
+  readonly onNativeGoalObserved?: (goal: unknown) => void
   /** Absent means DENY — see decideApproval. */
   readonly onApprovalRequest?: (
     request: MuseMspApprovalRequest
@@ -642,7 +652,8 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         return
       }
       case 'session/goalChanged': {
-        options.onGoalChanged?.(params.goal ?? null)
+        // Not adopted as the TaskWraith goal — see onNativeGoalObserved.
+        options.onNativeGoalObserved?.(params.goal ?? null)
         return
       }
       case 'approval/requested': {

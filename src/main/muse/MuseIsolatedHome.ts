@@ -1,10 +1,13 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import {
   chmodSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
+  readlinkSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -18,7 +21,7 @@ import { mergeMuseMcpSettings, serializeMuseSettings, type MuseMcpSettings } fro
 
 export interface MuseIsolatedHomeAuthority {
   readonly schemaVersion: 1
-  readonly strategy: 'node-mkdtemp-random-suffix-v1'
+  readonly strategy: 'node-mkdtemp-random-suffix-v1' | 'node-durable-seat-verified-v1'
   readonly canonicalRealPathVerified: true
   readonly leafType: 'real-directory'
   readonly fileIdentity: Readonly<{
@@ -28,7 +31,7 @@ export interface MuseIsolatedHomeAuthority {
   readonly fileIdentityVerification: 'device-inode-match' | 'device-inode-best-effort'
   readonly ownerVerification: 'process-uid-match' | 'unsupported-platform'
   readonly modeVerification: 'posix-0700' | 'unsupported-platform'
-  readonly cleanupPolicy: 'identity-match-recursive-force'
+  readonly cleanupPolicy: 'identity-match-recursive-force' | 'identity-match-scrub-to-continuity'
 }
 
 export type MuseIsolatedHomeCleanupResult =
@@ -79,7 +82,52 @@ export interface CreateMuseIsolatedHomeInput {
    * Never copies the user's real trust file.
    */
   readonly seedEmptyTrust?: boolean
+  /**
+   * Attach a DURABLE per-chat seat home instead of minting a disposable one
+   * under `temporaryRoot`.
+   *
+   * Required by the MSP lane: `session/resume` reads the session log out of
+   * `XDG_DATA_HOME/muse/sessions`, so a home destroyed at teardown can never
+   * be resumed. The lease keeps every verification the disposable home has —
+   * canonical real path, owner, exact 0700, device+inode identity — and adds
+   * two the disposable one never needed, because the tree is now reachable by
+   * anything running as this user between turns:
+   *
+   * - the home is REDUCED TO CONTINUITY on attach as well as at teardown, so a
+   *   turn never inherits the previous turn's credentials, trust grants, MCP
+   *   broker token, temp files or tracing logs; and
+   * - every retained entry is re-proven (no symlinks, owner match, no hard
+   *   links) before the seat is handed to a provider process.
+   *
+   * `boundaryRoot` is the shared `muse-seats-v1` directory and is established
+   * and verified BEFORE the seat, so a pre-planted symlinked root cannot
+   * redirect credentials out of userData. Both must be absolute.
+   */
+  readonly durableSeat?: Readonly<{ boundaryRoot: string; path: string }>
 }
+
+/**
+ * The ONLY material a Muse seat home may carry across a turn boundary,
+ * expressed as a path from the home root: `xdg-data/muse/{sessions,
+ * session-index.db}`.
+ *
+ * Measured against Muse Code 1.0.3-R2198.1 by resuming from a second host
+ * process against a relocated XDG_DATA_HOME: `sessions/` holds the
+ * `.msp-view-v1` snapshot+journal set and the dated event tree, and
+ * `session-index.db` is what resolves a session id. Everything else Muse
+ * writes — `local-tracing/`, `.auth.json.lock`, cron state — is residue.
+ *
+ * Fail-closed by construction: the scrub retains this list and deletes
+ * everything else, so material from a future Muse version is removed rather
+ * than silently inherited.
+ */
+export const MUSE_DURABLE_SEAT_CONTINUITY = Object.freeze({
+  /** Home-root child that survives; matches the XDG_DATA_HOME leaf name. */
+  dataRoot: 'xdg-data' as const,
+  /** Muse's own directory inside XDG_DATA_HOME. */
+  providerDir: 'muse' as const,
+  entries: Object.freeze(['sessions', 'session-index.db'] as const)
+})
 
 const issuedMuseIsolatedHomeLeases = new WeakMap<
   MuseIsolatedHomeLease,
@@ -117,14 +165,25 @@ const MUSE_AUTH_JSON_MAX_BYTES = 1024 * 1024
  * trust, and never inherits the user's real `~/.config/muse/trust.json`.
  */
 export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): MuseIsolatedHomeLease {
-  const temporaryRoot = canonicalRealDirectory(input.temporaryRoot)
+  const durableSeat = input.durableSeat ?? null
+  const posture = durableSeat ? MUSE_DURABLE_SEAT_POSTURE : MUSE_TEMPORARY_HOME_POSTURE
   const runId = requireRunId(input.runId)
-  const routeTag = createHash('sha256').update(runId, 'utf8').digest('hex').slice(0, 16)
-  const createdPath = mkdtempSync(join(temporaryRoot, `taskwraith-muse-home-${routeTag}-`))
+  let createdPath: string
+  if (durableSeat) {
+    createdPath = establishMuseDurableSeat(durableSeat.boundaryRoot, durableSeat.path)
+  } else {
+    const temporaryRoot = canonicalRealDirectory(input.temporaryRoot)
+    const routeTag = createHash('sha256').update(runId, 'utf8').digest('hex').slice(0, 16)
+    createdPath = mkdtempSync(join(temporaryRoot, `taskwraith-muse-home-${routeTag}-`))
+  }
   let canonicalPath = createdPath
   try {
     canonicalPath = realpathSync(createdPath)
     if (process.platform !== 'win32') chmodSync(canonicalPath, 0o700)
+    // Reduce a REUSED seat before this turn's material lands. Doing it here
+    // rather than only at teardown means a seat left behind by a crashed run
+    // is cleaned before it can be handed to a provider process.
+    if (durableSeat) scrubMuseDurableSeatHome(canonicalPath)
 
     const homePath = join(canonicalPath, 'home')
     const xdgConfigHome = join(canonicalPath, 'xdg-config')
@@ -152,23 +211,22 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
     }
 
     const skillPinSettings = input.skillPinSettings ?? buildMuseSkillPinSettings('off')
+    // Written WHOLESALE every turn, never merged onto what is already there.
+    // `mergeMuseMcpSettings` omits `mcp_servers` when this turn has no MCP
+    // grant, so a full rewrite is what deletes a previous turn's block — and
+    // that block carries a minted TASKWRAITH_MCP_BROKER_TOKEN.
     const settingsPath = join(museConfigDir, 'settings.json')
-    writeFileSync(
+    writePrivateFileAtomic(
       settingsPath,
-      serializeMuseSettings(mergeMuseMcpSettings(skillPinSettings, input.mcpSettings)),
-      {
-        encoding: 'utf8',
-        mode: 0o600
-      }
+      serializeMuseSettings(mergeMuseMcpSettings(skillPinSettings, input.mcpSettings))
     )
 
     const trustPath = join(museConfigDir, 'trust.json')
     const seedEmptyTrust = input.seedEmptyTrust !== false
     if (seedEmptyTrust) {
-      writeFileSync(trustPath, `${JSON.stringify(MUSE_EMPTY_TRUST_DOCUMENT, null, 2)}\n`, {
-        encoding: 'utf8',
-        mode: 0o600
-      })
+      // Re-seeded every turn: Muse writes project approvals into this file
+      // during a turn, and a reused seat must not inherit them.
+      writePrivateFileAtomic(trustPath, `${JSON.stringify(MUSE_EMPTY_TRUST_DOCUMENT, null, 2)}\n`)
     }
 
     const env = buildMuseIsolatedHomeEnvironment({
@@ -183,7 +241,7 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
       sourceEnvironment: input.sourceEnvironment ?? process.env
     })
 
-    const authority = inspectMuseIsolatedHome(canonicalPath)
+    const authority = inspectMuseIsolatedHome(canonicalPath, posture)
     let cleaned = false
 
     const lease: MuseIsolatedHomeLease = {
@@ -203,7 +261,7 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
       authority,
       verify: () => {
         if (cleaned) throw new Error('The Muse isolated-home lease has already been cleaned.')
-        const current = inspectMuseIsolatedHome(canonicalPath)
+        const current = inspectMuseIsolatedHome(canonicalPath, posture)
         assertSameAuthority(authority, current)
         return current
       },
@@ -211,7 +269,7 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
         if (cleaned) return { ok: true, alreadyAbsent: true }
         let current: MuseIsolatedHomeAuthority
         try {
-          current = inspectMuseIsolatedHome(canonicalPath)
+          current = inspectMuseIsolatedHome(canonicalPath, posture)
         } catch (error) {
           if (isMissingPathError(error)) {
             cleaned = true
@@ -235,10 +293,28 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
           }
         }
         try {
-          rmSync(canonicalPath, { recursive: true, force: true })
+          if (durableSeat) {
+            // A durable seat is REDUCED, never removed — the session log is
+            // the whole reason it exists. Verify the reduction actually
+            // happened: leaving a credential at rest under userData is worse
+            // than losing the ability to resume, so a seat that cannot be
+            // reduced is destroyed outright below.
+            scrubMuseDurableSeatHome(canonicalPath)
+            assertMuseDurableSeatReducedToContinuity(canonicalPath)
+          } else {
+            rmSync(canonicalPath, { recursive: true, force: true })
+          }
           cleaned = true
           return { ok: true, alreadyAbsent: false }
         } catch (error) {
+          if (durableSeat) {
+            try {
+              rmSync(canonicalPath, { recursive: true, force: true })
+              cleaned = true
+            } catch {
+              /* report the original reduction failure */
+            }
+          }
           return {
             ok: false,
             reason: `Muse isolated-home cleanup failed: ${
@@ -255,7 +331,11 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
     return Object.freeze(lease)
   } catch (error) {
     try {
-      rmSync(canonicalPath, { recursive: true, force: true })
+      // A half-built DISPOSABLE home is destroyed. A durable seat is only
+      // scrubbed: destroying it here would discard the chat's whole session
+      // history over one transient verification failure on turn N.
+      if (durableSeat) scrubMuseDurableSeatHome(canonicalPath)
+      else rmSync(canonicalPath, { recursive: true, force: true })
     } catch {
       /* preserve the original verification error */
     }
@@ -299,6 +379,11 @@ export function projectMuseAuthJson(
   verifyMuseIsolatedHome(lease)
   const authJsonText = validateMuseAuthJsonProjection(raw)
   const authPath = join(lease.museConfigDir, 'auth.json')
+  // `wx` is deliberate: never write THROUGH an existing path, which could be a
+  // symlink someone else planted. Remove first so the projection is also safe
+  // to re-run inside one turn; on the durable-seat lane the attach scrub has
+  // already taken the whole config tree, so this is defence in depth.
+  rmSync(authPath, { force: true })
   writeFileSync(authPath, authJsonText, {
     encoding: 'utf8',
     mode: 0o600,
@@ -341,6 +426,17 @@ export function projectMuseKeychainAccessIfRequired(
   mkdirSync(libraryDir, { recursive: true, mode: 0o700 })
   if (process.platform !== 'win32') chmodSync(libraryDir, 0o700)
   const linkPath = join(libraryDir, 'Keychains')
+  // Re-point rather than trust whatever is already there. An existing link is
+  // only kept when it still resolves to the expected keychain directory —
+  // anything else is removed, so a graft can never be silently redirected at a
+  // keychain the seat was not meant to reach.
+  try {
+    const existing = lstatSync(linkPath)
+    if (existing.isSymbolicLink() && readlinkSync(linkPath) === realKeychainsDir) return linkPath
+    rmSync(linkPath, { recursive: true, force: true })
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error
+  }
   symlinkSync(realKeychainsDir, linkPath)
   return linkPath
 }
@@ -497,7 +593,190 @@ function pathIsWithin(parent: string, child: string): boolean {
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
 }
 
-function inspectMuseIsolatedHome(path: string): MuseIsolatedHomeAuthority {
+type MuseIsolatedHomePosture = Readonly<{
+  strategy: MuseIsolatedHomeAuthority['strategy']
+  cleanupPolicy: MuseIsolatedHomeAuthority['cleanupPolicy']
+}>
+
+const MUSE_TEMPORARY_HOME_POSTURE: MuseIsolatedHomePosture = Object.freeze({
+  strategy: 'node-mkdtemp-random-suffix-v1',
+  cleanupPolicy: 'identity-match-recursive-force'
+})
+
+const MUSE_DURABLE_SEAT_POSTURE: MuseIsolatedHomePosture = Object.freeze({
+  strategy: 'node-durable-seat-verified-v1',
+  cleanupPolicy: 'identity-match-scrub-to-continuity'
+})
+
+/**
+ * Write a private file so the 0600 guarantee survives a REUSED home.
+ *
+ * `writeFileSync`'s `mode` is only honoured at O_CREAT, so writing over an
+ * existing file silently keeps whatever mode that file already had. Create a
+ * fresh private temp under the same directory, chmod it explicitly, then
+ * rename over the target — which also means a crash mid-write can never leave
+ * a truncated settings.json for the next turn to parse.
+ */
+function writePrivateFileAtomic(path: string, body: string): void {
+  const temporaryPath = `${path}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
+  try {
+    writeFileSync(temporaryPath, body, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+    if (process.platform !== 'win32') chmodSync(temporaryPath, 0o600)
+    renameSync(temporaryPath, path)
+  } catch (error) {
+    try {
+      rmSync(temporaryPath, { force: true })
+    } catch {
+      /* preserve the original write error */
+    }
+    throw error
+  }
+}
+
+function assertPrivateRealDirectory(path: string, label: string): void {
+  const info = lstatSync(path)
+  if (info.isSymbolicLink() || !info.isDirectory()) {
+    throw new Error(`The Muse ${label} is not a real directory.`)
+  }
+  if (process.platform !== 'win32') {
+    const getuid = process.getuid
+    if (typeof getuid !== 'function') {
+      throw new Error(`Muse ${label} ownership cannot be verified on this POSIX runtime.`)
+    }
+    if (info.uid !== getuid()) {
+      throw new Error(`The Muse ${label} is not owned by the current process user.`)
+    }
+    if ((info.mode & 0o777) !== 0o700) {
+      throw new Error(`The Muse ${label} does not have exact owner-only mode 0700.`)
+    }
+  }
+}
+
+/**
+ * Establish the shared seat root and one seat directory inside it, verifying
+ * both BEFORE any credential-bearing material is written. mkdir here routinely
+ * meets an existing path, so the lstat/realpath checks are load-bearing: a
+ * pre-planted symlink at either level must fail closed rather than redirect a
+ * projected credential out of userData.
+ */
+function establishMuseDurableSeat(boundaryRoot: string, seatPath: string): string {
+  if (!isAbsolute(boundaryRoot) || !isAbsolute(seatPath)) {
+    throw new Error('Muse durable seat paths must be absolute.')
+  }
+  mkdirSync(boundaryRoot, { recursive: true, mode: 0o700 })
+  if (process.platform !== 'win32') chmodSync(boundaryRoot, 0o700)
+  assertPrivateRealDirectory(boundaryRoot, 'seat root')
+
+  mkdirSync(seatPath, { recursive: true, mode: 0o700 })
+  if (process.platform !== 'win32') chmodSync(seatPath, 0o700)
+  assertPrivateRealDirectory(seatPath, 'seat home')
+
+  const rootReal = realpathSync(boundaryRoot)
+  const seatReal = realpathSync(seatPath)
+  if (!pathIsWithin(rootReal, seatReal) || rootReal === seatReal) {
+    throw new Error('The Muse durable seat home escaped its private seat root.')
+  }
+  return seatReal
+}
+
+/**
+ * Whether a retained entry is safe to hand to the next provider process.
+ *
+ * A disposable home never needed this — nothing outside the run could reach
+ * it. A durable seat sits on disk between turns, so anything that survives is
+ * re-proven: no symlink (which could redirect a Muse write anywhere this user
+ * can write), owner match, and no hard link into the retained tree from
+ * outside it.
+ */
+function durableContinuityEntryIsSafe(path: string): boolean {
+  const info = lstatSync(path)
+  if (info.isSymbolicLink()) return false
+  const getuid = process.getuid
+  if (process.platform !== 'win32' && typeof getuid === 'function' && info.uid !== getuid()) {
+    return false
+  }
+  if (info.isFile()) return info.nlink === 1
+  if (!info.isDirectory()) return false
+  for (const entry of readdirSync(path)) {
+    if (!durableContinuityEntryIsSafe(join(path, entry))) return false
+  }
+  return true
+}
+
+/**
+ * Reduce a durable seat home to MUSE_DURABLE_SEAT_CONTINUITY.
+ *
+ * Runs on attach AND at teardown. On attach it is what stops turn N inheriting
+ * turn 1's `auth.json`, trust grants, MCP broker token and temp material; at
+ * teardown it is what stops that material resting on disk between turns. An
+ * entry on the continuity list that fails re-verification is deleted like any
+ * other residue — losing resumability is the correct trade against serving a
+ * tampered session log.
+ */
+function scrubMuseDurableSeatHome(root: string): void {
+  const { dataRoot, providerDir, entries } = MUSE_DURABLE_SEAT_CONTINUITY
+  const drop = (path: string): void => {
+    rmSync(path, { recursive: true, force: true })
+  }
+  for (const child of readdirSync(root)) {
+    const childPath = join(root, child)
+    if (child !== dataRoot) {
+      drop(childPath)
+      continue
+    }
+    // Never readdir through a symlink: resolve the leaf type first.
+    if (!lstatSync(childPath).isDirectory() || lstatSync(childPath).isSymbolicLink()) {
+      drop(childPath)
+      continue
+    }
+    for (const dataChild of readdirSync(childPath)) {
+      const dataChildPath = join(childPath, dataChild)
+      if (dataChild !== providerDir) {
+        drop(dataChildPath)
+        continue
+      }
+      if (!lstatSync(dataChildPath).isDirectory() || lstatSync(dataChildPath).isSymbolicLink()) {
+        drop(dataChildPath)
+        continue
+      }
+      for (const leaf of readdirSync(dataChildPath)) {
+        const leafPath = join(dataChildPath, leaf)
+        if ((entries as readonly string[]).includes(leaf) && durableContinuityEntryIsSafe(leafPath))
+          continue
+        drop(leafPath)
+      }
+    }
+  }
+}
+
+/** Throw unless the seat home holds nothing but verified session continuity. */
+function assertMuseDurableSeatReducedToContinuity(root: string): void {
+  const { dataRoot, providerDir, entries } = MUSE_DURABLE_SEAT_CONTINUITY
+  for (const child of readdirSync(root)) {
+    if (child !== dataRoot) {
+      throw new Error(`Unexpected Muse seat entry survived cleanup: ${child}`)
+    }
+    for (const dataChild of readdirSync(join(root, child))) {
+      if (dataChild !== providerDir) {
+        throw new Error(`Unexpected Muse seat data entry survived cleanup: ${dataChild}`)
+      }
+      const providerPath = join(root, child, dataChild)
+      for (const leaf of readdirSync(providerPath)) {
+        if (!(entries as readonly string[]).includes(leaf)) {
+          throw new Error(`Unexpected Muse seat continuity entry survived cleanup: ${leaf}`)
+        }
+        if (!durableContinuityEntryIsSafe(join(providerPath, leaf))) {
+          throw new Error(`Unsafe Muse seat continuity entry survived cleanup: ${leaf}`)
+        }
+      }
+    }
+  }
+}
+
+function inspectMuseIsolatedHome(
+  path: string,
+  posture: MuseIsolatedHomePosture = MUSE_TEMPORARY_HOME_POSTURE
+): MuseIsolatedHomeAuthority {
   if (!isAbsolute(path) || resolve(path) !== path || realpathSync(path) !== path) {
     throw new Error('Muse isolated home is not a canonical real path.')
   }
@@ -528,7 +807,7 @@ function inspectMuseIsolatedHome(path: string): MuseIsolatedHomeAuthority {
 
   return Object.freeze({
     schemaVersion: 1,
-    strategy: 'node-mkdtemp-random-suffix-v1',
+    strategy: posture.strategy,
     canonicalRealPathVerified: true,
     leafType: 'real-directory',
     fileIdentity: Object.freeze({
@@ -539,7 +818,7 @@ function inspectMuseIsolatedHome(path: string): MuseIsolatedHomeAuthority {
     modeVerification,
     fileIdentityVerification:
       process.platform === 'win32' ? 'device-inode-best-effort' : 'device-inode-match',
-    cleanupPolicy: 'identity-match-recursive-force'
+    cleanupPolicy: posture.cleanupPolicy
   })
 }
 
