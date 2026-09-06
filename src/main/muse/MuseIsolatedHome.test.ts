@@ -21,6 +21,8 @@ import {
   createMuseIsolatedHome,
   museLaunchEnvPathsStayInsideLease,
   projectMuseAuthJson,
+  scrubMuseDurableSeatHome,
+  projectMuseKeychainAccessIfRequired,
   verifyMuseIsolatedHome,
   type MuseIsolatedHomeLease
 } from './MuseIsolatedHome'
@@ -482,7 +484,7 @@ describe('Muse durable per-chat seat home', () => {
     second.cleanup()
   })
 
-  it('re-asserts owner-only settings mode and empty trust on a reused seat', () => {
+  it('gives a reused seat a private settings document and empty trust', () => {
     const target = seat('reuse')
     const first = attach(target)
     writeFileSync(
@@ -522,7 +524,7 @@ describe('Muse durable per-chat seat home', () => {
     expect(existsSync(join(elsewhere, 'xdg-config'))).toBe(false)
   })
 
-  it('scrubs a symlink or hard link planted inside the retained session log', () => {
+  it('drops the whole session log when a hard link is planted inside it', () => {
     if (process.platform === 'win32') return
     const target = seat('tampered')
     const first = attach(target)
@@ -580,6 +582,133 @@ describe('Muse durable per-chat seat home', () => {
     // ...while the session log the crashed turn produced is still resumable.
     expect(readFileSync(join(second.museDataDir, 'session-index.db'), 'utf8')).toBe('index-bytes')
     second.cleanup()
+  })
+
+  it('evicts material the provider stashed inside the retained session log', () => {
+    const target = seat('stash')
+    const first = attach(target)
+    seedProviderResidue(first)
+    const sessions = join(first.museDataDir, 'sessions')
+    // The provider owns this tree and can write anything into it, so a copied
+    // credential would otherwise be retained permanently — the settings
+    // rewrite cannot reach it.
+    writeFileSync(join(sessions, 'stashed-auth.json'), 'access_token')
+    first.cleanup()
+
+    expect(existsSync(join(sessions, 'stashed-auth.json'))).toBe(false)
+    // ...while the real log shape is untouched.
+    expect(existsSync(join(sessions, '.msp-view-v1', 'session-a', 'HEAD.json'))).toBe(true)
+    expect(existsSync(join(first.museDataDir, 'session-index.db'))).toBe(true)
+  })
+
+  it('refuses to retain an allowlisted name recreated as the wrong type', () => {
+    const target = seat('typeconfusion')
+    const first = attach(target)
+    seedProviderResidue(first)
+    // A directory wearing the index's name would be unbounded permanent
+    // storage under a name the allowlist blesses.
+    rmSync(join(first.museDataDir, 'session-index.db'), { force: true })
+    mkdirSync(join(first.museDataDir, 'session-index.db', 'stash'), { recursive: true })
+    writeFileSync(join(first.museDataDir, 'session-index.db', 'stash', 'payload'), 'x')
+    first.cleanup()
+
+    expect(existsSync(join(first.museDataDir, 'session-index.db'))).toBe(false)
+    expect(existsSync(join(first.museDataDir, 'sessions'))).toBe(true)
+  })
+
+  it('destroys a seat it cannot reduce rather than handing it to a provider', () => {
+    if (process.platform === 'win32') return
+    const target = seat('unreducible')
+    const first = attach(target)
+    seedProviderResidue(first)
+    // An unreadable directory makes the recursive delete of xdg-config throw.
+    const locked = join(first.museConfigDir, 'locked')
+    mkdirSync(locked, { recursive: true })
+    writeFileSync(join(locked, 'inner'), 'x')
+    chmodSync(locked, 0o000)
+
+    // Fails closed, and says whether the seat was actually discarded — an
+    // unreadable directory defeats the destroy for the same reason it defeated
+    // the scrub, and "may still hold run material" is a different problem.
+    expect(() => attach(target)).toThrow(
+      /could not be reduced to session continuity and was left in place/
+    )
+
+    // The best-effort destroy takes the session log with it — that is the
+    // accepted cost of failing closed, and it is why this seat cannot resume.
+    expect(existsSync(join(first.museDataDir, 'session-index.db'))).toBe(false)
+
+    // Self-healing: once the obstruction is gone the next attach reduces the
+    // seat and proceeds, so the chat is not permanently unusable.
+    chmodSync(locked, 0o700)
+    const recovered = attach(target)
+    expect(existsSync(locked)).toBe(false)
+    expect(existsSync(recovered.settingsPath)).toBe(true)
+    recovered.cleanup()
+  })
+
+  it('re-points a keychain graft that no longer resolves where it should', () => {
+    if (process.platform !== 'darwin') return
+    const realKeychainsDir = join(TEMP_ROOT, 'real-keychains')
+    const decoy = join(TEMP_ROOT, 'decoy-keychains')
+    mkdirSync(realKeychainsDir, { recursive: true })
+    mkdirSync(decoy, { recursive: true })
+    const lease = attach(seat('keychain'))
+    const authJsonText = JSON.stringify({
+      schema_version: 2,
+      providers: { meta: { mechanism: 'oauth', storage: 'keychain', account: 'a' } }
+    })
+
+    const linkPath = projectMuseKeychainAccessIfRequired(lease, authJsonText, {
+      platform: 'darwin',
+      realKeychainsDir
+    })
+    expect(linkPath).toBeTruthy()
+    expect(readlinkSync(linkPath as string)).toBe(realKeychainsDir)
+
+    // Someone re-pointed the graft between turns.
+    rmSync(linkPath as string, { force: true })
+    symlinkSync(decoy, linkPath as string)
+    projectMuseKeychainAccessIfRequired(lease, authJsonText, {
+      platform: 'darwin',
+      realKeychainsDir
+    })
+    expect(readlinkSync(linkPath as string)).toBe(realKeychainsDir)
+    lease.cleanup()
+  })
+
+  it('refuses to scrub through a root that is not the verified seat', () => {
+    if (process.platform === 'win32') return
+    // readdirSync FOLLOWS a symlink-to-directory and rmSync(recursive) deletes
+    // THROUGH one, so a scrub that trusted its argument would turn a swapped
+    // seat into a recursive delete of whatever the link points at. The
+    // disposable lane cannot do this: there the destructive step is one rmSync
+    // on the leaf, which merely unlinks the link.
+    const victim = join(TEMP_ROOT, 'scrub-victim')
+    mkdirSync(join(victim, 'precious'), { recursive: true })
+    writeFileSync(join(victim, 'precious', 'keep.txt'), 'do not delete')
+    const swapped = join(TEMP_ROOT, 'scrub-swapped-seat')
+    symlinkSync(victim, swapped)
+
+    const result = scrubMuseDurableSeatHome(swapped)
+    expect(result.ok).toBe(false)
+    expect(result.failures.join(' ')).toContain('refused')
+    expect(readFileSync(join(victim, 'precious', 'keep.txt'), 'utf8')).toBe('do not delete')
+  })
+
+  it('refuses to scrub a real directory outside the seat root', () => {
+    const outside = join(TEMP_ROOT, 'scrub-outside')
+    mkdirSync(outside, { recursive: true, mode: 0o700 })
+    writeFileSync(join(outside, 'keep.txt'), 'still here')
+    const target = seat('containment')
+    const lease = attach(target)
+
+    // Same identity checks pass — it is a real 0700 directory owned by us —
+    // but it is not inside the seat root this lease was issued against.
+    const result = scrubMuseDurableSeatHome(outside, { boundaryRoot: target.boundaryRoot })
+    expect(result.ok).toBe(false)
+    expect(existsSync(join(outside, 'keep.txt'))).toBe(true)
+    lease.cleanup()
   })
 
   it('preserves the seat when creation fails after the home is established', () => {

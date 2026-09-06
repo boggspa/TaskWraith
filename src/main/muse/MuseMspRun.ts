@@ -1,0 +1,369 @@
+/**
+ * The MSP lane's `MuseRunInput` -> `MuseRunOutcome` implementation.
+ *
+ * Deliberately shaped as a drop-in for `runMuseProvider` (MuseRun.ts) so the
+ * transport swap in `MuseIpcBridge` is one line and nothing downstream — the
+ * result compat line, the exit-before-finish ordering, the thinking transcript
+ * — has to know which lane produced the outcome.
+ *
+ * What differs from the exec lane, and why:
+ *
+ * - The home is a DURABLE per-chat seat (MuseIsolatedHome `durableSeat`), not a
+ *   disposable mkdtemp. `session/resume` reads the log out of
+ *   XDG_DATA_HOME/muse/sessions, so a home destroyed at teardown can never be
+ *   resumed. Everything except that log is still scrubbed on both attach and
+ *   teardown.
+ * - Usage comes off the wire (`session/tokenUsage`, `session/contextUsage`)
+ *   rather than from a tailed session.jsonl, so it carries the provider's own
+ *   window size — which no hand-kept table can.
+ * - Images are real input parts rather than a warning about omitted files.
+ */
+
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+
+import type { AcpChildProcess } from '../acp/AcpTurnClient'
+import { loadMainAuthorizedAcpImageContents } from '../acp/AcpTurnClient'
+import {
+  buildMuseServeArgv,
+  museWriteCapable,
+  normalizeMuseReasoningEffort,
+  type MuseReasoningEffort,
+  type MuseSandboxNetworkMode
+} from './MuseCliArgs'
+import type { MuseExecNormalizedEvent } from './MuseExecJson'
+import { composeMuseLaunchPrompt } from './MuseLongTurnProgress'
+import { createMuseIsolatedHome, projectMuseAuthJson } from './MuseIsolatedHome'
+import type { MuseIsolatedHomeLease } from './MuseIsolatedHome'
+import { buildMuseSkillPinSettings } from './MuseSkillPin'
+import type { MuseMcpSettings } from './MuseMcpConfig'
+import {
+  runMuseMspTurn,
+  type MuseMspApprovalVerdict,
+  type MuseMspContextSnapshot,
+  type MuseMspSessionReadyInfo,
+  type MuseMspUsageSnapshot
+} from './MuseMspClient'
+import type {
+  MuseMspApprovalMode,
+  MuseMspApprovalRequest,
+  MuseMspReasoningEffort,
+  MuseMspTurnError,
+  MuseMspTurnInputPart
+} from './MuseMspProtocol'
+import type { MuseRunOutcome, MuseRunStatus } from './MuseRun'
+import {
+  MUSE_MSP_USAGE_SOURCE,
+  MUSE_TOKEN_COUNT_REPORTED,
+  MUSE_TOKEN_COUNT_UNAVAILABLE,
+  museMeterSnapshotToProviderStats,
+  type MuseMeterSnapshot
+} from './MuseUsage'
+
+export interface MuseMspSpawnInput {
+  readonly binaryPath: string
+  readonly argv: readonly string[]
+  readonly cwd: string
+  readonly env: Readonly<Record<string, string>>
+}
+
+export interface MuseMspRunInput {
+  readonly binaryPath: string
+  readonly workspacePath: string
+  readonly prompt: string
+  readonly runId: string
+  /**
+   * The acknowledgment already shown to the user. Folded into the launch
+   * prompt exactly as the exec lane does — without it the model repeats its
+   * introduction and the two lanes answer the same prompt differently.
+   */
+  readonly introductionText?: string | null
+  readonly clientVersion: string
+  /** Bidirectional stdio child for `muse serve`; MSP writes to stdin. */
+  readonly spawnMsp: (input: MuseMspSpawnInput) => AcpChildProcess
+  /**
+   * Durable per-chat seat. Required for resume to mean anything; when absent
+   * the lane still runs, against a disposable home under `temporaryRoot`.
+   */
+  readonly durableSeat?: Readonly<{ boundaryRoot: string; path: string }>
+  readonly temporaryRoot: string
+  /** Stored MSP session id; a non-empty value asks for `session/resume`. */
+  readonly resumeSessionId?: string | null
+  readonly model?: string | null
+  readonly reasoningEffort?: string | null
+  readonly approvalMode?: string | null
+  readonly sandboxNetwork?: MuseSandboxNetworkMode
+  readonly trustWorkspace?: boolean
+  readonly ultraTaskDelegationAutoAllow?: boolean
+  /** Main-authorized, chat-owned absolute paths. Never renderer-nominated. */
+  readonly imagePaths?: readonly string[]
+  /**
+   * BYOK / META_API_KEY. The exec lane pipes this through `--api-key-stdin`;
+   * MSP owns stdin for JSON-RPC, so there is no key channel on the wire and the
+   * key is projected as an api-key auth.json into the seat instead.
+   */
+  readonly apiKey?: string | null
+  readonly authJsonText?: string | null
+  readonly mcpSettings?: MuseMcpSettings
+  readonly sourceEnvironment?: NodeJS.ProcessEnv
+  readonly onEvent?: (event: MuseExecNormalizedEvent) => void
+  readonly onWarning?: (message: string) => void
+  readonly onSessionReady?: (info: MuseMspSessionReadyInfo) => void
+  readonly onApprovalRequest?: (
+    request: MuseMspApprovalRequest
+  ) => MuseMspApprovalVerdict | Promise<MuseMspApprovalVerdict>
+  readonly shouldCancel?: () => boolean
+  readonly cancelPollIntervalMs?: number
+  readonly now?: () => number
+  readonly createHome?: typeof createMuseIsolatedHome
+  readonly loadImages?: typeof loadMainAuthorizedAcpImageContents
+}
+
+function requireNonEmpty(value: string, label: string): string {
+  const trimmed = (value || '').trim()
+  if (!trimmed) throw new Error(`MuseMspRun requires a non-empty ${label}`)
+  return trimmed
+}
+
+/**
+ * TaskWraith approval posture -> MSP `ApprovalMode`.
+ *
+ * Parity with the exec lane, which has no per-tool wire approval at all and
+ * relies on the host sandbox plus the read-only flags for containment. A
+ * read-only seat is `denyUnmatched` on top of `--disable-write --disable-shell`
+ * so the wire agrees with the host rather than quietly contradicting it.
+ *
+ * `onRequest` is the mode a real wire-approval plane would select; it is NOT
+ * selected here, because a seat whose approvals are answered by the client's
+ * default-deny would deny every tool. Threading TaskWraith's approval
+ * orchestration into `onApprovalRequest` and switching this to `onRequest` is
+ * the follow-up that makes `appManagedApprovals` true for Muse.
+ */
+export function museMspApprovalModeFor(
+  approvalMode: string | null | undefined
+): MuseMspApprovalMode {
+  return museWriteCapable(approvalMode) ? 'allowAll' : 'denyUnmatched'
+}
+
+/**
+ * `MuseReasoningEffort` -> `MuseMspReasoningEffort`.
+ *
+ * The two ladders overlap but are not the same vocabulary: MSP publishes
+ * `none`, which `--provider meta` rejects on the exec lane, and the exec ladder
+ * carries `max`, which MSP does not define. `max` clamps UP to `ultra` rather
+ * than falling to a default, matching how normalizeMuseReasoningEffort already
+ * treats a top-tier selection on a model that cannot take it.
+ */
+export function museMspReasoningEffortFor(effort: MuseReasoningEffort): MuseMspReasoningEffort {
+  return effort === 'max' ? 'ultra' : effort
+}
+
+/**
+ * Schema-v1 api-key auth.json for a BYOK seat.
+ *
+ * `parseMuseAuthJsonCredential` already recognises this shape as
+ * `credentialKind: 'api-key'`, and `projectMuseAuthJson` validates it and
+ * removes it at teardown like any other projected credential. NOT verified
+ * against a live `muse serve` BYOK account: the env route Muse documents
+ * (`META_API_KEY`) is deliberately scrubbed by the seat's closed env allowlist,
+ * so auth.json is the only channel a relocated home has.
+ */
+export function buildMuseApiKeyAuthJson(apiKey: string): string {
+  return JSON.stringify({ schema_version: 1, providers: { meta: { api_key: apiKey } } })
+}
+
+function skillPinHashFor(lease: MuseIsolatedHomeLease): string {
+  try {
+    return createHash('sha256').update(readFileSync(lease.settingsPath)).digest('hex')
+  } catch {
+    return ''
+  }
+}
+
+/** Text first, then images — the order Muse renders them in. */
+export function buildMuseMspTurnInput(
+  prompt: string,
+  imagePaths: readonly string[] | undefined,
+  load: typeof loadMainAuthorizedAcpImageContents
+): MuseMspTurnInputPart[] {
+  const parts: MuseMspTurnInputPart[] = [{ type: 'text', text: prompt }]
+  if (!imagePaths || imagePaths.length === 0) return parts
+  for (const image of load(imagePaths)) {
+    // Field names differ from ACP's; the bytes and the validation do not.
+    parts.push({ type: 'image', base64Data: image.data, mediaType: image.mimeType })
+  }
+  return parts
+}
+
+export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRunOutcome> {
+  const binaryPath = requireNonEmpty(input.binaryPath, 'binaryPath')
+  const workspacePath = requireNonEmpty(input.workspacePath, 'workspacePath')
+  const prompt = requireNonEmpty(input.prompt, 'prompt')
+  const runId = requireNonEmpty(input.runId, 'runId')
+  const now = input.now ?? (() => Date.now())
+  const startedAt = now()
+  const effort: MuseReasoningEffort = normalizeMuseReasoningEffort(
+    input.reasoningEffort,
+    input.model
+  )
+  const writeCapable = museWriteCapable(input.approvalMode)
+  const argv = buildMuseServeArgv({
+    approvalMode: input.approvalMode,
+    sandboxNetwork: input.sandboxNetwork,
+    trustWorkspace: input.trustWorkspace
+  })
+
+  const lease = (input.createHome ?? createMuseIsolatedHome)({
+    temporaryRoot: input.temporaryRoot,
+    runId,
+    sourceEnvironment: input.sourceEnvironment,
+    skillPinSettings: buildMuseSkillPinSettings('off', {
+      ultraTaskDelegationAutoAllow: input.ultraTaskDelegationAutoAllow === true
+    }),
+    ...(input.mcpSettings ? { mcpSettings: input.mcpSettings } : {}),
+    ...(input.durableSeat ? { durableSeat: input.durableSeat } : {})
+  })
+
+  const events: MuseExecNormalizedEvent[] = []
+  const warnings: string[] = []
+  let assistantText = ''
+  let sessionId = ''
+  const latest: {
+    usage: MuseMspUsageSnapshot | null
+    context: MuseMspContextSnapshot | null
+    turnError: MuseMspTurnError | null
+  } = { usage: null, context: null, turnError: null }
+  let terminal: string | null = null
+  let exitCode: number | null = null
+  let cancelled = false
+
+  const noteWarning = (message: string): void => {
+    warnings.push(message)
+    input.onWarning?.(message)
+  }
+
+  const launchPrompt = composeMuseLaunchPrompt(prompt, input.introductionText)
+
+  try {
+    const authJsonText =
+      input.authJsonText || (input.apiKey ? buildMuseApiKeyAuthJson(input.apiKey) : null)
+    if (authJsonText) projectMuseAuthJson(lease, authJsonText)
+
+    let turnInput: MuseMspTurnInputPart[]
+    try {
+      turnInput = buildMuseMspTurnInput(
+        launchPrompt,
+        input.imagePaths,
+        input.loadImages ?? loadMainAuthorizedAcpImageContents
+      )
+    } catch (error) {
+      // Never silently omit an attachment: run the text turn and say so.
+      noteWarning(
+        `Muse could not attach the images for this turn: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+      turnInput = [{ type: 'text', text: launchPrompt }]
+    }
+
+    const handle = runMuseMspTurn({
+      spawnProcess: () => input.spawnMsp({ binaryPath, argv, cwd: workspacePath, env: lease.env }),
+      clientVersion: input.clientVersion,
+      workspaceRoot: workspacePath,
+      input: turnInput,
+      modelId: input.model || undefined,
+      reasoningEffort: museMspReasoningEffortFor(effort),
+      approvalMode: museMspApprovalModeFor(input.approvalMode),
+      resumeSessionId: input.resumeSessionId ?? null,
+      onEvent: (event) => {
+        events.push(event)
+        if (event.type === 'content' && event.text) assistantText += event.text
+        input.onEvent?.(event)
+      },
+      onSessionReady: (info) => {
+        sessionId = info.sessionId
+        input.onSessionReady?.(info)
+      },
+      onUsage: (snapshot) => {
+        latest.usage = snapshot
+      },
+      onContextUsage: (snapshot) => {
+        latest.context = snapshot
+      },
+      onWarning: noteWarning,
+      ...(input.onApprovalRequest ? { onApprovalRequest: input.onApprovalRequest } : {}),
+      onClose: (code, closeTerminal, error) => {
+        exitCode = code
+        terminal = closeTerminal
+        latest.turnError = error
+      }
+    })
+
+    const pollMs = input.cancelPollIntervalMs ?? 100
+    if (input.shouldCancel) {
+      const poll = setInterval(() => {
+        if (!input.shouldCancel?.()) return
+        cancelled = true
+        clearInterval(poll)
+        handle.cancel()
+      }, pollMs)
+      try {
+        await handle.closed
+      } finally {
+        clearInterval(poll)
+      }
+    } else {
+      await handle.closed
+    }
+  } finally {
+    const cleanup = lease.cleanup()
+    if (!cleanup.ok) noteWarning(cleanup.reason)
+  }
+
+  const status: MuseRunStatus =
+    cancelled || terminal === 'cancelled'
+      ? 'cancelled'
+      : terminal === 'completed'
+        ? 'success'
+        : 'failed'
+  if (latest.turnError?.message) noteWarning(latest.turnError.message)
+
+  const reported = latest.usage !== null
+  const meter: MuseMeterSnapshot = {
+    museSessionId: sessionId,
+    model: input.model || null,
+    inputTokens: latest.usage?.inputTokens ?? 0,
+    outputTokens: latest.usage?.outputTokens ?? 0,
+    cacheReadInputTokens: latest.usage?.lastCallCachedTokens ?? 0,
+    cacheCreationInputTokens: 0,
+    reasoningTokens: latest.usage?.lastCallReasoningTokens ?? 0,
+    totalTokens: latest.usage?.totalTokens ?? 0,
+    durationMs: now() - startedAt,
+    estimatedCostUsd: null,
+    tokenCountConfidence: reported ? MUSE_TOKEN_COUNT_REPORTED : MUSE_TOKEN_COUNT_UNAVAILABLE,
+    source: MUSE_MSP_USAGE_SOURCE,
+    usageIds: []
+  }
+  const providerStats = museMeterSnapshotToProviderStats(meter)
+  // The provider's own window for THIS session; `resolveContextWindow` reads
+  // the flat `totalTokenLimit` spelling and nothing else.
+  if (latest.context?.windowTokens && latest.context.windowTokens > 0) {
+    providerStats.totalTokenLimit = latest.context.windowTokens
+  }
+
+  return {
+    status,
+    sessionId,
+    exitCode,
+    assistantText,
+    events,
+    meter,
+    providerStats,
+    warnings,
+    argv,
+    effort,
+    writeCapable,
+    skillPinHash: skillPinHashFor(lease),
+    leasePath: lease.path
+  }
+}

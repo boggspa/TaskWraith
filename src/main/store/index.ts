@@ -38,6 +38,12 @@ import {
   legacyKimiAcpSeatStateRoots
 } from '../kimi/KimiAcpSeatState'
 import {
+  legacyMuseSeatStatePaths,
+  legacyMuseSeatStateRoots,
+  museSeatStatePath,
+  museSeatStateRoot
+} from '../muse/MuseSeatState'
+import {
   UsageJournalStore,
   type UsageHistoryMutationHold,
   type UsageHistoryMutationInput,
@@ -1516,6 +1522,7 @@ type HistoryDeletionStep =
   | 'run-events'
   | 'run-artifacts'
   | 'kimi-seat-state'
+  | 'muse-seat-state'
   | 'chat-records'
   | 'chat-list-index'
   | 'project-membership'
@@ -1536,6 +1543,7 @@ const HISTORY_DELETION_STEPS: readonly HistoryDeletionStep[] = [
   'run-events',
   'run-artifacts',
   'kimi-seat-state',
+  'muse-seat-state',
   'chat-records',
   'chat-list-index',
   'project-membership'
@@ -1557,6 +1565,7 @@ interface HistoryDeletionIntent {
   workflowIds: string[]
   workflowExecutionIds: string[]
   kimiSeats: Array<{ chatId: string; participantId: string }>
+  museSeats: Array<{ chatId: string; participantId: string }>
   quiescenceTargets: HistoryDeletionQuiescenceTarget[]
   completedQuiescenceTargetIds: string[]
   completedSteps: HistoryDeletionStep[]
@@ -2543,6 +2552,12 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
   if (!Array.isArray(record.kimiSeats)) {
     throw new Error('History deletion intent Kimi seats is not an array.')
   }
+  // Deliberately tolerant where kimiSeats is strict: an in-flight intent
+  // written before Muse seats existed carries no key, and there is no Muse seat
+  // on disk for it to miss. A PRESENT value is validated exactly as strictly.
+  if (record.museSeats !== undefined && !Array.isArray(record.museSeats)) {
+    throw new Error('History deletion intent Muse seats is not an array.')
+  }
   const chatIds = safeStrings(record.chatIds, 'chat ids', true)
   const runIds = safeStrings(record.runIds, 'run ids')
   // Version-1 intents written before mission facts existed carry no inventory.
@@ -2567,23 +2582,29 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
   }
   const workflowIds = safeStrings(record.workflowIds, 'workflow ids')
   const workflowExecutionIds = safeStrings(record.workflowExecutionIds, 'workflow execution ids')
-  const kimiSeats = record.kimiSeats.map((seat) => {
-    if (
-      !seat ||
-      typeof seat !== 'object' ||
-      Array.isArray(seat) ||
-      !isSafeChatId((seat as { chatId?: unknown }).chatId) ||
-      typeof (seat as { participantId?: unknown }).participantId !== 'string' ||
-      !(seat as { participantId: string }).participantId ||
-      (seat as { participantId: string }).participantId.length > 4096
-    ) {
-      throw new Error('History deletion intent contains an unsafe Kimi seat identity.')
-    }
-    return {
-      chatId: (seat as { chatId: string }).chatId,
-      participantId: (seat as { participantId: string }).participantId
-    }
-  })
+  const safeSeats = (
+    value: unknown[],
+    label: string
+  ): Array<{ chatId: string; participantId: string }> =>
+    value.map((seat) => {
+      if (
+        !seat ||
+        typeof seat !== 'object' ||
+        Array.isArray(seat) ||
+        !isSafeChatId((seat as { chatId?: unknown }).chatId) ||
+        typeof (seat as { participantId?: unknown }).participantId !== 'string' ||
+        !(seat as { participantId: string }).participantId ||
+        (seat as { participantId: string }).participantId.length > 4096
+      ) {
+        throw new Error(`History deletion intent contains an unsafe ${label} seat identity.`)
+      }
+      return {
+        chatId: (seat as { chatId: string }).chatId,
+        participantId: (seat as { participantId: string }).participantId
+      }
+    })
+  const kimiSeats = safeSeats(record.kimiSeats, 'Kimi')
+  const museSeats = record.museSeats === undefined ? [] : safeSeats(record.museSeats, 'Muse')
   if (!Array.isArray(record.quiescenceTargets)) {
     throw new Error('History deletion intent quiescence targets is not an array.')
   }
@@ -2704,6 +2725,7 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
     workflowIds,
     workflowExecutionIds,
     kimiSeats,
+    museSeats,
     quiescenceTargets,
     completedQuiescenceTargetIds,
     completedSteps,
@@ -7453,7 +7475,11 @@ export class AppStore {
     } = chat
     const chatWithMainOwnedFields: ChatRecord = {
       ...rendererOwnedChat,
-      runs: preserveContinuityRunReceipts(chat.runs || [], previousChatForFeedback?.runs || [], options.authoritativeContinuityDelivery),
+      runs: preserveContinuityRunReceipts(
+        chat.runs || [],
+        previousChatForFeedback?.runs || [],
+        options.authoritativeContinuityDelivery
+      ),
       continuityCheckpoints: options.authoritativeContinuityCheckpoints
         ? chat.continuityCheckpoints
         : previousChatForFeedback?.continuityCheckpoints,
@@ -7612,7 +7638,11 @@ export class AppStore {
         : rendererMessages
     const chatWithMainOwnedFields: ChatRecord = {
       ...rendererOwnedChat,
-      runs: preserveContinuityRunReceipts(chat.runs || [], previousChatForFeedback?.runs || [], options.authoritativeContinuityDelivery),
+      runs: preserveContinuityRunReceipts(
+        chat.runs || [],
+        previousChatForFeedback?.runs || [],
+        options.authoritativeContinuityDelivery
+      ),
       continuityCheckpoints: options.authoritativeContinuityCheckpoints
         ? chat.continuityCheckpoints
         : previousChatForFeedback?.continuityCheckpoints,
@@ -8306,6 +8336,7 @@ export class AppStore {
 
     const runIds = new Set<string>()
     const kimiSeats: Array<{ chatId: string; participantId: string }> = []
+    const museSeats: Array<{ chatId: string; participantId: string }> = []
     for (const chat of allChats) {
       if (!chatIds.has(chat.appChatId)) continue
       const historicalSeatIds = new Set<string>()
@@ -8335,7 +8366,10 @@ export class AppStore {
         ...(chat.ensemble?.participants || []).map((participant) => participant.id),
         ...historicalSeatIds
       ])
-      for (const participantId of seatIds) kimiSeats.push({ chatId: chat.appChatId, participantId })
+      for (const participantId of seatIds) {
+        kimiSeats.push({ chatId: chat.appChatId, participantId })
+        museSeats.push({ chatId: chat.appChatId, participantId })
+      }
     }
     for (const target of input.quiescenceTargets || []) {
       if (target.runId) runIds.add(target.runId)
@@ -8357,6 +8391,7 @@ export class AppStore {
       workflowIds: [],
       workflowExecutionIds: [],
       kimiSeats,
+      museSeats,
       quiescenceTargets: [...(input.quiescenceTargets || [])],
       completedQuiescenceTargetIds: [],
       completedSteps: [],
@@ -9109,6 +9144,37 @@ export class AppStore {
               (targetPath) => ({
                 targetPath,
                 label: `legacy Kimi ACP seat history for chat ${seat.chatId}`
+              })
+            )
+          ])
+        )
+      }
+      return
+    }
+    if (step === 'muse-seat-state') {
+      // Muse's durable seat home holds the session log — i.e. the transcript —
+      // and, if auth.json teardown ever slips, a live credential. Deleting a
+      // chat while leaving that on disk is the resurrection class this
+      // transaction exists to prevent, so it is swept like Kimi's.
+      if (intent.kind === 'global') {
+        removePathsStrict([
+          { targetPath: museSeatStateRoot(userDataPath), label: 'Muse seat history' },
+          ...legacyMuseSeatStateRoots(userDataPath).map((targetPath) => ({
+            targetPath,
+            label: 'legacy Muse seat history'
+          }))
+        ])
+      } else {
+        removePathsStrict(
+          intent.museSeats.flatMap((seat) => [
+            {
+              targetPath: museSeatStatePath(userDataPath, seat.chatId, seat.participantId),
+              label: `Muse seat history for chat ${seat.chatId}`
+            },
+            ...legacyMuseSeatStatePaths(userDataPath, seat.chatId, seat.participantId).map(
+              (targetPath) => ({
+                targetPath,
+                label: `legacy Muse seat history for chat ${seat.chatId}`
               })
             )
           ])

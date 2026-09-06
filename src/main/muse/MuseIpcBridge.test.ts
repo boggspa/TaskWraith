@@ -937,3 +937,104 @@ describe('createChildProcessMuseSpawn', () => {
     await expect(handle.wait()).resolves.toEqual({ code: 1, signal: null })
   })
 })
+
+describe('runMuseProviderFromIpc — transport selection', () => {
+  const MSP_ENV = 'TASKWRAITH_MUSE_MSP'
+
+  function ipcEvent(): { sender: unknown } {
+    return { sender: {} }
+  }
+
+  afterEach(() => {
+    delete process.env[MSP_ENV]
+  })
+
+  it('runs the exec lane while the MSP gate is off', async () => {
+    const execRun = vi.fn(async () => successOutcome())
+    const mspRun = vi.fn(async () => successOutcome())
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      baseDeps({
+        runMuseProvider: execRun as never,
+        runMuseMspProvider: mspRun as never,
+        getSeatHome: () => ({ boundaryRoot: '/seats', path: '/seats/a' })
+      })
+    )
+    expect(execRun).toHaveBeenCalledTimes(1)
+    expect(mspRun).not.toHaveBeenCalled()
+  })
+
+  it('runs the MSP lane against the chat seat when the gate is on', async () => {
+    process.env[MSP_ENV] = '1'
+    const execRun = vi.fn(async () => successOutcome())
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) =>
+      successOutcome({ sessionId: 'sess-msp' })
+    )
+    const getSeatHome = vi.fn(() => ({ boundaryRoot: '/seats', path: '/seats/a' }))
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        ensembleRun: { participantId: 'worker' },
+        providerSessionId: 'sess-stored',
+        imagePaths: ['/chat/a.png']
+      },
+      baseDeps({
+        runMuseProvider: execRun as never,
+        runMuseMspProvider: mspRun as never,
+        getSeatHome
+      })
+    )
+    expect(execRun).not.toHaveBeenCalled()
+    expect(getSeatHome).toHaveBeenCalledWith('chat-1', 'worker')
+    expect(mspRun.mock.calls[0][0]).toMatchObject({
+      durableSeat: { boundaryRoot: '/seats', path: '/seats/a' },
+      resumeSessionId: 'sess-stored',
+      imagePaths: ['/chat/a.png']
+    })
+  })
+
+  it('never asks to resume a session whose log no seat is holding', async () => {
+    process.env[MSP_ENV] = '1'
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        providerSessionId: 'sess-stored'
+      },
+      // No getSeatHome: a disposable home has no log to resume into, and MSP
+      // rejects a resume for a session it cannot find.
+      baseDeps({ runMuseMspProvider: mspRun as never })
+    )
+    expect(mspRun.mock.calls[0][0]).toMatchObject({ resumeSessionId: null })
+    expect(mspRun.mock.calls[0][0].durableSeat).toBeUndefined()
+  })
+
+  it('publishes the session id the provider actually used on the result line', async () => {
+    process.env[MSP_ENV] = '1'
+    const sendCompatLine = vi.fn()
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      baseDeps({
+        sendCompatLine,
+        runMuseMspProvider: (async () =>
+          successOutcome({ sessionId: 'sess-from-provider' })) as never
+      })
+    )
+    const init = sendCompatLine.mock.calls.find((call) => call[1].type === 'init')?.[1]
+    const result = sendCompatLine.mock.calls.find((call) => call[1].type === 'result')?.[1]
+    // The init line pinned a minted id; run_finished is applied last and is
+    // what makes the real one durable.
+    expect(init?.session_id).not.toBe('sess-from-provider')
+    expect(result?.providerThreadId).toBe('sess-from-provider')
+  })
+})

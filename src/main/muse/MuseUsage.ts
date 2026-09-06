@@ -19,6 +19,12 @@ import { join } from 'node:path'
 import { parseMuseEnvelope, type MuseEnvelope } from './MuseExecJson'
 
 export const MUSE_USAGE_SOURCE = 'muse-session-jsonl'
+/**
+ * MSP reports usage on the wire (`session/tokenUsage`), not through the tailed
+ * session log, so the lane that produced a figure stays visible downstream
+ * rather than every Muse stat claiming a provenance only one lane has.
+ */
+export const MUSE_MSP_USAGE_SOURCE = 'muse-msp-wire'
 export const MUSE_TOKEN_COUNT_CONFIDENCE_KEY = '_taskwraith_token_count_confidence'
 export const MUSE_TOKEN_COUNT_REPORTED = 'reported'
 export const MUSE_TOKEN_COUNT_UNAVAILABLE = 'unavailable'
@@ -45,7 +51,7 @@ export interface MuseMeterSnapshot {
   durationMs: number
   estimatedCostUsd: number | null
   tokenCountConfidence: MuseTokenCountConfidence
-  source: typeof MUSE_USAGE_SOURCE
+  source: typeof MUSE_USAGE_SOURCE | typeof MUSE_MSP_USAGE_SOURCE
   usageIds: string[]
   /** True when metering was refused because session logging is off. */
   meteringDisabled?: boolean
@@ -61,7 +67,14 @@ export interface MuseProviderStats {
   duration_ms: number
   model?: string
   total_cost_usd?: number
-  _taskwraith_usage_source: typeof MUSE_USAGE_SOURCE
+  /**
+   * The provider's own context window for THIS session, when it reported one.
+   * Flat `totalTokenLimit` is the only spelling `extractUsageLimits` ->
+   * `resolveContextWindow` reads off a result line; anything else (including
+   * codex's `modelContextWindow`) reaches the renderer and is ignored.
+   */
+  totalTokenLimit?: number
+  _taskwraith_usage_source: typeof MUSE_USAGE_SOURCE | typeof MUSE_MSP_USAGE_SOURCE
   [MUSE_TOKEN_COUNT_CONFIDENCE_KEY]: MuseTokenCountConfidence
 }
 
@@ -398,7 +411,7 @@ export function museMeterSnapshotToProviderStats(snapshot: MuseMeterSnapshot): M
     cache_creation_input_tokens: snapshot.cacheCreationInputTokens,
     reasoning_tokens: snapshot.reasoningTokens,
     duration_ms: snapshot.durationMs,
-    _taskwraith_usage_source: MUSE_USAGE_SOURCE,
+    _taskwraith_usage_source: snapshot.source,
     [MUSE_TOKEN_COUNT_CONFIDENCE_KEY]: snapshot.tokenCountConfidence
   }
   if (snapshot.model) stats.model = snapshot.model

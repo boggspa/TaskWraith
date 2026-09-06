@@ -25,6 +25,12 @@ export const MUSE_MSP_SCHEMA_FINGERPRINT =
  * fault rather than a name problem, so the constant is pinned here. */
 export const MUSE_MSP_CLIENT_NAME = 'taskwraith'
 export const MUSE_MSP_CLIENT_NAME_PATTERN = /^[a-z0-9_]+$/
+/**
+ * `clientInfo.version`. Identifies THIS MSP client implementation, not the app
+ * build: it is what a server-side compatibility rule would key on, and it must
+ * change when the wire behaviour here changes rather than on every release.
+ */
+export const MUSE_MSP_CLIENT_VERSION = '1'
 
 export type MuseMspJsonRpcId = number | string
 

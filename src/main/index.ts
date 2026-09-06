@@ -123,6 +123,7 @@ import {
   type KimiHomeFs
 } from './kimi/KimiAcpHome'
 import { kimiAcpSeatStatePath, kimiAcpSeatStateRoot } from './kimi/KimiAcpSeatState'
+import { museSeatStatePath, museSeatStateRoot } from './muse/MuseSeatState'
 import { prepareKimiOAuthCredentialProjection } from './kimi/KimiOAuthCredentialProjection'
 import { runKimiAcpTurn } from './kimi/KimiAcpClient'
 import { discoverKimiManagedModelRows } from './kimi/KimiModelCatalog'
@@ -37596,6 +37597,15 @@ const museIpcCancels = new Map<string, () => void>()
 const museIpcBridgeDeps: MuseIpcBridgeDeps = {
   resolveBinary: async () => resolveCliProviderBinary('muse'),
   getTemporaryRoot: () => app.getPath('temp'),
+  // Durable per-chat Muse seat, keyed the way Kimi's is: chat plus ensemble
+  // participant, so two lanes in one chat never resume into one session.
+  getSeatHome: (chatId, participantId) => {
+    const userDataPath = app.getPath('userData')
+    return {
+      boundaryRoot: museSeatStateRoot(userDataPath),
+      path: museSeatStatePath(userDataPath, chatId, participantId)
+    }
+  },
   spawn: createChildProcessMuseSpawn(),
   sendCompatLine: (sender, payload, route) =>
     sendAgentCompatLine(sender as Electron.WebContents, 'muse', payload, route ?? null),

@@ -9,6 +9,7 @@ import {
 } from './store'
 import { getNextScheduledTaskRunAtMs } from './ScheduledTaskTimer'
 import { kimiAcpSeatStatePath } from './kimi/KimiAcpSeatState'
+import { museSeatStatePath } from './muse/MuseSeatState'
 import type { ChatRecord, ChatRun } from './store/types'
 import { MissionFactLedgerRepository } from './missionLedger/MissionFactLedger'
 
@@ -239,9 +240,7 @@ describe('AppStore strict history deletion transaction', () => {
   it('rejects a Project-reference scope barrier carrying stray target identity', () => {
     const prepared = AppStore.prepareHistoryDeletion({
       kind: 'global',
-      quiescenceTargets: [
-        { id: 'project-reference:global', kind: 'project-reference' }
-      ]
+      quiescenceTargets: [{ id: 'project-reference:global', kind: 'project-reference' }]
     })
     const intent = JSON.parse(fs.readFileSync(historyIntentPath, 'utf8')) as {
       quiescenceTargets: Array<Record<string, unknown>>
@@ -250,9 +249,7 @@ describe('AppStore strict history deletion transaction', () => {
     writeJson(historyIntentPath, intent)
     AppStore.resetTransientDeletionGuardsForTests()
 
-    expect(() => AppStore.getPendingHistoryDeletion()).toThrow(
-      /quiescence target does not belong/
-    )
+    expect(() => AppStore.getPendingHistoryDeletion()).toThrow(/quiescence target does not belong/)
     expect(prepared.operationId).toBeTruthy()
   })
 
@@ -387,20 +384,24 @@ describe('AppStore strict history deletion transaction', () => {
     expect(() => AppStore.createChat('workspace-a', '/repo/workspace-a')).toThrow(
       HistoryDeletionMutationBlockedError
     )
-    expect(() => AppStore.saveChat({ ...AppStore.getChat('chat-a')!, title: 'late write' })).toThrow(
-      HistoryDeletionMutationBlockedError
-    )
+    expect(() =>
+      AppStore.saveChat({ ...AppStore.getChat('chat-a')!, title: 'late write' })
+    ).toThrow(HistoryDeletionMutationBlockedError)
     expect(() => AppStore.createSideChat({ parentChatId: 'chat-a' })).toThrow(
       HistoryDeletionMutationBlockedError
     )
-    expect(() => AppStore.createSubThread({
-      parentChatId: 'chat-a',
-      provider: 'codex',
-      delegationPrompt: 'late child',
-      returnResultToParent: true
-    })).toThrow(HistoryDeletionMutationBlockedError)
+    expect(() =>
+      AppStore.createSubThread({
+        parentChatId: 'chat-a',
+        provider: 'codex',
+        delegationPrompt: 'late child',
+        returnResultToParent: true
+      })
+    ).toThrow(HistoryDeletionMutationBlockedError)
 
-    expect(() => AppStore.saveChat({ ...AppStore.getChat('chat-b')!, title: 'allowed' })).not.toThrow()
+    expect(() =>
+      AppStore.saveChat({ ...AppStore.getChat('chat-b')!, title: 'allowed' })
+    ).not.toThrow()
     expect(() => AppStore.createGlobalChat()).not.toThrow()
 
     AppStore.commitPreparedHistoryDeletion(prepared.operationId)
@@ -426,7 +427,9 @@ describe('AppStore strict history deletion transaction', () => {
         ]
       })
     ).toThrow(HistoryDeletionMutationBlockedError)
-    expect(() => AppStore.saveChat({ ...AppStore.getChat('chat-b')!, title: 'allowed' })).not.toThrow()
+    expect(() =>
+      AppStore.saveChat({ ...AppStore.getChat('chat-b')!, title: 'allowed' })
+    ).not.toThrow()
 
     AppStore.commitPreparedHistoryDeletion(prepared.operationId)
     expect(AppStore.getChat('chat-a')?.messages).toEqual([])
@@ -530,16 +533,20 @@ describe('AppStore strict history deletion transaction', () => {
       enabled: true,
       template: { prompt: 'sibling workflow prompt' }
     })
-    expect(
-      fs.existsSync(join(workflowRunsDir, `${occurrence!.workflowExecutionId}.jsonl`))
-    ).toBe(false)
+    expect(fs.existsSync(join(workflowRunsDir, `${occurrence!.workflowExecutionId}.jsonl`))).toBe(
+      false
+    )
     expect(AppStore.getDueScheduledTasks(scheduledAt + 1).map((task) => task.id)).not.toContain(
       standaloneA.id
     )
   })
 
   it.each([
-    { label: 'chat deletion', execute: () => AppStore.deleteChat('chat-a'), siblingCancelled: false },
+    {
+      label: 'chat deletion',
+      execute: () => AppStore.deleteChat('chat-a'),
+      siblingCancelled: false
+    },
     {
       label: 'chat truncation',
       execute: () => AppStore.truncateChatHistory('chat-a'),
@@ -613,9 +620,9 @@ describe('AppStore strict history deletion transaction', () => {
     expect(AppStore.getDueScheduledTasks(Date.now()).map((task) => task.id)).not.toContain(
       targetTask.id
     )
-    expect(() => AppStore.claimDueScheduledTaskForRun(targetTask.id, { runId: 'late-run' })).toThrow(
-      HistoryDeletionMutationBlockedError
-    )
+    expect(() =>
+      AppStore.claimDueScheduledTaskForRun(targetTask.id, { runId: 'late-run' })
+    ).toThrow(HistoryDeletionMutationBlockedError)
     expect(() => AppStore.materializeWorkflowNow(targetWorkflow.id)).toThrow(
       HistoryDeletionMutationBlockedError
     )
@@ -670,9 +677,9 @@ describe('AppStore strict history deletion transaction', () => {
     }
 
     expect(thrown).toBeInstanceOf(HistoryDeletionIncompleteError)
-    expect((thrown as HistoryDeletionIncompleteError).failures.map((failure) => failure.step)).toEqual(
-      expect.arrayContaining(['run-events', 'approval-ledger'])
-    )
+    expect(
+      (thrown as HistoryDeletionIncompleteError).failures.map((failure) => failure.step)
+    ).toEqual(expect.arrayContaining(['run-events', 'approval-ledger']))
     // Other stores were still attempted, but the operation remains visibly incomplete.
     expect(fs.existsSync(chatsDir)).toBe(false)
     expect(fs.existsSync(runArtifactsDir)).toBe(false)
@@ -704,7 +711,12 @@ describe('AppStore strict history deletion transaction', () => {
       { id: 'queue-b', chatId: 'chat-b', workspaceId: 'workspace-b', runId: 'run-b' }
     ])
     writeJson(runRecoveryPath, [
-      { id: 'recovery-parent', chatId: 'parent-a', workspaceId: 'workspace-a', runId: 'run-parent' },
+      {
+        id: 'recovery-parent',
+        chatId: 'parent-a',
+        workspaceId: 'workspace-a',
+        runId: 'run-parent'
+      },
       { id: 'recovery-child', chatId: 'child-a', workspaceId: 'workspace-a', runId: 'run-child' },
       { id: 'recovery-b', chatId: 'chat-b', workspaceId: 'workspace-b', runId: 'run-b' }
     ])
@@ -756,7 +768,12 @@ describe('AppStore strict history deletion transaction', () => {
     ])
     writeJson(runRecoveryPath, [
       { id: 'recovery-child', chatId: 'child-a', workspaceId: 'workspace-a', runId: 'run-child' },
-      { id: 'recovery-sibling', chatId: 'sibling-a', workspaceId: 'workspace-a', runId: 'run-sibling' }
+      {
+        id: 'recovery-sibling',
+        chatId: 'sibling-a',
+        workspaceId: 'workspace-a',
+        runId: 'run-sibling'
+      }
     ])
 
     AppStore.deleteChat('parent-a')
@@ -895,6 +912,17 @@ describe('AppStore strict history deletion transaction', () => {
     const seatPath = kimiAcpSeatStatePath(userDataPath, 'chat-a', 'worker')
     fs.mkdirSync(seatPath, { recursive: true })
     fs.writeFileSync(join(seatPath, 'checkpoint.json'), 'secret', 'utf8')
+    // Muse's durable seat home holds the session transcript; erasing the chat
+    // must erase it too, for both the solo and the ensemble seat.
+    const musePaths = ['solo', 'worker'].map((participantId) =>
+      museSeatStatePath(userDataPath, 'chat-a', participantId)
+    )
+    for (const musePath of musePaths) {
+      fs.mkdirSync(join(musePath, 'xdg-data', 'muse', 'sessions'), { recursive: true })
+      fs.writeFileSync(join(musePath, 'xdg-data', 'muse', 'session-index.db'), 'log', 'utf8')
+    }
+    const otherMuseSeat = museSeatStatePath(userDataPath, 'chat-b', 'solo')
+    fs.mkdirSync(otherMuseSeat, { recursive: true })
 
     const truncated = AppStore.truncateChatHistory('chat-a')
 
@@ -913,6 +941,9 @@ describe('AppStore strict history deletion transaction', () => {
     expect(readArray(runRecoveryPath).map((row) => row.id)).toEqual(['recovery-b'])
     expect(fs.existsSync(mailboxPath)).toBe(false)
     expect(fs.existsSync(seatPath)).toBe(false)
+    for (const musePath of musePaths) expect(fs.existsSync(musePath)).toBe(false)
+    // ...and only that chat's seats.
+    expect(fs.existsSync(otherMuseSeat)).toBe(true)
     expect(fs.existsSync(chatPath('chat-a'))).toBe(true)
     expect(fs.existsSync(chatPath('chat-b'))).toBe(true)
   })

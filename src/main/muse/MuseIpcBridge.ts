@@ -11,7 +11,11 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { EffectiveRunPermissions, TaskWraithMcpProfileId } from '../store/types'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
+import type { AcpChildProcess } from '../acp/AcpTurnClient'
+import { museMspTransportEnabled, museMspSessionResumeEnabled } from '../museGate'
 import { resolveMuseExecSessionId } from './MuseCliArgs'
+import { MUSE_MSP_CLIENT_VERSION } from './MuseMspProtocol'
+import { runMuseMspProvider, type MuseMspSpawnInput } from './MuseMspRun'
 import { createMuseThinkingTranscript } from './MuseThinkingTranscript'
 import {
   generateMuseIntroduction,
@@ -50,6 +54,15 @@ export interface MuseIpcRunPayload {
   taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
   effectivePermissions?: Pick<EffectiveRunPermissions, 'subThreadDelegationAutoAllowSource'> | null
   providerSessionId?: string | null
+  /**
+   * Main-resolved, chat-owned absolute image paths. Renderer-nominated paths
+   * never reach here: `expandPdfImagePathsForPayload` has already replaced the
+   * array with delivered paths (or emptied it and stamped a warning) by the
+   * time the adapter runs.
+   */
+  imagePaths?: readonly string[]
+  /** Ensemble seat identity; absent for a solo run. */
+  ensembleRun?: { participantId?: string } | null
   /** Optional BYOK; never placed on argv — piped via `--api-key-stdin`. */
   museApiKey?: string | null
 }
@@ -104,8 +117,22 @@ export interface MuseIpcBridgeDeps {
   prepareTaskWraithMcp?: (
     input: MuseTaskWraithMcpPreparationInput
   ) => Promise<MuseTaskWraithMcpInvocation | null>
+  /**
+   * Durable per-chat seat directory for the MSP lane. Lives in the composition
+   * root because it needs `app.getPath('userData')`; the bridge stays
+   * Electron-free. Absent (or a chat-less payload) falls back to a disposable
+   * home, which simply means this turn cannot be resumed.
+   */
+  getSeatHome?: (
+    chatId: string,
+    participantId: string
+  ) => { boundaryRoot: string; path: string } | null
+  /** `muse serve` child for the MSP lane; defaults to the real child process. */
+  spawnMsp?: (input: MuseMspSpawnInput) => AcpChildProcess
   /** Test seam — defaults to the real lifecycle. */
   runMuseProvider?: typeof runMuseProvider
+  /** Test seam — defaults to the real MSP lifecycle. */
+  runMuseMspProvider?: typeof runMuseMspProvider
   generateIntroduction?: (input: MuseIntroductionInput) => Promise<MuseIntroductionResult>
   now?: () => number
 }
@@ -222,6 +249,30 @@ export function museExecEventToCompatPayload(
 }
 
 type NodeSpawn = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess
+
+/**
+ * `muse serve` child for the MSP lane.
+ *
+ * Same shape as the exec spawn with one load-bearing difference: stdin is
+ * never ended. MSP is a bidirectional JSON-RPC channel and an EOF on stdin
+ * terminates the host mid-session. The unhandled-'error' guard is kept for the
+ * same reason it exists on the exec lane — an 'error' on child.stdin with no
+ * listener takes down Electron main, not just the turn.
+ */
+export function createChildProcessMuseMspSpawn(
+  spawnImpl: NodeSpawn = nodeSpawn
+): (input: MuseMspSpawnInput) => AcpChildProcess {
+  return (input) => {
+    const child = spawnImpl(input.binaryPath, [...input.argv], {
+      cwd: input.cwd,
+      env: { ...input.env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: false
+    })
+    child.stdin?.once('error', () => undefined)
+    return child as unknown as AcpChildProcess
+  }
+}
 
 export function createChildProcessMuseSpawn(spawnImpl: NodeSpawn = nodeSpawn): MuseRunSpawn {
   return (input) => {
@@ -492,40 +543,85 @@ export async function runMuseProviderFromIpc(
       )
     }
 
-    const outcome = await run({
-      binaryPath: resolved.binaryPath,
-      workspacePath,
-      prompt,
-      introductionText: introduction.text,
-      runId,
-      temporaryRoot: deps.getTemporaryRoot(),
-      sessionId: museSessionId,
-      model: payload.model,
-      reasoningEffort: payload.reasoningEffort,
-      approvalMode: payload.approvalMode,
-      ultraTaskDelegationAutoAllow,
-      apiKey: credential.apiKey,
-      authJsonText: credential.authJsonText,
-      ...(mcpSettings ? { mcpSettings } : {}),
-      spawn: deps.spawn,
-      shouldCancel: () => cancelled,
-      onEvent: (museEvent) => {
-        // Publish completion once the session tail has supplied final text and
-        // usage. The stdout terminal envelope alone has neither usage nor the
-        // rich result payload the shared close-out/transcript consumers need.
-        if (museEvent.type === 'terminal') return
-        if (museEvent.type === 'thinking') {
-          for (const compat of thinking.project(museEvent)) {
-            deps.sendCompatLine(event.sender, compat, route)
-          }
-          return
+    const emitMuseEvent = (museEvent: MuseExecNormalizedEvent): void => {
+      // Publish completion once the session tail has supplied final text and
+      // usage. The stdout terminal envelope alone has neither usage nor the
+      // rich result payload the shared close-out/transcript consumers need.
+      if (museEvent.type === 'terminal') return
+      if (museEvent.type === 'thinking') {
+        for (const compat of thinking.project(museEvent)) {
+          deps.sendCompatLine(event.sender, compat, route)
         }
-        const compat = museExecEventToCompatPayload(museEvent, { model: payload.model })
-        if (!compat) return
-        thinking.observe(compat)
-        deps.sendCompatLine(event.sender, compat, route)
+        return
       }
-    })
+      const compat = museExecEventToCompatPayload(museEvent, { model: payload.model })
+      if (!compat) return
+      thinking.observe(compat)
+      deps.sendCompatLine(event.sender, compat, route)
+    }
+    const emitMuseWarning = (message: string): void => {
+      if (cancelled || !message) return
+      deps.sendCompatLine(
+        event.sender,
+        { type: 'provider_warning', provider: 'muse', message },
+        route
+      )
+    }
+
+    const seat =
+      route.appChatId && deps.getSeatHome
+        ? deps.getSeatHome(route.appChatId, payload.ensembleRun?.participantId || 'solo')
+        : null
+
+    const outcome = museMspTransportEnabled()
+      ? await (deps.runMuseMspProvider ?? runMuseMspProvider)({
+          binaryPath: resolved.binaryPath,
+          workspacePath,
+          prompt,
+          introductionText: introduction.text,
+          runId,
+          clientVersion: MUSE_MSP_CLIENT_VERSION,
+          spawnMsp: deps.spawnMsp ?? createChildProcessMuseMspSpawn(),
+          ...(seat ? { durableSeat: seat } : {}),
+          temporaryRoot: deps.getTemporaryRoot(),
+          // A seat we cannot resume into must not claim a stored session: MSP
+          // rejects a resume whose log is not in THIS home, and a fresh
+          // disposable home never has one.
+          resumeSessionId:
+            seat && museMspSessionResumeEnabled() ? payload.providerSessionId || null : null,
+          model: payload.model,
+          reasoningEffort: payload.reasoningEffort,
+          approvalMode: payload.approvalMode,
+          ultraTaskDelegationAutoAllow,
+          ...(payload.imagePaths ? { imagePaths: payload.imagePaths } : {}),
+          // MSP has no `--api-key-stdin`; both credential shapes travel as a
+          // projected auth.json inside the seat.
+          apiKey: credential.apiKey,
+          authJsonText: credential.authJsonText,
+          ...(mcpSettings ? { mcpSettings } : {}),
+          onEvent: emitMuseEvent,
+          onWarning: emitMuseWarning,
+          shouldCancel: () => cancelled
+        })
+      : await run({
+          binaryPath: resolved.binaryPath,
+          workspacePath,
+          prompt,
+          introductionText: introduction.text,
+          runId,
+          temporaryRoot: deps.getTemporaryRoot(),
+          sessionId: museSessionId,
+          model: payload.model,
+          reasoningEffort: payload.reasoningEffort,
+          approvalMode: payload.approvalMode,
+          ultraTaskDelegationAutoAllow,
+          apiKey: credential.apiKey,
+          authJsonText: credential.authJsonText,
+          ...(mcpSettings ? { mcpSettings } : {}),
+          spawn: deps.spawn,
+          shouldCancel: () => cancelled,
+          onEvent: emitMuseEvent
+        })
 
     const failed = outcome.status !== 'success'
     const resultText =
@@ -537,6 +633,11 @@ export async function runMuseProviderFromIpc(
         status: outcome.status === 'cancelled' ? 'cancelled' : failed ? 'failed' : 'success',
         subtype: failed ? 'error' : 'success',
         provider: 'muse',
+        // The init line pinned the id we MINTED. On the MSP lane the id the
+        // provider actually used arrives with session/ready, well after that
+        // line shipped; run_finished is applied last, so this is what makes a
+        // resumable session id reach chat.linkedProviderSessionId.
+        ...(outcome.sessionId ? { providerThreadId: outcome.sessionId } : {}),
         ...(resultText ? { result: resultText } : {}),
         stats: {
           ...museStatsWithIntroduction(outcome.providerStats, introduction.stats),

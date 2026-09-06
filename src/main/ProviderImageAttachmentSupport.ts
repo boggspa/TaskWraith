@@ -8,6 +8,7 @@
 // imports — so the matrix is unit-testable.
 
 import type { ProviderId } from './store/types'
+import { museMspTransportEnabled } from './museGate'
 import { findPiStaticModel, PI_DEFAULT_MODEL_WIRE_ID } from './pi/PiModels'
 
 // Mirrors the committed wire-id validator at the combined AntiGravity
@@ -35,6 +36,11 @@ const ANTIGRAVITY_GEMINI_API_IMAGE_ROUTE = /^gemini-api:gemini-[a-z0-9][a-z0-9._
  *   curated catalog row declares image input.
  * - antigravity: only exact `gemini-api:gemini-*` routes use the existing
  *   Gemini API inline-image transport; the official agy lane has none.
+ * - muse: MSP `TurnInputPart` image parts (base64Data + mediaType), and ONLY
+ *   on that transport. `muse exec --json` has no image input at all, so the
+ *   entry is gated on the transport rather than pinned true — claiming true on
+ *   the exec lane would drop every attachment with no warning, which is the
+ *   exact silent omission this matrix exists to prevent.
  * - Everything else has no image transport today.
  */
 const PROVIDER_IMAGE_ATTACHMENT_DELIVERY: Record<ProviderId, boolean> = {
@@ -47,6 +53,7 @@ const PROVIDER_IMAGE_ATTACHMENT_DELIVERY: Record<ProviderId, boolean> = {
   grok: true,
   pi: true,
   mistral: true,
+  // Transport-dependent; see providerDeliversImageAttachments.
   muse: false,
   // Unmeasured against the live CLI — flip when a trace confirms image content
   // blocks over `devin acp`.
@@ -60,6 +67,7 @@ export function providerDeliversImageAttachments(provider: string, model?: strin
       !model || model === 'cli-default' || model === 'default' ? PI_DEFAULT_MODEL_WIRE_ID : model
     return findPiStaticModel(normalizedModel)?.images === true
   }
+  if (provider === 'muse') return museMspTransportEnabled()
   if (provider === 'antigravity') {
     return typeof model === 'string' && ANTIGRAVITY_GEMINI_API_IMAGE_ROUTE.test(model.trim())
   }

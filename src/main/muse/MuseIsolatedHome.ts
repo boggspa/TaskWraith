@@ -126,7 +126,14 @@ export const MUSE_DURABLE_SEAT_CONTINUITY = Object.freeze({
   dataRoot: 'xdg-data' as const,
   /** Muse's own directory inside XDG_DATA_HOME. */
   providerDir: 'muse' as const,
-  entries: Object.freeze(['sessions', 'session-index.db'] as const)
+  entries: Object.freeze(['sessions', 'session-index.db'] as const),
+  /**
+   * Children `sessions/` may hold: the MSP view store and the dated event
+   * tree. Shape-pinned because this is the one directory the provider process
+   * writes into freely, so without it `cp auth.json sessions/x.json` is
+   * permanent retained storage for anything the model touched.
+   */
+  sessionChild: /^(?:\.msp-view-v1|\d{4})$/
 })
 
 const issuedMuseIsolatedHomeLeases = new WeakMap<
@@ -183,7 +190,33 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
     // Reduce a REUSED seat before this turn's material lands. Doing it here
     // rather than only at teardown means a seat left behind by a crashed run
     // is cleaned before it can be handed to a provider process.
-    if (durableSeat) scrubMuseDurableSeatHome(canonicalPath)
+    //
+    // Fail CLOSED: a seat that cannot be fully reduced is destroyed rather than
+    // handed over, even though that costs the transcript. The next attach then
+    // starts from an empty seat, so the failure is self-healing rather than
+    // permanent — an undeletable entry would otherwise brick the chat.
+    if (durableSeat) {
+      const attachScrub = scrubMuseDurableSeatHome(canonicalPath, {
+        boundaryRoot: durableSeat.boundaryRoot
+      })
+      if (!attachScrub.ok) {
+        // The destroy can fail for the same reason the scrub did (an
+        // unreadable directory defeats both). Say which happened: a seat that
+        // survived a failed reduction may still hold credential material, and
+        // that is a different operational problem from one that was discarded.
+        let discarded = true
+        try {
+          rmSync(canonicalPath, { recursive: true, force: true })
+        } catch {
+          discarded = false
+        }
+        throw new Error(
+          `The Muse seat could not be reduced to session continuity and was ${
+            discarded ? 'discarded' : 'left in place — it may still hold run material'
+          }: ${attachScrub.failures.join('; ')}`
+        )
+      }
+    }
 
     const homePath = join(canonicalPath, 'home')
     const xdgConfigHome = join(canonicalPath, 'xdg-config')
@@ -299,7 +332,11 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
             // happened: leaving a credential at rest under userData is worse
             // than losing the ability to resume, so a seat that cannot be
             // reduced is destroyed outright below.
-            scrubMuseDurableSeatHome(canonicalPath)
+            const scrub = scrubMuseDurableSeatHome(canonicalPath, {
+              boundaryRoot: durableSeat.boundaryRoot,
+              identity: authority.fileIdentity
+            })
+            if (!scrub.ok) throw new Error(scrub.failures.join('; '))
             assertMuseDurableSeatReducedToContinuity(canonicalPath)
           } else {
             rmSync(canonicalPath, { recursive: true, force: true })
@@ -309,6 +346,11 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
         } catch (error) {
           if (durableSeat) {
             try {
+              // The identity was last proven before the scrub, and the scrub
+              // walks a tree of unbounded size. Re-prove it: `canonicalPath` is
+              // a captured string the kernel re-resolves at rmSync time, so a
+              // rename landing in that window would redirect the delete.
+              assertSameAuthority(authority, inspectMuseIsolatedHome(canonicalPath, posture))
               rmSync(canonicalPath, { recursive: true, force: true })
               cleaned = true
             } catch {
@@ -334,8 +376,15 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
       // A half-built DISPOSABLE home is destroyed. A durable seat is only
       // scrubbed: destroying it here would discard the chat's whole session
       // history over one transient verification failure on turn N.
-      if (durableSeat) scrubMuseDurableSeatHome(canonicalPath)
-      else rmSync(canonicalPath, { recursive: true, force: true })
+      //
+      // This path reaches the scrub with NOTHING verified — the failure may
+      // have come from the verification itself — so the boundary guard is not
+      // optional here.
+      if (durableSeat) {
+        scrubMuseDurableSeatHome(canonicalPath, { boundaryRoot: durableSeat.boundaryRoot })
+      } else {
+        rmSync(canonicalPath, { recursive: true, force: true })
+      }
     } catch {
       /* preserve the original verification error */
     }
@@ -633,6 +682,13 @@ function writePrivateFileAtomic(path: string, body: string): void {
   }
 }
 
+function assertRealDirectoryLeaf(path: string, label: string): void {
+  const info = lstatSync(path)
+  if (info.isSymbolicLink() || !info.isDirectory()) {
+    throw new Error(`The Muse ${label} is not a real directory.`)
+  }
+}
+
 function assertPrivateRealDirectory(path: string, label: string): void {
   const info = lstatSync(path)
   if (info.isSymbolicLink() || !info.isDirectory()) {
@@ -663,11 +719,16 @@ function establishMuseDurableSeat(boundaryRoot: string, seatPath: string): strin
   if (!isAbsolute(boundaryRoot) || !isAbsolute(seatPath)) {
     throw new Error('Muse durable seat paths must be absolute.')
   }
+  // Order matters: mkdir succeeds silently on an existing symlink-to-directory
+  // and chmod FOLLOWS it, so chmod before the leaf-type check would set an
+  // arbitrary directory to 0700 before the guard rejects the path.
   mkdirSync(boundaryRoot, { recursive: true, mode: 0o700 })
+  assertRealDirectoryLeaf(boundaryRoot, 'seat root')
   if (process.platform !== 'win32') chmodSync(boundaryRoot, 0o700)
   assertPrivateRealDirectory(boundaryRoot, 'seat root')
 
   mkdirSync(seatPath, { recursive: true, mode: 0o700 })
+  assertRealDirectoryLeaf(seatPath, 'seat home')
   if (process.platform !== 'win32') chmodSync(seatPath, 0o700)
   assertPrivateRealDirectory(seatPath, 'seat home')
 
@@ -692,10 +753,19 @@ function durableContinuityEntryIsSafe(path: string): boolean {
   const info = lstatSync(path)
   if (info.isSymbolicLink()) return false
   const getuid = process.getuid
-  if (process.platform !== 'win32' && typeof getuid === 'function' && info.uid !== getuid()) {
-    return false
+  if (process.platform !== 'win32') {
+    // Fail CLOSED, not open: a POSIX runtime that cannot tell us the owner
+    // cannot re-prove retained material either.
+    if (typeof getuid !== 'function') return false
+    if (info.uid !== getuid()) return false
+    // Deliberately NO mode check. Muse chooses the mode of its own session log
+    // and index; requiring owner-only here would delete the real log on every
+    // attach. Confidentiality comes from the seat root being 0700 — nothing
+    // outside this user can traverse in whatever the leaf mode says.
   }
-  if (info.isFile()) return info.nlink === 1
+  // `undefined` on platforms that do not report link counts; only a REPORTED
+  // count above one is evidence of a link from outside the retained tree.
+  if (info.isFile()) return info.nlink === undefined || info.nlink === 1
   if (!info.isDirectory()) return false
   for (const entry of readdirSync(path)) {
     if (!durableContinuityEntryIsSafe(join(path, entry))) return false
@@ -708,65 +778,185 @@ function durableContinuityEntryIsSafe(path: string): boolean {
  *
  * Runs on attach AND at teardown. On attach it is what stops turn N inheriting
  * turn 1's `auth.json`, trust grants, MCP broker token and temp material; at
- * teardown it is what stops that material resting on disk between turns. An
- * entry on the continuity list that fails re-verification is deleted like any
- * other residue — losing resumability is the correct trade against serving a
- * tampered session log.
+ * teardown it is what stops that material resting on disk between turns.
+ *
+ * It RE-PROVES the root before touching anything. `readdirSync` follows a
+ * symlink-to-directory and `rmSync(recursive)` deletes THROUGH one, so a scrub
+ * that trusted its argument would turn "the sandboxed child swapped its own
+ * seat for a link" into a recursive delete of the link's target. The disposable
+ * lane cannot do this — there the destructive step is a single `rmSync` on the
+ * leaf, which merely unlinks a symlink.
+ *
+ * Every entry is removed under its own try/catch. A single undeletable entry
+ * (an unreadable directory, a `chflags uchg` file, a tree deeper than PATH_MAX)
+ * must not abandon the reduction with the rest of the credential material still
+ * in place — it reports failure instead, and the caller decides.
  */
-function scrubMuseDurableSeatHome(root: string): void {
-  const { dataRoot, providerDir, entries } = MUSE_DURABLE_SEAT_CONTINUITY
+export function scrubMuseDurableSeatHome(
+  root: string,
+  guard: Readonly<{
+    boundaryRoot?: string
+    identity?: MuseIsolatedHomeAuthority['fileIdentity']
+  }> = {}
+): { ok: boolean; failures: string[] } {
+  const failures: string[] = []
+  try {
+    // On POSIX the mode check below also rejects a symlink (0777 !== 0700).
+    // This is the guard that carries win32, where the whole uid/mode block is
+    // skipped and nothing else would notice the leaf type.
+    assertRealDirectoryLeaf(root, 'seat home')
+    const info = lstatSync(root, { bigint: true })
+    if (process.platform !== 'win32') {
+      const getuid = process.getuid
+      if (typeof getuid !== 'function') throw new Error('owner cannot be verified')
+      if (info.uid !== BigInt(getuid())) throw new Error('not owned by this user')
+      if ((info.mode & 0o777n) !== 0o700n) throw new Error('not mode 0700')
+    }
+    if (
+      guard.identity &&
+      (guard.identity.device !== info.dev.toString(10) ||
+        guard.identity.inode !== info.ino.toString(10))
+    ) {
+      throw new Error('file identity moved')
+    }
+    if (guard.boundaryRoot) {
+      const rootReal = realpathSync(guard.boundaryRoot)
+      if (!pathIsWithin(rootReal, realpathSync(root)) || rootReal === realpathSync(root)) {
+        throw new Error('escaped its private seat root')
+      }
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      failures: [
+        `Muse seat scrub refused: ${error instanceof Error ? error.message : String(error)}`
+      ]
+    }
+  }
+
+  const { dataRoot, providerDir, sessionChild } = MUSE_DURABLE_SEAT_CONTINUITY
   const drop = (path: string): void => {
-    rmSync(path, { recursive: true, force: true })
+    try {
+      rmSync(path, { recursive: true, force: true })
+    } catch (error) {
+      failures.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
-  for (const child of readdirSync(root)) {
+  const listOrDrop = (path: string): string[] | null => {
+    try {
+      return readdirSync(path)
+    } catch (error) {
+      failures.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
+      drop(path)
+      return null
+    }
+  }
+  const isRealDirectory = (path: string): boolean => {
+    try {
+      const info = lstatSync(path)
+      return info.isDirectory() && !info.isSymbolicLink()
+    } catch {
+      return false
+    }
+  }
+
+  const rootEntries = listOrDrop(root)
+  if (!rootEntries) return { ok: false, failures }
+  for (const child of rootEntries) {
     const childPath = join(root, child)
-    if (child !== dataRoot) {
+    if (child !== dataRoot || !isRealDirectory(childPath)) {
       drop(childPath)
       continue
     }
-    // Never readdir through a symlink: resolve the leaf type first.
-    if (!lstatSync(childPath).isDirectory() || lstatSync(childPath).isSymbolicLink()) {
-      drop(childPath)
-      continue
-    }
-    for (const dataChild of readdirSync(childPath)) {
+    const dataEntries = listOrDrop(childPath)
+    if (!dataEntries) continue
+    for (const dataChild of dataEntries) {
       const dataChildPath = join(childPath, dataChild)
-      if (dataChild !== providerDir) {
+      if (dataChild !== providerDir || !isRealDirectory(dataChildPath)) {
         drop(dataChildPath)
         continue
       }
-      if (!lstatSync(dataChildPath).isDirectory() || lstatSync(dataChildPath).isSymbolicLink()) {
-        drop(dataChildPath)
-        continue
-      }
-      for (const leaf of readdirSync(dataChildPath)) {
+      const providerEntries = listOrDrop(dataChildPath)
+      if (!providerEntries) continue
+      for (const leaf of providerEntries) {
         const leafPath = join(dataChildPath, leaf)
-        if ((entries as readonly string[]).includes(leaf) && durableContinuityEntryIsSafe(leafPath))
+        if (!durableContinuityLeafIsRetained(leaf, leafPath)) {
+          drop(leafPath)
           continue
-        drop(leafPath)
+        }
+        // The session log is the one tree the provider writes into freely, so
+        // it is shaped as well as type-checked: anything the provider stashed
+        // beside the log — a copied credential, a cache — is not a session and
+        // is evicted. Unknown children are dropped INDIVIDUALLY so a future
+        // Muse layout degrades resume rather than deleting the whole log.
+        if (leaf !== 'sessions') continue
+        const sessionEntries = listOrDrop(leafPath)
+        if (!sessionEntries) continue
+        for (const session of sessionEntries) {
+          if (sessionChild.test(session)) continue
+          drop(join(leafPath, session))
+        }
       }
     }
   }
+  return { ok: failures.length === 0, failures }
 }
 
-/** Throw unless the seat home holds nothing but verified session continuity. */
+/**
+ * Whether one child of `XDG_DATA_HOME/muse` is retained.
+ *
+ * Type-pinned, not just name-pinned: `session-index.db` recreated as a
+ * DIRECTORY would otherwise be unbounded permanent storage under a name the
+ * allowlist blesses.
+ */
+function durableContinuityLeafIsRetained(leaf: string, path: string): boolean {
+  const { entries } = MUSE_DURABLE_SEAT_CONTINUITY
+  if (!(entries as readonly string[]).includes(leaf)) return false
+  let info: ReturnType<typeof lstatSync>
+  try {
+    info = lstatSync(path)
+  } catch {
+    return false
+  }
+  if (info.isSymbolicLink()) return false
+  if (leaf === 'sessions' ? !info.isDirectory() : !info.isFile()) return false
+  return durableContinuityEntryIsSafe(path)
+}
+
+/**
+ * Throw unless the seat home holds nothing but verified session continuity.
+ *
+ * Uses the SAME predicates as the scrub, including the leaf-type guards — it is
+ * the trigger for destroying a seat that could not be reduced, so a weaker
+ * check here would let material the scrub would have dropped survive.
+ */
 function assertMuseDurableSeatReducedToContinuity(root: string): void {
-  const { dataRoot, providerDir, entries } = MUSE_DURABLE_SEAT_CONTINUITY
-  for (const child of readdirSync(root)) {
+  const { dataRoot, providerDir, sessionChild } = MUSE_DURABLE_SEAT_CONTINUITY
+  const listReal = (path: string, label: string): string[] => {
+    const info = lstatSync(path)
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error(`Muse seat ${label} is not a real directory after cleanup.`)
+    }
+    return readdirSync(path)
+  }
+  for (const child of listReal(root, 'home')) {
     if (child !== dataRoot) {
       throw new Error(`Unexpected Muse seat entry survived cleanup: ${child}`)
     }
-    for (const dataChild of readdirSync(join(root, child))) {
+    for (const dataChild of listReal(join(root, child), dataRoot)) {
       if (dataChild !== providerDir) {
         throw new Error(`Unexpected Muse seat data entry survived cleanup: ${dataChild}`)
       }
       const providerPath = join(root, child, dataChild)
-      for (const leaf of readdirSync(providerPath)) {
-        if (!(entries as readonly string[]).includes(leaf)) {
-          throw new Error(`Unexpected Muse seat continuity entry survived cleanup: ${leaf}`)
-        }
-        if (!durableContinuityEntryIsSafe(join(providerPath, leaf))) {
+      for (const leaf of listReal(providerPath, providerDir)) {
+        if (!durableContinuityLeafIsRetained(leaf, join(providerPath, leaf))) {
           throw new Error(`Unsafe Muse seat continuity entry survived cleanup: ${leaf}`)
+        }
+        if (leaf !== 'sessions') continue
+        for (const session of listReal(join(providerPath, leaf), 'sessions')) {
+          if (!sessionChild.test(session)) {
+            throw new Error(`Unexpected Muse session entry survived cleanup: ${session}`)
+          }
         }
       }
     }
