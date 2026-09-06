@@ -57,9 +57,8 @@ describe('CursorPathBLaunchPlan', () => {
       '--model',
       'composer-1',
       '--workspace',
-      WORKSPACE,
-      '--',
-      PROMPT
+      WORKSPACE
+      // No `--` guard and no positional: the prompt goes to stdin.
     ])
   })
 
@@ -289,5 +288,27 @@ describe('CursorPathBLaunchPlan', () => {
     expect(Object.isFrozen(plan.controls)).toBe(true)
     expect(Object.isFrozen(plan.broker)).toBe(true)
     expect(Object.isFrozen(plan.broker.allowRules)).toBe(true)
+  })
+})
+
+// The prompt reaches cursor-agent over stdin, never argv (see the ceiling note
+// in CursorCliArgs). The plan still carries the exact provider-visible prompt —
+// runCursorProvider writes plan.prompt to the child's stdin — but argv must stay
+// a bounded, closed set of TaskWraith-authored flags no matter how big it gets.
+describe('Cursor Path-B launch plan keeps the prompt out of argv', () => {
+  it('exposes the exact prompt while argv carries none of it', () => {
+    const plan = buildCursorPathBLaunchPlan(input({}))
+    expect(plan.prompt).toContain(PROMPT)
+    expect(plan.argv).not.toContain(plan.prompt)
+    expect(plan.argv).not.toContain('--')
+    expect(Math.max(...plan.argv.map((token) => token.length))).toBeLessThan(512)
+  })
+
+  it('keeps argv bounded for a prompt far past the cursor-agent argv ceiling', () => {
+    // 600KB — comfortably past the 465,459-byte total-argv ceiling at which
+    // cursor-agent exits 0 with no output at all.
+    const plan = buildCursorPathBLaunchPlan(input({ prompt: 'y'.repeat(600_000) }))
+    expect(plan.prompt.length).toBeGreaterThan(465_459)
+    expect(Math.max(...plan.argv.map((token) => token.length))).toBeLessThan(512)
   })
 })

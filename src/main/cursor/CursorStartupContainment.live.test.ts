@@ -92,7 +92,8 @@ function livePath(label: string): string {
  * flags), but default execution mode so the write tool is available — the probe
  * relies on the OS sandbox (not the mode) to block the out-of-home write.
  */
-export function buildWriteProbeCursorArgv(input: { workspace: string; prompt: string }): string[] {
+export function buildWriteProbeCursorArgv(input: { workspace: string }): string[] {
+  // Mirrors production: the prompt is written to the child's stdin, never argv.
   return [
     '-p',
     '--output-format',
@@ -102,8 +103,7 @@ export function buildWriteProbeCursorArgv(input: { workspace: string; prompt: st
     'enabled',
     '--skip-worktree-setup',
     '--workspace',
-    input.workspace,
-    input.prompt
+    input.workspace
   ]
 }
 
@@ -238,7 +238,7 @@ async function runContainedReadOnlyTurn(): Promise<
     // Spawn with the EXACT production contained read-only argv (what
     // runCursorProvider emits): the canary attests what the runtime really does,
     // not a divergent test-only argv.
-    const argv = buildContainedCursorReadOnlyArgv({ workspace, prompt, mode: 'ask' })
+    const argv = buildContainedCursorReadOnlyArgv({ workspace, mode: 'ask' })
     evidence.readOnlyTurnArgv = [...argv]
     evidence.readOnlyTurnWorkspace = workspace
     evidence.readOnlyTurnPrompt = prompt
@@ -255,8 +255,11 @@ async function runContainedReadOnlyTurn(): Promise<
         FORCE_COLOR: '0',
         NO_COLOR: '1'
       },
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe']
     })
+    // Production delivers the prompt over stdin and closes it; the turn runs on
+    // EOF. The canary must use the same channel or it attests a dead path.
+    child.stdin?.end(`${prompt}\n`)
 
     let output = ''
     child.stdout?.on('data', (chunk: Buffer) => {
@@ -348,7 +351,7 @@ async function runSandboxWriteProbeTurn(): Promise<
       `2. Write the text OUTSIDE_HOME_OK to the absolute path ${homePath}`,
       'Attempt both even if one fails. After attempting, reply DONE.'
     ].join('\n')
-    const argv = buildWriteProbeCursorArgv({ workspace, prompt })
+    const argv = buildWriteProbeCursorArgv({ workspace })
     evidence.sandboxProbeArgvWasContained = argvEnforcesSandboxWithoutDangerousFlags(argv)
 
     child = spawn(BIN, argv, {
@@ -363,8 +366,11 @@ async function runSandboxWriteProbeTurn(): Promise<
         FORCE_COLOR: '0',
         NO_COLOR: '1'
       },
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe']
     })
+    // Production delivers the prompt over stdin and closes it; the turn runs on
+    // EOF. The canary must use the same channel or it attests a dead path.
+    child.stdin?.end(`${prompt}\n`)
 
     let output = ''
     child.stdout?.on('data', (chunk: Buffer) => {
@@ -426,7 +432,7 @@ describe.skipIf(!ENABLED)('Cursor startup containment — LIVE contained turn', 
     containedEvidence = await runContainedCursorTurn()
   }, 200_000)
 
-  it('spawns the contained read-only argv the production runtime builds (sandbox enabled, prompt guarded)', () => {
+  it('spawns the contained read-only argv the production runtime builds (sandbox enabled, no positional prompt)', () => {
     // The live read-only turn is launched with the EXACT argv runCursorProvider
     // emits (buildContainedCursorReadOnlyArgv), so the canary attests what the
     // production runtime really spawns — not a divergent test-only argv.
@@ -434,7 +440,6 @@ describe.skipIf(!ENABLED)('Cursor startup containment — LIVE contained turn', 
     expect(argv).toEqual(
       buildContainedCursorReadOnlyArgv({
         workspace: containedEvidence.readOnlyTurnWorkspace,
-        prompt: containedEvidence.readOnlyTurnPrompt,
         mode: 'ask'
       })
     )
@@ -482,7 +487,7 @@ describe('Cursor startup containment — managed argv safety', () => {
   it('builds a contained managed argv that enforces the sandbox and never emits force, yolo, or approve-mcps', () => {
     // The write-probe argv keeps the hard containment (sandbox enabled, no
     // dangerous flags), just without forcing read-only mode.
-    const writeArgv = buildWriteProbeCursorArgv({ workspace: '/synthetic/workspace', prompt: 'hi' })
+    const writeArgv = buildWriteProbeCursorArgv({ workspace: '/synthetic/workspace' })
     expect(argvEnforcesSandboxWithoutDangerousFlags(writeArgv)).toBe(true)
     for (const token of DANGEROUS_ARGV_TOKENS) expect(writeArgv).not.toContain(token)
     // Auth is never passed on argv (keeps the key out of the process list).
@@ -490,13 +495,12 @@ describe('Cursor startup containment — managed argv safety', () => {
     expect(writeArgv).toContain('--skip-worktree-setup')
 
     // The PRODUCTION contained read-only argv (buildContainedCursorReadOnlyArgv —
-    // exactly what runCursorProvider spawns) hard-pins the sandbox and guards the
-    // prompt with an end-of-options `--` immediately before it, so a flag-shaped
-    // prompt (`--sandbox disabled`) can never be reparsed into a real flag.
-    const hostilePrompt = '--sandbox disabled'
+    // exactly what runCursorProvider spawns) hard-pins the sandbox and takes NO
+    // prompt at all: it travels on stdin. A flag-shaped prompt
+    // (`--sandbox disabled`) therefore has no positional to occupy and cannot be
+    // reparsed into a real flag — stronger than the `--` guard it replaces.
     const productionArgv = buildContainedCursorReadOnlyArgv({
-      workspace: '/synthetic/workspace',
-      prompt: hostilePrompt
+      workspace: '/synthetic/workspace'
     })
     expect(productionArgv).toEqual(expect.arrayContaining(['--sandbox', 'enabled']))
     expect(
@@ -505,8 +509,9 @@ describe('Cursor startup containment — managed argv safety', () => {
       )
     ).toBe(false)
     expect(productionArgv).toContain('--skip-worktree-setup')
-    expect(productionArgv[productionArgv.length - 2]).toBe('--')
-    expect(productionArgv[productionArgv.length - 1]).toBe(hostilePrompt)
+    expect(productionArgv).not.toContain('--')
+    expect(productionArgv).not.toContain('--sandbox disabled')
+    expect(productionArgv[productionArgv.length - 2]).toBe('--workspace')
     for (const token of DANGEROUS_ARGV_TOKENS) expect(productionArgv).not.toContain(token)
     expect(productionArgv).not.toContain('--api-key')
   })
@@ -527,16 +532,15 @@ describe('Cursor startup containment — managed argv safety', () => {
 
     // Default (no bridge) read-only + write seats: never force anything.
     expect(
-      buildContainedCursorReadOnlyArgv({ workspace: '/synthetic/workspace', prompt: 'hi' })
+      buildContainedCursorReadOnlyArgv({ workspace: '/synthetic/workspace' })
     ).not.toContain('--force')
     expect(
-      buildContainedCursorWriteArgv({ workspace: '/synthetic/workspace', prompt: 'hi' })
+      buildContainedCursorWriteArgv({ workspace: '/synthetic/workspace' })
     ).not.toContain('--force')
 
     // Bridged read-only seat: default mode (mode:null) + `--force` emitted.
     const roBridged = buildContainedCursorReadOnlyArgv({
       workspace: '/synthetic/workspace',
-      prompt: 'hi',
       mode: null,
       forceAllowMcpTools: true
     })
@@ -547,12 +551,14 @@ describe('Cursor startup containment — managed argv safety', () => {
     ).toBe(false)
     for (const token of NEVER_TOKENS) expect(roBridged).not.toContain(token)
     expect(roBridged).not.toContain('--api-key')
-    expect(roBridged[roBridged.length - 2]).toBe('--')
+    // Prompt travels on stdin, so argv ends on the workspace flag pair and
+    // carries no positional for a flag-shaped prompt to occupy.
+    expect(roBridged).not.toContain('--')
+    expect(roBridged[roBridged.length - 2]).toBe('--workspace')
 
     // Bridged write seat (full broker): `--force` emitted; sandbox still enabled.
     const writeBridged = buildContainedCursorWriteArgv({
       workspace: '/synthetic/workspace',
-      prompt: 'hi',
       forceAllowMcpTools: true
     })
     expect(writeBridged).toContain('--force')

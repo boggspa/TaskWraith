@@ -202,9 +202,11 @@ export function buildCursorPathBLaunchPlan(
     ? cursorGrokModel || normalizeCliProviderModel('cursor', requestedModel)
     : null
   const grokControlsApplied = isCursorGrokModelId(requestedModel)
+  // No `prompt` here: the contained builders take none. runCursorProvider writes
+  // `plan.prompt` to the child's stdin instead — cursor-agent silently exits 0
+  // with no output at all once total argv passes 465,459 bytes.
   const argvInput = {
     workspace: input.workspacePath,
-    prompt,
     model: wireModel
   }
   const argv = transactionalWriteSeat

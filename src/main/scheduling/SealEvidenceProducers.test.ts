@@ -31,7 +31,6 @@ import type { ScheduledOccurrenceAuthorityRoot } from '../ScheduledOccurrenceAut
 import type { AppSettings, EffectiveRunPermissions } from '../store/types'
 import {
   SealEvidenceFileHasher,
-  SEAL_EVIDENCE_ARGV_PROMPT_PLACEHOLDER,
   SEAL_EVIDENCE_ARGV_ROUTE_PLACEHOLDER,
   canonicalEvidenceEncode,
   launchArgsTemplateSha256,
@@ -229,8 +228,10 @@ describe('cursor seal evidence', () => {
     expect(evidence.runtime.launchArgsTemplateSha256).toBe(
       launchArgsTemplateSha256(
         buildContainedCursorReadOnlyArgv({
+          // No prompt: Cursor's contained argv carries none (stdin delivery), so
+          // the launch-args template is prompt-independent by construction and
+          // needs no placeholder substitution.
           workspace: WORKSPACE,
-          prompt: SEAL_EVIDENCE_ARGV_PROMPT_PLACEHOLDER,
           model: 'composer-1',
           mode: 'ask'
         })

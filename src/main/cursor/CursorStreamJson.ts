@@ -82,12 +82,43 @@ export function cursorTerminalCompatOutcome(
 }
 
 /** Cursor's protocol result outranks its wrapper process' zero exit status. */
+/**
+ * Map a Cursor child exit to the code TaskWraith settles on.
+ *
+ * Two zero-exit outcomes are really failures:
+ *   * `terminalResultFailed` — cursor-agent reported a failed terminal result
+ *     (e.g. `context_length_exceeded`) while still exiting 0.
+ *   * `producedProviderOutput: false` — the child wrote NOTHING to stdout and
+ *     exited 0. That is a silent drop, not an empty answer. It is the exact
+ *     signature of cursor-agent's 465,459-byte total-argv ceiling (which is why
+ *     the prompt now travels on stdin), and it is worth failing on its own
+ *     terms because any future silent bail lands here too: TaskWraith otherwise
+ *     synthesizes an init + `result: success` around the silence, the run
+ *     settles green, and the seat surfaces only as "Completed without producing
+ *     output" — a failure disguised as a successful empty turn.
+ *
+ * `producedProviderOutput` defaults to true so a caller that cannot observe the
+ * stream keeps the previous reading rather than inventing a failure.
+ */
 export function cursorEffectiveExitCode(
   processExitCode: number | null,
-  terminalResultFailed: boolean
+  terminalResultFailed: boolean,
+  producedProviderOutput = true
 ): number | null {
-  return terminalResultFailed && processExitCode === 0 ? 1 : processExitCode
+  if (processExitCode !== 0) return processExitCode
+  if (terminalResultFailed) return 1
+  return producedProviderOutput ? 0 : 1
 }
+
+/**
+ * Operator-facing explanation for the silent-transport failure above. Names the
+ * measured cause rather than a generic non-zero exit, because the child leaves
+ * no stderr of its own to quote.
+ */
+export const CURSOR_SILENT_TRANSPORT_MESSAGE =
+  'Cursor exited successfully without producing any output. cursor-agent drops a turn silently ' +
+  '(exit 0, no stdout, no stderr) when its input is too large for the transport, so TaskWraith is ' +
+  'failing this run rather than reporting an empty answer.\n'
 
 /**
  * Preserve both Cursor's failure subtype and optional result detail for the

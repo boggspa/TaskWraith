@@ -44,7 +44,7 @@ describe('Cursor Path-B production/evidence integration', () => {
     expect(cursorRunSource).toContain(
       'const workspaceConfigTransaction = createVerifiedCursorWorkspaceConfigTransaction('
     )
-    expect(cursorRunSource).toContain('configurationKey: workspacePostureKey')
+    expect(cursorRunSource).toContain('configurationKey: workspaceConfigBaseKey')
     expect(cursorRunSource).toContain(
       'configurationKey: workspaceConfigTransaction.configurationKey'
     )
@@ -96,5 +96,45 @@ describe('Cursor Path-B production/evidence integration', () => {
     expect(evidenceSource).toContain('const launchPlan = buildCursorPathBLaunchPlan({')
     expect(evidenceSource).toContain('const argvTemplate = buildCursorPathBLaunchPlan({')
     expect(evidenceSource).toContain("brokerOutcome: 'not-requested' as const")
+  })
+})
+
+describe('Cursor prompt delivery is stdin, never argv', () => {
+  it('hands the plan prompt to a one-shot stdin plan instead of a positional', () => {
+    // cursor-agent silently exits 0 with no stdout/stderr past a 465,459-byte
+    // total-argv ceiling, so a positional prompt loses the whole turn. The
+    // prompt must reach the child over stdin, and stdin must CLOSE (the turn
+    // runs on EOF) rather than being held open like pi's RPC channel.
+    expect(cursorRunSource).toContain(
+      'stdinPlan: { initialLines: [cursorLaunchPlan.prompt], endAfterInitialWrite: true }'
+    )
+  })
+})
+
+describe('Cursor stdin prompt delivery is crash-safe', () => {
+  it('swallows an EPIPE on the child stdin the prompt is written to', () => {
+    // The prompt is now up to ~1MB of buffered stdin, so a child that exits
+    // early (rejected model, failed login) leaves unflushed bytes. EPIPE arrives
+    // as a stream 'error' EVENT — invisible to a try/catch around write()/end()
+    // — and unhandled it would take down the Electron main process.
+    expect(indexSource).toContain("child.stdin?.on('error', () => {")
+  })
+})
+
+describe('Cursor workspace config lease is keyed by CONTENT, not seat posture', () => {
+  it('does not fragment the workspace overlay lease by posture label', () => {
+    // The lease key is `<base>:intent-sha256:<digest>` and the digest already
+    // encodes the exact installed bytes (allow rules, deny rules, MCP entry).
+    // Prefixing it with a posture LABEL additionally split seats that install
+    // byte-identical config, so a second seat waited out the first seat's whole
+    // turn for no policy reason at all. Seats whose config genuinely differs
+    // still serialize — that separation is load-bearing containment, because
+    // `.cursor/cli.json` is workspace-global and its allow rules are what bound
+    // a bridged read-only seat running in Cursor's DEFAULT mode.
+    expect(cursorRunSource).not.toContain('cursorWorkspaceConfigurationKey(\n')
+    expect(cursorRunSource).toContain(
+      'const workspaceConfigBaseKey = cursorWorkspaceConfigurationKey()'
+    )
+    expect(cursorRunSource).toContain('configurationKey: workspaceConfigBaseKey')
   })
 })

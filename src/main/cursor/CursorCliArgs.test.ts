@@ -6,6 +6,10 @@ import {
   buildCursorProviderCliArgs,
   cursorWriteCapable
 } from './CursorCliArgs'
+import type {
+  BuildContainedCursorReadOnlyArgvInput,
+  BuildContainedCursorWriteArgvInput
+} from './CursorCliArgs'
 import type { EffectiveRunPermissions } from '../store/types'
 
 const mcpDeniedPermissions: Pick<EffectiveRunPermissions, 'agenticServices' | 'presetId'> = {
@@ -366,7 +370,7 @@ describe('buildContainedCursorReadOnlyArgv (Path B contained read-only runtime)'
   const base = { workspace: '/ws', prompt: 'read the repo' }
   const DANGEROUS_TOKENS = ['--force', '-f', '--yolo', '--approve-mcps', '--api-key']
 
-  it('hard-pins the native sandbox and a read-only mode with the workspace + prompt', () => {
+  it('hard-pins the native sandbox and a read-only mode with the workspace', () => {
     const args = buildContainedCursorReadOnlyArgv(base)
     expect(args).toContain('-p')
     expect(args.join(' ')).toContain('--output-format stream-json')
@@ -378,32 +382,21 @@ describe('buildContainedCursorReadOnlyArgv (Path B contained read-only runtime)'
     // Default read-only mode is `ask`.
     expect(args.join(' ')).toContain('--mode ask')
     expect(args.join(' ')).toContain('--workspace /ws')
-    // Prompt is the trailing positional, guarded by an end-of-options `--`.
-    expect(args[args.length - 1]).toBe('read the repo')
-    expect(args[args.length - 2]).toBe('--')
+    // The prompt is NOT in argv — it is delivered on stdin, so argv ends on the
+    // workspace flag pair and carries no positional at all.
+    expect(args[args.length - 2]).toBe('--workspace')
+    expect(args[args.length - 1]).toBe('/ws')
+    expect(args).not.toContain('read the repo')
   })
 
-  it('guards the prompt behind `--` so a flag-shaped prompt cannot inject a cursor-agent flag', () => {
-    // Live-verified: cursor-agent parses options INTERSPERSED, so without the
-    // `--` guard a prompt of "--sandbox disabled" / "--force" would be reparsed as
-    // a real flag (disabling the sandbox or widening tools). The guard forces the
-    // prompt to be a positional after the real, load-bearing flags.
-    for (const prompt of [
-      '--sandbox disabled',
-      '--force',
-      '--yolo',
-      '--approve-mcps',
-      '--version'
-    ]) {
-      const args = buildContainedCursorReadOnlyArgv({ workspace: '/ws', prompt })
-      const guard = args.indexOf('--')
-      expect(guard).toBeGreaterThan(-1)
-      // The prompt is the ONLY token after the guard.
-      expect(args.slice(guard + 1)).toEqual([prompt])
-      // The real --sandbox enabled flag is before the guard and still reads enabled.
-      expect(args.indexOf('--sandbox')).toBeLessThan(guard)
-      expect(args[args.indexOf('--sandbox') + 1]).toBe('enabled')
-    }
+  it('cannot be reached by a flag-shaped prompt at all (no positional exists)', () => {
+    // Superseded the `--` end-of-options guard: cursor-agent parses options
+    // INTERSPERSED, so a positional prompt of "--sandbox disabled" / "--force"
+    // used to need guarding. The prompt now goes to stdin, so argv is a closed
+    // set of TaskWraith-authored flags and there is nothing to reparse.
+    const args = buildContainedCursorReadOnlyArgv({ workspace: '/ws' })
+    expect(args).not.toContain('--')
+    expect(args[args.indexOf('--sandbox') + 1]).toBe('enabled')
   })
 
   it('honors an explicit read-only mode (`plan`)', () => {
@@ -460,16 +453,17 @@ describe('buildContainedCursorWriteArgv (Path B contained WRITE runtime)', () =>
   const base = { workspace: '/ws', prompt: 'edit the repo' }
   const DANGEROUS_TOKENS = ['--force', '-f', '--yolo', '--approve-mcps', '--api-key']
 
-  it('uses default (write-capable) mode but keeps the sandbox, worktree skip, and prompt guard', () => {
+  it('uses default (write-capable) mode but keeps the sandbox and worktree skip', () => {
     const args = buildContainedCursorWriteArgv(base)
     // Default mode => NO --mode flag; that is what exposes cursor's write+shell tools.
     expect(args).not.toContain('--mode')
     // Containment is still hard-pinned.
     expect(args[args.indexOf('--sandbox') + 1]).toBe('enabled')
     expect(args).toContain('--skip-worktree-setup')
-    // Prompt is the trailing positional, guarded by the end-of-options `--`.
-    expect(args[args.length - 2]).toBe('--')
-    expect(args[args.length - 1]).toBe('edit the repo')
+    // The prompt is NOT in argv — stdin carries it.
+    expect(args[args.length - 2]).toBe('--workspace')
+    expect(args[args.length - 1]).toBe('/ws')
+    expect(args).not.toContain('edit the repo')
   })
 
   it('never emits any write-widening / sandbox-disabling / api-key token', () => {
@@ -480,14 +474,10 @@ describe('buildContainedCursorWriteArgv (Path B contained WRITE runtime)', () =>
     }
   })
 
-  it('guards a flag-shaped prompt behind `--` (inert) while the real sandbox stays enabled', () => {
-    for (const prompt of ['--sandbox disabled', '--force', '--yolo']) {
-      const args = buildContainedCursorWriteArgv({ workspace: '/ws', prompt })
-      const guard = args.indexOf('--')
-      expect(args.slice(guard + 1)).toEqual([prompt])
-      expect(args.indexOf('--sandbox')).toBeLessThan(guard)
-      expect(args[args.indexOf('--sandbox') + 1]).toBe('enabled')
-    }
+  it('has no positional for a flag-shaped prompt to occupy', () => {
+    const args = buildContainedCursorWriteArgv({ workspace: '/ws' })
+    expect(args).not.toContain('--')
+    expect(args[args.indexOf('--sandbox') + 1]).toBe('enabled')
   })
 
   it('normalizes a requested model and omits --model when absent', () => {
@@ -501,5 +491,60 @@ describe('buildContainedCursorWriteArgv (Path B contained WRITE runtime)', () =>
     expect(
       buildContainedCursorWriteArgv({ ...base, model: 'cursor-grok-4.6-xhigh-fast' }).join(' ')
     ).toContain('--model cursor-grok-4.6-xhigh-fast')
+  })
+})
+
+// ── Prompt delivery: stdin, never argv ──────────────────────────────────────
+// cursor-agent silently exits 0 with EMPTY stdout AND stderr once its total
+// argv exceeds 465,459 bytes (reproduced byte-exact against 2026.09.02-c22c1a3:
+// 465,459 prints, 465,460 vanishes; node and the kernel both carry 900KB fine,
+// so the ceiling is inside Cursor's own index.js). A trailing-positional prompt
+// therefore turned every large seat into a silent no-op that TaskWraith settled
+// as success. Production delivers the prompt over stdin instead, which carries
+// 605,771 bytes correctly (live-verified).
+describe('contained Path-B argv keeps the prompt OUT of argv (stdin delivery)', () => {
+  const HUGE = 'x'.repeat(600_000)
+  // Report token SIZES, never the tokens themselves: a failure here must stay
+  // readable rather than printing a 600KB diff.
+  const tokenSizes = (args: readonly string[]): number[] => args.map((token) => token.length)
+  // Callers SPREAD their input objects, and a spread bypasses TypeScript's
+  // excess-property check — so a stray `prompt` field reaching the builder is a
+  // real leak path, not a hypothetical one. Reproduce it exactly.
+  const withStrayPrompt = <T>(prompt: string): T => ({ workspace: '/ws', prompt }) as unknown as T
+
+  it('never places prompt text in the read-only argv, whatever its size', () => {
+    const args = buildContainedCursorReadOnlyArgv(
+      withStrayPrompt<BuildContainedCursorReadOnlyArgvInput>(HUGE)
+    )
+    expect(Math.max(...tokenSizes(args))).toBeLessThan(512)
+  })
+
+  it('never places prompt text in the write argv, whatever its size', () => {
+    const args = buildContainedCursorWriteArgv(
+      withStrayPrompt<BuildContainedCursorWriteArgvInput>(HUGE)
+    )
+    expect(Math.max(...tokenSizes(args))).toBeLessThan(512)
+  })
+
+  it('emits no end-of-options guard and no trailing positional at all', () => {
+    // With nothing positional left to guard, `--` is dead weight — and its
+    // absence is the proof that no prompt token can reach argv to be reparsed
+    // as a flag. This supersedes the old `--`-guard injection defence.
+    for (const args of [
+      buildContainedCursorReadOnlyArgv(
+        withStrayPrompt<BuildContainedCursorReadOnlyArgvInput>('--sandbox disabled')
+      ),
+      buildContainedCursorWriteArgv(withStrayPrompt<BuildContainedCursorWriteArgvInput>('--force'))
+    ]) {
+      expect(args).not.toContain('--')
+      expect(args).not.toContain('--sandbox disabled')
+      expect(args).not.toContain('--force')
+      // The real containment flag is untouched.
+      expect(args[args.indexOf('--sandbox') + 1]).toBe('enabled')
+      // Every remaining token is a flag or a flag value — the last one is the
+      // workspace, never free text.
+      expect(args[args.length - 1]).toBe('/ws')
+      expect(args[args.length - 2]).toBe('--workspace')
+    }
   })
 })

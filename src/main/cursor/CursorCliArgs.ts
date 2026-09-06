@@ -5,7 +5,9 @@
 //   * A bare `cursor-agent -p` has write+shell and uses them without TaskWraith
 //     per-tool mediation. Production therefore calls only the Path-B
 //     `buildContainedCursor*Argv` builders below, which hard-pin
-//     `--sandbox enabled`, skip worktree setup, and guard the prompt with `--`.
+//     `--sandbox enabled` and skip worktree setup. Those builders take NO
+//     prompt: production delivers it over stdin (see the stdin note below), so
+//     no prompt token can reach argv to be reparsed as a flag.
 //   * The older `buildCursorCliArgs` family remains for hermetic qualification
 //     tests and is not the production launch boundary.
 //   * Production emits `--force` only after the TaskWraith broker was registered,
@@ -189,7 +191,6 @@ export function buildCursorProviderCliArgs(input: BuildCursorProviderCliArgsInpu
 
 export interface BuildContainedCursorReadOnlyArgvInput {
   workspace: string
-  prompt: string
   model?: string | null
   /** Both `ask` and `plan` are read-only (non-mutating) Cursor modes. Pass
    * `null` ONLY for a read-only seat whose safe-subset TaskWraith MCP bridge
@@ -227,8 +228,8 @@ export interface BuildContainedCursorReadOnlyArgvInput {
  * mode via `mode: null`, contained by the transient deny-list + safe-subset
  * broker). No CURSOR_CONFIG_DIR/DATA override is applied — the
  * caller inherits the user's real config via the process env (Path B), bounded
- * by the sandbox. The prompt is passed after a `--` end-of-options guard (see
- * below). Only canonical TaskWraith-exposed Cursor model ids survive
+ * by the sandbox. The prompt is NOT in argv at all — it is written to the
+ * child's stdin (see below). Only canonical TaskWraith-exposed Cursor model ids survive
  * normalization; a requested model is always coerced to a concrete Cursor id,
  * and an absent model falls back to Cursor's own account default (no `--model`).
  *
@@ -244,12 +245,29 @@ export interface BuildContainedCursorReadOnlyArgvInput {
  * seat (adds `--mode`), or `null` for a write-capable seat (Cursor's DEFAULT mode
  * exposes write+shell tools — no `--mode`). Containment is identical either way:
  * `--sandbox enabled` (native OS sandbox — blocks writes to $HOME, allows the
- * workspace), `--skip-worktree-setup`, and the end-of-options `--` prompt guard.
+ * workspace) and `--skip-worktree-setup`.
  * NEVER `--yolo`/`--approve-mcps`/`--api-key`/`--sandbox disabled`; `--force`
  * only via the bridge-gated `forceAllowMcpTools` parameter.
+ *
+ * PROMPT DELIVERY IS STDIN, NEVER ARGV. `cursor-agent` silently exits 0 with an
+ * EMPTY stdout AND stderr once its total argv exceeds 465,459 bytes — measured
+ * byte-exact against 2026.09.02-c22c1a3 (465,459 runs, 465,460 vanishes), and it
+ * is a TOTAL argv budget, so splitting the prompt across positionals fails
+ * identically. The bundled node and the kernel both carry 900KB arguments fine,
+ * so the ceiling lives inside Cursor's own `index.js`; there is nothing to
+ * negotiate with. A trailing-positional prompt therefore turned every seat over
+ * that size into a silent no-op which TaskWraith settled as SUCCESS, surfacing
+ * to the user as "Completed without producing output". Stdin carries 605,771
+ * bytes correctly (live-verified) and is what every other CLI provider uses.
+ *
+ * Dropping the positional also retires the old `--` end-of-options guard: that
+ * guard existed solely because a flag-shaped prompt (`--sandbox disabled`,
+ * `--force`) would otherwise be reparsed as a real flag by cursor-agent's
+ * INTERSPERSED option parsing. With no prompt token in argv the injection
+ * surface is gone outright rather than guarded.
  */
 function buildContainedCursorArgv(
-  input: { workspace: string; prompt: string; model?: string | null },
+  input: { workspace: string; model?: string | null },
   readOnlyMode: 'ask' | 'plan' | null,
   forceAllowMcpTools?: boolean
 ): string[] {
@@ -276,15 +294,8 @@ function buildContainedCursorArgv(
     ...(forceAllowMcpTools === true ? ['--force'] : []),
     ...(modelArg ? ['--model', modelArg] : []),
     '--workspace',
-    input.workspace,
-    // End-of-options guard. cursor-agent parses options INTERSPERSED (live-
-    // verified: a positional `--version` prints the version instead of running a
-    // turn), so without this a flag-shaped user prompt — e.g. `--sandbox disabled`
-    // or `--force` — would be reparsed as a real flag and could disable the
-    // sandbox or widen tools. Everything after `--` is positional, so the prompt
-    // can never inject a flag. Keep the prompt strictly last.
-    '--',
-    input.prompt
+    input.workspace
+    // No positional prompt: it goes to stdin (see the note above).
   ]
 }
 
@@ -300,7 +311,6 @@ export function buildContainedCursorReadOnlyArgv(
 
 export interface BuildContainedCursorWriteArgvInput {
   workspace: string
-  prompt: string
   model?: string | null
   /** See BuildContainedCursorReadOnlyArgvInput.forceAllowMcpTools — the same
    * bridge-only `--force` gate applies to the write seat's full broker. */
@@ -311,7 +321,7 @@ export interface BuildContainedCursorWriteArgvInput {
  * Write-capable contained Cursor launch surface. Cursor's DEFAULT mode (no
  * `--mode`) exposes its write + shell tools; the ONLY containment is the native
  * `--sandbox enabled` (validated to block writes to $HOME while allowing the
- * workspace) plus the `--` prompt guard. It NEVER emits `--yolo`/
+ * workspace). The prompt is delivered on stdin, never argv. It NEVER emits `--yolo`/
  * `--approve-mcps`/`--api-key`/`--sandbox disabled`; `--force` appears only via
  * the bridge-gated `forceAllowMcpTools` input.
  */

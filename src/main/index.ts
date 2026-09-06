@@ -1811,6 +1811,7 @@ import { PI_CEREBRAS_429_BACKOFF_MS, PiCerebrasRateGovernor } from './pi/PiCereb
 import { resolvePiNativeToolPosture } from './pi/PiNativeToolPosture'
 import { registerPiKeyHandlers } from './ipc/piKeyHandlers'
 import {
+  CURSOR_SILENT_TRANSPORT_MESSAGE,
   cursorEffectiveExitCode,
   cursorEventToRunEvents,
   cursorTerminalCompatOutcome,
@@ -20437,6 +20438,15 @@ async function runCliProviderProcess(
     stdinPlan?: {
       initialLines: string[]
       /**
+       * One-shot prompt delivery: write the lines, then close stdin immediately
+       * so the child runs its single turn on EOF. Cursor needs this — its
+       * prompt CANNOT travel in argv (cursor-agent silently exits 0 with no
+       * stdout or stderr past a 465,459-byte total-argv ceiling), and unlike pi
+       * it is not an RPC transport, so no closer or live-steer writer is
+       * registered for it.
+       */
+      endAfterInitialWrite?: boolean
+      /**
        * A contained extension may prove its registration over stderr before
        * TaskWraith writes the provider prompt. If it does not, the fallback
        * prompt is sent instead so the model is never told to call ghost tools.
@@ -20804,6 +20814,9 @@ async function runCliProviderProcess(
   cliProviderProcesses.set(provider, child)
 
   let stdoutBuffer = ''
+  // Did the child write ANY stdout? A zero-exit run that wrote none is a
+  // silent drop, not an empty answer (see cursorEffectiveExitCode).
+  let providerStdoutBytes = 0
   const cliProviderStderrSanitizer = createCanvasEvalJsonLineSanitizer(
     `${provider}:${route.appRunId || route.appChatId || 'unrouted'}:stderr`
   )
@@ -20833,8 +20846,19 @@ async function runCliProviderProcess(
       state
     )
   }
+  // A provider prompt now travels on stdin (Cursor: up to ~1MB), so the pipe can
+  // still hold unflushed bytes when the child exits early — a rejected model, a
+  // failed login. The resulting EPIPE arrives as a stream 'error' EVENT, which a
+  // try/catch around write()/end() cannot see, and an unhandled one would take
+  // down the main process. Settlement is owned by the close/error listeners
+  // below, so dropping it here is the whole handling.
+  child.stdin?.on('error', () => {
+    /* child exited before draining stdin; close/error listeners settle the run */
+  })
   child.stdout?.on('data', (chunk) => {
-    stdoutBuffer += chunk.toString()
+    const text = chunk.toString()
+    providerStdoutBytes += text.length
+    stdoutBuffer += text
     const lines = stdoutBuffer.split(/\r?\n/)
     stdoutBuffer = lines.pop() || ''
     for (const line of lines) {
@@ -20857,6 +20881,15 @@ async function runCliProviderProcess(
     if (stdinPlanWritten) return
     for (const line of lines) child.stdin?.write(`${line}\n`)
     stdinPlanWritten = true
+    // One-shot providers (Cursor) run their turn on EOF; holding stdin open
+    // would wedge the child waiting for input that is never coming.
+    if (stdinPlan?.endAfterInitialWrite) {
+      try {
+        child.stdin?.end()
+      } catch {
+        /* the close/error listeners below still settle the run */
+      }
+    }
   }
   const flushStdinReadinessStderr = (): string => {
     const buffered = stdinReadinessStderrBuffer
@@ -21021,11 +21054,26 @@ async function runCliProviderProcess(
       releasePiLiveSteerBinding(route.appRunId)
       providerProcessTerminationBackstop.clear(route.appRunId)
     }
+    const cursorSilentTransport =
+      provider === 'cursor' &&
+      !providerSetupFailed &&
+      code === 0 &&
+      state.terminalResultFailed !== true &&
+      providerStdoutBytes === 0
     const effectiveExitCode = providerSetupFailed
       ? 1
       : provider === 'cursor'
-        ? cursorEffectiveExitCode(code, state.terminalResultFailed === true)
+        ? cursorEffectiveExitCode(
+            code,
+            state.terminalResultFailed === true,
+            providerStdoutBytes > 0
+          )
         : code
+    if (cursorSilentTransport) {
+      // The child left no stderr of its own to quote, so name the measured
+      // cause rather than settling on a bare non-zero exit.
+      emitCliProviderStderr(CURSOR_SILENT_TRANSPORT_MESSAGE)
+    }
     try {
       try {
         emitCliProviderStderr(cliProviderStderrSanitizer.push(flushStdinReadinessStderr()))
@@ -21248,7 +21296,10 @@ async function runCliProviderProcess(
   try {
     if (stdinPlan) {
       const appRunId = route.appRunId
-      if (appRunId) {
+      // A one-shot stdin prompt is not an RPC channel: stdin is closed as soon
+      // as the prompt is written, so a closer or steer writer over it would
+      // only ever fail.
+      if (appRunId && !stdinPlan.endAfterInitialWrite) {
         piRunStdinClosers.set(appRunId, () => {
           try {
             child.stdin?.end()
@@ -22884,9 +22935,11 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       workspaceMcpAliasesGlobalRegistry = cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath)
       const workspaceResourceKey =
         canonicalExternalGrantPath(payload.workspace!) || canonicalPath(payload.workspace!)
-      const workspacePostureKey = cursorWorkspaceConfigurationKey(
-        writeCapable ? 'write' : cursorPlanSeat ? 'plan' : 'read-only'
-      )
+      // Content-keyed, NOT posture-keyed: the transaction appends an intent
+      // digest covering the exact installed bytes, so two seats that install
+      // identical config share one overlay instead of queueing behind each
+      // other's whole turn. Seats whose config really differs still serialize.
+      const workspaceConfigBaseKey = cursorWorkspaceConfigurationKey()
       const workspaceConfigTransaction = createVerifiedCursorWorkspaceConfigTransaction(
         fsSync,
         join(cursorDir, 'cli.json'),
@@ -22899,7 +22952,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         },
         {
           denyRules: cursorBrokerPolicy.denyRules,
-          configurationKey: workspacePostureKey
+          configurationKey: workspaceConfigBaseKey
         }
       )
       cursorWorkspaceConfigLease = await cursorWorkspaceConfigLeases.acquire({
@@ -23081,6 +23134,12 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       fallback: false,
       costRateModel: cursorRunCostRateModel,
       extraEnv: cursorMcpBridgeEnv,
+      // The prompt travels on stdin, NOT argv. cursor-agent silently exits 0
+      // with an empty stdout AND stderr once total argv passes 465,459 bytes
+      // (measured byte-exact), which turned every large seat into a no-op that
+      // settled as success. Stdin carries 605,771 bytes correctly. One-shot:
+      // cursor-agent runs its single turn on EOF, so stdin closes immediately.
+      stdinPlan: { initialLines: [cursorLaunchPlan.prompt], endAfterInitialWrite: true },
       onComplete: releaseCursorConfigurationLeases
     })
   } finally {

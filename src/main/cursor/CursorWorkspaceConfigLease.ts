@@ -233,8 +233,22 @@ export function canonicalCursorWorkspaceConfigResource(resourcePath: string): st
   return resolve(path)
 }
 
-export function cursorWorkspaceConfigurationKey(posture: CursorWorkspaceConfigPosture): string {
-  return `cursor-workspace-config:v1:${posture}`
+/**
+ * Base key for a workspace-overlay lease. The caller appends an intent digest
+ * (see `cursorWorkspaceConfigIntentKey`) that already encodes the exact bytes
+ * installed — allow rules, deny rules, MCP entry — so the base needs to carry
+ * no policy of its own, and PRODUCTION PASSES NONE.
+ *
+ * Passing a posture additionally splits seats whose installed config is
+ * byte-identical, which made a second seat wait out the first seat's entire
+ * turn for no policy reason. Seats whose config genuinely differs still get
+ * different digests and still serialize: that separation is load-bearing,
+ * because `.cursor/cli.json` is workspace-global and its allow rules are what
+ * bound a bridged read-only seat running in Cursor's DEFAULT mode. The optional
+ * posture remains for callers that want deliberately distinct keys.
+ */
+export function cursorWorkspaceConfigurationKey(posture?: CursorWorkspaceConfigPosture): string {
+  return posture ? `cursor-workspace-config:v1:${posture}` : 'cursor-workspace-config:v1'
 }
 
 /**
