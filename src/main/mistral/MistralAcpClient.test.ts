@@ -411,3 +411,98 @@ describe('runMistralAcpTurn permission normalization', () => {
     await handle.closed
   })
 })
+
+describe('runMistralAcpTurn denied-tool recovery', () => {
+  const tick = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+  const narrateThenFailTool = async (child: FakeAcpChild, stopReason: string): Promise<void> => {
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-1' } })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'I will update Panels.swift next.' }
+        }
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'edit-1',
+          title: 'write_file',
+          kind: 'edit',
+          rawInput: { file_path: 'Panels.swift', content: 'body' }
+        }
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'edit-1',
+          status: 'failed',
+          content: [
+            {
+              type: 'content',
+              content: { type: 'text', text: 'User rejected the tool call.' }
+            }
+          ]
+        }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason } })
+    await tick(40)
+  }
+
+  it('continues once when the seat narrated before its tool was refused', async () => {
+    const child = new FakeAcpChild()
+    const warnings: string[] = []
+    const handle = runMistralAcpTurn({
+      prompt: 'update the export buttons',
+      cwd: '/tmp/workspace',
+      appVersion: '1.9.7-test',
+      spawnProcess: () => child,
+      onEvent: (event) => {
+        if (event.type === 'provider_warning' && event.text) warnings.push(event.text)
+      }
+    })
+
+    await narrateThenFailTool(child, 'cancelled')
+
+    const prompts = child.sent().filter((message) => message.method === 'session/prompt')
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toMatchObject({ id: 5, params: { sessionId: 'session-1' } })
+    expect(warnings.join(' ')).toContain('Mistral stopped after a rejected or failed tool')
+
+    child.emit({ jsonrpc: '2.0', id: 5, result: { stopReason: 'end_turn' } })
+    await handle.closed
+  })
+
+  it('leaves a healthy end_turn alone even when a tool reported a failure', async () => {
+    const child = new FakeAcpChild()
+    const handle = runMistralAcpTurn({
+      prompt: 'summarise the workspace',
+      cwd: '/tmp/workspace',
+      appVersion: '1.9.7-test',
+      spawnProcess: () => child,
+      onEvent: () => {}
+    })
+
+    await narrateThenFailTool(child, 'end_turn')
+
+    const prompts = child.sent().filter((message) => message.method === 'session/prompt')
+    expect(prompts).toHaveLength(1)
+    await handle.closed
+  })
+})
