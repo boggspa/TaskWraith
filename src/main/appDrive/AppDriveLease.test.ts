@@ -373,4 +373,136 @@ describe('AppDriveLeaseRegistry', () => {
     expect(second.leaseId).not.toBe(first.leaseId)
     expect(second).toMatchObject({ stepsUsed: 0, stepsRemaining: 2 })
   })
+
+  it('does not let a refused-step refund steal a prior consumed step', () => {
+    const { leases } = setup()
+    const actor = { runId: 'run-a', provider: 'codex', participantId: 'seat-a' }
+    leases.authorizeUserLease(binding({ stepBudget: 3 }))
+    const first = consume(leases)
+    if (!first.ok) throw new Error('expected first admission')
+    leases.completeAction({
+      leaseId: first.lease.leaseId,
+      actionId: first.actionId,
+      actor,
+      executed: true,
+      surfaceVerification: 'changed'
+    })
+    const second = consume(leases)
+    if (!second.ok) throw new Error('expected second admission')
+    leases.completeAction({
+      leaseId: second.lease.leaseId,
+      actionId: second.actionId,
+      actor,
+      executed: false,
+      surfaceVerification: 'unknown',
+      refusalCode: 'user_active'
+    })
+    expect(leases.peek('canvas-a')).toMatchObject({ stepsUsed: 2, stepsRemaining: 1 })
+    expect(
+      leases.refundConsumedStep({
+        surfaceId: 'canvas-a',
+        leaseId: second.lease.leaseId,
+        actionId: second.actionId
+      })
+    ).toMatchObject({ stepsUsed: 1, stepsRemaining: 2 })
+    expect(
+      leases.refundConsumedStep({
+        surfaceId: 'canvas-a',
+        leaseId: second.lease.leaseId,
+        actionId: second.actionId
+      })
+    ).toBeNull()
+    expect(
+      leases.refundConsumedStep({
+        surfaceId: 'canvas-a',
+        leaseId: first.lease.leaseId,
+        actionId: first.actionId
+      })
+    ).toBeNull()
+    expect(leases.peek('canvas-a')).toMatchObject({ stepsUsed: 1, stepsRemaining: 2 })
+    expect(leases.queryReports({ chatId: 'chat-a' })[0]).toMatchObject({
+      stepsUsed: 1,
+      stepsRemaining: 2
+    })
+  })
+
+  it('refunds only a completed refusal and ignores missing, pending, or revoked actions', () => {
+    const { leases } = setup()
+    const actor = { runId: 'run-a', provider: 'codex', participantId: 'seat-a' }
+    leases.authorizeUserLease(binding({ stepBudget: 2 }))
+    expect(
+      leases.refundConsumedStep({
+        surfaceId: 'canvas-a',
+        leaseId: 'lease-1',
+        actionId: 'action-1'
+      })
+    ).toBeNull()
+
+    const pending = consume(leases)
+    if (!pending.ok) throw new Error('expected pending admission')
+    expect(
+      leases.refundConsumedStep({
+        surfaceId: 'canvas-a',
+        leaseId: pending.lease.leaseId,
+        actionId: pending.actionId
+      })
+    ).toBeNull()
+    expect(leases.peek('canvas-a')?.stepsUsed).toBe(1)
+
+    leases.completeAction({
+      leaseId: pending.lease.leaseId,
+      actionId: pending.actionId,
+      actor,
+      executed: false,
+      surfaceVerification: 'unknown',
+      refusalCode: 'stale_input_epoch'
+    })
+    expect(
+      leases.refundConsumedStep({
+        surfaceId: 'canvas-a',
+        leaseId: pending.lease.leaseId,
+        actionId: 'action-missing'
+      })
+    ).toBeNull()
+    expect(
+      leases.refundConsumedStep({
+        surfaceId: 'canvas-other',
+        leaseId: pending.lease.leaseId,
+        actionId: pending.actionId
+      })
+    ).toBeNull()
+
+    expect(
+      leases.refundConsumedStep({
+        surfaceId: 'canvas-a',
+        leaseId: pending.lease.leaseId,
+        actionId: pending.actionId
+      })
+    ).toMatchObject({ stepsUsed: 0, stepsRemaining: 2 })
+    expect(leases.queryReports({ chatId: 'chat-a' })[0]).toMatchObject({
+      stepsUsed: 0,
+      stepsRemaining: 2,
+      actions: [expect.objectContaining({ actionId: pending.actionId, executed: false })]
+    })
+
+    leases.authorizeUserLease(binding({ approvalId: 'approval-b', stepBudget: 2 }))
+    const later = consume(leases)
+    if (!later.ok) throw new Error('expected later admission')
+    leases.completeAction({
+      leaseId: later.lease.leaseId,
+      actionId: later.actionId,
+      actor,
+      executed: false,
+      surfaceVerification: 'unknown',
+      refusalCode: 'user_active'
+    })
+    leases.revokeSurface('canvas-a', 'human-takeover')
+    expect(
+      leases.refundConsumedStep({
+        surfaceId: 'canvas-a',
+        leaseId: later.lease.leaseId,
+        actionId: later.actionId
+      })
+    ).toBeNull()
+  })
 })

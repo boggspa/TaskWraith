@@ -102,6 +102,12 @@ export interface ConsumeAppDriveLeaseInput {
   readonly independentVerificationRequired?: boolean
 }
 
+export interface RefundConsumedAppDriveStepInput {
+  readonly surfaceId: string
+  readonly leaseId: string
+  readonly actionId: string
+}
+
 export type AppDriveLeaseDenial = {
   readonly ok: false
   readonly code: AppDriveLeaseErrorCode
@@ -205,6 +211,7 @@ export class AppDriveLeaseRegistry {
   private readonly createLeaseId: () => string
   private readonly reports: AppDriveSessionReportStore
   private readonly bySurface = new Map<string, AppDriveLeaseSnapshot>()
+  private readonly refundedActionIds = new Set<string>()
 
   constructor(options: AppDriveLeaseRegistryOptions = {}) {
     this.now = options.now ?? Date.now
@@ -408,10 +415,31 @@ export class AppDriveLeaseRegistry {
     }
   }
 
-  refundConsumedStep(surfaceId: string): AppDriveLeaseSnapshot | null {
-    const normalized = canonical(surfaceId, 'surfaceId')
-    const lease = this.peek(normalized)
-    if (!lease || lease.status !== 'active' || lease.stepsUsed <= 0) return null
+  refundConsumedStep(input: RefundConsumedAppDriveStepInput): AppDriveLeaseSnapshot | null {
+    let surfaceId: string
+    let leaseId: string
+    let actionId: string
+    try {
+      surfaceId = canonical(input.surfaceId, 'surfaceId')
+      leaseId = canonical(input.leaseId, 'leaseId')
+      actionId = canonical(input.actionId, 'actionId')
+    } catch {
+      return null
+    }
+    const lease = this.peek(surfaceId)
+    if (!lease || lease.status !== 'active' || lease.leaseId !== leaseId || lease.stepsUsed <= 0) {
+      return null
+    }
+    const refundKey = `${lease.leaseId}:${actionId}`
+    if (this.refundedActionIds.has(refundKey)) return null
+    const report = this.reports.query({
+      chatId: lease.chatId,
+      reportId: lease.reportId,
+      surfaceId: lease.surfaceId,
+      limit: 1
+    })[0]
+    const action = report?.actions.find((candidate) => candidate.actionId === actionId)
+    if (!action || action.executed !== false) return null
     const stepsUsed = lease.stepsUsed - 1
     const next = freezeLease({
       ...lease,
@@ -419,12 +447,13 @@ export class AppDriveLeaseRegistry {
       stepsRemaining: lease.stepBudget - stepsUsed,
       updatedAt: this.now()
     })
-    this.bySurface.set(normalized, next)
+    this.bySurface.set(surfaceId, next)
     this.reports.updateBudget(next.leaseId, {
       stepsUsed: next.stepsUsed,
       stepsRemaining: next.stepsRemaining,
       expiresAt: next.expiresAt
     })
+    this.refundedActionIds.add(refundKey)
     return next
   }
 

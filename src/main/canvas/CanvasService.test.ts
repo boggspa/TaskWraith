@@ -2252,6 +2252,9 @@ describe('CanvasService emulator observation and macro', () => {
         expect(h.leases.peek(opened.canvasId)?.status).toBe(
           testCase.invalidates ? 'revoked' : 'active'
         )
+        expect(h.leases.peek(opened.canvasId)?.stepsUsed).toBe(
+          testCase.expected === 'stale_observation' ? 1 : 0
+        )
       } finally {
         cleanup(h)
       }
@@ -2292,6 +2295,7 @@ describe('CanvasService emulator observation and macro', () => {
         actions: [expect.objectContaining({ executed: null, refusalCode: 'user_active' })]
       })
       expect(h.invalidated).not.toHaveBeenCalled()
+      expect(h.leases.peek(opened.canvasId)).toMatchObject({ stepsUsed: 1, status: 'active' })
     } finally {
       cleanup(h)
     }
@@ -2302,15 +2306,15 @@ describe('CanvasService emulator observation and macro', () => {
     try {
       const opened = await open(h)
       const observed = await h.service.observeEmulator(opened.canvasId, ctx)
-      
-      // Authorize exactly 1 step
       authorize(h.leases, opened.canvasId, 1)
-      
       h.driver.emulatorStepImplementation = async () => {
-        throw new CanvasEmulatorUserActiveError(h.driver.emulatorObservation, 0)
+        const refreshed = advanceAtomicEmulatorObservation(h.driver.emulatorObservation, {
+          humanActive: true
+        })
+        throw new CanvasEmulatorUserActiveError(refreshed, 0)
       }
-      
-      const result = await h.service.stepEmulator(
+
+      const refused = await h.service.stepEmulator(
         opened.canvasId,
         {
           expectedObservationId: observed.observation.token.observationId,
@@ -2318,15 +2322,36 @@ describe('CanvasService emulator observation and macro', () => {
         },
         ctx
       )
-      expect(result).toMatchObject({
+      expect(refused).toMatchObject({
         outcome: 'refused',
         refusalReason: 'user_active'
       })
-      
-      // Step budget should be refunded, so we can step again (stepsUsed should be 0)
-      const lease = h.leases.peek(opened.canvasId)
-      expect(lease?.stepsUsed).toBe(0)
-      expect(lease?.stepsRemaining).toBe(1)
+      expect(h.leases.peek(opened.canvasId)).toMatchObject({
+        status: 'active',
+        stepsUsed: 0,
+        stepsRemaining: 1
+      })
+
+      h.driver.emulatorStepImplementation = undefined
+      h.driver.emulatorObservation = atomicEmulatorObservation({
+        ...h.driver.emulatorObservation,
+        humanActive: false
+      })
+      const replay = await h.service.observeEmulator(opened.canvasId, ctx)
+      const completed = await h.service.stepEmulator(
+        opened.canvasId,
+        {
+          expectedObservationId: replay.observation.token.observationId,
+          segments: [{ buttons: ['a'], frames: 1 }]
+        },
+        ctx
+      )
+      expect(completed).toMatchObject({ outcome: 'completed', framesCompleted: 1 })
+      expect(h.leases.peek(opened.canvasId)).toMatchObject({
+        status: 'active',
+        stepsUsed: 1,
+        stepsRemaining: 0
+      })
     } finally {
       cleanup(h)
     }

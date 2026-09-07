@@ -163,7 +163,12 @@ export interface CanvasServiceDeps {
   /** User-minted, expiring step budget for web actuation. */
   appDriveLeases?: Pick<
     AppDriveLeaseRegistry,
-    'acquireAndConsume' | 'completeAction' | 'queryReports' | 'recordObservation' | 'verifyAction'
+    | 'acquireAndConsume'
+    | 'completeAction'
+    | 'queryReports'
+    | 'recordObservation'
+    | 'verifyAction'
+    | 'refundConsumedStep'
   >
   /** Revoke the lease and its exact permission grant on navigation/close/takeover. */
   onSurfaceAuthorityInvalidated?: (input: {
@@ -1682,8 +1687,15 @@ export class CanvasService
               framesCompleted === 0 ? false : null,
               typed.code
             )
-            if (outcome === 'refused' && (typed.code === 'stale_input_epoch' || typed.code === 'user_active')) {
-              this.deps.appDriveLeases?.refundConsumedStep(canvasId)
+            if (
+              outcome === 'refused' &&
+              (typed.code === 'stale_input_epoch' || typed.code === 'user_active')
+            ) {
+              this.deps.appDriveLeases?.refundConsumedStep({
+                surfaceId: canvasId,
+                leaseId: driveAction.leaseId,
+                actionId: driveAction.actionId
+              })
             }
             this.emit(canvasId, 'interaction', ctx, {
               phase: 'outcome',

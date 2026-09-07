@@ -449,6 +449,7 @@ describe('EmulatorToolExecutors', () => {
       partial: false,
       framesCompleted: 0
     })
+    expect(refusedResult.structuredContent).not.toHaveProperty('message')
     expect(refusedResult.isError).toBe(true)
     const partialResult = await executors.executeEmulatorTool(
       'emulator_step',
