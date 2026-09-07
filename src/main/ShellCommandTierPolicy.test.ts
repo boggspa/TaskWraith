@@ -44,6 +44,14 @@ describe('isInspectionShellCommand (allow polarity — fails closed)', () => {
     for (const cmd of [
       'rg --pre cat -n secrets src', // rg preprocessor = RCE
       'rg --pre=cat -n secrets src',
+      // --hostname-bin is the same class as --pre: ripgrep executes an
+      // arbitrary program per file. The weaker --pre-only screen used to
+      // let this through; GrokReadOnlyShell already blocked it, and the
+      // prompt-free OR then preferred the weaker classifier.
+      'rg --hostname-bin /bin/sh needle file',
+      'rg --hostname-bin=/bin/sh needle file',
+      'rg --hostname-b /bin/sh needle file',
+      'rg --pr /bin/sh needle file',
       'env DEBUG=1 node evil.js', // env-with-args executes
       'find . -name x', // find excluded wholesale (-delete/-exec family)
       'sed -i s/a/b/ file', // charset would reject slashes? no — reject head

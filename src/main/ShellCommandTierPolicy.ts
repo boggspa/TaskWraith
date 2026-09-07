@@ -203,7 +203,7 @@ const INSPECTION_HEADS_ANY_FLAGS: ReadonlySet<string> = new Set([
 /**
  * Screened inspection heads: read-only in ordinary use, but with a known
  * write/exec completion that the per-head predicate must reject. Same
- * allow-polarity discipline as the rg `--pre` screen — anything the predicate
+ * allow-polarity discipline as the rg `--pre` / `--hostname-bin` screen — anything the predicate
  * cannot positively clear fails closed to the ordinary prompt. Short-flag
  * screens match bundled clusters (`sort -ro out` hides `-o` inside `-ro`) and
  * attached values (`-oout.txt`), which is why they test for the letter
@@ -487,10 +487,14 @@ const SCREENED_INSPECTION_HEADS: Readonly<Record<string, (args: readonly string[
   sed: sedArgsAreReadOnly
 }
 
-// rg is inspection-safe EXCEPT its preprocessor flags, which execute an
-// arbitrary command per file (`--pre <cmd>`): reject any token starting
-// with `--pre` (covers --pre and --pre-glob, = and space forms).
-const RG_REJECT_FLAG_PREFIX = '--pre'
+// rg is inspection-safe EXCEPT flags that execute an arbitrary program per
+// file: `--pre <cmd>` and `--hostname-bin <cmd>`. GrokReadOnlyShell already
+// screened both; this classifier only screened `--pre`, and
+// promptFreeReadOnlyShellReason ORs the two, so the weaker screen won.
+// User-approved narrowing 2026-09-07: close that hole rather than leave
+// prompt-free RCE. Bidirectional prefix match covers =/space forms,
+// `--pre-glob`, and abbreviations (`--pr`, `--hostname-b`).
+const RG_REJECT_FLAGS = ['--pre', '--hostname-bin'] as const
 
 /**
  * Is this exact shell string a pure read-only inspection command (`ls`, `cat`,
@@ -508,7 +512,13 @@ function inspectionTokensAreReadOnly(tokens: string[] | null): boolean {
   if (tokens[0] !== head && !STRIPPABLE_BIN_PREFIX.test(tokens[0] ?? '')) return false
   if (head.includes('/')) return false
   if (head === 'rg') {
-    return !tokens.slice(1).some((token) => token.startsWith(RG_REJECT_FLAG_PREFIX))
+    return !tokens.slice(1).some((token) =>
+      RG_REJECT_FLAGS.some(
+        (dangerous) =>
+          token.startsWith(dangerous) ||
+          (token.length > 2 && token.startsWith('--') && dangerous.startsWith(token))
+      )
+    )
   }
   if (head === 'env') {
     // Bare `env` prints the environment; `env X=1 cmd` EXECUTES cmd.

@@ -81,7 +81,14 @@ describe('promptFreeReadOnlyShellReason', () => {
       'find . -type f > inventory.txt',
       'ls -la && rm -rf build',
       'cat package.json | tee copy.json',
-      'node -e process.exit()'
+      'node -e process.exit()',
+      // The universal prompt-free gate ORs ShellCommandTierPolicy with
+      // GrokReadOnlyShell. The weaker screen used to admit --hostname-bin
+      // even though Grok already rejected it.
+      'rg --hostname-bin /bin/sh needle file',
+      'rg --hostname-bin=/bin/sh needle file',
+      'rg --hostname-b /bin/sh needle file',
+      'rg --pr /bin/sh needle file'
     ]) {
       expect(isPromptFreeReadOnlyShellCommand(command), command).toBe(false)
     }
