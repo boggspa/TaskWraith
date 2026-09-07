@@ -1212,7 +1212,7 @@ describe('runMuseProviderFromIpc — transport selection', () => {
 
   it('dispatches an explicit MCP opt-out MSP turn without injecting mcp_servers', async () => {
     process.env[MSP_ENV] = '1'
-    const mspRun = vi.fn(async () => successOutcome())
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
     await runMuseProviderFromIpc(
       ipcEvent() as never,
       {
@@ -1230,7 +1230,7 @@ describe('runMuseProviderFromIpc — transport selection', () => {
 
   it('dispatches an advertised MSP turn once composed settings carry mcp_servers.taskwraith', async () => {
     process.env[MSP_ENV] = '1'
-    const mspRun = vi.fn(async () => successOutcome())
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
     const prepareTaskWraithMcp = vi.fn(async () => ({
       command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
       args: ['--taskwraith-gemini-mcp-bridge'],
