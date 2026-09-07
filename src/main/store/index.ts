@@ -389,6 +389,7 @@ import {
 } from '../../shared/chatComposerSelectionPatch'
 import { chatHasReconcilableRun } from '../ChatRunReconciler'
 import { selectOpenRunCandidateChatIds } from './OpenRunChatCandidates'
+import { selectEnsembleWakeupCandidateChatIds } from './EnsembleWakeupCandidates'
 import { ChatListIndexStore } from './ChatListIndexStore'
 import {
   CHAT_RECORD_CACHE_MAX_BYTES,
@@ -3963,6 +3964,20 @@ function previewText(value: unknown, maxLength: number): string {
   return `${text.slice(0, maxLength - 3)}...`
 }
 
+/**
+ * Wakeup count for a chat-list row. Defensive because it runs over normalized
+ * records of every vintage: anything that is not a readable wakeup map counts
+ * as zero wakeups on THIS record, which is a statement about bytes we hold,
+ * not a licence to skip — the row only earns a skip once the index can also
+ * vouch for those bytes.
+ */
+function countPersistedEnsembleWakeups(ensemble: unknown): number {
+  if (!ensemble || typeof ensemble !== 'object') return 0
+  const wakeups = (ensemble as { wakeups?: unknown }).wakeups
+  if (!wakeups || typeof wakeups !== 'object') return 0
+  return Object.keys(wakeups as Record<string, unknown>).length
+}
+
 function summarizeLastRun(
   run: ChatRecord['runs'][number] | undefined
 ): ChatRecord['runs'][number] | undefined {
@@ -5629,6 +5644,7 @@ export class AppStore {
       summaryOnly: true,
       messageCount: messages.length,
       runCount: runs.length,
+      ensembleWakeupCount: countPersistedEnsembleWakeups(ensemble),
       runsSummary: runs.filter((run) => run?.runId).map((run) => this.summarizeRunForChatList(run)),
       ...(lastRun ? { lastRun } : {}),
       ...(sourceStat
@@ -5729,6 +5745,9 @@ export class AppStore {
       summaryOnly: true,
       messageCount: typeof item.messageCount === 'number' ? item.messageCount : 0,
       runCount: typeof item.runCount === 'number' ? item.runCount : 0,
+      ...(typeof item.ensembleWakeupCount === 'number'
+        ? { ensembleWakeupCount: item.ensembleWakeupCount }
+        : {}),
       runsSummary: Array.isArray(item.runsSummary) ? item.runsSummary : [],
       ...(item.lastRun ? { lastRun: summarizeLastRun(item.lastRun) || item.lastRun } : {}),
       ...(typeof item.sourceChatMtimeMs === 'number'
@@ -6344,6 +6363,64 @@ export class AppStore {
     const chats: ChatRecord[] = []
     for (const chatId of candidates) {
       if (this.orphanSubThreadReapCandidates.has(chatId)) continue
+      const chat = this.readChatRecordCached(chatId, path.join(chatsDir, `${chatId}.json`))
+      if (chat) chats.push(chat)
+    }
+    return chats.sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  /**
+   * Source records for the persisted ensemble-wakeup sweep.
+   *
+   * The boot recovery pass flatMapped `ensemble.wakeups` across a bare
+   * `getChats()`. Measured on Chris's profile 2026-09-07: 1080MB across 516
+   * files parsed pre-window to build an EMPTY list. The lean ensemble
+   * projection cannot answer this — it strips `wakeups` by design — so the row
+   * carries `ensembleWakeupCount` beside `messageCount`/`runCount`, judged by
+   * the same mtime+size vouch.
+   *
+   * Narrowing only: candidates take the unchanged canonical read and the
+   * caller still reads real wakeups off the record. A skip needs a vouching
+   * row AND an explicit zero, so a row predating the field falls through, and
+   * an unreadable index abandons the narrowing rather than sweeping partially.
+   */
+  static getChatsWithEnsembleWakeups(): ChatRecord[] {
+    let index: Record<string, ChatListItem>
+    try {
+      index = chatListIndexStore.readAll()
+    } catch {
+      return this.getChats()
+    }
+    if (!fs.existsSync(chatsDir)) return []
+    let chatIds: string[]
+    try {
+      chatIds = fs
+        .readdirSync(chatsDir)
+        .filter((name) => name.endsWith('.json'))
+        .map((name) => name.slice(0, -'.json'.length))
+    } catch {
+      return this.getChats()
+    }
+    const candidates = selectEnsembleWakeupCandidateChatIds(chatIds, {
+      vouchesForSourceBytes: (chatId) => {
+        const indexed = index[chatId]
+        if (!indexed) return false
+        try {
+          return this.chatListItemMatchesSource(
+            indexed,
+            fs.statSync(path.join(chatsDir, `${chatId}.json`))
+          )
+        } catch {
+          return false
+        }
+      },
+      readWakeupCount: (chatId) => {
+        const count = index[chatId]?.ensembleWakeupCount
+        return typeof count === 'number' ? count : null
+      }
+    })
+    const chats: ChatRecord[] = []
+    for (const chatId of candidates) {
       const chat = this.readChatRecordCached(chatId, path.join(chatsDir, `${chatId}.json`))
       if (chat) chats.push(chat)
     }

@@ -11730,7 +11730,9 @@ function maybeAppendAuditTranscriptMessage(run: AuditRunRecord): void {
 }
 
 function getPersistedEnsembleWakeups(): EnsembleWakeupRecord[] {
-  return AppStore.getChats().flatMap((chat) => Object.values(chat.ensemble?.wakeups || {}))
+  return AppStore.getChatsWithEnsembleWakeups().flatMap((chat) =>
+    Object.values(chat.ensemble?.wakeups || {})
+  )
 }
 
 function findPersistedEnsembleWakeup(wakeupId: string): EnsembleWakeupRecord | null {

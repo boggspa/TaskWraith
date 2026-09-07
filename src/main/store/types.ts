@@ -4647,6 +4647,14 @@ export interface ChatListItem extends ChatRecord {
    * Optional in the type so pre-existing fixtures/merge shapes stay valid —
    * consumers must handle absence (`item.runsSummary ?? item.runs`). */
   runsSummary?: ChatListRunSummary[]
+  /**
+   * Persisted `ensemble.wakeups` count on the record this row was built from.
+   * Optional because rows written before the field existed carry no value —
+   * and absence must never read as "no wakeups", or the boot recovery sweep
+   * would leave one armed with nothing left to fire it. Consumers treat
+   * `undefined` as unknown and fall back to the canonical read.
+   */
+  ensembleWakeupCount?: number
   searchText?: string
   searchPreview?: string
   sourceChatMtimeMs?: number
