@@ -280,11 +280,10 @@ export function canonicalModelIdForProvider(
     if (provider === 'ollama') return 'qwen3:4b-instruct'
     // The three newest seats had no branch here, so a run recorded with the
     // sentinel id surfaced a model row literally labelled "default". Each maps
-    // to that seat's own default — devstral-small for Mistral, NOT the
-    // flagship (see MISTRAL_DEFAULT_MODEL).
+    // to that seat's own default — Medium 3.5 for Mistral (Vibe 2.25).
     if (provider === 'antigravity') return 'gemini-api:gemini-2.5-flash'
     if (provider === 'pi') return 'deepseek/deepseek-v4-flash'
-    if (provider === 'mistral') return 'devstral-small'
+    if (provider === 'mistral') return 'mistral-medium-3.5'
     if (provider === 'muse') return 'muse-spark-1.2'
     // Devin's legacy 'cli-default' sentinel was an ambiguous target; it now
     // resolves to the explicit catalogue default like every other sentinel.

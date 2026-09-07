@@ -171,9 +171,9 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('mistral', 'mistral-vibe-cli-latest')).toBe('Mistral Medium 3.5')
     })
 
-    it('resolves the default sentinel to the seat default (devstral-small, not the flagship)', () => {
-      expect(canonicalModelIdForProvider('mistral', 'default')).toBe('devstral-small')
-      expect(canonicalModelIdForProvider('mistral', 'cli-default')).toBe('devstral-small')
+    it('resolves the default sentinel to the Vibe 2.25 seat default (Medium 3.5)', () => {
+      expect(canonicalModelIdForProvider('mistral', 'default')).toBe('mistral-medium-3.5')
+      expect(canonicalModelIdForProvider('mistral', 'cli-default')).toBe('mistral-medium-3.5')
     })
 
     it('keeps the Mistral brand word, which is part of the product name', () => {

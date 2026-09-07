@@ -143,34 +143,48 @@ export function buildMistralAcpCliArgs(): string[] {
 
 // ── Models ────────────────────────────────────────────────────────────────
 // Sourced from the CLI's own bundled catalogue
-// (vibe/core/config/vibe_schema.py DEFAULT_MODELS, v2.22.0). Vibe exposes each
-// model under an ALIAS in the ACP `model` config option while its own config
-// stores the canonical `name`; the ACP surface speaks aliases, so aliases are
-// what this seat uses as model ids.
+// (vibe/core/config/vibe_schema.py DEFAULT_MODELS, v2.25.0) plus the
+// GrowthBook-injected extra `glm-5-2` that Vibe's TUI shows as
+// "GLM-5.2 (Mistral Hosted)". Vibe exposes each model under an ALIAS in the
+// ACP `model` config option while its own config stores the canonical `name`;
+// the ACP surface speaks aliases, so aliases are what this seat uses as ids.
+//
+// Vibe 2.25's DEFAULT_MODELS is only Medium 3.5 + llamacpp `local`. Hosted
+// Devstral Small / Devstral 2 were retired from the API (2026-03-31 and
+// 2026-07-31) and removed from Vibe's picker; Medium 3.5 is the documented
+// successor. TaskWraith still offers the live BYOK API chat models below
+// because those remain on the Mistral limits page.
 
-/** Flagship. Alias of `mistral-vibe-cli-latest`. Available on the FREE plan. */
+/** Flagship. Alias of `mistral-vibe-cli-latest`. Vibe 2.25 default. */
 export const MISTRAL_MODEL_MEDIUM = 'mistral-medium-3.5'
-/** Cheap coding model. Alias of `devstral-small-latest`. ~26x cheaper. */
+/** Retired hosted Devstral Small. Kept only so stale threads remap. */
 export const MISTRAL_MODEL_DEVSTRAL_SMALL = 'devstral-small'
+/** Retired hosted Devstral 2. Kept only so stale threads remap. */
+export const MISTRAL_MODEL_DEVSTRAL_2 = 'devstral-2512'
 /**
- * Vibe's third catalogue entry is `local` — a llamacpp backend pointed at
- * 127.0.0.1:8080. It is not a Mistral cloud model, needs a llama-server the
- * user runs themselves, and bills nothing. Deliberately NOT offered by this
- * seat: local inference is Ollama's lane in TaskWraith, and surfacing it here
- * would put a silently-dead model in the picker for every user without a local
- * server.
+ * Vibe's other bundled catalogue entry is `local` — a llamacpp backend pointed
+ * at 127.0.0.1:8080 (the TUI label is "Devstral (local)"). It is not a Mistral
+ * cloud model, needs a llama-server the user runs themselves, and bills
+ * nothing. Deliberately NOT offered by this seat: local inference is Ollama's
+ * lane in TaskWraith (`devstral-small-2:24b`), and surfacing it here would put
+ * a silently-dead model in the picker for every user without a local server.
  */
 export const MISTRAL_LOCAL_ALIAS_EXCLUDED = 'local'
 
-export const MISTRAL_SEAT_MODELS = [
+/** Hosted Devstral ids Vibe 2.25 no longer accepts. Remap to Medium 3.5. */
+export const MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS = [
   MISTRAL_MODEL_DEVSTRAL_SMALL,
+  'devstral-small-latest',
+  MISTRAL_MODEL_DEVSTRAL_2
+] as const
+
+export const MISTRAL_SEAT_MODELS = [
   MISTRAL_MODEL_MEDIUM,
   'glm-5-2',
   'mistral-large-2512',
   'zai-glm-5-2',
   'codestral-2508',
   'mistral-small-2603',
-  'devstral-2512',
   'labs-leanstral-1-5',
   'mistral-medium-latest',
   'mistral-medium-2508',
@@ -183,13 +197,11 @@ export const MISTRAL_SEAT_MODELS = [
 /**
  * Default model for a new Mistral seat.
  *
- * devstral-small, not the flagship: graded head-to-head on an identical task
- * with a known-correct answer (2026-07-26), devstral-small was 26x cheaper,
- * used fewer turns, AND got the answer right where medium-3.5 did not. It is
- * also the model whose price makes the heuristic quota meter forgiving rather
- * than alarming.
+ * Vibe 2.25 made Medium 3.5 the only cloud default (it replaces Devstral 2 in
+ * the coding agent). Hosted Devstral Small is retired, so it can no longer be
+ * the TaskWraith default either.
  */
-export const MISTRAL_DEFAULT_MODEL = MISTRAL_MODEL_DEVSTRAL_SMALL
+export const MISTRAL_DEFAULT_MODEL = MISTRAL_MODEL_MEDIUM
 
 /**
  * Clamp an arbitrary stored model id onto this seat's catalogue.
@@ -211,8 +223,8 @@ export function normalizeMistralModel(model: string | null | undefined): string 
   if (lowered === MISTRAL_MODEL_MEDIUM || lowered === 'mistral-vibe-cli-latest') {
     return MISTRAL_MODEL_MEDIUM
   }
-  if (lowered === MISTRAL_MODEL_DEVSTRAL_SMALL || lowered === 'devstral-small-latest') {
-    return MISTRAL_MODEL_DEVSTRAL_SMALL
+  if ((MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS as readonly string[]).includes(lowered)) {
+    return MISTRAL_MODEL_MEDIUM
   }
   const match = MISTRAL_SEAT_MODELS.find((m) => m.toLowerCase() === lowered)
   if (match) return match

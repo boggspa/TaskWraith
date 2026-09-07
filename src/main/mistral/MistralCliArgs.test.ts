@@ -4,6 +4,8 @@ import {
   MISTRAL_DEFAULT_MODEL,
   MISTRAL_MODEL_DEVSTRAL_SMALL,
   MISTRAL_MODEL_MEDIUM,
+  MISTRAL_SEAT_MODELS,
+  MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS,
   MISTRAL_UNGATED_SESSION_MODES,
   applyMistralPromptPreamble,
   buildMistralAcpCliArgs,
@@ -83,19 +85,36 @@ describe('session mode selection', () => {
 })
 
 describe('normalizeMistralModel', () => {
-  it('defaults to devstral-small', () => {
-    expect(MISTRAL_DEFAULT_MODEL).toBe(MISTRAL_MODEL_DEVSTRAL_SMALL)
-    expect(normalizeMistralModel('')).toBe(MISTRAL_MODEL_DEVSTRAL_SMALL)
-    expect(normalizeMistralModel(null)).toBe(MISTRAL_MODEL_DEVSTRAL_SMALL)
-    expect(normalizeMistralModel(undefined)).toBe(MISTRAL_MODEL_DEVSTRAL_SMALL)
+  it('defaults to Mistral Medium 3.5, matching Vibe 2.25 DEFAULT_MODELS', () => {
+    // Vibe 2.25.0 shipped Medium 3.5 as the only cloud default (replacing
+    // Devstral 2 / Devstral Small). Offering the retired hosted ids would
+    // fail session/set_config_option on current vibe-acp.
+    expect(MISTRAL_DEFAULT_MODEL).toBe(MISTRAL_MODEL_MEDIUM)
+    expect(normalizeMistralModel('')).toBe(MISTRAL_MODEL_MEDIUM)
+    expect(normalizeMistralModel(null)).toBe(MISTRAL_MODEL_MEDIUM)
+    expect(normalizeMistralModel(undefined)).toBe(MISTRAL_MODEL_MEDIUM)
+  })
+
+  it('does not offer sunset hosted Devstral ids on the Vibe seat', () => {
+    expect(MISTRAL_SEAT_MODELS).not.toContain(MISTRAL_MODEL_DEVSTRAL_SMALL)
+    expect(MISTRAL_SEAT_MODELS).not.toContain('devstral-2512')
+    expect(MISTRAL_SEAT_MODELS).toContain(MISTRAL_MODEL_MEDIUM)
+    expect(MISTRAL_SEAT_MODELS).toContain('glm-5-2')
+    expect([...MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS]).toEqual(
+      expect.arrayContaining(['devstral-small', 'devstral-small-latest', 'devstral-2512'])
+    )
   })
 
   it('accepts both the ACP alias and the canonical Vibe name', () => {
     expect(normalizeMistralModel('mistral-medium-3.5')).toBe(MISTRAL_MODEL_MEDIUM)
     expect(normalizeMistralModel('mistral-vibe-cli-latest')).toBe(MISTRAL_MODEL_MEDIUM)
-    expect(normalizeMistralModel('devstral-small')).toBe(MISTRAL_MODEL_DEVSTRAL_SMALL)
-    expect(normalizeMistralModel('devstral-small-latest')).toBe(MISTRAL_MODEL_DEVSTRAL_SMALL)
     expect(normalizeMistralModel('  MISTRAL-MEDIUM-3.5  ')).toBe(MISTRAL_MODEL_MEDIUM)
+  })
+
+  it('remaps sunset hosted Devstral ids to Medium 3.5 so stale threads still launch', () => {
+    expect(normalizeMistralModel('devstral-small')).toBe(MISTRAL_MODEL_MEDIUM)
+    expect(normalizeMistralModel('devstral-small-latest')).toBe(MISTRAL_MODEL_MEDIUM)
+    expect(normalizeMistralModel('devstral-2512')).toBe(MISTRAL_MODEL_MEDIUM)
   })
 
   it('accepts bare Mistral API models', () => {

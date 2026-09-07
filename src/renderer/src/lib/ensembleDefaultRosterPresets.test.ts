@@ -41,7 +41,7 @@ describe('buildDefaultEnsembleRosterPresets', () => {
     expect(
       full.participants
         .filter((participant) => participant.provider === 'mistral')
-        .every((participant) => participant.model === 'devstral-small')
+        .every((participant) => participant.model === 'mistral-medium-3.5')
     ).toBe(true)
   })
 

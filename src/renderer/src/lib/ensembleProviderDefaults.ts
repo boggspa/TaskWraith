@@ -173,7 +173,7 @@ const grokReasoningOptions = (
 const GROK_45_REASONING = grokReasoningOptions(GROK_45_REASONING_EFFORTS)
 const GROK_46_REASONING = grokReasoningOptions(GROK_46_REASONING_EFFORTS)
 
-// Mistral Devstral Small and Mistral Medium 3.5 now support configurable Thinking levels
+// Mistral Medium 3.5 and hosted GLM-5.2 support configurable Thinking levels
 // (off, low, medium, high, max). These match the Vibe CLI's ThinkingLevel enum.
 const MISTRAL_THINKING_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'off', label: 'Off' },
@@ -389,17 +389,15 @@ const GROK_MODELS = withCuratedUltraTaskSupport(GROK_MODEL_ROWS)
 
 /** Mistral Vibe seat models. BARE ids only — a `mistral/<model>` id belongs to
  *  Pi's BYOK upstream, a different provider that shares the brand word.
- *  devstral-small leads because it is the seat default. Mirrors
+ *  Medium 3.5 leads because it is the Vibe 2.25 seat default. Mirrors
  *  MISTRAL_SEAT_MODELS and the contextWindows registrations. */
 const MISTRAL_MODEL_ROWS: CombinedModelPickerModelOption[] = [
-  { id: 'devstral-small', label: 'Devstral Small' },
   { id: 'mistral-medium-3.5', label: 'Mistral Medium 3.5' },
   { id: 'glm-5-2', label: 'GLM-5.2 (Mistral Hosted)' },
   { id: 'mistral-large-2512', label: 'Mistral Large 3' },
   { id: 'zai-glm-5-2', label: 'GLM-5.2 (via Mistral)' },
   { id: 'codestral-2508', label: 'Codestral (Aug 2025)' },
   { id: 'mistral-small-2603', label: 'Mistral Small 4' },
-  { id: 'devstral-2512', label: 'Devstral 2' },
   { id: 'labs-leanstral-1-5', label: 'Leanstral 1.5 (Labs)' },
   { id: 'mistral-medium-latest', label: 'Mistral Medium (Latest)' },
   { id: 'mistral-medium-2508', label: 'Mistral Medium 3.1' },
@@ -816,7 +814,7 @@ export function getDefaultEnsembleParticipantConfig(
       // participant ends up configured differently depending on which surface
       // created it.
       return {
-        model: 'devstral-small',
+        model: 'mistral-medium-3.5',
         permissionPresetId: 'default',
         reasoningEffort: 'medium'
       }
@@ -1561,7 +1559,7 @@ export function getEnsembleModelDefaults(
         reasoningOptions: MISTRAL_THINKING_REASONING,
         defaultReasoning: 'medium',
         fastModeCapableModelIds: new Set<string>(),
-        defaultModelId: 'devstral-small'
+        defaultModelId: 'mistral-medium-3.5'
       }
     case 'muse':
       return {

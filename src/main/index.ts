@@ -24959,7 +24959,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
       sender: event.sender,
       provider: 'mistral',
       route,
-      message: `The selected Mistral model (${model}) uses the API-key lane, but no authorized Mistral API key is available. Add one in Settings → Providers → Mistral, or choose Devstral Small / Mistral Medium 3.5 to use your Vibe subscription.`,
+      message: `The selected Mistral model (${model}) uses the API-key lane, but no authorized Mistral API key is available. Add one in Settings → Providers → Mistral, or choose Mistral Medium 3.5 / GLM-5.2 (Mistral Hosted) to use your Vibe subscription.`,
       setupRequired: true,
       fallback: false
     })
@@ -25226,7 +25226,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
           severity: 'warning',
           title: 'Mistral API model selected',
           message:
-            'This key-marked model runs on your Mistral API key and is billed per token. Devstral Small and Mistral Medium 3.5 use your Vibe subscription instead.'
+            'This key-marked model runs on your Mistral API key and is billed per token. Mistral Medium 3.5 and GLM-5.2 (Mistral Hosted) use your Vibe subscription instead.'
         },
         state
       )

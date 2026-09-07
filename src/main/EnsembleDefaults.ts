@@ -256,7 +256,7 @@ function getDefaultEnsembleModel(provider: ProviderId): string {
   if (provider === 'grok') return 'grok-4.6'
   if (provider === 'cursor') return 'composer-2.5-fast'
   if (provider === 'ollama') return 'qwen3.5:9b'
-  if (provider === 'mistral') return 'devstral-small'
+  if (provider === 'mistral') return 'mistral-medium-3.5'
   if (provider === 'muse') return 'muse-spark-1.2'
   if (provider === 'devin') return DEVIN_DEFAULT_MODEL_ID
   return 'flash-lite'

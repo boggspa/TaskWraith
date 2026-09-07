@@ -23,7 +23,6 @@ describe('derived reasoning offers', () => {
 
   it('offers native Mistral Off and Max thinking while retaining the legacy xhigh alias', () => {
     for (const modelId of [
-      'devstral-small',
       'mistral-medium-3.5',
       'glm-5-2',
       'mistral-small-2603',

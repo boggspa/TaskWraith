@@ -227,8 +227,8 @@ describe('HostNodeMistralProvider', () => {
           configOptions: [
             {
               id: 'model',
-              currentValue: 'devstral-small',
-              options: [{ value: 'devstral-small' }, { value: 'mistral-medium-3.5' }]
+              currentValue: 'mistral-medium-3.5',
+              options: [{ value: 'glm-5-2' }, { value: 'mistral-medium-3.5' }]
             },
             {
               id: 'thinking',
@@ -603,7 +603,7 @@ describe('HostNodeMistralProvider', () => {
             },
             {
               id: 'model',
-              currentValue: 'mistral-medium-3.5',
+              currentValue: 'glm-5-2',
               options: [{ value: 'devstral-small' }, { value: 'mistral-medium-3.5' }]
             }
           ]
@@ -631,7 +631,7 @@ describe('HostNodeMistralProvider', () => {
             },
             {
               id: 'model',
-              currentValue: 'mistral-medium-3.5',
+              currentValue: 'glm-5-2',
               options: [{ value: 'devstral-small' }, { value: 'mistral-medium-3.5' }]
             }
           ]
@@ -649,7 +649,7 @@ describe('HostNodeMistralProvider', () => {
     expect(modelConfig.params).toEqual({
       sessionId: 'session-mistral',
       configId: 'model',
-      value: 'devstral-small'
+      value: 'mistral-medium-3.5'
     })
 
     expect(instance.cancel('run-model-config')).toBe(true)

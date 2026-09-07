@@ -32,8 +32,8 @@ export const MISTRAL_ACP_REQUIRED_MESSAGE =
  * Allow an ambient `MISTRAL_API_KEY` to satisfy a key-marked Mistral model.
  *
  * This flag authorizes a credential SOURCE; it does not choose the billing
- * lane. The model makes that choice deterministically: Devstral Small and
- * Mistral Medium 3.5 always use Vibe's subscription credential, while the
+ * lane. The model makes that choice deterministically: Mistral Medium 3.5 and
+ * hosted GLM-5.2 always use Vibe's subscription credential, while the
  * picker's key-marked rows use BYOK. A key stored in TaskWraith is already an
  * explicit source and does not need this flag.
  *

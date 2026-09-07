@@ -359,22 +359,16 @@ const GROK_DEFAULT_MODELS = withCuratedUltraTaskSupport(GROK_DEFAULT_MODEL_ROWS)
 // Pi's BYOK upstream, a DIFFERENT provider that shares the brand word, and is
 // served through the `pi` group in this same picker.
 //
-// devstral-small leads and is the default: graded head-to-head it was ~26x
-// cheaper and more accurate on lane work. Note the two are NOT equivalent —
-// mistral-medium-3.5 has thinking + vision, hosted glm-5-2 adds thinking; the seat's provider-level
-// `imageAttachments` is false because the default model has none.
-const MISTRAL_DEFAULT_MODEL = 'devstral-small'
+// Medium 3.5 leads and is the default (Vibe 2.25). Hosted Devstral Small /
+// Devstral 2 are sunset and omitted; glm-5-2 is the GrowthBook-injected hosted
+// extra Vibe still shows. Medium 3.5 has thinking + vision.
+const MISTRAL_DEFAULT_MODEL = 'mistral-medium-3.5'
 const MISTRAL_DEFAULT_MODEL_ROWS = [
   {
     id: MISTRAL_DEFAULT_MODEL,
-    label: 'Devstral Small',
-    description: '256K context - coding-tuned',
-    isDefault: true
-  },
-  {
-    id: 'mistral-medium-3.5',
     label: 'Mistral Medium 3.5',
-    description: '256K context - flagship'
+    description: '256K context - flagship',
+    isDefault: true
   },
   {
     id: 'glm-5-2',
@@ -400,11 +394,6 @@ const MISTRAL_DEFAULT_MODEL_ROWS = [
     id: 'mistral-small-2603',
     label: 'Mistral Small 4',
     description: '256K context - reasoning'
-  },
-  {
-    id: 'devstral-2512',
-    label: 'Devstral 2',
-    description: '262K context'
   },
   {
     id: 'labs-leanstral-1-5',

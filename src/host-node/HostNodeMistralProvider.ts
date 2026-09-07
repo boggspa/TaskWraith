@@ -58,6 +58,9 @@ import { resolveMistralCredentialLaunch } from '../main/mistral/MistralCredentia
 import {
   mistralSessionModeFallbacksForSeat,
   mistralSessionModeForSeat,
+  MISTRAL_DEFAULT_MODEL,
+  MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS,
+  normalizeMistralModel,
   normalizeMistralThinkingLevel
 } from '../main/mistral/MistralCliArgs'
 import {
@@ -120,7 +123,7 @@ function mistralSessionConfigSelections(
       values: [mode, ...mistralSessionModeFallbacksForSeat(readOnly)]
     },
     ...hostAcpModelAndEffortSelections({
-      modelValue: thread.modelId,
+      modelValue: normalizeMistralModel(thread.modelId),
       ...(thinking ? { reasoningId: thinking } : {})
     })
   ]
@@ -177,7 +180,11 @@ function providerModelIsSelectable(
   offers: HostProviderOffersProjection,
   thread: HostProviderRunThread
 ): boolean {
-  const model = offers.models.find((candidate) => candidate.modelId === thread.modelId)
+  const raw = typeof thread.modelId === 'string' ? thread.modelId.trim().toLowerCase() : ''
+  const selectableId = (MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS as readonly string[]).includes(raw)
+    ? MISTRAL_DEFAULT_MODEL
+    : raw
+  const model = offers.models.find((candidate) => candidate.modelId === selectableId)
   return Boolean(
     model &&
     model.available &&
@@ -332,7 +339,7 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
     }
 
     const credentialLaunch = resolveMistralCredentialLaunch({
-      model: thread.modelId,
+      model: normalizeMistralModel(thread.modelId),
       resolvedEnv: {
         ...(this.options.environment ?? process.env),
         FORCE_COLOR: '0',
@@ -345,7 +352,7 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
     })
     if (credentialLaunch.missingApiKey) {
       throw new Error(
-        `${PROVIDER_DISPLAY_NAME} model ${thread.modelId} requires MISTRAL_API_KEY; choose Devstral Small / Mistral Medium 3.5 to use Vibe instead.`
+        `${PROVIDER_DISPLAY_NAME} model ${thread.modelId} requires MISTRAL_API_KEY; choose Mistral Medium 3.5 or GLM-5.2 (Mistral Hosted) to use Vibe instead.`
       )
     }
 

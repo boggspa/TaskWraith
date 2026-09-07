@@ -1049,32 +1049,23 @@ const GROK_STATIC_MODELS = [
   { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast', ultraTaskSupported: true }
 ]
 // Mistral Vibe seat rows. Sourced from the CLI's own bundled catalogue
-// (vibe/core/config/vibe_schema.py DEFAULT_MODELS, v2.22.0), which exposes each
-// model under an ALIAS over ACP while storing a canonical name internally — the
-// aliases are what `session/set_config_option` accepts, so aliases are the ids.
+// (vibe/core/config/vibe_schema.py DEFAULT_MODELS, v2.25.0) plus the
+// GrowthBook-injected hosted GLM-5.2 extra. Vibe exposes each model under an
+// ALIAS over ACP; aliases are the ids `session/set_config_option` accepts.
 //
-// devstral-small leads and is the default rather than the flagship: graded
-// head-to-head on an identical task with a known-correct answer, it was ~26x
-// cheaper, used fewer turns, AND was the one that got the answer right.
+// Medium 3.5 is the Vibe 2.25 default and the documented successor of hosted
+// Devstral 2 / Devstral Small (retired from the API). Hosted Devstral rows are
+// omitted from the picker; stale stored ids remap via normalizeMistralModel.
 //
-// Vibe's third catalogue entry, `local`, is a llamacpp backend on
-// 127.0.0.1:8080. It is deliberately absent: local inference is Ollama's lane
-// here, and listing it would put a permanently-dead row in the picker for every
-// user without their own llama-server running.
+// Vibe's other bundled entry, `local` (TUI: "Devstral (local)"), is a llamacpp
+// backend on 127.0.0.1:8080. It is deliberately absent: local inference is
+// Ollama's lane here (`devstral-small-2:24b`).
 const MISTRAL_STATIC_MODELS = [
-  {
-    id: MISTRAL_DEFAULT_MODEL,
-    label: 'Devstral Small',
-    description: '256K context - coding-tuned, $0.10/$0.30 per Mtok',
-    isDefault: true,
-    supportedReasoningEfforts: [...MISTRAL_REASONING_EFFORTS],
-    defaultReasoningEffort: MISTRAL_DEFAULT_REASONING_EFFORT,
-    ultraTaskSupported: true
-  },
   {
     id: MISTRAL_MODEL_MEDIUM,
     label: 'Mistral Medium 3.5',
     description: '256K context - flagship, $1.50/$7.50 per Mtok',
+    isDefault: true,
     supportedReasoningEfforts: [...MISTRAL_REASONING_EFFORTS],
     defaultReasoningEffort: MISTRAL_DEFAULT_REASONING_EFFORT,
     ultraTaskSupported: true
@@ -1112,12 +1103,6 @@ const MISTRAL_STATIC_MODELS = [
     id: 'mistral-small-2603',
     label: 'Mistral Small 4',
     description: '256K context - $0.15/$0.60 per Mtok',
-    ultraTaskSupported: true
-  },
-  {
-    id: 'devstral-2512',
-    label: 'Devstral 2',
-    description: '262K context - $0.40/$2.00 per Mtok',
     ultraTaskSupported: true
   },
   {
