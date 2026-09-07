@@ -4655,6 +4655,16 @@ export interface ChatListItem extends ChatRecord {
    * `undefined` as unknown and fall back to the canonical read.
    */
   ensembleWakeupCount?: number
+  /**
+   * Pending `soloWakeups` count on the record this row was built from.
+   * Counts only `pending` records, deliberately unlike ensembleWakeupCount
+   * (all statuses): the recovery classifier skips non-pending wakeups, so a
+   * chat whose wakeups all expired needs no sweep. Optional because rows
+   * written before the field existed carry no value — and absence must never
+   * read as "no wakeups". Consumers treat `undefined` as unknown and fall
+   * back to the canonical read.
+   */
+  soloWakeupCount?: number
   searchText?: string
   searchPreview?: string
   sourceChatMtimeMs?: number
