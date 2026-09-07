@@ -15,6 +15,7 @@ import {
   resolveCursorGrokCliModelId
 } from '../../shared/grok45Models'
 import { buildContainedCursorReadOnlyArgv, buildContainedCursorWriteArgv } from './CursorCliArgs'
+import { buildCursorPathBActiveBrokerPrompt } from './CursorPathBBrokerReceipt'
 import {
   buildCursorCanonicalBrokerMcpAllowRulesForProfile,
   CURSOR_BROKER_MCP_ALLOW_RULES,
@@ -185,7 +186,7 @@ export function buildCursorPathBLaunchPlan(
   })
   const transactionalWriteSeat = input.writeCapable
   const basePrompt = brokerActive
-    ? `${input.prompt}\n\nTaskWraith Cursor broker receipt: the managed tools are ready under the exact Cursor MCP server id \`${CURSOR_MCP_SERVER_NAME}\`. Call GetMcpTools with server \`${CURSOR_MCP_SERVER_NAME}\` before concluding that TaskWraith tools are absent. Do not confuse it with user-owned \`taskwraith\` or \`agbench\` servers. Use the returned exact file and shell tools within your assigned lane.`
+    ? buildCursorPathBActiveBrokerPrompt(input.prompt, policy, input.taskWraithMcpProfileId)
     : sanitizeTaskWraithMcpPromptClaims(input.prompt, {
         advertised: false,
         coreProfile: false

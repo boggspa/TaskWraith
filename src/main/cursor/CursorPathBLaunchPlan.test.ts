@@ -318,3 +318,55 @@ describe('Cursor Path-B launch plan keeps the prompt out of argv', () => {
     expect(Math.max(...plan.argv.map((token) => token.length))).toBeLessThan(512)
   })
 })
+
+describe('Cursor Path-B broker receipt names the live listed tools', () => {
+  it('tells an active broker seat to use GetMcpTools on taskwraith-broker, not IDE discovery', () => {
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        brokerRequested: true,
+        brokerOutcome: 'active',
+        taskWraithMcpProfileId: 'taskwraith-gateway-v1'
+      })
+    )
+
+    expect(plan.prompt).toContain('GetMcpTools')
+    expect(plan.prompt).toContain('taskwraith-broker')
+    expect(plan.prompt).toContain('Do not use GetDynamicTools')
+    expect(plan.prompt).toContain('CallDynamicTool')
+    expect(plan.prompt).toContain('capability_search')
+    expect(plan.prompt).toContain('ask_user_question')
+    expect(plan.prompt).not.toContain('ensemble_fanout')
+  })
+
+  it('lists write-capable orchestration tools only when the full broker is active', () => {
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'active',
+        taskWraithMcpProfileId: 'taskwraith-gateway-v20'
+      })
+    )
+
+    expect(plan.prompt).toContain('ensemble_fanout')
+    expect(plan.prompt).toContain('delegate_wave')
+    expect(plan.prompt).toContain('apply_patch')
+    expect(plan.prompt).toContain('ordinary tool-call rows')
+  })
+
+  it('strips discovery instructions when the broker degrades to native-only', () => {
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'native-only-degraded',
+        taskWraithMcpProfileId: 'taskwraith-full-v1'
+      })
+    )
+
+    expect(plan.prompt).not.toContain('GetMcpTools')
+    expect(plan.prompt).not.toContain('GetDynamicTools')
+    expect(plan.prompt).not.toContain('capability_search')
+    expect(plan.prompt).not.toContain('ensemble_fanout')
+  })
+})
