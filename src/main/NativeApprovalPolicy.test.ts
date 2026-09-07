@@ -748,3 +748,28 @@ describe('resolveNativeApprovalPreflightDecision — external read split (slice 
     ).toMatchObject({ kind: 'deny' })
   })
 })
+
+describe('resolveNativeApprovalPreflightDecision — host-destructive deny-wall', () => {
+  it('denies disk-wipe and power-off even when policy would allow', () => {
+    for (const shellCommand of ['rm -rf /', 'ls && rm -rf /', 'shutdown now']) {
+      expect(
+        resolveNativeApprovalPreflightDecision({
+          resolution: resolution('allow', 'allow'),
+          sessionYoloEnabled: true,
+          shellCommand
+        }),
+        shellCommand
+      ).toMatchObject({ kind: 'deny' })
+    }
+  })
+
+  it('does not deny ordinary in-workspace recursive rm', () => {
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        resolution: resolution('allow', 'allow'),
+        sessionYoloEnabled: true,
+        shellCommand: 'rm -rf node_modules'
+      })
+    ).toMatchObject({ kind: 'allow' })
+  })
+})

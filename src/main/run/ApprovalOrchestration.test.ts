@@ -48,8 +48,9 @@ vi.mock('../WorkspaceInspectionShell', async () => {
     '../PromptFreeReadOnlyShell'
   )
   return {
-    workspaceInspectionShellReason: vi.fn((command: unknown, context: { workspacePath?: string }) =>
-      context.workspacePath ? actual.promptFreeReadOnlyShellReason(command) : null
+    workspaceInspectionShellReason: vi.fn(
+      (command: unknown, context: { workspacePath?: string }) =>
+        context.workspacePath ? actual.promptFreeReadOnlyShellReason(command) : null
     )
   }
 })
@@ -191,11 +192,11 @@ beforeEach(() => {
   vi.mocked(workspaceInspectionProgramPlan).mockReturnValue(null)
   vi.mocked(workspaceInspectionShellReason).mockImplementation((command, context) =>
     context.workspacePath
-      ? (command === 'printenv' ||
+      ? command === 'printenv' ||
         /[<>]/.test(String(command)) ||
         /(?:^|\s)\/(?:etc|Users|opt)(?:\/|\s|$)/.test(String(command))
-          ? null
-          : promptFreeReadOnlyShellReason(command))
+        ? null
+        : promptFreeReadOnlyShellReason(command)
       : null
   )
 })
@@ -393,41 +394,38 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
   it.each([
     { service: 'subThreadDelegation' as const, toolName: 'cancel_subthread' },
     { service: 'mcpTools' as const, toolName: 'delegate_wave' }
-  ])(
-    'does not broaden signed consent to $service/$toolName',
-    async ({ service, toolName }) => {
-      const order: string[] = []
-      const deps = makeDeps(order)
-      setResolution(deps, order, { policy: 'deny', decision: 'deny' })
-      vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
-        runId
-          ? {
-              runId,
+  ])('does not broaden signed consent to $service/$toolName', async ({ service, toolName }) => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+    vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+      runId
+        ? {
+            runId,
+            appChatId: 'chat-1',
+            status: 'running',
+            state: {
               appChatId: 'chat-1',
-              status: 'running',
-              state: {
-                appChatId: 'chat-1',
-                effectivePermissions: {
-                  presetId: 'read_only',
-                  subThreadDelegationAutoAllowSource: 'ultratask'
-                }
+              effectivePermissions: {
+                presetId: 'read_only',
+                subThreadDelegationAutoAllowSource: 'ultratask'
               }
             }
-          : undefined) as never)
+          }
+        : undefined) as never)
 
-      await expect(
-        createApprovalOrchestration(deps)(
-          sender,
-          'codex',
-          service,
-          '/repo',
-          request({ preview: { toolName } })
-        )
-      ).resolves.toBe(false)
-      expect(order).toContain('audit:autoDeny:policy')
-      expect(order).not.toContain('audit:autoAllow:explicit_user_request')
-    }
-  )
+    await expect(
+      createApprovalOrchestration(deps)(
+        sender,
+        'codex',
+        service,
+        '/repo',
+        request({ preview: { toolName } })
+      )
+    ).resolves.toBe(false)
+    expect(order).toContain('audit:autoDeny:policy')
+    expect(order).not.toContain('audit:autoAllow:explicit_user_request')
+  })
 
   // (c) PLAN-ARTIFACT — invariant #3: the plan-artifact fast-path sits AFTER
   // resolve and BEFORE the plain deny. A denied decision + plan-artifact metadata
@@ -773,10 +771,8 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     expect(order).not.toContain('registerGeminiTool')
   })
 
-  // (d1) TIER HOLD — catastrophic deletion at Full WS Access. Owner spec
-  // (slices D/E): `rm -r` class ALWAYS asks at workspace_write, surviving
-  // session-YOLO and an allow decision. Ask-hold, not deny.
-  it('(d1) recursive rm at workspace_write prompts despite YOLO + allow', async () => {
+  // (d1) ALWAYS ALLOW — ordinary recursive rm at Full WS Access auto-allows.
+  it('(d1) recursive rm at workspace_write auto-allows when policy allows', async () => {
     const order: string[] = []
     const deps = makeDeps(order)
     vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
@@ -794,7 +790,7 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
           }
         : undefined) as never)
 
-    createApprovalOrchestration(deps)(
+    const result = await createApprovalOrchestration(deps)(
       sender,
       'codex',
       'shellCommands',
@@ -806,17 +802,15 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
         }
       })
     )
-    await Promise.resolve()
 
-    expect(order).not.toContain('audit:autoAllow:session_yolo')
-    expect(order).toContain('registerGeminiTool')
+    expect(result).toBe(true)
+    expect(order).toContain('audit:autoAllow:session_yolo')
+    expect(order).not.toContain('registerGeminiTool')
   })
 
-  // (d2) TIER HOLD — remote egress asks even at Full Access (owner spec:
-  // remote/SSH + raw network shell commands ASK at both write tiers; the
-  // 2026-08-26 carve-out exempts only a provably inbound curl/wget fetch,
-  // never an ssh-family command).
-  it('(d2) ssh at full_access prompts despite YOLO + allow', async () => {
+  // (d2) ALWAYS ALLOW — ordinary ssh at Full Access auto-allows. Host-destroy
+  // remains a hard deny on a separate path.
+  it('(d2) ssh at full_access auto-allows when policy allows', async () => {
     const order: string[] = []
     const deps = makeDeps(order)
     vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
@@ -834,7 +828,7 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
           }
         : undefined) as never)
 
-    createApprovalOrchestration(deps)(
+    const result = await createApprovalOrchestration(deps)(
       sender,
       'codex',
       'shellCommands',
@@ -846,10 +840,10 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
         }
       })
     )
-    await Promise.resolve()
 
-    expect(order).not.toContain('audit:autoAllow:session_yolo')
-    expect(order).toContain('registerGeminiTool')
+    expect(result).toBe(true)
+    expect(order).toContain('audit:autoAllow:session_yolo')
+    expect(order).not.toContain('registerGeminiTool')
   })
 
   // (d3) INSPECTION FAST PATH — read-only inspection commands (`ls`, `cat`,
@@ -1243,7 +1237,13 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     const deps = makeDeps(order)
     // The human already accepted canvas_eval on this exact live canvas. A URL or
     // run change is intentionally irrelevant; a different canvas id is not.
-    vi.mocked((deps.permissionService as never as { hasLiveCanvasEvalWindowGrant: ReturnType<typeof vi.fn> }).hasLiveCanvasEvalWindowGrant).mockReturnValue(true)
+    vi.mocked(
+      (
+        deps.permissionService as never as {
+          hasLiveCanvasEvalWindowGrant: ReturnType<typeof vi.fn>
+        }
+      ).hasLiveCanvasEvalWindowGrant
+    ).mockReturnValue(true)
     const script = 'document.title + "SECOND-EVAL"'
     const onApprovalPromptCreated = vi.fn(({ approvalId }: { approvalId: string }) =>
       createCanvasEvalApprovalReceipt(script, approvalId)
@@ -1278,8 +1278,11 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     // The window was consulted for THIS exact surface, and the call allows the tool.
     expect(
       vi.mocked(
-        (deps.permissionService as never as { hasLiveCanvasEvalWindowGrant: ReturnType<typeof vi.fn> })
-          .hasLiveCanvasEvalWindowGrant
+        (
+          deps.permissionService as never as {
+            hasLiveCanvasEvalWindowGrant: ReturnType<typeof vi.fn>
+          }
+        ).hasLiveCanvasEvalWindowGrant
       ).mock.calls[0]?.[0]
     ).toBe('canvas-1')
     expect(await pending).toBe(true)
@@ -2279,5 +2282,75 @@ describe('createApprovalOrchestration — AntiGravity shell approval parity', ()
     expect(deps.matchCommandRule).not.toHaveBeenCalled()
     expect(createCommandRuleOffer).not.toHaveBeenCalled()
     expect(order).toContain('registerGeminiTool')
+  })
+
+  it('host-destructive shell denies even at full_access + YOLO + allow', async () => {
+    for (const command of ['rm -rf /', 'ls && rm -rf /', 'shutdown now']) {
+      const order: string[] = []
+      const deps = makeDeps(order)
+      vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
+      setResolution(deps, order, { policy: 'allow', decision: 'allow' })
+      vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+        runId
+          ? {
+              runId,
+              appChatId: 'chat-1',
+              status: 'running',
+              state: {
+                appChatId: 'chat-1',
+                effectivePermissions: { presetId: 'full_access' }
+              }
+            }
+          : undefined) as never)
+
+      await expect(
+        createApprovalOrchestration(deps)(
+          sender,
+          'codex',
+          'shellCommands',
+          '/repo',
+          request({ preview: { command, params: { command } } })
+        )
+      ).resolves.toBe(false)
+      expect(order).toContain('audit:autoDeny:host_destructive')
+      expect(order).not.toContain('audit:autoAllow:session_yolo')
+      expect(order).not.toContain('registerGeminiTool')
+    }
+  })
+
+  it('ordinary in-workspace rm -rf is not the host-destructive deny-wall', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
+    setResolution(deps, order, { policy: 'allow', decision: 'allow' })
+    vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+      runId
+        ? {
+            runId,
+            appChatId: 'chat-1',
+            status: 'running',
+            state: {
+              appChatId: 'chat-1',
+              effectivePermissions: { presetId: 'full_access' }
+            }
+          }
+        : undefined) as never)
+
+    await expect(
+      createApprovalOrchestration(deps)(
+        sender,
+        'codex',
+        'shellCommands',
+        '/repo',
+        request({
+          preview: {
+            command: 'rm -rf node_modules',
+            params: { command: 'rm -rf node_modules' }
+          }
+        })
+      )
+    ).resolves.toBe(true)
+    expect(order).not.toContain('audit:autoDeny:host_destructive')
+    expect(order).toContain('audit:autoAllow:session_yolo')
   })
 })

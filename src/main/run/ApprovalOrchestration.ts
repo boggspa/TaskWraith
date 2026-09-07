@@ -20,6 +20,7 @@ import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
 import { shellCommandFromApprovalPreview } from '../ReadOnlyGitShellCommand'
 import { isIsolateSharedBranchHold } from '../IsolateSharedBranchHold'
 import { shellCommandTierHold } from '../ShellCommandTierPolicy'
+import { isHostDestructiveShellCommand } from '../shell-policy/HostDestructiveShellDeny'
 import { workspaceInspectionShellReason } from '../WorkspaceInspectionShell'
 import { workspaceInspectionProgramPlan } from '../WorkspaceInspectionProgram'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
@@ -406,9 +407,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       /** Main-only exact brokered-shell authority; never reconstructed from preview text. */
       commandRuleInput?: BrokeredCommandRuleInput
       onCommandRuleMatch?: (match: CommandRuleMatch) => void
-      createCommandRuleOffer?: (
-        receipt: ApprovalPromptReceipt
-      ) => ExactCommandRuleOfferView | null
+      createCommandRuleOffer?: (receipt: ApprovalPromptReceipt) => ExactCommandRuleOfferView | null
       discardCommandRuleOffer?: (approvalId: string) => void
       onWorkspaceInspectionMatch?: () => void
     }
@@ -567,7 +566,10 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
           ? 'explicit_user_request'
           : null)
       if (shellFastPathReason) {
-        if (shellFastPathReason === 'readonly_shell' || shellFastPathReason === 'inspection_shell') {
+        if (
+          shellFastPathReason === 'readonly_shell' ||
+          shellFastPathReason === 'inspection_shell'
+        ) {
           request.onWorkspaceInspectionMatch?.()
           workspaceInspectionAuditMetadata = {
             executionBoundary: 'brokered-direct-inspection',
@@ -631,6 +633,28 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         request,
         'autoDeny',
         'policy',
+        'request',
+        { policy, ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}) }
+      )
+      deps.safeSendToSender(sender, 'agent-error', {
+        provider,
+        error: agenticServiceBlockedMessage(service)
+      })
+      return false
+    }
+
+    if (
+      service === 'shellCommands' &&
+      isHostDestructiveShellCommand(shellCommandFromApprovalPreview(request.preview))
+    ) {
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoDeny',
+        'host_destructive',
         'request',
         { policy, ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}) }
       )

@@ -11,6 +11,8 @@ import type {
   AppSettings,
   EffectiveRunPermissions
 } from './store/types'
+import { shellCommandFromRawCommand } from './ReadOnlyGitShellCommand'
+import { isHostDestructiveShellCommand } from './shell-policy/HostDestructiveShellDeny'
 
 export { canonicalTaskWraithToolName } from './TaskWraithMcpTools'
 
@@ -160,9 +162,21 @@ export function resolveNativeApprovalPreflightDecision(args: {
    * reads auto-approve there by owner spec; writes keep the external-path ask.
    */
   externalPathReadAutoAllowed?: boolean
+  /**
+   * Raw native/broker shell command, when the service is shellCommands.
+   * Host-destructive shapes (disk wipe, power-off) deny before YOLO/grants.
+   */
+  shellCommand?: unknown
   effectivePermissions?: EffectiveRunPermissions
 }): Exclude<NativeApprovalPreflight, { kind: 'none' }> {
   const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = args.resolution
+  if (
+    isHostDestructiveShellCommand(
+      shellCommandFromRawCommand(args.shellCommand) ?? args.shellCommand
+    )
+  ) {
+    return { kind: 'deny', policy, effectivePermissions: args.effectivePermissions }
+  }
   if (
     args.readOnlyShellFastPath &&
     !args.neverAutoAllow &&

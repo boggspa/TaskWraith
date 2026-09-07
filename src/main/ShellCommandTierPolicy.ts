@@ -999,13 +999,23 @@ export interface ShellCommandTierHoldArgs {
  */
 export function shellCommandTierHold(args: ShellCommandTierHoldArgs): boolean {
   if (args.service !== 'shellCommands') return false
+  // Accept Edits / Full WS / Full Access authorize ordinary bash. Host-destructive
+  // commands are a hard deny at the orchestration/native preflight wall, not an
+  // ask-hold here. Isolate pinned-Shared remains a separate ask-hold.
+  if (
+    args.presetId === 'default' ||
+    args.presetId === 'workspace_write' ||
+    args.presetId === 'full_access'
+  ) {
+    return false
+  }
   const cmd = shellCommandFromRawCommand(args.shellCommand)
   if (cmd === null) return false
   if (isRemoteEgressShellCommand(cmd)) {
     // Inbound-fetch carve-out: the write tiers stop asking for a download that
     // only pulls bytes in and lands them at a named in-workspace path. Every
     // other egress shape — and any chain the proof cannot fully account for —
-    // still asks, at every tier.
+    // still asks, at every remaining (Ask/Plan) tier.
     if (args.presetId !== 'workspace_write' && args.presetId !== 'full_access') return true
     return !remoteEgressIsProvablyInboundFetch(cmd, args.workspacePath)
   }
