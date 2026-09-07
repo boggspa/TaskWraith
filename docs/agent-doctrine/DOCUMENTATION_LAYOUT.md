@@ -39,12 +39,14 @@ recalled from a public repository. Both have already happened here.
   construction rather than by anyone remembering.
 - **A family of related docs gets a subdirectory, not a flat name prefix.**
   `docs/agent-doctrine/`, `docs/how-to/`, `docs/security/`, `docs/refactors/`,
-  and `docs/performance/` are the pattern. The Channels proof family still
-  sits as `docs/channels-*.md` because `scripts/channels-p3-enabled-proof.cjs`
-  blob-pins those exact paths; `docs/channels/README.md` is the directory index
-  until a pin-aware move can land. A prefix family left flat without an index
-  reads as unrelated documents and cannot be published, ignored, or moved as a
-  unit.
+  `docs/performance/`, and `docs/channels/` are the pattern. The Channels proof
+  family used to sit as flat `docs/channels-*.md` files because
+  `scripts/channels-p3-enabled-proof.cjs` blob-pins those exact historical
+  paths; the proof now aliases them to `docs/channels/channels-p*.md`.
+  `CHANNEL_AGENT_REVIEW_RECORD` still names the acceptance-commit path so the
+  packaged gate identity stays byte-stable. A prefix family left flat without
+  an index reads as unrelated documents and cannot be published, ignored, or
+  moved as a unit.
 
 ## The publication test
 

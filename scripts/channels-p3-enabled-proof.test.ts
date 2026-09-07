@@ -13,6 +13,7 @@ interface EnabledProofModule {
   FLEET_WORKTREE_SOURCE_COMMIT: string
   MUSE_CHANNEL_REVIEW_COMMIT: string
   MUSE_DELTA_ACCEPTANCE_COMMIT: string
+  SECURITY_DESIGN_CONTENT_COMMIT: string
   MUSE_EFFORT_SOURCE_COMMIT: string
   MUSE_PROVIDER_COMMIT: string
   MUSE_ROSTER_REVIEW_COMMIT: string
@@ -20,6 +21,9 @@ interface EnabledProofModule {
   PACKAGED_FORBIDDEN_MARKERS: Record<string, string[]>
   PACKAGED_REQUIRED_MARKERS: Record<string, string[]>
   PACKAGE_PROVENANCE_COMMIT: string
+  PINNED_DOC_PATH_ALIASES: Map<string, string>
+  currentPinnedDocPath(historicalPath: string): string
+  rewriteMarkdownLinksOneDirectoryDeeper(text: string): string
   parseArgs(argv: string[]): {
     evidencePath: string
     packageInput: string
@@ -112,6 +116,15 @@ describe('Channels P3 enabled proof harness', () => {
       ])
     ).toMatchObject({ protectedChangeCount: 8 })
 
+    expect(
+      proof.verifyProtectedChanges([
+        'docs/channels/channels-p3-adversarial-review.md',
+        'docs/channels/channels-p3-security-design.md',
+        'docs/channels/channels-p3-muse-delta-review.md',
+        'src/main/SubThreadEphemeralFleet.ts'
+      ])
+    ).toMatchObject({ protectedChangeCount: 3 })
+
     expect(() =>
       proof.verifyProtectedChanges(['src/shared/collaboration/ChannelAgentProtocol.ts'])
     ).toThrow('protected review boundary changed')
@@ -160,6 +173,31 @@ describe('Channels P3 enabled proof harness', () => {
     }
   })
 
+  it('aliases P3 review records into docs/channels/ without changing acceptance identity', () => {
+    expect(proof.currentPinnedDocPath('docs/channels-p3-adversarial-review.md')).toBe(
+      'docs/channels/channels-p3-adversarial-review.md'
+    )
+    expect(proof.currentPinnedDocPath('docs/channels-p3-security-design.md')).toBe(
+      'docs/channels/channels-p3-security-design.md'
+    )
+    expect(proof.currentPinnedDocPath('docs/channels-p3-muse-delta-review.md')).toBe(
+      'docs/channels/channels-p3-muse-delta-review.md'
+    )
+    expect(proof.PINNED_DOC_PATH_ALIASES.get('docs/channels-p3-adversarial-review.md')).toBe(
+      'docs/channels/channels-p3-adversarial-review.md'
+    )
+    expect(
+      proof.rewriteMarkdownLinksOneDirectoryDeeper(
+        'See [`Gate`](../src/shared/collaboration/ChannelAgentReviewGate.ts).'
+      )
+    ).toBe('See [`Gate`](../../src/shared/collaboration/ChannelAgentReviewGate.ts).')
+    expect(
+      proof.rewriteMarkdownLinksOneDirectoryDeeper(
+        '[`channels-p3-security-design.md`](channels-p3-security-design.md)'
+      )
+    ).toBe('[`channels-p3-security-design.md`](channels-p3-security-design.md)')
+  })
+
   it('pins the reviewed, accepted, and enabled commit chain', () => {
     expect(proof.ACCEPTED_CANDIDATE).toBe('b0f4d84e1fd84e2312f8375dcf7e6fc2d4ee63e4')
     expect(proof.ACCEPTANCE_COMMIT).toBe('92ad1e98259a95377b78c689b586e5e9f8d120d0')
@@ -172,6 +210,9 @@ describe('Channels P3 enabled proof harness', () => {
     expect(proof.MUSE_ROSTER_REVIEW_COMMIT).toBe('ac6c7a552a074ebfa76e36af4a4a0d97fc90f834')
     expect(proof.MUSE_EFFORT_SOURCE_COMMIT).toBe('c22f159432f8e380fe9ad4b6c66e8140415c72fd')
     expect(proof.MUSE_DELTA_ACCEPTANCE_COMMIT).toBe('aa94e20c4a9e8db3010c15748b19776303d47a5e')
+    expect(proof.SECURITY_DESIGN_CONTENT_COMMIT).toBe(
+      'c2181f2ab32645c02792d880681394622b32e292'
+    )
   })
 
   it('runs one real production dispatch and verifies its signed post after restart', () => {

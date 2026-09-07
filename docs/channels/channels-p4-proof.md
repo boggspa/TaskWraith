@@ -20,10 +20,10 @@ type failures.
   relay readiness, and an independently verified Channel credential. It never
   projects People ids, source policy, room ids without a usable credential, or
   a retired token.
-- [`PeopleToChannelMigrationFinalizationProductionRunner.ts`](../src/main/collaboration/PeopleToChannelMigrationFinalizationProductionRunner.ts)
+- [`PeopleToChannelMigrationFinalizationProductionRunner.ts`](../../src/main/collaboration/PeopleToChannelMigrationFinalizationProductionRunner.ts)
   executes additive soak plus finalization before startup creates a Channel
   bootstrap. It carries the same closed legacy-write gate into the later
-  [`HumanCollaborationStore`](../src/main/collaboration/HumanCollaborationStore.ts),
+  [`HumanCollaborationStore`](../../src/main/collaboration/HumanCollaborationStore.ts),
   so ordinary People writes cannot reopen after the committed receipt.
 - Finalization persists the encrypted delta before recovery fencing, replays
   logs and policies idempotently, rotates terminal admissions, retires exactly

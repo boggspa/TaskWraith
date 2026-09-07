@@ -55,15 +55,15 @@ data model.
 
 | Current People component | P1 treatment |
 | --- | --- |
-| [`HumanCollaborationCipher`](../src/shared/collaboration/HumanCollaborationCipher.ts) and [`HumanCollaborationKeySchedule`](../src/shared/collaboration/HumanCollaborationKeySchedule.ts) | Reuse pairwise E2EE, fresh ephemeral keys, transcript signatures, and SAS derivation unchanged. There is one independent encrypted session per member room. |
-| [`HumanCollaborationIdentityStore`](../src/main/collaboration/HumanCollaborationIdentityStore.ts) | Reuse the persisted human identity key and pinned-key reconnect rule. A member id never substitutes for proof of the pinned key. |
-| [`HumanContributionRules`](../src/main/collaboration/HumanContributionRules.ts) | Reuse fail-closed normalization and the existing 8,000-byte contribution bound as design inputs. P1 admits only the human text append capability; host-action requests and provider dispatch are absent. |
-| [`HumanCollaborationAuditLog`](../src/main/collaboration/HumanCollaborationAuditLog.ts) | Reuse bounded, redacted audit conventions for admission, rejection, revocation, recovery, and protocol errors. The audit log is not the Channel message log. |
-| [`secretRedaction`](../src/shared/secretRedaction.ts) and the path scrubber in [`HumanShareProjection`](../src/main/collaboration/HumanShareProjection.ts) | Reuse before content becomes a committed outbound Channel record. Raw secrets and host paths are neither persisted in the Channel log nor fanned out. |
-| [`HumanCollaborationHostTransport`](../src/main/collaboration/HumanCollaborationHostTransport.ts) | Keep one host `mac` seat paired with one remote `iphone` seat per room, reconnect backoff, and bounded frames. Replace the single-share projection routing with channel/member routing and N-room fan-out. |
-| [`HumanCollaborationStore`](../src/main/collaboration/HumanCollaborationStore.ts) | Do not extend the share snapshot into Channels. Replace it with Channel and Member metadata plus a separate append-log owner. |
+| [`HumanCollaborationCipher`](../../src/shared/collaboration/HumanCollaborationCipher.ts) and [`HumanCollaborationKeySchedule`](../../src/shared/collaboration/HumanCollaborationKeySchedule.ts) | Reuse pairwise E2EE, fresh ephemeral keys, transcript signatures, and SAS derivation unchanged. There is one independent encrypted session per member room. |
+| [`HumanCollaborationIdentityStore`](../../src/main/collaboration/HumanCollaborationIdentityStore.ts) | Reuse the persisted human identity key and pinned-key reconnect rule. A member id never substitutes for proof of the pinned key. |
+| [`HumanContributionRules`](../../src/main/collaboration/HumanContributionRules.ts) | Reuse fail-closed normalization and the existing 8,000-byte contribution bound as design inputs. P1 admits only the human text append capability; host-action requests and provider dispatch are absent. |
+| [`HumanCollaborationAuditLog`](../../src/main/collaboration/HumanCollaborationAuditLog.ts) | Reuse bounded, redacted audit conventions for admission, rejection, revocation, recovery, and protocol errors. The audit log is not the Channel message log. |
+| [`secretRedaction`](../../src/shared/secretRedaction.ts) and the path scrubber in [`HumanShareProjection`](../../src/main/collaboration/HumanShareProjection.ts) | Reuse before content becomes a committed outbound Channel record. Raw secrets and host paths are neither persisted in the Channel log nor fanned out. |
+| [`HumanCollaborationHostTransport`](../../src/main/collaboration/HumanCollaborationHostTransport.ts) | Keep one host `mac` seat paired with one remote `iphone` seat per room, reconnect backoff, and bounded frames. Replace the single-share projection routing with channel/member routing and N-room fan-out. |
+| [`HumanCollaborationStore`](../../src/main/collaboration/HumanCollaborationStore.ts) | Do not extend the share snapshot into Channels. Replace it with Channel and Member metadata plus a separate append-log owner. |
 | `HumanShareProjection` | Do not reuse. A trimmed view of a host chat is the wrong primitive for mutually visible Channel history. |
-| [`relay/src/server.ts`](../relay/src/server.ts) | No change. It remains a blind two-seat forwarder with single occupancy per role and a 1 MiB frame ceiling. |
+| [`relay/src/server.ts`](../../relay/src/server.ts) | No change. It remains a blind two-seat forwarder with single occupancy per role and a 1 MiB frame ceiling. |
 
 The existing People flow remains operational and unchanged until P4. P1 code
 must live beside it, not dual-write People shares into an unfinished Channel
@@ -363,7 +363,7 @@ Before launching apps, automated tests cover:
 12. no Channel record entering any provider history serializer.
 
 The existing in-memory relay pattern in
-[`HumanCollaborationTransport.integration.test.ts`](../src/main/collaboration/HumanCollaborationTransport.integration.test.ts)
+[`HumanCollaborationTransport.integration.test.ts`](../../src/main/collaboration/HumanCollaborationTransport.integration.test.ts)
 is the donor harness, extended to two independent member rooms. It is not P0
 evidence.
 

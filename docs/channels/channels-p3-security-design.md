@@ -7,7 +7,7 @@ risks are recorded in
 Production agent participation is **ENABLED** and has been since 2026-08-10.
 The enable slice `191e5e37d` landed ten minutes after the acceptance commit
 `92ad1e982`, and `e0d7d1be4` retained the review provenance in the package.
-[`ChannelAgentReviewGate.ts`](../src/shared/collaboration/ChannelAgentReviewGate.ts)
+[`ChannelAgentReviewGate.ts`](../../src/shared/collaboration/ChannelAgentReviewGate.ts)
 now reads `status: 'accepted'` with `participationEnabled: true`, and its
 `acceptanceRecord` names this review record. The capability shipped in 1.9.5.
 The enable slice's own proof lives in `scripts/channels-p3-enabled-proof.cjs`;
@@ -97,7 +97,7 @@ and audit remain authoritative inside that boundary.
 
 ## Signed protocol
 
-[`ChannelAgentProtocol.ts`](../src/shared/collaboration/ChannelAgentProtocol.ts)
+[`ChannelAgentProtocol.ts`](../../src/shared/collaboration/ChannelAgentProtocol.ts)
 defines four strict version-1 objects. Every parser rejects unknown keys,
 non-canonical base64, controls or surrounding whitespace in identifiers,
 unsorted set-like arrays, unsafe numbers, invalid hashes, and malformed time

@@ -14,8 +14,8 @@ provider dispatch.
 | Durable-authority commit | `f2b88a2cfaf1968fa52735e054276a70552726ad` |
 | Encrypted-runtime commit | `a188c8503b726c31967d78a610fa91620a849b37` |
 | Process-harness/source commit | `896bd89143a485721ed9b185322545e4cfb32442` |
-| Harness | [`scripts/channels-p1-proof.cjs`](../scripts/channels-p1-proof.cjs) |
-| Worker | [`scripts/channels-p1-proof-worker.ts`](../scripts/channels-p1-proof-worker.ts) |
+| Harness | [`scripts/channels-p1-proof.cjs`](../../scripts/channels-p1-proof.cjs) |
+| Worker | [`scripts/channels-p1-proof-worker.ts`](../../scripts/channels-p1-proof-worker.ts) |
 | Local evidence | `.local-only/channels-p1-proof-evidence.json`, deliberately gitignored and mode `0600` |
 
 The evidence file records fingerprints and content hashes, never invite tokens,

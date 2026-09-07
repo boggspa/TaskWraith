@@ -16,9 +16,9 @@ membership, provider dispatch, macOS DOM automation, or a new two-Mac run.
 | P0 prerequisite           | User attestation: the existing People flow passed between two real Macs on unrelated networks on 2026-08-09. |
 | P1 proof                  | [`channels-p1-proof.md`](channels-p1-proof.md)                                                               |
 | P2 process-harness commit | `fa5a638c4c94ffb5462bde553d7fbcce0f15e458`                                                                   |
-| Harness                   | [`scripts/channels-p2-proof.cjs`](../scripts/channels-p2-proof.cjs)                                          |
-| Worker                    | [`scripts/channels-p2-proof-worker.ts`](../scripts/channels-p2-proof-worker.ts)                              |
-| Harness tests             | [`scripts/channels-p2-proof.test.ts`](../scripts/channels-p2-proof.test.ts)                                  |
+| Harness                   | [`scripts/channels-p2-proof.cjs`](../../scripts/channels-p2-proof.cjs)                                          |
+| Worker                    | [`scripts/channels-p2-proof-worker.ts`](../../scripts/channels-p2-proof-worker.ts)                              |
+| Harness tests             | [`scripts/channels-p2-proof.test.ts`](../../scripts/channels-p2-proof.test.ts)                                  |
 | Packaged artifact         | `dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Resources/app.asar`                                      |
 | Package size / SHA-256    | 125,132,538 bytes / `f85a5ef33afdf05c8e918d128cd245af1648f5b9153912ab0bebbce3e8d9c55e`                       |
 | Worker size / SHA-256     | 415,784 bytes / `8a2d73cc52bd67e00eb94d6037de3639a2679a5c41708bfd13c17b57ae6f3ca4`                           |

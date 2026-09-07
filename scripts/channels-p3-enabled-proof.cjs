@@ -34,6 +34,8 @@ const MUSE_SETTINGS_COMPLETENESS_COMMIT = '63d5985665a21c89c28cabd6bc37432e4ca99
 const MUSE_ROSTER_REVIEW_COMMIT = 'ac6c7a552a074ebfa76e36af4a4a0d97fc90f834'
 const MUSE_EFFORT_SOURCE_COMMIT = 'c22f159432f8e380fe9ad4b6c66e8140415c72fd'
 const MUSE_DELTA_ACCEPTANCE_COMMIT = 'aa94e20c4a9e8db3010c15748b19776303d47a5e'
+/** Last content commit of the P3 security-design record before the family move. */
+const SECURITY_DESIGN_CONTENT_COMMIT = 'c2181f2ab32645c02792d880681394622b32e292'
 
 const PACKAGED_REQUIRED_MARKERS = {
   main: [
@@ -105,6 +107,22 @@ const ENABLE_TRANSITION_FILES = [
   'src/shared/collaboration/ChannelAgentReviewGate.ts'
 ]
 
+/** Historical path at the pin commit → current path at HEAD after the family move. */
+const PINNED_DOC_PATH_ALIASES = new Map([
+  ['docs/channels-p3-adversarial-review.md', 'docs/channels/channels-p3-adversarial-review.md'],
+  ['docs/channels-p3-security-design.md', 'docs/channels/channels-p3-security-design.md'],
+  ['docs/channels-p3-muse-delta-review.md', 'docs/channels/channels-p3-muse-delta-review.md']
+])
+
+function currentPinnedDocPath(historicalPath) {
+  return PINNED_DOC_PATH_ALIASES.get(historicalPath) || historicalPath
+}
+
+/** The only allowed body delta for a pinned review record that moved one directory deeper. */
+function rewriteMarkdownLinksOneDirectoryDeeper(text) {
+  return text.replace(/\]\(\.\.\//g, '](../../')
+}
+
 const POST_ACCEPTANCE_PROTECTED_PINS = new Map([
   ['src/shared/collaboration/ChannelAgentReviewGate.test.ts', PACKAGE_PROVENANCE_COMMIT],
   ['src/shared/collaboration/ChannelAgentReviewGate.ts', PACKAGE_PROVENANCE_COMMIT],
@@ -132,6 +150,7 @@ const PROTECTED_BLOB_PINS = new Map([
 
 const ALLOWED_PROTECTED_CHANGES = new Set([
   ...PROTECTED_BLOB_PINS.keys(),
+  ...PINNED_DOC_PATH_ALIASES.values(),
   'docs/channels-p3-adversarial-review.md',
   'docs/channels-p3-security-design.md',
   'scripts/channels-p3-enabled-proof.cjs',
@@ -212,6 +231,7 @@ function isProtectedBoundaryPath(file) {
     /^src\/renderer\/src\/components\/Channel(?:Agent|Host|Member)/.test(file) ||
     /^scripts\/channels-p[23]-/.test(file) ||
     /^docs\/channels-p3-/.test(file) ||
+    /^docs\/channels\/channels-p3-/.test(file) ||
     file === 'src/main/services/ComposerService.ts' ||
     file === 'src/main/RunEventBus.ts' ||
     file === 'src/main/RunManager.ts' ||
@@ -270,6 +290,25 @@ function blobId(commit, file) {
   }).trim()
 }
 
+function gitShowText(commit, file) {
+  return execFileSync('git', ['show', `${commit}:${file}`], {
+    cwd: ROOT,
+    encoding: 'utf8'
+  })
+}
+
+function assertPinnedBlob(candidateCommit, historicalPath, expectedCommit) {
+  const currentPath = currentPinnedDocPath(historicalPath)
+  const pinned = blobId(expectedCommit, historicalPath)
+  const current = blobId(candidateCommit, currentPath)
+  if (current === pinned) return
+  assertProof(
+    gitShowText(candidateCommit, currentPath) ===
+      rewriteMarkdownLinksOneDirectoryDeeper(gitShowText(expectedCommit, historicalPath)),
+    `protected boundary file changed after ${expectedCommit}: ${historicalPath}`
+  )
+}
+
 function verifyProtectedBoundary(candidateCommit) {
   const changedFiles = execFileSync(
     'git',
@@ -290,20 +329,18 @@ function verifyProtectedBoundary(candidateCommit) {
   )
   const summary = verifyProtectedChanges(changedFiles, rootDiffs)
   for (const [file, expectedCommit] of PROTECTED_BLOB_PINS) {
-    assertProof(
-      blobId(candidateCommit, file) === blobId(expectedCommit, file),
-      `protected boundary file changed after ${expectedCommit}: ${file}`
-    )
+    assertPinnedBlob(candidateCommit, file, expectedCommit)
   }
-  for (const file of [
+  assertPinnedBlob(
+    candidateCommit,
     'docs/channels-p3-adversarial-review.md',
-    'docs/channels-p3-security-design.md'
-  ]) {
-    assertProof(
-      blobId(candidateCommit, file) === blobId(ACCEPTANCE_COMMIT, file),
-      `accepted review record changed after ${ACCEPTANCE_COMMIT}: ${file}`
-    )
-  }
+    ACCEPTANCE_COMMIT
+  )
+  assertPinnedBlob(
+    candidateCommit,
+    'docs/channels-p3-security-design.md',
+    SECURITY_DESIGN_CONTENT_COMMIT
+  )
   return {
     ...summary,
     reviewedFrom: ACCEPTED_CANDIDATE,
@@ -568,6 +605,7 @@ module.exports = {
   FLEET_WORKTREE_SOURCE_COMMIT,
   MUSE_CHANNEL_REVIEW_COMMIT,
   MUSE_DELTA_ACCEPTANCE_COMMIT,
+  SECURITY_DESIGN_CONTENT_COMMIT,
   MUSE_EFFORT_SOURCE_COMMIT,
   MUSE_PROVIDER_COMMIT,
   MUSE_ROSTER_REVIEW_COMMIT,
@@ -575,7 +613,10 @@ module.exports = {
   PACKAGED_FORBIDDEN_MARKERS,
   PACKAGED_REQUIRED_MARKERS,
   PACKAGE_PROVENANCE_COMMIT,
+  PINNED_DOC_PATH_ALIASES,
+  currentPinnedDocPath,
   parseArgs,
+  rewriteMarkdownLinksOneDirectoryDeeper,
   runMission,
   verifyPackagedGroups,
   verifyProtectedChanges
