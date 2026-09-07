@@ -124,6 +124,7 @@ import type {
 import { resolveEnsembleFanoutIsolationPolicy } from '../store/types'
 import { ChatTranscriptMutationAuthor } from '../store/ChatTranscriptMutationAuthoring'
 import type { AuthoredChatTranscriptMutation } from '../store/ChatRecordMutation'
+import { mapPreserveIdentity } from '../store/EnsembleStreamChatApply'
 import {
   coalesceSeatChangeMessages,
   coalesceSeatParticipantAddedMessages,
@@ -20015,7 +20016,7 @@ export class EnsembleOrchestrator {
         : holdingOwnedFanoutTranscript
           ? 'running'
           : run.status
-    let messages = [...chat.messages]
+    let messages = chat.messages
     const existingMessageById = new Map(messages.map((message) => [message.id, message]))
 
     // Timeline-driven materialisation. Each entry in `run.timeline`
@@ -20362,7 +20363,7 @@ export class EnsembleOrchestrator {
       Boolean(run.promptShellStamp) &&
       isDynamicStateReceiptTerminalStatus(run.status)
 
-    const runs = chat.runs.map((existingRun) => {
+    const runs = mapPreserveIdentity(chat.runs, (existingRun) => {
       if (existingRun.runId !== run.runId) return existingRun
       const next: ChatRun = {
         ...existingRun,
@@ -20398,15 +20399,14 @@ export class EnsembleOrchestrator {
       } else {
         delete next.ensembleTerminalReason
       }
-      return next
+      return plainDataEqual(next, existingRun) ? existingRun : next
     })
 
     const persistProviderSession =
       this.deps.shouldPersistProviderSessionForRun?.(run.runId) !== false
     const shouldMergeTerminalTokenTotals = effectiveFinal && !run.terminalTokenTotalsApplied
     const priorParticipants = chat.ensemble.participants || []
-    let participantsChanged = false
-    const participants = priorParticipants.map((participant) => {
+    const nextParticipants = mapPreserveIdentity(priorParticipants, (participant) => {
       if (participant.id !== run.participant.id) return participant
       const tokenTotals = shouldMergeTerminalTokenTotals
         ? mergeTokenTotals(participant.tokenTotals, run.stats)
@@ -20428,11 +20428,8 @@ export class EnsembleOrchestrator {
       } else if (shouldPersistDynamicStateReceipt) {
         next.promptDynamicStateVersion = run.promptDynamicStateVersion
       }
-      if (plainDataEqual(next, participant)) return participant
-      participantsChanged = true
-      return next
+      return plainDataEqual(next, participant) ? participant : next
     })
-    const nextParticipants = participantsChanged ? participants : priorParticipants
     const projectedParticipantRun = runs.find((existingRun) => existingRun.runId === run.runId)
     const participantRound = run.preserveParticipantRoundStatus
       ? chat.ensemble.activeRound
