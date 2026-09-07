@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AGENTIC_SERVICE_LABELS } from '../../../shared/agenticServiceLabels'
 import { devinDefaultReasoningEffort } from '../../../shared/devinModelCatalog'
+import { resolveOllamaComposerReasoningEffort } from '../../../shared/ollamaReasoning'
 import { trustedSessionRuntimeProfileForRequest } from '../../../shared/trustedSessionRuntimeProfile'
 import { planTrustedSessionElevation } from '../lib/trustedSessionElevation'
 import { createWindowDragSession } from '../lib/windowDragSession'
@@ -4030,11 +4031,22 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               effectiveSelectedModel,
                               effectiveModelOptionsRaw
                             )
+                            const healedOllamaReasoning = resolveOllamaComposerReasoningEffort(
+                              effectiveSelectedModel,
+                              effectiveOllamaReasoning
+                            )
                             combinedSelectedReasoning = combinedReasoningOptions.some(
                               (option) => option.value === effectiveOllamaReasoning
                             )
                               ? effectiveOllamaReasoning
-                              : combinedReasoningOptions.filter((o) => o.value !== 'ultraTask').at(-1)?.value || combinedReasoningOptions[0]?.value || ''
+                              : combinedReasoningOptions.some(
+                                    (option) => option.value === healedOllamaReasoning
+                                  )
+                                ? healedOllamaReasoning
+                                : combinedReasoningOptions.filter((o) => o.value !== 'ultraTask')
+                                    .at(-1)?.value ||
+                                  combinedReasoningOptions[0]?.value ||
+                                  ''
                           } else if (
                             effectiveProvider === 'grok' &&
                             isGrokReasoningModelId(effectiveSelectedModel)
@@ -4288,11 +4300,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                             }
                             if (effectiveProvider === 'ollama') {
-                              const nextReasoning = getEnsembleReasoningOptions(
-                                'ollama',
-                                nextModel,
-                                effectiveModelOptionsRaw.find((model) => model.id === nextModel)
-                              ).at(-1)?.value || ''
+                              const nextReasoning =
+                                resolveReasoningEffortForSeatChange({
+                                  provider: 'ollama',
+                                  model: nextModel,
+                                  previousEffort: effectiveOllamaReasoning,
+                                  modelMetadata: effectiveModelOptionsRaw.find(
+                                    (model) => model.id === nextModel
+                                  )
+                                }) || ''
                               if (shouldUpdateLiveComposerState) {
                                 setOllamaReasoningEffort(nextReasoning)
                               }
