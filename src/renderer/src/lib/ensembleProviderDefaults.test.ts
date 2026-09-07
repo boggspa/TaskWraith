@@ -386,6 +386,29 @@ describe('resolveReasoningEffortForSeatChange', () => {
   it('keeps an effort that remains enabled and otherwise snaps to the nearest ladder stop', () => {
     expect(
       resolveReasoningEffortForSeatChange({
+        provider: 'ollama',
+        model: 'deepseek-v4-pro:cloud',
+        previousEffort: 'max'
+      })
+    ).toBe('max')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'ollama',
+        model: 'deepseek-v4-pro:cloud',
+        previousEffort: 'on'
+      })
+    ).toBe('high')
+    expect(
+      resolveEnsembleParticipantSettings(
+        participant({
+          provider: 'ollama',
+          model: 'deepseek-v4-pro:cloud',
+          reasoningEffort: 'max'
+        })
+      ).reasoningEffort
+    ).toBe('max')
+    expect(
+      resolveReasoningEffortForSeatChange({
         provider: 'codex',
         model: 'gpt-5.5',
         previousEffort: 'high'

@@ -38,7 +38,10 @@ import {
   KIMI_DEFAULT_MODELS,
   type CodexModelOption
 } from './providerModelDefaults'
-import { resolveOllamaReasoningSupport } from '../../../shared/ollamaReasoning'
+import {
+  normalizeOllamaReasoningEffort,
+  resolveOllamaReasoningSupport
+} from '../../../shared/ollamaReasoning'
 import { resolvePiReasoningSupport } from '../../../shared/piReasoning'
 import {
   CURSOR_GROK_46_BASE_MODEL_ID,
@@ -1179,6 +1182,26 @@ export function resolveReasoningEffortForSeatChange(options: {
 
   const exactPrevious = resolveEnabledEffortToken(normalizedPrevious, enabled)
   if (exactPrevious) return exactPrevious === 'ultratask' ? 'ultraTask' : exactPrevious
+
+  if (provider === 'ollama') {
+    // Boolean `on` shares EFFORT_LADDER_RANK 1 with `low`. Nearest-stop
+    // snapping therefore rewrote DeepSeek V4 Cloud Max/On onto Low. Fold
+    // through the vendor ladder first so Max stays Max and On becomes the
+    // model default (high), not Light.
+    const healed = normalizeOllamaReasoningEffort(
+      previousEffort,
+      resolveOllamaReasoningSupport({
+        modelId: model,
+        ...(metadata && Array.isArray(metadata.capabilities)
+          ? { capabilities: metadata.capabilities }
+          : {})
+      })
+    )
+    const healedToken = healed ? normalizeReasoningEffortToken(healed) : ''
+    if (healedToken && enabled.includes(healedToken)) {
+      return healedToken === 'ultratask' ? 'ultraTask' : healedToken
+    }
+  }
 
   const previousRank = effortLadderRank(normalizedPrevious, provider)
   if (previousRank != null) {
