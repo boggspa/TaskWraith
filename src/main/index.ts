@@ -10743,7 +10743,9 @@ function reconcileStaleChatRunsProjection(
   settleOrphanedRunQueueJobsProjection(fencedForErasure)
   const nowIso = new Date().toISOString()
   const sourceChats =
-    options.scope === 'open-runs' ? AppStore.getChatsWithOpenRuns() : AppStore.getChats()
+    options.scope === 'open-runs'
+      ? AppStore.getChatsWithOpenRuns()
+      : AppStore.getChatsForStaleRunSweep()
   const { chats, settlements, terminalRecoveries } = reconcileStaleChatRuns(
     sourceChats.filter((chat) => !fencedForErasure(chat)),
     isChatRunLive,

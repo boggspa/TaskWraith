@@ -388,6 +388,7 @@ import {
   type ChatComposerSelectionPatchRequest
 } from '../../shared/chatComposerSelectionPatch'
 import { chatHasReconcilableRun } from '../ChatRunReconciler'
+import { selectOpenRunCandidateChatIds } from './OpenRunChatCandidates'
 import { ChatListIndexStore } from './ChatListIndexStore'
 import {
   CHAT_RECORD_CACHE_MAX_BYTES,
@@ -6277,6 +6278,74 @@ export class AppStore {
         continue
       }
       chats.push(chat)
+    }
+    return chats.sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  /**
+   * Source records for the stale-run reconciler's whole-corpus sweep.
+   *
+   * `getChats()` reads and parses EVERY chat record. Measured on Chris's
+   * profile 2026-09-07: 1058MB across 509 files parsed on the main thread,
+   * pre-window, to reach unsettled runs on 6 chats -- the bulk of the
+   * multi-minute boot stall. `openRunChatIds` cannot narrow it here because
+   * that set is only populated as records enter the cache, so it is empty on
+   * the boot pass this exists for.
+   *
+   * The index row carries the exact mtime+size its counts were derived from,
+   * and `ChatListIndexStore.writeEntry` writes that row's `runsSummary` side
+   * file in the same call from the same item -- so a row that vouches for the
+   * record on disk vouches for its sibling summary too. A vouched summary
+   * whose runs have all ended cannot hold anything to reconcile.
+   *
+   * Narrowing only, never a substitute predicate: candidates take the
+   * unchanged canonical read and `reconcileStaleChatRuns` still decides on
+   * real bytes. Every uncertainty widens the set (see
+   * `selectOpenRunCandidateChatIds`), and an unreadable index or listing
+   * abandons the narrowing altogether rather than sweeping a partial corpus:
+   * a missed candidate strands a run with nothing left to settle it.
+   */
+  static getChatsForStaleRunSweep(): ChatRecord[] {
+    let index: Record<string, ChatListItem>
+    try {
+      index = chatListIndexStore.readAll()
+    } catch {
+      return this.getChats()
+    }
+    if (!fs.existsSync(chatsDir)) return []
+    let chatIds: string[]
+    try {
+      chatIds = fs
+        .readdirSync(chatsDir)
+        .filter((name) => name.endsWith('.json'))
+        .map((name) => name.slice(0, -'.json'.length))
+    } catch {
+      return this.getChats()
+    }
+    const candidates = selectOpenRunCandidateChatIds(chatIds, {
+      vouchesForSourceBytes: (chatId) => {
+        const indexed = index[chatId]
+        if (!indexed) return false
+        try {
+          return this.chatListItemMatchesSource(
+            indexed,
+            fs.statSync(path.join(chatsDir, `${chatId}.json`))
+          )
+        } catch {
+          return false
+        }
+      },
+      readRunsSummary: (chatId) => {
+        const indexed = index[chatId]
+        return Array.isArray(indexed?.runsSummary) ? indexed.runsSummary : null
+      }
+    })
+    this.ensureOrphanSubThreadsReaped()
+    const chats: ChatRecord[] = []
+    for (const chatId of candidates) {
+      if (this.orphanSubThreadReapCandidates.has(chatId)) continue
+      const chat = this.readChatRecordCached(chatId, path.join(chatsDir, `${chatId}.json`))
+      if (chat) chats.push(chat)
     }
     return chats.sort((a, b) => b.updatedAt - a.updatedAt)
   }
