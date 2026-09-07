@@ -86,6 +86,22 @@ async function providerStateFixture() {
     writeFile(join(workspace, 'src', 'main.ts'), 'const permission = true\nconst other = 1\n'),
     // The three reads that stalled behind an approval card, by their real shapes.
     writeFile(join(cliStep, 'output.txt'), 'step output'),
+    // Same allowlisted shape, but carrying secrets. Measured 2026-09-07: 102 of
+    // 9,190 real `steps/N/output.txt` files hold Authorization/Bearer material,
+    // including TaskWraith's own hook bearer token and a GitHub PAT-shaped
+    // string. Synthetic stand-ins here; the shapes are what matter.
+    writeFile(
+      join(cliStep, 'output-bearer.txt'),
+      'ran: curl -H "Authorization: Bearer aaaaaaaaaaaaaaaaaaaa" https://example.test\n'
+    ),
+    writeFile(
+      join(cliStep, 'output-hook-token.txt'),
+      'hook cmd: -H \'X-TaskWraith-Hook-Token: 0123456789abcdef0123456789abcdef\'\n'
+    ),
+    writeFile(
+      join(cliStep, 'output-pat.txt'),
+      'echoed env: GITHUB_TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n'
+    ),
     writeFile(join(cli, 'mcp', 'TaskWraith', 'ensemble_yield.json'), '{"yield":true}'),
     writeFile(join(agyScratch, 'fix_docs.js'), 'module.exports = {}'),
     writeFile(join(cli, 'log', 'cli-20260907_160115.log'), 'log line'),
@@ -316,6 +332,36 @@ describe('WorkspaceInspectionShell', () => {
         })
       ).toBeNull()
     })
+
+    it.skipIf(!isPosixHost)(
+      'cards an allowlisted file that carries credentials',
+      async () => {
+        // The path allowlist was scoped against the account address, which lives
+        // in `log` and is correctly excluded. But the GRANTED `brain` subtree
+        // carries the credentials themselves — and in the one file shape the
+        // grant exists to serve, `steps/N/output.txt`. Path alone cannot
+        // separate them, so content decides whether THIS file is handed over.
+        const { workspace, home, cliStep } = await providerStateFixture()
+        process.env.HOME = home
+        for (const name of ['output-bearer.txt', 'output-hook-token.txt', 'output-pat.txt']) {
+          expect(
+            workspaceInspectionShellReason(`cat ${join(cliStep, name)}`, {
+              workspacePath: workspace,
+              cwd: workspace
+            })
+          ).toBeNull()
+        }
+        // Not a refusal — the read falls back to the ordinary approval card, so
+        // the user still decides. The clean sibling in the same directory is
+        // untouched, which is what keeps the capability worth having.
+        expect(
+          workspaceInspectionShellReason(`cat ${join(cliStep, 'output.txt')}`, {
+            workspacePath: workspace,
+            cwd: workspace
+          })
+        ).toBe('inspection_shell')
+      }
+    )
 
     it.skipIf(!isPosixHost)(
       'keeps the three stalled provider working-state reads prompt-free',

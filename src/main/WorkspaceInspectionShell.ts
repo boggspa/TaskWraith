@@ -582,6 +582,78 @@ function promptFreeOutsideReadRoots(): readonly string[] | null {
  * - anything unresolvable (missing path, unreadable parent, unresolvable home)
  *   keeps its card.
  */
+/**
+ * Bytes scanned for credential material before an outside-workspace read is
+ * allowed to skip its approval card. Measured 2026-09-07 on this host's
+ * `~/.gemini/antigravity-cli/brain`: 9,190 `steps/N/output.txt` files, median
+ * 1.9 KB and p95 25 KB, so this ceiling reads the whole of all but a handful
+ * and bounds the worst case rather than the common one.
+ */
+const OUTSIDE_READ_CREDENTIAL_SCAN_BYTES = 256 * 1024
+
+/**
+ * Secret shapes that disqualify a file from the prompt-free outside-workspace
+ * read tier.
+ *
+ * The allowlist above was scoped against the wrong datum. Its comment excludes
+ * the `log` subtrees because those carry the signed-in account address — true,
+ * and that exclusion does hold — but the granted `brain` subtree turned out to
+ * carry the credentials themselves: on 2026-09-07, 102 of 9,190
+ * `steps/N/output.txt` files held `Authorization`/`Bearer` material, including
+ * TaskWraith's own hook bearer token and a GitHub PAT-shaped string. That file
+ * shape is exactly the stalled lane read the grant exists to serve, so the
+ * grant cannot be narrowed by path without giving the capability back.
+ *
+ * A path allowlist answers "where may a read point"; this answers "is THIS
+ * file safe to hand over without asking". A match is not a refusal — the read
+ * falls back to the ordinary approval card, so the user still decides.
+ */
+const OUTSIDE_READ_CREDENTIAL_PATTERNS: readonly RegExp[] = [
+  // TaskWraith's own hook bearer token: the sole authenticator on the approval
+  // bridge (`AntigravityHookBridge`), so a lane reading it could arbitrate its
+  // own tool calls.
+  /x-taskwraith-hook-token/i,
+  /\bauthorization\s*[:=]/i,
+  /\bbearer\s+[A-Za-z0-9._~+/-]{12,}/i,
+  // GitHub PAT families (classic, fine-grained, OAuth, refresh, server).
+  /\bgh[pousr]_[A-Za-z0-9]{20,}/,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}/,
+  /\b(?:access|refresh|id|bearer)[_-]?token\b/i,
+  /\bapi[_-]?key\b/i,
+  /\bclient[_-]?secret\b/i,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  /\bsk-[A-Za-z0-9_-]{16,}/,
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}/,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  // JWT: header.payload. prefix is enough; the signature adds nothing here.
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\./
+]
+
+/**
+ * True when the file looks like it carries a secret, or when that cannot be
+ * determined. Fails CLOSED: an unreadable or unstattable file keeps its card.
+ */
+function outsideReadLooksCredentialBearing(resolvedPath: string): boolean {
+  let handle: number | null = null
+  try {
+    handle = fs.openSync(resolvedPath, 'r')
+    const buffer = Buffer.allocUnsafe(OUTSIDE_READ_CREDENTIAL_SCAN_BYTES)
+    const read = fs.readSync(handle, buffer, 0, OUTSIDE_READ_CREDENTIAL_SCAN_BYTES, 0)
+    const text = buffer.subarray(0, read).toString('utf8')
+    return OUTSIDE_READ_CREDENTIAL_PATTERNS.some((pattern) => pattern.test(text))
+  } catch {
+    return true
+  } finally {
+    if (handle !== null) {
+      try {
+        fs.closeSync(handle)
+      } catch {
+        // Nothing actionable; the decision above already stands.
+      }
+    }
+  }
+}
+
 function outsideWorkspaceReadIsPromptFree(absolutePath: string): boolean {
   const allowedRoots = promptFreeOutsideReadRoots()
   if (!allowedRoots) return false
@@ -593,7 +665,10 @@ function outsideWorkspaceReadIsPromptFree(absolutePath: string): boolean {
     return false
   }
   const comparableResolved = comparablePath(resolved)
-  return allowedRoots.some((root) => isInside(comparablePath(root), comparableResolved))
+  if (!allowedRoots.some((root) => isInside(comparablePath(root), comparableResolved))) return false
+  // Path says where a read MAY point; content says whether this particular file
+  // may be handed over without asking. Both must pass.
+  return !outsideReadLooksCredentialBearing(resolved)
 }
 
 /**
