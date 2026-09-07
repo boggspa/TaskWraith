@@ -302,6 +302,23 @@ describe('Muse isolated home', () => {
     }
   })
 
+
+  it('forwards MUSE_LOG when museLogLevel is provided and omits it otherwise', () => {
+    const leaseWithLog = createMuseIsolatedHome({
+      temporaryRoot: TEMP_ROOT,
+      runId: 'log-enabled',
+      museLogLevel: 'debug'
+    })
+    leases.push(leaseWithLog)
+    expect(leaseWithLog.env.MUSE_LOG).toBe('debug')
+
+    const leaseWithoutLog = createMuseIsolatedHome({
+      temporaryRoot: TEMP_ROOT,
+      runId: 'log-disabled'
+    })
+    leases.push(leaseWithoutLog)
+    expect(leaseWithoutLog.env.MUSE_LOG).toBeUndefined()
+  })
   it('refuses a mode-weakened directory where POSIX mode semantics are available', () => {
     if (process.platform === 'win32') return
     const lease = create('mode-change')

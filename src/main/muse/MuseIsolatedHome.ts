@@ -78,6 +78,11 @@ export interface CreateMuseIsolatedHomeInput {
   /** Optional app-owned MCP entries written only into this disposable home. */
   readonly mcpSettings?: MuseMcpSettings
   /**
+   * Opt-in Muse log level (e.g., 'debug'). When set, MUSE_LOG is forwarded to the
+   * spawned muse serve process to surface internal diagnostics.
+   */
+  readonly museLogLevel?: string
+  /**
    * When true (default), write empty `trust.json` with `projects: {}`.
    * Never copies the user's real trust file.
    */
@@ -271,7 +276,8 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
       xdgStateHome,
       xdgRuntimeDir,
       tmpDir,
-      sourceEnvironment: input.sourceEnvironment ?? process.env
+      sourceEnvironment: input.sourceEnvironment ?? process.env,
+      museLogLevel: input.museLogLevel
     })
 
     const authority = inspectMuseIsolatedHome(canonicalPath, posture)
@@ -500,6 +506,7 @@ export interface BuildMuseIsolatedHomeEnvironmentInput {
   readonly xdgRuntimeDir: string
   readonly tmpDir: string
   readonly sourceEnvironment?: NodeJS.ProcessEnv
+  readonly museLogLevel?: string
 }
 
 /**
@@ -525,6 +532,7 @@ export function buildMuseIsolatedHomeEnvironment(
 
   const source = input.sourceEnvironment ?? {}
   const env: Record<string, string> = {}
+  if (input.museLogLevel !== undefined) env.MUSE_LOG = input.museLogLevel
   for (const key of MUSE_PROBE_ENV_ALLOWLIST) {
     const value = source[key]
     if (typeof value === 'string') env[key] = value
