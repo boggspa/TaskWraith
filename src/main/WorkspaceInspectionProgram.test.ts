@@ -7,6 +7,7 @@ import type { HostCommandResult } from './runStateTypes'
 import {
   executeWorkspaceInspectionProgram,
   workspaceInspectionProgramPlan,
+  workspaceInspectionSequencePlan,
   type WorkspaceInspectionProgramCommandInvocation
 } from './WorkspaceInspectionProgram'
 
@@ -110,6 +111,73 @@ describe('WorkspaceInspectionProgram', () => {
         command
       ).toBeNull()
     }
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'compiles a prompt-free &&/; inspection sequence into hardened command stages',
+    async () => {
+      const { workspace } = await fixture()
+      const andPlan = workspaceInspectionSequencePlan('git status --short && git diff --stat', {
+        workspacePath: workspace,
+        cwd: workspace
+      })
+      expect(andPlan).toMatchObject({
+        reason: 'inspection_shell',
+        recipe: 'inspection_sequence_v1',
+        steps: [
+          { kind: 'command', condition: 'always' },
+          { kind: 'command', condition: 'previous_succeeded' }
+        ]
+      })
+      expect(andPlan?.steps[0]).toMatchObject({ kind: 'command' })
+      expect(andPlan?.steps[1]).toMatchObject({ kind: 'command' })
+      if (andPlan?.steps[0]?.kind !== 'command' || andPlan.steps[1]?.kind !== 'command') {
+        throw new Error('Expected two compiled command stages.')
+      }
+      expect(andPlan.steps[0].plan.argv).toEqual(['status', '--short'])
+      expect(andPlan.steps[1].plan.argv).toEqual(
+        expect.arrayContaining(['diff', '--stat', '--no-ext-diff', '--no-textconv'])
+      )
+      expect(andPlan.steps[1].plan.environment).toMatchObject({ GIT_OPTIONAL_LOCKS: '0' })
+
+      const semicolonPlan = workspaceInspectionSequencePlan(
+        'git status --short; git diff --stat',
+        { workspacePath: workspace, cwd: workspace }
+      )
+      expect(semicolonPlan?.recipe).toBe('inspection_sequence_v1')
+      expect(semicolonPlan?.steps[1]).toMatchObject({
+        kind: 'command',
+        condition: 'always'
+      })
+      if (semicolonPlan?.steps[1]?.kind !== 'command') {
+        throw new Error('Expected a compiled semicolon command stage.')
+      }
+      expect(semicolonPlan.steps[1].plan.argv).toEqual(
+        expect.arrayContaining(['--no-ext-diff', '--no-textconv'])
+      )
+    }
+  )
+
+  it('does not compile pipelines or the snapshot recipe as a generic sequence', async () => {
+    const { workspace } = await fixture()
+    expect(
+      workspaceInspectionSequencePlan('git status --short | head -n 1', {
+        workspacePath: workspace,
+        cwd: workspace
+      })
+    ).toBeNull()
+    expect(
+      workspaceInspectionSequencePlan(capturedCommand, {
+        workspacePath: workspace,
+        cwd: workspace
+      })
+    ).toBeNull()
+    expect(
+      workspaceInspectionProgramPlan('git status --short && git diff --stat', {
+        workspacePath: workspace,
+        cwd: workspace
+      })
+    ).toBeNull()
   })
 
   it.skipIf(process.platform === 'win32')(

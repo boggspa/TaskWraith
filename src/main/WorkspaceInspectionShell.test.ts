@@ -9,6 +9,7 @@ import {
   isWorkspaceInspectionShellCommand,
   workspaceInspectionBrokeredShellHardening,
   workspaceInspectionExecutionPlan,
+  workspaceInspectionOutsideReadsStillHold,
   workspaceInspectionShellReason
 } from './WorkspaceInspectionShell'
 
@@ -361,6 +362,45 @@ describe('WorkspaceInspectionShell', () => {
             cwd: workspace
           })
         ).toBe('inspection_shell')
+      }
+    )
+
+    it.skipIf(!isPosixHost)(
+      'cards an allowlisted file whose secret lives only past the first scan window',
+      async () => {
+        const { workspace, home, cliStep } = await providerStateFixture()
+        process.env.HOME = home
+        const tailSecret = join(cliStep, 'output-tail-secret.txt')
+        await writeFile(
+          tailSecret,
+          Buffer.concat([
+            Buffer.alloc(256 * 1024, 0x78),
+            Buffer.from(`\nGITHUB_TOKEN=ghp_${'B'.repeat(36)}\n`)
+          ])
+        )
+        expect(
+          workspaceInspectionShellReason(`cat ${tailSecret}`, {
+            workspacePath: workspace,
+            cwd: workspace
+          })
+        ).toBeNull()
+      }
+    )
+
+    it.skipIf(!isPosixHost)(
+      'fails the outside-read fingerprint when the file is swapped after the scan',
+      async () => {
+        const { workspace, home, cliStep } = await providerStateFixture()
+        process.env.HOME = home
+        const command = `cat ${join(cliStep, 'output.txt')}`
+        const plan = workspaceInspectionExecutionPlan(command, {
+          workspacePath: workspace,
+          cwd: workspace
+        })
+        expect(plan?.outsideReadFingerprints?.length).toBeGreaterThan(0)
+        expect(workspaceInspectionOutsideReadsStillHold(plan?.outsideReadFingerprints)).toBe(true)
+        await writeFile(join(cliStep, 'output.txt'), 'step output replaced\n')
+        expect(workspaceInspectionOutsideReadsStillHold(plan?.outsideReadFingerprints)).toBe(false)
       }
     )
 

@@ -4,7 +4,9 @@ import * as path from 'node:path'
 import type { HostCommandResult } from './runStateTypes'
 import {
   workspaceInspectionExecutionPlan,
+  workspaceInspectionOutsideReadsStillHold,
   type WorkspaceInspectionExecutionPlan,
+  type WorkspaceInspectionOutsideReadFingerprint,
   type WorkspaceInspectionShellContext
 } from './WorkspaceInspectionShell'
 import { shellCommandFromRawCommand } from './ReadOnlyGitShellCommand'
@@ -47,9 +49,13 @@ export type WorkspaceInspectionProgramStep =
   | WorkspaceInspectionMarkerListStep
   | WorkspaceInspectionLiteralStep
 
+export type WorkspaceInspectionProgramRecipe =
+  | 'workspace_git_snapshot_v1'
+  | 'inspection_sequence_v1'
+
 export interface WorkspaceInspectionProgramPlan {
   reason: 'inspection_shell'
-  recipe: 'workspace_git_snapshot_v1'
+  recipe: WorkspaceInspectionProgramRecipe
   workspaceLexicalPath: string
   workspaceRealPath: string
   steps: WorkspaceInspectionProgramStep[]
@@ -412,6 +418,71 @@ export function workspaceInspectionProgramPlan(
     return null
   }
   if (!isWorkspaceGitSnapshotRecipe(steps)) return null
+  return freezeIssuedProgramPlan(
+    'workspace_git_snapshot_v1',
+    workspaceLexicalPath,
+    workspaceRealPath,
+    steps
+  )
+}
+
+/**
+ * Compile a prompt-free `&&` / `;` chain of individually proven inspection
+ * commands into typed direct stages, so git argv flags like `--no-ext-diff`
+ * can ride the spawn. Pipelines stay out (`parseSequence` rejects `|`) and
+ * keep the env-only brokered-shell hardening. The snapshot recipe stays
+ * with `workspaceInspectionProgramPlan`; this planner will not claim it.
+ *
+ * Approval still does not treat a generic sequence as a typed boundary —
+ * this is a spawn-time execution plan, not a new approval fast-path.
+ */
+export function workspaceInspectionSequencePlan(
+  rawCommand: unknown,
+  context: WorkspaceInspectionShellContext
+): WorkspaceInspectionProgramPlan | null {
+  const command = shellCommandFromRawCommand(rawCommand)
+  if (command === null || !context.workspacePath) return null
+  const segments = parseSequence(command)
+  if (!segments || segments.length < 2) return null
+  let workspaceLexicalPath: string
+  let workspaceRealPath: string
+  let cwd: string
+  try {
+    workspaceLexicalPath = path.resolve(context.workspacePath)
+    workspaceRealPath = fs.realpathSync(workspaceLexicalPath)
+    cwd = fs.realpathSync(path.resolve(context.cwd || context.workspacePath))
+  } catch {
+    return null
+  }
+  if (!isInside(workspaceRealPath, cwd)) return null
+
+  const steps: WorkspaceInspectionProgramStep[] = []
+  for (const segment of segments) {
+    const commandPlan = workspaceInspectionExecutionPlan(segment.source, context)
+    if (!commandPlan || commandPlan.workspaceRealPath !== workspaceRealPath) return null
+    steps.push({
+      kind: 'command',
+      condition: segment.condition,
+      discardStderr: segment.discardStderr,
+      source: segment.source,
+      plan: commandPlan
+    })
+  }
+  if (steps.length < 2 || isWorkspaceGitSnapshotRecipe(steps)) return null
+  return freezeIssuedProgramPlan(
+    'inspection_sequence_v1',
+    workspaceLexicalPath,
+    workspaceRealPath,
+    steps
+  )
+}
+
+function freezeIssuedProgramPlan(
+  recipe: WorkspaceInspectionProgramRecipe,
+  workspaceLexicalPath: string,
+  workspaceRealPath: string,
+  steps: WorkspaceInspectionProgramStep[]
+): WorkspaceInspectionProgramPlan {
   const frozenSteps = steps.map((step): WorkspaceInspectionProgramStep => {
     if (step.kind !== 'command') return Object.freeze({ ...step })
     const frozenPlan = Object.freeze({
@@ -426,13 +497,22 @@ export function workspaceInspectionProgramPlan(
               ...step.plan.unsetEnvironment
             ]) as unknown as readonly string[]
           }
+        : {}),
+      ...(step.plan.outsideReadFingerprints
+        ? {
+            outsideReadFingerprints: Object.freeze(
+              step.plan.outsideReadFingerprints.map((fingerprint) =>
+                Object.freeze({ ...fingerprint })
+              )
+            ) as unknown as readonly WorkspaceInspectionOutsideReadFingerprint[]
+          }
         : {})
     })
     return Object.freeze({ ...step, plan: frozenPlan })
   })
   const plan = Object.freeze({
     reason: 'inspection_shell' as const,
-    recipe: 'workspace_git_snapshot_v1' as const,
+    recipe,
     workspaceLexicalPath,
     workspaceRealPath,
     steps: Object.freeze(frozenSteps) as unknown as WorkspaceInspectionProgramStep[]
@@ -465,6 +545,25 @@ function sameEnvironment(
   return sameStringArray(leftKeys, rightKeys) && leftKeys.every((key) => left[key] === right[key])
 }
 
+function sameOutsideReadFingerprints(
+  left: readonly WorkspaceInspectionOutsideReadFingerprint[] | undefined,
+  right: readonly WorkspaceInspectionOutsideReadFingerprint[] | undefined
+): boolean {
+  const leftPrints = left ?? []
+  const rightPrints = right ?? []
+  return (
+    leftPrints.length === rightPrints.length &&
+    leftPrints.every(
+      (fingerprint, index) =>
+        fingerprint.resolvedPath === rightPrints[index]?.resolvedPath &&
+        fingerprint.dev === rightPrints[index]?.dev &&
+        fingerprint.ino === rightPrints[index]?.ino &&
+        fingerprint.size === rightPrints[index]?.size &&
+        fingerprint.mtimeMs === rightPrints[index]?.mtimeMs
+    )
+  )
+}
+
 function sameExecutionPlan(
   left: WorkspaceInspectionExecutionPlan,
   right: WorkspaceInspectionExecutionPlan
@@ -476,7 +575,8 @@ function sameExecutionPlan(
     left.cwd === right.cwd &&
     sameStringArray(left.argv, right.argv) &&
     sameEnvironment(left.environment, right.environment) &&
-    sameStringArray(left.unsetEnvironment, right.unsetEnvironment)
+    sameStringArray(left.unsetEnvironment, right.unsetEnvironment) &&
+    sameOutsideReadFingerprints(left.outsideReadFingerprints, right.outsideReadFingerprints)
   )
 }
 
@@ -569,7 +669,8 @@ export async function executeWorkspaceInspectionProgram(
         !isInside(plan.workspaceRealPath, liveCwd) ||
         liveExecutableRealPath !== step.plan.executableRealPath ||
         !livePlan ||
-        !sameExecutionPlan(step.plan, livePlan)
+        !sameExecutionPlan(step.plan, livePlan) ||
+        !workspaceInspectionOutsideReadsStillHold(livePlan.outsideReadFingerprints)
       ) {
         result = syntheticResult(
           '',

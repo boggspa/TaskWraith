@@ -1672,11 +1672,13 @@ import { isIsolateSharedBranchHold } from './IsolateSharedBranchHold'
 import { shellCommandTierHold } from './ShellCommandTierPolicy'
 import {
   workspaceInspectionBrokeredShellHardening,
-  workspaceInspectionExecutionPlan
+  workspaceInspectionExecutionPlan,
+  workspaceInspectionOutsideReadsStillHold
 } from './WorkspaceInspectionShell'
 import {
   executeWorkspaceInspectionProgram,
-  workspaceInspectionProgramPlan
+  workspaceInspectionProgramPlan,
+  workspaceInspectionSequencePlan
 } from './WorkspaceInspectionProgram'
 import { deleteCliProviderProcessIfOwned } from './grok/GrokProcessOwnership'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
@@ -41399,14 +41401,26 @@ async function executeUnscopedGeminiMcpTool(
         executionEnvironment = undefined
         unsetExecutionEnvironment = undefined
       } else if (!workspaceInspectionPlan && !workspaceInspectionProgram) {
-        const hardening = workspaceInspectionBrokeredShellHardening(command, {
+        workspaceInspectionProgram = workspaceInspectionSequencePlan(command, {
           workspacePath,
           cwd
         })
-        if (hardening) {
-          executionEnvironment = hardening.environment
-          unsetExecutionEnvironment = hardening.unsetEnvironment
+        if (!workspaceInspectionProgram) {
+          const hardening = workspaceInspectionBrokeredShellHardening(command, {
+            workspacePath,
+            cwd
+          })
+          if (hardening) {
+            executionEnvironment = hardening.environment
+            unsetExecutionEnvironment = hardening.unsetEnvironment
+          }
         }
+      }
+      if (
+        workspaceInspectionPlan &&
+        !workspaceInspectionOutsideReadsStillHold(workspaceInspectionPlan.outsideReadFingerprints)
+      ) {
+        throw new Error('The prompt-free workspace inspection boundary changed before execution.')
       }
       const workspaceInspectionDeadline = Date.now() + 30_000
       const result = await runWithHostCommandProjectionScope(hostCommandProjection, () =>
@@ -41442,7 +41456,11 @@ async function executeUnscopedGeminiMcpTool(
       text = formatHostCommandResult(result)
       // A silent non-zero exit is otherwise the bare `Exit code: N`, naming nothing.
       text = appendSilentShellCommandNotice(text, executionCommand, result)
-      if (workspaceInspectionProgram && !commandRuleMatch) {
+      if (
+        workspaceInspectionProgram &&
+        !commandRuleMatch &&
+        workspaceInspectionProgram.recipe === 'workspace_git_snapshot_v1'
+      ) {
         text = `${text}\n\nTaskWraith executed workspace_git_snapshot_v1 as direct read-only stages. Marker output is a bounded list of JSON-escaped names only; ls metadata is intentionally omitted.`
       }
       // S3 disclosure. Extra native shell fields reached us and did nothing;

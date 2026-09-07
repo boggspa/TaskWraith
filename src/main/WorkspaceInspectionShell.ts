@@ -117,6 +117,14 @@ export interface WorkspaceInspectionShellContext {
   cwd?: string | null
 }
 
+export interface WorkspaceInspectionOutsideReadFingerprint {
+  resolvedPath: string
+  dev: number
+  ino: number
+  size: number
+  mtimeMs: number
+}
+
 export interface WorkspaceInspectionExecutionPlan {
   reason: PromptFreeReadOnlyShellReason
   workspaceRealPath: string
@@ -125,6 +133,7 @@ export interface WorkspaceInspectionExecutionPlan {
   cwd: string
   environment?: Readonly<Record<string, string>>
   unsetEnvironment?: readonly string[]
+  outsideReadFingerprints?: readonly WorkspaceInspectionOutsideReadFingerprint[]
 }
 
 function isInside(root: string, target: string): boolean {
@@ -635,26 +644,62 @@ const OUTSIDE_READ_CREDENTIAL_PATTERNS: readonly RegExp[] = [
  *
  * Residuals, stated rather than implied:
  * - The scan opens, reads, and closes the fd. The consumer (`cat`/`rg`)
- *   reopens the path at spawn, so a swap between close and child-open
- *   remains possible. Single-segment direct plans re-run this gate
- *   immediately before spawn; pipelines do not, so their window spans
- *   approval through dispatch.
+ *   reopens the path at spawn. Typed single-segment plans and compiled
+ *   `&&`/`;` sequences re-stat and re-scan immediately before spawn
+ *   against a fingerprint taken at classify. A swap in the remaining
+ *   close→child-open window is still possible; closing it would mean
+ *   holding the fd or replacing the child path-open, which this layer
+ *   does not do. Pipelines stay env-only and do not get that re-hold.
  * - The regex list is a heuristic. A novel secret shape that matches none
  *   of the patterns stays prompt-free until a pattern is added. A match
  *   still cards; it never refuses.
- * - Only the first 256 KiB are scanned. A secret living only past that
- *   ceiling would also stay prompt-free.
+ * - The first and last 256 KiB are scanned. A secret living only in the
+ *   unscanned middle of a file larger than 512 KiB would stay prompt-free.
  */
-function outsideReadLooksCredentialBearing(resolvedPath: string): boolean {
+let outsideReadFingerprintSink: WorkspaceInspectionOutsideReadFingerprint[] | null = null
+
+function scanOpenedOutsideReadForCredentials(handle: number, size: number): boolean {
+  const window = Math.min(OUTSIDE_READ_CREDENTIAL_SCAN_BYTES, Math.max(size, 0))
+  if (window === 0) return false
+  const buffer = Buffer.allocUnsafe(window)
+  const headRead = fs.readSync(handle, buffer, 0, window, 0)
+  const head = buffer.subarray(0, headRead).toString('utf8')
+  if (OUTSIDE_READ_CREDENTIAL_PATTERNS.some((pattern) => pattern.test(head))) return true
+  if (size <= OUTSIDE_READ_CREDENTIAL_SCAN_BYTES) return false
+  const tailRead = fs.readSync(
+    handle,
+    buffer,
+    0,
+    window,
+    size - OUTSIDE_READ_CREDENTIAL_SCAN_BYTES
+  )
+  const tail = buffer.subarray(0, tailRead).toString('utf8')
+  return OUTSIDE_READ_CREDENTIAL_PATTERNS.some((pattern) => pattern.test(tail))
+}
+
+function inspectOutsideRead(resolvedPath: string): {
+  credentialBearing: boolean
+  fingerprint: WorkspaceInspectionOutsideReadFingerprint | null
+} {
   let handle: number | null = null
   try {
     handle = fs.openSync(resolvedPath, 'r')
-    const buffer = Buffer.allocUnsafe(OUTSIDE_READ_CREDENTIAL_SCAN_BYTES)
-    const read = fs.readSync(handle, buffer, 0, OUTSIDE_READ_CREDENTIAL_SCAN_BYTES, 0)
-    const text = buffer.subarray(0, read).toString('utf8')
-    return OUTSIDE_READ_CREDENTIAL_PATTERNS.some((pattern) => pattern.test(text))
+    const stats = fs.fstatSync(handle)
+    const credentialBearing = scanOpenedOutsideReadForCredentials(handle, stats.size)
+    return {
+      credentialBearing,
+      fingerprint: credentialBearing
+        ? null
+        : {
+            resolvedPath,
+            dev: stats.dev,
+            ino: stats.ino,
+            size: stats.size,
+            mtimeMs: stats.mtimeMs
+          }
+    }
   } catch {
-    return true
+    return { credentialBearing: true, fingerprint: null }
   } finally {
     if (handle !== null) {
       try {
@@ -664,6 +709,51 @@ function outsideReadLooksCredentialBearing(resolvedPath: string): boolean {
       }
     }
   }
+}
+
+function outsideReadLooksCredentialBearing(resolvedPath: string): boolean {
+  return inspectOutsideRead(resolvedPath).credentialBearing
+}
+
+/**
+ * True when every allowlisted outside read still names the same inode that
+ * was scanned at classify, and a fresh content scan still finds no known
+ * secret shape. Fail-closed: a missing, unreadable, or drifted file is a
+ * hold failure — the same class as "the inspection boundary changed", not
+ * a new refuse-at-classify. Empty/absent fingerprints hold (no outside
+ * read was admitted).
+ */
+export function workspaceInspectionOutsideReadsStillHold(
+  fingerprints: readonly WorkspaceInspectionOutsideReadFingerprint[] | undefined
+): boolean {
+  if (!fingerprints || fingerprints.length === 0) return true
+  for (const fingerprint of fingerprints) {
+    let handle: number | null = null
+    try {
+      handle = fs.openSync(fingerprint.resolvedPath, 'r')
+      const stats = fs.fstatSync(handle)
+      if (
+        stats.dev !== fingerprint.dev ||
+        stats.ino !== fingerprint.ino ||
+        stats.size !== fingerprint.size ||
+        stats.mtimeMs !== fingerprint.mtimeMs
+      ) {
+        return false
+      }
+      if (scanOpenedOutsideReadForCredentials(handle, stats.size)) return false
+    } catch {
+      return false
+    } finally {
+      if (handle !== null) {
+        try {
+          fs.closeSync(handle)
+        } catch {
+          // The hold already failed or succeeded above.
+        }
+      }
+    }
+  }
+  return true
 }
 
 function outsideWorkspaceReadIsPromptFree(absolutePath: string): boolean {
@@ -680,7 +770,12 @@ function outsideWorkspaceReadIsPromptFree(absolutePath: string): boolean {
   if (!allowedRoots.some((root) => isInside(comparablePath(root), comparableResolved))) return false
   // Path says where a read MAY point; content says whether this particular file
   // may be handed over without asking. Both must pass.
-  return !outsideReadLooksCredentialBearing(resolved)
+  const inspection = inspectOutsideRead(resolved)
+  if (inspection.credentialBearing) return false
+  if (outsideReadFingerprintSink && inspection.fingerprint) {
+    outsideReadFingerprintSink.push(inspection.fingerprint)
+  }
+  return true
 }
 
 /**
@@ -850,39 +945,48 @@ export function workspaceInspectionExecutionPlan(
   rawCommand: unknown,
   context: WorkspaceInspectionShellContext
 ): WorkspaceInspectionExecutionPlan | null {
-  const reason = workspaceInspectionShellReason(rawCommand, context)
-  const command = shellCommandFromRawCommand(rawCommand)
-  if (!reason || command === null || !context.workspacePath) return null
-  let workspaceRealPath: string
-  let cwd: string
+  const fingerprints: WorkspaceInspectionOutsideReadFingerprint[] = []
+  outsideReadFingerprintSink = fingerprints
   try {
-    workspaceRealPath = fs.realpathSync(path.resolve(context.workspacePath))
-    cwd = fs.realpathSync(path.resolve(context.cwd || context.workspacePath))
-  } catch {
-    return null
-  }
-  const segments = commandSegments(command)
-  const words = segments?.length === 1 ? shellWords(segments[0]) : null
-  if (!words) return null
-  const executableRealPath = resolveTrustedExecutable(words[0].value, workspaceRealPath)
-  if (!executableRealPath) return null
-  const head = executableHead(words[0].value)
-  const unsetEnvironment = inspectionUnsetEnvironment(head)
-  return {
-    reason,
-    workspaceRealPath,
-    executableRealPath,
-    argv:
-      head === 'git'
-        ? hardenedGitArgv(words.slice(1).map((word) => word.value))
-        : words.slice(1).map((word) => word.value),
-    cwd,
-    ...(head === 'git'
-      ? {
-          environment: gitInspectionEnvironment()
-        }
-      : {}),
-    ...(unsetEnvironment.length > 0 ? { unsetEnvironment } : {})
+    const reason = workspaceInspectionShellReason(rawCommand, context)
+    const command = shellCommandFromRawCommand(rawCommand)
+    if (!reason || command === null || !context.workspacePath) return null
+    let workspaceRealPath: string
+    let cwd: string
+    try {
+      workspaceRealPath = fs.realpathSync(path.resolve(context.workspacePath))
+      cwd = fs.realpathSync(path.resolve(context.cwd || context.workspacePath))
+    } catch {
+      return null
+    }
+    const segments = commandSegments(command)
+    const words = segments?.length === 1 ? shellWords(segments[0]) : null
+    if (!words) return null
+    const executableRealPath = resolveTrustedExecutable(words[0].value, workspaceRealPath)
+    if (!executableRealPath) return null
+    const head = executableHead(words[0].value)
+    const unsetEnvironment = inspectionUnsetEnvironment(head)
+    return {
+      reason,
+      workspaceRealPath,
+      executableRealPath,
+      argv:
+        head === 'git'
+          ? hardenedGitArgv(words.slice(1).map((word) => word.value))
+          : words.slice(1).map((word) => word.value),
+      cwd,
+      ...(head === 'git'
+        ? {
+            environment: gitInspectionEnvironment()
+          }
+        : {}),
+      ...(unsetEnvironment.length > 0 ? { unsetEnvironment } : {}),
+      ...(fingerprints.length > 0
+        ? { outsideReadFingerprints: fingerprints.slice() }
+        : {})
+    }
+  } finally {
+    outsideReadFingerprintSink = null
   }
 }
 
@@ -894,10 +998,12 @@ export interface WorkspaceInspectionBrokeredHardening {
 /**
  * Env hardening for a prompt-free multi-segment command that has no typed
  * direct plan. Single-segment plans already carry this at construction;
- * generic `&&` / `;` / `|` chains classify prompt-free and then spawn as a
- * raw shell string, so this is the only place those git/rg env blocks can
- * ride. Returns null when a typed plan exists or the command is not
- * prompt-free — callers must not treat null as "refuse".
+ * compiled `&&` / `;` sequences now ride `workspaceInspectionSequencePlan`
+ * so argv flags can spawn. `|` pipelines still classify prompt-free and
+ * then spawn as a raw shell string, so this is the only place those
+ * git/rg env blocks can ride a pipe. Returns null when a typed plan
+ * exists or the command is not prompt-free — callers must not treat
+ * null as "refuse".
  */
 export function workspaceInspectionBrokeredShellHardening(
   rawCommand: unknown,
