@@ -23,6 +23,20 @@ describe('Cursor Path-B production/evidence integration', () => {
     expect(cursorRunSource).not.toContain('buildContainedCursorWriteArgv(')
   })
 
+  it('threads signed effectivePermissions into pre-spawn broker policy and the launch plan', () => {
+    const policyCall = cursorRunSource.slice(
+      cursorRunSource.indexOf('const cursorBrokerPolicy = resolveCursorPathBBrokerPolicy({'),
+      cursorRunSource.indexOf('let cursorGlobalBrokerRegistryLease')
+    )
+    const planCall = cursorRunSource.slice(
+      cursorRunSource.indexOf('const cursorLaunchPlan = buildCursorPathBLaunchPlan({'),
+      cursorRunSource.indexOf('payload.prompt = cursorLaunchPlan.prompt')
+    )
+
+    expect(policyCall).toContain('effectivePermissions: payload.effectivePermissions')
+    expect(planCall).toContain('effectivePermissions: payload.effectivePermissions')
+  })
+
   it('holds the global broker registry before the workspace overlay and releases in reverse', () => {
     const globalAcquire = cursorRunSource.indexOf('cursorGlobalBrokerRegistryLeases.acquire({')
     const workspaceAcquire = cursorRunSource.indexOf('cursorWorkspaceConfigLeases.acquire({')

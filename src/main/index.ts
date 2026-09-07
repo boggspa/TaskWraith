@@ -22809,7 +22809,8 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   const cursorBrokerPolicy = resolveCursorPathBBrokerPolicy({
     writeCapable,
     planSeat: cursorPlanSeat,
-    taskWraithMcpProfileId: payload.taskWraithMcpProfileId ?? null
+    taskWraithMcpProfileId: payload.taskWraithMcpProfileId ?? null,
+    effectivePermissions: payload.effectivePermissions
   })
   let cursorGlobalBrokerRegistryLease: CursorGlobalBrokerRegistryLease | undefined
   let cursorWorkspaceConfigLease: CursorWorkspaceConfigLease | undefined
@@ -23104,6 +23105,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         ? 'native-only-degraded'
         : 'not-requested',
     taskWraithMcpProfileId: payload.taskWraithMcpProfileId ?? null,
+    effectivePermissions: payload.effectivePermissions,
     workspaceMcpAliasesGlobalRegistry
   })
   payload.prompt = cursorLaunchPlan.prompt
