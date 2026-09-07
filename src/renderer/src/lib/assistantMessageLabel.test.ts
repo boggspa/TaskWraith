@@ -293,6 +293,38 @@ describe('formatAssistantMessageLabel', () => {
     })
   })
 
+  it('keeps Ollama Cloud DeepSeek V4 Pro Max on the ensemble header instead of Low', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'ollama',
+          ensembleRole: 'Work4',
+          ensembleModel: 'deepseek-v4-pro:cloud',
+          ensembleReasoningEffort: 'max'
+        }),
+        'Ollama',
+        'ollama',
+        { isEnsembleChat: true }
+      )
+    ).toMatchObject({
+      label: 'DeepSeek / Work4',
+      modelBadge: 'V4 Pro Max'
+    })
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'ollama',
+          ensembleRole: 'Work4',
+          ensembleModel: 'deepseek-v4-pro:cloud',
+          ensembleReasoningEffort: 'max'
+        }),
+        'Ollama',
+        'ollama',
+        { isEnsembleChat: true }
+      ).modelBadge
+    ).not.toBe('V4 Pro Low')
+  })
+
   it('shows selected effort for every adjustable ensemble provider', () => {
     const cases: Array<{
       provider: ProviderId
