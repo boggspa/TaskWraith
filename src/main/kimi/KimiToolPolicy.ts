@@ -178,6 +178,7 @@ export function isKimiSafeMcpTool(request: {
     return false
   }
   if (KIMI_BROKER_DEFERRED_MESH_TOOLS.has(tool)) return false
+  if (tool === 'run_shell_command') return false
   return isReadOnlyAdvertisedTool(tool)
 }
 
@@ -287,6 +288,7 @@ export function classifyKimiToolPermission(
   if (isKimiDeniedNativeTool(request)) return 'deny'
   const taskWraithToolName = resolveKimiTaskWraithMcpTool(request)
   const taskWraithService = taskWraithToolName ? resolveKimiTaskWraithMcpToolService(request) : null
+  if (taskWraithToolName === 'run_shell_command') return 'gate'
   if (
     isUltraTaskDelegationAutoAllowRequest({
       service: taskWraithService,

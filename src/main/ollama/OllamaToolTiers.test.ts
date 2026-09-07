@@ -160,7 +160,7 @@ describe('Ollama tool surface governance', () => {
     expect(actual).toContain('ask_user_question')
     expect(actual).toContain('blackboard_read')
     expect(actual).not.toContain('write_file')
-    expect(actual).not.toContain('run_shell_command')
+    expect(actual).toContain('run_shell_command')
     expect(actual).not.toContain('ensemble_bossman_control')
     expect(actual).not.toContain('delegate_to_subthread')
     expect(actual).not.toContain('delegate_wave')
@@ -180,7 +180,7 @@ describe('Ollama tool surface governance', () => {
     expect(actual).toContain('canvas_sketch_get')
     expect(actual).toContain('canvas_sketch_update')
     expect(actual).not.toContain('write_file')
-    expect(actual).not.toContain('run_shell_command')
+    expect(actual).toContain('run_shell_command')
     expect(actual).not.toContain('delegate_to_subthread')
     expect(actual).not.toContain('delegate_wave')
   })
@@ -198,7 +198,7 @@ describe('Ollama tool surface governance', () => {
       expect(actual).toContain('read_subthread_result')
       expect(actual).toContain('cancel_subthread')
       expect(actual).not.toContain('write_file')
-      expect(actual).not.toContain('run_shell_command')
+      expect(actual).toContain('run_shell_command')
     }
   })
 

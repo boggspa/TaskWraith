@@ -3495,7 +3495,7 @@ describe('runOllamaProvider streaming', () => {
     expect(toolNames).toContain('tool_help')
     expect(toolNames).not.toContain('write_file')
     expect(toolNames).not.toContain('replace')
-    expect(toolNames).not.toContain('run_shell_command')
+    expect(toolNames).toContain('run_shell_command')
     expect(toolNames).not.toContain('run_task')
   })
 

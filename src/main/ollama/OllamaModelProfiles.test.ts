@@ -29,7 +29,9 @@ describe('ollamaModelFamilyPromptLines', () => {
   })
 
   it('states the real permission on read-only and never hedges on edit tiers', () => {
-    const qwenReadOnly = ollamaModelFamilyPromptLines('qwen3:4b', 'workspace', 'read_only').join(' ')
+    const qwenReadOnly = ollamaModelFamilyPromptLines('qwen3:4b', 'workspace', 'read_only').join(
+      ' '
+    )
     // Read-only text describes the tier's actual permission, which is honest.
     expect(qwenReadOnly).toContain('no edit tools')
     const qwenEdits = ollamaModelFamilyPromptLines('qwen3:4b', 'workspace', 'provider_parity').join(
@@ -217,9 +219,9 @@ describe('ollamaLocalToolSystemPrompt', () => {
       true
     )
     // No model id → generic, still an identity line, no crash.
-    expect(ollamaLocalToolSystemPrompt('read_only').startsWith('You are a local model running')).toBe(
-      true
-    )
+    expect(
+      ollamaLocalToolSystemPrompt('read_only').startsWith('You are a local model running')
+    ).toBe(true)
   })
 
   it('advertises the immutable gateway working set, not the full catalog', () => {
@@ -277,7 +279,7 @@ describe('ollamaLocalToolSystemPrompt', () => {
     // just wastes a weak model's tool budget.
     const readOnly = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b', { readOnly: true })
     expect(readOnly).not.toContain('write_file')
-    expect(readOnly).not.toContain('run_shell_command')
+    expect(readOnly).toContain('run_shell_command')
     expect(readOnly).not.toContain('run_task')
     // Reads/search/web stay available and the seat is told writes are unavailable.
     expect(readOnly).toContain('read_file')
@@ -302,7 +304,7 @@ describe('ollamaLocalToolSystemPrompt', () => {
     expect(plan).toContain('canvas_sketch_get')
     expect(plan).toContain('canvas_sketch_update')
     expect(plan).not.toContain('write_file')
-    expect(plan).not.toContain('run_shell_command')
+    expect(plan).toContain('run_shell_command')
     expect(plan).toContain('This run is PLAN-scoped')
     expect(plan).toContain('approval modal')
   })
@@ -327,7 +329,7 @@ describe('ollamaLocalToolSystemPrompt', () => {
     expect(ultraTask).toContain('ULTRATASK DELEGATION IS AUTO-ALLOWED')
     expect(ultraTask).toContain('ensemble_await')
     expect(ultraTask).not.toContain('write_file')
-    expect(ultraTask).not.toContain('run_shell_command')
+    expect(ultraTask).toContain('run_shell_command')
   })
 })
 

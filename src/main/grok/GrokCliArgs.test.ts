@@ -184,9 +184,7 @@ describe('buildGrokCliArgs', () => {
     expect(args.indexOf('--model')).toBeLessThan(args.indexOf('agent'))
     expect(args.indexOf('--effort')).toBeLessThan(args.indexOf('agent'))
     expect(
-      args
-        .map((value, index) => (value === '--deny' ? args[index + 1] : null))
-        .filter(Boolean)
+      args.map((value, index) => (value === '--deny' ? args[index + 1] : null)).filter(Boolean)
     ).toEqual([...GROK_ACP_READ_ONLY_DENY_RULES])
   })
 
@@ -480,12 +478,12 @@ describe('applyGrokPromptPreamble', () => {
     expect(out).not.toContain(GROK_MCP_SHELL_TOOL_NAME)
   })
 
-  it('does not claim shell broker tooling on read-only seats', () => {
+  it('routes read-only ACP shell work through the broker tool name', () => {
     expect(
       buildGrokProviderPrompt('Inspect only.', 'plan', undefined, {
         taskWraithShellToolAvailable: true
       })
-    ).not.toContain(GROK_MCP_SHELL_PROMPT_NOTE)
+    ).toContain(GROK_MCP_SHELL_PROMPT_NOTE)
   })
 
   it('routes read-only ACP questions through the available broker tool', () => {
@@ -521,9 +519,7 @@ describe('formatGrokGoalSlashCommand', () => {
     )
     expect(formatGrokGoalSlashCommand({ ...grokNativeGoal, status: 'paused' })).toBeNull()
     expect(formatGrokGoalSlashCommand({ ...grokNativeGoal, status: 'completed' })).toBeNull()
-    expect(
-      formatGrokGoalSlashCommand({ ...grokNativeGoal, mode: 'taskwraith_steered' })
-    ).toBeNull()
+    expect(formatGrokGoalSlashCommand({ ...grokNativeGoal, mode: 'taskwraith_steered' })).toBeNull()
   })
 
   it('keeps /goal as the first bytes of the provider prompt', () => {
@@ -564,12 +560,11 @@ describe('applyGrokReadOnlyPromptPreamble', () => {
     expect(applyGrokReadOnlyPromptPreamble('x', readOnlySeatDefault)).toBe('x')
   })
 
-  it('steer keeps an unbrokered read-only seat off shell, writes, and dead ends', () => {
-    // Native Bash/Shell is deny-walled for this ACP seat. The prompt must say
-    // so rather than inventing a read-only shell route.
+  it('steer keeps an unbrokered read-only seat off native shell, writes, and dead ends', () => {
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/do not attempt/i)
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/Native Bash\/Shell/i)
-    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/do not attempt or search/i)
+    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/TaskWraith MCP shell/i)
+    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/prompt the user/i)
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/describe what you would change/i)
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/summar/i)
   })

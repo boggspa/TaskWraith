@@ -291,7 +291,8 @@ function describeTool(toolName: OllamaToolName): string | null {
   if (toolName === 'workspace_symbols') {
     return '- workspace_symbols: {"query":"symbol or function name","path":"src"} — language-aware symbol lookup for definitions before reading or editing.'
   }
-  if (toolName === 'git_status') return '- git_status: {} — inspect current git state without changing files.'
+  if (toolName === 'git_status')
+    return '- git_status: {} — inspect current git state without changing files.'
   if (toolName === 'git_diff') {
     return '- git_diff: {"path":"relative/path.txt"} — inspect unstaged changes or a focused path diff without changing files.'
   }
@@ -450,9 +451,7 @@ export function ollamaLocalToolSystemPrompt(
       : []),
     'Common tools:',
     ...detailed,
-    ...(named.length
-      ? [`Also ready (same JSON shape): ${named.join(', ')}.`]
-      : [])
+    ...(named.length ? [`Also ready (same JSON shape): ${named.join(', ')}.`] : [])
   ]
   if (hasWebTools) {
     lines.push(
@@ -470,9 +469,9 @@ export function ollamaLocalToolSystemPrompt(
     'Path contract: tool paths are workspace-relative. Copy paths exactly from search/list results; do not prepend the absolute workspace path. Use "." only when a directory or search tool explicitly needs the workspace root.',
     options.readOnly
       ? options.plan
-        ? 'This run is PLAN-scoped: general file edits, shell, and publishing are unavailable. Listed visual/media instruments may pause for a user approval modal; request them only when they advance the plan.'
-        : 'This run is READ-ONLY: file edits, shell, and publishing are unavailable and not listed above. Do not attempt them — read, search, and answer, and say plainly if the task would require a write you cannot make.'
-      : 'File edits, shell, and publishing are governed by the run\'s permission role: TaskWraith either shows the user an approval modal or blocks the tool. If a tool is blocked, say so and continue with what you can do.',
+        ? 'This run is PLAN-scoped: general file edits and publishing are unavailable. Listed visual/media instruments and shell may pause for a user approval modal; request them only when they advance the plan.'
+        : 'This run is READ-ONLY: file edits and publishing are unavailable. Shell via run_shell_command may pause for a user approval modal. Do not attempt file writes — read, search, and answer, and say plainly if the task would require a write you cannot make.'
+      : "File edits, shell, and publishing are governed by the run's permission role: TaskWraith either shows the user an approval modal or blocks the tool. If a tool is blocked, say so and continue with what you can do.",
     'Use ask_user_question when the request is too ambiguous to continue safely or when a mid-task choice belongs to the user.',
     'After a tool result returns, answer normally or request one more tool with the same JSON shape. Do not invent file contents or workspace facts when a tool result is needed.'
   )

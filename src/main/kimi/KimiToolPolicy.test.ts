@@ -389,6 +389,18 @@ describe('classifyKimiToolPermission', () => {
         opts({ writeCapable: false })
       )
     ).toBe('deny')
+    expect(
+      classifyKimiToolPermission(
+        { toolName: 'mcp__taskwraith__run_shell_command', toolKind: 'execute' },
+        opts({ writeCapable: false })
+      )
+    ).toBe('gate')
+    expect(
+      classifyKimiToolPermission(
+        { toolName: 'TaskWraith__run_shell_command', toolKind: 'execute' },
+        opts({ writeCapable: false })
+      )
+    ).toBe('gate')
   })
 
   it('admits exact UltraTask delegation tools through the read-only ACP wall', () => {

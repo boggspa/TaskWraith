@@ -80,7 +80,7 @@ describe('Ollama capability gateway exposure', () => {
     expect(names).toContain('canvas_sketch_get')
     expect(names).toContain('canvas_sketch_update')
     expect(names).not.toContain('write_file')
-    expect(names).not.toContain('run_shell_command')
+    expect(names).toContain('run_shell_command')
     expect(
       definitions.find((definition) => definition.function.name === 'canvas_sketch_update')
         ?.function.parameters

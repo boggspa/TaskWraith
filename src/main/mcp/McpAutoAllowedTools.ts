@@ -286,6 +286,7 @@ export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNa
       tool === 'delegate_wave' ||
       tool === 'ultra_task' ||
       tool === 'cancel_subthread' ||
+      tool === 'run_shell_command' ||
       (MESH_MCP_TOOL_NAMES as readonly string[]).includes(tool) ||
       (SIMULATOR_MUTATING_MCP_TOOL_NAMES as readonly string[]).includes(tool)
   )
@@ -295,10 +296,11 @@ export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNa
  * Tools advertised to a READ-ONLY / plan seat: (TASKWRAITH_MCP_TOOLS ∩
  * MCP_AUTO_ALLOWED_TOOLS) — the advertised universe narrowed to read/search
  * plus coordination-state updates — PLUS the recon-tier gated instruments
- * above. DERIVED, never hand-listed, so a mutating workspace/shell/destructive
- * app tool can never appear here unless it is also wrongly added to
- * MCP_AUTO_ALLOWED_TOOLS (SAFETY INVARIANT test) or wrongly promoted to the
- * recon instrument tier (its own invariant test). The Gemini read-only
+ * above. DERIVED, never hand-listed. Workspace writes and destructive app tools
+ * stay out unless wrongly added to MCP_AUTO_ALLOWED_TOOLS (SAFETY INVARIANT) or
+ * wrongly promoted to the recon instrument tier (its own invariant). Brokered
+ * `run_shell_command` is a recon instrument: advertised and host-gated, never
+ * auto-run. The Gemini read-only
  * --allowed-tools allowlist, the Grok and Cursor read-only safe-subset
  * bridges, the Mistral safe-tool gate, and the Ollama read_only tool tier are
  * all built from this set, so every read-only seat advertises an identical
@@ -312,9 +314,10 @@ export const READ_ONLY_MCP_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName>
 /**
  * Is this bare tool name in the read-only advertise subset? The bridge uses this
  * to scope BOTH tools/list and tools/call for a read-only seat (notably Grok,
- * which auto-runs MCP tools with NO host gate — so the advertised list AND the
- * tools/call reject are the entire safety boundary). Unknown / mutating tools
- * return false.
+ * which auto-runs MCP tools with NO provider permission RPC — the advertised
+ * list plus the tools/call reject are the transport boundary; host-gated recon
+ * instruments such as `run_shell_command` still hit requestAgenticServiceApproval).
+ * Unknown / mutating write tools return false.
  */
 export function isReadOnlyAdvertisedTool(name: string): boolean {
   return (READ_ONLY_MCP_ADVERTISE_TOOLS as readonly string[]).includes(name)

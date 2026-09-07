@@ -170,7 +170,6 @@ describe('canonical global broker allow rules', () => {
       for (const tool of [
         'write_file',
         'apply_patch',
-        'run_shell_command',
         'delegate_wave',
         'ultra_task',
         'delegate_to_subthread'
@@ -178,6 +177,7 @@ describe('canonical global broker allow rules', () => {
         expect(rules).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`)
         expect(rules).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
       }
+      expect(rules).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:run_shell_command)`)
       expect(rules).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:*)`)
       expect(Object.isFrozen(rules)).toBe(true)
     }
@@ -198,7 +198,7 @@ describe('CURSOR_READONLY_MCP_ALLOW_RULES (read-only safe-subset broker)', () =>
   })
 
   it('SAFETY: never allows a mutating tool (only the read-only advertise subset)', () => {
-    for (const mutating of ['write_file', 'replace', 'apply_patch', 'run_shell_command']) {
+    for (const mutating of ['write_file', 'replace', 'apply_patch']) {
       expect(CURSOR_READONLY_MCP_ALLOW_RULES).not.toContain(
         `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}:${mutating})`
       )
@@ -206,6 +206,9 @@ describe('CURSOR_READONLY_MCP_ALLOW_RULES (read-only safe-subset broker)', () =>
         `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}-${mutating})`
       )
     }
+    expect(CURSOR_READONLY_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}:run_shell_command)`
+    )
     // Exactly one exact-rule per gateway/read-only tool (plus the wildcard +
     // hyphen forms). Safe capabilities outside the compact direct set are
     // available through capability_invoke instead of individual rules.

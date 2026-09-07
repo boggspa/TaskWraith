@@ -61,7 +61,6 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'move_path',
       'rename_path',
       'apply_patch',
-      'run_shell_command',
       'start_background_process',
       'kill_background_process',
       'git_stage',
@@ -177,7 +176,6 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'move_path',
       'rename_path',
       'apply_patch',
-      'run_shell_command',
       'start_background_process',
       'kill_background_process',
       'git_stage',
@@ -226,6 +224,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
         'delegate_to_subthread',
         'delegate_wave',
         'ultra_task',
+        'run_shell_command',
         ...MESH_MCP_TOOL_NAMES,
         'simulator_boot',
         'simulator_button',
@@ -248,6 +247,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     expect(TASKWRAITH_TOOL_ACTIONS.delegate_wave.service).toBe('subThreadDelegation')
     expect(TASKWRAITH_TOOL_ACTIONS.ultra_task.service).toBe('subThreadDelegation')
     expect(TASKWRAITH_TOOL_ACTIONS.cancel_subthread.service).toBe('subThreadDelegation')
+    expect(TASKWRAITH_TOOL_ACTIONS.run_shell_command.service).toBe('shellCommands')
     for (const tool of [
       'simulator_open',
       'simulator_boot',
@@ -341,7 +341,6 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'move_path',
       'rename_path',
       'apply_patch',
-      'run_shell_command',
       'start_background_process',
       'kill_background_process',
       'git_stage',
@@ -362,6 +361,13 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     ]) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(false)
     }
+  })
+
+  it('advertises run_shell_command as an approval-queued Ask instrument', () => {
+    expect(isReadOnlyAdvertisedTool('run_shell_command')).toBe(true)
+    expect(isPlanAdvertisedTool('run_shell_command')).toBe(true)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('run_shell_command')).toBe(false)
+    expect(RECON_INSTRUMENT_ADVERTISE_TOOLS).toContain('run_shell_command')
   })
 
   it('advertises sub-thread delegation as an approval-queued Ask instrument', () => {
@@ -491,7 +497,6 @@ describe('PLAN_MCP_ADVERTISE_TOOLS / isPlanAdvertisedTool (plan-seat bridge scop
       'write_file',
       'replace',
       'apply_patch',
-      'run_shell_command',
       'git_stage',
       'git_commit',
       'git_push',

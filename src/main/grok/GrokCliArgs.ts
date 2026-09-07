@@ -23,10 +23,7 @@
 // In NO mode is `--always-approve` ever emitted.
 
 import type { ActiveGoal } from '../store/types'
-import {
-  isGrok45ReasoningModelId,
-  isGrokReasoningModelId
-} from '../../shared/grok45Models'
+import { isGrok45ReasoningModelId, isGrokReasoningModelId } from '../../shared/grok45Models'
 import { GROK_BROKER_MCP_TOOL_NAMESPACE } from '../index.constants'
 
 const GROK_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh'])
@@ -96,12 +93,7 @@ export const GROK_WRITE_MODE_DENY_RULES = GROK_READ_ONLY_DENY_RULES
  * provide a hard workspace-rooted shell sandbox to contain absolute paths or
  * network egress. Shell goes through the broker as well.
  */
-export const GROK_ACP_READ_ONLY_DENY_RULES = [
-  'Bash(*)',
-  'Shell(*)',
-  'Edit(*)',
-  'Write(*)'
-] as const
+export const GROK_ACP_READ_ONLY_DENY_RULES = ['Bash(*)', 'Shell(*)', 'Edit(*)', 'Write(*)'] as const
 
 export const GROK_ACP_WRITE_MODE_DENY_RULES = GROK_ACP_READ_ONLY_DENY_RULES
 
@@ -128,12 +120,11 @@ export function grokWriteCapable(approvalMode: string | null | undefined): boole
 export const GROK_READ_ONLY_PROMPT_PREAMBLE =
   'You are running in READ-ONLY mode (recon / investigation). You CAN read and ' +
   'inspect through the native read/file tools that are actually listed. Native Bash/Shell ' +
-  'and TaskWraith shell tools are unavailable in this seat, so do not attempt or search ' +
-  'for a shell route. An explicit no-tools instruction ' +
+  'are unavailable in this seat — do not attempt them. If a TaskWraith MCP shell tool is ' +
+  'listed, that is the shell route and the host will prompt the user before it runs. ' +
+  'An explicit no-tools instruction ' +
   'in the user request or role brief overrides that allowance: do not call read, ' +
-  'shell, file, goal, or any other tool. File writes and edits, and ' +
-  'MUTATING shell commands (anything that changes files or git state, installs ' +
-  'packages, or has other side effects) are refused by the host — do not ' +
+  'shell, file, goal, or any other tool. File writes and edits are refused by the host — do not ' +
   'attempt them; if the task would need one, describe what you would change ' +
   'instead. If a tool call is refused, do NOT end your turn — summarise what ' +
   'you found from the reads you did and answer the user directly. Do not substitute ' +
@@ -241,15 +232,12 @@ export function buildGrokProviderPrompt(
   }
 ): string {
   let brokerAwarePrompt = prompt
-  if (
-    options?.taskWraithShellToolAvailable &&
-    grokWriteCapable(approvalMode) &&
-    !prompt.includes(GROK_MCP_SHELL_TOOL_NAME)
-  ) {
+  if (options?.taskWraithShellToolAvailable && !prompt.includes(GROK_MCP_SHELL_TOOL_NAME)) {
     brokerAwarePrompt = `${GROK_MCP_SHELL_PROMPT_NOTE}\n\n${brokerAwarePrompt}`
   }
   const questionAwarePrompt =
-    options?.taskWraithQuestionToolAvailable && !brokerAwarePrompt.includes(GROK_MCP_QUESTION_TOOL_NAME)
+    options?.taskWraithQuestionToolAvailable &&
+    !brokerAwarePrompt.includes(GROK_MCP_QUESTION_TOOL_NAME)
       ? `${GROK_MCP_QUESTION_PROMPT_NOTE}\n\n${brokerAwarePrompt}`
       : brokerAwarePrompt
   return applyGrokNativeGoalPrompt(
