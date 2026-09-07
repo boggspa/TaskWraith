@@ -559,7 +559,6 @@ export interface EnsembleFanoutAllResult {
     | 'explicit_targets_required'
     | 'budget_exhausted'
     | 'host_capacity'
-    | 'too_many_concurrent_fanouts'
     | 'dispatch_failed'
 }
 
@@ -597,7 +596,6 @@ export interface EnsembleFanoutResult {
     | 'write_lanes_disabled'
     | 'budget_exhausted'
     | 'host_capacity'
-    | 'too_many_concurrent_fanouts'
     | 'dispatch_failed'
 }
 

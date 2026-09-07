@@ -164,12 +164,6 @@ describe('concurrent fan-outs share the host cap', () => {
       expect(fourth.ok).toBe(true)
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(5))
       expect(openLaneCount(harness)).toBe(4)
-      expect(
-        harness.chat.messages.some(
-          (message) =>
-            typeof message.content === 'string' && message.content.includes('At most 3 fan-outs')
-        )
-      ).toBe(false)
       for (let index = 1; index <= 4; index += 1) complete(harness, index)
       await vi.waitFor(() => expect(openLaneCount(harness)).toBe(0))
     }
