@@ -21,6 +21,7 @@ conditional refinements that are not captured in these older exports.
 | Codex | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/Codex%20Composer%20-%20Dark%20Mode.png" alt="Codex Composer - Dark Mode" width="360" /> | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/Codex%20Composer%20-%20Light%20Mode.png" alt="Codex Composer - Light Mode" width="360" /> |
 | Claude | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/Claude%20Composer%20-%20Dark%20Mode.png" alt="Claude Composer - Dark Mode" width="360" /> | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/Claude%20Composer%20-%20Light%20Mode.png" alt="Claude Composer - Light Mode" width="360" /> |
 | Cursor | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/Cursor%20Composer%20-%20Dark%20Mode.png" alt="Cursor Composer - Dark Mode" width="360" /> | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/Cursor%20Composer%20-%20Light%20Mode.png" alt="Cursor Composer - Light Mode" width="360" /> |
+| ChatGPT | Visual-only shell (`chatgpt`): a Codex + Cursor cross. Capsule/radius follow Cursor; above-bar and footer grouping follow Codex. No separate design-export screenshot in this gallery yet. | Same visual-only treatment in light mode. |
 | Grok | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/Grok%20Composer%20-%20Dark%20Mode.png" alt="Grok Composer - Dark Mode" width="360" /> | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/Grok%20Composer%20-%20Light%20Mode.png" alt="Grok Composer - Light Mode" width="360" /> |
 | Kimi | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/Kimi%20Composer%20-%20Dark%20Mode.png" alt="Kimi Composer - Dark Mode" width="360" /> | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/Kimi%20Composer%20-%20Light%20Mode.png" alt="Kimi Composer - Light Mode" width="360" /> |
 | Gemini | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/Gemini%20Composer%20-%20Dark%20Mode.png" alt="Gemini Composer - Dark Mode" width="360" /> | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/Gemini%20Composer%20-%20Light%20Mode.png" alt="Gemini Composer - Light Mode" width="360" /> |
@@ -45,6 +46,7 @@ current iOS state matrix.
 | Codex | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/iOS%20Variants/IOS%20Codex%20Composer.png" alt="iOS Codex Composer" width="320" /> |
 | Claude | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/iOS%20Variants/IOS%20Claude%20Composer.png" alt="iOS Claude Composer" width="320" /> |
 | Cursor | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/iOS%20Variants/IOS%20Cursor%20Composer.png" alt="iOS Cursor Composer" width="320" /> |
+| ChatGPT | Visual-only iOS counterpart of the desktop `chatgpt` shell (Cursor capsule layout, Codex-grouped chrome). No dedicated export in this reference set yet. |
 | Grok | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/iOS%20Variants/IOS%20Grok%20Composer.png" alt="iOS Grok Composer" width="320" /> |
 | Kimi | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/iOS%20Variants/IOS%20Kimi%20Composer.png" alt="iOS Kimi Composer" width="320" /> |
 | Gemini | <img src="../design-assets/TaskWraith%20Composer%20Shell%20Electron%20Variants/iOS%20Variants/IOS%20Gemini%20Composer.png" alt="iOS Gemini Composer" width="320" /> |
@@ -62,6 +64,9 @@ current iOS state matrix.
   provider logos.
 - Composer shells are presentation-level choices. They do not grant more file,
   shell, git, remote, or workflow authority by themselves.
+- The `chatgpt` shell is visual-only: it does not select the Codex provider.
+  Live desktop/iOS style ids are `default, codex, chatgpt, claude, cursor, grok,
+  gemini, kimi, modular, terminal, stub, satellite, obsidian, alabaster`.
 - The compact composer affordances are meant to keep high-risk controls visible:
   approval mode, continuation budget, participant targeting, model
   selection, run state, and workspace context remain close to the send control.
