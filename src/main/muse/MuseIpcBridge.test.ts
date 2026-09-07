@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import {
   createChildProcessMuseSpawn,
   defaultMuseAuthJsonPath,
+  MUSE_MCP_PREFLIGHT_MISSING_TASKWRAITH_SERVER,
   museExecEventToCompatPayload,
   readDefaultMuseAuthJsonText,
   runMuseProviderFromIpc,
@@ -966,7 +967,13 @@ describe('runMuseProviderFromIpc — transport selection', () => {
     const mspRun = vi.fn(async () => successOutcome())
     await runMuseProviderFromIpc(
       ipcEvent() as never,
-      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
       baseDeps({
         runMuseProvider: execRun as never,
         runMuseMspProvider: mspRun as never,
@@ -993,7 +1000,8 @@ describe('runMuseProviderFromIpc — transport selection', () => {
         appChatId: 'chat-1',
         ensembleRun: { participantId: 'worker' },
         providerSessionId: 'sess-stored',
-        imagePaths: ['/chat/a.png']
+        imagePaths: ['/chat/a.png'],
+        taskWraithMcpAdvertised: false
       },
       baseDeps({
         runMuseProvider: execRun as never,
@@ -1020,7 +1028,8 @@ describe('runMuseProviderFromIpc — transport selection', () => {
         workspace: '/ws',
         appRunId: 'run-1',
         appChatId: 'chat-1',
-        providerSessionId: 'sess-stored'
+        providerSessionId: 'sess-stored',
+        taskWraithMcpAdvertised: false
       },
       // No getSeatHome: a disposable home has no log to resume into, and MSP
       // rejects a resume for a session it cannot find.
@@ -1036,7 +1045,13 @@ describe('runMuseProviderFromIpc — transport selection', () => {
     const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
     await runMuseProviderFromIpc(
       ipcEvent() as never,
-      { prompt: 'hi', workspace: '/ws', appRunId: 'run-77', appChatId: 'chat-1' },
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-77',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
       baseDeps({
         runMuseMspProvider: mspRun as never,
         requestApproval: async (ask) => {
@@ -1072,7 +1087,13 @@ describe('runMuseProviderFromIpc — transport selection', () => {
     const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
     await runMuseProviderFromIpc(
       ipcEvent() as never,
-      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
       baseDeps({
         runMuseMspProvider: mspRun as never,
         requestApproval: async () => {
@@ -1095,7 +1116,13 @@ describe('runMuseProviderFromIpc — transport selection', () => {
     const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
     await runMuseProviderFromIpc(
       ipcEvent() as never,
-      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
       baseDeps({ runMuseMspProvider: mspRun as never })
     )
     // Absence is meaningful: the client denies by default, so selecting
@@ -1115,7 +1142,13 @@ describe('runMuseProviderFromIpc — transport selection', () => {
     )
     await runMuseProviderFromIpc(
       ipcEvent() as never,
-      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
       baseDeps({
         sendCompatLine,
         runMuseProvider: execRun as never,
@@ -1140,7 +1173,13 @@ describe('runMuseProviderFromIpc — transport selection', () => {
     )
     await runMuseProviderFromIpc(
       ipcEvent() as never,
-      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
       baseDeps({ runMuseProvider: execRun as never, runMuseMspProvider: mspRun as never })
     )
     expect(execRun).not.toHaveBeenCalled()
@@ -1158,11 +1197,87 @@ describe('runMuseProviderFromIpc — transport selection', () => {
     )
     await runMuseProviderFromIpc(
       ipcEvent() as never,
-      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
       baseDeps({ runMuseProvider: execRun as never, runMuseMspProvider: mspRun as never })
     )
     // Re-running would duplicate work the user already saw.
     expect(execRun).not.toHaveBeenCalled()
+  })
+
+  it('dispatches an explicit MCP opt-out MSP turn without injecting mcp_servers', async () => {
+    process.env[MSP_ENV] = '1'
+    const mspRun = vi.fn(async () => successOutcome())
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
+      baseDeps({ runMuseMspProvider: mspRun as never })
+    )
+    expect(mspRun).toHaveBeenCalledTimes(1)
+    expect(mspRun.mock.calls[0][0].mcpSettings).toBeUndefined()
+  })
+
+  it('dispatches an advertised MSP turn once composed settings carry mcp_servers.taskwraith', async () => {
+    process.env[MSP_ENV] = '1'
+    const mspRun = vi.fn(async () => successOutcome())
+    const prepareTaskWraithMcp = vi.fn(async () => ({
+      command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+      args: ['--taskwraith-gemini-mcp-bridge'],
+      env: { TASKWRAITH_PARENT_PROVIDER: 'muse' }
+    }))
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: true
+      },
+      baseDeps({ runMuseMspProvider: mspRun as never, prepareTaskWraithMcp })
+    )
+    expect(mspRun).toHaveBeenCalledTimes(1)
+    expect(mspRun.mock.calls[0][0].mcpSettings).toMatchObject({
+      mcp_servers: { taskwraith: expect.objectContaining({ mode: 'required' }) }
+    })
+  })
+
+  it('fails fast before MSP dispatch when the advertised TaskWraith MCP server is missing from composed settings', async () => {
+    process.env[MSP_ENV] = '1'
+    const mspRun = vi.fn(async () => successOutcome())
+    const execRun = vi.fn(async () => successOutcome())
+    const settleSetupFailure = vi.fn()
+    // Prompt composition treats a missing flag as advertised (`!== false`); the
+    // bridge used to require `=== true` before injecting mcp_servers. That
+    // desync ships a settings.json with no taskwraith server while the prompt
+    // still names the tools — `mode: required` then kills the turn.
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      baseDeps({
+        runMuseProvider: execRun as never,
+        runMuseMspProvider: mspRun as never,
+        settleSetupFailure
+      })
+    )
+    expect(mspRun).not.toHaveBeenCalled()
+    expect(execRun).not.toHaveBeenCalled()
+    expect(settleSetupFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: MUSE_MCP_PREFLIGHT_MISSING_TASKWRAITH_SERVER
+      })
+    )
   })
 
   it('publishes the session id the provider actually used on the result line', async () => {
@@ -1170,7 +1285,13 @@ describe('runMuseProviderFromIpc — transport selection', () => {
     const sendCompatLine = vi.fn()
     await runMuseProviderFromIpc(
       ipcEvent() as never,
-      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
       baseDeps({
         sendCompatLine,
         runMuseMspProvider: (async () =>

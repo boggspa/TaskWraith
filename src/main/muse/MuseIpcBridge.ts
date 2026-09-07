@@ -31,6 +31,7 @@ import {
 } from './MuseIntroduction'
 import {
   buildMuseTaskWraithMcpSettings,
+  MUSE_TASKWRAITH_MCP_SERVER_NAME,
   type MuseMcpSettings,
   type MuseTaskWraithMcpInvocation
 } from './MuseMcpConfig'
@@ -309,6 +310,17 @@ export function museMspHostFailedToStart(outcome: MuseRunOutcome): boolean {
   return outcome.status === 'failed' && !outcome.sessionId && outcome.events.length === 0
 }
 
+/** Named fail-fast when an MSP turn advertised TaskWraith MCP without shipping the server. */
+export const MUSE_MCP_PREFLIGHT_MISSING_TASKWRAITH_SERVER =
+  'Muse MCP preflight: this turn advertised the TaskWraith bridge, but the composed Muse settings omit mcp_servers.taskwraith. Refusing to dispatch rather than letting a required-mode audit fail silently.'
+
+/** True when composed run settings actually carry the app-owned TaskWraith MCP server. */
+export function museComposedSettingsCarryTaskWraithMcp(
+  mcpSettings: MuseMcpSettings | undefined
+): boolean {
+  return mcpSettings?.mcp_servers?.[MUSE_TASKWRAITH_MCP_SERVER_NAME] != null
+}
+
 /** Startup-shaped failure outcome for a host that never came up. */
 function museFailedStartupOutcome(museSessionId: string): MuseRunOutcome {
   const meter = unavailableMuseMeterSnapshot(museSessionId)
@@ -554,6 +566,21 @@ export async function runMuseProviderFromIpc(
       )
       return
     }
+  }
+
+  // Prompt composition treats a missing flag as advertised (`!== false`). The
+  // prepare gate above still requires `=== true`. That desync can ship a
+  // settings.json with no mcp_servers.taskwraith while the prompt still names
+  // the tools; `mode: 'required'` then kills the turn. Fail closed before
+  // dispatch. Do not widen museMspHostFailedToStart — a wedge already has a
+  // sessionId, and silently re-running that turn is forbidden.
+  if (
+    museMspTransportEnabled() &&
+    payload.taskWraithMcpAdvertised !== false &&
+    !museComposedSettingsCarryTaskWraithMcp(mcpSettings)
+  ) {
+    failSetup(deps, event, payload, MUSE_MCP_PREFLIGHT_MISSING_TASKWRAITH_SERVER)
+    return
   }
 
   let cancelled = false
