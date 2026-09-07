@@ -1854,6 +1854,7 @@ import {
   type CursorGlobalBrokerRegistryLease
 } from './cursor/CursorGlobalBrokerRegistryLease'
 import { cursorTaskWraithBrokerAttachAllowed } from './cursor/CursorMcpPolicy'
+import { compactCursorPathBHostContext } from './cursor/CursorPathBHostCompaction'
 import {
   createGrokTurnAbortController,
   runGrokAcpTurn,
@@ -31285,13 +31286,6 @@ async function compactProviderContextForRequest(payload: {
   /** 'auto' only from the orchestrator's post-round trigger; IPC = manual. */
   trigger?: 'auto' | 'manual'
 }): Promise<{ ok: boolean; error?: string }> {
-  if (payload.provider === 'cursor') {
-    return {
-      ok: false,
-      error:
-        'Cursor host-seat compaction is not implemented for Path-B sandbox runs yet; start a fresh Cursor turn instead of compacting the seat.'
-    }
-  }
   const admissionChat = AppStore.getChat(payload.chatId)
   if (!admissionChat) return { ok: false, error: 'Chat not found.' }
   let reservation: MaintenanceCompactionReservation
@@ -31330,13 +31324,6 @@ async function compactProviderContextForReservedRequest(
   },
   reservation: MaintenanceCompactionReservation
 ): Promise<{ ok: boolean; error?: string }> {
-  if (payload.provider === 'cursor') {
-    return {
-      ok: false,
-      error:
-        'Cursor host-seat compaction is not implemented for Path-B sandbox runs yet; start a fresh Cursor turn instead of compacting the seat.'
-    }
-  }
   let providerSessionId = payload.providerSessionId
   let model: string | undefined
   let reasoningEffort: string | null | undefined
@@ -31344,9 +31331,9 @@ async function compactProviderContextForReservedRequest(
   let kimiNativeSession = false
   const isHostSeatProvider =
     payload.provider === 'kimi' || payload.provider === 'grok' || payload.provider === 'antigravity'
-  // Kimi/Grok host seats compact only as ENSEMBLE seats here. Cursor remains in
-  // the request union for historical decoding but is rejected above. Solo Kimi
-  // compacts through the renderer's summarize-run lane (wave 2);
+  // Kimi/Grok/AntiGravity host seats compact only as ENSEMBLE seats here.
+  // Path-B Cursor uses extractive host compaction for solo and ensemble seats.
+  // Solo Kimi compacts through the renderer's summarize-run lane (wave 2);
   // solo grok has no host lever yet (its ACP default reinjects the transcript,
   // so a solo grok chat cannot overflow from accumulation).
   if (isHostSeatProvider && !payload.participantId) {
@@ -31380,7 +31367,8 @@ async function compactProviderContextForReservedRequest(
       !participant.linkedProviderSessionId &&
       payload.provider !== 'kimi' &&
       payload.provider !== 'grok' &&
-      payload.provider !== 'antigravity'
+      payload.provider !== 'antigravity' &&
+      payload.provider !== 'cursor'
     ) {
       return {
         ok: false,
@@ -31449,6 +31437,57 @@ async function compactProviderContextForReservedRequest(
       trigger: payload.trigger || 'manual',
       reservation
     })
+  }
+  if (payload.provider === 'cursor') {
+    return compactCursorPathBHostContext(
+      {
+        chatId: payload.chatId,
+        ...(payload.participantId ? { participantId: payload.participantId } : {}),
+        trigger: payload.trigger || 'manual',
+        ...(cardMetadata ? { cardMetadata } : {}),
+        reservationCanWrite: () => maintenanceCompactionRegistry.canWrite(reservation)
+      },
+      {
+        getChat: (chatId) => AppStore.getChat(chatId),
+        saveChat: (chat) => {
+          AppStore.saveChat(chat)
+          broadcastChatUpdated(chat)
+        },
+        now: () => Date.now(),
+        nowIso: () => new Date().toISOString(),
+        appendCard: (signal, extra) => {
+          appendContextCompactionMessageToChat(
+            payload.chatId,
+            signal,
+            payload.participantId || payload.chatId,
+            extra
+          )
+          broadcastContextCompactionSignalProgress({
+            chatId: payload.chatId,
+            provider: 'cursor',
+            signal,
+            ...(extra ? { cardMetadata: extra } : {}),
+            trigger: payload.trigger || 'manual'
+          })
+        },
+        broadcastProgress: (status) => {
+          broadcastContextCompactionProgress({
+            chatId: payload.chatId,
+            ...(payload.participantId ? { participantId: payload.participantId } : {}),
+            provider: 'cursor',
+            status,
+            trigger: payload.trigger || 'manual',
+            ...(typeof cardMetadata?.displayParticipantLabel === 'string'
+              ? { label: cardMetadata.displayParticipantLabel }
+              : {}),
+            ...(typeof cardMetadata?.displayHueClass === 'string'
+              ? { hueClass: cardMetadata.displayHueClass }
+              : {})
+          })
+        },
+        seatPreTokens: seatRunPreTokens
+      }
+    )
   }
   if (payload.provider === 'claude') {
     if (!providerSessionId) {
