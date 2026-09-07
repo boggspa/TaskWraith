@@ -8,7 +8,7 @@ context needed to answer.
 
 ## 1.9.8 - Unreleased
 
-> **Source-ahead — 2026-09-02.** The highlights below describe work landed after
+> **Source-ahead — 2026-09-07.** The highlights below describe work landed after
 > the shipped v1.9.7 boundary; they are not a release or artifact claim.
 
 ### New Models and Provider Seats
