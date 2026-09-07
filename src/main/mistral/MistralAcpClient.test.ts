@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { resolveStructuredTaskWraithToolRequest } from '../grok/GrokMcpAdvertise'
 import type { AcpPermissionRequest } from '../grok/GrokAcpProtocol'
 import {
+  MISTRAL_TOOL_FAILURE_CONTINUITY_PROMPT,
+  MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT,
   formatMistralSteerPrompt,
   mistralTaskWraithBrokerToolRequested,
   normalizeMistralVibePermissionRequest,
@@ -10,6 +12,7 @@ import {
   type AcpChildProcess
 } from './MistralAcpClient'
 import type { EffectiveRunPermissions } from '../store/types'
+import type { NormalizedGrokRunEvent } from '../grok/GrokAcpProtocol'
 
 const MISTRAL_NAMESPACES = ['taskwraith-mistral', 'TaskWraith'] as const
 
@@ -42,6 +45,7 @@ describe('formatMistralSteerPrompt', () => {
 })
 
 class FakeAcpChild implements AcpChildProcess {
+  killed = false
   private readonly writes: string[] = []
   private readonly dataListeners: Array<(chunk: string) => void> = []
   private closeListener?: (code: number | null) => void
@@ -69,6 +73,7 @@ class FakeAcpChild implements AcpChildProcess {
   }
 
   kill(_signal?: string): void {
+    this.killed = true
     this.closeListener?.(0)
   }
 
@@ -409,5 +414,244 @@ describe('runMistralAcpTurn permission normalization', () => {
 
     handle.cancel()
     await handle.closed
+  })
+})
+
+/**
+ * The seat's denied-tool recovery had NO test coverage at all until now, which
+ * is how `9e70e36df` shipped a predicate that could not fire on the turns it
+ * was written for and stayed green all the way to master. The two cases below
+ * are the discriminating pair: together they make any future change to
+ * `shouldRecover` impossible to land silently.
+ */
+const tick = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+const promptFrames = (child: FakeAcpChild): Record<string, unknown>[] =>
+  child.sent().filter((message) => message.method === 'session/prompt')
+
+const promptText = (frame: Record<string, unknown> | undefined): string | undefined =>
+  (frame?.params as { prompt?: Array<{ text?: string }> } | undefined)?.prompt?.[0]?.text
+
+function runMistral(child: FakeAcpChild): {
+  events: NormalizedGrokRunEvent[]
+  handle: ReturnType<typeof runMistralAcpTurn>
+} {
+  const events: NormalizedGrokRunEvent[] = []
+  const handle = runMistralAcpTurn({
+    prompt: 'inspect the workspace',
+    cwd: '/tmp/workspace',
+    appVersion: '1.9.7-test',
+    spawnProcess: () => child,
+    onEvent: (event) => events.push(event)
+  })
+  return { events, handle }
+}
+
+const sessionReady = (child: FakeAcpChild): void => {
+  child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+  child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-1' } })
+}
+
+const toolCall = (child: FakeAcpChild, toolCallId: string, title: string, kind: string): void => {
+  child.emit({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: {
+      sessionId: 'session-1',
+      update: { sessionUpdate: 'tool_call', toolCallId, title, kind, rawInput: {} }
+    }
+  })
+}
+
+const toolResult = (
+  child: FakeAcpChild,
+  toolCallId: string,
+  status: 'completed' | 'failed',
+  output?: string
+): void => {
+  child.emit({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId,
+        status,
+        // Real Vibe carries the outcome as an ACP content block, which is what
+        // `acpToolContentToText` reads to populate `lastFailedToolOutput` — the
+        // only input that selects between the two continuity prompts. A bare
+        // status update leaves that null, so a fixture without content can only
+        // ever exercise the generic branch.
+        ...(output
+          ? { content: [{ type: 'content', content: { type: 'text', text: output } }] }
+          : {})
+      }
+    }
+  })
+}
+
+const failedTool = (child: FakeAcpChild, output?: string): void => {
+  toolCall(child, 'shell-1', 'execute', 'execute')
+  toolResult(child, 'shell-1', 'failed', output)
+}
+
+const succeededTool = (child: FakeAcpChild, toolCallId: string): void => {
+  toolCall(child, toolCallId, 'read_file', 'read')
+  toolResult(child, toolCallId, 'completed', '100 lines')
+}
+
+/**
+ * Maps to a `thinking` event, never `content` — so interposing these must NOT
+ * satisfy `!assistantTextSeen`. Real failing runs carry several between the
+ * rejected tool and the terminal.
+ */
+const thought = (child: FakeAcpChild, text: string): void => {
+  child.emit({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: {
+      sessionId: 'session-1',
+      update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text } }
+    }
+  })
+}
+
+describe('runMistralAcpTurn denied-tool recovery', () => {
+  it('continues once after a failed tool ends the turn with no assistant text', async () => {
+    // THE case the revert says was silently dropped: tool failure + NO
+    // assistant text + a clean `end_turn`. Measured against real runs, Vibe
+    // terminates `end_turn` here — not `cancelled` — so a predicate gated on
+    // the terminal status cannot fire, which is why this shape is the one that
+    // has to be pinned.
+    const child = new FakeAcpChild()
+    const { events, handle } = runMistral(child)
+    sessionReady(child)
+    failedTool(child)
+    // The failure is NOT adjacent to the terminal in a real run: Vibe keeps
+    // working after it. Interposing successful tools and thought segments is
+    // what makes `toolFailureSeen` stickiness load-bearing rather than an
+    // accident of ordering.
+    succeededTool(child, 'read-1')
+    thought(child, 'The command failed, so I will read the files directly.')
+    succeededTool(child, 'read-2')
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
+    await tick(40)
+
+    const prompts = promptFrames(child)
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toMatchObject({ id: 5, params: { sessionId: 'session-1' } })
+    expect(promptText(prompts[1])).toBe(MISTRAL_TOOL_FAILURE_CONTINUITY_PROMPT)
+
+    // Count pinned BEFORE reading the text, so a typo in the warning cannot
+    // pass as an absence.
+    const warnings = events.filter((event) => event.type === 'provider_warning')
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]?.text).toContain('Mistral stopped after a rejected or failed tool')
+    expect(child.killed).toBe(false)
+
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'Finished from existing evidence.' }
+        }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 5, result: { stopReason: 'end_turn' } })
+    await handle.closed
+  })
+
+  it('selects the declined-tool prompt when the tool was rejected by the user', async () => {
+    // The MEASURED shape, not a constructed one. A denied tool comes back as
+    // `status:'failed'` carrying Vibe's own decline text, and `lastFailedToolOutput`
+    // is the sole input that routes the recovery to the declined prompt. Asserting
+    // the generic prompt here would pass on a fixture that never populated it, so
+    // this pins the branch the real run takes.
+    const child = new FakeAcpChild()
+    const { events, handle } = runMistral(child)
+    sessionReady(child)
+    failedTool(child, 'User rejected the tool call; provide an alternative plan')
+    thought(child, 'Permission was refused; work from what is already readable.')
+    succeededTool(child, 'read-1')
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
+    await tick(40)
+
+    const prompts = promptFrames(child)
+    expect(prompts).toHaveLength(2)
+    const recovery = promptText(prompts[1])
+    expect(recovery).toBe(MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT)
+    // Both directions: the two prompts are different strings, so pinning only
+    // one of them cannot show which branch ran.
+    expect(recovery).not.toBe(MISTRAL_TOOL_FAILURE_CONTINUITY_PROMPT)
+    expect(events.filter((event) => event.type === 'provider_warning')).toHaveLength(1)
+
+    child.emit({ jsonrpc: '2.0', id: 5, result: { stopReason: 'end_turn' } })
+    await handle.closed
+  })
+
+  it('does not spend the recovery when nothing actually failed', async () => {
+    // A turn that only made SUCCESSFUL tool calls and stopped without prose is
+    // silent, not broken. Recovery here would re-prompt a model that had no
+    // failure to recover from, and would do it on every such turn.
+    const child = new FakeAcpChild()
+    const { events, handle } = runMistral(child)
+    sessionReady(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'read-1',
+          title: 'read_file',
+          kind: 'read',
+          rawInput: { path: 'src/main/thing.ts' }
+        }
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: { sessionUpdate: 'tool_call_update', toolCallId: 'read-1', status: 'completed' }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
+    await handle.closed
+
+    expect(promptFrames(child)).toHaveLength(1)
+    expect(events.filter((event) => event.type === 'provider_warning')).toHaveLength(0)
+  })
+
+  it('does not spend the recovery when the answer already reached the user', async () => {
+    // The mirror. Vibe narrates before it acts, so a turn that produced
+    // assistant text has already reported to the user and must not be
+    // re-prompted — this is the half `9e70e36df` would have started firing on.
+    const child = new FakeAcpChild()
+    const { events, handle } = runMistral(child)
+    sessionReady(child)
+    failedTool(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'The test command failed; here is what I found.' }
+        }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
+    await handle.closed
+
+    expect(promptFrames(child)).toHaveLength(1)
+    expect(events.filter((event) => event.type === 'provider_warning')).toHaveLength(0)
   })
 })

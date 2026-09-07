@@ -393,7 +393,7 @@ export function formatMistralSteerPrompt(context: AcpSteerPromptContext): string
   ].join('\n\n')
 }
 
-const MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT =
+export const MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT =
   'The user declined the previous tool request. Respect that decision: do not retry the same ' +
   'tool, request the same permission, or substitute an equivalent side effect. Continue from ' +
   'the evidence already available and produce the best complete report you can; if a required ' +
