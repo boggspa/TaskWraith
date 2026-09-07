@@ -14,6 +14,7 @@ export function resolveApprovalTimeoutMs(
   settings: AppSettings['approvalTimeouts']
 ): number | null {
   if (!settings.enabled) return null
+  if (approval.holdWithoutTimeoutDeny) return null
   if (approval.method && PER_KIND_OVERRIDES_MS[approval.method]) {
     return PER_KIND_OVERRIDES_MS[approval.method]
   }

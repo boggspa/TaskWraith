@@ -4,7 +4,8 @@ import {
   isFullShellAccessGranted,
   isPlanInstrumentGrantHold,
   isPostureApprovalOnlyService,
-  resolveEffectiveRunPermissions
+  resolveEffectiveRunPermissions,
+  shouldHoldShellApprovalWithoutTimeoutDeny
 } from './EffectiveRunPermissions'
 import type { AppSettings, ExternalPathGrant } from './store/types'
 
@@ -1162,5 +1163,71 @@ describe('isPlanInstrumentGrantHold — gate-level grant immunity for plan instr
     }
     expect(isPlanInstrumentGrantHold(undefined, 'canvasInteraction')).toBe(false)
     expect(isPlanInstrumentGrantHold(null, 'mediaEditing')).toBe(false)
+  })
+})
+
+describe('shouldHoldShellApprovalWithoutTimeoutDeny', () => {
+  it('holds interactive Ask shellCommands without timeout deny', () => {
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'read_only',
+        service: 'shellCommands'
+      })
+    ).toBe(true)
+  })
+
+  it('holds interactive Plan shellCommands without timeout deny', () => {
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'plan',
+        service: 'shellCommands'
+      })
+    ).toBe(true)
+  })
+
+  it('does not hold unattended Plan shellCommands', () => {
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'plan',
+        service: 'shellCommands',
+        unattended: true
+      })
+    ).toBe(false)
+  })
+
+  it('does not hold Ask fileChanges / mcpTools / hostCommand rerun', () => {
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'read_only',
+        service: 'fileChanges'
+      })
+    ).toBe(false)
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'read_only',
+        service: 'mcpTools'
+      })
+    ).toBe(false)
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'read_only',
+        service: undefined
+      })
+    ).toBe(false)
+  })
+
+  it('does not hold Accept Edits / Full Access shell', () => {
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'default',
+        service: 'shellCommands'
+      })
+    ).toBe(false)
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'full_access',
+        service: 'shellCommands'
+      })
+    ).toBe(false)
   })
 })

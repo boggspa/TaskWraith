@@ -28,6 +28,7 @@ interface AgentApprovalRequest {
   body: string
   preview?: any
   actions: AgentApprovalAction[]
+  holdWithoutTimeoutDeny?: boolean
 }
 
 const isNativeSubAgentPreferenceApproval = (request: AgentApprovalRequest | null): boolean =>

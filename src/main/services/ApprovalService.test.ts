@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   ApprovalService,
+  handleApprovalTimeout,
   type ApprovalServiceDeps,
   type PendingMainApproval,
   type PendingGeminiToolApproval,
@@ -1054,6 +1055,162 @@ describe('ApprovalService — scheduleTimeout', () => {
     svc.scheduleTimeout({ approvalId: 'ollama-approval', provider: 'ollama' })
 
     expect(scheduledMs).toEqual([75_000, 80_000, 85_000])
+  })
+
+  it('does not arm a timer for Ask shellCommands when Settings timeouts are enabled', () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      status: 'running',
+      state: { effectivePermissions: { presetId: 'read_only' } }
+    })
+    const svc = new ApprovalService(deps)
+    const scheduledMs: number[] = []
+    const scheduler = new ApprovalTimeoutScheduler(DEFAULT_APPROVAL_TIMEOUT_POLICY, vi.fn(), {
+      setTimeoutFn: ((_cb, ms) => {
+        scheduledMs.push(ms)
+        return { __timeout: scheduledMs.length } as unknown as NodeJS.Timeout
+      }) as typeof setTimeout,
+      clearTimeoutFn: vi.fn()
+    })
+    svc.setScheduler(scheduler)
+    svc.registerGeminiTool('ask-shell', {
+      provider: 'codex',
+      service: 'shellCommands',
+      runId: 'r-1',
+      resolve: vi.fn()
+    })
+    svc.scheduleTimeout({ approvalId: 'ask-shell', provider: 'codex' })
+    expect(scheduledMs).toEqual([])
+  })
+
+  it('arms and auto-denies Ask fileChanges when Settings are enabled', () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      status: 'running',
+      state: { effectivePermissions: { presetId: 'read_only' } }
+    })
+    const svc = new ApprovalService(deps)
+    const scheduledMs: number[] = []
+    const scheduler = new ApprovalTimeoutScheduler(DEFAULT_APPROVAL_TIMEOUT_POLICY, vi.fn(), {
+      setTimeoutFn: ((_cb, ms) => {
+        scheduledMs.push(ms)
+        return { __timeout: scheduledMs.length } as unknown as NodeJS.Timeout
+      }) as typeof setTimeout,
+      clearTimeoutFn: vi.fn()
+    })
+    svc.setScheduler(scheduler)
+    svc.registerGeminiTool('ask-files', {
+      provider: 'codex',
+      service: 'fileChanges',
+      runId: 'r-1',
+      resolve: vi.fn()
+    })
+    svc.scheduleTimeout({ approvalId: 'ask-files', provider: 'codex' })
+    expect(scheduledMs).toEqual([30_000])
+  })
+
+  it('unattended Plan shellCommands still auto-denies on timeout', () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      status: 'running',
+      state: { effectivePermissions: { presetId: 'plan' }, scheduledTaskId: 'task-1' }
+    })
+    const svc = new ApprovalService(deps)
+    const scheduledMs: number[] = []
+    const scheduler = new ApprovalTimeoutScheduler(DEFAULT_APPROVAL_TIMEOUT_POLICY, vi.fn(), {
+      setTimeoutFn: ((_cb, ms) => {
+        scheduledMs.push(ms)
+        return { __timeout: scheduledMs.length } as unknown as NodeJS.Timeout
+      }) as typeof setTimeout,
+      clearTimeoutFn: vi.fn()
+    })
+    svc.setScheduler(scheduler)
+    svc.registerGeminiTool('plan-shell', {
+      provider: 'codex',
+      service: 'shellCommands',
+      runId: 'r-1',
+      resolve: vi.fn()
+    })
+    svc.scheduleTimeout({ approvalId: 'plan-shell', provider: 'codex' })
+    expect(scheduledMs).toEqual([30_000])
+  })
+})
+
+describe('ApprovalService — Ask shell timeout hold', () => {
+  it('handleApprovalTimeout does not resolve decline or write autoDeny for Ask shellCommands', async () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      status: 'running',
+      state: { effectivePermissions: { presetId: 'read_only' } }
+    })
+    const svc = new ApprovalService(deps)
+    const resolveFn = vi.fn()
+    svc.registerGeminiTool('ask-shell', {
+      provider: 'codex',
+      service: 'shellCommands',
+      runId: 'r-1',
+      resolve: resolveFn
+    })
+    await handleApprovalTimeout(
+      svc,
+      {
+        approvalId: 'ask-shell',
+        appliedMs: 60_000,
+        source: 'providerDefault'
+      },
+      {
+        appendDurableRunEventForRoute: spies.appendDurableRunEventForRoute,
+        log: spies.log,
+        sendTimeoutToRenderer: vi.fn()
+      }
+    )
+    expect(resolveFn).not.toHaveBeenCalled()
+    expect(spies.resolveApprovalLedger).not.toHaveBeenCalled()
+    expect(svc.has('ask-shell')).toBe(true)
+  })
+
+  it('Ask shellCommands stays pending after the provider window; user decline still denies', async () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      status: 'running',
+      state: { effectivePermissions: { presetId: 'read_only' } }
+    })
+    const svc = new ApprovalService(deps)
+    const resolveFn = vi.fn()
+    svc.registerGeminiTool('ask-shell', {
+      provider: 'codex',
+      service: 'shellCommands',
+      runId: 'r-1',
+      resolve: resolveFn
+    })
+    await handleApprovalTimeout(
+      svc,
+      {
+        approvalId: 'ask-shell',
+        appliedMs: 60_000,
+        source: 'providerDefault'
+      },
+      {
+        appendDurableRunEventForRoute: spies.appendDurableRunEventForRoute,
+        log: spies.log,
+        sendTimeoutToRenderer: vi.fn()
+      }
+    )
+    expect(svc.has('ask-shell')).toBe(true)
+    const ok = await svc.resolve('ask-shell', 'decline')
+    expect(ok).toBe(true)
+    expect(resolveFn).toHaveBeenCalledWith(false)
+    expect(spies.resolveApprovalLedger).toHaveBeenCalledWith('ask-shell', 'decline', 'user', {})
   })
 })
 

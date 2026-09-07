@@ -15,6 +15,7 @@ import type { BridgeApnsTokenStore } from '../BridgeApnsTokenStore'
 import { buildMobileApprovalCard, type MobileApprovalCard } from '../RemoteTaskProjection'
 import { AGENTIC_SERVICE_LABELS } from '../AgenticServiceMessages'
 import { RemoteAttentionApnsFanout } from '../RemoteAttentionApnsFanout'
+import { shouldHoldShellApprovalWithoutTimeoutDeny } from '../EffectiveRunPermissions'
 import {
   isBossApprovalReviewCandidate,
   type BossApprovalReviewCandidate,
@@ -248,6 +249,7 @@ export type RendererApprovalRequest = {
   preview?: unknown
   params?: unknown
   actions: AgentApprovalAction[]
+  holdWithoutTimeoutDeny?: boolean
 } & Record<string, unknown>
 
 export interface ResolveOptions {
@@ -602,10 +604,15 @@ export class ApprovalService {
   publishRendererApprovalRequest(request: RendererApprovalRequest): boolean {
     const approvalId = request.id.trim()
     if (!approvalId || !this.has(approvalId)) return false
+    const holdWithoutTimeoutDeny =
+      request.holdWithoutTimeoutDeny === true ||
+      this.shouldHoldShellTimeoutDeny(approvalId, request.service, request.appRunId)
+    if (holdWithoutTimeoutDeny) request.holdWithoutTimeoutDeny = true
     this.pendingRendererRequests.set(approvalId, {
       ...request,
       id: approvalId,
-      actions: [...request.actions]
+      actions: [...request.actions],
+      ...(holdWithoutTimeoutDeny ? { holdWithoutTimeoutDeny: true } : {})
     })
     return true
   }
@@ -833,6 +840,64 @@ export class ApprovalService {
     return null
   }
 
+  private pendingTimeoutHoldContext(approvalId: string): {
+    service?: AgenticServiceId
+    runId?: string
+  } {
+    const gemini = this.pendingGeminiTool.get(approvalId)
+    if (gemini) return { service: gemini.service, runId: gemini.runId }
+    const kimi = this.pendingKimi.get(approvalId)
+    if (kimi) return { service: kimi.service, runId: kimi.runId }
+    const codex = this.pendingCodex.get(approvalId)
+    if (codex) return { service: codex.service, runId: codex.runId }
+    const renderer = this.pendingRendererRequests.get(approvalId)
+    if (renderer) return { service: renderer.service, runId: renderer.appRunId }
+    return {}
+  }
+
+  private runIsUnattended(runId?: string): boolean {
+    if (!runId) return false
+    const session = this.deps.runManager.get(runId) as
+      | { scheduledTaskId?: unknown; state?: unknown }
+      | undefined
+    if (!session) return false
+    if (typeof session.scheduledTaskId === 'string' && session.scheduledTaskId.trim()) return true
+    const state = session.state as Record<string, unknown> | undefined
+    if (!state || typeof state !== 'object') return false
+    if (typeof state.scheduledTaskId === 'string' && state.scheduledTaskId.trim()) return true
+    const payload = state.payload as Record<string, unknown> | undefined
+    return typeof payload?.scheduledTaskId === 'string' && Boolean(payload.scheduledTaskId.trim())
+  }
+
+  private runPresetId(runId?: string): string | undefined {
+    if (!runId) return undefined
+    const session = this.deps.runManager.get(runId) as { state?: unknown } | undefined
+    const state = session?.state as
+      | {
+          effectivePermissions?: { presetId?: unknown }
+          payload?: { effectivePermissions?: { presetId?: unknown } }
+        }
+      | undefined
+    const presetId =
+      state?.effectivePermissions?.presetId ?? state?.payload?.effectivePermissions?.presetId
+    return typeof presetId === 'string' ? presetId : undefined
+  }
+
+  shouldHoldShellTimeoutDeny(
+    approvalId: string,
+    service?: AgenticServiceId,
+    runId?: string
+  ): boolean {
+    const pending = this.pendingTimeoutHoldContext(approvalId)
+    const resolvedService = service ?? pending.service
+    const resolvedRunId = runId ?? pending.runId
+    return shouldHoldShellApprovalWithoutTimeoutDeny({
+      presetId: this.runPresetId(resolvedRunId),
+      service: resolvedService,
+      unattended: this.runIsUnattended(resolvedRunId)
+    })
+  }
+
   private projectApprovalCard(
     approvalId: string,
     provider: ProviderId,
@@ -881,6 +946,7 @@ export class ApprovalService {
     }
     const userSettings = this.deps.getApprovalTimeoutSettings()
     if (!userSettings.enabled) return
+    if (this.shouldHoldShellTimeoutDeny(args.approvalId)) return
     this.scheduler.updatePolicy({
       defaultTimeoutsMs: {
         gemini: userSettings.perProviderMs.gemini,
@@ -1791,6 +1857,12 @@ export async function handleApprovalTimeout(
   helpers.log(
     `[ApprovalTimeout] approvalId=${reason.approvalId} auto-deny after ${reason.appliedMs}ms (source=${reason.source})`
   )
+  if (service.shouldHoldShellTimeoutDeny(reason.approvalId)) {
+    helpers.log(
+      `[ApprovalTimeout] holding Ask/Plan shellCommands without deny approvalId=${reason.approvalId}`
+    )
+    return
+  }
   const route = service.lookupRoute(reason.approvalId)
   if (route?.appRunId) {
     try {

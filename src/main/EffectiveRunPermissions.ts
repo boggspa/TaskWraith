@@ -352,6 +352,20 @@ export function isPlanInstrumentGrantHold(
   return false
 }
 
+/**
+ * Interactive Ask/Plan bash waits for the user. Settings approval timers must
+ * not system-decline those cards. Unattended/scheduled Plan still fail-closed.
+ */
+export function shouldHoldShellApprovalWithoutTimeoutDeny(args: {
+  presetId?: string | null
+  service?: AgenticServiceId | null
+  unattended?: boolean
+}): boolean {
+  if (args.service !== 'shellCommands') return false
+  if (args.unattended) return false
+  return args.presetId === 'read_only' || args.presetId === 'plan'
+}
+
 export function isPostureApprovalOnlyService(
   presetId: string | null | undefined,
   service: AgenticServiceId | null | undefined

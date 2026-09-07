@@ -23,21 +23,34 @@ const settings = {
 
 describe('resolveApprovalTimeoutMs', () => {
   it('returns null when timeouts are disabled', () => {
-    expect(
-      resolveApprovalTimeoutMs(baseApproval, { ...settings, enabled: false })
-    ).toBeNull()
+    expect(resolveApprovalTimeoutMs(baseApproval, { ...settings, enabled: false })).toBeNull()
   })
 
   it('uses per-provider defaults', () => {
     expect(resolveApprovalTimeoutMs(baseApproval, settings)).toBe(60_000)
   })
 
-  it('prefers per-kind overrides', () => {
+  it('returns null for Ask shellCommands hold so the countdown is hidden', () => {
     expect(
       resolveApprovalTimeoutMs(
-        { ...baseApproval, method: 'hostCommand/rerun' },
+        { ...baseApproval, service: 'shellCommands', holdWithoutTimeoutDeny: true },
         settings
       )
+    ).toBeNull()
+  })
+
+  it('still returns Codex 60s for Ask fileChanges / non-Ask shell', () => {
+    expect(resolveApprovalTimeoutMs({ ...baseApproval, service: 'fileChanges' }, settings)).toBe(
+      60_000
+    )
+    expect(resolveApprovalTimeoutMs({ ...baseApproval, service: 'shellCommands' }, settings)).toBe(
+      60_000
+    )
+  })
+
+  it('prefers per-kind overrides', () => {
+    expect(
+      resolveApprovalTimeoutMs({ ...baseApproval, method: 'hostCommand/rerun' }, settings)
     ).toBe(180_000)
   })
 
