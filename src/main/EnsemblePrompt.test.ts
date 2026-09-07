@@ -323,7 +323,30 @@ describe('Ensemble prompt composition', () => {
       chatContextTurns: 4
     })
     expect(prompt).toContain('ULTRA-TASK MODE ACTIVE')
-    expect(prompt).toContain('Priority order: ensemble_fanout')
+    expect(prompt).toContain('Priority order among listed tools: ensemble_fanout')
+    expect(prompt).toContain('Skip any name that is not listed for this seat')
+  })
+
+  it('gates UltraTask priority names to listed tools in every permission mode', () => {
+    for (const permissionPresetId of ['read_only', 'plan', 'workspace_write', 'full_access'] as const) {
+      const ultraSeat: EnsembleParticipant = {
+        ...ensemble.participants[1],
+        reasoningEffort: 'ultraTask',
+        permissionPresetId
+      }
+      const prompt = buildEnsembleParticipantPrompt({
+        chat: chat(),
+        config: { ...ensemble, participants: [ensemble.participants[0], ultraSeat] },
+        participant: ultraSeat,
+        currentPrompt: 'Please implement this.',
+        roundId: 'round-1',
+        chatContextTurns: 4,
+        listedTools: ['delegate_wave', 'delegate_to_subthread', 'ensemble_await']
+      })
+      expect(prompt).toContain('ULTRA-TASK MODE ACTIVE')
+      expect(prompt).toContain('delegate_wave (all chats)')
+      expect(prompt).not.toMatch(/Priority order[^\n]*ensemble_fanout/)
+    }
   })
 
   it.each(['ultra', 'ultracode', 'max'])(

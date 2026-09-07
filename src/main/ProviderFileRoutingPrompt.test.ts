@@ -43,6 +43,10 @@ describe('buildProviderFileRoutingPrompt', () => {
       'Prefer `taskwraith__apply_patch` or `taskwraith__replace` for an existing file'
     )
     expect(prompt).toContain('Use `taskwraith__write_file` only to create a new file')
+    expect(prompt).not.toMatch(/write_file` \/ `taskwraith__replace` for an exact file operation/)
+    expect(prompt).toContain(
+      'call `taskwraith__apply_patch` for a patch, or `taskwraith__replace` for an in-place edit'
+    )
     expect(prompt).toContain('ordinary tool-call row')
   })
 

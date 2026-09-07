@@ -720,7 +720,7 @@ function buildTaskWraithRuntimePreamble(args: {
     // UltraTask lines moved out of the preamble (v11 -> v12): they now ship
     // standalone, inserted immediately before the current user request, so
     // they stay per-turn and gate-free.
-    `To ask the user, call ${questionTool}; native question/elicitation UI is not connected here. This is the route that reaches desktop and iOS.`,
+    `To ask the user, call ${questionTool} when it is listed; native question/elicitation UI is not connected here. This is the route that reaches desktop and iOS.`,
     ...(args.nativeSubAgentInstruction ? [args.nativeSubAgentInstruction] : [])
   ]
 
@@ -2200,7 +2200,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   // - per-turn: not subject to the runtime preamble's once-per-session
   //   suppression on resumed Claude/Codex/Gemini sessions;
   // - posture-independent: exact UltraTask selection is the user's consent to
-  //   delegation in a workspace, including Ask/Plan posture;
+  //   delegation in every permission mode, including Ask/Plan;
   // - provider-aware: Muse uses its native subagent_spawn/join route while
   //   broker-backed providers use the TaskWraith delegation tools;
   // - adjacent: recency at the moment the model chooses how to execute.

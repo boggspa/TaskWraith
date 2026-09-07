@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { ContextCompactionSignal } from '../../shared/contextCompaction'
+import { formatContextCompactionSummary } from '../../shared/contextCompaction'
 import type { ChatRecord, EnsembleParticipant } from '../store/types'
 import {
   buildCursorPathBCompactionSummary,
@@ -32,6 +33,12 @@ export interface CursorPathBHostCompactionRuntimeDeps {
   now(): number
   nowIso(): string
   appendCard(signal: ContextCompactionSignal, extraMetadata?: Record<string, unknown>): void
+  appendDurableRunEvent?(event: {
+    kind: 'context_compaction'
+    summary: string
+    signal: ContextCompactionSignal
+    lastRunId?: string
+  }): void
   broadcastProgress(status: 'started' | 'completed' | 'failed'): void
   seatPreTokens(chat: ChatRecord, participantId: string): number | undefined
 }
@@ -113,11 +120,19 @@ export function compactCursorPathBHostContext(
     return plan
   }
   if (!payload.reservationCanWrite()) {
+    deps.broadcastProgress('failed')
     return { ok: false, error: 'Compaction was cancelled for history deletion.' }
   }
   const nextChat = { ...plan.nextChat, updatedAt: deps.now() }
   deps.saveChat(nextChat)
   deps.appendCard(plan.signal, payload.cardMetadata)
+  const lastRunId = [...(nextChat.runs || [])].reverse().find((run) => run?.runId)?.runId
+  deps.appendDurableRunEvent?.({
+    kind: 'context_compaction',
+    summary: formatContextCompactionSummary(plan.signal, 'Cursor'),
+    signal: plan.signal,
+    ...(lastRunId ? { lastRunId } : {})
+  })
   deps.broadcastProgress('completed')
   return { ok: true }
 }

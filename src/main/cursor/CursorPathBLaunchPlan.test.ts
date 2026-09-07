@@ -151,7 +151,7 @@ describe('CursorPathBLaunchPlan', () => {
     }
   )
 
-  it('adds exact delegation allow rules only for signed UltraTask Ask/Plan runs', () => {
+  it('adds exact delegation allow rules for signed UltraTask on every permission mode', () => {
     const effectivePermissions = {
       subThreadDelegationAutoAllowSource: 'ultratask'
     } as EffectiveRunPermissions
@@ -178,6 +178,18 @@ describe('CursorPathBLaunchPlan', () => {
     })
     for (const toolName of ['delegate_wave', 'ultra_task', 'delegate_to_subthread']) {
       expect(ordinary.allowRules.some((rule) => rule.includes(toolName))).toBe(false)
+    }
+
+    const writeUltra = resolveCursorPathBBrokerPolicy({
+      writeCapable: true,
+      planSeat: false,
+      taskWraithMcpProfileId: 'taskwraith-full-v1',
+      effectivePermissions
+    })
+    expect(writeUltra.bridgeMode).toBe('full')
+    expect(writeUltra.allowRules).toContain('Mcp(taskwraith-broker:*)')
+    for (const toolName of ['delegate_wave', 'ultra_task', 'delegate_to_subthread']) {
+      expect(writeUltra.allowRules).toContain(`Mcp(taskwraith-broker:${toolName})`)
     }
   })
 
@@ -352,6 +364,21 @@ describe('Cursor Path-B broker receipt names the live listed tools', () => {
     expect(plan.prompt).toContain('delegate_wave')
     expect(plan.prompt).toContain('apply_patch')
     expect(plan.prompt).toContain('ordinary tool-call rows')
+  })
+
+  it('does not list capability_search on a write-capable taskwraith-full-v1 seat', () => {
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'active',
+        taskWraithMcpProfileId: 'taskwraith-full-v1'
+      })
+    )
+
+    expect(plan.prompt).toContain('ensemble_fanout')
+    expect(plan.prompt).toContain('ask_user_question')
+    expect(plan.prompt).not.toContain('capability_search')
   })
 
   it('strips discovery instructions when the broker degrades to native-only', () => {

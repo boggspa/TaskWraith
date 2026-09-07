@@ -82,9 +82,9 @@ TaskWraith's authority is centered on the desktop app:
   asserts about its own work is unverifiable, and the telemetry it reads to
   produce one is attacker-influenceable.
 
-The tagged v1.9.6 release is the current public baseline. This repository can
+The tagged v1.9.7 release is the current public baseline. This repository can
 also contain source-ahead work that is not a released guarantee until it is
-named in later release notes. The changelog's **1.9.6** section is the newest
+named in later release notes. The changelog's **1.9.7** section is the newest
 released section; anything in this tree beyond it is source-ahead and carries
 no released guarantee.
 
@@ -156,7 +156,7 @@ gitignored, and not published.
 ## Emulator Canvas: a bounded demo surface
 
 **Source-ahead only:** this describes code in the current repository after the
-public v1.9.6 baseline. It is not a release or packaged-artifact promise.
+public v1.9.7 baseline. It is not a release or packaged-artifact promise.
 
 Emulator Canvas runs one reviewed, packaged homebrew demo. It is not a general
 ROM loader or browser: neither a person nor an agent supplies a game file, ROM

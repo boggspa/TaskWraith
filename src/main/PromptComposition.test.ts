@@ -837,7 +837,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt).toContain('TaskWraith runtime note')
     expect(result.contextualPrompt).toContain('taskwraith__apply_patch')
     expect(result.contextualPrompt).toContain('taskwraith__run_shell_command')
-    expect(result.contextualPrompt).toContain('native Cursor tools')
+    expect(result.contextualPrompt).toContain('Native Cursor tools')
     expect(result.contextualPrompt).toContain('Create a test file.')
   })
 
@@ -1101,6 +1101,23 @@ describe('composeRunPrompt sub-thread returns', () => {
       expect(result.contextualPrompt).not.toContain('Batch wave example')
       expect(result.contextualPrompt).not.toContain('RECALL')
     }
+  })
+
+  it('names ask_user_question only as a listed-tool route', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'cursor',
+      finalPrompt: 'Ask before editing.',
+      messages: [],
+      chatContextTurns: 4,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'cursor',
+      taskWraithMcpProfileId: TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
+    })
+    expect(result.contextualPrompt).toMatch(/To ask the user, call .* when it is listed/)
+    expect(result.contextualPrompt).toContain('native question/elicitation UI is not connected')
   })
 
   it('adds sub-thread recall examples only for operational delegation prompts', () => {

@@ -109,6 +109,7 @@ import {
 } from '../../shared/taskWraithCloseout'
 import type { PromptDeliveryReceipts } from '../../shared/PromptDeliveryReceipts'
 import { buildLiveToolFileSummarySignature } from './lib/liveToolFileSummarySignature'
+import { canCompactSoloChatContext } from './lib/chatContextCompactEligibility'
 import {
   coerceLiveProvider,
   DEFAULT_PROVIDER,
@@ -23113,10 +23114,13 @@ function App(): React.JSX.Element {
       }
       if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
       const provider = getChatProvider(chat)
-      // Path-B Cursor starts a fresh contained process and receives host-fed
-      // context; it has no provider-native session compaction lever. This only
-      // hides "compact now" and does not affect ordinary managed Cursor runs.
-      if (provider === 'cursor') return
+      if (provider === 'cursor') {
+        await window.api.compactProviderContext({
+          chatId: chat.appChatId,
+          provider: 'cursor'
+        })
+        return
+      }
       const sessionId = chat.linkedProviderSessionId
       const kimiNativeSession = Boolean(
         provider === 'kimi' &&
@@ -23313,25 +23317,20 @@ function App(): React.JSX.Element {
     ? currentChatTranscript.hasOlder ||
       currentChatTranscript.messages.some((m) => m.role === 'assistant')
     : Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
-  const canCompactCurrentChatContext =
-    !isCurrentEnsembleChat &&
-    !isCurrentChatRunning &&
-    (currentProvider === 'claude' || currentProvider === 'codex'
-      ? Boolean(currentChat?.linkedProviderSessionId)
-      : currentProvider === 'kimi'
-        ? currentChat?.providerMetadata?.kimiAcpNativeSession === true &&
-          isKimiAcpProductionPosture(currentChat.providerMetadata?.kimiAcpPostureVersion)
-          ? Boolean(currentChat.linkedProviderSessionId?.startsWith('session_'))
-          : currentChatHasAssistantMessage
-        : currentProvider === 'antigravity'
-          ? Boolean(currentChat?.linkedProviderSessionId?.startsWith('api://')) &&
-            currentChatHasAssistantMessage
-          : // Mistral carries its material in-prompt (fresh ACP session every
-            // turn), so like legacy Kimi it needs NO session token — the lever
-            // exists as soon as there is something to summarize.
-            currentProvider === 'mistral'
-            ? currentChatHasAssistantMessage
-            : false)
+  const canCompactCurrentChatContext = canCompactSoloChatContext({
+    isEnsemble: isCurrentEnsembleChat,
+    isRunning: isCurrentChatRunning,
+    provider: currentProvider,
+    hasLinkedSession:
+      currentProvider === 'kimi'
+        ? Boolean(currentChat?.linkedProviderSessionId?.startsWith('session_'))
+        : Boolean(currentChat?.linkedProviderSessionId),
+    hasAssistantMessage: currentChatHasAssistantMessage,
+    kimiNativeSession:
+      currentChat?.providerMetadata?.kimiAcpNativeSession === true &&
+      isKimiAcpProductionPosture(currentChat.providerMetadata?.kimiAcpPostureVersion),
+    antigravityApiSession: Boolean(currentChat?.linkedProviderSessionId?.startsWith('api://'))
+  })
   const onCompactContext = useMemo(
     () =>
       canCompactCurrentChatContext

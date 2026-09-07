@@ -24,6 +24,7 @@ describe('Cursor Path-B host compaction production wiring', () => {
   it('dispatches reserved Cursor requests to the extracted Path-B host compact', () => {
     expect(indexSource.includes("from './cursor/CursorPathBHostCompaction'")).toBe(true)
     expect(reservedSource.includes('compactCursorPathBHostContext(')).toBe(true)
+    expect(reservedSource.includes('appendDurableRunEventForRoute(')).toBe(true)
     expect(
       reservedSource.includes(
         'Cursor host-seat compaction is not implemented for Path-B sandbox runs yet'

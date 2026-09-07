@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 > **Source-ahead feature.** This guide describes code present after the public
-> v1.9.6 baseline. It is not a released or packaged-artifact promise.
+> v1.9.7 baseline. It is not a released or packaged-artifact promise.
 
 ## What it is
 

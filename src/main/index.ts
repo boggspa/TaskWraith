@@ -1849,12 +1849,12 @@ import {
 } from './cursor/CursorWorkspaceConfigLease'
 import {
   CursorGlobalBrokerRegistryLeaseAbortedError,
-  CursorGlobalBrokerRegistryInstallError,
   cursorGlobalBrokerRegistryLeases,
   type CursorGlobalBrokerRegistryLease
 } from './cursor/CursorGlobalBrokerRegistryLease'
 import { cursorTaskWraithBrokerAttachAllowed } from './cursor/CursorMcpPolicy'
 import { compactCursorPathBHostContext } from './cursor/CursorPathBHostCompaction'
+import { buildCursorMcpBridgeUnavailableWarning } from './cursor/CursorMcpBridgeWarning'
 import {
   createGrokTurnAbortController,
   runGrokAcpTurn,
@@ -23057,6 +23057,10 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         settleDeniedProviderTransportLaunch(route)
         return
       }
+      const warning = buildCursorMcpBridgeUnavailableWarning({
+        writeCapable,
+        error
+      })
       sendAgentCompatLine(
         event.sender,
         'cursor',
@@ -23064,23 +23068,8 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           type: 'provider_warning',
           provider: 'cursor',
           severity: 'warning',
-          title: 'Cursor MCP bridge unavailable',
-          message: `TaskWraith could not set up the MCP broker; Cursor is continuing with ${
-            writeCapable
-              ? 'the user-approved native Shell/Write surface inside Cursor’s workspace sandbox'
-              : 'native reads only'
-          }. ${error instanceof Error ? error.message : String(error)}${
-            error instanceof CursorGlobalBrokerRegistryInstallError
-              ? ` Registry recovery outcome: ${error.cleanup.outcome}${
-                  error.cleanup.outcome === 'cleanup-failed'
-                    ? ` (${error.cleanup.message})`
-                    : error.cleanup.outcome === 'restore-attempted-unverified' &&
-                        error.cleanup.detail
-                      ? ` (${error.cleanup.detail})`
-                      : ''
-                }.`
-              : ''
-          }`
+          title: warning.title,
+          message: warning.message
         },
         route
       )
@@ -31469,6 +31458,21 @@ async function compactProviderContextForReservedRequest(
             ...(extra ? { cardMetadata: extra } : {}),
             trigger: payload.trigger || 'manual'
           })
+        },
+        appendDurableRunEvent: ({ lastRunId, signal, summary }) => {
+          if (!lastRunId) return
+          appendDurableRunEventForRoute(
+            'cursor',
+            { appRunId: lastRunId, appChatId: payload.chatId },
+            'context_compaction',
+            'control',
+            summary,
+            {
+              compaction: signal,
+              manual: (payload.trigger || 'manual') === 'manual',
+              native: false
+            }
+          )
         },
         broadcastProgress: (status) => {
           broadcastContextCompactionProgress({

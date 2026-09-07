@@ -3,8 +3,8 @@
 Developer reference for TaskWraith's source-ahead Kimi runtime after the
 `kimi-cli` to Kimi Code migration.
 
-> **Version boundary:** v1.9.6 is the released baseline. This document describes
-> the current source-ahead checkout and must not be read as a v1.9.6 guarantee.
+> **Version boundary:** v1.9.7 is the released baseline. This document describes
+> the current source-ahead checkout and must not be read as a v1.9.7 guarantee.
 > The next release notes decide when this posture becomes shipped behavior.
 
 ## Current status

@@ -89,7 +89,7 @@ describe('Cursor Path-B production/evidence integration', () => {
     expect(cursorRunSource).toContain(
       'onInstallFailure: globalBrokerRegistrationTransaction.onInstallFailure'
     )
-    expect(cursorRunSource).toContain('Registry recovery outcome:')
+    expect(cursorRunSource).toContain('buildCursorMcpBridgeUnavailableWarning({')
     expect(cursorRunSource).toContain(
       'error instanceof CursorGlobalBrokerRegistryLeaseAbortedError'
     )

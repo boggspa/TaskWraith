@@ -111,7 +111,9 @@ export function resolveCursorPathBBrokerPolicy(input: {
   if (input.writeCapable) {
     return Object.freeze({
       bridgeMode: 'full',
-      allowRules: Object.freeze([...CURSOR_BROKER_MCP_ALLOW_RULES]),
+      allowRules: Object.freeze(
+        cursorUltraTaskDelegationAllowRules(CURSOR_BROKER_MCP_ALLOW_RULES, input.effectivePermissions)
+      ),
       // While the broker is active, exact TaskWraith transactions remain the
       // only write path. A degraded launch has already released this transient
       // policy and may retain Cursor-native Shell/Write in its workspace sandbox.

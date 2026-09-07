@@ -221,6 +221,12 @@ export interface BuildEnsemblePromptInput {
    */
   instructionContext?: ResolvedInstructionContext | null
   /**
+   * Live listed TaskWraith tools for this seat when the caller already knows
+   * them. UltraTask priority names are filtered to this set. Omitted callers
+   * still get "among listed tools" language rather than an unconditional order.
+   */
+  listedTools?: readonly string[]
+  /**
    * Pre-rendered tree-derived churn stanza (see `WorkspaceChurn` and
    * `DiffService.sampleWorkspaceChurn`) describing what the WORKSPACE holds
    * relative to a snapshot taken at round start.
@@ -1137,6 +1143,42 @@ function permissionSurfaceRule(
   return '- Your permission role: use the read/search tools actually listed by your runtime; listed file and shell mutations may prompt for user approval. Respect a denial — do not retry it through an alternate tool.'
 }
 
+const ULTRATASK_PRIORITY_TOOLS = [
+  { name: 'ensemble_fanout', label: 'ensemble_fanout (Ensemble only)' },
+  { name: 'delegate_wave', label: 'delegate_wave (all chats)' },
+  { name: 'delegate_to_subthread', label: 'delegate_to_subthread (fallback)' }
+] as const
+
+function ultraTaskPriorityLines(listedTools?: readonly string[]): string[] {
+  const available = listedTools
+    ? ULTRATASK_PRIORITY_TOOLS.filter((row) => listedTools.includes(row.name))
+    : [...ULTRATASK_PRIORITY_TOOLS]
+  const order = available.map((row) => row.label).join(' > ')
+  const lines = [
+    '- ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.'
+  ]
+  if (available.length > 0) {
+    lines.push(
+      listedTools
+        ? `- Priority order among this seat's listed tools: ${order}.`
+        : `- Priority order among listed tools: ${order}. Skip any name that is not listed for this seat.`
+    )
+  } else {
+    lines.push(
+      '- No listed TaskWraith delegation tools are attached to this seat; use unique @Role/@Model mentions and normal rotation rather than inventing a fan-out tool.'
+    )
+  }
+  lines.push(
+    '- Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.'
+  )
+  if (available.length > 0) {
+    lines.push(
+      '- After ANY listed delegation call, immediately invoke ensemble_await with the returned IDs when that await tool is listed, to block and retain turn ownership.'
+    )
+  }
+  return lines
+}
+
 export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput): string {
   return buildEnsembleParticipantPromptProjection(input).prompt
 }
@@ -1893,12 +1935,7 @@ export function buildEnsembleParticipantPromptProjection(
             '- Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.',
             '- After ANY subagent_spawn call, immediately invoke subagent_wait, then subagent_read_result, to block and retain turn ownership.'
           ]
-        : [
-            '- ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.',
-            '- Priority order: ensemble_fanout (Ensemble only) > delegate_wave (all chats) > delegate_to_subthread (fallback).',
-            '- Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.',
-            '- After ANY delegation call, immediately invoke ensemble_await with the returned IDs to block and retain turn ownership.'
-          ]
+        : ultraTaskPriorityLines(input.listedTools)
       : []),
     '- When the listed tool surface includes the graph primitives, use ensemble_fanout → ensemble_await → ensemble_lane_result for multi-step work. ensemble_await also accepts subThreadIds and waveIds to block on delegated sub-threads and waves in both Ensemble and single-provider threads. If any of those names are absent, do not search for them or scrape shared history; continue with the available rotation and mention fallback.',
     '- At most 3 fan-outs may be in flight at once. A fourth dispatch is refused until you ensemble_await one of the open ones and read it with ensemble_lane_result — so plan a fan-out and its join together rather than firing several and collecting them later. This bounds concurrent fan-out CALLS, never the number of participants in one: a single fan-out may carry the whole roster, so never drop seats to get past the refusal.',

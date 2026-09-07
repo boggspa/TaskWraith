@@ -127,6 +127,8 @@ describe('compactCursorPathBHostContext', () => {
       linkedProviderSessionId: 'cursor-solo-session',
       messages: [msg('u1', 'user', 'Ship the overlay'), msg('a1', 'assistant', 'Working on it')]
     } as ChatRecord
+    const durable: Array<{ kind: string; summary: string }> = []
+    const progress: string[] = []
     const result = compactCursorPathBHostContext(
       {
         chatId: 'solo-1',
@@ -141,7 +143,12 @@ describe('compactCursorPathBHostContext', () => {
         now: () => 99,
         nowIso: () => '2026-09-07T15:26:00.000Z',
         appendCard: () => undefined,
-        broadcastProgress: () => undefined,
+        appendDurableRunEvent: ({ kind, summary }) => {
+          durable.push({ kind, summary })
+        },
+        broadcastProgress: (status) => {
+          progress.push(status)
+        },
         seatPreTokens: () => undefined
       }
     )
@@ -149,6 +156,10 @@ describe('compactCursorPathBHostContext', () => {
     expect(saved[0]?.linkedProviderSessionId).toBeUndefined()
     expect(saved[0]?.contextCompactionSummary?.provider).toBe('cursor')
     expect(saved[0]?.updatedAt).toBe(99)
+    expect(durable).toEqual([
+      expect.objectContaining({ kind: 'context_compaction', summary: expect.stringContaining('Context compacted') })
+    ])
+    expect(progress).toEqual(['started', 'completed'])
   })
 
   it('does not persist after a history-deletion cancel', () => {
