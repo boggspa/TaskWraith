@@ -1,4 +1,6 @@
-import { resolve } from 'path'
+import { join, resolve } from 'path'
+import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
 import { describe, expect, it, vi } from 'vitest'
 import { RunManager } from '../RunManager'
 import type { AppSettings } from '../store/types'
@@ -202,6 +204,48 @@ describe('createOllamaMainRuntime', () => {
       expect.objectContaining({ workspacePath }),
       workspacePath
     )
+  })
+
+  it('pages read_file by the documented offset/limit and labels the window', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'ollama-read-window-'))
+    try {
+      writeFileSync(
+        join(workspacePath, 'big.ts'),
+        Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n'),
+        'utf8'
+      )
+      const runtime = createOllamaMainRuntime(dependencies())
+
+      // offset/limit is the vocabulary tool_help and resources/Tools.md promise.
+      // It used to pass validation and then be discarded, so every page
+      // returned lines 1-N and the repeat guard ended the round.
+      const windowed = await runtime.executeLocalTool({
+        toolName: 'read_file',
+        arguments: { path: 'big.ts', offset: 11, limit: 5 },
+        workspacePath
+      })
+
+      expect(windowed).toMatchObject({ ok: true })
+      // The header is what lets summarizeReadFileOutput continue from the
+      // window instead of restarting its count at 1 and prescribing the same
+      // next offset forever.
+      expect(String(windowed.output).split('\n')[0]).toBe('[read_file: lines 11-15 of 40]')
+      expect(windowed.output).toContain('line 11')
+      expect(windowed.output).toContain('line 15')
+      expect(windowed.output).not.toContain('line 16')
+      expect(windowed.output).not.toContain('line 10')
+
+      // A plain whole-file read stays headerless and byte-identical.
+      const whole = await runtime.executeLocalTool({
+        toolName: 'read_file',
+        arguments: { path: 'big.ts' },
+        workspacePath
+      })
+      expect(String(whole.output).startsWith('line 1\n')).toBe(true)
+      expect(whole.output).not.toContain('[read_file: lines')
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true })
+    }
   })
 
   it('applies small-local-model argument economy at the pre-execution hook', async () => {

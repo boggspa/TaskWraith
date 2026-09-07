@@ -3490,11 +3490,38 @@ function shouldReleaseOllamaThinkingUpdate(input: {
 // this narrow: a broad "directory means path everywhere" table would accept
 // calls that the eventual executor still rejects.
 const OLLAMA_ARG_SYNONYMS_BY_TOOL: Partial<Record<OllamaToolName, Record<string, string[]>>> = {
-  read_file: { path: ['file_path'] },
+  // Paging aliases are load-bearing, not politeness. `tool_help` and the
+  // generated resources/Tools.md tell every model to page with `offset`/`limit`
+  // (that IS the vocabulary the MCP read_file honours), while this lane's
+  // native schema declares startLine/endLine/maxLines. Unaliased, `offset` was
+  // accepted by validation and silently DROPPED by the executor, so every
+  // "next page" re-returned lines 1-N — identical bytes the repeat guard then
+  // correctly scored as a loop. The snake_case forms are worse: they normalize
+  // to their camelCase twin at edit distance ZERO and were still rejected, one
+  // per turn, burning three of the four ceiling turns on a single call.
+  read_file: {
+    path: ['file_path'],
+    startLine: ['start_line', 'offset', 'lineStart'],
+    endLine: ['end_line', 'lineEnd'],
+    maxLines: ['max_lines', 'limit']
+  },
   list_directory: { path: ['directory'] },
-  find_files: { pattern: ['patterns', 'glob', 'globs'] },
-  workspace_search: { query: ['pattern'] },
-  git_blame: { path: ['file'] },
+  find_files: {
+    pattern: ['patterns', 'glob', 'globs'],
+    maxResults: ['max_results'],
+    includeHidden: ['include_hidden']
+  },
+  workspace_search: {
+    query: ['pattern'],
+    maxResults: ['max_results'],
+    contextLines: ['context_lines']
+  },
+  git_blame: {
+    path: ['file'],
+    startLine: ['start_line', 'offset', 'lineStart'],
+    endLine: ['end_line', 'lineEnd'],
+    maxLines: ['max_lines', 'limit']
+  },
   write_file: { path: ['file_path'] },
   replace: {
     path: ['file_path'],

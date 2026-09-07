@@ -6,6 +6,7 @@ import {
 import { dirname, isAbsolute, resolve } from 'path'
 import os from 'os'
 import { MAX_EDITOR_FILE_BYTES } from '../index.constants'
+import { formatReadFileLineWindow } from '../BoundedRegularFileReader'
 import type { McpToolExecutionResult } from '../index.types'
 import { assertTextBuffer } from '../gemini/GeminiDiscovery'
 import { mcpJson, isTaskWraithMcpToolName } from '../mcp/McpResultHelpers'
@@ -210,8 +211,19 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
     const endByMax = requestedMax ? startLine + requestedMax - 1 : totalLines
     const endLine = Math.min(totalLines, requestedEnd || endByMax)
     const safeEndLine = Math.max(startLine, endLine)
+    const windowText = lines.slice(startLine - 1, safeEndLine).join('\n')
+    // A windowed read carries the same `[read_file: lines X-Y of N]` header the
+    // MCP path emits. Without it `summarizeReadFileOutput` had no window to
+    // continue from, so it restarted its count at 1 and prescribed the SAME
+    // next offset after every call — the model dutifully re-issued identical
+    // arguments and the repeat guard ended the round. Plain whole-file reads
+    // stay byte-identical, which is what the summariser's headerless path and
+    // its tests expect.
+    const windowed = requestedStart !== null || requestedEnd !== null || requestedMax !== null
     return {
-      output: lines.slice(startLine - 1, safeEndLine).join('\n'),
+      output: windowed
+        ? formatReadFileLineWindow({ windowText, startLine, endLine: safeEndLine, totalLines })
+        : windowText,
       startLine,
       endLine: safeEndLine,
       totalLines,

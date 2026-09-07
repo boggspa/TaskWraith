@@ -4745,16 +4745,50 @@ describe('parseOllamaToolRequest', () => {
   })
 
   it('suggests the nearest real argument name for misspelled/unknown keys', () => {
+    // A genuine typo, not a separator variant. `start_line` normalizes onto
+    // `startLine` at distance ZERO and is now an accepted alias — see
+    // 'accepts the documented paging vocabulary'. Keeping a real misspelling
+    // here is what stops the near-miss suggester rotting unnoticed.
     const misspelled = validateOllamaToolArguments('read_file', {
       path: 'a.ts',
-      start_line: 1,
+      maxLine: 1,
       intent: 'read'
     })
     expect(misspelled.ok).toBe(false)
     if (!misspelled.ok) {
-      expect(misspelled.message).toContain('unknown argument "start_line"')
-      expect(misspelled.message).toContain('Did you mean "startLine"?')
+      expect(misspelled.message).toContain('unknown argument "maxLine"')
+      expect(misspelled.message).toContain('Did you mean "maxLines"?')
     }
+  })
+
+  it('accepts the documented paging vocabulary instead of dropping it', () => {
+    // tool_help and resources/Tools.md both promise offset/limit. Unaliased,
+    // `offset` passed validation and was then discarded by the executor, so
+    // every page returned lines 1-N and the repeat guard ended the round.
+    const paged = validateOllamaToolArguments('read_file', {
+      path: 'a.ts',
+      offset: 201,
+      limit: 200
+    })
+    expect(paged.ok).toBe(true)
+    expect(canonicalizeOllamaToolArguments('read_file', { path: 'a.ts', offset: 201, limit: 200 }))
+      .toMatchObject({ startLine: 201, maxLines: 200 })
+
+    // snake_case normalizes onto its camelCase twin at distance zero, yet was
+    // rejected one key per turn — three of the four ceiling turns for one call.
+    const snake = validateOllamaToolArguments('read_file', {
+      path: 'a.ts',
+      start_line: 1,
+      end_line: 40,
+      max_lines: 40
+    })
+    expect(snake.ok).toBe(true)
+    expect(
+      canonicalizeOllamaToolArguments('read_file', { path: 'a.ts', start_line: 7, max_lines: 40 })
+    ).toMatchObject({ startLine: 7, maxLines: 40 })
+
+    // The narrow-table guard still holds: a cross-tool alias stays rejected.
+    expect(validateOllamaToolArguments('read_file', { directory: 'src' }).ok).toBe(false)
   })
 
   it('silently ignores unknown arguments that are not close to any real arguments', () => {
