@@ -28,7 +28,7 @@ export type CursorPathBHostCompactionPlan =
     }
 
 export interface CursorPathBHostCompactionRuntimeDeps {
-  getChat(chatId: string): ChatRecord | undefined
+  getChat(chatId: string): ChatRecord | null | undefined
   saveChat(chat: ChatRecord): void
   now(): number
   nowIso(): string
