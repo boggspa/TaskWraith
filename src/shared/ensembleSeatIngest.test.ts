@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ENSEMBLE_INGEST_CHARS_PER_TOKEN,
   ENSEMBLE_INGEST_EXCEPTION_DEFAULT_CHARS,
   ENSEMBLE_INGEST_OVERRIDE_MAX_CHARS,
   ENSEMBLE_INGEST_OVERRIDE_MIN_CHARS,
+  ENSEMBLE_INGEST_WINDOW_FRACTION,
   ENSEMBLE_SEAT_INGEST_MAX_CHARS,
   ENSEMBLE_SEAT_INGEST_MIN_CHARS,
   ensembleIngestOverrideEligible,
@@ -80,15 +82,16 @@ describe('ensembleIngestOverrideEligible', () => {
 })
 
 describe('resolveEnsembleSeatIngestChars', () => {
-  it('derives a window-scaled maximum for capable models', () => {
+  it('derives a window-scaled fraction for capable models', () => {
     const claude = resolveEnsembleSeatIngestChars({
       provider: 'claude',
       modelId: 'x',
       liveContextTokens: 200_000
     })
-    // (200_000 − 16_384 − 4_096) × 3.5
+    // 200_000 × 0.14 × 3.5 — the FRACTION, not (window − reserves) × 3.5,
+    // which would be 628_320 here.
     expect(claude).toMatchObject({
-      chars: 628_320,
+      chars: 98_000,
       source: 'window-derived',
       overrideEligible: false
     })
@@ -98,8 +101,41 @@ describe('resolveEnsembleSeatIngestChars', () => {
       modelId: 'x',
       liveContextTokens: 1_048_576
     })
-    expect(big.chars).toBe(3_598_336)
+    expect(big.chars).toBe(513_802)
     expect(big.chars).toBeLessThanOrEqual(ENSEMBLE_SEAT_INGEST_MAX_CHARS)
+  })
+
+  it('keeps a Mistral seat clear of the measured reasoning-separation cliff', () => {
+    // The reason this cap exists. Vibe stops separating reasoning at >=150K
+    // prompt tokens on a single-turn reply, and the model's whole
+    // chain-of-thought then arrives as its answer. Medium 3.5's 262_144-token
+    // window funded ~845K chars under the old policy, which is how a
+    // 194_964-token prompt was built.
+    const seat = resolveEnsembleSeatIngestChars({
+      provider: 'mistral',
+      modelId: 'mistral-medium-3.5'
+    })
+    expect(seat.windowTokens).toBe(262_144)
+    expect(seat.chars).toBe(128_450)
+    // Pin the MARGIN, not just the number: the transcript must stay far below
+    // the cliff even before the prompt shell and the seat's own output.
+    expect(seat.chars / ENSEMBLE_INGEST_CHARS_PER_TOKEN).toBeLessThan(150_000)
+    expect(seat.chars).toBeLessThan(200_000)
+  })
+
+  it('spends the same share of every window', () => {
+    // Guards the fraction itself: a constant-valued cap would pass the two
+    // cases above while breaking the smaller and larger windows between them.
+    for (const windowTokens of [131_072, 200_000, 262_144, 400_000]) {
+      const resolved = resolveEnsembleSeatIngestChars({
+        provider: 'claude',
+        modelId: 'x',
+        liveContextTokens: windowTokens
+      })
+      expect(resolved.chars).toBe(
+        Math.floor(windowTokens * ENSEMBLE_INGEST_WINDOW_FRACTION * ENSEMBLE_INGEST_CHARS_PER_TOKEN)
+      )
+    }
   })
 
   it('floors a tiny window at the minimum instead of going negative', () => {
@@ -150,7 +186,7 @@ describe('resolveEnsembleSeatIngestChars', () => {
     ).toBe(ENSEMBLE_INGEST_OVERRIDE_MIN_CHARS)
   })
 
-  it('ignores overrides for ineligible models (they always get the window maximum)', () => {
+  it('ignores overrides for ineligible models (they always get the window fraction)', () => {
     const resolved = resolveEnsembleSeatIngestChars({
       provider: 'claude',
       modelId: 'claude-opus-5',
@@ -158,6 +194,6 @@ describe('resolveEnsembleSeatIngestChars', () => {
       overrides: { [ensembleIngestOverrideKey('claude', 'claude-opus-5')]: 12_000 }
     })
     expect(resolved.source).toBe('window-derived')
-    expect(resolved.chars).toBe(628_320)
+    expect(resolved.chars).toBe(98_000)
   })
 })

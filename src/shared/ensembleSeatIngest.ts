@@ -4,10 +4,12 @@
  * slider (2026-09-01 product decision).
  *
  * Policy:
- *   - Most models inherit the MAXIMUM ingest their window can carry: the
- *     transcript budget is (window − output/shell reserves) × chars-per-token,
- *     so capable (200k–1M+) models effectively stop truncating the shared
- *     panel history.
+ *   - Most models take a FIXED FRACTION of their window
+ *     (`ENSEMBLE_INGEST_WINDOW_FRACTION`), not the maximum it can carry. The
+ *     2026-09-01 decision handed capable models nearly the whole window, which
+ *     measurably broke them: see that constant for the failure it is sized
+ *     against. The reserve-derived figure is still computed and still wins
+ *     when it is SMALLER, so a small window keeps its old behaviour.
  *   - Two model classes stay hand-tunable because a full-window ingest is a
  *     poor default for them: Codex GPT-5.3 Spark, and 4B–12B-parameter local
  *     Ollama models. They default to a 50K-char ingest and accept a per-model
@@ -47,6 +49,26 @@ export const ENSEMBLE_INGEST_EXCEPTION_DEFAULT_CHARS = 50_000
  * shell so a full ingest cannot fill the window to the brim.
  */
 export const ENSEMBLE_INGEST_CHARS_PER_TOKEN = 3.5
+
+/**
+ * Share of a seat model's context window spendable on shared panel history.
+ *
+ * MEASURED, not chosen for elegance (2026-09-07, Vibe 2.25 / Mistral Medium
+ * 3.5, 961 sessions of `~/.vibe/logs/session`). Vibe only separates model
+ * reasoning when the API hands back structured `ThinkChunk`s —
+ * `parse_content` returns `reasoning_content=None` for a plain string
+ * (vibe/core/llm/backend/mistral.py). At >=150K prompt tokens on a
+ * single-turn, no-tool reply the API returns a string instead, so the model's
+ * entire chain-of-thought arrives as its ANSWER. That cell failed 7 of 8
+ * sessions; every other cell failed 0-8%. There is no thought chunk to route
+ * in that case, so nothing downstream of Vibe can recover it.
+ *
+ * The prior full-window policy handed Medium 3.5 (262,144 tokens) ~845K chars
+ * and produced a 194,964-token prompt — inside the failing cell. At 14% the
+ * same seat gets ~128K chars (~36.7K tokens), a wide margin below the cliff
+ * for every model in the catalogue.
+ */
+export const ENSEMBLE_INGEST_WINDOW_FRACTION = 0.14
 export const ENSEMBLE_INGEST_OUTPUT_RESERVE_TOKENS = 16_384
 export const ENSEMBLE_INGEST_SHELL_RESERVE_TOKENS = 4_096
 
@@ -140,7 +162,11 @@ export function clampEnsembleIngestOverrideChars(value: number): number {
 function windowDerivedChars(windowTokens: number): number {
   const usableTokens =
     windowTokens - ENSEMBLE_INGEST_OUTPUT_RESERVE_TOKENS - ENSEMBLE_INGEST_SHELL_RESERVE_TOKENS
-  const chars = Math.floor(usableTokens * ENSEMBLE_INGEST_CHARS_PER_TOKEN)
+  // `min`, so the reserves still win on a window too small to fund them: the
+  // fraction alone would GROW a tiny window's budget back above what its
+  // output/shell reserves leave, which is the opposite of a cap.
+  const budgetTokens = Math.min(usableTokens, windowTokens * ENSEMBLE_INGEST_WINDOW_FRACTION)
+  const chars = Math.floor(budgetTokens * ENSEMBLE_INGEST_CHARS_PER_TOKEN)
   return Math.max(ENSEMBLE_SEAT_INGEST_MIN_CHARS, Math.min(ENSEMBLE_SEAT_INGEST_MAX_CHARS, chars))
 }
 
