@@ -10887,16 +10887,19 @@ function reconcileStaleChatRunsProjection(
   return settlements.length + terminalRecoveries.length
 }
 
-function recoverSubThreadControlPlane(): void {
+function recoverSubThreadControlPlane(budget?: SweepBudget): void {
   // Universal ChatRun liveness first so iOS task-cards / thread-list stop
   // advertising orphan "running" rows before sub-thread worker control reclaims
   // any remaining control-plane state. Worker recovery remains idempotent.
-  reconcileStaleChatRunsProjection({ minAgeMs: 0 })
-  recoverSubThreadWorkerQueues()
+  // A budget bounds the pre-window pass to the most recent candidates; the
+  // deferred post-paint sweep re-runs unbounded.
+  reconcileStaleChatRunsProjection(budget ? { minAgeMs: 0, budget } : { minAgeMs: 0 })
+  recoverSubThreadWorkerQueues(budget)
   const joinGroups = new Set<string>()
-  // Stage 4 shell sweep: parentChatId + delegationContext join policies are
-  // list-carried chrome; no messages/runs are read here.
-  for (const chat of AppStore.getChats(undefined, { listShells: true })) {
+  // Sub-thread candidates only: parentChatId + delegationContext join policies
+  // are list-carried chrome the narrowed reader pre-filters by, so this no
+  // longer walks every shell in the corpus to skip non-sub-threads.
+  for (const chat of AppStore.getSubThreadRecoveryChats(budget ? { budget } : {})) {
     if (!chat.parentChatId) continue
     const policies = [
       chat.delegationContext?.joinPolicy,
@@ -11856,8 +11859,13 @@ async function handleSoloWakeupTimerFired(wakeupId: string): Promise<void> {
   }
 }
 
-function recoverPersistedEnsembleWakeups(): void {
-  const actions = classifyWakeupRecovery(getPersistedEnsembleWakeups(), {
+function recoverPersistedEnsembleWakeups(budget?: SweepBudget): void {
+  const wakeups = budget
+    ? AppStore.getChatsWithEnsembleWakeups({ budget }).flatMap((chat) =>
+        Object.values(chat.ensemble?.wakeups || {})
+      )
+    : getPersistedEnsembleWakeups()
+  const actions = classifyWakeupRecovery(wakeups, {
     nowMs: Date.now(),
     nowIso: new Date().toISOString()
   })
@@ -11882,9 +11890,19 @@ function recoverPersistedEnsembleWakeups(): void {
  * shared `WakeupTimerService`; the fire handler then runs the
  * solo continuation dispatch.
  */
-function recoverPersistedSoloChatWakeups(): void {
+function recoverPersistedSoloChatWakeups(budget?: SweepBudget): void {
   if (!soloChatWakeupServiceRef) return
-  const actions = classifyWakeupRecovery(soloChatWakeupServiceRef.getAllPersistedWakeups(), {
+  // The bounded pass mirrors SoloChatWakeupService.getAllPersistedWakeups over
+  // the most recent candidates; unbounded keeps the service's own scan.
+  const wakeups = budget
+    ? AppStore.getChatsWithSoloWakeups({ budget }).flatMap((chat) => {
+        if (chat.chatKind === 'ensemble') return []
+        return Object.values(chat.soloWakeups || {}).filter(
+          (record) => record.status === 'pending'
+        )
+      })
+    : soloChatWakeupServiceRef.getAllPersistedWakeups()
+  const actions = classifyWakeupRecovery(wakeups, {
     nowMs: Date.now(),
     nowIso: new Date().toISOString()
   })
@@ -12778,8 +12796,8 @@ async function maybeDrainSubThreadWorkerQueue(subThreadId: string): Promise<void
   }
 }
 
-function recoverSubThreadWorkerQueues(): void {
-  for (const chat of AppStore.getChats()) {
+function recoverSubThreadWorkerQueues(budget?: SweepBudget): void {
+  for (const chat of AppStore.getSubThreadRecoveryChats(budget ? { budget } : {})) {
     const control = chat.delegationContext?.workerControl
     if (!chat.parentChatId || !control) continue
     const recoveredAt = new Date().toISOString()
