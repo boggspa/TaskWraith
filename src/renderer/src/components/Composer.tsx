@@ -122,7 +122,8 @@ import {
 } from '../lib/fastModeToggle'
 import { resolveEnsembleParticipantRetryDispatch } from '../lib/ensembleRetryPrompt'
 import { resolveComposerModelReasoningDefault } from '../lib/composerProviderReasoningSelection'
-import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
+import { AgentApprovalPreview } from '../lib/agentApprovalPreview'
+import { ApprovalTimeoutCountdown } from './ApprovalTimeoutCountdown'
 import { agentApprovalCancelPresentation } from '../lib/agentApprovalLifecycle'
 import { approvalActionPresentation } from '../lib/approvalActionPresentation'
 import {
@@ -172,7 +173,7 @@ import { shouldOfferPlanImport } from '../lib/planImport'
 import { hasResolvedMention } from '../lib/mentionHighlight'
 import { hasComposerMarkdown } from '../lib/composerMarkdownHighlight'
 import { planEmoticonAutoReplace } from '../lib/emoticonAutoReplace'
-import { formatApprovalCountdown, resolveApprovalTimeoutMs } from '../lib/approvalTimeoutCountdown'
+import { resolveApprovalTimeoutMs } from '../lib/approvalTimeoutCountdown'
 import { getProviderLabel } from '../lib/providerLabels'
 import {
   CLAUDE_DEFAULT_MODELS,
@@ -1416,8 +1417,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   }
 
   const agentApprovalCardRef = useRef<HTMLDivElement | null>(null)
-  const agentApprovalAppearedAtRef = useRef<number | null>(null)
-  const agentApprovalSeenIdRef = useRef<string | null>(null)
   const [trustedSessionConfirmOpen, setTrustedSessionConfirmOpen] = useState(false)
   const [trustedSessionApprovalId, setTrustedSessionApprovalId] = useState<string | null>(null)
   const agentApprovalTimeoutMs = pendingAgentApproval
@@ -1623,20 +1622,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     }, 0)
     return () => window.clearTimeout(focusTimer)
   }, [pendingAgentApproval?.id])
-
-  const pendingApprovalId = pendingAgentApproval?.id ?? null
-  if (pendingApprovalId !== agentApprovalSeenIdRef.current) {
-    agentApprovalSeenIdRef.current = pendingApprovalId
-    agentApprovalAppearedAtRef.current = pendingApprovalId ? Date.now() : null
-  }
-  const agentApprovalNowTick = useSharedNowTick(
-    Boolean(pendingAgentApproval && agentApprovalTimeoutMs != null)
-  )
-  const agentApprovalCountdownMs = useMemo(() => {
-    if (!pendingAgentApproval || agentApprovalTimeoutMs == null) return null
-    const appearedAt = agentApprovalAppearedAtRef.current ?? Date.now()
-    return Math.max(0, appearedAt + agentApprovalTimeoutMs - Date.now())
-  }, [agentApprovalNowTick, agentApprovalTimeoutMs, pendingApprovalId])
 
   // ---------------------------------------------------------------------------
   // Composer-local editor state (Slices B + C of the multiview composer-parity
@@ -5846,7 +5831,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 aria-modal="false"
                 aria-labelledby="composer-agent-approval-title"
                 aria-describedby={
-                  agentApprovalCountdownMs != null
+                  agentApprovalTimeoutMs != null
                     ? 'composer-agent-approval-countdown'
                     : undefined
                 }
@@ -5977,15 +5962,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     )}
                   </section>
                 )}
-                {agentApprovalCountdownMs != null && (
-                  <div
-                    id="composer-agent-approval-countdown"
-                    className="composer-permission-countdown"
-                    role="status"
-                    aria-live="polite"
-                  >
-                    Auto-denies in {formatApprovalCountdown(agentApprovalCountdownMs)}
-                  </div>
+                {agentApprovalTimeoutMs != null && (
+                  <ApprovalTimeoutCountdown
+                    approvalId={pendingAgentApproval.id}
+                    timeoutMs={agentApprovalTimeoutMs}
+                  />
                 )}
                 {pendingAgentApproval.body && (
                   <div className="composer-permission-message">
@@ -6006,7 +5987,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     </code>
                   </div>
                 )}
-                {renderAgentApprovalPreview(pendingAgentApproval.preview)}
+                <AgentApprovalPreview preview={pendingAgentApproval.preview} />
                 {/* Order-4 — optional one-line intent note. Always
                   optional: it never blocks approve/deny. The text
                   is captured at click time in
