@@ -1425,7 +1425,6 @@ describe('runMuseMspTurn — inactivity watchdog', () => {
     const closes: Array<string | null> = []
     const { child, handle } = start({
       inactivityTimeoutMs: 30,
-      toolCallTimeoutMs: 2_000,
       onClose: (_code: number | null, terminal: string | null) => closes.push(terminal)
     })
     await driveToTurn(child)
@@ -1451,48 +1450,48 @@ describe('runMuseMspTurn — inactivity watchdog', () => {
     expect(closes).toEqual(['completed'])
   })
 
-  it('still terminates a tool call that never returns, on its own finite bound', async () => {
-    const closes: Array<{ terminal: string | null; kind: string }> = []
+  it('does not terminate a tool call that never returns on a finite bound', async () => {
+    // Rejected policy: a wall-clock tool budget (30min, 24h, or this 80ms
+    // stand-in) that kills a healthy long turn. The original wedge was a silent
+    // host with NO work in flight. Independent escape is shouldCancel → cancel().
     const { child, handle } = start({
       inactivityTimeoutMs: 30,
-      toolCallTimeoutMs: 250,
-      onClose: (_code: number | null, terminal: string | null, error: { kind?: string } | null) => {
-        closes.push({ terminal, kind: error?.kind ?? '' })
-      }
+      toolCallTimeoutMs: 80
     })
     await driveToTurn(child)
     toolFrame(child, 'started')
     await flush()
 
-    // Well past the idle deadline: the tool bound governs now, not the idle one.
-    await sleep(120)
+    await sleep(250)
     expect(child.killed).toEqual([])
+    expect(await settleWithin(handle, 50)).toBe('wedged')
 
-    // But it is a BOUND, not an exemption — an outstanding tool call must never
-    // become a licence to hang, or the wedge is back under a new name.
-    expect(await settleWithin(handle, 1_500)).toBe('closed')
-    expect(closes).toEqual([{ terminal: 'failed', kind: 'hostUnresponsive' }])
+    // Completing the tool returns the host to the idle clock — otherwise the
+    // assertion above would pass for a watchdog that never runs at all.
+    toolFrame(child, 'completed', 'completed')
+    await flush()
+    expect(await settleWithin(handle, 1_000)).toBe('closed')
   })
 
   it('drops back to the idle deadline once the tool call completes', async () => {
-    const { child, handle } = start({ inactivityTimeoutMs: 40, toolCallTimeoutMs: 5_000 })
+    const { child, handle } = start({ inactivityTimeoutMs: 40 })
     await driveToTurn(child)
     toolFrame(child, 'started')
     await flush()
     toolFrame(child, 'completed', 'completed')
     await flush()
-    // The generous tool window must not linger after the tool is done, or a
-    // post-tool silent host waits 5s instead of 40ms.
+    // A suspended watchdog must not linger after the tool is done, or a
+    // post-tool silent host hangs the way the original wedge did.
     expect(await settleWithin(handle, 1_000)).toBe('closed')
   })
 
-  it('does not compound the compaction grace on top of the tool-call budget', async () => {
-    // The tool budget already covers this silence. Letting the counted grace
-    // stack on top of it multiplies the worst case by (1 + grace) — 30min
-    // becomes 2h — which is exactly the unbounded-wait direction we refuse.
+  it('does not let compaction grace create a kill while a tool call is in progress', async () => {
+    // With a tool outstanding, neither the idle clock nor the counted
+    // compaction grace may fire. A finite toolCallTimeoutMs is the rejected
+    // policy — if it were still honoured this would die at 80ms.
     const { child, handle } = start({
       inactivityTimeoutMs: 30,
-      toolCallTimeoutMs: 200,
+      toolCallTimeoutMs: 80,
       inactivityCompactionGrace: 3
     })
     await driveToTurn(child)
@@ -1503,8 +1502,31 @@ describe('runMuseMspTurn — inactivity watchdog', () => {
       params: { sessionId: 'sess-1', usedTokens: 900_000, pressure: 'compacting' }
     })
     await flush()
-    // One tool budget (~200ms), not four (~800ms).
-    expect(await settleWithin(handle, 600)).toBe('closed')
+
+    // Idle × (1 + grace) is the old stacked worst case. The tool is still
+    // running, so none of those clocks may kill the turn.
+    await sleep(250)
+    expect(child.killed).toEqual([])
+    expect(await settleWithin(handle, 50)).toBe('wedged')
+
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/contextUsage',
+      params: { sessionId: 'sess-1', usedTokens: 100, pressure: 'normal' }
+    })
+    toolFrame(child, 'completed', 'completed')
+    await flush()
+    expect(await settleWithin(handle, 1_000)).toBe('closed')
+  })
+
+  it('does not ship a finite production tool-call kill budget', async () => {
+    const mod = await import('./MuseMspClient')
+    const budget = (mod as { MUSE_MSP_TOOL_CALL_TIMEOUT_MS?: number }).MUSE_MSP_TOOL_CALL_TIMEOUT_MS
+    expect(budget === undefined || !Number.isFinite(budget)).toBe(true)
+    if (typeof budget === 'number') {
+      expect(budget).not.toBe(1_800_000)
+      expect(budget).not.toBe(86_400_000)
+    }
   })
 
   it('extends the watchdog during compaction quiet but still bounds it', async () => {
