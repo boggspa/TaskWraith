@@ -5,6 +5,7 @@ import { TranscriptPanel, transcriptRunningChatIdsSignature } from './Transcript
 import { Composer, type ComposerProps } from './Composer'
 import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildChatViewProps'
 import { useCurrentChatTranscriptWindow } from '../lib/currentChatTranscriptWindow'
+import { shouldDeferTranscriptPresentation } from '../lib/approvalPresentationGate'
 import { transcriptPendingApprovalsSignature } from '../lib/transcriptPanelMemoProps'
 import type { MessageFeedbackDetails } from '../lib/messageFeedback'
 import { FileMenuSelectionIcon } from './AppChromeSymbols'
@@ -517,7 +518,10 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
   // (App derives pane welcome-ness from `messages.length === 0`, which reads
   // true for every shell). Subscribes only while the chat is actually paged.
   const paneTranscript = useCurrentChatTranscriptWindow(props.chat ?? null, {
-    deferPresentation: props.isThinking === true
+    deferPresentation: shouldDeferTranscriptPresentation({
+      running: props.isThinking === true,
+      approvalOpen: Boolean(props.composerProps?.pendingAgentApproval)
+    })
   })
   const paneMessages = paneTranscript.paged ? paneTranscript.messages : props.messages
   const paneIsWelcomeChat = props.isWelcomeChat && !paneTranscript.paged

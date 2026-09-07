@@ -796,6 +796,7 @@ import { commitHydratedChat, resolveChatHydration } from './lib/chatHydrationMer
 import { hydratePagedChatShell } from './lib/chatTranscriptPager'
 import { createSurfaceChatHydrator, isSurfaceChatHydrated } from './lib/chatSurfacePagedHydration'
 import { useCurrentChatTranscriptWindow } from './lib/currentChatTranscriptWindow'
+import { shouldDeferTranscriptPresentation } from './lib/approvalPresentationGate'
 import {
   isTranscriptPagedShell,
   shouldPageTranscriptOnOpen,
@@ -19890,7 +19891,10 @@ function App(): React.JSX.Element {
   // transcript: the store's loaded window on a paged shell, the canonical
   // arrays otherwise. Whole-transcript (Class W) features escalate below.
   const currentChatTranscript = useCurrentChatTranscriptWindow(currentChat, {
-    deferPresentation: Boolean(currentChat && runningChatIds.has(currentChat.appChatId))
+    deferPresentation: shouldDeferTranscriptPresentation({
+      running: Boolean(currentChat && runningChatIds.has(currentChat.appChatId)),
+      approvalOpen: Boolean(currentChat && pendingAgentApprovalByChatId[currentChat.appChatId])
+    })
   })
   // Class W read paths (thread search, pins) escalate ON DEMAND only — a paged thread STAYS PAGED on plain open; plain
   // opens never background-hydrate a paged chat. Compaction, closeout repair, and the mention menu carry

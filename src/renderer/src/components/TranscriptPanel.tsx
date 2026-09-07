@@ -83,6 +83,10 @@ import {
   useChatTranscript
 } from '../lib/useChatTranscript'
 import {
+  chatHasPendingApproval,
+  shouldDeferTranscriptPresentation
+} from '../lib/approvalPresentationGate'
+import {
   requestLatestTranscriptPage,
   requestNewerTranscriptPage,
   requestOlderTranscriptPage
@@ -2481,9 +2485,16 @@ export const TranscriptPanel = memo(
     // panel. Props remain the fallback for tests / side panes not yet ingested.
     const chatId = currentChat?.appChatId ?? null
     const storeTranscript = useChatTranscript(chatId, {
-      deferPresentation: Boolean(
-        chatId && Array.isArray(runningChatIds) && runningChatIds.includes(chatId)
-      )
+      deferPresentation: shouldDeferTranscriptPresentation({
+        running: Boolean(
+          chatId && Array.isArray(runningChatIds) && runningChatIds.includes(chatId)
+        ),
+        approvalOpen: chatHasPendingApproval(
+          chatId,
+          pendingAgentApprovalByChatId,
+          pendingApprovalQueueByChatId
+        )
+      })
     })
     const storeReady = Boolean(chatId && getChatTranscriptStore().has(chatId))
     const resolvedMessages = storeReady ? storeTranscript.messages : messages
