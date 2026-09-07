@@ -39,6 +39,11 @@ describe('buildProviderFileRoutingPrompt', () => {
     expect(prompt).toContain('taskwraith__write_file')
     expect(prompt).toContain('Cursor-native apply_patch/edit/write tool')
     expect(prompt).toContain('TaskWraith locks, audit, and grants')
+    expect(prompt).toContain(
+      'Prefer `taskwraith__apply_patch` or `taskwraith__replace` for an existing file'
+    )
+    expect(prompt).toContain('Use `taskwraith__write_file` only to create a new file')
+    expect(prompt).toContain('ordinary tool-call row')
   })
 
   it('explains normal approval for a Codex ask posture', () => {

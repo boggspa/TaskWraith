@@ -13,7 +13,7 @@ export function taskWraithToolNamespaceHint(provider: ProviderId): string {
     return 'Claude may expose TaskWraith tools as `mcp__TaskWraith__<tool>`.'
   }
   if (provider === 'cursor') {
-    return 'Managed Cursor runs may expose brokered TaskWraith tools as `taskwraith__<tool>` when the TaskWraith gateway is active; native Cursor tools remain provider-owned and sandbox-bounded.'
+    return 'Managed Cursor runs may expose brokered TaskWraith tools as `taskwraith__<tool>` on MCP server `taskwraith-broker` when the TaskWraith gateway is active. Discover them with GetMcpTools on that server — not GetDynamicTools or CallDynamicTool. Native Cursor tools remain provider-owned and sandbox-bounded.'
   }
   if (provider === 'grok') {
     return 'Grok exposes TaskWraith tools as `TaskWraith__<tool>`; ACP may report the read-only scoped alias `taskwraith-grok__<tool>`.'

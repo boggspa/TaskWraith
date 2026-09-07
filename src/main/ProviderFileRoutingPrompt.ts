@@ -58,8 +58,10 @@ export function buildProviderFileRoutingPrompt(input: {
     TASKWRAITH_FILE_ROUTING_PROMPT_OPEN,
     'TaskWraith file-routing (effective grant):',
     `- For workspace edits, call \`${patchTool}\` for a patch, or \`${writeTool}\` / \`${replaceTool}\` for an exact file operation, when the tool is listed. ${fileGrantSentence(filePolicy)}`,
+    `- Prefer \`${patchTool}\` or \`${replaceTool}\` for an existing file. Use \`${writeTool}\` only to create a new file; a long existing file is not a reason to rewrite it wholesale.`,
     `- A refusal from a ${nativeToolFamily} apply_patch/edit/write tool that mentions a read-only sandbox or user approval settings describes that native containment route; it does not cancel the effective TaskWraith file grant. Do not repeat or reinterpret the native refusal. Route the original edit once through \`${patchTool}\` or the matching listed TaskWraith file tool.`,
     '- The brokered call is the write attempt: it enforces the signed permission posture, approved lane scope, exact path claims, and audit identity through TaskWraith locks, audit, and grants. If that TaskWraith call is unavailable, denied, or scope-blocked, report that exact blocker and do not probe another write transport.',
+    '- Successful brokered or native file tools appear as ordinary tool-call rows in the TaskWraith transcript (the same ActivityStack cards as other providers), not a separate presentation element.',
     TASKWRAITH_FILE_ROUTING_PROMPT_CLOSE,
     '',
     ''
