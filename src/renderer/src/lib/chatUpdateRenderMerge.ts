@@ -486,7 +486,15 @@ export function mergeChatUpdatedForRender(
       // A paged shell's messages are a presentation page, never the live
       // transcript authority — keeping them would blank the delivery's arrays.
       if (liveChat.messages !== chat.messages && !isTranscriptPagedShell(liveChat)) {
-        merged = { ...chat, messages: liveChat.messages }
+        // Adopting the live transcript onto a paged shell has to carry the
+        // live runs with it. The shell's runs were bounded to the same tail
+        // page its messages were, so keeping them beside a full transcript
+        // leaves the two arrays describing different windows — which empties
+        // every older round's fan-out run index and splits its rows off from
+        // their prompt.
+        merged = isTranscriptPagedShell(chat)
+          ? { ...chat, messages: liveChat.messages, runs: liveChat.runs }
+          : { ...chat, messages: liveChat.messages }
       }
     } else if (liveChat.messages.length > 0 && !isTranscriptPagedShell(chat)) {
       const mergedMessages = mergeLiveMessages(chat.messages, liveChat.messages)

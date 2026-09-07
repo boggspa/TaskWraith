@@ -3,12 +3,17 @@ import type {
   ActiveGoal,
   ChatMessage,
   ChatRecord,
+  ChatRun,
   EnsembleParticipant
 } from '../../../main/store/types'
 import { coalescePendingChatUpdateRender, mergeChatUpdatedForRender } from './chatUpdateRenderMerge'
 
 function message(id: string, content: string): ChatMessage {
   return { id, role: 'assistant', content, timestamp: '1' }
+}
+
+function run(runId: string): ChatRun {
+  return { runId, startedAt: '1' }
 }
 
 function chat(messages: ChatMessage[]): ChatRecord {
@@ -56,6 +61,34 @@ describe('mergeChatUpdatedForRender', () => {
     })
 
     expect(merged.messages).toBe(incomingMessages)
+  })
+
+  it('does not graft the live transcript onto a paged shell’s truncated runs', () => {
+    // A snapshot of an oversized chat arrives as a shell whose messages AND
+    // runs are both bounded to one tail page. Adopting the live transcript
+    // without the live runs leaves the two arrays describing different
+    // windows, which is what empties every older round's fan-out run index.
+    const liveMessages = [message('old', 'older row'), message('tail', 'tail row')]
+    const liveRuns = [run('run-old'), run('run-tail')]
+    const live = { ...chat(liveMessages), runs: liveRuns } as ChatRecord
+    const shell = {
+      ...chat([message('tail', 'tail row')]),
+      runs: [run('run-tail')],
+      summaryOnly: true,
+      transcriptPaged: true,
+      messageCount: 2,
+      runCount: 2
+    } as unknown as ChatRecord
+
+    const merged = mergeChatUpdatedForRender(shell, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages).toBe(liveMessages)
+    expect(merged.runs).toBe(liveRuns)
   })
 
   it('does not re-inflate a paged snapshot from a live full transcript', () => {

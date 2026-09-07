@@ -98,6 +98,39 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(sink.deliveries[1].record.updatedAt).toBe(3)
   })
 
+  it('does not patch against a full baseline after delivering a bounded snapshot', () => {
+    // An oversized snapshot goes on the wire as one tail page, and its ACK
+    // fingerprints hash that WINDOW so the ACK matches. The retained patch
+    // baseline must therefore be the window too: keeping the canonical record
+    // makes the next delivery a splice patch carrying indices into the full
+    // array, which the renderer applies to a 1.5k-row window.
+    const big = Array.from(
+      { length: DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 200 },
+      (_, index) => `row ${index}`
+    )
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    coordinator.enqueue(sink, chat(1, big))
+    const first = sink.deliveries[0]
+    expect(first.kind).toBe('snapshot')
+    if (first.kind !== 'snapshot') throw new Error('expected snapshot')
+    expect(first.page?.hasOlder).toBe(true)
+
+    const applied = applyChatUpdateDelivery(first)
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) throw new Error(applied.reason)
+    expect(applied.baseline.chat.messages.length).toBeLessThan(big.length)
+
+    coordinator.enqueue(sink, chat(2, [...big, 'appended']))
+    coordinator.acknowledge(sink.id, { deliveryId: first.deliveryId, applied: true })
+
+    expect(sink.deliveries).toHaveLength(2)
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+  })
+
   it('produces a patch that reconstructs the exact latest pending chat', () => {
     const sink = target()
     const coordinator = new ChatUpdateDeliveryCoordinator({
