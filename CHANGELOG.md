@@ -13,6 +13,11 @@ context needed to answer.
 
 ### New Models and Provider Seats
 
+- **Mistral Vibe 2.25 lineup.** Mistral Medium 3.5 is now the Vibe seat default,
+  matching Vibe CLI 2.25. Hosted Devstral Small and Devstral 2 are gone from the
+  picker (API retirement; Vibe no longer lists them). Stale stored ids remap to
+  Medium 3.5 so old threads still launch. GLM-5.2 (Mistral Hosted) stays on the
+  subscription lane. Local Devstral remains Ollama's `devstral-small-2:24b`.
 - **Gemini 3.8 Flash in AntiGravity.** The official `agy` catalogue now offers
   Gemini 3.8 Flash with Low, Medium, and High reasoning. TaskWraith groups the
   exact variants under one picker row, retains them in the consent-gated

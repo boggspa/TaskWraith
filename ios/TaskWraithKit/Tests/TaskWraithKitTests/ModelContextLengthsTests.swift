@@ -301,22 +301,22 @@ struct ModelContextLengthsTests {
 
     // MARK: - Mistral group
 
-    @Test("mistral devstral-small leads (seat default): 262_144 / 262k")
-    func mistralDevstralSmall() {
+    @Test("mistral medium-3.5 leads (Vibe 2.25 seat default): 262_144 / 262k")
+    func mistralMedium35() {
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "mistral" }?
-            .models.first { $0.modelId == "devstral-small" }
+            .models.first { $0.modelId == "mistral-medium-3.5" }
         #expect(row != nil)
-        #expect(row?.label == "Devstral Small")
+        #expect(row?.label == "Mistral Medium 3.5")
         #expect(row?.contextWindow == 262_144)
         #expect(row?.formatted == "262k")
     }
 
-    @Test("mistral group is the two BARE Vibe seat ids, never Pi's mistral/<model> wire ids")
+    @Test("mistral group is the two BARE Vibe subscription ids, never Pi's mistral/<model> wire ids")
     func mistralGroupMirrorsPickerRows() {
         let groups = ModelContextLengths.buildGroups()
         let models = groups.first { $0.provider == "mistral" }?.models ?? []
-        #expect(models.map(\.modelId) == ["devstral-small", "mistral-medium-3.5"])
+        #expect(models.map(\.modelId) == ["mistral-medium-3.5", "glm-5-2"])
         #expect(!models.contains { $0.modelId.hasPrefix("mistral/") })
     }
 

@@ -142,12 +142,11 @@ public enum ModelContextLengths {
         case "mistral":
             // Mistral Vibe seat. BARE ids only — a `mistral/<model>` id
             // belongs to Pi's BYOK upstream, a different provider that shares
-            // the brand word. devstral-small leads because it is the seat
-            // default. Mirrors MISTRAL_MODELS and the contextWindows
-            // registrations.
+            // the brand word. Medium 3.5 leads because it is the Vibe 2.25
+            // seat default. Context-length table stays a short subset.
             return [
-                (id: "devstral-small",      label: "Devstral Small"),
                 (id: "mistral-medium-3.5",  label: "Mistral Medium 3.5"),
+                (id: "glm-5-2",             label: "GLM-5.2 (Mistral Hosted)"),
             ]
         case "ollama":
             return [

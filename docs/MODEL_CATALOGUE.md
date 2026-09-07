@@ -201,30 +201,33 @@ them onto the shared ladder vocabulary.
 
 | Model                                                | Reasoning     | Fast | Notes                                                          |
 | ---------------------------------------------------- | ------------- | ---- | -------------------------------------------------------------- |
-| **Devstral Small** `devstral-small` **(Default)**    | —             | —    | 256K context · coding-tuned · $0.10/$0.30 per Mtok.            |
-| **Mistral Medium 3.5** `mistral-medium-3.5`          | High (fixed)  | —    | 256K context · flagship · $1.50/$7.50 per Mtok. Always thinks at High. |
+| **Mistral Medium 3.5** `mistral-medium-3.5` **(Default)** | off…max   | —    | 256K context · flagship · $1.50/$7.50 per Mtok. Vibe 2.25 default. |
+| **GLM-5.2 (Mistral Hosted)** `glm-5-2`               | off…max       | —    | 1M context · Vibe subscription extra · $1.40/$4.40 per Mtok.   |
 | **Mistral Large 3** `mistral-large-2512`             | —             | —    | 262K context · flagship · $0.50/$1.50 per Mtok.                |
 | **GLM-5.2 (via Mistral)** `zai-glm-5-2`              | —             | —    | 1M context · $1.40/$4.40 per Mtok.                             |
 | **Codestral (Aug 2025)** `codestral-2508`            | —             | —    | 131K context · coding-tuned · $0.30/$0.90 per Mtok.            |
-| **Mistral Small 4** `mistral-small-2603`             | —             | —    | 256K context · $0.15/$0.60 per Mtok.                           |
-| **Devstral 2** `devstral-2512`                       | —             | —    | 262K context · $0.40/$2.00 per Mtok.                           |
+| **Mistral Small 4** `mistral-small-2603`             | off…max       | —    | 256K context · $0.15/$0.60 per Mtok.                           |
 | **Leanstral 1.5 (Labs)** `labs-leanstral-1-5`        | —             | —    | 262K context · free research tier.                             |
-| **Mistral Medium (Latest)** `mistral-medium-latest`  | —             | —    | 262K context · flagship · $1.50/$7.50 per Mtok.                |
+| **Mistral Medium (Latest)** `mistral-medium-latest`  | off…max       | —    | 262K context · flagship · $1.50/$7.50 per Mtok.                |
 | **Mistral Medium 3.1** `mistral-medium-2508`         | —             | —    | 262K context · $0.40/$2.00 per Mtok.                           |
 | **Mistral Medium 3** `mistral-medium-2505`           | —             | —    | 131K context · $0.40/$2.00 per Mtok.                           |
 | **Ministral 3 (14B)** `ministral-14b-2512`           | —             | —    | 262K context · $0.20/$0.20 per Mtok.                           |
 | **Ministral 3 (8B)** `ministral-8b-2512`             | —             | —    | 262K context · $0.15/$0.15 per Mtok.                           |
 | **Ministral 3 (3B)** `ministral-3b-2512`             | —             | —    | 262K context · $0.10/$0.10 per Mtok.                           |
 
-Only the first two rows bill against the Vibe subscription. Every row below
+The first two rows bill against the Vibe subscription. Every row below
 them is API-only: it runs on a user-supplied Mistral API key
 (`MISTRAL_API_KEY`), metered per token and separate from any Vibe plan.
 The picker marks those rows with the API-key glyph so the lane is visible
 before you start a run.
 
-Vibe's third catalogue entry, `local`, is a llamacpp backend and is
-deliberately omitted: local inference is Ollama's lane here, and listing it
-would leave a permanently dead row for anyone without their own llama-server.
+Hosted **Devstral Small** (`devstral-small`) and **Devstral 2**
+(`devstral-2512`) were retired from the Mistral API (2026-03-31 and
+2026-07-31) and dropped from Vibe 2.25's picker. Stale stored ids remap to
+Medium 3.5 at launch. Local Devstral remains Ollama's
+`devstral-small-2:24b` — Vibe's llamacpp `local` alias is deliberately
+omitted so the picker never shows a dead row for users without a
+llama-server.
 
 <table>
   <tr>
