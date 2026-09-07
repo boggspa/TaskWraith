@@ -14950,6 +14950,7 @@ function resolveNativeApprovalPreflight(args: {
     // Native provider shells retain aliases/PATH/config we cannot bind to the
     // inspected executable. Prompt-free inspection is therefore broker-only,
     // where TaskWraith can direct-spawn the verified plan below.
+    shellCommand: args.service === 'shellCommands' ? args.shellCommand : undefined,
     readOnlyShellFastPath: false,
     // Slice E: outside-workspace READS auto-approve at the write tiers;
     // writes keep the external-path ask.
@@ -24418,8 +24419,7 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
     payload.activeGoal,
     {
       taskWraithQuestionToolAvailable: grokMcpServers.length > 0,
-      taskWraithShellToolAvailable:
-        grokMcpServers.length > 0 && grokWriteCapable(payload.approvalMode)
+      taskWraithShellToolAvailable: grokMcpServers.length > 0
     }
   )
   // Grok ACP never resumes (fresh session/new each turn), so this text is
@@ -24514,8 +24514,7 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
       imagePaths: payload.imagePaths,
       cwd: payload.workspace!,
       mcpServers: grokMcpServers,
-      taskWraithShellToolAvailable:
-        grokMcpServers.length > 0 && grokWriteCapable(payload.approvalMode),
+      taskWraithShellToolAvailable: grokMcpServers.length > 0,
       spawnProcess: grokSpawnAcpProcess,
       onProcess: (child) => {
         const proc = child as unknown as ChildProcess
