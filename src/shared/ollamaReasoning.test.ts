@@ -3,6 +3,7 @@ import {
   isOllamaGptOssModel,
   isOllamaReasoningToken,
   normalizeOllamaReasoningEffort,
+  resolveOllamaComposerReasoningEffort,
   resolveOllamaReasoningSupport
 } from './ollamaReasoning'
 
@@ -196,7 +197,14 @@ describe('normalizeOllamaReasoningEffort', () => {
     // DOWN would run the Local Scout profile (reasoningLevel 'medium') at
     // DeepSeek's LOWEST effort.
     const deepseek = resolveOllamaReasoningSupport({ modelId: 'deepseek-v4-pro:cloud' })
+    expect(normalizeOllamaReasoningEffort('max', deepseek)).toBe('max')
+    expect(normalizeOllamaReasoningEffort('max', deepseek)).not.toBe('low')
+    expect(normalizeOllamaReasoningEffort('on', deepseek)).toBe('high')
+    expect(normalizeOllamaReasoningEffort('on', deepseek)).not.toBe('low')
     expect(normalizeOllamaReasoningEffort('medium', deepseek)).toBe('high')
+    expect(resolveOllamaComposerReasoningEffort('deepseek-v4-pro:cloud', 'max')).toBe('max')
+    expect(resolveOllamaComposerReasoningEffort('deepseek-v4-pro:cloud', 'on')).toBe('high')
+    expect(resolveOllamaComposerReasoningEffort('deepseek-v4-pro:cloud', 'on')).not.toBe('low')
     // GLM 5.2 offers only High and Max, so anything below lands on High.
     const glm52 = resolveOllamaReasoningSupport({ modelId: 'glm-5.2:cloud' })
     expect(normalizeOllamaReasoningEffort('low', glm52)).toBe('high')

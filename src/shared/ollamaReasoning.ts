@@ -373,3 +373,20 @@ export function normalizeOllamaReasoningEffort(
   const atOrAbove = ladder.filter((level) => LEVEL_ORDER.indexOf(level) >= requestedRank)
   return atOrAbove.length > 0 ? atOrAbove[0] : ladder[ladder.length - 1]
 }
+
+/**
+ * Picker/dispatch heal for a stored Ollama effort. Boolean `on` must land on
+ * the model's default stop (DeepSeek V4: high), never the Low slot that shares
+ * the shared-ladder Light index with `on`.
+ */
+export function resolveOllamaComposerReasoningEffort(
+  modelId?: string | null,
+  stored?: unknown,
+  capabilities?: readonly string[] | null
+): string {
+  const support = resolveOllamaReasoningSupport({
+    modelId: modelId ?? undefined,
+    ...(capabilities != null ? { capabilities } : {})
+  })
+  return normalizeOllamaReasoningEffort(stored, support) ?? ''
+}
