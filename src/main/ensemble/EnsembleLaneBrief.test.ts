@@ -80,11 +80,78 @@ describe('resolveLaneBriefs', () => {
     }
   })
 
-  it('falls back rather than dispatching an empty or non-string brief', () => {
-    const resolved = resolveLaneBriefs(targets, { Reviewer: '   ', Worker: 42 })
+  it('falls back on an empty brief rather than dispatching an empty task', () => {
+    const resolved = resolveLaneBriefs(targets, { Reviewer: '   ' })
     expect(resolved.ok).toBe(true)
     // No entry means "use the shared prompt" — never an empty task.
     if (resolved.ok) expect(resolved.briefByParticipantId.size).toBe(0)
+  })
+
+  it('refuses a matched key whose value cannot be a brief', () => {
+    // `{"Worker": ["step 1", "step 2"]}` is a very plausible model spelling.
+    // Dropping it silently hands that lane the broadcast while the Boss
+    // believes it sent a slice — the exact failure this module prevents.
+    for (const bad of [42, ['step 1', 'step 2'], { nested: true }, null]) {
+      const resolved = resolveLaneBriefs(targets, { Worker: bad })
+      expect(resolved.ok).toBe(false)
+      if (!resolved.ok) expect(resolved.error).toBe('invalid_lane_brief')
+    }
+  })
+
+  it('resolves by specificity, not by the caller’s key order', () => {
+    // The collision that made 41ab0d4c0 reintroduce its own bug: two lanes on
+    // one provider is the ordinary fan-out shape, and a broad provider key
+    // written first captured a lane that had its own id key.
+    const work1 = participant('work1', 'Worker', 'antigravity')
+    const work2 = participant('work2', 'Worker2', 'antigravity')
+    const shared = [work1, work2]
+
+    const collide = resolveLaneBriefs(shared, {
+      antigravity: 'recon only',
+      work2: 'edit src/router.ts'
+    })
+    expect(collide.ok).toBe(true)
+    if (collide.ok) {
+      expect(collide.briefByParticipantId.get('work2')).toBe('edit src/router.ts')
+      expect(collide.briefByParticipantId.get('work1')).toBe('recon only')
+    }
+
+    // Same map, opposite key order — must resolve identically.
+    const reordered = resolveLaneBriefs(shared, {
+      work2: 'edit src/router.ts',
+      antigravity: 'recon only'
+    })
+    expect(reordered.ok).toBe(true)
+    if (reordered.ok) {
+      expect(reordered.briefByParticipantId.get('work2')).toBe('edit src/router.ts')
+      expect(reordered.briefByParticipantId.get('work1')).toBe('recon only')
+    }
+
+    // A specific key must beat the catch-all regardless of order.
+    for (const map of [
+      { '*': 'GENERIC', work1: 'WORK1-ONLY' },
+      { work1: 'WORK1-ONLY', '*': 'GENERIC' }
+    ]) {
+      const starred = resolveLaneBriefs(shared, map)
+      expect(starred.ok).toBe(true)
+      if (starred.ok) {
+        expect(starred.briefByParticipantId.get('work1')).toBe('WORK1-ONLY')
+        expect(starred.briefByParticipantId.get('work2')).toBe('GENERIC')
+      }
+    }
+  })
+
+  it('accepts the JSON-encoded transport its own schema advertises', () => {
+    const resolved = resolveLaneBriefs(
+      targets,
+      JSON.stringify({ Reviewer: 'Read it.', Worker: 'Write it.' })
+    )
+    expect(resolved.ok).toBe(true)
+    if (resolved.ok) {
+      expect(resolved.briefByParticipantId.get('antigravity')).toBe('Read it.')
+      expect(resolved.briefByParticipantId.get('codex')).toBe('Write it.')
+    }
+    expect(resolveLaneBriefs(targets, 'not json at all').ok).toBe(false)
   })
 })
 
