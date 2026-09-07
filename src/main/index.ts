@@ -1670,7 +1670,10 @@ import {
 import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
 import { isIsolateSharedBranchHold } from './IsolateSharedBranchHold'
 import { shellCommandTierHold } from './ShellCommandTierPolicy'
-import { workspaceInspectionExecutionPlan } from './WorkspaceInspectionShell'
+import {
+  workspaceInspectionBrokeredShellHardening,
+  workspaceInspectionExecutionPlan
+} from './WorkspaceInspectionShell'
 import {
   executeWorkspaceInspectionProgram,
   workspaceInspectionProgramPlan
@@ -41395,6 +41398,15 @@ async function executeUnscopedGeminiMcpTool(
         executionCwd = liveMatch.cwd
         executionEnvironment = undefined
         unsetExecutionEnvironment = undefined
+      } else if (!workspaceInspectionPlan && !workspaceInspectionProgram) {
+        const hardening = workspaceInspectionBrokeredShellHardening(command, {
+          workspacePath,
+          cwd
+        })
+        if (hardening) {
+          executionEnvironment = hardening.environment
+          unsetExecutionEnvironment = hardening.unsetEnvironment
+        }
       }
       const workspaceInspectionDeadline = Date.now() + 30_000
       const result = await runWithHostCommandProjectionScope(hostCommandProjection, () =>

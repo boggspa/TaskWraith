@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   isWorkspaceInspectionShellCommand,
+  workspaceInspectionBrokeredShellHardening,
   workspaceInspectionExecutionPlan,
   workspaceInspectionShellReason
 } from './WorkspaceInspectionShell'
@@ -634,6 +635,46 @@ describe('WorkspaceInspectionShell', () => {
         // direct-plan gate in ApprovalOrchestration.ts.
         expect(
           workspaceInspectionExecutionPlan(command, { workspacePath: workspace, cwd: workspace })
+        ).toBeNull()
+      }
+    )
+
+    it.skipIf(!isPosixHost)(
+      'hardens a prompt-free git chain without promising a typed plan',
+      async () => {
+        const { workspace } = await fixture()
+        for (const command of [
+          'git status --short && git diff --stat',
+          'git status --short; git diff --stat'
+        ]) {
+          expect(
+            workspaceInspectionShellReason(command, { workspacePath: workspace, cwd: workspace }),
+            command
+          ).not.toBeNull()
+          expect(
+            workspaceInspectionExecutionPlan(command, { workspacePath: workspace, cwd: workspace }),
+            command
+          ).toBeNull()
+          const hardening = workspaceInspectionBrokeredShellHardening(command, {
+            workspacePath: workspace,
+            cwd: workspace
+          })
+          expect(hardening?.environment, command).toMatchObject({
+            GIT_OPTIONAL_LOCKS: '0',
+            GIT_CONFIG_KEY_0: 'core.fsmonitor',
+            GIT_CONFIG_VALUE_0: 'false',
+            GIT_CONFIG_KEY_1: 'diff.external',
+            GIT_CONFIG_VALUE_1: '/usr/bin/false'
+          })
+          expect(hardening?.unsetEnvironment, command).toEqual(
+            expect.arrayContaining(['GIT_EXTERNAL_DIFF', 'GIT_DIR', 'GIT_WORK_TREE'])
+          )
+        }
+        expect(
+          workspaceInspectionBrokeredShellHardening('git diff --stat', {
+            workspacePath: workspace,
+            cwd: workspace
+          })
         ).toBeNull()
       }
     )

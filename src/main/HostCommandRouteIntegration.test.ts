@@ -77,6 +77,7 @@ describe('host command route/history integration', () => {
     expect(mcp).toContain('workspaceInspectionPlan.executableRealPath')
     expect(mcp).toContain('executionEnvironment = workspaceInspectionPlan.environment')
     expect(mcp).toContain('unsetExecutionEnvironment = workspaceInspectionPlan.unsetEnvironment')
+    expect(mcp).toContain('workspaceInspectionBrokeredShellHardening(command, {')
     expect(mcp.indexOf('if (workspaceInspectionFastPath)')).toBeLessThan(
       mcp.indexOf('runHostCommand(executionCommand, executionCwd')
     )

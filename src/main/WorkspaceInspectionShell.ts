@@ -632,6 +632,18 @@ const OUTSIDE_READ_CREDENTIAL_PATTERNS: readonly RegExp[] = [
 /**
  * True when the file looks like it carries a secret, or when that cannot be
  * determined. Fails CLOSED: an unreadable or unstattable file keeps its card.
+ *
+ * Residuals, stated rather than implied:
+ * - The scan opens, reads, and closes the fd. The consumer (`cat`/`rg`)
+ *   reopens the path at spawn, so a swap between close and child-open
+ *   remains possible. Single-segment direct plans re-run this gate
+ *   immediately before spawn; pipelines do not, so their window spans
+ *   approval through dispatch.
+ * - The regex list is a heuristic. A novel secret shape that matches none
+ *   of the patterns stays prompt-free until a pattern is added. A match
+ *   still cards; it never refuses.
+ * - Only the first 256 KiB are scanned. A secret living only past that
+ *   ceiling would also stay prompt-free.
  */
 function outsideReadLooksCredentialBearing(resolvedPath: string): boolean {
   let handle: number | null = null
@@ -871,6 +883,46 @@ export function workspaceInspectionExecutionPlan(
         }
       : {}),
     ...(unsetEnvironment.length > 0 ? { unsetEnvironment } : {})
+  }
+}
+
+export interface WorkspaceInspectionBrokeredHardening {
+  environment?: Readonly<Record<string, string>>
+  unsetEnvironment?: readonly string[]
+}
+
+/**
+ * Env hardening for a prompt-free multi-segment command that has no typed
+ * direct plan. Single-segment plans already carry this at construction;
+ * generic `&&` / `;` / `|` chains classify prompt-free and then spawn as a
+ * raw shell string, so this is the only place those git/rg env blocks can
+ * ride. Returns null when a typed plan exists or the command is not
+ * prompt-free — callers must not treat null as "refuse".
+ */
+export function workspaceInspectionBrokeredShellHardening(
+  rawCommand: unknown,
+  context: WorkspaceInspectionShellContext
+): WorkspaceInspectionBrokeredHardening | null {
+  if (workspaceInspectionShellReason(rawCommand, context) === null) return null
+  if (workspaceInspectionExecutionPlan(rawCommand, context) !== null) return null
+  const command = shellCommandFromRawCommand(rawCommand)
+  if (command === null) return null
+  const segments = commandSegments(command)
+  if (!segments || segments.length < 2) return null
+  const unset = new Set<string>()
+  let needsGitEnv = false
+  for (const segment of segments) {
+    const words = shellWords(segment)
+    if (!words?.length) return null
+    const head = executableHead(words[0].value)
+    if (!head) return null
+    for (const key of inspectionUnsetEnvironment(head)) unset.add(key)
+    if (head === 'git') needsGitEnv = true
+  }
+  if (!needsGitEnv && unset.size === 0) return null
+  return {
+    ...(needsGitEnv ? { environment: gitInspectionEnvironment() } : {}),
+    ...(unset.size > 0 ? { unsetEnvironment: [...unset] } : {})
   }
 }
 
