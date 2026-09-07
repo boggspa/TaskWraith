@@ -275,7 +275,7 @@ const copyPreviewMessages = async (): Promise<CopyTranscriptResult> => PREVIEW_C
 function PreviewSendGlyph({ composerStyle }: { composerStyle: ComposerStyle }): React.ReactElement {
   if (composerStyle === 'claude') return <ClaudeReturnSymbolIcon />
   if (
-    composerStyle === 'codex' || composerStyle === 'chatgpt' ||
+    composerStyle === 'codex' ||
     composerStyle === 'chatgpt' ||
     composerStyle === 'gemini' ||
     composerStyle === 'cursor' ||
