@@ -711,10 +711,6 @@ function inspectOutsideRead(resolvedPath: string): {
   }
 }
 
-function outsideReadLooksCredentialBearing(resolvedPath: string): boolean {
-  return inspectOutsideRead(resolvedPath).credentialBearing
-}
-
 /**
  * True when every allowlisted outside read still names the same inode that
  * was scanned at classify, and a fresh content scan still finds no known
