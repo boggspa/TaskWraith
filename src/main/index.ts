@@ -1312,6 +1312,7 @@ import {
 import { settleClaudeSdkTerminal } from './providers/ClaudeSdkRunLifecycle'
 import type { ClaudeContextPreference } from './providers/ClaudeContextPreference'
 import { ProviderContextDiagnostics } from './providers/ProviderContextDiagnostics'
+import { forEachCooperative } from './providers/CooperativeStreamPump'
 import { formatProviderContextPolicy } from '../shared/providerContextPolicy'
 import {
   buildBridgeApnsPusherFromSettings,
@@ -20885,15 +20886,15 @@ async function runCliProviderProcess(
     stdoutBuffer += text
     const lines = stdoutBuffer.split(/\r?\n/)
     stdoutBuffer = lines.pop() || ''
-    for (const line of lines) {
+    forEachCooperative(lines, (line) => {
       const trimmed = line.trim()
-      if (!trimmed) continue
+      if (!trimmed) return
       try {
         handleCliProviderJsonEvent(state, JSON.parse(trimmed))
       } catch {
         emitPlainAssistantContent(line + '\n')
       }
-    }
+    })
   })
 
   let providerSetupFailed = false
