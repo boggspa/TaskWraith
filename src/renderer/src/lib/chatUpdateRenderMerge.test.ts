@@ -7,6 +7,7 @@ import type {
   EnsembleParticipant
 } from '../../../main/store/types'
 import { coalescePendingChatUpdateRender, mergeChatUpdatedForRender } from './chatUpdateRenderMerge'
+import { groupEnsembleMessagesByRound } from './ensembleRoundGrouping'
 
 function message(id: string, content: string): ChatMessage {
   return { id, role: 'assistant', content, timestamp: '1' }
@@ -110,6 +111,170 @@ describe('mergeChatUpdatedForRender', () => {
 
     expect(merged.messages).toEqual(page)
     expect(merged.messages).toHaveLength(1)
+  })
+
+  it('does not resurrect paged-out user prompts onto a snapshot shell', () => {
+    // An oversized chat snapshots as a tail page. Every historical user prompt
+    // is "missing" from that window, so the unconditional live-user-message
+    // preservation re-appended all of history below the tail — each orphaned
+    // prompt splitting off from its round as a lone "0 messages" card while the
+    // real transcript sat way above the groupings.
+    const roundPrompt = (id: string, roundId: string, timestamp: string): ChatMessage => ({
+      id,
+      role: 'user',
+      content: `prompt ${id}`,
+      timestamp,
+      metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: roundId }
+    })
+    const roundTurn = (id: string, roundId: string, timestamp: string): ChatMessage => ({
+      id,
+      role: 'assistant',
+      content: `turn ${id}`,
+      timestamp,
+      metadata: { kind: 'ensembleParticipant', ensembleRoundId: roundId }
+    })
+    const liveMessages = [
+      roundPrompt('u1', 'round-1', '2026-09-07T20:00:00.000Z'),
+      roundTurn('a1', 'round-1', '2026-09-07T20:01:00.000Z'),
+      roundPrompt('u2', 'round-2', '2026-09-07T21:00:00.000Z'),
+      roundTurn('a2', 'round-2', '2026-09-07T21:01:00.000Z')
+    ]
+    const tail = liveMessages.slice(2)
+    const shell = {
+      ...chat(tail),
+      chatKind: 'ensemble',
+      runs: [],
+      summaryOnly: true,
+      transcriptPaged: true,
+      messageCount: 4,
+      runCount: 0
+    } as unknown as ChatRecord
+    const live = { ...chat(liveMessages), chatKind: 'ensemble' } as ChatRecord
+
+    const merged = mergeChatUpdatedForRender(shell, {
+      liveChat: live,
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['u2', 'a2'])
+    // The user-visible half: the merged tail groups as one intact round, not
+    // a lone prompt card plus a body-less round.
+    const items = groupEnsembleMessagesByRound(merged)
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ type: 'round-group', roundId: 'round-2' })
+    if (items[0].type !== 'round-group') throw new Error('expected a round group')
+    expect(items[0].messages.map((entry) => entry.id)).toEqual(['u2', 'a2'])
+  })
+
+  it('does not resurrect paged-out closeouts onto a snapshot shell', () => {
+    const closeout = (id: string): ChatMessage => ({
+      id,
+      role: 'system',
+      content: '',
+      timestamp: '2026-09-07T20:00:00.000Z',
+      metadata: { kind: 'taskWraithCloseout' }
+    })
+    const answer = (id: string, timestamp: string): ChatMessage => ({
+      id,
+      role: 'assistant',
+      content: `answer ${id}`,
+      timestamp
+    })
+    const liveMessages = [
+      answer('a1', '2026-09-07T19:00:00.000Z'),
+      closeout('closeout-old'),
+      answer('a2', '2026-09-07T21:00:00.000Z')
+    ]
+    const shell = {
+      ...chat([answer('a2', '2026-09-07T21:00:00.000Z')]),
+      summaryOnly: true,
+      transcriptPaged: true,
+      messageCount: 3,
+      runCount: 0
+    } as unknown as ChatRecord
+
+    const merged = mergeChatUpdatedForRender(shell, {
+      liveChat: chat(liveMessages),
+      messagesChanged: true,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a2'])
+  })
+
+  it('still preserves a new local user row appended past a snapshot shell’s total', () => {
+    // The live transcript runs one row past the snapshot's canonical total:
+    // that row was authored after the snapshot and must survive the merge.
+    const tail: ChatMessage = {
+      id: 'a1',
+      role: 'assistant',
+      content: 'tail answer',
+      timestamp: '2026-09-07T21:00:00.000Z'
+    }
+    const fresh: ChatMessage = {
+      id: 'u-new',
+      role: 'user',
+      content: 'just sent',
+      timestamp: '2026-09-07T21:00:01.000Z'
+    }
+    const shell = {
+      ...chat([tail]),
+      summaryOnly: true,
+      transcriptPaged: true,
+      messageCount: 1,
+      runCount: 0
+    } as unknown as ChatRecord
+
+    const merged = mergeChatUpdatedForRender(shell, {
+      liveChat: chat([tail, fresh]),
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a1', 'u-new'])
+  })
+
+  it('preserves a new local row on a stale live base by recency, not history', () => {
+    // The live base missed the snapshot's tail row, so the fresh row sits
+    // below the shell's total and only its newer timestamp proves it is new.
+    const historical: ChatMessage = {
+      id: 'u-old',
+      role: 'user',
+      content: 'old prompt',
+      timestamp: '2026-09-07T20:00:00.000Z'
+    }
+    const fresh: ChatMessage = {
+      id: 'u-new',
+      role: 'user',
+      content: 'just sent',
+      timestamp: '2026-09-07T21:00:01.000Z'
+    }
+    const shellRow: ChatMessage = {
+      id: 'a2',
+      role: 'assistant',
+      content: 'tail answer',
+      timestamp: '2026-09-07T21:00:00.000Z'
+    }
+    const shell = {
+      ...chat([shellRow]),
+      summaryOnly: true,
+      transcriptPaged: true,
+      messageCount: 2,
+      runCount: 0
+    } as unknown as ChatRecord
+
+    const merged = mergeChatUpdatedForRender(shell, {
+      liveChat: chat([historical, fresh]),
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a2', 'u-new'])
   })
 
   it('keeps longer live assistant content when the incoming transcript changed', () => {

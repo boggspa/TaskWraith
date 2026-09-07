@@ -117,6 +117,48 @@ function mergeLiveMessages(
   return orphans.length > 0 ? [...mergedMessages, ...orphans] : mergedMessages
 }
 
+function timestampMs(value: unknown): number | null {
+  if (typeof value !== 'string' || value.length === 0) return null
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+/**
+ * A paged shell's messages are one tail window, so "missing from the shell"
+ * is true of every historical row outside that window. Only a row that is
+ * provably NEWER than the window may be preserved onto it: a row at or past
+ * the shell's known canonical total (a full live transcript running ahead of
+ * the snapshot), or — for a stale base where position proves nothing — a row
+ * strictly newer than the window's newest message. Everything else is history
+ * that must stay paged out: appending it reorders the transcript and splits
+ * each resurrected prompt off from its round as a lone "0 messages" card.
+ */
+function filterPagedShellPreservations(
+  chat: ChatRecord,
+  liveChat: ChatRecord,
+  missing: ChatMessage[]
+): ChatMessage[] {
+  if (missing.length === 0) return missing
+  const total = (chat as { messageCount?: unknown }).messageCount
+  const knownTotal =
+    typeof total === 'number' && Number.isFinite(total) ? total : Number.POSITIVE_INFINITY
+  const liveIndexById = new Map<string, number>()
+  for (let index = 0; index < liveChat.messages.length; index += 1) {
+    const id = liveChat.messages[index]?.id
+    if (id && !liveIndexById.has(id)) liveIndexById.set(id, index)
+  }
+  const newestMs = timestampMs(chat.messages[chat.messages.length - 1]?.timestamp)
+  return missing.filter((message) => {
+    const liveIndex = liveIndexById.get(message.id)
+    if (liveIndex !== undefined && liveIndex >= knownTotal) return true
+    if (newestMs !== null) {
+      const candidateMs = timestampMs(message.timestamp)
+      if (candidateMs !== null && candidateMs > newestMs) return true
+    }
+    return false
+  })
+}
+
 function preserveLiveTaskWraithCloseouts(
   chat: ChatRecord,
   liveChat: ChatRecord | null | undefined
@@ -129,9 +171,10 @@ function preserveLiveTaskWraithCloseouts(
       message.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND &&
       !incomingIds.has(message.id)
   )
-  return missingCloseouts.length > 0
-    ? { ...chat, messages: [...chat.messages, ...missingCloseouts] }
-    : chat
+  const preservable = isTranscriptPagedShell(chat)
+    ? filterPagedShellPreservations(chat, liveChat, missingCloseouts)
+    : missingCloseouts
+  return preservable.length > 0 ? { ...chat, messages: [...chat.messages, ...preservable] } : chat
 }
 
 function preserveLiveUserMessages(
@@ -143,9 +186,10 @@ function preserveLiveUserMessages(
   const missingUserMessages = liveChat.messages.filter(
     (message) => message.role === 'user' && !incomingIds.has(message.id)
   )
-  return missingUserMessages.length > 0
-    ? { ...chat, messages: [...chat.messages, ...missingUserMessages] }
-    : chat
+  const preservable = isTranscriptPagedShell(chat)
+    ? filterPagedShellPreservations(chat, liveChat, missingUserMessages)
+    : missingUserMessages
+  return preservable.length > 0 ? { ...chat, messages: [...chat.messages, ...preservable] } : chat
 }
 
 /** Normalize a chat/goal/ensemble freshness stamp. `ChatRecord.updatedAt` is
