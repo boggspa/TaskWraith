@@ -33573,8 +33573,22 @@ async function syncCodexNativeGoalForRun(
     }
 
     await client.request(intent.method, intent.params, 15_000)
-    if (intent.preserveTaskWraithGoal) syncCodexGoalCapabilityMetadata(appChatId, true)
-    else syncCodexGoalCapabilityMetadata(appChatId, true, null)
+    if (intent.preserveTaskWraithGoal) {
+      syncCodexGoalCapabilityMetadata(appChatId, true)
+      return
+    }
+    // The clear intent was decided from the read at the top of this function,
+    // before a round trip that may take 15s. Passing `null` forces
+    // `delete chat.activeGoal` against a FRESH read, so a goal set during the
+    // await would be erased by a decision made before it existed. Re-read and
+    // mirror the clear only while the chat still has no goal of its own; a
+    // goal that arrived meanwhile is re-mirrored by the next run's sync.
+    const chatAfterClear = AppStore.getChat(appChatId)
+    syncCodexGoalCapabilityMetadata(
+      appChatId,
+      true,
+      chatAfterClear?.activeGoal ? undefined : null
+    )
   } catch (error) {
     const unsupportedNativeGoalControl = isCodexNativeGoalUnsupportedError(error)
     if (unsupportedNativeGoalControl) {
