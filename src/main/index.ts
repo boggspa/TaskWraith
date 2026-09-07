@@ -122,6 +122,10 @@ import {
   prepareKimiIsolatedHome,
   type KimiHomeFs
 } from './kimi/KimiAcpHome'
+import {
+  appTranslocationRemedyMessage,
+  pathIsAppTranslocated
+} from './AppTranslocation'
 import { kimiAcpSeatStatePath, kimiAcpSeatStateRoot } from './kimi/KimiAcpSeatState'
 import { museSeatStatePath, museSeatStateRoot } from './muse/MuseSeatState'
 import { prepareKimiOAuthCredentialProjection } from './kimi/KimiOAuthCredentialProjection'
@@ -3543,6 +3547,15 @@ function taskwraithMcpBridgeCommandStatus(): {
   error?: string
 } {
   const command = process.execPath
+  // Refuse BEFORE the access check, which a translocated path passes: the
+  // mount is live in this process and dies with it, so the child that actually
+  // runs the command gets ENOENT. Every consumer already gates on `available`,
+  // so this both stops Mistral/Grok/Devin/Codex/Claude/Kimi/Muse handing a
+  // doomed command over the wire AND stops Cursor/Gemini/agy PERSISTING one
+  // into a config file that outlives the launch.
+  if (pathIsAppTranslocated(command)) {
+    return { command, available: false, error: appTranslocationRemedyMessage() }
+  }
   try {
     fsSync.accessSync(command, fsSync.constants.X_OK)
     return { command, available: true }
