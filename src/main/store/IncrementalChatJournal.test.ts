@@ -398,6 +398,94 @@ describe('IncrementalChatJournal', () => {
     expect(journal.replay('chat-2').record).toEqual(secondNext)
   })
 
+  describe('pendingReplayState (cheap replay probe)', () => {
+    it('reports no tail and the checkpoint revision for a freshly folded chat', () => {
+      const before = chat('chat-1', 1)
+      journal.initialize('chat-1', before)
+      // Checkpoint written, no mutations tail yet.
+      expect(journal.pendingReplayState('chat-1')).toEqual({
+        hasTail: false,
+        checkpointRevision: 1
+      })
+    })
+
+    it('reports a live tail while mutations sit unfolded, then clears once folded', () => {
+      const before = chat('chat-1', 1)
+      const after = advance(before, 'tail present')
+      journal.initialize('chat-1', before)
+      journal.append(deriveChatRecordMutation(before, after))
+      expect(journal.pendingReplayState('chat-1').hasTail).toBe(true)
+
+      expect(journal.checkpoint('chat-1', 'manual')).toBe(true)
+      // Folded: tail gone, checkpoint now at the advanced revision.
+      expect(journal.pendingReplayState('chat-1')).toEqual({
+        hasTail: false,
+        checkpointRevision: 2
+      })
+    })
+
+    it('peeks the header revision without parsing the multi-message record', () => {
+      // A record whose body carries its own `persistenceRevision` and even a
+      // nested `revision`-shaped string must not fool the header peek.
+      const before = chat('chat-1', 7)
+      before.messages[0].content = '{"revision":999999}'
+      journal.initialize('chat-1', before)
+      expect(journal.pendingReplayState('chat-1').checkpointRevision).toBe(7)
+    })
+
+    it('never throws: unknown chat and unsafe id both fall back to a real replay', () => {
+      expect(journal.pendingReplayState('unknown-chat')).toEqual({
+        hasTail: false,
+        checkpointRevision: null
+      })
+      // An unsafe id forces the replay path (hasTail true) rather than throwing.
+      expect(journal.pendingReplayState('../escape')).toEqual({
+        hasTail: true,
+        checkpointRevision: null
+      })
+    })
+  })
+
+  it('keeps compacting healthy chats when one chat throws (idle sweep)', () => {
+    // chat-bad is iterated FIRST (inserted first): under the old unguarded loop
+    // its throw aborted the whole sweep and chat-good was never folded.
+    const bad = chat('chat-bad', 1)
+    const badNext = advance(bad, 'bad tail')
+    const good = chat('chat-good', 1)
+    const goodNext = advance(good, 'good tail')
+    journal.initialize('chat-bad', bad)
+    journal.append(deriveChatRecordMutation(bad, badNext))
+    journal.initialize('chat-good', good)
+    journal.append(deriveChatRecordMutation(good, goodNext))
+    // Corrupt chat-bad's checkpoint on disk; checkpoint()'s own readCheckpoint
+    // re-reads it and throws, exactly like a revision-gap chat at boot.
+    fs.writeFileSync(path.join(baseDir, 'chat-bad.checkpoint.json'), '{ not valid json')
+
+    nowMs += 1_000_000 // both idle-eligible
+    expect(() => journal.checkpointIdle()).not.toThrow()
+    // The healthy chat still folded despite the corrupt sibling ahead of it.
+    expect(fs.existsSync(path.join(baseDir, 'chat-good.mutations.jsonl'))).toBe(false)
+    expect(journal.replay('chat-good').record).toEqual(goodNext)
+  })
+
+  it('keeps compacting healthy chats when one chat throws (shutdown sweep)', () => {
+    const bad = chat('chat-bad', 1)
+    const badNext = advance(bad, 'bad tail')
+    const good = chat('chat-good', 1)
+    const goodNext = advance(good, 'good tail')
+    journal.initialize('chat-bad', bad)
+    journal.append(deriveChatRecordMutation(bad, badNext))
+    journal.initialize('chat-good', good)
+    journal.append(deriveChatRecordMutation(good, goodNext))
+    fs.writeFileSync(path.join(baseDir, 'chat-bad.checkpoint.json'), '{ not valid json')
+
+    // The corrupt chat is skipped, so the count is the ONE healthy fold — not a
+    // thrown sweep that strands every later chat's journal.
+    expect(journal.checkpointAll('shutdown')).toBe(1)
+    expect(fs.existsSync(path.join(baseDir, 'chat-good.mutations.jsonl'))).toBe(false)
+    expect(journal.replay('chat-good').record).toEqual(goodNext)
+  })
+
   it('keeps deletion tombstoned against late mutation appends', () => {
     const before = chat()
     const after = advance(before, 'late')

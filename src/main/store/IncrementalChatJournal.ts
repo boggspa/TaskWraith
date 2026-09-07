@@ -41,6 +41,29 @@ export interface IncrementalChatReplayResult {
   recoveredTornTail: boolean
 }
 
+/**
+ * A cheap, read-only probe of whether a full `replay()` could change the served
+ * record — a stat of the mutations tail plus a header-only peek at the
+ * checkpoint revision, never the fat record parse `replay()` pays.
+ *
+ * The read path uses it to skip the checkpoint re-parse for a chat whose
+ * journal has been folded away (no tail) and whose checkpoint does not lead the
+ * legacy record: in that case replay would reproduce the checkpoint at a
+ * revision the caller already discards for the legacy record, so skipping it is
+ * a proven no-op on the served bytes. A leading checkpoint or a live tail still
+ * forces the real replay.
+ */
+export interface IncrementalChatPendingReplayState {
+  /** True when the journal holds an unflushed mutations tail beyond the checkpoint. */
+  hasTail: boolean
+  /**
+   * The checkpoint's head revision, read from its header WITHOUT parsing the
+   * full record; null when there is no checkpoint or its header is unreadable
+   * (both of which force the caller onto the full replay path, unchanged).
+   */
+  checkpointRevision: number | null
+}
+
 export interface IncrementalChatJournalStats {
   appends: number
   deferredAppends: number
@@ -96,6 +119,9 @@ export interface IncrementalChatJournal {
   initialize(chatId: string, record: ChatRecord): void
   append(batch: ChatRecordMutationBatch, options?: IncrementalChatAppendOptions): void
   replay(chatId: string): IncrementalChatReplayResult
+  /** Cheap probe (stat + checkpoint-header peek) of whether `replay` could lead
+   *  the legacy record; see {@link IncrementalChatPendingReplayState}. */
+  pendingReplayState(chatId: string): IncrementalChatPendingReplayState
   replaceAuthoritativeCheckpoint(chatId: string, record: ChatRecord): void
   checkpoint(chatId: string, reason: IncrementalChatCheckpointReason): boolean
   checkpointIdle(nowMs?: number): number
@@ -129,6 +155,11 @@ const DEFAULT_MAX_JOURNAL_ENTRIES = 1_000
 const DEFAULT_IDLE_CHECKPOINT_MS = 15_000
 const DEFAULT_MAX_UNCHECKPOINTED_MS = 2 * 60 * 1000
 const DEFAULT_MAX_JOURNAL_READ_BYTES = 256 * 1024 * 1024
+/** Enough of a checkpoint file to hold every header field before the fat
+ *  `record`: format, version, chatId, revision, savedAt, reason all sit in the
+ *  first ~200 bytes, so a 4KB probe reaches the top-level revision with room to
+ *  spare while never touching the megabytes of transcript that follow. */
+const CHECKPOINT_HEADER_PROBE_BYTES = 4096
 const CHAT_ID_PATTERN = /^[A-Za-z0-9_-]{1,256}$/
 const MUTATION_OPERATION_TYPES = new Set<ChatRecordMutationOperation['type']>([
   'record_patch',
@@ -637,6 +668,57 @@ export function createIncrementalChatJournal(
     }
   }
 
+  /**
+   * The checkpoint's head revision from a header-only read — never the full
+   * record parse. Returns null when the checkpoint is absent or its header does
+   * not yield a top-level revision, both of which the caller treats as "cannot
+   * prove a no-op, do the real replay".
+   */
+  const peekCheckpointRevision = (chatId: string): number | null => {
+    let fd: number | null = null
+    try {
+      fd = fs.openSync(checkpointPath(chatId), 'r')
+      const buffer = Buffer.allocUnsafe(CHECKPOINT_HEADER_PROBE_BYTES)
+      const read = fs.readSync(fd, buffer, 0, CHECKPOINT_HEADER_PROBE_BYTES, 0)
+      const head = buffer.toString('utf8', 0, read)
+      // Bound the search to the header: the fat `record` is serialised last, so
+      // slicing before it means a `persistenceRevision` (or any nested field)
+      // inside the transcript can never be mistaken for the top-level revision.
+      const recordAt = head.indexOf('"record"')
+      const header = recordAt >= 0 ? head.slice(0, recordAt) : head
+      const match = /"revision"\s*:\s*(\d+)/.exec(header)
+      if (!match) return null
+      const value = Number(match[1])
+      return Number.isSafeInteger(value) && value >= 0 ? value : null
+    } catch {
+      // ENOENT (no checkpoint) or any read error — force the full replay path.
+      return null
+    } finally {
+      if (fd !== null) {
+        try {
+          fs.closeSync(fd)
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+  }
+
+  const pendingReplayState = (chatId: string): IncrementalChatPendingReplayState => {
+    // Never throw from a probe: an unsafe id (or any stat failure) forces the
+    // real replay path, which validates and fails exactly as it does today.
+    if (!CHAT_ID_PATTERN.test(chatId)) return { hasTail: true, checkpointRevision: null }
+    let hasTail = false
+    try {
+      hasTail = fs.statSync(journalPath(chatId)).size > 0
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        return { hasTail: true, checkpointRevision: null }
+      }
+    }
+    return { hasTail, checkpointRevision: peekCheckpointRevision(chatId) }
+  }
+
   const checkpoint = (chatId: string, reason: IncrementalChatCheckpointReason): boolean => {
     assertWritable()
     assertChatId(chatId)
@@ -778,20 +860,30 @@ export function createIncrementalChatJournal(
     assertWritable()
     let count = 0
     for (const chatId of knownChatIds()) {
-      const state = loadState(chatId)
-      if (
-        state.tombstoned ||
-        state.journalEntries === 0 ||
-        state.lastAppendAtMs === null ||
-        state.dirtySinceMs === null
-      ) {
-        continue
-      }
-      if (
-        nowMs - state.lastAppendAtMs >= idleCheckpointMs ||
-        nowMs - state.dirtySinceMs >= maxUncheckpointedMs
-      ) {
-        if (checkpoint(chatId, 'idle')) count += 1
+      // One corrupt/gapped chat must not abort the sweep for every chat after
+      // it. A revision gap (or any loadState/checkpoint fault) throws here, and
+      // an unguarded loop then leaves every later chat's journal uncompacted —
+      // so a single chat left broken by an interrupted write silently stalls
+      // compaction corpus-wide and the journals grow unbounded across boots.
+      // Skip the offending chat, keep sweeping the healthy ones.
+      try {
+        const state = loadState(chatId)
+        if (
+          state.tombstoned ||
+          state.journalEntries === 0 ||
+          state.lastAppendAtMs === null ||
+          state.dirtySinceMs === null
+        ) {
+          continue
+        }
+        if (
+          nowMs - state.lastAppendAtMs >= idleCheckpointMs ||
+          nowMs - state.dirtySinceMs >= maxUncheckpointedMs
+        ) {
+          if (checkpoint(chatId, 'idle')) count += 1
+        }
+      } catch (error) {
+        console.error(`[incremental-chat] idle checkpoint skipped ${chatId}`, error)
       }
     }
     return count
@@ -804,7 +896,13 @@ export function createIncrementalChatJournal(
     drainDeferredDurability()
     let count = 0
     for (const chatId of knownChatIds()) {
-      if (checkpoint(chatId, reason)) count += 1
+      // Same corpus-wide-stall hazard as checkpointIdle: one broken chat must
+      // not abort the shutdown sweep and strand every later chat's journal.
+      try {
+        if (checkpoint(chatId, reason)) count += 1
+      } catch (error) {
+        console.error(`[incremental-chat] shutdown checkpoint skipped ${chatId}`, error)
+      }
     }
     return count
   }
@@ -885,6 +983,7 @@ export function createIncrementalChatJournal(
     initialize,
     append,
     replay,
+    pendingReplayState,
     replaceAuthoritativeCheckpoint,
     checkpoint,
     checkpointIdle,

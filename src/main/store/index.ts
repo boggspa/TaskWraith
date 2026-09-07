@@ -6066,11 +6066,26 @@ export class AppStore {
     }
     const legacyRecord = this.normalizeChatRecord(chat)
     let record = legacyRecord
+    const legacyRevision = chatPersistenceRevision(legacyRecord)
+    // Skip the fat checkpoint re-parse when a full replay provably cannot change
+    // the served record: a chat whose journal has been folded away (no tail)
+    // and whose checkpoint does not lead the legacy record replays back to a
+    // revision the block below already resolves to `legacyRecord`. A boot pass
+    // that re-reads the corpus was paying a 25-32MB checkpoint parse per read
+    // for exactly these folded chats (256 of 258 on a real profile) only to
+    // discard the result — the dominant per-read cost behind the cold-boot
+    // stall. A live tail, a leading checkpoint, or an unreadable header (null)
+    // all still take the real replay, so behaviour is unchanged wherever replay
+    // could actually matter.
+    const pendingReplay = incrementalChatPersistence.pendingReplayState(chatId)
+    const replayCannotLead =
+      !pendingReplay.hasTail &&
+      pendingReplay.checkpointRevision !== null &&
+      pendingReplay.checkpointRevision <= legacyRevision
     try {
-      const replayed = incrementalChatPersistence.replay(chatId).record
+      const replayed = replayCannotLead ? null : incrementalChatPersistence.replay(chatId).record
       if (replayed) {
         const incrementalRecord = this.normalizeChatRecord(replayed)
-        const legacyRevision = chatPersistenceRevision(legacyRecord)
         const incrementalRevision = chatPersistenceRevision(incrementalRecord)
         if (
           incrementalRevision > legacyRevision ||

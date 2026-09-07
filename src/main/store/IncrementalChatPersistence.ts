@@ -10,6 +10,7 @@ import type {
   IncrementalChatAppendDurability,
   IncrementalChatJournal,
   IncrementalChatJournalStats,
+  IncrementalChatPendingReplayState,
   IncrementalChatReplayResult
 } from './IncrementalChatJournal'
 import type { ChatMessage, ChatRecord } from './types'
@@ -51,6 +52,8 @@ export interface IncrementalChatPersistence {
   ): IncrementalChatPersistResult
   verify(chatId: string, expected: ChatRecord, repair?: boolean): boolean
   replay(chatId: string): IncrementalChatReplayResult
+  /** Cheap probe of whether {@link replay} could lead the legacy record. */
+  pendingReplayState(chatId: string): IncrementalChatPendingReplayState
   replaceAuthoritative(chatId: string, record: ChatRecord): void
   checkpointIdle(nowMs?: number): number
   checkpointAll(): number
@@ -352,6 +355,7 @@ export function createIncrementalChatPersistence(
     persist,
     verify,
     replay: (chatId) => journal.replay(chatId),
+    pendingReplayState: (chatId) => journal.pendingReplayState(chatId),
     replaceAuthoritative,
     checkpointIdle,
     checkpointAll,

@@ -209,6 +209,41 @@ describe('T4a chat journal integration', () => {
       expect(AppStore.getChat('chat-v2-restart')?.title).toBe('recovered from mutation tail')
     })
 
+    it('serves a leading checkpoint that has no mutation tail (the boot tail-gate must not skip it)', () => {
+      // The read path now skips the fat replay when a chat has no journal tail
+      // AND its checkpoint does not lead the legacy record. This is the one case
+      // that gate must NOT skip: a folded checkpoint (no tail) that leads the
+      // legacy file — the divergence a failed legacy write leaves behind.
+      saveChat('chat-lead')
+      AppStore.clearChatRecordCacheForTests()
+      const base = AppStore.getChat('chat-lead')
+      if (!base) throw new Error('base record missing')
+      const legacyRevision =
+        (base as ChatRecord & { persistenceRevision?: number }).persistenceRevision ?? 0
+
+      // Fold a checkpoint ONE revision ahead of legacy, with no mutations tail.
+      const leadingRecord = {
+        ...base,
+        title: 'checkpoint leads legacy',
+        persistenceRevision: legacyRevision + 1
+      }
+      const checkpoint = {
+        format: 'taskwraith-chat-checkpoint',
+        version: 1,
+        chatId: 'chat-lead',
+        revision: legacyRevision + 1,
+        savedAt: '2026-09-07T00:00:00.000Z',
+        reason: 'recovery',
+        record: leadingRecord
+      }
+      fs.writeFileSync(incrementalCheckpointPath('chat-lead'), JSON.stringify(checkpoint))
+      fs.rmSync(incrementalMutationPath('chat-lead'), { force: true })
+      AppStore.clearChatRecordCacheForTests()
+
+      // checkpointRevision > legacyRevision, so replay must still run and win.
+      expect(AppStore.getChat('chat-lead')?.title).toBe('checkpoint leads legacy')
+    })
+
     // The fault injection below is POSIX-specific: making a directory at the
     // append target yields EISDIR on Unix, while Windows reports EPERM/EACCES
     // and the fallback does not fire. UNRESOLVED whether that is the injection
