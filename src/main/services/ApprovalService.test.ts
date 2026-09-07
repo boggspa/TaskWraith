@@ -48,7 +48,9 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
       isApprovedAction: ReturnType<typeof vi.fn>
       recordCanvasEvalWindowGrant: ReturnType<typeof vi.fn>
     }
-    appendDurableRunEventForRoute: ReturnType<typeof vi.fn>
+    appendDurableRunEventForRoute: ReturnType<
+      typeof vi.fn<ApprovalServiceDeps['appendDurableRunEventForRoute']>
+    >
     resolveApprovalLedger: ReturnType<typeof vi.fn>
     codexClient: {
       respond: ReturnType<typeof vi.fn>
@@ -61,7 +63,7 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
     workspaceIdForPath: ReturnType<typeof vi.fn>
     publishApprovalRunEvent: ReturnType<typeof vi.fn>
     getApprovalTimeoutSettings: ReturnType<typeof vi.fn>
-    log: ReturnType<typeof vi.fn>
+    log: ReturnType<typeof vi.fn<ApprovalServiceDeps['log']>>
   }
 } {
   const codexClient = {
@@ -95,7 +97,7 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
       ),
       recordCanvasEvalWindowGrant: vi.fn()
     },
-    appendDurableRunEventForRoute: vi.fn(),
+    appendDurableRunEventForRoute: vi.fn<ApprovalServiceDeps['appendDurableRunEventForRoute']>(),
     resolveApprovalLedger: vi.fn(),
     codexClient,
     sendAgentCompatLine: vi.fn(),
@@ -122,7 +124,7 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
       },
       mainAuthorityMs: 60_000
     })),
-    log: vi.fn()
+    log: vi.fn<ApprovalServiceDeps['log']>()
   }
   return {
     spies,
