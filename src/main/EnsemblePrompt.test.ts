@@ -5426,4 +5426,61 @@ describe('effective lane posture', () => {
     // Over-correction guard: an unclamped worker keeps its stage sentence.
     expect(build(undefined)).toContain('take a serial implementation turn')
   })
+
+  it.each([
+    ['antigravity' as const, 'gemini-3.1-pro-high'],
+    ['ollama' as const, 'qwen3:8b']
+  ])(
+    'does not tell a read-clamped %s capsule seat it is a worker',
+    (provider, model) => {
+      // The generic-shape gate missed the provider capsules, which render their
+      // own `Stage:` line — so the two surfaces the failing lanes actually ran
+      // on kept contradicting the boundary three lines above it.
+      const worker: EnsembleParticipant = {
+        ...ensemble.participants[1],
+        provider,
+        model,
+        stageRole: 'worker'
+      }
+      const config: EnsembleConfig = {
+        ...ensemble,
+        participants: [ensemble.participants[0], worker]
+      }
+      const build = (posture?: typeof readClamped): string =>
+        buildEnsembleParticipantPrompt({
+          chat: chat(),
+          config,
+          participant: worker,
+          currentPrompt: 'Inspect the dispatch path.',
+          roundId: `round-capsule-${provider}`,
+          chatContextTurns: 4,
+          ...(posture ? { effectiveLanePosture: posture } : {})
+        })
+
+      expect(build(readClamped)).not.toMatch(/Stage:\s*[Ww]orker/)
+      // Over-correction guard: an unclamped worker keeps its capsule stage.
+      expect(build(undefined)).toMatch(/Stage:\s*[Ww]orker/)
+    }
+  )
+
+  it('keeps a read-clamped reviewer’s capsule stage, which does not conflict', () => {
+    // Only `worker` contradicts a read lane. Suppressing scout/reviewer too
+    // would strip a seat of framing that is entirely compatible with reading.
+    const reviewer: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      provider: 'antigravity',
+      model: 'gemini-3.1-pro-high',
+      stageRole: 'reviewer'
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: { ...ensemble, participants: [ensemble.participants[0], reviewer] },
+      participant: reviewer,
+      currentPrompt: 'Inspect the dispatch path.',
+      roundId: 'round-capsule-reviewer',
+      chatContextTurns: 4,
+      effectiveLanePosture: readClamped
+    })
+    expect(prompt).toMatch(/Stage:\s*reviewer/i)
+  })
 })

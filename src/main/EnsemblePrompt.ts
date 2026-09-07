@@ -1281,6 +1281,17 @@ export function buildEnsembleParticipantPromptProjection(
   // Non-elidable posture sentence for a reader lane; `undefined` for every
   // other seat, which keeps every existing prompt shape byte-identical.
   const laneIntentBoundary = formatLaneIntentBoundary(input.effectiveLanePosture)
+  // The provider capsules render their own `Stage:` line from this value, and
+  // 658ed47ee gated only the generic prompt shape — so a read-clamped seat kept
+  // being told `Stage: Worker — act on the request directly.` in the very
+  // capsules the failing AntiGravity and Ollama lanes render on, directly
+  // underneath the boundary telling it not to. Only `worker` conflicts with a
+  // read lane; scout, reviewer and background are all compatible with it and
+  // keep their stage.
+  const capsuleStageRole =
+    laneIntentBoundary && input.participant.stageRole === 'worker'
+      ? undefined
+      : input.participant.stageRole
   const maxContinuationHops = input.config.maxContinuationHops || 6
   const continuationHops = input.config.activeRound?.continuationHops || 0
   // 1.0.4 — speaker-position awareness. The opening participant of a
@@ -1582,7 +1593,7 @@ export function buildEnsembleParticipantPromptProjection(
         modelLabel: input.participant.model || selfModelLabel,
         selfToken,
         roundId: input.roundId,
-        stageRole: input.participant.stageRole,
+        stageRole: capsuleStageRole,
         roleInstructions:
           input.participant.instructions || 'Contribute a concise, useful response for your role.',
         currentPrompt: requestPresentation.text,
@@ -1648,7 +1659,7 @@ export function buildEnsembleParticipantPromptProjection(
         continuityCheckpoint,
         participantLabel,
         roundId: input.roundId,
-        stageRole: input.participant.stageRole,
+        stageRole: capsuleStageRole,
         roleInstructions:
           input.participant.instructions || 'Contribute a concise, useful response for your role.',
         currentPrompt: requestPresentation.text,
