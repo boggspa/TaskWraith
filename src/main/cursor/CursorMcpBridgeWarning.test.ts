@@ -1,10 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { CursorGlobalBrokerRegistryInstallError } from './CursorGlobalBrokerRegistryLease'
 import {
   buildCursorMcpBridgeUnavailableWarning,
-  classifyCursorMcpBridgeFailure
+  classifyCursorMcpBridgeFailure,
+  clearCursorMcpBridgeLastFailure,
+  peekCursorMcpBridgeLastFailure
 } from './CursorMcpBridgeWarning'
+
+beforeEach(() => {
+  clearCursorMcpBridgeLastFailure()
+})
 
 describe('classifyCursorMcpBridgeFailure', () => {
   it('distinguishes enable, ready-probe, and other setup failures', () => {
@@ -57,5 +63,18 @@ describe('buildCursorMcpBridgeUnavailableWarning', () => {
     expect(warning.title).toBe('Cursor MCP registry install failed')
     expect(warning.message).toContain('Registry recovery outcome: cleanup-failed')
     expect(warning.message).toContain('could not restore mcp.json')
+  })
+
+  it('records the last MCP setup failure for Settings to read', () => {
+    expect(peekCursorMcpBridgeLastFailure()).toBeNull()
+    buildCursorMcpBridgeUnavailableWarning({
+      writeCapable: true,
+      error: new Error('cursor-agent mcp enable taskwraith-broker failed: exit 1')
+    })
+    expect(peekCursorMcpBridgeLastFailure()).toEqual({
+      phase: 'enable',
+      title: 'Cursor MCP enable failed',
+      message: expect.stringContaining('mcp enable')
+    })
   })
 })

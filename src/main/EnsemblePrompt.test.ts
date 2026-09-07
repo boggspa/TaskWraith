@@ -349,6 +349,36 @@ describe('Ensemble prompt composition', () => {
     }
   })
 
+  it('derives UltraTask listed tools from a Cursor gateway-solo receipt when the orchestrator omits listedTools', () => {
+    const ultraSeat: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      id: 'cursor',
+      provider: 'cursor',
+      reasoningEffort: 'ultraTask',
+      permissionPresetId: 'read_only',
+      taskWraithMcpProfileReceipt: {
+        schemaVersion: 1,
+        profileId: 'taskwraith-gateway-solo-v1',
+        provider: 'cursor',
+        providerSessionId: 'cursor-sess-1',
+        pinnedAt: '2026-09-07T00:00:00.000Z'
+      }
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: { ...ensemble, participants: [ensemble.participants[0], ultraSeat] },
+      participant: ultraSeat,
+      currentPrompt: 'Please implement this.',
+      roundId: 'round-1',
+      chatContextTurns: 4
+    })
+    expect(prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(prompt).toContain("Priority order among this seat's listed tools")
+    expect(prompt).toContain('delegate_wave (all chats)')
+    expect(prompt).not.toMatch(/Priority order[^\n]*ensemble_fanout/)
+    expect(prompt).not.toContain('Skip any name that is not listed for this seat')
+  })
+
   it.each(['ultra', 'ultracode', 'max'])(
     'does not confer UltraTask delegation consent for the ordinary %s tier',
     (reasoningEffort) => {

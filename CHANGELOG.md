@@ -32,6 +32,19 @@ context needed to answer.
   product-improvement data-use notice). Muse Spark 1.2 stays the seat default,
   and New Additions leads Muse with 1.3.
 
+### Cursor Path-B
+
+- **Solo Cursor file-routing and honest UltraTask names.** A broker-active
+  Path-B write seat now gets the same TaskWraith file-routing envelope as
+  Ensemble, without duplicating it. UltraTask priority names on Ensemble
+  Cursor seats follow the pinned MCP receipt even when the orchestrator
+  omits an explicit listed-tools argument.
+- **Settings can see Cursor elicit and the last broker failure.** Path-B
+  Cursor advertises `ask_user_question` as a TaskWraith bridge capability.
+  An MCP enable, ready-probe, or registry failure stays visible in Settings
+  until the next active-broker launch, without reclassifying Cursor shell
+  or file tools as bridge-backed.
+
 ### Updates and Restart
 
 - **A queued restart says what it is waiting for.** Choosing Restart after an

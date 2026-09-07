@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { GATEWAY_MCP_ADVERTISE_TOOLS } from './mcp/McpToolProfiles'
+import {
+  buildCursorMcpBridgeUnavailableWarning,
+  clearCursorMcpBridgeLastFailure
+} from './cursor/CursorMcpBridgeWarning'
 import { buildProviderCapabilityContract } from './ProviderCapabilities'
 import type { AgenticServicesSettings, AppSettings } from './store/types'
 
@@ -29,6 +33,10 @@ function settings(
 }
 
 describe('ProviderCapabilities', () => {
+  beforeEach(() => {
+    clearCursorMcpBridgeLastFailure()
+  })
+
   it('describes AntiGravity as the sandboxed official CLI with the hook approval bridge', () => {
     const contract = buildProviderCapabilityContract({
       provider: 'antigravity',
@@ -629,6 +637,27 @@ describe('ProviderCapabilities', () => {
     // Cursor's brokered TaskWraith MCP tools route through the central
     // approval gate, so workspace Tool Grants apply (provider parity).
     expect(contract.approvals.supportsWorkspaceGrants).toBe(true)
+    expect(contract.tools.elicit.state).toBe('available')
+    expect(contract.tools.elicit.source).toBe('bridge')
+    expect(contract.tools.elicit.tools).toEqual(['ask_user_question'])
+    expect(contract.tools.shellCommands.source).not.toBe('bridge')
+    expect(contract.tools.fileChanges.source).not.toBe('bridge')
+  })
+
+  it('keeps Cursor elicit unavailable after a Path-B MCP setup failure', () => {
+    buildCursorMcpBridgeUnavailableWarning({
+      writeCapable: true,
+      error: new Error('Cursor MCP server taskwraith-broker is not ready for this run')
+    })
+    const contract = buildProviderCapabilityContract({
+      provider: 'cursor',
+      settings: settings(),
+      approvalMode: 'default',
+      status: { provider: 'cursor', available: true, version: '1.0.0' }
+    })
+    expect(contract.tools.elicit.state).toBe('unavailable')
+    expect(contract.tools.elicit.source).toBe('bridge')
+    expect(contract.warnings.some((entry) => entry.id === 'cursor-mcp-bridge-degraded')).toBe(true)
   })
 
   it('marks write-capable Grok as TaskWraith MCP bridge-backed', () => {

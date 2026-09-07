@@ -8,6 +8,10 @@ import {
   ULTRATASK_DELEGATION_TOOL_NAMES
 } from '../UltraTaskDelegationConsent'
 import { sanitizeTaskWraithMcpPromptClaims } from '../PromptComposition'
+import {
+  buildProviderFileRoutingPrompt,
+  TASKWRAITH_FILE_ROUTING_PROMPT_OPEN
+} from '../ProviderFileRoutingPrompt'
 import { normalizeCliProviderModel } from '../providers/StaticProviderModels'
 import {
   isCursorGrokModelId,
@@ -16,6 +20,7 @@ import {
 } from '../../shared/grok45Models'
 import { buildContainedCursorReadOnlyArgv, buildContainedCursorWriteArgv } from './CursorCliArgs'
 import { buildCursorPathBActiveBrokerPrompt } from './CursorPathBBrokerReceipt'
+import { clearCursorMcpBridgeLastFailure } from './CursorMcpBridgeWarning'
 import {
   buildCursorCanonicalBrokerMcpAllowRulesForProfile,
   CURSOR_BROKER_MCP_ALLOW_RULES,
@@ -182,14 +187,22 @@ export function buildCursorPathBLaunchPlan(
 ): CursorPathBLaunchPlan {
   assertBrokerOutcome(input)
   const brokerActive = input.brokerOutcome === 'active'
+  if (brokerActive) clearCursorMcpBridgeLastFailure()
   const policy = resolveCursorPathBBrokerPolicy({
     ...input,
     nativeWriteFallback: input.writeCapable && !brokerActive
   })
   const transactionalWriteSeat = input.writeCapable
+  const promptWithFileRouting =
+    brokerActive && !input.prompt.includes(TASKWRAITH_FILE_ROUTING_PROMPT_OPEN)
+      ? `${buildProviderFileRoutingPrompt({
+          provider: 'cursor',
+          effectivePermissions: input.effectivePermissions
+        })}${input.prompt}`
+      : input.prompt
   const basePrompt = brokerActive
-    ? buildCursorPathBActiveBrokerPrompt(input.prompt, policy, input.taskWraithMcpProfileId)
-    : sanitizeTaskWraithMcpPromptClaims(input.prompt, {
+    ? buildCursorPathBActiveBrokerPrompt(promptWithFileRouting, policy, input.taskWraithMcpProfileId)
+    : sanitizeTaskWraithMcpPromptClaims(promptWithFileRouting, {
         advertised: false,
         coreProfile: false
       })

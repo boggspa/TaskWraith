@@ -24,6 +24,7 @@ import { normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
 import { isEnsembleParticipantAuthoredMessage } from '../shared/ensembleParticipantMessage'
 import type { EnsemblePromptTranscriptAttribution } from '../shared/ensemblePromptCostAttribution'
 import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
+import { resolveEnsembleListedTools } from './EnsembleListedTools'
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   gemini: 'Gemini',
@@ -222,8 +223,10 @@ export interface BuildEnsemblePromptInput {
   instructionContext?: ResolvedInstructionContext | null
   /**
    * Live listed TaskWraith tools for this seat when the caller already knows
-   * them. UltraTask priority names are filtered to this set. Omitted callers
-   * still get "among listed tools" language rather than an unconditional order.
+   * them. UltraTask priority names are filtered to this set. When omitted, a
+   * pinned MCP profile receipt is enough to derive the same filter so
+   * production Ensemble prompt builds stay honest without growing the
+   * orchestrator.
    */
   listedTools?: readonly string[]
   /**
@@ -1935,7 +1938,16 @@ export function buildEnsembleParticipantPromptProjection(
             '- Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.',
             '- After ANY subagent_spawn call, immediately invoke subagent_wait, then subagent_read_result, to block and retain turn ownership.'
           ]
-        : ultraTaskPriorityLines(input.listedTools)
+        : ultraTaskPriorityLines(
+            resolveEnsembleListedTools({
+              listedTools: input.listedTools,
+              provider: input.participant.provider,
+              profileId: input.participant.taskWraithMcpProfileReceipt?.profileId ?? null,
+              permissionPresetId:
+                input.effectiveLanePosture?.presetId ?? input.participant.permissionPresetId,
+              reasoningEffort: input.participant.reasoningEffort
+            })
+          )
       : []),
     '- When the listed tool surface includes the graph primitives, use ensemble_fanout → ensemble_await → ensemble_lane_result for multi-step work. ensemble_await also accepts subThreadIds and waveIds to block on delegated sub-threads and waves in both Ensemble and single-provider threads. If any of those names are absent, do not search for them or scrape shared history; continue with the available rotation and mention fallback.',
     '- At most 3 fan-outs may be in flight at once. A fourth dispatch is refused until you ensemble_await one of the open ones and read it with ensemble_lane_result — so plan a fan-out and its join together rather than firing several and collecting them later. This bounds concurrent fan-out CALLS, never the number of participants in one: a single fan-out may carry the whole roster, so never drop seats to get past the refusal.',

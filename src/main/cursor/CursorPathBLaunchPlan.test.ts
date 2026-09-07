@@ -1,10 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE } from '../PromptComposition'
 import {
   buildCursorPathBLaunchPlan,
   resolveCursorPathBBrokerPolicy,
   type CursorPathBLaunchPlanInput
 } from './CursorPathBLaunchPlan'
+import { TASKWRAITH_FILE_ROUTING_PROMPT_OPEN } from '../ProviderFileRoutingPrompt'
+import {
+  buildCursorMcpBridgeUnavailableWarning,
+  clearCursorMcpBridgeLastFailure,
+  peekCursorMcpBridgeLastFailure
+} from './CursorMcpBridgeWarning'
 import type { EffectiveRunPermissions } from '../store/types'
 
 const WORKSPACE = '/Users/test/repo'
@@ -28,6 +34,9 @@ function input(overrides: Partial<CursorPathBLaunchPlanInput> = {}): CursorPathB
 }
 
 describe('CursorPathBLaunchPlan', () => {
+  beforeEach(() => {
+    clearCursorMcpBridgeLastFailure()
+  })
   it('builds the exact native-only read-only plan and defuses stale MCP claims', () => {
     const plan = buildCursorPathBLaunchPlan(
       input({
@@ -395,5 +404,72 @@ describe('Cursor Path-B broker receipt names the live listed tools', () => {
     expect(plan.prompt).not.toContain('GetDynamicTools')
     expect(plan.prompt).not.toContain('capability_search')
     expect(plan.prompt).not.toContain('ensemble_fanout')
+  })
+
+  it('injects file-routing for a solo write-capable active broker when the Ensemble envelope is absent', () => {
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'active',
+        taskWraithMcpProfileId: 'taskwraith-full-v1',
+        effectivePermissions: {
+          agenticServices: { fileChanges: 'allow', mcpTools: 'allow' }
+        } as EffectiveRunPermissions
+      })
+    )
+    expect(plan.prompt).toContain(TASKWRAITH_FILE_ROUTING_PROMPT_OPEN)
+    expect(plan.prompt).toContain('Use `taskwraith__write_file` only to create a new file')
+    expect(plan.prompt).toContain('exact Cursor MCP server id `taskwraith-broker`')
+  })
+
+  it('does not duplicate file-routing when the Ensemble envelope is already present', () => {
+    const envelope = `${TASKWRAITH_FILE_ROUTING_PROMPT_OPEN}\nexisting envelope\n</taskwraith-file-routing-v1>\n\n`
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        prompt: `${envelope}${PROMPT}`,
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'active',
+        taskWraithMcpProfileId: 'taskwraith-full-v1',
+        effectivePermissions: {
+          agenticServices: { fileChanges: 'allow', mcpTools: 'allow' }
+        } as EffectiveRunPermissions
+      })
+    )
+    expect(plan.prompt.split(TASKWRAITH_FILE_ROUTING_PROMPT_OPEN)).toHaveLength(2)
+    expect(plan.prompt).toContain('existing envelope')
+  })
+
+  it('clears a recorded MCP setup failure when the broker is active', () => {
+    buildCursorMcpBridgeUnavailableWarning({
+      writeCapable: true,
+      error: new Error('cursor-agent mcp enable taskwraith-broker failed: exit 1')
+    })
+    expect(peekCursorMcpBridgeLastFailure()).not.toBeNull()
+    buildCursorPathBLaunchPlan(
+      input({
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'active',
+        taskWraithMcpProfileId: 'taskwraith-full-v1'
+      })
+    )
+    expect(peekCursorMcpBridgeLastFailure()).toBeNull()
+  })
+
+  it('does not inject file-routing when the broker is native-only degraded', () => {
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'native-only-degraded',
+        taskWraithMcpProfileId: 'taskwraith-full-v1',
+        effectivePermissions: {
+          agenticServices: { fileChanges: 'allow', mcpTools: 'allow' }
+        } as EffectiveRunPermissions
+      })
+    )
+    expect(plan.prompt).not.toContain(TASKWRAITH_FILE_ROUTING_PROMPT_OPEN)
   })
 })

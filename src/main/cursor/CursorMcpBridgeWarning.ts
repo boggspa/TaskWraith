@@ -2,6 +2,22 @@ import { CursorGlobalBrokerRegistryInstallError } from './CursorGlobalBrokerRegi
 
 export type CursorMcpBridgeFailurePhase = 'enable' | 'ready-probe' | 'registry' | 'other'
 
+export type CursorMcpBridgeLastFailure = {
+  readonly phase: CursorMcpBridgeFailurePhase
+  readonly title: string
+  readonly message: string
+}
+
+let lastFailure: CursorMcpBridgeLastFailure | null = null
+
+export function peekCursorMcpBridgeLastFailure(): CursorMcpBridgeLastFailure | null {
+  return lastFailure
+}
+
+export function clearCursorMcpBridgeLastFailure(): void {
+  lastFailure = null
+}
+
 export function classifyCursorMcpBridgeFailure(error: unknown): CursorMcpBridgeFailurePhase {
   const message = error instanceof Error ? error.message : String(error)
   if (error instanceof CursorGlobalBrokerRegistryInstallError || /registry/i.test(message)) {
@@ -40,8 +56,10 @@ export function buildCursorMcpBridgeUnavailableWarning(input: {
   const surface = input.writeCapable
     ? 'the user-approved native Shell/Write surface inside Cursor’s workspace sandbox'
     : 'native reads only'
-  return {
+  const warning = {
     title: FAILURE_TITLES[phase],
     message: `TaskWraith could not set up the MCP broker; Cursor is continuing with ${surface}. ${detail}${registryRecoverySuffix(input.error)}`
   }
+  lastFailure = { phase, ...warning }
+  return warning
 }

@@ -29,6 +29,7 @@ import {
   PI_MANAGED_SHELL_TOOL_NAMES
 } from './pi/PiEnsembleCoordination'
 import { buildUserMcpLaunchServers } from './UserMcpServers'
+import { peekCursorMcpBridgeLastFailure } from './cursor/CursorMcpBridgeWarning'
 
 export const TASKWRAITH_GEMINI_MCP_TOOLS = TASKWRAITH_MCP_TOOLS
 
@@ -1281,6 +1282,27 @@ export function buildProviderCapabilityContract({
         services.subThreadDelegation,
         false,
         `${label} sub-thread delegation is delegated to the provider CLI; TaskWraith does not advertise its delegation tool here yet.`
+      )
+    }
+    if (provider === 'cursor') {
+      const lastFailure = peekCursorMcpBridgeLastFailure()
+      if (lastFailure) {
+        warnings.push(
+          warning(
+            'cursor-mcp-bridge-degraded',
+            'warning',
+            lastFailure.title,
+            lastFailure.message
+          )
+        )
+      }
+      elicit = elicitCapability(
+        'bridge',
+        lastFailure == null,
+        'Broker-active Path-B Cursor seats can ask the user through TaskWraith `ask_user_question` (auto-allowed). Native-only degraded turns cannot.',
+        lastFailure
+          ? lastFailure.message
+          : 'TaskWraith cannot route Cursor user questions until the Path-B broker is active.'
       )
     }
     if (!taskWraithBridgeProvider) {
