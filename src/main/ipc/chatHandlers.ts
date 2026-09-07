@@ -51,6 +51,7 @@ export interface ChatHandlerDeps {
   chatService: Pick<
     ChatService,
     | 'getChats'
+    | 'getAbandonedReapCandidates'
     | 'getWorkspaceCommitAttributionProjections'
     | 'getChatList'
     | 'getPinnedMessages'
@@ -1088,8 +1089,11 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
                 )
               }
             : renderer ?? {}
-        // selectCandidates() walks the whole chat corpus (AppStore.getChats())
-        // to find abandoned drafts, so it is not free to call repeatedly. The
+        // selectCandidates() reads only the chats that could still be reapable
+        // (getAbandonedReapCandidates skips anything the chat-list index can
+        // vouch for as already started), so it no longer parses the whole
+        // corpus -- but it still stats every chat file and fully parses every
+        // empty shell, so it is not free to call repeatedly. The
         // loop still re-validates a candidate against LIVE state immediately
         // before deleting it -- awaiting deleteChatWithLifecycle can let
         // anything change (a message arrives, the chat gets pinned or opened
@@ -1105,9 +1109,15 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         // still re-checked against a fresh corpus read, exactly as before.
         const selectCandidates = (): string[] => {
           const collected: string[] = []
+          // Parentage comes from the whole corpus, not from the narrowed list:
+          // a started parent is skipped as a candidate, and deriving parentage
+          // from the list alone would then reap an empty chat that a skipped
+          // child still points at.
+          const { chats, parentChatIds } = deps.chatService.getAbandonedReapCandidates()
           deps.reapAbandonedChats(
             {
-              getChats: () => deps.chatService.getChats(),
+              getChats: () => chats,
+              getParentChatIds: () => parentChatIds,
               getWorkflowChatIds: deps.getWorkflowChatIds,
               getScheduledChatIds: deps.getScheduledChatIds,
               getSharedChatIds: deps.getSharedChatIds,

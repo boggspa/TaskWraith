@@ -174,6 +174,17 @@ export interface RendererReapContext {
 /** Store-side dependencies, injected so the orchestration is unit-testable. */
 export interface ReapAbandonedChatsDeps {
   getChats: () => ChatRecord[]
+  /**
+   * Ids that are a parent of at least one chat in the WHOLE corpus.
+   *
+   * Required whenever `getChats` is narrowed to candidates rather than the
+   * full corpus. `reapableAbandonedChatIds` otherwise derives parentage from
+   * the list it is handed, and a narrowed list has already dropped the started
+   * children whose `parentChatId` is the only evidence that some empty shell
+   * is a parent — which would reap it. Omit only when `getChats` really does
+   * return every chat.
+   */
+  getParentChatIds?: () => Set<string>
   /** Chat ids backing a saved WorkflowDefinition (template.chatId). */
   getWorkflowChatIds: () => Set<string>
   /** Chat ids targeted by a non-terminal scheduled task. */
@@ -200,6 +211,9 @@ export function reapAbandonedChats(
     workflowChatIds: deps.getWorkflowChatIds(),
     scheduledChatIds: deps.getScheduledChatIds(),
     sharedChatIds: deps.getSharedChatIds?.() ?? new Set(),
+    // undefined ⇒ reapableAbandonedChatIds derives parentage from the list, so
+    // a caller handing over the full corpus keeps its existing behaviour.
+    parentChatIds: deps.getParentChatIds?.(),
     keepChatId: renderer.keepChatId,
     // "One survivable New Chat": the just-created chat (keepChatId) plus the
     // single newest older draft survive a create-time sweep; a 2nd+ older

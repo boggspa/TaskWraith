@@ -62,6 +62,14 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
     isChatBusy: vi.fn(() => false),
     chatService: {
       getChats: vi.fn(() => [chat('chat-1')]),
+      // The reaper's narrow source. `parentChatIds` is deliberately non-empty:
+      // it is derived from the WHOLE corpus (including chats the prefilter
+      // skipped), so the handler must thread it through rather than let the
+      // reaper re-derive parentage from the narrowed list.
+      getAbandonedReapCandidates: vi.fn(() => ({
+        chats: [chat('chat-1')],
+        parentChatIds: new Set<string>(['parent-1'])
+      })),
       getWorkspaceCommitAttributionProjections: vi.fn(() => [chat('chat-1')]),
       getChatList: vi.fn(() => []),
       getPinnedMessages: vi.fn(() => []),
@@ -1371,6 +1379,10 @@ describe('registerChatHandlers', () => {
     )
     const reaperDeps = reapAbandonedChats.mock.calls[0]![0]
     expect(reaperDeps.getChats()).toEqual([chat('chat-1')])
+    // Whole-corpus parentage reaches the reaper. Without it the reaper falls
+    // back to deriving parents from the narrowed list, which no longer holds
+    // the started children that prove a shell is a parent.
+    expect(reaperDeps.getParentChatIds?.()).toEqual(new Set(['parent-1']))
     expect(deps.deleteChatWithLifecycle).toHaveBeenCalledWith('old-chat')
     expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
 

@@ -257,3 +257,109 @@ describe('getChats({ listShells: true }) background sweep', () => {
     expect(AppStore.getChat(shell.appChatId)?.runs.at(-1)?.status).toBe('cancelled')
   })
 })
+
+/** An empty, never-started shell — the only shape the reaper may ever delete. */
+function persistEmptyChat(workspaceId: string, overrides: Partial<ChatRecord> = {}): ChatRecord {
+  const base = AppStore.createChat(workspaceId, `/repo/${workspaceId}`)
+  return AppStore.saveChat({ ...base, ...overrides } as ChatRecord)
+}
+
+/**
+ * `getAbandonedReapCandidates()` — the abandoned-chat reaper's narrow source.
+ *
+ * The reap handler runs on a boot path and re-selects after every deletion
+ * await, so taking `getChats()` parsed the whole corpus several times over and
+ * pinned main in GC before the first window could paint. The prefilter skips a
+ * chat only when the index vouches for it AND that row reports a message or a
+ * run — both of which already make the chat unreapable — so it can only ever
+ * protect. The predicate itself never sees a shell.
+ */
+describe('getAbandonedReapCandidates() reap prefilter', () => {
+  beforeEach(() => {
+    AppStore.resetTransientDeletionGuardsForTests()
+    fs.rmSync(userDataPath, { recursive: true, force: true })
+    fs.mkdirSync(chatsDir, { recursive: true })
+  })
+
+  afterEach(() => {
+    if (!fs.existsSync(chatsDir)) return
+    for (const file of fs.readdirSync(chatsDir)) fs.chmodSync(join(chatsDir, file), 0o644)
+  })
+
+  it.skipIf(runningAsRoot || process.platform === 'win32')(
+    'never opens a started chat the index vouches for, and hands back empty chats whole',
+    () => {
+      const started = persistChat('ws-1', {})
+      const empty = persistEmptyChat('ws-1')
+      AppStore.clearChatRecordCacheForTests()
+      fs.chmodSync(chatPath(started.appChatId), 0o000)
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const failedOpens = (): number =>
+        consoleError.mock.calls.filter((call) =>
+          call.some((arg) => String(arg).includes(started.appChatId))
+        ).length
+      try {
+        const { chats } = AppStore.getAbandonedReapCandidates()
+        expect(chats.map((chat) => chat.appChatId)).toEqual([empty.appChatId])
+        // Positive proof rather than an argument from silence: the started
+        // chat's bytes are unreadable, and nothing tried to read them.
+        expect(failedOpens()).toBe(0)
+        // The candidate is the CANONICAL record. A shell would arrive with
+        // empty runs and no ollamaSessionMemory and read as abandoned.
+        expect(isShell(chats[0])).toBe(false)
+      } finally {
+        consoleError.mockRestore()
+      }
+    }
+  )
+
+  it('derives parentage from the whole corpus, including the chats it skipped', () => {
+    const parent = persistEmptyChat('ws-1')
+    // A STARTED child: skipped as a candidate, yet its parentChatId is the only
+    // evidence that `parent` is a parent at all. Lose it and the reaper deletes
+    // the parent of a real thread.
+    persistChat('ws-1', { parentChatId: parent.appChatId })
+
+    const { chats, parentChatIds } = AppStore.getAbandonedReapCandidates()
+    expect(chats.map((chat) => chat.appChatId)).toEqual([parent.appChatId])
+    expect(parentChatIds.has(parent.appChatId)).toBe(true)
+  })
+
+  it('falls back to the canonical read when the index cannot vouch', () => {
+    const started = persistChat('ws-1', {})
+    // Same bytes, different mtime. The EXACT pair is the contract, so the row
+    // can no longer vouch and the chat must be read rather than assumed empty.
+    const touched = new Date('2030-01-01T00:00:00.000Z')
+    fs.utimesSync(chatPath(started.appChatId), touched, touched)
+
+    const { chats } = AppStore.getAbandonedReapCandidates()
+    const row = chats.find((chat) => chat.appChatId === started.appChatId)
+    // It arrives whole, so the predicate can see the transcript that protects
+    // it. Skipping it on a failed vouch would be a silent deletion.
+    expect(row?.messages.map((message) => message.id)).toEqual(['m-1', 'm-2'])
+    expect(row?.runs.map((item) => item.runId)).toEqual(['run-1', 'run-2'])
+  })
+
+  it('prefilters on the stat pair alone — a row without the shell marker still counts', () => {
+    // The deliberate divergence from readChatShellForSweep, pinned. That
+    // helper SERVES the row, so it needs runsSummary before a consumer reads
+    // run data off it; this one asks a yes/no question and serves nothing.
+    // It matters in practice: rows are restamped only when
+    // legacyStoreCanWrite() allows it, so on a Host-owned profile almost every
+    // row predates the marker — measured 446 of 447 — and requiring it made
+    // the prefilter skip nothing at all.
+    const started = persistChat('ws-1', {})
+    const empty = persistEmptyChat('ws-1')
+    fs.rmSync(join(summariesDir, `${started.appChatId}.json`), { force: true })
+    fs.appendFileSync(chatListIndexPath, ' ')
+    AppStore.clearChatRecordCacheForTests()
+
+    // The shell sweep refuses the row outright — no freshness marker.
+    expect(isShell(findRow(shellSweep(), started.appChatId))).toBe(false)
+
+    // The reap prefilter still skips it as started. Asserted positively: the
+    // empty chat is the whole candidate list, so this cannot pass vacuously.
+    const { chats } = AppStore.getAbandonedReapCandidates()
+    expect(chats.map((chat) => chat.appChatId)).toEqual([empty.appChatId])
+  })
+})

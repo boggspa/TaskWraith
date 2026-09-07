@@ -6230,6 +6230,114 @@ export class AppStore {
     return chats.sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
+  /**
+   * The index row for `chatId`, but only when it can vouch for the exact bytes
+   * on disk AND reports content that makes the chat unreapable outright.
+   *
+   * The vouch is the exact mtimeMs+size pair -- the same identity check
+   * `getChatList` judges an entry by, so a matching row's counts were derived
+   * from these exact bytes. Every uncertainty returns null (an absent row, a
+   * stale stat pair, non-numeric counts) and the caller falls back to the
+   * canonical read.
+   *
+   * It deliberately does NOT also require `runsSummary`, which is the one
+   * place this diverges from `readChatShellForSweep`. That helper SERVES the
+   * row, so it needs the shell-shape freshness marker before a consumer can
+   * read run data off it; this asks a single yes/no question and serves
+   * nothing. The divergence is load-bearing, not cosmetic: measured on Chris's
+   * profile 2026-09-07, 446 of 447 index entries predate `runsSummary`, so
+   * requiring it skipped NOTHING -- all 514 files and 1100MB still parsed,
+   * which is exactly the boot stall this method exists to remove. On the stat
+   * pair alone, 370 files (687MB) are skipped. Rows are restamped only when
+   * `legacyStoreCanWrite()` allows it, so a Host-owned profile can sit
+   * indefinitely without the marker ever appearing.
+   *
+   * Both error directions are safe, which is what makes the weaker gate
+   * acceptable inside a module whose contract is paranoia. A count wrongly
+   * above zero skips a chat that was in fact empty, so an abandoned shell
+   * merely survives the sweep. A count wrongly at zero falls through to the
+   * canonical read and the predicate decides on real bytes. Neither direction
+   * can delete a started chat.
+   */
+  private static startedChatFromIndex(
+    chatId: string,
+    chatPath: string,
+    existingIndex: Record<string, ChatListItem>
+  ): ChatListItem | null {
+    try {
+      const indexed = existingIndex[chatId]
+      if (
+        indexed?.summaryOnly !== true ||
+        typeof indexed.messageCount !== 'number' ||
+        typeof indexed.runCount !== 'number'
+      ) {
+        return null
+      }
+      if (indexed.messageCount <= 0 && indexed.runCount <= 0) return null
+      return this.chatListItemMatchesSource(indexed, fs.statSync(chatPath)) ? indexed : null
+    } catch {
+      // Unreadable/missing file — let the canonical read resolve it.
+      return null
+    }
+  }
+
+  /**
+   * Candidate records for the abandoned-chat reaper, plus the parent set
+   * derived from the WHOLE corpus.
+   *
+   * `getChats()` reads and parses EVERY chat file -- measured at 1.16GB across
+   * 514 files -- and the reap handler re-selects after every deletion await,
+   * so a boot-time reap paid that cost several times over. Measured on Chris's
+   * profile 2026-09-06: main pinned at 100-117% with the heap spiking to 3.1GB
+   * for 60-90s before the first window could paint, and tipping the V8 ceiling
+   * aborted the app outright.
+   *
+   * The narrowing is a PREFILTER, never a substitute predicate. A chat is
+   * skipped only when the index vouches for it AND that row reports a message
+   * or a run -- and `isReapableAbandonedChat` already returns false for both,
+   * so skipping one cannot change the reap set. It can only ever protect.
+   *
+   * Everything else takes the unchanged canonical read, so the predicate never
+   * sees a shell. That is load-bearing beyond messages/runs:
+   * `normalizeChatListItem` empties `runs` and drops `ollamaSessionMemory`, so
+   * a shell would shed guards the predicate reads and present a started chat
+   * as an empty, reapable draft. Deleting a real conversation is the single
+   * failure the reaper's paranoid contract exists to prevent.
+   *
+   * `parentChatIds` is derived HERE rather than by the reaper, which otherwise
+   * infers it from the list it is handed: a started parent is skipped above,
+   * so a list-derived set would no longer see the child that makes some other
+   * chat a parent, and would reap a parent it should have protected.
+   */
+  static getAbandonedReapCandidates(): { chats: ChatRecord[]; parentChatIds: Set<string> } {
+    this.ensureOrphanSubThreadsReaped()
+    const parentChatIds = new Set<string>()
+    if (!fs.existsSync(chatsDir)) return { chats: [], parentChatIds }
+    const files = fs.readdirSync(chatsDir).filter((f) => f.endsWith('.json'))
+    const existingIndex = chatListIndexStore.readAll()
+    const chats: ChatRecord[] = []
+    for (const file of files) {
+      const chatId = path.basename(file, '.json')
+      const chatPath = path.join(chatsDir, file)
+      const started = this.startedChatFromIndex(chatId, chatPath, existingIndex)
+      if (started) {
+        // Skipped for candidacy, but it still votes on parentage — mirroring
+        // the orphan filter getChats applies before deriveParentChatIds sees
+        // the list.
+        const appChatId = started.appChatId ?? chatId
+        if (!this.orphanSubThreadReapCandidates.has(appChatId) && started.parentChatId) {
+          parentChatIds.add(started.parentChatId)
+        }
+        continue
+      }
+      const chat = this.readChatRecordCached(chatId, chatPath)
+      if (!chat || this.orphanSubThreadReapCandidates.has(chat.appChatId)) continue
+      if (chat.parentChatId) parentChatIds.add(chat.parentChatId)
+      chats.push(chat)
+    }
+    return { chats: chats.sort((a, b) => b.updatedAt - a.updatedAt), parentChatIds }
+  }
+
   static getChats(workspaceId?: string, options: { listShells?: boolean } = {}): ChatRecord[] {
     this.ensureOrphanSubThreadsReaped()
     if (!fs.existsSync(chatsDir)) return []

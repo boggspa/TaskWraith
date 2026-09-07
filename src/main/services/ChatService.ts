@@ -223,6 +223,7 @@ export type PrepareForkMessages = (input: PrepareForkMessagesInput) => ChatMessa
 
 export interface ChatServiceStore {
   getChats: (workspaceId?: string) => ChatRecord[]
+  getAbandonedReapCandidates: () => { chats: ChatRecord[]; parentChatIds: Set<string> }
   getWorkspaceCommitAttributionProjections: (workspaceId: string) => ChatRecord[]
   getChatList: (workspaceId?: string) => ChatListItem[]
   getPinnedMessages: (workspaceId?: string) => PinnedMessageGroup[]
@@ -332,6 +333,16 @@ export class ChatService {
 
   getChats(workspaceId?: string): ChatRecord[] {
     return this.deps.appStore.getChats(workspaceId)
+  }
+
+  /**
+   * Narrow source for the abandoned-chat reaper: only the chats that could
+   * still be reapable, plus whole-corpus parentage. See
+   * `AppStore.getAbandonedReapCandidates` for why the reaper must not take
+   * `getChats()` — nothing on a boot path may parse the whole corpus.
+   */
+  getAbandonedReapCandidates(): { chats: ChatRecord[]; parentChatIds: Set<string> } {
+    return this.deps.appStore.getAbandonedReapCandidates()
   }
 
   /** Transcript-reduced, workspace-scoped records for the Commits inspector. */
