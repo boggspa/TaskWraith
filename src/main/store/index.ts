@@ -390,10 +390,7 @@ import {
 import { chatHasReconcilableRun } from '../ChatRunReconciler'
 import { selectOpenRunCandidateChatIds } from './OpenRunChatCandidates'
 import { selectEnsembleWakeupCandidateChatIds } from './EnsembleWakeupCandidates'
-import {
-  countPendingSoloWakeups,
-  selectSoloWakeupCandidateChatIds
-} from './SoloWakeupCandidates'
+import { countPendingSoloWakeups, selectSoloWakeupCandidateChatIds } from './SoloWakeupCandidates'
 import {
   selectSubThreadRecoveryCandidateChatIds,
   type SubThreadRecoveryHint
@@ -5763,7 +5760,9 @@ export class AppStore {
       ...(typeof item.ensembleWakeupCount === 'number'
         ? { ensembleWakeupCount: item.ensembleWakeupCount }
         : {}),
-      ...(typeof item.soloWakeupCount === 'number' ? { soloWakeupCount: item.soloWakeupCount } : {}),
+      ...(typeof item.soloWakeupCount === 'number'
+        ? { soloWakeupCount: item.soloWakeupCount }
+        : {}),
       runsSummary: Array.isArray(item.runsSummary) ? item.runsSummary : [],
       ...(item.lastRun ? { lastRun: summarizeLastRun(item.lastRun) || item.lastRun } : {}),
       ...(typeof item.sourceChatMtimeMs === 'number'
