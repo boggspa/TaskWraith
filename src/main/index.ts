@@ -41874,6 +41874,7 @@ async function executeUnscopedGeminiMcpTool(
       const result = await (ensembleOrchestratorRef?.fanoutForRun(context.appRunId, {
         targets: args.targets,
         prompt: optionalString(args.prompt),
+        laneBriefs: args.laneBriefs ?? args.lane_briefs,
         reason: optionalString(args.reason),
         mode:
           args.mode === 'locked_writers'

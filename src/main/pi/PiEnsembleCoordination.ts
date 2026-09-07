@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { chmodSync, lstatSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
+import { ENSEMBLE_FANOUT_LANE_BRIEFS_SCHEMA } from '../../shared/ensembleFanoutLaneBriefs'
 import {
   ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE,
   ENSEMBLE_FANOUT_WRITE_SCOPES_GUIDANCE,
@@ -556,6 +557,7 @@ function parametersFor(name) {
       return object({
         targets: optionalTextArray(),
         prompt: Type.String(),
+        laneBriefs: Type.Optional(${JSON.stringify(ENSEMBLE_FANOUT_LANE_BRIEFS_SCHEMA)}),
         reason: optionalText(),
         mode: optionalText(),
         targetStage: optionalText(),

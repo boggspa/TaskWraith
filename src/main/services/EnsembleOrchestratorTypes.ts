@@ -504,6 +504,13 @@ export type EnsembleFanoutTargetStage = 'all' | 'scouts' | 'workers' | 'reviewer
 export interface EnsembleFanoutInput {
   targets?: unknown
   prompt?: string
+  /**
+   * Optional per-target briefs, keyed exactly like `writeScopes`
+   * (participant id, role, provider, provider label, or `*`/`all`). A target
+   * with no key falls back to `prompt`, so omitting this reproduces the
+   * broadcast behaviour byte-for-byte. See `../ensemble/EnsembleLaneBrief`.
+   */
+  laneBriefs?: unknown
   reason?: string
   mode?: EnsembleFanoutMode
   targetStage?: unknown
@@ -586,6 +593,7 @@ export interface EnsembleFanoutResult {
     | 'explicit_targets_required'
     | 'missing_write_scope'
     | 'invalid_write_scope'
+    | 'invalid_lane_brief'
     | 'write_lanes_disabled'
     | 'budget_exhausted'
     | 'host_capacity'

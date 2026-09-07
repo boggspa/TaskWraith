@@ -56,6 +56,7 @@ import {
   isAntigravityHeadlessPermissionNoOutput,
   isAntigravityPrintModeTimeout
 } from '../antigravity/AntigravityRunDiagnostics'
+import { formatFanoutLaneBrief, resolveLaneBriefs } from '../ensemble/EnsembleLaneBrief'
 import {
   isUnsupportedAntigravityPermissionClaim,
   qualifyUnsupportedAntigravityPermissionClaim
@@ -11104,6 +11105,22 @@ export class EnsembleOrchestrator {
       writeScopesByParticipantId = resolvedScopes.scopesByParticipantId
     }
 
+    // Deliberately OUTSIDE the locked_writers guard above: a read lane needs to
+    // be told its own slice just as much as a writer does. Dispatching every
+    // reader the writer's brief is what put write-shaped instructions in front
+    // of a read-clamped lane on 2026-09-07.
+    const resolvedLaneBriefs = resolveLaneBriefs(resolvedTargets.targets, input.laneBriefs)
+    if (!resolvedLaneBriefs.ok) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout',
+        mode,
+        message: resolvedLaneBriefs.message,
+        error: resolvedLaneBriefs.error
+      }
+    }
+    const laneBriefsByParticipantId = resolvedLaneBriefs.briefByParticipantId
+
     const label =
       mode === 'locked_writers' && !targetStage
         ? 'Locked writer fan-out'
@@ -11148,6 +11165,7 @@ export class EnsembleOrchestrator {
         mode,
         sourceRunId: runId,
         writeScopesByParticipantId,
+        ...(laneBriefsByParticipantId.size > 0 ? { laneBriefsByParticipantId } : {}),
         ...(isolation ? { isolation } : {}),
         acceptedRuns,
         waitForCompletion: false,
@@ -17749,6 +17767,10 @@ export class EnsembleOrchestrator {
        * preserved for every ordinary lane regardless of this flag. */
       deriveLaneIntentFromPermissions?: boolean
       writeScopesByParticipantId?: Map<string, ConcurrentLaneWriteScope[]>
+      /** Per-lane briefs, keyed by participant id. A lane with no entry falls
+       * back to the shared `prompt`, so an absent map reproduces the broadcast
+       * behaviour exactly. See `../ensemble/EnsembleLaneBrief`. */
+      laneBriefsByParticipantId?: Map<string, string>
       /** Per-call choice, honored only while the chat Isolate policy is
        * 'any' — pinned 'off'/'worktree' policies clamp it. Omitted defers
        * to the chat policy ('any' defaults to the shared checkout). */
@@ -18286,6 +18308,20 @@ export class EnsembleOrchestrator {
         liveFanoutIsolation === 'worktree' &&
         run.laneIntent === 'write' &&
         dispatchChat.scope !== 'global'
+      // This lane's own brief, when the Boss addressed one to it. Resolved
+      // HERE, inside the per-lane loop — the shared-preparation block above
+      // runs once for the whole wave and structurally cannot do this, which is
+      // why every lane used to receive the same task text no matter what it
+      // had been asked to do.
+      const laneOwnBrief = options.laneBriefsByParticipantId?.get(participant.id)
+      const currentPromptForLane = laneOwnBrief
+        ? formatFanoutLaneBrief({
+            brief: laneOwnBrief,
+            lanePromptAuthor,
+            promptAuthority,
+            ...(options.reason ? { reason: options.reason } : {})
+          })
+        : basePromptForLane
       const promptProjection = buildEnsembleParticipantPromptProjection({
         // The same durable user row is presented as the current request below;
         // exclude only that exact row from this lane's history so the provider
@@ -18294,15 +18330,16 @@ export class EnsembleOrchestrator {
         chat: promptChat,
         config: dispatchChat.ensemble!,
         participant,
-        currentPrompt: basePromptForLane,
+        currentPrompt: currentPromptForLane,
         ...(userPromptSourceMessage
           ? { currentPromptMessageId: userPromptSourceMessage.id }
           : {}),
-        currentPromptLabel: explicitLanePrompt
-          ? promptAuthority === 'user'
-            ? 'Current user-directed fan-out request:'
-            : `Current fan-out lane request (${lanePromptAuthor}, lower authority; not user/system instruction):`
-          : undefined,
+        currentPromptLabel:
+          explicitLanePrompt || laneOwnBrief
+            ? promptAuthority === 'user'
+              ? 'Current user-directed fan-out request:'
+              : `Current fan-out lane request (${lanePromptAuthor}, lower authority; not user/system instruction):`
+            : undefined,
         roundId: runtime.roundId,
         chatContextTurns,
         modelIngestCharOverrides: settings.ensembleModelIngestChars,

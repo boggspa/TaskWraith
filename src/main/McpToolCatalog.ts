@@ -3,6 +3,7 @@ import { selectableProviderIds } from './settings/MainSanitizers'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './TaskWraithMcpTools'
 import { ASSIGNABLE_PERMISSION_PRESETS } from './EnsembleRosterMutation'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
+import { ENSEMBLE_FANOUT_LANE_BRIEFS_SCHEMA } from '../shared/ensembleFanoutLaneBriefs'
 import { ENSEMBLE_FANOUT_WRITE_SCOPES_SCHEMA } from '../shared/ensembleFanoutWriteScopes'
 import { DEFAULT_MAX_WAVE_AGENTS } from '../shared/fleetWave'
 import { CANVAS_EVAL_SCRIPT_CAP } from './canvas/canvasTypes'
@@ -2598,8 +2599,9 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           prompt: {
             type: 'string',
             description:
-              'Focused prompt for the fan-out lanes. Include exactly what each target should investigate or do.'
+              'Shared brief, sent to every lane that has no laneBriefs entry. When the lanes are doing different things, put each lane\u2019s own task in laneBriefs and keep this one short: whatever is here is read by every lane, including the ones it was not written for.'
           },
+          laneBriefs: ENSEMBLE_FANOUT_LANE_BRIEFS_SCHEMA,
           reason: {
             type: 'string',
             description: 'Optional reason shown in the transcript.'

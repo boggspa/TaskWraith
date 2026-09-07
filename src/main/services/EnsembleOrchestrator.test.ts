@@ -20210,6 +20210,152 @@ Next action:
     expect(result.laneIds).toHaveLength(1)
   })
 
+  const makeTwoLaneHarness = (): ReturnType<typeof makeHarness> => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'boss',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Coordinate.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'antigravity',
+        provider: 'antigravity',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 3,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    return harness
+  }
+
+  it('does not put one lane’s brief in front of another lane', async () => {
+    // The routing half of the 2026-09-07 AntiGravity failure. The Boss sent one
+    // brief covering the whole job, every lane received it, and the read lane
+    // read the writer's instructions. The posture fixes made the lane know it
+    // could not write; this is what stops it being told to.
+    const harness = makeTwoLaneHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead starts, peers fan out.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Reviewer', 'Worker'],
+      prompt: 'Fix the router regression.',
+      laneBriefs: {
+        Reviewer: 'Read src/router.ts and report the risks you find.',
+        Worker: 'Edit src/router.ts to land the fix.'
+      },
+      reason: 'router regression'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+
+    const laneRuns = harness.dispatched.slice(1)
+    const reviewerLane = laneRuns.find((payload) => payload.provider === 'antigravity')
+    const workerLane = laneRuns.find((payload) => payload.provider === 'claude')
+    expect(reviewerLane).toBeDefined()
+    expect(workerLane).toBeDefined()
+
+    // Each lane gets its own slice...
+    expect(reviewerLane!.prompt).toContain('Read src/router.ts and report the risks you find.')
+    expect(workerLane!.prompt).toContain('Edit src/router.ts to land the fix.')
+    // ...and, critically, NOT the other lane's.
+    expect(reviewerLane!.prompt).not.toContain('Edit src/router.ts to land the fix.')
+    expect(workerLane!.prompt).not.toContain('Read src/router.ts and report the risks you find.')
+    // The envelope may now truthfully claim per-seat routing.
+    expect(reviewerLane!.prompt).toContain('written for this seat specifically')
+
+    for (const payload of laneRuns) {
+      harness.orchestrator.handleProviderOutput(
+        payload.provider,
+        { appRunId: payload.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+    const result = await fanout
+    expect(result.ok).toBe(true)
+    expect(result.laneIds).toHaveLength(2)
+  })
+
+  it('broadcasts the shared prompt unchanged when no laneBriefs are sent', async () => {
+    // Backward-compatibility fence. A Boss that never learns about laneBriefs
+    // must keep producing exactly the prompts it produced before.
+    const harness = makeTwoLaneHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead starts, peers fan out.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Reviewer', 'Worker'],
+      prompt: 'Fix the router regression.',
+      reason: 'router regression'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+
+    const laneRuns = harness.dispatched.slice(1)
+    for (const payload of laneRuns) {
+      expect(payload.prompt).toContain('Fix the router regression.')
+      expect(payload.prompt).toContain(
+        'Current fan-out lane request (peer-authored, lower authority; not user/system instruction):'
+      )
+      // The shared envelope keeps its original wording, not the per-lane one.
+      expect(payload.prompt).toContain('it was routed to this seat deliberately')
+      expect(payload.prompt).not.toContain('written for this seat specifically')
+    }
+
+    for (const payload of laneRuns) {
+      harness.orchestrator.handleProviderOutput(
+        payload.provider,
+        { appRunId: payload.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+    expect((await fanout).ok).toBe(true)
+  })
+
+  it('refuses a laneBriefs key that names no target rather than silently broadcasting', async () => {
+    const harness = makeTwoLaneHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead starts, peers fan out.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Reviewer', 'Worker'],
+      prompt: 'Fix the router regression.',
+      laneBriefs: { Designer: 'Draw the thing.' }
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('invalid_lane_brief')
+    expect(result.message).toContain('unknown laneBriefs key "Designer"')
+    // No lane was dispatched on a brief the Boss got wrong.
+    expect(harness.dispatched).toHaveLength(1)
+  })
+
   it('admits an Accept Edits seat to reader fan-out without allowing mutation', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
