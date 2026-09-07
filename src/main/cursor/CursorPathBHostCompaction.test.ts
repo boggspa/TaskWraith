@@ -23,23 +23,35 @@ function cursorSeat(overrides: Partial<EnsembleParticipant> = {}): EnsembleParti
   } as EnsembleParticipant
 }
 
-function chatWithSeat(participant: EnsembleParticipant): ChatRecord {
+function makeChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   return {
-    id: 'chat-1',
-    title: 'Ensemble',
+    appChatId: 'chat-1',
+    title: 'Chat',
     createdAt: 1,
     updatedAt: 1,
+    archived: false,
+    messages: [],
+    runs: [],
+    ...overrides
+  }
+}
+
+function chatWithSeat(participant: EnsembleParticipant): ChatRecord {
+  return makeChat({
+    title: 'Ensemble',
     messages: Array.from({ length: 16 }, (_, index) =>
       msg(`m${index}`, index % 2 === 0 ? 'user' : 'assistant', `row ${index}`)
     ),
     provider: 'claude',
     ensemble: {
+      enabled: true,
+      maxParticipants: 2,
       participants: [
         participant,
         { id: 'seat-other', provider: 'codex', role: 'Worker' } as EnsembleParticipant
       ]
     }
-  } as ChatRecord
+  })
 }
 
 describe('planCursorPathBHostCompaction', () => {
@@ -91,15 +103,13 @@ describe('planCursorPathBHostCompaction', () => {
   })
 
   it('resets a solo Cursor chat without spawning a compact RPC', () => {
-    const solo = {
-      id: 'solo-1',
+    const solo = makeChat({
+      appChatId: 'solo-1',
       title: 'Solo',
-      createdAt: 1,
-      updatedAt: 1,
       provider: 'cursor',
       linkedProviderSessionId: 'cursor-solo-session',
       messages: [msg('u1', 'user', 'Ship the overlay'), msg('a1', 'assistant', 'Working on it')]
-    } as ChatRecord
+    })
     const plan = planCursorPathBHostCompaction({
       chat: solo,
       roundPrompt: 'Ship the overlay',
@@ -118,15 +128,13 @@ describe('planCursorPathBHostCompaction', () => {
 describe('compactCursorPathBHostContext', () => {
   it('persists the extractive plan only while the reservation can write', () => {
     const saved: ChatRecord[] = []
-    const chat = {
-      id: 'solo-1',
+    const chat = makeChat({
+      appChatId: 'solo-1',
       title: 'Solo',
-      createdAt: 1,
-      updatedAt: 1,
       provider: 'cursor',
       linkedProviderSessionId: 'cursor-solo-session',
       messages: [msg('u1', 'user', 'Ship the overlay'), msg('a1', 'assistant', 'Working on it')]
-    } as ChatRecord
+    })
     const durable: Array<{ kind: string; summary: string }> = []
     const progress: string[] = []
     const result = compactCursorPathBHostContext(
