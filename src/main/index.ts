@@ -61613,6 +61613,7 @@ if (isGeminiMcpBridgeProcess) {
       getChat: (chatId) => AppStore.getChat(chatId),
       saveChat: saveAndBroadcastChat,
       listChats: () => AppStore.getChats(),
+      listWakeupCandidateChats: () => AppStore.getChatsWithSoloWakeups(),
       dispatchRun: (payload) =>
         dispatchRunWithProviderPause(payload, { sender: mainWindow!.webContents }),
       signRunPermissionPosture: signRunPosture,
