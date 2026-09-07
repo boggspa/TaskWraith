@@ -883,7 +883,27 @@ const chatListIndexPath = path.join(userDataPath, 'chat-list-index.jsonl')
 const chatJournalDir = path.join(userDataPath, 'chat-journal')
 const incrementalChatJournalDir = path.join(userDataPath, 'chat-journal-v2')
 const segmentedChatStoreDir = path.join(userDataPath, 'chat-store-v2')
-const chatListIndexStore = new ChatListIndexStore(userDataPath, { canWrite: legacyStoreCanWrite })
+/**
+ * The chat-list index is a DERIVED, self-invalidating cache, not an
+ * authoritative profile byte the Host owns: every entry vouches for its chat
+ * only while that chat file's mtime+size still match, so a stale entry can
+ * never mis-serve — it simply falls back to a fresh read. It is the sideband
+ * class, exactly like the v2 journal / segmented mirror (`...SidebandWritable`
+ * below): writable when WE own legacy writes OR the Host does.
+ *
+ * Gating it on `legacyStoreCanWrite` alone left it ORPHANED under Host
+ * ownership — the Host never writes the index, and the in-process refresh door
+ * (the getChatList rebuild) was fenced off — so it went stale, its vouch
+ * failed corpus-wide, and every boot scan / first-paint get-chat-list degraded
+ * from a stat to a full-record read+replay. Keeping it fresh under Host
+ * ownership is what makes those reads cheap again.
+ */
+function chatListIndexSidebandWritable(): boolean {
+  return legacyStoreCanWrite() || legacyStoreWriterGate.snapshot().state === 'host-owned'
+}
+const chatListIndexStore = new ChatListIndexStore(userDataPath, {
+  canWrite: chatListIndexSidebandWritable
+})
 /** Rows already derived from the exact bytes on disk, so a chat whose index
  *  entry cannot be restamped is parsed once per process rather than once per
  *  getChatList call. See ChatListRebuildMemo for why the restamp can stall. */
@@ -5783,7 +5803,11 @@ export class AppStore {
     // the same gate as saveChat: a streaming-stale row rebuilds fresh for the
     // caller on every read, but its disk append rides the volatile cadence.
     for (const chatId of dirtyChatIds) {
-      if (!legacyStoreCanWrite()) continue
+      // Refresh the derived index even under Host ownership — the index is a
+      // sideband cache the Host does not maintain, and gating this door on
+      // `legacyStoreCanWrite` alone is what let it rot corpus-wide and turned
+      // every boot scan into a full read.
+      if (!chatListIndexSidebandWritable()) continue
       this.writeChatListIndexEntryIfAllowed(chatId, nextIndex[chatId])
     }
     return items.sort((a, b) => b.updatedAt - a.updatedAt)
@@ -5800,6 +5824,18 @@ export class AppStore {
    *  a fat line per streamed message AND the settle callback appended a
    *  second, stale-content line per flush just to refresh two stat numbers. */
   private static writeChatListIndexEntryIfAllowed(chatId: string, next: ChatListItem): boolean {
+    // Under Host ownership the legacy write admission is closed (admit() returns
+    // null and would throw), and there is no in-process legacy drain to
+    // serialize against — the Host owns the authoritative bytes. The index is a
+    // sideband derived cache, so refresh it directly, exactly like the v2
+    // journal / segmented mirror writes. When WE own legacy writes, keep the
+    // drain-aware admission so an index refresh can never publish mid-drain.
+    // The churn throttle (writeChatListIndexEntryIfAllowedAdmitted →
+    // shouldWriteChatListIndexItem) applies on BOTH paths, so no door escapes
+    // it — the invariant the shared-gate comment above protects.
+    if (!legacyStoreCanWrite()) {
+      return this.writeChatListIndexEntryIfAllowedAdmitted(chatId, next)
+    }
     return runLegacyStoreWriteAdmission(
       { operation: 'write-chat-list-index', pathFamily: 'chats' },
       () => this.writeChatListIndexEntryIfAllowedAdmitted(chatId, next)

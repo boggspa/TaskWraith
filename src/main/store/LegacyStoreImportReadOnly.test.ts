@@ -37,6 +37,27 @@ function snapshotTree(root: string): unknown[] {
   return rows
 }
 
+/** Last-writer-wins projection of a chat's row in the incremental JSONL index. */
+function readIndexEntry(
+  root: string,
+  chatId: string
+): { sourceChatMtimeMs?: number; sourceChatSize?: number; ensemble?: unknown } | null {
+  const indexPath = path.join(root, 'chat-list-index.jsonl')
+  if (!fs.existsSync(indexPath)) return null
+  let found: Record<string, unknown> | null = null
+  for (const line of fs.readFileSync(indexPath, 'utf8').split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    try {
+      const rec = JSON.parse(trimmed)
+      if (rec.chatId === chatId && rec.entry) found = rec.entry
+    } catch {
+      /* skip corrupt */
+    }
+  }
+  return found as { sourceChatMtimeMs?: number; sourceChatSize?: number; ensemble?: unknown } | null
+}
+
 function chatFixture(): ChatRecord {
   return {
     appChatId: 'read-chat',
@@ -120,16 +141,19 @@ it('imports Host-owned legacy data in read-only mode without repairing any profi
     `${JSON.stringify(fatIndexEntry)}\n`,
     'utf8'
   )
-  const hostOwnedPaths = [
+  // The AUTHORITATIVE families the standalone Host owns stay byte-frozen: the
+  // in-process AppStore reads them but must neither rewrite them nor drop a
+  // `.corrupt-*` backup beside a corrupt one. The legacy chat-list-index.json
+  // monolith rides with them — the incremental JSONL superseded it, so nothing
+  // rewrites the old file under Host ownership.
+  const frozenPaths = [
     path.join(userDataPath, 'workspaces.json'),
     path.join(userDataPath, 'chats'),
     path.join(userDataPath, 'chat-journal'),
     path.join(userDataPath, 'chat-journal-v2'),
-    path.join(userDataPath, 'chat-list-index.json'),
-    path.join(userDataPath, 'chat-list-index.jsonl'),
-    path.join(userDataPath, 'chat-list-summaries')
+    path.join(userDataPath, 'chat-list-index.json')
   ]
-  const before = hostOwnedPaths.map(snapshotTree)
+  const before = frozenPaths.map(snapshotTree)
 
   const { configureHostStoreRuntime } = await import('../../host-runtime/HostStoreRuntime')
   configureHostStoreRuntime({
@@ -160,5 +184,19 @@ it('imports Host-owned legacy data in read-only mode without repairing any profi
   AppStore.flushAllChatSaves()
   await vi.advanceTimersByTimeAsync(15_000)
 
-  expect(hostOwnedPaths.map(snapshotTree)).toEqual(before)
+  expect(frozenPaths.map(snapshotTree)).toEqual(before)
+
+  // The chat-list index is a DERIVED accelerator the Host never writes — only
+  // this process does. Freezing it under Host ownership (the original gate) is
+  // what let it rot corpus-wide: a row that cannot be restamped never vouches,
+  // so every boot scan and first-paint getChatList fell back to a full record
+  // read+replay — the 30-60min cold-boot stall on large profiles. So under Host
+  // ownership the index is REFRESHED, not frozen. Prove the fat, non-vouching
+  // legacy row was replaced by a lean row whose stat matches the chat on disk:
+  // the row now vouches, and the next scan takes the stat-only shortcut.
+  const chatStat = fs.statSync(path.join(userDataPath, 'chats', `${chat.appChatId}.json`))
+  const refreshed = readIndexEntry(userDataPath, chat.appChatId)
+  expect(refreshed, 'index row was not refreshed under Host ownership').toBeTruthy()
+  expect(refreshed?.sourceChatMtimeMs).toBe(chatStat.mtimeMs)
+  expect(refreshed?.sourceChatSize).toBe(chatStat.size)
 })
