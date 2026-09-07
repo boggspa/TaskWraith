@@ -78,8 +78,9 @@ export interface CreateMuseIsolatedHomeInput {
   /** Optional app-owned MCP entries written only into this disposable home. */
   readonly mcpSettings?: MuseMcpSettings
   /**
-   * Opt-in Muse log level (e.g., 'debug'). When set, MUSE_LOG is forwarded to the
-   * spawned muse serve process to surface internal diagnostics.
+   * Opt-in Muse log level (e.g., 'debug'). When set, both RUST_LOG (what Muse
+   * 1.0.3 actually reads) and MUSE_LOG (kept for a future rename) are forwarded
+   * to the spawned muse process. Opt-in only — never enabled by default.
    */
   readonly museLogLevel?: string
   /**
@@ -532,7 +533,10 @@ export function buildMuseIsolatedHomeEnvironment(
 
   const source = input.sourceEnvironment ?? {}
   const env: Record<string, string> = {}
-  if (input.museLogLevel !== undefined) env.MUSE_LOG = input.museLogLevel
+  if (input.museLogLevel !== undefined) {
+    env.MUSE_LOG = input.museLogLevel
+    env.RUST_LOG = input.museLogLevel
+  }
   for (const key of MUSE_PROBE_ENV_ALLOWLIST) {
     const value = source[key]
     if (typeof value === 'string') env[key] = value

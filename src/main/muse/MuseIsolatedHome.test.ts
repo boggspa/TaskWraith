@@ -303,7 +303,7 @@ describe('Muse isolated home', () => {
   })
 
 
-  it('forwards MUSE_LOG when museLogLevel is provided and omits it otherwise', () => {
+  it('forwards MUSE_LOG and RUST_LOG when museLogLevel is provided and omits them otherwise', () => {
     const leaseWithLog = createMuseIsolatedHome({
       temporaryRoot: TEMP_ROOT,
       runId: 'log-enabled',
@@ -311,6 +311,7 @@ describe('Muse isolated home', () => {
     })
     leases.push(leaseWithLog)
     expect(leaseWithLog.env.MUSE_LOG).toBe('debug')
+    expect(leaseWithLog.env.RUST_LOG).toBe('debug')
 
     const leaseWithoutLog = createMuseIsolatedHome({
       temporaryRoot: TEMP_ROOT,
@@ -318,6 +319,7 @@ describe('Muse isolated home', () => {
     })
     leases.push(leaseWithoutLog)
     expect(leaseWithoutLog.env.MUSE_LOG).toBeUndefined()
+    expect(leaseWithoutLog.env.RUST_LOG).toBeUndefined()
   })
   it('refuses a mode-weakened directory where POSIX mode semantics are available', () => {
     if (process.platform === 'win32') return
