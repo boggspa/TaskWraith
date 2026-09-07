@@ -580,7 +580,8 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
                 const folded = foldOllamaHostToolOutcome(turnState, {
                   toolName: toolCall.name,
                   ok: outcome.ok,
-                  result: outcome.result
+                  result: outcome.result,
+                  args: toolCall.arguments
                 })
                 turnState = folded.state
                 productiveThisTurn = productiveThisTurn || folded.productive

@@ -20,18 +20,62 @@ export const HOST_OLLAMA_MAX_TOOL_TURNS = 12
 export const HOST_OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS = 4
 /** An identical failure stops counting as progress after this many in a row. */
 export const HOST_OLLAMA_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES = 3
+/**
+ * Key-independent backstop, cleared by any success. "Identical" is keyed on the
+ * identical CALL, so a model that varies its arguments while failing every time
+ * never repeats a key and the streak above can no longer bound it on its own.
+ */
+export const HOST_OLLAMA_MAX_CONSECUTIVE_TOOL_FAILURES = 8
 
-/** Failure identity is the tool plus the head of its message, as on the desktop. */
+/**
+ * Failure identity is the tool, its operative ARGUMENTS, and the head of its
+ * message. The arguments are load-bearing: several refusals carry a fixed
+ * preamble with no discriminator inside this window, so keying on the message
+ * head alone collapsed three DIFFERENT failing calls into one streak and
+ * finalized runs that were still making progress.
+ */
 const FAILURE_KEY_MAX_CHARS = 160
+
+/**
+ * Narration keys, stripped from the failure key. They are free prose the model
+ * rewrites at will, so counting them would mint a fresh key every turn and the
+ * breaker would never fire. Mirrors OLLAMA_TOOL_NARRATION_ARG_KEYS on the
+ * desktop lane, re-stated because the Host cannot import it.
+ */
+const HOST_NARRATION_ARG_KEYS = ['intent', 'summary', 'reason', 'description']
+
+/** Order-independent serialization, so key order cannot fork the identity. */
+function hostCanonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+  if (Array.isArray(value)) return `[${value.map(hostCanonicalJson).join(',')}]`
+  const record = value as Record<string, unknown>
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${hostCanonicalJson(record[key])}`)
+    .join(',')}}`
+}
+
+/** Call identity: the tool plus its arguments, minus TOP-LEVEL narration. */
+function hostToolCallKey(toolName: string, args?: Record<string, unknown>): string {
+  const identity: Record<string, unknown> = { ...(args || {}) }
+  for (const key of HOST_NARRATION_ARG_KEYS) delete identity[key]
+  return `${toolName}${hostCanonicalJson(identity)}`
+}
 
 export interface OllamaHostToolTurnState {
   readonly consecutiveNonProductiveTurns: number
   readonly identicalFailureStreak: number
   readonly lastFailureKey: string | null
+  readonly consecutiveFailures: number
 }
 
 export function createOllamaHostToolTurnState(): OllamaHostToolTurnState {
-  return { consecutiveNonProductiveTurns: 0, identicalFailureStreak: 0, lastFailureKey: null }
+  return {
+    consecutiveNonProductiveTurns: 0,
+    identicalFailureStreak: 0,
+    lastFailureKey: null,
+    consecutiveFailures: 0
+  }
 }
 
 /**
@@ -42,20 +86,29 @@ export function createOllamaHostToolTurnState(): OllamaHostToolTurnState {
  */
 export function foldOllamaHostToolOutcome(
   state: OllamaHostToolTurnState,
-  outcome: { readonly toolName: string; readonly ok: boolean; readonly result: string }
+  outcome: {
+    readonly toolName: string
+    readonly ok: boolean
+    readonly result: string
+    readonly args?: Record<string, unknown>
+  }
 ): { readonly state: OllamaHostToolTurnState; readonly productive: boolean } {
   if (outcome.ok) {
     return {
-      state: { ...state, identicalFailureStreak: 0, lastFailureKey: null },
+      state: { ...state, identicalFailureStreak: 0, lastFailureKey: null, consecutiveFailures: 0 },
       productive: true
     }
   }
-  const failureKey = `${outcome.toolName}\n${outcome.result.slice(0, FAILURE_KEY_MAX_CHARS)}`
+  const callKey = hostToolCallKey(outcome.toolName, outcome.args)
+  const failureKey = `${callKey}\n${outcome.result.slice(0, FAILURE_KEY_MAX_CHARS)}`
   const identicalFailureStreak =
     failureKey === state.lastFailureKey ? state.identicalFailureStreak + 1 : 1
+  const consecutiveFailures = state.consecutiveFailures + 1
   return {
-    state: { ...state, identicalFailureStreak, lastFailureKey: failureKey },
-    productive: identicalFailureStreak < HOST_OLLAMA_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES
+    state: { ...state, identicalFailureStreak, lastFailureKey: failureKey, consecutiveFailures },
+    productive:
+      identicalFailureStreak < HOST_OLLAMA_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES &&
+      consecutiveFailures < HOST_OLLAMA_MAX_CONSECUTIVE_TOOL_FAILURES
   }
 }
 
