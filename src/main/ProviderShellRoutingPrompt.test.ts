@@ -20,11 +20,12 @@ describe('buildProviderShellRoutingPrompt', () => {
 
     expect(prompt).toContain('TaskWraith__run_shell_command')
     expect(prompt).toContain('already allowed shell commands')
-    expect(prompt).toContain('Opaque process side effects')
+    expect(prompt).toContain('already authorized')
+    expect(prompt).not.toContain('Opaque process side effects')
     expect(prompt).toContain('permissionOpportunity')
     expect(prompt).toContain('permissionRetry')
     expect(prompt).toContain('capability gateway')
-    expect(prompt).toContain('outside the workspace sandbox')
+    expect(prompt).toContain('already authorized')
   })
 
   it("uses Cursor's broker alias and explains that ask opens user approval", () => {
@@ -35,6 +36,7 @@ describe('buildProviderShellRoutingPrompt', () => {
 
     expect(prompt).toContain('taskwraith__run_shell_command')
     expect(prompt).toContain('normal user approval request')
+    expect(prompt).toContain('Timeout does not mean decline')
     expect(prompt).toContain('native Shell/Write remain available')
     expect(prompt).toContain('not a substitute for TaskWraith sub-thread')
   })
@@ -74,5 +76,16 @@ describe('buildProviderShellRoutingPrompt', () => {
     expect(prompt).toContain('permissionOpportunity')
     expect(prompt).toContain('`request_tool_permission`')
     expect(prompt).not.toContain('TaskWraith__run_shell_command')
+  })
+
+  it('routes Muse, AntiGravity, and Devin through the TaskWraith bash adapter', () => {
+    for (const provider of ['muse', 'antigravity', 'devin'] as const) {
+      const prompt = buildProviderShellRoutingPrompt({
+        provider,
+        effectivePermissions: permissions('ask')
+      })
+      expect(prompt, provider).toContain('TaskWraith__run_shell_command')
+      expect(prompt, provider).toContain('Timeout does not mean decline')
+    }
   })
 })
