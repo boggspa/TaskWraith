@@ -735,16 +735,19 @@ describe('HostProfileDomainStore', () => {
     expect(updated.messages).toHaveLength(2)
   })
 
-  it('fails closed on a chat symlink or unexpected directory entry', () => {
+  it('skips a chat symlink or unexpected directory entry without failing the listing', () => {
     const { profile, store } = open()
-    const thread = store.createThread({ scope: 'global' })
-    const chatFile = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
+    const kept = store.createThread({ scope: 'global', title: 'kept' })
+    const doomed = store.createThread({ scope: 'global' })
+    const chatFile = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${doomed.appChatId}.json`)
     const target = join(profile, 'chat-target.json')
     writeFileSync(target, readFileSync(chatFile))
     chmodSync(target, 0o600)
     rmSync(chatFile)
     symlinkSync(target, chatFile)
-    expect(() => store.listThreads()).toThrow('Unsafe')
+    // The symlinked record is skipped (never followed) rather than failing the
+    // whole listing and wedging the Host; the valid sibling still lists.
+    expect(store.listThreads().map((item) => item.appChatId)).toEqual([kept.appChatId])
   })
 
   it('treats missing legacy run status as active until an end timestamp exists and ignores AppStore temp artifacts', () => {
@@ -1161,15 +1164,59 @@ describe('HostProfileDomainStore', () => {
     expect(store.quarantinedThreadIds).toEqual([oversized.appChatId])
   })
 
-  it('still fails closed on a structurally unsafe entry rather than quarantining it', () => {
+  it('skips a stray non-record entry and keeps listing the valid chats', () => {
     const { profile, store } = open()
-    store.createThread({ scope: 'global' })
-    writeFileSync(join(profile, HOST_PROFILE_CHATS_DIRECTORY, 'not-a-chat.txt'), 'x', {
+    const kept = store.createThread({ scope: 'global', title: 'kept' })
+    // A stray non-.json file (a `.DS_Store`, an editor swap file, a leftover)
+    // used to throw and take the WHOLE listing down — which wedged the external
+    // Host at boot and forced the app onto the in-process fallback for every
+    // launch. It must be skipped, not fatal.
+    writeFileSync(join(profile, HOST_PROFILE_CHATS_DIRECTORY, '.DS_Store'), 'x', {
       mode: 0o600
     })
 
-    expect(() => store.listThreads()).toThrow('Unsafe')
+    const listed = store.listThreads()
+
+    expect(listed.map((thread) => thread.appChatId)).toEqual([kept.appChatId])
+    // A stray entry is not a quarantined record — that set is for oversized
+    // chats the Host recognised but could not read.
     expect(store.quarantinedThreadIds).toEqual([])
+  })
+
+  it('skips a symlinked record without following it, keeping the valid chats', () => {
+    const { profile, store } = open()
+    const kept = store.createThread({ scope: 'global', title: 'kept' })
+    // A symlink where a chat record should be is exactly the shape the old
+    // throw guarded against — but failing the whole listing is the wrong
+    // response. Skip it (never follow it) and keep serving the real chats.
+    symlinkSync(
+      '/etc/passwd',
+      join(profile, HOST_PROFILE_CHATS_DIRECTORY, 'aaaa-evil-symlink.json')
+    )
+
+    const listed = store.listThreads()
+
+    expect(listed.map((thread) => thread.appChatId)).toEqual([kept.appChatId])
+  })
+
+  it('audits a persistent stray entry once, not on every reconciler pass', () => {
+    const { profile, store } = open()
+    store.createThread({ scope: 'global' })
+    writeFileSync(join(profile, HOST_PROFILE_CHATS_DIRECTORY, '.DS_Store'), 'x', {
+      mode: 0o600
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      store.listThreads()
+      store.listThreads()
+      store.listThreads()
+      const strayWarnings = warn.mock.calls.filter((call) => String(call[0]).includes('.DS_Store'))
+      // Silent skips are what made the original whole-Host failure invisible —
+      // but the reconciler sweeps once a second, so audit once, not per pass.
+      expect(strayWarnings).toHaveLength(1)
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('stops quarantining a record once it is back under the cap', () => {

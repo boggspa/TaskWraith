@@ -774,6 +774,10 @@ export class HostProfileDomainStore {
   private readonly beforeAtomicPublish?: (targetPath: string) => void
   private readonly quarantinedThreads = new Set<string>()
   private readonly onThreadQuarantined?: (threadId: string, reason: 'record-too-large') => void
+  /** Stray `chats/` entry names already reported, so a persistent stray file
+   *  (a `.DS_Store`, a leftover symlink) is audited once, not once per sweep —
+   *  the sweep runs on the reconciler's 1s timer. */
+  private readonly reportedStrayEntries = new Set<string>()
   private readonly threadCache = new Map<string, CachedThreadSummary>()
   private readonly threadCacheMaxBytes: number
   private threadCacheBytes = 0
@@ -1125,16 +1129,34 @@ export class HostProfileDomainStore {
     this.assertAuthority()
     this.ensureDirectory(this.chatsPath)
     const visited = new Set<string>()
+    // A single stray or tampered directory entry must NOT fail the whole
+    // listing. Throwing here propagates out of listThreadSummaries and takes
+    // the external Host's projection down; the desktop then silently falls back
+    // to the in-process Host, whose 1s reconciler re-throws on the same entry
+    // forever — one leftover `.DS_Store` or symlink is enough to wedge boot for
+    // every launch. Skip the entry (never follow it — the safety of not reading
+    // an unsafe path is unchanged), audit it once, and keep sweeping the valid
+    // records. This mirrors the oversized-record quarantine just below.
     for (const entry of readdirSync(this.chatsPath, { withFileTypes: true })) {
       if (this.isRecognizedTemp(entry.name)) {
-        if (!entry.isFile() || entry.isSymbolicLink())
-          throw new Error('Unsafe chat directory entry')
+        if (!entry.isFile() || entry.isSymbolicLink()) {
+          this.reportStrayEntry(entry.name, 'temp entry is not a regular file')
+        }
         continue
       }
-      if (!entry.name.endsWith('.json')) throw new Error('Unsafe chat directory entry')
-      if (!entry.isFile() || entry.isSymbolicLink()) throw new Error('Unsafe chat directory entry')
+      if (!entry.name.endsWith('.json')) {
+        this.reportStrayEntry(entry.name, 'not a .json record')
+        continue
+      }
+      if (!entry.isFile() || entry.isSymbolicLink()) {
+        this.reportStrayEntry(entry.name, 'record is not a regular file')
+        continue
+      }
       const id = entry.name.slice(0, -'.json'.length)
-      if (!safeId(id)) throw new Error('Unsafe chat filename')
+      if (!safeId(id)) {
+        this.reportStrayEntry(entry.name, 'unsafe chat id')
+        continue
+      }
       const path = this.chatPath(id)
       const stat = this.statRecord(path)
       // Vanished between readdir and stat. getThread's readOptionalJson
@@ -1158,6 +1180,17 @@ export class HostProfileDomainStore {
       visit(id, path, stat)
     }
     return visited
+  }
+
+  /**
+   * Audit a stray/unsafe `chats/` entry that the sweep skipped rather than
+   * failed on. Deduped by name so a persistent stray file is logged once, not
+   * on every 1s reconciler pass.
+   */
+  private reportStrayEntry(name: string, reason: string): void {
+    if (this.reportedStrayEntries.has(name)) return
+    this.reportedStrayEntries.add(name)
+    console.warn(`[host-profile] skipping unsafe chats/ entry ${JSON.stringify(name)} (${reason})`)
   }
 
   /**
