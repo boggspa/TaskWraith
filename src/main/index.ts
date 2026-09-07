@@ -1013,6 +1013,7 @@ import { tryFlushBridgeRunTranscript } from './BridgeRunTranscriptFlushGuard'
 import { AppStore, registerPersistenceWriteEnqueue, type ChatSaveOptions } from './store'
 import { ChatTranscriptMutationIndex } from './store/ChatTranscriptMutationAuthoring'
 import { isSegmentedChatStoreEnabled } from './store/SegmentedChatStore'
+import type { SweepBudget } from './store/BootSweepBudget'
 import {
   PersistenceWriteQueue,
   createUtilityProcessChannelFactory,
@@ -10646,9 +10647,18 @@ function hasActiveProviderRunForChat(chatId: string | undefined | null): boolean
 /** Backstop for run-queue jobs stranded in a live status by a settlement miss
  * (see ChatRunReconciler's orphaned-job section): any starting/active/
  * cancelling job whose runId matches a TERMINAL ChatRun settles to the
- * status mirroring that seal. Chats fenced for erasure are skipped whole. */
+ * status mirroring that seal. Chats fenced for erasure are skipped whole.
+ *
+ * The terminal map used to come from a bare `getChats()` — a whole-corpus
+ * parse on every sweep, including the 2-minute periodic tick. It now comes
+ * from runs already parsed for this sweep's stale-run pass plus one targeted
+ * read per stranded job's own chat. A job with no chatId cannot be located
+ * without a walk; only the unbounded full sweep keeps that legacy fallback,
+ * and only when such a job is actually uncovered. */
 function settleOrphanedRunQueueJobsProjection(
-  fencedForErasure: (chat: ChatRecord) => boolean
+  fencedForErasure: (chat: ChatRecord) => boolean,
+  sourceChats: readonly ChatRecord[],
+  options: { includeLegacyCorpusFallback?: boolean } = {}
 ): number {
   const candidates = AppStore.getRunQueueJobs({
     statuses: [...ORPHANED_RUN_QUEUE_JOB_STATUSES]
@@ -10656,15 +10666,35 @@ function settleOrphanedRunQueueJobsProjection(
   if (candidates.length === 0) return 0
   const terminalRunStatusById = new Map<string, string>()
   const fencedChatIds = new Set<string>()
-  for (const chat of AppStore.getChats()) {
+  const seenChatIds = new Set<string>()
+  const harvestTerminalRuns = (chat: ChatRecord | null | undefined): void => {
+    if (!chat || seenChatIds.has(chat.appChatId)) return
+    seenChatIds.add(chat.appChatId)
     if (fencedForErasure(chat)) {
       fencedChatIds.add(chat.appChatId)
-      continue
+      return
     }
     for (const run of chat.runs || []) {
       if (run.status && run.status !== 'running') {
         terminalRunStatusById.set(run.runId, run.status)
       }
+    }
+  }
+  // Runs already parsed for this sweep's stale-run pass are free evidence...
+  for (const chat of sourceChats) harvestTerminalRuns(chat)
+  // ...and a stranded job's own chat is found by id, not by corpus scan. The
+  // classic wedge is a job stuck 'active' under a chat whose runs are all
+  // already terminal, and that chat is usually NOT in the sweep above.
+  for (const job of candidates) {
+    if (!job.chatId || seenChatIds.has(job.chatId)) continue
+    harvestTerminalRuns(AppStore.getChat(job.chatId))
+  }
+  if (options.includeLegacyCorpusFallback) {
+    const uncovered = candidates.some(
+      (job) => !job.chatId && !terminalRunStatusById.has(job.runId)
+    )
+    if (uncovered) {
+      for (const chat of AppStore.getChats()) harvestTerminalRuns(chat)
     }
   }
   const settlements = reconcileOrphanedRunQueueJobs(
@@ -10708,12 +10738,13 @@ function settleOrphanedRunQueueJobsProjection(
 
 /**
  * `scope: 'open-runs'` reconciles only chats the store still lists as holding
- * an unsettled run. `scope: 'all'` re-reads the whole corpus -- 1.16GB across
- * 514 files on a real profile -- and exists to re-seed that list, not to run
- * on a short timer.
+ * an unsettled run. `scope: 'all'` sweeps the narrowed whole-corpus candidates
+ * and exists to re-seed that list, not to run on a short timer.
+ * `options.budget` truncates the 'all' reads to the most recent candidates for
+ * the pre-window pass; the deferred post-paint sweep re-runs unbounded.
  */
 function reconcileStaleChatRunsProjection(
-  options: { minAgeMs?: number; scope?: 'all' | 'open-runs' } = {}
+  options: { minAgeMs?: number; scope?: 'all' | 'open-runs'; budget?: SweepBudget } = {}
 ): number {
   // A chat inside a prepared (uncommitted) erasure must not be settled or
   // re-projected. Filter fenced chats up front so the sweep continues over the
@@ -10735,17 +10766,20 @@ function reconcileStaleChatRunsProjection(
       pendingDeletion.workspaceId === chat.workspaceId
     )
   }
-  // Jobs first, and INDEPENDENT of the chat settlements below: the classic
-  // wedge is a job stuck 'active' under a chat whose runs are all already
-  // terminal — the run sweep then has nothing to settle and returns early,
-  // so job logic placed after it would never fire for exactly the case that
-  // needs it.
-  settleOrphanedRunQueueJobsProjection(fencedForErasure)
   const nowIso = new Date().toISOString()
   const sourceChats =
     options.scope === 'open-runs'
       ? AppStore.getChatsWithOpenRuns()
-      : AppStore.getChatsForStaleRunSweep()
+      : AppStore.getChatsForStaleRunSweep(options.budget ? { budget: options.budget } : {})
+  // Jobs first, and INDEPENDENT of the chat settlements below: the classic
+  // wedge is a job stuck 'active' under a chat whose runs are all already
+  // terminal — the run sweep then has nothing to settle and returns early,
+  // so job logic placed after it would never fire for exactly the case that
+  // needs it. The sweep's own parsed chats seed the job settle's terminal map
+  // so it never walks the corpus for them.
+  settleOrphanedRunQueueJobsProjection(fencedForErasure, sourceChats, {
+    includeLegacyCorpusFallback: options.scope !== 'open-runs' && !options.budget
+  })
   const { chats, settlements, terminalRecoveries } = reconcileStaleChatRuns(
     sourceChats.filter((chat) => !fencedForErasure(chat)),
     isChatRunLive,
