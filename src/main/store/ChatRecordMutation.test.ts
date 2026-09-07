@@ -424,7 +424,7 @@ describe('ChatRecordMutation', () => {
       ensemble: {
         ...ensemble,
         participants: afterParticipants,
-        updatedAt: 99
+        updatedAt: '2026-09-07T20:00:00.000Z'
       }
     })
     const authoredTranscript: AuthoredChatTranscriptMutation = {

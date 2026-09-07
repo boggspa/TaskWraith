@@ -896,10 +896,8 @@ export function boundChatUpdateSnapshot(chat: ChatRecord): {
   page?: TranscriptPage
 } {
   const messages = Array.isArray(chat.messages) ? chat.messages : []
-  const sourceChatSize =
-    typeof (chat as { sourceChatSize?: unknown }).sourceChatSize === 'number'
-      ? (chat as { sourceChatSize: number }).sourceChatSize
-      : 0
+  const sourceChatSizeValue = (chat as { sourceChatSize?: unknown }).sourceChatSize
+  const sourceChatSize = typeof sourceChatSizeValue === 'number' ? sourceChatSizeValue : 0
   if (
     !shouldPageTranscriptOnOpen({
       messageCount: messages.length,
