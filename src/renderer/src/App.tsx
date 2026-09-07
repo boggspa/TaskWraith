@@ -77,6 +77,7 @@ import {
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
 import { DEVIN_DEFAULT_MODEL_ID, devinDefaultReasoningEffort } from '../../shared/devinModelCatalog'
 import { defaultPiReasoningEffort } from '../../shared/piReasoning'
+import { resolveOllamaComposerReasoningEffort } from '../../shared/ollamaReasoning'
 import {
   appliedChatUpdateBaseline,
   applyChatUpdateDelivery,
@@ -604,7 +605,8 @@ import {
   getDefaultEnsembleParticipantConfig,
   getEnsembleReasoningOptions,
   normalizeProviderModelSelection,
-  resolveEnsembleParticipantSettings
+  resolveEnsembleParticipantSettings,
+  resolveReasoningEffortForSeatChange
 } from './lib/ensembleProviderDefaults'
 import { shouldApplyFocusedWorkspaceRebind } from './lib/ensembleWelcomeWorkspace'
 import { withSessionActivityLedger } from './lib/sessionActivityLedger'
@@ -4149,7 +4151,10 @@ function App(): React.JSX.Element {
       ...(provider === 'ollama'
         ? {
             ollamaReasoningEffort:
-              participant.reasoningEffort ||
+              resolveOllamaComposerReasoningEffort(
+                providerModel,
+                participant.reasoningEffort
+              ) ||
               getEnsembleReasoningOptions(
                 'ollama',
                 providerModel,
@@ -6288,6 +6293,10 @@ function App(): React.JSX.Element {
     // normalizers clamp it to each provider's real ceiling. Without this the
     // persisted value is rejected on read-back and the slider snaps back.
     providerReasoningEfforts.add('ultraTask')
+    const ollamaHealedReasoning = resolveOllamaComposerReasoningEffort(
+      selected,
+      metadata.ollamaReasoningEffort
+    )
     const providerDefaultReasoning =
       providerModelOption?.defaultReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
     // Tier retirement (2026-07): Ollama chats resolve their permission role the
@@ -6377,7 +6386,9 @@ function App(): React.JSX.Element {
           ? metadata.ollamaReasoningEffort
           : persistedOllamaRunProfile === 'local_scout' && providerReasoningEfforts.has('medium')
             ? 'medium'
-            : providerReasoningOptions.at(-1)?.value || '',
+            : providerReasoningEfforts.has(ollamaHealedReasoning)
+              ? ollamaHealedReasoning
+              : providerReasoningOptions.at(-1)?.value || '',
       cursorReasoningEffort:
         typeof metadata.cursorReasoningEffort === 'string' &&
         providerReasoningEfforts.has(metadata.cursorReasoningEffort)
@@ -22728,11 +22739,12 @@ function App(): React.JSX.Element {
     }
     if (sideComposerProvider === 'ollama') {
       metadataPatch.ollamaReasoningEffort =
-        getEnsembleReasoningOptions(
-          'ollama',
-          nextModel,
-          sideComposerModelOptionsRaw.find((model) => model.id === nextModel)
-        ).at(-1)?.value || ''
+        resolveReasoningEffortForSeatChange({
+          provider: 'ollama',
+          model: nextModel,
+          previousEffort: sideOllamaReasoning,
+          modelMetadata: sideComposerModelOptionsRaw.find((model) => model.id === nextModel)
+        }) || ''
     }
     if (sideComposerProvider === 'claude') {
       const modelOption = (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
