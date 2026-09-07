@@ -583,10 +583,7 @@ describe('runAcpTurn — neutral core', () => {
           {
             id: 'model',
             currentValue: 'kimi-code/k3',
-            options: [
-              { value: 'kimi-code/kimi-for-coding' },
-              { value: 'kimi-code/k3' }
-            ]
+            options: [{ value: 'kimi-code/kimi-for-coding' }, { value: 'kimi-code/k3' }]
           },
           {
             id: 'thinking',
@@ -632,9 +629,7 @@ describe('runAcpTurn — neutral core', () => {
       jsonrpc: '2.0',
       id: 1001,
       result: {
-        configOptions: [
-          { id: 'thinking', currentValue: 'on', options: [{ value: 'on' }] }
-        ]
+        configOptions: [{ id: 'thinking', currentValue: 'on', options: [{ value: 'on' }] }]
       }
     })
     expect(child.sent()[4]).toMatchObject({
@@ -767,11 +762,12 @@ describe('runAcpTurn — neutral core', () => {
     child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-new' } })
     expect(child.sent()[3]).toMatchObject({
       method: 'session/prompt',
-      params: { sessionId: 'session-new', prompt: [{ type: 'text', text: 'full cold-start context' }] }
+      params: {
+        sessionId: 'session-new',
+        prompt: [{ type: 'text', text: 'full cold-start context' }]
+      }
     })
-    expect(ready).toEqual([
-      { sessionId: 'session-new', resumed: false, fallbackFromResume: true }
-    ])
+    expect(ready).toEqual([{ sessionId: 'session-new', resumed: false, fallbackFromResume: true }])
   })
 
   it('uses the cold-start prompt when initialize does not advertise resume', () => {
@@ -1102,9 +1098,12 @@ describe('runAcpTurn — neutral core', () => {
 
   it('skips denied-tool recovery when the hook is null (Kimi posture)', async () => {
     const child = new FakeAcpChild()
-    const { events } = baseOptions(child, {
+    const closes: Array<{ turnComplete: boolean; terminalStatus: string | null }> = []
+    baseOptions(child, {
       deniedToolRecovery: null,
-      onPermissionRequest: () => 'deny'
+      onPermissionRequest: () => 'deny',
+      onClose: (_code, turnComplete, terminalStatus) =>
+        closes.push({ turnComplete, terminalStatus: terminalStatus ?? null })
     })
     child.emit({ jsonrpc: '2.0', id: 1, result: {} })
     child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
@@ -1124,7 +1123,12 @@ describe('runAcpTurn — neutral core', () => {
     await new Promise((r) => setTimeout(r, 40))
     expect(child.sent().filter((m) => m.method === 'session/prompt')).toHaveLength(1)
     expect(child.killed).toBe(true)
-    expect(events.some((e) => e.type === 'result')).toBe(false)
+    // `result` events are never forwarded to onEvent (they are consumed by the
+    // terminal branch), so asserting their absence there holds for every run of
+    // this client and proves nothing. Close-out is the observable that actually
+    // distinguishes "the cancelled terminal ended the turn" from "the terminal
+    // was dropped and the turn died un-terminalized".
+    expect(closes).toEqual([{ turnComplete: true, terminalStatus: 'cancelled' }])
   })
 
   it('recovers once from a failed tool terminal even without a permission request', async () => {
@@ -1407,9 +1411,9 @@ describe('runAcpTurn — neutral core', () => {
       sessionId: 's-1',
       prompt: [{ type: 'text', text: 'hi' }]
     })
-    expect(events.some((e) => e.type === 'provider_warning' && /retrying/i.test(e.text || ''))).toBe(
-      true
-    )
+    expect(
+      events.some((e) => e.type === 'provider_warning' && /retrying/i.test(e.text || ''))
+    ).toBe(true)
 
     child.emit({ jsonrpc: '2.0', id: prompts[1].id as number, result: { stopReason: 'end_turn' } })
     await new Promise((r) => setTimeout(r, 40))
@@ -1447,7 +1451,9 @@ describe('runAcpTurn — neutral core', () => {
     child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
     // Same uninformative envelope — but the stderr channel says a retry is
     // pointless. Correlating the channels is what makes the refusal possible.
-    child.errorOutput('ERROR worker quit with fatal: Transport channel closed, when Auth(AuthorizationRequired)')
+    child.errorOutput(
+      'ERROR worker quit with fatal: Transport channel closed, when Auth(AuthorizationRequired)'
+    )
     child.emit({ jsonrpc: '2.0', id: 3, error: { code: -32603, message: 'Internal error' } })
     await new Promise((r) => setTimeout(r, 20))
 
@@ -1558,9 +1564,9 @@ describe('runAcpTurn — neutral core', () => {
       formatProcessError: (err) => `custom: ${err.message}`
     })
     child.fail(new Error('spawn boom'))
-    expect(events.some((e) => e.type === 'provider_warning' && e.text === 'custom: spawn boom')).toBe(
-      true
-    )
+    expect(
+      events.some((e) => e.type === 'provider_warning' && e.text === 'custom: spawn boom')
+    ).toBe(true)
   })
 
   it('terminates and joins process error even when warning projection throws', async () => {
@@ -2346,6 +2352,11 @@ describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prom
     const { handle } = baseOptions(child, {
       deniedToolRecovery: {
         detect: (status) => status === 'cancelled',
+        // Load-bearing: without it `shouldRecover?.(ctx) === true` is pinned
+        // false and the empty-array assertion below would hold whether or not
+        // the steer guard exists. This config WOULD recover on this terminal,
+        // so `pendingSteer` is the only thing that can keep it unspent.
+        shouldRecover: () => true,
         prompt: (context) => {
           recoveryPrompts.push(context.terminalStatus || '')
           return 'recovery follow-up'
