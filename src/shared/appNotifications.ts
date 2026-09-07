@@ -247,14 +247,9 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         label: 'Mistral',
         models: [
           {
-            name: 'Devstral Small',
-            blurb:
-              'New configurable Effort options for a faster, lower-cost default or deeper reasoning.'
-          },
-          {
             name: 'Mistral 3.5 Medium',
             blurb:
-              'Configurable Effort tuning now available, balancing latency and reasoning depth.'
+              'Vibe 2.25 default. Configurable Effort tuning, balancing latency and reasoning depth.'
           },
           {
             name: 'Mistral Large 3',
@@ -276,11 +271,6 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             name: 'Mistral Small 4',
             blurb:
               'Mistral Small 4 expands tool and reasoning coverage while staying cost-efficient.'
-          },
-          {
-            name: 'Devstral 2',
-            blurb:
-              'A faster default path with broader instruction coverage and lower per-token cost.'
           },
           {
             name: 'Leanstral 1.5 (Labs)',

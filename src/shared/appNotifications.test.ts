@@ -219,14 +219,12 @@ describe('notification registry', () => {
 
     const mistral = groups.find((g) => g.provider === 'mistral')
     expect(mistral?.models.map((m) => m.name)).toEqual([
-      'Devstral Small',
       'Mistral 3.5 Medium',
       'Mistral Large 3',
       'Mistral Medium (Latest)',
       'Mistral Medium 3.1',
       'Mistral Medium 3',
       'Mistral Small 4',
-      'Devstral 2',
       'Leanstral 1.5 (Labs)',
       'GLM-5.2 (via Mistral)',
       'GLM-5.2 (Mistral Hosted)',

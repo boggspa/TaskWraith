@@ -2825,14 +2825,12 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Muse Contributor Spark 1.3","blurb":"The discounted route at $0.10/$0.20 per Mtok; content may be used for product improvement."}
             ]},
             {"provider":"mistral","label":"Mistral","models":[
-              {"name":"Devstral Small","blurb":"New configurable Effort options for a faster, lower-cost default or deeper reasoning."},
-              {"name":"Mistral 3.5 Medium","blurb":"Configurable Effort tuning now available, balancing latency and reasoning depth."},
+              {"name":"Mistral 3.5 Medium","blurb":"Vibe 2.25 default. Configurable Effort tuning, balancing latency and reasoning depth."},
               {"name":"Mistral Large 3","blurb":"A flagship-sized 262K context model tuned for deeper planning and coding tasks."},
               {"name":"Mistral Medium (Latest)","blurb":"Current Mistral Medium flagship with stronger context and balanced latency."},
               {"name":"Mistral Medium 3.1","blurb":"Mistral Medium 3.1 extends the medium family with a refreshed default profile."},
               {"name":"Mistral Medium 3","blurb":"Legacy Mistral Medium 3 keeps strong performance in a lighter-cost package."},
               {"name":"Mistral Small 4","blurb":"Mistral Small 4 expands tool and reasoning coverage while staying cost-efficient."},
-              {"name":"Devstral 2","blurb":"A faster default path with broader instruction coverage and lower per-token cost."},
               {"name":"Leanstral 1.5 (Labs)","blurb":"Leanstral 1.5 (Labs) is a research-focused experimental reasoning update."},
               {"name":"GLM-5.2 (via Mistral)","blurb":"GLM-5.2 (via Mistral) introduces a 1M context lane for heavier prompts."},
               {"name":"GLM-5.2 (Mistral Hosted)","blurb":"GLM-5.2 on the Vibe subscription — 1M context, no API key, metered on your plan."},
