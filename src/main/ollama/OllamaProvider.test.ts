@@ -3404,6 +3404,64 @@ describe('runOllamaProvider streaming', () => {
     expect(contentTexts.join('\n')).toContain('stopping instead of looping')
   }, 10000)
 
+  it('does not charge a budget-truncated turn to the retry ceiling', async () => {
+    let chatCalls = 0
+    // `done_reason: 'length'` with nothing emitted is OUR per-turn generation
+    // budget running out inside the think stream, not the model failing to
+    // converge. Charging those to the ceiling is how a coherent max-effort
+    // reasoner was finalized as a "success" before it ever answered.
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        if (chatCalls >= 5) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: { role: 'assistant', content: 'Finished once the budget allowed it.' }
+            }),
+            JSON.stringify({ done: true, done_reason: 'stop', prompt_eval_count: 8, eval_count: 6 })
+          ])
+        }
+        // Whole budget spent thinking: no content, no tool call, cut off.
+        return ollamaStreamResponse([
+          JSON.stringify({
+            done: true,
+            done_reason: 'length',
+            prompt_eval_count: 8,
+            eval_count: 4096
+          })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock })
+
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
+
+    // 2 forgiven, 2 charged, then the answer lands. Charging all four would
+    // have hit the ceiling at the top of turn 5 and never dispatched it.
+    expect(chatCalls).toBe(5)
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts.join('\n')).toContain('Finished once the budget allowed it.')
+    expect(contentTexts.join('\n')).not.toContain('stopping instead of looping')
+  }, 10000)
+
   it('stops a model that re-reads the same unchanged file instead of acting (repeat is not progress)', async () => {
     let chatCalls = 0
     const chatBodies: string[] = []

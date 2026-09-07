@@ -192,14 +192,44 @@ export function resolveOllamaRunProfile(
  * truncated mid-thought and fed the degenerate-response nudge cycle. A
  * thinking model gets the final budget from turn one.
  */
+/**
+ * Headroom multiplier per reasoning level. The per-turn budget must hold the
+ * think stream AND the answer or tool call, so a level that cannot be turned
+ * off spends the whole budget thinking and returns empty `content` with no tool
+ * call — which the run loop counts as a non-productive turn. Four of those
+ * finalize the run as a "success" mid-task. `glm-5.3` ships `max` with
+ * `canDisable: false` and did exactly this against the 4096 default.
+ *
+ * Raising a ceiling costs nothing for a model that does not need it: num_predict
+ * bounds generation, it does not target it. A bare `true` is a toggle family
+ * with no level to read, so it stays unscaled.
+ */
+const OLLAMA_NUM_PREDICT_REASONING_SCALE: Record<OllamaThinkingLevel, number> = {
+  low: 1,
+  medium: 1,
+  high: 2,
+  max: 4
+}
+
 export function resolveOllamaTurnNumPredict(input: {
   toolCallCount: number
   thinkingLevel?: OllamaThinkingSetting | null
-  profile: Pick<OllamaRunProfile, 'numPredictTool' | 'numPredictFinal'>
+  profile: Pick<OllamaRunProfile, 'numPredictTool' | 'numPredictFinal' | 'contextCapTokens'>
 }): number | undefined {
-  return input.toolCallCount > 0 || (input.thinkingLevel !== null && input.thinkingLevel !== undefined && input.thinkingLevel !== false)
-    ? input.profile.numPredictFinal
-    : input.profile.numPredictTool
+  const thinking = input.thinkingLevel
+  const thinkingActive = thinking !== null && thinking !== undefined && thinking !== false
+  if (!(input.toolCallCount > 0 || thinkingActive)) return input.profile.numPredictTool
+  const base = input.profile.numPredictFinal
+  if (base === undefined) return base
+  const scale = typeof thinking === 'string' ? OLLAMA_NUM_PREDICT_REASONING_SCALE[thinking] || 1 : 1
+  if (scale <= 1) return base
+  // `resolveOllamaNumCtx` reserves only the UNSCALED budget when it sizes the
+  // window, so cap the scaled value at a quarter of the profile's context
+  // rather than letting generation crowd out the prompt.
+  const ceiling = input.profile.contextCapTokens
+    ? Math.floor(input.profile.contextCapTokens / 4)
+    : base
+  return Math.max(base, Math.min(base * scale, ceiling))
 }
 
 export type OllamaThinkingSetting = boolean | OllamaThinkingLevel

@@ -211,12 +211,43 @@ describe('OllamaRunProfiles', () => {
     // nudge cycle.
     expect(
       resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: 'high', profile })
-    ).toBe(profile.numPredictFinal)
+    ).toBe(8192)
     expect(
       resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: false, profile })
     ).toBe(profile.numPredictTool)
     expect(
       resolveOllamaTurnNumPredict({ toolCallCount: 2, thinkingLevel: null, profile })
     ).toBe(profile.numPredictFinal)
+  })
+
+  it('scales the turn budget with reasoning effort so a think stream cannot exhaust it', () => {
+    const profile = OLLAMA_RUN_PROFILE_PRESETS.provider_parity
+    // The whole budget holds thinking AND the answer, so an effort level that
+    // cannot be disabled (glm-5.3 ships `max`) spent all 4096 thinking and
+    // returned an empty turn the run loop scored as non-productive.
+    expect(resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: 'max', profile })).toBe(
+      16384
+    )
+    // Low effort has no need of the headroom; leave those runs untouched.
+    expect(resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: 'low', profile })).toBe(
+      profile.numPredictFinal
+    )
+    // A toggle family reports a bare `true` with no level to read.
+    expect(resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: true, profile })).toBe(
+      profile.numPredictFinal
+    )
+  })
+
+  it('caps the scaled budget so generation cannot crowd out the prompt', () => {
+    // local_scout: 3072 final against a 32_768 cap. 4x would be 12_288, past
+    // the quarter-context ceiling, and num_ctx only ever reserves the unscaled
+    // budget — so the scale is clamped rather than allowed to starve the prompt.
+    const profile = OLLAMA_RUN_PROFILE_PRESETS.local_scout
+    expect(resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: 'max', profile })).toBe(
+      8192
+    )
+    expect(
+      resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: 'max', profile })
+    ).toBeLessThan(profile.contextCapTokens / 4 + 1)
   })
 })

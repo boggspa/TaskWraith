@@ -356,6 +356,8 @@ interface OllamaChatChunk {
     tool_calls?: OllamaNativeToolCall[]
   }
   done?: boolean
+  /** Why generation stopped. `length` means the num_predict budget ran out. */
+  done_reason?: string
   error?: string
   prompt_eval_count?: number
   eval_count?: number
@@ -492,6 +494,13 @@ export const OLLAMA_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES = 3
 // longer bound it. Count consecutive failures regardless of key so a run that
 // only ever fails still reaches the retry ceiling instead of grinding.
 export const OLLAMA_MAX_CONSECUTIVE_TOOL_FAILURES = 8
+// A turn cut off by the per-turn generation budget (`done_reason: 'length'`)
+// with nothing emitted is TaskWraith's limit, not the model failing to
+// converge — a max-effort reasoner can spend a whole budget in the think
+// stream. Forgive this many per run before such turns feed the ceiling, so one
+// truncation does not cost a quarter of the retry budget, while a model that
+// truncates forever is still bounded.
+export const OLLAMA_MAX_FORGIVEN_TRUNCATED_TURNS = 2
 export const OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS = [250, 750]
 const OLLAMA_LOCAL_TOOL_SERVER = 'TaskWraith-local'
 
@@ -3061,6 +3070,24 @@ export function isDegenerateOllamaTurn(
 /** Nudge for harmony-format models (gpt-oss) that emit a plan into their hidden
  * reasoning channel without producing a final answer or an actual tool call.
  * We must not surface chain-of-thought as the answer, so push the model to act. */
+/**
+ * Nudge for a turn the GENERATION CAP cut off (`done_reason: 'length'`) before
+ * it emitted anything. That is TaskWraith's per-turn budget running out inside
+ * the think stream, not the model failing to converge, so the steer names the
+ * real constraint instead of telling the model it "said nothing".
+ */
+export function ollamaTruncatedTurnNudgePrompt(options?: OllamaRetryPromptOptions): string {
+  return appendOllamaStickyAskRemnant(
+    [
+      'Your previous turn hit this run per-turn generation limit while still reasoning, so nothing was delivered.',
+      'Think briefly, then act: issue ONE tool call, or give your answer directly.',
+      ...ollamaEnsembleRetryReminder(options),
+      'Keep this turn short enough to finish inside the budget.'
+    ].join(' '),
+    options?.currentRequestExcerpt
+  )
+}
+
 export function ollamaReasoningOnlyNudgePrompt(options?: OllamaRetryPromptOptions): string {
   return appendOllamaStickyAskRemnant(
     [
@@ -4271,6 +4298,9 @@ export async function runOllamaProvider(
     // cancels. Reset to 0 whenever the model does something productive (a tool
     // executes, or it answers).
     let consecutiveNonProductiveTurns = 0
+    // Budget-truncated turns forgiven so far. See
+    // OLLAMA_MAX_FORGIVEN_TRUNCATED_TURNS.
+    let truncatedTurnsForgiven = 0
     let forceJsonToolFallback =
       toolProtocolEnabled && (!nativeToolsSupported || runProfile.protocolMode === 'json_only')
     // Per-run (toolName+args) → result-signature store for the
@@ -4569,6 +4599,24 @@ export async function runOllamaProvider(
         // No structured tool call this turn. Every branch below either nudges
         // and `continue`s (non-productive — count it toward the ceiling) or
         // emits a final answer and `break`s (loop ends, counter irrelevant).
+        //
+        // One exception, checked BEFORE the counter moves: a turn the
+        // generation cap cut off mid-thought. `done_reason: 'length'` with
+        // nothing emitted is our budget running out, not the model failing to
+        // converge, and charging it to the ceiling is how a coherent
+        // max-effort reasoner got finalized as a "success" four turns later.
+        if (
+          turn.lastDone?.done_reason === 'length' &&
+          !turn.content.trim() &&
+          truncatedTurnsForgiven < OLLAMA_MAX_FORGIVEN_TRUNCATED_TURNS
+        ) {
+          truncatedTurnsForgiven += 1
+          messages.push({
+            role: 'user',
+            content: ollamaTruncatedTurnNudgePrompt(stickyRetryOptions)
+          })
+          continue
+        }
         consecutiveNonProductiveTurns += 1
         const hasContent = turn.content.trim().length > 0
         // Hallucinated native tool name: the model DID try to call a tool, but
