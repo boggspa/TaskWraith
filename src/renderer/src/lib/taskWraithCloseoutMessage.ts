@@ -1406,7 +1406,7 @@ export function buildCloseoutParticipantTable(
       }
     )
     const permissionTurns = turnConfigurations.map((configuration) => ({
-      raw: configuration.permissionPresetId,
+      raw: configuration.permissionPresetId || undefined,
       display: configuration.permissionPresetId
         ? formatPermissionPreset(configuration.permissionPresetId)
         : null
@@ -1501,13 +1501,28 @@ function participantSeatChangeLink(
   return { participantId: participant.participantId, before: side('first'), after: side('last') }
 }
 
+/** Per-turn capture: `''` = signed seal present but presetId omitted. */
+type TurnPermissionPresetCapture = PermissionPresetId | ''
+
 type ParticipantTurnConfiguration = {
   provider: ProviderId
   modelId: string
   reasoningEffort?: string
   thinkingEnabled?: boolean
   reasoningCaptured: boolean
-  permissionPresetId?: PermissionPresetId
+  permissionPresetId?: TurnPermissionPresetCapture
+}
+
+function captureTurnPermissionPreset(
+  run: ChatRun,
+  snapshotPresetId: PermissionPresetId | undefined
+): TurnPermissionPresetCapture | undefined {
+  if (run.permissionPosture?.signaturePresent) {
+    if (typeof run.permissionPosture.presetId !== 'string') return ''
+    const trimmed = run.permissionPosture.presetId.trim()
+    return trimmed ? (trimmed as PermissionPresetId) : ''
+  }
+  return run.permissionPosture?.presetId || snapshotPresetId
 }
 
 function participantFallbackSeatSnapshot(
@@ -1561,11 +1576,10 @@ function participantTurnConfiguration(
       metadataReasoning !== undefined ||
       metadataThinking !== undefined ||
       typeof metadata?.ensembleProvider === 'string',
-    permissionPresetId: run.permissionPosture?.signaturePresent
-      ? typeof run.permissionPosture.presetId === 'string'
-        ? run.permissionPosture.presetId.trim()
-        : ''
-      : run.permissionPosture?.presetId || snapshot?.configuredPermissionPresetId
+    permissionPresetId: captureTurnPermissionPreset(
+      run,
+      snapshot?.configuredPermissionPresetId
+    )
   }
 }
 
