@@ -486,6 +486,12 @@ export const OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS = 4
 // shell-error loop with no ceiling). Distinct failures — a model genuinely
 // iterating on an error — keep resetting the streak, and any success clears it.
 export const OLLAMA_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES = 3
+// Backstop for the breaker above. "Identical" is keyed on the identical CALL
+// (tool + arguments + failure head), so a model that varies its arguments while
+// failing every time never repeats a key and the identical streak alone can no
+// longer bound it. Count consecutive failures regardless of key so a run that
+// only ever fails still reaches the retry ceiling instead of grinding.
+export const OLLAMA_MAX_CONSECUTIVE_TOOL_FAILURES = 8
 export const OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS = [250, 750]
 const OLLAMA_LOCAL_TOOL_SERVER = 'TaskWraith-local'
 
@@ -716,6 +722,26 @@ function ollamaCanonicalJson(value: unknown): string {
     .sort()
     .map((k) => `${JSON.stringify(k)}:${ollamaCanonicalJson(obj[k])}`)
     .join(',')}}`
+}
+
+/**
+ * Argument keys carrying model-authored narration rather than call identity.
+ * `ollamaToolRequiresIntent` makes one of these REQUIRED on every file-edit,
+ * shell, remote-git and process-control tool, so they are free prose the model
+ * rewrites at will — see `ollamaToolFailureCallKey`.
+ */
+const OLLAMA_TOOL_NARRATION_ARG_KEYS = ['intent', 'summary', 'reason', 'description'] as const
+
+/**
+ * Call key for the identical-failure breaker. Narration is stripped first: a
+ * model that reworded its required `intent` each turn while re-issuing the SAME
+ * failing command would otherwise mint a fresh key every time and never trip
+ * the breaker. Identity is the tool plus its operative arguments.
+ */
+export function ollamaToolFailureCallKey(toolName: string, args: Record<string, unknown>): string {
+  const identity: Record<string, unknown> = { ...(args || {}) }
+  for (const key of OLLAMA_TOOL_NARRATION_ARG_KEYS) delete identity[key]
+  return ollamaToolCallKey(toolName, identity)
 }
 
 /** Stable per-run key for a (toolName, arguments) pair. */
@@ -4261,6 +4287,9 @@ export async function runOllamaProvider(
     // real iteration — restarts the streak. Spans turns; any success clears.
     let lastToolFailureKey: string | null = null
     let identicalToolFailureStreak = 0
+    // Key-independent failure count, cleared by any success. See
+    // OLLAMA_MAX_CONSECUTIVE_TOOL_FAILURES.
+    let consecutiveToolFailures = 0
     const emitOllamaContent = (text: string): void => {
       if (!text) return
       deps.sendAgentCompatLine(
@@ -4734,6 +4763,9 @@ export async function runOllamaProvider(
           // re-hits the harness gate every turn would reset the counter forever.
           if (!harnessGate.blocked && !toolResult.validationError) {
             if (toolResult.ok) {
+              // A tool that worked is not a failure, even when the repeat guard
+              // declines to credit it as progress below.
+              consecutiveToolFailures = 0
               if (!repeat.repeated) {
                 lastToolFailureKey = null
                 identicalToolFailureStreak = 0
@@ -4749,11 +4781,29 @@ export async function runOllamaProvider(
               // times (compile error → read → fix is a legitimate loop). The
               // SAME failure over and over is not — stop crediting it so the
               // retry ceiling can finalize instead of looping for hours.
-              const failureKey = `${toolRequest.toolName}\n${String(toolResult.output || '').slice(0, 160)}`
+              //
+              // "Identical" means the identical CALL, not merely a matching
+              // error head. Several refusals in this tree carry a fixed
+              // preamble longer than the 160-char head — an oversized-file
+              // read, a declined approval, or a bare `Exit code: 1` from a
+              // shell command that printed nothing — so keying on the output
+              // alone collapsed three DIFFERENT failing calls into one streak
+              // and finalized runs that were still making progress. Three
+              // no-match greps are three failures, not a loop. The arguments
+              // are the discriminator that tells them apart.
+              const failureCallKey = ollamaToolFailureCallKey(
+                toolRequest.toolName,
+                toolRequest.arguments
+              )
+              const failureKey = `${failureCallKey}\n${String(toolResult.output || '').slice(0, 160)}`
               identicalToolFailureStreak =
                 failureKey === lastToolFailureKey ? identicalToolFailureStreak + 1 : 1
               lastToolFailureKey = failureKey
-              if (identicalToolFailureStreak < OLLAMA_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES) {
+              consecutiveToolFailures += 1
+              if (
+                identicalToolFailureStreak < OLLAMA_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES &&
+                consecutiveToolFailures < OLLAMA_MAX_CONSECUTIVE_TOOL_FAILURES
+              ) {
                 productiveToolRanThisTurn = true
               } else {
                 // Once identical failures stop counting as progress, keep the

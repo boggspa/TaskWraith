@@ -476,8 +476,14 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
           // startLine/maxLines cannot rescue an oversized file here yet. Until
           // the streaming window is wired in, name the route that DOES work in
           // this loop rather than leaving a verdict with nowhere to go.
-          sizeLimitErrorMessage:
-            'File is too large to read through the Ollama tool loop. startLine/maxLines do not bypass this gate yet; read a bounded range with run_shell_command, for example: sed -n "300,320p" <path>.'
+          //
+          // The path leads deliberately. This refusal carries no other
+          // discriminator, so a trailing `<path>` placeholder made every
+          // oversized read — different files included — produce a byte-identical
+          // failure whose head fed the identical-failure breaker as one streak.
+          // Naming the file up front keeps the model's suggested command
+          // runnable and keeps three distinct refusals three distinct failures.
+          sizeLimitErrorMessage: `read_file could not read "${rawPath}": it is larger than the ${MAX_EDITOR_FILE_BYTES}-byte Ollama read limit. startLine/maxLines do not bypass this gate yet; read a bounded range with run_shell_command, for example: sed -n "300,320p" "${rawPath}".`
         })
         const targetPath = authority.targetPath
         assertTextBuffer(buffer)

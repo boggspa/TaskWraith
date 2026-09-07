@@ -3237,6 +3237,173 @@ describe('runOllamaProvider streaming', () => {
     expect(contentTexts.join('\n')).not.toContain('stopping instead of looping')
   }, 10000)
 
+  it('keeps crediting DIFFERENT calls that fail with identical output (no-match greps)', async () => {
+    let chatCalls = 0
+    const commands: string[] = []
+    // Six DISTINCT searches, every one a legitimate no-match. `Exit code: 1` is
+    // the whole output a silent non-zero shell command produces, so keying the
+    // identical-failure streak on the output head alone made six different
+    // greps one streak and finalized the run before the model could answer.
+    // The arguments are what tells them apart.
+    const executeTool = vi.fn(async (request: { arguments?: Record<string, unknown> }) => {
+      commands.push(String(request.arguments?.command || ''))
+      return { ok: false, output: 'Exit code: 1' }
+    })
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        if (chatCalls >= 7) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: { role: 'assistant', content: 'All six searches came back empty.' }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: `{"taskwraith_tool":{"name":"run_shell_command","arguments":{"command":"grep -rn symbol${chatCalls} src/"}}}`
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
+
+    expect(executeTool).toHaveBeenCalledTimes(6)
+    // Guard against a vacuous pass: the six calls really were distinct.
+    expect(new Set(commands).size).toBe(6)
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts.join('\n')).toContain('All six searches came back empty.')
+    expect(contentTexts.join('\n')).not.toContain('stopping instead of looping')
+  }, 10000)
+
+  it('still finalizes a run whose calls all fail with ever-changing arguments', async () => {
+    let chatCalls = 0
+    // Backstop for the discriminator above: keying the identical streak on the
+    // arguments means a model that varies them never repeats a key, so the
+    // identical streak alone can no longer bound a run that only ever fails.
+    // Seven failures stay credited, the eighth stops counting, and the ceiling
+    // finalizes four non-productive turns later.
+    const executeTool = vi.fn(async () => ({ ok: false, output: 'Exit code: 1' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        // Fail loudly rather than hanging if the backstop ever goes missing.
+        if (chatCalls > 40) throw new Error('runaway loop: backstop did not finalize the run')
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: `{"taskwraith_tool":{"name":"run_shell_command","arguments":{"command":"probe${chatCalls}"}}}`
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
+
+    // 7 credited failures, then 4 non-productive turns -> ceiling on the 12th.
+    expect(chatCalls).toBe(11)
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts.join('\n')).toContain('stopping instead of looping')
+  }, 10000)
+
+  it('trips the breaker on a repeated failing command whose intent is reworded', async () => {
+    let chatCalls = 0
+    // `intent` is REQUIRED free prose on every shell/edit tool, so it is
+    // narration, not call identity. If it counted toward the failure key a
+    // model could reword it each turn and re-issue the same broken command
+    // forever without ever tripping the breaker.
+    const executeTool = vi.fn(async () => ({ ok: false, output: 'Exit code: 1' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        if (chatCalls > 40) throw new Error('runaway loop: reworded intent evaded the breaker')
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: `{"taskwraith_tool":{"name":"run_shell_command","arguments":{"command":"npm run build","intent":"attempt ${chatCalls}: trying the build once more"}}}`
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
+
+    // Identical call: 2 credited, streak breaks on the 3rd, ceiling on the 7th.
+    // Counting the reworded intent would defer this to the backstop at 11.
+    expect(chatCalls).toBe(6)
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts.join('\n')).toContain('stopping instead of looping')
+  }, 10000)
+
   it('stops a model that re-reads the same unchanged file instead of acting (repeat is not progress)', async () => {
     let chatCalls = 0
     const chatBodies: string[] = []
