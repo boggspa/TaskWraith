@@ -1766,7 +1766,11 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       // A turn that never terminalized is a defect, not an ending. Say which
       // shape it was while the distinction still exists: silence here is what
       // made a real dead-ended run unattributable.
-      if (!turnComplete && !cancelRequested) {
+      // `processError` is excluded on purpose: that path already emitted a
+      // warning naming the actual cause, and this one would only add a vaguer
+      // second warning to the same defect. The lane is deliberately quiet
+      // (warnings are not transcript rows), so keep it one warning per cause.
+      if (!turnComplete && !cancelRequested && !processError) {
         // Guarded: a throwing projection must never stop the close from being
         // delivered — the turn ending is more important than explaining it.
         try {
@@ -1775,7 +1779,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
             text: uncorrelatedTerminals
               ? `The provider's turn terminal did not correlate to this prompt (${uncorrelatedTerminals} dropped), so the turn never completed.`
               : seenAnyTerminalEvent
-                ? 'The provider reported a turn terminal that carried no stop reason, so the turn never completed.'
+                ? 'The provider terminated one prompt and TaskWraith continued with a follow-up, which never reported its own terminal, so the turn never completed.'
                 : 'The provider closed without reporting a turn terminal, so the turn never completed.'
           })
         } catch {

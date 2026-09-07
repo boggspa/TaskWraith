@@ -1102,8 +1102,9 @@ describe('runAcpTurn — neutral core', () => {
     baseOptions(child, {
       deniedToolRecovery: null,
       onPermissionRequest: () => 'deny',
-      onClose: (_code, turnComplete, terminalStatus) =>
+      onClose: (_code, turnComplete, terminalStatus) => {
         closes.push({ turnComplete, terminalStatus: terminalStatus ?? null })
+      }
     })
     child.emit({ jsonrpc: '2.0', id: 1, result: {} })
     child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
@@ -1595,6 +1596,84 @@ describe('runAcpTurn — neutral core', () => {
     await handle.closed
     expect(closes).toEqual([1])
     expect(closeSettled).toBe(true)
+  })
+
+  it('names a swallowed terminal when a turn dead-ends on an id mismatch', async () => {
+    // The correlation `continue` is usually right, but it is also the one path
+    // that can drop the ONLY terminal a turn gets. Without this the run is
+    // indistinguishable from a provider that never terminalized at all.
+    const child = new FakeAcpChild()
+    const { events, handle } = baseOptions(child)
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-1' } })
+    child.emit({ jsonrpc: '2.0', id: 99, result: { stopReason: 'end_turn' } })
+    child.finish(0)
+    await handle.closed
+
+    const warnings = events.filter((event) => event.type === 'provider_warning')
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]?.text).toContain('did not correlate to this prompt (1 dropped)')
+  })
+
+  it('distinguishes a follow-up that never terminalized from a missing terminal', async () => {
+    // Reachable only this way: a terminal DID arrive and was spent launching a
+    // recovery follow-up, which then got none of its own. Reporting that as
+    // "closed without reporting a turn terminal" would be false.
+    const child = new FakeAcpChild()
+    const { events, handle } = baseOptions(child, {
+      deniedToolRecovery: {
+        detect: () => false,
+        shouldRecover: () => true,
+        prompt: 'continue please',
+        warning: 'recovering once'
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-1' } })
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
+    child.finish(0)
+    await handle.closed
+
+    const texts = events
+      .filter((event) => event.type === 'provider_warning')
+      .map((event) => event.text || '')
+    expect(texts).toHaveLength(2)
+    expect(texts[0]).toBe('recovering once')
+    expect(texts[1]).toContain('continued with a follow-up, which never reported its own terminal')
+    expect(texts[1]).not.toContain('closed without reporting')
+  })
+
+  it('says so plainly when no terminal ever arrived', async () => {
+    const child = new FakeAcpChild()
+    const { events, handle } = baseOptions(child)
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-1' } })
+    child.finish(0)
+    await handle.closed
+
+    const warnings = events.filter((event) => event.type === 'provider_warning')
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]?.text).toBe(
+      'The provider closed without reporting a turn terminal, so the turn never completed.'
+    )
+  })
+
+  it('does not add a vaguer second warning when the process error already named the cause', async () => {
+    // The warning lane is deliberately quiet — warnings are not transcript rows
+    // — so a single defect must not produce two records, the second of which is
+    // strictly less informative than the first.
+    const child = new FakeAcpChild()
+    child.autoCloseOnKill = false
+    const { events, handle } = baseOptions(child)
+
+    child.fail(new Error('provider transport failed'))
+    child.finish(null)
+    await handle.closed
+
+    const warnings = events.filter((event) => event.type === 'provider_warning')
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]?.text).toContain('provider transport failed')
+    expect(warnings[0]?.text).not.toContain('never completed')
   })
 
   it('waits for process close and delivers one terminal callback after an error', () => {
