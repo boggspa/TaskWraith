@@ -39,10 +39,12 @@ Clients share the transport-independent protocol in `src/shared/hostProtocol.ts`
 
 - Desktop uses a main-owned authenticated local client behind preload IPC.
 - The TUI uses the authenticated local Host socket directly, and no longer
-  needs the desktop window open first: when no Host is reachable it launches the
-  app executable in windowless Host mode under the TUI's own process identity,
-  waits for an authenticated handshake, then connects. See
-  [`src/tui/WINDOWLESS_HOST.md`](../src/tui/WINDOWLESS_HOST.md).
+  needs the desktop window open first: when no Host is reachable it starts the
+  pure-Node `taskwraith-host` process (`tw` / `node … serve --mode production`),
+  waits for an authenticated handshake, then connects. The older windowless
+  Electron `--taskwraith-headless-host` path is superseded; see
+  [`src/tui/WINDOWLESS_HOST.md`](../src/tui/WINDOWLESS_HOST.md) and
+  [`docs/host-arc/HOST_ARC_STATUS.md`](host-arc/HOST_ARC_STATUS.md).
 - Paired iOS uses the existing E2EE remote bridge and a paired-identity Host
   gateway for snapshots, deltas, governed commands, and durable receipts.
 - Multi-human Channels contribute a compact lifecycle/member projection and
@@ -126,9 +128,9 @@ authority. The desktop picker carries an exact participant id alongside the
 prompt — the legacy embedded `ensemble-dm://` link is still parsed for stored
 and retried prompts — and main re-resolves every desktop/remote direct prompt
 against the canonical roster; ambiguous plain aliases and stale structured ids
-fail before launch. This main-authoritative routing hardening is part of the
-v1.9.5 release baseline, not source-ahead of it: the resolver landed in
-v1.8.5 and the picker's out-of-band id in v1.8.8.
+fail before launch. This main-authoritative routing hardening shipped in
+v1.9.0 and is part of every later public `master` tag (currently v1.9.7): the
+resolver landed in v1.8.5 and the picker's out-of-band id in v1.8.8.
 
 ## Evidence Packs and Capability Ledger
 
