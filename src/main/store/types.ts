@@ -4852,6 +4852,7 @@ export type ApprovalLedgerDecisionSource =
   | 'plan_artifact'
   | 'readonly_shell'
   | 'inspection_shell'
+  | 'host_destructive'
   | 'command_rule'
   | 'external_read'
   | 'explicit_user_request'

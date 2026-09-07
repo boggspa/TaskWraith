@@ -44,6 +44,8 @@ export type AutomaticApprovalDecisionSource =
   | 'plan_artifact'
   | 'readonly_shell'
   | 'inspection_shell'
+  // Host-destructive shell (disk wipe, shutdown, etc.) — deny-wall before YOLO/grants.
+  | 'host_destructive'
   | 'command_rule'
   | 'external_read'
   | 'explicit_user_request'
