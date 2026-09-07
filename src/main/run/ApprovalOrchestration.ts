@@ -25,7 +25,10 @@ import {
   workspaceInspectionExecutionPlan,
   workspaceInspectionShellReason
 } from '../WorkspaceInspectionShell'
-import { workspaceInspectionProgramPlan } from '../WorkspaceInspectionProgram'
+import {
+  workspaceInspectionProgramPlan,
+  type WorkspaceInspectionProgramRecipe
+} from '../WorkspaceInspectionProgram'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
 import { isRecord } from '../settings/MainSanitizers'
@@ -560,7 +563,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     let workspaceInspectionAuditMetadata:
       | {
           executionBoundary: 'brokered-direct-inspection'
-          workspaceInspectionRecipe?: 'workspace_git_snapshot_v1'
+          workspaceInspectionRecipe?: WorkspaceInspectionProgramRecipe
         }
       | undefined
     if (service === 'shellCommands' && !request.forcePrompt) {
