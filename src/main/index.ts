@@ -192,6 +192,7 @@ import {
   normalizeMcpToolArguments,
   isTaskWraithMcpToolName
 } from './mcp/McpResultHelpers'
+import { appendSilentShellCommandNotice } from './mcp/SilentShellFailureNotice'
 import {
   attachMcpResultRepairHints,
   buildCapabilityInvokeUnknownTargetHint
@@ -41382,6 +41383,8 @@ async function executeUnscopedGeminiMcpTool(
             })
       )
       text = formatHostCommandResult(result)
+      // A silent non-zero exit is otherwise the bare `Exit code: N`, naming nothing.
+      text = appendSilentShellCommandNotice(text, executionCommand, result)
       if (workspaceInspectionProgram && !commandRuleMatch) {
         text = `${text}\n\nTaskWraith executed workspace_git_snapshot_v1 as direct read-only stages. Marker output is a bounded list of JSON-escaped names only; ls metadata is intentionally omitted.`
       }
