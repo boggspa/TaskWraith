@@ -14,6 +14,7 @@ import type {
   EffectiveRunPermissions,
   TaskWraithMcpProfileId
 } from '../store/types'
+import type { ContextCompactionSignal } from '../../shared/contextCompaction'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
 import type { AcpChildProcess } from '../acp/AcpTurnClient'
 import { museMspTransportEnabled, museMspSessionResumeEnabled } from '../museGate'
@@ -115,6 +116,17 @@ export interface MuseIpcBridgeDeps {
    * discards the event instead of publishing it.
    */
   sendExit?: (sender: unknown, exitCode: number, route: MuseIpcCompatRoute) => void
+  /**
+   * Chat-card sink for a Muse compaction ITEM. Wired in the composition root
+   * onto `appendContextCompactionMessageToChat` + progress broadcast — the same
+   * pair Codex/Claude/Kimi already use. Absent means the signal stays in-process.
+   */
+  onContextCompaction?: (input: {
+    chatId: string
+    signal: ContextCompactionSignal
+    appRunId: string
+    participantId?: string
+  }) => void
   registerCancel?: (runId: string, cancel: () => void) => void
   clearCancel?: (runId: string) => void
   readAuthJsonText?: () => Promise<string | null>
@@ -725,6 +737,22 @@ export async function runMuseProviderFromIpc(
           ...(mcpSettings ? { mcpSettings } : {}),
           onEvent: emitMuseEvent,
           onWarning: emitMuseWarning,
+          ...(deps.onContextCompaction && route.appChatId
+            ? {
+                onContextCompaction: (signal: ContextCompactionSignal) => {
+                  const chatId = route.appChatId
+                  if (!chatId) return
+                  deps.onContextCompaction!({
+                    chatId,
+                    signal,
+                    appRunId: runId,
+                    ...(payload.ensembleRun?.participantId
+                      ? { participantId: payload.ensembleRun.participantId }
+                      : {})
+                  })
+                }
+              }
+            : {}),
           ...(deps.requestApproval
             ? {
                 onApprovalRequest: async (request) => {

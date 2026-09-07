@@ -1305,4 +1305,47 @@ describe('runMuseProviderFromIpc — transport selection', () => {
     expect(init?.session_id).not.toBe('sess-from-provider')
     expect(result?.providerThreadId).toBe('sess-from-provider')
   })
+
+  it('forwards a Muse compaction signal from the MSP run to the chat-card sink', async () => {
+    process.env[MSP_ENV] = '1'
+    const signal = {
+      kind: 'completed' as const,
+      telemetry: {
+        provider: 'muse',
+        eventUuid: 'cmp-1',
+        trigger: 'auto' as const,
+        preTokens: 900_000,
+        postTokens: 12_000
+      }
+    }
+    const onContextCompaction = vi.fn()
+    const mspRun = vi.fn(
+      async (input: { onContextCompaction?: (value: typeof signal) => void }) => {
+        input.onContextCompaction?.(signal)
+        return successOutcome()
+      }
+    )
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        ensembleRun: { participantId: 'worker' },
+        taskWraithMcpAdvertised: false
+      },
+      baseDeps({
+        runMuseMspProvider: mspRun as never,
+        onContextCompaction
+      })
+    )
+    expect(mspRun).toHaveBeenCalledTimes(1)
+    expect(onContextCompaction).toHaveBeenCalledWith({
+      chatId: 'chat-1',
+      signal,
+      appRunId: 'run-1',
+      participantId: 'worker'
+    })
+  })
 })

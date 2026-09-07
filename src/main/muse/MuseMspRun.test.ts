@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import type { AcpChildProcess } from '../acp/AcpTurnClient'
 import { createMuseIsolatedHome } from './MuseIsolatedHome'
 import { buildMuseTaskWraithMcpSettings } from './MuseMcpConfig'
@@ -66,6 +66,12 @@ async function playTurn(
     usage?: Record<string, unknown>
     context?: Record<string, unknown>
     terminal?: string
+    compaction?: {
+      itemId?: string
+      trigger?: 'auto' | 'manual'
+      tokensBefore?: number
+      tokensAfter?: number
+    }
   } = {}
 ): Promise<void> {
   const sessionId = options.sessionId ?? 'sess-1'
@@ -94,6 +100,41 @@ async function playTurn(
   }
   if (options.context) {
     child.emit({ jsonrpc: '2.0', method: 'session/contextUsage', params: options.context })
+    await flush()
+  }
+  if (options.compaction) {
+    const itemId = options.compaction.itemId ?? 'cmp-1'
+    const trigger = options.compaction.trigger ?? 'auto'
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/started',
+      params: {
+        item: {
+          itemId,
+          kind: 'compaction',
+          revision: 1,
+          status: 'inProgress',
+          trigger
+        }
+      }
+    })
+    await flush()
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/completed',
+      params: {
+        item: {
+          itemId,
+          kind: 'compaction',
+          revision: 2,
+          status: 'completed',
+          outcome: 'compacted',
+          trigger,
+          tokensBefore: options.compaction.tokensBefore ?? 900_000,
+          tokensAfter: options.compaction.tokensAfter ?? 12_000
+        }
+      }
+    })
     await flush()
   }
   child.emit({
@@ -386,6 +427,40 @@ describe('runMuseMspProvider', () => {
     const outcome = await pending
     expect(outcome.status).toBe('success')
     expect(outcome.leasePath).toContain('taskwraith-muse-home-')
+  })
+
+  it('forwards a compaction item observed on the wire to onContextCompaction', async () => {
+    const child = new FakeMspChild()
+    const onContextCompaction = vi.fn()
+    const pending = run(child, {
+      durableSeat: seat('compaction-forward'),
+      onContextCompaction
+    })
+    await playTurn(child, {
+      compaction: {
+        itemId: 'cmp-run',
+        trigger: 'auto',
+        tokensBefore: 900_000,
+        tokensAfter: 12_000
+      }
+    })
+    await pending
+    // Without the run-lane forward, the client emits into a void and this
+    // stays at zero — so a silent no-op cannot pass.
+    expect(onContextCompaction).toHaveBeenCalledWith({
+      kind: 'started',
+      telemetry: { provider: 'muse', eventUuid: 'cmp-run', trigger: 'auto' }
+    })
+    expect(onContextCompaction).toHaveBeenCalledWith({
+      kind: 'completed',
+      telemetry: {
+        provider: 'muse',
+        eventUuid: 'cmp-run',
+        trigger: 'auto',
+        preTokens: 900_000,
+        postTokens: 12_000
+      }
+    })
   })
 })
 

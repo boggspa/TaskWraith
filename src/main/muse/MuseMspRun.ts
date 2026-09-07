@@ -31,6 +31,7 @@ import {
   type MuseReasoningEffort,
   type MuseSandboxNetworkMode
 } from './MuseCliArgs'
+import type { ContextCompactionSignal } from '../../shared/contextCompaction'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
 import { composeMuseLaunchPrompt } from './MuseLongTurnProgress'
 import { createMuseIsolatedHome, projectMuseAuthJson } from './MuseIsolatedHome'
@@ -114,6 +115,8 @@ export interface MuseMspRunInput {
   readonly onEvent?: (event: MuseExecNormalizedEvent) => void
   readonly onWarning?: (message: string) => void
   readonly onSessionReady?: (info: MuseMspSessionReadyInfo) => void
+  /** Compaction ITEM lifecycle from the client — occupancy pressure never arrives here. */
+  readonly onContextCompaction?: (signal: ContextCompactionSignal) => void
   readonly onApprovalRequest?: (
     request: MuseMspApprovalRequest
   ) => MuseMspApprovalVerdict | Promise<MuseMspApprovalVerdict>
@@ -344,6 +347,7 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
       onContextUsage: (snapshot) => {
         latest.context = snapshot
       },
+      ...(input.onContextCompaction ? { onContextCompaction: input.onContextCompaction } : {}),
       onWarning: noteWarning,
       ...(input.onApprovalRequest ? { onApprovalRequest: input.onApprovalRequest } : {}),
       onClose: (code, closeTerminal, error) => {
