@@ -628,7 +628,7 @@ describe('AntiGravity evidence source equivalence guard', () => {
       '--mode',
       'plan',
       '--print-timeout',
-      '30m',
+      '24h',
       '--model',
       'claude-sonnet-4-5',
       '--effort',

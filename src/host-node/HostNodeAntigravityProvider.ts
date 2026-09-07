@@ -1,6 +1,7 @@
 import { spawn as nodeSpawn } from 'node:child_process'
 
 import { antigravityVariantGroupForModel } from '../shared/antigravityAgyModelGrouping'
+import { AGY_PRINT_TIMEOUT } from '../shared/antigravityPrintTimeout'
 import { ANTIGRAVITY_PROVIDER_ID } from '../shared/retiredProviders'
 import {
   discoverHostStandaloneAntigravity,
@@ -41,7 +42,6 @@ import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLaunche
 import { meaningfulAcpStderrLine } from './HostNodeAcpStderr'
 
 const PROBE_CACHE_MS = 1_000
-const AGY_PRINT_TIMEOUT = '30m'
 const MAX_RAW_OUTPUT_CHARS = 256 * 1024
 // eslint-disable-next-line no-control-regex -- Host identifiers reject C0 controls.
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/

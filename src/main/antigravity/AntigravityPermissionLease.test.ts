@@ -12,6 +12,7 @@ import {
   recoverInterruptedAntigravityPermissionLease
 } from './AntigravityPermissionLease'
 import { isReadOnlyGitShellCommand } from '../ReadOnlyGitShellCommand'
+import { AGY_PRINT_TIMEOUT_MS } from '../../shared/antigravityPrintTimeout'
 import { isInspectionShellCommand } from '../ShellCommandTierPolicy'
 
 const tempDirectories: string[] = []
@@ -780,6 +781,30 @@ describe('AntigravityPermissionLeaseCoordinator MCP overlay — sibling instance
 
     expect(recovered).toBe(true)
     expect(await readFile(configPath, 'utf8')).toBe('')
+    await lease.release()
+  })
+
+  // The staleness bound is what separates a recycled pid from a long run, so it
+  // MUST stay strictly above the agy print-mode wall clock. Below it, a run that
+  // legitimately used its whole cap reads as abandoned — and `cleanMcpReceipt`'s
+  // ownership guard cannot save it, because the receipt it re-reads IS this one,
+  // so the owner ids match and the rollback proceeds. The live run would lose
+  // every TaskWraith tool with nothing told to the owning process.
+  //
+  // Aged by the cap itself rather than a literal: raising the cap moves this
+  // case with it, and lowering the bound under the cap fails here.
+  it('does NOT recover a live owner whose run has used the entire print-mode cap', async () => {
+    const { configPath, receiptPath, installed, lease } = await installedLane()
+    await reassignReceipt(receiptPath, {
+      ownerId: 'long-running-sibling',
+      ownerPid: process.pid,
+      installedAt: new Date(Date.now() - AGY_PRINT_TIMEOUT_MS).toISOString()
+    })
+
+    const recovered = await recoverInterruptedAntigravityMcpLease(configPath)
+
+    expect(recovered).toBe(false)
+    expect(await readFile(configPath, 'utf8')).toBe(installed)
     await lease.release()
   })
 

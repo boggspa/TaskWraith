@@ -279,7 +279,7 @@ describe('HostNodeAntigravityProvider run path', () => {
       '--mode',
       'plan',
       '--print-timeout',
-      '30m',
+      '24h',
       '--new-project',
       '--model',
       'gemini-3.7-flash-low',

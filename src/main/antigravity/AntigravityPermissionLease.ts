@@ -8,6 +8,7 @@ import {
   serializeAgyMcpConfigDocument,
   type AgyMcpServerRegistration
 } from './AntigravityMcpConfig'
+import { AGY_PRINT_TIMEOUT_MS } from '../../shared/antigravityPrintTimeout'
 
 const RECEIPT_SCHEMA_VERSION = 1
 const MAX_SETTINGS_BYTES = 1024 * 1024
@@ -567,13 +568,29 @@ function mcpReceiptHeldByLiveSibling(receipt: AntigravityMcpLeaseReceipt): boole
   // Backstop: a pid outlives its process, and a recycled one would otherwise
   // read as a live owner forever — leaving TaskWraith registered in the user's
   // GLOBAL agy config permanently, which is the exact leak this lease exists to
-  // avoid. agy print runs are capped at AGY_READ_ONLY_PRINT_TIMEOUT (30m), so
-  // anything this old is not a run still in flight.
+  // avoid. MAX_MCP_LEASE_HOLD_MS is held strictly above the agy print-mode wall
+  // clock below, so a receipt older than it cannot belong to a run still in
+  // flight.
   return !mcpReceiptIsStale(receipt)
 }
 
-/** Generous next to a 30-minute print cap; the pid check is the real signal. */
-const MAX_MCP_LEASE_HOLD_MS = 12 * 60 * 60 * 1000
+/**
+ * The age past which a receipt can no longer belong to a live run.
+ *
+ * The invariant is a relationship, not a number: this MUST stay strictly
+ * greater than the agy print-mode wall clock, because `installedAt` is stamped
+ * before the child is spawned — a run that uses its entire cap is already
+ * fractionally older than the cap by the time it exits. The margin covers
+ * install, spawn, and teardown.
+ *
+ * Inverting it is a silent data-loss bug, not a tuning miss: a live run's
+ * receipt would read as stale, and `cleanMcpReceipt`'s ownership guard cannot
+ * catch it, because the receipt being recovered IS the on-disk one. A peer
+ * would restore the user's original `mcp_config.json` and unlink the receipt
+ * mid-run, and the owning process would never learn it had been stripped.
+ * Derived rather than written as a literal so it cannot drift below the cap.
+ */
+const MAX_MCP_LEASE_HOLD_MS = AGY_PRINT_TIMEOUT_MS + 2 * 60 * 60 * 1000
 
 function mcpReceiptIsStale(receipt: AntigravityMcpLeaseReceipt): boolean {
   if (typeof receipt.installedAt !== 'string') return false

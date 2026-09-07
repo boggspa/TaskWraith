@@ -1,3 +1,5 @@
+import { AGY_PRINT_TIMEOUT } from '../../shared/antigravityPrintTimeout'
+
 export const ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON =
   'AntiGravity produced no assistant output because official agy headless mode auto-denied a native tool permission (read_file, write_file, command, or unsandboxed). TaskWraith preserved the signed run posture without bypassing provider permissions; configure the matching agy allow rule or provide the needed context in the prompt.'
 
@@ -53,4 +55,26 @@ export function isAntigravityHeadlessPermissionNoOutput(text: unknown): boolean 
     /headless mode/i.test(text) &&
     /auto-denied/i.test(text)
   )
+}
+
+/**
+ * agy's print-mode wall clock (`--print-timeout`, which TaskWraith sets to
+ * {@link AGY_PRINT_TIMEOUT}) expired and agy killed the turn. Bare, agy reports
+ * only `timeout waiting for response`, which reads like a network stall and
+ * sends the operator hunting for the wrong fault.
+ */
+export const ANTIGRAVITY_PRINT_MODE_TIMEOUT_REASON = `AntiGravity produced no result because official agy's print-mode wall clock expired: the turn outran the --print-timeout TaskWraith passes (${AGY_PRINT_TIMEOUT}) and agy terminated it. Nothing was denied and no permission was involved — resume the conversation to continue, or split the work into shorter turns.`
+
+/**
+ * Official agy emits exactly `Error: timeout waiting for response` on stderr
+ * when the print-mode wall clock runs out. Anchored to whole lines and to that
+ * exact wording so an MCP, network, or tool timeout carrying similar words is
+ * never misattributed to the print cap.
+ */
+const AGY_PRINT_MODE_TIMEOUT_LINE_RE =
+  /(?:^|\r?\n)[ \t]*Error:[ \t]*timeout waiting for response[ \t]*(?:\r?\n|$)/i
+
+export function isAntigravityPrintModeTimeout(text: unknown): boolean {
+  if (typeof text !== 'string') return false
+  return AGY_PRINT_MODE_TIMEOUT_LINE_RE.test(text)
 }
