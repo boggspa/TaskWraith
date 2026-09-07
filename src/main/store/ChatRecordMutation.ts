@@ -1,4 +1,11 @@
-import type { ChatMessage, ChatRecord, ChatRun, ThreadTitleProvenance, ToolActivity } from './types'
+import type {
+  ChatMessage,
+  ChatRecord,
+  ChatRun,
+  EnsembleConfig,
+  ThreadTitleProvenance,
+  ToolActivity
+} from './types'
 import { isPlaceholderThreadTitle } from '../../shared/threadTitles'
 import {
   buildChatTranscriptOps,
@@ -65,6 +72,17 @@ export type ChatRecordMutationOperation =
       runId: string
       run: ChatRun
     }
+  | {
+      type: 'ensemble_patch'
+      set: Record<string, unknown>
+      clear: string[]
+    }
+  | {
+      type: 'ensemble_participant_patch'
+      participantId: string
+      set: Record<string, unknown>
+      clear: string[]
+    }
 
 export interface ChatRecordMutationBatch {
   format: typeof CHAT_RECORD_MUTATION_FORMAT
@@ -120,6 +138,8 @@ interface ObjectPatch {
 }
 
 const TOP_LEVEL_EXCLUDES = new Set(['appChatId', 'messages', 'runs', 'persistenceRevision'])
+const AUTHORED_TOP_LEVEL_EXCLUDES = new Set([...TOP_LEVEL_EXCLUDES, 'ensemble'])
+const ENSEMBLE_PARTICIPANT_EXCLUDES = new Set(['participants'])
 const REBASE_TOP_LEVEL_EXCLUDES = new Set([...TOP_LEVEL_EXCLUDES, 'title', 'threadTitle'])
 const MESSAGE_FIELD_EXCLUDES = new Set(['id', 'content', 'toolActivities'])
 const MESSAGE_REBASE_EXCLUDES = new Set(['id'])
@@ -314,6 +334,93 @@ function deriveMessageOperations(
   return operations.length !== operationCount
 }
 
+function deriveAuthoredEnsembleOperations(
+  before: EnsembleConfig | undefined,
+  after: EnsembleConfig | undefined
+): ChatRecordMutationOperation[] {
+  if (Object.is(before, after)) return []
+  if (!before || !after) {
+    if (!after) {
+      return before ? [{ type: 'record_patch', set: {}, clear: ['ensemble'] }] : []
+    }
+    return [{ type: 'record_patch', set: { ensemble: jsonClone(after) }, clear: [] }]
+  }
+
+  const beforeSeats = before.participants || []
+  const afterSeats = after.participants || []
+  const rosterReplaced =
+    beforeSeats.length !== afterSeats.length ||
+    beforeSeats.some((seat, index) => seat.id !== afterSeats[index]?.id)
+  if (rosterReplaced) {
+    return [{ type: 'record_patch', set: { ensemble: jsonClone(after) }, clear: [] }]
+  }
+
+  const operations: ChatRecordMutationOperation[] = []
+  const chromePatch = objectPatch(
+    before as unknown as Record<string, unknown>,
+    after as unknown as Record<string, unknown>,
+    ENSEMBLE_PARTICIPANT_EXCLUDES
+  )
+  if (hasPatch(chromePatch)) operations.push({ type: 'ensemble_patch', ...chromePatch })
+
+  for (let index = 0; index < afterSeats.length; index += 1) {
+    const previousSeat = beforeSeats[index]
+    const nextSeat = afterSeats[index]
+    if (Object.is(previousSeat, nextSeat)) continue
+    const seatPatch = objectPatch(
+      previousSeat as unknown as Record<string, unknown>,
+      nextSeat as unknown as Record<string, unknown>,
+      new Set()
+    )
+    if (!hasPatch(seatPatch)) continue
+    operations.push({
+      type: 'ensemble_participant_patch',
+      participantId: nextSeat.id,
+      ...seatPatch
+    })
+  }
+  return operations
+}
+
+function deriveRunOperations(
+  beforeRuns: ChatRun[],
+  afterRuns: ChatRun[]
+): ChatRecordMutationOperation[] {
+  if (Object.is(beforeRuns, afterRuns)) return []
+  if (
+    beforeRuns.length === afterRuns.length &&
+    beforeRuns.every((run, index) => run.runId === afterRuns[index]?.runId)
+  ) {
+    const operations: ChatRecordMutationOperation[] = []
+    for (let index = 0; index < afterRuns.length; index += 1) {
+      const previous = beforeRuns[index]
+      const next = afterRuns[index]
+      if (Object.is(previous, next) || jsonEqual(previous, next)) continue
+      operations.push({ type: 'run_put', runId: next.runId, run: jsonClone(next) })
+    }
+    return operations
+  }
+  const operations: ChatRecordMutationOperation[] = []
+  const runStructure = deriveArrayStructure(beforeRuns, afterRuns, (run) => run.runId)
+  if (runStructure.splice) {
+    operations.push({
+      type: 'runs_splice',
+      index: runStructure.splice.index,
+      deleteCount: runStructure.splice.deleteCount,
+      runs: runStructure.splice.items
+    })
+  }
+  for (const pair of runStructure.stablePairs) {
+    if (jsonEqual(pair.before, pair.after)) continue
+    operations.push({
+      type: 'run_put',
+      runId: pair.after.runId,
+      run: jsonClone(pair.after)
+    })
+  }
+  return operations
+}
+
 export function deriveChatRecordMutationWithProjection(
   before: ChatRecord,
   after: ChatRecord,
@@ -330,13 +437,17 @@ export function deriveChatRecordMutationWithProjection(
     )
   }
 
+  const authored = Boolean(options.authoredTranscript)
   const operations: ChatRecordMutationOperation[] = []
   const recordPatch = objectPatch(
     before as unknown as Record<string, unknown>,
     after as unknown as Record<string, unknown>,
-    TOP_LEVEL_EXCLUDES
+    authored ? AUTHORED_TOP_LEVEL_EXCLUDES : TOP_LEVEL_EXCLUDES
   )
   if (hasPatch(recordPatch)) operations.push({ type: 'record_patch', ...recordPatch })
+  if (authored) {
+    operations.push(...deriveAuthoredEnsembleOperations(before.ensemble, after.ensemble))
+  }
 
   let transcriptOps: ChatUpdateTranscriptOp[] | null
   let changedMessageCount: number
@@ -383,23 +494,7 @@ export function deriveChatRecordMutationWithProjection(
     }
   }
 
-  const runStructure = deriveArrayStructure(before.runs, after.runs, (run) => run.runId)
-  if (runStructure.splice) {
-    operations.push({
-      type: 'runs_splice',
-      index: runStructure.splice.index,
-      deleteCount: runStructure.splice.deleteCount,
-      runs: runStructure.splice.items
-    })
-  }
-  for (const pair of runStructure.stablePairs) {
-    if (jsonEqual(pair.before, pair.after)) continue
-    operations.push({
-      type: 'run_put',
-      runId: pair.after.runId,
-      run: jsonClone(pair.after)
-    })
-  }
+  operations.push(...deriveRunOperations(before.runs, after.runs))
 
   return {
     batch: {
@@ -780,6 +875,32 @@ export function applyChatRecordMutation(
         const index = record.runs.findIndex((run) => run.runId === operation.runId)
         if (index < 0) throw new Error(`Chat run ${operation.runId} is missing`)
         record.runs[index] = jsonClone(operation.run)
+        break
+      }
+      case 'ensemble_patch': {
+        if (!record.ensemble) throw new Error('Chat mutation ensemble is missing')
+        if (
+          Object.prototype.hasOwnProperty.call(operation.set, 'participants') ||
+          operation.clear.includes('participants')
+        ) {
+          throw new Error('Ensemble patch cannot replace participants')
+        }
+        applyPatch(record.ensemble as unknown as Record<string, unknown>, operation)
+        break
+      }
+      case 'ensemble_participant_patch': {
+        const seats = record.ensemble?.participants
+        const index = seats?.findIndex((seat) => seat.id === operation.participantId) ?? -1
+        if (!seats || index < 0) {
+          throw new Error(`Chat ensemble participant ${operation.participantId} is missing`)
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(operation.set, 'id') ||
+          operation.clear.includes('id')
+        ) {
+          throw new Error('Ensemble participant patch cannot replace identity')
+        }
+        applyPatch(seats[index] as unknown as Record<string, unknown>, operation)
         break
       }
     }

@@ -1,11 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, ChatRecord, ChatRun, ToolActivity } from './types'
 import {
   applyChatRecordMutation,
   deriveChatRecordMutation,
   deriveChatRecordMutationWithProjection,
   estimateChatRecordMutationBytes,
-  rebaseChatRecordUpdate
+  rebaseChatRecordUpdate,
+  type AuthoredChatTranscriptMutation
 } from './ChatRecordMutation'
 
 function message(id: string, content: string, toolActivities?: ToolActivity[]): ChatMessage {
@@ -379,5 +380,138 @@ describe('ChatRecordMutation', () => {
     expect(batch.operations[1]).toMatchObject({ type: 'message_content_append' })
     expect(mutationBytes).toBeLessThan(1_000)
     expect(mutationBytes * 500).toBeLessThan(fullRecordBytes)
+  })
+
+  it('does not stringify a rebuilt ensemble roster or walk shared runs on an authored stream persist', () => {
+    const runs = Array.from({ length: 437 }, (_, index) => run(`run-${index}`))
+    const guardedRuns = new Proxy(runs, {
+      get(target, property, receiver) {
+        if (
+          property === Symbol.iterator ||
+          (typeof property === 'string' && /^\d+$/.test(property))
+        ) {
+          throw new Error('authored derivation walked shared runs')
+        }
+        return Reflect.get(target, property, receiver)
+      }
+    })
+    const instructions = 'x'.repeat(50_000)
+    const participants = Array.from({ length: 26 }, (_, index) => ({
+      id: `seat-${index}`,
+      provider: 'pi' as const,
+      enabled: true,
+      role: `Seat${index}`,
+      instructions,
+      order: index,
+      tokenTotals: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
+    }))
+    const ensemble = {
+      enabled: true,
+      maxParticipants: 50,
+      orchestrationMode: 'continuous' as const,
+      participants
+    }
+    const before = chat([message('m-1', 'Hello')], guardedRuns, 1, { ensemble })
+    const afterParticipants = participants.map((participant, index) =>
+      index === 0
+        ? {
+            ...participant,
+            tokenTotals: { input_tokens: 2, output_tokens: 1, total_tokens: 3 }
+          }
+        : participant
+    )
+    const after = chat([message('m-1', 'Hello world')], guardedRuns, 2, {
+      ensemble: {
+        ...ensemble,
+        participants: afterParticipants,
+        updatedAt: 99
+      }
+    })
+    const authoredTranscript: AuthoredChatTranscriptMutation = {
+      operations: [
+        {
+          type: 'message_content_append',
+          messageId: 'm-1',
+          content: ' world'
+        }
+      ],
+      transcriptOps: [{ op: 'update', id: 'm-1', message: after.messages[0] }],
+      changedMessageCount: 1
+    }
+
+    const stringify = vi.spyOn(JSON, 'stringify')
+    const derived = deriveChatRecordMutationWithProjection(before, after, { authoredTranscript })
+    const oversized = stringify.mock.results.some(
+      (result) => typeof result.value === 'string' && result.value.length > 100_000
+    )
+    stringify.mockRestore()
+
+    expect(oversized).toBe(false)
+    expect(JSON.stringify(derived.batch).length).toBeLessThan(8_000)
+    expect(derived.batch.operations.map((operation) => operation.type)).toEqual(
+      expect.arrayContaining(['message_content_append', 'ensemble_participant_patch'])
+    )
+    expect(
+      derived.batch.operations.some(
+        (operation) => operation.type === 'record_patch' && 'ensemble' in operation.set
+      )
+    ).toBe(false)
+    const replayed = applyChatRecordMutation({ ...before, runs }, derived.batch)
+    expect(replayed.messages[0].content).toBe('Hello world')
+    expect(replayed.ensemble?.participants[0]?.tokenTotals).toEqual({
+      input_tokens: 2,
+      output_tokens: 1,
+      total_tokens: 3
+    })
+  })
+
+  it('keeps an authored 26-seat persist well under the G-lag budget', () => {
+    const runs = Array.from({ length: 437 }, (_, index) => run(`run-${index}`))
+    const instructions = 'x'.repeat(50_000)
+    const participants = Array.from({ length: 26 }, (_, index) => ({
+      id: `seat-${index}`,
+      provider: 'pi' as const,
+      enabled: true,
+      role: `Seat${index}`,
+      instructions,
+      order: index,
+      tokenTotals: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
+    }))
+    const ensemble = {
+      enabled: true,
+      maxParticipants: 50,
+      orchestrationMode: 'continuous' as const,
+      participants
+    }
+    const before = chat([message('m-1', 'Hello')], runs, 1, { ensemble })
+    const after = chat([message('m-1', 'Hello world')], runs, 2, {
+      ensemble: {
+        ...ensemble,
+        participants: participants.map((participant, index) =>
+          index === 0
+            ? {
+                ...participant,
+                tokenTotals: { input_tokens: 2, output_tokens: 1, total_tokens: 3 }
+              }
+            : participant
+        )
+      }
+    })
+    const authoredTranscript: AuthoredChatTranscriptMutation = {
+      operations: [
+        {
+          type: 'message_content_append',
+          messageId: 'm-1',
+          content: ' world'
+        }
+      ],
+      transcriptOps: [{ op: 'update', id: 'm-1', message: after.messages[0] }],
+      changedMessageCount: 1
+    }
+
+    const started = performance.now()
+    deriveChatRecordMutationWithProjection(before, after, { authoredTranscript })
+    const elapsedMs = performance.now() - started
+    expect(elapsedMs).toBeLessThan(25)
   })
 })
