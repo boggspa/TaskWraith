@@ -49,7 +49,7 @@ small Ensemble to deliberate and review in a shared transcript.
   workspace around the way you work.
 - **Spend with no surprises.** Keep provider usage signals and run activity
   visible while each account and quota stays under its provider's control.
-- **Powerful on day one.** Welcome, Goals, Diff Studio, Canvas, terminal, and
+- **Powerful on day one.** Welcome, Goals, Diff Studio, Canvas, terminal, TaskWraith Studio, and
   familiar chat workflows are ready when you need them.
 
 <table>
@@ -107,7 +107,7 @@ npm run dev
 | [Positioning](docs/POSITIONING.md)                | The product promise, claim boundaries, and a guide to solo chats, sub-threads, and Ensembles    |
 | [Trust & Safety](docs/TRUST_AND_SAFETY.md)        | Safe first runs, permissions, storage, provider boundaries, and release verification            |
 | [Privacy](docs/PRIVACY.md)                        | What stays local, what providers receive, optional observation, and remote companion boundaries |
-| [Security](SECURITY.md)                           | Supported versions, reporting, disclosure, and release security                                 |
+| [Security](SECURITY.md)                           | Supported Security Posture, reporting, disclosure, and release security                                 |
 | [Safety](docs/SAFETY.md)                          | Engineering guardrails, implemented protections, and known limits                               |
 | [Model Catalogue](docs/MODEL_CATALOGUE.md)        | Current provider and model rows, reasoning controls, and route-specific limits                  |
 | [Changelog](CHANGELOG.md)                         | Shipped releases and the clearly labelled source-ahead section                                  |

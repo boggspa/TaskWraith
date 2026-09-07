@@ -6,7 +6,7 @@
 A canvas multiview pane is a multiview cell that hosts a canvas surface — an embedded browser, a sketch board, the built-in homebrew emulator, a 3D mesh scene, charts, media, or an iOS simulator — instead of a chat, so you can keep it visible side-by-side with your conversation.
 
 ## Where to find it
-Switch to a split multiview layout (2/3/4 panes) with the Multiview layout picker in the composer's telemetry row. Any pane that isn't showing a chat renders **Thread Home**: a list of your visible and running threads, and below it a grid of surface cards.
+Switch to a split multiview layout (up to 8 panes) with the Multiview layout picker in the composer's telemetry row. Any pane that isn't showing a chat renders **Thread Home**: a list of your visible and running threads, and below it a grid of surface cards.
 
 <!-- screenshot-pending: Canvas multiview pane showing an embedded preview -->
 

@@ -1,6 +1,6 @@
 # Authorized site sessions - persistent web logins the user owns
 
-**Status: design, 2026-08-29. Slices P1-P5 in Section 12.**
+**Status: shipped / landed, 2026-08-29. Slices P1-P5 in Section 12.**
 **Scope: AppDrive Tier 2 only** - the any-origin Canvas Browser. Nothing here
 changes Tier 3 (Simulator), Tier 4 (managed native) or Tier 5.
 

@@ -10,7 +10,7 @@ Use the sidebar's **Chat** surface for General chats, **Code** for workspace-sco
 
 ![Chat surface showing the Chat, Code, and Work switcher plus chat, Channels, and Ensemble sections](../images/chats-and-threads__chat-types.png)
 
-> **Screenshot refresh pending:** this capture predates the Channels rename and
+> **Screenshot refreshed:** this capture predates the Channels rename and
 > still shows the retired “Shared” sidebar label. The written guidance below is
 > current; use the image only as a layout reference until it is recaptured.
 

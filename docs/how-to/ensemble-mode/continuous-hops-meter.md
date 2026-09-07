@@ -13,7 +13,7 @@ In the **Turns** cell on the second row of the Roster Presets section above the 
 ## How to use it
 1. Watch the chip while a round runs — the first number climbs as agents hand work on.
 2. Click the chip to open **Max handoff turns**.
-3. Type a new limit between 1 and 500 and click **Set**.
+3. Type a new limit between 1 and 1200 and click **Set**.
 4. The new limit takes effect at once, including on a round that is already running.
 
 ## Tips & related

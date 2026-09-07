@@ -636,7 +636,7 @@ This codebase punishes incomplete seam sweeps — `canvasInteraction` and `canva
 
 ### 12.3 Pre-existing gaps found in passing (not caused by this work)
 
-- `threadMessage` is missing from the `tw_approvals_list` service enum ([McpToolCatalog.ts](../../src/main/McpToolCatalog.ts)) — agents cannot filter for it.
+- `threadMessage` is missing from the `approval_status` service enum ([McpToolCatalog.ts](../../src/main/McpToolCatalog.ts)) — agents cannot filter for it.
 - `TaskWraithPluginAgenticServiceId` is missing `externalPublish` ([PluginTypes.ts](../../src/shared/plugins/PluginTypes.ts)) although `PluginManifest.ts:104` accepts it.
 - The earlier `CanvasDriverKind: 'window'` gap is closed by `CanvasWindowDriver`; its narrow, consented contract is recorded in §12b rather than treated as a generic Canvas driver.
 

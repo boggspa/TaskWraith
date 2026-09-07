@@ -96,7 +96,7 @@ approach without losing the original timeline.
   native vs emulated for the active provider).
 - Inspector / thread controls use the same capability summary.
 - **Codex** is the only provider with true native fork support today. Runnable
-  Claude, Kimi, Cursor, Grok, and Ollama seats use **emulated** fork fallbacks
+  Claude, Kimi, Cursor, Grok, Ollama, Pi, Mistral, Muse, Devin, and AntiGravity seats use **emulated** fork fallbacks
   until a provider adds native fork APIs.
 
 Emulated forks preserve TaskWraith audit and workspace boundaries; they do not

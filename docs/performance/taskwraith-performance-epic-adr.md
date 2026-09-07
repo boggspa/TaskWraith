@@ -1069,7 +1069,7 @@ A canonical renderer store (phase 6) is a **migration-class** change and gets it
 
 1. Honest instrumentation: IPC-byte, ledger-latency, and retained-memory probes (default-off).
 2. Safe pruning / popover equality / "Submitting…" feedback fixes — behavior-only, no format change.
-3. Replace the approval ledger's full-file rewrite with a versioned append-event log, preserving the §5.2 durability ordering exactly (true append + fsync before ACK; the `.json` file becomes a periodic snapshot, not the hot path; torn last lines recover).
+3. Shipped: Replace the approval ledger's full-file rewrite with a versioned append-event log, preserving the §5.2 durability ordering exactly (true append + fsync before ACK; the `.json` file becomes a periodic snapshot, not the hot path; torn last lines recover).
 4. Define operation authority, durability barriers, and ACK/recovery semantics.
 5. Fan-out authors one composed operation batch per flush, carried through transport and persistence (corrects correction 4's gap).
 6. Canonical renderer store: shells in React state so demotion actually releases the primary record (correction 3), behind a new compatibility flag.
