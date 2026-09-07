@@ -2978,6 +2978,88 @@ describe('runOllamaProvider streaming', () => {
     expect(lines.some((line) => line.payload.type === 'provider_warning')).toBe(false)
   })
 
+  it('does not finalize a named Ollama Cloud ensemble seat at the local-model retry ceiling', async () => {
+    // K2.7 Code (and the other named Cloud seats) can emit several reasoning-only
+    // turns while still making progress. The local-model retry ceiling used to
+    // stop that as "deferring to the panel" even with no tool error.
+    let chatCalls = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      const parsed = new URL(String(url))
+      if (parsed.origin !== 'https://ollama.com') {
+        throw new Error('local daemon is offline')
+      }
+      if (parsed.pathname === '/api/tags') {
+        return jsonResponse({ models: [{ model: 'kimi-k2.7-code' }] })
+      }
+      if (parsed.pathname === '/api/show') {
+        return jsonResponse({
+          details: { family: 'kimi', context_length: 262_144 },
+          capabilities: ['completion', 'tools']
+        })
+      }
+      if (parsed.pathname === '/api/chat') {
+        chatCalls += 1
+        if (chatCalls <= 4) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                thinking: 'Inspecting the assigned slice before I answer.'
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 10 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'Slice complete: the coordinator owns persistence.'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({
+      fetchMock,
+      cloudApiKey: 'ollama-secret',
+      settings: {
+        ollamaDefaultModel: 'kimi-k2.7-code:cloud',
+        ollamaModelPreflightAt: {}
+      },
+      executeTool: async () => ({ ok: true, output: '' })
+    })
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        model: 'kimi-k2.7-code:cloud',
+        ensembleRun: {
+          roundId: 'round-1',
+          participantId: 'participant-ollama',
+          provider: 'ollama',
+          role: 'SliceWorker',
+          order: 9,
+          ensembleContextChars: 24000,
+          ensembleContextTurns: 8
+        }
+      },
+      baseRoute
+    )
+
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(chatCalls).toBe(5)
+    expect(contentTexts.join('\n')).toContain('Slice complete: the coordinator owns persistence.')
+    expect(contentTexts.join('\n')).not.toContain('deferring to the panel')
+    expect(contentTexts.join('\n')).not.toContain('stopping instead of looping')
+  })
+
   it('lets a model read straight away now that retrieval-first is retired', async () => {
     let chatCalls = 0
     // This model goes straight to read_file with no explore call first. That

@@ -818,6 +818,59 @@ describe('HostNodeOllamaProvider Host-owned tool tier', () => {
     expect(assistant?.text).toContain('stopping instead of looping')
   })
 
+  it('does not apply the local-model retry ceiling to a named Ollama Cloud seat', async () => {
+    const cloudOffers = {
+      ...OLLAMA_OFFERS,
+      models: [
+        {
+          modelId: 'minimax-m3:cloud',
+          label: 'MiniMax M3',
+          available: true,
+          default: true,
+          reasoning: [
+            { reasoningId: 'off', label: 'Off', available: true },
+            { reasoningId: 'on', label: 'On', available: true }
+          ]
+        }
+      ]
+    }
+    mockFetchCatalog.mockResolvedValue(
+      mockCatalog(
+        [
+          {
+            id: 'minimax-m3:cloud',
+            source: 'cloud',
+            transport: 'cloud-direct',
+            isDefault: true
+          }
+        ],
+        { localReachable: false, cloudAuthenticated: true }
+      )
+    )
+    mockRunChatLoop.mockImplementation(async (options) => {
+      await options.executeTool?.({ name: 'read_file', arguments: { path: '../out' } })
+      return {
+        content: '',
+        toolCalls: [{ name: 'read_file', arguments: { path: '../out' } }],
+        toolResults: []
+      }
+    })
+    const runPort = runPortAt(realWorkspace())
+    runPort.thread = threadFixture({
+      modelId: 'minimax-m3:cloud',
+      reasoningId: 'on',
+      workspace: runPort.thread!.workspace
+    })
+    const result = await runOnce(runPort, {
+      offers: cloudOffers,
+      cloudApiKey: 'ollama-cloud-key'
+    })
+    expect(result.status).toBe('completed')
+    expect(mockRunChatLoop).toHaveBeenCalledTimes(HOST_OLLAMA_MAX_TOOL_TURNS)
+    const assistant = runPort.transcripts.find((entry) => entry.role === 'assistant')
+    expect(assistant?.text ?? '').not.toContain('stopping instead of looping')
+  })
+
   it('bounds a model that keeps calling tools productively forever', async () => {
     mockRunChatLoop.mockImplementation(async (options) => {
       await options.executeTool?.({ name: 'list_dir', arguments: { path: '.' } })

@@ -38,6 +38,7 @@ import {
   ollamaCloudBaseModelId,
   ollamaCloudModelDisplayName
 } from '../../shared/ollamaModelAvailability'
+import { ollamaToolLoopRetryCeilingEnabled } from '../../shared/ollamaLoopProtectionPolicy'
 import type {
   AppSettings,
   OllamaToolControlTier,
@@ -4375,7 +4376,13 @@ export async function runOllamaProvider(
     }
     for (let turnIndex = 0; ; turnIndex += 1) {
       assertOllamaTransportLaunchAuthorized(controller.signal, launchAuthorized)
-      if (consecutiveNonProductiveTurns >= OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS) {
+      // Named Ollama Cloud seats are exempt: reasoning-only turns there are
+      // not a stuck local-model loop, and the ceiling's panel-defer text is a
+      // false stop. Local models and other Cloud rows still finalize here.
+      if (
+        ollamaToolLoopRetryCeilingEnabled(model) &&
+        consecutiveNonProductiveTurns >= OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS
+      ) {
         emitOllamaContent(ollamaCeilingFinalizeContent(stickyRetryOptions))
         break
       }

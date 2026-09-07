@@ -67,6 +67,15 @@ context needed to answer.
 - Removed the unused install-on-quit updater channel, which electron-updater
   never honoured.
 
+### Ollama
+
+- **Named Cloud seats are not stopped by the local-model retry ceiling.**
+  GLM 5.3 / 5.3 Flash / 5.1, DeepSeek V4 Flash / V4 Pro, Gemma 4, Mistral
+  Large 3 (675B), GPT OSS (120B), Nemotron 3 Ultra, Kimi K2.6 / K2.7 Code /
+  K3, and MiniMax M2.7 / M3 no longer get finalized with "deferring to the
+  panel" after a handful of reasoning-only turns. Local models and other
+  Cloud rows keep the breaker.
+
 ## 1.9.7 - 2026-09-02
 
 ### New Models and Provider Seats

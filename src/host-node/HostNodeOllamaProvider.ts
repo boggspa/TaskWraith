@@ -26,6 +26,7 @@ import {
   type OllamaModelInfo
 } from '../host-shared/ollama/OllamaDaemonClient'
 import { isOllamaCloudModelId, ollamaCloudBaseModelId } from '../shared/ollamaModelAvailability'
+import { ollamaToolLoopRetryCeilingEnabled } from '../shared/ollamaLoopProtectionPolicy'
 import {
   compressOllamaMessagesWithWorkingMemory,
   createEmptyOllamaSessionMemory,
@@ -631,7 +632,10 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
         if (active.cancelled || result.toolCalls.length === 0) break
 
         turnState = closeOllamaHostToolTurn(turnState, { productive: productiveThisTurn })
-        if (ollamaHostToolCeilingReached(turnState)) {
+        if (
+          ollamaToolLoopRetryCeilingEnabled(thread.modelId) &&
+          ollamaHostToolCeilingReached(turnState)
+        ) {
           ceilingFired = true
           break
         }
