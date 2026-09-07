@@ -208,6 +208,40 @@ describe('fleetWaveSeatFromWorker', () => {
     expect(seat?.grantsCount).toBe(1)
   })
 
+  it('badges a posture that recorded zero grants instead of the roster count', () => {
+    // `positiveInt` maps 0 to undefined, so the old `??` chain fell through to
+    // the roster and advertised grants the run provably did not hold.
+    const seat = fleetWaveSeatFromWorker({
+      worker: {
+        provider: 'claude',
+        model: 'claude-opus-5',
+        permissionPresetId: 'workspace_write',
+        grantsCount: 3,
+        label: 'Scout'
+      },
+      index: 0,
+      child: child({
+        provider: 'claude',
+        runs: [
+          {
+            runId: 'wave-run-zero',
+            provider: 'claude',
+            startedAt: '2026-09-07T00:00:00.000Z',
+            permissionPosture: {
+              schemaVersion: 1,
+              presetId: 'read_only',
+              externalPathGrantCount: 0,
+              postureHash: 'hash',
+              signaturePresent: true
+            }
+          }
+        ]
+      })
+    })
+
+    expect(seat?.grantsCount).toBeUndefined()
+  })
+
   it('keeps the requested tier when the child recorded no posture', () => {
     // Cards spawned before postures were recorded, and cards whose child never
     // dispatched, still show what was asked for rather than nothing.

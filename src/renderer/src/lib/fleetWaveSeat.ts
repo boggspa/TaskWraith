@@ -114,8 +114,13 @@ export function fleetWaveSeatFromWorker({
     trimmed(run?.permissionPosture?.presetId) || trimmed(worker.permissionPresetId)
   // Same precedence as the preset above, off the same seal: the signed posture
   // is what executed, the projected request is only what was asked for.
-  const grantsCount =
-    positiveInt(run?.permissionPosture?.externalPathGrantCount) ?? positiveInt(worker.grantsCount)
+  // A signed posture is authoritative even when it reports ZERO grants:
+  // `positiveInt` maps 0 to undefined, so a `??` chain would fall through and
+  // badge the run with the roster's stale count. Presence of the posture, not
+  // truthiness of its number, decides which source wins.
+  const grantsCount = run?.permissionPosture
+    ? positiveInt(run.permissionPosture.externalPathGrantCount)
+    : positiveInt(worker.grantsCount)
   const label =
     trimmed(worker.label) ||
     trimmed(worker.title) ||

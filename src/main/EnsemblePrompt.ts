@@ -789,7 +789,9 @@ function formatAdvisoryTurnBoundary(
   config: EnsembleConfig,
   participant: EnsembleParticipant,
   orderedParticipants: EnsembleParticipant[],
-  bossDrivenWriteAllocation: boolean
+  bossDrivenWriteAllocation: boolean,
+  /** See `formatRoleBoundaryContract`: this dispatch's LANE intent is read. */
+  laneReadClamped: boolean
 ): string | null {
   // Captain is authority added to a seat, not an advisory replacement for its
   // role. Scout/reviewer wording still comes from the role/stage contract,
@@ -798,7 +800,9 @@ function formatAdvisoryTurnBoundary(
   // A scoped writer lane is already a machine-verifiable Boss/Captain
   // assignment. Re-injecting an advisory boundary here contradicts that
   // allocation and causes capable seats to self-refuse despite write posture.
-  if (bossDrivenWriteAllocation) return null
+  // The read clamp reverses that: a lane that cannot write IS advisory this
+  // turn, so suppressing the boundary on the stale allocation is the desync.
+  if (bossDrivenWriteAllocation && !laneReadClamped) return null
   const kind = advisorySeatKind(participant)
   if (!kind) return null
 
@@ -1413,7 +1417,8 @@ export function buildEnsembleParticipantPromptProjection(
     input.config,
     input.participant,
     orderedParticipants,
-    bossDrivenWriteAllocation
+    bossDrivenWriteAllocation,
+    Boolean(laneIntentBoundary)
   )
   const planOwnerLines = formatEnsemblePlanOwnerLines(input.chat, input.config, input.participant)
   // Recon-aware ollama workflow hint: the local-scout hint used to say
@@ -1808,7 +1813,7 @@ export function buildEnsembleParticipantPromptProjection(
     ),
     // Spike 4 — declared dispatch stage. Emitted only when the seat carries
     // an explicit stageRole so unstaged rosters keep their prompt shape.
-    ...(bossDrivenWriteAllocation
+    ...(bossDrivenWriteAllocation && !laneIntentBoundary
       ? []
       : input.participant.stageRole === 'reviewer'
         ? [
@@ -1821,10 +1826,12 @@ export function buildEnsembleParticipantPromptProjection(
               'Stage role: scout — you run at the start of the round to investigate. Gather the facts your peers will need and report them crisply; leave implementation to the worker seats.'
             ]
           : input.participant.stageRole === 'worker'
-            ? [
-                '',
-                'Stage role: worker — you take a serial implementation turn. Act on the request (and any scout findings above) directly.'
-              ]
+            ? laneIntentBoundary
+              ? []
+              : [
+                  '',
+                  'Stage role: worker — you take a serial implementation turn. Act on the request (and any scout findings above) directly.'
+                ]
             : input.participant.stageRole === 'background'
               ? [
                   '',

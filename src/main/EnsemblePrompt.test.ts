@@ -5317,4 +5317,60 @@ describe('effective lane posture', () => {
     expect(serialSeat).not.toContain('inspection, recon, or review only')
     expect(serialSeat).toContain('Your permission role is workspace_write')
   })
+
+  it('restores the advisory boundary a stale write allocation had suppressed', () => {
+    // Second consumer of the same stale signal as the role-boundary contract.
+    // `formatAdvisoryTurnBoundary` returned null on `bossDrivenWriteAllocation`
+    // alone, so a reviewer seat on a read-clamped lane lost its advisory
+    // framing on the strength of a write allocation it could no longer execute.
+    const reviewer: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      role: 'Reviewer',
+      stageRole: 'reviewer'
+    }
+    const config: EnsembleConfig = {
+      ...withLanes({ 'lane-codex': writeLane('codex') }),
+      participants: [ensemble.participants[0], reviewer]
+    }
+    const build = (posture?: typeof readClamped): string =>
+      buildEnsembleParticipantPrompt({
+        chat: chat(),
+        config,
+        participant: reviewer,
+        currentPrompt: 'Inspect the dispatch path.',
+        roundId: 'round-advisory-consumer',
+        chatContextTurns: 4,
+        ...(posture ? { effectiveLanePosture: posture } : {})
+      })
+
+    expect(build(readClamped)).toContain('Stage role: reviewer')
+    // Over-correction guard: a genuine allocation still suppresses it.
+    expect(build(undefined)).not.toContain('Stage role: reviewer')
+  })
+
+  it('never tells a read-clamped seat to take an implementation turn', () => {
+    // Third consumer. The worker stage-role sentence was not gated on posture
+    // at all in this direction, so a read-clamped worker was still told to
+    // "take a serial implementation turn" underneath the reader boundary.
+    const worker: EnsembleParticipant = { ...ensemble.participants[1], stageRole: 'worker' }
+    const config: EnsembleConfig = {
+      ...ensemble,
+      participants: [ensemble.participants[0], worker]
+    }
+    const build = (posture?: typeof readClamped): string =>
+      buildEnsembleParticipantPrompt({
+        chat: chat(),
+        config,
+        participant: worker,
+        currentPrompt: 'Inspect the dispatch path.',
+        roundId: 'round-worker-stage',
+        chatContextTurns: 4,
+        ...(posture ? { effectiveLanePosture: posture } : {})
+      })
+
+    expect(build(readClamped)).not.toContain('take a serial implementation turn')
+    expect(build(readClamped)).toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+    // Over-correction guard: an unclamped worker keeps its stage sentence.
+    expect(build(undefined)).toContain('take a serial implementation turn')
+  })
 })
