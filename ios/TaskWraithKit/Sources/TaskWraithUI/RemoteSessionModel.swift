@@ -2798,10 +2798,9 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-09-03","kind":"addition","title":"New Additions","body":"GPT-6 Astra and GPT-6 Astra Pro in Codex, Claude Fable 5.1, the Devin CLI seat, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-09-03","kind":"addition","title":"New Additions","body":"GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"codex","label":"Codex","models":[
-              {"name":"GPT-6 Astra","blurb":"OpenAI's newest frontier model. Rolling out by organisation."},
-              {"name":"GPT-6 Astra Pro","blurb":"The Pro tier of Astra, on Pro, Business, and Enterprise plans."}
+              {"name":"GPT-6 Astra","blurb":"OpenAI's newest frontier model. Rolling out by organisation."}
             ]},
             {"provider":"claude","label":"Claude","models":[
               {"name":"Fable 5.1","blurb":"Anthropic's newest Fable — 1M context, adaptive thinking, the full effort ladder. Fable 5 moves to Legacy."}
