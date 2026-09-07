@@ -60,14 +60,14 @@
       <stop offset=".667" stop-color="#976C52" data-brand="ollama"/>
       <stop offset=".733" stop-color="#0C8194" data-brand="poolside"/>
       <stop offset=".80" stop-color="#0073E6" data-brand="kimi"/>
-      <stop offset=".867" stop-color="#346EEC" data-brand="gemini"/>
+      <stop offset=".867" stop-color="#346EEC" data-brand="gemini-google"/>
       <stop offset=".933" stop-color="#3079BC" data-brand="ibm"/>
       <stop offset="1" stop-color="#757575" data-brand="grok"/>
     </linearGradient>
     <linearGradient id="provider-glyph-ensemble-hub-blue-pool" gradientUnits="userSpaceOnUse" x1="9.15" y1="12" x2="14.85" y2="12" color-interpolation="linearRGB">
       <stop offset="0" stop-color="#0C8194" data-brand="poolside"/>
       <stop offset=".34" stop-color="#0073E6" data-brand="kimi"/>
-      <stop offset=".68" stop-color="#346EEC" data-brand="gemini"/>
+      <stop offset=".68" stop-color="#346EEC" data-brand="gemini-google"/>
       <stop offset="1" stop-color="#3079BC" data-brand="ibm"/>
     </linearGradient>
     <path id="provider-glyph-ensemble-channel" d="M12 3.2c3.35 0 6.1 2.7 6.1 6.05 0 2.2-1.25 3.75-3.25 4.4"/>

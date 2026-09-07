@@ -154,7 +154,7 @@ export interface TaskWraithTuiOptions {
   initialThreadId?: string
   demo?: boolean
   /**
-   * Re-arms the windowless Host launcher (ensureTuiHostAvailable). Invoked by
+   * Re-arms the standalone Host launcher (ensureTuiHostAvailable). Invoked by
    * the reconnect loop once failures exceed HOST_REVIVE_FAILURE_THRESHOLD so a
    * dead Host process is relaunched instead of retried forever. The TUI class
    * itself stays launcher-agnostic; the CLI injects this.

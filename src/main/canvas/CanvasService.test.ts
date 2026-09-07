@@ -2297,6 +2297,41 @@ describe('CanvasService emulator observation and macro', () => {
     }
   })
 
+  it('does not consume a step budget when a step is refused due to human play', async () => {
+    const h = harness()
+    try {
+      const opened = await open(h)
+      const observed = await h.service.observeEmulator(opened.canvasId, ctx)
+      
+      // Authorize exactly 1 step
+      authorize(h.leases, opened.canvasId, 1)
+      
+      h.driver.emulatorStepImplementation = async () => {
+        throw new CanvasEmulatorUserActiveError(h.driver.emulatorObservation, 0)
+      }
+      
+      const result = await h.service.stepEmulator(
+        opened.canvasId,
+        {
+          expectedObservationId: observed.observation.token.observationId,
+          segments: [{ buttons: ['a'], frames: 1 }]
+        },
+        ctx
+      )
+      expect(result).toMatchObject({
+        outcome: 'refused',
+        refusalReason: 'user_active'
+      })
+      
+      // Step budget should be refunded, so we can step again (stepsUsed should be 0)
+      const lease = h.leases.peek(opened.canvasId)
+      expect(lease?.stepsUsed).toBe(0)
+      expect(lease?.stepsRemaining).toBe(1)
+    } finally {
+      cleanup(h)
+    }
+  })
+
   it('contains invalid frame transitions and serializes concurrent observations after a macro', async () => {
     const h = harness()
     try {

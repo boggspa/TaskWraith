@@ -314,7 +314,7 @@ describe a Turn-bound mode as selectable.
   keep the Turn Budget low and leave fan-out off, and the round ends shortly
   after the roster drains.
 - **A bounded final synthesis turn may be inserted immediately before the loop
-  actually stops** (still source-ahead — absent from every tag through v1.9.6;
+  actually stops** (shipped in v1.9.6;
   `git cat-file -e <tag>:` plus the source path named at the end of this bullet
   is the test before calling it shipped). When a synthesizer is elected —
   configured seat, else Boss, else Captain, else the last enabled foreground

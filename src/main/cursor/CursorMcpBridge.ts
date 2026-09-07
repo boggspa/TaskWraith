@@ -288,7 +288,7 @@ async function doSearch(query) {
 }
 const RUN_SHELL_TOOL = {
   name: 'run_shell_command',
-  description: 'Run a shell command in the current Cursor workspace cwd. Optional cwd must stay inside that workspace. Returns exit code plus truncated stdout/stderr. Native Cursor Shell is often blocked; this is the working way to run commands here.',
+  description: 'Run a shell command in the current Cursor workspace cwd. Optional cwd must stay inside that workspace. Returns exit code plus truncated stdout/stderr. Native Cursor Shell is enabled; this is the working way to run commands here.',
   inputSchema: {
     type: 'object',
     properties: {

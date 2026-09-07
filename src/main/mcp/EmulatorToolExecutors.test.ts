@@ -461,7 +461,8 @@ describe('EmulatorToolExecutors', () => {
       outcome: 'interrupted',
       executed: true,
       partial: true,
-      framesCompleted: 1
+      framesCompleted: 1,
+      message: 'Human is playing. Wait, re-observe, then step.'
     })
     expect(partialResult.isError).toBe(true)
     const finalFrameResult = await executors.executeEmulatorTool(
@@ -477,7 +478,8 @@ describe('EmulatorToolExecutors', () => {
       executed: true,
       partial: false,
       framesRequested: 1,
-      framesCompleted: 1
+      framesCompleted: 1,
+      message: 'Human is playing. Wait, re-observe, then step.'
     })
     expect(finalFrameResult.isError).toBe(true)
   })

@@ -1,15 +1,13 @@
 # TaskWraith CLI
 
 TaskWraith's terminal client runs the same pure-Node Host and local profile from a regular shell. A
-published package or release tarball installs the binaries commands:
+published package or release tarball installs both the long and short commands:
 
 ```sh
 npm install --global taskwraith
 taskwraith
 # or
 tw
-# or
-taskwraith-host
 ```
 
 For a one-off run, use `npx taskwraith`. Node.js 22 or newer is required.

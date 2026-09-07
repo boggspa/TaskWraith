@@ -97,7 +97,7 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
         placeholder: 'Describe a task or ask a question'
       }
     case 'cursor':
-      // Preview-only. Cursor here is the VISUAL shell, not the provider —
+      // Preview-only.
       // the flat-gray CSS strips all chroma regardless of provider.
       return {
         providerLabel: 'Cursor',

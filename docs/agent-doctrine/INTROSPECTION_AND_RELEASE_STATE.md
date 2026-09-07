@@ -54,7 +54,7 @@ This document's released baseline is whatever tag is currently on public
 `master` — read it with `git describe --tags --abbrev=0 origin/master` and
 cross-check `package.json`. The number is deliberately **not** restated here.
 A pinned version becomes a false claim the moment the next tag lands, and this
-paragraph proved it: it read v1.9.5 while v1.9.6 was already tagged, pushed, and
+paragraph proved it: it read v1.9.7 while v1.9.8 was already tagged, pushed, and
 in `package.json`. `docs/POSITIONING.md` reached the same conclusion after its
 own line sat at v1.8.8 two releases running.
 

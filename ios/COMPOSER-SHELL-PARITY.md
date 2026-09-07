@@ -17,7 +17,7 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 
 - **Type:** `ComposerStyle` union — `src/main/store/types.ts:103-160`. Exactly **14**:
   `default, codex, chatgpt, claude, cursor, grok, gemini, kimi, modular, terminal, stub, satellite, obsidian, alabaster, chatgpt`.
-  No others. `cursor`/`grok`/`chatgpt` are **VISUAL-ONLY** shells, independent of any provider. `chatgpt`
+  No others. `chatgpt` is a **VISUAL-ONLY** shell, independent of any provider. `chatgpt`
   (added CS14) is a cross of the codex + cursor shells — codex above-row tucked-tab chrome + cursor capsule
   body, with the cursor inset rim removed so the input pill reads flat; NOT the ChatGPT product/runtime.
 - **Setting:** `AppSettings.composerStyle` (`types.ts:1381`), default `'default'` (`store/index.ts:392`).
