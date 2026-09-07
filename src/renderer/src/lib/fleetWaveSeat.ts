@@ -74,6 +74,11 @@ function resolvedModel(
  * shared transcript seat state. The projected card metadata wins when newer
  * records carry it; existing cards resolve from the durable child run.
  * Unknown fields stay absent rather than being presented as defaults.
+ *
+ * The permission tier is the one deliberate exception to "projection first":
+ * the card's projection is a REQUEST, and only the child run's signed posture
+ * records what the wave was allowed to do. A permission chip is a claim about
+ * authority, so it reads the seal.
  */
 export function fleetWaveSeatFromWorker({
   worker,
@@ -99,10 +104,18 @@ export function fleetWaveSeatFromWorker({
       : typeof thinkingValue === 'boolean'
         ? thinkingValue
         : undefined
+  // The SEAL first, then the card's projected request. Inverted until now, so a
+  // worker asked for at spawn time with one tier kept wearing that tier even
+  // after the child run was clamped to another — the card claimed authority the
+  // wave never had. `worker.permissionPresetId` is what was requested; the run's
+  // signed posture is what executed. Older cards whose child carries no posture
+  // still fall back to the request, and a worker with neither stays chip-less.
   const permissionPresetId =
-    trimmed(worker.permissionPresetId) || trimmed(run?.permissionPosture?.presetId)
+    trimmed(run?.permissionPosture?.presetId) || trimmed(worker.permissionPresetId)
+  // Same precedence as the preset above, off the same seal: the signed posture
+  // is what executed, the projected request is only what was asked for.
   const grantsCount =
-    positiveInt(worker.grantsCount) ?? positiveInt(run?.permissionPosture?.externalPathGrantCount)
+    positiveInt(run?.permissionPosture?.externalPathGrantCount) ?? positiveInt(worker.grantsCount)
   const label =
     trimmed(worker.label) ||
     trimmed(worker.title) ||

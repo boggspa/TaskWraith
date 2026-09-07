@@ -44,12 +44,26 @@ function stageRoleOf(value: unknown): SeatChangeSeatState['stageRole'] {
  * `ensembleModel` fields do not carry. Without it the permission chip would
  * silently render the default tier for a lane that ran read-only.
  *
+ * The snapshot's preset is what the seat was CONFIGURED as, not what executed:
+ * `EnsembleSeatSnapshot` says so in its own type contract, and the run's signed
+ * `permissionPosture.presetId` is the value the round actually ran under after
+ * the unattended, trust, and preview-risk gates. Pass the row's run and the
+ * SEAL wins — measured, a lane sealed `read_only` was wearing "Full WS Access"
+ * off its roster config while the close-out table beside it correctly said
+ * "Ask". Same precedence `taskWraithCloseoutMessage` already uses, so the two
+ * surfaces can no longer contradict each other on one screen.
+ *
+ * The `|| snapshot` half is load-bearing, not defensive: rows written before
+ * postures were recorded have no seal, and `SeatChangeRow` renders NO chip for
+ * an absent preset on purpose. An unknown must stay unknown.
+ *
  * Unlike the peer-message card, `seatNumber` IS carried here: a fan-out lane
  * belongs to the reader's OWN roster, so "#3" names a seat they can see. (It is
  * meaningless for a peer sender, whose roster the reader is not in.)
  */
 export function seatFromEnsembleMetadata(
-  metadata: Record<string, unknown> | undefined | null
+  metadata: Record<string, unknown> | undefined | null,
+  run?: ChatRun | null
 ): SeatChangeSeatState | null {
   if (!metadata) return null
   const snapshot =
@@ -65,7 +79,8 @@ export function seatFromEnsembleMetadata(
 
   const role = trimmed(metadata.ensembleRole)
   const reasoningEffort = trimmed(snapshot?.reasoningEffort)
-  const permissionPresetId = trimmed(snapshot?.configuredPermissionPresetId)
+  const permissionPresetId =
+    trimmed(run?.permissionPosture?.presetId) || trimmed(snapshot?.configuredPermissionPresetId)
   const seatNumber = positiveInt(metadata.ensembleOrder)
   const stageRole = stageRoleOf(metadata.ensembleStageRole)
   // Sibling field rather than part of the snapshot: authority is chat-level,
@@ -129,7 +144,11 @@ export function seatFromChatRun(run: ChatRun | null | undefined): SeatChangeSeat
   const seatNumber = positiveInt(run?.ensembleOrder)
   const stageRole = stageRoleOf(run?.ensembleStageRole)
   const reasoningEffort = trimmed(snapshot.reasoningEffort)
-  const permissionPresetId = trimmed(snapshot.configuredPermissionPresetId)
+  // Seal before config, as above — and here the signed posture is on the very
+  // same run object the snapshot came off, so reading the configured preset was
+  // never a matter of not having the authoritative one to hand.
+  const permissionPresetId =
+    trimmed(run?.permissionPosture?.presetId) || trimmed(snapshot.configuredPermissionPresetId)
 
   return {
     provider,

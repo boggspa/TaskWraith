@@ -2747,10 +2747,15 @@ function questionSeatFromRun(run: ChatRun): RemoteSeatChangeSeat | undefined {
   if (typeof snapshot.thinkingEnabled === 'boolean') {
     result.thinkingEnabled = snapshot.thinkingEnabled
   }
-  const permissionPresetId = stringField(
-    snapshot.configuredPermissionPresetId,
-    REMOTE_SEAT_FIELD_MAX
-  )
+  // Seal before config, exactly as the renderer does. The snapshot's preset is
+  // what the seat was CONFIGURED as; `permissionPosture.presetId` is the signed
+  // value the run actually executed under. Reading config here would have let
+  // the phone inherit the desktop's wrong badge — a lane sealed read_only
+  // wearing its roster's wider tier. Falls back to the snapshot so rows
+  // predating recorded postures still project nothing rather than a guess.
+  const permissionPresetId =
+    stringField(run.permissionPosture?.presetId, REMOTE_SEAT_FIELD_MAX) ||
+    stringField(snapshot.configuredPermissionPresetId, REMOTE_SEAT_FIELD_MAX)
   if (permissionPresetId) result.permissionPresetId = permissionPresetId
   return result
 }

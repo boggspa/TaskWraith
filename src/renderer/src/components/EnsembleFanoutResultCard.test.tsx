@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { ChatMessage, ToolActivity } from '../../../main/store/types'
+import type { ChatMessage, ChatRecord, ToolActivity } from '../../../main/store/types'
 import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
 import {
@@ -646,13 +646,43 @@ describe('EnsembleFanoutResultCard — the lane wears the seat element', () => {
     configuredPermissionPresetId: 'read_only'
   }
 
-  const render = (extra: Record<string, unknown>) =>
+  const render = (extra: Record<string, unknown>, chat?: ChatRecord) =>
     renderToStaticMarkup(
       <EnsembleFanoutResultCard
         message={fanoutMessage({ metadata: { ...fanoutMessage().metadata, ...extra } })}
+        chat={chat}
         onPreviewImage={() => {}}
       />
     )
+
+  // A chat whose run store seals `runId` at `presetId`. The lane row's own
+  // runId is 'codex-run-1'.
+  const chatSealing = (presetId: string, runId = 'codex-run-1'): ChatRecord =>
+    ({
+      appChatId: 'chat-1',
+      messages: [],
+      runs: [
+        {
+          runId,
+          startedAt: '2026-09-07T12:00:00.000Z',
+          permissionPosture: {
+            schemaVersion: 1,
+            presetId,
+            readOnly: presetId === 'read_only',
+            externalPathGrantCount: 0,
+            postureHash: 'hash',
+            signaturePresent: true
+          }
+        }
+      ]
+    }) as unknown as ChatRecord
+
+  const chatWithoutPosture = (): ChatRecord =>
+    ({
+      appChatId: 'chat-1',
+      messages: [],
+      runs: [{ runId: 'codex-run-1', startedAt: '2026-09-07T12:00:00.000Z' }]
+    }) as unknown as ChatRecord
 
   it('renders the shared seat chips instead of the old segmented pills', () => {
     const html = render({ ensembleSeatSnapshot: SNAPSHOT })
@@ -664,6 +694,38 @@ describe('EnsembleFanoutResultCard — the lane wears the seat element', () => {
     // The flat metadata cannot carry this; without the snapshot the chip would
     // fall back to the default tier and misreport a read-only lane.
     expect(render({ ensembleSeatSnapshot: SNAPSHOT })).toContain('Ask')
+  })
+
+  it('shows the SEALED tier when the roster config and the run DISAGREE', () => {
+    // The reported defect. The roster had this lane at workspace_write and the
+    // round sealed it read_only; the card wore "Full WS Access" while the
+    // close-out table on the same screen correctly said "Ask" for the same
+    // lane. The seal is what executed, so the seal is what the badge claims.
+    const configured = { ...SNAPSHOT, configuredPermissionPresetId: 'workspace_write' }
+    expect(render({ ensembleSeatSnapshot: configured })).toContain('Full WS Access')
+
+    const withSeal = render({ ensembleSeatSnapshot: configured }, chatSealing('read_only'))
+    expect(withSeal).toContain('Ask')
+    expect(withSeal).toContain('data-permission-value="read_only"')
+    expect(withSeal).not.toContain('Full WS Access')
+    expect(withSeal).not.toContain('data-permission-value="workspace_write"')
+  })
+
+  it('falls back to the captured config when the run records no posture', () => {
+    // Rows written before postures were recorded keep the tier they captured,
+    // and a row with neither still renders NO chip rather than a default.
+    expect(render({ ensembleSeatSnapshot: SNAPSHOT }, chatWithoutPosture())).toContain('Ask')
+    expect(render({ ensembleSeatSnapshot: undefined }, chatWithoutPosture())).not.toContain(
+      'data-permission-value'
+    )
+  })
+
+  it('never reads a FOREIGN run posture onto this lane', () => {
+    // Matched on `message.runId` alone, never the streaming/boundary run: for a
+    // lane row that can be another seat's turn, and a wrong run's posture is
+    // just a new way to lie. Config stands when this row's run is absent.
+    const html = render({ ensembleSeatSnapshot: SNAPSHOT }, chatSealing('full_access', 'boss-run'))
+    expect(html).toContain('data-permission-value="read_only"')
   })
 
   it('keeps a long model label inside the seat strip with a hover title', () => {

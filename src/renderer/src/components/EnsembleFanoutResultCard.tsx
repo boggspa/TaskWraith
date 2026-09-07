@@ -240,7 +240,19 @@ export function EnsembleFanoutResultCard({
   // provider. The element now omits the permission chip when the tier is
   // unknown, so those rows can render the seat honestly: same provider, model,
   // role and #N the pills carried, minus a claim nobody can make.
-  const seat = useMemo(() => seatFromEnsembleMetadata(metadata), [metadata])
+  //
+  // The snapshot's preset is the seat's CONFIGURED tier, and it is not what ran:
+  // a lane sealed `read_only` was rendering "Full WS Access" off its roster
+  // while the close-out table one screen away correctly said "Ask". So the row's
+  // OWN run goes in beside the metadata and its signed posture wins. Matched on
+  // `message.runId` only — never the streaming/boundary run, which for a lane
+  // row can be a different seat's turn entirely, and a wrong run's posture is
+  // just a new way to lie.
+  const laneRun = useMemo(
+    () => (message.runId ? chat?.runs?.find((run) => run.runId === message.runId) : undefined),
+    [chat?.runs, message.runId]
+  )
+  const seat = useMemo(() => seatFromEnsembleMetadata(metadata, laneRun), [metadata, laneRun])
   const seatRole = composedSeatRole(seat)
   const content = message.content || ''
   const transcriptParts = useMemo(() => readEnsembleFanoutTranscriptParts(message), [message])

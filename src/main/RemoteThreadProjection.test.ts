@@ -2080,6 +2080,70 @@ describe('RemoteThreadProjection', () => {
       expect(unlinked.rows[0].agentQuestion?.seat).toBeUndefined()
     })
 
+    it('projects the SEALED tier, not the configured one, when they disagree', () => {
+      // The remote twin of the desktop fix: the snapshot's preset is what the
+      // seat was CONFIGURED as, and `permissionPosture.presetId` is the signed
+      // value the run actually executed under. Reading config here let the
+      // phone inherit the desktop's wrong badge — a lane sealed read_only
+      // wearing its roster's wider tier.
+      const seatRun = (extra: Record<string, unknown> = {}) =>
+        ({
+          runId: 'run-q1',
+          provider: 'claude',
+          ensembleRole: 'SolBoss',
+          ensembleOrder: 1,
+          ensembleSeatSnapshot: {
+            provider: 'claude',
+            model: 'claude-opus-5',
+            configuredPermissionPresetId: 'workspace_write'
+          },
+          ...extra
+        }) as unknown as ChatRun
+
+      const sealed = project({ kind: 'latestN', n: 10 }, [ask({}, 'run-q1')], [
+        seatRun({
+          permissionPosture: {
+            schemaVersion: 1,
+            presetId: 'read_only',
+            readOnly: true,
+            externalPathGrantCount: 0,
+            postureHash: 'hash',
+            signaturePresent: true
+          }
+        })
+      ])
+      expect(sealed.rows[0].agentQuestion?.seat?.permissionPresetId).toBe('read_only')
+
+      // No posture (a run recorded before postures existed) keeps the captured
+      // configuration rather than projecting nothing.
+      const legacy = project({ kind: 'latestN', n: 10 }, [ask({}, 'run-q1')], [seatRun()])
+      expect(legacy.rows[0].agentQuestion?.seat?.permissionPresetId).toBe('workspace_write')
+
+      // A posture with no preset falls through instead of blanking the tier.
+      const blank = project({ kind: 'latestN', n: 10 }, [ask({}, 'run-q1')], [
+        seatRun({
+          permissionPosture: {
+            schemaVersion: 1,
+            externalPathGrantCount: 0,
+            postureHash: 'hash',
+            signaturePresent: false
+          }
+        })
+      ])
+      expect(blank.rows[0].agentQuestion?.seat?.permissionPresetId).toBe('workspace_write')
+
+      // Neither side carries a tier: the phone shows NO chip, same honest
+      // unknown the desktop row keeps.
+      const unknown = project({ kind: 'latestN', n: 10 }, [ask({}, 'run-q1')], [
+        {
+          runId: 'run-q1',
+          provider: 'claude',
+          ensembleSeatSnapshot: { provider: 'claude', model: 'claude-opus-5' }
+        } as unknown as ChatRun
+      ])
+      expect(unknown.rows[0].agentQuestion?.seat?.permissionPresetId).toBeUndefined()
+    })
+
     it('projects metadata.agentQuestion as an inline structured field (still an attention row)', () => {
       const snap = project({ kind: 'latestN', n: 10 }, [ask()])
       expect(snap.rows[0]).toMatchObject({

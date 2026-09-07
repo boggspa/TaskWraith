@@ -137,6 +137,106 @@ describe('fleetWaveSeatFromWorker', () => {
     })
   })
 
+  it('shows the CLAMPED child posture, not the tier the wave asked for', () => {
+    // The precedence used to run the other way, so a card kept advertising its
+    // spawn-time request after the child run was clamped below it — the same
+    // "badge claims authority the lane never had" defect as the fan-out lane.
+    const seat = fleetWaveSeatFromWorker({
+      worker: {
+        provider: 'claude',
+        model: 'claude-opus-5',
+        permissionPresetId: 'workspace_write',
+        label: 'Scout'
+      },
+      index: 0,
+      child: child({
+        provider: 'claude',
+        runs: [
+          {
+            runId: 'wave-run',
+            provider: 'claude',
+            startedAt: '2026-09-07T00:00:00.000Z',
+            permissionPosture: {
+              schemaVersion: 1,
+              presetId: 'read_only',
+              readOnly: true,
+              externalPathGrantCount: 0,
+              postureHash: 'hash',
+              signaturePresent: true
+            }
+          }
+        ]
+      })
+    })
+
+    expect(seat?.permissionPresetId).toBe('read_only')
+  })
+
+  it('shows the grant count the child run actually held, not the wave request', () => {
+    // Same precedence as the preset above, off the same seal. KNOWN RESIDUAL:
+    // `positiveInt` drops 0, so a run that sealed ZERO grants still falls back
+    // to the request. That needs posture-presence awareness plus a decision on
+    // whether a zero-grant chip renders at all; tracked separately.
+    const seat = fleetWaveSeatFromWorker({
+      worker: {
+        provider: 'claude',
+        model: 'claude-opus-5',
+        permissionPresetId: 'workspace_write',
+        grantsCount: 3,
+        label: 'Scout'
+      },
+      index: 0,
+      child: child({
+        provider: 'claude',
+        runs: [
+          {
+            runId: 'wave-run',
+            provider: 'claude',
+            startedAt: '2026-09-07T00:00:00.000Z',
+            permissionPosture: {
+              schemaVersion: 1,
+              presetId: 'workspace_write',
+              externalPathGrantCount: 1,
+              postureHash: 'hash',
+              signaturePresent: true
+            }
+          }
+        ]
+      })
+    })
+
+    expect(seat?.grantsCount).toBe(1)
+  })
+
+  it('keeps the requested tier when the child recorded no posture', () => {
+    // Cards spawned before postures were recorded, and cards whose child never
+    // dispatched, still show what was asked for rather than nothing.
+    const seat = fleetWaveSeatFromWorker({
+      worker: {
+        provider: 'claude',
+        model: 'claude-opus-5',
+        permissionPresetId: 'workspace_write',
+        label: 'Scout'
+      },
+      index: 0,
+      child: child({
+        provider: 'claude',
+        runs: [{ runId: 'wave-run', provider: 'claude', startedAt: '2026-09-07T00:00:00.000Z' }]
+      })
+    })
+
+    expect(seat?.permissionPresetId).toBe('workspace_write')
+  })
+
+  it('renders no tier when neither the seal nor the request carries one', () => {
+    expect(
+      fleetWaveSeatFromWorker({
+        worker: { provider: 'claude', model: 'claude-opus-5', label: 'Scout' },
+        index: 0
+      })
+    ).not.toHaveProperty('permissionPresetId')
+  })
+
   it('returns null rather than inventing a seat when provider or model is unknown', () => {
     expect(fleetWaveSeatFromWorker({ worker: { label: 'Unknown' }, index: 0 })).toBeNull()
     expect(
