@@ -1013,7 +1013,12 @@ import { tryFlushBridgeRunTranscript } from './BridgeRunTranscriptFlushGuard'
 import { AppStore, registerPersistenceWriteEnqueue, type ChatSaveOptions } from './store'
 import { ChatTranscriptMutationIndex } from './store/ChatTranscriptMutationAuthoring'
 import { isSegmentedChatStoreEnabled } from './store/SegmentedChatStore'
-import type { SweepBudget } from './store/BootSweepBudget'
+import {
+  DEFERRED_SWEEP_SLICE_BYTES,
+  PRE_WINDOW_SWEEP_BUDGET,
+  planSweepSlices,
+  type SweepBudget
+} from './store/BootSweepBudget'
 import {
   PersistenceWriteQueue,
   createUtilityProcessChannelFactory,
@@ -1187,6 +1192,7 @@ import {
   EnsembleParticipant,
   EnsembleOrchestrationMode,
   EnsembleWakeupRecord,
+  SoloChatWakeupRecord,
   RunEventKind,
   TranscriptMediaRef,
   TranscriptMediaThumbnail,
@@ -2347,7 +2353,9 @@ import {
   reconcileStaleChatRuns,
   sealChatRunTerminalFields,
   settleStaleChatRun,
-  type ChatRunTerminalSeal
+  type ChatRunTerminalSeal,
+  type StaleChatRunSettlement,
+  type TerminalChatRunRecovery
 } from './ChatRunReconciler'
 import { withLiveChatRunStatus } from './ChatRunLiveStatus'
 import {
@@ -2506,6 +2514,10 @@ import {
 } from './startup/StartupAuthorityRecovery'
 import { resolveWorkspaceLockAuthorityRoot } from './startup/WorkspaceLockAuthorityRootOverride'
 import { startupMilestones } from './startup/StartupMilestones'
+import {
+  runSlicesSerially,
+  scheduleDeferredBootSweeps
+} from './startup/DeferredBootSweeps'
 import { recoverWorkspaceLock } from './WorkspaceLockRecovery'
 import { providerRunRequiresCoarseWorkspaceLock } from './WorkspaceLockProviderPolicy'
 import {
@@ -2916,6 +2928,8 @@ let stallReconcilerInterval: ReturnType<typeof setInterval> | null = null
 // Startup uses minAgeMs=0; the interval uses a short grace window.
 const CHAT_RUN_RECONCILER_INTERVAL_MS = 2 * 60 * 1000
 const CHAT_RUN_RECONCILER_PERIODIC_MIN_AGE_MS = 30_000
+/** Backstop for the deferred post-paint boot sweeps when first paint never signals. */
+const DEFERRED_BOOT_SWEEP_PAINT_TIMEOUT_MS = 60_000
 /** Ticks between whole-corpus re-seeds of the store's open-run list. The list
  * is maintained incrementally by every read and save, so this only has to
  * catch records changed by something that never passed through this process
@@ -10743,29 +10757,39 @@ function settleOrphanedRunQueueJobsProjection(
  * `options.budget` truncates the 'all' reads to the most recent candidates for
  * the pre-window pass; the deferred post-paint sweep re-runs unbounded.
  */
+/** Erasure fence for stale-run sweeps. Null when the destructive intent is
+ * unreadable — not evidence the sweep is safe, so the caller skips it. */
+function historyDeletionSweepFence(): { fencedForErasure: (chat: ChatRecord) => boolean } | null {
+  let pendingDeletion: ReturnType<typeof AppStore.getPendingHistoryDeletion>
+  try {
+    pendingDeletion = AppStore.getPendingHistoryDeletion()
+  } catch {
+    // An unreadable destructive intent is not evidence the sweep is safe.
+    return null
+  }
+  return {
+    fencedForErasure: (chat: ChatRecord): boolean => {
+      if (!pendingDeletion) return false
+      if (pendingDeletion.kind === 'global') return true
+      if (pendingDeletion.chatIds.includes(chat.appChatId)) return true
+      return (
+        pendingDeletion.kind === 'workspace' &&
+        Boolean(chat.workspaceId) &&
+        pendingDeletion.workspaceId === chat.workspaceId
+      )
+    }
+  }
+}
+
 function reconcileStaleChatRunsProjection(
   options: { minAgeMs?: number; scope?: 'all' | 'open-runs'; budget?: SweepBudget } = {}
 ): number {
   // A chat inside a prepared (uncommitted) erasure must not be settled or
   // re-projected. Filter fenced chats up front so the sweep continues over the
   // rest of the batch instead of aborting on the saveChat fence throw.
-  let pendingDeletion: ReturnType<typeof AppStore.getPendingHistoryDeletion>
-  try {
-    pendingDeletion = AppStore.getPendingHistoryDeletion()
-  } catch {
-    // An unreadable destructive intent is not evidence the sweep is safe.
-    return 0
-  }
-  const fencedForErasure = (chat: ChatRecord): boolean => {
-    if (!pendingDeletion) return false
-    if (pendingDeletion.kind === 'global') return true
-    if (pendingDeletion.chatIds.includes(chat.appChatId)) return true
-    return (
-      pendingDeletion.kind === 'workspace' &&
-      Boolean(chat.workspaceId) &&
-      pendingDeletion.workspaceId === chat.workspaceId
-    )
-  }
+  const fence = historyDeletionSweepFence()
+  if (!fence) return 0
+  const { fencedForErasure } = fence
   const nowIso = new Date().toISOString()
   const sourceChats =
     options.scope === 'open-runs'
@@ -10790,7 +10814,22 @@ function reconcileStaleChatRunsProjection(
     }
   )
   if (chats.length === 0) return 0
+  persistStaleRunSweepResult(chats, settlements, terminalRecoveries)
 
+  return settlements.length + terminalRecoveries.length
+}
+
+/**
+ * Persist one stale-run sweep batch: save settled chats, push the remote
+ * surfaces iOS reads, and audit every settlement. Shared by the synchronous
+ * projection and the deferred post-paint sweep (which calls it per slice, so
+ * each slice's chats settle with identical surfacing).
+ */
+function persistStaleRunSweepResult(
+  chats: ChatRecord[],
+  settlements: StaleChatRunSettlement[],
+  terminalRecoveries: TerminalChatRunRecovery[]
+): void {
   for (const chat of chats) {
     const saved = saveAndBroadcastChat(chat)
     pushBridgeRunTaskCardDelta?.(saved.appChatId)
@@ -10883,8 +10922,6 @@ function reconcileStaleChatRunsProjection(
       }
     })
   }
-
-  return settlements.length + terminalRecoveries.length
 }
 
 function recoverSubThreadControlPlane(budget?: SweepBudget): void {
@@ -10900,18 +10937,116 @@ function recoverSubThreadControlPlane(budget?: SweepBudget): void {
   // are list-carried chrome the narrowed reader pre-filters by, so this no
   // longer walks every shell in the corpus to skip non-sub-threads.
   for (const chat of AppStore.getSubThreadRecoveryChats(budget ? { budget } : {})) {
-    if (!chat.parentChatId) continue
-    const policies = [
-      chat.delegationContext?.joinPolicy,
-      ...(chat.delegationContext?.workerControl?.events || []).map((event) => event.joinPolicy)
-    ].filter((policy): policy is SubThreadJoinPolicy => Boolean(policy))
-    for (const policy of policies) {
-      const key = subThreadJoinTimerKey(chat.parentChatId, policy.groupId)
-      if (joinGroups.has(key)) continue
-      joinGroups.add(key)
-      scheduleSubThreadJoinEvaluation(chat.parentChatId, policy.groupId)
-    }
+    collectSubThreadJoinPolicies(chat, joinGroups)
   }
+}
+
+/** Arm the join-evaluation timers for one chat's delegation join policies. */
+function collectSubThreadJoinPolicies(chat: ChatRecord, joinGroups: Set<string>): void {
+  if (!chat.parentChatId) return
+  const policies = [
+    chat.delegationContext?.joinPolicy,
+    ...(chat.delegationContext?.workerControl?.events || []).map((event) => event.joinPolicy)
+  ].filter((policy): policy is SubThreadJoinPolicy => Boolean(policy))
+  for (const policy of policies) {
+    const key = subThreadJoinTimerKey(chat.parentChatId, policy.groupId)
+    if (joinGroups.has(key)) continue
+    joinGroups.add(key)
+    scheduleSubThreadJoinEvaluation(chat.parentChatId, policy.groupId)
+  }
+}
+
+/**
+ * Post-paint completion for the bounded pre-window boot sweeps. Same
+ * predicates as the pre-window pass, over the full candidate set, in
+ * byte-budgeted slices that yield the event loop so chat IPC stays responsive
+ * while the corpus drains. Most-recent candidates first, so the chats the user
+ * is likeliest to open settle earliest.
+ */
+async function runDeferredStaleRunSweep(): Promise<void> {
+  const fence = historyDeletionSweepFence()
+  if (!fence) return
+  const { fencedForErasure } = fence
+  const nowIso = new Date().toISOString()
+  await runSlicesSerially(
+    planSweepSlices(AppStore.listStaleRunSweepCandidates(), DEFERRED_SWEEP_SLICE_BYTES),
+    (slice) => {
+      const records = slice
+        .map(({ chatId }) => AppStore.getChat(chatId))
+        .filter((chat): chat is ChatRecord => chat !== null && !fencedForErasure(chat))
+      const { chats, settlements, terminalRecoveries } = reconcileStaleChatRuns(
+        records,
+        isChatRunLive,
+        nowIso,
+        { minAgeMs: 0, getRunSession: (runId) => runManager.get(runId) }
+      )
+      if (chats.length > 0) persistStaleRunSweepResult(chats, settlements, terminalRecoveries)
+    }
+  )
+  // Jobs after runs here (this path has no early return to work around): the
+  // targeted reads see this sweep's fresh seals, so a job under a run settled
+  // above clears immediately instead of waiting for the periodic tick.
+  settleOrphanedRunQueueJobsProjection(fencedForErasure, [], {
+    includeLegacyCorpusFallback: true
+  })
+}
+
+async function runDeferredWakeupSweeps(): Promise<void> {
+  await runSlicesSerially(
+    planSweepSlices(AppStore.listEnsembleWakeupCandidates(), DEFERRED_SWEEP_SLICE_BYTES),
+    (slice) => {
+      applyEnsembleWakeupRecoveryActions(
+        slice.flatMap(({ chatId }) =>
+          Object.values(AppStore.getChat(chatId)?.ensemble?.wakeups || {})
+        )
+      )
+    }
+  )
+  await runSlicesSerially(
+    planSweepSlices(AppStore.listSoloWakeupCandidates(), DEFERRED_SWEEP_SLICE_BYTES),
+    (slice) => {
+      applySoloWakeupRecoveryActions(
+        slice.flatMap(({ chatId }) => {
+          const chat = AppStore.getChat(chatId)
+          if (!chat || chat.chatKind === 'ensemble') return []
+          return Object.values(chat.soloWakeups || {}).filter(
+            (record) => record.status === 'pending'
+          )
+        })
+      )
+    }
+  )
+}
+
+async function runDeferredSubThreadSweep(): Promise<void> {
+  const joinGroups = new Set<string>()
+  await runSlicesSerially(
+    planSweepSlices(AppStore.listSubThreadRecoveryCandidates(), DEFERRED_SWEEP_SLICE_BYTES),
+    (slice) => {
+      for (const { chatId } of slice) {
+        const chat = AppStore.getChat(chatId)
+        if (!chat) continue
+        recoverOneSubThreadWorkerQueue(chat)
+        collectSubThreadJoinPolicies(chat, joinGroups)
+      }
+    }
+  )
+}
+
+/**
+ * Complete every bounded pre-window sweep over the full candidate set. Same
+ * guards as the pre-window calls: no recovery while a startup fence is up,
+ * and wakeups stay behind the ensemble-wakeups flag.
+ */
+async function runDeferredBootSweeps(): Promise<void> {
+  if (historyDeletionStartupRecoveryBlockedReason || workspaceLockStartupRecoveryBlockedReason) {
+    return
+  }
+  await runDeferredStaleRunSweep()
+  if (ensembleWakeupsEnabled()) {
+    await runDeferredWakeupSweeps()
+  }
+  await runDeferredSubThreadSweep()
 }
 
 type ParentRunDispatch = (
@@ -11865,6 +12000,15 @@ function recoverPersistedEnsembleWakeups(budget?: SweepBudget): void {
         Object.values(chat.ensemble?.wakeups || {})
       )
     : getPersistedEnsembleWakeups()
+  applyEnsembleWakeupRecoveryActions(wakeups)
+}
+
+/**
+ * Classify one wakeup batch and arm/fire/expire each record. Shared by the
+ * pre-window pass and the deferred post-paint sweep (which calls it per
+ * slice — classification is per-record, so slicing changes nothing).
+ */
+function applyEnsembleWakeupRecoveryActions(wakeups: EnsembleWakeupRecord[]): void {
   const actions = classifyWakeupRecovery(wakeups, {
     nowMs: Date.now(),
     nowIso: new Date().toISOString()
@@ -11902,6 +12046,15 @@ function recoverPersistedSoloChatWakeups(budget?: SweepBudget): void {
         )
       })
     : soloChatWakeupServiceRef.getAllPersistedWakeups()
+  applySoloWakeupRecoveryActions(wakeups)
+}
+
+/**
+ * Classify one solo-wakeup batch and arm/fire/expire each record. Shared by
+ * the pre-window pass and the deferred post-paint sweep.
+ */
+function applySoloWakeupRecoveryActions(wakeups: SoloChatWakeupRecord[]): void {
+  if (!soloChatWakeupServiceRef) return
   const actions = classifyWakeupRecovery(wakeups, {
     nowMs: Date.now(),
     nowIso: new Date().toISOString()
@@ -12798,49 +12951,54 @@ async function maybeDrainSubThreadWorkerQueue(subThreadId: string): Promise<void
 
 function recoverSubThreadWorkerQueues(budget?: SweepBudget): void {
   for (const chat of AppStore.getSubThreadRecoveryChats(budget ? { budget } : {})) {
-    const control = chat.delegationContext?.workerControl
-    if (!chat.parentChatId || !control) continue
-    const recoveredAt = new Date().toISOString()
-    const recoveredRuns = (chat.runs || []).map((run) => {
-      // Prefer the universal liveness probe (RunManager + bridge + bg + queue).
-      // Keep the chat-scoped bg-transcript match as a belt-and-braces path for
-      // legacy map shapes where runId indexing may lag chatId association.
-      const live =
-        isChatRunLive(run.runId) ||
-        Boolean(
-          run.runId &&
-          [...backgroundSubThreadTranscripts.values()].some(
-            (state) => state.chatId === chat.appChatId && state.runId === run.runId
-          )
+    recoverOneSubThreadWorkerQueue(chat)
+  }
+}
+
+/** Settle one sub-thread's worker control lane and re-arm its drain. */
+function recoverOneSubThreadWorkerQueue(chat: ChatRecord): void {
+  const control = chat.delegationContext?.workerControl
+  if (!chat.parentChatId || !control) return
+  const recoveredAt = new Date().toISOString()
+  const recoveredRuns = (chat.runs || []).map((run) => {
+    // Prefer the universal liveness probe (RunManager + bridge + bg + queue).
+    // Keep the chat-scoped bg-transcript match as a belt-and-braces path for
+    // legacy map shapes where runId indexing may lag chatId association.
+    const live =
+      isChatRunLive(run.runId) ||
+      Boolean(
+        run.runId &&
+        [...backgroundSubThreadTranscripts.values()].some(
+          (state) => state.chatId === chat.appChatId && state.runId === run.runId
         )
-      return !live && isActiveChatRunStatus(run.status) ? settleStaleChatRun(run, recoveredAt) : run
-    })
-    const runSnapshots = recoveredRuns.flatMap((run) =>
-      typeof run.runId === 'string' && typeof run.status === 'string'
-        ? [{ runId: run.runId, status: run.status, ...(run.cancelled ? { cancelled: true } : {}) }]
-        : []
-    )
-    const recovered = recoverSubThreadWorkerControl(control, runSnapshots, recoveredAt)
-    const controlChanged = JSON.stringify(control) !== JSON.stringify(recovered)
-    const runsChanged = JSON.stringify(chat.runs || []) !== JSON.stringify(recoveredRuns)
-    if (controlChanged || runsChanged) {
-      saveAndBroadcastChat({
-        ...chat,
-        runs: recoveredRuns,
-        delegationContext: {
-          ...chat.delegationContext!,
-          workerControl: recovered
-        },
-        updatedAt: Date.now()
-      })
-    }
-    void maybeDrainSubThreadWorkerQueue(chat.appChatId).catch((error) => {
-      console.warn(
-        `[SubThreadWorker] recovery drain failed for subThreadId=${chat.appChatId}:`,
-        error instanceof Error ? error.message : String(error)
       )
+    return !live && isActiveChatRunStatus(run.status) ? settleStaleChatRun(run, recoveredAt) : run
+  })
+  const runSnapshots = recoveredRuns.flatMap((run) =>
+    typeof run.runId === 'string' && typeof run.status === 'string'
+      ? [{ runId: run.runId, status: run.status, ...(run.cancelled ? { cancelled: true } : {}) }]
+      : []
+  )
+  const recovered = recoverSubThreadWorkerControl(control, runSnapshots, recoveredAt)
+  const controlChanged = JSON.stringify(control) !== JSON.stringify(recovered)
+  const runsChanged = JSON.stringify(chat.runs || []) !== JSON.stringify(recoveredRuns)
+  if (controlChanged || runsChanged) {
+    saveAndBroadcastChat({
+      ...chat,
+      runs: recoveredRuns,
+      delegationContext: {
+        ...chat.delegationContext!,
+        workerControl: recovered
+      },
+      updatedAt: Date.now()
     })
   }
+  void maybeDrainSubThreadWorkerQueue(chat.appChatId).catch((error) => {
+    console.warn(
+      `[SubThreadWorker] recovery drain failed for subThreadId=${chat.appChatId}:`,
+      error instanceof Error ? error.message : String(error)
+    )
+  })
 }
 
 function registerBridgeRunTranscript(args: {
@@ -61722,18 +61880,20 @@ if (isGeminiMcpBridgeProcess) {
       !workspaceLockStartupRecoveryBlockedReason &&
       ensembleWakeupsEnabled()
     ) {
-      recoverPersistedEnsembleWakeups()
+      // Bounded to the most recent candidates so first paint is not held
+      // behind corpus parses; the deferred post-paint sweep completes them.
+      recoverPersistedEnsembleWakeups(PRE_WINDOW_SWEEP_BUDGET)
       // 1.0.5-EW37 — Solo wakeups gated behind the same flag as
       // ensemble for now. Once the feature is considered stable
       // both lanes will move out from behind TASKWRAITH_ENSEMBLE_WAKEUPS
       // together.
-      recoverPersistedSoloChatWakeups()
+      recoverPersistedSoloChatWakeups(PRE_WINDOW_SWEEP_BUDGET)
     }
     if (
       !historyDeletionStartupRecoveryBlockedReason &&
       !workspaceLockStartupRecoveryBlockedReason
     ) {
-      recoverSubThreadControlPlane()
+      recoverSubThreadControlPlane(PRE_WINDOW_SWEEP_BUDGET)
     }
     const dispatchAgentRun = async (
       payload: AgentRunPayload,
@@ -63169,6 +63329,17 @@ if (isGeminiMcpBridgeProcess) {
     })
     const openedForDeferredSecondInstance = startupWindowGate.release(createWindow)
     if (!openedForDeferredSecondInstance && !tuiHeadlessHostSession.isHeadless) createWindow()
+    // The pre-window recovery above settled only the most recent candidates so
+    // this window could paint in seconds. Complete the same sweeps over the
+    // full candidate set once the first frame is up (immediately when
+    // headless), in slices that yield the event loop so chat IPC stays
+    // responsive while the corpus drains.
+    scheduleDeferredBootSweeps({
+      headless: tuiHeadlessHostSession.isHeadless,
+      onFirstPaint: (onPaint) => mainWindow?.webContents.once('did-finish-load', onPaint),
+      paintTimeoutMs: DEFERRED_BOOT_SWEEP_PAINT_TIMEOUT_MS,
+      runFullSweeps: runDeferredBootSweeps
+    })
     const packagedEmulatorSmokeHandled = await startPackagedEmulatorSmoke({
       argv: process.argv,
       posture: instanceLaunchPosture,
