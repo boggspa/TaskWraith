@@ -115,6 +115,22 @@ export type MuseMspReasoningEffort = (typeof MUSE_MSP_REASONING_EFFORTS)[number]
  * running turn instead of queueing it. */
 export type MuseMspIfBusy = 'queue' | 'steer' | 'replace'
 
+/** `ContextPressureLevel` (SS4.6.6). Occupancy vs the host pressure basis —
+ * hard threshold first, both inclusive `>=`. OPEN. This is NOT compaction:
+ * the sibling `compaction` item kind (SS4.5.10) is a different plane. */
+export const MUSE_MSP_CONTEXT_PRESSURE_LEVELS = ['normal', 'warning', 'blocked'] as const
+export type MuseMspContextPressureLevel =
+  | (typeof MUSE_MSP_CONTEXT_PRESSURE_LEVELS)[number]
+  | (string & {})
+
+/** `CompactionTrigger` (SS4.5.10). OPEN. Lives on the compaction ITEM. */
+export const MUSE_MSP_COMPACTION_TRIGGERS = ['manual', 'auto'] as const
+export type MuseMspCompactionTrigger = (typeof MUSE_MSP_COMPACTION_TRIGGERS)[number] | (string & {})
+
+/** `CompactionOutcome` (SS4.5.10 / SS3.7). OPEN. A `noop` is success. */
+export const MUSE_MSP_COMPACTION_OUTCOMES = ['compacted', 'noop', 'failed', 'cancelled'] as const
+export type MuseMspCompactionOutcome = (typeof MUSE_MSP_COMPACTION_OUTCOMES)[number] | (string & {})
+
 /** Wire-OPEN for evolution even though the runtime's own vocabulary is closed. */
 export type MuseMspTurnTerminal = 'completed' | 'failed' | 'cancelled' | (string & {})
 
@@ -236,6 +252,14 @@ export interface MuseMspItem {
   steered?: boolean
   truncated?: boolean
   recordedAt?: string
+  /** `compaction` item (SS4.5.10) — distinct from `contextUsage.pressure`. */
+  outcome?: MuseMspCompactionOutcome
+  trigger?: MuseMspCompactionTrigger
+  tokensBefore?: number
+  tokensAfter?: number
+  reason?: string
+  summarizedThrough?: string
+  strategyId?: string
 }
 
 /** `ApprovalChoice.scope` — maps onto TaskWraith's once / session / persistent

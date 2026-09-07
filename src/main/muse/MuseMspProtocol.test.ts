@@ -4,7 +4,10 @@ import {
   encodeMuseMspFrame,
   museMspCommandId,
   MUSE_MSP_CLIENT_NAME,
-  MUSE_MSP_CLIENT_NAME_PATTERN
+  MUSE_MSP_CLIENT_NAME_PATTERN,
+  MUSE_MSP_COMPACTION_OUTCOMES,
+  MUSE_MSP_COMPACTION_TRIGGERS,
+  MUSE_MSP_CONTEXT_PRESSURE_LEVELS
 } from './MuseMspProtocol'
 
 function bytes(fill: number): (size: number) => Uint8Array {
@@ -120,5 +123,14 @@ describe('MUSE_MSP_CLIENT_NAME', () => {
     // whole reason this constant exists.
     expect(MUSE_MSP_CLIENT_NAME).toMatch(MUSE_MSP_CLIENT_NAME_PATTERN)
     expect(MUSE_MSP_CLIENT_NAME_PATTERN.test('taskwraith-spike')).toBe(false)
+  })
+})
+
+describe('Muse MSP context pressure vs compaction vocabulary', () => {
+  it('keeps occupancy pressure and the compaction item on separate planes', () => {
+    expect(MUSE_MSP_CONTEXT_PRESSURE_LEVELS).toEqual(['normal', 'warning', 'blocked'])
+    expect(MUSE_MSP_CONTEXT_PRESSURE_LEVELS).not.toContain('compacting')
+    expect(MUSE_MSP_COMPACTION_TRIGGERS).toEqual(['manual', 'auto'])
+    expect(MUSE_MSP_COMPACTION_OUTCOMES).toEqual(['compacted', 'noop', 'failed', 'cancelled'])
   })
 })

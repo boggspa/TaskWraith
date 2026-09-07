@@ -28,7 +28,12 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto'
 
 import type { AcpChildProcess } from '../acp/AcpTurnClient'
+import type { ContextCompactionSignal } from '../../shared/contextCompaction'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
+import {
+  museMspCompactionItemToSignal,
+  museMspContextPressureIndicatesCompactionQuiet
+} from './MuseMspCompaction'
 import {
   decodeMuseMspFrames,
   encodeMuseMspFrame,
@@ -40,6 +45,7 @@ import {
   type MuseMspApprovalMode,
   type MuseMspApprovalRequest,
   type MuseMspApprovalRequirementRef,
+  type MuseMspContextPressureLevel,
   type MuseMspItem,
   type MuseMspJsonRpcId,
   type MuseMspReasoningEffort,
@@ -86,7 +92,8 @@ export interface MuseMspUsageSnapshot {
 export interface MuseMspContextSnapshot {
   readonly usedTokens: number
   readonly windowTokens?: number
-  readonly pressure?: string
+  /** Occupancy (`ContextPressureLevel`), not the compaction item kind. */
+  readonly pressure?: MuseMspContextPressureLevel
 }
 
 export interface MuseMspTurnOptions {
@@ -106,6 +113,8 @@ export interface MuseMspTurnOptions {
   readonly onSessionReady?: (info: MuseMspSessionReadyInfo) => void
   readonly onUsage?: (usage: MuseMspUsageSnapshot) => void
   readonly onContextUsage?: (context: MuseMspContextSnapshot) => void
+  /** Compaction ITEM lifecycle — never occupancy pressure. */
+  readonly onContextCompaction?: (signal: ContextCompactionSignal) => void
   /**
    * DIAGNOSTIC ONLY. TaskWraith owns the objective: `resolveActiveGoalMode`
    * grants a provider-native goal mode to codex/claude/grok/ollama and lands
@@ -289,6 +298,7 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   // entry restore the very unbounded wait this watchdog exists to end.
   let pendingApprovalDecisions = 0
   let pendingUserInputs = 0
+  let occupancyCompactionQuiet = false
   let compactionQuiet = false
   let compactionExtensionsUsed = 0
   // itemIds of long-running work started but not yet terminal. Non-empty
@@ -296,6 +306,14 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   // kill here is the false-positive the user rejected. Independent escape is
   // MuseMspRun's shouldCancel poll → handle.cancel().
   const openLongWorkItems = new Set<string>()
+  // Compaction ITEM ids in flight. Distinct from occupancy pressure AND from
+  // openLongWorkItems: this set feeds the counted grace, never an unbounded
+  // suspend.
+  const openCompactionItems = new Set<string>()
+
+  const refreshCompactionQuiet = (): void => {
+    compactionQuiet = occupancyCompactionQuiet || openCompactionItems.size > 0
+  }
 
   let settleClosed: () => void = () => {}
   const closedPromise = new Promise<void>((resolve) => {
@@ -692,10 +710,11 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       return null
     }
     // Open enum: the schema requires unknown kinds to render GENERICALLY —
-    // "kind name plus status plus fallbackText" — rather than vanishing. Five
-    // known kinds (userShell, subagent, workflow, reminderChild, compaction)
-    // reach this arm too, so a subagent run or a context compaction is visible
-    // instead of silently absent from the transcript.
+    // "kind name plus status plus fallbackText" — rather than vanishing. Known
+    // kinds that still reach this arm (userShell, subagent, workflow,
+    // reminderChild) stay visible. `compaction` is mapped to
+    // ContextCompactionSignal instead of this generic card.
+    if (item.kind === 'compaction') return null
     if (phase !== 'completed') return null
     const fallback = text(item.fallbackText)
     if (!fallback) return null
@@ -777,6 +796,20 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
           // mutation, so it armed (or left armed) against the previous set.
           // Re-arm now: suspend if work just started, idle if it just ended.
           armInactivityWatchdog()
+        }
+        if (workKind === 'compaction') {
+          if (phase !== 'completed' && item.status === 'inProgress') {
+            openCompactionItems.add(item.itemId)
+          } else {
+            openCompactionItems.delete(item.itemId)
+          }
+          refreshCompactionQuiet()
+          // Re-arm after the set mutation: start counted grace, or resume the
+          // idle deadline when the item goes terminal. Never suspend forever.
+          armInactivityWatchdog()
+          const signal = museMspCompactionItemToSignal(item, phase)
+          if (signal) options.onContextCompaction?.(signal)
+          return
         }
         // A completed agentMessage repeats text already streamed as deltas.
         if (phase === 'completed' && item.kind === 'agentMessage') return
@@ -865,11 +898,11 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         const usedTokens = num(params.usedTokens)
         if (usedTokens === undefined) return
         const pressure = text(params.pressure)
-        // `pressure` is an open string on this schema, so match the family
-        // rather than pinning a closed enum this build may not have served.
-        // Note the sibling `compaction` ITEM kind is a different plane; the
-        // two must not be conflated.
-        compactionQuiet = /compact/i.test(pressure)
+        // Occupancy plane only. Closed 1.0.3 values never mean compacting;
+        // an open-enum compact* member still trips the counted grace. The
+        // compaction ITEM is tracked separately in openCompactionItems.
+        occupancyCompactionQuiet = museMspContextPressureIndicatesCompactionQuiet(pressure)
+        refreshCompactionQuiet()
         options.onContextUsage?.({
           usedTokens,
           windowTokens: num(params.windowTokens),

@@ -620,6 +620,29 @@ describe('runMuseMspTurn — live usage and context', () => {
     child.emit({ jsonrpc: '2.0', method: 'session/contextUsage', params: { sessionId: 'sess-1' } })
     expect(onContextUsage).not.toHaveBeenCalled()
   })
+
+  it('forwards occupancy pressure without treating it as a compaction signal', async () => {
+    const onContextCompaction = vi.fn()
+    const onContextUsage = vi.fn()
+    const { child } = start({ onContextCompaction, onContextUsage })
+    await driveToTurn(child)
+    for (const pressure of ['normal', 'warning', 'blocked'] as const) {
+      onContextUsage.mockClear()
+      child.emit({
+        jsonrpc: '2.0',
+        method: 'session/contextUsage',
+        params: { sessionId: 'sess-1', usedTokens: 900_000, windowTokens: 1_000_000, pressure }
+      })
+      expect(onContextUsage).toHaveBeenCalledWith({
+        usedTokens: 900_000,
+        windowTokens: 1_000_000,
+        pressure
+      })
+    }
+    // Occupancy and the compaction ITEM are different planes: a full window is
+    // not a ContextCompactionSignal.
+    expect(onContextCompaction).not.toHaveBeenCalled()
+  })
 })
 
 describe('selectMuseMspApprovalChoice — select, never create', () => {
@@ -795,6 +818,57 @@ describe('runMuseMspTurn — schema-fidelity regressions', () => {
       }
     })
     expect(events.filter((e) => e.type === 'content').map((e) => e.text)).toEqual(['Orange'])
+  })
+
+  it('emits ContextCompactionSignal for a compaction item and does not fall through to unknown', async () => {
+    const onContextCompaction = vi.fn()
+    const { child, events } = start({ onContextCompaction })
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/started',
+      params: {
+        item: {
+          itemId: 'cmp-1',
+          kind: 'compaction',
+          revision: 1,
+          status: 'inProgress',
+          trigger: 'auto'
+        }
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/completed',
+      params: {
+        item: {
+          itemId: 'cmp-1',
+          kind: 'compaction',
+          revision: 2,
+          status: 'completed',
+          outcome: 'compacted',
+          trigger: 'auto',
+          tokensBefore: 900_000,
+          tokensAfter: 12_000,
+          fallbackText: 'compacted 900000 → 12000'
+        }
+      }
+    })
+    expect(onContextCompaction).toHaveBeenCalledWith({
+      kind: 'started',
+      telemetry: { provider: 'muse', eventUuid: 'cmp-1', trigger: 'auto' }
+    })
+    expect(onContextCompaction).toHaveBeenCalledWith({
+      kind: 'completed',
+      telemetry: {
+        provider: 'muse',
+        eventUuid: 'cmp-1',
+        trigger: 'auto',
+        preTokens: 900_000,
+        postTokens: 12_000
+      }
+    })
+    expect(events.some((e) => e.type === 'unknown')).toBe(false)
   })
 
   it('renders an unhandled item kind generically from fallbackText', async () => {
@@ -1527,6 +1601,54 @@ describe('runMuseMspTurn — inactivity watchdog', () => {
       expect(budget).not.toBe(1_800_000)
       expect(budget).not.toBe(86_400_000)
     }
+  })
+
+  it('does not extend the watchdog for occupancy pressure blocked', async () => {
+    // `blocked` is the 1.0.3 hard occupancy threshold, not "currently compacting".
+    // Idle is 30ms; counted grace would still be alive at 45ms. Closing by 500ms
+    // would pass either way, so the 45ms kill is the non-vacuous leg.
+    const { child, handle } = start({ inactivityTimeoutMs: 30 })
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/contextUsage',
+      params: {
+        sessionId: 'sess-1',
+        usedTokens: 990_000,
+        windowTokens: 1_000_000,
+        pressure: 'blocked'
+      }
+    })
+    await flush()
+    await sleep(45)
+    expect(child.killed.length).toBeGreaterThan(0)
+    expect(await settleWithin(handle, 500)).toBe('closed')
+  })
+
+  it('extends the watchdog during an in-progress compaction item but still bounds it', async () => {
+    // The compaction ITEM is the compacting plane. It must not join the
+    // long-work suspend set (that would be the unbounded wedge renamed), so
+    // the counted grace still spends and the handle still closes.
+    const { child, handle, warnings } = start({ inactivityTimeoutMs: 30 })
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/started',
+      params: {
+        item: {
+          itemId: 'cmp-1',
+          kind: 'compaction',
+          revision: 1,
+          status: 'inProgress',
+          trigger: 'auto'
+        }
+      }
+    })
+    await flush()
+    await sleep(45)
+    expect(child.killed).toEqual([])
+    expect(await settleWithin(handle, 900)).toBe('closed')
+    expect(warnings.some((w) => /stopped responding/i.test(w))).toBe(true)
   })
 
   it('extends the watchdog during compaction quiet but still bounds it', async () => {
