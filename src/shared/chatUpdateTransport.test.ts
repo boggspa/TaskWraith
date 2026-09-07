@@ -18,6 +18,7 @@ import {
   utf8ByteLength,
   type ChatUpdateProducerDelta
 } from './chatUpdateTransport'
+import { DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES } from './transcriptPage'
 
 function message(id: string, content: string): ChatMessage {
   return { id, role: 'assistant', content, timestamp: '2026-07-18T00:00:00.000Z' }
@@ -886,5 +887,35 @@ describe('chat update transport', () => {
     const large = chat(2, [message('a', 'x'.repeat(10_000))])
     expect(estimateChatRecordBytes(large)).toBeGreaterThan(estimateChatRecordBytes(small))
     expect(estimateChatRecordBytes(large)).toBeGreaterThan(10_000)
+  })
+
+  it('snapshots an oversized chat as a bounded page instead of cloning the full transcript', () => {
+    const messages = Array.from(
+      { length: DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 80 },
+      (_, index) => message(`m-${index}`, `row ${index}`)
+    )
+    const oversized = chat(9, messages)
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'snap-page-1',
+      revision: 9,
+      chat: oversized
+    })
+
+    expect(delivery.kind).toBe('snapshot')
+    if (delivery.kind !== 'snapshot') throw new Error('expected snapshot')
+    expect(delivery.chat.messages.length).toBeLessThanOrEqual(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES)
+    expect(delivery.chat.messages.length).toBeLessThan(messages.length)
+    expect(delivery.chat.messages).not.toBe(messages)
+    expect((delivery.chat as { summaryOnly?: boolean }).summaryOnly).toBe(true)
+    expect((delivery.chat as { transcriptPaged?: boolean }).transcriptPaged).toBe(true)
+    expect(delivery.page?.hasOlder).toBe(true)
+    expect(delivery.page?.totalMessageCount).toBe(messages.length)
+    expect(delivery.chat.messages.map((entry) => entry.id)).toEqual(
+      messages.slice(-delivery.chat.messages.length).map((entry) => entry.id)
+    )
+    const applied = applyChatUpdateDelivery(delivery)
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) throw new Error(applied.reason)
+    expect(applied.baseline.chat.messages).toHaveLength(delivery.chat.messages.length)
   })
 })

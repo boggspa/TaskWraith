@@ -22,6 +22,7 @@ import {
   resolveChatUpdateAckTimeoutMs,
   resolveSnapshotRetryDelayMs
 } from './ChatUpdateSnapshotAckPolicy'
+import { DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES } from '../shared/transcriptPage'
 
 function message(id: string, content: string): ChatMessage {
   return { id, role: 'assistant', content, timestamp: '2026-07-18T00:00:00.000Z' }
@@ -1076,5 +1077,37 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
       baselineDrops: 1,
       ackRejections: 0
     })
+  })
+
+  it('does not put the full messages array on the wire when a baseline drop snapshots an oversized chat', () => {
+    const messages = Array.from(
+      { length: DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 80 },
+      (_, index) => message(`m-${index}`, `row ${index}`)
+    )
+    const oversized = {
+      ...chat(3, ['placeholder']),
+      messages,
+      persistenceRevision: 3,
+      updatedAt: 3
+    } as ChatRecord
+    const stringify = vi.spyOn(JSON, 'stringify')
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    coordinator.enqueue(sink, oversized)
+    const stringifiedFullMessages = stringify.mock.calls.some((args) => args[0] === messages)
+    stringify.mockRestore()
+
+    expect(stringifiedFullMessages).toBe(false)
+    expect(sink.deliveries).toHaveLength(1)
+    expect(sink.deliveries[0].kind).toBe('snapshot')
+    if (sink.deliveries[0].kind !== 'snapshot') throw new Error('expected snapshot')
+    expect(sink.deliveries[0].chat.messages.length).toBeLessThan(messages.length)
+    expect(sink.deliveries[0].chat.messages.length).toBeLessThanOrEqual(
+      DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES
+    )
+    expect(sink.deliveries[0].page?.hasOlder).toBe(true)
   })
 })

@@ -78,6 +78,26 @@ describe('ChatTranscriptStore', () => {
     expect(store.stats().chatCount).toBe(0)
   })
 
+  it('ingests a marked paged snapshot window as a store page, not a full transcript', () => {
+    const store = new ChatTranscriptStore()
+    const windowMessages = [message('m-79', 'tail')]
+    const paged = {
+      ...chat('chat-paged-snap'),
+      summaryOnly: true as const,
+      transcriptPaged: true as const,
+      messageCount: 80,
+      runCount: 0,
+      messages: windowMessages,
+      runs: []
+    }
+    const payload = store.ingest(paged)
+    expect(payload).not.toBeNull()
+    expect(store.isPaged('chat-paged-snap')).toBe(true)
+    expect(payload?.hasOlder).toBe(true)
+    expect(payload?.totalMessageCount).toBe(80)
+    expect(payload?.messages).toEqual(windowMessages)
+  })
+
   it('bumps per-chat generation on set/ingest/drop/clear', () => {
     const store = new ChatTranscriptStore()
     expect(store.generation('chat-e')).toBe(0)

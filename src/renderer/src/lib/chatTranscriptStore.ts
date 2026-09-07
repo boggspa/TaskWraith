@@ -4,6 +4,7 @@ import {
   DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES,
   DEFAULT_TRANSCRIPT_PAGE_MAX_RUNS,
   estimateJsonishBytes,
+  isTranscriptPagedShell,
   selectTranscriptPageEndingAt,
   selectTranscriptPageRuns,
   selectTranscriptPageStartingAt,
@@ -426,7 +427,31 @@ export class ChatTranscriptStore {
 
   /** Capture full authoritative arrays while publishing one bounded page. */
   ingest(chat: ChatRecord): ChatTranscriptPayload | null {
-    if (!chat?.appChatId || isChatSummaryRecord(chat)) return null
+    if (!chat?.appChatId) return null
+    if (isTranscriptPagedShell(chat)) {
+      const windowMessages = Array.isArray(chat.messages) ? chat.messages : []
+      if (windowMessages.length === 0) return null
+      const total =
+        typeof (chat as { messageCount?: unknown }).messageCount === 'number'
+          ? (chat as { messageCount: number }).messageCount
+          : windowMessages.length
+      const windowStart = Math.max(0, total - windowMessages.length)
+      return this.ingestPage({
+        chatId: chat.appChatId,
+        messages: windowMessages,
+        runs: Array.isArray(chat.runs) ? chat.runs : [],
+        totalMessageCount: total,
+        windowStart,
+        windowEnd: windowStart + windowMessages.length,
+        estimatedBytes: estimateJsonishBytes(windowMessages),
+        hasOlder: windowStart > 0,
+        hasNewer: windowStart + windowMessages.length < total,
+        oldestMessageId: windowMessages[0]?.id ?? null,
+        newestMessageId: windowMessages[windowMessages.length - 1]?.id ?? null,
+        updatedAt: chat.updatedAt ?? 0
+      })
+    }
+    if (isChatSummaryRecord(chat)) return null
     const sourceMessages = chat.messages.length === 0 ? EMPTY_MESSAGES : chat.messages
     const sourceRuns = chat.runs.length === 0 ? EMPTY_RUNS : chat.runs
     const previous = this.byId.get(chat.appChatId)

@@ -58,6 +58,27 @@ describe('mergeChatUpdatedForRender', () => {
     expect(merged.messages).toBe(incomingMessages)
   })
 
+  it('does not re-inflate a paged snapshot from a live full transcript', () => {
+    const page = [message('z', 'tail')]
+    const incoming = {
+      ...chat(page),
+      summaryOnly: true,
+      messageCount: 80,
+      runCount: 0,
+      transcriptPaged: true
+    } as unknown as ChatRecord
+    const liveMessages = Array.from({ length: 80 }, (_, index) => message(`m-${index}`, `${index}`))
+    const merged = mergeChatUpdatedForRender(incoming, {
+      liveChat: chat(liveMessages),
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages).toEqual(page)
+    expect(merged.messages).toHaveLength(1)
+  })
+
   it('keeps longer live assistant content when the incoming transcript changed', () => {
     const incomingMessages = [message('a', 'short')]
     const liveMessages = [message('a', 'longer live answer')]

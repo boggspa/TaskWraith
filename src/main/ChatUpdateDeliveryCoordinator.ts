@@ -928,7 +928,8 @@ export class ChatUpdateDeliveryCoordinator {
     const revisionInputBytes: ChatUpdateRevisionInputBytes | undefined = this.serializedBytes
       ? { ensemble: 0, runs: 0, nonMessageRecord: 0 }
       : undefined
-    const contentSub = computeChatSubRevisions(next.chat, revisionInputBytes)
+    const hashSource = epochDelivery.kind === 'snapshot' ? epochDelivery.chat : next.chat
+    const contentSub = computeChatSubRevisions(hashSource, revisionInputBytes)
     if (this.serializedBytes && revisionInputBytes) {
       const envelope = utf8ByteLength(JSON.stringify(epochDelivery) ?? '')
       this.serializedBytes.envelope += envelope
@@ -936,7 +937,9 @@ export class ChatUpdateDeliveryCoordinator {
       this.serializedBytes.ensemble += revisionInputBytes.ensemble
       this.serializedBytes.runs += revisionInputBytes.runs
       this.serializedBytes.nonMessageRecord += revisionInputBytes.nonMessageRecord
-      this.serializedBytes.messages += utf8ByteLength(JSON.stringify(next.chat.messages) ?? '')
+      this.serializedBytes.messages += utf8ByteLength(
+        JSON.stringify(hashSource.messages) ?? ''
+      )
     }
     const recordHash = contentSub.recordHash
     const compactBaseline: CompactChatUpdateBaseline = {

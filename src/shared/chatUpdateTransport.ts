@@ -1,4 +1,10 @@
 import type { ChatMessage, ChatRecord } from '../main/store/types'
+import {
+  DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES,
+  buildTranscriptPage,
+  shouldPageTranscriptOnOpen,
+  type TranscriptPage
+} from './transcriptPage'
 
 export const CHAT_UPDATE_CHANNEL = 'chat-updated'
 export const CHAT_UPDATE_ACK_CHANNEL = 'chat-updated:ack'
@@ -146,6 +152,11 @@ export interface ChatUpdateSnapshotDelivery {
   transcriptHash?: string
   /** Snapshot metadata carried forward so later patches keep the recovery fence. */
   transcriptIdsUnique?: boolean
+  /**
+   * Present when the snapshot was bounded to a transcript page instead of the
+   * canonical messages array. The delivered `chat.messages` are that page.
+   */
+  page?: TranscriptPage
 }
 
 /** v1 patch: full non-message record (legacy clients / default emit). */
@@ -867,6 +878,53 @@ export interface ChatUpdateDeliveryDiagnostics {
   spliceRecovery: boolean
 }
 
+function transcriptContentExceedsPageBytes(messages: readonly ChatMessage[]): boolean {
+  let bytes = 0
+  for (const message of messages) {
+    if (typeof message.content === 'string') bytes += message.content.length * 2
+    if (bytes > DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES) return true
+  }
+  return false
+}
+
+/**
+ * Baseline-drop snapshots must not put the canonical transcript on the wire.
+ * Oversized chats become a marked shell whose `messages` are one tail page.
+ */
+export function boundChatUpdateSnapshot(chat: ChatRecord): {
+  chat: ChatRecord
+  page?: TranscriptPage
+} {
+  const messages = Array.isArray(chat.messages) ? chat.messages : []
+  const sourceChatSize =
+    typeof (chat as { sourceChatSize?: unknown }).sourceChatSize === 'number'
+      ? (chat as { sourceChatSize: number }).sourceChatSize
+      : 0
+  if (
+    !shouldPageTranscriptOnOpen({
+      messageCount: messages.length,
+      sourceChatSize
+    }) &&
+    !transcriptContentExceedsPageBytes(messages)
+  ) {
+    return { chat }
+  }
+  const page = buildTranscriptPage(chat, { chatId: chat.appChatId })
+  if (!page || (!page.hasOlder && !page.hasNewer)) return { chat }
+  return {
+    page,
+    chat: {
+      ...chat,
+      messages: page.messages,
+      runs: page.runs,
+      summaryOnly: true,
+      transcriptPaged: true,
+      messageCount: page.totalMessageCount,
+      runCount: Array.isArray(chat.runs) ? chat.runs.length : 0
+    } as ChatRecord
+  }
+}
+
 export function buildChatUpdateDelivery(input: {
   deliveryId: string
   revision: number
@@ -908,20 +966,24 @@ export function buildChatUpdateDelivery(input: {
       }
     : computeChatSubRevisions(chat)
 
-  const snapshot = (): ChatUpdateSnapshotDelivery => ({
-    protocolVersion,
-    kind: 'snapshot',
-    deliveryId,
-    chatId: chat.appChatId,
-    revision,
-    chat,
-    // A snapshot is the only place the hot path deliberately scans the whole
-    // transcript: it establishes a fresh exact root after a reload, NACK, or
-    // discontinuity.
-    transcriptHash: computeChatTranscriptHash(chat.messages),
-    transcriptIdsUnique: hasUniqueChatMessageIds(chat.messages),
-    ...(protocolVersion === CHAT_UPDATE_PROTOCOL_V2 ? sub : {})
-  })
+  const snapshot = (): ChatUpdateSnapshotDelivery => {
+    const bounded = boundChatUpdateSnapshot(chat)
+    const snapshotSub = computeChatSubRevisions(bounded.chat)
+    return {
+      protocolVersion,
+      kind: 'snapshot',
+      deliveryId,
+      chatId: chat.appChatId,
+      revision,
+      chat: bounded.chat,
+      // Hash the delivered window, not the canonical array, so ACK/apply agree
+      // and a 18k-row ensemble cannot be cloned onto the wire.
+      transcriptHash: computeChatTranscriptHash(bounded.chat.messages),
+      transcriptIdsUnique: hasUniqueChatMessageIds(bounded.chat.messages),
+      ...(bounded.page ? { page: bounded.page } : {}),
+      ...(protocolVersion === CHAT_UPDATE_PROTOCOL_V2 ? snapshotSub : {})
+    }
+  }
 
   if (!baseline || baseline.chat.appChatId !== chat.appChatId) {
     return snapshot()

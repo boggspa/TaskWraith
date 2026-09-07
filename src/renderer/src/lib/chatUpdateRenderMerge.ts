@@ -488,7 +488,7 @@ export function mergeChatUpdatedForRender(
       if (liveChat.messages !== chat.messages && !isTranscriptPagedShell(liveChat)) {
         merged = { ...chat, messages: liveChat.messages }
       }
-    } else if (liveChat.messages.length > 0) {
+    } else if (liveChat.messages.length > 0 && !isTranscriptPagedShell(chat)) {
       const mergedMessages = mergeLiveMessages(chat.messages, liveChat.messages)
       if (mergedMessages) {
         merged = { ...chat, messages: mergedMessages }
