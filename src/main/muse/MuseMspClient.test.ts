@@ -1397,6 +1397,116 @@ describe('runMuseMspTurn — inactivity watchdog', () => {
     expect(await settleWithin(handle, 600)).toBe('closed')
   })
 
+  /** One `item/started`/`item/completed` pair for a long-running tool call. */
+  const toolFrame = (
+    child: FakeMspChild,
+    phase: 'started' | 'completed',
+    status = 'inProgress'
+  ): void => {
+    child.emit({
+      jsonrpc: '2.0',
+      method: `item/${phase}`,
+      params: {
+        item: {
+          itemId: 'tool-1',
+          kind: 'toolCall',
+          revision: phase === 'started' ? 1 : 2,
+          status,
+          turnId: 'turn-1',
+          tool: 'run_shell_command',
+          callId: 'call-1',
+          ...(phase === 'completed' ? { visibleOutput: 'done' } : {})
+        }
+      }
+    })
+  }
+
+  it('lets a healthy silent tool call run far past the idle deadline', async () => {
+    const closes: Array<string | null> = []
+    const { child, handle } = start({
+      inactivityTimeoutMs: 30,
+      toolCallTimeoutMs: 2_000,
+      onClose: (_code: number | null, terminal: string | null) => closes.push(terminal)
+    })
+    await driveToTurn(child)
+    toolFrame(child, 'started')
+    await flush()
+
+    // A build or a big test run streams NOTHING for its whole duration. This is
+    // ~7 idle deadlines of silence; killing here would trade a rare wedge for a
+    // common false failure.
+    await sleep(220)
+    expect(child.killed).toEqual([])
+
+    // And it still completes normally afterwards.
+    toolFrame(child, 'completed', 'completed')
+    await flush()
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'turn/completed',
+      params: { turnId: 'turn-1', terminal: 'completed' }
+    })
+    await flush()
+    await handle.closed
+    expect(closes).toEqual(['completed'])
+  })
+
+  it('still terminates a tool call that never returns, on its own finite bound', async () => {
+    const closes: Array<{ terminal: string | null; kind: string }> = []
+    const { child, handle } = start({
+      inactivityTimeoutMs: 30,
+      toolCallTimeoutMs: 250,
+      onClose: (_code: number | null, terminal: string | null, error: { kind?: string } | null) => {
+        closes.push({ terminal, kind: error?.kind ?? '' })
+      }
+    })
+    await driveToTurn(child)
+    toolFrame(child, 'started')
+    await flush()
+
+    // Well past the idle deadline: the tool bound governs now, not the idle one.
+    await sleep(120)
+    expect(child.killed).toEqual([])
+
+    // But it is a BOUND, not an exemption — an outstanding tool call must never
+    // become a licence to hang, or the wedge is back under a new name.
+    expect(await settleWithin(handle, 1_500)).toBe('closed')
+    expect(closes).toEqual([{ terminal: 'failed', kind: 'hostUnresponsive' }])
+  })
+
+  it('drops back to the idle deadline once the tool call completes', async () => {
+    const { child, handle } = start({ inactivityTimeoutMs: 40, toolCallTimeoutMs: 5_000 })
+    await driveToTurn(child)
+    toolFrame(child, 'started')
+    await flush()
+    toolFrame(child, 'completed', 'completed')
+    await flush()
+    // The generous tool window must not linger after the tool is done, or a
+    // post-tool silent host waits 5s instead of 40ms.
+    expect(await settleWithin(handle, 1_000)).toBe('closed')
+  })
+
+  it('does not compound the compaction grace on top of the tool-call budget', async () => {
+    // The tool budget already covers this silence. Letting the counted grace
+    // stack on top of it multiplies the worst case by (1 + grace) — 30min
+    // becomes 2h — which is exactly the unbounded-wait direction we refuse.
+    const { child, handle } = start({
+      inactivityTimeoutMs: 30,
+      toolCallTimeoutMs: 200,
+      inactivityCompactionGrace: 3
+    })
+    await driveToTurn(child)
+    toolFrame(child, 'started')
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/contextUsage',
+      params: { sessionId: 'sess-1', usedTokens: 900_000, pressure: 'compacting' }
+    })
+    await flush()
+    // One tool budget (~200ms), not four (~800ms).
+    expect(await settleWithin(handle, 600)).toBe('closed')
+  })
+
   it('extends the watchdog during compaction quiet but still bounds it', async () => {
     const { child, handle, warnings } = start({ inactivityTimeoutMs: 30 })
     await driveToTurn(child)

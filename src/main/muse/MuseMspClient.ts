@@ -150,6 +150,11 @@ export interface MuseMspTurnOptions {
    * Zero or negative disables it — do not do that outside a test.
    */
   readonly inactivityTimeoutMs?: number
+  /**
+   * The separate, longer, still-finite deadline that governs while a tool call
+   * (or subagent/workflow/shell item) is outstanding. Never disables the bound.
+   */
+  readonly toolCallTimeoutMs?: number
   /** Consecutive deadline extensions granted while Muse reports compaction. */
   readonly inactivityCompactionGrace?: number
   readonly now?: () => number
@@ -167,8 +172,31 @@ export interface MuseMspTurnOptions {
  */
 export const MUSE_MSP_INACTIVITY_TIMEOUT_MS = 180_000
 
+/**
+ * Deadline while a unit of long work is outstanding.
+ *
+ * A tool call streams NOTHING between `item/started` and `item/completed` — a
+ * build, a test suite or a long shell command is legitimately silent for
+ * minutes, and the idle deadline would kill a perfectly healthy turn. That
+ * would trade a rare wedge for a common false failure, which is the worse bug.
+ *
+ * So outstanding work gets its own budget rather than an exemption: still
+ * finite, because a tool call that never returns must not become a licence to
+ * hang. 30 minutes is well past any plausible interactive tool while remaining
+ * a bound a human would rather hit than wait out forever.
+ */
+export const MUSE_MSP_TOOL_CALL_TIMEOUT_MS = 1_800_000
+
 /** Deadline extensions allowed while `session/contextUsage` reports compaction. */
 export const MUSE_MSP_INACTIVITY_COMPACTION_GRACE = 3
+
+/**
+ * Item kinds that represent outstanding WORK, i.e. a legitimately silent gap.
+ *
+ * `compaction` is deliberately absent — it has its own counted grace below, and
+ * folding it in here would give it two budgets. `reminderChild` is not work.
+ */
+const MUSE_MSP_LONG_WORK_ITEM_KINDS = new Set(['toolCall', 'userShell', 'subagent', 'workflow'])
 
 export interface MuseMspTurnHandle {
   /** Cancel the running turn, then terminate the host. Idempotent. */
@@ -282,6 +310,9 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   let pendingUserInputs = 0
   let compactionQuiet = false
   let compactionExtensionsUsed = 0
+  // itemIds of long-running work started but not yet terminal. Non-empty means
+  // silence is expected, so the longer (still finite) budget applies.
+  const openLongWorkItems = new Set<string>()
 
   let settleClosed: () => void = () => {}
   const closedPromise = new Promise<void>((resolve) => {
@@ -391,7 +422,15 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   const armInactivityWatchdog = (): void => {
     clearInactivityWatchdog()
     if (closed || terminationRequested) return
-    const timeoutMs = options.inactivityTimeoutMs ?? MUSE_MSP_INACTIVITY_TIMEOUT_MS
+    const idleMs = options.inactivityTimeoutMs ?? MUSE_MSP_INACTIVITY_TIMEOUT_MS
+    // A tool call is silent by nature, so while one is outstanding the turn is
+    // governed by the longer budget instead of the idle deadline. Chosen at ARM
+    // time, so the window widens the moment work starts and — because the item
+    // handlers re-arm after mutating the set — narrows again the moment it ends.
+    const timeoutMs =
+      openLongWorkItems.size > 0
+        ? (options.toolCallTimeoutMs ?? MUSE_MSP_TOOL_CALL_TIMEOUT_MS)
+        : idleMs
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return
     inactivityTimer = setTimeout(() => {
       inactivityTimer = null
@@ -405,13 +444,20 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       // be the same infinite wait wearing a different name, so the grace is
       // counted and spent.
       const grace = options.inactivityCompactionGrace ?? MUSE_MSP_INACTIVITY_COMPACTION_GRACE
-      if (compactionQuiet && compactionExtensionsUsed < grace) {
+      // Never stack the grace on top of the work budget: that budget already
+      // covers this silence, and compounding them multiplies the worst case by
+      // (1 + grace). Compaction is a between-steps operation anyway.
+      if (compactionQuiet && openLongWorkItems.size === 0 && compactionExtensionsUsed < grace) {
         compactionExtensionsUsed += 1
         armInactivityWatchdog()
         return
       }
       const quiet = timeoutMs >= 1000 ? `${Math.round(timeoutMs / 1000)}s` : `${timeoutMs}ms`
-      const stage = sessionId ? '' : ' before the handshake completed'
+      const stage = !sessionId
+        ? ' before the handshake completed'
+        : openLongWorkItems.size > 0
+          ? ' while a tool call was still outstanding'
+          : ''
       turnTerminal = turnTerminal ?? 'failed'
       turnError = turnError ?? {
         kind: 'hostUnresponsive',
@@ -737,6 +783,23 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
             : method === 'item/updated'
               ? 'updated'
               : 'completed'
+        // Widen the deadline while long work runs, and narrow it again the
+        // instant that work goes terminal. `ItemStatus` is an OPEN enum whose
+        // only non-terminal member is `inProgress`, so any other value — including
+        // one this build has never seen — closes the window rather than holding
+        // the generous budget open on a guess.
+        const workKind = String(item.kind || itemKinds.get(item.itemId) || '')
+        if (MUSE_MSP_LONG_WORK_ITEM_KINDS.has(workKind)) {
+          if (phase !== 'completed' && item.status === 'inProgress') {
+            openLongWorkItems.add(item.itemId)
+          } else {
+            openLongWorkItems.delete(item.itemId)
+          }
+          // The frame-level reset at the top of handleFrame ran BEFORE this
+          // mutation, so it armed against the previous budget. Re-arm now that
+          // the correct one is known.
+          armInactivityWatchdog()
+        }
         // A completed agentMessage repeats text already streamed as deltas.
         if (phase === 'completed' && item.kind === 'agentMessage') return
         const event = itemToEvent(item, phase)

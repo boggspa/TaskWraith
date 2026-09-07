@@ -474,6 +474,30 @@ describe('MSP session-log terminal adoption', () => {
     expect(joined).not.toContain(token)
   })
 
+  it('redacts MCP broker secrets out of an adoption FAILURE message too', async () => {
+    // Every other adopted-text path is redacted; the catch arm was not. A
+    // resolver or parser that quotes the offending content back is exactly
+    // where the broker token would surface.
+    const token = 'broker-token-8f21c4de-never-show-this'
+    const child = new FakeMspChild()
+    const pending = run(child, {
+      resolveSessionLog: () => {
+        throw new Error(`session-index read failed near TASKWRAITH_MCP_ROUTE=${token}`)
+      },
+      mcpSettings: buildMuseTaskWraithMcpSettings({
+        command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+        args: ['--taskwraith-gemini-mcp-bridge'],
+        env: { TASKWRAITH_MCP_ROUTE: token }
+      })
+    })
+    await playSilentExit(child)
+    const outcome = await pending
+    const joined = outcome.warnings.join('\n')
+    expect(joined).toContain('adoption failed')
+    expect(joined).toContain('[redacted]')
+    expect(joined).not.toContain(token)
+  })
+
   it('leaves a wire terminal authoritative and never consults the log', async () => {
     const child = new FakeMspChild()
     const pending = run(child, {

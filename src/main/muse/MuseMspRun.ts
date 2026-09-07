@@ -412,10 +412,15 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
           }
         }
       } catch (error) {
+        // Redacted like every other adopted-text path. A resolver or parser
+        // that quotes the offending content back is exactly where the broker
+        // token would surface, and an error message is not a safer channel for
+        // it than a success message.
         noteWarning(
-          `Muse session-log terminal adoption failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`
+          `Muse session-log terminal adoption failed: ${redactMuseMcpSecrets(
+            error instanceof Error ? error.message : String(error),
+            input.mcpSettings
+          )}`
         )
       }
     }
