@@ -39,13 +39,13 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
   thread's Plan / Ask / Accept Edits / Full WS Access / Full Access
   posture stays a separate per-thread choice.
 
-## Current state (iOS 0.1.0 build 97; desktop v1.9.7 source-ahead checkout)
+## Current state (iOS 0.1.0 build 98; desktop v1.9.7 source-ahead checkout)
 
 The public desktop baseline is v1.9.7. The current checkout is source-ahead of
 that tag; the companion build number below is the latest source-tree value, not
-a claim that build 97 has been uploaded or released.
+a claim that build 98 has been uploaded or released.
 
-- App icon: current variants are regular, WWDC26, monoline, and glass, backed by
+- App icon: current variants are regular, lightMonoline, monoline, and glass, backed by
   the checked-in `AppIcon-*` asset sets.
 - Pairing: QR/paste pairing, confirm-code verification, persisted paired Mac,
   trusted reconnect, local-network preflight, and Tailscale-oriented off-LAN
@@ -1266,7 +1266,7 @@ and fixture behavior.
 ## Current follow-ups
 
 **P0 distribution gate (established 2026-08-27):** Chris Izatt owns the
-release-candidate cryptographic review, targeted for 2026-09-03. No new external
+release-candidate cryptographic review, targeted for 2026-09-07 (past due). No new external
 TestFlight or App Store candidate ships before the exact commit and exported
 artifact pass an implementation-independent review and the findings have a
 recorded disposition. This gate outranks every feature follow-up below; the

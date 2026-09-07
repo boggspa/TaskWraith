@@ -71,6 +71,7 @@ an existing one by matching Git** rather than by remembering they made it:
 | -------------------------- | ------------------------ | --------------------- |
 | `ThreadWorktreeBinding`    | `thread-<hint>-<digest>` | `taskwraith/thread-…` |
 | `FanoutWorktreeAllocation` | `fanout-<hint>-<digest>` | `taskwraith/fanout-…` |
+| `SubThreadEphemeralFleetWorktree` | `fleet-<hint>-<digest>` | `taskwraith/fleet-…` |
 
 That re-adoption makes these names load-bearing. A hand-created worktree landing
 in one of those namespaces is not merely confusing — the next allocation finds

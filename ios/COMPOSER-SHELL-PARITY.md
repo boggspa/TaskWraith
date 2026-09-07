@@ -16,7 +16,7 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 ## Part A — Canonical style list & selection
 
 - **Type:** `ComposerStyle` union — `src/main/store/types.ts:103-160`. Exactly **14**:
-  `default, codex, chatgpt, claude, cursor, grok, gemini, kimi, modular, terminal, stub, satellite, obsidian, alabaster`.
+  `default, codex, chatgpt, claude, cursor, grok, gemini, kimi, modular, terminal, stub, satellite, obsidian, alabaster, chatgpt`.
   No others. `cursor`/`grok`/`chatgpt` are **VISUAL-ONLY** shells, independent of any provider. `chatgpt`
   (added CS14) is a cross of the codex + cursor shells — codex above-row tucked-tab chrome + cursor capsule
   body, with the cursor inset rim removed so the input pill reads flat; NOT the ChatGPT product/runtime.
@@ -26,7 +26,7 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
   `data-composer-style` and `data-interface-style` on `<html>` (`:257-258`). Every composer
   descendant matches → the shell is global.
 - **Three sync'd lists:** type union (`types.ts:103`), `COMPOSER_STYLE_OPTIONS`
-  (`SettingsPanel.tsx:462-548`), `SIDEBAR_COMPOSER_STYLE_OPTIONS` (`Sidebar.tsx:316-330`).
+  (`settingsUiOptions.ts:59`), `SIDEBAR_COMPOSER_STYLE_OPTIONS` (`Sidebar.tsx:316-330`).
   Picker = SettingsPanel `<select>` (`:2469-2491`) + Sidebar quick-switcher.
 - **Send-glyph mapping** (`App.tsx:20675-20685`): `claude`→ClaudeReturn (return); `codex`/`gemini`/
   `cursor`/`grok`/`kimi`/`chatgpt`→ArrowUp; **all others**→RunSymbol (triangle).
@@ -321,7 +321,7 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 | alabaster | charcoal mirror of obsidian (08:6140) | **charcoal rim-shimmer chase** |
 
 ### Two-surface split
-ONLY **obsidian** + **alabaster** restructure rows: `.composer-surface` → transparent; `.composer-textarea-wrap` + `.composer-bottom-controls` each become a separately-lit rect with its own animated rim-chase (`.composer-bottom-controls` flips `display:contents` → `display:flex` column). All other 11 shells keep `.composer-bottom-controls` as `display:contents`.
+ONLY **obsidian** + **alabaster** restructure rows: `.composer-surface` → transparent; `.composer-textarea-wrap` + `.composer-bottom-controls` each become a separately-lit rect with its own animated rim-chase (`.composer-bottom-controls` flips `display:contents` → `display:flex` column). All other 12 shells keep `.composer-bottom-controls` as `display:contents`.
 
 ---
 
@@ -469,7 +469,7 @@ all but grok (grok tucks its above-rows behind the composer lip).
   the view untouched, so the merged/default path is byte-identical.
 
 ### F.5 — Build scope
-**Build 11 (CS10):** `controlsBelowTextarea` (11 shells) + `detachedAboveRows` (10 shells),
+**Build 11 (CS10):** `controlsBelowTextarea` (12 shells) + `detachedAboveRows` (11 shells),
 plus the gemini surface-radius fix (its `.solid` navy capsule was drawn at radius 0 → square
 detached pills; now 26px to match the capsule). `liftedSend` + `controlsAsPlainText` are
 effectively already satisfied on iOS (trailing-edge send; flat plain-text model picker).
@@ -481,10 +481,10 @@ byte-parity PASS, both fixes PASS.
 
 ### F.6 — Verification
 - `swift build` + 69 Kit tests + a full `xcodebuild` simulator app build, per slice.
-- A 15-agent adversarial review (12 per-shell parity vs the light/dark matrix + 3 skeptics)
+- A 16-agent adversarial review (12 per-shell parity vs the light/dark matrix + 3 skeptics)
   graded default byte-parity **PASS** (traced element-by-element + git-diff confirmed),
   layout values/wiring **PASS** (all 13 cases match the table), detached-restructure
-  **CONCERN** (no ViewBuilder/chaining defects; the fill issues in F.7). All 12 non-default
+  **CONCERN** (no ViewBuilder/chaining defects; the fill issues in F.7). All 13 non-default
   shells: layout value correct, consumed-flag structural match **full**.
 
 ### F.7 — Done in build 12 (CS11 A+B)
