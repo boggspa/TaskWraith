@@ -1745,6 +1745,7 @@ import {
 } from './muse/MuseIpcBridge'
 import { isMuseCredentialPresent } from './muse/MuseProbe'
 import { prepareMuseTaskWraithMcpInvocation } from './muse/MuseTaskWraithMcpBridge'
+import { deliverMuseContextCompactionCard } from './muse/MuseContextCompactionChatCard'
 import {
   configureMistralQuotaStore,
   flushMistralQuotaStore,
@@ -37747,7 +37748,15 @@ const museIpcBridgeDeps: MuseIpcBridgeDeps = {
         instanceLaunchPosture.kind === 'packaged-isolated'
           ? instanceLaunchPosture.instanceId
           : undefined
-    })
+    }),
+  onContextCompaction: ({ chatId, signal, appRunId, participantId }) =>
+    deliverMuseContextCompactionCard(
+      { chatId, signal, appRunId, participantId },
+      {
+        append: appendContextCompactionMessageToChat,
+        broadcast: broadcastContextCompactionSignalProgress
+      }
+    )
 }
 
 async function getMuseProviderStatus() {
