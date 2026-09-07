@@ -309,7 +309,18 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
       ]
     }
     const baseline = buildAntigravityOfficialAgyPromptCapsuleProjection(crowded, evidence)
-    expect(baseline.prompt).toHaveLength(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
+    // This fixture still overflows the budget — the shed transcript proves it.
+    // It used to land on exactly MAX_CHARS because an over-budget capsule with
+    // no continuity checkpoint skipped shedding entirely and took the outer
+    // TAIL cut, which silently ate the required permission boundary and yield
+    // check. Shedding is no longer gated on a checkpoint, so the same fixture
+    // now reclaims optional context and keeps every required section.
+    expect(baseline.prompt).not.toContain('LATEST STEER AT TRANSCRIPT TAIL')
+    expect(baseline.prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
+    expect(baseline.prompt).not.toContain('[Capsule truncated to the official agy safety budget.]')
+    expect(baseline.prompt).toContain('Permission and native-tool boundary:')
+    expect(baseline.prompt).toContain('Y'.repeat(300))
+    expect(baseline.prompt).toContain('Respond now as [P].')
     const continuityCheckpoint = `<checkpoint>OLDER_CHECKPOINT_GOAL ${'X'.repeat(1_537)}</checkpoint>`
     const recovered = buildAntigravityOfficialAgyPromptCapsuleProjection(
       {
@@ -334,6 +345,77 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     )
     expect(recovered.suppliedMessageIds).toContain('current-retained')
     expect(recovered.suppliedMessageIds).not.toContain('tail-cut-by-outer-cap')
+  })
+
+  it('keeps the reader-lane boundary above the assignment and out of every shed group', () => {
+    // A runtime read-clamped lane must be TOLD it is read-clamped, above the
+    // assignment, in a capsule that is already over budget. The part carries no
+    // continuitySheddingGroup and no checkpoint flag on purpose, so neither the
+    // shedding pass nor the outer tail cut can take it.
+    const laneIntentBoundary =
+      'TaskWraith lane intent: inspection, recon, or review only. Do not modify workspace files or external state. This auxiliary lane is runtime read-clamped.'
+    const crowded = {
+      participantLabel: 'AntiGravity / Reader #p3',
+      roundId: 'round-read-clamped',
+      stageRole: 'background',
+      roleInstructions: 'R'.repeat(1_000),
+      currentPrompt: 'LANE_ASSIGNMENT_MARKER inspect the dispatch path.',
+      roster: 'O'.repeat(1_200),
+      authorityLines: ['A'.repeat(600)],
+      roleBoundaryLines: ['B'.repeat(600)],
+      laneIntentBoundary,
+      roundPolicy: 'P'.repeat(900),
+      parallelPolicy: 'L'.repeat(700),
+      dynamicState: 'D'.repeat(1_800),
+      workspaceStanza: 'W'.repeat(600),
+      workspaceChurnStanza: 'H'.repeat(900),
+      scoutBriefs: 'S'.repeat(1_200),
+      blackboardSnapshot: 'B'.repeat(2_200),
+      seatSummary: 'E'.repeat(800),
+      transcript: 'T'.repeat(3_000),
+      permissionRule: 'M'.repeat(900),
+      yieldExecutionCheck: 'Y'.repeat(700)
+    }
+    const spacious = buildAntigravityOfficialAgyPromptCapsuleProjection(crowded)
+    expect(spacious.prompt).toContain(laneIntentBoundary)
+    expect(spacious.prompt.indexOf(laneIntentBoundary)).toBeLessThan(
+      spacious.prompt.indexOf('LANE_ASSIGNMENT_MARKER')
+    )
+
+    // Now push it past the budget. Optional context is reclaimed; the boundary
+    // and the assignment are not.
+    const saturated = buildAntigravityOfficialAgyPromptCapsuleProjection({
+      ...crowded,
+      stageRole: 'Z'.repeat(14_000)
+    })
+    expect(saturated.prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
+    expect(saturated.prompt).not.toContain('T'.repeat(3_000))
+    expect(saturated.prompt).toContain(laneIntentBoundary)
+    expect(saturated.prompt.indexOf(laneIntentBoundary)).toBeLessThan(
+      saturated.prompt.indexOf('LANE_ASSIGNMENT_MARKER')
+    )
+  })
+
+  it('omits the boundary block entirely for a lane that is not reader-intent', () => {
+    const base = {
+      participantLabel: 'AntiGravity / Worker #p3',
+      roundId: 'round-writer',
+      roleInstructions: 'Implement the assigned slice.',
+      currentPrompt: 'LANE_ASSIGNMENT_MARKER land the assigned slice.',
+      roster: '1. AntiGravity / Worker',
+      authorityLines: [] as string[],
+      roleBoundaryLines: [] as string[],
+      roundPolicy: 'Implement once.',
+      parallelPolicy: 'Serial.',
+      dynamicState: '',
+      transcript: '',
+      permissionRule: 'Use only tools listed by this run.',
+      yieldExecutionCheck: 'Return a bounded result.'
+    }
+    expect(buildAntigravityOfficialAgyPromptCapsule(base)).not.toContain('TaskWraith lane intent:')
+    expect(buildAntigravityOfficialAgyPromptCapsule({ ...base, laneIntentBoundary: '' })).toBe(
+      buildAntigravityOfficialAgyPromptCapsule(base)
+    )
   })
 
   it('reports why a checkpoint cannot fit beside the required contract', () => {

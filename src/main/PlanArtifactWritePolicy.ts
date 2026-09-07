@@ -2,6 +2,7 @@ import fsSync from 'node:fs'
 import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import type { AgenticServiceId, ChatWorkflowMode, EffectiveRunPermissions } from './store/types'
 import type { TaskWraithMcpToolName } from './TaskWraithMcpTools'
+import { isForcedReadOnlyFanoutClampedPosture } from './ForcedReadOnlyFanoutPosture'
 
 export interface PlanArtifactWriteCheckInput {
   workflowMode?: ChatWorkflowMode | string | null
@@ -35,6 +36,14 @@ export function evaluatePlanArtifactWrite(input: PlanArtifactWriteCheckInput): P
   }
   if (input.effectivePermissions.agenticServices?.fileChanges !== 'deny') {
     return { allowed: false, reason: 'file_changes_not_denied_by_posture' }
+  }
+  // A `fileChanges: 'deny'` produced by the forced read-only Ensemble fan-out
+  // clamp is a REFUSAL, not a user-configured Plan posture. Turning it into a
+  // prompt-free write path would hand an unattended, write-denied lane a new
+  // way into `plans/**.md`, which is the opposite of what the clamp is for.
+  // A genuine user-configured deny carries no marker and still qualifies.
+  if (isForcedReadOnlyFanoutClampedPosture(input.effectivePermissions)) {
+    return { allowed: false, reason: 'forced_read_only_fanout_clamp' }
   }
   if (input.globalFileChangesPolicy === 'deny') {
     return { allowed: false, reason: 'global_file_changes_denied' }

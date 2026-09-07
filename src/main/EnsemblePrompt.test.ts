@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildEnsembleDynamicStateSnapshot,
   buildDupProviderModelLabels,
+  ENSEMBLE_WRITER_GIT_GUIDANCE,
   buildEnsembleParticipantPrompt,
   buildEnsembleParticipantPromptProjection,
   buildParticipantTokenMap,
@@ -29,6 +30,7 @@ import type {
   ActiveGoal,
   ChatMessage,
   ChatRecord,
+  ConcurrentLane,
   EnsembleBossmanReviewGate,
   EnsembleConfig,
   EnsembleParticipant,
@@ -37,6 +39,10 @@ import type {
 } from './store/types'
 import { createActiveGoal } from './GoalState'
 import { ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS } from './antigravity/AntigravityEnsemblePromptProfile'
+import {
+  LANE_INTENT_BOUNDARY_READ_CLAMPED,
+  LANE_INTENT_BOUNDARY_TIER_PRESERVED
+} from './ensemble/EnsembleLanePosture'
 import { ANTIGRAVITY_UNSUPPORTED_PERMISSION_CLAIM_NOTE } from './antigravity/AntigravityPermissionClaimEvidence'
 
 const ensemble: EnsembleConfig = {
@@ -4905,5 +4911,410 @@ describe('per-seat ingest budget (window-derived, replaces the chars slider)', (
       chatContextTurns: 6
     })
     expect(prompt).toContain('OLDEST_MARKER_ROW')
+  })
+})
+
+/*
+ * Effective lane posture — a fan-out lane that was runtime-narrowed at dispatch.
+ *
+ * The lane RECORD is never written back when a writer lane narrows to read, so
+ * `config.activeRound.lanes[…].intent` and the seat's own `permissionPresetId`
+ * both keep claiming "writer". Every posture statement in the prompt therefore
+ * has to come from `effectiveLanePosture`, and the reader boundary has to reach
+ * all four prompt shapes.
+ */
+describe('effective lane posture', () => {
+  const writeLane = (
+    participantId: string,
+    overrides: Partial<ConcurrentLane> = {}
+  ): ConcurrentLane => ({
+    laneId: `lane-${participantId}`,
+    participantId,
+    provider: 'codex',
+    status: 'running',
+    intent: 'write',
+    approvedWriteScopes: [
+      {
+        kind: 'path',
+        path: 'src/main/AssignedRepair.ts',
+        approvedBy: 'boss',
+        approvedAt: '2026-09-07T00:00:00.000Z'
+      }
+    ],
+    startedAt: '2026-09-07T00:00:00.000Z',
+    ...overrides
+  })
+
+  const withLanes = (lanes: Record<string, ConcurrentLane>): EnsembleConfig => {
+    const base = withActiveRoundStatuses(ensemble, { codex: 'running', claude: 'running' })
+    return {
+      ...base,
+      activeRound: { ...base.activeRound!, concurrentMode: true, lanes }
+    }
+  }
+
+  const readClamped = {
+    presetId: 'read_only' as const,
+    readOnly: true,
+    laneIntent: 'read' as const
+  }
+
+  it('keeps one seat’s write lane out of a different seat’s prompt', () => {
+    // Both existing lane fixtures in this file are self-lanes, so the wave-wide
+    // resolver this replaces looked correct: a writer ANYWHERE handed every
+    // reader on the panel the writer git guidance.
+    const config = withLanes({ 'lane-codex': writeLane('codex') })
+    const writer = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Land the assigned slice.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4
+    })
+    const otherSeat = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: ensemble.participants[0],
+      currentPrompt: 'Review the assigned slice.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4
+    })
+
+    expect(writer).toContain(ENSEMBLE_WRITER_GIT_GUIDANCE)
+    expect(otherSeat).not.toContain(ENSEMBLE_WRITER_GIT_GUIDANCE)
+  })
+
+  it('stops a completed write lane from poisoning later turns in the same round', () => {
+    // Lanes are never removed from `activeRound`, so an unfiltered resolver is
+    // sticky for the whole round: one writer finishing in pass 1 kept every
+    // later reader — and the writer's own later read turns — mislabelled.
+    const config = withLanes({
+      'lane-codex': writeLane('codex', { status: 'completed', endedAt: '2026-09-07T00:05:00.000Z' })
+    })
+    const sameSeatLater = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Report what landed.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4
+    })
+    const laterReader = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: ensemble.participants[0],
+      currentPrompt: 'Review what landed.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4
+    })
+
+    expect(sameSeatLater).not.toContain(ENSEMBLE_WRITER_GIT_GUIDANCE)
+    expect(laterReader).not.toContain(ENSEMBLE_WRITER_GIT_GUIDANCE)
+  })
+
+  it('trusts the live posture over a stale write lane record', () => {
+    // The dangerous direction: the record still says write, the run does not.
+    const config = withLanes({ 'lane-codex': writeLane('codex') })
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Inspect the dispatch path.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4,
+      effectiveLanePosture: readClamped
+    })
+
+    expect(prompt).not.toContain(ENSEMBLE_WRITER_GIT_GUIDANCE)
+    expect(prompt).toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+  })
+
+  it('states the reader boundary above the assignment in the default prompt shape', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'LANE_ASSIGNMENT_MARKER inspect the dispatch path.',
+      roundId: 'round-lane',
+      chatContextTurns: 4,
+      effectiveLanePosture: readClamped
+    })
+
+    expect(prompt).toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+    expect(prompt.indexOf(LANE_INTENT_BOUNDARY_READ_CLAMPED)).toBeLessThan(
+      prompt.indexOf('LANE_ASSIGNMENT_MARKER')
+    )
+  })
+
+  it('states the reader boundary on a slim resumed turn, which carries no other posture line', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'LANE_ASSIGNMENT_MARKER inspect the dispatch path.',
+      roundId: 'round-lane',
+      chatContextTurns: 4,
+      slimTurn: true,
+      effectiveLanePosture: {
+        presetId: 'workspace_write',
+        readOnly: false,
+        laneIntent: 'read'
+      }
+    })
+
+    expect(prompt).toContain('TaskWraith Ensemble Mode — resumed turn')
+    expect(prompt).toContain(LANE_INTENT_BOUNDARY_TIER_PRESERVED)
+    expect(prompt.indexOf(LANE_INTENT_BOUNDARY_TIER_PRESERVED)).toBeLessThan(
+      prompt.indexOf('LANE_ASSIGNMENT_MARKER')
+    )
+    // The two other posture statements are absent from this shape entirely,
+    // which is why the boundary is the only thing standing between a resumed
+    // reader lane and a prompt with no posture at all.
+    expect(prompt).not.toContain('Your permission role is')
+    expect(prompt).not.toContain('Role boundary contract:')
+  })
+
+  it('states the reader boundary in the official-agy capsule, above the assignment', () => {
+    const antigravity: EnsembleParticipant = {
+      id: 'gempro',
+      provider: 'antigravity',
+      enabled: true,
+      role: 'GemProWork',
+      instructions: 'Implement the assigned slice.',
+      order: 1,
+      model: 'gemini-3.1-pro-high',
+      permissionPresetId: 'workspace_write'
+    }
+    const config: EnsembleConfig = {
+      ...ensemble,
+      participants: [antigravity, ensemble.participants[1]]
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: antigravity,
+      currentPrompt: 'LANE_ASSIGNMENT_MARKER inspect the dispatch path.',
+      roundId: 'round-agy-lane',
+      chatContextTurns: 4,
+      effectiveLanePosture: readClamped
+    })
+
+    expect(prompt).toContain('AntiGravity official agy context capsule')
+    expect(prompt).toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+    expect(prompt.indexOf(LANE_INTENT_BOUNDARY_READ_CLAMPED)).toBeLessThan(
+      prompt.indexOf('LANE_ASSIGNMENT_MARKER')
+    )
+  })
+
+  it('states the reader boundary in the Ollama capsule, above the assignment', () => {
+    const ollamaParticipant: EnsembleParticipant = {
+      id: 'ollama-gemma',
+      provider: 'ollama',
+      enabled: true,
+      role: 'Builder',
+      instructions: 'Add smoke tests.',
+      order: 4,
+      permissionPresetId: 'workspace_write',
+      model: 'gemma4:12b'
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: { ...ensemble, participants: [...ensemble.participants, ollamaParticipant] },
+      participant: ollamaParticipant,
+      currentPrompt: 'LANE_ASSIGNMENT_MARKER inspect the dispatch path.',
+      roundId: 'round-ollama-lane',
+      chatContextTurns: 10,
+      effectiveLanePosture: readClamped
+    })
+
+    expect(prompt).toContain('Ollama context capsule')
+    expect(prompt).toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+    expect(prompt.indexOf(LANE_INTENT_BOUNDARY_READ_CLAMPED)).toBeLessThan(
+      prompt.indexOf('LANE_ASSIGNMENT_MARKER')
+    )
+  })
+
+  it('names the clamped preset instead of the seat preset in the permission rule', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Inspect the dispatch path.',
+      roundId: 'round-lane',
+      chatContextTurns: 4,
+      effectiveLanePosture: readClamped
+    })
+
+    expect(prompt).toContain('Your permission role is read_only')
+    expect(prompt).not.toContain('Your permission role is workspace_write')
+  })
+
+  it('replaces the worker rule with a read/recon boundary on a read lane', () => {
+    const worker: EnsembleParticipant = { ...ensemble.participants[1], stageRole: 'worker' }
+    const config = withActiveRoundStatuses(
+      { ...ensemble, participants: [ensemble.participants[0], worker] },
+      { codex: 'running' }
+    )
+    const clamped = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: worker,
+      currentPrompt: 'Inspect the dispatch path.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4,
+      effectiveLanePosture: readClamped
+    })
+    const writing = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: worker,
+      currentPrompt: 'Land the assigned slice.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4,
+      effectiveLanePosture: {
+        presetId: 'workspace_write',
+        readOnly: false,
+        laneIntent: 'write'
+      }
+    })
+
+    expect(clamped).not.toContain('Worker rule: execute the assigned implementation slice')
+    expect(clamped).toContain('Read-clamped lane: report findings, evidence, and risks')
+    expect(writing).toContain('Worker rule: execute the assigned implementation slice')
+    expect(writing).not.toContain('Read-clamped lane:')
+  })
+
+  it('drops the Boss/Captain write-allocation line when the live posture is read-clamped', () => {
+    // Sibling of the worker-stage case above, reached through an earlier branch:
+    // `hasBossDrivenWriteAllocation` reads the persisted lane record, and a
+    // writer lane narrowed to read at dispatch is never written back to it. The
+    // record still says `intent: 'write'` with boss-approved scopes, so without
+    // the posture gate the allocation branch matched first and told a run that
+    // cannot write to "execute the approved implementation slice".
+    const worker: EnsembleParticipant = { ...ensemble.participants[1], stageRole: 'worker' }
+    const base = withLanes({ 'lane-codex': writeLane('codex') })
+    const config: EnsembleConfig = {
+      ...base,
+      participants: [ensemble.participants[0], worker]
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: worker,
+      currentPrompt: 'Inspect the dispatch path.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4,
+      effectiveLanePosture: readClamped
+    })
+
+    expect(prompt).not.toContain('Boss/Captain write allocation:')
+    expect(prompt).toContain('Read-clamped lane: report findings, evidence, and risks')
+    expect(prompt).toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+  })
+
+  it('drops the write-allocation line on a slim resumed turn too', () => {
+    // Third emission site for the same sentence, in the slim shape. Proven to
+    // self-contradict before the gate: the same prompt carried both the
+    // allocation line and the runtime-read-clamped boundary.
+    const worker: EnsembleParticipant = { ...ensemble.participants[1], stageRole: 'worker' }
+    const base = withLanes({ 'lane-codex': writeLane('codex') })
+    const config: EnsembleConfig = {
+      ...base,
+      participants: [ensemble.participants[0], worker]
+    }
+    const build = (posture?: typeof readClamped): string =>
+      buildEnsembleParticipantPrompt({
+        chat: chat(),
+        config,
+        participant: worker,
+        currentPrompt: 'Inspect the dispatch path.',
+        roundId: 'round-advisory',
+        chatContextTurns: 4,
+        slimTurn: true,
+        ...(posture ? { effectiveLanePosture: posture } : {})
+      })
+
+    const clamped = build(readClamped)
+    expect(clamped).toContain('TaskWraith Ensemble Mode — resumed turn')
+    expect(clamped).not.toContain('Boss/Captain write allocation:')
+    expect(clamped).toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+
+    // Over-correction guard: a genuine allocation lane keeps the line.
+    const allocated = build(undefined)
+    expect(allocated).toContain('Boss/Captain write allocation:')
+    expect(allocated).not.toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+  })
+
+  it('keeps the write-allocation line for a genuine unclamped allocation lane', () => {
+    // The over-correction guard: the clamp supersedes the allocation for a
+    // read-clamped lane only. A live write lane — and a caller that supplies no
+    // posture at all, which is every non-lane caller — must be unchanged.
+    const worker: EnsembleParticipant = { ...ensemble.participants[1], stageRole: 'worker' }
+    const base = withLanes({ 'lane-codex': writeLane('codex') })
+    const config: EnsembleConfig = {
+      ...base,
+      participants: [ensemble.participants[0], worker]
+    }
+    const writing = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: worker,
+      currentPrompt: 'Land the assigned slice.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4,
+      effectiveLanePosture: {
+        presetId: 'workspace_write',
+        readOnly: false,
+        laneIntent: 'write'
+      }
+    })
+    const noPosture = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: worker,
+      currentPrompt: 'Land the assigned slice.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4
+    })
+
+    expect(writing).toContain(
+      'Boss/Captain write allocation: execute the approved implementation slice'
+    )
+    expect(writing).not.toContain('Read-clamped lane:')
+    expect(noPosture).toContain(
+      'Boss/Captain write allocation: execute the approved implementation slice'
+    )
+    expect(noPosture).not.toContain('Read-clamped lane:')
+  })
+
+  it('says nothing extra for a write lane or for a seat with no lane at all', () => {
+    // Pins the same negative EnsembleOrchestrator.test.ts asserts for a
+    // write-intent BG lane: the reader sentence must never reach one.
+    const writeIntent = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Land the assigned slice.',
+      roundId: 'round-lane',
+      chatContextTurns: 4,
+      effectiveLanePosture: {
+        presetId: 'workspace_write',
+        readOnly: false,
+        laneIntent: 'write'
+      }
+    })
+    const serialSeat = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Land the assigned slice.',
+      roundId: 'round-lane',
+      chatContextTurns: 4
+    })
+
+    expect(writeIntent).not.toContain('inspection, recon, or review only')
+    expect(serialSeat).not.toContain('inspection, recon, or review only')
+    expect(serialSeat).toContain('Your permission role is workspace_write')
   })
 })

@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { applyForcedReadOnlyFanoutWriteDeny } from './ForcedReadOnlyFanoutPosture'
 import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
 import type { EffectiveRunPermissions } from './store/types'
 
@@ -88,6 +89,25 @@ describe('evaluatePlanArtifactWrite', () => {
         rawPath: 'PLAN.md'
       })
     ).toMatchObject({ allowed: false, reason: 'not_read_only_posture' })
+  })
+
+  it('does NOT fire for a fileChanges deny produced by the fan-out read-only clamp', () => {
+    // The clamp denies writes so an unattended lane refuses in band instead of
+    // parking on an unanswerable card. That refusal must not double as a new
+    // prompt-free write path into plans/**.md.
+    const clamped = applyForcedReadOnlyFanoutWriteDeny(readOnlyPermissions)
+    for (const rawPath of ['PLAN.md', 'docs/plans/feature.md', 'plans/sketch.md']) {
+      expect(
+        evaluatePlanArtifactWrite({ ...base(), effectivePermissions: clamped, rawPath })
+      ).toMatchObject({ allowed: false, reason: 'forced_read_only_fanout_clamp' })
+    }
+  })
+
+  it('still fires for a user-configured Plan-workflow fileChanges deny', () => {
+    // Same resolved policy values, no clamp marker: unchanged behaviour.
+    expect(
+      evaluatePlanArtifactWrite({ ...base(), rawPath: 'docs/plans/feature.md' })
+    ).toMatchObject({ allowed: true, relativePath: 'docs/plans/feature.md' })
   })
 
   it('does not override explicit global file-change denies', () => {

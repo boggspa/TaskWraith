@@ -355,14 +355,28 @@ export function isPlanInstrumentGrantHold(
 /**
  * Interactive Ask/Plan bash waits for the user. Settings approval timers must
  * not system-decline those cards. Unattended/scheduled Plan still fail-closed.
+ *
+ * Two independent "nobody will answer this" facts suppress the hold, and they
+ * are deliberately kept apart rather than merged into one flag:
+ *   - `unattended` — nobody SCHEDULED this run to be watched (a scheduled-task
+ *     occurrence). Derived from `scheduledTaskId`.
+ *   - `backgroundFanoutLane` — nobody is WATCHING this lane. An Ensemble
+ *     fan-out lane is dispatched by the Boss, not by a person sitting on a
+ *     modal, and it carries no `scheduledTaskId`, so the first fact never sees
+ *     it. Without this the lane holds the card and then hangs on the transport
+ *     backstop instead of failing closed on the approval timer.
+ * Either fact alone re-arms the timer; only a genuinely attended interactive
+ * Ask/Plan run keeps the hold.
  */
 export function shouldHoldShellApprovalWithoutTimeoutDeny(args: {
   presetId?: string | null
   service?: AgenticServiceId | null
   unattended?: boolean
+  backgroundFanoutLane?: boolean
 }): boolean {
   if (args.service !== 'shellCommands') return false
   if (args.unattended) return false
+  if (args.backgroundFanoutLane) return false
   return args.presetId === 'read_only' || args.presetId === 'plan'
 }
 

@@ -29,6 +29,12 @@ export interface AntigravityOfficialAgyPromptCapsuleInput {
   roleBoundaryLines: readonly string[]
   /** Late, host-derived advisory-seat mutation/completion nudge. */
   turnBoundary?: string
+  /**
+   * Non-elidable reader-lane posture sentence. Emitted ABOVE the assignment and
+   * deliberately carries NO `continuitySheddingGroup` and no checkpoint flag, so
+   * it can never be shed for continuity budget nor elided out of the capsule.
+   */
+  laneIntentBoundary?: string
   roundPolicy: string
   parallelPolicy: string
   /** Current root goal/assignment contract. With a checkpoint this remains a
@@ -180,23 +186,41 @@ function selectContinuityPromptParts(
   continuityCheckpointOmitted?: 'required-contract-and-checkpoint-exceed-budget'
 } {
   const joined = joinPromptParts(parts)
-  if (!continuityCheckpoint) return { joined }
+  const fits = (
+    candidate: ReturnType<typeof joinPromptParts>
+  ): ReturnType<typeof selectContinuityPromptParts> =>
+    continuityCheckpoint
+      ? { joined: candidate, continuityCheckpointIncluded: true }
+      : { joined: candidate }
   if (joined.prompt.length <= ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS) {
-    return { joined, continuityCheckpointIncluded: true }
+    return fits(joined)
   }
 
+  // Shedding is NOT conditional on a continuity checkpoint. Without it an
+  // over-budget capsule fell straight through to the outer TAIL cut, which
+  // silently ate `Permission and native-tool boundary:` and the yield check
+  // while transcript/blackboard/scout context sat untouched above them. Reclaim
+  // optional context first, whatever the reason the capsule is over budget.
   const omittedGroups = new Set<ContinuitySheddingGroup>()
+  let reduced = joined
   for (const group of CONTINUITY_SHEDDING_ORDER) {
     if (!parts.some((part) => part.continuitySheddingGroup === group)) continue
     omittedGroups.add(group)
-    const reduced = joinPromptParts(
+    reduced = joinPromptParts(
       parts.filter(
         (part) => !part.continuitySheddingGroup || !omittedGroups.has(part.continuitySheddingGroup)
       )
     )
     if (reduced.prompt.length <= ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS) {
-      return { joined: reduced, continuityCheckpointIncluded: true }
+      return fits(reduced)
     }
+  }
+
+  if (!continuityCheckpoint) {
+    // Every optional group is already gone and the required sections alone
+    // still overflow. Hand the smallest join to the outer tail cut so the
+    // required boundaries sit as far from that cut as they can.
+    return { joined: reduced }
   }
 
   return {
@@ -283,6 +307,9 @@ export function buildAntigravityOfficialAgyPromptCapsuleProjection(
     { text: `Round id: ${boundedText(input.roundId, 160)}` },
     { text: `Stage: ${role || 'ordinary participant — '}${boundedText(input.roundPolicy, 900)}` },
     { text: '' },
+    ...(input.laneIntentBoundary
+      ? [{ text: boundedText(input.laneIntentBoundary, 400) }, { text: '' }]
+      : []),
     { text: currentPromptSection, evidence: currentPromptEvidence },
     { text: '' },
     { text: section('Your role instructions:', input.roleInstructions, 1_000) },

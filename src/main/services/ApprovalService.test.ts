@@ -1113,6 +1113,87 @@ describe('ApprovalService — scheduleTimeout', () => {
     expect(scheduledMs).toEqual([30_000])
   })
 
+  it('background fan-out lane shellCommands still arms the timer (no scheduledTaskId)', () => {
+    // The lane is not a scheduled occurrence, so `runIsUnattended` is false and
+    // the interactive Ask/Plan hold would otherwise apply. Nobody is watching
+    // this lane's modal, so it must fail closed on the timer instead of hanging
+    // on the transport backstop.
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      status: 'running',
+      state: {
+        effectivePermissions: { presetId: 'read_only' },
+        ensembleRun: {
+          roundId: 'round-1',
+          participantId: 'p-1',
+          laneId: 'lane-round-1-p-1-1',
+          provider: 'codex',
+          role: 'Worker',
+          order: 1
+        }
+      }
+    })
+    const svc = new ApprovalService(deps)
+    const scheduledMs: number[] = []
+    const scheduler = new ApprovalTimeoutScheduler(DEFAULT_APPROVAL_TIMEOUT_POLICY, vi.fn(), {
+      setTimeoutFn: ((_cb, ms) => {
+        scheduledMs.push(ms)
+        return { __timeout: scheduledMs.length } as unknown as NodeJS.Timeout
+      }) as typeof setTimeout,
+      clearTimeoutFn: vi.fn()
+    })
+    svc.setScheduler(scheduler)
+    svc.registerGeminiTool('lane-shell', {
+      provider: 'codex',
+      service: 'shellCommands',
+      runId: 'r-1',
+      resolve: vi.fn()
+    })
+    svc.scheduleTimeout({ approvalId: 'lane-shell', provider: 'codex' })
+    expect(scheduledMs).toEqual([30_000])
+    expect(svc.shouldHoldShellTimeoutDeny('lane-shell')).toBe(false)
+  })
+
+  it('an attended serial Ensemble turn (ensembleRun without laneId) keeps the hold', () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      status: 'running',
+      state: {
+        effectivePermissions: { presetId: 'read_only' },
+        ensembleRun: {
+          roundId: 'round-1',
+          participantId: 'p-1',
+          provider: 'codex',
+          role: 'Reviewer',
+          order: 1
+        }
+      }
+    })
+    const svc = new ApprovalService(deps)
+    const scheduledMs: number[] = []
+    const scheduler = new ApprovalTimeoutScheduler(DEFAULT_APPROVAL_TIMEOUT_POLICY, vi.fn(), {
+      setTimeoutFn: ((_cb, ms) => {
+        scheduledMs.push(ms)
+        return { __timeout: scheduledMs.length } as unknown as NodeJS.Timeout
+      }) as typeof setTimeout,
+      clearTimeoutFn: vi.fn()
+    })
+    svc.setScheduler(scheduler)
+    svc.registerGeminiTool('serial-shell', {
+      provider: 'codex',
+      service: 'shellCommands',
+      runId: 'r-1',
+      resolve: vi.fn()
+    })
+    svc.scheduleTimeout({ approvalId: 'serial-shell', provider: 'codex' })
+    expect(scheduledMs).toEqual([])
+    expect(svc.shouldHoldShellTimeoutDeny('serial-shell')).toBe(true)
+  })
+
   it('unattended Plan shellCommands still auto-denies on timeout', () => {
     const { deps, spies } = makeDeps()
     spies.runManager.get.mockReturnValue({

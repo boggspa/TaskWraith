@@ -31,6 +31,12 @@ export interface OllamaEnsemblePromptCapsuleInput {
   roleBoundaryLines: readonly string[]
   /** Late, host-derived advisory-seat mutation/completion nudge. */
   turnBoundary?: string
+  /**
+   * Non-elidable reader-lane posture sentence. Emitted ABOVE the assignment and
+   * deliberately carries NO `continuitySheddingGroup` and no checkpoint flag, so
+   * it can never be shed for continuity budget nor elided out of the capsule.
+   */
+  laneIntentBoundary?: string
   roundPolicy: string
   parallelPolicy: string
   /** Current root goal/assignment contract. With a checkpoint this remains a
@@ -281,6 +287,9 @@ export function buildOllamaEnsemblePromptCapsuleProjection(
   const parts: PromptPart[] = [
     { text: 'TaskWraith Ensemble Mode — Ollama context capsule' },
     { text: '' },
+    ...(input.laneIntentBoundary
+      ? [{ text: boundedText(input.laneIntentBoundary, 400) }, { text: '' }]
+      : []),
     // Request FIRST so small locals attend to the ask before roster noise.
     { text: currentPromptSection, evidence: currentPromptEvidence },
     { text: '' },
@@ -323,7 +332,7 @@ export function buildOllamaEnsemblePromptCapsuleProjection(
     {
       text: '- Call ask_user_question only when the request is genuinely ambiguous or a real decision fork belongs to the user. If they already answered, proceed.'
     },
-    { text: `- ${boundedText(input.permissionRule, 500)}` },
+    { text: `- ${boundedText(input.permissionRule, 700)}` },
     ...(input.workflowHint ? [{ text: `- ${boundedText(input.workflowHint, 400)}` }] : []),
     ...(input.transcriptAutoCompacted
       ? [

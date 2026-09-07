@@ -5,6 +5,7 @@ import type {
   ChatRecord,
   EnsembleConfig,
   EnsembleParticipant,
+  PermissionPresetId,
   ProviderId,
   SessionActivityLedgerEntry,
   ToolActivity
@@ -15,6 +16,10 @@ import {
   ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE,
   ENSEMBLE_FANOUT_WRITE_SCOPES_GUIDANCE
 } from '../shared/ensembleFanoutWriteScopes'
+import {
+  formatLaneIntentBoundary,
+  type EffectiveLanePosture
+} from './ensemble/EnsembleLanePosture'
 import { normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
 import { isEnsembleParticipantAuthoredMessage } from '../shared/ensembleParticipantMessage'
 import type { EnsemblePromptTranscriptAttribution } from '../shared/ensemblePromptCostAttribution'
@@ -185,6 +190,16 @@ export interface BuildEnsemblePromptInput {
   dynamicStateSnapshot?: EnsembleDynamicStateSnapshot
   /** Effective host approval mode, used to name Grok's per-run MCP server exactly. */
   effectiveApprovalMode?: string | null
+  /**
+   * The posture this dispatch ACTUALLY runs under, after any runtime clamp.
+   *
+   * Optional on purpose: 100+ existing test constructions and every non-lane
+   * caller omit it, and a serial seat with no lane must fall through to the
+   * seat-configured behaviour. When present it is authoritative over the seat's
+   * roster `permissionPresetId` and over `config.activeRound.lanes[…].intent`,
+   * both of which go stale when a writer lane is narrowed to read at dispatch.
+   */
+  effectiveLanePosture?: EffectiveLanePosture
   /** Run-scoped Boss/Captain routing checkpoint supplied by the orchestrator. */
   authorityRoutingCheckpoint?: EnsembleAuthorityRoutingCheckpoint
   /**
@@ -469,7 +484,14 @@ function formatRoleBoundaryContract(
   orderedParticipants: EnsembleParticipant[],
   positionOneIndexed: number,
   totalParticipants: number,
-  bossDrivenWriteAllocation: boolean
+  bossDrivenWriteAllocation: boolean,
+  /**
+   * This dispatch's LANE task intent is read (see `EffectiveLanePosture`), so
+   * neither the seat's roster worker stage nor a Boss/Captain write allocation
+   * can be executed this turn. True for both reader cases — runtime-clamped and
+   * configured-tier-preserved.
+   */
+  laneReadClamped: boolean
 ): string[] {
   if (orderedParticipants.length < 2) return []
   const selfRole = sanitizeText(participant.role || 'Participant') || 'Participant'
@@ -493,7 +515,14 @@ function formatRoleBoundaryContract(
     )
   }
 
-  if (bossDrivenWriteAllocation) {
+  // The live posture outranks the allocation, and only in the safe direction.
+  // `bossDrivenWriteAllocation` is derived from the persisted lane record, and a
+  // writer lane narrowed to read at dispatch is never written back to it — so
+  // the record keeps claiming write for a run that cannot write, and this branch
+  // would otherwise reach the write line before the read/recon branches below
+  // ever run. The clamp supersedes the allocation for this lane only; it does
+  // not revoke the allocation itself.
+  if (bossDrivenWriteAllocation && !laneReadClamped) {
     lines.push(
       "- Boss/Captain write allocation: execute the approved implementation slice inside its declared write scopes. This explicit allocation supersedes an advisory/review stage for this lane only; it does not change the seat's standing roster role."
     )
@@ -507,7 +536,9 @@ function formatRoleBoundaryContract(
     )
   } else if (isWorkerLike(participant)) {
     lines.push(
-      '- Worker rule: execute the assigned implementation slice. Do not redesign the plan or take over review/recon unless the current plan is unsafe or blocked.'
+      laneReadClamped
+        ? '- Read-clamped lane: report findings, evidence, and risks for the assigned slice instead of implementing it. This lane intent supersedes your worker stage for this lane only; it does not change the seat\'s standing roster role. Do not attempt workspace mutations — they cannot succeed from this lane.'
+        : '- Worker rule: execute the assigned implementation slice. Do not redesign the plan or take over review/recon unless the current plan is unsafe or blocked.'
     )
   }
 
@@ -667,6 +698,36 @@ function isConfiguredCaptain(config: EnsembleConfig, participantId: string): boo
     captainParticipantIds: config.captainParticipantIds,
     secondInCommandParticipantId: config.secondInCommandParticipantId
   }).captainParticipantIds.includes(participantId)
+}
+
+/**
+ * Does THIS seat hold a live write-intent lane right now?
+ *
+ * The former `hasWriteIntentLane` asked a wave-wide question with no status
+ * filter, so a single writer anywhere in the round handed every reader the
+ * writer git guidance — and because lanes are never removed from the round, one
+ * COMPLETED writer in pass 1 kept poisoning every later reader for the rest of
+ * the round. Modelled on `hasBossDrivenWriteAllocation` below: same self-lane
+ * and active-status filters.
+ *
+ * The live posture wins when the caller supplied one: a writer lane narrowed to
+ * read at dispatch is never written back to the lane record, so the record is
+ * stale in exactly the dangerous direction.
+ */
+function hasSelfWriteIntentLane(
+  config: EnsembleConfig,
+  participantId: string,
+  posture?: EffectiveLanePosture
+): boolean {
+  if (posture?.laneIntent) return posture.laneIntent === 'write'
+  return Object.values(config.activeRound?.lanes || {}).some(
+    (lane) =>
+      lane.participantId === participantId &&
+      lane.intent === 'write' &&
+      (lane.status === 'pending' ||
+        lane.status === 'running' ||
+        lane.status === 'awaiting-approval')
+  )
 }
 
 function hasBossDrivenWriteAllocation(config: EnsembleConfig, participantId: string): boolean {
@@ -1041,9 +1102,16 @@ export function buildEnsembleDynamicStateSnapshot(
  */
 function permissionSurfaceRule(
   participant: EnsembleParticipant,
-  effectiveApprovalMode?: string | null
+  effectiveApprovalMode?: string | null,
+  /**
+   * The preset this dispatch actually resolved to. A fan-out lane clamped at
+   * dispatch keeps its roster `permissionPresetId`, so without this the rule
+   * tells a read-clamped lane "your permission role is workspace_write" while
+   * the denial wording beside it is already (correctly) plan-shaped.
+   */
+  lanePresetId?: PermissionPresetId
 ): string {
-  const presetId = participant.permissionPresetId
+  const presetId = lanePresetId ?? participant.permissionPresetId
   const denialPosture =
     presetId === 'read_only' || presetId === 'plan' || effectiveApprovalMode === 'plan'
   if (denialPosture) {
@@ -1156,10 +1224,14 @@ export function buildEnsembleParticipantPromptProjection(
     return undefined
   })()
   const activeConcurrentMode = Boolean(input.config.activeRound?.concurrentMode)
-  const hasWriteIntentLane = Boolean(
-    input.config.activeRound?.lanes &&
-    Object.values(input.config.activeRound.lanes).some((lane) => lane.intent === 'write')
+  const hasWriteIntentLane = hasSelfWriteIntentLane(
+    input.config,
+    input.participant.id,
+    input.effectiveLanePosture
   )
+  // Non-elidable posture sentence for a reader lane; `undefined` for every
+  // other seat, which keeps every existing prompt shape byte-identical.
+  const laneIntentBoundary = formatLaneIntentBoundary(input.effectiveLanePosture)
   const maxContinuationHops = input.config.maxContinuationHops || 6
   const continuationHops = input.config.activeRound?.continuationHops || 0
   // 1.0.4 — speaker-position awareness. The opening participant of a
@@ -1303,7 +1375,8 @@ export function buildEnsembleParticipantPromptProjection(
     orderedParticipants,
     positionOneIndexed,
     totalParticipants,
-    bossDrivenWriteAllocation
+    bossDrivenWriteAllocation,
+    Boolean(laneIntentBoundary)
   )
   const rootGoal = resolveActiveGoalForEnsemble(input.chat.activeGoal)
   const goalAssignment = latestGoalAssignmentForParticipant(input.chat, input.participant.id)
@@ -1468,6 +1541,7 @@ export function buildEnsembleParticipantPromptProjection(
         authorityLines: authorityRoutingLines,
         roleBoundaryLines,
         turnBoundary: advisoryTurnBoundary || undefined,
+        laneIntentBoundary,
         roundPolicy: compactRoundPolicy,
         parallelPolicy: compactParallelPolicy,
         workContract,
@@ -1478,7 +1552,11 @@ export function buildEnsembleParticipantPromptProjection(
         blackboardSnapshot: blackboardSnapshot || undefined,
         seatSummary: seatSummaryBlock || undefined,
         transcript,
-        permissionRule: permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
+        permissionRule: permissionSurfaceRule(
+          input.participant,
+          input.effectiveApprovalMode,
+          input.effectiveLanePosture?.presetId
+        ),
         workflowHint: ollamaScoutDelegateWorkflowHint(input.participant.model, ollamaHintIntent),
         transcriptAutoCompacted: Boolean(ollamaTranscriptBudget?.autoCompacted)
       },
@@ -1529,6 +1607,7 @@ export function buildEnsembleParticipantPromptProjection(
         authorityLines: authorityRoutingLines,
         roleBoundaryLines,
         turnBoundary: advisoryTurnBoundary || undefined,
+        laneIntentBoundary,
         roundPolicy: compactRoundPolicy,
         parallelPolicy: compactParallelPolicy,
         workContract,
@@ -1539,7 +1618,11 @@ export function buildEnsembleParticipantPromptProjection(
         blackboardSnapshot,
         seatSummary: seatSummaryBlock,
         transcript,
-        permissionRule: permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
+        permissionRule: permissionSurfaceRule(
+          input.participant,
+          input.effectiveApprovalMode,
+          input.effectiveLanePosture?.presetId
+        ),
         yieldExecutionCheck,
         goalLifecycleFallback: antigravityGoalLifecycleFallback
       },
@@ -1590,7 +1673,10 @@ export function buildEnsembleParticipantPromptProjection(
       `Round id: ${input.roundId}`,
       ...(authorityRoutingLines.length > 0 ? ['', ...authorityRoutingLines] : []),
       ...formatBossPostRound1HandoffRule(input.config, input.participant.id),
-      ...(bossDrivenWriteAllocation
+      // Same live-posture gate as the full briefing's role boundary: the lane
+      // record still says `write` after a dispatch-time narrow, so without this
+      // a read lane gets both this line and the read-clamp boundary below it.
+      ...(bossDrivenWriteAllocation && !laneIntentBoundary
         ? [
             'Boss/Captain write allocation: execute the approved implementation slice inside its declared write scopes.'
           ]
@@ -1641,6 +1727,10 @@ export function buildEnsembleParticipantPromptProjection(
       '',
       'New since your previous turn (tagged transcript):',
       deltaTranscript || '[No new panel activity since your previous turn.]',
+      // This shape emits neither the role-boundary contract nor the permission
+      // surface rule, so without this line a resumed reader lane carries no
+      // posture statement at all.
+      ...(laneIntentBoundary ? ['', laneIntentBoundary] : []),
       '',
       requestPresentation.label || 'Current user request:',
       requestPresentation.text,
@@ -1815,7 +1905,11 @@ export function buildEnsembleParticipantPromptProjection(
       : canCompleteRootGoal
         ? '- In Continuous mode the round auto-continues until the root Goal is complete or the hop budget runs out. Complete it only after every required assignment and review gate is finished and verified.'
         : '- In Continuous mode, finish only your assignment/review contribution and hand evidence to the Boss/Captain. Local todo completion never authorizes root Goal completion.',
-    permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
+    permissionSurfaceRule(
+      input.participant,
+      input.effectiveApprovalMode,
+      input.effectiveLanePosture?.presetId
+    ),
     '- Respond as yourself only. Do not impersonate other participants.',
     // 1.0.4-AF / Adv-1 — Plan/Ensemble precedence note. Ensemble
     // Mode is an orchestration mode; Plan-authoring mode is where plan
@@ -1959,6 +2053,7 @@ export function buildEnsembleParticipantPromptProjection(
     '',
     'Recent tagged transcript:',
     transcript || '[No prior transcript]',
+    ...(laneIntentBoundary ? ['', laneIntentBoundary] : []),
     '',
     requestPresentation.label || 'Current user request:',
     requestPresentation.text,

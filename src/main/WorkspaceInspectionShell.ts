@@ -1,4 +1,5 @@
 import * as fs from 'node:fs'
+import * as os from 'node:os'
 import * as path from 'node:path'
 
 import {
@@ -50,6 +51,66 @@ const TRUSTED_EXECUTABLE_DIRECTORIES = [
   '/usr/local/bin',
   '/opt/homebrew/bin'
 ] as const
+
+/**
+ * THE OWNER MAY EDIT OR REMOVE ANY ENTRY IN THIS ARRAY — it is deliberately
+ * the single, self-contained place this policy lives.
+ *
+ * Owner decision (2026-09-07): a command the read-only classifier has ALREADY
+ * proven non-mutating may read outside the workspace — but only inside the
+ * provider WORKING-STATE subtrees named here. This is an ALLOWLIST, not a
+ * blocklist: a location nobody thought of stays behind the ordinary approval
+ * card instead of being readable by default. WHICH commands count as read-only
+ * is untouched; only WHERE a proven read may point.
+ *
+ * Every entry names a SUBDIRECTORY of a provider root. The provider roots
+ * themselves are deliberately absent, because they hold live credentials at
+ * their own top level — `~/.gemini/oauth_creds.json`,
+ * `~/.gemini/google_accounts.json`,
+ * `~/.gemini/jetski-standalone-oauth-token`, `~/.gemini/antigravity-oauth-token`
+ * and `~/.gemini/antigravity-cli/antigravity-oauth-token` were all verified
+ * present on the owner's host. A single root entry would make every one of
+ * them readable with no card, so widen this list one named subtree at a time
+ * and never by promoting an entry to its parent.
+ *
+ * Matching runs against the fully RESOLVED absolute path (`..` rejected
+ * outright, symlinks collapsed by `realpath`), never against the raw command
+ * token, and only for an existing REGULAR FILE — so no traversal spelling,
+ * symlink, or recursive directory walk can carry a read back out of an entry.
+ */
+const PROMPT_FREE_OUTSIDE_READ_ROOTS: readonly string[] = [
+  // Stalled lane read: `antigravity-cli/brain/<uuid>/.system_generated/steps/64/output.txt`.
+  '.gemini/antigravity-cli/brain',
+  // Stalled lane read: `antigravity-cli/mcp/TaskWraith/ensemble_yield.json`.
+  '.gemini/antigravity-cli/mcp',
+  '.gemini/antigravity-cli/conversations',
+  '.gemini/antigravity-cli/scratch',
+  // Stalled lane read: `antigravity/brain/<uuid>/scratch/fix_docs.js`.
+  '.gemini/antigravity/brain',
+  '.gemini/antigravity/mcp',
+  '.gemini/antigravity/conversations',
+  '.gemini/antigravity/scratch'
+  // `log` subtrees are deliberately ABSENT: verified 2026-09-07 that agy CLI
+  // logs carry the signed-in account address and auth state (`email=…`,
+  // `authMethod=…`, `loaded token`). No observed lane stall reads a log, so the
+  // grant would buy nothing. Re-add both entries here if that changes.
+]
+
+/**
+ * macOS and Windows resolve paths case-insensitively, so `realpath` hands back
+ * whatever case the operand was spelled with rather than the on-disk case.
+ * Compare allowlist roots the way the host filesystem does, or
+ * `~/.Gemini/antigravity-cli/brain/…` would name an allowlisted file this check
+ * could not recognise. The direction of the risk is inverted from a blocklist:
+ * a case mismatch can only ever LOSE the grant (→ approval card), never open
+ * one, so either answer is fail-closed.
+ */
+const HOST_PATHS_ARE_CASE_INSENSITIVE =
+  process.platform === 'darwin' || process.platform === 'win32'
+
+function comparablePath(value: string): string {
+  return HOST_PATHS_ARE_CASE_INSENSITIVE ? value.toLowerCase() : value
+}
 
 export interface WorkspaceInspectionShellContext {
   workspacePath?: string | null
@@ -121,9 +182,12 @@ function commandSegments(command: string): string[] | null {
       segment += character
       continue
     }
-    // Redirection is deliberately outside the prompt-free workspace tier. The
+    // Redirection is deliberately outside the prompt-free tier. The
     // syntax-only classifier may prove a /dev/null redirect non-mutating, but
-    // this layer promises path confinement and avoids another filename grammar.
+    // a redirect target is a WRITE path, and this layer resolves read operands
+    // rather than taking on another filename grammar. Untouched by the
+    // 2026-09-07 read allowlist and by lifting the single-segment cap: both
+    // moved READS only, and `||` stays rejected below for the same reason.
     if (character === '<' || character === '>') return null
     if (character === '&') {
       if (command[index + 1] !== '&' || !push()) return null
@@ -230,8 +294,11 @@ function executableHead(value: string): string {
  * The global syntax-only Git proof rejects every `-C` because it cannot bind
  * the requested repository. This workspace-aware layer can: remove one
  * literal `-C <path>` only for subcommand classification, then validate the
- * original path token against the live workspace below and execute the
- * original argv directly.
+ * original path token below and execute the original argv directly. `-C` names
+ * a DIRECTORY, so the 2026-09-07 outside-read allowlist never clears one: it
+ * admits resolved regular files only. Kept single-segment on purpose — this
+ * rewrite exists to hand ONE normalized git invocation to the syntax-only
+ * proof, and a pipeline has no single invocation to normalize.
  */
 function gitCommandWithoutWorkspaceC(command: string): string | null {
   const segments = commandSegments(command)
@@ -470,7 +537,80 @@ function existingGlobPrefix(value: string): string {
   return separator >= 0 ? prefix.slice(0, separator + 1) || '.' : '.'
 }
 
-function tokenStaysInsideWorkspace(
+/**
+ * `PROMPT_FREE_OUTSIDE_READ_ROOTS`, resolved against this host's home
+ * directory. Each entry contributes its lexical location and, when the location
+ * exists, its real location too — so a home or provider root that is itself a
+ * symlink cannot be spelled around in either direction. `null` means the home
+ * directory could not be resolved at all, which fails the whole outside-read
+ * allowance closed rather than guessing where the allowlist points.
+ */
+function promptFreeOutsideReadRoots(): readonly string[] | null {
+  let home: string
+  try {
+    home = fs.realpathSync(os.homedir())
+  } catch {
+    return null
+  }
+  const roots: string[] = []
+  for (const relativeRoot of PROMPT_FREE_OUTSIDE_READ_ROOTS) {
+    const lexical = path.resolve(home, relativeRoot)
+    roots.push(lexical)
+    try {
+      const real = fs.realpathSync(lexical)
+      if (real !== lexical) roots.push(real)
+    } catch {
+      // The subtree does not exist on this host yet. Its lexical root is still
+      // recorded, so a read lands inside the allowlist once the provider
+      // creates it, without a second policy edit.
+    }
+  }
+  return roots
+}
+
+/**
+ * May an already-proven read-only command point at this absolute path when it
+ * lands OUTSIDE the workspace? Only inside `PROMPT_FREE_OUTSIDE_READ_ROOTS`,
+ * and every uncertainty fails closed to the ordinary approval card:
+ *
+ * - the path must resolve to an EXISTING REGULAR FILE. A directory operand is
+ *   walked recursively by `rg`, `grep -r` and `find`, so admitting one would
+ *   hand a whole subtree to a single proof;
+ * - the RESOLVED path must sit under an allowlisted root. A symlink NAMED
+ *   inside one that points at `~/.gemini/oauth_creds.json` resolves straight
+ *   back out of the allowlist and keeps its card;
+ * - anything unresolvable (missing path, unreadable parent, unresolvable home)
+ *   keeps its card.
+ */
+function outsideWorkspaceReadIsPromptFree(absolutePath: string): boolean {
+  const allowedRoots = promptFreeOutsideReadRoots()
+  if (!allowedRoots) return false
+  let resolved: string
+  try {
+    resolved = fs.realpathSync(absolutePath)
+    if (!fs.statSync(resolved).isFile()) return false
+  } catch {
+    return false
+  }
+  const comparableResolved = comparablePath(resolved)
+  return allowedRoots.some((root) => isInside(comparablePath(root), comparableResolved))
+}
+
+/**
+ * The single confinement chokepoint for every operand of a proven read-only
+ * command: both the ordinary token walk and the attached `-f<path>` option
+ * value go through here, so there is no second route to a path.
+ *
+ * Workspace-internal behaviour is unchanged. What changed (owner decision, see
+ * `PROMPT_FREE_OUTSIDE_READ_ROOTS`) is the former outright rejection of a token
+ * landing outside the workspace: it now defers to
+ * `outsideWorkspaceReadIsPromptFree`, which admits only the allowlisted
+ * provider working-state subtrees. Shape rejections above that deferral —
+ * unquoted globs, `=`-expansions, `@`, `~`, `file://` and any literal `..`
+ * component — are kept for outside paths exactly as they were, because each is
+ * an expansion this layer cannot resolve with confidence.
+ */
+function tokenPathIsPromptFree(
   word: ShellWord,
   workspaceRealPath: string,
   workspaceLexicalPath: string,
@@ -488,22 +628,35 @@ function tokenStaysInsideWorkspace(
   const lexical = path.isAbsolute(pathValue)
     ? path.resolve(pathValue)
     : path.resolve(cwd, pathValue)
-  if (!isInside(workspaceRealPath, lexical) && !isInside(workspaceLexicalPath, lexical)) {
-    return false
+  if (isInside(workspaceRealPath, lexical) || isInside(workspaceLexicalPath, lexical)) {
+    try {
+      if (isInside(workspaceRealPath, fs.realpathSync(lexical))) return true
+    } catch {
+      // Non-existent relative patterns/operands remain lexically inside the
+      // workspace. Existing parents were checked above for glob prefixes.
+      return isInside(workspaceRealPath, lexical)
+    }
   }
-  try {
-    return isInside(workspaceRealPath, fs.realpathSync(lexical))
-  } catch {
-    // Non-existent relative patterns/operands remain lexically inside the
-    // workspace. Existing parents were checked above for glob prefixes.
-    return isInside(workspaceRealPath, lexical)
-  }
+  return outsideWorkspaceReadIsPromptFree(lexical)
 }
 
 /**
  * Add workspace/confidentiality proof to the existing non-mutation parser.
  * The returned reason is suitable for prompt-free audit only while this exact
  * context still revalidates; callers must check again immediately before spawn.
+ *
+ * A workspace binding is still mandatory (no `workspacePath` → no reason) and
+ * the cwd must still resolve inside it. Two things were relaxed, both for
+ * READS only: where an operand may point (`tokenPathIsPromptFree`), and how
+ * many segments a command may have.
+ *
+ * A pipeline is prompt-free only when EVERY segment is. `promptFreeReadOnlyShellReason`
+ * already proves each `|` segment read-only on its own
+ * (`isInspectionShellCommand` → `inspectionPipelineSegmentsOf(...).every(...)`),
+ * and the loop below re-runs the full head / trusted-executable / flag / operand
+ * checks — including the outside-read allowlist — once per segment. One failing
+ * segment fails the whole command. `<`/`>` redirects and `||` are still rejected
+ * outright in `commandSegments`.
  */
 export function workspaceInspectionShellReason(
   rawCommand: unknown,
@@ -531,7 +684,7 @@ export function workspaceInspectionShellReason(
   }
   if (!isInside(workspaceRealPath, cwd)) return null
   const segments = commandSegments(command)
-  if (!segments || segments.length !== 1) return null
+  if (!segments || segments.length === 0) return null
 
   for (const segment of segments) {
     const words = shellWords(segment)
@@ -564,7 +717,7 @@ export function workspaceInspectionShellReason(
         continue
       }
       if (
-        !tokenStaysInsideWorkspace(
+        !tokenPathIsPromptFree(
           word,
           workspaceRealPath,
           workspaceLexicalPath,
@@ -577,7 +730,7 @@ export function workspaceInspectionShellReason(
       const attachedPath = attachedPathOptionValue(head, word.value)
       if (
         attachedPath &&
-        !tokenStaysInsideWorkspace(
+        !tokenPathIsPromptFree(
           {
             value: attachedPath,
             hasUnquotedGlob: word.hasUnquotedGlob,
@@ -596,6 +749,16 @@ export function workspaceInspectionShellReason(
   return reason
 }
 
+/**
+ * The typed direct-execution plan for a proven inspection command: one trusted
+ * executable and one argv, spawned without a shell.
+ *
+ * Deliberately still single-segment. A pipeline has no single executable or
+ * argv to describe, so `null` here means "prompt-free, but run it the ordinary
+ * brokered way" — never "not allowed". The approval gate reads that
+ * distinction (see `ApprovalOrchestration.ts`) and only claims the
+ * `brokered-direct-inspection` boundary when this returns a plan.
+ */
 export function workspaceInspectionExecutionPlan(
   rawCommand: unknown,
   context: WorkspaceInspectionShellContext

@@ -21,7 +21,10 @@ import { shellCommandFromApprovalPreview } from '../ReadOnlyGitShellCommand'
 import { isIsolateSharedBranchHold } from '../IsolateSharedBranchHold'
 import { shellCommandTierHold } from '../ShellCommandTierPolicy'
 import { isHostDestructiveShellCommand } from '../shell-policy/HostDestructiveShellDeny'
-import { workspaceInspectionShellReason } from '../WorkspaceInspectionShell'
+import {
+  workspaceInspectionExecutionPlan,
+  workspaceInspectionShellReason
+} from '../WorkspaceInspectionShell'
 import { workspaceInspectionProgramPlan } from '../WorkspaceInspectionProgram'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
@@ -542,6 +545,18 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     // resolution keeps flowing through the ordinary audited path below, but it
     // still receives the inspection callback so execution uses the typed direct
     // plan rather than falling back to raw shell interpretation.
+    //
+    // 2026-09-07 owner decision — two READ-only widenings, both inside
+    // `workspaceInspectionShellReason`. (1) A command it has already proven
+    // read-only may point outside the workspace, but only into the provider
+    // working-state subtrees in `PROMPT_FREE_OUTSIDE_READ_ROOTS` there; every
+    // other outside path, credentials included, still reaches the gate below.
+    // (2) A multi-segment pipeline is prompt-free when EVERY segment
+    // independently passes. WHICH commands count as read-only is unchanged, so
+    // writes and anything unproven still reach the deny/ask gate untouched. A
+    // workspace binding and an in-workspace cwd are still mandatory, and both
+    // widenings apply to every run that reaches this path, not only fan-out
+    // recon lanes.
     let workspaceInspectionAuditMetadata:
       | {
           executionBoundary: 'brokered-direct-inspection'
@@ -566,10 +581,20 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
           ? 'explicit_user_request'
           : null)
       if (shellFastPathReason) {
-        if (
-          shellFastPathReason === 'readonly_shell' ||
-          shellFastPathReason === 'inspection_shell'
-        ) {
+        // The direct-inspection boundary is claimed only when a TYPED plan
+        // actually exists for this command — one trusted executable and one
+        // argv, or the compiled snapshot program. `onWorkspaceInspectionMatch`
+        // is the signal the executor revalidates against, and it fails hard
+        // when the gate promised a direct plan the executor cannot rebuild. A
+        // proven multi-segment pipeline has no single argv, so it is
+        // auto-allowed here and then runs the ordinary brokered way — exactly
+        // as it would have after a human clicked Approve, minus the card.
+        const workspaceInspectionDirectPlan =
+          shellFastPathReason === 'readonly_shell' || shellFastPathReason === 'inspection_shell'
+            ? workspaceInspectionProgram ||
+              workspaceInspectionExecutionPlan(readOnlyShellCommand, inspectionContext)
+            : null
+        if (workspaceInspectionDirectPlan) {
           request.onWorkspaceInspectionMatch?.()
           workspaceInspectionAuditMetadata = {
             executionBoundary: 'brokered-direct-inspection',

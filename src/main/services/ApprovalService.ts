@@ -193,6 +193,19 @@ export interface PendingKimiApproval {
   externalPathDetection?: PendingExternalPathDetection
 }
 
+/**
+ * Does this value look like an `EnsembleRunIdentity` for a CONCURRENT fan-out
+ * lane? `laneId` is only stamped by concurrent lane dispatch; serial rotation
+ * dispatch leaves it undefined (see `ensembleRunIdentity` in
+ * EnsembleOrchestrator). Read defensively — the value crosses the run-state
+ * boundary as plain data.
+ */
+function hasEnsembleFanoutLaneId(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+  const laneId = (value as { laneId?: unknown }).laneId
+  return typeof laneId === 'string' && laneId.trim().length > 0
+}
+
 function approvalActionResumesExecution(action: AgentApprovalAction): boolean {
   return (
     action === 'accept' ||
@@ -869,6 +882,36 @@ export class ApprovalService {
     return typeof payload?.scheduledTaskId === 'string' && Boolean(payload.scheduledTaskId.trim())
   }
 
+  /**
+   * Is this run a BACKGROUND Ensemble fan-out lane — a seat the Boss dispatched
+   * into its own lane, with no human sitting on its approval modal?
+   *
+   * Deliberately separate from `runIsUnattended`, which answers a different
+   * question ("nobody SCHEDULED this run"): it keys only on `scheduledTaskId`,
+   * which a Boss-dispatched fan-out lane never carries. Widening that method to
+   * cover lanes would collapse two distinct facts — "unattended" also drives
+   * scheduled-run posture clamps and seal evidence — so the lane fact gets its
+   * own derivation and both are fed to the hold predicate.
+   *
+   * The evidence is the run state's `EnsembleRunIdentity`. `laneId` is the
+   * discriminator: only concurrent fan-out dispatch stamps one. A serial
+   * rotation turn in an interactive round carries an `ensembleRun` WITHOUT a
+   * `laneId`, and a human is watching that round, so it keeps the hold.
+   */
+  private runIsBackgroundFanoutLane(runId?: string): boolean {
+    if (!runId) return false
+    const session = this.deps.runManager.get(runId) as
+      | { ensembleRun?: unknown; state?: unknown }
+      | undefined
+    if (!session) return false
+    if (hasEnsembleFanoutLaneId(session.ensembleRun)) return true
+    const state = session.state as Record<string, unknown> | undefined
+    if (!state || typeof state !== 'object') return false
+    if (hasEnsembleFanoutLaneId(state.ensembleRun)) return true
+    const payload = state.payload as Record<string, unknown> | undefined
+    return hasEnsembleFanoutLaneId(payload?.ensembleRun)
+  }
+
   private runPresetId(runId?: string): string | undefined {
     if (!runId) return undefined
     const session = this.deps.runManager.get(runId) as { state?: unknown } | undefined
@@ -894,7 +937,8 @@ export class ApprovalService {
     return shouldHoldShellApprovalWithoutTimeoutDeny({
       presetId: this.runPresetId(resolvedRunId),
       service: resolvedService,
-      unattended: this.runIsUnattended(resolvedRunId)
+      unattended: this.runIsUnattended(resolvedRunId),
+      backgroundFanoutLane: this.runIsBackgroundFanoutLane(resolvedRunId)
     })
   }
 

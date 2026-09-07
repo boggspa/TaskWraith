@@ -7,6 +7,10 @@ import {
   resolveEffectiveRunPermissions,
   shouldHoldShellApprovalWithoutTimeoutDeny
 } from './EffectiveRunPermissions'
+import {
+  applyForcedReadOnlyFanoutWriteDeny,
+  isForcedReadOnlyFanoutClampedPosture
+} from './ForcedReadOnlyFanoutPosture'
 import type { AppSettings, ExternalPathGrant } from './store/types'
 
 function settings(overrides: Partial<AppSettings> = {}): AppSettings {
@@ -1195,6 +1199,35 @@ describe('shouldHoldShellApprovalWithoutTimeoutDeny', () => {
     ).toBe(false)
   })
 
+  it('does not hold a background fan-out lane, even though it is not scheduled', () => {
+    // The lane carries no scheduledTaskId, so `unattended` is false. Nobody is
+    // watching its modal either, so the timer must stay armed and the approval
+    // must fail closed instead of hanging on a transport backstop.
+    for (const presetId of ['read_only', 'plan'] as const) {
+      expect(
+        shouldHoldShellApprovalWithoutTimeoutDeny({
+          presetId,
+          service: 'shellCommands',
+          unattended: false,
+          backgroundFanoutLane: true
+        })
+      ).toBe(false)
+    }
+  })
+
+  it('still holds an attended interactive lane that is neither scheduled nor a fan-out lane', () => {
+    for (const presetId of ['read_only', 'plan'] as const) {
+      expect(
+        shouldHoldShellApprovalWithoutTimeoutDeny({
+          presetId,
+          service: 'shellCommands',
+          unattended: false,
+          backgroundFanoutLane: false
+        })
+      ).toBe(true)
+    }
+  })
+
   it('does not hold Ask fileChanges / mcpTools / hostCommand rerun', () => {
     expect(
       shouldHoldShellApprovalWithoutTimeoutDeny({
@@ -1229,5 +1262,46 @@ describe('shouldHoldShellApprovalWithoutTimeoutDeny', () => {
         service: 'shellCommands'
       })
     ).toBe(false)
+  })
+})
+
+describe('forced read-only Ensemble fan-out clamp', () => {
+  const resolveReadOnlyLane = () =>
+    resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings(),
+      presetId: 'read_only'
+    })
+
+  it('leaves the read_only preset itself untouched for a non-fan-out run', () => {
+    const resolved = resolveReadOnlyLane()
+    expect(resolved.agenticServices.fileChanges).toBe('ask')
+    expect(resolved.agenticServices.shellCommands).toBe('ask')
+    expect(isForcedReadOnlyFanoutClampedPosture(resolved)).toBe(false)
+  })
+
+  it('emits fileChanges deny and shellCommands ask for a clamped fan-out lane', () => {
+    const clamped = applyForcedReadOnlyFanoutWriteDeny(resolveReadOnlyLane())
+    expect(clamped.presetId).toBe('read_only')
+    expect(clamped.readOnly).toBe(true)
+    expect(clamped.agenticServices.fileChanges).toBe('deny')
+    expect(clamped.agenticServices.shellCommands).toBe('ask')
+    expect(isForcedReadOnlyFanoutClampedPosture(clamped)).toBe(true)
+  })
+
+  it('moves no other service away from what the read_only preset resolved', () => {
+    const resolved = resolveReadOnlyLane()
+    const clamped = applyForcedReadOnlyFanoutWriteDeny(resolved)
+    for (const service of Object.keys(resolved.agenticServices) as Array<
+      keyof typeof resolved.agenticServices
+    >) {
+      if (service === 'fileChanges') continue
+      expect(clamped.agenticServices[service]).toBe(resolved.agenticServices[service])
+    }
+    expect(clamped.networkAccess).toBe(resolved.networkAccess)
+    expect(clamped.approvalMode).toBe(resolved.approvalMode)
+    expect(clamped.externalPathGrants).toEqual(resolved.externalPathGrants)
+    expect(clamped.workspaceGrantServiceIds).toEqual(resolved.workspaceGrantServiceIds)
   })
 })

@@ -14,6 +14,7 @@ import {
 } from '../../shared/ensembleSeatFailureClear'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
+import { applyForcedReadOnlyFanoutWriteDeny } from '../ForcedReadOnlyFanoutPosture'
 import {
   isExplicitUltraTaskSelection,
   withUltraTaskDelegationAutoAllow
@@ -42,6 +43,7 @@ import {
   providerLabel,
   resolveForegroundSynthesizerParticipantId
 } from '../EnsemblePrompt'
+import { resolveEffectiveLanePosture } from '../ensemble/EnsembleLanePosture'
 import {
   resolveRunSkillHookContext,
   type RunSkillHookContext
@@ -15435,6 +15437,7 @@ export class EnsembleOrchestrator {
         modelIngestCharOverrides: this.deps.getSettings().ensembleModelIngestChars,
         dynamicStateSnapshot,
         effectiveApprovalMode: permissions.approvalMode,
+        effectiveLanePosture: resolveEffectiveLanePosture(permissions, run.laneIntent),
         authorityRoutingCheckpoint: run.authorityRoutingCheckpoint,
         instructionContext,
         ...skillHookContext
@@ -15472,6 +15475,7 @@ export class EnsembleOrchestrator {
               modelIngestCharOverrides: this.deps.getSettings().ensembleModelIngestChars,
               dynamicStateSnapshot,
               effectiveApprovalMode: permissions.approvalMode,
+              effectiveLanePosture: resolveEffectiveLanePosture(permissions, run.laneIntent),
               authorityRoutingCheckpoint: run.authorityRoutingCheckpoint,
               instructionContext,
               // Same dispatch, same evidence — reuse the sample rather than
@@ -18271,13 +18275,6 @@ export class EnsembleOrchestrator {
         liveFanoutIsolation === 'worktree' &&
         run.laneIntent === 'write' &&
         dispatchChat.scope !== 'global'
-      const readerIntentBoundary =
-        run.laneIntent === 'read'
-          ? forceReadOnly
-            ? '\n\nTaskWraith lane intent: inspection, recon, or review only. Do not modify workspace files or external state. This auxiliary lane is runtime read-clamped.'
-            : '\n\nTaskWraith lane intent: inspection, recon, or review only. Do not modify workspace files or external state. Your configured permission tier remains active so allowed inspection tools stay non-blocking; that authority does not broaden this reader assignment.'
-          : ''
-      const promptForLane = `${basePromptForLane}${readerIntentBoundary}`
       const promptProjection = buildEnsembleParticipantPromptProjection({
         // The same durable user row is presented as the current request below;
         // exclude only that exact row from this lane's history so the provider
@@ -18286,7 +18283,7 @@ export class EnsembleOrchestrator {
         chat: promptChat,
         config: dispatchChat.ensemble!,
         participant,
-        currentPrompt: promptForLane,
+        currentPrompt: basePromptForLane,
         ...(userPromptSourceMessage
           ? { currentPromptMessageId: userPromptSourceMessage.id }
           : {}),
@@ -18300,6 +18297,7 @@ export class EnsembleOrchestrator {
         modelIngestCharOverrides: settings.ensembleModelIngestChars,
         dynamicStateSnapshot,
         effectiveApprovalMode: permissions.approvalMode,
+        effectiveLanePosture: resolveEffectiveLanePosture(permissions, run.laneIntent),
         instructionContext,
         ...fanoutSkillHookContext
         // No `workspaceChurnStanza` here, deliberately: lanes in this pass run
@@ -21754,15 +21752,22 @@ export class EnsembleOrchestrator {
     participant: EnsembleParticipant,
     explicitExternalPathGrants: ExternalPathGrant[] = runtime.externalPathGrants || []
   ): EffectiveRunPermissions {
-    return this.resolveParticipantPermissions(
-      chat,
-      participant,
-      explicitExternalPathGrants,
-      {
-        presetId: 'read_only',
-        ignoreOverrides: true,
-        disallowTrustedSession: true
-      }
+    // Nobody is watching this lane's approval cards, so a `fileChanges: 'ask'`
+    // card cannot be answered — it burns the lane's budget and auto-denies.
+    // Deny writes instead: the gate turns a deny into an in-band tool refusal
+    // the model can adapt to. `shellCommands` stays 'ask' by owner decision.
+    // Runtime-only; see ForcedReadOnlyFanoutPosture.
+    return applyForcedReadOnlyFanoutWriteDeny(
+      this.resolveParticipantPermissions(
+        chat,
+        participant,
+        explicitExternalPathGrants,
+        {
+          presetId: 'read_only',
+          ignoreOverrides: true,
+          disallowTrustedSession: true
+        }
+      )
     )
   }
 
