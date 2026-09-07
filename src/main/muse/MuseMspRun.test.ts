@@ -388,3 +388,102 @@ describe('runMuseMspProvider', () => {
     expect(outcome.leasePath).toContain('taskwraith-muse-home-')
   })
 })
+
+describe('MSP session-log terminal adoption', () => {
+  /** Handshake to an accepted turn, then the host exits with NO wire terminal. */
+  async function playSilentExit(child: FakeMspChild, sessionId = 'sess-log'): Promise<void> {
+    await flush()
+    child.emit({ jsonrpc: '2.0', id: 1, result: { serverInfo: { name: 'muse' } } })
+    await flush()
+    child.emit({
+      jsonrpc: '2.0',
+      id: 2,
+      result: { session: { sessionId, turnCount: 0, workspaceRoot: '/ws', modelId: 'm' } }
+    })
+    await flush()
+    child.emit({ jsonrpc: '2.0', id: 3, result: { turnId: 'turn-1', status: 'accepted' } })
+    await flush()
+    child.finish(0)
+    await flush()
+  }
+
+  /**
+   * Seed a durable `session.jsonl` into the lease the run is about to use, on
+   * the real date-partitioned path the fs fallback has to walk.
+   */
+  function seedingCreateHome(
+    sessionId: string,
+    payload: Record<string, unknown>
+  ): typeof createMuseIsolatedHome {
+    return ((options: Parameters<typeof createMuseIsolatedHome>[0]) => {
+      const lease = createMuseIsolatedHome(options)
+      const dir = join(lease.museDataDir, 'sessions', '2026', '09', '07', sessionId)
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(
+        join(dir, 'session.jsonl'),
+        `${JSON.stringify({
+          schema_version: 1,
+          id: 'env-terminal',
+          stream: { kind: 'session', id: sessionId },
+          sequence: 12,
+          recorded_at: Date.now() * 1_000,
+          record_type: 'event',
+          payload_type: 'run.terminal.completed',
+          payload
+        })}\n`
+      )
+      return lease
+    }) as typeof createMuseIsolatedHome
+  }
+
+  it('adopts the terminal Muse recorded when the wire never delivered one', async () => {
+    const child = new FakeMspChild()
+    const pending = run(child, {
+      createHome: seedingCreateHome('sess-log', { terminal: 'cancelled', reason: 'user stop' }),
+      sessionLogResolveTimeoutMs: 2_000
+    })
+    await playSilentExit(child)
+    const outcome = await pending
+    // Without adoption the status ternary defaults a missing terminal to
+    // 'failed', so 'cancelled' can only come from the durable log.
+    expect(outcome.status).toBe('cancelled')
+    expect(outcome.warnings.some((w) => w.includes('user stop'))).toBe(true)
+  })
+
+  it('redacts MCP broker secrets out of the adopted reason', async () => {
+    const token = 'broker-token-8f21c4de-never-show-this'
+    const child = new FakeMspChild()
+    const pending = run(child, {
+      createHome: seedingCreateHome('sess-log', {
+        terminal: 'failed',
+        reason: `run config error: mcp server taskwraith env TASKWRAITH_MCP_ROUTE=${token}`
+      }),
+      sessionLogResolveTimeoutMs: 2_000,
+      mcpSettings: buildMuseTaskWraithMcpSettings({
+        command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+        args: ['--taskwraith-gemini-mcp-bridge'],
+        env: { TASKWRAITH_MCP_ROUTE: token }
+      })
+    })
+    await playSilentExit(child)
+    const outcome = await pending
+    expect(outcome.status).toBe('failed')
+    const joined = outcome.warnings.join('\n')
+    expect(joined).toContain('run config error')
+    expect(joined).toContain('[redacted]')
+    expect(joined).not.toContain(token)
+  })
+
+  it('leaves a wire terminal authoritative and never consults the log', async () => {
+    const child = new FakeMspChild()
+    const pending = run(child, {
+      // The log would say 'failed'; the wire says the turn completed.
+      createHome: seedingCreateHome('sess-1', { terminal: 'failed', reason: 'stale log verdict' }),
+      sessionLogResolveTimeoutMs: 2_000
+    })
+    await playTurn(child, { text: 'ok' })
+    const outcome = await pending
+    expect(outcome.status).toBe('success')
+    expect(outcome.warnings.some((w) => w.includes('stale log verdict'))).toBe(false)
+  })
+})

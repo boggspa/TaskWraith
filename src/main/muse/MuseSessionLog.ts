@@ -15,7 +15,7 @@
 import { execFile } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import { join, normalize, sep } from 'node:path'
-import { parseMuseEnvelope, type MuseEnvelope } from './MuseExecJson'
+import { museRecordedAtMs, parseMuseEnvelope, type MuseEnvelope } from './MuseExecJson'
 
 export interface MuseSessionIndexRow {
   session_id: string
@@ -396,6 +396,125 @@ export function createMuseSessionLogTailer(
       await Promise.allSettled([activeRead, finalRead].filter(Boolean))
     }
   }
+}
+
+export interface MuseSessionLogTerminalRecord {
+  /** Muse's own verdict verbatim (`completed` / `failed` / `cancelled` / …). */
+  readonly terminal: string
+  /** Display-only free text; may be absent. */
+  readonly reason: string | null
+  readonly payloadType: string
+  readonly sequence: number
+  readonly recordedAtMs: number
+}
+
+export interface ReadMuseSessionLogTerminalOptions {
+  readonly sessionLogPath: string
+  /**
+   * Ignore any terminal recorded before this wall-clock ms.
+   *
+   * LOAD-BEARING on a resumed session: the durable log still carries every
+   * prior turn's terminal, so an unscoped read would happily report turn 1's
+   * `completed` for a turn 5 that never produced a result at all. Claiming
+   * success for work that never ran is strictly worse than reporting nothing.
+   */
+  readonly notBeforeMs: number
+  /** Cap on the tail read; the terminal is the last thing Muse writes. */
+  readonly maxBytes?: number
+}
+
+const DEFAULT_TERMINAL_TAIL_BYTES = 256 * 1024
+
+/**
+ * `run.terminal.completed` on the stdout plane — but the durable log does NOT
+ * share stdout's payload_type catalog (see MuseExecJson's header), so match the
+ * family by segment instead of pinning one exact spelling this build may not
+ * use. `run.output.delta` and friends never match.
+ */
+function isTerminalPayloadType(payloadType: string): boolean {
+  return payloadType.split('.').includes('terminal')
+}
+
+function terminalFromPayload(payload: Record<string, unknown>): string | null {
+  const direct = payload.terminal
+  if (typeof direct === 'string' && direct.trim()) return direct.trim()
+  const state = payload.terminal_state
+  if (state && typeof state === 'object' && !Array.isArray(state)) {
+    const nested = (state as Record<string, unknown>).terminal
+    if (typeof nested === 'string' && nested.trim()) return nested.trim()
+  }
+  return null
+}
+
+async function readSessionLogTail(path: string, maxBytes: number): Promise<string | null> {
+  let stat
+  try {
+    stat = await fs.stat(path)
+  } catch {
+    return null
+  }
+  if (!stat.isFile() || stat.size === 0) return null
+  const start = Math.max(0, stat.size - maxBytes)
+  const length = stat.size - start
+  let handle
+  try {
+    handle = await fs.open(path, 'r')
+  } catch {
+    return null
+  }
+  try {
+    const buffer = Buffer.alloc(length)
+    const { bytesRead } = await handle.read(buffer, 0, length, start)
+    const text = buffer.subarray(0, bytesRead).toString('utf8')
+    if (start === 0) return text
+    // A tail read can begin mid-line; that leading fragment is not parseable.
+    const newline = text.indexOf('\n')
+    return newline >= 0 ? text.slice(newline + 1) : ''
+  } catch {
+    return null
+  } finally {
+    await handle.close().catch(() => undefined)
+  }
+}
+
+/**
+ * Read the terminal verdict Muse recorded for THIS run out of `session.jsonl`.
+ *
+ * The MSP lane's usage and terminal both come off the wire, so a host that dies
+ * (or is killed by the inactivity watchdog) without sending `turn/completed`
+ * leaves TaskWraith with no verdict at all — while Muse has already written one
+ * to its own durable log. This is the read that was always missing.
+ *
+ * Returns the LAST in-window terminal, or null. Never throws.
+ */
+export async function readMuseSessionLogTerminal(
+  options: ReadMuseSessionLogTerminalOptions
+): Promise<MuseSessionLogTerminalRecord | null> {
+  const text = await readSessionLogTail(
+    options.sessionLogPath,
+    options.maxBytes ?? DEFAULT_TERMINAL_TAIL_BYTES
+  )
+  if (!text) return null
+
+  let found: MuseSessionLogTerminalRecord | null = null
+  for (const line of text.split(/\r?\n/)) {
+    const envelope = parseMuseSessionLogLine(line)
+    if (!envelope || !isTerminalPayloadType(envelope.payload_type)) continue
+    const terminal = terminalFromPayload(envelope.payload)
+    if (!terminal) continue
+    const recordedAtMs = museRecordedAtMs(envelope.recorded_at)
+    if (recordedAtMs < options.notBeforeMs) continue
+    const reason = envelope.payload.reason
+    // Append-only log: the last matching record in file order is the newest.
+    found = {
+      terminal,
+      reason: typeof reason === 'string' && reason.trim() ? reason.trim() : null,
+      payloadType: envelope.payload_type,
+      sequence: envelope.sequence,
+      recordedAtMs
+    }
+  }
+  return found
 }
 
 /**

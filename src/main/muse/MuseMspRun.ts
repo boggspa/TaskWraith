@@ -53,6 +53,11 @@ import type {
 } from './MuseMspProtocol'
 import type { MuseRunOutcome, MuseRunStatus } from './MuseRun'
 import {
+  readMuseSessionLogTerminal,
+  resolveMuseSessionLogPath,
+  type MuseSessionLogResolveResult
+} from './MuseSessionLog'
+import {
   MUSE_MSP_USAGE_SOURCE,
   MUSE_TOKEN_COUNT_REPORTED,
   MUSE_TOKEN_COUNT_UNAVAILABLE,
@@ -117,6 +122,51 @@ export interface MuseMspRunInput {
   readonly now?: () => number
   readonly createHome?: typeof createMuseIsolatedHome
   readonly loadImages?: typeof loadMainAuthorizedAcpImageContents
+  /** Bound on the session-log lookup used to adopt a missing terminal. */
+  readonly sessionLogResolveTimeoutMs?: number
+  /** Injected resolver (tests / parity with the exec lane). */
+  readonly resolveSessionLog?: (input: {
+    dataHome: string
+    sessionId: string
+  }) => Promise<MuseSessionLogResolveResult>
+}
+
+/**
+ * Clock skew tolerance when deciding whether a logged terminal belongs to THIS
+ * run. Small enough that a previous turn — minutes old on any real resume —
+ * still falls outside the window.
+ */
+const MUSE_SESSION_LOG_TERMINAL_SKEW_MS = 2_000
+const MUSE_ADOPTED_REASON_MAX_CHARS = 400
+/** Below this, an env value is a flag/short literal rather than a credential. */
+const MUSE_SECRET_MIN_CHARS = 6
+
+/**
+ * Strip app-owned MCP credentials out of text Muse authored.
+ *
+ * The bridge registration carries the broker route token in
+ * `mcp_servers.<name>.env`, and a Muse-side run config error is exactly the
+ * kind of message that quotes the server block back at you. Anything adopted
+ * from Muse's own log therefore passes through here before it can reach a
+ * warning, a transcript or a log line.
+ */
+export function redactMuseMcpSecrets(value: string, mcpSettings?: MuseMcpSettings): string {
+  let out = value
+  const secrets: string[] = []
+  for (const server of Object.values(mcpSettings?.mcp_servers ?? {})) {
+    for (const entry of Object.values(server?.env ?? {})) {
+      if (typeof entry === 'string' && entry.trim().length >= MUSE_SECRET_MIN_CHARS) {
+        secrets.push(entry)
+      }
+    }
+  }
+  // Longest first, so a secret that contains a shorter one is not half-masked.
+  secrets.sort((a, b) => b.length - a.length)
+  // split/join rather than RegExp: a token is arbitrary bytes, never a pattern.
+  for (const secret of secrets) out = out.split(secret).join('[redacted]')
+  return out.length > MUSE_ADOPTED_REASON_MAX_CHARS
+    ? `${out.slice(0, MUSE_ADOPTED_REASON_MAX_CHARS)}…`
+    : out
 }
 
 function requireNonEmpty(value: string, label: string): string {
@@ -318,6 +368,56 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
       }
     } else {
       await handle.closed
+    }
+
+    // Belt to the watchdog's braces.
+    //
+    // This lane takes its terminal off the wire, so a host that dies — or that
+    // the inactivity watchdog had to kill — leaves us with no verdict while
+    // Muse has already written one to its own durable session log. That record
+    // was always there; we simply never read it.
+    //
+    // Runs INSIDE the try on purpose: `lease.cleanup()` in the finally scrubs
+    // the home, and on a disposable (non-durable-seat) run it takes the log
+    // with it.
+    if (!cancelled && terminal === null && sessionId) {
+      try {
+        const resolveSessionLog =
+          input.resolveSessionLog ??
+          ((opts: { dataHome: string; sessionId: string }) =>
+            resolveMuseSessionLogPath({
+              dataHome: opts.dataHome,
+              sessionId: opts.sessionId,
+              timeoutMs: input.sessionLogResolveTimeoutMs ?? 250
+            }))
+        const resolved = await resolveSessionLog({
+          dataHome: lease.museDataDir,
+          sessionId
+        })
+        if (resolved.sessionLogPath) {
+          const record = await readMuseSessionLogTerminal({
+            sessionLogPath: resolved.sessionLogPath,
+            notBeforeMs: startedAt - MUSE_SESSION_LOG_TERMINAL_SKEW_MS
+          })
+          if (record) {
+            // An unrecognised verdict falls through the status ternary to
+            // 'failed', which is the right default for a turn we never saw end.
+            terminal = record.terminal
+            const reason = record.reason
+              ? ` ${redactMuseMcpSecrets(record.reason, input.mcpSettings)}`
+              : ''
+            noteWarning(
+              `Muse exited without reporting a result on the wire; TaskWraith adopted the "${record.terminal}" verdict recorded in its own session log.${reason}`
+            )
+          }
+        }
+      } catch (error) {
+        noteWarning(
+          `Muse session-log terminal adoption failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      }
     }
   } finally {
     const cleanup = lease.cleanup()

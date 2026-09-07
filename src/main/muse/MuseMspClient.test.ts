@@ -1302,3 +1302,123 @@ describe('runMuseMspTurn — steering and teardown', () => {
     expect(warnings.some((w) => w.includes('did not complete'))).toBe(true)
   })
 })
+
+describe('runMuseMspTurn — inactivity watchdog', () => {
+  /** Resolve 'closed' or 'wedged' — never hang the suite on the bug under test. */
+  const settleWithin = (handle: { closed: Promise<void> }, ms: number): Promise<string> =>
+    Promise.race([
+      handle.closed.then(() => 'closed'),
+      new Promise<string>((resolve) => setTimeout(() => resolve('wedged'), ms))
+    ])
+
+  const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+  it('terminates a post-handshake silent host and reports a failed turn terminal', async () => {
+    const closes: Array<{ code: number | null; terminal: string | null; kind: string }> = []
+    const { child, handle, warnings } = start({
+      inactivityTimeoutMs: 25,
+      onClose: (code: number | null, terminal: string | null, error: { kind?: string } | null) => {
+        closes.push({ code, terminal, kind: error?.kind ?? '' })
+      }
+    })
+    // Handshake succeeds, the turn is accepted, and then the host goes silent
+    // forever. This is the incident shape: sessionId set, no terminal, no exit.
+    await driveToTurn(child)
+
+    expect(await settleWithin(handle, 500)).toBe('closed')
+    expect(closes).toEqual([{ code: 0, terminal: 'failed', kind: 'hostUnresponsive' }])
+    expect(child.killed.length).toBeGreaterThan(0)
+    expect(warnings.some((w) => /stopped responding/i.test(w))).toBe(true)
+  })
+
+  it('terminates a host that never answers the handshake at all', async () => {
+    // Nothing is ever emitted: `initialize` never resolves, so `start()` is
+    // suspended and the old code could not reach any terminator.
+    const { child, handle } = start({ inactivityTimeoutMs: 25 })
+    expect(await settleWithin(handle, 500)).toBe('closed')
+    expect(child.killed.length).toBeGreaterThan(0)
+  })
+
+  it('is reset by inbound activity, so a slow but talking host is never killed', async () => {
+    const { child, handle } = start({ inactivityTimeoutMs: 60 })
+    await driveToTurn(child)
+    // Four deltas at half the deadline: total elapsed (~120ms) is twice the
+    // deadline, but no single gap ever reaches it.
+    for (let i = 0; i < 4; i += 1) {
+      await sleep(30)
+      child.emit({
+        jsonrpc: '2.0',
+        method: 'item/delta',
+        params: { sessionId: 'sess-1', itemId: 'item-1', delta: 'tick' }
+      })
+      await flush()
+    }
+    expect(child.killed).toEqual([])
+    // Now it really does go quiet — and the watchdog still fires.
+    expect(await settleWithin(handle, 600)).toBe('closed')
+  })
+
+  it('holds the watchdog while a TaskWraith approval decision is outstanding', async () => {
+    let release: (verdict: 'allow') => void = () => {}
+    const { child, handle } = start({
+      inactivityTimeoutMs: 25,
+      onApprovalRequest: () =>
+        new Promise<'allow'>((resolve) => {
+          release = resolve
+        })
+    })
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'approval/requested',
+      params: {
+        approvalId: 'ap-1',
+        sessionId: 'sess-1',
+        turnId: 'turn-1',
+        toolName: 'run_shell_command',
+        currentRequirementId: { approvalId: 'ap-1', sourceIndex: 0 },
+        availableChoices: [
+          { choiceId: 'yes', decision: 'approved', label: 'Allow once', scope: 'once' },
+          { choiceId: 'no', decision: 'denied', label: 'Deny', scope: 'once' }
+        ]
+      }
+    })
+    await flush()
+
+    // A human can sit on an approval far longer than the deadline.
+    await sleep(150)
+    expect(child.killed).toEqual([])
+
+    // Once the decision is sent the host owns the turn again, so the same
+    // silence that was excused above must now terminate the run. Without this
+    // leg the assertion above would pass for a watchdog that never runs.
+    release('allow')
+    await flush()
+    expect(await settleWithin(handle, 600)).toBe('closed')
+  })
+
+  it('extends the watchdog during compaction quiet but still bounds it', async () => {
+    const { child, handle, warnings } = start({ inactivityTimeoutMs: 30 })
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/contextUsage',
+      params: {
+        sessionId: 'sess-1',
+        usedTokens: 900_000,
+        windowTokens: 1_007_997,
+        pressure: 'compacting'
+      }
+    })
+    await flush()
+
+    // Past one plain deadline: compaction quiet is legitimate, so no kill yet.
+    await sleep(45)
+    expect(child.killed).toEqual([])
+
+    // But compaction is a bounded machine operation, not a licence to hang —
+    // a `pressure` that never clears must not resurrect the infinite wedge.
+    expect(await settleWithin(handle, 900)).toBe('closed')
+    expect(warnings.some((w) => /stopped responding/i.test(w))).toBe(true)
+  })
+})

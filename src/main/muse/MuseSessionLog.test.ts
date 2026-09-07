@@ -7,6 +7,7 @@ import {
   findMuseSessionLogByFsFallback,
   museSessionIndexDbPath,
   parseMuseSessionLogLine,
+  readMuseSessionLogTerminal,
   resolveMuseSessionLogOnce,
   resolveMuseSessionLogPath,
   type MuseSessionLogTailOptions
@@ -256,5 +257,104 @@ describe('parseMuseSessionLogLine', () => {
     expect(parseMuseSessionLogLine(line)?.payload_type).toBe('runtime.session')
     expect(parseMuseSessionLogLine('{bad')).toBeNull()
     expect(parseMuseSessionLogLine('')).toBeNull()
+  })
+})
+
+describe('readMuseSessionLogTerminal', () => {
+  /** `recorded_at` is MICROSECONDS on the durable record. */
+  function terminalLine(options: {
+    terminal?: string
+    reason?: string
+    atMs: number
+    sequence: number
+    payloadType?: string
+    payload?: Record<string, unknown>
+  }): string {
+    return `${JSON.stringify({
+      schema_version: 1,
+      id: `env-${options.sequence}`,
+      stream: { kind: 'session', id: 'sess-1' },
+      sequence: options.sequence,
+      recorded_at: options.atMs * 1_000,
+      record_type: 'event',
+      payload_type: options.payloadType ?? 'run.terminal.completed',
+      payload: options.payload ?? {
+        ...(options.terminal ? { terminal: options.terminal } : {}),
+        ...(options.reason ? { reason: options.reason } : {})
+      }
+    })}\n`
+  }
+
+  function logFile(body: string): string {
+    const dir = tempDir()
+    const path = join(dir, 'session.jsonl')
+    writeFileSync(path, body)
+    return path
+  }
+
+  it('adopts the terminal Muse recorded for this run', async () => {
+    const path = logFile(
+      terminalLine({ terminal: 'failed', reason: 'run config error', atMs: 2_000, sequence: 9 })
+    )
+    const found = await readMuseSessionLogTerminal({ sessionLogPath: path, notBeforeMs: 1_000 })
+    expect(found?.terminal).toBe('failed')
+    expect(found?.reason).toBe('run config error')
+  })
+
+  it('reads the nested terminal_state spelling too', async () => {
+    const path = logFile(
+      terminalLine({
+        atMs: 2_000,
+        sequence: 3,
+        payload: { terminal_state: { terminal: 'cancelled' }, reason: 'stopped' }
+      })
+    )
+    const found = await readMuseSessionLogTerminal({ sessionLogPath: path, notBeforeMs: 1_000 })
+    expect(found?.terminal).toBe('cancelled')
+  })
+
+  it('NEVER adopts a prior turn terminal from a resumed session log', async () => {
+    // The decisive guard: a resumed session's log still carries turn 1's
+    // `completed`. Reporting that for a turn that wedged is worse than
+    // reporting nothing — it claims success for work that never ran.
+    const path = logFile(
+      terminalLine({ terminal: 'completed', reason: 'turn one', atMs: 500, sequence: 1 })
+    )
+    expect(
+      await readMuseSessionLogTerminal({ sessionLogPath: path, notBeforeMs: 1_000 })
+    ).toBeNull()
+  })
+
+  it('takes the LAST in-window terminal, not the first', async () => {
+    const path = logFile(
+      terminalLine({ terminal: 'completed', reason: 'old', atMs: 500, sequence: 1 }) +
+        terminalLine({ terminal: 'completed', reason: 'earlier', atMs: 1_500, sequence: 4 }) +
+        terminalLine({ terminal: 'failed', reason: 'latest', atMs: 2_500, sequence: 7 })
+    )
+    const found = await readMuseSessionLogTerminal({ sessionLogPath: path, notBeforeMs: 1_000 })
+    expect(found?.terminal).toBe('failed')
+    expect(found?.reason).toBe('latest')
+  })
+
+  it('ignores non-terminal records, torn lines and a missing file', async () => {
+    const path = logFile(
+      '{"not":"an envelope"}\n' +
+        terminalLine({
+          terminal: 'failed',
+          atMs: 2_000,
+          sequence: 2,
+          payloadType: 'run.output.delta'
+        }) +
+        '{"schema_version":1,"id":"torn"'
+    )
+    expect(
+      await readMuseSessionLogTerminal({ sessionLogPath: path, notBeforeMs: 1_000 })
+    ).toBeNull()
+    expect(
+      await readMuseSessionLogTerminal({
+        sessionLogPath: join(tempDir(), 'absent.jsonl'),
+        notBeforeMs: 0
+      })
+    ).toBeNull()
   })
 })

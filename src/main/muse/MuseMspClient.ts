@@ -144,9 +144,31 @@ export interface MuseMspTurnOptions {
   readonly onRawFrame?: (direction: 'in' | 'out', frame: unknown) => void
   readonly endProcess?: (child: AcpChildProcess) => void
   readonly endProcessGraceMs?: number
+  /**
+   * Rolling inactivity deadline for the whole connection, reset by every
+   * inbound frame. Injectable so the suites can drive it in milliseconds.
+   * Zero or negative disables it — do not do that outside a test.
+   */
+  readonly inactivityTimeoutMs?: number
+  /** Consecutive deadline extensions granted while Muse reports compaction. */
+  readonly inactivityCompactionGrace?: number
   readonly now?: () => number
   readonly randomBytes?: (size: number) => Uint8Array
 }
+
+/**
+ * Default inactivity deadline.
+ *
+ * Chosen well clear of the renderer's 20s "likely compacting" hint and of
+ * CursorContextPressureRecovery's 45s quiet window, so the watchdog can never
+ * race a UI affordance that is merely describing a normal pause. It is a
+ * backstop against a host that has stopped talking altogether, not a latency
+ * budget: a legitimately slow tool call still streams item/updated frames.
+ */
+export const MUSE_MSP_INACTIVITY_TIMEOUT_MS = 180_000
+
+/** Deadline extensions allowed while `session/contextUsage` reports compaction. */
+export const MUSE_MSP_INACTIVITY_COMPACTION_GRACE = 3
 
 export interface MuseMspTurnHandle {
   /** Cancel the running turn, then terminate the host. Idempotent. */
@@ -251,6 +273,15 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   const reasoningShown = new Map<string, string>()
   const approvalRequirements = new Map<string, MuseMspApprovalRequirementRef>()
   const settledUserInputs = new Set<string>()
+  let inactivityTimer: ReturnType<typeof setTimeout> | null = null
+  // Our OWN in-flight work, deliberately not the host-owned
+  // `approvalRequirements` map: that map is pruned by an `approval/resolved`
+  // the host may never send, so keying suspension on it would let one leaked
+  // entry restore the very unbounded wait this watchdog exists to end.
+  let pendingApprovalDecisions = 0
+  let pendingUserInputs = 0
+  let compactionQuiet = false
+  let compactionExtensionsUsed = 0
 
   let settleClosed: () => void = () => {}
   const closedPromise = new Promise<void>((resolve) => {
@@ -326,9 +357,85 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
     }
   }
 
+  const clearInactivityWatchdog = (): void => {
+    if (inactivityTimer) {
+      clearTimeout(inactivityTimer)
+      inactivityTimer = null
+    }
+  }
+
+  /**
+   * True while TaskWraith itself owes the answer.
+   *
+   * An approval or a `userInput` prompt sitting in front of a human is not host
+   * silence, and a person can legitimately be away from the keyboard for hours.
+   * These counters are bounded by OUR code — once the decision is sent they
+   * drop, and the host is back on the clock.
+   */
+  const awaitingTaskWraith = (): boolean => pendingApprovalDecisions > 0 || pendingUserInputs > 0
+
+  /**
+   * Arm the rolling inactivity deadline.
+   *
+   * MSP is a persistent session host, so a turn ends when the host says so:
+   * `turn/completed` -> endProcess -> child 'close' -> onClose -> `closed`. A
+   * host that handshakes and then goes silent says nothing, exits never, and
+   * left `await handle.closed` suspended forever — the seat simply hung. This
+   * is the only bound on that wait.
+   *
+   * On expiry it terminates the child rather than resolving `closed` directly,
+   * so the verdict still travels the ONE existing close path. Short-circuiting
+   * that would strand `sendAgentCompatExit`, which must fire before the run is
+   * finished or the exit is discarded and every turn wedges in the renderer.
+   */
+  const armInactivityWatchdog = (): void => {
+    clearInactivityWatchdog()
+    if (closed || terminationRequested) return
+    const timeoutMs = options.inactivityTimeoutMs ?? MUSE_MSP_INACTIVITY_TIMEOUT_MS
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return
+    inactivityTimer = setTimeout(() => {
+      inactivityTimer = null
+      if (closed || terminationRequested) return
+      if (awaitingTaskWraith()) {
+        armInactivityWatchdog()
+        return
+      }
+      // Compaction is a legitimately long quiet, but it is a bounded machine
+      // operation — never a licence to hang. An unbounded extension here would
+      // be the same infinite wait wearing a different name, so the grace is
+      // counted and spent.
+      const grace = options.inactivityCompactionGrace ?? MUSE_MSP_INACTIVITY_COMPACTION_GRACE
+      if (compactionQuiet && compactionExtensionsUsed < grace) {
+        compactionExtensionsUsed += 1
+        armInactivityWatchdog()
+        return
+      }
+      const quiet = timeoutMs >= 1000 ? `${Math.round(timeoutMs / 1000)}s` : `${timeoutMs}ms`
+      const stage = sessionId ? '' : ' before the handshake completed'
+      turnTerminal = turnTerminal ?? 'failed'
+      turnError = turnError ?? {
+        kind: 'hostUnresponsive',
+        message: `The Muse session host stopped responding${stage}: nothing arrived for ${quiet}. TaskWraith ended the turn instead of waiting indefinitely.`,
+        // NOT the server's judgment — ours, and we cannot know this is
+        // transient. Claiming retryable invites an automatic re-run straight
+        // back into whatever wedged the host.
+        retryable: false
+      }
+      warn(turnError.message)
+      endProcess()
+    }, timeoutMs)
+  }
+
+  /** Any sign of life from the host restarts the clock and refunds the grace. */
+  const noteInboundActivity = (): void => {
+    compactionExtensionsUsed = 0
+    armInactivityWatchdog()
+  }
+
   const endProcess = (): void => {
     if (terminationRequested) return
     terminationRequested = true
+    clearInactivityWatchdog()
     try {
       if (options.endProcess) options.endProcess(child)
       else child.kill('SIGTERM')
@@ -360,16 +467,28 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
    */
   const decideApproval = async (request: MuseMspApprovalRequest): Promise<void> => {
     let verdict: MuseMspApprovalVerdict = 'deny'
-    if (!options.onApprovalRequest) {
-      warn(
-        `Muse asked to run "${request.toolName}" but no TaskWraith approval handler is attached; denying.`
-      )
-    } else {
-      try {
-        verdict = (await options.onApprovalRequest(request)) === 'allow' ? 'allow' : 'deny'
-      } catch {
-        verdict = 'deny'
+    // Suspend the inactivity watchdog for exactly as long as TaskWraith (or the
+    // human behind it) owes the answer — and NOT a moment longer. Wrapping the
+    // `approval/decide` round-trip below in this window would suspend the
+    // watchdog on a call the host may never answer, which is the same unbounded
+    // wait the watchdog exists to end.
+    pendingApprovalDecisions += 1
+    try {
+      if (!options.onApprovalRequest) {
+        warn(
+          `Muse asked to run "${request.toolName}" but no TaskWraith approval handler is attached; denying.`
+        )
+      } else {
+        try {
+          verdict = (await options.onApprovalRequest(request)) === 'allow' ? 'allow' : 'deny'
+        } catch {
+          verdict = 'deny'
+        }
       }
+    } finally {
+      pendingApprovalDecisions -= 1
+      // The ball is back in the host's court, so it gets a full fresh deadline.
+      noteInboundActivity()
     }
     const choice = selectMuseMspApprovalChoice(request.availableChoices, verdict)
     if (!choice) {
@@ -450,9 +569,24 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       finish()
       return
     }
-    void Promise.resolve(options.onUserInputRequest(request))
-      .catch(() => undefined)
-      .finally(finish)
+    // Same suspension as an approval: a prompt in front of a human is not a
+    // silent host. Bounded by our own handler, not by anything the host sends.
+    pendingUserInputs += 1
+    const settle = (): void => {
+      pendingUserInputs -= 1
+      finish()
+      noteInboundActivity()
+    }
+    try {
+      void Promise.resolve(options.onUserInputRequest(request))
+        .catch(() => undefined)
+        .finally(settle)
+    } catch {
+      // A handler that throws SYNCHRONOUSLY never reaches the finally above,
+      // which would otherwise leak the counter and suspend the watchdog for
+      // the rest of the turn.
+      settle()
+    }
   }
 
   const itemToEvent = (
@@ -689,10 +823,16 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       case 'session/contextUsage': {
         const usedTokens = num(params.usedTokens)
         if (usedTokens === undefined) return
+        const pressure = text(params.pressure)
+        // `pressure` is an open string on this schema, so match the family
+        // rather than pinning a closed enum this build may not have served.
+        // Note the sibling `compaction` ITEM kind is a different plane; the
+        // two must not be conflated.
+        compactionQuiet = /compact/i.test(pressure)
         options.onContextUsage?.({
           usedTokens,
           windowTokens: num(params.windowTokens),
-          pressure: text(params.pressure) || undefined
+          pressure: pressure || undefined
         })
         return
       }
@@ -747,6 +887,10 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
 
   const handleFrame = (frame: ReturnType<typeof decodeMuseMspFrames>['frames'][number]): void => {
     if (frame.kind === 'unparsable') return
+    // Every decoded frame is proof of life: responses, server-to-client
+    // requests and all notifications (items, turn lifecycle, usage, context,
+    // approvals). Reset before dispatch so a handler that throws still counts.
+    noteInboundActivity()
     try {
       options.onRawFrame?.('in', frame)
     } catch {
@@ -827,6 +971,7 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
     terminalCloseDelivered = true
     closed = true
     clearKillBackstop()
+    clearInactivityWatchdog()
     for (const [id, inFlight] of pending) {
       pending.delete(id)
       inFlight.reject(new Error(`${inFlight.method} did not complete before the Muse host exited`))
@@ -924,6 +1069,11 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
     )
     activeTurnId = text(turn.turnId) || activeTurnId
   }
+
+  // Armed BEFORE the handshake, not after it: a host that spawns and never
+  // answers `initialize` leaves start() suspended on a call that can never
+  // settle, which is the same unbounded wait one stage earlier.
+  armInactivityWatchdog()
 
   void start()
     .catch((error: Error) => {
