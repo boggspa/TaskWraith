@@ -58,7 +58,7 @@ a claim that build 98 has been uploaded or released.
   "still working" anchor during tool calls, proposal/question/approval cards,
   file editor, Diff Studio, usage tab, notes, side chats, and provider-skinned
   composer shells.
-- Settings: full-screen settings for General, Appearance, Approvals, Providers,
+- Settings: full-screen settings for Appearance, Composer & Transcript, Approvals, Providers,
   Roster, MCP, Workspaces, pinned messages, Model usage, Local servers, and
   Devices. Provider setup and deep MCP configuration remain Mac-owned.
 - First launch: the iOS first-launch sheet orients users around Mac-owned setup,

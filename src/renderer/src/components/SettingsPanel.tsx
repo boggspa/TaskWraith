@@ -5877,7 +5877,7 @@ export function SettingsPanel({
                                 <code>{tool.iconRef}</code>
                               </span>
                               <span>
-                                Codex / Gemini / Kimi
+                                Codex / Kimi / Cursor / Grok / Mistral / Muse / Devin / Ollama
                                 <code>{formatMcpInvocation('codex', tool.name)}</code>
                               </span>
                               <span>

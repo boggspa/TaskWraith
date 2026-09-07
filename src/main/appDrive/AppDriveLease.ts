@@ -408,6 +408,26 @@ export class AppDriveLeaseRegistry {
     }
   }
 
+  refundConsumedStep(surfaceId: string): AppDriveLeaseSnapshot | null {
+    const normalized = canonical(surfaceId, 'surfaceId')
+    const lease = this.peek(normalized)
+    if (!lease || lease.status !== 'active' || lease.stepsUsed <= 0) return null
+    const stepsUsed = lease.stepsUsed - 1
+    const next = freezeLease({
+      ...lease,
+      stepsUsed,
+      stepsRemaining: lease.stepBudget - stepsUsed,
+      updatedAt: this.now()
+    })
+    this.bySurface.set(normalized, next)
+    this.reports.updateBudget(next.leaseId, {
+      stepsUsed: next.stepsUsed,
+      stepsRemaining: next.stepsRemaining,
+      expiresAt: next.expiresAt
+    })
+    return next
+  }
+
   transfer(input: {
     surfaceId: string
     fromRunId: string

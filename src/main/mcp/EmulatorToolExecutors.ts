@@ -397,6 +397,9 @@ function stepProjection(
       executed: result.executed,
       partial: result.partial,
       ...(result.refusalReason ? { refusalReason: result.refusalReason } : {}),
+      ...(result.refusalReason === 'user_active'
+        ? { message: 'Human is playing. Wait, re-observe, then step.' }
+        : {}),
       ...(driveReportId ? { driveReportId } : {}),
       ...(driveActionId ? { driveActionId } : {}),
       ...(hasVerifierFlag

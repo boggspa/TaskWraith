@@ -16,7 +16,7 @@ In the transcript, next to the system message that contains the question. Appear
 3. For a free-text answer, click **Other** or type directly (on iOS) and enter your response.
 4. Submit by pressing ⌘/Ctrl+Enter or clicking **Send answer**.
 5. To skip, dismiss with **×** or Escape — the agent continues without your input.
-6. Unanswered questions expire after 10 minutes and the agent is told it timed out.
+6. Unanswered questions expire after 24 minutes and the agent is told it timed out.
 
 ## Tips & related
 - [Pending Approval Modal](../approvals-and-permissions/pending-approval-modal.md) — related prompt for approving tool actions

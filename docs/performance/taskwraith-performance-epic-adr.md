@@ -1030,7 +1030,7 @@ Two constraints for anyone migrating a further call site:
 
 ### Committing this file
 
-`docs/` is **gitignored-but-tracked** here: `.gitignore:45` matches `docs/`, yet this file is in the index (`git ls-files` resolves it). Two consequences for the committer — stage it by **explicit pathspec**, using `git add -f docs/performance/taskwraith-performance-epic-adr.md` (repo convention) or a private index, and note that `git check-ignore` on this path reports *not ignored* unless you pass `--no-index`, because it consults the index first. Never rely on a bulk add.
+`docs/` is **gitignored-but-tracked** here: `.gitignore:55` matches `docs/`, yet this file is in the index (`git ls-files` resolves it). Two consequences for the committer — stage it by **explicit pathspec**, using `git add -f docs/performance/taskwraith-performance-epic-adr.md` (repo convention) or a private index, and note that `git check-ignore` on this path reports *not ignored* unless you pass `--no-index`, because it consults the index first. Never rely on a bulk add.
 
 ---
 

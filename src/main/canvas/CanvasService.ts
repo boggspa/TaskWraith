@@ -1674,8 +1674,6 @@ export class CanvasService
             current = typed.observation
             this.cacheEmulatorObservation(session, current)
             framesCompleted += framesAdvanced
-            const humanInterruption =
-              typed.code === 'stale_input_epoch' || typed.code === 'user_active'
             const outcome: CanvasEmulatorStepResult['outcome'] =
               framesCompleted === 0 ? 'refused' : 'interrupted'
             const projection = this.cacheEmulatorObservation(session, current)
@@ -1684,8 +1682,8 @@ export class CanvasService
               framesCompleted === 0 ? false : null,
               typed.code
             )
-            if (humanInterruption) {
-              this.invalidateSurfaceAuthority(canvasId, session, ctx, 'human-takeover')
+            if (outcome === 'refused' && (typed.code === 'stale_input_epoch' || typed.code === 'user_active')) {
+              this.deps.appDriveLeases?.refundConsumedStep(canvasId)
             }
             this.emit(canvasId, 'interaction', ctx, {
               phase: 'outcome',

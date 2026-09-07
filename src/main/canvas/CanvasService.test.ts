@@ -2207,14 +2207,14 @@ describe('CanvasService emulator observation and macro', () => {
         name: 'stale input',
         error: (observation) => new CanvasEmulatorInputEpochStaleError(observation, 0),
         expected: 'stale_input_epoch',
-        invalidates: true,
+        invalidates: false,
         frames: 0
       },
       {
         name: 'user active',
         error: (observation) => new CanvasEmulatorUserActiveError(observation, 0),
         expected: 'user_active',
-        invalidates: true,
+        invalidates: false,
         frames: 0
       }
     ]
@@ -2291,7 +2291,7 @@ describe('CanvasService emulator observation and macro', () => {
       expect(h.service.driveReports({}, ctx)[0]).toMatchObject({
         actions: [expect.objectContaining({ executed: null, refusalCode: 'user_active' })]
       })
-      expect(h.invalidated).toHaveBeenCalledOnce()
+      expect(h.invalidated).not.toHaveBeenCalled()
     } finally {
       cleanup(h)
     }

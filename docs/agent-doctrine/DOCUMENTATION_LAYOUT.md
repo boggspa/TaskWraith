@@ -6,7 +6,7 @@ Read this file in full before adding, moving, renaming, or deciding the publicat
 
 `.gitignore:55` ignores `docs/` wholesale, and 166 of the 200 `docs/**/*.md`
 files present in this checkout are force-added past that line individually.
-Until this document existed there was no written rule deciding which 143.
+Until this document existed there was no written rule deciding which 166.
 Publication status was set by whoever last ran `git add -f`, and the two failure
 directions are not symmetric: an unpublished doc that source cites dangles on
 every fresh clone, and a published doc that should have stayed private cannot be

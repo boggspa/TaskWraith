@@ -194,7 +194,7 @@ relationships as aliases.
   for visual identity review after implementation.
 - Do not flatten the Google, OpenAI, Qwen, or Ornith aliases into duplicate literals.
   Keeping the aliases prevents future palette drift.
-- Gemini remains in the allocation because historical records and Google/Gemma branding
+- Google Gemma now inherits AntiGravity green. because historical records and Google/Gemma branding
   still consume its hue even though Gemini is retired for new desktop runs.
 
 ## Implementation record

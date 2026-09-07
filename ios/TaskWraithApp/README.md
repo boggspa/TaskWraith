@@ -88,7 +88,7 @@ cleartext `ws://` to a LAN/Tailscale relay. Checklist:
 
 | DRI         | Target     | Status                                                                        |
 | ----------- | ---------- | ----------------------------------------------------------------------------- |
-| Chris Izatt | 2026-09-03 | **BLOCKING** — no new external TestFlight or App Store candidate until closed |
+| Chris Izatt | 2026-09-07 | **BLOCKING** — no new external TestFlight or App Store candidate until closed |
 
 The DRI owns scheduling, evidence collection, finding closure, and the final
 go/no-go record; the reviewer must be independent of the implementation being

@@ -88,7 +88,7 @@ app.
 
 ### Build from source
 
-For contributors, install Node.js 20 or newer and any provider CLI you plan to
+For contributors, install Node.js 22 or newer and any provider CLI you plan to
 use, then run:
 
 ```sh

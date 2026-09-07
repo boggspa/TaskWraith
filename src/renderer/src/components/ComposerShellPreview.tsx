@@ -275,7 +275,7 @@ const copyPreviewMessages = async (): Promise<CopyTranscriptResult> => PREVIEW_C
 function PreviewSendGlyph({ composerStyle }: { composerStyle: ComposerStyle }): React.ReactElement {
   if (composerStyle === 'claude') return <ClaudeReturnSymbolIcon />
   if (
-    composerStyle === 'codex' ||
+    composerStyle === 'codex' || composerStyle === 'chatgpt' ||
     composerStyle === 'chatgpt' ||
     composerStyle === 'gemini' ||
     composerStyle === 'cursor' ||
@@ -353,7 +353,7 @@ export function ComposerShellPreview({
       percent: previewContextPercent
     }
   }
-  const aboveRowsFloatAboveStack = composerStyle === 'cursor' || composerStyle === 'codex'
+  const aboveRowsFloatAboveStack = composerStyle === 'cursor' || composerStyle === 'codex' || composerStyle === 'chatgpt'
   // Same hook as the live composer, so preview and product cannot disagree
   // about the above-bar flag classes. See lib/ComposerAboveBarStyleState.ts.
   const composerAboveBarStackRef = useComposerAboveBarStyleState<HTMLDivElement>()
@@ -367,7 +367,7 @@ export function ComposerShellPreview({
   const previewActionLabel =
     composerStyle === 'cursor'
       ? 'Commit'
-      : composerStyle === 'codex' || composerStyle === 'grok' || composerStyle === 'claude'
+      : composerStyle === 'codex' || composerStyle === 'chatgpt' || composerStyle === 'grok' || composerStyle === 'claude'
         ? 'Create PR'
         : 'Review changes'
   const workspaceAboveRow = (
@@ -494,7 +494,7 @@ export function ComposerShellPreview({
                         sections={PREVIEW_PLUS_SECTIONS}
                         triggerIcon={<PlusSymbolIcon />}
                       />
-                      {composerStyle === 'codex' && (
+                      {composerStyle === 'codex' || composerStyle === 'chatgpt' && (
                         <ContextMeterPopover
                           meter={previewContextMeter}
                           percent={previewContextPercent}

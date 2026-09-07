@@ -71,7 +71,7 @@ moving out of `Unreleased`, plus published artifacts.
 - **Ensemble mode** — multi-provider single-thread, with
   ensemble_yield + unique @-mention auto-promotion + fail-closed ambiguity +
   same-provider participants + Continuous-only mode
-- **Source-ahead routing hardening** — new-round participant selection is
+- **Routing hardening** — new-round participant selection is
   re-resolved in Electron main; exact picker links retain participant identity
   and ambiguous plain aliases fail closed. This guarantee shipped in v1.9.0.
 - Approval flow + timeout policy (Phase E1)

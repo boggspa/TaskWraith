@@ -69,7 +69,7 @@ export const COMPOSER_STYLE_OPTIONS: Array<{
   {
     value: 'codex',
     label: 'Codex shell',
-    helper: 'Codex-like sidebar, transcript, status bar, and composer hierarchy.'
+    helper: 'Codex-like composer hierarchy.'
   },
   {
     value: 'chatgpt',
@@ -79,7 +79,7 @@ export const COMPOSER_STYLE_OPTIONS: Array<{
   {
     value: 'claude',
     label: 'Claude shell',
-    helper: 'Claude-like sidebar, transcript, status bar, and composer hierarchy.'
+    helper: 'Claude-like composer hierarchy.'
   },
   {
     value: 'cursor',

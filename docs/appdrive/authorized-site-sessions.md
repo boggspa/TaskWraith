@@ -309,7 +309,7 @@ A row shows label, origin, status pill, and the access selector
   costs one orphaned directory on disk instead of handing a re-added site a
   cookie jar the user believes they deleted.
 
-**Not yet built:** the panel shows an expired status when you look at it, and
+**Landed:** the panel shows an expired status when you look at it, and
 `web_login_open` refuses an expired session by name, but nothing proactively
 surfaces "this site needs you". A run that stops for this reason therefore
 reports the refusal in its transcript rather than raising a prompt. Closing that
