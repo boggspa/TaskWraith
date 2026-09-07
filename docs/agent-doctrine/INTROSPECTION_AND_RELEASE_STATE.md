@@ -60,7 +60,7 @@ own line sat at v1.8.8 two releases running.
 
 This checkout is also source-ahead of that tag. Treat behavior newer than the
 tag as unshipped, and note what does **not** discharge that: there is no
-per-release notes file to wait for. The `docs/CHANGELOG-*.md` series stops at
+per-release notes file to wait for. The `CHANGELOG.md` series stops at
 1.5.2, so "it appears in the next release notes" is not a test anything can
 pass. The evidence that actually counts is a tag containing the code —
 `git cat-file -e <tag>:<path>` — plus the matching root `CHANGELOG.md` section
@@ -70,7 +70,7 @@ moving out of `Unreleased`, plus published artifacts.
   delegation + J2 recall mode) — landed
 - **Ensemble mode** — multi-provider single-thread, with
   ensemble_yield + unique @-mention auto-promotion + fail-closed ambiguity +
-  same-provider participants + turn/continuous modes
+  same-provider participants + Continuous-only mode
 - **Source-ahead routing hardening** — new-round participant selection is
   re-resolved in Electron main; exact picker links retain participant identity
   and ambiguous plain aliases fail closed. This guarantee shipped in v1.9.0.

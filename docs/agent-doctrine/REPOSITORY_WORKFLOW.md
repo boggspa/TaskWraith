@@ -64,7 +64,7 @@ satisfied in a way that is much worse than the problem:
   reformatted a monolith to buy headroom for it". The second is the
   cheapest way to make the number go green and the most destructive thing
   you can do to the tree: measured 2026-08-16, `src/main/index.ts` is
-  ~58,600 lines and `App.tsx` ~31,700. At the 2026-07-27 measurement
+  ~63,166 lines and `App.tsx` ~31,700. At the 2026-07-27 measurement
   (48,861 and 30,481) a reformat rewrote ~2,558 and ~3,421 lines
   respectively; both files have only grown since, so treat those rewrite
   counts as a floor. That is thousands of unrelated lines, `git

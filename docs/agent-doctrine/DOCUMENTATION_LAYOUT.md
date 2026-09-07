@@ -4,7 +4,7 @@ Read this file in full before adding, moving, renaming, or deciding the publicat
 
 ## Why this file exists
 
-`.gitignore:41` ignores `docs/` wholesale, and 143 of the 162 `docs/**/*.md`
+`.gitignore:55` ignores `docs/` wholesale, and 166 of the 200 `docs/**/*.md`
 files present in this checkout are force-added past that line individually.
 Until this document existed there was no written rule deciding which 143.
 Publication status was set by whoever last ran `git add -f`, and the two failure

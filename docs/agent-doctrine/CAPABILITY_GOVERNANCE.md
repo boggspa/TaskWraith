@@ -11,7 +11,7 @@ capability without explicit consent commits the same class of violation as an
 agent that acts without consent. The 2026-07-19 overnight incident is the
 canonical precedent: an autonomous security session unilaterally removed a live
 provider and gated another, and the cleanup took days (see
-[papercuts/2026-07-19-retro.md](../../.local-only/papercuts/2026-07-19-retro.md) and the
+[.local-only/papercuts/2026-07-19-retro.md](../../.local-only/.local-only/papercuts/2026-07-19-retro.md) and the
 local-only, gitignored Security Engineering Ledger).
 
 Rules, in priority order:
