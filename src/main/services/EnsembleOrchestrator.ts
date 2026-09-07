@@ -51,8 +51,10 @@ import {
 import { buildProviderShellRoutingPrompt } from '../ProviderShellRoutingPrompt'
 import { buildProviderFileRoutingPrompt } from '../ProviderFileRoutingPrompt'
 import {
+  ANTIGRAVITY_PRINT_MODE_TIMEOUT_REASON,
   antigravityHeadlessPermissionReason,
-  isAntigravityHeadlessPermissionNoOutput
+  isAntigravityHeadlessPermissionNoOutput,
+  isAntigravityPrintModeTimeout
 } from '../antigravity/AntigravityRunDiagnostics'
 import {
   isUnsupportedAntigravityPermissionClaim,
@@ -13474,6 +13476,15 @@ export class EnsembleOrchestrator {
     if (routed.appChatId && routed.appChatId !== run.chatId) return false
     if (provider === 'antigravity' && isAntigravityHeadlessPermissionNoOutput(text)) {
       run.providerDiagnostic = antigravityHeadlessPermissionReason(runId)
+      return true
+    }
+    // The print-mode wall clock is the one agy failure that produces a clean
+    // exit and an empty transcript, so without this branch the lane reads as
+    // "finished with nothing to say" — the exact silent failure fc9ea9aab was
+    // raised against. The cap is now 24h, so reaching here is rare; when it
+    // does happen the seat must say why rather than vanish.
+    if (provider === 'antigravity' && isAntigravityPrintModeTimeout(text)) {
+      run.providerDiagnostic = ANTIGRAVITY_PRINT_MODE_TIMEOUT_REASON
       return true
     }
     if (!isHostSeatCompactionProvider(provider)) return false

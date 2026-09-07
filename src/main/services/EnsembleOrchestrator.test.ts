@@ -1323,6 +1323,65 @@ describe('EnsembleOrchestrator', () => {
     expect(state?.reason).toContain('read_file')
   })
 
+  it('surfaces an agy print-mode timeout instead of an empty successful turn', async () => {
+    // The one agy failure that exits clean with an empty transcript, so the
+    // lane otherwise reads as "finished with nothing to say" — the silent
+    // failure the 24h cap was raised against. Rare now; must still be legible.
+    const initialChat = makeChat()
+    initialChat.ensemble = {
+      ...initialChat.ensemble!,
+      participants: [
+        {
+          id: 'antigravity',
+          provider: 'antigravity',
+          enabled: true,
+          role: 'GemProWork',
+          instructions: 'Review the workspace.',
+          order: 1,
+          model: 'gemini-3.1-pro-high',
+          permissionPresetId: 'default'
+        }
+      ]
+    }
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review the current workspace.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+    const payload = harness.dispatched[0]
+    const route = { appRunId: payload.appRunId, appChatId: 'ensemble-chat' }
+    expect(
+      harness.orchestrator.noteProviderFailureText(
+        'antigravity',
+        route,
+        'Error: timeout waiting for response\n'
+      )
+    ).toBe(true)
+    // The narrow matcher must not claim an MCP broker timeout, which is a
+    // different failure with a different remedy.
+    expect(
+      harness.orchestrator.noteProviderFailureText(
+        'antigravity',
+        route,
+        'MCP Error: timeout waiting for response'
+      )
+    ).toBe(false)
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    const state = harness.chat.ensemble?.activeRound?.participants.find(
+      (participant) => participant.participantId === 'antigravity'
+    )
+    expect(state?.status).toBe('failed')
+    expect(state?.reason).toContain("print-mode wall clock expired")
+    expect(state?.reason).toContain('Nothing was denied and no permission was involved')
+  })
+
   it('lets an official-agy Boss complete the active goal through the host-bound fallback', async () => {
     const harness = makeHarness({ initialChat: makeAntigravityGoalChat() })
     harness.orchestrator.startRound({
