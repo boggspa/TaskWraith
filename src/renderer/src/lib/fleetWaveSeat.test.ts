@@ -172,6 +172,37 @@ describe('fleetWaveSeatFromWorker', () => {
     expect(seat?.permissionPresetId).toBe('read_only')
   })
 
+  it('does not fall back to the requested tier when the signed seal omits presetId', () => {
+    const seat = fleetWaveSeatFromWorker({
+      worker: {
+        provider: 'claude',
+        model: 'claude-opus-5',
+        permissionPresetId: 'workspace_write',
+        label: 'Scout'
+      },
+      index: 0,
+      child: child({
+        provider: 'claude',
+        runs: [
+          {
+            runId: 'wave-run',
+            provider: 'claude',
+            startedAt: '2026-09-07T00:00:00.000Z',
+            permissionPosture: {
+              schemaVersion: 1,
+              externalPathGrantCount: 0,
+              postureHash: 'hash',
+              signaturePresent: true
+            }
+          }
+        ]
+      })
+    })
+
+    expect(seat?.permissionPresetId).not.toBe('workspace_write')
+    expect(seat).not.toHaveProperty('permissionPresetId')
+  })
+
   it('shows the grant count the child run actually held, not the wave request', () => {
     // Same precedence as the preset above, off the same seal. KNOWN RESIDUAL:
     // `positiveInt` drops 0, so a run that sealed ZERO grants still falls back

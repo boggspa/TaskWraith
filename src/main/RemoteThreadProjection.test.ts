@@ -2132,6 +2132,21 @@ describe('RemoteThreadProjection', () => {
       ])
       expect(blank.rows[0].agentQuestion?.seat?.permissionPresetId).toBe('workspace_write')
 
+      const signedBlankPreset = project({ kind: 'latestN', n: 10 }, [ask({}, 'run-q1')], [
+        seatRun({
+          permissionPosture: {
+            schemaVersion: 1,
+            externalPathGrantCount: 0,
+            postureHash: 'hash',
+            signaturePresent: true
+          }
+        })
+      ])
+      expect(signedBlankPreset.rows[0].agentQuestion?.seat?.permissionPresetId).not.toBe(
+        'workspace_write'
+      )
+      expect(signedBlankPreset.rows[0].agentQuestion?.seat?.permissionPresetId).toBeUndefined()
+
       // Neither side carries a tier: the phone shows NO chip, same honest
       // unknown the desktop row keeps.
       const unknown = project({ kind: 'latestN', n: 10 }, [ask({}, 'run-q1')], [

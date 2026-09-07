@@ -79,8 +79,10 @@ export function seatFromEnsembleMetadata(
 
   const role = trimmed(metadata.ensembleRole)
   const reasoningEffort = trimmed(snapshot?.reasoningEffort)
-  const permissionPresetId =
-    trimmed(run?.permissionPosture?.presetId) || trimmed(snapshot?.configuredPermissionPresetId)
+  const permissionPresetId = run?.permissionPosture?.signaturePresent
+    ? trimmed(run.permissionPosture.presetId)
+    : trimmed(run?.permissionPosture?.presetId) ||
+      trimmed(snapshot?.configuredPermissionPresetId)
   const seatNumber = positiveInt(metadata.ensembleOrder)
   const stageRole = stageRoleOf(metadata.ensembleStageRole)
   // Sibling field rather than part of the snapshot: authority is chat-level,
@@ -147,8 +149,10 @@ export function seatFromChatRun(run: ChatRun | null | undefined): SeatChangeSeat
   // Seal before config, as above — and here the signed posture is on the very
   // same run object the snapshot came off, so reading the configured preset was
   // never a matter of not having the authoritative one to hand.
-  const permissionPresetId =
-    trimmed(run?.permissionPosture?.presetId) || trimmed(snapshot.configuredPermissionPresetId)
+  const permissionPresetId = run?.permissionPosture?.signaturePresent
+    ? trimmed(run.permissionPosture.presetId)
+    : trimmed(run?.permissionPosture?.presetId) ||
+      trimmed(snapshot.configuredPermissionPresetId)
 
   return {
     provider,

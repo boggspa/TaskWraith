@@ -1936,6 +1936,60 @@ Next action:
     expect(table?.totalWorkLabel).toBe('3 Turns')
   })
 
+  it('does not label a signed seal without presetId as the configured wider tier', () => {
+    const round: EnsembleRoundState = {
+      roundId: 'round-signed-blank',
+      status: 'completed',
+      prompt: 'Seal without preset',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:01:00.000Z',
+      participants: [
+        {
+          participantId: 'seat',
+          provider: 'claude',
+          role: 'Lead',
+          order: 1,
+          status: 'answered'
+        }
+      ]
+    }
+    const closeout = buildTaskWraithRoundCloseoutMessage({
+      chat: chat({
+        chatKind: 'ensemble',
+        runs: [
+          {
+            runId: 'seat-run-1',
+            provider: 'claude',
+            startedAt: '2026-07-07T12:00:00.000Z',
+            status: 'success',
+            requestedModel: 'claude-fable-5',
+            ensembleRoundId: round.roundId,
+            ensembleParticipantId: 'seat',
+            ensembleRole: 'Lead',
+            ensembleOrder: 1,
+            ensembleSeatSnapshot: {
+              schemaVersion: 1,
+              provider: 'claude',
+              model: 'claude-fable-5',
+              configuredPermissionPresetId: 'workspace_write'
+            },
+            permissionPosture: {
+              schemaVersion: 1,
+              externalPathGrantCount: 0,
+              postureHash: 'seat-posture-blank',
+              signaturePresent: true
+            }
+          }
+        ]
+      }),
+      round,
+      completedAt: round.endedAt!
+    })
+    const table = closeout.metadata?.closeoutParticipantTable
+    expect(table?.rows?.[0]?.seatText).not.toMatch(/Full WS Access|Accept Edits|\bAsk\b/)
+    expect(table?.rows?.[0]?.seatLink?.after).not.toHaveProperty('permissionPresetId')
+  })
+
   it('prefers an AI summary over the final assistant text and records provenance', () => {
     const run: ChatRun = {
       runId: 'run-ai',

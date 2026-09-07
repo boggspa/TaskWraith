@@ -1405,17 +1405,28 @@ export function buildCloseoutParticipantTable(
         })
       }
     )
-    const permissionSeq = seatFieldSequence<PermissionPresetId>(
-      turnConfigurations.map((configuration) => ({
-        raw: configuration.permissionPresetId || fallbackSnapshot.configuredPermissionPresetId,
-        display: configuration.permissionPresetId
-          ? formatPermissionPreset(configuration.permissionPresetId)
-          : null
-      })),
-      {
-        raw: fallbackSnapshot.configuredPermissionPresetId,
-        display: formatPermissionPreset(fallbackSnapshot.configuredPermissionPresetId)
-      }
+    const permissionTurns = turnConfigurations.map((configuration) => ({
+      raw: configuration.permissionPresetId,
+      display: configuration.permissionPresetId
+        ? formatPermissionPreset(configuration.permissionPresetId)
+        : null
+    }))
+    // A signed seal that omitted presetId is an honest unknown (`''`), not a
+    // missing turn. Falling through to the roster default here re-broke Claim 2
+    // after the decoder already refused the configured wider tier.
+    const signedBlankOmitsPreset = turnConfigurations.some(
+      (configuration) => configuration.permissionPresetId === ''
+    )
+    const permissionSeq = seatFieldSequence<PermissionPresetId | undefined>(
+      permissionTurns,
+      signedBlankOmitsPreset && permissionTurns.every((turn) => !turn.display)
+        ? { raw: undefined, display: '' }
+        : {
+            raw: fallbackSnapshot.configuredPermissionPresetId,
+            display: formatPermissionPreset(
+              fallbackSnapshot.configuredPermissionPresetId || 'default'
+            )
+          }
     )
     // Link TEXT keeps every field the five culled columns used to carry, so
     // surfaces that don't intercept the scheme lose nothing but the motion.
@@ -1471,7 +1482,7 @@ function participantSeatChangeLink(
     provider: SeatFieldSequence<ProviderId>
     model: SeatFieldSequence<string>
     reasoning: SeatFieldSequence<SeatReasoningRaw>
-    permission: SeatFieldSequence<PermissionPresetId>
+    permission: SeatFieldSequence<PermissionPresetId | undefined>
   }
 ): SeatChangeLink {
   const side = (which: 'first' | 'last'): SeatChangeSeatState => ({
@@ -1485,7 +1496,7 @@ function participantSeatChangeLink(
     ...(fields.reasoning[which].thinkingEnabled === undefined
       ? {}
       : { thinkingEnabled: fields.reasoning[which].thinkingEnabled }),
-    permissionPresetId: fields.permission[which]
+    ...(fields.permission[which] ? { permissionPresetId: fields.permission[which] } : {})
   })
   return { participantId: participant.participantId, before: side('first'), after: side('last') }
 }
@@ -1550,7 +1561,11 @@ function participantTurnConfiguration(
       metadataReasoning !== undefined ||
       metadataThinking !== undefined ||
       typeof metadata?.ensembleProvider === 'string',
-    permissionPresetId: run.permissionPosture?.presetId || snapshot?.configuredPermissionPresetId
+    permissionPresetId: run.permissionPosture?.signaturePresent
+      ? typeof run.permissionPosture.presetId === 'string'
+        ? run.permissionPosture.presetId.trim()
+        : ''
+      : run.permissionPosture?.presetId || snapshot?.configuredPermissionPresetId
   }
 }
 

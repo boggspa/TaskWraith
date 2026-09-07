@@ -110,8 +110,9 @@ export function fleetWaveSeatFromWorker({
   // wave never had. `worker.permissionPresetId` is what was requested; the run's
   // signed posture is what executed. Older cards whose child carries no posture
   // still fall back to the request, and a worker with neither stays chip-less.
-  const permissionPresetId =
-    trimmed(run?.permissionPosture?.presetId) || trimmed(worker.permissionPresetId)
+  const permissionPresetId = run?.permissionPosture?.signaturePresent
+    ? trimmed(run.permissionPosture.presetId)
+    : trimmed(run?.permissionPosture?.presetId) || trimmed(worker.permissionPresetId)
   // Same precedence as the preset above, off the same seal: the signed posture
   // is what executed, the projected request is only what was asked for.
   // A signed posture is authoritative even when it reports ZERO grants:

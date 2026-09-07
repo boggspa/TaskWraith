@@ -149,6 +149,25 @@ describe('seatFromEnsembleMetadata', () => {
       ).not.toHaveProperty('permissionPresetId')
     })
 
+    it('does not fall back to configured tier when the signed seal omits presetId', () => {
+      const row = metadata({
+        ensembleSeatSnapshot: { ...SNAPSHOT, configuredPermissionPresetId: 'workspace_write' }
+      })
+      const run = {
+        runId: 'lane-run-1',
+        startedAt: '2026-09-07T10:00:00.000Z',
+        permissionPosture: {
+          schemaVersion: 1,
+          externalPathGrantCount: 0,
+          postureHash: 'hash',
+          signaturePresent: true
+        }
+      } as ChatRun
+
+      expect(seatFromEnsembleMetadata(row, run)?.permissionPresetId).not.toBe('workspace_write')
+      expect(seatFromEnsembleMetadata(row, run)).not.toHaveProperty('permissionPresetId')
+    })
+
     it('ignores a posture that records no preset rather than blanking the chip', () => {
       // An unsigned/legacy posture object with no presetId must not erase the
       // captured configuration — falling through is the whole point of `||`.
@@ -377,6 +396,19 @@ describe('seatFromChatRun', () => {
     })
     expect(seatFromChatRun(run())?.permissionPresetId).toBe('workspace_write')
     expect(seatFromChatRun(sealedReadOnly)?.permissionPresetId).toBe('read_only')
+  })
+
+  it('does not fall back to the snapshot when the signed seal omits presetId', () => {
+    const chatRun = run({
+      permissionPosture: {
+        schemaVersion: 1,
+        externalPathGrantCount: 0,
+        postureHash: 'hash',
+        signaturePresent: true
+      }
+    })
+    expect(seatFromChatRun(chatRun)?.permissionPresetId).not.toBe('workspace_write')
+    expect(seatFromChatRun(chatRun)).not.toHaveProperty('permissionPresetId')
   })
 
   it('falls back to the snapshot for a run recorded before postures existed', () => {

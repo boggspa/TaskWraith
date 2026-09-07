@@ -2753,9 +2753,10 @@ function questionSeatFromRun(run: ChatRun): RemoteSeatChangeSeat | undefined {
   // the phone inherit the desktop's wrong badge — a lane sealed read_only
   // wearing its roster's wider tier. Falls back to the snapshot so rows
   // predating recorded postures still project nothing rather than a guess.
-  const permissionPresetId =
-    stringField(run.permissionPosture?.presetId, REMOTE_SEAT_FIELD_MAX) ||
-    stringField(snapshot.configuredPermissionPresetId, REMOTE_SEAT_FIELD_MAX)
+  const permissionPresetId = run.permissionPosture?.signaturePresent
+    ? stringField(run.permissionPosture.presetId, REMOTE_SEAT_FIELD_MAX)
+    : stringField(run.permissionPosture?.presetId, REMOTE_SEAT_FIELD_MAX) ||
+      stringField(snapshot.configuredPermissionPresetId, REMOTE_SEAT_FIELD_MAX)
   if (permissionPresetId) result.permissionPresetId = permissionPresetId
   return result
 }
