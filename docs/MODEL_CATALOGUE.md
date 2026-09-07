@@ -6,12 +6,12 @@ TaskWraith's model picker is provider-aware: choose a provider, then a model,
 the reasoning level it supports, and (where offered) a Fast tier. This page is
 the concise, public reference for the curated picker catalogue.
 
-> **Snapshot: 2 September 2026.** Your actual picker is still governed by the
+> **Snapshot: 7 September 2026.** Your actual picker is still governed by the
 > provider CLI, your account and plan, and (for Ollama) the models installed on
 > your machine. Codex is refreshed from its live provider catalogue when
 > available; the rows below describe TaskWraith's curated fallback and the
-> standard options it presents. Rows added or corrected after v1.9.7 describe
-> the current source-ahead checkout and are not a v1.9.7 release guarantee.
+> standard options it presents. Rows added or corrected after the current
+> public `master` tag describe this checkout and are not a release guarantee.
 
 ## Reading the catalogue
 
@@ -43,6 +43,7 @@ not the monoline glyph set.
 
 | Model                                         | Reasoning                                       | Fast   | Notes                                                            |
 | --------------------------------------------- | ----------------------------------------------- | ------ | ---------------------------------------------------------------- |
+| **GPT-6-Astra** `gpt-6-astra`                 | Light · Medium · High · Extra · Max · Ultracode | Toggle | Leads the picker from 2026-09-03. Not the seat default.          |
 | **GPT-5.6-Sol** `gpt-5.6-sol`                 | Light · Medium · High · Extra · Max · Ultracode | Toggle | Latest frontier agentic coding model.                            |
 | **GPT-5.6-Terra** `gpt-5.6-terra`             | Light · Medium · High · Extra · Max · Ultracode | Toggle | Balanced agentic coding for everyday work.                       |
 | **GPT-5.6-Luna** `gpt-5.6-luna`               | Light · Medium · High · Extra · Max             | Toggle | Fast and affordable agentic coding.                              |
@@ -124,7 +125,9 @@ and workspace Tool Grants apply to TaskWraith-mediated calls; see
 | **Composer 2.5 Fast** `composer-2.5-fast` **(Default)** | —                   | Included | Fast route is encoded in the selected model row.      |
 | **Composer 2.5** `composer-2.5`                         | —                   | Pair     | Select this normal row or its Fast counterpart above. |
 | **Cursor Grok 4.6** `grok-4.6`                          | Low · Medium · High · Extra-high | Toggle | First-party Cursor model pool with 256K context.       |
-| **Cursor Grok 4.5** `grok-4.5`                          | Low · Medium · High | Toggle   | First-party Cursor model pool with 500K context.      |
+
+Cursor Grok 4.5 is retired: Cursor's catalogue no longer carries the family and
+rejects its wire ids. Stored 4.5 seats migrate onto 4.6 before launch.
 
 <table>
   <tr>
