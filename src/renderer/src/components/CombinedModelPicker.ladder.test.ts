@@ -41,6 +41,19 @@ describe('reasoning ladder mapping', () => {
     expect(ladderIndexForOption('ollama', 'on')).toBe(1)
   })
 
+  it('does not rewrite DeepSeek V4 Cloud Max to Low when boolean On shares the Light stop', () => {
+    const modelId = 'deepseek-v4-pro:cloud'
+    const ladder = buildLadderModel('ollama', getEnsembleReasoningOptions('ollama', modelId))
+    expect(ladder.valueByIndex[1]).toBe('low')
+    expect(ladder.valueByIndex[5]).toBe('max')
+    expect(clampedLadderIndex('ollama', 'max', ladder, modelId)).toBe(5)
+    expect(ladder.valueByIndex[clampedLadderIndex('ollama', 'max', ladder, modelId)]).toBe('max')
+    // Boolean `on` occupies the same shared-ladder index as `low`. Parking
+    // there rewrote a Max chip (composer fallback) into a Low transcript stamp.
+    expect(ladder.valueByIndex[clampedLadderIndex('ollama', 'on', ladder, modelId)]).toBe('high')
+    expect(clampedLadderIndex('ollama', 'on', ladder, modelId)).not.toBe(1)
+  })
+
   it('returns null for values off the ladder', () => {
     expect(ladderIndexForOption('codex', 'turbo')).toBeNull()
   })

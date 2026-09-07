@@ -51,6 +51,7 @@ import { PillButton } from './PillButton'
 import { getProviderName } from './Sidebar'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { isOllamaCloudModelId } from '../../../shared/ollamaModelAvailability'
+import { resolveOllamaComposerReasoningEffort } from '../../../shared/ollamaReasoning'
 import { OllamaCloudIcon } from './icons/OllamaCloudIcon'
 
 export type {
@@ -988,10 +989,32 @@ export function nearestEnabledLadderIndex(raw: number, enabled: readonly number[
 export function clampedLadderIndex(
   provider: ProviderId,
   effort: string,
-  ladder: LadderModel
+  ladder: LadderModel,
+  modelId?: string
 ): number {
+  const effortKey = effort.trim().toLowerCase()
   const raw = ladderIndexForOption(provider, effort)
-  if (raw != null && ladder.enabledSet.has(raw)) return raw
+  const occupant = raw != null ? ladder.valueByIndex[raw] : undefined
+  if (
+    raw != null &&
+    ladder.enabledSet.has(raw) &&
+    occupant != null &&
+    occupant.toLowerCase() === effortKey
+  ) {
+    return raw
+  }
+  if (provider === 'ollama' && modelId) {
+    const healed = resolveOllamaComposerReasoningEffort(modelId, effort)
+    if (healed) {
+      const healedIndex = ladderIndexForOption(provider, healed)
+      if (healedIndex != null && ladder.enabledSet.has(healedIndex)) {
+        const healedOccupant = ladder.valueByIndex[healedIndex]
+        if (healedOccupant && healedOccupant.toLowerCase() === healed.toLowerCase()) {
+          return healedIndex
+        }
+      }
+    }
+  }
   if (raw != null) {
     const nearest = nearestEnabledLadderIndex(raw, ladder.enabledIndices)
     if (nearest != null) return nearest
@@ -1035,7 +1058,8 @@ export function ReasoningLadderSlider({
   const interactive =
     !disabled && !unavailablePresentation && ladder.enabledIndices.length > 1
   const currentIndex =
-    unavailablePresentation?.index ?? clampedLadderIndex(provider, selectedReasoning, ladder)
+    unavailablePresentation?.index ??
+    clampedLadderIndex(provider, selectedReasoning, ladder, modelId)
   const displayIndex = interactive && dragIndex != null ? dragIndex : currentIndex
   const providerHueClass = modelPickerHueClass(provider, modelId)
   // A locked nonzero stop is still meaningful reasoning state (K2.7's On,
@@ -1798,7 +1822,9 @@ export function CombinedModelPicker({
           // Reasoning ladder: down = lower effort. The slider commits on move.
           const enabled = ladder.enabledIndices
           if (reasoningAvailability.mutable && !disabled) {
-            const pos = enabled.indexOf(clampedLadderIndex(provider, selectedReasoning, ladder))
+            const pos = enabled.indexOf(
+              clampedLadderIndex(provider, selectedReasoning, ladder, selectedModelId)
+            )
             const value = ladder.valueByIndex[enabled[Math.max(0, pos - 1)]]
             if (value) onSelectReasoning(value)
           }
@@ -1813,7 +1839,9 @@ export function CombinedModelPicker({
           // Reasoning ladder: up = higher effort.
           const enabled = ladder.enabledIndices
           if (reasoningAvailability.mutable && !disabled) {
-            const cur = enabled.indexOf(clampedLadderIndex(provider, selectedReasoning, ladder))
+            const cur = enabled.indexOf(
+              clampedLadderIndex(provider, selectedReasoning, ladder, selectedModelId)
+            )
             const pos = cur < 0 ? 0 : cur
             const value = ladder.valueByIndex[enabled[Math.min(enabled.length - 1, pos + 1)]]
             if (value) onSelectReasoning(value)
@@ -1858,7 +1886,10 @@ export function CombinedModelPicker({
           // Reasoning ladder: Enter confirms exactly what the thumb shows (the
           // clamped stop), never a stale row index. Up/Down/drag already commit
           // on every move, so this is effectively a no-op re-commit.
-          const value = ladder.valueByIndex[clampedLadderIndex(provider, selectedReasoning, ladder)]
+          const value =
+            ladder.valueByIndex[
+              clampedLadderIndex(provider, selectedReasoning, ladder, selectedModelId)
+            ]
           if (value) onSelectReasoning(value)
         }
       }
@@ -1886,6 +1917,7 @@ export function CombinedModelPicker({
     ladder,
     provider,
     selectedReasoning,
+    selectedModelId,
     unifiedModelEntries,
     enterConfirmAction
   ])
