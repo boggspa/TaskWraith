@@ -390,6 +390,20 @@ import {
 import { chatHasReconcilableRun } from '../ChatRunReconciler'
 import { selectOpenRunCandidateChatIds } from './OpenRunChatCandidates'
 import { selectEnsembleWakeupCandidateChatIds } from './EnsembleWakeupCandidates'
+import {
+  countPendingSoloWakeups,
+  selectSoloWakeupCandidateChatIds
+} from './SoloWakeupCandidates'
+import {
+  selectSubThreadRecoveryCandidateChatIds,
+  type SubThreadRecoveryHint
+} from './SubThreadRecoveryCandidates'
+import {
+  orderSweepStatsByRecency,
+  truncateSweepToBudget,
+  type SweepBudget,
+  type SweepFileStat
+} from './BootSweepBudget'
 import { ChatListIndexStore } from './ChatListIndexStore'
 import {
   CHAT_RECORD_CACHE_MAX_BYTES,
@@ -5645,6 +5659,7 @@ export class AppStore {
       messageCount: messages.length,
       runCount: runs.length,
       ensembleWakeupCount: countPersistedEnsembleWakeups(ensemble),
+      soloWakeupCount: countPendingSoloWakeups(normalizedChat.soloWakeups),
       runsSummary: runs.filter((run) => run?.runId).map((run) => this.summarizeRunForChatList(run)),
       ...(lastRun ? { lastRun } : {}),
       ...(sourceStat
@@ -5748,6 +5763,7 @@ export class AppStore {
       ...(typeof item.ensembleWakeupCount === 'number'
         ? { ensembleWakeupCount: item.ensembleWakeupCount }
         : {}),
+      ...(typeof item.soloWakeupCount === 'number' ? { soloWakeupCount: item.soloWakeupCount } : {}),
       runsSummary: Array.isArray(item.runsSummary) ? item.runsSummary : [],
       ...(item.lastRun ? { lastRun: summarizeLastRun(item.lastRun) || item.lastRun } : {}),
       ...(typeof item.sourceChatMtimeMs === 'number'
@@ -6302,6 +6318,78 @@ export class AppStore {
   }
 
   /**
+   * The chat files' stats, most-recently modified first. Every boot sweep
+   * needs these stats for its index vouch anyway, so recency ordering is free
+   * — and it is what lets a bounded pass cover the most recent activity first.
+   * An unreadable file keeps its id with NaN stats: it sorts last, widens to a
+   * candidate, and its read later fails cheaply.
+   */
+  private static sweepFileStatsByRecency(): SweepFileStat[] {
+    if (!fs.existsSync(chatsDir)) return []
+    const stats: SweepFileStat[] = []
+    for (const name of fs.readdirSync(chatsDir)) {
+      if (!name.endsWith('.json')) continue
+      const chatId = name.slice(0, -'.json'.length)
+      try {
+        const stat = fs.statSync(path.join(chatsDir, name))
+        stats.push({ chatId, mtimeMs: stat.mtimeMs, size: stat.size })
+      } catch {
+        stats.push({ chatId, mtimeMs: Number.NaN, size: Number.NaN })
+      }
+    }
+    return orderSweepStatsByRecency(stats)
+  }
+
+  /**
+   * The chat-list index, or null when it cannot be read. A null index widens
+   * every sweep to the full corpus rather than sweeping partially.
+   */
+  private static sweepIndexOrNull(): Record<string, ChatListItem> | null {
+    try {
+      return chatListIndexStore.readAll()
+    } catch {
+      return null
+    }
+  }
+
+  /** Vouch predicate over one listing pass's stats — no re-stat per chat. */
+  private static sweepVouchForStats(
+    index: Record<string, ChatListItem>,
+    stats: readonly SweepFileStat[]
+  ): (chatId: string) => boolean {
+    const byId = new Map(stats.map((stat) => [stat.chatId, stat]))
+    return (chatId: string) => {
+      const indexed = index[chatId]
+      const stat = byId.get(chatId)
+      return Boolean(indexed && stat && this.chatListItemMatchesSource(indexed, stat))
+    }
+  }
+
+  /**
+   * Canonical reads for recency-ordered candidates, optionally truncated to a
+   * budget. Truncation is a deferral, never a skip: the deferred post-paint
+   * sweep reads the remainder with the same predicates. Sorting by updatedAt
+   * preserves the sweep order callers had.
+   */
+  private static readCandidateChats(
+    candidates: readonly SweepFileStat[],
+    budget?: SweepBudget
+  ): ChatRecord[] {
+    const stats = budget ? truncateSweepToBudget(candidates, budget) : candidates
+    const chats: ChatRecord[] = []
+    for (const { chatId } of stats) {
+      const chat = this.readChatRecordCached(chatId, path.join(chatsDir, `${chatId}.json`))
+      if (chat) chats.push(chat)
+    }
+    return chats.sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  private static excludeReapCandidates(candidates: readonly SweepFileStat[]): SweepFileStat[] {
+    this.ensureOrphanSubThreadsReaped()
+    return candidates.filter((stat) => !this.orphanSubThreadReapCandidates.has(stat.chatId))
+  }
+
+  /**
    * Source records for the stale-run reconciler's whole-corpus sweep.
    *
    * `getChats()` reads and parses EVERY chat record. Measured on Chris's
@@ -6323,50 +6411,36 @@ export class AppStore {
    * `selectOpenRunCandidateChatIds`), and an unreadable index or listing
    * abandons the narrowing altogether rather than sweeping a partial corpus:
    * a missed candidate strands a run with nothing left to settle it.
+   *
+   * `options.budget` truncates the READS to the most recent candidates for the
+   * pre-window pass; omitted, every candidate is read. Either way the
+   * candidate SET is unchanged — see `listStaleRunSweepCandidates`.
    */
-  static getChatsForStaleRunSweep(): ChatRecord[] {
-    let index: Record<string, ChatListItem>
-    try {
-      index = chatListIndexStore.readAll()
-    } catch {
-      return this.getChats()
-    }
-    if (!fs.existsSync(chatsDir)) return []
-    let chatIds: string[]
-    try {
-      chatIds = fs
-        .readdirSync(chatsDir)
-        .filter((name) => name.endsWith('.json'))
-        .map((name) => name.slice(0, -'.json'.length))
-    } catch {
-      return this.getChats()
-    }
-    const candidates = selectOpenRunCandidateChatIds(chatIds, {
-      vouchesForSourceBytes: (chatId) => {
-        const indexed = index[chatId]
-        if (!indexed) return false
-        try {
-          return this.chatListItemMatchesSource(
-            indexed,
-            fs.statSync(path.join(chatsDir, `${chatId}.json`))
-          )
-        } catch {
-          return false
+  static getChatsForStaleRunSweep(options: { budget?: SweepBudget } = {}): ChatRecord[] {
+    return this.readCandidateChats(this.listStaleRunSweepCandidates(), options.budget)
+  }
+
+  /**
+   * Candidate chat files for the stale-run sweep, most-recently modified
+   * first. Index + stats only — zero parses — so the deferred sweep can plan
+   * byte-budgeted slices before reading a byte of transcript.
+   */
+  static listStaleRunSweepCandidates(): SweepFileStat[] {
+    const stats = this.sweepFileStatsByRecency()
+    const index = this.sweepIndexOrNull()
+    if (!index) return this.excludeReapCandidates(stats)
+    const candidates = selectOpenRunCandidateChatIds(
+      stats.map((stat) => stat.chatId),
+      {
+        vouchesForSourceBytes: this.sweepVouchForStats(index, stats),
+        readRunsSummary: (chatId) => {
+          const indexed = index[chatId]
+          return Array.isArray(indexed?.runsSummary) ? indexed.runsSummary : null
         }
-      },
-      readRunsSummary: (chatId) => {
-        const indexed = index[chatId]
-        return Array.isArray(indexed?.runsSummary) ? indexed.runsSummary : null
       }
-    })
-    this.ensureOrphanSubThreadsReaped()
-    const chats: ChatRecord[] = []
-    for (const chatId of candidates) {
-      if (this.orphanSubThreadReapCandidates.has(chatId)) continue
-      const chat = this.readChatRecordCached(chatId, path.join(chatsDir, `${chatId}.json`))
-      if (chat) chats.push(chat)
-    }
-    return chats.sort((a, b) => b.updatedAt - a.updatedAt)
+    )
+    const wanted = new Set(candidates)
+    return this.excludeReapCandidates(stats.filter((stat) => wanted.has(stat.chatId)))
   }
 
   /**
@@ -6384,47 +6458,128 @@ export class AppStore {
    * row AND an explicit zero, so a row predating the field falls through, and
    * an unreadable index abandons the narrowing rather than sweeping partially.
    */
-  static getChatsWithEnsembleWakeups(): ChatRecord[] {
-    let index: Record<string, ChatListItem>
-    try {
-      index = chatListIndexStore.readAll()
-    } catch {
-      return this.getChats()
-    }
-    if (!fs.existsSync(chatsDir)) return []
-    let chatIds: string[]
-    try {
-      chatIds = fs
-        .readdirSync(chatsDir)
-        .filter((name) => name.endsWith('.json'))
-        .map((name) => name.slice(0, -'.json'.length))
-    } catch {
-      return this.getChats()
-    }
-    const candidates = selectEnsembleWakeupCandidateChatIds(chatIds, {
-      vouchesForSourceBytes: (chatId) => {
-        const indexed = index[chatId]
-        if (!indexed) return false
-        try {
-          return this.chatListItemMatchesSource(
-            indexed,
-            fs.statSync(path.join(chatsDir, `${chatId}.json`))
-          )
-        } catch {
-          return false
+  static getChatsWithEnsembleWakeups(options: { budget?: SweepBudget } = {}): ChatRecord[] {
+    return this.readCandidateChats(this.listEnsembleWakeupCandidates(), options.budget)
+  }
+
+  /**
+   * Candidate chat files for the ensemble-wakeup sweep, most-recently modified
+   * first. Index + stats only — zero parses.
+   */
+  static listEnsembleWakeupCandidates(): SweepFileStat[] {
+    const stats = this.sweepFileStatsByRecency()
+    const index = this.sweepIndexOrNull()
+    if (!index) return stats
+    const candidates = selectEnsembleWakeupCandidateChatIds(
+      stats.map((stat) => stat.chatId),
+      {
+        vouchesForSourceBytes: this.sweepVouchForStats(index, stats),
+        readWakeupCount: (chatId) => {
+          const count = index[chatId]?.ensembleWakeupCount
+          return typeof count === 'number' ? count : null
         }
-      },
-      readWakeupCount: (chatId) => {
-        const count = index[chatId]?.ensembleWakeupCount
-        return typeof count === 'number' ? count : null
       }
-    })
-    const chats: ChatRecord[] = []
-    for (const chatId of candidates) {
-      const chat = this.readChatRecordCached(chatId, path.join(chatsDir, `${chatId}.json`))
-      if (chat) chats.push(chat)
+    )
+    const wanted = new Set(candidates)
+    return stats.filter((stat) => wanted.has(stat.chatId))
+  }
+
+  /**
+   * Source records for the persisted solo-wakeup sweep.
+   *
+   * The boot recovery pass collected `soloWakeups` across a bare `getChats()`
+   * — a whole-corpus parse on the main thread, pre-window, to build a
+   * usually-empty list. Same narrowing idiom as the ensemble twin: the row
+   * carries a pending-`soloWakeups` count beside `messageCount`/`runCount`,
+   * judged by the same mtime+size vouch.
+   *
+   * Narrowing only: candidates take the unchanged canonical read and the
+   * caller still reads real wakeups off the record. A skip needs a vouching
+   * row AND an explicit zero, so a row predating the field falls through, and
+   * an unreadable index abandons the narrowing rather than sweeping partially.
+   *
+   * `options.budget` truncates the READS to the most recent candidates for the
+   * pre-window pass; omitted, every candidate is read.
+   */
+  static getChatsWithSoloWakeups(options: { budget?: SweepBudget } = {}): ChatRecord[] {
+    return this.readCandidateChats(this.listSoloWakeupCandidates(), options.budget)
+  }
+
+  /**
+   * Candidate chat files for the solo-wakeup sweep, most-recently modified
+   * first. Index + stats only — zero parses.
+   */
+  static listSoloWakeupCandidates(): SweepFileStat[] {
+    const stats = this.sweepFileStatsByRecency()
+    const index = this.sweepIndexOrNull()
+    if (!index) return this.excludeReapCandidates(stats)
+    const candidates = selectSoloWakeupCandidateChatIds(
+      stats.map((stat) => stat.chatId),
+      {
+        vouchesForSourceBytes: this.sweepVouchForStats(index, stats),
+        readWakeupCount: (chatId) => {
+          const count = index[chatId]?.soloWakeupCount
+          return typeof count === 'number' ? count : null
+        }
+      }
+    )
+    const wanted = new Set(candidates)
+    return this.excludeReapCandidates(stats.filter((stat) => wanted.has(stat.chatId)))
+  }
+
+  /**
+   * Source records for sub-thread worker-queue recovery and the join-policy
+   * loop. Both iterated a bare `getChats()` — a whole-corpus parse on the main
+   * thread, pre-window — and then skipped every chat that is not a sub-thread
+   * carrying worker control or a join policy. Both answers are list-carried
+   * chrome (`parentChatId` + `delegationContext` survive on the row), so a
+   * vouched row answers them without the canonical read.
+   *
+   * Narrowing only: candidates take the unchanged canonical read and each
+   * caller still applies its own predicate to real bytes. Every uncertainty
+   * widens the set (see `selectSubThreadRecoveryCandidateChatIds`).
+   *
+   * `options.budget` truncates the READS to the most recent candidates for the
+   * pre-window pass; omitted, every candidate is read.
+   */
+  static getSubThreadRecoveryChats(options: { budget?: SweepBudget } = {}): ChatRecord[] {
+    return this.readCandidateChats(this.listSubThreadRecoveryCandidates(), options.budget)
+  }
+
+  /**
+   * Candidate chat files for sub-thread recovery, most-recently modified
+   * first. Index + stats only — zero parses.
+   */
+  static listSubThreadRecoveryCandidates(): SweepFileStat[] {
+    const stats = this.sweepFileStatsByRecency()
+    const index = this.sweepIndexOrNull()
+    if (!index) return this.excludeReapCandidates(stats)
+    const candidates = selectSubThreadRecoveryCandidateChatIds(
+      stats.map((stat) => stat.chatId),
+      {
+        vouchesForSourceBytes: this.sweepVouchForStats(index, stats),
+        readRecoveryHint: (chatId) => this.subThreadRecoveryHintFromRow(index[chatId])
+      }
+    )
+    const wanted = new Set(candidates)
+    return this.excludeReapCandidates(stats.filter((stat) => wanted.has(stat.chatId)))
+  }
+
+  private static subThreadRecoveryHintFromRow(
+    item: ChatListItem | undefined
+  ): SubThreadRecoveryHint | null {
+    if (!item) return null
+    const parentChatId =
+      typeof item.parentChatId === 'string' && item.parentChatId !== '' ? item.parentChatId : null
+    const delegation = item.delegationContext
+    const workerControl = delegation?.workerControl
+    const events = Array.isArray(workerControl?.events) ? workerControl.events : []
+    return {
+      parentChatId,
+      hasWorkerControl: Boolean(workerControl),
+      hasJoinPolicy:
+        Boolean(delegation?.joinPolicy) || events.some((event) => Boolean(event?.joinPolicy))
     }
-    return chats.sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
   /**
