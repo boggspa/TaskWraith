@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { HostThreadRecordPersistInput } from '../host/HostThreadRecordPersistCommand'
+import {
+  HostThreadRecordPersistClient,
+  type HostPersistenceDiagnosticOptions,
+  type HostPersistenceObservation,
+  type HostThreadRecordPersistInput
+} from '../host/HostThreadRecordPersistCommand'
+import type { HostCommandReceipt } from '../../shared/hostProtocol'
 import {
   HostChatCompatibilityPersistence,
   type HostChatCompatibilityPersistencePort
@@ -426,5 +432,316 @@ describe('HostChatCompatibilityPersistence', () => {
       /expected revision/
     )
     expect(persistence.snapshot().pendingChatIds).toEqual([])
+  })
+})
+
+describe('compatibility persistence observations', () => {
+  function observed(
+    options: HostPersistenceDiagnosticOptions = {},
+    overrides: Partial<HostChatCompatibilityPersistencePort> = {}
+  ) {
+    const events: HostPersistenceObservation[] = []
+    const f = harness(overrides)
+    let id = 0
+    let time = 0
+    const persistence = new HostChatCompatibilityPersistence(f.port, {
+      observer: (event) => {
+        events.push(event)
+      },
+      diagnosticNowMs: () => time,
+      diagnosticCreateId: () => `barrier-${++id}`,
+      ...options
+    })
+    return {
+      ...f,
+      persistence,
+      events,
+      advance: (n: number) => {
+        time += n
+      }
+    }
+  }
+
+  it.each(['working', 'throwing-clock', 'throwing-sink', 'rejecting-sink'] as const)(
+    'preserves exact shared promise identity and one shared operation with %s diagnostics',
+    async (mode) => {
+      let release!: () => void
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const options: HostPersistenceDiagnosticOptions =
+        mode === 'throwing-clock'
+          ? {
+              diagnosticNowMs: () => {
+                throw new Error('clock')
+              }
+            }
+          : mode === 'throwing-sink'
+            ? {
+                observer: () => {
+                  throw new Error('sink')
+                }
+              }
+            : mode === 'rejecting-sink'
+              ? {
+                  observer: () => Promise.reject(new Error('sink'))
+                }
+              : {}
+      const f = observed(options, { drain: vi.fn(() => held) })
+      f.persistence.stage(input('C', 4, 3))
+      const first = f.persistence.barrier('C')
+      const second = f.persistence.barrier('C')
+      expect(second).toBe(first)
+      await Promise.resolve()
+      expect(f.enqueued).toHaveLength(1)
+      f.advance(12)
+      release()
+      await first
+      expect(f.port.drain).toHaveBeenCalledTimes(1)
+      if (mode === 'working' || mode === 'throwing-clock') {
+        const starts = f.events.filter(
+          (event) => event.phase === 'barrier' && event.outcome === 'started'
+        )
+        const ends = f.events.filter(
+          (event) => event.phase === 'barrier' && event.outcome === 'succeeded'
+        )
+        expect(starts).toHaveLength(1)
+        expect(ends).toHaveLength(1)
+        expect(ends[0].durationMs).toBe(mode === 'working' ? 12 : null)
+        expect(f.events.find((event) => event.phase === 'barrier_join')).toMatchObject({
+          outcome: 'joined',
+          relatedOperationId: starts[0].operationId
+        })
+      }
+    }
+  )
+
+  it('preserves newer-target chaining and records predecessor links without another caller wrapper', async () => {
+    const releases: Array<() => void> = []
+    const f = observed(
+      {},
+      {
+        drain: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              releases.push(resolve)
+            })
+        )
+      }
+    )
+    f.persistence.stage(input('C', 4, 3))
+    const first = f.persistence.barrier('C')
+    await waitForLength(releases, 1)
+    f.advance(3)
+    const latest = input('C', 8, 7)
+    f.persistence.stage(latest)
+    const second = f.persistence.barrier('C')
+    expect(second).not.toBe(first)
+    expect(f.persistence.barrier('C')).toBe(second)
+    const barriers = f.events.filter(
+      (event) => event.phase === 'barrier' && event.outcome === 'started'
+    )
+    expect(barriers[1].relatedOperationId).toBe(barriers[0].operationId)
+    f.advance(7)
+    releases.shift()!()
+    await first
+    await waitForLength(releases, 1)
+    expect(f.enqueued[1].record).toBe(latest.record)
+    expect(f.enqueued[1].expectedRevision).toBe(7)
+    f.advance(10)
+    releases.shift()!()
+    await second
+    expect(
+      f.events
+        .filter((event) => event.phase === 'barrier' && event.outcome === 'succeeded')
+        .map((event) => event.durationMs)
+    ).toEqual([10, 17])
+  })
+
+  it('keeps rejection identity/order and restores the newest context with the first CAS base', async () => {
+    let reject!: (error: unknown) => void
+    const held = new Promise<void>((_resolve, rejectPromise) => {
+      reject = rejectPromise
+    })
+    const f = observed({}, { drain: vi.fn(() => held) })
+    f.persistence.stage({ ...input('C', 4, 3), diagnosticContext: { requestId: 'first' } })
+    const first = f.persistence.barrier('C')
+    const joined = f.persistence.barrier('C')
+    expect(joined).toBe(first)
+    await Promise.resolve()
+    const latest = { ...input('C', 9, 8), diagnosticContext: { requestId: 'latest' } }
+    f.persistence.stage(latest)
+    const original = new Error('private error')
+    const order: string[] = []
+    const observer = first.catch((error) => {
+      expect(error).toBe(original)
+      order.push('rejected')
+    })
+    reject(original)
+    await observer
+    expect(order).toEqual(['rejected'])
+    expect(
+      f.events.filter((event) => event.phase === 'barrier' && event.outcome === 'failed')
+    ).toHaveLength(1)
+    vi.mocked(f.port.drain).mockResolvedValue(undefined)
+    await f.persistence.barrier('C')
+    expect(f.enqueued[1].record).toBe(latest.record)
+    expect(f.enqueued[1]).toMatchObject({
+      expectedRevision: 3,
+      diagnosticContext: { requestId: 'latest' }
+    })
+    expect(JSON.stringify(f.events)).not.toContain('private error')
+  })
+
+  it('restores identical record lineage after synchronous materialization failure', () => {
+    const original = new Error('enqueue')
+    const f = observed(
+      {},
+      {
+        enqueue: vi.fn(() => {
+          throw original
+        })
+      }
+    )
+    const entry = { ...input('C', 4, 3), diagnosticContext: { runId: 'R' } }
+    f.persistence.stage(entry)
+    expect(() => f.persistence.materialize('C')).toThrow(original)
+    expect(f.persistence.latestSequence('C')).toBe(1)
+    const retried: HostThreadRecordPersistInput[] = []
+    vi.mocked(f.port.enqueue).mockImplementation((value) => {
+      retried.push(value)
+    })
+    expect(f.persistence.materialize('C')).toBe(true)
+    expect(retried[0].record).toBe(entry.record)
+    expect(retried[0].diagnosticContext?.runId).toBe('R')
+    expect(
+      f.events
+        .filter((event) => event.phase === 'materialize' && event.outcome !== 'started')
+        .map((event) => event.outcome)
+    ).toEqual(['failed', 'succeeded'])
+  })
+
+  it('keeps rebased submitted entry identity and the latest absorbed context', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const f = observed({}, { drain: vi.fn(() => held) })
+    f.persistence.stage({ ...input('C', 4, 3), diagnosticContext: { requestId: 'first' } })
+    const barrier = f.persistence.barrier('C')
+    await waitForLength(f.enqueued, 1)
+    f.persistence.stage({ ...input('C', 8, 7), diagnosticContext: { requestId: 'latest' } })
+    const recovered = input('C', 6, 5)
+    expect(f.persistence.rebase(recovered)).toBe(true)
+    expect(f.events.find((event) => event.phase === 'rebase')).toMatchObject({
+      sequence: 2,
+      relatedSequence: 1,
+      context: { requestId: 'latest' },
+      expectedRevision: 5
+    })
+    release()
+    await barrier
+    expect(f.persistence.hasUnconfirmed('C')).toBe(false)
+    expect(f.port.enqueue).toHaveBeenCalledTimes(1)
+  })
+
+  it('distinguishes quiet and deleting barriers without a fictitious physical write', async () => {
+    const f = observed()
+    await f.persistence.barrier('quiet')
+    await f.persistence.prepareDelete('deleting')
+    await expect(f.persistence.barrier('deleting')).rejects.toThrow('deleting')
+    expect(f.events.map((event) => [event.phase, event.outcome])).toEqual([
+      ['barrier_quiet', 'skipped'],
+      ['barrier_rejected', 'failed']
+    ])
+    expect(f.port.enqueue).not.toHaveBeenCalled()
+  })
+
+  it('does no diagnostic clock or ID work without an observer and retains untouched input', async () => {
+    const clock = vi.fn(() => 1)
+    const id = vi.fn(() => 'not-used')
+    const f = observed({ observer: undefined, diagnosticNowMs: clock, diagnosticCreateId: id })
+    const entry = input('C', 4, 3)
+    Object.defineProperty(entry, 'diagnosticContext', {
+      get: () => {
+        throw new Error('context')
+      }
+    })
+    f.persistence.stage(entry)
+    await f.persistence.barrier('C')
+    expect(f.enqueued[0]).toBe(entry)
+    expect(clock).not.toHaveBeenCalled()
+    expect(id).not.toHaveBeenCalled()
+    expect(f.events).toEqual([])
+  })
+
+  it('joins wrapper materialization to real client commands with bounded body-free context', async () => {
+    const events: HostPersistenceObservation[] = []
+    let commandId = 0
+    let diagnosticId = 0
+    const options = {
+      observer: (event: HostPersistenceObservation) => {
+        events.push(event)
+      },
+      diagnosticCreateId: () => `diag-${++diagnosticId}`
+    }
+    const client = new HostThreadRecordPersistClient({
+      ...options,
+      profilePath: '/unused',
+      transfer: {
+        publish: ({ transferId }) => ({ transferId, sha256: 'a'.repeat(64), byteLength: 42 }),
+        remove: () => true
+      },
+      createId: () => `id-${++commandId}`,
+      broker: {
+        submitCommand: async (command) => ({
+          ok: true,
+          receipt: {
+            type: 'host.receipt',
+            protocolVersion: command.protocolVersion,
+            commandId: command.commandId,
+            idempotencyKey: command.idempotencyKey,
+            name: command.name,
+            actor: command.actor,
+            status: 'succeeded'
+          } as HostCommandReceipt
+        }),
+        lookupReceipt: async () => ({ ok: false, error: 'unexpected' })
+      }
+    })
+    const persistence = new HostChatCompatibilityPersistence(client, options)
+    const latest = {
+      ...input('C', 9, 8),
+      diagnosticContext: { requestId: 'latest', roundId: 'round' }
+    }
+    persistence.stage({ ...input('C', 4, 3), diagnosticContext: { requestId: 'first' } })
+    persistence.stage(latest)
+    const first = persistence.barrier('C')
+    expect(persistence.barrier('C')).toBe(first)
+    await first
+    const materialize = events.find((event) => event.phase === 'materialize')!
+    const enqueue = events.find((event) => event.phase === 'enqueue')!
+    const persist = events.find((event) => event.phase === 'persist')!
+    const receipt = events.find((event) => event.phase === 'client_receipt_wait')!
+    expect(materialize).toMatchObject({
+      sequence: 2,
+      expectedRevision: 3,
+      parentOperationId: events.find((event) => event.phase === 'barrier')!.operationId
+    })
+    expect(enqueue.context).toMatchObject({
+      requestId: 'latest',
+      lineageId: materialize.operationId
+    })
+    expect(persist.parentOperationId).toBe(enqueue.operationId)
+    expect(receipt).toMatchObject({ parentOperationId: persist.operationId, commandId: 'id-2' })
+    expect(events.filter((event) => event.phase === 'stage')[1]).toMatchObject({
+      sequence: 2,
+      relatedSequence: 1
+    })
+    expect(JSON.stringify(events)).not.toContain('body-9')
+    expect(JSON.stringify(events)).not.toContain('messages')
+    expect(
+      events.filter((event) => event.phase === 'persist' && event.outcome === 'succeeded')
+    ).toHaveLength(1)
   })
 })

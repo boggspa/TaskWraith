@@ -1,6 +1,9 @@
-import type {
-  HostThreadRecordPersistInput,
-  HostThreadRecordPersistPort
+import {
+  HostPersistenceDiagnostics,
+  type HostPersistenceDiagnosticOptions,
+  type HostPersistenceObservationOperation,
+  type HostThreadRecordPersistInput,
+  type HostThreadRecordPersistPort
 } from '../host/HostThreadRecordPersistCommand'
 
 /**
@@ -46,6 +49,7 @@ interface CompatibilityEntry {
 interface ActiveBarrier {
   targetSequence: number
   promise: Promise<void>
+  observation?: HostPersistenceObservationOperation
 }
 
 interface ChatCompatibilityState {
@@ -107,13 +111,17 @@ function createState(): ChatCompatibilityState {
 
 export class HostChatCompatibilityPersistence {
   private readonly port: HostChatCompatibilityPersistencePort
+  private readonly diagnostics?: HostPersistenceDiagnostics
   private readonly states = new Map<string, ChatCompatibilityState>()
   private nextSequence = 1
   private closing = false
   private closed = false
   private shutdownPromise: Promise<void> | null = null
 
-  constructor(port: HostChatCompatibilityPersistencePort) {
+  constructor(
+    port: HostChatCompatibilityPersistencePort,
+    options: HostPersistenceDiagnosticOptions = {}
+  ) {
     if (
       !port ||
       typeof port.enqueue !== 'function' ||
@@ -123,6 +131,10 @@ export class HostChatCompatibilityPersistence {
       throw new TypeError('Host compatibility persistence requires enqueue and drain ports.')
     }
     this.port = port
+    this.diagnostics =
+      typeof options.observer === 'function'
+        ? new HostPersistenceDiagnostics('compatibility', options)
+        : undefined
   }
 
   /**
@@ -132,36 +144,47 @@ export class HostChatCompatibilityPersistence {
   stage(input: HostThreadRecordPersistInput): HostChatCompatibilityStageResult {
     validateInput(input)
     const state = this.stateFor(input.chatId)
-    if (this.closing || this.closed || state.deleting || state.deleted) return 'blocked'
+    if (this.closing || this.closed || state.deleting || state.deleted) {
+      this.observeStage(input, 'blocked')
+      return 'blocked'
+    }
 
     const revision = persistenceRevision(input)
     const latest = state.pending ?? state.submitted
     const latestRevision = latest ? persistenceRevision(latest.input) : state.durableRevision
-    if (latestRevision !== null && revision < latestRevision) return 'stale'
+    if (latestRevision !== null && revision < latestRevision) {
+      this.observeStage(input, 'stale')
+      return 'stale'
+    }
     if (
       latestRevision !== null &&
       revision === latestRevision &&
       (latest || state.durableSequence > 0)
     ) {
+      this.observeStage(input, 'duplicate')
       return 'duplicate'
     }
 
     const sequence = this.nextSequence++
     if (state.pending) {
+      const previousSequence = state.pending.sequence
       // Keep the first Host CAS base while replacing only the full-record
       // reference. The body is never spread or cloned here.
       state.pending = {
         input: {
           chatId: input.chatId,
           record: input.record,
-          expectedRevision: state.pending.input.expectedRevision
+          expectedRevision: state.pending.input.expectedRevision,
+          ...(input.diagnosticContext ? { diagnosticContext: input.diagnosticContext } : {})
         },
         sequence
       }
+      this.observeStage(state.pending.input, 'replaced', sequence, previousSequence)
       return 'replaced'
     }
 
     state.pending = { input, sequence }
+    this.observeStage(input, 'staged', sequence)
     return 'staged'
   }
 
@@ -169,7 +192,7 @@ export class HostChatCompatibilityPersistence {
    * Enqueue one pending checkpoint. At most one coordinator-owned checkpoint
    * per chat is unconfirmed at once; a newer staged record remains pending.
    */
-  materialize(chatId: string): boolean {
+  materialize(chatId: string, barrierOperationId?: string | null): boolean {
     validateChatId(chatId)
     const state = this.states.get(chatId)
     if (!state || state.deleting || state.deleted || !state.pending) return false
@@ -182,13 +205,32 @@ export class HostChatCompatibilityPersistence {
     state.pending = null
     state.submitted = entry
     state.materializeAfterSubmitted = false
+    const observation = this.diagnostics?.begin('materialize', {
+      chatId,
+      parentOperationId: barrierOperationId,
+      context: entry.input.diagnosticContext,
+      sequence: entry.sequence,
+      expectedRevision: entry.input.expectedRevision
+    })
     try {
-      this.port.enqueue(entry.input)
+      this.port.enqueue(
+        observation && this.diagnostics
+          ? {
+              ...entry.input,
+              diagnosticContext: this.diagnostics.context(
+                entry.input.diagnosticContext,
+                observation.operationId
+              )
+            }
+          : entry.input
+      )
+      observation?.finish('succeeded')
       return true
     } catch (error) {
       state.submitted = null
       this.restoreUnconfirmed(state, entry)
       state.materializeAfterSubmitted = true
+      observation?.finish('failed')
       throw error
     }
   }
@@ -203,12 +245,22 @@ export class HostChatCompatibilityPersistence {
     validateInput(input)
     const state = this.states.get(input.chatId)
     if (!state) return false
+    const priorContext = (state.pending ?? state.submitted)?.input.diagnosticContext
+    if (!input.diagnosticContext && priorContext)
+      input = { ...input, diagnosticContext: priorContext }
 
     if (state.submitted) {
       const latestSequence = Math.max(
         state.submitted.sequence,
         state.pending?.sequence ?? state.submitted.sequence
       )
+      this.diagnostics?.event('rebase', 'succeeded', {
+        chatId: input.chatId,
+        context: input.diagnosticContext,
+        sequence: latestSequence,
+        relatedSequence: state.submitted.sequence,
+        expectedRevision: input.expectedRevision
+      })
       // Mutate the existing entry rather than replacing it: settleSubmitted
       // captured this identity before the injected drain entered Host recovery.
       state.submitted.input = input
@@ -220,6 +272,12 @@ export class HostChatCompatibilityPersistence {
 
     if (!state.pending) return false
     state.pending = { input, sequence: state.pending.sequence }
+    this.diagnostics?.event('rebase', 'succeeded', {
+      chatId: input.chatId,
+      context: input.diagnosticContext,
+      sequence: state.pending.sequence,
+      expectedRevision: input.expectedRevision
+    })
     return true
   }
 
@@ -294,11 +352,14 @@ export class HostChatCompatibilityPersistence {
    * Materialize and durably drain everything staged when this barrier was
    * requested. A later barrier with a newer target chains behind the first;
    * equal-target callers share the exact same promise and drain result.
+   * Diagnostics measure this shared lower barrier (including predecessor wait),
+   * not each joining caller or the outer AppStore recovery/materialization path.
    */
   barrier(chatId: string): Promise<void> {
     validateChatId(chatId)
     const state = this.stateFor(chatId)
     if (state.deleting || state.deleted) {
+      this.diagnostics?.event('barrier_rejected', 'failed', { chatId, reason: 'deleting' })
       return Promise.reject(new Error(`Host compatibility persistence is deleting ${chatId}.`))
     }
 
@@ -307,16 +368,31 @@ export class HostChatCompatibilityPersistence {
       state.submitted?.sequence ?? 0,
       state.pending?.sequence ?? 0
     )
-    if (targetSequence <= state.durableSequence) return Promise.resolve()
+    if (targetSequence <= state.durableSequence) {
+      this.diagnostics?.event('barrier_quiet', 'skipped', { chatId, sequence: targetSequence })
+      return Promise.resolve()
+    }
     if (state.activeBarrier && state.activeBarrier.targetSequence >= targetSequence) {
+      this.diagnostics?.event('barrier_join', 'joined', {
+        chatId,
+        sequence: targetSequence,
+        relatedOperationId: state.activeBarrier.observation?.operationId
+      })
       return state.activeBarrier.promise
     }
 
+    const observation = this.diagnostics?.begin('barrier', {
+      chatId,
+      sequence: targetSequence,
+      context: (state.pending ?? state.submitted)?.input.diagnosticContext,
+      relatedOperationId: state.activeBarrier?.observation?.operationId
+    })
     const predecessor = state.activeBarrier?.promise.catch(() => undefined) ?? Promise.resolve()
     const active: ActiveBarrier = {
       targetSequence,
+      ...(observation ? { observation } : {}),
       promise: predecessor
-        .then(() => this.drainThrough(chatId, state, targetSequence))
+        .then(() => this.drainThrough(chatId, state, targetSequence, observation))
         .finally(() => {
           if (state.activeBarrier === active) state.activeBarrier = null
         })
@@ -392,6 +468,26 @@ export class HostChatCompatibilityPersistence {
     }
   }
 
+  private observeStage(
+    input: HostThreadRecordPersistInput,
+    reason: HostChatCompatibilityStageResult,
+    sequence?: number,
+    relatedSequence?: number
+  ): void {
+    this.diagnostics?.event(
+      'stage',
+      reason === 'staged' || reason === 'replaced' ? 'pending' : 'skipped',
+      {
+        chatId: input.chatId,
+        context: input.diagnosticContext,
+        expectedRevision: input.expectedRevision,
+        sequence,
+        relatedSequence,
+        reason
+      }
+    )
+  }
+
   private stateFor(chatId: string): ChatCompatibilityState {
     const existing = this.states.get(chatId)
     if (existing) return existing
@@ -403,16 +499,23 @@ export class HostChatCompatibilityPersistence {
   private async drainThrough(
     chatId: string,
     state: ChatCompatibilityState,
-    targetSequence: number
+    targetSequence: number,
+    observation?: HostPersistenceObservationOperation
   ): Promise<void> {
-    while (state.durableSequence < targetSequence) {
-      if (state.deleting || state.deleted) {
-        throw new Error(`Host compatibility persistence was deleted before barrier ${chatId}.`)
+    try {
+      while (state.durableSequence < targetSequence) {
+        if (state.deleting || state.deleted) {
+          throw new Error(`Host compatibility persistence was deleted before barrier ${chatId}.`)
+        }
+        if (!state.submitted && !this.materialize(chatId, observation?.operationId)) {
+          throw new Error(`Host compatibility persistence lost its barrier target for ${chatId}.`)
+        }
+        await this.settleSubmitted(chatId, state)
       }
-      if (!state.submitted && !this.materialize(chatId)) {
-        throw new Error(`Host compatibility persistence lost its barrier target for ${chatId}.`)
-      }
-      await this.settleSubmitted(chatId, state)
+      observation?.finish('succeeded')
+    } catch (error) {
+      observation?.finish('failed')
+      throw error
     }
   }
 
@@ -464,7 +567,10 @@ export class HostChatCompatibilityPersistence {
       input: {
         chatId: state.pending.input.chatId,
         record: state.pending.input.record,
-        expectedRevision: entry.input.expectedRevision
+        expectedRevision: entry.input.expectedRevision,
+        ...(state.pending.input.diagnosticContext
+          ? { diagnosticContext: state.pending.input.diagnosticContext }
+          : {})
       },
       sequence: state.pending.sequence
     }
@@ -510,7 +616,8 @@ export class HostChatCompatibilityPersistence {
 }
 
 export function createHostChatCompatibilityPersistence(
-  port: HostChatCompatibilityPersistencePort
+  port: HostChatCompatibilityPersistencePort,
+  options?: HostPersistenceDiagnosticOptions
 ): HostChatCompatibilityPersistence {
-  return new HostChatCompatibilityPersistence(port)
+  return new HostChatCompatibilityPersistence(port, options)
 }

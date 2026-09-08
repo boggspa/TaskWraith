@@ -28,6 +28,8 @@ import {
   HostThreadRecordPersistError,
   classifyHostPersistRejection,
   createDesktopHostThreadRecordPersistClient,
+  type HostPersistenceDiagnosticOptions,
+  type HostPersistenceObservation,
   type HostThreadRecordPersistBrokerPort,
   type HostThreadRecordPersistInput,
   type HostThreadRecordTransferPort
@@ -980,5 +982,384 @@ describe('production factory identity against the real authority gate', () => {
     expect(composed.brokerActor).toMatchObject({ ...TASKWRAITH_DESKTOP_HOST_ACTOR })
     // 3. command actor
     expect(composed.command.actor).toMatchObject({ ...TASKWRAITH_DESKTOP_HOST_ACTOR })
+  })
+})
+
+describe('Host persistence local observations', () => {
+  function observed(
+    script: Parameters<typeof scriptedBroker>[0],
+    options: HostPersistenceDiagnosticOptions & {
+      transfer?: HostThreadRecordTransferPort
+      timeoutMs?: number
+      recoverConflict?: (input: HostThreadRecordPersistInput) => HostThreadRecordPersistInput | null
+    } = {}
+  ) {
+    const events: HostPersistenceObservation[] = []
+    const calls: string[] = []
+    const broker = scriptedBroker(script)
+    let clock = 0
+    let ids = 0
+    let diagnosticIds = 0
+    const transfer =
+      options.transfer ??
+      fakeTransfer({
+        publish: ({ transferId }) => {
+          calls.push('publish')
+          clock += 3
+          return { transferId, byteLength: 42, sha256: 'a'.repeat(64) }
+        }
+      })
+    const client = new HostThreadRecordPersistClient({
+      profilePath: PROFILE,
+      broker: {
+        submitCommand: (command) => {
+          calls.push('submit')
+          clock += 7
+          return broker.submitCommand(command)
+        },
+        lookupReceipt: (commandId) => {
+          calls.push('lookup')
+          clock += 5
+          return broker.lookupReceipt(commandId)
+        }
+      },
+      transfer,
+      createId: () => {
+        calls.push('id')
+        return `id-${++ids}`
+      },
+      nowMs: () => {
+        calls.push('now')
+        return clock
+      },
+      wait: async (requested) => {
+        calls.push(`wait:${requested}`)
+        clock += requested + 50
+      },
+      observer: (event) => {
+        events.push(event)
+      },
+      diagnosticNowMs: () => clock,
+      diagnosticCreateId: () => `diagnostic-${++diagnosticIds}`,
+      ...options
+    })
+    return { client, broker, transfer, events, calls }
+  }
+
+  const request = () => ({
+    chatId: 'chat-1',
+    expectedRevision: 3,
+    record: chatRecord({ messages: [{ content: 'DO-NOT-RECORD-BODY' }] }),
+    diagnosticContext: { requestId: 'request-1', roundId: 'round-1' }
+  })
+  const ends = (events: HostPersistenceObservation[], phase: HostPersistenceObservation['phase']) =>
+    events.filter((event) => event.phase === phase && event.outcome !== 'started')
+
+  it('keeps exact operational IDs and immediate receipt behavior with body-free local timing', async () => {
+    const { client, broker, events, calls } = observed((command) => [
+      receiptFor(command, 'succeeded')
+    ])
+    await client.persist(request())
+    expect(broker.commands[0]).toMatchObject({
+      commandId: 'id-2',
+      arguments: { transferId: 'id-1' }
+    })
+    expect(calls).toEqual(['id', 'publish', 'id', 'now', 'submit'])
+    expect(ends(events, 'transfer_stage')).toMatchObject([
+      { durationMs: 3, bytes: 42, timing: 'measured' }
+    ])
+    expect(ends(events, 'submit')).toMatchObject([{ durationMs: 7, commandId: 'id-2' }])
+    expect(ends(events, 'client_receipt_wait')).toMatchObject([
+      {
+        durationMs: 7,
+        receiptStatus: 'succeeded',
+        commandName: 'thread.record.persist'
+      }
+    ])
+    expect(ends(events, 'persist')).toMatchObject([
+      { durationMs: 10, context: { requestId: 'request-1' } }
+    ])
+    expect(
+      events.some((event) => ['poll_delay', 'poll_lookup', 'recovery_lookup'].includes(event.phase))
+    ).toBe(false)
+    expect(JSON.stringify(events)).not.toContain('DO-NOT-RECORD-BODY')
+    expect(JSON.stringify(events)).not.toContain(PROFILE)
+    expect(JSON.stringify(broker.commands)).not.toContain('diagnostic')
+  })
+
+  it('separates requested polling delay from actual local wait and lookup durations', async () => {
+    const { client, events, calls } = observed((command) => [
+      receiptFor(command, 'pending'),
+      receiptFor(command, 'pending'),
+      receiptFor(command, 'succeeded')
+    ])
+    await client.persist(request())
+    expect(ends(events, 'poll_delay')).toMatchObject([
+      { requestedDelayMs: 250, durationMs: 300 },
+      { requestedDelayMs: 250, durationMs: 300 }
+    ])
+    expect(ends(events, 'poll_lookup')).toMatchObject([{ durationMs: 5 }, { durationMs: 5 }])
+    expect(ends(events, 'client_receipt_wait')).toMatchObject([{ durationMs: 617 }])
+    expect(calls.filter((call) => call.startsWith('wait'))).toEqual(['wait:250', 'wait:250'])
+  })
+
+  it('distinguishes resolved submission failure recovery from a thrown submission', async () => {
+    const recovering = observed((command) => [
+      { error: 'lost reply' },
+      receiptFor(command, 'succeeded')
+    ])
+    await recovering.client.persist(request())
+    expect(ends(recovering.events, 'submit')).toMatchObject([{ outcome: 'failed' }])
+    expect(ends(recovering.events, 'recovery_lookup')).toMatchObject([{ outcome: 'succeeded' }])
+    const original = new Error('PRIVATE failure')
+    const thrown = observed(() => {
+      throw original
+    })
+    await expect(thrown.client.persist(request())).rejects.toBe(original)
+    expect(ends(thrown.events, 'submit')).toMatchObject([
+      { outcome: 'failed', errorCode: 'unknown' }
+    ])
+    expect(ends(thrown.events, 'recovery_lookup')).toEqual([])
+    expect(JSON.stringify(thrown.events)).not.toContain('PRIVATE')
+    expect((thrown.transfer as ReturnType<typeof fakeTransfer>).removed).toEqual(['id-1'])
+  })
+
+  it('records staging failure before any command ID exists without consuming an ID', async () => {
+    const f = observed(() => [], {
+      transfer: fakeTransfer({
+        publish: () => {
+          throw new Error('disk')
+        }
+      })
+    })
+    await expect(f.client.persist(request())).rejects.toMatchObject({
+      code: 'artifact_publish_failed'
+    })
+    expect(f.calls).toEqual(['id'])
+    expect(f.broker.commands).toHaveLength(0)
+    expect(ends(f.events, 'transfer_stage')).toMatchObject([
+      { outcome: 'failed', errorCode: 'artifact_publish_failed' }
+    ])
+    expect(f.events.every((event) => event.commandId === undefined)).toBe(true)
+  })
+
+  it.each(['failed', 'denied', 'cancelled', 'indeterminate', 'conflict'] as const)(
+    'keeps validated %s receipt status and original classified error',
+    async (status) => {
+      const f = observed((command) => [receiptFor(command, status)])
+      await expect(f.client.persist(request())).rejects.toMatchObject({
+        code: 'host_rejected',
+        receipt: { status }
+      })
+      expect(ends(f.events, 'client_receipt_wait')).toMatchObject([
+        { outcome: 'failed', receiptStatus: status }
+      ])
+    }
+  )
+
+  it('does not report mismatched receipts as a validated terminal outcome', async () => {
+    const f = observed((command) => [receiptFor(command, 'succeeded', { commandId: 'wrong' })])
+    await expect(f.client.persist(request())).rejects.toMatchObject({
+      code: 'invalid_host_receipt'
+    })
+    expect(ends(f.events, 'client_receipt_wait')).toMatchObject([
+      { outcome: 'failed', errorCode: 'invalid_host_receipt' }
+    ])
+    expect(ends(f.events, 'client_receipt_wait')[0].receiptStatus).toBeUndefined()
+  })
+
+  it.each(['throw', 'nan', 'backwards'] as const)(
+    'contains a %s diagnostic clock and keeps business calls identical',
+    async (mode) => {
+      const control = observed((command) => [
+        receiptFor(command, 'pending'),
+        receiptFor(command, 'succeeded')
+      ])
+      await control.client.persist(request())
+      let clock = 1000
+      const f = observed(
+        (command) => [receiptFor(command, 'pending'), receiptFor(command, 'succeeded')],
+        {
+          diagnosticNowMs: () => {
+            if (mode === 'throw') throw new Error('clock')
+            return mode === 'nan' ? NaN : clock--
+          }
+        }
+      )
+      await f.client.persist(request())
+      expect(f.calls).toEqual(control.calls)
+      expect(f.broker.commands).toEqual(control.broker.commands)
+      for (const event of f.events.filter((event) => event.outcome !== 'started')) {
+        expect(event.durationMs).toBeNull()
+        expect(event.timing).toBe('unavailable')
+      }
+    }
+  )
+
+  it('does no diagnostic clock or ID work with the observer absent', async () => {
+    const clock = vi.fn(() => {
+      throw new Error('must not read')
+    })
+    const id = vi.fn(() => {
+      throw new Error('must not read')
+    })
+    const f = observed((command) => [receiptFor(command, 'succeeded')], {
+      observer: undefined,
+      diagnosticNowMs: clock,
+      diagnosticCreateId: id
+    })
+    const entry = request()
+    Object.defineProperty(entry, 'diagnosticContext', {
+      get: () => {
+        throw new Error('not read')
+      }
+    })
+    f.client.enqueue(entry)
+    await f.client.drain('chat-1')
+    expect(clock).not.toHaveBeenCalled()
+    expect(id).not.toHaveBeenCalled()
+    expect(f.events).toEqual([])
+  })
+
+  it.each(['throw', 'reject'] as const)(
+    'contains an observer that will %s on every event',
+    async (mode) => {
+      const f = observed((command) => [receiptFor(command, 'succeeded')], {
+        observer: () => {
+          if (mode === 'throw') throw new Error('sink')
+          return Promise.reject(new Error('sink'))
+        }
+      })
+      await f.client.persist(request())
+      expect(f.calls).toEqual(['id', 'publish', 'id', 'now', 'submit'])
+      // Vitest also fails the suite on an unhandled rejected observer promise.
+      await Promise.resolve()
+    }
+  )
+
+  it('keeps null diagnostic IDs honest and bounds copied correlation fields', async () => {
+    const f = observed((command) => [receiptFor(command, 'succeeded')], {
+      diagnosticCreateId: () => {
+        throw new Error('id')
+      }
+    })
+    const context = { requestId: 'request', roundId: 'x'.repeat(257), secret: 'HIDDEN' }
+    await f.client.persist({ ...request(), diagnosticContext: context })
+    expect(f.events.every((event) => event.operationId === null)).toBe(true)
+    expect(f.events[0].context).toEqual({ requestId: 'request' })
+    context.requestId = 'changed'
+    expect(f.events[0].context?.requestId).toBe('request')
+    expect(JSON.stringify(f.events)).not.toContain('HIDDEN')
+  })
+
+  it('links superseded queue items and retries without creating phantom commands', async () => {
+    let release!: () => void
+    const first = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const events: HostPersistenceObservation[] = []
+    const commands: HostCommand[] = []
+    let id = 0
+    let observationId = 0
+    const client = new HostThreadRecordPersistClient({
+      profilePath: PROFILE,
+      transfer: fakeTransfer(),
+      createId: () => `id-${++id}`,
+      observer: (event) => {
+        events.push(event)
+      },
+      diagnosticCreateId: () => `obs-${++observationId}`,
+      broker: {
+        submitCommand: async (command) => {
+          commands.push(command)
+          if (commands.length === 1) await first
+          return {
+            ok: true,
+            receipt: receiptFor(
+              command,
+              commands.length === 2 ? 'conflict' : 'succeeded',
+              commands.length === 2 ? { errorCode: 'revision_conflict' } : {}
+            )
+          }
+        },
+        lookupReceipt: async () => ({ ok: false, error: 'unexpected' })
+      },
+      recoverConflict: (entry) => ({
+        chatId: entry.chatId,
+        expectedRevision: 4,
+        record: entry.record
+      })
+    })
+    client.enqueue(request())
+    client.enqueue({ ...request(), diagnosticContext: { requestId: 'B' } })
+    client.enqueue({ ...request(), diagnosticContext: { requestId: 'C' } })
+    client.enqueue({ ...request(), expectedRevision: 4, diagnosticContext: { requestId: 'D' } })
+    const drain = client.drain('chat-1')
+    release()
+    await drain
+    expect(commands.map((command) => command.commandId)).toEqual(['id-2', 'id-4', 'id-6'])
+    const enqueues = ends(events, 'enqueue')
+    const attempts = events.filter(
+      (event) => event.phase === 'persist' && event.outcome === 'started'
+    )
+    expect(
+      attempts.map((event) => [event.context?.requestId, event.attempt, event.parentOperationId])
+    ).toEqual([
+      ['request-1', 0, enqueues[0].operationId],
+      ['C', 0, enqueues[2].operationId],
+      ['C', 1, enqueues[2].operationId]
+    ])
+    expect(ends(events, 'superseded').map((event) => event.relatedOperationId)).toEqual([
+      enqueues[1].operationId,
+      enqueues[3].operationId
+    ])
+    expect(ends(events, 'retry')).toHaveLength(1)
+    expect(ends(events, 'drain')).toHaveLength(1)
+  })
+
+  it('reports a receipt-poll timeout separately from completed poll delays', async () => {
+    const f = observed((command) => [receiptFor(command, 'pending')], { timeoutMs: 300 })
+    await expect(f.client.persist(request())).rejects.toMatchObject({ code: 'host_timeout' })
+    expect(ends(f.events, 'client_receipt_wait')).toMatchObject([
+      { outcome: 'failed', errorCode: 'host_timeout' }
+    ])
+    expect(ends(f.events, 'poll_delay')).toMatchObject([{ outcome: 'succeeded', durationMs: 300 }])
+    expect(ends(f.events, 'poll_lookup')).toHaveLength(1)
+  })
+
+  it('preserves failed recovery and emits no polling or synthetic terminal receipt', async () => {
+    const f = observed(() => [{ error: 'private submit' }, { error: 'private lookup' }])
+    await expect(f.client.persist(request())).rejects.toMatchObject({ code: 'host_unavailable' })
+    expect(ends(f.events, 'recovery_lookup')).toMatchObject([{ outcome: 'failed' }])
+    expect(ends(f.events, 'poll_delay')).toEqual([])
+    expect(ends(f.events, 'client_receipt_wait')[0].receiptStatus).toBeUndefined()
+    expect(JSON.stringify(f.events)).not.toContain('private')
+  })
+
+  it('forwards optional diagnostics through the production factory without changing actor identity', async () => {
+    const events: HostPersistenceObservation[] = []
+    const client = createDesktopHostThreadRecordPersistClient({
+      userDataPath: createRealProfile(),
+      appVersion: 'test',
+      observer: (event) => {
+        events.push(event)
+      },
+      diagnosticNowMs: () => 5,
+      diagnosticCreateId: () => 'factory-observation'
+    })
+    await client.persist(request())
+    expect(ends(events, 'persist')).toMatchObject([
+      { operationId: 'factory-observation', durationMs: 0 }
+    ])
+    expect(hoisted.submitted.at(-1)?.actor).toEqual(TASKWRAITH_DESKTOP_HOST_ACTOR)
+  })
+
+  it('labels deletion receipt waits separately from persistence', async () => {
+    const f = observed((command) => [receiptFor(command, 'succeeded')])
+    await f.client.deleteRecord({ chatId: 'chat-1', expectedRevision: 3 })
+    expect(ends(f.events, 'client_receipt_wait')).toMatchObject([
+      { commandName: 'thread.record.delete' }
+    ])
+    expect(ends(f.events, 'persist')).toEqual([])
   })
 })

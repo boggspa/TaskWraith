@@ -125,10 +125,256 @@ export interface HostThreadRecordTransferPort {
   remove(input: { profilePath: string; transferId: string }): boolean
 }
 
+/**
+ * Process-local, opt-in diagnostics. These are client observations, never Host
+ * durable service spans or the full AppStore.awaitChatRecordPersisted barrier.
+ * Context contains opaque correlation IDs only (no prompt, record or profile).
+ * Starts without an end remain censored to the consumer; in particular the
+ * existing receipt deadline starts only after submission/recovery returns.
+ * No timer is added to bound a hung initial broker submission. A sink must not
+ * mutate application state; synchronous sink cost remains on the caller's loop.
+ */
+export interface HostPersistenceDiagnosticContext {
+  readonly requestId?: string
+  /** Links materialization to client enqueue/attempts without retaining every caller. */
+  readonly lineageId?: string
+  readonly runId?: string
+  readonly roundId?: string
+  readonly participantId?: string
+  readonly laneId?: string
+}
+
+export interface HostPersistenceObservationFields {
+  readonly chatId?: string
+  readonly context?: HostPersistenceDiagnosticContext
+  readonly parentOperationId?: string | null
+  readonly relatedOperationId?: string | null
+  readonly commandId?: string
+  readonly commandName?: HostCommand['name']
+  readonly expectedRevision?: number
+  readonly sequence?: number
+  readonly relatedSequence?: number
+  readonly reason?: 'blocked' | 'stale' | 'duplicate' | 'replaced' | 'staged' | 'deleting'
+  readonly attempt?: number
+  readonly count?: number
+  readonly bytes?: number
+  readonly requestedDelayMs?: number
+  readonly receiptStatus?: HostCommandReceipt['status']
+  readonly errorCode?: HostThreadRecordPersistErrorCode | 'unknown'
+}
+
+export interface HostPersistenceObservation extends HostPersistenceObservationFields {
+  readonly schemaVersion: 1
+  readonly process: 'main'
+  readonly component: 'persist-client' | 'compatibility'
+  readonly phase:
+    | 'persist'
+    | 'transfer_stage'
+    | 'submit'
+    | 'recovery_lookup'
+    | 'poll_delay'
+    | 'poll_lookup'
+    | 'client_receipt_wait'
+    | 'enqueue'
+    | 'superseded'
+    | 'retry'
+    | 'drain'
+    | 'stage'
+    | 'materialize'
+    | 'rebase'
+    | 'barrier'
+    | 'barrier_join'
+    | 'barrier_quiet'
+    | 'barrier_rejected'
+  readonly operationId: string | null
+  readonly outcome:
+    | 'started'
+    | 'succeeded'
+    | 'failed'
+    | 'pending'
+    | 'superseded'
+    | 'joined'
+    | 'skipped'
+  readonly durationMs: number | null
+  readonly timing: 'measured' | 'unavailable' | 'instant'
+}
+
+export interface HostPersistenceDiagnosticOptions {
+  /** Must be nonblocking and observational. Async rejection is consumed, never awaited. */
+  readonly observer?: (event: HostPersistenceObservation) => void | Promise<void>
+  /** Independent of business timeout/issuedAt clocks. Never read without an observer. */
+  readonly diagnosticNowMs?: () => number
+  /** Independent of transfer/command IDs. Failures produce null correlation, not new work. */
+  readonly diagnosticCreateId?: () => string
+}
+
+export interface HostPersistenceObservationOperation {
+  readonly operationId: string | null
+  finish(
+    outcome: HostPersistenceObservation['outcome'],
+    fields?: HostPersistenceObservationFields
+  ): void
+}
+
+/**
+ * Shared by the two existing client seams. Retains no event/ID lists. One small
+ * token per live operation, plus one entry per existing queued item, is sufficient
+ * for streamed joins/supersessions; the consumer owns bounded event retention.
+ * No helper is constructed when the sink is absent. IDs are observer-local, not
+ * authenticated run identity. Invalid clocks yield null durations, never zero.
+ */
+export class HostPersistenceDiagnostics {
+  private lastTime: number | null = null
+  private clockFaults = 0
+  private readonly clock: () => number
+  private readonly createId: () => string
+
+  constructor(
+    private readonly component: HostPersistenceObservation['component'],
+    private readonly options: HostPersistenceDiagnosticOptions
+  ) {
+    this.clock = options.diagnosticNowMs ?? (() => performance.now())
+    this.createId = options.diagnosticCreateId ?? randomUUID
+  }
+
+  private time(): number | null {
+    try {
+      const value = this.clock()
+      if (!Number.isFinite(value) || value < 0 || (this.lastTime !== null && value < this.lastTime))
+        throw new Error('Invalid diagnostic clock')
+      this.lastTime = value
+      return value
+    } catch {
+      this.clockFaults += 1
+      return null
+    }
+  }
+
+  private id(): string | null {
+    try {
+      const value = this.createId()
+      return typeof value === 'string' && value.trim() && value.length <= 256 ? value : null
+    } catch {
+      return null
+    }
+  }
+
+  context(
+    context?: HostPersistenceDiagnosticContext,
+    lineageId?: string | null
+  ): HostPersistenceDiagnosticContext {
+    const copied: Record<string, string> = {}
+    for (const key of [
+      'requestId',
+      'runId',
+      'roundId',
+      'participantId',
+      'laneId',
+      'lineageId'
+    ] as const) {
+      try {
+        const value = context?.[key]
+        if (typeof value === 'string' && value.trim() && value.length <= 256) copied[key] = value
+      } catch {
+        // Unreadable diagnostic metadata cannot affect persistence.
+      }
+    }
+    if (lineageId) copied.lineageId = lineageId
+    return Object.freeze(copied)
+  }
+
+  private fields(input: HostPersistenceObservationFields): HostPersistenceObservationFields {
+    const { context, ...fields } = input
+    // Call sites supply scalar fields only. Bound IDs without truncating them
+    // into another identity; missing IDs remain uncorrelated diagnostics.
+    for (const key of ['chatId', 'commandId', 'parentOperationId', 'relatedOperationId'] as const) {
+      const value = fields[key]
+      if (
+        value !== undefined &&
+        value !== null &&
+        (typeof value !== 'string' || !value.trim() || value.length > 512)
+      )
+        delete fields[key]
+    }
+    return context ? { ...fields, context: this.context(context) } : fields
+  }
+
+  private emit(event: HostPersistenceObservation): void {
+    try {
+      const result = this.options.observer?.(Object.freeze(event))
+      if (result) void Promise.resolve(result).catch(() => undefined)
+    } catch {
+      // Diagnostics never replace the original persistence outcome.
+    }
+  }
+
+  begin(
+    phase: HostPersistenceObservation['phase'],
+    fields: HostPersistenceObservationFields
+  ): HostPersistenceObservationOperation {
+    const operationId = this.id()
+    const safeFields = this.fields(fields)
+    const started = this.time()
+    const faults = this.clockFaults
+    const base = {
+      ...safeFields,
+      schemaVersion: 1 as const,
+      process: 'main' as const,
+      component: this.component,
+      phase,
+      operationId
+    }
+    this.emit({ ...base, outcome: 'started', durationMs: null, timing: 'instant' })
+    let finished = false
+    return {
+      operationId,
+      finish: (outcome, extra = {}) => {
+        if (finished) return
+        finished = true
+        const ended = this.time()
+        const valid = started !== null && ended !== null && faults === this.clockFaults
+        this.emit({
+          ...base,
+          ...this.fields(extra),
+          outcome,
+          durationMs: valid ? ended - started : null,
+          timing: valid ? 'measured' : 'unavailable'
+        })
+      }
+    }
+  }
+
+  event(
+    phase: HostPersistenceObservation['phase'],
+    outcome: HostPersistenceObservation['outcome'],
+    fields: HostPersistenceObservationFields
+  ): string | null {
+    const operationId = this.id()
+    this.emit({
+      ...this.fields(fields),
+      schemaVersion: 1,
+      process: 'main',
+      component: this.component,
+      phase,
+      operationId,
+      outcome,
+      durationMs: null,
+      timing: 'instant'
+    })
+    return operationId
+  }
+}
+
+/** Error messages, causes, receipts and provider contents never enter telemetry. */
+function diagnosticError(error: unknown): HostPersistenceObservationFields {
+  return { errorCode: error instanceof HostThreadRecordPersistError ? error.code : 'unknown' }
+}
+
 export interface HostThreadRecordPersistInput {
   readonly chatId: string
   readonly record: ChatRecord
   readonly expectedRevision: number
+  readonly diagnosticContext?: HostPersistenceDiagnosticContext
 }
 
 /** The seam the AppStore/orchestrator slice depends on. That slice owns its own files. */
@@ -167,7 +413,7 @@ export interface HostThreadRecordDeletePort {
   deleteRecord(input: HostThreadRecordDeleteInput): Promise<void>
 }
 
-export interface HostThreadRecordPersistClientOptions {
+export interface HostThreadRecordPersistClientOptions extends HostPersistenceDiagnosticOptions {
   readonly broker: HostThreadRecordPersistBrokerPort
   /** Host profile directory. On Desktop this is app userData (bootstrap.ts:146-148). */
   readonly profilePath: string
@@ -196,6 +442,8 @@ interface PersistLane {
   error: HostThreadRecordPersistError | null
   /** True while a delete owns this chat: queued and incoming persists are superseded. */
   superseded: boolean
+  /** Parallel, bounded by the existing pending queue; absent without a sink. */
+  observations?: Array<string | null>
 }
 
 const defaultTransferPort: HostThreadRecordTransferPort = {
@@ -286,6 +534,7 @@ export class HostThreadRecordPersistClient
   private readonly recoverConflict?: HostThreadRecordPersistClientOptions['recoverConflict']
   private readonly maxConflictRetries: number
   private readonly lanes = new Map<string, PersistLane>()
+  private readonly diagnostics?: HostPersistenceDiagnostics
 
   constructor(options: HostThreadRecordPersistClientOptions) {
     if (
@@ -298,6 +547,10 @@ export class HostThreadRecordPersistClient
     if (typeof options.profilePath !== 'string' || options.profilePath.length === 0) {
       throw new Error('HostThreadRecordPersistClient requires a profile path.')
     }
+    this.diagnostics =
+      typeof options.observer === 'function'
+        ? new HostPersistenceDiagnostics('persist-client', options)
+        : undefined
     this.broker = options.broker
     this.profilePath = options.profilePath
     this.transfer = options.transfer ?? defaultTransferPort
@@ -316,62 +569,99 @@ export class HostThreadRecordPersistClient
         : 3
   }
 
-  async persist(input: HostThreadRecordPersistInput): Promise<HostCommandReceipt> {
+  async persist(
+    input: HostThreadRecordPersistInput,
+    /** Internal queue lineage; never changes the wire command or input body. */
+    lineage?: Pick<HostPersistenceObservationFields, 'parentOperationId' | 'attempt'>
+  ): Promise<HostCommandReceipt> {
     this.assertInput(input)
-    const transferId = this.nextTransferId()
-
-    let descriptor: { transferId: string; sha256: string; byteLength: number }
+    const operation = this.diagnostics?.begin('persist', {
+      chatId: input.chatId,
+      context: input.diagnosticContext,
+      expectedRevision: input.expectedRevision,
+      ...lineage
+    })
     try {
-      descriptor = this.transfer.publish({
-        profilePath: this.profilePath,
-        transferId,
-        record: input.record
-      })
-    } catch (error) {
-      throw new HostThreadRecordPersistError(
-        'artifact_publish_failed',
-        'The chat record could not be staged for the Host.',
-        { cause: error }
-      )
-    }
-
-    const commandId = this.createId()
-    const command: HostCommand = {
-      type: 'host.command',
-      protocolVersion: HOST_PROTOCOL_VERSION,
-      commandId,
-      idempotencyKey: `thread:record-persist:${commandId}`,
-      actor: { ...this.actor },
-      name: 'thread.record.persist',
-      target: { threadId: input.chatId },
-      // The digest comes from publish, never recomputed here: one serialization
-      // point makes publisher/consumer drift unrepresentable.
-      arguments: {
-        transferId: descriptor.transferId,
-        sha256: descriptor.sha256,
-        byteLength: descriptor.byteLength,
+      const transferId = this.nextTransferId()
+      const staging = this.diagnostics?.begin('transfer_stage', {
+        chatId: input.chatId,
+        parentOperationId: operation?.operationId,
+        context: input.diagnosticContext,
         expectedRevision: input.expectedRevision
-      },
-      issuedAt: new Date(this.nowMs()).toISOString()
-    }
+      })
 
-    try {
-      const receipt = await this.execute(command)
+      let descriptor: { transferId: string; sha256: string; byteLength: number }
       try {
-        this.onPersisted?.(input, receipt)
-      } catch {
-        // The Host write is already durable. Local rebase bookkeeping must
-        // never turn that success into a failed receipt or a duplicate retry.
+        descriptor = this.transfer.publish({
+          profilePath: this.profilePath,
+          transferId,
+          record: input.record
+        })
+        staging?.finish('succeeded', { bytes: descriptor.byteLength })
+      } catch (error) {
+        staging?.finish('failed', { errorCode: 'artifact_publish_failed' })
+        throw new HostThreadRecordPersistError(
+          'artifact_publish_failed',
+          'The chat record could not be staged for the Host.',
+          { cause: error }
+        )
       }
-      return receipt
+
+      const commandId = this.createId()
+      const command: HostCommand = {
+        type: 'host.command',
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        commandId,
+        idempotencyKey: `thread:record-persist:${commandId}`,
+        actor: { ...this.actor },
+        name: 'thread.record.persist',
+        target: { threadId: input.chatId },
+        // The digest comes from publish, never recomputed here: one serialization
+        // point makes publisher/consumer drift unrepresentable.
+        arguments: {
+          transferId: descriptor.transferId,
+          sha256: descriptor.sha256,
+          byteLength: descriptor.byteLength,
+          expectedRevision: input.expectedRevision
+        },
+        issuedAt: new Date(this.nowMs()).toISOString()
+      }
+
+      try {
+        const receipt = await this.execute(
+          command,
+          operation,
+          this.diagnostics ? input.diagnosticContext : undefined
+        )
+        try {
+          this.onPersisted?.(input, receipt)
+        } catch {
+          // The Host write is already durable. Local rebase bookkeeping must
+          // never turn that success into a failed receipt or a duplicate retry.
+        }
+        operation?.finish('succeeded', {
+          commandId,
+          commandName: command.name,
+          receiptStatus: receipt.status
+        })
+        return receipt
+      } catch (error) {
+        // The Host removes the artifact only when it actually consumes it, so a
+        // command that never landed would otherwise leak an owner-only file.
+        try {
+          this.transfer.remove({ profilePath: this.profilePath, transferId: descriptor.transferId })
+        } catch {
+          // Best-effort: the persist failure is the reportable fault.
+        }
+        operation?.finish('failed', {
+          commandId,
+          commandName: command.name,
+          ...diagnosticError(error)
+        })
+        throw error
+      }
     } catch (error) {
-      // The Host removes the artifact only when it actually consumes it, so a
-      // command that never landed would otherwise leak an owner-only file.
-      try {
-        this.transfer.remove({ profilePath: this.profilePath, transferId: descriptor.transferId })
-      } catch {
-        // Best-effort: the persist failure is the reportable fault.
-      }
+      operation?.finish('failed', diagnosticError(error))
       throw error
     }
   }
@@ -396,14 +686,38 @@ export class HostThreadRecordPersistClient
     }
     // A delete owns this chat: the record is going away, so a save enqueued
     // before the delete settles must never be submitted.
-    if (lane.superseded) return
+    if (lane.superseded) {
+      this.diagnostics?.event('superseded', 'superseded', {
+        chatId: input.chatId,
+        context: input.diagnosticContext,
+        count: 1
+      })
+      return
+    }
     // A revision-bearing snapshot may replace only another snapshot based on
     // the SAME Host revision. Dropping a different-revision predecessor leaves
     // a CAS gap: the replacement expects a revision that was never written.
     const tail = lane.queued[lane.queued.length - 1]
-    if (tail?.expectedRevision === input.expectedRevision)
+    const queuedId = this.diagnostics?.event('enqueue', 'pending', {
+      chatId: input.chatId,
+      context: input.diagnosticContext,
+      expectedRevision: input.expectedRevision
+    })
+    if (tail?.expectedRevision === input.expectedRevision) {
       lane.queued[lane.queued.length - 1] = input
-    else lane.queued.push(input)
+      if (lane.observations) {
+        this.diagnostics?.event('superseded', 'superseded', {
+          chatId: input.chatId,
+          relatedOperationId: lane.observations.at(-1),
+          parentOperationId: queuedId,
+          count: 1
+        })
+        lane.observations[lane.observations.length - 1] = queuedId ?? null
+      }
+    } else {
+      lane.queued.push(input)
+      lane.observations?.push(queuedId ?? null)
+    }
     if (!lane.running) {
       lane.running = true
       lane.chain = this.runLane(input.chatId)
@@ -412,13 +726,21 @@ export class HostThreadRecordPersistClient
 
   async drain(chatId: string): Promise<void> {
     const lane = this.lanes.get(chatId)
-    if (!lane) return
-    while (lane.running || lane.queued.length > 0) {
-      await lane.chain
+    const observation = this.diagnostics?.begin('drain', { chatId, count: this.pending(chatId) })
+    try {
+      if (!lane) return
+      while (lane.running || lane.queued.length > 0) {
+        await lane.chain
+      }
+      const error = lane.error
+      lane.error = null
+      if (error) throw error
+    } catch (error) {
+      observation?.finish('failed', diagnosticError(error))
+      throw error
+    } finally {
+      observation?.finish('succeeded')
     }
-    const error = lane.error
-    lane.error = null
-    if (error) throw error
   }
 
   async drainAll(): Promise<void> {
@@ -459,12 +781,14 @@ export class HostThreadRecordPersistClient
   async deleteRecord(input: HostThreadRecordDeleteInput): Promise<void> {
     this.assertDeleteInput(input)
     const lane = this.laneFor(input.chatId)
+    this.dropQueuedObservations(input.chatId, lane)
     lane.queued = []
     lane.superseded = true
     try {
       while (lane.running) {
         await lane.chain
         // Anything that slipped in while awaiting is superseded by this delete.
+        this.dropQueuedObservations(input.chatId, lane)
         lane.queued = []
       }
       // A superseded persist's failure is moot once the record is being removed.
@@ -514,7 +838,8 @@ export class HostThreadRecordPersistClient
       running: false,
       chain: Promise.resolve(),
       error: null,
-      superseded: false
+      superseded: false,
+      ...(this.diagnostics ? { observations: [] } : {})
     }
     this.lanes.set(chatId, created)
     return created
@@ -525,10 +850,14 @@ export class HostThreadRecordPersistClient
     try {
       while (lane.queued.length > 0) {
         let next = lane.queued.shift()!
+        const parentOperationId = lane.observations?.shift()
         let conflictAttempt = 0
         for (;;) {
           try {
-            await this.persist(next)
+            await this.persist(
+              next,
+              this.diagnostics ? { parentOperationId, attempt: conflictAttempt } : undefined
+            )
             break
           } catch (error) {
             if (
@@ -541,7 +870,14 @@ export class HostThreadRecordPersistClient
               // chain. AppStore's accumulated intent already subsumes them;
               // discard those stale CAS entries and retry the one rebased
               // snapshot returned by the authoritative callback.
+              this.dropQueuedObservations(chatId, lane, parentOperationId)
               lane.queued = []
+              this.diagnostics?.event('retry', 'pending', {
+                chatId,
+                parentOperationId,
+                attempt: conflictAttempt + 1,
+                context: next.diagnosticContext
+              })
               const recovered = await this.recoverConflict(next, error, conflictAttempt)
               conflictAttempt += 1
               if (recovered) {
@@ -552,7 +888,10 @@ export class HostThreadRecordPersistClient
                     'Conflict recovery changed the target chat.'
                   )
                 }
-                next = recovered
+                next =
+                  !recovered.diagnosticContext && next.diagnosticContext
+                    ? { ...recovered, diagnosticContext: next.diagnosticContext }
+                    : recovered
                 continue
               }
             }
@@ -569,10 +908,28 @@ export class HostThreadRecordPersistClient
               cause: error
             }))
       // A failed entry must not strand later work in a permanently queued state.
+      this.dropQueuedObservations(chatId, lane)
       lane.queued = []
     } finally {
       lane.running = false
     }
+  }
+
+  private dropQueuedObservations(
+    chatId: string,
+    lane: PersistLane,
+    parentOperationId?: string | null
+  ): void {
+    if (!lane.observations) return
+    for (const relatedOperationId of lane.observations) {
+      this.diagnostics?.event('superseded', 'superseded', {
+        chatId,
+        parentOperationId,
+        relatedOperationId,
+        count: 1
+      })
+    }
+    lane.observations = []
   }
 
   private nextTransferId(): string {
@@ -601,45 +958,108 @@ export class HostThreadRecordPersistClient
     }
   }
 
-  private async execute(command: HostCommand): Promise<HostCommandReceipt> {
-    const submitted = await this.broker.submitCommand(command)
-    let receipt: HostCommandReceipt
-    if (submitted.ok) {
-      receipt = submitted.receipt
-    } else {
-      const recovered = await this.broker.lookupReceipt(command.commandId)
-      if (!recovered.ok) {
-        throw new HostThreadRecordPersistError(
-          'host_unavailable',
-          submitted.error.slice(0, 200) || 'The Host did not accept the persist command.'
-        )
+  private async execute(
+    command: HostCommand,
+    parent?: HostPersistenceObservationOperation,
+    context?: HostPersistenceDiagnosticContext
+  ): Promise<HostCommandReceipt> {
+    const fields = this.diagnostics
+      ? {
+          chatId: command.target?.threadId,
+          commandId: command.commandId,
+          commandName: command.name,
+          parentOperationId: parent?.operationId,
+          context
+        }
+      : undefined
+    const observation = fields && this.diagnostics?.begin('client_receipt_wait', fields)
+    let phase: HostPersistenceObservationOperation | undefined
+    try {
+      phase = fields
+        ? this.diagnostics?.begin('submit', {
+            ...fields,
+            parentOperationId: observation?.operationId
+          })
+        : undefined
+      const submitted = await this.broker.submitCommand(command)
+      phase?.finish(submitted.ok ? 'succeeded' : 'failed')
+      phase = undefined
+      let receipt: HostCommandReceipt
+      if (submitted.ok) {
+        receipt = submitted.receipt
+      } else {
+        phase = fields
+          ? this.diagnostics?.begin('recovery_lookup', {
+              ...fields,
+              parentOperationId: observation?.operationId
+            })
+          : undefined
+        const recovered = await this.broker.lookupReceipt(command.commandId)
+        phase?.finish(recovered.ok ? 'succeeded' : 'failed')
+        phase = undefined
+        if (!recovered.ok) {
+          throw new HostThreadRecordPersistError(
+            'host_unavailable',
+            submitted.error.slice(0, 200) || 'The Host did not accept the persist command.'
+          )
+        }
+        receipt = recovered.receipt
       }
-      receipt = recovered.receipt
-    }
 
-    let settled = this.settle(command, receipt)
-    if (settled) return settled
-    const deadline = this.nowMs() + this.timeoutMs
-    while (this.nowMs() < deadline) {
-      await this.wait(this.pollIntervalMs)
-      const lookup = await this.broker.lookupReceipt(command.commandId)
-      if (!lookup.ok) {
-        throw new HostThreadRecordPersistError(
-          'host_unavailable',
-          lookup.error.slice(0, 200) || 'The Host receipt could not be read.'
-        )
+      let settled = this.settle(command, receipt, observation)
+      if (settled) {
+        observation?.finish('succeeded', { receiptStatus: settled.status })
+        return settled
       }
-      settled = this.settle(command, lookup.receipt)
-      if (settled) return settled
+      const deadline = this.nowMs() + this.timeoutMs
+      while (this.nowMs() < deadline) {
+        phase = fields
+          ? this.diagnostics?.begin('poll_delay', {
+              ...fields,
+              parentOperationId: observation?.operationId,
+              requestedDelayMs: this.pollIntervalMs
+            })
+          : undefined
+        await this.wait(this.pollIntervalMs)
+        phase?.finish('succeeded')
+        phase = fields
+          ? this.diagnostics?.begin('poll_lookup', {
+              ...fields,
+              parentOperationId: observation?.operationId
+            })
+          : undefined
+        const lookup = await this.broker.lookupReceipt(command.commandId)
+        phase?.finish(lookup.ok ? 'succeeded' : 'failed')
+        phase = undefined
+        if (!lookup.ok) {
+          throw new HostThreadRecordPersistError(
+            'host_unavailable',
+            lookup.error.slice(0, 200) || 'The Host receipt could not be read.'
+          )
+        }
+        settled = this.settle(command, lookup.receipt, observation)
+        if (settled) {
+          observation?.finish('succeeded', { receiptStatus: settled.status })
+          return settled
+        }
+      }
+      throw new HostThreadRecordPersistError(
+        'host_timeout',
+        'Host record persistence did not settle before the timeout.'
+      )
+    } catch (error) {
+      phase?.finish('failed', diagnosticError(error))
+      observation?.finish('failed', diagnosticError(error))
+      throw error
     }
-    throw new HostThreadRecordPersistError(
-      'host_timeout',
-      'Host record persistence did not settle before the timeout.'
-    )
   }
 
   /** Returns the receipt once terminal, null while pending, throws on rejection. */
-  private settle(command: HostCommand, receipt: HostCommandReceipt): HostCommandReceipt | null {
+  private settle(
+    command: HostCommand,
+    receipt: HostCommandReceipt,
+    observation?: HostPersistenceObservationOperation
+  ): HostCommandReceipt | null {
     if (!receiptMatches(command, receipt, this.actor)) {
       throw new HostThreadRecordPersistError(
         'invalid_host_receipt',
@@ -650,6 +1070,7 @@ export class HostThreadRecordPersistClient
     if (receipt.status === 'pending') return null
     if (receipt.status === 'succeeded') return receipt
     const classified = classifyHostPersistRejection(receipt)
+    observation?.finish('failed', { receiptStatus: receipt.status, errorCode: classified.code })
     throw new HostThreadRecordPersistError(
       classified.code,
       receipt.errorMessage ?? hostPersistRejectionMessage(receipt, classified),
@@ -658,12 +1079,14 @@ export class HostThreadRecordPersistClient
   }
 }
 
-export function createDesktopHostThreadRecordPersistClient(input: {
-  userDataPath: string
-  appVersion: string
-  onPersisted?: HostThreadRecordPersistClientOptions['onPersisted']
-  recoverConflict?: HostThreadRecordPersistClientOptions['recoverConflict']
-}): HostThreadRecordPersistClient {
+export function createDesktopHostThreadRecordPersistClient(
+  input: HostPersistenceDiagnosticOptions & {
+    userDataPath: string
+    appVersion: string
+    onPersisted?: HostThreadRecordPersistClientOptions['onPersisted']
+    recoverConflict?: HostThreadRecordPersistClientOptions['recoverConflict']
+  }
+): HostThreadRecordPersistClient {
   const broker = createHostProjectionBroker({
     userDataPath: input.userDataPath,
     appVersion: input.appVersion,
@@ -681,6 +1104,9 @@ export function createDesktopHostThreadRecordPersistClient(input: {
     broker,
     profilePath: input.userDataPath,
     actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR },
+    observer: input.observer,
+    diagnosticNowMs: input.diagnosticNowMs,
+    diagnosticCreateId: input.diagnosticCreateId,
     ...(input.onPersisted ? { onPersisted: input.onPersisted } : {}),
     ...(input.recoverConflict ? { recoverConflict: input.recoverConflict } : {})
   })
