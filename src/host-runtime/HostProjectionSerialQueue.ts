@@ -13,8 +13,11 @@
  * span on resource `host_chain` (chatId/laneId carry the per-enqueue label
  * until the claimed call sites can pass real identity — M2/M4 work), and
  * the observer additionally receives the run duration and outcome.
- * Instrumentation failures are swallowed: a broken sink must never break
- * the projection queue, and FIFO order and rejection propagation are
+ * Instrumentation failures are swallowed: neither a broken sink nor a
+ * broken clock may break the projection queue. A `now` that throws or
+ * returns a non-finite reading drops that task's timing and nothing else —
+ * the operation still runs, and its own success value or rejection still
+ * propagates unchanged. FIFO order and rejection propagation are
  * byte-for-byte the original semantics.
  */
 import type { WorkSpanRecordInput } from '../host-shared/perf/WorkSpanRecorder'
@@ -67,13 +70,36 @@ export function createHostProjectionSerialQueue(
   }
   const now = options.now ?? (() => Date.now())
 
+  /**
+   * Guarded clock read. A caller-supplied `now` is foreign code on the same
+   * stack as the task body: an exception from it must never prevent the
+   * operation from running, and must never replace the operation's real
+   * success value or rejection. A throw or a non-finite/negative reading
+   * degrades to `null`, which drops timing for that one task only.
+   */
+  const readClock = (): number | null => {
+    let value: unknown
+    try {
+      value = now()
+    } catch {
+      return null
+    }
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+  }
+
   const emit = (
     label: string,
-    queuedAt: number,
-    startedAt: number,
-    finishedAt: number,
+    queuedAt: number | null,
+    startedAt: number | null,
+    finishedAt: number | null,
     ok: boolean
   ): void => {
+    if (queuedAt === null || startedAt === null || finishedAt === null) {
+      // Degraded clock: nothing attributable to report, so report nothing
+      // rather than publish a fabricated wait. The task's own outcome, which
+      // has already been decided by this point, is untouched.
+      return
+    }
     const timing: HostProjectionQueueTaskTiming = {
       label,
       queuedAt,
@@ -108,9 +134,9 @@ export function createHostProjectionSerialQueue(
 
   return <T>(operation: () => Promise<T>, label?: string): Promise<T> => {
     const taskLabel = typeof label === 'string' && label.length > 0 ? label : UNLABELED
-    const queuedAt = now()
+    const queuedAt = readClock()
     const run = async (): Promise<T> => {
-      const startedAt = now()
+      const startedAt = readClock()
       let ok = true
       try {
         return await operation()
@@ -118,7 +144,9 @@ export function createHostProjectionSerialQueue(
         ok = false
         throw error
       } finally {
-        emit(taskLabel, queuedAt, startedAt, now(), ok)
+        // readClock cannot throw, so this finally can never overwrite the
+        // pending completion or rejection that the try/catch just settled.
+        emit(taskLabel, queuedAt, startedAt, readClock(), ok)
       }
     }
     const result = tail.then(run)

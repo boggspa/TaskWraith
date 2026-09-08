@@ -173,4 +173,98 @@ describe('createHostProjectionSerialQueue', () => {
 
     await expect(runner(async () => 'still-works', 'x')).resolves.toBe('still-works')
   })
+
+  /**
+   * Clock containment. `now` is caller-supplied foreign code that runs on the
+   * task's own stack — at enqueue, at start, and inside the finally that
+   * settles the task. An unguarded read there can stop the operation from
+   * running at all, or overwrite the operation's real outcome with a timing
+   * error. These pin that it cannot.
+   */
+  describe('a broken clock is contained like any other instrumentation failure', () => {
+    /** Throws on the nth (1-based) read, ticks normally otherwise. */
+    function clockThrowingOnRead(target: number): () => number {
+      let reads = 0
+      let at = 0
+      return () => {
+        reads += 1
+        if (reads === target) {
+          throw new Error(`clock exploded on read ${target}`)
+        }
+        return (at += 10)
+      }
+    }
+
+    it('still runs the operation when the enqueue clock read throws', async () => {
+      const spans: WorkSpanRecordInput[] = []
+      const timings: HostProjectionQueueTaskTiming[] = []
+      const runner = createHostProjectionSerialQueue({
+        spans: { record: (span) => spans.push(span) },
+        observer: (timing) => timings.push(timing),
+        now: clockThrowingOnRead(1)
+      })
+
+      let ran = false
+      await expect(
+        runner(async () => {
+          ran = true
+          return 'ran-anyway'
+        }, 'enqueue-throw')
+      ).resolves.toBe('ran-anyway')
+      expect(ran).toBe(true)
+      // No queuedAt means no attributable wait, so nothing is published.
+      expect(spans).toEqual([])
+      expect(timings).toEqual([])
+    })
+
+    it('keeps the operation result when the settling clock read throws', async () => {
+      const spans: WorkSpanRecordInput[] = []
+      const runner = createHostProjectionSerialQueue({
+        spans: { record: (span) => spans.push(span) },
+        now: clockThrowingOnRead(3)
+      })
+
+      await expect(runner(async () => 'the-real-value', 'finally-throw')).resolves.toBe(
+        'the-real-value'
+      )
+      expect(spans).toEqual([])
+    })
+
+    it('keeps the original rejection when the settling clock read throws', async () => {
+      const original = new Error('the real projection failure')
+      const runner = createHostProjectionSerialQueue({
+        observer: () => undefined,
+        now: clockThrowingOnRead(3)
+      })
+
+      // The finally must not substitute the clock error for this rejection:
+      // a caller diagnosing a projection failure would be handed the wrong one.
+      await expect(
+        runner(async () => {
+          throw original
+        }, 'rejecting')
+      ).rejects.toBe(original)
+    })
+
+    it('drops timing for a non-finite reading and recovers on the next task', async () => {
+      const timings: HostProjectionQueueTaskTiming[] = []
+      let reads = 0
+      const runner = createHostProjectionSerialQueue({
+        observer: (timing) => timings.push(timing),
+        now: () => {
+          reads += 1
+          // First task's start read is NaN; every other read is healthy.
+          return reads === 2 ? Number.NaN : reads * 10
+        }
+      })
+
+      await expect(runner(async () => 'degraded', 'first')).resolves.toBe('degraded')
+      expect(timings).toEqual([])
+
+      await expect(runner(async () => 'healthy', 'second')).resolves.toBe('healthy')
+      expect(timings).toHaveLength(1)
+      expect(timings[0]).toMatchObject({ label: 'second', ok: true })
+      expect(Number.isFinite(timings[0].waitMs)).toBe(true)
+    })
+  })
 })
