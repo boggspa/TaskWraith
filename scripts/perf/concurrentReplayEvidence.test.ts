@@ -465,6 +465,244 @@ describe('deadlines retain unresolved effect ownership', () => {
   })
 })
 
+describe('measurement-clock deadline wakeups', () => {
+  it('re-arms a timer leading the measurement clock by 0.4ms and preserves strict elapsed coverage', async () => {
+    vi.useFakeTimers()
+    const origin = Date.now()
+    let returned = false
+    const pending = start({
+      nowMs: () => Math.max(0, Date.now() - origin - 0.4)
+    }).then((result) => {
+      returned = true
+      return result
+    })
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(returned).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(returned).toBe(false) // the second repetition has only just begun
+    await vi.runAllTimersAsync()
+    const result = await pending
+    expect(
+      result.evidenceEligible,
+      JSON.stringify({
+        errors: result.evidenceErrors,
+        windows: result.run.evidence.windows
+      })
+    ).toBe(true)
+    expect(result.run.evidence.windows).toHaveLength(3)
+    expect(result.run.evidence.windows[0].elapsedMs).toBe(120_000.6)
+    for (const window of result.run.evidence.windows) {
+      expect(window.reason).toBe('deadline')
+      expect(window.outcome).toBe('complete')
+      expect(window.elapsedMs).toBe(window.endedAtMs - window.startedAtMs)
+      expect(window.elapsedMs).toBeGreaterThanOrEqual(120_000)
+    }
+    const { beside } = await validPair()
+    expect(pairRuns(result.run, beside.run).ok).toBe(true)
+  })
+
+  it('ignores a superseded wakeup without extra clock reads or premature fencing', async () => {
+    vi.useFakeTimers()
+    const origin = Date.now()
+    const callbacks: Array<() => void> = []
+    const delays: number[] = []
+    const clock = vi.fn(() => Math.max(0, Date.now() - origin - 0.4))
+    let returned = false
+    const pending = start({
+      windowMs: 10,
+      repetitions: 1,
+      nowMs: clock,
+      timers: {
+        setTimeout: (callback: () => void, delay: number) => {
+          callbacks.push(callback)
+          delays.push(delay)
+          return setTimeout(callback, delay)
+        },
+        clearTimeout
+      }
+    }).then((result) => {
+      returned = true
+      return result
+    })
+    await vi.advanceTimersByTimeAsync(10)
+    expect(delays).toEqual([10, 1])
+    expect(returned).toBe(false)
+    const reads = clock.mock.calls.length
+    callbacks[0]()
+    expect(clock).toHaveBeenCalledTimes(reads)
+    expect(delays).toEqual([10, 1])
+    expect(returned).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    const result = await pending
+    expect(result.ok).toBe(true)
+    expect(result.run.evidence.windows[0].elapsedMs).toBe(10.6)
+    const snapshot = JSON.stringify(result)
+    callbacks[1]()
+    expect(JSON.stringify(result)).toBe(snapshot)
+  })
+
+  it('returns failed evidence if re-arming throws while preserving unresolved ownership', async () => {
+    vi.useFakeTimers()
+    const origin = Date.now()
+    const adapter = api()
+    const late = deferred<{ persistenceRevision: number }>()
+    adapter.saveChat.mockImplementationOnce(() => late.promise)
+    let arms = 0
+    const pending = start({
+      api: adapter,
+      windowMs: 10,
+      nowMs: () => Math.max(0, Date.now() - origin - 0.4),
+      timers: {
+        setTimeout: (callback: () => void, delay: number) => {
+          if (++arms === 2) throw new Error('re-arm failed')
+          return setTimeout(callback, delay)
+        },
+        clearTimeout
+      }
+    })
+    await vi.advanceTimersByTimeAsync(10)
+    const result = await pending
+    expect(result.run.failed).toBe(true)
+    expect(result.run.evidence.windows).toHaveLength(1)
+    expect(result.run.evidence.windows[0].reason).toBe('deadline_timer_failed')
+    expect(result.run.evidence.windows[0].lanes[0].pendingEvents).toBe(1)
+    expect(adapter.saveChat).toHaveBeenCalledTimes(1)
+    await expect(start({ api: adapter })).rejects.toThrow('still owned')
+    late.resolve({ persistenceRevision: 2 })
+    await vi.advanceTimersByTimeAsync(0)
+    expect((await measured({ api: adapter })).evidenceEligible).toBe(true)
+  })
+
+  it.each(['stopped', 'regressed', 'throwing'])(
+    'fences a %s clock after an early wake and retains its pending effect',
+    async (mode) => {
+      vi.useFakeTimers()
+      const origin = Date.now()
+      const adapter = api()
+      const late = deferred<{ persistenceRevision: number }>()
+      adapter.saveChat.mockImplementationOnce(() => late.promise)
+      const pending = start({
+        api: adapter,
+        windowMs: 10,
+        nowMs: () => {
+          const elapsed = Date.now() - origin
+          if (elapsed < 10) return 0
+          if (elapsed === 10) return 9.6
+          if (mode === 'throwing') throw new Error('clock failed')
+          return mode === 'regressed' ? 9.5 : 9.6
+        }
+      })
+      await vi.advanceTimersByTimeAsync(11)
+      const result = await pending
+      expect(result.run.failed).toBe(true)
+      expect(result.evidenceEligible).toBe(false)
+      expect(result.run.evidence.windows).toHaveLength(1)
+      expect(result.run.evidence.windows[0].reason).toBe(
+        mode === 'stopped' ? 'deadline_clock_unusable' : 'clock_invalid'
+      )
+      expect(result.run.evidence.windows[0].lanes[0].pendingEvents).toBe(1)
+      await expect(start({ api: adapter })).rejects.toThrow('still owned')
+      late.resolve({ persistenceRevision: 2 })
+      await vi.advanceTimersByTimeAsync(0)
+    }
+  )
+
+  it('bounds positive-delay retries even when a clock advances too slowly to reach the fence', async () => {
+    vi.useFakeTimers()
+    const origin = Date.now()
+    const delays: number[] = []
+    const result = await measured({
+      windowMs: 100,
+      nowMs: () => (Date.now() - origin) / 1000,
+      timers: {
+        setTimeout: (callback: () => void, delay: number) => {
+          delays.push(delay)
+          return setTimeout(callback, delay)
+        },
+        clearTimeout
+      }
+    })
+    expect(result.run.failed).toBe(true)
+    expect(result.run.evidence.windows).toHaveLength(1)
+    expect(result.run.evidence.windows[0].reason).toBe('deadline_clock_unusable')
+    expect(delays).toHaveLength(9)
+    expect(delays[0]).toBe(100)
+    expect(delays.slice(1).every((delay) => delay >= 1 && delay <= 10)).toBe(true)
+    expect(Date.now() - origin).toBe(180)
+    expect(result.run.evidence.windows[0].elapsedMs).toBe(0.18)
+    expect(result.evidenceEligible).toBe(false)
+  })
+
+  it('ignores a retired callback after clear failure and never disturbs a newer chat owner', async () => {
+    vi.useFakeTimers()
+    const adapter = api()
+    const retiredCallbacks: Array<() => void> = []
+    const oldClock = vi.fn(() => Date.now())
+    await expect(
+      start({
+        api: adapter,
+        eventTimeoutMs: 10,
+        nowMs: oldClock,
+        timers: {
+          setTimeout: (callback: () => void, delay: number) => {
+            if (retiredCallbacks.length) throw new Error('event timer arm failed')
+            retiredCallbacks.push(callback)
+            return setTimeout(callback, delay)
+          },
+          clearTimeout: () => {
+            throw new Error('clear failed')
+          }
+        }
+      })
+    ).rejects.toThrow('event timer arm failed')
+    expect(adapter.saveChat).not.toHaveBeenCalled()
+    const reads = oldClock.mock.calls.length
+    const late = deferred<{ persistenceRevision: number }>()
+    adapter.saveChat.mockImplementationOnce(() => late.promise)
+    const newer = start({ api: adapter, windowMs: 5 })
+    await vi.advanceTimersByTimeAsync(0)
+    retiredCallbacks[0]()
+    expect(oldClock).toHaveBeenCalledTimes(reads)
+    await expect(start({ api: adapter })).rejects.toThrow('still owned')
+    await vi.advanceTimersByTimeAsync(5)
+    const result = await newer
+    expect(result.run.evidence.windows).toHaveLength(1)
+    expect(result.run.incomplete).toBe(true)
+    expect(adapter.saveChat).toHaveBeenCalledTimes(1)
+    retiredCallbacks[0]()
+    expect(oldClock).toHaveBeenCalledTimes(reads)
+    await expect(start({ api: adapter })).rejects.toThrow('still owned')
+    late.resolve({ persistenceRevision: 2 })
+    await vi.advanceTimersByTimeAsync(0)
+    expect((await measured({ api: adapter })).evidenceEligible).toBe(true)
+    expect(oldClock).toHaveBeenCalledTimes(reads)
+  })
+
+  it('keeps per-event timeout independent when it expires during a deadline re-arm', async () => {
+    vi.useFakeTimers()
+    const origin = Date.now()
+    const adapter = api()
+    const late = deferred<{ persistenceRevision: number }>()
+    adapter.saveChat.mockImplementationOnce(() => late.promise)
+    const pending = start({
+      api: adapter,
+      windowMs: 10,
+      eventTimeoutMs: 10.5,
+      nowMs: () => Math.max(0, Date.now() - origin - 0.4)
+    })
+    await vi.advanceTimersByTimeAsync(11)
+    const result = await pending
+    expect(result.run.evidence.windows[0].reason).toBe('event_timeout')
+    expect(result.run.evidence.windows[0].elapsedMs).toBe(10.6)
+    expect(result.run.censored).toBe(true)
+    expect(result.evidenceEligible).toBe(false)
+    expect(result.run.evidence.windows).toHaveLength(1)
+    await expect(start({ api: adapter })).rejects.toThrow('still owned')
+    late.resolve({ persistenceRevision: 2 })
+    await vi.advanceTimersByTimeAsync(0)
+  })
+})
+
 describe('replay input boundaries', () => {
   it('does not strand phantom ownership when an event timer cannot be armed', async () => {
     vi.useFakeTimers()

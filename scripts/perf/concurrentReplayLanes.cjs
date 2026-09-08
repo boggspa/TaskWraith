@@ -28,6 +28,7 @@
  * (cancel/approval/answer/seat toggle). A cell run through this driver alone
  * is NOT a measured Appendix A cell. Qualified pairs require report schema v2
  * and versioned per-window coverage. Old descriptors remain diagnostic data.
+ * A timer cannot preempt synchronously blocking adapter or event-loop work.
  */
 
 const { applyReplayEvent } = require('./replayDriver.cjs')
@@ -246,9 +247,56 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
   }
   const startedAtMs = readTime()
   const deadlineAtMs = startedAtMs === null ? null : startedAtMs + windowMs
+  // Addition and subtraction can round differently for fractional readings.
+  // Require the same actual elapsed calculation the report validator checks.
+  const reachedDeadline = (at) => at >= deadlineAtMs && at - startedAtMs >= windowMs
   const pending = new Set()
   const allEntries = []
-  const deadline = timers.setTimeout(() => stop('deadline'), Math.ceil(windowMs))
+  // Timers wake on libuv's millisecond clock, which can lead this clock. Only
+  // a validated measurement-clock reading may establish the actual deadline.
+  // After the initial wake, at most eight positive-delay retries (<=10ms each)
+  // permit small skew without hanging on a stopped or unusably slow clock.
+  let deadline = null
+  let deadlineActive = true
+  let deadlineArm = 0
+  let deadlineRearms = 0
+  let previousWakeAtMs = startedAtMs
+  const armDeadline = (delayMs) => {
+    if (!deadlineActive || fenceReason !== null) return
+    const arm = ++deadlineArm
+    try {
+      const handle = timers.setTimeout(
+        () => {
+          if (!deadlineActive || fenceReason !== null || arm !== deadlineArm) return
+          deadline = null
+          const at = readTime()
+          if (at === null) return
+          if (reachedDeadline(at)) {
+            stop('deadline')
+            return
+          }
+          if (at <= previousWakeAtMs || deadlineRearms >= 8) {
+            clockFailed = true
+            stop('deadline_clock_unusable')
+            return
+          }
+          previousWakeAtMs = at
+          deadlineRearms += 1
+          const remainingMs = Math.max(deadlineAtMs - at, windowMs - (at - startedAtMs))
+          armDeadline(Math.min(10, remainingMs))
+        },
+        Math.max(1, Math.ceil(delayMs))
+      )
+      // Also contain a misbehaving injected timer that invokes synchronously:
+      // never overwrite a newer arm's handle with the retired arm's handle.
+      if (deadlineActive && fenceReason === null && arm === deadlineArm) deadline = handle
+      else clearTimer(timers, handle)
+    } catch {
+      clockFailed = true
+      stop('deadline_timer_failed')
+    }
+  }
+  armDeadline(windowMs)
 
   const guardApi = (state) => {
     const adapter = {}
@@ -287,7 +335,7 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
 
   const launch = (state) => {
     const at = readTime()
-    if (at === null || at >= deadlineAtMs) {
+    if (at === null || reachedDeadline(at)) {
       stop('deadline')
       return
     }
@@ -367,7 +415,7 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     while (fenceReason === null) {
       const at = readTime()
       if (at === null) break
-      if (at >= deadlineAtMs) {
+      if (reachedDeadline(at)) {
         stop('deadline')
         break
       }
@@ -388,6 +436,8 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     }
   } finally {
     accepting = false
+    deadlineActive = false
+    deadlineArm += 1
     clearTimer(timers, deadline)
     for (const entry of allEntries) clearTimer(timers, entry.timeout)
   }
