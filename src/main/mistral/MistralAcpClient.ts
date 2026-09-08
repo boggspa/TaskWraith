@@ -538,6 +538,13 @@ function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHand
     string,
     { request: AcpPermissionRequest; denial: MistralPermissionDenial; recorded?: boolean }
   >()
+  // The core holds the original request through its write callback. A WeakMap
+  // lets a successful reply be audited even if its prompt has since settled,
+  // without retaining stale requests or depending on a provider tool result.
+  const replyRefusals = new WeakMap<
+    AcpPermissionRequest,
+    NonNullable<ReturnType<typeof refusals.get>>
+  >()
   const recordRefusal = (refusal: NonNullable<ReturnType<typeof refusals.get>>): void => {
     if (refusal.recorded) return
     refusal.recorded = true
@@ -567,7 +574,6 @@ function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHand
       if (refusal && event.toolStatus === 'error') {
         // Preserve Vibe's original output and append the independently recorded
         // host origin. This is transcript projection, not a rewritten ACP reply.
-        recordRefusal(refusal)
         options.onEvent({
           ...event,
           toolOutput: `${event.toolOutput || ''}\n\nTaskWraith refusal receipt: ${mistralPermissionRefusalText(refusal.denial)}`
@@ -584,6 +590,9 @@ function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHand
           const normalized = normalizeMistralVibePermissionRequest(request)
           const decision = await options.onPermissionRequest!(normalized)
           const toolId = normalized.rawToolCall?.toolCallId
+          const refusal =
+            typeof decision === 'string' ? undefined : { request: normalized, denial: decision }
+          if (refusal) replyRefusals.set(request, refusal)
           if (
             typeof decision !== 'string' &&
             !transportClosed &&
@@ -591,28 +600,44 @@ function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHand
             typeof toolId === 'string'
           ) {
             if (refusals.size >= 128) refusals.delete(refusals.keys().next().value!)
-            refusals.set(toolId, { request: normalized, denial: decision })
+            refusals.set(toolId, refusal!)
           }
           return typeof decision === 'string' ? decision : decision.decision
         }
       : undefined,
+    onPermissionResponse: (request, decision) => {
+      const refusal = replyRefusals.get(request)
+      if (decision === 'deny' && refusal) recordRefusal(refusal)
+      replyRefusals.delete(request)
+    },
     // Vibe can terminate opaquely after a native permission denial or an ACP
     // tool failure. Preserve the decision, then give the same session one
     // bounded chance to finish/report rather than failing the participant.
     deniedToolRecovery: {
       detect: isMistralDeniedToolTerminal,
       prompt: (context) => {
-        // A provider can cancel immediately after our deny without emitting a
-        // failed tool result. Only use that exact request when no later failed
-        // tool exists; never lend its provenance to a subsequent broker call.
+        // Denials and tool results can arrive in either order, including a
+        // cancellation without a result for the latest denied operation. Keep
+        // different calls separate instead of guessing which caused the stop.
         const requestToolId = context.deniedPermissionRequest?.rawToolCall?.toolCallId
-        const toolId = context.toolFailureSeen
-          ? context.lastFailedToolId
-          : context.reason === 'denied-permission-cancellation' && typeof requestToolId === 'string'
-            ? requestToolId
-            : undefined
-        const refusal = toolId ? refusals.get(toolId) : undefined
-        if (refusal) recordRefusal(refusal)
+        const denied = typeof requestToolId === 'string' ? refusals.get(requestToolId) : undefined
+        const failed = context.lastFailedToolId ? refusals.get(context.lastFailedToolId) : undefined
+        if (
+          context.toolFailureSeen &&
+          context.deniedPermissionRequest &&
+          (!requestToolId ||
+            !context.lastFailedToolId ||
+            requestToolId !== context.lastFailedToolId)
+        ) {
+          return [
+            "A failed result and a denied permission request concern different tool calls, or their identities cannot be correlated. Do not borrow one call's refusal origin to explain or retry the other.",
+            denied
+              ? `Host receipt for permission request ${JSON.stringify(requestToolId)}: ${mistralPermissionRefusalText(denied.denial)}`
+              : 'The denied permission request has no confirmed origin receipt.',
+            'Do not retry either side effect or substitute a broker transport. Preserve the completed design, continue from available evidence, and report these separate blockers so the coordinator can recover after the lane settles.'
+          ].join('\n')
+        }
+        const refusal = context.toolFailureSeen ? failed : denied
         return mistralToolRecoveryPrompt(context, refusal?.denial)
       },
       shouldRecover: (context) => context.toolFailureSeen && !context.assistantTextSeen,

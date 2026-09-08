@@ -253,6 +253,9 @@ export interface AcpTurnOptions {
   onPermissionRequest?: (
     request: AcpPermissionRequest
   ) => AcpPermissionDecision | Promise<AcpPermissionDecision>
+  /** Audit notification after a current permission reply is written successfully
+   * to the child transport. Stale decisions and failed writes never notify. */
+  onPermissionResponse?: (request: AcpPermissionRequest, decision: AcpPermissionDecision) => void
   /**
    * Handle an inbound agent→client request the core does not (fs/*, terminal/*,
    * provider extensions). Return true when a reply was sent via `reply`; return
@@ -924,7 +927,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     options.onEvent({ type: 'provider_warning', text: err.message || String(err) })
   })
 
-  const writeFrame = (message: Record<string, unknown>): void => {
+  const writeFrame = (message: Record<string, unknown>, onWritten?: () => void): void => {
     options.onRawFrame?.('out', message)
     const stdin = child.stdin
     if (
@@ -939,7 +942,14 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     }
     try {
       stdin.write(encodeAcpFrame(message), (err?: Error | null) => {
-        if (!err) return
+        if (!err) {
+          try {
+            onWritten?.()
+          } catch {
+            // An audit observer cannot alter a reply already written.
+          }
+          return
+        }
         if (isTerminalStdinWriteError(err)) {
           stdinClosed = true
           return
@@ -1398,10 +1408,15 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         deniedPermissionRequest = request
       }
     }
+    const reply = (decision: AcpPermissionDecision): void => {
+      writeFrame(buildAcpPermissionResponse(request.rpcId, request.options, decision), () => {
+        options.onPermissionResponse?.(request, decision)
+      })
+    }
     const fallbackDeny = (): void => {
       if (!permissionPromptIsCurrent()) return
       recordDeniedPrompt()
-      writeResponse(buildAcpPermissionResponse(request.rpcId, request.options, 'deny'))
+      reply('deny')
     }
     let decision: AcpPermissionDecision | Promise<AcpPermissionDecision>
     try {
@@ -1416,7 +1431,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         // cancellation/close or answer a newer recovery prompt; discard stale.
         if (!permissionPromptIsCurrent()) return
         if (resolved === 'deny') recordDeniedPrompt()
-        writeResponse(buildAcpPermissionResponse(request.rpcId, request.options, resolved))
+        reply(resolved)
       })
       .catch(fallbackDeny)
     // Surface the request in the transcript only when no mediator is wired, so

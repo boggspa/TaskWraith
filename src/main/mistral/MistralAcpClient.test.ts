@@ -936,7 +936,8 @@ describe('runMistralAcpTurn denied-tool recovery', () => {
     toolResult(child, 'broker-2', 'failed', 'User rejected the tool call')
     child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
     await tick(40)
-    expect(promptText(promptFrames(child)[1])).toBe(MISTRAL_UNATTRIBUTED_REFUSAL_CONTINUITY_PROMPT)
+    expect(promptText(promptFrames(child)[1])).toContain('different tool calls')
+    expect(promptText(promptFrames(child)[1])).toContain('Do not retry either side effect')
     child.emit({ jsonrpc: '2.0', id: 5, result: { stopReason: 'end_turn' } })
     await handle.closed
   })
@@ -979,6 +980,100 @@ describe('runMistralAcpTurn denied-tool recovery', () => {
     expect(promptText(promptFrames(child)[1])).toContain('no human was asked')
     child.emit({ jsonrpc: '2.0', id: 5, result: { stopReason: 'end_turn' } })
     await handle.closed
+  })
+
+  it.each(['host-policy', 'human'] as const)(
+    'keeps a later %s denial separate from an earlier containment failure without a second result',
+    async (origin) => {
+      const child = new FakeAcpChild()
+      const onPermissionRefusal = vi.fn()
+      const handle = runMistralAcpTurn({
+        skipIntroduction: true,
+        prompt: 'work',
+        cwd: '/tmp/workspace',
+        appVersion: 'test',
+        spawnProcess: () => child,
+        onEvent: () => {},
+        onPermissionRefusal,
+        onPermissionRequest: (request) => ({
+          decision: 'deny',
+          origin: request.rpcId === 9 ? 'host-containment' : origin,
+          reason:
+            request.rpcId === 9 ? 'A: no native sandbox.' : 'B: outside workspace or declined.'
+        })
+      })
+      sessionReady(child)
+      for (const [id, toolId] of [
+        [9, 'a'],
+        [10, 'b']
+      ] as const) {
+        toolCall(child, toolId, 'bash', 'execute')
+        child.emit({
+          jsonrpc: '2.0',
+          id,
+          method: 'session/request_permission',
+          params: {
+            sessionId: 'session-1',
+            toolCall: { toolCallId: toolId },
+            options: permissionRequest({}).options
+          }
+        })
+        await tick()
+        if (id === 9) toolResult(child, toolId, 'failed', 'User rejected the tool call')
+      }
+      child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+      await tick(40)
+      const prompt = promptText(promptFrames(child)[1])!
+      expect(prompt).toContain('different tool calls')
+      expect(prompt).toContain('B: outside workspace or declined.')
+      expect(prompt).toContain('Do not retry either side effect')
+      expect(prompt).not.toContain('once through')
+      expect(onPermissionRefusal.mock.calls.map(([request]) => request.rpcId)).toEqual([9, 10])
+      child.emit({ jsonrpc: '2.0', id: 5, result: { stopReason: 'end_turn' } })
+      await handle.closed
+    }
+  )
+
+  it('audits a second transmitted denial even after the one-shot recovery is spent', async () => {
+    const child = new FakeAcpChild()
+    const onPermissionRefusal = vi.fn()
+    const handle = runMistralAcpTurn({
+      skipIntroduction: true,
+      prompt: 'work',
+      cwd: '/tmp/workspace',
+      appVersion: 'test',
+      spawnProcess: () => child,
+      onEvent: () => {},
+      onPermissionRefusal,
+      onPermissionRequest: () => ({
+        decision: 'deny',
+        origin: 'host-policy',
+        reason: 'Outside workspace.'
+      })
+    })
+    sessionReady(child)
+    for (const [id, promptId] of [
+      [9, 3],
+      [10, 5]
+    ] as const) {
+      toolCall(child, `call-${id}`, 'bash', 'execute')
+      child.emit({
+        jsonrpc: '2.0',
+        id,
+        method: 'session/request_permission',
+        params: {
+          sessionId: 'session-1',
+          toolCall: { toolCallId: `call-${id}` },
+          options: permissionRequest({}).options
+        }
+      })
+      await tick()
+      child.emit({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'cancelled' } })
+      await tick(40)
+    }
+    await handle.closed
+    expect(onPermissionRefusal.mock.calls.map(([request]) => request.rpcId)).toEqual([9, 10])
+    expect(promptFrames(child)).toHaveLength(2)
   })
 
   it('does not spend the recovery when nothing actually failed', async () => {

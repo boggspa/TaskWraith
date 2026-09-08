@@ -992,6 +992,47 @@ describe('runAcpTurn — neutral core', () => {
     })
   })
 
+  it.each(['written', 'failed-write', 'cancelled-before-decision'] as const)(
+    'emits permission audit only for a successfully written current reply: %s',
+    async (outcome) => {
+      const child = new FakeAcpChild()
+      let decide!: (value: 'deny') => void
+      const onPermissionResponse = vi.fn()
+      const { handle } = baseOptions(child, {
+        onPermissionRequest: () =>
+          new Promise((resolve) => {
+            decide = resolve
+          }),
+        onPermissionResponse
+      })
+      child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+      child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+      if (outcome === 'failed-write') {
+        child.stdin.write = (_data, callback) => callback?.(new Error('EPIPE'))
+      }
+      child.emit({
+        jsonrpc: '2.0',
+        id: 9,
+        method: 'session/request_permission',
+        params: {
+          sessionId: 's-1',
+          toolCall: { toolCallId: 'tool-1', title: 'bash' },
+          options: [{ optionId: 'reject', name: 'Reject', kind: 'reject_once' }]
+        }
+      })
+      if (outcome === 'cancelled-before-decision') handle.cancel()
+      decide('deny')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(onPermissionResponse).toHaveBeenCalledTimes(outcome === 'written' ? 1 : 0)
+      if (outcome === 'written')
+        expect(onPermissionResponse).toHaveBeenCalledWith(
+          expect.objectContaining({ rpcId: 9 }),
+          'deny'
+        )
+      handle.cancel()
+    }
+  )
+
   it('correlates exact ToolCall input into the matching permission request once', async () => {
     const child = new FakeAcpChild()
     const requests: AcpPermissionRequest[] = []
