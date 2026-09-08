@@ -166,6 +166,9 @@ function cellName(cell) {
 
 /**
  * Parse a canonical cell name back into a cell descriptor.
+ * Only CANONICAL spellings parse: `Number()` alone would accept alternate
+ * spellings like `02` that never round-trip, so the name must re-encode to
+ * itself byte-for-byte.
  * @returns {object | null} the cell, or null when the name is not a cell.
  */
 function parseCellName(name) {
@@ -181,7 +184,8 @@ function parseCellName(name) {
     saturation: parts[4]
   }
   const check = validateMatrixCell(cell)
-  return check.ok ? check.cell : null
+  if (!check.ok) return null
+  return cellName(check.cell) === name ? check.cell : null
 }
 
 /** Every cell in the Appendix A cross product, in stable axis order. */
@@ -236,7 +240,7 @@ function assertPairedRunCompatibility(alone, beside) {
   if (alone.cellName !== beside.cellName) {
     reasons.push(`cell mismatch: ${alone.cellName} vs ${beside.cellName}`)
   } else if (parseCellName(alone.cellName) === null) {
-    reasons.push(`cell name is not a valid matrix cell: ${alone.cellName}`)
+    reasons.push(`cell name is not a valid canonical matrix cell: ${alone.cellName}`)
   }
   if (
     typeof alone.fixtureFingerprint !== 'string' ||
@@ -245,8 +249,22 @@ function assertPairedRunCompatibility(alone, beside) {
   ) {
     reasons.push('fixture fingerprints differ — paired runs must use identical fixtures')
   }
+  // Presence AND type, not just equality: two descriptors that both omit
+  // workload or seed would otherwise "agree" on undefined and pass.
+  if (typeof alone.workload !== 'string' || alone.workload.length === 0) {
+    reasons.push('alone workload must be a non-empty string')
+  }
+  if (typeof beside.workload !== 'string' || beside.workload.length === 0) {
+    reasons.push('beside workload must be a non-empty string')
+  }
   if (alone.workload !== beside.workload) {
     reasons.push(`workload mismatch: ${alone.workload} vs ${beside.workload}`)
+  }
+  if (!Number.isSafeInteger(alone.seed)) {
+    reasons.push('alone seed must be a safe integer')
+  }
+  if (!Number.isSafeInteger(beside.seed)) {
+    reasons.push('beside seed must be a safe integer')
   }
   if (alone.seed !== beside.seed) {
     reasons.push(`seed mismatch: ${alone.seed} vs ${beside.seed}`)

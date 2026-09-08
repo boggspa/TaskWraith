@@ -370,7 +370,10 @@ function validatePerfMetrics(metrics) {
   // paired comparisons they are the denominator for could never run.
   // Present-but-malformed is an error, so a partially wired span pipeline
   // fails loudly instead of silently reporting an unattributable run.
-  if (metrics.crossThread != null) {
+  // Property ABSENCE is the compatibility seam, not falsiness: an own
+  // crossThread key with a null/primitive/malformed value is present-but-
+  // malformed and must fail loudly (hasOwnProperty distinguishes the two).
+  if (Object.prototype.hasOwnProperty.call(metrics, 'crossThread')) {
     for (const error of validateCrossThreadBlock(metrics.crossThread)) {
       errors.push(`crossThread: ${error}`)
     }
