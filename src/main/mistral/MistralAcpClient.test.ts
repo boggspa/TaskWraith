@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { preflightNativeWorkspaceTool } from '../native-tools/NativeWorkspaceToolGate'
 import { resolveStructuredTaskWraithToolRequest } from '../grok/GrokMcpAdvertise'
 import type { AcpPermissionRequest } from '../grok/GrokAcpProtocol'
 import {
@@ -15,6 +19,12 @@ import type { EffectiveRunPermissions } from '../store/types'
 import type { NormalizedGrokRunEvent } from '../grok/GrokAcpProtocol'
 
 const MISTRAL_NAMESPACES = ['taskwraith-mistral', 'TaskWraith'] as const
+const NATIVE_IDENTITY_ROOT = mkdtempSync(join(tmpdir(), 'taskwraith-vibe-native-identity-'))
+const NATIVE_IDENTITY_WORKSPACE = join(NATIVE_IDENTITY_ROOT, 'workspace')
+mkdirSync(NATIVE_IDENTITY_WORKSPACE)
+writeFileSync(join(NATIVE_IDENTITY_WORKSPACE, 'probe.txt'), 'verified read fixture')
+writeFileSync(join(NATIVE_IDENTITY_ROOT, 'outside.txt'), 'outside the workspace')
+afterAll(() => rmSync(NATIVE_IDENTITY_ROOT, { recursive: true, force: true }))
 
 describe('formatMistralSteerPrompt', () => {
   it('frames already-delivered output as non-authoritative continuation context', () => {
@@ -102,6 +112,118 @@ function permissionRequest(rawToolCall: Record<string, unknown>): AcpPermissionR
 }
 
 describe('normalizeMistralVibePermissionRequest', () => {
+  function nativeReadRequest(path: string): AcpPermissionRequest {
+    return {
+      ...permissionRequest({
+        toolCallId: 'native-read',
+        title: `Reading ${path}`,
+        kind: 'read',
+        _meta: { tool_name: 'read_file', effect_kind: 'file_read' },
+        rawInput: { filePath: path }
+      }),
+      toolName: 'tool',
+      toolKind: ''
+    }
+  }
+
+  function preflight(request: AcpPermissionRequest) {
+    return preflightNativeWorkspaceTool({
+      provider: 'mistral',
+      toolName: request.toolName,
+      toolKind: request.toolKind,
+      rawToolCall: request.rawToolCall,
+      workspacePath: NATIVE_IDENTITY_WORKSPACE,
+      runtimeSandboxed: false
+    })
+  }
+
+  it('repairs placeholder identity after correlation so an in-workspace native read is allowed', () => {
+    const request = nativeReadRequest(join(NATIVE_IDENTITY_WORKSPACE, 'probe.txt'))
+    const normalized = normalizeMistralVibePermissionRequest(request)
+    expect(preflight(normalized)).toMatchObject({
+      kind: 'allow',
+      canonicalTool: 'read_file',
+      access: 'read'
+    })
+    expect(normalized).toMatchObject({ toolName: 'read_file', toolKind: 'read' })
+    expect(normalized.rawToolCall).toBe(request.rawToolCall)
+    expect(request.toolName).toBe('tool')
+    expect(mistralTaskWraithBrokerToolRequested(normalized)).toBe(false)
+  })
+
+  it('still applies workspace boundaries after repairing native identity', () => {
+    const normalized = normalizeMistralVibePermissionRequest(
+      nativeReadRequest(join(NATIVE_IDENTITY_ROOT, 'outside.txt'))
+    )
+    expect(normalized.toolName).toBe('read_file')
+    expect(preflight(normalized)).toMatchObject({ kind: 'deny', canonicalTool: 'read_file' })
+  })
+
+  it('uses agreeing machine metadata rather than a human display title', () => {
+    const request = {
+      ...nativeReadRequest(join(NATIVE_IDENTITY_WORKSPACE, 'probe.txt')),
+      toolName: 'Reading the requested file'
+    }
+    const normalized = normalizeMistralVibePermissionRequest(request)
+    expect(normalized).toMatchObject({ toolName: 'read_file', toolKind: 'read' })
+    expect(preflight(normalized).kind).toBe('allow')
+  })
+
+  it.each([
+    { kind: 'edit', effect_kind: 'file_read', tool_name: 'read_file' },
+    { kind: 'read', effect_kind: 'tool', tool_name: 'read_file' },
+    { kind: 'read', effect_kind: 'file_read', tool_name: 'TaskWraith_write_file' }
+  ])('does not repair conflicting or broker-shaped native identity: %j', (identity) => {
+    const request = nativeReadRequest(join(NATIVE_IDENTITY_WORKSPACE, 'probe.txt'))
+    request.rawToolCall = {
+      ...request.rawToolCall,
+      kind: identity.kind,
+      _meta: { tool_name: identity.tool_name, effect_kind: identity.effect_kind }
+    }
+    expect(normalizeMistralVibePermissionRequest(request)).toBe(request)
+  })
+
+  it('does not overwrite an explicit conflicting permission identity', () => {
+    const request = {
+      ...nativeReadRequest(join(NATIVE_IDENTITY_WORKSPACE, 'probe.txt')),
+      toolName: 'bash',
+      toolKind: 'execute'
+    }
+    expect(normalizeMistralVibePermissionRequest(request)).toBe(request)
+  })
+
+  it.each([
+    { name: 'bash', kind: 'execute', effect: 'shell', input: { command: 'rm -rf /tmp/example' } },
+    {
+      name: 'write_file',
+      kind: 'edit',
+      effect: 'file_write',
+      input: { filePath: '/tmp/outside.txt', content: 'x' }
+    },
+    {
+      name: 'edit',
+      kind: 'edit',
+      effect: 'file_edit',
+      input: { filePath: '/tmp/outside.txt', oldString: 'x', newString: 'y' }
+    }
+  ])(
+    'restores native $name identity without granting the broker fast path',
+    ({ name, kind, effect, input }) => {
+      const request = {
+        ...permissionRequest({
+          kind,
+          _meta: { tool_name: name, effect_kind: effect },
+          rawInput: input
+        }),
+        toolName: 'tool'
+      }
+      const normalized = normalizeMistralVibePermissionRequest(request)
+      expect(normalized).toMatchObject({ toolName: name, toolKind: kind })
+      expect(mistralTaskWraithBrokerToolRequested(normalized)).toBe(false)
+      expect(preflight(normalized).kind).toBe('deny')
+    }
+  )
+
   it('admits every exact UltraTask delegation route into the host-gated broker', () => {
     for (const toolName of ['delegate_wave', 'ultra_task', 'delegate_to_subthread']) {
       expect(
@@ -284,7 +406,7 @@ describe('normalizeMistralVibePermissionRequest', () => {
     const request = permissionRequest(rawToolCall)
     const normalized = normalizeMistralVibePermissionRequest(request)
 
-    expect(normalized).toBe(request)
+    expect(normalized.rawToolCall).toBe(request.rawToolCall)
     expect(resolveStructuredTaskWraithToolRequest(normalized, MISTRAL_NAMESPACES)).toBeNull()
   })
 })

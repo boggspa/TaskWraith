@@ -141,6 +141,18 @@ function patchIfTaskWraithAlias(
   return true
 }
 
+// Vibe's public effect-kind -> ACP kind mapping. Only native action kinds
+// already understood by TaskWraith's existing permission gate are projected.
+const MISTRAL_NATIVE_EFFECT_KINDS: Readonly<Record<string, string>> = {
+  file_read: 'read',
+  file_search: 'search',
+  file_edit: 'edit',
+  file_write: 'edit',
+  shell: 'execute',
+  web_search: 'search',
+  web_fetch: 'fetch'
+}
+
 /**
  * Normalize Vibe's structured MCP identity into the spelling consumed by the
  * existing strict TaskWraith resolver.
@@ -150,6 +162,9 @@ function patchIfTaskWraithAlias(
  * tool-call `_meta.tool_name` field and marks generic MCP effects as
  * `_meta.effect_kind='tool'` + `kind='other'`. Native write/bash calls carry
  * different kinds and metadata, so they remain on the normal permission path.
+ * A permission frame may name only toolCallId. Correlation enriches its raw
+ * descriptor but can leave the outer identity at "tool" / empty kind; repair
+ * those placeholders from agreeing native metadata before calling the gate.
  * The returned descriptor is local permission evidence only; it does not
  * rewrite the provider invocation or bypass the broker's signed mutation gate.
  * When Vibe omits rawInput from ACP, the broker still validates the provider's
@@ -166,6 +181,21 @@ export function normalizeMistralVibePermissionRequest(
     return request
   }
   const rawInput = record(rawInputValue) || {}
+  const nativeName = typeof metadata.tool_name === 'string' ? metadata.tool_name.trim() : ''
+  const nativeKind =
+    typeof metadata.effect_kind === 'string'
+      ? MISTRAL_NATIVE_EFFECT_KINDS[metadata.effect_kind]
+      : undefined
+  if (
+    nativeName &&
+    nativeKind &&
+    rawToolCall.kind === nativeKind &&
+    (!request.toolKind || request.toolKind === nativeKind) &&
+    !canonicalVibeTaskWraithToolName(nativeName) &&
+    !/^mcp(?::|__)/i.test(nativeName)
+  ) {
+    return { ...request, toolName: nativeName, toolKind: nativeKind }
+  }
   if (rawToolCall.kind !== 'other' || metadata.effect_kind !== 'tool') return request
   if (request.toolKind && request.toolKind !== 'other') return request
 
