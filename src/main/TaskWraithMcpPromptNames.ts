@@ -3,12 +3,16 @@ import { GROK_BROKER_MCP_TOOL_NAMESPACE } from './index.constants'
 
 export function taskWraithToolNameForProvider(provider: ProviderId, toolName: string): string {
   if (provider === 'claude') return `mcp__TaskWraith__${toolName}`
+  if (provider === 'kimi') return `mcp__taskwraith__${toolName}`
   if (provider === 'cursor') return `taskwraith__${toolName}`
   if (provider === 'grok') return `${GROK_BROKER_MCP_TOOL_NAMESPACE}__${toolName}`
   return `TaskWraith__${toolName}`
 }
 
 export function taskWraithToolNamespaceHint(provider: ProviderId): string {
+  if (provider === 'kimi') {
+    return 'Kimi Code exposes current TaskWraith tools as `mcp__taskwraith__<tool>`. Older versions may list `TaskWraith__<tool>`; use the exact listed name. An absent tool is an availability blocker, not a reason to substitute a native tool.'
+  }
   if (provider === 'claude') {
     return 'Claude may expose TaskWraith tools as `mcp__TaskWraith__<tool>`.'
   }

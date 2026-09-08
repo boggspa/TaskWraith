@@ -19,3 +19,14 @@ describe('TaskWraithMcpPromptNames', () => {
     expect(hint).not.toContain('unavailable')
   })
 })
+
+describe('Kimi tool prompt names', () => {
+  it('uses the current Kimi namespace and preserves other provider spellings', () => {
+    expect(taskWraithToolNameForProvider('kimi', 'replace')).toBe('mcp__taskwraith__replace')
+    expect(taskWraithToolNameForProvider('claude', 'replace')).toBe('mcp__TaskWraith__replace')
+    expect(taskWraithToolNameForProvider('codex', 'replace')).toBe('TaskWraith__replace')
+    expect(taskWraithToolNameForProvider('cursor', 'replace')).toBe('taskwraith__replace')
+    expect(taskWraithToolNamespaceHint('kimi')).toContain('exact listed name')
+    expect(taskWraithToolNamespaceHint('kimi')).toContain('availability blocker')
+  })
+})

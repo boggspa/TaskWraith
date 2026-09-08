@@ -560,6 +560,23 @@ describe('runAcpTurn — neutral core', () => {
     })
   })
 
+  it('settles a blocked readiness result even when diagnostic projection throws', async () => {
+    const child = new FakeAcpChild()
+    const closed = vi.fn()
+    const { handle } = baseOptions(child, {
+      prepareSessionPrompt: async () => ({ status: 'blocked', message: 'missing broker tools' }),
+      onEvent: () => {
+        throw new Error('renderer unavailable')
+      },
+      onClose: closed
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session' } })
+    await handle.closed
+    expect(closed).toHaveBeenCalledWith(0, true, 'taskwraith_blocked')
+    expect(handle.wasBlockedByHost?.()).toBe(true)
+  })
+
   it('re-asserts advertised model and thinking selections before a resumed prompt', () => {
     const child = new FakeAcpChild()
     baseOptions(child, {

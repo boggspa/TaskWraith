@@ -149,6 +149,8 @@ import { kimiAcpSeatStatePath, kimiAcpSeatStateRoot } from './kimi/KimiAcpSeatSt
 import { museSeatStatePath, museSeatStateRoot } from './muse/MuseSeatState'
 import { prepareKimiOAuthCredentialProjection } from './kimi/KimiOAuthCredentialProjection'
 import { runKimiAcpTurn } from './kimi/KimiAcpClient'
+import { createKimiRuntimeRecovery } from './kimi/KimiRuntimeRecovery'
+import { readKimiRunCapabilityReceipt } from './kimi/KimiRunCapabilityStore'
 import { discoverKimiManagedModelRows } from './kimi/KimiModelCatalog'
 import {
   KIMI_ACP_PRODUCTION_POSTURE_VERSION,
@@ -4856,6 +4858,8 @@ function publishNativeWindowRendererEvent(event: NativeWindowCoordinatorRenderer
 }
 
 const desktopToolExecutors = createDesktopToolExecutors({
+  readKimiCapabilityReceipt: (runId, chatId) =>
+    readKimiRunCapabilityReceipt({ userDataPath: app.getPath('userData'), runId, chatId }),
   getBridgeDaemon: () => bridgeDaemonRef,
   getNativeCapabilities: () => getNativeCapabilitySnapshot(),
   getCreativeApprovalGate: () => creativeApprovalGateRef,
@@ -27060,11 +27064,6 @@ async function runKimiAcpProvider(
 
     let handle: ReturnType<typeof runKimiAcpTurn>
     let providerTransportLaunchAttempted = false
-    // How long a natively resumed session may leave this run's gateway bridge
-    // dark before the resume is judged surface-less and reminted. Healthy
-    // resumes register the server and fetch tools around the resume result
-    // itself (a localhost round-trip); only a broken resume pays this wait.
-    const KIMI_RESUMED_SESSION_GATEWAY_CONTACT_GRACE_MS = 2_000
     let productionGatewayBridge: KimiHttpMcpBridgeHandle | null = null
     try {
       const launched = await launchKimiProductionAcp({
@@ -27129,8 +27128,27 @@ async function runKimiAcpProvider(
           // no microtask can invalidate authority between here and child spawn.
           assertKimiSpawnAuthority(() => providerTransportLaunchAuthorized('kimi', payload, route))
           const teardown = createJoinedKimiCleanup(transportCleanup, () => home.cleanup())
+          const recovery =
+            kimiNativeCompactionStartedAt === null
+              ? createKimiRuntimeRecovery({
+                  runId: route.appRunId!,
+                  chatId: route.appChatId,
+                  payload,
+                  gateway: productionGatewayBridge!,
+                  seatHome: home.home,
+                  startedAt: state.startedAt,
+                  getChat: (chatId) => AppStore.getChat(chatId),
+                  record: (receipt) =>
+                    appendDurableRunEventForRoute(
+                      'kimi', route, 'lifecycle', 'control',
+                      `Kimi capabilities: ${receipt.phase}`,
+                      { type: 'kimi_capability_receipt', capabilityReceipt: receipt }
+                    )
+                })
+              : null
           providerTransportLaunchAttempted = true
           return runKimiAcpTurn({
+            recovery: recovery?.options,
             prompt: production.session.prompt,
             imagePaths: payload.imagePaths,
             resumeSessionId: production.session.resumeSessionId,
@@ -27176,20 +27194,6 @@ async function runKimiAcpProvider(
             cwd: production.cwd,
             initializeParams: production.initializeParams,
             mcpServers: production.mcpServers,
-            // Every native fs/exec tool on a Kimi seat is deny-walled; the
-            // per-run gateway bridge is its ONLY tool surface. A resumed
-            // session that never contacts the bridge is running toolless
-            // (observed live: a compaction-minted session resumed with zero
-            // gateway tools, ChipTown chat 75d1d780) — remint it as a fresh
-            // session with the cold-start prompt instead of prompting into it.
-            // The compaction launch below deliberately does NOT get this
-            // probe: its whole point is resuming the fat native session, and
-            // it works from transcript history, not gateway tools.
-            confirmResumedSession: async () => {
-              const bridge = productionGatewayBridge
-              if (!bridge) return true
-              return bridge.waitForContact(KIMI_RESUMED_SESSION_GATEWAY_CONTACT_GRACE_MS)
-            },
             spawnProcess: () => {
               // Build the CLI model arg the same way every other Kimi path does:
               // kimiCliModelArg omits `--model` for the default (kimi-code uses its
@@ -27255,11 +27259,15 @@ async function runKimiAcpProvider(
                     flushKimiAcpThinking(state)
                     const status = turnComplete ? terminalStatus || 'success' : 'failed'
                     const transportFailed = typeof code === 'number' && code !== 0
+                    const blockedReason = turnComplete ? recovery?.blockedReason() : null
+                    if (blockedReason && !cleanupError && !transportFailed) {
+                      ensembleOrchestratorRef?.markLaneBlockedForRun(route.appRunId, blockedReason)
+                    }
                     const failed =
                       Boolean(cleanupError) ||
                       transportFailed ||
                       !turnComplete ||
-                      (status !== 'success' && status !== 'end_turn')
+                      (status !== 'success' && status !== 'end_turn' && !blockedReason)
                     finishStatus = failed ? 'failed' : 'completed'
                     if (cleanupError) {
                       sendAgentCompatError(

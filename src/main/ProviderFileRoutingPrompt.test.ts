@@ -60,6 +60,25 @@ describe('buildProviderFileRoutingPrompt', () => {
     expect(prompt).toContain('normal user approval request')
   })
 
+  it('gives Kimi the listed edit route and distinguishes host containment from a human refusal', () => {
+    const prompt = buildProviderFileRoutingPrompt({
+      provider: 'kimi',
+      effectivePermissions: permissions('allow')
+    })
+    expect(prompt).toContain('mcp__taskwraith__replace')
+    expect(prompt).toContain('mcp__taskwraith__apply_patch')
+    expect(prompt).toContain('before a human is asked')
+    expect(prompt).toContain('current tool list')
+    expect(prompt).toContain('report the missing route and finish the lane')
+    expect(prompt).not.toContain('Codex-native')
+    expect(
+      buildProviderFileRoutingPrompt({
+        provider: 'kimi',
+        effectivePermissions: permissions('allow', 'deny')
+      })
+    ).toBe('')
+  })
+
   it('does not advertise a file route when either governing service is denied', () => {
     expect(
       buildProviderFileRoutingPrompt({
@@ -79,7 +98,6 @@ describe('buildProviderFileRoutingPrompt', () => {
     for (const provider of [
       'claude',
       'gemini',
-      'kimi',
       'ollama',
       'grok',
       'mistral',

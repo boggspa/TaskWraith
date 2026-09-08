@@ -1049,7 +1049,7 @@ describe('DesktopToolExecutors Codex auth projection', () => {
 })
 
 describe('DesktopToolExecutors approval status workspace grants', () => {
-  it("reports 'agents' wildcard grants alongside the caller's own legacy rows", () => {
+  it("reports 'agents' wildcard grants alongside the caller's own legacy rows", async () => {
     const grants: AgenticWorkspaceGrant[] = [
       {
         id: 'grant-agents',
@@ -1083,12 +1083,12 @@ describe('DesktopToolExecutors approval status workspace grants', () => {
 
     // 'agents' rows report for any caller; the legacy codex row stays scoped
     // to codex; the other-workspace row is filtered by path.
-    const claudeResult = executor.executeApprovalStatus(activeContext, {}, 'claude') as {
+    const claudeResult = (await executor.executeApprovalStatus(activeContext, {}, 'claude')) as {
       workspaceGrants: AgenticWorkspaceGrant[]
     }
     expect(claudeResult.workspaceGrants.map((grant) => grant.id)).toEqual(['grant-agents'])
 
-    const codexResult = executor.executeApprovalStatus(activeContext, {}, 'codex') as {
+    const codexResult = (await executor.executeApprovalStatus(activeContext, {}, 'codex')) as {
       workspaceGrants: AgenticWorkspaceGrant[]
     }
     expect(codexResult.workspaceGrants.map((grant) => grant.id)).toEqual([

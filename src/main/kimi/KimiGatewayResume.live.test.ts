@@ -1,26 +1,9 @@
-// Live regression for the resumed-session gateway remint (c2ae88633 + its
-// bridge first-contact groundwork 4984bfdb3), motivated by ChipTown chat
-// 75d1d780: a Kimi seat natively resumed onto a compaction-minted session ran
-// with ZERO mcp__taskwraith__ tools while every native fs/exec tool is
-// deny-walled by design — a Full-WS-Access seat with no usable tools at all.
-// Raw-ACP archaeology and probes (KimiMcpResumeProbe.live.test.ts) showed the
-// resume mechanics are healthy whenever the bridge answers, so the cure is the
-// bridge-contact confirm: a resumed session whose per-run bridge stays dark is
-// abandoned and reminted via session/new with the cold-start recovery prompt.
-//
-// This suite drives the REAL `kimi acp` binary through the REAL runKimiAcpTurn
-// client and the REAL startKimiHttpMcpBridge transport, and proves BOTH sides
-// of that contract:
-//   A. a resume judged gateway-dark is reminted: fresh session, recovery
-//      prompt on the wire, a warning a human can read, and — decisive for the
-//      original incident — gateway tools that actually work in the turn;
-//   B. a healthy resume passes the production 2s first-contact grace and KEEPS
-//      its native session (the gate must never cost a healthy seat its
-//      history).
-//
-// GATED exactly like KimiAcpContainment.live.test.ts (real model calls):
-//
-//   KIMI_ACP_LIVE_TRACE=1 npx vitest run src/main/kimi/KimiGatewayResume.live.test.ts
+// Live regression for the August 18 Kimi resume recovery, strengthened to
+// require initialize and tools/list responses after session configuration.
+// A partial connection must recover with a working catalogue; a healthy resume
+// retains its native history; a permanently empty catalogue sends no work.
+// Native containment is tested separately and is not attested by this suite.
+// Run with KIMI_ACP_LIVE_TRACE=1 and an authenticated Kimi Code install.
 
 import { describe, it, expect } from 'vitest'
 import { spawn } from 'node:child_process'
@@ -34,9 +17,13 @@ import { runKimiAcpTurn } from './KimiAcpClient'
 import { startKimiHttpMcpBridge, type KimiHttpMcpBridgeHandle } from './KimiHttpMcpBridge'
 import {
   buildKimiProductionInitializeParams,
+  buildKimiContainedProcessEnv,
   prepareKimiPrivateRunCwd,
   type KimiPrivateCwdFs
 } from './KimiProductionContainment'
+import type { AcpSessionConfigSelection } from '../acp/AcpTurnClient'
+import type { KimiRunCapabilityReceipt } from './KimiRunCapabilities'
+import { readKimiProviderToolSnapshot } from './KimiProviderToolSnapshot'
 
 const SOURCE_HOME = resolve(
   process.env.TASKWRAITH_KIMI_CANARY_HOME || join(homedir(), '.kimi-code')
@@ -119,11 +106,15 @@ function kimiSubprocessEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
 }
 
 /** Real HTTP bridge with a stub TaskWraith dispatch exposing one echo tool. */
-async function startEchoBridge(label: string): Promise<{
+async function startEchoBridge(
+  label: string,
+  emptyCatalogues: number = 0
+): Promise<{
   bridge: KimiHttpMcpBridgeHandle
   toolCalls: Array<{ name: string; text: string }>
 }> {
   const toolCalls: Array<{ name: string; text: string }> = []
+  let lists = 0
   const bridge = await startKimiHttpMcpBridge({
     dispatch: async (message) => {
       const id = message.id as number | string | undefined
@@ -144,6 +135,10 @@ async function startEchoBridge(label: string): Promise<{
         }
       }
       if (message.method === 'tools/list') {
+        lists += 1
+        if (lists <= emptyCatalogues) {
+          return { jsonrpc: '2.0', id: id ?? null, result: { tools: [] } }
+        }
         return {
           jsonrpc: '2.0',
           id: id ?? null,
@@ -196,6 +191,7 @@ interface LiveTurnCapture {
   warnings: string[]
   answer: string
   terminalStatus?: string
+  receipts: KimiRunCapabilityReceipt[]
 }
 
 /** One real `kimi acp` turn through the production client with full capture. */
@@ -206,9 +202,17 @@ async function runLiveTurn(options: {
   prompt: string
   resumeSessionId?: string
   resumeFallbackPrompt?: string
-  confirmResumedSession?: () => Promise<boolean>
+  resumeConfigOptions?: readonly AcpSessionConfigSelection[]
 }): Promise<LiveTurnCapture> {
-  const capture: LiveTurnCapture = { session: null, wirePrompts: [], warnings: [], answer: '' }
+  const startedAt = Date.now()
+  const capture: LiveTurnCapture = {
+    session: null,
+    wirePrompts: [],
+    warnings: [],
+    answer: '',
+    receipts: []
+  }
+  let handle: ReturnType<typeof runKimiAcpTurn> | null = null
   await new Promise<void>((resolveTurn) => {
     let settled = false
     const timers: {
@@ -222,12 +226,29 @@ async function runLiveTurn(options: {
       if (timers.close) clearTimeout(timers.close)
       resolveTurn()
     }
-    const handle = runKimiAcpTurn({
+    handle = runKimiAcpTurn({
       prompt: options.prompt,
       resumeSessionId: options.resumeSessionId,
       cwdLifetime: 'session',
       resumeFallbackPrompt: options.resumeFallbackPrompt,
-      confirmResumedSession: options.confirmResumedSession,
+      resumeConfigOptions: options.resumeConfigOptions,
+      recovery: {
+        context: {
+          runId: `gateway-live-${startedAt}`,
+          workspacePath: options.cwd,
+          assignedScope: { kind: 'workspace', paths: [] }
+        },
+        gateway: options.bridge,
+        onReceipt: (receipt) => capture.receipts.push(receipt),
+        requiredToolGroups: [['probe_echo']],
+        readToolSnapshot: (sessionId) =>
+          readKimiProviderToolSnapshot({
+            seatHome: options.home.home,
+            sessionId,
+            runStartedAt: startedAt
+          }),
+        timeoutMs: PRODUCTION_RESUME_CONTACT_GRACE_MS
+      },
       cwd: options.cwd,
       initializeParams: buildKimiProductionInitializeParams('0.0.0-live-regression'),
       mcpServers: [
@@ -241,9 +262,17 @@ async function runLiveTurn(options: {
       spawnProcess: () =>
         spawn(BIN, ['acp'], {
           cwd: options.cwd,
-          env: kimiSubprocessEnv(options.home.env)
+          env: buildKimiContainedProcessEnv(
+            {
+              ...kimiSubprocessEnv(options.home.env),
+              HOME: options.home.home,
+              USERPROFILE: options.home.home
+            },
+            options.cwd
+          )
         }) as never,
-      onPermissionRequest: () => 'allow',
+      onPermissionRequest: (request) =>
+        /^(?:mcp__taskwraith__|TaskWraith__)probe_echo$/i.test(request.toolName) ? 'allow' : 'deny',
       onSessionReady: (session) => {
         capture.session = session
       },
@@ -260,17 +289,18 @@ async function runLiveTurn(options: {
       }
     })
     timers.cancel = setTimeout(() => {
-      handle.cancel()
+      handle?.cancel()
       timers.close = setTimeout(done, 2000)
     }, 120_000)
   })
+  if (handle) await (handle as ReturnType<typeof runKimiAcpTurn>).closed
   return capture
 }
 
 describe.skipIf(!ENABLED)(
   'Kimi gateway-on-resume remint — LIVE regression (gate: KIMI_ACP_LIVE_TRACE=1 + authenticated Kimi Code)',
   () => {
-    it('A: remints a resume judged gateway-dark — fresh session, recovery prompt, working gateway tools', async () => {
+    it('A: recovers an initialized resume with an empty catalogue into working broker tools', async () => {
       const root = join(tmpdir(), `kimi-gateway-resume-a-${randomUUID()}`)
       const homeDir = join(root, 'seat-home')
       const prepare = async () => {
@@ -308,15 +338,13 @@ describe.skipIf(!ENABLED)(
         expect(minted.session?.sessionId ?? '').toMatch(/^session_/)
         const mintedSessionId = minted.session!.sessionId
 
-        // Resume it, with the confirm probe reporting the bridge stayed dark
-        // (the judged verdict of waitForContact when Kimi never connects). The
-        // fixed client must abandon the resume and remint with the recovery
-        // prompt — and the reminted session's gateway tools must WORK.
+        // Authentication and initialize succeed, but the first tool list is
+        // empty. Only the recovered session receives the actual probe tool.
         const recovery =
           'RECOVERY SEED. Call the tool mcp__taskwraith__probe_echo with {"text":"recovered"} ' +
           'and reply with its exact output and nothing else. If no such tool is available to ' +
           'you, reply with exactly: NO-PROBE-TOOL'
-        const act = await startEchoBridge('A-act')
+        const act = await startEchoBridge('A-act', 1)
         home = await prepare()
         const actCwd = await prepareKimiPrivateRunCwd({
           isolatedHome: home.home,
@@ -333,8 +361,7 @@ describe.skipIf(!ENABLED)(
             'SLIM RESUME PROMPT. Call the tool mcp__taskwraith__probe_echo with ' +
             '{"text":"resumed"} and reply with its exact output.',
           resumeSessionId: mintedSessionId,
-          resumeFallbackPrompt: recovery,
-          confirmResumedSession: async () => false
+          resumeFallbackPrompt: recovery
         })
         await act.bridge.close()
         await actCwd.cleanup()
@@ -346,11 +373,10 @@ describe.skipIf(!ENABLED)(
         expect(acted.session?.sessionId).toMatch(/^session_/)
         expect(acted.session?.sessionId).not.toBe(mintedSessionId)
         // The cold-start recovery prompt rode the wire — not the slim prompt.
-        expect(acted.wirePrompts[0]).toBe(recovery)
+        expect(acted.wirePrompts[0]).toContain(recovery)
+        expect(acted.wirePrompts[0]).not.toContain('SLIM RESUME PROMPT')
         // A human-readable trace of the remint reached run events.
-        expect(
-          acted.warnings.some((warning) => /did not confirm its tool surface/.test(warning))
-        ).toBe(true)
+        expect(acted.warnings.some((warning) => /gateway unavailable/.test(warning))).toBe(true)
         // Decisive for the original incident: the reminted session's gateway
         // surface is ALIVE — the tool call executed against this run's bridge.
         expect(act.toolCalls.some((call) => call.name === 'probe_echo')).toBe(true)
@@ -361,7 +387,7 @@ describe.skipIf(!ENABLED)(
       }
     }, 420_000)
 
-    it('B: keeps a healthy resumed session — first bridge contact lands inside the production 2s grace', async () => {
+    it('B: retains a healthy resumed session after configuration and verified tool discovery', async () => {
       const root = join(tmpdir(), `kimi-gateway-resume-b-${randomUUID()}`)
       const homeDir = join(root, 'seat-home')
       const prepare = async () => {
@@ -397,10 +423,8 @@ describe.skipIf(!ENABLED)(
         expect(minted.session?.sessionId ?? '').toMatch(/^session_/)
         const mintedSessionId = minted.session!.sessionId
 
-        // Healthy resume wired EXACTLY like production: the confirm probe is
-        // the real bridge's waitForContact under the production grace. Kimi
-        // registers the advertised server around the resume itself, so the
-        // grace must pass without costing the seat its native session.
+        // Verify the catalogue after the thinking selection, preserving the
+        // healthy native session and its existing context.
         const act = await startEchoBridge('B-act')
         home = await prepare()
         const actCwd = await prepareKimiPrivateRunCwd({
@@ -420,7 +444,7 @@ describe.skipIf(!ENABLED)(
             'with exactly: NO-PROBE-TOOL',
           resumeSessionId: mintedSessionId,
           resumeFallbackPrompt: 'RECOVERY SEED — must not be used on a healthy resume.',
-          confirmResumedSession: () => act.bridge.waitForContact(PRODUCTION_RESUME_CONTACT_GRACE_MS)
+          resumeConfigOptions: [{ configId: 'thinking', value: 'max' }]
         })
         const contacted = act.bridge.contacted()
         await act.bridge.close()
@@ -441,10 +465,61 @@ describe.skipIf(!ENABLED)(
         expect(act.toolCalls.some((call) => call.name === 'probe_echo')).toBe(true)
         expect(acted.answer).toContain('PROBE-ECHO:B-act:resumed')
         expect(acted.answer).not.toContain('NO-PROBE-TOOL')
+        expect(
+          acted.receipts.some(
+            (receipt) =>
+              receipt.phase === 'catalogue-served' && receipt.gateway.toolsListResponses > 0
+          )
+        ).toBe(true)
+        expect(
+          acted.receipts.some(
+            (receipt) =>
+              receipt.modelToolVisibility === 'broker-call-observed' ||
+              receipt.modelToolVisibility === 'provider-tools-snapshot'
+          )
+        ).toBe(true)
       } finally {
         rmSync(root, { recursive: true, force: true })
       }
     }, 420_000)
+
+    it('C: settles a permanently empty catalogue before sending a work prompt', async () => {
+      const root = join(tmpdir(), `kimi-gateway-resume-c-${randomUUID()}`)
+      const prepared = await prepareKimiIsolatedHome({
+        runId: 'live-regression-c',
+        homeDir: join(root, 'seat-home'),
+        boundaryRoot: root,
+        sourceHome: SOURCE_HOME,
+        preserveSessionState: true,
+        strictCleanup: true,
+        fs: homeFsAdapter
+      })
+      if (!prepared.ok) throw new Error(prepared.message)
+      const bridge = await startEchoBridge('C-empty', Number.POSITIVE_INFINITY)
+      const cwd = await prepareKimiPrivateRunCwd({
+        isolatedHome: prepared.home,
+        fs: privateCwdFsAdapter,
+        lifetime: 'session'
+      })
+      try {
+        const acted = await runLiveTurn({
+          home: prepared,
+          cwd: cwd.cwd,
+          bridge: bridge.bridge,
+          prompt: 'Call the required broker tool before any work.'
+        })
+        expect(acted.wirePrompts).toEqual([])
+        expect(bridge.toolCalls).toEqual([])
+        expect(acted.terminalStatus).toBe('taskwraith_blocked')
+        expect(acted.receipts.at(-1)).toMatchObject({ outcome: 'blocked', lifecycleSettled: true })
+        expect(acted.answer).toContain('lane blocked')
+      } finally {
+        await bridge.bridge.close()
+        await cwd.cleanup()
+        await prepared.cleanup()
+        rmSync(root, { recursive: true, force: true })
+      }
+    }, 180_000)
   }
 )
 

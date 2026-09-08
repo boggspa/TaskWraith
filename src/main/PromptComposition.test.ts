@@ -888,7 +888,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     })
 
     expect(result.contextualPrompt).toContain('ULTRA-TASK MODE ACTIVE')
-    expect(result.contextualPrompt).toContain('TaskWraith__ultra_task once')
+    expect(result.contextualPrompt).toContain('mcp__taskwraith__ultra_task once')
     expect(result.contextualPrompt).toContain('returns an execution id')
     expect(result.contextualPrompt).toContain('graph runs independently')
     expect(result.contextualPrompt).toContain('must not block its workers')
@@ -1044,7 +1044,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     const cases = [
       ['gemini', 'TaskWraith__delegate_to_subthread', 'TaskWraith__delegate_wave'],
       ['claude', 'mcp__TaskWraith__delegate_to_subthread', 'mcp__TaskWraith__delegate_wave'],
-      ['kimi', 'TaskWraith__delegate_to_subthread', 'TaskWraith__delegate_wave'],
+      ['kimi', 'mcp__taskwraith__delegate_to_subthread', 'mcp__taskwraith__delegate_wave'],
       ['codex', 'TaskWraith__delegate_to_subthread', 'TaskWraith__delegate_wave'],
       ['grok', 'TaskWraith__delegate_to_subthread', 'TaskWraith__delegate_wave']
     ] as const

@@ -1169,7 +1169,11 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
           send(prepared.prompt)
           return
         }
-        options.onEvent({ type: 'provider_warning', text: prepared.message })
+        try {
+          options.onEvent({ type: 'provider_warning', text: prepared.message })
+        } catch {
+          // Diagnostic projection cannot prevent recovery or blocked settlement.
+        }
         if (
           prepared.status === 'recover' &&
           !sessionPreparationRecoveryAttempted &&
@@ -1183,11 +1187,16 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         blockedByHost = true
         terminalStatus = 'taskwraith_blocked'
         turnComplete = true
-        options.onEvent({
-          type: 'content',
-          text: `TaskWraith lane blocked: ${prepared.message} The existing session and prior work remain available; the coordinator can recover or reassign after this run settles.`
-        })
-        endProcess()
+        try {
+          options.onEvent({
+            type: 'content',
+            text: `TaskWraith lane blocked: ${prepared.message} The existing session and prior work remain available; the coordinator can recover or reassign after this run settles.`
+          })
+        } catch {
+          // Exact child close remains authoritative even if its notice cannot render.
+        } finally {
+          endProcess()
+        }
       })
   }
 
@@ -1968,9 +1977,14 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       turnComplete = true
       activePromptRpcId = null
       clearTransientRetryTimer()
-      options.onEvent({ type: 'provider_warning', text: message })
-      options.onEvent({ type: 'content', text: `\n\nTaskWraith lane blocked: ${message}` })
-      endProcess()
+      try {
+        options.onEvent({ type: 'provider_warning', text: message })
+        options.onEvent({ type: 'content', text: `\n\nTaskWraith lane blocked: ${message}` })
+      } catch {
+        // A failed notice must not leave a blocked provider process running.
+      } finally {
+        endProcess()
+      }
       return true
     },
     steer: (text: string, hooks?: AcpSteerDeliveryHooks): boolean => {

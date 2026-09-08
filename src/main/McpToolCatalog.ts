@@ -1924,7 +1924,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'approval_status',
       description:
-        'Return approval policies, workspace grants, and recent approval ledger records. ' +
+        'Return recorded run policies (labelled separately from configured defaults), workspace grants, and approval ledger records. ' +
+        'For an exact Kimi run in the current chat, also return its available capability receipt: broker discovery, observed tools, assigned scope, and system containment refusals. An unavailable receipt is unknown; an empty approval ledger does not prove tool availability or absence of native refusals. ' +
         'By default the query is scoped to the current run+chat (derived from the calling ' +
         'agent context) so the agent sees only approvals relevant to its own work. Pass ' +
         "`all: true` to widen the query to ALL of the calling agent's provider's approvals " +
@@ -1942,7 +1943,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           provider: {
             type: 'string',
             enum: selectableProviderIds(),
-            description: "Optional provider override. Defaults to the calling agent's provider."
+            description: "Optional provider override. With an explicit runId in the current chat, defaults to that run's provider; otherwise defaults to the calling agent's provider."
           },
           service: {
             type: 'string',

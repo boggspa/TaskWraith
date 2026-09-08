@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { formatKimiProcessError, runKimiAcpTurn } from './KimiAcpClient'
 import type { AcpChildProcess } from '../acp/AcpTurnClient'
+import type { AcpRunEvent } from '../acp/AcpProtocol'
+import { createKimiGatewayReadiness } from './KimiGatewayReadiness'
+import type { KimiHttpMcpBridgeHandle } from './KimiHttpMcpBridge'
+import type { KimiRunCapabilityReceipt } from './KimiRunCapabilities'
 import {
   createProviderTransportCloseOperation,
   ProviderOperationRegistry,
@@ -49,6 +53,131 @@ class FakeChild implements AcpChildProcess {
 }
 
 describe('runKimiAcpTurn', () => {
+  it('bounds native refusals without asking a human and joins blocked handoff through cleanup', async () => {
+    const child = new FakeChild()
+    const readiness = createKimiGatewayReadiness()
+    const receipts: KimiRunCapabilityReceipt[] = []
+    const events: AcpRunEvent[] = []
+    const humanMediator = vi.fn(async () => 'allow' as const)
+    let releaseCleanup!: () => void
+    const cleanup = new Promise<void>((resolve) => {
+      releaseCleanup = resolve
+    })
+    const closed = vi.fn(async () => {
+      await cleanup
+    })
+    const handle = runKimiAcpTurn({
+      prompt: 'Repair only the assigned file',
+      cwdLifetime: 'session',
+      cwd: '/private/runtime',
+      spawnProcess: () => child,
+      onEvent: (event) => events.push(event),
+      onPermissionRequest: humanMediator,
+      onClose: closed,
+      recovery: {
+        context: {
+          runId: 'kimi-run',
+          chatId: 'chat',
+          workspacePath: '/workspace',
+          assignedScope: {
+            kind: 'lane',
+            intent: 'write',
+            paths: [{ kind: 'path', path: 'src/owned.ts' }]
+          }
+        },
+        gateway: { readiness } as KimiHttpMcpBridgeHandle,
+        onReceipt: (receipt) => receipts.push(receipt),
+        timeoutMs: 1
+      },
+      onRawFrame: (direction, raw) => {
+        const frame = raw as { method?: string }
+        if (direction === 'out' && frame.method === 'session/new') {
+          const generation = readiness.snapshot().generation
+          readiness.responseServed(generation, 'initialize', {
+            result: { protocolVersion: '2025-03-26' }
+          })
+          readiness.responseServed(generation, 'tools/list', {
+            result: { tools: [{ name: 'read_file' }, { name: 'replace' }] }
+          })
+        }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session' } })
+    await vi.waitFor(() =>
+      expect(child.sent().some((frame) => frame.method === 'session/prompt')).toBe(true)
+    )
+    const emitUpdate = (update: Record<string, unknown>) =>
+      child.emit({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: { sessionId: 'session', update }
+      })
+    emitUpdate({
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: 'Design: retain capacity until provider completion.' }
+    })
+    const refuse = async (id: number) => {
+      const toolCall = {
+        toolCallId: `edit-${id}`,
+        title: 'Edit',
+        kind: 'edit',
+        status: 'pending',
+        rawInput: { file_path: '/workspace/src/owned.ts' }
+      }
+      emitUpdate({ sessionUpdate: 'tool_call', ...toolCall })
+      child.emit({
+        jsonrpc: '2.0',
+        id: 100 + id,
+        method: 'session/request_permission',
+        params: {
+          sessionId: 'session',
+          toolCall,
+          options: [{ optionId: 'reject', name: 'Reject', kind: 'reject_once' }]
+        }
+      })
+      await vi.waitFor(() => expect(child.sent().some((frame) => frame.id === 100 + id)).toBe(true))
+      emitUpdate({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: `edit-${id}`,
+        status: 'failed',
+        content: [
+          {
+            type: 'content',
+            content: {
+              type: 'text',
+              text: 'Tool "Edit" was not run because the user rejected the approval request.'
+            }
+          }
+        ]
+      })
+    }
+    await refuse(1)
+    expect(child.killed).toBe(false)
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    expect(child.sent().filter((frame) => frame.method === 'session/prompt')).toHaveLength(2)
+    await refuse(2)
+    expect(humanMediator).not.toHaveBeenCalled()
+    expect(closed).toHaveBeenCalledWith(0, true, 'taskwraith_blocked')
+    expect(receipts.at(-1)).toMatchObject({ outcome: 'blocked', lifecycleSettled: false })
+    let settled = false
+    void handle.closed.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    releaseCleanup()
+    await handle.closed
+    expect(receipts.at(-1)).toMatchObject({ outcome: 'blocked', lifecycleSettled: true })
+    const text = events
+      .filter((event) => event.type === 'content')
+      .map((event) => event.text)
+      .join('')
+    expect(text).toContain('Design: retain capacity until provider completion.')
+    expect(text).toContain('TaskWraith lane blocked')
+    expect(child.sent().filter((frame) => frame.method === 'session/prompt')).toHaveLength(2)
+  })
+
   it('holds a deletion join through cancel, exact child close, and async cleanup', async () => {
     const registry = new ProviderOperationRegistry()
     const transportClose = createProviderTransportCloseOperation()
