@@ -639,6 +639,104 @@ describe('runAcpTurn — neutral core', () => {
     })
   })
 
+  it('publishes readiness only after final configuration and exact prompt preparation', async () => {
+    const child = new FakeAcpChild()
+    const ready = vi.fn()
+    const prepare = vi.fn(async () => ({ status: 'ready' as const, prompt: 'verified work' }))
+    const { handle } = baseOptions(child, {
+      resumeSessionId: 'session-existing',
+      resumeConfigOptions: [{ configId: 'thinking', value: 'on' }],
+      prepareSessionPrompt: prepare,
+      onSessionReady: ready
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { agentCapabilities: { sessionCapabilities: { resume: {} } } }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 4,
+      result: {
+        configOptions: [
+          { id: 'thinking', currentValue: 'off', options: [{ value: 'off' }, { value: 'on' }] }
+        ]
+      }
+    })
+    expect(prepare).not.toHaveBeenCalled()
+    expect(ready).not.toHaveBeenCalled()
+    child.emit({ jsonrpc: '2.0', id: 1000, result: { configOptions: [] } })
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce())
+    expect(ready).toHaveBeenCalledOnce()
+    expect(child.sent().at(-1)).toMatchObject({
+      method: 'session/prompt',
+      params: { prompt: [{ type: 'text', text: 'verified work' }] }
+    })
+    handle.cancel()
+  })
+
+  it('recovers once with full context and blocks if the replacement also lacks tools', async () => {
+    const child = new FakeAcpChild()
+    const closed = vi.fn()
+    const ready = vi.fn()
+    const { events } = baseOptions(child, {
+      resumeSessionId: 'session-existing',
+      resumeFallbackPrompt: 'full authorized context',
+      prepareSessionPrompt: async () => ({ status: 'recover', message: 'tools/list unavailable' }),
+      onSessionReady: ready,
+      onClose: closed
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { agentCapabilities: { sessionCapabilities: { resume: {} } } }
+    })
+    child.emit({ jsonrpc: '2.0', id: 4, result: {} })
+    await vi.waitFor(() =>
+      expect(child.sent().some((frame) => frame.method === 'session/new')).toBe(true)
+    )
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-fresh' } })
+    await vi.waitFor(() => expect(closed).toHaveBeenCalledWith(0, true, 'taskwraith_blocked'))
+    expect(child.sent().filter((frame) => frame.method === 'session/new')).toHaveLength(1)
+    expect(child.sent().some((frame) => frame.method === 'session/prompt')).toBe(false)
+    expect(ready).not.toHaveBeenCalled()
+    expect(
+      events.some((event) => event.type === 'content' && event.text?.includes('lane blocked'))
+    ).toBe(true)
+  })
+
+  it('blocks a failed readiness probe and fences a late result after user cancellation', async () => {
+    const failedChild = new FakeAcpChild()
+    baseOptions(failedChild, {
+      prepareSessionPrompt: async () => {
+        throw new Error('probe error')
+      }
+    })
+    failedChild.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    failedChild.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-new' } })
+    await vi.waitFor(() => expect(failedChild.killed).toBe(true))
+    expect(failedChild.sent().some((frame) => frame.method === 'session/prompt')).toBe(false)
+
+    const child = new FakeAcpChild()
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { handle } = baseOptions(child, {
+      prepareSessionPrompt: async () => {
+        await pending
+        return { status: 'ready' }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-new' } })
+    handle.cancel()
+    release()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(child.sent().some((frame) => frame.method === 'session/prompt')).toBe(false)
+  })
+
   it.each([
     { offered: ['ask', 'plan'], expected: 'ask' },
     { offered: ['default', 'plan'], expected: 'default' }

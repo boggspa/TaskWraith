@@ -116,4 +116,43 @@ describe('startKimiHttpMcpBridge', () => {
     expect(handle.contacted()).toBe(false)
     await expect(handle.waitForContact(40)).resolves.toBe(false)
   })
+
+  it('requires a served tool list instead of authenticated GET or initialize contact', async () => {
+    handle = await startKimiHttpMcpBridge({
+      dispatch: async (message) => ({
+        jsonrpc: '2.0', id: message.id,
+        result: message.method === 'initialize'
+          ? { protocolVersion: '2025-03-26' }
+          : { tools: [{ name: 'read_file' }, { name: 'replace' }] }
+      })
+    })
+    await fetch(handle.url, { headers: { Authorization: handle.headerValue } })
+    expect(handle.contacted()).toBe(true)
+    await expect(handle.readiness.waitForTools(10)).resolves.toBe(false)
+    await post(handle, { jsonrpc: '2.0', id: 1, method: 'initialize' })
+    await expect(handle.readiness.waitForTools(10)).resolves.toBe(false)
+    await post(handle, { jsonrpc: '2.0', id: 2, method: 'tools/list' })
+    await expect(handle.readiness.waitForTools(10, [['replace']])).resolves.toBe(true)
+    expect(handle.readiness.snapshot()).toMatchObject({
+      initializeResponses: 1, toolsListResponses: 1, toolNames: ['read_file', 'replace']
+    })
+  })
+
+  it('does not reuse a delayed old-session response to admit its recovery session', async () => {
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => { release = resolve })
+    let entered!: () => void
+    const dispatched = new Promise<void>((resolve) => { entered = resolve })
+    handle = await startKimiHttpMcpBridge({ dispatch: async (message) => {
+      entered()
+      await pending
+      return { jsonrpc: '2.0', id: message.id, result: { tools: [{ name: 'replace' }] } }
+    } })
+    const response = post(handle, { jsonrpc: '2.0', id: 2, method: 'tools/list' })
+    await dispatched
+    handle.readiness.beginSession()
+    release()
+    await response
+    expect(handle.readiness.snapshot().toolsListResponses).toBe(0)
+  })
 })

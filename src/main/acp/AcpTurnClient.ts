@@ -115,6 +115,17 @@ export interface AcpSessionConfigSelection {
   fallbackValues?: readonly string[]
 }
 
+export interface AcpSessionPromptContext {
+  sessionId: string
+  resumed: boolean
+  fallbackFromResume: boolean
+  prompt: string
+}
+
+export type AcpSessionPromptPreparation =
+  | { status: 'ready'; prompt?: string }
+  | { status: 'recover' | 'blocked'; message: string }
+
 export interface AcpTurnOptions {
   prompt: string
   /**
@@ -212,6 +223,10 @@ export interface AcpTurnOptions {
    * resumed sessions are always kept.
    */
   confirmResumedSession?: () => Promise<boolean>
+  /** Runs after session configuration, before readiness is published or work is sent.
+   * Recovery is bounded to one fresh session and requires full recovery context
+   * when replacing a resumed session. Probe errors never imply readiness. */
+  prepareSessionPrompt?: (session: AcpSessionPromptContext) => Promise<AcpSessionPromptPreparation>
   /** Normalized run events: content / thinking / init / result / tool / warning. */
   onEvent: (event: AcpRunEvent) => void
   /**
@@ -336,6 +351,10 @@ export interface AcpTurnHandle {
    * RunManager teardown paths that must not silently deliver a stale steer.
    */
   cancelSteer: () => void
+  /** Host-owned blocked-lane settlement. Refuses while a tool batch or queued
+   * steer is unresolved; cleanup remains joined by closed. */
+  finishBlocked?: (message: string) => boolean
+  wasBlockedByHost?: () => boolean
   /**
    * Resolves only after the exact child emits `close` and the provider-owned
    * `onClose` callback has settled. A kill request is not close evidence, and
@@ -700,7 +719,11 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   let agentSupportsImagePrompts = false
   let initialPromptImages: AcpPromptImageContent[] = []
   let promptSent = false
+  let sessionPreparationPending = false
+  let sessionPreparationRecoveryAttempted = false
+  let currentSessionResumed = false
   let turnComplete = false
+  let blockedByHost = false
   let terminalStatus: string | undefined
   let stdinClosed = false
   let closed = false
@@ -1103,9 +1126,69 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   }
 
   const sendPromptOnce = (): void => {
-    if (promptSent) return
-    promptSent = true
-    sendPrompt(promptForTurn, initialPromptImages)
+    if (promptSent || sessionPreparationPending || closed || cancelRequested) return
+    const preparedSessionId = sessionId
+    const publishReady = (): void => {
+      options.onEvent({ type: 'init', sessionId })
+      options.onSessionReady?.({
+        sessionId,
+        resumed: currentSessionResumed,
+        fallbackFromResume
+      })
+    }
+    const send = (prompt = promptForTurn): void => {
+      if (options.prepareSessionPrompt) publishReady()
+      promptSent = true
+      sendPrompt(prompt, initialPromptImages)
+    }
+    if (!options.prepareSessionPrompt) {
+      send()
+      return
+    }
+    sessionPreparationPending = true
+    void Promise.resolve()
+      .then(() =>
+        options.prepareSessionPrompt!({
+          sessionId,
+          resumed: currentSessionResumed,
+          fallbackFromResume,
+          prompt: promptForTurn
+        })
+      )
+      .catch(
+        (): AcpSessionPromptPreparation => ({
+          status: 'blocked',
+          message:
+            "TaskWraith could not verify this session's tool surface. No work prompt was sent."
+        })
+      )
+      .then((prepared) => {
+        sessionPreparationPending = false
+        if (closed || cancelRequested || sessionId !== preparedSessionId) return
+        if (prepared.status === 'ready') {
+          send(prepared.prompt)
+          return
+        }
+        options.onEvent({ type: 'provider_warning', text: prepared.message })
+        if (
+          prepared.status === 'recover' &&
+          !sessionPreparationRecoveryAttempted &&
+          options.allowResumeFallback !== false &&
+          (!currentSessionResumed || Boolean(options.resumeFallbackPrompt?.trim()))
+        ) {
+          sessionPreparationRecoveryAttempted = true
+          sendSessionNew(true)
+          return
+        }
+        blockedByHost = true
+        terminalStatus = 'taskwraith_blocked'
+        turnComplete = true
+        options.onEvent({
+          type: 'content',
+          text: `TaskWraith lane blocked: ${prepared.message} The existing session and prior work remain available; the coordinator can recover or reassign after this run settles.`
+        })
+        endProcess()
+      })
   }
 
   const clearTransientRetryTimer = (): void => {
@@ -1208,7 +1291,8 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   }
 
   const sessionReady = (resumed: boolean, result: unknown): void => {
-    if (sessionId) {
+    currentSessionResumed = resumed
+    if (sessionId && !options.prepareSessionPrompt) {
       options.onEvent({ type: 'init', sessionId })
       options.onSessionReady?.({ sessionId, resumed, fallbackFromResume })
     }
@@ -1867,6 +1951,28 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
 
   return {
     closed: closeSettled,
+    wasBlockedByHost: () => blockedByHost,
+    finishBlocked: (message: string): boolean => {
+      if (
+        cancelRequested ||
+        closed ||
+        stdinClosed ||
+        turnComplete ||
+        pendingSteer ||
+        outstandingToolIds.size > 0 ||
+        toolBatchIdentityAmbiguous
+      )
+        return false
+      blockedByHost = true
+      terminalStatus = 'taskwraith_blocked'
+      turnComplete = true
+      activePromptRpcId = null
+      clearTransientRetryTimer()
+      options.onEvent({ type: 'provider_warning', text: message })
+      options.onEvent({ type: 'content', text: `\n\nTaskWraith lane blocked: ${message}` })
+      endProcess()
+      return true
+    },
     steer: (text: string, hooks?: AcpSteerDeliveryHooks): boolean => {
       const steerText = typeof text === 'string' ? text.trim() : ''
       if (!steerText) return false
