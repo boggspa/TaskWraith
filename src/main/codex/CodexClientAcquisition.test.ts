@@ -32,7 +32,7 @@ class FakeClient {
   setWorkspaceLockOwnerId = vi.fn()
 }
 
-function fixture() {
+function fixture(cohortFairness?: boolean) {
   let client: FakeClient | null = null
   let lease: CodexClientLifecycleLease | null = null
   const settings = {
@@ -44,6 +44,7 @@ function fixture() {
   const activeSessions: { state: unknown }[] = []
   const deps: CodexClientAcquisitionDependencies<FakeClient> = {
     ...profileFence,
+    flags: { cohortFairness },
     get codexClient() {
       return client
     },
@@ -418,6 +419,197 @@ describe('Codex client accessor parity', () => {
     reservations.activeLaneReservationCount = 0
     acquisition.getCodexClient()
     expect(client.dispose).toHaveBeenCalledOnce()
+  })
+})
+
+describe('Codex cohort fairness enabled', () => {
+  async function reopenedScenario() {
+    const context = fixture(true)
+    const { acquisition, deps } = context
+    const joins = vi.spyOn(deps.codexProviderClientCohorts, 'tryJoin')
+    const first = await acquisition.acquireCodexProviderClientRunLease(solo, 'first', null)
+    const secondPending = acquisition.acquireCodexProviderClientRunLease(mesh, 'second', null)
+    const olderPending = acquisition.acquireCodexProviderClientRunLease(mesh, 'older', null)
+    await first.cohortLease.release()
+    const second = await secondPending
+    const successfulOwners = () =>
+      joins.mock.calls
+        .filter((_, index) => joins.mock.results[index].value != null)
+        .map(([owner]) => owner)
+    return { ...context, second, olderPending, successfulOwners }
+  }
+
+  it('joins an older compatible request while it is still behind the active lifecycle slot', async () => {
+    const { deps, second, olderPending, successfulOwners } = await reopenedScenario()
+    expect(successfulOwners()).toContain('older')
+    const older = await olderPending
+    expect(older.lifecycleLease).toBe(second.lifecycleLease)
+    expect(deps.activeCodexClientLifecycleLease).toBe(second.lifecycleLease)
+    await second.cohortLease.release()
+    expect(deps.activeCodexClientLifecycleLease).toBe(older.lifecycleLease)
+    await older.cohortLease.release()
+  })
+
+  it('enrols the older compatible waiter before a newcomer joins the reopened cohort', async () => {
+    const { acquisition, second, olderPending, successfulOwners } = await reopenedScenario()
+    const newcomer = await acquisition.acquireCodexProviderClientRunLease(mesh, 'newcomer', null)
+    expect(successfulOwners()).toEqual(['older', 'newcomer'])
+    const older = await olderPending
+    expect(older.lifecycleLease).toBe(newcomer.lifecycleLease)
+    await second.cohortLease.release()
+    await newcomer.cohortLease.release()
+    await older.cohortLease.release()
+  })
+
+  it('reopens the cohort after the last queued lifecycle abort', async () => {
+    const { acquisition, deps } = fixture(true)
+    const first = await acquisition.acquireCodexProviderClientRunLease(gateway, 'first', null)
+    const abort = new AbortController()
+    const pending = acquisition.acquireCodexClientLifecycleLease('maintenance', abort.signal)
+    const rejected = expect(pending).rejects.toBeInstanceOf(AcquireAbortedError)
+    abort.abort()
+    await rejected
+    const borrowed = deps.codexProviderClientCohorts.tryBorrow('read-after-abort')
+    expect(borrowed).not.toBeNull()
+    await borrowed!.release()
+    const compatible = await acquisition.acquireCodexProviderClientRunLease(gateway, 'next', null)
+    expect(compatible.lifecycleLease).toBe(first.lifecycleLease)
+    expect(first.client.setMcpConfig).toHaveBeenCalledOnce()
+    await first.cohortLease.release()
+    await compatible.cohortLease.release()
+  })
+
+  it('keeps remaining destructive demand ahead of borrowers and new compatible traffic', async () => {
+    const { acquisition, deps } = fixture(true)
+    const first = await acquisition.acquireCodexProviderClientRunLease(gateway, 'first', null)
+    const abort = new AbortController()
+    const cancelled = acquisition.acquireCodexClientLifecycleLease('cancelled', abort.signal)
+    const rejected = expect(cancelled).rejects.toBeInstanceOf(AcquireAbortedError)
+    const remaining = acquisition.acquireCodexClientLifecycleLease('remaining')
+    abort.abort()
+    await rejected
+    expect(deps.codexProviderClientCohorts.tryBorrow('read')).toBeNull()
+    let nextAcquired = false
+    const nextPending = acquisition
+      .acquireCodexProviderClientRunLease(gateway, 'next', null)
+      .then((lease) => {
+        nextAcquired = true
+        return lease
+      })
+    await first.cohortLease.release()
+    const exclusive = await remaining
+    expect(nextAcquired).toBe(false)
+    expect(() => acquisition.getCodexClient()).toThrow('reserved by remaining')
+    exclusive.release()
+    await (await nextPending).cohortLease.release()
+  })
+
+  it('gives a neutral borrower live ownership during a compatible reopen without retargeting', async () => {
+    const { acquisition, deps, second, olderPending, successfulOwners } = await reopenedScenario()
+    expect(successfulOwners()).toContain('older')
+    const configured = second.client.setMcpConfig.mock.calls.length
+    const borrowed = deps.codexProviderClientCohorts.tryBorrow('neutral-read')
+    expect(borrowed?.resource.client).toBe(second.client)
+    const older = await olderPending
+    await second.cohortLease.release()
+    await older.cohortLease.release()
+    expect(deps.activeCodexClientLifecycleLease).toBe(second.lifecycleLease)
+    expect(second.client.setMcpConfig).toHaveBeenCalledTimes(configured)
+    expect(() => acquisition.getCodexClient()).toThrow('reserved by provider-run:second')
+    await borrowed!.release()
+    expect(deps.activeCodexClientLifecycleLease).toBeNull()
+  })
+
+  it('drains a reopened cohort for older incompatible work despite continuing compatible arrivals', async () => {
+    const { acquisition, deps } = fixture(true)
+    const first = await acquisition.acquireCodexProviderClientRunLease(solo, 'first', null)
+    const secondPending = acquisition.acquireCodexProviderClientRunLease(mesh, 'second', null)
+    const olderPending = acquisition.acquireCodexProviderClientRunLease(gateway, 'older', null)
+    await first.cohortLease.release()
+    const second = await secondPending
+    expect(deps.codexProviderClientCohorts.admissionState()?.accepting).toBe(false)
+    const arrivals = Array.from({ length: 16 }, (_, index) =>
+      acquisition.acquireCodexProviderClientRunLease(mesh, 'new-' + index, null)
+    )
+    await second.cohortLease.release()
+    const older = await olderPending
+    expect(older.lifecycleLease.label).toBe('provider-run:older')
+    await older.cohortLease.release()
+    const batch = await Promise.all(arrivals)
+    expect(new Set(batch.map((lease) => lease.lifecycleLease)).size).toBe(1)
+    expect(batch[0].lifecycleLease).not.toBe(second.lifecycleLease)
+    await Promise.all(batch.map((lease) => lease.cohortLease.release()))
+    expect(deps.activeCodexClientLifecycleLease).toBeNull()
+  })
+
+  it('releases a compatible join aborted before delivery to the provider caller', async () => {
+    const { acquisition, deps } = fixture(true)
+    const first = await acquisition.acquireCodexProviderClientRunLease(gateway, 'first', null)
+    const abort = new AbortController()
+    const join = deps.codexProviderClientCohorts.tryJoin.bind(deps.codexProviderClientCohorts)
+    vi.spyOn(deps.codexProviderClientCohorts, 'tryJoin').mockImplementation((owner, key) => {
+      const lease = join(owner, key)
+      if (owner === 'cancelled') abort.abort()
+      return lease
+    })
+    await expect(
+      acquisition.acquireCodexProviderClientRunLease(
+        { ...gateway, providerSetupAbortSignal: abort.signal },
+        'cancelled',
+        null
+      )
+    ).rejects.toBeInstanceOf(AcquireAbortedError)
+    expect(deps.poisonWorkspaceLockMutationAdmission).not.toHaveBeenCalled()
+    await first.cohortLease.release()
+    expect(deps.finishCodexClientLifecycle).toHaveBeenCalledOnce()
+    expect(deps.activeCodexClientLifecycleLease).toBeNull()
+  })
+
+  it('retains the exact lifecycle poison check on a compatible join', async () => {
+    const { acquisition, deps } = fixture(true)
+    const first = await acquisition.acquireCodexProviderClientRunLease(gateway, 'first', null)
+    deps.activeCodexClientLifecycleLease = {
+      token: Symbol('foreign'),
+      label: 'foreign',
+      release: vi.fn()
+    }
+    await expect(
+      acquisition.acquireCodexProviderClientRunLease(gateway, 'next', null)
+    ).rejects.toThrow('Codex compatible client cohort lost lifecycle ownership.')
+    expect(deps.poisonWorkspaceLockMutationAdmission).toHaveBeenCalledExactlyOnceWith(
+      'Codex run next joined a client cohort without its exact lifecycle lease.'
+    )
+    expect(deps.codexProviderClientCohorts.admissionState()?.accepting).toBe(false)
+    deps.activeCodexClientLifecycleLease = first.lifecycleLease
+    await first.cohortLease.release()
+  })
+
+  it('releases the lifecycle FIFO after a transition failure', async () => {
+    const { acquisition, deps } = fixture(true)
+    vi.mocked(deps.disposeCodexClientForOwnerTransition).mockRejectedValueOnce(
+      new Error('transition failed')
+    )
+    await expect(
+      acquisition.acquireCodexProviderClientRunLease(gateway, 'failed', null)
+    ).rejects.toThrow('transition failed')
+    expect(deps.activeCodexClientLifecycleLease).toBeNull()
+    const next = await acquisition.acquireCodexProviderClientRunLease(gateway, 'next', null)
+    await next.cohortLease.release()
+  })
+
+  it('keeps the selected scheduling mode stable while an owner is live', async () => {
+    const { acquisition, deps } = fixture(true)
+    const first = await acquisition.acquireCodexProviderClientRunLease(gateway, 'first', null)
+    Object.defineProperty(deps, 'flags', { value: { cohortFairness: false } })
+    const abort = new AbortController()
+    const pending = acquisition.acquireCodexClientLifecycleLease('cancelled', abort.signal)
+    const rejected = expect(pending).rejects.toBeInstanceOf(AcquireAbortedError)
+    abort.abort()
+    await rejected
+    const borrowed = deps.codexProviderClientCohorts.tryBorrow('read-after-abort')
+    expect(borrowed).not.toBeNull()
+    await borrowed!.release()
+    await first.cohortLease.release()
   })
 })
 

@@ -13,6 +13,7 @@ import type {
 import type * as McpSessionProfileFence from '../mcp/McpSessionProfileFence'
 import type { RuntimeProfile, TaskWraithMcpProfileId } from '../store/types'
 import type { CodexClientLifecycleQueue } from './CodexClientLifecycleQueue'
+import { CodexClientWaiterQueue } from './CodexClientWaiterQueue'
 import type {
   CodexClientRunCohortLease,
   CodexClientRunCohortRegistry
@@ -88,6 +89,7 @@ export interface CodexClientAcquisitionDependencies<
   readonly codexProviderClientCohorts: CodexClientRunCohortRegistry<
     CodexProviderClientCohortResource<TClient>
   >
+  readonly flags?: { readonly cohortFairness?: boolean }
   readonly codexClientLifecycleQueue: CodexClientLifecycleQueue
   readonly CodexClientLifecycleAcquireAbortedError: new (label: string) => Error
   readonly poisonWorkspaceLockMutationAdmission: (reason: string) => void
@@ -149,19 +151,51 @@ export interface CodexClientAcquisitionDependencies<
 
 /**
  * Acquisition extracted from index.ts at d93fb8a65, intentionally unwired.
- * Owns no new global state and preserves the existing compatibility and FIFO
- * behavior, including the reopened-cohort fairness defects. Process launch,
- * credential ownership and teardown remain supplied by the composition root.
+ * Default mode preserves the existing compatibility and FIFO behavior.
+ * The composition root supplies flags.cohortFairness from
+ * process.env.TASKWRAITH_CODEX_COHORT_FAIRNESS === '1'; this module never reads it.
+ * Mode is selected on the first lease request and held for this factory's
+ * lifetime, so a flag change cannot mix schedulers with queued work in flight.
+ * Process launch, credential ownership and teardown remain supplied by the root.
  */
 export function createCodexClientAcquisition<TClient extends CodexAcquisitionClient>(
   deps: CodexClientAcquisitionDependencies<TClient>
 ) {
+  let fairWaiters:
+    | CodexClientWaiterQueue<CodexProviderClientCohortResource<TClient>>
+    | null
+    | undefined
+
+  function fairnessQueue() {
+    if (fairWaiters === undefined) {
+      fairWaiters =
+        deps.flags?.cohortFairness === true
+          ? new CodexClientWaiterQueue({
+              lifecycleQueue: () => deps.codexClientLifecycleQueue,
+              cohorts: () => deps.codexProviderClientCohorts,
+              canReopen: (resource) =>
+                deps.activeCodexClientLifecycleLease === resource.lifecycleLease
+            })
+          : null
+    }
+    return fairWaiters
+  }
+
   async function acquireCodexClientLifecycleLease(
     label: string,
     signal?: AbortSignal
   ): Promise<CodexClientLifecycleLease> {
     const normalizedLabel = label.trim()
     if (!normalizedLabel) throw new Error('Codex client lifecycle requires an exact owner label.')
+    const fair = fairnessQueue()
+    if (fair) {
+      const grant = await fair.acquireExclusive(normalizedLabel, signal)
+      if (!grant || signal?.aborted) {
+        grant?.release()
+        throw new deps.CodexClientLifecycleAcquireAbortedError(normalizedLabel)
+      }
+      return claimCodexClientLifecycleLease(normalizedLabel, grant)
+    }
     // An exclusive transition queued behind a provider cohort must eventually
     // run. Close admission before joining the lifecycle tail so later compatible
     // turns cannot starve a profile, credential, maintenance, or teardown change.
@@ -171,6 +205,13 @@ export function createCodexClientAcquisition<TClient extends CodexAcquisitionCli
       queueSlot.release()
       throw new deps.CodexClientLifecycleAcquireAbortedError(normalizedLabel)
     }
+    return claimCodexClientLifecycleLease(normalizedLabel, queueSlot)
+  }
+
+  function claimCodexClientLifecycleLease(
+    normalizedLabel: string,
+    queueSlot: { release(): void }
+  ): CodexClientLifecycleLease {
     if (deps.activeCodexClientLifecycleLease) {
       queueSlot.release()
       throw new Error('Codex client lifecycle serialization was violated.')
@@ -334,7 +375,20 @@ export function createCodexClientAcquisition<TClient extends CodexAcquisitionCli
         }`
       )
       .digest('hex')
-    const joined = deps.codexProviderClientCohorts.tryJoin(runId, compatibilityKey)
+    const fair = fairnessQueue()
+    const lifecycleLabel = `provider-run:${runId}`.trim()
+    const grant = fair
+      ? await fair.acquireCompatible(runId, compatibilityKey, payload.providerSetupAbortSignal)
+      : null
+    if (fair && !grant) {
+      throw new deps.CodexClientLifecycleAcquireAbortedError(lifecycleLabel)
+    }
+    const joined =
+      grant?.kind === 'cohort'
+        ? grant.lease
+        : fair
+          ? null
+          : deps.codexProviderClientCohorts.tryJoin(runId, compatibilityKey)
     if (joined) {
       const { client, lifecycleLease } = joined.resource
       if (deps.activeCodexClientLifecycleLease !== lifecycleLease) {
@@ -345,13 +399,26 @@ export function createCodexClientAcquisition<TClient extends CodexAcquisitionCli
         )
         throw new Error('Codex compatible client cohort lost lifecycle ownership.')
       }
+      if (fair && payload.providerSetupAbortSignal?.aborted) {
+        await joined.release()
+        throw new deps.CodexClientLifecycleAcquireAbortedError(lifecycleLabel)
+      }
       return { client, lifecycleLease, cohortLease: joined }
     }
 
-    const lifecycleLease = await acquireCodexClientLifecycleLease(
-      `provider-run:${runId}`,
-      payload.providerSetupAbortSignal
-    )
+    let lifecycleLease: CodexClientLifecycleLease
+    if (grant?.kind === 'lifecycle') {
+      if (payload.providerSetupAbortSignal?.aborted) {
+        grant.release()
+        throw new deps.CodexClientLifecycleAcquireAbortedError(lifecycleLabel)
+      }
+      lifecycleLease = claimCodexClientLifecycleLease(lifecycleLabel, grant)
+    } else {
+      lifecycleLease = await acquireCodexClientLifecycleLease(
+        `provider-run:${runId}`,
+        payload.providerSetupAbortSignal
+      )
+    }
     let client: TClient | null = null
     try {
       await deps.disposeCodexClientForOwnerTransition(lifecycleLease)
@@ -369,6 +436,7 @@ export function createCodexClientAcquisition<TClient extends CodexAcquisitionCli
         async () => deps.finishCodexClientLifecycle(client!, lifecycleLease),
         () => lifecycleLease.release()
       )
+      fair?.cohortOpened()
       return { client, lifecycleLease, cohortLease }
     } catch (error) {
       try {
