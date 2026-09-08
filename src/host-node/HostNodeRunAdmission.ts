@@ -34,17 +34,44 @@ export interface HostNodeRunAdmission {
   acquire(input: {
     readonly commandId: string
     readonly threadId: string
+    /**
+     * M2 additive hook (Amendment A1.3): invoked SYNCHRONOUSLY at the moment
+     * the lease is claimed — inside `admitNow`/`flushWaiters` before the
+     * waiter promise resolves — so the caller can install a cancellation
+     * latch atomically with the claim. Optional; existing callers unchanged.
+     */
+    readonly onClaim?: (lease: HostNodeRunAdmissionLease) => void
   }): Promise<HostNodeRunAdmissionResult>
   hasThread(threadId: string): boolean
   inflightCount(): number
   queuedCount(): number
   cancelQueued(input: { readonly threadId: string; readonly commandId?: string }): number
+  /**
+   * M2 additive hook (Amendment A1.3): like `cancelQueued`, but reports
+   * whether the target was still a waiter and whether it is already
+   * in-flight, so a post-claim cancel can be routed to the claimed run's
+   * cancellation latch instead of silently finding nothing (Gap 1).
+   */
+  cancelQueuedWithStatus(input: {
+    readonly threadId: string
+    readonly commandId?: string
+  }): HostNodeRunAdmissionCancelStatus
   beginShutdown(): void
+}
+
+export interface HostNodeRunAdmissionCancelStatus {
+  /** Waiters cancelled by this call (same semantics as cancelQueued). */
+  readonly cancelled: number
+  /** True when at least one matching waiter was still queued. */
+  readonly stillQueued: boolean
+  /** True when the target is already claimed/in-flight (route to the latch). */
+  readonly targetInflight: boolean
 }
 
 interface Waiter {
   readonly commandId: string
   readonly threadId: string
+  readonly onClaim?: (lease: HostNodeRunAdmissionLease) => void
   readonly resolve: (result: HostNodeRunAdmissionResult) => void
 }
 
@@ -100,16 +127,45 @@ export function createHostNodeRunAdmission(
     }
   }
 
-  const admitNow = (commandId: string, threadId: string): HostNodeRunAdmissionResult => {
+  const cancelMatchingWaiters = (input: {
+    readonly threadId: string
+    readonly commandId?: string
+  }): number => {
+    let cancelled = 0
+    for (let index = waiters.length - 1; index >= 0; index -= 1) {
+      const waiter = waiters[index]
+      if (waiter.threadId !== input.threadId) continue
+      if (input.commandId && waiter.commandId !== input.commandId) continue
+      waiters.splice(index, 1)
+      waiter.resolve({
+        kind: 'rejected',
+        errorCode: 'run_start_cancelled',
+        errorMessage: 'Queued run was cancelled before it started.'
+      })
+      cancelled += 1
+    }
+    return cancelled
+  }
+
+  const admitNow = (
+    commandId: string,
+    threadId: string,
+    onClaim?: (lease: HostNodeRunAdmissionLease) => void
+  ): HostNodeRunAdmissionResult => {
     inflight.set(commandId, threadId)
-    return { kind: 'admitted', lease: leaseFor(commandId, threadId) }
+    const lease = leaseFor(commandId, threadId)
+    // The claim hook fires BEFORE the result escapes (return or waiter
+    // resolution), so a latch installed here precedes any observation of the
+    // admission — that atomicity is what closes cancel gap 1.
+    if (onClaim) onClaim(lease)
+    return { kind: 'admitted', lease }
   }
 
   const flushWaiters = (): void => {
     while (!shuttingDown && inflight.size < maxConcurrentRuns && waiters.length > 0) {
       const waiter = waiters.shift()
       if (!waiter) return
-      waiter.resolve(admitNow(waiter.commandId, waiter.threadId))
+      waiter.resolve(admitNow(waiter.commandId, waiter.threadId, waiter.onClaim))
     }
   }
 
@@ -130,7 +186,9 @@ export function createHostNodeRunAdmission(
             'This thread already has an active or queued run. Wait for it to finish or cancel it.'
         }
       }
-      if (inflight.size < maxConcurrentRuns) return admitNow(input.commandId, input.threadId)
+      if (inflight.size < maxConcurrentRuns) {
+        return admitNow(input.commandId, input.threadId, input.onClaim)
+      }
       if (waiters.length >= maxQueuedStarts) {
         return {
           kind: 'rejected',
@@ -142,6 +200,7 @@ export function createHostNodeRunAdmission(
         waiters.push({
           commandId: input.commandId,
           threadId: input.threadId,
+          onClaim: input.onClaim,
           resolve
         })
       })
@@ -150,20 +209,14 @@ export function createHostNodeRunAdmission(
     inflightCount: () => inflight.size,
     queuedCount: () => waiters.length,
     cancelQueued(input) {
-      let cancelled = 0
-      for (let index = waiters.length - 1; index >= 0; index -= 1) {
-        const waiter = waiters[index]
-        if (waiter.threadId !== input.threadId) continue
-        if (input.commandId && waiter.commandId !== input.commandId) continue
-        waiters.splice(index, 1)
-        waiter.resolve({
-          kind: 'rejected',
-          errorCode: 'run_start_cancelled',
-          errorMessage: 'Queued run was cancelled before it started.'
-        })
-        cancelled += 1
-      }
-      return cancelled
+      return cancelMatchingWaiters(input)
+    },
+    cancelQueuedWithStatus(input) {
+      const cancelled = cancelMatchingWaiters(input)
+      const targetInflight = input.commandId
+        ? inflight.has(input.commandId)
+        : [...inflight.values()].includes(input.threadId)
+      return { cancelled, stillQueued: cancelled > 0, targetInflight }
     },
     beginShutdown() {
       shuttingDown = true

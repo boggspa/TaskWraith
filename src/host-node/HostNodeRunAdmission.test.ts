@@ -100,4 +100,103 @@ describe('HostNodeRunAdmission', () => {
     expect(admission.queuedCount()).toBe(0)
     if (first.kind === 'admitted') first.lease.release()
   })
+
+  it('invokes onClaim synchronously before the direct-admit result escapes', async () => {
+    const admission = createHostNodeRunAdmission({ maxConcurrentRuns: 1, maxQueuedStarts: 0 })
+    const order: string[] = []
+    const result = await admission.acquire({
+      commandId: 'run-1',
+      threadId: 'thread-a',
+      onClaim: (lease) => {
+        order.push(`claim:${lease.commandId}`)
+      }
+    })
+    order.push(`observed:${result.kind}`)
+    expect(order).toEqual(['claim:run-1', 'observed:admitted'])
+    expect(result.kind).toBe('admitted')
+    if (result.kind === 'admitted') result.lease.release()
+  })
+
+  it('invokes onClaim inside flushWaiters before the waiter promise resolves', async () => {
+    const admission = createHostNodeRunAdmission({ maxConcurrentRuns: 1, maxQueuedStarts: 1 })
+    const first = await admission.acquire({ commandId: 'run-1', threadId: 'thread-a' })
+    const order: string[] = []
+    const queued = admission
+      .acquire({
+        commandId: 'run-2',
+        threadId: 'thread-b',
+        onClaim: (lease) => {
+          order.push(`claim:${lease.commandId}`)
+        }
+      })
+      .then((result) => {
+        order.push(`resolved:${result.kind}`)
+        return result
+      })
+    await Promise.resolve()
+    expect(admission.queuedCount()).toBe(1)
+
+    if (first.kind === 'admitted') first.lease.release()
+    const admitted = await queued
+    // The latch hook ran strictly before the waiter observed the admission.
+    expect(order).toEqual(['claim:run-2', 'resolved:admitted'])
+    expect(admitted.kind).toBe('admitted')
+    if (admitted.kind === 'admitted') admitted.lease.release()
+  })
+
+  it('cancelQueuedWithStatus reports a still-queued target and cancels it', async () => {
+    const admission = createHostNodeRunAdmission({ maxConcurrentRuns: 1, maxQueuedStarts: 1 })
+    const first = await admission.acquire({ commandId: 'run-1', threadId: 'thread-a' })
+    const queued = admission.acquire({ commandId: 'run-2', threadId: 'thread-b' })
+    await Promise.resolve()
+
+    expect(admission.cancelQueuedWithStatus({ threadId: 'thread-b', commandId: 'run-2' })).toEqual({
+      cancelled: 1,
+      stillQueued: true,
+      targetInflight: false
+    })
+    await expect(queued).resolves.toMatchObject({
+      kind: 'rejected',
+      errorCode: 'run_start_cancelled'
+    })
+    if (first.kind === 'admitted') first.lease.release()
+  })
+
+  it('cancelQueuedWithStatus routes a post-claim cancel to the latch instead of losing it', async () => {
+    const admission = createHostNodeRunAdmission({ maxConcurrentRuns: 1, maxQueuedStarts: 1 })
+    const first = await admission.acquire({ commandId: 'run-1', threadId: 'thread-a' })
+    let latched: string | null = null
+    const queued = admission.acquire({
+      commandId: 'run-2',
+      threadId: 'thread-b',
+      onClaim: (lease) => {
+        // The latch is installed atomically with the claim.
+        latched = lease.commandId
+      }
+    })
+    await Promise.resolve()
+
+    // The Gap-1 race: release flushes the waiter (claim + latch happen
+    // synchronously) BEFORE the awaiting continuation can act. A cancel that
+    // lands anywhere after the release must NOT find "nothing".
+    if (first.kind === 'admitted') first.lease.release()
+    const status = admission.cancelQueuedWithStatus({ threadId: 'thread-b', commandId: 'run-2' })
+    expect(status).toEqual({ cancelled: 0, stillQueued: false, targetInflight: true })
+    expect(latched).toBe('run-2')
+
+    const admitted = await queued
+    expect(admitted.kind).toBe('admitted')
+    if (admitted.kind === 'admitted') admitted.lease.release()
+    expect(admission.inflightCount()).toBe(0)
+  })
+
+  it('keeps cancelQueued returning a bare count (existing API unchanged)', async () => {
+    const admission = createHostNodeRunAdmission({ maxConcurrentRuns: 1, maxQueuedStarts: 1 })
+    const first = await admission.acquire({ commandId: 'run-1', threadId: 'thread-a' })
+    const queued = admission.acquire({ commandId: 'run-2', threadId: 'thread-b' })
+    await Promise.resolve()
+    expect(admission.cancelQueued({ threadId: 'thread-b' })).toBe(1)
+    await expect(queued).resolves.toMatchObject({ kind: 'rejected' })
+    if (first.kind === 'admitted') first.lease.release()
+  })
 })
