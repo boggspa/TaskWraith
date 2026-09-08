@@ -124,7 +124,7 @@ describe('ChatJournal', () => {
     // Torn partial line
     fs.appendFileSync(jPath, '{"savedAt":"2026-08-04T00:00:02.000Z","record":{"id":"torn')
 
-    // Re-create — initDirectory must truncate the torn tail
+    // Re-create, then open — recovery on first open must truncate the torn tail
     const recovered = createChatJournal(baseDir)
     const result = recovered.read('chat-recover')
     expect(result.tail).toHaveLength(2)
@@ -141,8 +141,9 @@ describe('ChatJournal', () => {
     fs.writeFileSync(jPath, '{torn\nalso-torn\n', 'utf-8')
 
     const recovered = createChatJournal(baseDir)
-    expect(fs.existsSync(jPath)).toBe(false)
+    // Construction reads nothing; opening the chat is what recovers it.
     expect(recovered.read('chat-all-corrupt').tail).toEqual([])
+    expect(fs.existsSync(jPath)).toBe(false)
   })
 
   it('does not lose valid lines when a torn tail is recovered', () => {
@@ -559,7 +560,7 @@ describe('ChatJournal', () => {
     expect(s.tornLinesRecovered).toBe(0)
   })
 
-  it('G3: initDirectory truncates journal when all lines are already in snapshot', () => {
+  it('G3: opening a chat truncates its journal when all lines are already in snapshot', () => {
     // Pre-populate: snapshot with entries, journal with same entries
     const r1 = chatRecord('g3-init', 'a')
     const r2 = chatRecord('g3-init', 'b')
@@ -574,15 +575,15 @@ describe('ChatJournal', () => {
     fs.writeFileSync(snapPath, JSON.stringify(entries), 'utf-8')
     fs.writeFileSync(jPath, entries.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf-8')
 
-    // Recover — initDirectory must dedupe
+    // Recover — opening the chat must dedupe
     const recovered = createChatJournal(baseDir)
+    const result = recovered.read('g3-init')
 
     // Journal should be truncated (or removed if empty after dedup)
     const journalAfter = journalContent(jPath)
     // After dedup, all 2 lines were already in snapshot → journal removed
     expect(journalAfter).toBeNull()
 
-    const result = recovered.read('g3-init')
     expect(result.snapshot).not.toBeNull()
     const snap = result.snapshot as ChatJournalEntry[]
     expect(snap).toHaveLength(2)
@@ -593,7 +594,7 @@ describe('ChatJournal', () => {
     expect(s.linesWritten).toBe(0)
   })
 
-  it('G3: initDirectory preserves journal lines that postdate the snapshot', () => {
+  it('G3: opening a chat preserves journal lines that postdate the snapshot', () => {
     // Snapshot has entries 1-2, journal has entries 1-2-3
     const r1 = chatRecord('g3-partial', 'a')
     const r2 = chatRecord('g3-partial', 'b')
@@ -621,6 +622,7 @@ describe('ChatJournal', () => {
     )
 
     const recovered = createChatJournal(baseDir)
+    const result = recovered.read('g3-partial')
 
     // Journal should still exist with only line 3
     const journalLines = journalContent(jPath)!.split('\n').filter(Boolean)
@@ -628,7 +630,6 @@ describe('ChatJournal', () => {
     const parsed = JSON.parse(journalLines[0]) as ChatJournalEntry
     expect(parsed.record).toEqual(r3)
 
-    const result = recovered.read('g3-partial')
     expect(result.snapshot).not.toBeNull()
     expect(result.tail).toHaveLength(1)
     expect(result.tail[0].record).toEqual(r3)
@@ -895,12 +896,15 @@ describe('ChatJournal — oversized journal cannot brick startup', () => {
     return fs.statSync(filePath).size
   }
 
-  it('quarantines a journal above the parse ceiling instead of reading it', () => {
+  it('quarantines a journal above the parse ceiling on first open instead of reading it', () => {
     const jPath = path.join(baseDir, 'huge-chat.jsonl')
     const written = writeValidOversizedJournal(jPath, 4096)
 
     const journal = createChatJournal(baseDir, { maxJournalParseBytes: 1024 })
 
+    // Construction touches nothing; the first open of this chat parks the file.
+    expect(quarantined()).toHaveLength(0)
+    expect(journal.read('huge-chat')).toEqual({ snapshot: null, tail: [] })
     expect(quarantined()).toHaveLength(1)
     expect(fs.existsSync(jPath)).toBe(false)
     // Quarantine must PRESERVE the bytes — the journal is the only copy of
@@ -933,12 +937,16 @@ describe('ChatJournal — oversized journal cannot brick startup', () => {
     const journal = createChatJournal(baseDir, { maxJournalParseBytes: 1024 })
 
     // The whole point: one poisoned file must not cost the user every OTHER
-    // chat's journal, and must not stop new appends from working.
-    expect(quarantined()).toHaveLength(1)
+    // chat's journal, and must not stop new appends from working. Lazily it
+    // is not even touched until its own chat is opened.
     expect(journal.read('good-chat').tail).toHaveLength(1)
+    expect(quarantined()).toHaveLength(0)
     expect(fs.existsSync(path.join(baseDir, 'good-chat.jsonl'))).toBe(true)
     journal.append('another-chat', { id: 'another-chat', messages: [] })
     expect(journal.read('another-chat').tail).toHaveLength(1)
+    expect(journal.read('huge-chat')).toEqual({ snapshot: null, tail: [] })
+    expect(quarantined()).toHaveLength(1)
+    expect(journal.read('good-chat').tail).toHaveLength(1)
   })
 
   it('reads a quarantined chat as empty rather than throwing', () => {

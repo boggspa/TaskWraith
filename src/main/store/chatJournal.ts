@@ -29,7 +29,9 @@
  * DURABILITY:
  *   - Every append is atomic: temp file → write → fsync → rename.
  *   - Torn appends (crash mid-write) are detected on recovery: the journal
- *     is truncated to the last complete JSON line.
+ *     is truncated to the last complete JSON line. Recovery runs the first
+ *     time a chat is opened in a process — construction never scans the
+ *     directory or reads a journal body (see `initDirectory` / `openChat`).
  *   - Snapshots are likewise atomic: temp → write → fsync → rename.
  *
  * COMPACTION:
@@ -77,7 +79,7 @@ export interface ChatJournalStats {
   chatsDeleted: number
   /** Appends refused because the chat is tombstoned. */
   tombstoneRejects: number
-  /** Torn lines detected and recovered on init. */
+  /** Torn lines detected and recovered when their chat was first opened. */
   tornLinesRecovered: number
 }
 
@@ -114,7 +116,9 @@ export interface ChatJournal {
 
   /**
    * Compact every chat above a threshold. Returns count of chats
-   * compacted. Called during idle or before shutdown.
+   * compacted. Called during idle or before shutdown. This opens every
+   * journal still on disk, which is the only whole-directory read the
+   * journal performs — never at construction.
    */
   compactAll(): number
 
@@ -152,6 +156,10 @@ const SNAPSHOT_AGE_THRESHOLD_MS = 10 * 60 * 1000
  * The app died with exit 133 / SIGTRAP and ZERO output. So did every TaskWraith
  * MCP bridge child, each being a re-entry of the same binary, which surfaced to
  * Mistral/Vibe as `unhandled errors in a TaskGroup (1 sub-exception)`.
+ *
+ * Construction no longer reads any journal (recovery moved to the first open
+ * of each chat), but the per-chat open and `read()` still load one journal
+ * into one string, so the ceiling stays load-bearing there.
  *
  * 256 MB sits well under V8's limit and far above any healthy journal
  * (SNAPSHOT_BYTE_THRESHOLD compacts at 16 MB), so crossing it always means the
@@ -489,146 +497,35 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
   // ---- lifecycle ----
 
   /**
-   * Scan the journal directory on init: detect torn tails, rebuild
-   * in-memory state, and recover tombstoned chats.
+   * Construction does ONE thing: make sure the directory exists.
+   *
+   * It used to scan the whole directory and parse every journal before
+   * returning — and each line holds a whole chat record, so with
+   * `store/index.ts` calling `createChatJournal` at module scope that was a
+   * full-history read on the main process before `app.whenReady`, growing with
+   * the number of chats and the size of their transcripts. Recovery is per
+   * chat and needs no global view, so it runs when a chat is first opened in
+   * this process instead (see `openChat`). What recovery DOES is unchanged:
+   * torn tails are truncated, the compact() crash window is deduplicated,
+   * oversized journals are parked, and compaction state is rebuilt from disk —
+   * for that chat, when that chat is touched.
    */
   const initDirectory = (): void => {
-    if (canWrite()) {
-      try {
-        fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
-      } catch {
-        /* already exists */
-      }
-    }
-
-    let entries: fs.Dirent[]
+    if (!canWrite()) return
     try {
-      entries = fs.readdirSync(baseDir, { withFileTypes: true })
+      fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
     } catch {
-      return
-    }
-
-    for (const entry of entries) {
-      if (!entry.isFile()) continue
-      const name = entry.name
-
-      // Tombstone markers
-      if (name.endsWith('.tombstone')) {
-        const chatId = name.slice(0, -'.tombstone'.length)
-        // Same completeness requirement as the rebuild below: a tombstoned
-        // chat can be revived, and it would otherwise carry NaN byte state.
-        chats.set(chatId, {
-          lineCount: 0,
-          bytesSinceSnapshot: 0,
-          lastSnapshotAt: 0,
-          observedAt: Date.now(),
-          tombstoned: true
-        })
-        continue
-      }
-
-      // Journal files
-      if (name.endsWith('.jsonl')) {
-        const chatId = name.slice(0, -'.jsonl'.length)
-        const jPath = path.join(baseDir, name)
-
-        // Oversized journal: park it and move on. Renaming out of the `.jsonl`
-        // suffix is what takes it out of this scan, so the next launch is
-        // clean; the bytes are kept because this file is the only record of
-        // both the unmerged saves and the compaction failure that grew it.
-        // `continue` (rather than seeding state) deliberately leaves the chat
-        // looking journal-less, so a fresh journal starts from zero.
-        const oversized = oversizedJournalBytes(jPath)
-        if (oversized !== null) {
-          const parked = canWrite() ? quarantineOversizedJournal(jPath) : null
-          console.warn(
-            `[chat-journal] ${name} is ${oversized} bytes, above the ${maxJournalParseBytes}-byte read ceiling; ` +
-              `${canWrite() ? `parked as ${parked ? path.basename(parked) : '(rename failed)'}` : 'left in place without write authority'} and skipped. ` +
-              'The authoritative chat record is unaffected; snapshot compaction for this chat needs investigating.'
-          )
-          continue
-        }
-
-        const { entries: lines, torn } = parseJournalLines(jPath)
-
-        if (torn && lines.length > 0 && canWrite()) {
-          // Truncate to last valid line
-          truncateToValidLines(jPath, lines.length)
-          tornLinesRecovered += 1
-        } else if (torn && lines.length === 0 && canWrite()) {
-          // All lines are corrupt — remove the journal
-          try {
-            fs.unlinkSync(jPath)
-          } catch {
-            /* ignore */
-          }
-        }
-
-        // G3 crash-window recovery: if a snapshot also exists, deduplicate
-        // journal lines that are already baked into the snapshot. A crash
-        // between compact()'s atomicWrite(snapshot) and unlinkSync(journal)
-        // leaves both files; without dedup, read() replays the tail twice
-        // and repeated compactions double-merge.
-        let dedupedLines = lines
-        const snapPath = snapshotPath(chatId)
-        if (lines.length > 0 && fs.existsSync(snapPath)) {
-          let snapData: unknown = null
-          try {
-            snapData = JSON.parse(fs.readFileSync(snapPath, 'utf-8'))
-          } catch {
-            /* corrupt snapshot — handled by read() later */
-          }
-          if (snapData !== null) {
-            dedupedLines = dedupeTailAgainstSnapshot(snapData, lines)
-            if (dedupedLines.length < lines.length && canWrite()) {
-              // Rewrite journal with only the non-duplicate lines.
-              // truncateToValidLines keeps the FIRST N, but dupes are
-              // always at the head (journal lines up to snapshot mtime),
-              // so we must write the survivors explicitly.
-              if (dedupedLines.length === 0) {
-                try {
-                  fs.unlinkSync(jPath)
-                } catch {
-                  /* ignore */
-                }
-              } else {
-                const rewritten = dedupedLines.map((e) => JSON.stringify(e)).join('\n') + '\n'
-                atomicWrite(jPath, rewritten)
-              }
-            }
-          }
-        }
-
-        // Rebuild state.
-        //
-        // Every ChatState field has to be set here. `append` accumulates with
-        // `state.bytesSinceSnapshot += lineBytes`, so omitting it leaves NaN,
-        // and NaN fails every comparison — the byte ceiling then silently never
-        // fires for any chat that existed when the process started, which is
-        // exactly the set of chats whose journals are already large.
-        //
-        // Seed the byte count from what is ACTUALLY on disk rather than 0: a
-        // journal reopened at 80 MB must be over the ceiling immediately, not
-        // 16 MB from now.
-        const snapTs = snapshotTimestamp(chatId)
-        const existing = chats.get(chatId)
-        let bytesOnDisk = 0
-        try {
-          bytesOnDisk = fs.statSync(jPath).size
-        } catch {
-          /* journal was unlinked above (all lines deduped away) — 0 is right */
-        }
-        chats.set(chatId, {
-          lineCount: dedupedLines.length,
-          bytesSinceSnapshot: bytesOnDisk,
-          lastSnapshotAt: snapTs,
-          observedAt: Date.now(),
-          tombstoned: existing?.tombstoned ?? false
-        })
-        linesWritten += dedupedLines.length
-      }
+      /* already exists */
     }
   }
+
+  /**
+   * When this process constructed the journal. A journal already on disk is
+   * "first observed" at process start — exactly what the eager scan recorded —
+   * so the age fallback in `shouldCompact` keeps firing on the first save after
+   * ten minutes of uptime instead of restarting the clock at first touch.
+   */
+  const constructedAt = Date.now()
 
   /** Get the mtime of the snapshot file, or 0 if none exists. */
   const snapshotTimestamp = (chatId: string): number => {
@@ -639,19 +536,140 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
     }
   }
 
-  /** Ensure in-memory state for a chat exists (non-tombstoned, lazy init). */
-  const ensureChat = (chatId: string): ChatState => {
-    let state = chats.get(chatId)
-    if (!state) {
-      state = {
+  /** Byte size of a journal file, or null when there is none. */
+  const journalSize = (filePath: string): number | null => {
+    try {
+      return fs.statSync(filePath).size
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Recover one on-disk journal the first time its chat is opened in this
+   * process, and report the compaction state to rebuild from it.
+   */
+  const recoverJournalOnOpen = (
+    chatId: string,
+    jPath: string
+  ): { lineCount: number; bytesOnDisk: number } => {
+    const name = path.basename(jPath)
+
+    // Oversized journal: park it and move on. Renaming out of the `.jsonl`
+    // suffix is what takes it out of every later open, so the next launch is
+    // clean; the bytes are kept because this file is the only record of both
+    // the unmerged saves and the compaction failure that grew it. Zero state
+    // deliberately leaves the chat looking journal-less, so a fresh journal
+    // starts from zero.
+    const oversized = oversizedJournalBytes(jPath)
+    if (oversized !== null) {
+      const parked = canWrite() ? quarantineOversizedJournal(jPath) : null
+      console.warn(
+        `[chat-journal] ${name} is ${oversized} bytes, above the ${maxJournalParseBytes}-byte read ceiling; ` +
+          `${canWrite() ? `parked as ${parked ? path.basename(parked) : '(rename failed)'}` : 'left in place without write authority'} and skipped. ` +
+          'The authoritative chat record is unaffected; snapshot compaction for this chat needs investigating.'
+      )
+      return { lineCount: 0, bytesOnDisk: 0 }
+    }
+
+    const { entries: lines, torn } = parseJournalLines(jPath)
+
+    if (torn && lines.length > 0 && canWrite()) {
+      // Truncate to last valid line
+      truncateToValidLines(jPath, lines.length)
+      tornLinesRecovered += 1
+    } else if (torn && lines.length === 0 && canWrite()) {
+      // All lines are corrupt — remove the journal
+      try {
+        fs.unlinkSync(jPath)
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // G3 crash-window recovery: if a snapshot also exists, deduplicate
+    // journal lines that are already baked into the snapshot. A crash
+    // between compact()'s atomicWrite(snapshot) and unlinkSync(journal)
+    // leaves both files; without dedup, read() replays the tail twice
+    // and repeated compactions double-merge.
+    let dedupedLines = lines
+    const snapPath = snapshotPath(chatId)
+    if (lines.length > 0 && fs.existsSync(snapPath)) {
+      let snapData: unknown = null
+      try {
+        snapData = JSON.parse(fs.readFileSync(snapPath, 'utf-8'))
+      } catch {
+        /* corrupt snapshot — handled by read() later */
+      }
+      if (snapData !== null) {
+        dedupedLines = dedupeTailAgainstSnapshot(snapData, lines)
+        if (dedupedLines.length < lines.length && canWrite()) {
+          // Rewrite journal with only the non-duplicate lines.
+          // truncateToValidLines keeps the FIRST N, but dupes are
+          // always at the head (journal lines up to snapshot mtime),
+          // so we must write the survivors explicitly.
+          if (dedupedLines.length === 0) {
+            try {
+              fs.unlinkSync(jPath)
+            } catch {
+              /* ignore */
+            }
+          } else {
+            const rewritten = dedupedLines.map((e) => JSON.stringify(e)).join('\n') + '\n'
+            atomicWrite(jPath, rewritten)
+          }
+        }
+      }
+    }
+
+    // Seed the byte count from what is ACTUALLY on disk rather than 0: a
+    // journal reopened at 80 MB must be over the ceiling immediately, not
+    // 16 MB from now. A journal unlinked above (all lines deduped away or
+    // corrupt) correctly reads as 0.
+    linesWritten += dedupedLines.length
+    return { lineCount: dedupedLines.length, bytesOnDisk: journalSize(jPath) ?? 0 }
+  }
+
+  /**
+   * In-memory state for a chat, built from disk the first time the chat is
+   * touched in this process and cached for the rest of it.
+   *
+   * Every ChatState field has to be set here. `append` accumulates with
+   * `state.bytesSinceSnapshot += lineBytes`, so omitting it leaves NaN, and
+   * NaN fails every comparison — the byte ceiling then silently never fires
+   * for a chat whose journal already existed, which is exactly the set of
+   * chats whose journals are large.
+   *
+   * A tombstone wins outright and buries whatever files it left behind: the
+   * chat can never be appended to or read, so decoding its journal would be
+   * wasted work.
+   */
+  const openChat = (chatId: string): ChatState => {
+    const known = chats.get(chatId)
+    if (known) return known
+
+    if (fs.existsSync(tombstonePath(chatId))) {
+      const buried: ChatState = {
         lineCount: 0,
         bytesSinceSnapshot: 0,
-        lastSnapshotAt: snapshotTimestamp(chatId),
+        lastSnapshotAt: 0,
         observedAt: Date.now(),
-        tombstoned: false
+        tombstoned: true
       }
-      chats.set(chatId, state)
+      chats.set(chatId, buried)
+      return buried
     }
+
+    const jPath = journalPath(chatId)
+    const recovered = journalSize(jPath) === null ? null : recoverJournalOnOpen(chatId, jPath)
+    const state: ChatState = {
+      lineCount: recovered?.lineCount ?? 0,
+      bytesSinceSnapshot: recovered?.bytesOnDisk ?? 0,
+      lastSnapshotAt: snapshotTimestamp(chatId),
+      observedAt: recovered ? constructedAt : Date.now(),
+      tombstoned: false
+    }
+    chats.set(chatId, state)
     return state
   }
 
@@ -672,7 +690,7 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
   const append = (chatId: string, record: unknown): void => {
     requireWriteAuthority()
     appends += 1
-    const state = ensureChat(chatId)
+    const state = openChat(chatId)
 
     if (state.tombstoned) {
       tombstoneRejects += 1
@@ -697,7 +715,7 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
 
     // Append-only path: atomicWrite would replace the whole file and
     // destroy prior lines. appendJournalLine fsyncs the new line; torn
-    // tails are recovered on the next createChatJournal().
+    // tails are recovered when the chat is next opened in a process.
     appendJournalLine(journalPath(chatId), line)
     const lineBytes = Buffer.byteLength(line, 'utf-8')
     bytesWritten += lineBytes
@@ -755,8 +773,10 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
   }
 
   const read = (chatId: string): { snapshot: unknown | null; tail: ChatJournalEntry[] } => {
-    const state = chats.get(chatId)
-    if (state?.tombstoned) {
+    // Opening is what recovers a journal left torn or duplicated by a crash,
+    // on disk when this process has write authority and in memory otherwise.
+    const state = openChat(chatId)
+    if (state.tombstoned) {
       return { snapshot: null, tail: [] }
     }
 
@@ -838,8 +858,8 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
 
   const compact = (chatId: string): boolean => {
     requireWriteAuthority()
-    const state = chats.get(chatId)
-    if (!state || state.tombstoned || state.lineCount === 0) return false
+    const state = openChat(chatId)
+    if (state.tombstoned || state.lineCount === 0) return false
 
     // Only the NEWEST journal entry is needed. The previous snapshot was read
     // here when compaction merged into it; the collapse below deliberately
@@ -890,8 +910,22 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
 
   const compactAll = (): number => {
     requireWriteAuthority()
+    // Every chat opened in this process plus every journal still on disk.
+    // This is the one deliberately whole-directory operation left, and it has
+    // no production caller: idle or shutdown compaction opts into the scan by
+    // calling it; construction never does.
+    const chatIds = new Set(chats.keys())
+    try {
+      for (const entry of fs.readdirSync(baseDir, { withFileTypes: true })) {
+        if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+          chatIds.add(entry.name.slice(0, -'.jsonl'.length))
+        }
+      }
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
     let count = 0
-    for (const chatId of Array.from(chats.keys())) {
+    for (const chatId of chatIds) {
       if (compact(chatId)) count += 1
     }
     return count
