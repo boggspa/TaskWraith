@@ -2587,6 +2587,157 @@
   white-space: nowrap;
 }
 
+/* Seat-navigator rail — the Duplicate row's navigation sibling. Mounted as
+ * bottomContent of the ORDINARY composer model/permission popovers so a tab
+ * click retargets the active participant chip without closing the picker.
+ * The add-participant popover keeps its own three-row grid + Duplicate rail
+ * (is-ensemble-add-participant), hence the :not() guards. */
+.composer-combined-picker-popover.has-bottom-content:not(.is-ensemble-add-participant) {
+  flex-wrap: wrap;
+}
+
+.composer-combined-picker-popover.has-bottom-content:not(.is-ensemble-add-participant)
+  > .composer-combined-picker-bottom-content {
+  flex: 1 1 100%;
+  min-width: 0;
+  /* Size the rail from the columns above it, never the other way round: the
+   * chip list scrolls horizontally inside whatever width the popover already
+   * has (the permission popover stays narrow with many seats). */
+  contain: inline-size;
+  margin-top: 6px;
+  padding: 6px 2px 0;
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 58%, transparent);
+}
+
+/* The fixed-height unified model picker becomes a two-row grid so the rail
+ * gets its own track instead of squeezing the scrollable model list. */
+.composer-combined-picker-popover.is-unified-provider-picker.has-bottom-content:not(
+    .is-ensemble-add-participant
+  ) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: min(354px, calc(100vh - 24px));
+  max-height: min(354px, calc(100vh - 24px));
+}
+
+.composer-combined-picker-popover.is-unified-provider-picker.has-bottom-content:not(
+    .is-ensemble-add-participant
+  )
+  .composer-combined-picker-models.is-unified-model-list {
+  grid-column: 1;
+  grid-row: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.composer-combined-picker-popover.is-unified-provider-picker.has-bottom-content:not(
+    .is-ensemble-add-participant
+  )
+  .composer-combined-picker-reasoning {
+  grid-column: 2;
+  grid-row: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.composer-combined-picker-popover.is-unified-provider-picker.has-bottom-content:not(
+    .is-ensemble-add-participant
+  )
+  > .composer-combined-picker-bottom-content {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  margin-top: 0;
+}
+
+.ensemble-seat-navigator-rail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ensemble-seat-navigator-label {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ensemble-seat-navigator-list {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 1px 2px 3px;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-primary) 20%, transparent) transparent;
+}
+
+.ensemble-seat-navigator-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  min-height: 26px;
+  padding: 3px 1px 4px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ensemble-seat-navigator-chip:hover,
+.ensemble-seat-navigator-chip.is-selected {
+  border-bottom-color: color-mix(in srgb, var(--seat-navigator-accent) 68%, transparent);
+  background: transparent;
+}
+
+.ensemble-seat-navigator-chip.is-selected {
+  cursor: default;
+}
+
+.ensemble-seat-navigator-chip:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--seat-navigator-accent) 58%, transparent);
+  outline-offset: 2px;
+}
+
+/* Disabled seats stay selectable (their config is still editable), so this
+ * dims without the :disabled attribute the Duplicate rail uses. */
+.ensemble-seat-navigator-chip.is-disabled-seat {
+  opacity: 0.55;
+}
+
+.ensemble-seat-navigator-provider,
+.ensemble-seat-navigator-provider .provider-brand-logo {
+  width: 13px;
+  height: 13px;
+}
+
+.ensemble-seat-navigator-role {
+  overflow: hidden;
+  color: color-mix(in srgb, var(--seat-navigator-accent) 76%, var(--text-primary));
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ensemble-seat-navigator-model {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 460px) {
   .ensemble-add-participant-fields {
     grid-template-columns: minmax(0, 1fr);

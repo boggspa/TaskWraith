@@ -58,4 +58,15 @@ describe('CombinedPermissionsPicker', () => {
     expect(pickerSource).toContain('popoverClassName?: string')
     expect(pickerSource).toContain("popoverClassName ? ` ${popoverClassName}` : ''")
   })
+
+  it('offers the same bottomContent slot as CombinedModelPicker', () => {
+    // The composer mounts the Ensemble seat-navigator rail here; the popover
+    // only exists while open, so the contract is pinned at the source level
+    // exactly like the popoverClassName seam above.
+    expect(pickerSource).toContain('bottomContent?: ReactNode')
+    expect(pickerSource).toContain("hasBottomContent ? ' has-bottom-content' : ''")
+    expect(pickerSource).toContain(
+      '<div className="composer-combined-picker-bottom-content">{bottomContent}</div>'
+    )
+  })
 })

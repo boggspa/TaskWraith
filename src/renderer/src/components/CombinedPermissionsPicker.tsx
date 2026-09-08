@@ -7,7 +7,7 @@
  * they are no longer a second composer-time decision layer.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { ComposerStyle, ProviderId } from '../../../main/store/types'
 import { permissionOptionCanBeSelected } from '../lib/chatPopoutAuthority'
@@ -54,6 +54,12 @@ interface CombinedPermissionsPickerProps {
   repositionOnScroll?: boolean
   /** Optional class on the body-portaled surface for caller-specific layering. */
   popoverClassName?: string
+  /**
+   * Optional full-width content below the permission column — the composer
+   * mounts the Ensemble seat-navigator rail here, mirroring the
+   * CombinedModelPicker slot of the same name.
+   */
+  bottomContent?: ReactNode
 }
 
 export function CombinedPermissionsPicker({
@@ -68,7 +74,8 @@ export function CombinedPermissionsPicker({
   onStartTrustedSession,
   onStopTrustedSession,
   repositionOnScroll,
-  popoverClassName
+  popoverClassName,
+  bottomContent
 }: CombinedPermissionsPickerProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -187,12 +194,13 @@ export function CombinedPermissionsPicker({
     }
   }, [open, permissionOptions, permissionHighlight, choosePermissionOption])
 
+  const hasBottomContent = Boolean(bottomContent)
   const popoverContent = open && position && (
     <div
       ref={popoverRef}
       className={`composer-combined-picker-popover provider-${provider} shell-${composerStyle}${
-        popoverClassName ? ` ${popoverClassName}` : ''
-      }`}
+        hasBottomContent ? ' has-bottom-content' : ''
+      }${popoverClassName ? ` ${popoverClassName}` : ''}`}
       style={{
         position: 'fixed',
         left: `${position.left}px`,
@@ -255,6 +263,9 @@ export function CombinedPermissionsPicker({
           </button>
         ) : null}
       </div>
+      {hasBottomContent && (
+        <div className="composer-combined-picker-bottom-content">{bottomContent}</div>
+      )}
     </div>
   )
 

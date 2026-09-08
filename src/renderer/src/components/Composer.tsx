@@ -66,6 +66,7 @@ import type {
 } from '../components/ContinuousHopsLimitChip'
 import { EnsembleParticipantsAboveRow } from '../components/EnsembleParticipantsAboveRow'
 import { EnsembleRosterPresetPicker } from '../components/EnsembleRosterPresetPicker'
+import { EnsembleSeatNavigatorRail } from '../components/EnsembleSeatNavigatorRail'
 import { ExternalPathAboveRow } from '../components/ExternalPathAboveRow'
 import { ExternalPathGrantPromptCard } from '../components/ExternalPathGrantPromptCard'
 import { GhostCompanion } from '../components/FxLayers'
@@ -1413,6 +1414,24 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         roundStatus={currentEnsembleRoundStatus}
         activeGoalStatus={currentEnsembleActiveGoalStatus}
         onMaxContinuationHopsChange={updateCurrentEnsembleMaxContinuationHops}
+      />
+    )
+  }
+
+  // Seat-navigator rail — the bottomContent of BOTH per-seat composer pickers
+  // (model/reasoning + permissions). Selecting a tab drives the SAME
+  // onSelectParticipant as the above-row chips, so the active chip follows and
+  // the open popover rebinds to the chosen seat in place. Built once here so
+  // the two picker mounts can never drift. Needs a second seat to navigate to;
+  // solo ensembles keep their popovers rail-free.
+  const renderEnsembleSeatNavigatorRail = (): React.JSX.Element | null => {
+    const seatParticipants = isCurrentEnsembleChat ? currentChat?.ensemble?.participants : undefined
+    if (!seatParticipants || seatParticipants.length < 2) return null
+    return (
+      <EnsembleSeatNavigatorRail
+        participants={seatParticipants}
+        selectedParticipantId={effectiveSelectedParticipantId || null}
+        onSelectParticipant={handleSelectParticipant}
       />
     )
   }
@@ -4668,6 +4687,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 fastModeEnabled={fastModeEnabledForProvider}
                                 onToggleFastMode={handleToggleFastMode}
                                 disabled={false}
+                                bottomContent={renderEnsembleSeatNavigatorRail()}
                               />
                               {!ensembleBinding &&
                                 effectiveSelectedModel === 'custom' &&
@@ -4984,6 +5004,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               disabledReason={
                                 providerRunUnavailableReason(effectiveProvider) || undefined
                               }
+                              bottomContent={renderEnsembleSeatNavigatorRail()}
                             />
                           )
                         })()}
