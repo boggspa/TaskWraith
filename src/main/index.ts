@@ -325,7 +325,6 @@ import {
   isCodexAppServerRequestTimeout,
   isCodexConfigParseError,
   type CodexAppServerCredentialLease,
-  type CodexMcpTaskWraithConfig,
   type CodexAppServerSpawnedProcess
 } from './CodexAppServerClient'
 import { acquireCodexOAuthCredentialLease } from './codex/CodexOAuthCredentialLease'
@@ -2587,6 +2586,120 @@ import {
 import { setAntigravityGeminiApiKeyConfiguredProbe } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { setAntigravityAgyOptInEnabledProbe } from './antigravity/AntigravityAgyOptInEnabledSignal'
 import { AntigravityGeminiApiDiscoveryOutcomeStore } from './antigravity/AntigravityGeminiApiDiscoveryOutcome'
+import { createCodexClientAcquisition } from './codex/CodexClientAcquisition'
+
+const { acquireCodexClientLifecycleLease, getCodexClient, acquireCodexProviderClientRunLease } =
+  createCodexClientAcquisition({
+    flags: { cohortFairness: process.env.TASKWRAITH_CODEX_COHORT_FAIRNESS === '1' },
+    get codexProviderClientCohorts() {
+      return codexProviderClientCohorts
+    },
+    get codexClientLifecycleQueue() {
+      return codexClientLifecycleQueue
+    },
+    get activeCodexClientLifecycleLease() {
+      return activeCodexClientLifecycleLease
+    },
+    set activeCodexClientLifecycleLease(value) {
+      activeCodexClientLifecycleLease = value
+    },
+    get poisonWorkspaceLockMutationAdmission() {
+      return poisonWorkspaceLockMutationAdmission
+    },
+    get AppStore() {
+      return AppStore
+    },
+    get taskwraithMcpBridgeCommandStatus() {
+      return taskwraithMcpBridgeCommandStatus
+    },
+    get buildUserMcpLaunchServers() {
+      return buildUserMcpLaunchServers
+    },
+    get managedUserMcpLaunchAllowlistPolicy() {
+      return managedUserMcpLaunchAllowlistPolicy
+    },
+    get validateUserMcpPluginProvenance() {
+      return validateUserMcpPluginProvenance
+    },
+    get TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID() {
+      return TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID
+    },
+    get taskwraithMcpBridgeArgs() {
+      return taskwraithMcpBridgeArgs
+    },
+    get geminiMcpSocketPath() {
+      return geminiMcpSocketPath
+    },
+    get isGatewayTaskWraithMcpProfile() {
+      return isGatewayTaskWraithMcpProfile
+    },
+    get isSoloTaskWraithMcpProfile() {
+      return isSoloTaskWraithMcpProfile
+    },
+    get isPortableEnsembleControlMcpProfile() {
+      return isPortableEnsembleControlMcpProfile
+    },
+    get isMeshCanvasDirectTaskWraithMcpProfile() {
+      return isMeshCanvasDirectTaskWraithMcpProfile
+    },
+    get isMeshTopologyDirectTaskWraithMcpProfile() {
+      return isMeshTopologyDirectTaskWraithMcpProfile
+    },
+    get isSketchCanvasDirectTaskWraithMcpProfile() {
+      return isSketchCanvasDirectTaskWraithMcpProfile
+    },
+    get isGatewayV13DirectTaskWraithMcpProfile() {
+      return isGatewayV13DirectTaskWraithMcpProfile
+    },
+    get isPermissionOpportunityDirectTaskWraithMcpProfile() {
+      return isPermissionOpportunityDirectTaskWraithMcpProfile
+    },
+    get createHash() {
+      return createHash
+    },
+    get codexClient() {
+      return codexClient
+    },
+    set codexClient(value) {
+      codexClient = value
+    },
+    get taskWraithCodexHome() {
+      return taskWraithCodexHome
+    },
+    get process() {
+      return process
+    },
+    get acquireCodexCredentialLeaseIfConsented() {
+      return acquireCodexCredentialLeaseIfConsented
+    },
+    get shouldRestartCodexAppServerForMcpConfig() {
+      return shouldRestartCodexAppServerForMcpConfig
+    },
+    get codexAppServerStartupLeaseCount() {
+      return codexAppServerStartupLeaseCount
+    },
+    get runManager() {
+      return runManager
+    },
+    get codexThreadAdmissionRegistry() {
+      return codexThreadAdmissionRegistry
+    },
+    get console() {
+      return console
+    },
+    get disposeCodexClientForOwnerTransition() {
+      return disposeCodexClientForOwnerTransition
+    },
+    get finishCodexClientLifecycle() {
+      return finishCodexClientLifecycle
+    },
+    get CodexClientLifecycleAcquireAbortedError() {
+      return CodexClientLifecycleAcquireAbortedError
+    },
+    get CodexAppServerClient() {
+      return CodexAppServerClient
+    }
+  })
 
 /** Post-ready dedicated Gemini API secret store; null until app.whenReady constructs it. */
 let antigravityGeminiApiSecretStoreRef: AntigravityGeminiApiSecretStore | null = null
@@ -27586,46 +27699,6 @@ class CodexClientLifecycleAcquireAbortedError extends Error {
   }
 }
 
-async function acquireCodexClientLifecycleLease(
-  label: string,
-  signal?: AbortSignal
-): Promise<CodexClientLifecycleLease> {
-  const normalizedLabel = label.trim()
-  if (!normalizedLabel) throw new Error('Codex client lifecycle requires an exact owner label.')
-  // An exclusive transition queued behind a provider cohort must eventually
-  // run. Close admission before joining the lifecycle tail so later compatible
-  // turns cannot starve a profile, credential, maintenance, or teardown change.
-  codexProviderClientCohorts.stopAccepting()
-  const queueSlot = codexClientLifecycleQueue.enqueue()
-  if (!(await queueSlot.waitUntilAcquired(signal)) || signal?.aborted) {
-    queueSlot.release()
-    throw new CodexClientLifecycleAcquireAbortedError(normalizedLabel)
-  }
-  if (activeCodexClientLifecycleLease) {
-    queueSlot.release()
-    throw new Error('Codex client lifecycle serialization was violated.')
-  }
-  let released = false
-  const lease: CodexClientLifecycleLease = {
-    token: Symbol(normalizedLabel),
-    label: normalizedLabel,
-    release: () => {
-      if (released) return
-      released = true
-      if (activeCodexClientLifecycleLease !== lease) {
-        poisonWorkspaceLockMutationAdmission(
-          `Codex client lifecycle ${normalizedLabel} lost its exact serialization lease.`
-        )
-        return
-      }
-      activeCodexClientLifecycleLease = null
-      queueSlot.release()
-    }
-  }
-  activeCodexClientLifecycleLease = lease
-  return lease
-}
-
 async function disposeCodexClientForOwnerTransition(
   lease: CodexClientLifecycleLease
 ): Promise<void> {
@@ -27862,196 +27935,10 @@ function handleCodexStderrFromClient(chunk: string, client: CodexAppServerClient
   sendAgentCompatError(states[0].sender!, 'codex', chunk, states[0])
 }
 
-interface CodexClientStartupConfiguration {
-  readonly runtimeProfile: RuntimeProfile | null | undefined
-  readonly mcpConfig: CodexMcpTaskWraithConfig | null
-  readonly credentialLeaseConsent: boolean
-  readonly compatibilityKey: string
-}
-
-function resolveCodexClientStartupConfiguration(
-  runtimeProfile?: RuntimeProfile | null,
-  taskWraithMcpProfileId?: AgentRunPayload['taskWraithMcpProfileId'] | null
-): CodexClientStartupConfiguration {
-  const settings = AppStore.getSettings()
-  const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
-  const userMcpServers = buildUserMcpLaunchServers(settings.userMcpServers, {
-    supportedTransports: ['stdio', 'http'],
-    allowlistPolicy: managedUserMcpLaunchAllowlistPolicy?.(),
-    resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs),
-    validatePluginProvenance: validateUserMcpPluginProvenance
-  })
-  const taskWraithBridgeEnabled = Boolean(
-    settings.geminiMcpBridgeEnabled && bridgeCommandStatus.available
-  )
-  const mcpProfileId = taskWraithMcpProfileId ?? TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID
-  const mcpConfig: CodexMcpTaskWraithConfig | null =
-    taskWraithBridgeEnabled || userMcpServers.length > 0
-      ? {
-          enabled: taskWraithBridgeEnabled,
-          bridgeBinaryPath: bridgeCommandStatus.command,
-          bridgeArgs: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
-            gatewaySubset: isGatewayTaskWraithMcpProfile(mcpProfileId),
-            soloSubset: isSoloTaskWraithMcpProfile(mcpProfileId),
-            portableEnsembleControl: isPortableEnsembleControlMcpProfile(mcpProfileId),
-            meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(mcpProfileId),
-            meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(mcpProfileId),
-            sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(mcpProfileId),
-            orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(mcpProfileId),
-            permissionOpportunityDirect:
-              isPermissionOpportunityDirectTaskWraithMcpProfile(mcpProfileId)
-          }),
-          parentProvider: 'codex',
-          userMcpServers
-        }
-      : null
-  const credentialLeaseConsent = Boolean(settings.codexReuseExistingLogin)
-  const compatibilityKey = createHash('sha256')
-    .update(
-      JSON.stringify({
-        runtimeProfile: runtimeProfile ?? null,
-        mcpConfig,
-        credentialLeaseConsent
-      })
-    )
-    .digest('hex')
-  return { runtimeProfile, mcpConfig, credentialLeaseConsent, compatibilityKey }
-}
-
-function getCodexClient(
-  runtimeProfile?: RuntimeProfile | null,
-  taskWraithMcpProfileId?: AgentRunPayload['taskWraithMcpProfileId'] | null,
-  lifecycleLease?: CodexClientLifecycleLease,
-  resolvedConfiguration?: CodexClientStartupConfiguration
-): CodexAppServerClient {
-  if (activeCodexClientLifecycleLease && activeCodexClientLifecycleLease !== lifecycleLease) {
-    throw new Error(
-      `Codex app-server is reserved by ${activeCodexClientLifecycleLease.label}; an unowned helper cannot restart or retarget it.`
-    )
-  }
-  if (!codexClient) {
-    codexClient = new CodexAppServerClient(
-      taskWraithCodexHome(),
-      () => [
-        ...(process.env.CODEX_HOME ? [process.env.CODEX_HOME] : []),
-        ...AppStore.getRuntimeProfiles()
-          .filter((profile) => profile.provider === 'codex')
-          .map((profile) => profile.env.CODEX_HOME)
-          .filter((candidate): candidate is string => Boolean(candidate?.trim()))
-      ],
-      { acquireCredentialLease: acquireCodexCredentialLeaseIfConsented }
-    )
-  }
-  const configuration =
-    resolvedConfiguration ??
-    resolveCodexClientStartupConfiguration(runtimeProfile, taskWraithMcpProfileId)
-  if (configuration.runtimeProfile !== undefined) {
-    codexClient.setRuntimeProfile(configuration.runtimeProfile ?? null)
-  }
-  // Phase I2: refresh the MCP config on every accessor call so the
-  // toggle in Settings → MCP Bridge takes effect on the NEXT Codex
-  // app-server start. A stale idle daemon is restarted below, while an
-  // app-server with a transport-owned in-flight turn is never torn down.
-  // The TaskWraith bridge mirrors the existing Gemini gate
-  // (geminiMcpBridgeEnabled); user-managed stdio/HTTP servers can
-  // attach independently through the MCP Servers settings page.
-  // Codex's app-server owns one bridge configuration for its process lifetime.
-  // A run passes its profile here before a fresh server starts; a running server
-  // retains its started profile as a compatibility receipt, never as a Mesh
-  // permission grant. Every actual mesh call still hits the current run's
-  // signed meshCanvas approval gate in executeGeminiMcpTool.
-  codexClient.setMcpConfig(configuration.mcpConfig)
-  // Same deferral rule as the MCP config: consent to borrow ~/.codex applies to
-  // the NEXT app-server start, so an idle daemon is restarted to pick it up.
-  // Without this the toggle looks inert — the daemon that started before it was
-  // enabled keeps serving, and Codex keeps asking for a sign-in.
-  codexClient.setCredentialLeaseConsent(configuration.credentialLeaseConsent)
-  const shouldRestart = shouldRestartCodexAppServerForMcpConfig({
-    stale: codexClient.hasStaleMcpConfig() || codexClient.hasStaleCredentialLeaseConsent(),
-    startupLeaseCount: codexAppServerStartupLeaseCount,
-    activeStates: runManager
-      .getActiveByProvider('codex')
-      .map((session) => session.state as Partial<CodexRunState> | null | undefined),
-    // Manual compactions and native reviews hold admission lanes without a
-    // RunManager session or startup lease; never dispose the daemon under one.
-    admissionReservationCount: codexThreadAdmissionRegistry.activeLaneReservationCount
-  })
-  if (shouldRestart) {
-    console.log('[codex] restarting idle app-server to apply configuration changes')
-    codexClient.dispose()
-  }
-  return codexClient
-}
-
 interface CodexProviderClientRunLease {
   readonly client: CodexAppServerClient
   readonly lifecycleLease: CodexClientLifecycleLease
   readonly cohortLease: CodexClientRunCohortLease<CodexProviderClientCohortResource>
-}
-
-async function acquireCodexProviderClientRunLease(
-  payload: AgentRunPayload,
-  runId: string,
-  workspaceLockOwnerId: string | null
-): Promise<CodexProviderClientRunLease> {
-  const configuration = resolveCodexClientStartupConfiguration(
-    payload.runtimeProfile ?? null,
-    payload.taskWraithMcpProfileId
-  )
-  // A future coarse-lock compatibility mode must remain isolated by its exact
-  // owner. Today's operation-scoped policy always supplies null, allowing
-  // compatible native threads to share one process without sharing authority.
-  const compatibilityKey = createHash('sha256')
-    .update(
-      `${configuration.compatibilityKey}\0${
-        workspaceLockOwnerId ? `${workspaceLockOwnerId}\0${runId}` : 'unowned'
-      }`
-    )
-    .digest('hex')
-  const joined = codexProviderClientCohorts.tryJoin(runId, compatibilityKey)
-  if (joined) {
-    const { client, lifecycleLease } = joined.resource
-    if (activeCodexClientLifecycleLease !== lifecycleLease) {
-      codexProviderClientCohorts.stopAccepting()
-      await joined.release().catch(() => undefined)
-      poisonWorkspaceLockMutationAdmission(
-        `Codex run ${runId} joined a client cohort without its exact lifecycle lease.`
-      )
-      throw new Error('Codex compatible client cohort lost lifecycle ownership.')
-    }
-    return { client, lifecycleLease, cohortLease: joined }
-  }
-
-  const lifecycleLease = await acquireCodexClientLifecycleLease(
-    `provider-run:${runId}`,
-    payload.providerSetupAbortSignal
-  )
-  let client: CodexAppServerClient | null = null
-  try {
-    await disposeCodexClientForOwnerTransition(lifecycleLease)
-    client = getCodexClient(
-      configuration.runtimeProfile,
-      payload.taskWraithMcpProfileId,
-      lifecycleLease,
-      configuration
-    )
-    client.setWorkspaceLockOwnerId(workspaceLockOwnerId)
-    const cohortLease = codexProviderClientCohorts.open(
-      runId,
-      compatibilityKey,
-      { client, lifecycleLease },
-      async () => finishCodexClientLifecycle(client!, lifecycleLease),
-      () => lifecycleLease.release()
-    )
-    return { client, lifecycleLease, cohortLease }
-  } catch (error) {
-    try {
-      if (client) await finishCodexClientLifecycle(client, lifecycleLease)
-    } finally {
-      lifecycleLease.release()
-    }
-    throw error
-  }
 }
 
 /**
