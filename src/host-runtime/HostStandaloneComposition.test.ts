@@ -3,8 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { WorkSpanAggregates } from '../host-shared/perf/WorkSpanRecorder'
 import { HOST_PROTOCOL_VERSION, type HostCommand } from '../shared/hostProtocol'
-import { createHostStandaloneComposition } from './HostStandaloneComposition'
+import type { HostPerfSnapshotFileFs, HostPerfSnapshotFileTimers } from './HostPerfSnapshotFile'
+import {
+  createHostStandaloneComposition,
+  HOST_PERF_SNAPSHOT_FILE_INTERVAL_MS
+} from './HostStandaloneComposition'
 
 const paths: string[] = []
 const actor = { actorId: 'actor-1', clientId: 'client-1', clientClass: 'test' as const }
@@ -231,5 +236,128 @@ describe('HostStandaloneComposition', () => {
         })
       )
     ).toThrow('lease missing')
+  })
+
+  it('meters the Host loop and attributes projection queue waits from the first command', async () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-perf-'))
+    paths.push(runtimePath)
+    const composition = createHostStandaloneComposition(input(runtimePath, { assertHeld: vi.fn() }))
+    try {
+      // No opt-in, no file transport: the meter and recorder still run in-process.
+      expect(composition.perf.snapshotFile).toBeNull()
+      expect(composition.perf.snapshot().eventLoopLag.sampling).toBe(true)
+      await composition.authority.command(context, command())
+      const workSpans = composition.perf.snapshot().sections.workSpans as WorkSpanAggregates
+      expect(workSpans.process).toBe('host')
+      expect(workSpans.byKind.host_queue_wait).toMatchObject({ count: 1 })
+      expect(workSpans.byResource.host_chain).toMatchObject({ count: 1 })
+      expect(workSpans.exact.byKind.host_queue_wait).toMatchObject({ offeredCount: 1 })
+    } finally {
+      await composition.shutdown()
+    }
+    // Shutdown drains the queue (one more span) and only then stops the meter;
+    // the recorded aggregates stay readable afterwards.
+    const afterShutdown = composition.perf.snapshot()
+    expect(afterShutdown.eventLoopLag.sampling).toBe(false)
+    expect(
+      (afterShutdown.sections.workSpans as WorkSpanAggregates).byKind.host_queue_wait
+    ).toMatchObject({ count: 2 })
+  })
+
+  it('stamps the opt-in snapshot file with the Host identity and stops it on shutdown', async () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-perf-file-'))
+    paths.push(runtimePath)
+    const path = join(runtimePath, 'perf', 'host-snapshot.json')
+    const files = new Map<string, string>()
+    const fs: HostPerfSnapshotFileFs = {
+      writeFileSync: (target, data) => {
+        files.set(target, data)
+      },
+      renameSync: (from, to) => {
+        files.set(to, files.get(from)!)
+        files.delete(from)
+      }
+    }
+    const intervals: number[] = []
+    let cleared = 0
+    const timers: HostPerfSnapshotFileTimers = {
+      setInterval: (_callback, ms) => {
+        intervals.push(ms)
+        return { unref: () => undefined }
+      },
+      clearInterval: () => {
+        cleared += 1
+      }
+    }
+    const directories: string[] = []
+    const composition = createHostStandaloneComposition({
+      ...input(runtimePath, { assertHeld: vi.fn() }),
+      perf: {
+        snapshotFile: {
+          path,
+          fs,
+          timers,
+          ensureDirectory: (directory) => {
+            directories.push(directory)
+          }
+        },
+        now: () => new Date('2026-09-08T20:00:00.000Z')
+      }
+    })
+    try {
+      expect(directories).toEqual([join(runtimePath, 'perf')])
+      expect(intervals).toEqual([HOST_PERF_SNAPSHOT_FILE_INTERVAL_MS])
+      expect(composition.perf.identity).toEqual({
+        process: 'host',
+        instanceId: 'standalone-host',
+        generation: composition.getPosition().generation,
+        pid: process.pid
+      })
+      await composition.authority.command(context, command())
+      expect(composition.perf.snapshotFile?.writeOnce()).toBe(true)
+      const payload = JSON.parse(files.get(path)!)
+      expect(payload.identity).toEqual(composition.perf.identity)
+      expect(payload.sequence).toBe(1)
+      expect(payload.capturedAt).toBe('2026-09-08T20:00:00.000Z')
+      expect(payload.snapshot.sections.workSpans.byKind.host_queue_wait).toMatchObject({ count: 1 })
+      expect(composition.perf.snapshotFile?.stats()).toMatchObject({ running: true, writes: 1 })
+    } finally {
+      await composition.shutdown()
+    }
+    expect(cleared).toBe(1)
+    expect(composition.perf.snapshotFile?.stats()).toMatchObject({ running: false, writes: 1 })
+  })
+
+  it('keeps an unwritable snapshot directory out of Host startup', async () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-perf-dir-'))
+    paths.push(runtimePath)
+    const composition = createHostStandaloneComposition({
+      ...input(runtimePath, { assertHeld: vi.fn() }),
+      perf: {
+        snapshotFile: {
+          path: join(runtimePath, 'perf', 'host-snapshot.json'),
+          fs: {
+            writeFileSync: () => {
+              throw new Error('ENOENT')
+            },
+            renameSync: () => undefined
+          },
+          timers: { setInterval: () => null, clearInterval: () => undefined },
+          ensureDirectory: () => {
+            throw new Error('EACCES')
+          }
+        }
+      }
+    })
+    try {
+      expect(composition.perf.snapshotFile?.writeOnce()).toBe(false)
+      expect(composition.perf.snapshotFile?.stats()).toMatchObject({ writes: 0, writeFailures: 1 })
+      await expect(composition.authority.command(context, command())).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'succeeded' }
+      })
+    } finally {
+      await composition.shutdown()
+    }
   })
 })
