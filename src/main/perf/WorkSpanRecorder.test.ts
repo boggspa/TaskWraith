@@ -1,14 +1,18 @@
+import { createRequire } from 'module'
 import { describe, expect, it } from 'vitest'
 import {
   createWorkSpanRecorder,
   DEFAULT_KEEP_ALL_MIN_WINDOW,
   DEFAULT_SAMPLE_KEEP_EVERY,
   WORK_SPAN_KINDS,
+  WORK_SPAN_PROCESSES,
   WORK_SPAN_REASONS,
   WORK_SPAN_RESOURCES,
   type WorkSpanAttrs,
   type WorkSpanKind
 } from './WorkSpanRecorder'
+
+const requireCjs = createRequire(import.meta.url)
 
 /** Deterministic clock: first call returns `start`, then +`stepMs` per call. */
 function tickingClock(start = 1_000, stepMs = 10): () => number {
@@ -683,5 +687,75 @@ describe('createWorkSpanRecorder', () => {
     expect(snapshot.byChat['chat-a'].admission_wait?.count).toBe(2)
     expect(snapshot.attributionOverflow).toBe(2)
     expect(snapshot.recorded).toBe(5)
+  })
+})
+
+/**
+ * Review3 wave-4 pins (F1/F3/F4): taxonomy lockstep with the collector's
+ * frozen copies, a distribution where p95 and p99 genuinely differ, and
+ * the process-field validation record() performs but nothing exercised.
+ */
+describe('WorkSpanRecorder review pins', () => {
+  it('keeps the collector taxonomy copies in exact lockstep (F1)', () => {
+    // The collector fails closed on unknown kinds/resources, so a recorder
+    // enum drifting ahead of these frozen copies silently invalidates every
+    // report that uses the new entry. Deep equality both ways, not subset.
+    const collector = requireCjs('../../../scripts/perf/collectors/hostSpans.cjs') as {
+      WORK_SPAN_PROCESSES: readonly string[]
+      WORK_SPAN_KINDS: readonly string[]
+      WORK_SPAN_RESOURCES: readonly string[]
+    }
+    expect([...collector.WORK_SPAN_KINDS]).toEqual([...WORK_SPAN_KINDS])
+    expect([...collector.WORK_SPAN_RESOURCES]).toEqual([...WORK_SPAN_RESOURCES])
+    expect([...collector.WORK_SPAN_PROCESSES]).toEqual([...WORK_SPAN_PROCESSES])
+  })
+
+  it('computes p95 and p99 as different ranks over 100 distinct durations (F3)', () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 128,
+      now: tickingClock()
+    })
+    for (let duration = 1; duration <= 100; duration += 1) {
+      recorder.record({
+        ...attrs({ kind: 'admission_wait' }),
+        startedAt: duration,
+        durationMs: duration
+      })
+    }
+    const aggregate = recorder.snapshot().byKind.admission_wait
+    // Nearest-rank over 1..100: the ranks are the values themselves, so a
+    // p99 accidentally computed at the p95 (or max, or p50) rank cannot hide.
+    expect(aggregate?.p50Ms).toBe(50)
+    expect(aggregate?.p95Ms).toBe(95)
+    expect(aggregate?.p99Ms).toBe(99)
+    expect(aggregate?.maxMs).toBe(100)
+    expect(aggregate?.p95Ms).not.toBe(aggregate?.p99Ms)
+  })
+
+  it('rejects a record() span with an unknown process (F4)', () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 16,
+      now: tickingClock()
+    })
+    recorder.record({
+      ...attrs({ kind: 'admission_wait' }),
+      startedAt: 0,
+      durationMs: 1,
+      process: 'gpu' as never
+    })
+    const snapshot = recorder.snapshot()
+    expect(snapshot.rejected).toBe(1)
+    expect(snapshot.recorded).toBe(0)
+    // And a valid explicit process still records, proving the guard is
+    // selective rather than refusing the field outright.
+    recorder.record({
+      ...attrs({ kind: 'admission_wait' }),
+      startedAt: 0,
+      durationMs: 1,
+      process: 'host'
+    })
+    expect(recorder.snapshot().recorded).toBe(1)
   })
 })
