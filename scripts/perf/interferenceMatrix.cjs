@@ -8,9 +8,11 @@
  * cell naming scheme, the light-alone/light-beside pairing rule, and the
  * fixed sampling window every cell must be measured under. It is pure data
  * plus validators — no launch, no replay, no fixtures. Drivers that can
- * actually REACH every cell (multi-chat concurrency, provider saturation,
- * control actions under load) are later milestone work; a cell existing here
- * is a scenario definition. Every enumerated cell explicitly lists today's missing drivers.
+ * actually REACH every cell are landing piecemeal (concurrent per-chat
+ * replay lanes: scripts/perf/concurrentReplayLanes.cjs, M1 A1.2); provider
+ * saturation and control-action drivers are still later milestone work.
+ * A cell existing here is a scenario definition. Every enumerated cell
+ * explicitly lists today's missing drivers.
  *
  * Cell names are `<history>/<chats>/<path>/<mix>/<saturation>` exactly as
  * Appendix A specifies; the pairing role (`light-alone` vs `light-beside`)
@@ -280,7 +282,6 @@ function assertPairedRunCompatibility(alone, beside) {
 
 /** Missing drivers are current harness facts, not measurements or new limits. */
 const MISSING_DRIVER_CAPABILITIES = Object.freeze([
-  'concurrent_per_chat_replay_lanes',
   'deterministic_replay_provider',
   'ensemble_pool_saturation_driver',
   'host_native_saturation_driver',
@@ -291,7 +292,6 @@ function cellReachability(cell) {
   const check = validateMatrixCell(cell)
   if (!check.ok) throw new Error(check.errors.join('; '))
   const missingCapability = ['deterministic_replay_provider', 'control_action_replay_events']
-  if (cell.chats > 1) missingCapability.push('concurrent_per_chat_replay_lanes')
   if (cell.saturation === 'ensemble_pool_30_join') {
     missingCapability.push('ensemble_pool_saturation_driver')
   }

@@ -200,6 +200,29 @@ function resolveWorkloadShape(options) {
         soakTurns: 0,
         messageTargetHint: 50 * (1 + 4 * 8)
       }
+    case 'large_history': {
+      // M1 A1.2 (Appendix A "large" pin): one chat at the measured worst
+      // case — ≈27k messages, ≈65 MB serialized total, ≈1,000 runs. The byte
+      // pin decomposes into chat + tool budgets (~45 + ~20 MB = 65 MB); run
+      // count is not a generator axis (runs derive from the replay schedule),
+      // so it is asserted as a shape pin in tests, not invented here. Tool
+      // volume scales at the observed 50seat ratio (~0.75 activities/msg).
+      const messageTarget = 27000
+      return {
+        workload,
+        seatCount: 30,
+        chatCount: 1,
+        turnsPerSeat: Math.ceil((messageTarget - 1) / 30),
+        toolsPerAssistant: 1,
+        dualConcurrentRuns: true,
+        messageTarget,
+        toolActivityTarget: Math.round(messageTarget * 0.75),
+        chatSerializedTargetBytes: Math.round(45 * 1024 * 1024),
+        toolSerializedTargetBytes: Math.round(20 * 1024 * 1024),
+        soakTurns: 0,
+        messageTargetHint: messageTarget
+      }
+    }
     default: {
       const err = new Error(`Unknown workload: ${workload}`)
       throw err

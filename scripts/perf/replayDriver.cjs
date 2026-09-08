@@ -525,5 +525,8 @@ module.exports = {
   createCdpEvaluateAdapter,
   buildMessagePrefixBatches,
   applyReplayEvent,
+  // Additive (M1 A1.2 concurrent replay lanes): the stall-guarded applier,
+  // exported so per-chat lane drivers reuse the exact event semantics.
+  applyReplayEventWithTimeout,
   runDeterministicReplay
 }

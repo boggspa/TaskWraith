@@ -78,9 +78,9 @@ describe('interference matrix reachability', () => {
       expect(cell.reachable).toBe(false)
       expect(cell.missingCapability).toContain('deterministic_replay_provider')
       expect(cell.missingCapability).toContain('control_action_replay_events')
-      expect(cell.missingCapability.includes('concurrent_per_chat_replay_lanes')).toBe(
-        cell.chats > 1
-      )
+      // The per-chat lanes capability LANDED with scripts/perf/concurrentReplayLanes.cjs
+      // (M1 A1.2): the matrix no longer claims it missing.
+      expect(cell.missingCapability.includes('concurrent_per_chat_replay_lanes')).toBe(false)
       expect(cell.missingCapability.includes('ensemble_pool_saturation_driver')).toBe(
         cell.saturation === 'ensemble_pool_30_join'
       )
