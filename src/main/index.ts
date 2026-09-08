@@ -1052,6 +1052,7 @@ import {
   createMainPerfInstrumentation,
   type MainPerfInstrumentation
 } from './perf/MainPerfSnapshot'
+import { createWorkSpanRecorder } from './perf/WorkSpanRecorder'
 import { resolveHostInstallId } from './host/HostInstallIdentity'
 import { createHostProductionBootstrap } from './host/HostProductionBootstrap'
 import { createHostProductionChatListCoalescer } from './host/HostProductionChatListCoalescer'
@@ -4497,7 +4498,13 @@ function emitAutoFailoverNotice(notice: AutoFailoverNotice): void {
     console.warn(`[auto-failover] ${notice.kind} for ${notice.failedProvider}`)
   }
 }
-const ensembleHostAdmissionRuntime = new EnsembleHostAdmissionRuntime()
+const mainWorkSpanRecorder = createWorkSpanRecorder({
+  process: 'main',
+  maxRetained: 4096
+})
+const ensembleHostAdmissionRuntime = new EnsembleHostAdmissionRuntime({
+  schedulerOptions: { spans: mainWorkSpanRecorder }
+})
 const ensembleDelegatedRunAdmission = new EnsembleDelegatedRunAdmission(
   ensembleHostAdmissionRuntime
 )
@@ -46667,7 +46674,8 @@ if (isGeminiMcpBridgeProcess) {
         incrementalChatPersistence: () => AppStore.getIncrementalChatPersistenceStats(),
         persistenceCoalescing: () => AppStore.getPersistenceCoalescingStats(),
         chatUpdateProtocol: () => chatUpdateDeliveryCoordinator.protocolCounters(),
-        persistenceWriteQueue: () => persistenceWriteQueueRef?.stats ?? null
+        persistenceWriteQueue: () => persistenceWriteQueueRef?.stats ?? null,
+        workSpans: mainWorkSpanRecorder.section
       }
     })
     mainPerfInstrumentationRef.start()

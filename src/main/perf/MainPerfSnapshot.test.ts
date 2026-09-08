@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createMainPerfInstrumentation } from './MainPerfSnapshot'
+import { createWorkSpanRecorder } from '../perf/WorkSpanRecorder'
 import type { EventLoopLagMeter, EventLoopLagSnapshot } from './EventLoopLagMeter'
 import type { HostLoadSampler, HostLoadSnapshot } from './HostLoadSample'
 
@@ -108,5 +109,25 @@ describe('createMainPerfInstrumentation', () => {
     instrumentation.snapshot({ resetLagWindow: true })
 
     expect(resets).toEqual([0, 1])
+  })
+
+  it('wires workSpans section from the actual main recorder', () => {
+    const { meter } = fakeMeter()
+    const mainRecorder = createWorkSpanRecorder({ process: 'main', maxRetained: 4096 })
+    const instrumentation = createMainPerfInstrumentation({
+      meter,
+      hostLoad: fakeHostLoad(),
+      sections: {
+        workSpans: mainRecorder.section
+      }
+    })
+    const snapshot = instrumentation.snapshot()
+
+    // The workSpans section should be present and return the recorder's aggregates
+    expect(snapshot.sections.workSpans).toBeDefined()
+    expect(typeof snapshot.sections.workSpans).toBe('object')
+    // Verify it's the actual section by checking it has the expected shape
+    expect(snapshot.sections.workSpans).toHaveProperty('byKind')
+    expect(snapshot.sections.workSpans).toHaveProperty('byResource')
   })
 })
