@@ -329,6 +329,177 @@ function validPercentiles(value) {
   )
 }
 
+const RUN_EVIDENCE_VERSION = 1
+const INTERFERENCE_REPORT_SCHEMA_VERSION = 2
+
+/**
+ * Eligibility is separate from legacy metadata compatibility. The coverage
+ * record describes observed windows and populations; a claimed status alone
+ * cannot turn missing, failed or censored work into a measurement.
+ */
+function validateRunEvidence(run) {
+  const errors = []
+  if (!isPlainObject(run)) return ['run descriptor required']
+  if (
+    run.windowMs !== MATRIX_SAMPLING.windowMs ||
+    run.repetitions !== MATRIX_SAMPLING.repetitions
+  ) {
+    errors.push('qualified evidence requires the 120-second, three-repetition sampling contract')
+  }
+  if (
+    !PAIRING_ROLES.includes(run.role) ||
+    parseCellName(run.cellName) === null ||
+    typeof run.fixtureFingerprint !== 'string' ||
+    !run.fixtureFingerprint.trim() ||
+    fixtureVersionsKey(run.fixtureVersions) === null ||
+    typeof run.workload !== 'string' ||
+    !run.workload.trim() ||
+    typeof run.buildId !== 'string' ||
+    !run.buildId.trim() ||
+    !Number.isSafeInteger(run.seed)
+  ) {
+    errors.push('qualified evidence requires complete run identity and fixture metadata')
+  }
+  if (
+    !isPlainObject(run.signals) ||
+    Object.keys(run.signals).length === 0 ||
+    Object.values(run.signals).some((summary) => !validPercentiles(summary))
+  ) {
+    errors.push('qualified evidence requires measured percentile signals')
+  }
+  const evidence = run.evidence
+  if (!isPlainObject(evidence) || evidence.schemaVersion !== RUN_EVIDENCE_VERSION) {
+    return ['versioned run evidence required; legacy descriptors are diagnostic only']
+  }
+  if (evidence.status !== 'complete' || evidence.diagnosticOnly !== false) {
+    errors.push('run evidence is not a completed measurement')
+  }
+  for (const flag of ['censored', 'failed', 'unsupported', 'incomplete', 'diagnosticOnly']) {
+    if (run[flag] === true) errors.push('run is ' + flag)
+  }
+  const populations = evidence.populations
+  if (!Array.isArray(populations) || populations.length === 0) {
+    return [...errors, 'measured populations required']
+  }
+  const ids = new Set()
+  let light = null
+  let heavyCount = 0
+  for (const population of populations) {
+    if (
+      !isPlainObject(population) ||
+      typeof population.chatId !== 'string' ||
+      !population.chatId.trim() ||
+      ids.has(population.chatId) ||
+      !['light', 'heavy'].includes(population.role)
+    ) {
+      errors.push('invalid or duplicate measured population')
+      continue
+    }
+    ids.add(population.chatId)
+    if (population.role === 'light') {
+      if (light !== null) errors.push('exactly one light population required')
+      light = population.chatId
+    } else heavyCount += 1
+  }
+  if (light === null || evidence.lightChatId !== light) {
+    errors.push('exactly identified light population required')
+  }
+  if (
+    (run.role === 'light-alone' && (heavyCount !== 0 || populations.length !== 1)) ||
+    (run.role === 'light-beside' && heavyCount === 0)
+  ) {
+    errors.push('pairing role contradicts measured populations')
+  }
+  if (!Array.isArray(evidence.windows) || evidence.windows.length !== run.repetitions) {
+    return [...errors, 'coverage for every repetition required']
+  }
+  let lightSamples = 0
+  let previousEnd = null
+  const nonnegative = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0
+  const count = (value) => Number.isSafeInteger(value) && value >= 0
+  for (const [index, window] of evidence.windows.entries()) {
+    if (!isPlainObject(window)) {
+      errors.push('invalid observed window')
+      continue
+    }
+    if (
+      window.repetition !== index ||
+      window.outcome !== 'complete' ||
+      window.reason !== 'deadline' ||
+      ['failed', 'censored', 'unsupported', 'incomplete'].some((flag) => window[flag] === true) ||
+      !nonnegative(window.startedAtMs) ||
+      !nonnegative(window.endedAtMs) ||
+      !nonnegative(window.elapsedMs) ||
+      window.elapsedMs !== window.endedAtMs - window.startedAtMs ||
+      window.elapsedMs < run.windowMs ||
+      (previousEnd !== null && window.startedAtMs < previousEnd)
+    ) {
+      errors.push('incomplete, overlapping or invalid observed window')
+    }
+    previousEnd = window.endedAtMs
+    if (!Array.isArray(window.lanes) || window.lanes.length !== populations.length) {
+      errors.push('window population coverage required')
+      continue
+    }
+    const seen = new Set()
+    for (const lane of window.lanes) {
+      const population = populations.find((item) => item?.chatId === lane?.chatId)
+      if (!isPlainObject(lane) || !population || seen.has(lane.chatId)) {
+        errors.push('invalid window population')
+        continue
+      }
+      seen.add(lane.chatId)
+      if (lane.role !== population.role) errors.push('window population role mismatch')
+      const fields = [
+        'plannedEvents',
+        'startedEvents',
+        'completedEvents',
+        'failedEvents',
+        'unsupportedEvents',
+        'pendingEvents',
+        'lateEvents',
+        'measuredSamples',
+        'overlappedLightSamples'
+      ]
+      if (fields.some((field) => !count(lane[field]))) {
+        errors.push('invalid window coverage counters')
+        continue
+      }
+      if (
+        lane.plannedEvents === 0 ||
+        lane.startedEvents !== lane.plannedEvents ||
+        lane.completedEvents !== lane.plannedEvents ||
+        lane.failedEvents !== 0 ||
+        lane.unsupportedEvents !== 0 ||
+        lane.pendingEvents !== 0 ||
+        lane.lateEvents !== 0 ||
+        lane.measuredSamples === 0 ||
+        lane.measuredSamples > lane.completedEvents ||
+        lane.overlappedLightSamples > lane.measuredSamples
+      ) {
+        errors.push('empty, failed, unsupported or censored population')
+      }
+      if (lane.chatId === light) {
+        lightSamples += lane.measuredSamples
+        if (run.role === 'light-beside' && lane.overlappedLightSamples === 0) {
+          errors.push('no observed light/heavy overlap in repetition ' + index)
+        }
+      }
+    }
+  }
+  for (const summary of Object.values(run.signals || {})) {
+    if (
+      !isPlainObject(summary) ||
+      !count(summary.count) ||
+      summary.count === 0 ||
+      summary.count !== lightSamples
+    ) {
+      errors.push('signal count does not match observed light coverage')
+    }
+  }
+  return errors
+}
+
 /**
  * Compare measured percentile summaries; never derive p99 from p95 aggregates.
  * The older assertPairedRunCompatibility helper remains available for its
@@ -347,6 +518,7 @@ function pairRuns(lightAlone, lightBeside) {
     ['light-alone', lightAlone],
     ['light-beside', lightBeside]
   ]) {
+    reasons.push(...validateRunEvidence(run).map((reason) => label + ': ' + reason))
     if (run.repetitions !== MATRIX_SAMPLING.repetitions) {
       reasons.push(label + ' repetitions must be 3')
     }
@@ -364,6 +536,33 @@ function pairRuns(lightAlone, lightBeside) {
         if (!name.trim() || !validPercentiles(summary)) {
           reasons.push(label + ' invalid p50/p95/p99 for signal ' + name)
         }
+      }
+    }
+  }
+  if (lightAlone.evidence?.lightChatId !== lightBeside.evidence?.lightChatId) {
+    reasons.push('paired runs must measure the same identified light population')
+  }
+  const aloneWindows = lightAlone.evidence?.windows
+  const besideWindows = lightBeside.evidence?.windows
+  if (
+    Array.isArray(aloneWindows) &&
+    Array.isArray(besideWindows) &&
+    aloneWindows.length === besideWindows.length
+  ) {
+    for (let index = 0; index < aloneWindows.length; index += 1) {
+      const aloneLanes = aloneWindows[index]?.lanes
+      const besideLanes = besideWindows[index]?.lanes
+      const aloneLight = Array.isArray(aloneLanes)
+        ? aloneLanes.find((lane) => lane?.role === 'light')
+        : null
+      const besideLight = Array.isArray(besideLanes)
+        ? besideLanes.find((lane) => lane?.role === 'light')
+        : null
+      if (
+        aloneLight?.plannedEvents !== besideLight?.plannedEvents ||
+        aloneLight?.measuredSamples !== besideLight?.measuredSamples
+      ) {
+        reasons.push('paired light coverage differs in repetition ' + index)
       }
     }
   }
@@ -520,7 +719,9 @@ function validateInterferenceEnvironment(environment) {
 function validateInterferenceReport(report) {
   if (!isPlainObject(report)) return { ok: false, errors: ['report required'] }
   const errors = validateInterferenceEnvironment(report.environment)
-  if (report.schemaVersion !== MATRIX_SCHEMA_VERSION) errors.push('unsupported schemaVersion')
+  if (report.schemaVersion !== INTERFERENCE_REPORT_SCHEMA_VERSION) {
+    errors.push('schemaVersion 2 required for qualified pairs; legacy reports are diagnostic only')
+  }
   if (!Array.isArray(report.cells) || report.cells.length === 0) {
     errors.push('nonempty cells required')
   }
@@ -563,7 +764,7 @@ function validateInterferenceReport(report) {
 }
 
 function createInterferenceReport({ environment, cells = enumerateMatrixCells(), pairs = [] }) {
-  const report = { schemaVersion: MATRIX_SCHEMA_VERSION, environment, cells, pairs }
+  const report = { schemaVersion: INTERFERENCE_REPORT_SCHEMA_VERSION, environment, cells, pairs }
   const check = validateInterferenceReport(report)
   if (!check.ok) throw new Error('invalid interferenceReport: ' + check.errors.join('; '))
   return JSON.parse(JSON.stringify(report))
@@ -571,6 +772,9 @@ function createInterferenceReport({ environment, cells = enumerateMatrixCells(),
 
 module.exports = {
   MATRIX_SCHEMA_VERSION,
+  RUN_EVIDENCE_VERSION,
+  INTERFERENCE_REPORT_SCHEMA_VERSION,
+  validateRunEvidence,
   MATRIX_SAMPLING,
   HISTORY_SIZES,
   HISTORY_SIZE_PINS,

@@ -100,6 +100,7 @@ describe('concurrentReplayLanes (M1 A1.2 — first B2 driver)', () => {
       api: fakeApi(logA),
       seed: 4242,
       windowMs: 60_000,
+      diagnosticOnly: true,
       repetitions: 1,
       ...runMetadata()
     })
@@ -127,6 +128,7 @@ describe('concurrentReplayLanes (M1 A1.2 — first B2 driver)', () => {
       api: fakeApi(logB),
       seed: 4242,
       windowMs: 60_000,
+      diagnosticOnly: true,
       repetitions: 1,
       ...runMetadata()
     })
@@ -142,6 +144,7 @@ describe('concurrentReplayLanes (M1 A1.2 — first B2 driver)', () => {
       api: fakeApi(),
       seed: 4242,
       windowMs: 60_000,
+      diagnosticOnly: true,
       repetitions: 3,
       ...runMetadata()
     })
@@ -152,6 +155,7 @@ describe('concurrentReplayLanes (M1 A1.2 — first B2 driver)', () => {
       api: fakeApi(),
       seed: 4242,
       windowMs: 60_000,
+      diagnosticOnly: true,
       repetitions: 3,
       ...runMetadata()
     })
@@ -187,25 +191,29 @@ describe('concurrentReplayLanes (M1 A1.2 — first B2 driver)', () => {
   })
 
   it('produces summaries that validate through pairRuns and validateInterferenceReport', async () => {
-    // The contractual fixed window: pairRuns/assertPairedRunCompatibility
-    // refuse anything but MATRIX_SAMPLING.windowMs — so this test uses the
-    // default 120 s window (the fake adapter completes instantly).
-    const options = {
-      api: fakeApi(),
-      seed: 4242,
-      repetitions: 3,
-      ...runMetadata()
+    // Observe the full windows with fake time; an instantaneous diagnostic
+    // replay is deliberately ineligible, even if its metadata says 120 s.
+    async function measured(lanes) {
+      vi.useFakeTimers()
+      try {
+        const pending = runConcurrentReplayLanes({
+          api: fakeApi(),
+          lanes,
+          seed: 4242,
+          repetitions: 3,
+          nowMs: () => Date.now(),
+          ...runMetadata()
+        })
+        await vi.runAllTimersAsync()
+        return await pending
+      } finally {
+        vi.useRealTimers()
+      }
     }
-    const alone = await runConcurrentReplayLanes({
-      ...options,
-      lanes: [lane('light', 'light-chat', 3)]
-    })
-    const beside = await runConcurrentReplayLanes({
-      ...options,
-      api: fakeApi(),
-      lanes: [lane('light', 'light-chat', 3), lane('heavy', 'heavy-chat', 3)]
-    })
-
+    const alone = await measured([lane('light', 'light-chat', 3)])
+    const beside = await measured([lane('light', 'light-chat', 3), lane('heavy', 'heavy-chat', 3)])
+    expect(alone.evidenceEligible).toBe(true)
+    expect(beside.evidenceEligible).toBe(true)
     expect(assertPairedRunCompatibility(alone.run, beside.run)).toEqual({ ok: true })
     const paired = pairRuns(alone.run, beside.run)
     if (!paired.ok) throw new Error(`pairRuns refused: ${paired.reasons}`)
@@ -255,9 +263,11 @@ describe('concurrentReplayLanes (M1 A1.2 — first B2 driver)', () => {
       api: fakeApi(),
       seed: 4242,
       windowMs: 60_000,
+      diagnosticOnly: true,
       repetitions: 1
     })
-    expect(result.ok).toBe(true)
+    expect(result.ok).toBe(false)
+    expect(result.evidenceEligible).toBe(false)
     expect(
       result.unsupported.some((u: { event: string }) => u.event === 'invented_future_kind')
     ).toBe(true)
@@ -286,7 +296,7 @@ describe('concurrentReplayLanes (M1 A1.2 — first B2 driver)', () => {
   })
 
   it('percentileSummary is nearest-rank and empty-safe', () => {
-    expect(percentileSummary([])).toEqual({ count: 0, p50: 0, p95: 0, p99: 0, max: 0 })
+    expect(percentileSummary([])).toEqual({ count: 0, p50: null, p95: null, p99: null, max: null })
     const summary = percentileSummary([10, 1, 5, 100])
     expect(summary).toEqual({ count: 4, p50: 5, p95: 100, p99: 100, max: 100 })
   })

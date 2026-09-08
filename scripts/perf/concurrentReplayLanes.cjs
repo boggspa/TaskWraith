@@ -26,12 +26,18 @@
  * interferenceMatrix.cjs): no provider runs (replay exercises the save/hydrate
  * path only), no Ensemble-pool or Host-native saturation, no control actions
  * (cancel/approval/answer/seat toggle). A cell run through this driver alone
- * is NOT a measured Appendix A cell.
+ * is NOT a measured Appendix A cell. Qualified pairs require report schema v2
+ * and versioned per-window coverage. Old descriptors remain diagnostic data.
  */
 
-const { applyReplayEventWithTimeout } = require('./replayDriver.cjs')
+const { applyReplayEvent } = require('./replayDriver.cjs')
 const { createPrng } = require('./fixtureGenerator.cjs')
-const { MATRIX_SAMPLING, cellName } = require('./interferenceMatrix.cjs')
+const {
+  MATRIX_SAMPLING,
+  RUN_EVIDENCE_VERSION,
+  cellName,
+  validateRunEvidence
+} = require('./interferenceMatrix.cjs')
 
 const LANE_ROLES = Object.freeze(['light', 'heavy'])
 const PAIRING_ROLES = Object.freeze(['light-alone', 'light-beside'])
@@ -42,7 +48,7 @@ function isPlainObject(value) {
 
 /** Nearest-rank percentiles, matching the recorder's convention. */
 function percentileSummary(values) {
-  if (values.length === 0) return { count: 0, p50: 0, p95: 0, p99: 0, max: 0 }
+  if (values.length === 0) return { count: 0, p50: null, p95: null, p99: null, max: null }
   const sorted = [...values].sort((a, b) => a - b)
   const rank = (q) =>
     sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil((q / 100) * sorted.length) - 1))]
@@ -73,115 +79,392 @@ function makeLaneContext(api, lane) {
 }
 
 function validateLaneSpec(lane, index) {
+  if (!isPlainObject(lane)) return ['lane ' + index + ' must be an object']
   const errors = []
-  if (!isPlainObject(lane)) return [`lane ${index} must be an object`]
-  if (!LANE_ROLES.includes(lane.role)) errors.push(`lane ${index} role must be light|heavy`)
-  if (typeof lane.chatId !== 'string' || lane.chatId.length === 0) {
-    errors.push(`lane ${index} chatId required`)
-  }
-  if (!Array.isArray(lane.schedule)) errors.push(`lane ${index} schedule must be an array`)
-  if (lane.pairingRole !== undefined && !PAIRING_ROLES.includes(lane.pairingRole)) {
-    errors.push(`lane ${index} pairingRole must be light-alone|light-beside`)
+  if (!LANE_ROLES.includes(lane.role)) errors.push('lane role must be light|heavy')
+  if (typeof lane.chatId !== 'string' || !lane.chatId.trim()) errors.push('lane chatId required')
+  if (!Array.isArray(lane.schedule)) errors.push('lane schedule must be an array')
+  else
+    for (const event of lane.schedule) {
+      if (
+        !isPlainObject(event) ||
+        typeof event.kind !== 'string' ||
+        (event.appChatId !== lane.chatId &&
+          !(event.kind === 'schedule_complete' && event.appChatId === undefined))
+      ) {
+        errors.push('every replay event must target its own lane chat')
+      }
+    }
+  if (lane.chats !== undefined && !Array.isArray(lane.chats)) {
+    errors.push('lane chats must be an array')
+  } else {
+    const ids = new Set()
+    for (const chat of lane.chats || []) {
+      if (!isPlainObject(chat) || chat.appChatId !== lane.chatId || ids.has(chat.appChatId)) {
+        errors.push('fixture chats must uniquely belong to their lane')
+      }
+      ids.add(chat?.appChatId)
+    }
   }
   return errors
 }
 
-/**
- * Run one window of the seeded interleave. Returns per-lane state; the
- * caller aggregates across repetitions.
- */
-async function runOneWindow(laneStates, options, prng) {
-  const nowMs = options.nowMs
-  const maxInFlight = options.maxInFlight
-  const windowMs = options.windowMs
-  const windowStart = nowMs()
-  /** @type {Set<Promise<object>>} */
-  const pending = new Set()
+// Ownership survives an incomplete return until the underlying effects settle.
+// Reusing another wrapper around the same remote instance is caller-owned; the
+// supplied adapter object must remain the stable identity for these runs.
+const activeChats = new WeakMap()
+const MAX_TIMER_MS = 2 ** 31 - 1
 
-  const startNext = (state) => {
-    const eventIndex = state.nextIndex
-    const event = state.lane.schedule[eventIndex]
-    state.nextIndex += 1
-    const startedAtMs = nowMs()
-    // The promise STAYS in `pending` after settling; only the race branch
-    // below removes it. Deleting on settle would let a finished event vanish
-    // unrecorded and pin its lane as forever-in-flight.
-    const application = Promise.resolve()
-      .then(() =>
-        applyReplayEventWithTimeout(
-          state.ctx,
-          event,
-          { eventNumber: eventIndex + 1, totalEvents: state.lane.schedule.length, startedAtMs },
-          options
-        )
-      )
-      .then(
-        (result) => ({ state, startedAtMs, result }),
-        (error) => ({ state, startedAtMs, error })
-      )
-    pending.add(application)
-    return application
+function positiveInteger(value, label) {
+  if (!Number.isSafeInteger(value) || value <= 0)
+    throw new Error(label + ' must be a positive integer')
+  return value
+}
+
+function duration(value, label) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > MAX_TIMER_MS) {
+    throw new Error(label + ' must be a finite positive timer duration')
   }
+  return value
+}
 
-  while (true) {
-    // The window fence is checked before ANY new start: an expired window
-    // censors instead of launching more work.
-    const windowEnded = nowMs() - windowStart >= windowMs
-    const eligible = laneStates.filter(
-      (state) => state.nextIndex < state.lane.schedule.length && !state.inFlightBy
-    )
-    if (!windowEnded && eligible.length > 0 && pending.size < maxInFlight) {
-      const pick = eligible[Math.floor(prng() * eligible.length)]
-      // Invariant: one in-flight event per lane — per-lane order is never
-      // reordered by the scheduler, only interleaved across lanes.
-      pick.inFlightBy = startNext(pick)
-      continue
+function makeClock(nowMs) {
+  if (nowMs !== undefined && typeof nowMs !== 'function')
+    throw new Error('nowMs must be a function')
+  const now = nowMs || (() => require('node:perf_hooks').performance.now())
+  let last = null
+  return () => {
+    const value = now()
+    if (
+      typeof value !== 'number' ||
+      !Number.isFinite(value) ||
+      value < 0 ||
+      (last !== null && value < last)
+    ) {
+      throw new Error('nowMs must produce finite non-negative monotonic readings')
     }
-    if (pending.size > 0) {
-      const settled = await Promise.race(pending)
-      pending.delete(settled.state.inFlightBy)
-      settled.state.inFlightBy = null
-      const latencyMs = Math.max(0, nowMs() - settled.startedAtMs)
-      if (settled.error) {
-        settled.state.failures += 1
-        settled.state.errors.push(settled.error)
-      } else {
-        settled.state.latencies.push(latencyMs)
-        settled.state.applied += 1
+    last = value
+    return value
+  }
+}
+
+function reserveChats(api, lanes) {
+  let owners = activeChats.get(api)
+  if (!owners) activeChats.set(api, (owners = new Map()))
+  if (lanes.some((lane) => owners.has(lane.chatId))) {
+    throw new Error('chat still owned by another replay or unresolved effects')
+  }
+  const token = {}
+  const pending = new Map(lanes.map((lane) => [lane.chatId, new Set()]))
+  let finished = false
+  const releaseIdle = (chatId) => {
+    if (finished && pending.get(chatId).size === 0 && owners.get(chatId) === token)
+      owners.delete(chatId)
+  }
+  for (const lane of lanes) owners.set(lane.chatId, token)
+  return {
+    add(entry) {
+      pending.get(entry.state.lane.chatId).add(entry)
+    },
+    settled(entry) {
+      const id = entry.state.lane.chatId
+      pending.get(id).delete(entry)
+      releaseIdle(id)
+    },
+    finish() {
+      finished = true
+      for (const id of pending.keys()) releaseIdle(id)
+    },
+    confirmDrained() {
+      for (const [id, entries] of pending) {
+        entries.clear()
+        releaseIdle(id)
       }
-      continue
     }
-    if (windowEnded) {
-      for (const state of laneStates) {
-        if (state.nextIndex < state.lane.schedule.length) state.censored = true
+  }
+}
+
+function clearTimer(timers, timer) {
+  if (timer === null) return
+  try {
+    timers.clearTimeout(timer)
+  } catch {
+    /* A cleanup seam cannot strand ownership. */
+  }
+}
+
+function boundedCleanup(hook, pending, reason, timers, timeoutMs) {
+  if (typeof hook !== 'function') return Promise.resolve({ status: 'not_requested' })
+  return new Promise((resolve) => {
+    let done = false
+    let timer = null
+    const finish = (status) => {
+      if (done) return
+      done = true
+      clearTimer(timers, timer)
+      resolve({ status })
+    }
+    timer = timers.setTimeout(() => finish('timed_out'), Math.ceil(timeoutMs))
+    Promise.resolve()
+      .then(() => hook({ reason, pending }))
+      .then(
+        (receipt) => finish(receipt?.effectsSettled === true ? 'confirmed_drained' : 'unconfirmed'),
+        () => finish('failed')
+      )
+  })
+}
+
+/**
+ * The deadline races RAW effect completion, never a timeout wrapper that can
+ * hide an outstanding save. Completion timestamps are captured in the promise
+ * settlement handler, not when a later scheduler iteration consumes the item.
+ */
+async function runOneWindow(laneStates, options, prng, ownership, repetition) {
+  const { clock, timers, windowMs, maxInFlight } = options
+  let fenceReason = null
+  let accepting = true
+  let collecting = true
+  let clockFailed = false
+  let resolveFence
+  const fence = new Promise((resolve) => {
+    resolveFence = resolve
+  })
+  const stop = (reason) => {
+    if (fenceReason !== null) return
+    accepting = false
+    fenceReason = reason
+    resolveFence({ fence: true })
+  }
+  const readTime = () => {
+    try {
+      return clock()
+    } catch {
+      clockFailed = true
+      stop('clock_invalid')
+      return null
+    }
+  }
+  const startedAtMs = readTime()
+  const deadlineAtMs = startedAtMs === null ? null : startedAtMs + windowMs
+  const pending = new Set()
+  const allEntries = []
+  const deadline = timers.setTimeout(() => stop('deadline'), Math.ceil(windowMs))
+
+  const guardApi = (state) => {
+    const adapter = {}
+    for (const name of ['getChat', 'saveChat', 'savePrefix', 'selectChat']) {
+      if (typeof options.api[name] !== 'function') continue
+      adapter[name] = (...args) => {
+        const target = name === 'getChat' || name === 'selectChat' ? args[0] : args[0]?.appChatId
+        if (!accepting || target !== state.lane.chatId) {
+          throw new Error('replay effect is outside its owned chat/window')
+        }
+        const entry = state.inFlightBy
+        entry.apiCalls += 1
+        entry.apiPending += 1
+        for (const other of allEntries) {
+          if (other.apiPending === 0 || other === entry) continue
+          if (entry.state.lane.role === 'light' && other.state.lane.role === 'heavy')
+            entry.overlapped = true
+          if (other.state.lane.role === 'light' && entry.state.lane.role === 'heavy')
+            other.overlapped = true
+        }
+        let result
+        try {
+          result = options.api[name](...args)
+        } catch (error) {
+          entry.apiPending -= 1
+          throw error
+        }
+        return Promise.resolve(result).finally(() => {
+          entry.apiPending -= 1
+        })
       }
+    }
+    return adapter
+  }
+  for (const state of laneStates) state.ctx = makeLaneContext(guardApi(state), state.lane)
+
+  const launch = (state) => {
+    const at = readTime()
+    if (at === null || at >= deadlineAtMs) {
+      stop('deadline')
       return
     }
-    if (eligible.length === 0) return
+    const index = state.nextIndex++
+    const entry = {
+      state,
+      index,
+      startedAtMs: at,
+      finishedAtMs: null,
+      settled: false,
+      consumed: false,
+      apiCalls: 0,
+      apiPending: 0,
+      overlapped: false,
+      unsupportedBefore: state.ctx.unsupported.length,
+      timeout: null
+    }
+    // Arm before owning an effect: a broken injected timer must not create a
+    // phantom unresolved entry for work that was never dispatched.
+    if (options.eventTimeoutMs !== undefined) {
+      entry.timeout = timers.setTimeout(
+        () => stop('event_timeout'),
+        Math.ceil(options.eventTimeoutMs)
+      )
+    }
+    state.inFlightBy = entry
+    pending.add(entry)
+    allEntries.push(entry)
+    ownership.add(entry)
+    const settle = (outcome, value) => {
+      entry.outcome = outcome
+      entry.value = value
+      entry.finishedAtMs = collecting ? readTime() : null
+      entry.settled = true
+      clearTimer(timers, entry.timeout)
+      ownership.settled(entry)
+      return entry
+    }
+    entry.promise = Promise.resolve()
+      .then(() => applyReplayEvent(state.ctx, state.lane.schedule[index]))
+      .then(
+        (value) => settle('returned', value),
+        (error) => settle('failed', error)
+      )
+  }
+
+  const consume = (entry) => {
+    if (entry.consumed) return
+    entry.consumed = true
+    pending.delete(entry)
+    const state = entry.state
+    state.inFlightBy = null
+    if (entry.finishedAtMs === null || entry.finishedAtMs > deadlineAtMs) {
+      state.lateEvents += 1
+      return
+    }
+    state.completedEvents += 1
+    if (entry.outcome === 'failed' || entry.value?.runPresent === false) {
+      state.failures += 1
+    } else if (
+      entry.value?.ok !== true ||
+      entry.value.delegated === true ||
+      state.ctx.unsupported.length > entry.unsupportedBefore
+    ) {
+      state.unsupportedEvents += 1
+    } else {
+      state.applied += 1
+      if (entry.apiCalls > 0) {
+        state.latencies.push(entry.finishedAtMs - entry.startedAtMs)
+        if (state.lane.role === 'light' && entry.overlapped) state.overlappedLightSamples += 1
+      }
+    }
+  }
+
+  if (laneStates.some((state) => state.lane.schedule.length === 0)) stop('empty_population')
+  try {
+    while (fenceReason === null) {
+      const at = readTime()
+      if (at === null) break
+      if (at >= deadlineAtMs) {
+        stop('deadline')
+        break
+      }
+      const eligible = laneStates.filter(
+        (state) => state.nextIndex < state.lane.schedule.length && state.inFlightBy === null
+      )
+      if (eligible.length && pending.size < maxInFlight) {
+        launch(eligible[Math.floor(prng() * eligible.length)])
+        continue
+      }
+      if (pending.size === 0 && options.diagnosticOnly) {
+        stop('diagnostic_complete')
+        break
+      }
+      const settled = await Promise.race([fence, ...[...pending].map((entry) => entry.promise)])
+      if (settled.fence) break
+      consume(settled)
+    }
+  } finally {
+    accepting = false
+    clearTimer(timers, deadline)
+    for (const entry of allEntries) clearTimer(timers, entry.timeout)
+  }
+  // Keep all completions observed at the fence, including results that settled
+  // together before Promise.race resumed. Late or unresolved effects are censored.
+  for (const entry of [...pending]) if (entry.settled) consume(entry)
+  const endedAtMs = readTime()
+  collecting = false
+  const lanes = laneStates.map((state) => ({
+    role: state.lane.role,
+    chatId: state.lane.chatId,
+    plannedEvents: state.lane.schedule.length,
+    startedEvents: state.nextIndex,
+    completedEvents: state.completedEvents,
+    failedEvents: state.failures,
+    unsupportedEvents: state.unsupportedEvents,
+    pendingEvents: [...pending].filter((entry) => entry.state === state).length,
+    lateEvents: state.lateEvents,
+    measuredSamples: state.latencies.length,
+    overlappedLightSamples: state.overlappedLightSamples
+  }))
+  const elapsedMs = startedAtMs === null || endedAtMs === null ? null : endedAtMs - startedAtMs
+  const failed = clockFailed || lanes.some((lane) => lane.failedEvents > 0)
+  const unsupported = lanes.some((lane) => lane.unsupportedEvents > 0)
+  const incomplete = lanes.some((lane) => lane.pendingEvents > 0)
+  const censored =
+    fenceReason === 'event_timeout' ||
+    lanes.some((lane) => lane.completedEvents !== lane.plannedEvents || lane.lateEvents > 0)
+  const outcome = failed
+    ? 'failed'
+    : unsupported
+      ? 'unsupported'
+      : incomplete
+        ? 'incomplete'
+        : censored
+          ? 'censored'
+          : options.diagnosticOnly
+            ? 'diagnostic'
+            : elapsedMs !== null &&
+                elapsedMs >= windowMs &&
+                lanes.every((lane) => lane.measuredSamples > 0)
+              ? 'complete'
+              : 'incomplete'
+  return {
+    repetition,
+    startedAtMs,
+    endedAtMs,
+    elapsedMs,
+    outcome,
+    reason: fenceReason,
+    lanes,
+    failed,
+    unsupported,
+    incomplete,
+    censored,
+    pending: [...pending]
+      .filter((entry) => !entry.settled)
+      .map((entry) => ({
+        chatId: entry.state.lane.chatId,
+        eventIndex: entry.index,
+        kind: entry.state.lane.schedule[entry.index].kind
+      }))
   }
 }
 
 /**
- * Run the lane set for the fixed sampling window, `repetitions` times.
+ * Measurement mode observes the whole requested window even when its finite
+ * schedule finishes early. Diagnostic mode may return early and NEVER qualifies
+ * a pair. A fence with unresolved effects ends the run: no next repetition.
  *
- * @param {object} options
- * @param {Array<object>} options.lanes lane specs:
- *   { role: 'light'|'heavy', chatId, schedule, chats?, pairingRole? }
- * @param {object} options.api page adapter (getChat/saveChat[/savePrefix])
- * @param {number} options.seed seeds the cross-lane interleave
- * @param {object} [options.cell] matrix cell descriptor for the run descriptor
- * @param {string} [options.cellName] alternative: pre-computed canonical name
- * @param {'light-alone'|'light-beside'} [options.pairingRole] derived from the
- *   lane roles when omitted (any heavy lane → light-beside)
- * @param {number} [options.windowMs] default MATRIX_SAMPLING.windowMs (120 s)
- * @param {number} [options.repetitions] default MATRIX_SAMPLING.repetitions (3)
- * @param {number} [options.maxInFlight] default lanes.length
- * @param {() => number} [options.nowMs] clock injection (tests)
- * Metadata pass-through for the run descriptor (pairRuns validates them):
- *   workload, fixtureFingerprint, fixtureVersions, buildId.
+ * cancelPending is an explicit caller-owned cancellation/drain hook, not a
+ * default app shutdown. Only {effectsSettled:true} confirms that effects cannot
+ * continue. Its wait is bounded by cleanupTimeoutMs. Otherwise chat ownership is
+ * retained until raw effects settle; later calls using this adapter cannot reuse
+ * those chats. Reported windows stay detached from late settlements.
  */
 async function runConcurrentReplayLanes(options) {
-  const errors = []
   if (!isPlainObject(options)) throw new Error('options required')
   if (
     !options.api ||
@@ -190,70 +473,109 @@ async function runConcurrentReplayLanes(options) {
   ) {
     throw new Error('api.getChat and api.saveChat required')
   }
-  if (!Array.isArray(options.lanes) || options.lanes.length === 0) {
+  if (!Array.isArray(options.lanes) || options.lanes.length === 0)
     throw new Error('at least one lane required')
-  }
-  options.lanes.forEach((lane, index) => errors.push(...validateLaneSpec(lane, index)))
+  const errors = options.lanes.flatMap(validateLaneSpec)
   if (!Number.isSafeInteger(options.seed)) throw new Error('seed must be a safe integer')
-  if (errors.length > 0) throw new Error(`invalid lane specs: ${errors.join('; ')}`)
-
-  const windowMs = options.windowMs == null ? MATRIX_SAMPLING.windowMs : options.windowMs
-  const repetitions =
-    options.repetitions == null ? MATRIX_SAMPLING.repetitions : options.repetitions
-  if (!Number.isFinite(windowMs) || windowMs <= 0) throw new Error('windowMs must be positive')
-  if (!Number.isSafeInteger(repetitions) || repetitions < 1) {
-    throw new Error('repetitions must be a positive integer')
+  if (options.diagnosticOnly !== undefined && typeof options.diagnosticOnly !== 'boolean') {
+    errors.push('diagnosticOnly must be boolean')
   }
-  const nowMs = typeof options.nowMs === 'function' ? options.nowMs : Date.now
-  const maxInFlight = options.maxInFlight == null ? options.lanes.length : options.maxInFlight
-
-  const hasHeavy = options.lanes.some((lane) => lane.role === 'heavy')
-  const pairingRole = options.pairingRole || (hasHeavy ? 'light-beside' : 'light-alone')
-  for (const [index, lane] of options.lanes.entries()) {
-    if (lane.pairingRole !== undefined && lane.pairingRole !== pairingRole) {
-      throw new Error(`lane ${index} pairingRole ${lane.pairingRole} != run role ${pairingRole}`)
+  const ids = options.lanes.map((lane) => lane?.chatId)
+  if (new Set(ids).size !== ids.length) errors.push('lane chatIds must be unique')
+  if (options.lanes.filter((lane) => lane?.role === 'light').length !== 1)
+    errors.push('exactly one light lane required')
+  const hasHeavy = options.lanes.some((lane) => lane?.role === 'heavy')
+  const pairingRole = options.pairingRole ?? (hasHeavy ? 'light-beside' : 'light-alone')
+  if (!PAIRING_ROLES.includes(pairingRole) || (pairingRole === 'light-beside') !== hasHeavy)
+    errors.push('pairingRole contradicts heavy-lane presence')
+  for (const lane of options.lanes)
+    if (lane?.pairingRole !== undefined && lane.pairingRole !== pairingRole) {
+      errors.push('lane pairingRole contradicts run role')
     }
+  if (errors.length) throw new Error('invalid lane specs: ' + errors.join('; '))
+  const windowMs = duration(options.windowMs ?? MATRIX_SAMPLING.windowMs, 'windowMs')
+  const repetitions = positiveInteger(
+    options.repetitions ?? MATRIX_SAMPLING.repetitions,
+    'repetitions'
+  )
+  const maxInFlight = positiveInteger(
+    options.maxInFlight === undefined ? options.lanes.length : options.maxInFlight,
+    'maxInFlight'
+  )
+  if (options.eventTimeoutMs !== undefined) duration(options.eventTimeoutMs, 'eventTimeoutMs')
+  const cleanupTimeoutMs = duration(options.cleanupTimeoutMs ?? 1000, 'cleanupTimeoutMs')
+  if (options.cancelPending !== undefined && typeof options.cancelPending !== 'function') {
+    throw new Error('cancelPending must be an explicit caller-owned hook')
   }
-
-  const aggregates = options.lanes.map((lane) => ({
+  const timers = options.timers ?? { setTimeout, clearTimeout }
+  if (typeof timers.setTimeout !== 'function' || typeof timers.clearTimeout !== 'function') {
+    throw new Error('timers require setTimeout and clearTimeout')
+  }
+  const clock = makeClock(options.nowMs)
+  clock() // Invalid initial clocks are refused before any chat is owned or mutated.
+  const lanes = options.lanes.map((lane) => ({
+    ...lane,
+    schedule: lane.schedule.map((event) => ({ ...event })),
+    chats: [...(lane.chats || [])]
+  }))
+  const ownership = reserveChats(options.api, lanes)
+  const aggregates = lanes.map((lane) => ({
     lane,
     latencies: [],
     applied: 0,
     failures: 0,
-    errors: [],
-    censored: false,
-    unsupported: []
+    unsupported: [],
+    censored: false
   }))
-
-  for (let repetition = 0; repetition < repetitions; repetition += 1) {
-    // One PRNG per repetition at the SAME seed: every rep replays the same
-    // cross-lane start order, so rep-to-rep deltas are timing, not schedule.
-    const prng = createPrng(options.seed)
-    const laneStates = aggregates.map((aggregate) => ({
-      aggregate,
-      lane: aggregate.lane,
-      ctx: makeLaneContext(options.api, aggregate.lane),
-      nextIndex: 0,
-      inFlightBy: null,
-      latencies: [],
-      applied: 0,
-      failures: 0,
-      errors: [],
-      censored: false
-    }))
-    await runOneWindow(laneStates, { ...options, nowMs, windowMs, maxInFlight }, prng)
-    for (const state of laneStates) {
-      const aggregate = state.aggregate
-      aggregate.latencies.push(...state.latencies)
-      aggregate.applied += state.applied
-      aggregate.failures += state.failures
-      aggregate.errors.push(...state.errors)
-      aggregate.censored = aggregate.censored || state.censored
-      aggregate.unsupported.push(...state.ctx.unsupported)
+  const windows = []
+  let cleanup = { status: 'not_needed' }
+  try {
+    for (let repetition = 0; repetition < repetitions; repetition += 1) {
+      const states = aggregates.map((aggregate) => ({
+        aggregate,
+        lane: aggregate.lane,
+        nextIndex: 0,
+        inFlightBy: null,
+        latencies: [],
+        applied: 0,
+        failures: 0,
+        completedEvents: 0,
+        unsupportedEvents: 0,
+        lateEvents: 0,
+        overlappedLightSamples: 0
+      }))
+      const window = await runOneWindow(
+        states,
+        { ...options, clock, timers, windowMs, maxInFlight },
+        createPrng(options.seed),
+        ownership,
+        repetition
+      )
+      for (const state of states) {
+        state.aggregate.latencies.push(...state.latencies)
+        state.aggregate.applied += state.applied
+        state.aggregate.failures += state.failures
+        state.aggregate.unsupported.push(...state.ctx.unsupported)
+        state.aggregate.censored ||= window.censored || window.incomplete
+      }
+      const { pending, ...observed } = window
+      windows.push(observed)
+      if (pending.length) {
+        cleanup = await boundedCleanup(
+          options.cancelPending,
+          pending,
+          window.reason,
+          timers,
+          cleanupTimeoutMs
+        )
+        if (cleanup.status === 'confirmed_drained') ownership.confirmDrained()
+      }
+      if (window.outcome !== 'complete' && window.outcome !== 'diagnostic') break
     }
+  } finally {
+    ownership.finish()
   }
-
-  const lanes = aggregates.map((aggregate) => ({
+  const summaries = aggregates.map((aggregate) => ({
     role: aggregate.lane.role,
     chatId: aggregate.lane.chatId,
     eventsApplied: aggregate.applied,
@@ -262,37 +584,66 @@ async function runConcurrentReplayLanes(options) {
     censored: aggregate.censored,
     applyLatencyMs: percentileSummary(aggregate.latencies)
   }))
-
-  // The compared signals are LIGHT-lane only, so the alone/beside runs of a
-  // pair present identical signal sets (pairRuns refuses otherwise).
-  const lightLatencies = aggregates
-    .filter((aggregate) => aggregate.lane.role === 'light')
-    .flatMap((aggregate) => aggregate.latencies)
-  const signals = { 'light.applyLatencyMs': percentileSummary(lightLatencies) }
-
-  const resolvedCellName = options.cell ? cellName(options.cell) : options.cellName
+  const light = aggregates.find((aggregate) => aggregate.lane.role === 'light')
+  const signals = { 'light.applyLatencyMs': percentileSummary(light.latencies) }
+  const failed = windows.some((window) => window.failed)
+  const unsupported = windows.some((window) => window.unsupported)
+  const censored = windows.some((window) => window.censored)
+  const incomplete =
+    windows.length !== repetitions || windows.some((window) => window.outcome === 'incomplete')
+  const status = failed
+    ? 'failed'
+    : unsupported
+      ? 'unsupported'
+      : incomplete
+        ? 'incomplete'
+        : censored
+          ? 'censored'
+          : options.diagnosticOnly
+            ? 'diagnostic'
+            : 'complete'
   const run = {
-    ...(resolvedCellName ? { cellName: resolvedCellName } : {}),
+    ...(options.cell || options.cellName
+      ? { cellName: options.cell ? cellName(options.cell) : options.cellName }
+      : {}),
     role: pairingRole,
     workload: options.workload,
     seed: options.seed,
     windowMs,
     repetitions,
-    ...(options.fixtureFingerprint ? { fixtureFingerprint: options.fixtureFingerprint } : {}),
-    ...(options.fixtureVersions ? { fixtureVersions: options.fixtureVersions } : {}),
-    ...(options.buildId ? { buildId: options.buildId } : {}),
-    signals
+    fixtureFingerprint: options.fixtureFingerprint,
+    fixtureVersions: options.fixtureVersions,
+    buildId: options.buildId,
+    signals,
+    failed,
+    censored,
+    unsupported,
+    incomplete,
+    diagnosticOnly: options.diagnosticOnly === true,
+    evidence: {
+      schemaVersion: RUN_EVIDENCE_VERSION,
+      status,
+      diagnosticOnly: options.diagnosticOnly === true,
+      lightChatId: light.lane.chatId,
+      populations: lanes.map((lane) => ({ role: lane.role, chatId: lane.chatId })),
+      windows
+    }
   }
-
+  const evidenceErrors = validateRunEvidence(run)
   return {
-    ok: true,
+    ok: !failed && !unsupported && !censored && !incomplete,
+    evidenceEligible: evidenceErrors.length === 0,
+    evidenceErrors,
     pairingRole,
     windowMs,
     repetitions,
-    censored: aggregates.some((aggregate) => aggregate.censored),
-    lanes,
+    censored,
+    failed,
+    incomplete,
+    lanes: summaries,
     signals,
     run,
+    cleanup,
     unsupported: aggregates.flatMap((aggregate) => aggregate.unsupported)
   }
 }
@@ -346,8 +697,9 @@ async function runDryRun() {
     lanes: [makeLane('light', 'dry-light', 4), makeLane('heavy', 'dry-heavy', 4)],
     api,
     seed: 4242,
-    windowMs: 60_000,
-    repetitions: 2
+    windowMs: 100,
+    repetitions: 2,
+    diagnosticOnly: true
   })
   return result
 }

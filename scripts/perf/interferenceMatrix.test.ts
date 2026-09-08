@@ -39,6 +39,40 @@ function environment() {
   }
 }
 
+function evidence(role: string) {
+  const populations = [
+    { chatId: 'light', role: 'light' },
+    ...(role === 'light-beside' ? [{ chatId: 'heavy', role: 'heavy' }] : [])
+  ]
+  return {
+    schemaVersion: 1,
+    status: 'complete',
+    diagnosticOnly: false,
+    lightChatId: 'light',
+    populations,
+    windows: Array.from({ length: 3 }, (_, repetition) => ({
+      repetition,
+      outcome: 'complete',
+      reason: 'deadline',
+      startedAtMs: repetition * 120_000,
+      endedAtMs: (repetition + 1) * 120_000,
+      elapsedMs: 120_000,
+      lanes: populations.map((population) => ({
+        ...population,
+        plannedEvents: 1,
+        startedEvents: 1,
+        completedEvents: 1,
+        failedEvents: 0,
+        unsupportedEvents: 0,
+        pendingEvents: 0,
+        lateEvents: 0,
+        measuredSamples: 1,
+        overlappedLightSamples: population.role === 'light' && role === 'light-beside' ? 1 : 0
+      }))
+    }))
+  }
+}
+
 function run(role: string, overrides: Record<string, unknown> = {}) {
   return {
     cellName: cellName(enumerateMatrixCells()[0]),
@@ -50,7 +84,8 @@ function run(role: string, overrides: Record<string, unknown> = {}) {
     buildId: 'test-build',
     windowMs: 120_000,
     repetitions: 3,
-    signals: { roundStartMs: { p50: 10, p95: 20, p99: 30 } },
+    signals: { roundStartMs: { count: 3, p50: 10, p95: 20, p99: 30 } },
+    evidence: evidence(role),
     ...overrides
   }
 }
@@ -104,7 +139,7 @@ describe('paired interference evidence', () => {
     const alone = run('light-alone')
     const beside = run('light-beside', {
       fixtureVersions: { schedule: 2, fixture: 1 },
-      signals: { roundStartMs: { p50: 5, p95: 35, p99: 55 } }
+      signals: { roundStartMs: { count: 3, p50: 5, p95: 35, p99: 55 } }
     })
     const result = pairRuns(alone, beside)
     expect(result.ok).toBe(true)
