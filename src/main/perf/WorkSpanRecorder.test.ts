@@ -247,7 +247,8 @@ describe('createWorkSpanRecorder', () => {
       recorded: 0,
       dropped: 0,
       sampledOut: 0,
-      rejected: 0
+      rejected: 0,
+      degraded: 0
     })
   })
 
@@ -364,6 +365,100 @@ describe('createWorkSpanRecorder', () => {
     expect(second.spans[0]).toMatchObject({ runId: 'run-1', durationMs: 10 })
     expect(second.byKind.admission_wait?.count).toBe(1)
     expect(second.byKind.admission_wait?.p95Ms).toBe(10)
+  })
+
+  it('contains a clock that throws at begin time and keeps application work running', () => {
+    let calls = 0
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 4,
+      now: () => {
+        calls += 1
+        throw new Error('clock_probe')
+      }
+    })
+
+    let applicationWorkCompleted = false
+    expect(() => {
+      const end = recorder.begin(attrs())
+      applicationWorkCompleted = true
+      end({ bytes: 16, fallback: true })
+    }).not.toThrow()
+
+    expect(applicationWorkCompleted).toBe(true)
+    expect(calls).toBe(1)
+    const snapshot = recorder.snapshot()
+    expect(snapshot.degraded).toBe(1)
+    expect(snapshot.recorded).toBe(0)
+    expect(snapshot.spans).toEqual([])
+  })
+
+  it('contains a clock that throws at end time without recording a poisoned span', () => {
+    let calls = 0
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 4,
+      now: () => {
+        calls += 1
+        if (calls === 1) return 1_000
+        throw new Error('clock_probe_end')
+      }
+    })
+
+    const end = recorder.begin(attrs())
+    expect(() => end()).not.toThrow()
+
+    const snapshot = recorder.snapshot()
+    expect(snapshot.degraded).toBe(1)
+    expect(snapshot.recorded).toBe(0)
+    expect(snapshot.byKind.admission_wait).toBeUndefined()
+  })
+
+  it('treats a non-finite clock reading as degraded at begin and at end', () => {
+    const beginNaN = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 4,
+      now: () => Number.NaN
+    })
+    expect(() => beginNaN.begin(attrs())()).not.toThrow()
+    expect(beginNaN.snapshot()).toMatchObject({ degraded: 1, recorded: 0 })
+
+    let calls = 0
+    const endInfinite = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 4,
+      now: () => {
+        calls += 1
+        return calls === 1 ? 1_000 : Number.POSITIVE_INFINITY
+      }
+    })
+    expect(() => endInfinite.begin(attrs())()).not.toThrow()
+    const snapshot = endInfinite.snapshot()
+    expect(snapshot.degraded).toBe(1)
+    expect(snapshot.recorded).toBe(0)
+    // A poisoned duration must never reach the aggregates.
+    expect(snapshot.byKind.admission_wait).toBeUndefined()
+  })
+
+  it('keeps measuring after a transient clock failure', () => {
+    let calls = 0
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 4,
+      now: () => {
+        calls += 1
+        if (calls === 1) throw new Error('transient')
+        return calls * 10
+      }
+    })
+
+    recorder.begin(attrs())()
+    recorder.begin(attrs())()
+
+    const snapshot = recorder.snapshot()
+    expect(snapshot.degraded).toBe(1)
+    expect(snapshot.recorded).toBe(1)
+    expect(snapshot.spans).toHaveLength(1)
   })
 
   it('pins retained-window percentiles beside exact totals across eviction', () => {

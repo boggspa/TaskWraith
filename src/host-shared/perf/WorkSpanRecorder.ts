@@ -10,8 +10,11 @@
  * aggregate totals per span kind and per resource, and counters for
  * everything it declined to keep. Nothing here may ever throw on the hot
  * path — malformed input is counted (`rejected`) and forgotten, a crashing
- * sampler keeps the span (fail-open), and retention overflow evicts the
- * oldest span (`dropped`) while the exact totals keep counting.
+ * sampler keeps the span (fail-open), a crashing or non-finite injected
+ * clock abandons only the measurement (`degraded`), and retention overflow
+ * evicts the oldest span (`dropped`) while the exact totals keep counting.
+ * The application work being measured never fails because its diagnostic
+ * did.
  *
  * Placement: the implementation lives in src/host-shared so the standalone
  * Host runtime (which imports nothing from src/main) can construct its own
@@ -125,6 +128,12 @@ export interface WorkSpanAggregates {
   sampledOut: number
   /** Malformed begin/record inputs; nothing was thrown or recorded. */
   rejected: number
+  /**
+   * Measurements abandoned because the injected clock threw or returned a
+   * non-finite timestamp. The application work continued; only the
+   * diagnostic was dropped.
+   */
+  degraded: number
 }
 
 export interface WorkSpanSnapshot extends WorkSpanAggregates {
@@ -258,7 +267,24 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
   let dropped = 0
   let sampledOut = 0
   let rejected = 0
+  let degraded = 0
   let windowOffered = 0
+
+  /**
+   * The injected clock is caller code on the hot path, so it is treated as
+   * hostile: a throw or a non-finite reading abandons the measurement
+   * (counted in `degraded`) instead of propagating into the application work
+   * being measured. Returns null when the reading is unusable.
+   */
+  const readClock = (): number | null => {
+    let value: unknown
+    try {
+      value = now()
+    } catch {
+      return null
+    }
+    return finiteNonNegative(value) ? value : null
+  }
 
   const defaultSampler = (): boolean =>
     windowOffered <= keepAllBelow || windowOffered % DEFAULT_SAMPLE_KEEP_EVERY === 1
@@ -302,17 +328,26 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
       sampledOut += 1
       return () => {}
     }
-    const startedAt = now()
+    const startedAt = readClock()
+    if (startedAt === null) {
+      degraded += 1
+      return () => {}
+    }
     let ended = false
     return (endOptions?: WorkSpanEndOptions) => {
       if (ended) return
       ended = true
+      const endedAt = readClock()
+      if (endedAt === null) {
+        degraded += 1
+        return
+      }
       const bytes = endOptions?.bytes
       accept({
         process: options.process,
         ...normalized,
         startedAt,
-        durationMs: Math.max(0, now() - startedAt),
+        durationMs: Math.max(0, endedAt - startedAt),
         // End decorations are coerced, not rejected: the measured wait is the
         // valuable part and this path must never throw.
         bytes: finiteNonNegative(bytes) ? bytes : 0,
@@ -371,7 +406,8 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
       recorded,
       dropped,
       sampledOut,
-      rejected
+      rejected,
+      degraded
     }
   }
 
@@ -384,6 +420,7 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
     dropped = 0
     sampledOut = 0
     rejected = 0
+    degraded = 0
     windowOffered = 0
   }
 
