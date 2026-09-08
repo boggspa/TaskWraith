@@ -42,33 +42,45 @@ const PERF_GATE_THRESHOLDS = Object.freeze({
 })
 
 /**
- * §1.1 proposed G-X cross-thread bounds (Independent Threads Programme) —
- * NOT ratified, NOT enforced. They are deliberately kept OUT of
- * PERF_GATE_THRESHOLDS: evaluatePerfGates consumes that map, and an
- * unratified number must never fail a run. Ratification is an M1-exit
- * amendment recorded in the programme doc by the programme owner, after the
- * paired light-alone/light-beside baselines exist.
+ * PROPOSED, UNRATIFIED cross-thread bounds: no gate consumes these before
+ * Boss ratification at M1 exit. The seven acceptance rows have eight fields
+ * because the async-writer row specifies both byte capacity and fallbacks.
  *
- * `...OverLightAloneP95Ms` bounds are deltas against the paired light-alone
- * run of the SAME matrix cell (scripts/perf/interferenceMatrix.cjs), not
- * absolutes.
+ * Enumeration and JSON expose the eight canonical fields below. Legacy names
+ * remain available through non-enumerable readonly aliases for property access;
+ * their old JSON shape is intentionally not preserved.
  */
-const PROPOSED_CROSS_THREAD_BOUNDS = Object.freeze({
-  /** Round start (composer send → first participant dispatch) over light-alone p95 (ms). */
-  maxRoundStartLatencyOverLightAloneP95Ms: 250,
-  /** Persistence barrier (awaitChatRecordPersisted) over light-alone p95 (ms). */
-  maxPersistenceBarrierOverLightAloneP95Ms: 300,
-  /** Control response (cancel / approval / answer) end-to-end p95 (ms), Desktop + Host-native. */
-  maxControlResponseEndToEndP95Ms: 300,
-  /** Host command queue wait p95 for a command on an unrelated thread (ms). */
-  maxHostQueueWaitUnrelatedCommandP95Ms: 50,
-  /** Host event-loop lag p95 under heavy-thread load (ms); the Host had no meter before M1. */
-  maxHostEventLoopLagP95Ms: 25,
-  /** Async-writer queue bytes must stay within the configured cap (boolean requirement). */
-  requireAsyncWriterQueueBytesWithinCap: true,
-  /** Fallback counters at zero — asynchronous accumulation guard. */
-  maxAsyncWriterFallbackCount: 0
+const proposedCrossThreadBounds = {
+  roundStartDeltaMs: 250,
+  persistBarrierDeltaMs: 300,
+  controlResponseMs: 300,
+  hostQueueWaitUnrelatedMs: 50,
+  hostEventLoopLagP95Ms: 25,
+  mainEventLoopLagP95Ms: PERF_GATE_THRESHOLDS.maxEventLoopLagP95Ms,
+  asyncWriterQueueBytesCap: 'configured',
+  fallbackCounterMax: 0
+}
+
+// Preserve the names used by the first M1 harness without adding extra bounds.
+for (const [legacy, canonical] of Object.entries({
+  maxRoundStartLatencyOverLightAloneP95Ms: 'roundStartDeltaMs',
+  maxPersistenceBarrierOverLightAloneP95Ms: 'persistBarrierDeltaMs',
+  maxControlResponseEndToEndP95Ms: 'controlResponseMs',
+  maxHostQueueWaitUnrelatedCommandP95Ms: 'hostQueueWaitUnrelatedMs',
+  maxHostEventLoopLagP95Ms: 'hostEventLoopLagP95Ms',
+  maxAsyncWriterFallbackCount: 'fallbackCounterMax'
+})) {
+  Object.defineProperty(proposedCrossThreadBounds, legacy, {
+    enumerable: false,
+    get: () => proposedCrossThreadBounds[canonical]
+  })
+}
+Object.defineProperty(proposedCrossThreadBounds, 'requireAsyncWriterQueueBytesWithinCap', {
+  enumerable: false,
+  get: () => proposedCrossThreadBounds.asyncWriterQueueBytesCap === 'configured'
 })
+
+const PROPOSED_CROSS_THREAD_BOUNDS = Object.freeze(proposedCrossThreadBounds)
 
 module.exports = {
   BYTES_1_5_GIB,
