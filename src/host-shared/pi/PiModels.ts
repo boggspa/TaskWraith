@@ -417,6 +417,27 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     thinking: true,
     images: false
   },
+  {
+    wireId: 'cerebras/gemma-4-31b',
+    upstream: 'cerebras',
+    modelId: 'gemma-4-31b',
+    label: 'Gemma 4 31B (Cerebras)',
+    contextWindow: 131_072,
+    maxOutputTokens: 40_000,
+    thinking: true,
+    images: true
+  },
+  {
+    // Added after Pi 0.84.2; registered in the isolated home before launch.
+    wireId: 'cerebras/qwen-3.8-27b',
+    upstream: 'cerebras',
+    modelId: 'qwen-3.8-27b',
+    label: 'Qwen 3.8 27B (Cerebras)',
+    contextWindow: 131_072,
+    maxOutputTokens: 40_960,
+    thinking: true,
+    images: true
+  },
   // OpenRouter — user-approved exceptions only. Pi 0.82.1 does not bundle
   // these models, so PiOpenRouterModelRegistration writes active metadata in
   // the selected run's isolated home before Pi starts.

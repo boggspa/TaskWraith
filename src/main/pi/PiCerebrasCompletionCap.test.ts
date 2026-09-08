@@ -22,6 +22,17 @@ afterEach(() => {
 })
 
 describe('writePiCerebrasCompletionCapOverride', () => {
+  it('registers Qwen through the Electron launch wrapper without a configured cap', () => {
+    const home = isolatedHome()
+    writePiCerebrasCompletionCapOverride({ isolatedHomeDir: home, modelId: 'qwen-3.8-27b' })
+    const config = JSON.parse(readFileSync(join(home, 'models.json'), 'utf8'))
+    expect(config.providers.cerebras.models[0]).toMatchObject({
+      id: 'qwen-3.8-27b',
+      maxTokens: 40_960,
+      thinkingLevelMap: { off: 'none', low: 'low', medium: 'medium', high: 'high' }
+    })
+  })
+
   it('writes only the selected Cerebras model override into Pi’s isolated home', () => {
     const home = isolatedHome()
     writePiCerebrasCompletionCapOverride({

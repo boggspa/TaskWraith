@@ -49,6 +49,13 @@ describe('splitPiWireModelId', () => {
 })
 
 describe('resolvePiUpstreamBrand', () => {
+  it.each(['cerebras/gemma-4-31b', 'cerebras/qwen-3.8-27b'])(
+    'keeps the Cerebras serving brand for %s',
+    (wireId) => {
+      expect(resolvePiUpstreamBrand(wireId)).toEqual({ label: 'Cerebras', hueClass: 'cerebras' })
+    }
+  )
+
   it('resolves each surfaced upstream from a wire id', () => {
     expect(resolvePiUpstreamBrand('mistral/devstral-2512')?.hueClass).toBe('mistral')
     expect(resolvePiUpstreamBrand('groq/openai/gpt-oss-120b')?.hueClass).toBe('groq')

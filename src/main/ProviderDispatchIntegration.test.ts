@@ -215,12 +215,15 @@ describe('provider dispatch integration', () => {
     expect(antigravity).toContain('settleVisibleProviderSetupFailure({')
   })
 
-  it('applies an explicit Cerebras completion cap only inside Pi’s isolated home', () => {
+  it('prepares Cerebras models even without a cap, only inside Pi’s isolated home', () => {
     const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
 
     expect(pi).toContain("upstream === 'cerebras'")
     expect(pi).toContain('normalizePiCerebrasMaxCompletionTokens(')
     expect(pi).toContain('writePiCerebrasCompletionCapOverride({')
+    expect(pi).toMatch(
+      /if \(upstream === 'cerebras'\) \{\s*try \{\s*writePiCerebrasCompletionCapOverride/
+    )
     expect(pi).toContain('isolatedHomeDir: isolatedHomeLease.path')
     expect(pi.indexOf('writePiCerebrasCompletionCapOverride({')).toBeLessThan(
       pi.indexOf('await runCliProviderProcess(')

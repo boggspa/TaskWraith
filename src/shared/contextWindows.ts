@@ -102,6 +102,8 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'groq/qwen/qwen3-32b': 131_072,
   'cerebras/zai-glm-4.7': 131_072,
   'cerebras/gpt-oss-120b': 131_072,
+  'cerebras/gemma-4-31b': 131_072,
+  'cerebras/qwen-3.8-27b': 131_072,
   'openrouter/stealth/ox-alpha': 1_048_576,
   'openrouter/z-ai/glm-5.2': 256_000,
   // Historical persisted id; dispatch canonicalizes it to the row above.

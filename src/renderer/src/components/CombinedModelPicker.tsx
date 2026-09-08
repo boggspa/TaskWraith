@@ -2358,7 +2358,12 @@ export function CombinedModelPicker({
               ))}
             <span className="composer-combined-picker-trigger-provider">
               <span className="composer-combined-picker-trigger-provider-icon" aria-hidden>
-                <ProviderBrandLogoIcon provider={provider} accentProvider={providerHueClass} />
+                <ProviderBrandLogoIcon
+                  provider={
+                    provider === 'pi' && providerHueClass === 'cerebras' ? 'cerebras' : provider
+                  }
+                  accentProvider={providerHueClass}
+                />
               </span>
               <span className="composer-combined-picker-trigger-provider-label">
                 {providerDisplayLabel}

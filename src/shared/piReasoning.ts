@@ -128,6 +128,12 @@ const PI_MODEL_REASONING: Readonly<Record<string, PiReasoningSupport>> = {
   'cerebras/gpt-oss-120b': ladder(['low', 'medium', 'high'], 'medium', false),
   'groq/qwen/qwen3-32b': BOOLEAN,
   'cerebras/zai-glm-4.7': ALWAYS_ON,
+  // Cerebras reasoning docs, verified 2026-09-08:
+  // https://inference-docs.cerebras.ai/capabilities/reasoning
+  // Gemma's low/medium/high all enable the same thinking mode; default is Off.
+  'cerebras/gemma-4-31b': ladder(['high'], 'off'),
+  // Cerebras High selects Qwen's native xhigh mode; Off maps to API `none`.
+  'cerebras/qwen-3.8-27b': ladder(['low', 'medium', 'high'], 'high'),
 
   // OpenRouter advertises per-model `supported_efforts`, and GLM-5.2's copy is
   // High and Extra High — a different pair from Z.ai's own High and Max.

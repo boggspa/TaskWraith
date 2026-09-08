@@ -27,8 +27,55 @@ import {
 import { ModelApiKeyIndicator } from './ModelApiKeyIndicator'
 import { API_KEY_MODEL_INDICATOR_LABEL } from '../../../shared/apiKeyModelIndicator'
 import { mergeOllamaModelCatalog } from '../lib/ollamaModelCatalog'
+import {
+  getEnsembleModelDefaults,
+  getEnsembleReasoningOptions,
+  resolveEnsembleParticipantSettings
+} from '../lib/ensembleProviderDefaults'
 
 describe('CombinedModelPicker', () => {
+  it.each([
+    ['cerebras/gemma-4-31b', 'Gemma 4 31B (Cerebras)', ['off', 'high'], 'off'],
+    ['cerebras/qwen-3.8-27b', 'Qwen 3.8 27B (Cerebras)', ['off', 'low', 'medium', 'high'], 'high']
+  ] as const)(
+    'offers %s in composer and participant pickers with Cerebras identity',
+    (modelId, label, efforts, defaultEffort) => {
+      const modelOptions = getEnsembleModelDefaults('pi').modelOptions
+      expect(modelOptions).toContainEqual(expect.objectContaining({ id: modelId, label }))
+      const reasoningOptions = getEnsembleReasoningOptions('pi', modelId)
+      expect(reasoningOptions.map((option) => option.value)).toEqual(efforts)
+      expect(resolveEnsembleParticipantSettings({ provider: 'pi', model: modelId })).toMatchObject({
+        model: modelId,
+        reasoningEffort: defaultEffort
+      })
+
+      for (const addParticipant of [false, true]) {
+        const html = renderToStaticMarkup(
+          <CombinedModelPicker
+            provider="pi"
+            composerStyle="default"
+            modelOptions={modelOptions}
+            providerGroups={[{ provider: 'pi', label: 'Pi', modelOptions }]}
+            selectedModelId={modelId}
+            onSelectModel={() => undefined}
+            onSelectProviderModel={() => undefined}
+            reasoningOptions={reasoningOptions}
+            selectedReasoning={defaultEffort}
+            onSelectReasoning={() => undefined}
+            confirmAction={
+              addParticipant ? { label: 'Add participant', onConfirm: () => undefined } : undefined
+            }
+          />
+        )
+        expect(html).toContain(label)
+        expect(html).toContain('data-provider-hue="cerebras"')
+        expect(html).toContain('data-provider-logo="cerebras"')
+        expect(html).toContain('--chip-accent:var(--provider-cerebras-color, var(--accent))')
+        expect(html).toContain(`data-selected-reasoning="${defaultEffort}"`)
+      }
+    }
+  )
+
   it('uses shared compact primary chrome for confirmation actions', () => {
     const html = renderToStaticMarkup(
       <CombinedModelPickerConfirmButton
@@ -359,7 +406,7 @@ describe('CombinedModelPicker', () => {
     expect(html).toContain('composer-combined-picker-trigger-suffix">High</span>')
   })
 
-  it('uses every selected Pi model upstream hue without changing its runtime provider mark', () => {
+  it('uses each Pi upstream hue and the Cerebras logo override', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
       const id = Object.keys(PI_MODEL_LABELS).find((model) =>
         model.startsWith(`${upstream}/`)
@@ -387,7 +434,7 @@ describe('CombinedModelPicker', () => {
       expect(html).toContain(
         `--chip-accent:var(--provider-${brand.hueClass}-color, var(--accent))`
       )
-      expect(html).toContain('data-provider-logo="pi"')
+      expect(html).toContain(`data-provider-logo="${upstream === 'cerebras' ? 'cerebras' : 'pi'}"`)
     }
   })
 

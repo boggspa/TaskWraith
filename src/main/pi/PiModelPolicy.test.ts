@@ -100,6 +100,19 @@ describe('piModelPolicyVerdict', () => {
 })
 
 describe('catalog/policy lockstep', () => {
+  it('offers both new Cerebras models beside GPT-OSS with exact context and policy support', () => {
+    const offered = piModelsForConfiguredUpstreams(new Set(['cerebras']))
+    expect(offered.map((model) => model.wireId)).toEqual([
+      'cerebras/gpt-oss-120b',
+      'cerebras/gemma-4-31b',
+      'cerebras/qwen-3.8-27b'
+    ])
+    for (const model of offered) {
+      expect(piModelPolicyVerdict(model.upstream, model.modelId).allowed).toBe(true)
+      expect(resolveContextWindow('pi', model.wireId)).toBe(131_072)
+    }
+  })
+
   it('keeps retired Ox Alpha metadata while the policy refuses only a new run', () => {
     expect(PI_STATIC_MODELS.find((model) => model.wireId === 'openrouter/stealth/ox-alpha')).toMatchObject({
       label: 'Ox Alpha',
@@ -130,10 +143,15 @@ describe('catalog/policy lockstep', () => {
     const configured = new Set(['cerebras'])
     expect(
       piModelsForConfiguredUpstreams(configured, new Date(2026, 7, 16)).map((model) => model.wireId)
-    ).toEqual(['cerebras/zai-glm-4.7', 'cerebras/gpt-oss-120b'])
+    ).toEqual([
+      'cerebras/zai-glm-4.7',
+      'cerebras/gpt-oss-120b',
+      'cerebras/gemma-4-31b',
+      'cerebras/qwen-3.8-27b'
+    ])
     expect(
       piModelsForConfiguredUpstreams(configured, new Date(2026, 7, 17)).map((model) => model.wireId)
-    ).toEqual(['cerebras/gpt-oss-120b'])
+    ).toEqual(['cerebras/gpt-oss-120b', 'cerebras/gemma-4-31b', 'cerebras/qwen-3.8-27b'])
 
     const openRouterConfigured = new Set(['openrouter'])
     expect(

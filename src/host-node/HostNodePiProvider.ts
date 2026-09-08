@@ -62,6 +62,7 @@ import {
   type PiUpstreamId
 } from '../host-shared/pi/PiModelPolicy'
 import { writePiOpenRouterModelRegistration } from '../host-shared/pi/PiOpenRouterModelRegistration'
+import { writePiCerebrasModelRegistration } from '../host-shared/pi/PiCerebrasModelRegistration'
 import {
   PiRpcTurnReducer,
   parsePiStreamChunk,
@@ -538,6 +539,10 @@ export class HostNodePiProvider implements HostNodeProviderInstance {
       // Isolated PI_CODING_AGENT_DIR: created and verified before the child
       // can ever see it, and cleaned up in `finally`.
       lease = createPiIsolatedHome({ temporaryRoot: this.temporaryRoot, runId: request.runId })
+
+      if (upstream === 'cerebras') {
+        writePiCerebrasModelRegistration({ isolatedHomeDir: lease.path, modelId })
+      }
 
       if (upstream === 'openrouter') {
         try {

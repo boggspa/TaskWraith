@@ -23748,7 +23748,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   if (!isolatedHome) return
   const isolatedHomeLease = isolatedHome
 
-  if (cerebrasMaxCompletionTokens !== undefined) {
+  if (upstream === 'cerebras') {
     try {
       writePiCerebrasCompletionCapOverride({
         isolatedHomeDir: isolatedHomeLease.path,
@@ -23758,7 +23758,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     } catch (error) {
       isolatedHomeLease.cleanup()
       failFast(
-        `Could not prepare Pi's Cerebras completion cap: ${
+        `Could not prepare Pi's Cerebras model configuration: ${
           error instanceof Error ? error.message : String(error)
         }`,
         false

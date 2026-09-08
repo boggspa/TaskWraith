@@ -333,6 +333,45 @@ describe('HostNodePiProvider selection validation', () => {
 })
 
 describe('HostNodePiProvider containment', () => {
+  it.each(['gemma-4-31b', 'qwen-3.8-27b'])(
+    'registers Cerebras %s from the real offer catalogue before spawning Pi',
+    async (modelId) => {
+      const runPort = new FakeRunPort()
+      runPort.thread = threadFixture({ modelId: `cerebras/${modelId}`, reasoningId: 'off' })
+      const scripted = scriptedSpawn({ stdout: SUCCESS_STREAM, replyToPrompt: true })
+      let registeredConfig: unknown
+      const spawn: HostNodePiSpawn = (input) => {
+        registeredConfig = JSON.parse(
+          readFileSync(join(String(input.env.PI_CODING_AGENT_DIR), 'models.json'), 'utf8')
+        )
+        return scripted.spawn(input)
+      }
+      const result = await providerWith(runPort, spawn, {
+        offers: hostProviderOffers('pi', true)!,
+        baseEnv: { [PI_UPSTREAM_KEY_ENV.cerebras]: 'cerebras-test-key', PATH: '/usr/bin' }
+      }).run({ runId: 'run-cerebras', threadId: 'thread-1', prompt: 'hi', target: TARGET })
+
+      expect(result.status).toBe('completed')
+      expect(registeredConfig).toMatchObject({
+        providers: {
+          cerebras: {
+            models: [
+              {
+                id: modelId,
+                input: ['text', 'image'],
+                contextWindow: 131_072,
+                thinkingLevelMap: { off: 'none' }
+              }
+            ]
+          }
+        }
+      })
+      expect(scripted.captured[0].args).toEqual(
+        expect.arrayContaining(['--provider', 'cerebras', '--model', modelId, '--thinking', 'off'])
+      )
+    }
+  )
+
   it('spawns with the full containment flag surface and read-only native tools', async () => {
     const runPort = new FakeRunPort()
     const { spawn, captured } = scriptedSpawn({ stdout: SUCCESS_STREAM, replyToPrompt: true })
