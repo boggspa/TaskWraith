@@ -343,6 +343,8 @@ lane, and their metadata is written into the run's isolated Pi home at launch.
 | **Qwen3 32B (Groq)** `groq/qwen/qwen3-32b`                 | —            | —    | 131K context via Groq.                      |
 | **GLM-4.7 (Cerebras)** `cerebras/zai-glm-4.7`              | —            | —    | 131K context via Cerebras. **Retired 2026-08-17**; no longer offered for new runs, kept here so older transcripts still decode. |
 | **GPT-OSS 120B (Cerebras)** `cerebras/gpt-oss-120b`        | —            | —    | 131K context via Cerebras.                  |
+| **Gemma 4 31B (Cerebras)** `cerebras/gemma-4-31b` | Off / High | — | 131K text/image context, 40,000 output. High enables thinking; Off is the default. Preview access on eligible Cerebras accounts. |
+| **Qwen 3.8 27B (Cerebras)** `cerebras/qwen-3.8-27b` | Off / Low / Medium / High | — | 131K text/image context, 40,960 output. High is the default and maps to Qwen’s native xhigh mode. |
 | **Ox Alpha** `openrouter/stealth/ox-alpha`                 | —            | —    | **Retired 2026-08-28** after OpenRouter withdrew it; no longer offered for new runs, kept here so older chats and saved ensemble seats still decode. |
 | **GLM 5.2** `openrouter/z-ai/glm-5.2`                     | —            | —    | 256K context via OpenRouter.                |
 | **Laguna S 2.1** `openrouter/poolside/laguna-s-2.1`        | —            | —    | 256K context via OpenRouter.                |

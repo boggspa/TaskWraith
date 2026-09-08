@@ -267,6 +267,8 @@ describe('notification registry', () => {
     ])
     const pi = groups.find((g) => g.provider === 'pi')
     expect(pi?.models.map((m) => m.name)).toEqual([
+      'Gemma 4 31B (Cerebras)',
+      'Qwen 3.8 27B (Cerebras)',
       'North Mini Code (OpenRouter Free)',
       'MiniMax M3 (OpenRouter Free)',
       'Inkling (OpenRouter Free)',
@@ -282,6 +284,8 @@ describe('notification registry', () => {
     // Every Pi row wears the hue of the BYOK upstream that serves it — a
     // missing accent would silently fall back to the Pi seat slate.
     expect(pi?.models.map((m) => m.accentProvider)).toEqual([
+      'cerebras',
+      'cerebras',
       'cohere',
       'minimax',
       'thinkingmachines',
@@ -300,8 +304,8 @@ describe('notification registry', () => {
     expect(pi?.models.find((m) => m.name === 'Inkling Small (OpenRouter Free)')?.blurb).toMatch(
       /avoid sensitive data.*logged free endpoint/i
     )
-    // Retired Pi rows stay out of New Additions, so no row wears either upstream hue.
-    expect(groups.flatMap((g) => g.models.map((m) => m.accentProvider))).not.toContain('cerebras')
+    // New Cerebras routes do not resurrect the retired GLM-4.7 announcement.
+    expect(pi?.models.map((m) => m.name)).not.toContain('GLM-4.7 (Cerebras)')
     expect(groups.flatMap((g) => g.models.map((m) => m.accentProvider))).not.toContain('openrouter')
 
     // Muse Glimmer is an Ollama runtime entry even though Meta also has its own
