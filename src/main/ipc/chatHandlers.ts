@@ -48,6 +48,11 @@ export type SenderChatReadScope =
   | { kind: 'chat'; chatId: string; workspaceId?: string }
 
 export interface ChatHandlerDeps {
+  beforeChatInventoryWrite?: () => Promise<void> | undefined
+  beforeSaveChat?: (chat: ChatRecord) => Promise<void> | undefined
+  beforeTranscriptOps?: (chatId: string, ops: readonly ChatTranscriptOp[]) => Promise<void> | undefined
+  observeHistoryChanges?: (listener: () => void) => void
+  repairIndexedTitle?: import('../ThreadTitleRepairRunner').ThreadTitleRepairRunnerDeps['repairIndexedChat']
   chatService: Pick<
     ChatService,
     | 'getChats'
@@ -459,6 +464,7 @@ async function assertChatKindPersisted(
 export function registerChatHandlers(deps: ChatHandlerDeps): void {
   const rendererTranscriptIndexes = new Map<string, ChatTranscriptMutationIndex>()
   const threadTitleRepair = createThreadTitleRepairRunner({
+    repairIndexedChat: deps.repairIndexedTitle,
     statePath: defaultThreadTitleRepairStatePath(app.getPath('userData')),
     // Unscoped on purpose: the list this handler returns can be narrowed to one
     // workspace, and a partial observation would strand every candidate outside
@@ -475,6 +481,12 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     writeStateFile: writeThreadTitleRepairStateFile,
     mode: threadTitleRepairModeFromEnv(process.env.TASKWRAITH_THREAD_TITLE_REPAIR)
   })
+  deps.observeHistoryChanges?.(() => threadTitleRepair.observe())
+  if (deps.repairIndexedTitle) threadTitleRepair.observe()
+  const afterMigration = <T>(write: () => T): T | Promise<T> => {
+    const pending = deps.beforeChatInventoryWrite?.()
+    return pending ? pending.then(write) : write()
+  }
   const observeNoHistoryChat = (chat: ChatRecord): void => {
     if (deps.getSettings().storeLocalChatHistory === false) {
       deps.observeSoloSteerTranscriptRows(chat)
@@ -535,20 +547,20 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     assertReadableChat(scope, chatId)
     return deps.chatService.getChat(chatId)
   })
-  ipcMain.handle('create-chat', (event, workspaceId: string, workspacePath: string) => {
+  ipcMain.handle('create-chat', (event, workspaceId: string, workspacePath: string) => afterMigration(() => {
     deps.assertSenderCanManageChatCollection(event, 'create-chat')
     const chat = deps.chatService.createChat(workspaceId, workspacePath)
     observeNoHistoryChat(chat)
     deps.broadcastThreadUpdate(chat?.appChatId)
     return chat
-  })
-  ipcMain.handle('create-global-chat', (event) => {
+  }))
+  ipcMain.handle('create-global-chat', (event) => afterMigration(() => {
     deps.assertSenderCanManageChatCollection(event, 'create-global-chat')
     const chat = deps.chatService.createGlobalChat()
     observeNoHistoryChat(chat)
     deps.broadcastThreadUpdate(chat?.appChatId)
     return chat
-  })
+  }))
   ipcMain.handle(
     'create-ensemble-chat',
     async (event, args?: { workspaceId?: string; workspacePath?: string }) => {
@@ -557,6 +569,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         throw new Error('Ensemble Mode is disabled.')
       }
       const configuredProviders = await deps.detectConfiguredProviders(deps.getSettings())
+      await deps.beforeChatInventoryWrite?.()
       const chat = deps.chatService.createEnsembleChat(args, configuredProviders)
       // Durability barrier: bounded and non-fatal. A slow or failing Host must
       // not destroy the create — see settleEnsembleCreatePersistBarrier.
@@ -582,6 +595,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     ) => {
       deps.assertSenderChatScope(event, args.parentChatId, 'create-sub-thread')
       deps.assertParentChatCreationAllowed(args.parentChatId)
+      await deps.beforeChatInventoryWrite?.()
       const chat = deps.chatService.createSubThread(args)
       observeNoHistoryChat(chat)
       deps.broadcastThreadUpdate(chat?.appChatId)
@@ -606,14 +620,14 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         originRunId?: string
         sideChatMode?: 'ensembleClone' | 'singleProvider' | 'fanOut'
       }
-    ) => {
+    ) => afterMigration(() => {
       deps.assertSenderChatScope(event, args.parentChatId, 'create-side-chat')
       deps.assertParentChatCreationAllowed(args.parentChatId)
       const chat = deps.chatService.createSideChat(args)
       observeNoHistoryChat(chat)
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
-    }
+    })
   )
   ipcMain.handle('get-side-chats', (event, parentChatId: string) => {
     const scope = deps.resolveSenderChatReadScope(event)
@@ -636,6 +650,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       if (args?.targetKind === 'ensemble' && deps.getSettings().ensembleModeEnabled === false) {
         throw new Error('Ensemble Mode is disabled.')
       }
+      await deps.beforeChatInventoryWrite?.()
       const chat = deps.chatService.setChatKind(args)
       // Prove the mode switch reached the durable Host record before reporting
       // success — otherwise the next stale delivery silently reverts the toggle.
@@ -649,7 +664,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     }
   )
 
-  ipcMain.handle('rebind-chat-workspace', (event, args: RebindChatWorkspaceInput) => {
+  ipcMain.handle('rebind-chat-workspace', (event, args: RebindChatWorkspaceInput) => afterMigration(() => {
     deps.assertSenderCanRebindChatWorkspace(event, args?.chatId)
     const before = deps.chatService.getChat(args?.chatId)
     if (!deps.getChatWorkspaceRebindBlocker) {
@@ -696,11 +711,16 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       deps.broadcastThreadList()
     }
     return { chat: rebound, changed }
-  })
+  }))
 
-  ipcMain.handle('save-chat', (event, chat: ChatRecord) => {
+  type RendererSaveResult = { chat: ChatRecord; previous: ChatRecord | null; accepted: boolean }
+  ipcMain.handle('save-chat', function saveRendererChat(event, chat: ChatRecord): RendererSaveResult | Promise<RendererSaveResult> {
     const chatId = chat.appChatId
     deps.assertSenderChatScope(event, chatId, 'save-chat')
+    const waiting = deps.beforeSaveChat?.(chat)
+    if (waiting) return waiting.then(() => saveRendererChat(event, chat))
+    if (threadCatalogueWriteGate.isHeld(chatId))
+      return threadCatalogueWriteGate.wait(chatId).then(() => saveRendererChat(event, chat))
     const previous = deps.chatService.getChat(chatId)
     const normalized = preserveExecutionGraphTranscript(
       previous,
@@ -780,7 +800,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
 
   ipcMain.handle(
     'mutate-chat-transcript',
-    (event, payload: unknown): RendererChatTranscriptMutationResult => {
+    function mutateTranscript(event, payload: unknown): RendererChatTranscriptMutationResult | Promise<RendererChatTranscriptMutationResult> {
       const request = parseRendererChatTranscriptMutationRequest(payload)
       const requestedChatId =
         payload && typeof payload === 'object' && typeof (payload as { chatId?: unknown }).chatId === 'string'
@@ -798,6 +818,9 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       }
 
       deps.assertSenderChatScope(event, request.chatId, 'mutate-chat-transcript')
+      const waiting = deps.beforeTranscriptOps?.(request.chatId, request.transcriptOps)
+      if (waiting) return waiting.then(() => mutateTranscript(event, payload))
+      if (threadCatalogueWriteGate.isHeld(request.chatId)) return threadCatalogueWriteGate.wait(request.chatId).then(() => mutateTranscript(event, payload))
       const previous = deps.chatService.getChat(request.chatId)
       if (!previous) {
         rendererTranscriptIndexes.delete(request.chatId)
@@ -1182,3 +1205,4 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     })()
   })
 }
+import { threadCatalogueWriteGate } from '../store/ThreadCatalogueWriteGate'

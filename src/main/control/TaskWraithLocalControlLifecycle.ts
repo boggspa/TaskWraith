@@ -1,7 +1,10 @@
 import type { App } from 'electron'
 import type { BridgeActionExecutor } from '../BridgeActionExecutor'
 import type { LocalControlServer } from './LocalControlServer'
-import { startTaskWraithLocalControl } from './TaskWraithControlFacade'
+import {
+  startTaskWraithLocalControl,
+  type TaskWraithControlFacadeOptions
+} from './TaskWraithControlFacade'
 
 type TaskWraithLocalControlExecutor = Pick<
   BridgeActionExecutor,
@@ -28,7 +31,8 @@ type TaskWraithLocalControlApp = Pick<App, 'getPath' | 'getVersion' | 'once' | '
  */
 export function installTaskWraithLocalControl(
   app: TaskWraithLocalControlApp,
-  executor: TaskWraithLocalControlExecutorFactory
+  executor: TaskWraithLocalControlExecutorFactory,
+  history: Pick<TaskWraithControlFacadeOptions, 'getThreadProjection' | 'store'> = {}
 ): Promise<void> {
   let server: LocalControlServer | null = null
   let startPromise: Promise<LocalControlServer | null> | null = null
@@ -48,6 +52,7 @@ export function installTaskWraithLocalControl(
       .then(() => {
         if (stopped) return null
         return startTaskWraithLocalControl({
+          ...history,
           userDataPath: app.getPath('userData'),
           hostVersion: app.getVersion(),
           executeComposerPrompt: (action) => executor().executeComposerPrompt(action),

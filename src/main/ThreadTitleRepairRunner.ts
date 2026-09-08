@@ -60,6 +60,10 @@ type ThreadTitleRepairPersistOutcome = 'confirmed' | 'rejected' | 'timeout'
 type ThreadTitleRepairCandidateOutcome = 'applied' | 'complete' | 'retry' | 'abort-session'
 
 export interface ThreadTitleRepairRunnerDeps {
+  repairIndexedChat?: (
+    chatId: string,
+    mode: ThreadTitleRepairMode
+  ) => Promise<{ previousTitle: string; title: string; applied: boolean } | null>
   statePath: string
   /**
    * The complete chat list, unscoped.
@@ -217,6 +221,22 @@ export function createThreadTitleRepairRunner(
     state: ThreadTitleRepairState,
     chatId: string
   ): Promise<{ state: ThreadTitleRepairState; outcome: ThreadTitleRepairCandidateOutcome }> => {
+    if (deps.repairIndexedChat) {
+      if (deps.isChatBusy(chatId)) return { state, outcome: 'retry' }
+      const result = await deps.repairIndexedChat(chatId, mode)
+      if (!result) return { state, outcome: 'retry' }
+      if (!result.applied)
+        return { state: clearThreadTitleRepairFailure(state, chatId), outcome: 'complete' }
+      return {
+        state: appendThreadTitleRepairLedger(clearThreadTitleRepairFailure(state, chatId), {
+          chatId,
+          previousTitle: result.previousTitle,
+          derivedTitle: result.title,
+          at: now()
+        }),
+        outcome: 'applied'
+      }
+    }
     // Read late and write immediately. The record must not cross an await
     // between the read and the save, or a concurrent turn's appended messages
     // can be forced back out by a stale snapshot when the revision rebases.

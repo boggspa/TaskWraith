@@ -216,6 +216,74 @@ export function dispatchDueIntrospectionSchedules(
   return results
 }
 
+export async function dispatchDueIntrospectionSchedulesAsync(
+  store: Omit<IntrospectionSchedulerStore, 'runManualIntrospection'> & { runManualIntrospection(input: RunManualIntrospectionInput): Promise<RunManualIntrospectionResult> },
+  nowMs = Date.now()
+): Promise<DispatchDueIntrospectionSchedulesResult[]> {
+  const nowIso = new Date(nowMs).toISOString()
+  const dayKey = calendarDayKey(nowIso)
+  const results: DispatchDueIntrospectionSchedulesResult[] = []
+
+  for (const record of store.getIntrospectionScheduleRecords()) {
+    const settings = toIntrospectionScheduleSettings(record, record.workspaceId)
+    if (!isIntrospectionScheduleDue(settings, nowMs)) {
+      results.push({
+        workspaceId: settings.workspaceId ?? null,
+        skipped: true,
+        reason: 'not_due'
+      })
+      continue
+    }
+
+    const workspaceId = settings.workspaceId || undefined
+    const scopedRuns = store.getIntrospectionRuns(workspaceId)
+    if (hasScheduledIntrospectionForDay(scopedRuns, workspaceId, dayKey)) {
+      // A concurrent collector already owns today, but has not completed it.
+      if (scopedRuns.some((run) => run.trigger === 'scheduled' && calendarDayKey(run.createdAt) === dayKey && ['collecting', 'analyzing'].includes(run.status))) {
+        results.push({ workspaceId: settings.workspaceId ?? null, skipped: true, reason: 'already_ran_today' })
+        continue
+      }
+      store.updateIntrospectionScheduleRecord({
+        workspaceId: settings.workspaceId,
+        lastRunAt: nowIso,
+        nextRunAt: computeNextIntrospectionRunAt(true, nowIso, nowMs)
+      })
+      results.push({
+        workspaceId: settings.workspaceId ?? null,
+        skipped: true,
+        reason: 'already_ran_today'
+      })
+      continue
+    }
+
+    const window = buildRolling24hWindow(nowIso)
+    const workspacePath = workspaceId ? store.getWorkspacePath(workspaceId) : undefined
+    const outcome = await store.runManualIntrospection({
+      ...window,
+      workspaceId,
+      workspacePath,
+      trigger: 'scheduled'
+    })
+
+    store.updateIntrospectionScheduleRecord({
+      workspaceId: settings.workspaceId,
+      enabled: true,
+      lastRunAt: nowIso,
+      nextRunAt: computeNextIntrospectionRunAt(true, nowIso, nowMs)
+    })
+
+    results.push({
+      workspaceId: settings.workspaceId ?? null,
+      skipped: false,
+      packId: outcome.pack.id,
+      evidenceCount: outcome.evidenceCount,
+      proposalCount: outcome.proposalCount
+    })
+  }
+
+  return results
+}
+
 export function mergeIntrospectionScheduleUpdate(
   existing: IntrospectionScheduleRecord | null,
   partial: Partial<IntrospectionScheduleSettings> & { workspaceId?: string | null },

@@ -107,6 +107,33 @@ describe('AppStore strict history deletion transaction', () => {
     vi.restoreAllMocks()
   })
 
+  it('resumes the recovery scheduler after failed quiescence while retaining the actual deletion fence', async () => {
+    saveChat('chat-a', 'workspace-a', [makeRun('run-a')])
+    saveChat('chat-b', 'workspace-b', [])
+    const resume = vi.fn()
+    const erase = vi.fn(async () => {})
+    AppStore.installCatalogueErasure(
+      erase,
+      async () => {
+        throw new Error('quiescence failed')
+      },
+      resume
+    )
+    const prepared = AppStore.prepareHistoryDeletion({
+      kind: 'chat',
+      rootChatId: 'chat-a',
+      quiescenceTargets: []
+    })
+    await expect(AppStore.commitPreparedHistoryDeletion(prepared.operationId)).rejects.toThrow(
+      'quiescence failed'
+    )
+    expect(resume).toHaveBeenCalledOnce()
+    expect(erase).not.toHaveBeenCalled()
+    expect(fs.existsSync(historyIntentPath)).toBe(true)
+    expect(fs.existsSync(chatPath('chat-a'))).toBe(true)
+    expect(() => saveChat('chat-b', 'workspace-b', [])).not.toThrow()
+  })
+
   it('durably prepares before quiescence and refuses an early commit', () => {
     saveChat('chat-a', 'workspace-a', [makeRun('run-a')])
 
@@ -785,7 +812,7 @@ describe('AppStore strict history deletion transaction', () => {
     expect(fs.existsSync(chatPath('sibling-a'))).toBe(true)
   })
 
-  it('truncates only after durable orchestration and mailbox resurrection sources are gone', () => {
+  it('truncates only after durable orchestration and mailbox resurrection sources are gone', async () => {
     saveChat('chat-a', 'workspace-a', [makeRun('run-a')], {
       chatKind: 'ensemble',
       linkedProviderSessionId: 'provider-session-a',
@@ -924,7 +951,7 @@ describe('AppStore strict history deletion transaction', () => {
     const otherMuseSeat = museSeatStatePath(userDataPath, 'chat-b', 'solo')
     fs.mkdirSync(otherMuseSeat, { recursive: true })
 
-    const truncated = AppStore.truncateChatHistory('chat-a')
+    const truncated = await AppStore.truncateChatHistory('chat-a')
 
     expect(truncated).not.toBeNull()
     expect(truncated?.messages).toEqual([])

@@ -1,4 +1,5 @@
 import { type IpcMainInvokeEvent, ipcMain } from 'electron'
+import { registerThreadCatalogueReadHandlers } from './ThreadCatalogueReadHandlers'
 import type { ChatService } from '../services/ChatService'
 import {
   buildTranscriptPage,
@@ -20,6 +21,7 @@ import type { SenderChatReadScope } from './chatHandlers'
  */
 
 export interface ChatTranscriptPageHandlersDeps {
+  getCatalogue?: () => import('../store/ThreadCatalogueMirror').ThreadCatalogueMirror | null
   chatService: Pick<ChatService, 'getChat'>
   resolveSenderChatReadScope: (event: IpcMainInvokeEvent) => SenderChatReadScope
 }
@@ -96,6 +98,7 @@ function buildChatShell(chat: ChatRecord): ChatShell {
 }
 
 export function registerChatTranscriptPageHandlers(deps: ChatTranscriptPageHandlersDeps): void {
+  registerThreadCatalogueReadHandlers(deps.resolveSenderChatReadScope, deps.getCatalogue)
   ipcMain.handle('get-chat-transcript-page', (event, input: unknown): TranscriptPage | null => {
     const scope = deps.resolveSenderChatReadScope(event)
     const request = parseTranscriptPageRequest(input)

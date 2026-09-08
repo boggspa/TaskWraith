@@ -63,7 +63,9 @@ describe('RendererChatTranscriptPersistence', () => {
       'chat-1',
       3,
       expect.objectContaining({ persistenceRevision: 4 }),
-      expect.objectContaining({ accepted: true, revision: 4 })
+      expect.objectContaining({ accepted: true, revision: 4 }),
+      target,
+      expect.objectContaining({ persistenceRevision: 4 })
     )
   })
 
@@ -108,7 +110,8 @@ describe('RendererChatTranscriptPersistence', () => {
         title: 'Main title',
         persistenceRevision: 4,
         messages: [expect.objectContaining({ content: 'new' })]
-      })
+      }),
+      canonical
     )
     expect(mutate).toHaveBeenCalledTimes(2)
     expect(mutate.mock.calls[1][0]).toMatchObject({

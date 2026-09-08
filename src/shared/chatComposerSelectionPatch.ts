@@ -1,36 +1,14 @@
 import type { ChatRecord, ChatWorkflowMode, ProviderId } from '../main/store/types'
 import { queueProviderChange, readPendingProviderChange } from './providerChangeQueue'
 
-export const CHAT_COMPOSER_SELECTION_PROVIDER_METADATA_KEYS = [
-  'selectedModelType',
-  'customModel',
-  'codexReasoningEffort',
-  'codexServiceTier',
-  'claudeReasoningEffort',
-  'claudeFastMode',
-  'kimiFastMode',
-  'kimiReasoningEffort',
-  'kimiThinkingEnabled',
-  'grokReasoningEffort',
-  'museReasoningEffort',
-  'mistralReasoningEffort',
-  'devinReasoningEffort',
-  'piReasoningEffort',
-  'ollamaReasoningEffort',
-  'cursorReasoningEffort',
-  'cursorFastMode',
-  'antigravityReasoningEffort',
-  'antigravityUltraTaskSelected',
-  'runtimeProfileId',
-  'geminiAuthProfileId'
-] as const
-
-export const CHAT_COMPOSER_SELECTION_METADATA_KEYS = [
-  ...CHAT_COMPOSER_SELECTION_PROVIDER_METADATA_KEYS,
-  'approvalMode',
-  'permissionPresetId',
-  'workflowMode'
-] as const
+import {
+  CHAT_COMPOSER_SELECTION_METADATA_KEYS,
+  CHAT_COMPOSER_SELECTION_PROVIDER_METADATA_KEYS
+} from './chatComposerSelectionKeys'
+export {
+  CHAT_COMPOSER_SELECTION_METADATA_KEYS,
+  CHAT_COMPOSER_SELECTION_PROVIDER_METADATA_KEYS
+} from './chatComposerSelectionKeys'
 
 export type ChatComposerSelectionMetadataKey =
   (typeof CHAT_COMPOSER_SELECTION_METADATA_KEYS)[number]

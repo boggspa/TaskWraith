@@ -26,7 +26,7 @@ import { HOST_PROFILE_AUTHORITY_LEASE_FILENAME } from './HostProfileAuthorityLea
 import { HostProfileDomainStore } from './HostProfileDomainStore'
 
 const OLD_GENERAL_RESPONSE_LINE_BYTES = 256_000
-const LARGE_THREAD_COUNT = 150
+const LARGE_THREAD_COUNT = 220
 const paths: string[] = []
 const children: ChildProcess[] = []
 
@@ -54,6 +54,20 @@ function waitFor(check: () => boolean, label: string, timeoutMs = 12_000): Promi
     }, 25)
     timer.unref?.()
   })
+}
+
+async function waitForAsync<T>(
+  check: () => Promise<T | null>,
+  label: string,
+  timeoutMs = 30_000
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const value = await check()
+    if (value !== null) return value
+    await new Promise<void>((resolve) => setTimeout(resolve, 25))
+  }
+  throw new Error(`Timed out waiting for ${label}`)
 }
 
 function waitForExit(child: ChildProcess, timeoutMs = 10_000): Promise<void> {
@@ -84,6 +98,16 @@ function compileProductionCli(root: string): string {
     { cwd: process.cwd(), encoding: 'utf8' }
   )
   expect(compile.status, `${compile.stdout || ''}${compile.stderr || ''}`).toBe(0)
+  const workers = spawnSync(
+    process.execPath,
+    [
+      join(process.cwd(), 'scripts', 'build-history-workers.cjs'),
+      '--outdir',
+      join(outDir, 'host-node')
+    ],
+    { cwd: process.cwd(), encoding: 'utf8' }
+  )
+  expect(workers.status, workers.stderr).toBe(0)
   const cli = join(outDir, 'host-runtime', 'cli.js')
   expect(existsSync(cli)).toBe(true)
   chmodSync(cli, 0o755)
@@ -302,7 +326,15 @@ describe('real production Host ensemble smoke', () => {
           clientClass: 'test',
           clientVersion: '1.0'
         },
-        capabilities: ['bootstrap', 'snapshot', 'commands', 'receipts', 'health', 'ensemble'],
+        capabilities: [
+          'bootstrap',
+          'snapshot',
+          'commands',
+          'receipts',
+          'health',
+          'history',
+          'ensemble'
+        ],
         connectTimeoutMs: 5_000,
         requestTimeoutMs: 10_000
       })
@@ -314,11 +346,26 @@ describe('real production Host ensemble smoke', () => {
       )
 
       const initial = await client.getSnapshot()
-      const ensembleThread = initial.snapshot.threads.find(
-        (thread) => thread.id === ensembleThreadId
-      )
-      expect(ensembleThread).toMatchObject({ chatKind: 'ensemble' })
-      expect(initial.snapshot.participants).toEqual(
+      expect(initial.snapshot.threads.length).toBeLessThanOrEqual(LARGE_THREAD_COUNT + 1)
+
+      // The first projection is deliberately usable while the decoder is still
+      // building a cold catalogue. Wait for explicit metadata coverage before
+      // asserting the historical large-packet transport boundary.
+      const complete = await waitForAsync(async () => {
+        const page = await client!.queryThreadCatalogue<{
+          coverage: 'partial' | 'complete'
+        }>({ method: 'list', limit: 1 })
+        if (page.coverage !== 'complete') return null
+        const snapshot = await client!.getSnapshot()
+        return snapshot.snapshot.threads.length === LARGE_THREAD_COUNT + 1 ? snapshot : null
+      }, 'complete cold metadata projection')
+      const snapshotBytes = Buffer.byteLength(JSON.stringify(complete), 'utf8')
+      expect(snapshotBytes).toBeGreaterThan(OLD_GENERAL_RESPONSE_LINE_BYTES)
+      expect(complete.snapshot.threads).toHaveLength(LARGE_THREAD_COUNT + 1)
+      expect(
+        complete.snapshot.threads.find((thread) => thread.id === ensembleThreadId)
+      ).toMatchObject({ chatKind: 'ensemble' })
+      expect(complete.snapshot.participants).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             id: 'seat-worker',
@@ -350,14 +397,12 @@ describe('real production Host ensemble smoke', () => {
         ])
       )
       expect(
-        initial.snapshot.participants.some((participant) => participant.id === hostileParticipantId)
+        complete.snapshot.participants.some(
+          (participant) => participant.id === hostileParticipantId
+        )
       ).toBe(false)
 
-      const snapshotBytes = Buffer.byteLength(JSON.stringify(initial), 'utf8')
-      expect(snapshotBytes).toBeGreaterThan(OLD_GENERAL_RESPONSE_LINE_BYTES)
-      expect(initial.snapshot.threads).toHaveLength(LARGE_THREAD_COUNT + 1)
-
-      expect.soft(initial.snapshot.warnings).toContainEqual(
+      expect.soft(complete.snapshot.warnings).toContainEqual(
         expect.objectContaining({
           warningId: 'projection_rows_omitted:participants',
           code: 'projection_rows_omitted',

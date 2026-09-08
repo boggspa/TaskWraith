@@ -24,11 +24,11 @@ describe('Channels production main integration', () => {
       'type BroadHistoryStrictAttempt = {'
     )
     expect(composition).toContain('startPeopleToChannelMigrationBootstrap({')
-    expect(composition).toContain(
-      'runner: new PeopleToChannelMigrationFinalizationProductionRunner({'
-    )
-    expect(composition).toContain("hostDisplayName: app.getName().trim() || 'TaskWraith'")
-    expect(composition).toContain('listChats: () => AppStore.getChats()')
+    expect(composition).toContain('await runPeopleMigrationIsolated({')
+    expect(composition).toContain('runner: { runToCompletion: () => completedMigration }')
+    expect(composition).not.toContain('AppStore.getChats()')
+    expect(composition).toContain('await peopleMigrationDeletionBarrier.ready')
+    expect(composition).toContain('peopleMigrationHandoff.reload?.()')
     // P5-C RETIRED the retention port. This previously pinned the literal
     // `retainedWorkspaceBootstrapShareIds: () => []` — an explicit empty
     // declaration. Workspace bootstrap is Channel-native and no automatic
@@ -51,7 +51,7 @@ describe('Channels production main integration', () => {
     )
     expect(composition).toContain('channelProductionBootstrap = channelMigrationStartup.bootstrap')
     expect(composition).toContain(
-      'channelMigrationLegacyWriteGate = channelMigrationStartup.legacyWriteGate'
+      'channelMigrationForwarder.set(channelMigrationStartup.legacyWriteGate)'
     )
     expect(composition).toContain('workspacePopoutOwnerForSender(senderId)')
     expect(composition).toContain('agentManagement: {')
@@ -82,8 +82,8 @@ describe('Channels production main integration', () => {
     const recovery = source.indexOf('await recoverPendingHistoryDeletionBeforeRunQueue()')
     const peopleRuntime = source.indexOf('const getHumanCollaborationRuntime = () => {')
     const composer = source.indexOf('composerServiceRef = composerService')
-    const dispatch = source.indexOf('channelAgentDispatchRef = async (payload, hooks) => {')
-    const activation = source.indexOf('channelProductionBootstrap?.startAgentExecution()')
+    const dispatch = source.indexOf('channelAgentDispatchRef = (payload, hooks) =>')
+    const activation = source.indexOf(')?.startAgentExecution()', dispatch)
     expect(migration).toBeGreaterThanOrEqual(0)
     expect(constructed).toBeGreaterThanOrEqual(0)
     expect(constructed).toBeGreaterThan(migration)
@@ -97,7 +97,7 @@ describe('Channels production main integration', () => {
     expect(dispatchComposition).toContain('hooks.observer')
     expect(dispatchComposition).toContain('hooks.finalAuthorization')
     expect(source).toContain('Channels migration authority is unavailable before People startup.')
-    expect(source).toContain('{ legacyWriteGate: channelMigrationLegacyWriteGate }')
+    expect(source).toContain('legacyWriteGate: channelMigrationLegacyWriteGate')
   })
 
   it('pins the user-kept degraded People recovery path so it cannot be retired silently', () => {
@@ -167,19 +167,21 @@ describe('Channels production main integration', () => {
         node.expression.left.text === 'disposeHumanCollaborationIpcHandlers' &&
         node.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
     )
+    const migrationStartup = directVariable('channelMigrationReady')
+    expect(degradedTry.getText(syntax), reason).toContain('degradePeopleToChannelMigrationStartup')
     for (const statement of [
       directVariable('humanCollaborationStore'),
       directVariable('reopenCollaborationRooms'),
       directVariable('getHumanCollaborationRuntime'),
       ipcRegistration
     ]) {
-      expect(statement.parent === degradedTry.parent, reason).toBe(true)
-      expect(statement.pos, reason).toBeGreaterThan(degradedTry.end)
+      expect(statement.parent === migrationStartup.parent, reason).toBe(true)
+      expect(statement.pos, reason).toBeGreaterThan(migrationStartup.end)
     }
 
     const degradedCatch = source.slice(degradedAt, catchEndAt)
     expect(degradedCatch, reason).toContain(
-      'channelMigrationLegacyWriteGate = degraded.legacyWriteGate'
+      'channelMigrationForwarder.set(degraded.legacyWriteGate)'
     )
     expect(degradedCatch, reason).not.toMatch(/\b(?:return|throw)\b/)
 
@@ -189,9 +191,7 @@ describe('Channels production main integration', () => {
       reason
     )
     expect(storeConstruction, reason).toContain("'human-collaboration.json'")
-    expect(storeConstruction, reason).toContain(
-      '{ legacyWriteGate: channelMigrationLegacyWriteGate }'
-    )
+    expect(storeConstruction, reason).toContain('legacyWriteGate: channelMigrationLegacyWriteGate')
 
     const reconnect = between(
       'const reopenCollaborationRooms = (): void => {',
@@ -241,8 +241,8 @@ describe('Channels production main integration', () => {
 
   it('isolates exact Channel runs from parent sessions, raw history, and ordinary failover', () => {
     const dispatch = between(
-      'channelAgentDispatchRef = async (payload, hooks) => {',
-      'channelProductionBootstrap?.startAgentExecution()'
+      'channelAgentDispatchRef = (payload, hooks) =>',
+      ')?.startAgentExecution()'
     )
     const registered = dispatch.indexOf('channelAgentRunIsolationRegistry.register(payload)')
     const provider = dispatch.indexOf('baseDispatchRunWithProviderPause(')
@@ -410,7 +410,7 @@ describe('Channels production main integration', () => {
     // actually running; only ACTIVE channels count as shared.
     const wiring = between(
       'resolveActiveChannelChatIds = () => {',
-      'const purgeChannelsForHistoryPreparation = ('
+      'const purgeChannelsForHistoryPreparation = createPeopleMigrationHistoryDeletion('
     )
     expect(wiring).toContain("if (!service || service.status().state !== 'running')")
     expect(wiring).toContain("channel.status === 'active'")
@@ -435,7 +435,7 @@ describe('Channels production main integration', () => {
     // inert exactly when channels are down — and for a delete guard, inert
     // means the chat is unprotected. The unreadable case must fail closed.
     expect(sharedChatIds).toContain('if (!channelAuthorityIsReadable()) {')
-    expect(sharedChatIds).toContain('for (const chat of AppStore.getChats()) chatIds.add(')
+    expect(sharedChatIds).toContain('for (const chat of AppStore.getChatList()) chatIds.add(')
     expect(source).toContain('let channelAuthorityIsReadable: () => boolean = () => false')
   })
 })

@@ -1,3 +1,8 @@
+import {
+  THREAD_CATALOGUE_WIRE_MAX_BYTES,
+  type ThreadCatalogueReadQuery,
+  type ThreadCatalogueMaintenanceQuery
+} from '../shared/threadCatalogueProtocol'
 /**
  * Host Arc v2 authenticated local server (Wave 3.3).
  *
@@ -77,6 +82,8 @@ const REQUIRED_READ_CAPABILITY: Partial<Record<HostLocalTransportRequestKind, Ho
   'provider.auth.flows': 'provider-auth',
   'provider.auth.status': 'provider-auth',
   'thread.history': 'history',
+  'thread.catalogue': 'history',
+  'thread.catalogue.maintenance': 'commands',
   'workspace.git.read': 'workspace-git',
   'history.since': 'history'
 }
@@ -129,6 +136,10 @@ const MAX_SOCKET_WRITE_BACKLOG_BYTES = MAX_LARGE_RESPONSE_LINE_BYTES * 2
 // ---------------------------------------------------------------------------
 
 export interface HostLocalServerOptions {
+  runCommand?: (
+    command: HostCommand,
+    execute: () => ReturnType<HostAuthority['command']>
+  ) => ReturnType<HostAuthority['command']>
   /** Injected base directory for path construction (testable). */
   userDataPath: string
   /** Host identity — carried into the welcome frame via HostSession. */
@@ -204,9 +215,14 @@ function socketWrite(
   const lineBudget =
     frame.type === 'response' &&
     frame.ok &&
-    (frame.result.kind === 'snapshot.get' || frame.result.kind === 'twmission.export')
-      ? MAX_LARGE_RESPONSE_LINE_BYTES
-      : MAX_LINE_BYTES
+    (frame.result.kind === 'thread.catalogue' ||
+      frame.result.kind === 'thread.catalogue.maintenance')
+      ? THREAD_CATALOGUE_WIRE_MAX_BYTES
+      : frame.type === 'response' &&
+          frame.ok &&
+          (frame.result.kind === 'snapshot.get' || frame.result.kind === 'twmission.export')
+        ? MAX_LARGE_RESPONSE_LINE_BYTES
+        : MAX_LINE_BYTES
   if (bytes > lineBudget) {
     // Response too large for the transport.  Send a body-free error frame
     // with the same id when the frame carried one, then destroy.
@@ -976,6 +992,10 @@ export class HostLocalServer {
         return this.handleProviderAuthFlows(context, frame.id, frame.params.providerId)
       case 'provider.auth.status':
         return this.handleProviderAuthStatus(context, frame.id, frame.params.providerId)
+      case 'thread.catalogue':
+        return this.handleThreadCatalogue(context, frame.id, frame.params)
+      case 'thread.catalogue.maintenance':
+        return this.handleThreadCatalogueMaintenance(context, frame.id, frame.params)
       case 'thread.history':
         return this.handleThreadHistory(context, frame.id, frame.params)
       case 'workspace.git.read':
@@ -1186,6 +1206,30 @@ export class HostLocalServer {
     return this.success(id, { kind: 'thread.history', page: result.value })
   }
 
+  private async handleThreadCatalogue(
+    context: HostAuthorityCallContext,
+    id: string,
+    request: ThreadCatalogueReadQuery
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.threadCatalogue
+    if (!provider) return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, request)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'thread.catalogue', reply: result.value })
+  }
+
+  private async handleThreadCatalogueMaintenance(
+    context: HostAuthorityCallContext,
+    id: string,
+    request: ThreadCatalogueMaintenanceQuery
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.threadCatalogueMaintenance
+    if (!provider) return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, request)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'thread.catalogue.maintenance', reply: result.value })
+  }
+
   private async handleWorkspaceGitRead(
     context: HostAuthorityCallContext,
     id: string,
@@ -1228,7 +1272,10 @@ export class HostLocalServer {
     id: string,
     params: HostCommand
   ): Promise<HostLocalTransportHostFrame> {
-    const result = await this.options.authority.command(context, params)
+    const execute = () => this.options.authority.command(context, params)
+    const result = await (this.options.runCommand
+      ? this.options.runCommand(params, execute)
+      : execute())
     if (!result.ok) {
       return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
     }

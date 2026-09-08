@@ -92,6 +92,17 @@ function harness(overrides: Record<string, unknown> = {}) {
     profilePath: '/profile',
     mode: 'production',
     payloadVersion: `sha256:${'d'.repeat(64)}`,
+    createThreadCatalogue: () =>
+      ({
+        ready: Promise.resolve(),
+        query: async (q: { method: string }) =>
+          q.method === 'changes'
+            ? { reset: false, changes: [], position: { incarnation: 'test', sequence: 0 } }
+            : q.method === 'list'
+              ? { entries: [], next: null, coverage: 'complete', repairPending: [] }
+              : true,
+        dispose: async () => undefined
+      }) as never,
     domainOptions: {} as never,
     signalTarget: {
       once: (signal, listener_) => {

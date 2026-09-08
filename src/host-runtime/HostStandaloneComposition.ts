@@ -22,6 +22,8 @@ import {
   type AppStoreHostAuthoritySetupExecutor,
   type AppStoreHostAuthoritySnapshotDonor,
   type AppStoreHostAuthorityThreadHistoryProvider,
+  type AppStoreHostAuthorityThreadCatalogueProvider,
+  type AppStoreHostAuthorityThreadCatalogueMaintenanceProvider,
   type AppStoreHostAuthorityThreadOffersProvider,
   type HostStandaloneAuthorityLeasePort
 } from './AppStoreHostAuthority'
@@ -51,6 +53,8 @@ export interface HostStandaloneCompositionInput {
   readonly providerAuthFlowsProvider?: AppStoreHostAuthorityProviderAuthFlowsProvider
   readonly providerAuthStatusProvider?: AppStoreHostAuthorityProviderAuthStatusProvider
   readonly threadHistoryProvider?: AppStoreHostAuthorityThreadHistoryProvider
+  readonly threadCatalogueProvider?: AppStoreHostAuthorityThreadCatalogueProvider
+  readonly threadCatalogueMaintenanceProvider?: AppStoreHostAuthorityThreadCatalogueMaintenanceProvider
   readonly historySinceProvider?: AppStoreHostAuthorityHistorySinceProvider
   readonly host: HostSessionHostIdentity
   readonly hostCapabilityOffer: readonly HostCapability[]
@@ -145,6 +149,12 @@ export function createHostStandaloneComposition(
       ...(input.threadHistoryProvider
         ? { threadHistoryProvider: input.threadHistoryProvider }
         : {}),
+      ...(input.threadCatalogueProvider
+        ? { threadCatalogueProvider: input.threadCatalogueProvider }
+        : {}),
+      ...(input.threadCatalogueMaintenanceProvider
+        ? { threadCatalogueMaintenanceProvider: input.threadCatalogueMaintenanceProvider }
+        : {}),
       ...(input.historySinceProvider ? { historySinceProvider: input.historySinceProvider } : {}),
       onShutdown: shutdown
     }
@@ -163,7 +173,7 @@ export function createHostStandaloneComposition(
       return result.value
     },
     fetchDeltas: (position) => runtime.deltaStore.since(position),
-    publishEffects: (effects) => publisher.publish(effects)
+    publishEffects: (effects) => publisher.publishDurableBatch(effects)
   })
   const session = new HostSession({
     host: input.host,

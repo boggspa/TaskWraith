@@ -1,3 +1,8 @@
+import type {
+  ThreadCatalogueReadQuery,
+  ThreadCatalogueMaintenanceQuery,
+  ThreadCatalogueWireReply
+} from '../shared/threadCatalogueProtocol'
 /**
  * Standalone Host Authority contract (Wave 2B Subwave 4B).
  *
@@ -143,6 +148,15 @@ export interface HostAuthority {
     context: HostAuthorityCallContext,
     request: HostThreadHistoryRequest
   ): Promise<HostAuthorityResult<HostThreadHistoryPage>>
+
+  threadCatalogue?(
+    context: HostAuthorityCallContext,
+    request: ThreadCatalogueReadQuery
+  ): Promise<HostAuthorityResult<ThreadCatalogueWireReply>>
+  threadCatalogueMaintenance?(
+    context: HostAuthorityCallContext,
+    request: ThreadCatalogueMaintenanceQuery
+  ): Promise<HostAuthorityResult<ThreadCatalogueWireReply>>
 
   historySince?(
     context: HostAuthorityCallContext,

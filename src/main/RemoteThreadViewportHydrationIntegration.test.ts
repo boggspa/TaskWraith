@@ -24,12 +24,12 @@ describe('remote thread viewport hydration integration', () => {
   })
 
   it('uses viewport units for periodic recent-thread snapshots', () => {
-    const periodicSnapshot = between(
-      'if (chatIndex < REMOTE_THREAD_SNAPSHOT_CAP) {',
-      'if (taskCard.diffSummary) {'
+    const projection = readFileSync(
+      new URL('./store/ThreadCatalogueRemote.ts', import.meta.url),
+      'utf8'
     )
-
-    expect(periodicSnapshot).toContain("mode: { kind: 'latestViewportN', n: 24 }")
-    expect(periodicSnapshot).not.toContain("mode: { kind: 'latestN', n: 24 }")
+    expect(indexSource).toContain('includeViewport: chatIndex < REMOTE_THREAD_SNAPSHOT_CAP')
+    expect(projection).toContain("mode: { kind: 'latestViewportN', n: 24 }")
+    expect(projection).not.toContain("mode: { kind: 'latestN', n: 24 }")
   })
 })

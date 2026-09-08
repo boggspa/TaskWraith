@@ -1,9 +1,6 @@
-import type { ChatMessage, ChatRecord } from '../../../main/store/types'
-import {
-  applyChatTranscriptOps,
-  plainDataEqual,
-  type ChatTranscriptOp
-} from '../../../shared/chatUpdateTransport'
+import { computeChatSubRevisions } from '../../../shared/chatUpdateTransport'
+import type { ChatRecord } from '../../../main/store/types'
+import { rebaseTailTranscript, hasOnlyTranscriptChanges } from './advanceRendererRecord'
 import {
   RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
   buildTailChatTranscriptOps,
@@ -18,6 +15,7 @@ interface PendingTranscriptSave {
 }
 
 interface ChatPersistenceState {
+  generation: number
   pending?: PendingTranscriptSave
   inFlight?: Promise<void>
   flushAfterFlight: boolean
@@ -32,62 +30,17 @@ export interface RendererChatTranscriptPersistenceDeps {
     chatId: string,
     baseRevision: number,
     optimisticTarget: ChatRecord,
-    result: Extract<RendererChatTranscriptMutationResult, { accepted: true }>
+    result: Extract<RendererChatTranscriptMutationResult, { accepted: true }>,
+    beforeTarget: ChatRecord,
+    acceptedTarget: ChatRecord
   ) => void
-  onRecovered: (chatId: string, optimisticTarget: ChatRecord, rebasedTarget: ChatRecord) => void
+  onRecovered: (
+    chatId: string,
+    optimisticTarget: ChatRecord,
+    rebasedTarget: ChatRecord,
+    canonical: ChatRecord
+  ) => void
   onUnrecoverable: (chatId: string, canonical: ChatRecord | null) => void
-}
-
-function messageById(messages: readonly ChatMessage[], id: string): ChatMessage | undefined {
-  return messages.find((message) => message.id === id)
-}
-
-function rebaseTailTranscript(
-  base: ChatRecord,
-  target: ChatRecord,
-  canonical: ChatRecord
-): { target: ChatRecord; ops: ChatTranscriptOp[] } | null {
-  const desiredOps = buildTailChatTranscriptOps(base.messages, target.messages)
-  if (!desiredOps) return null
-  const applicable: ChatTranscriptOp[] = []
-
-  for (const operation of desiredOps) {
-    if (operation.op === 'append') {
-      const canonicalById = new Map(canonical.messages.map((message) => [message.id, message]))
-      const existing = operation.messages.filter((message) => canonicalById.has(message.id))
-      if (existing.length === operation.messages.length) {
-        if (existing.every((message) => plainDataEqual(canonicalById.get(message.id), message))) {
-          continue
-        }
-        return null
-      }
-      if (existing.length > 0) return null
-      applicable.push(operation)
-      continue
-    }
-
-    const canonicalMessage = messageById(canonical.messages, operation.id)
-    const baseMessage = messageById(base.messages, operation.id)
-    if (operation.op === 'update') {
-      if (plainDataEqual(canonicalMessage, operation.message)) continue
-      if (!canonicalMessage || !baseMessage || !plainDataEqual(canonicalMessage, baseMessage)) {
-        return null
-      }
-      applicable.push(operation)
-      continue
-    }
-
-    if (!canonicalMessage) continue
-    if (!baseMessage || !plainDataEqual(canonicalMessage, baseMessage)) return null
-    applicable.push(operation)
-  }
-
-  const messages = applyChatTranscriptOps(canonical.messages, applicable)
-  if (!messages) return null
-  return {
-    target: { ...canonical, messages },
-    ops: applicable
-  }
 }
 
 /**
@@ -102,7 +55,7 @@ export class RendererChatTranscriptPersistence {
   constructor(private readonly deps: RendererChatTranscriptPersistenceDeps) {}
 
   queue(base: ChatRecord, target: ChatRecord): boolean {
-    if (base.appChatId !== target.appChatId) return false
+    if (base.appChatId !== target.appChatId || !hasOnlyTranscriptChanges(base, target)) return false
     const immediateOps = buildTailChatTranscriptOps(base.messages, target.messages)
     if (!immediateOps || immediateOps.length === 0) return false
 
@@ -122,6 +75,18 @@ export class RendererChatTranscriptPersistence {
     }
     state.pending = { base, target }
     return true
+  }
+
+  /** Explicit history reset: old ACKs/conflicts may finish, but may never replay work. */
+  cancel(chatId: string): void {
+    const state = this.states.get(chatId)
+    if (!state) return
+    state.generation += 1
+    this.discardPending(chatId)
+  }
+
+  cancelAll(): void {
+    for (const id of this.states.keys()) this.cancel(id)
   }
 
   discardPending(chatId: string): void {
@@ -180,76 +145,108 @@ export class RendererChatTranscriptPersistence {
     pending: PendingTranscriptSave,
     request: RendererChatTranscriptMutationRequest
   ): Promise<void> {
-    let result: RendererChatTranscriptMutationResult
+    const generation = state.generation
+    const valid = (): boolean => state.generation === generation
     try {
-      result = await this.deps.mutate(request)
-    } catch {
-      const canonical = await this.deps.loadCanonical(request.chatId).catch(() => null)
-      result = {
-        version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
-        accepted: false,
-        chatId: request.chatId,
-        revision: chatPersistenceRevision(canonical),
-        reason: 'revision-conflict',
-        canonical
-      }
-    }
-
-    if (result.accepted && result.messageCount === pending.target.messages.length) {
-      const acceptedTarget: ChatRecord = {
-        ...pending.target,
-        persistenceRevision: result.revision,
-        updatedAt: result.updatedAt
-      }
-      const queued = state.pending
-      if (queued?.base === pending.target) {
-        const previousQueuedTarget = queued.target
-        queued.base = acceptedTarget
-        queued.target = {
-          ...previousQueuedTarget,
-          persistenceRevision: result.revision,
-          updatedAt: result.updatedAt
+      let result: RendererChatTranscriptMutationResult
+      try {
+        result = await this.deps.mutate(request)
+      } catch {
+        if (!valid()) return
+        const canonical = await this.deps.loadCanonical(request.chatId).catch(() => null)
+        result = {
+          version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+          accepted: false,
+          chatId: request.chatId,
+          revision: chatPersistenceRevision(canonical),
+          reason: 'revision-conflict',
+          canonical
         }
-        this.deps.onAccepted(request.chatId, request.baseRevision, queued.target, result)
-      } else {
-        this.deps.onAccepted(request.chatId, request.baseRevision, acceptedTarget, result)
       }
-    } else {
-      const canonical = result.accepted
-        ? await this.deps.loadCanonical(request.chatId).catch(() => null)
-        : result.canonical
-      const queued = state.pending
-      const optimisticTarget = queued?.base === pending.target ? queued.target : pending.target
-      state.pending = undefined
-      const recovered = canonical
-        ? rebaseTailTranscript(pending.base, optimisticTarget, canonical)
+
+      if (!valid()) return
+      const acceptedTarget: ChatRecord | null = result.accepted
+        ? {
+            ...pending.target,
+            persistenceRevision: result.revision,
+            updatedAt: result.updatedAt
+          }
         : null
-      if (canonical && recovered) {
-        this.deps.onRecovered(request.chatId, optimisticTarget, recovered.target)
-        if (recovered.ops.length > 0) {
-          state.pending = { base: canonical, target: recovered.target }
-          state.flushAfterFlight = true
+      const hashMatches =
+        !result.accepted ||
+        !result.recordHash ||
+        computeChatSubRevisions(acceptedTarget!).recordHash === result.recordHash
+      if (
+        result.accepted &&
+        acceptedTarget &&
+        hashMatches &&
+        result.messageCount === pending.target.messages.length
+      ) {
+        const queued = state.pending
+        if (queued?.base === pending.target) {
+          const previousQueuedTarget = queued.target
+          queued.base = acceptedTarget
+          queued.target = {
+            ...previousQueuedTarget,
+            persistenceRevision: result.revision,
+            updatedAt: result.updatedAt
+          }
+          this.deps.onAccepted(
+            request.chatId,
+            request.baseRevision,
+            queued.target,
+            result,
+            previousQueuedTarget,
+            acceptedTarget
+          )
+        } else {
+          this.deps.onAccepted(
+            request.chatId,
+            request.baseRevision,
+            acceptedTarget,
+            result,
+            pending.target,
+            acceptedTarget
+          )
         }
       } else {
-        this.deps.onUnrecoverable(request.chatId, canonical)
+        const canonical = result.accepted
+          ? await this.deps.loadCanonical(request.chatId).catch(() => null)
+          : result.canonical
+        if (!valid()) return
+        const queued = state.pending
+        const optimisticTarget = queued?.base === pending.target ? queued.target : pending.target
+        state.pending = undefined
+        const recovered = canonical
+          ? rebaseTailTranscript(pending.base, optimisticTarget, canonical)
+          : null
+        if (canonical && recovered) {
+          this.deps.onRecovered(request.chatId, optimisticTarget, recovered.target, canonical)
+          if (recovered.ops.length > 0) {
+            state.pending = { base: canonical, target: recovered.target }
+            state.flushAfterFlight = true
+          }
+        } else {
+          this.deps.onUnrecoverable(request.chatId, canonical)
+        }
       }
-    }
-
-    state.inFlight = undefined
-    delete (state as ChatPersistenceState & { inFlightTarget?: ChatRecord }).inFlightTarget
-    const shouldFlush = state.flushAfterFlight && Boolean(state.pending)
-    state.flushAfterFlight = false
-    if (shouldFlush) {
-      await this.flush(request.chatId)
-    } else {
-      this.deleteIfIdle(request.chatId, state)
+    } finally {
+      state.inFlight = undefined
+      delete (state as ChatPersistenceState & { inFlightTarget?: ChatRecord }).inFlightTarget
+      const shouldFlush = state.flushAfterFlight && Boolean(state.pending)
+      state.flushAfterFlight = false
+      if (shouldFlush) {
+        await this.flush(request.chatId)
+      } else {
+        this.deleteIfIdle(request.chatId, state)
+      }
     }
   }
 
   private stateFor(chatId: string): ChatPersistenceState {
     const existing = this.states.get(chatId)
     if (existing) return existing
-    const created: ChatPersistenceState = { flushAfterFlight: false }
+    const created: ChatPersistenceState = { generation: 0, flushAfterFlight: false }
     this.states.set(chatId, created)
     return created
   }

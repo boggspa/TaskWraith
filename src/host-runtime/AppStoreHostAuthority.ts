@@ -1,3 +1,10 @@
+import {
+  decodeThreadCatalogueReadQuery,
+  decodeThreadCatalogueMaintenanceQuery,
+  type ThreadCatalogueMaintenanceQuery,
+  type ThreadCatalogueReadQuery,
+  type ThreadCatalogueWireReply
+} from '../shared/threadCatalogueProtocol'
 /**
  * In-process migration HostAuthority (Host Arc Wave 2B Subwave 4C).
  *
@@ -10,6 +17,7 @@
 import type { HostProjectionOperationRunner } from './HostProjectionSerialQueue'
 import {
   decodeHostCommand,
+  TASKWRAITH_DESKTOP_HOST_ACTOR,
   decodeHostCommandReceipt,
   HOST_PROTOCOL_MAX_ID,
   type HostActorIdentity,
@@ -222,6 +230,12 @@ export type AppStoreHostAuthorityProviderAuthStatusProvider = (
 export type AppStoreHostAuthorityThreadHistoryProvider = (
   request: HostThreadHistoryRequest
 ) => HostThreadHistoryPage | Promise<HostThreadHistoryPage>
+export type AppStoreHostAuthorityThreadCatalogueProvider = (
+  request: ThreadCatalogueReadQuery
+) => Promise<ThreadCatalogueWireReply>
+export type AppStoreHostAuthorityThreadCatalogueMaintenanceProvider = (
+  request: ThreadCatalogueMaintenanceQuery
+) => Promise<ThreadCatalogueWireReply>
 export type AppStoreHostAuthorityHistorySinceProvider = (
   request: HostHistorySinceRequest
 ) => HostHistorySinceResult | Promise<HostHistorySinceResult>
@@ -274,6 +288,8 @@ export interface AppStoreHostAuthorityPorts {
   readonly providerAuthFlowsProvider?: AppStoreHostAuthorityProviderAuthFlowsProvider
   readonly providerAuthStatusProvider?: AppStoreHostAuthorityProviderAuthStatusProvider
   readonly threadHistoryProvider?: AppStoreHostAuthorityThreadHistoryProvider
+  readonly threadCatalogueProvider?: AppStoreHostAuthorityThreadCatalogueProvider
+  readonly threadCatalogueMaintenanceProvider?: AppStoreHostAuthorityThreadCatalogueMaintenanceProvider
   readonly historySinceProvider?: AppStoreHostAuthorityHistorySinceProvider
   readonly onShutdown: AppStoreHostAuthorityShutdownCallback
   /** Optional only for pre-cutover compatibility; present enables S2–S5. */
@@ -423,6 +439,8 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly providerAuthFlowsProvider?: AppStoreHostAuthorityProviderAuthFlowsProvider
   private readonly providerAuthStatusProvider?: AppStoreHostAuthorityProviderAuthStatusProvider
   private readonly threadHistoryProvider?: AppStoreHostAuthorityThreadHistoryProvider
+  private readonly threadCatalogueProvider?: AppStoreHostAuthorityThreadCatalogueProvider
+  private readonly threadCatalogueMaintenanceProvider?: AppStoreHostAuthorityThreadCatalogueMaintenanceProvider
   private readonly historySinceProvider?: AppStoreHostAuthorityHistorySinceProvider
   private readonly onShutdown: AppStoreHostAuthorityShutdownCallback
   private readonly deferredAsk?: HostDeferredAskPorts
@@ -499,6 +517,8 @@ export class AppStoreHostAuthority implements HostAuthority {
     this.providerAuthFlowsProvider = ports.providerAuthFlowsProvider
     this.providerAuthStatusProvider = ports.providerAuthStatusProvider
     this.threadHistoryProvider = ports.threadHistoryProvider
+    this.threadCatalogueProvider = ports.threadCatalogueProvider
+    this.threadCatalogueMaintenanceProvider = ports.threadCatalogueMaintenanceProvider
     this.historySinceProvider = ports.historySinceProvider
     this.onShutdown = ports.onShutdown
     this.deferredAsk = ports.deferredAsk
@@ -732,6 +752,46 @@ export class AppStoreHostAuthority implements HostAuthority {
       return decoded.ok && decoded.value.threadId === decodedRequest.value.threadId
         ? { ok: true, value: decoded.value }
         : { ok: false, error: 'host_unavailable' }
+    } catch {
+      return { ok: false, error: 'host_unavailable' }
+    }
+  }
+
+  async threadCatalogue(
+    context: HostAuthorityCallContext,
+    request: ThreadCatalogueReadQuery
+  ): Promise<HostAuthorityResult<ThreadCatalogueWireReply>> {
+    const gate = this.gate(context)
+    if (!gate.ok) return gate
+    const decoded = decodeThreadCatalogueReadQuery(request)
+    if (!decoded || !this.threadCatalogueProvider) return { ok: false, error: 'host_unavailable' }
+    try {
+      return { ok: true, value: await this.threadCatalogueProvider(decoded) }
+    } catch {
+      return { ok: false, error: 'host_unavailable' }
+    }
+  }
+
+  async threadCatalogueMaintenance(
+    context: HostAuthorityCallContext,
+    request: ThreadCatalogueMaintenanceQuery
+  ): Promise<HostAuthorityResult<ThreadCatalogueWireReply>> {
+    const gate = this.gate(context)
+    if (!gate.ok) return gate
+    const expected = TASKWRAITH_DESKTOP_HOST_ACTOR
+    if (
+      context.client.clientClass !== expected.clientClass ||
+      context.client.clientId !== expected.clientId ||
+      context.actor.clientClass !== expected.clientClass ||
+      context.actor.clientId !== expected.clientId ||
+      context.actor.actorId !== expected.actorId
+    )
+      return { ok: false, error: 'host_unavailable' }
+    const decoded = decodeThreadCatalogueMaintenanceQuery(request)
+    if (!decoded || !this.threadCatalogueMaintenanceProvider)
+      return { ok: false, error: 'host_unavailable' }
+    try {
+      return { ok: true, value: await this.threadCatalogueMaintenanceProvider(decoded) }
     } catch {
       return { ok: false, error: 'host_unavailable' }
     }

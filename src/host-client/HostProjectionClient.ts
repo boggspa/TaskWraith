@@ -1,3 +1,7 @@
+import type {
+  ThreadCatalogueReadQuery,
+  ThreadCatalogueMaintenanceQuery
+} from '../shared/threadCatalogueProtocol'
 /**
  * Host Arc Wave 4.1 — reusable authenticated v2 projection client.
  *
@@ -546,6 +550,30 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
       throw new Error('TaskWraith Host returned an unexpected thread history result kind.')
     }
     return result.page
+  }
+
+  async queryThreadCatalogue<T = unknown>(request: ThreadCatalogueReadQuery): Promise<T> {
+    const result = await this.request('thread.catalogue', request)
+    if (result.kind !== 'thread.catalogue') throw new Error('Unexpected history catalogue response')
+    if (request.method === 'chunk' && result.reply.data !== null) {
+      const chunk = result.reply.data as { encoding?: unknown; bytes?: unknown }
+      if (
+        chunk?.encoding !== 'base64' ||
+        typeof chunk.bytes !== 'string' ||
+        chunk.bytes.length > 65_536 ||
+        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(chunk.bytes)
+      )
+        throw new Error('Invalid history chunk')
+      return new Uint8Array(Buffer.from(chunk.bytes, 'base64')) as T
+    }
+    return result.reply.data as T
+  }
+
+  async maintainThreadCatalogue<T = unknown>(request: ThreadCatalogueMaintenanceQuery): Promise<T> {
+    const result = await this.request('thread.catalogue.maintenance', request)
+    if (result.kind !== 'thread.catalogue.maintenance')
+      throw new Error('Unexpected history maintenance response')
+    return result.reply.data as T
   }
 
   /**

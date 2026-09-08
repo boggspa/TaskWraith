@@ -1,3 +1,6 @@
+import { RendererChatPendingDrafts } from './lib/RendererChatPendingDrafts'
+import { RendererChatConflictNotice } from './components/RendererChatConflictNotice'
+import { ThreadCatalogueStatus } from './components/ThreadCatalogueStatus'
 import {
   startTransition,
   useState,
@@ -1868,6 +1871,7 @@ function App(): React.JSX.Element {
   // for future surfaces; this is the single canonical caller.)
   const saveChatTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const rendererTranscriptPersistenceRef = useRef<RendererChatTranscriptPersistence | null>(null)
+  const pendingChatDraftsRef = useRef(new RendererChatPendingDrafts())
   const lastUsageWindowsByProviderRef = useRef<Record<ProviderId, UsageWindowAggregate[]>>({
     gemini: [],
     codex: [],
@@ -5358,6 +5362,7 @@ function App(): React.JSX.Element {
           pendingQuestions && pendingQuestions.length > 0
             ? new Set(pendingQuestions.map((question) => question.messageId))
             : undefined
+        const beforeMerge = updated
         updated = mergeChatUpdatedForRender(pendingMainUpdate.chat, {
           liveChat: updated,
           messagesChanged: pendingMainUpdate.messagesChanged,
@@ -5366,6 +5371,7 @@ function App(): React.JSX.Element {
           pendingMarkerIds,
           localGoalIntent: pendingGoalIntentRef.current.get(chatId) ?? null
         })
+        updated = pendingChatDraftsRef.current.apply(pendingMainUpdate.chat, updated, beforeMerge)
         byId.set(chatId, updated)
       }
       if (updated) {
@@ -5503,19 +5509,11 @@ function App(): React.JSX.Element {
     rendererTranscriptPersistenceRef.current = new RendererChatTranscriptPersistence({
       mutate: (request) => window.api.mutateChatTranscript(request),
       loadCanonical: (chatId) => window.api.getChat(chatId),
-      onAccepted: (chatId, baseRevision, _optimisticTarget, result) => {
+      onAccepted: (chatId, baseRevision, optimisticTarget, result, beforeTarget, acceptedTarget) => {
         const current = chatByIdRef.current.get(chatId)
-        const currentRevision =
-          Number.isSafeInteger(current?.persistenceRevision) &&
-          (current?.persistenceRevision ?? -1) >= 0
-            ? current!.persistenceRevision!
-            : 0
-        if (!current || currentRevision !== baseRevision) return
-        const persistedRecord = {
-          ...current,
-          persistenceRevision: result.revision,
-          updatedAt: result.updatedAt
-        }
+        const advancedRecord = pendingChatDraftsRef.current.advance(beforeTarget, optimisticTarget, current, acceptedTarget)
+        if (!advancedRecord) return
+        const persistedRecord = advancedRecord.record
         const transportBaseline = chatUpdateBaselineByIdRef.current.get(chatId)
         if (
           transportBaseline &&
@@ -5523,10 +5521,10 @@ function App(): React.JSX.Element {
         ) {
           const advanced = appliedChatUpdateBaseline(
             transportBaseline.revision,
-            persistedRecord,
+            acceptedTarget,
             result.transcriptHash
           )
-          if (!result.recordHash || advanced.recordHash === result.recordHash) {
+          if (!advancedRecord.pending && (!result.recordHash || advanced.recordHash === result.recordHash)) {
             chatUpdateBaselineByIdRef.current.set(chatId, advanced)
           } else {
             chatUpdateBaselineByIdRef.current.delete(chatId)
@@ -5534,25 +5532,16 @@ function App(): React.JSX.Element {
         }
         publishPersistedRecord(chatId, persistedRecord)
       },
-      onRecovered: (chatId, _optimisticTarget, rebasedTarget) => {
+      onRecovered: (chatId, optimisticTarget, rebasedTarget, canonical) => {
         chatUpdateBaselineByIdRef.current.delete(chatId)
         const current = chatByIdRef.current.get(chatId)
-        publishPersistedRecord(
-          chatId,
-          current
-            ? {
-                ...current,
-                messages: rebasedTarget.messages,
-                persistenceRevision: rebasedTarget.persistenceRevision,
-                updatedAt: rebasedTarget.updatedAt
-              }
-            : rebasedTarget
-        )
+        const advanced = pendingChatDraftsRef.current.advance(optimisticTarget, rebasedTarget, current, canonical)
+        if (advanced) publishPersistedRecord(chatId, advanced.record)
       },
       onUnrecoverable: (chatId, canonical) => {
         chatUpdateBaselineByIdRef.current.delete(chatId)
         if (canonical) {
-          publishPersistedRecord(chatId, canonical)
+          publishPersistedRecord(chatId, pendingChatDraftsRef.current.apply(canonical, canonical, chatByIdRef.current.get(chatId)))
           return
         }
         const latest = chatByIdRef.current.get(chatId)
@@ -5674,6 +5663,7 @@ function App(): React.JSX.Element {
       // patch IPC. Returning here keeps the optimistic React/cache update above
       // while avoiding a structured clone of the entire chat transcript.
       if (options?.persistence === 'none') return updated
+      pendingChatDraftsRef.current.trackTarget(updated)
       const persistTranscriptTail =
         options?.persistence === 'transcript-tail' &&
         rendererTranscriptPersistenceRef.current!.queue(base, updated)
@@ -5692,6 +5682,7 @@ function App(): React.JSX.Element {
           .current!.whenIdle(chatId)
           .then(() => {
             const latest = chatByIdRef.current.get(chatId) || updated
+            if (pendingChatDraftsRef.current.conflicts(chatId).length) return
             return window.api.saveChat(latest)
           })
           .catch(() => {})
@@ -5880,7 +5871,7 @@ function App(): React.JSX.Element {
 
   const refreshChatList = useCallback(
     async (workspaceId?: string): Promise<ChatRecord[]> => {
-      const list = await loadChatList(workspaceId)
+      const list = (await loadChatList(workspaceId)).map((row) => pendingChatDraftsRef.current.apply(row, row, chatByIdRef.current.get(row.appChatId)))
       chatMutations.reconcileAll(list)
       return list
     },
@@ -5907,7 +5898,7 @@ function App(): React.JSX.Element {
 
   const applyHydratedChat = useCallback(
     (chat: ChatRecord, request?: { localAtRequestStart: ChatRecord | null }): ChatRecord => {
-      const merged = resolveHydratedChat(chat, request)
+      const merged = pendingChatDraftsRef.current.apply(chat, resolveHydratedChat(chat, request), chatByIdRef.current.get(chat.appChatId))
       const committed = commitHydratedChat({
         chat: merged,
         transcriptStore: chatHydrationRuntime.transcriptStore,
@@ -5957,7 +5948,7 @@ function App(): React.JSX.Element {
     ) {
       return current
     }
-    const committed: ChatRecord = mergeChatRecordValue(current ?? undefined, shell)
+    const committed: ChatRecord = pendingChatDraftsRef.current.apply(shell, mergeChatRecordValue(current ?? undefined, shell), current)
     chatByIdRef.current.set(committed.appChatId, committed)
     chatHydrationRuntime.transcriptStore.ingestPage(page)
     chatHydrationRuntime.byteLru.touch(committed.appChatId)
@@ -9796,6 +9787,8 @@ function App(): React.JSX.Element {
       saveChatTimersRef.current.delete(chatId)
     }
     chatMutations.removeChat(chatId)
+    pendingChatDraftsRef.current.discard(chatId)
+    rendererTranscriptPersistenceRef.current?.cancel(chatId)
     chatByIdRef.current.delete(chatId)
     chatHydrationRuntime.retention.drop(chatId)
     if (currentChat?.appChatId === chatId) {
@@ -9869,6 +9862,8 @@ function App(): React.JSX.Element {
 
     await window.api.clearChats()
     const nextChats = await loadChatList().catch(() => [])
+    pendingChatDraftsRef.current.clear()
+    rendererTranscriptPersistenceRef.current?.cancelAll()
     chatByIdRef.current.clear()
     chatHydrationRuntime.retention.clear()
     queuedRunsRef.current = []
@@ -9983,6 +9978,8 @@ function App(): React.JSX.Element {
             clearTimeout(pendingSave)
             saveChatTimersRef.current.delete(id)
           }
+          pendingChatDraftsRef.current.discard(id)
+          rendererTranscriptPersistenceRef.current?.cancel(id)
           chatByIdRef.current.delete(id)
           chatHydrationRuntime.retention.drop(id)
         }
@@ -19795,6 +19792,8 @@ function App(): React.JSX.Element {
       // cancel: a row that landed mid-cancel is now visible, and the revision
       // fence on the mutation below turns any later arrival into a retryable
       // conflict instead of a row inside the cut tail.
+      await rendererTranscriptPersistenceRef.current?.whenIdle(chatId)
+      pendingChatDraftsRef.current.discard(chatId)
       const baseline = (await refreshSingleChat(chatId)) || chat
       const sendRewindMutation = (record: ChatRecord) => {
         const anchorMessage = record.messages.find((message) => message.id === messageId)
@@ -27658,6 +27657,8 @@ function App(): React.JSX.Element {
           return
         }
         ctx.setDraft('')
+        pendingChatDraftsRef.current.discard(chat.appChatId)
+        rendererTranscriptPersistenceRef.current?.cancel(chat.appChatId)
         // Optimistic local clear, then persist via the IPC. We refresh
         // the chat list right after so the new (empty) transcript is the
         // source of truth across the renderer.
@@ -32451,6 +32452,19 @@ function App(): React.JSX.Element {
   return (
     <UsageSummaryStoreContext.Provider value={usageSummaryStore}>
       {appView}
+      <ThreadCatalogueStatus />
+      <RendererChatConflictNotice
+        chatId={currentChat?.appChatId}
+        drafts={pendingChatDraftsRef.current}
+        getCurrent={(id) => chatByIdRef.current.get(id)}
+        beforeResolve={async (id) => { await rendererTranscriptPersistenceRef.current?.whenIdle(id) }}
+        onResolved={(canonical, advanced) => {
+          if (advanced) chatByIdRef.current.set(canonical.appChatId, advanced)
+          applyHydratedChat(canonical)
+          if (pendingChatDraftsRef.current.has(canonical.appChatId) && !pendingChatDraftsRef.current.conflicts(canonical.appChatId).length)
+            updateChatById(canonical.appChatId, (chat) => ({ ...chat }))
+        }}
+      />
     </UsageSummaryStoreContext.Provider>
   )
 }

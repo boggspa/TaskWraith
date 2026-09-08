@@ -3964,6 +3964,7 @@ export interface StaleRunSettlementProvenance {
 }
 
 export interface ChatRun {
+  hostRunOrigin?: import('../../shared/threadCatalogueTypes').HostCatalogueRunOrigin
   /** Written only when a checkpoint was handed to this run's provider adapter. */
   continuityCheckpointDelivery?: ContinuityDelivery
 
@@ -4639,6 +4640,12 @@ export interface ChatListRunSummary {
 
 export interface ChatListItem extends ChatRecord {
   summaryOnly: true
+  /** Bounded catalogue chrome is display-only and must never become a full-record save. */
+  catalogueProjection?: true
+  catalogueViewKey?: string
+  catalogueControl?: import('../../shared/taskWraithControlProjection').TaskWraithControlThreadFacts
+  cataloguePresentation?: import('../../shared/threadCatalogueTypes').ThreadCataloguePresentation
+  catalogueEditBase?: import('../../shared/threadCatalogueMerge').CatalogueEditBase
   messageCount: number
   runCount: number
   lastRun?: ChatRun

@@ -8,9 +8,11 @@ const main = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
 describe('pre-ready Electron bootstrap configuration', () => {
   it('registers privileged schemes synchronously before external Host preparation can yield', () => {
     const configure = bootstrap.indexOf('configureElectronBeforeReady()')
-    const start = bootstrap.indexOf('void bootstrapMainProcess({')
+    const start = bootstrap.indexOf(': bootstrapMainProcess({')
     expect(configure).toBeGreaterThanOrEqual(0)
+    expect(start).toBeGreaterThanOrEqual(0)
     expect(configure).toBeLessThan(start)
+    expect(bootstrap).toContain('if (!peopleMigrationHelper) configureElectronBeforeReady()')
     expect(bootstrap).toContain(
       'protocol.registerSchemesAsPrivileged([TW_MEDIA_PRIVILEGE, MESH_ASSET_PRIVILEGE, TWEMU_PRIVILEGE])'
     )

@@ -209,6 +209,8 @@ export interface SegmentedChatStore {
 }
 
 export interface SegmentedChatStoreOptions {
+  beforeSourceMutation?: (chatId: string) => void
+  maintenanceScope?: 'opened' | 'all'
   /** Feature flag (ADR §11.4). Defaults to `isSegmentedChatStoreEnabled`. */
   enabled?: () => boolean
   /** Authority gate; false is strictly read-only. Independent of the flag so
@@ -852,6 +854,7 @@ export function createSegmentedChatStore(
   ): SegmentedChatMirrorResult | null => {
     if (!enabled()) return null
     if (!canWrite()) throw new Error('Segmented chat store is read-only')
+    options.beforeSourceMutation?.(next.appChatId)
     try {
       mirrorSaves += 1
       const chatId = next.appChatId
@@ -1148,6 +1151,7 @@ export function createSegmentedChatStore(
   }
 
   const checkpoint = (chatId: string): boolean => {
+    options.beforeSourceMutation?.(chatId)
     if (!enabled()) return false
     assertWritable()
     assertChatId(chatId)
@@ -1212,6 +1216,7 @@ export function createSegmentedChatStore(
 
   const knownChatIds = (): Set<string> => {
     const ids = new Set(states.keys())
+    if (options.maintenanceScope === 'opened') return ids
     let entries: string[] = []
     try {
       entries = fs.readdirSync(baseDir)
@@ -1262,6 +1267,7 @@ export function createSegmentedChatStore(
   }
 
   const purge = (chatId: string): void => {
+    options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
     for (const filePath of [manifestPath(chatId), snapshotPath(chatId), tombstonePath(chatId)]) {

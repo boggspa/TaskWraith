@@ -1,4 +1,5 @@
 import type { ChatListItem, ChatRecord } from './types'
+import { applyCatalogueEdits } from '../../shared/threadCatalogueMerge'
 
 /**
  * Stage 6 — escalate-not-reject for summary shells on the whole-record save
@@ -102,6 +103,8 @@ export function escalateSummaryChatForSave(
   // No canonical record: a summary CREATE. A canonical that is itself a
   // summary cannot lend transcript authority. Both stay with the fence.
   if (!canonical || (canonical as Partial<ChatListItem>).summaryOnly === true) return incoming
+  if ((incoming as ChatListItem).catalogueProjection === true)
+    return applyCatalogueEdits(canonical, incoming as ChatListItem)
 
   const chrome: Record<string, unknown> = { ...(incoming as SummaryChatShape) }
   for (const field of SUMMARY_PROJECTION_FIELDS) delete chrome[field]

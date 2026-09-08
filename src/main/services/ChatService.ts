@@ -251,11 +251,11 @@ export interface ChatServiceStore {
   persistChatComposerSelection: (
     request: ChatComposerSelectionPatchRequest
   ) => Promise<{ chat: ChatRecord; changed: boolean }>
-  deleteChat: (chatId: string) => void
+  deleteChat: (chatId: string) => void | Promise<void>
   deleteChatViaHost?: (chatId: string) => Promise<void>
-  truncateChatHistory?: (chatId: string) => ChatRecord | null
+  truncateChatHistory?: (chatId: string) => ChatRecord | null | Promise<ChatRecord | null>
   truncateChatHistoryViaHost?: (chatId: string) => Promise<ChatRecord | null>
-  clearChats: (workspaceId?: string) => void
+  clearChats: (workspaceId?: string) => void | Promise<void>
   clearChatsViaHost?: (workspaceId?: string) => Promise<void>
   legacyStoreWritesOpen?: () => boolean
 }
@@ -1780,8 +1780,7 @@ export class ChatService {
       this.endCollaborationShares(store.listShares(id))
     }
     if ((this.deps.appStore.legacyStoreWritesOpen?.() ?? true) || !this.deps.appStore.deleteChatViaHost) {
-      this.deps.appStore.deleteChat(id)
-      return
+      return this.deps.appStore.deleteChat(id)
     }
     return this.deps.appStore.deleteChatViaHost(id)
   }
@@ -1863,8 +1862,7 @@ export class ChatService {
   /** Commit the durable chat deletion after every external store has cleared. */
   commitClearChats(workspaceId?: string): void | Promise<void> {
     if ((this.deps.appStore.legacyStoreWritesOpen?.() ?? true) || !this.deps.appStore.clearChatsViaHost) {
-      this.deps.appStore.clearChats(workspaceId)
-      return
+      return this.deps.appStore.clearChats(workspaceId)
     }
     return this.deps.appStore.clearChatsViaHost(workspaceId)
   }

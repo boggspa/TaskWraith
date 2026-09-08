@@ -2454,6 +2454,14 @@ declare global {
       getChats: (workspaceId?: string) => Promise<ChatRecord[]>
       /** Transcript-reduced records carrying only commit receipts. */
       getWorkspaceCommitAttributions: (workspaceId: string) => Promise<ChatRecord[]>
+      getHistoryIndexStatus: () => Promise<{
+        complete: boolean
+        loaded: number
+        failed: number
+        error: string | null
+      }>
+      getTranscriptMessage: (chatId: string, messageId: string) => Promise<ChatMessage | null>
+      getChatRunSummaries: (workspaceId?: string) => Promise<ChatListItem[]>
       getChatList: (workspaceId?: string) => Promise<ChatListItem[]>
       getPinnedMessages: (workspaceId?: string) => Promise<PinnedMessageGroup[]>
       getChat: (chatId: string) => Promise<ChatRecord | null>

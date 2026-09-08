@@ -811,8 +811,7 @@ export function ModelUsageSettingsTable({
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.api?.getChatList !== 'function') return
     let cancelled = false
-    window.api
-      .getChatList()
+    void (window.api.getChatRunSummaries?.() ?? window.api.getChatList())
       .then((latest) => {
         if (!cancelled) setChats(Array.isArray(latest) ? latest : [])
       })

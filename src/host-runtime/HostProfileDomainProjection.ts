@@ -205,7 +205,11 @@ function runIsActive(run: ProfileRun): boolean {
   return timestamp(run.endedAt) === undefined
 }
 
-function projectProfileRuns(threads: readonly ProfileThread[]): {
+function projectProfileRuns(
+  threads: readonly Pick<ProfileThread, 'appChatId' | 'provider' | 'updatedAt' | 'runs'>[],
+  totalCount?: number,
+  complete = true
+): {
   runs: HostRunProjection[]
   warning?: HostWarningProjection
 } {
@@ -242,7 +246,7 @@ function projectProfileRuns(threads: readonly ProfileThread[]): {
       }
     })
   )
-  if (candidates.length <= HOST_PROFILE_RUN_PROJECTION_LIMIT) {
+  if (complete && (totalCount ?? candidates.length) <= HOST_PROFILE_RUN_PROJECTION_LIMIT) {
     return { runs: candidates.map((candidate) => candidate.row) }
   }
 
@@ -265,7 +269,7 @@ function projectProfileRuns(threads: readonly ProfileThread[]): {
       severity: 'warning',
       code: HOST_WARNING_PROJECTION_WINDOWED,
       message:
-        `family runs intentionally windowed from ${candidates.length} to ` +
+        `family runs ${complete ? 'intentionally windowed' : 'still loading'} from ${totalCount ?? candidates.length} to ` +
         `${HOST_PROFILE_RUN_PROJECTION_LIMIT}; possibly-live rows precede recent terminal rows`,
       at: warningAt
     }
@@ -405,7 +409,27 @@ export function projectHostProfileDomainSnapshot(
             at: participantWarningAt
           }
         ]
-  const runProjection = projectProfileRuns(threads)
+  const runWindow = store.listRunSummaries()
+  const threadById = new Map(threads.map((thread) => [thread.appChatId, thread]))
+  const runProjection = runWindow
+    ? projectProfileRuns(
+        runWindow.entries.flatMap(({ chatId, run }) => {
+          const thread = threadById.get(chatId)
+          return thread
+            ? [
+                {
+                  appChatId: chatId,
+                  provider: thread.provider,
+                  updatedAt: thread.updatedAt,
+                  runs: [run]
+                }
+              ]
+            : []
+        }),
+        runWindow.total,
+        runWindow.complete
+      )
+    : projectProfileRuns(threads)
   if (runProjection.warning) warnings.push(runProjection.warning)
   return {
     health,

@@ -13,6 +13,24 @@ import {
 import { buildHumanShareProjection } from './HumanShareProjection'
 
 describe('HumanCollaborationStore', () => {
+  it('reloads externally retired shares before a later local write and keeps an unreadable disk fail-closed', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'taskwraith-people-reload-'))
+    const path = join(dir, 'people.json')
+    try {
+      const parent = new HumanCollaborationStore(path)
+      const share = parent.createShare({ chatId: 'retired', mode: 'comments', now: 1 }).share
+      const external = new HumanCollaborationStore(path)
+      external.purgeChatShares(['retired'])
+      expect(parent.getShare(share.shareId)).not.toBeNull()
+      parent.reloadFromDisk()
+      expect(parent.getShare(share.shareId)).toBeNull()
+      parent.createShare({ chatId: 'fresh', mode: 'comments', now: 2 })
+      expect(new HumanCollaborationStore(path).listShares().map((item) => item.chatId)).toEqual(['fresh'])
+      writeFileSync(path, '{torn')
+      expect(() => parent.reloadFromDisk()).toThrow('unreadable')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
   it('quiesces every ordinary People mutation while retaining the scoped migration retirement seam', () => {
     const gate = new PeopleToChannelMigrationLegacyWriteGate()
     const store = new HumanCollaborationStore(undefined, { legacyWriteGate: gate })

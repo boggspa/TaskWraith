@@ -1,3 +1,4 @@
+import type { HostCatalogueRunOrigin } from '../shared/threadCatalogueTypes'
 /**
  * Standalone Node Host domain ports. No Electron/Bridge/desktop-store imports:
  * profile state, delivery, provider registry, inventory, and auth handoff are
@@ -15,8 +16,7 @@ import {
   HOST_APPROVAL_DECIDE_DECISIONS,
   HOST_PROTOCOL_MAX_WARNING,
   HOST_QUESTION_ANSWER_DECISIONS,
-  TASKWRAITH_DESKTOP_HOST_ACTOR,
-  hostRunFailureNotice
+  TASKWRAITH_DESKTOP_HOST_ACTOR
 } from '../shared/hostProtocol'
 import {
   decodeHostWorkspaceGitReadResult,
@@ -133,6 +133,8 @@ function buildResumeFallbackPrompt(
 }
 
 export interface HostNodeDomainPortsOptions {
+  readonly hostRunOrigin?: HostCatalogueRunOrigin
+  readonly runLocator?: { find(runId: string): Promise<{ chatId: string } | null> }
   /** Canonical profile directory used only for owner-bound large-record transfer artifacts. */
   readonly profilePath?: string
   readonly store: HostProfileDomainStore
@@ -411,6 +413,13 @@ export class HostNodeDomainPorts {
   private readonly profileRecordExecutor: HostProfileRecordCommandExecutor
   private readonly authOperations = new Map<string, AuthOperation>()
   private readonly runCompletions = new Map<string, Promise<void>>()
+  private readonly runThreads = new Map<string, string>()
+
+  hasRuntimeWorkForThread(threadId: string): boolean {
+    return [...this.runThreads].some(
+      ([id, thread]) => thread === threadId && this.runCompletions.has(id)
+    )
+  }
   private readonly runAdmission: HostNodeRunAdmission
   /** Last offer set per provider that actually named runnable models. */
   private readonly lastKnownRunnableOffers = new Map<string, HostProviderOffersProjection>()
@@ -436,6 +445,8 @@ export class HostNodeDomainPorts {
       store: options.store
     })
     this.runPort = new HostNodeProfileRunPort({
+      hostRunOrigin: options.hostRunOrigin,
+      runIdsPreflighted: Boolean(options.runLocator),
       store: options.store,
       events: options.events,
       ...(options.permissionConsentAuthority
@@ -454,7 +465,6 @@ export class HostNodeDomainPorts {
       runPort: this.runPort,
       interactions: this.interactions
     })
-    this.recoverInterruptedRuns()
     this.setupExecutor = new HostSetupCommandExecutor({
       workspace: {
         register: (input) => ({ workspaceId: options.store.registerWorkspace(input).id })
@@ -1013,6 +1023,14 @@ export class HostNodeDomainPorts {
     const effectiveThread = this.effectiveThread(thread, command.arguments)
     if (!effectiveThread) return failed('standalone_configuration_mismatch')
 
+    if (this.options.runLocator) {
+      try {
+        if (await this.options.runLocator.find(command.commandId))
+          return failed('run_identity_conflict', 'This run identity is already present in history.')
+      } catch {
+        /* Derived lookup cannot withhold a fresh command. Target/receipt/admission checks remain authoritative. */
+      }
+    }
     const prompt = this.promptWithActiveGoal(
       command.target.threadId,
       command.arguments.text as string
@@ -1069,8 +1087,10 @@ export class HostNodeDomainPorts {
         )
       })
     this.runCompletions.set(command.commandId, tracked)
+    this.runThreads.set(command.commandId, command.target.threadId)
     void tracked.finally(() => {
       this.runCompletions.delete(command.commandId)
+      this.runThreads.delete(command.commandId)
       lease.release()
     })
     if (!(await this.awaitPersistedStart(command.commandId, command.target.threadId, prompt))) {
@@ -1398,48 +1418,6 @@ export class HostNodeDomainPorts {
           message.runId === runId && message.role === 'user' && message.content === prompt
       )
     )
-  }
-
-  /** A fresh profile lease cannot prove an inherited running provider child still exists. */
-  private recoverInterruptedRuns(): void {
-    const composedProviderIds = new Set(this.registry.providerIds)
-    const endedAt = new Date(this.now()).toISOString()
-    for (const thread of this.options.store.listThreadSummaries()) {
-      if (!thread.provider || !composedProviderIds.has(thread.provider)) continue
-      for (const run of thread.runs ?? []) {
-        if (run.provider !== thread.provider || run.status !== 'running') continue
-        const warningSummaries = ['Provider running state recovered after Host restart.']
-        // This path writes the run row DIRECTLY and never goes through
-        // writeFinish, so it used to skip writeFinish's transcript notice
-        // entirely: a Host restart reaped a healthy in-flight turn and the user
-        // saw a FAILED with no reason anywhere. The reason was always recorded
-        // on the row — it just had no way to reach a human. Publish the same
-        // notice writeFinish would have, so a restart explains itself.
-        const notice = hostRunFailureNotice(warningSummaries)
-        if (notice) {
-          try {
-            this.options.store.appendTranscript({
-              threadId: thread.appChatId,
-              runId: run.runId,
-              role: 'system',
-              content: notice,
-              timestamp: endedAt
-            })
-          } catch {
-            // The terminal run write below is the authority; a notice never
-            // blocks recovery, exactly as in writeFinish.
-          }
-        }
-        this.options.store.updateRun({
-          threadId: thread.appChatId,
-          runId: run.runId,
-          status: 'failed',
-          endedAt,
-          warningSummaries,
-          errorCode: 'provider_failed'
-        })
-      }
-    }
   }
 
   /** Runs whose rejected start already carries a transcript notice. */

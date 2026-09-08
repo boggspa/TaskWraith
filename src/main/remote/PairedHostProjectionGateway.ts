@@ -304,6 +304,8 @@ export class PairedHostProjectionGateway {
       case 'provider.auth.flows':
       case 'provider.auth.status':
       case 'thread.history':
+      case 'thread.catalogue':
+      case 'thread.catalogue.maintenance':
       case 'workspace.git.read':
       case 'history.since':
       case 'host.shutdown':

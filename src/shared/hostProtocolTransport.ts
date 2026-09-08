@@ -1,3 +1,12 @@
+import {
+  decodeThreadCatalogueReadQuery,
+  decodeThreadCatalogueMaintenanceQuery,
+  type ThreadCatalogueMaintenanceQuery,
+  decodeThreadCatalogueWireReply,
+  THREAD_CATALOGUE_WIRE_MAX_BYTES,
+  type ThreadCatalogueReadQuery,
+  type ThreadCatalogueWireReply
+} from './threadCatalogueProtocol'
 /**
  * Host local transport envelope (Wave 3.2).
  *
@@ -156,6 +165,8 @@ export const HOST_LOCAL_TRANSPORT_REQUEST_KINDS = [
   'provider.auth.flows',
   'provider.auth.status',
   'thread.history',
+  'thread.catalogue',
+  'thread.catalogue.maintenance',
   'workspace.git.read',
   'history.since',
   'receipt.lookup',
@@ -239,6 +250,20 @@ export type HostLocalTransportRequest =
       type: 'request'
       transportVersion: HostLocalTransportVersion
       id: string
+      kind: 'thread.catalogue'
+      params: ThreadCatalogueReadQuery
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'thread.catalogue.maintenance'
+      params: ThreadCatalogueMaintenanceQuery
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
       kind: 'workspace.git.read'
       params: HostWorkspaceGitReadParams
     }
@@ -303,6 +328,8 @@ export type HostLocalTransportSuccessResult =
   | { kind: 'provider.auth.flows'; flows: readonly HostProviderAuthFlowProjection[] }
   | { kind: 'provider.auth.status'; status: HostProviderAuthStatusProjection }
   | { kind: 'thread.history'; page: HostThreadHistoryPage }
+  | { kind: 'thread.catalogue'; reply: ThreadCatalogueWireReply }
+  | { kind: 'thread.catalogue.maintenance'; reply: ThreadCatalogueWireReply }
   | { kind: 'workspace.git.read'; result: HostWorkspaceGitReadResult }
   | { kind: 'history.since'; result: HostHistorySinceResult }
   | { kind: 'receipt.lookup'; receipt: HostCommandReceipt }
@@ -853,6 +880,14 @@ function decodeSuccessResult(
       if (!status.ok) return fail('invalid_payload')
       return { ok: true, value: { kind: 'provider.auth.status', status: status.value } }
     }
+    case 'thread.catalogue.maintenance':
+    case 'thread.catalogue': {
+      const bytes = serializedJsonByteLength(value)
+      const reply = decodeThreadCatalogueWireReply(value.reply)
+      if (!reply || bytes === null || bytes > THREAD_CATALOGUE_WIRE_MAX_BYTES)
+        return fail('invalid_payload')
+      return { ok: true, value: { kind: value.kind, reply } }
+    }
     case 'thread.history': {
       const page = decodeHostThreadHistoryPage(value.page)
       if (!page.ok) return fail('invalid_payload')
@@ -1007,6 +1042,34 @@ export function decodeHostLocalTransportClientFrame(
             id: id.value,
             kind: value.kind,
             params: params.value
+          }
+        }
+      }
+      case 'thread.catalogue.maintenance': {
+        const params = decodeThreadCatalogueMaintenanceQuery(value.params)
+        if (!params) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'thread.catalogue.maintenance',
+            params
+          }
+        }
+      }
+      case 'thread.catalogue': {
+        const params = decodeThreadCatalogueReadQuery(value.params)
+        if (!params) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'thread.catalogue',
+            params
           }
         }
       }

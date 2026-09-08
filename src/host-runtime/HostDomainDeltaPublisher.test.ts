@@ -115,6 +115,90 @@ describe('HostDomainDeltaPublisher', () => {
     expect(store.getPosition()).toEqual(before)
   })
 
+  it('uses the durable store batch only for the explicit background path', () => {
+    const real = openStore()
+    let singleCalls = 0
+    let batchCalls = 0
+    const port: HostDomainDeltaStorePort = {
+      getPosition: () => real.getPosition(),
+      append: (input) => {
+        singleCalls += 1
+        return real.append(input)
+      },
+      appendBatch: (inputs) => {
+        batchCalls += 1
+        return real.appendBatch(inputs)
+      }
+    }
+    const publisher = new HostDomainDeltaPublisher({ store: port })
+    const effects = [upsert('one'), upsert('two')]
+    const background = publisher.publishDurableBatch(effects)
+
+    expect(background).toMatchObject({
+      kind: 'published',
+      count: 2,
+      position: { generation: 1, cursor: 2 }
+    })
+    expect(batchCalls).toBe(1)
+    expect(singleCalls).toBe(0)
+
+    expect(publisher.publish([upsert('command')])).toMatchObject({
+      kind: 'published',
+      position: { generation: 1, cursor: 3 }
+    })
+    expect(singleCalls).toBe(1)
+    expect(batchCalls).toBe(1)
+  })
+
+  it('validates every background effect before invoking the store batch', () => {
+    let batchCalls = 0
+    const publisher = new HostDomainDeltaPublisher({
+      store: {
+        getPosition: () => ({ generation: 1, cursor: 0 }),
+        append: () => {
+          throw new Error('single append must not run')
+        },
+        appendBatch: () => {
+          batchCalls += 1
+          throw new Error('batch must not run')
+        }
+      }
+    })
+    const result = publisher.publishDurableBatch([
+      upsert('valid'),
+      { kind: 'remove', family: 'thread', entityId: 'invalid', payload: { body: true } }
+    ])
+
+    expect(result).toMatchObject({
+      kind: 'rejected',
+      failures: [expect.objectContaining({ index: 1 })]
+    })
+    expect(batchCalls).toBe(0)
+  })
+
+  it('reports a failed batch rollback without claiming any published effects', () => {
+    const publisher = new HostDomainDeltaPublisher({
+      store: {
+        getPosition: () => ({ generation: 1, cursor: 4 }),
+        append: () => {
+          throw new Error('single append must not run')
+        },
+        appendBatch: () => ({
+          kind: 'write-failed',
+          detail: 'injected batch fsync failure',
+          position: { generation: 1, cursor: 4 },
+          rollback: 'uncertain'
+        })
+      }
+    })
+
+    expect(publisher.publishDurableBatch([upsert('one'), upsert('two')])).toEqual({
+      kind: 'store_error',
+      detail: 'injected batch fsync failure (rollback uncertain)',
+      position: { generation: 1, cursor: 4 }
+    })
+  })
+
   it('rejects generation-reset and invalid kinds without appending', () => {
     const { store, publisher } = openPublisher()
     const result = publisher.publish([

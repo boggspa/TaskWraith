@@ -226,6 +226,8 @@ function validateHostPayload(hostRoot, label) {
     ['host-runtime', 'HostServerIdentity.js'],
     ['host-runtime', 'HostProductionCli.js'],
     ['host-node', 'HostNodeProductionServer.js'],
+    ['host-node', 'ThreadCatalogueWorkerEntry.js'],
+    ['host-node', 'ThreadCatalogueDecoderEntry.js'],
     ['host-node', 'HostNodeProductionFactory.js'],
     ['host-node', 'HostNodeDomainPorts.js'],
     ['host-node', 'HostNodeMuseResources.js'],
@@ -324,7 +326,7 @@ function seedReleaseScaleProfile(chatsPath) {
       { mode: 0o600 }
     )
   }
-  return { runRows, participantRows }
+  return { threadCount, runRows, participantRows }
 }
 
 async function runProductionRoundTrip(launcher, target) {
@@ -395,9 +397,44 @@ async function runProductionRoundTrip(launcher, target) {
       fail('production Host did not return an authenticated snapshot')
     }
     const snapshotProviders = response.frame.result.frame?.snapshot?.providers
-    const releaseScaleSnapshot = response.frame.result.frame?.snapshot
+    let releaseScaleSnapshot = response.frame.result.frame?.snapshot
     if (!Array.isArray(snapshotProviders)) {
       fail('production Host snapshot must include a providers inventory')
+    }
+    // The initial snapshot is intentionally useful before historical indexing
+    // completes. Assert the release-scale families only after explicit coverage
+    // and the corresponding projection have both arrived.
+    const coverageDeadline = Date.now() + Math.max(timeoutMs, 30_000)
+    while (Date.now() < coverageDeadline) {
+      const coverage = await hostRequest(discovery, fs.readFileSync(tokenPath, 'utf8').trim(), {
+        type: 'request',
+        transportVersion: 1,
+        id: 'history-coverage',
+        kind: 'thread.catalogue',
+        params: { method: 'list', limit: 1 }
+      })
+      if (coverage.frame?.ok !== true) fail('production Host did not report history coverage')
+      if (coverage.frame.result?.reply?.data?.coverage === 'complete') {
+        const complete = await hostRequest(discovery, fs.readFileSync(tokenPath, 'utf8').trim(), {
+          type: 'request',
+          transportVersion: 1,
+          id: 'complete-snapshot',
+          kind: 'snapshot.get',
+          params: {}
+        })
+        if (complete.frame?.ok !== true)
+          fail('production Host did not return the completed snapshot')
+        const snapshot = complete.frame.result?.frame?.snapshot
+        if (
+          snapshot?.threads?.length === releaseScale.threadCount &&
+          snapshot?.participants?.length === 2_000 &&
+          snapshot?.runs?.length > 0
+        ) {
+          releaseScaleSnapshot = snapshot
+          break
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500))
     }
     const warningCodes = Array.isArray(releaseScaleSnapshot?.warnings)
       ? releaseScaleSnapshot.warnings.map((warning) => `${warning.code}:${warning.warningId}`)
@@ -620,16 +657,37 @@ async function hostRequest(discovery, token, request) {
     const socket = createConnection(discovery.socketPath)
     let buffer = ''
     let welcome = null
+    let settled = false
     const timer = setTimeout(() => {
       socket.destroy()
-      reject(new Error('timed out waiting for production Host response'))
+      reject(
+        new Error(
+          `timed out waiting for production Host ${request.kind} ${welcome ? 'response' : 'welcome'}`
+        )
+      )
     }, timeoutMs)
     const finish = (value) => {
+      settled = true
       clearTimeout(timer)
       socket.destroy()
       resolve(value)
     }
-    socket.on('error', reject)
+    socket.on('error', (error) => {
+      settled = true
+      clearTimeout(timer)
+      reject(error)
+    })
+    socket.on('close', () => {
+      if (!settled) {
+        settled = true
+        clearTimeout(timer)
+        reject(
+          new Error(
+            `production Host connection closed before ${request.kind} ${welcome ? 'response' : 'welcome'}`
+          )
+        )
+      }
+    })
     socket.on('connect', () => {
       socket.write(
         `${JSON.stringify({

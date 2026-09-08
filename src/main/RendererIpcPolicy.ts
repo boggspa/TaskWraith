@@ -137,6 +137,8 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'get-chat',
   'get-chat-list',
   'get-chat-transcript-page',
+  'thread-catalogue:read',
+  'thread-catalogue:status',
   'get-chats',
   'get-workspace-commit-attributions',
   'unarchive-chat',

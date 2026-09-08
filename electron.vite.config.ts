@@ -47,6 +47,8 @@ export default defineConfig(({ mode }) => {
         rollupOptions: {
           input: {
             index: resolve('src/main/bootstrap.ts'),
+            threadCatalogueWorker: resolve('src/main/workers/threadCatalogueWorker.ts'),
+            threadCatalogueDecoder: resolve('src/main/workers/threadCatalogueDecoder.ts'),
             // utilityProcess entry: the 90-day external-activity scan runs
             // off the main event loop (see ExternalActivityWorkerScan.ts).
             externalActivityWorker: resolve('src/main/workers/externalActivityWorker.ts'),

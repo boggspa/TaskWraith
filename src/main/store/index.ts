@@ -1,3 +1,12 @@
+import {
+  assertPeopleDonorMutationAllowed,
+  pendingPeopleDonorMutation
+} from '../../host-shared/thread-catalogue/PeopleDonorMutationGate'
+import { preserveSettledRunSeals } from '../../shared/threadCatalogueTerminalRuns'
+import { ThreadCatalogueMirror, catalogueChatListItem } from './ThreadCatalogueMirror'
+import { projectThreadCatalogueRecord } from './ThreadCatalogueFromRecord'
+import { ThreadCatalogueSourcePublisher } from './ThreadCatalogueSourcePublisher'
+import { threadCatalogueWriteGate } from './ThreadCatalogueWriteGate'
 import { readCanonicalCatalogueChat } from './ThreadCatalogueCanonicalRead'
 import { normalizeCatalogueChatRecord } from './ThreadCatalogueNormalize'
 import { preserveContinuityRunReceipts } from '../../shared/threadContinuity'
@@ -595,6 +604,7 @@ const hostChatCompatibility = (): HostChatCompatibilityPersistence => {
 
 /** Publish one latest compatibility checkpoint and mark only that brief Host flight as shadowed. */
 function materializeHostChatCompatibility(chatId: string): boolean {
+  if (threadCatalogueWriteGate.isHeld(chatId)) return false
   const materialized = hostChatCompatibility().materialize(chatId)
   if (materialized) hostPersistShadowChatIds.add(chatId)
   return materialized
@@ -968,6 +978,7 @@ const saveCoalescer =
  * must expect chat-journal bytes to ADD to chat bytes here, not replace them.
  */
 const chatJournal = createChatJournal(chatJournalDir, { canWrite: legacyStoreCanWrite })
+let catalogueSourceWriteGuard: ((chatId: string) => void) | null = null
 /**
  * Stage 2 — sideband writability for the T4 incremental journal.
  *
@@ -987,6 +998,8 @@ function incrementalJournalSidebandWritable(): boolean {
 }
 const incrementalChatPersistence = createIncrementalChatPersistence({
   journal: createIncrementalChatJournal(incrementalChatJournalDir, {
+    beforeSourceMutation: (chatId) => catalogueSourceWriteGuard?.(chatId),
+    maintenanceScope: 'opened',
     canWrite: incrementalJournalSidebandWritable,
     // Read-path torn-tail repair stays strictly legacy-admitted: under Host
     // ownership a torn legacy-era tail must not self-heal as a side effect
@@ -1017,6 +1030,8 @@ function segmentedStoreSidebandWritable(): boolean {
   return legacyStoreCanWrite() || legacyStoreWriterGate.snapshot().state === 'host-owned'
 }
 const segmentedChatStore = createSegmentedChatStore(segmentedChatStoreDir, {
+  beforeSourceMutation: (chatId) => catalogueSourceWriteGuard?.(chatId),
+  maintenanceScope: 'opened',
   enabled: isSegmentedChatStoreEnabled,
   canWrite: segmentedStoreSidebandWritable,
   // Quarantine renames and torn-tail trims are read-path side effects; keep
@@ -1546,6 +1561,7 @@ type HistoryDeletionStep =
   | 'kimi-seat-state'
   | 'muse-seat-state'
   | 'chat-records'
+  | 'thread-catalogue'
   | 'chat-list-index'
   | 'project-membership'
 
@@ -1567,6 +1583,7 @@ const HISTORY_DELETION_STEPS: readonly HistoryDeletionStep[] = [
   'kimi-seat-state',
   'muse-seat-state',
   'chat-records',
+  'thread-catalogue',
   'chat-list-index',
   'project-membership'
 ]
@@ -4759,6 +4776,9 @@ export class AppStore {
     this.orphanSubThreadsReaped = false
     this.orphanSubThreadReapCandidates.clear()
     this.historyDeletionRunning = false
+    this.catalogueErasure = null
+    this.catalogueQuiescence = null
+    this.catalogueResume = null
     historyDeletionFailureStepsForTests.clear()
     approvalLedgerEventStore = null
     approvalLedgerEventMutationsSinceCompact = 0
@@ -5655,6 +5675,7 @@ export class AppStore {
   }
 
   static getChatList(workspaceId?: string): ChatListItem[] {
+    if (this.threadCatalogueMirror) return this.threadCatalogueMirror.list(workspaceId)
     if (!fs.existsSync(chatsDir)) return []
     const files = fs.readdirSync(chatsDir).filter((f) => f.endsWith('.json'))
     const existingIndex = chatListIndexStore.readAll()
@@ -6008,6 +6029,160 @@ export class AppStore {
   }
 
   private static orphanSubThreadsReaped = false
+  private static threadCatalogueMirror: ThreadCatalogueMirror | null = null
+  private static threadCataloguePublisher: ThreadCatalogueSourcePublisher | null = null
+
+  static installThreadCataloguePublisher(
+    writerId: string,
+    onChanged: (chatId: string) => void,
+    manageHolds = false,
+    repairSource?: (chatId: string) => Promise<string>
+  ): void {
+    this.threadCataloguePublisher = new ThreadCatalogueSourcePublisher({
+      profilePath: userDataPath,
+      writer: 'desktop',
+      writerId,
+      segmented: isSegmentedChatStoreEnabled(),
+      canWrite: incrementalJournalSidebandWritable,
+      canManageRecoveryHolds: () => manageHolds && incrementalJournalSidebandWritable(),
+      onChanged,
+      repairSource,
+      onError: (error) => console.error('[thread-catalogue] source publication failed', error)
+    })
+    catalogueSourceWriteGuard = (chatId) => {
+      threadCatalogueWriteGate.assertAvailable(chatId)
+      this.threadCataloguePublisher?.catalogue.assertRecoveryHoldAllows(chatId)
+    }
+  }
+
+  static async drainThreadCataloguePublications(chatIds?: readonly string[]): Promise<void> {
+    await this.threadCataloguePublisher?.drain(chatIds)
+  }
+  static async disposeThreadCataloguePublisher(): Promise<void> {
+    await this.threadCataloguePublisher?.dispose()
+  }
+  private static catalogueErasure:
+    | ((preparation: HistoryDeletionPreparation) => Promise<void>)
+    | null = null
+  private static catalogueResume: (() => void) | null = null
+  private static catalogueQuiescence:
+    | ((preparation: HistoryDeletionPreparation) => Promise<void>)
+    | null = null
+  static installCatalogueErasure(
+    erase: (preparation: HistoryDeletionPreparation) => Promise<void>,
+    quiesce: (preparation: HistoryDeletionPreparation) => Promise<void>,
+    resume: () => void = () => {}
+  ): void {
+    this.catalogueErasure = erase
+    this.catalogueQuiescence = quiesce
+    this.catalogueResume = resume
+  }
+
+  static getThreadCataloguePublisher(): ThreadCatalogueSourcePublisher | null {
+    return this.threadCataloguePublisher
+  }
+
+  static async quiesceForCatalogueMutation(chatId: string): Promise<void> {
+    if (legacyStoreCanWrite()) this.flushChatSave(chatId)
+    await hostChatCompatibilityPersistence?.barrier(chatId)
+    await hostThreadRecordPersistPort?.drain(chatId)
+    await this.threadCataloguePublisher?.drainChat(chatId)
+    const deadline = Date.now() + 30_000
+    while (outstandingUtilityWriteChatIds.has(chatId)) {
+      if (Date.now() >= deadline) throw new Error('History compatibility writer has not drained')
+      await new Promise<void>((resolve) => setTimeout(resolve, 10))
+    }
+  }
+
+  static pendingPeopleMigrationInventory(): Promise<void> | undefined {
+    return pendingPeopleDonorMutation(userDataPath)
+  }
+
+  static catalogueRecoveryAllowed(chatId: string): boolean {
+    return this.threadCataloguePublisher?.canRecover(chatId) ?? false
+  }
+
+  static hasPendingCatalogueWrites(chatId: string): boolean {
+    return Boolean(
+      this.threadCataloguePublisher?.hasPending(chatId) ||
+      outstandingUtilityWriteChatIds.has(chatId) ||
+      hostThreadRecordPersistPort?.pending(chatId) ||
+      hostChatCompatibilityPersistence?.hasUnconfirmed(chatId)
+    )
+  }
+
+  private static catalogueRecordWrite<T extends ChatRecord | null>(
+    chatId: string,
+    write: () => Promise<T>
+  ): Promise<T> {
+    return this.threadCataloguePublisher
+      ? this.threadCataloguePublisher.writeRecord(chatId, write)
+      : write()
+  }
+
+  static acceptCatalogueMutation(
+    projection: ReturnType<typeof projectThreadCatalogueRecord>
+  ): void {
+    const id = projection.summary.chatId
+    this.chatRecordCache.delete(id)
+    hostChatCompatibilityPersistence?.acknowledgeRevision(id, projection.revision)
+    hostPersistUnconfirmedChatIds.delete(id)
+    hostPersistRebaseByChatId.delete(id)
+    this.threadCatalogueMirror?.observe(projection)
+  }
+
+  static installThreadCatalogue(mirror: ThreadCatalogueMirror): void {
+    this.threadCatalogueMirror = mirror
+    mirror.subscribe((row, id) => {
+      if (!row) {
+        this.orphanSubThreadReapCandidates.delete(id)
+        this.openRunChatIds.delete(id)
+        return
+      }
+      if (row.recovery.unsettledRuns > 0) this.openRunChatIds.add(id)
+      else this.openRunChatIds.delete(id)
+      const parent = row.summary.parentChatId
+      if (
+        row.sourceComplete !== false &&
+        parent &&
+        isSafeChatId(parent) &&
+        !fs.existsSync(chatPathForId(chatsDir, parent))
+      )
+        this.orphanSubThreadReapCandidates.add(id)
+      else this.orphanSubThreadReapCandidates.delete(id)
+    })
+  }
+
+  static getThreadCatalogue(): ThreadCatalogueMirror | null {
+    return this.threadCatalogueMirror
+  }
+
+  static chatRecordExists(chatId: string): boolean {
+    return isSafeChatId(chatId) && fs.existsSync(chatPathForId(chatsDir, chatId))
+  }
+
+  private static catalogueSweepCandidates(
+    family: 'runs' | 'ensemble' | 'solo' | 'subthreads'
+  ): SweepFileStat[] | null {
+    if (!this.threadCatalogueMirror) return null
+    return this.threadCatalogueMirror
+      .projections()
+      .filter(({ recovery: r }) =>
+        family === 'runs'
+          ? r.unsettledRuns > 0
+          : family === 'ensemble'
+            ? r.ensembleWakeups > 0
+            : family === 'solo'
+              ? r.soloWakeups > 0
+              : r.workerEvents > 0 || r.joinPolicies > 0
+      )
+      .map(({ summary: s }) => ({
+        chatId: s.chatId,
+        mtimeMs: s.updatedAt,
+        size: s.chrome?.sourceChatSize ?? 0
+      }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+  }
   private static orphanSubThreadReapCandidates = new Set<string>()
 
   /** One-time-per-process discovery of child chats (sub-threads / side-chats /
@@ -6022,6 +6197,9 @@ export class AppStore {
    * transiently unparseable parent can never cause its children to be reaped.
    * Best-effort: any failure leaves data untouched. */
   private static ensureOrphanSubThreadsReaped(): void {
+    if (this.threadCatalogueMirror) {
+      return
+    }
     if (this.orphanSubThreadsReaped) return
     this.orphanSubThreadsReaped = true
     try {
@@ -6047,8 +6225,9 @@ export class AppStore {
           }
         },
         indexEntry: (chatId) => chatListIndex[chatId],
-        readChatRecord: (chatId) =>
-          this.readChatRecordCached(chatId, path.join(chatsDir, `${chatId}.json`)) ?? null,
+        // Unknown topology is repair debt, never a reason to decode the corpus
+        // inside an otherwise budgeted read. The catalogue supplies it later.
+        readChatRecord: () => null,
         parentChatExists: (parentChatId) => {
           try {
             return fs.existsSync(chatPathForId(chatsDir, parentChatId))
@@ -6085,6 +6264,12 @@ export class AppStore {
     chatPath: string,
     existingIndex: Record<string, ChatListItem>
   ): ChatRecord | null {
+    if (this.threadCatalogueMirror) {
+      const row = this.threadCatalogueMirror.get(chatId)
+      return row
+        ? catalogueChatListItem(row, this.threadCatalogueMirror?.sourceWitnessFor(chatId))
+        : null
+    }
     try {
       const sourceStat = fs.statSync(chatPath)
       const indexed = existingIndex[chatId]
@@ -6236,6 +6421,8 @@ export class AppStore {
    * byte-budgeted slices before reading a byte of transcript.
    */
   static listStaleRunSweepCandidates(): SweepFileStat[] {
+    const catalogued = this.catalogueSweepCandidates('runs')
+    if (catalogued) return catalogued
     const stats = this.sweepFileStatsByRecency()
     const index = this.sweepIndexOrNull()
     if (!index) return this.excludeReapCandidates(stats)
@@ -6277,6 +6464,8 @@ export class AppStore {
    * first. Index + stats only — zero parses.
    */
   static listEnsembleWakeupCandidates(): SweepFileStat[] {
+    const catalogued = this.catalogueSweepCandidates('ensemble')
+    if (catalogued) return catalogued
     const stats = this.sweepFileStatsByRecency()
     const index = this.sweepIndexOrNull()
     if (!index) return stats
@@ -6320,6 +6509,8 @@ export class AppStore {
    * first. Index + stats only — zero parses.
    */
   static listSoloWakeupCandidates(): SweepFileStat[] {
+    const catalogued = this.catalogueSweepCandidates('solo')
+    if (catalogued) return catalogued
     const stats = this.sweepFileStatsByRecency()
     const index = this.sweepIndexOrNull()
     if (!index) return this.excludeReapCandidates(stats)
@@ -6361,6 +6552,8 @@ export class AppStore {
    * first. Index + stats only — zero parses.
    */
   static listSubThreadRecoveryCandidates(): SweepFileStat[] {
+    const catalogued = this.catalogueSweepCandidates('subthreads')
+    if (catalogued) return catalogued
     const stats = this.sweepFileStatsByRecency()
     const index = this.sweepIndexOrNull()
     if (!index) return this.excludeReapCandidates(stats)
@@ -6472,6 +6665,20 @@ export class AppStore {
    * chat a parent, and would reap a parent it should have protected.
    */
   static getAbandonedReapCandidates(): { chats: ChatRecord[]; parentChatIds: Set<string> } {
+    if (this.threadCatalogueMirror) {
+      const rows = this.threadCatalogueMirror.projections()
+      const parentChatIds = new Set(
+        rows.flatMap(({ summary }) => (summary.parentChatId ? [summary.parentChatId] : []))
+      )
+      if (!this.threadCatalogueMirror.complete) return { chats: [], parentChatIds }
+      const chats = rows
+        .filter(({ summary }) => summary.messageCount === 0 && summary.runCount === 0)
+        .flatMap(({ summary }) => {
+          const chat = this.getChat(summary.chatId)
+          return chat ? [chat] : []
+        })
+      return { chats, parentChatIds }
+    }
     this.ensureOrphanSubThreadsReaped()
     const parentChatIds = new Set<string>()
     if (!fs.existsSync(chatsDir)) return { chats: [], parentChatIds }
@@ -6501,6 +6708,8 @@ export class AppStore {
   }
 
   static getChats(workspaceId?: string, options: { listShells?: boolean } = {}): ChatRecord[] {
+    if (options.listShells && this.threadCatalogueMirror)
+      return this.threadCatalogueMirror.list(workspaceId)
     this.ensureOrphanSubThreadsReaped()
     if (!fs.existsSync(chatsDir)) return []
     const files = fs.readdirSync(chatsDir).filter((f) => f.endsWith('.json'))
@@ -6701,18 +6910,20 @@ export class AppStore {
         if (deletedChatIds.has(chatId)) {
           throw new Error('This chat was deleted before its isolated worktree could be bound.')
         }
-        const persisted = await persistThreadWorktreeBindingPatch({
-          chatsDir,
-          chatId,
-          binding,
-          admitMutation: async (chat) => {
-            await this.assertHistoryMutationAllowedAsync({
-              operation: 'Thread worktree binding persistence',
-              chatIds: [chat.appChatId],
-              workspaceIds: [chat.workspaceId]
-            })
-          }
-        })
+        const persisted = await this.catalogueRecordWrite(chatId, () =>
+          persistThreadWorktreeBindingPatch({
+            chatsDir,
+            chatId,
+            binding,
+            admitMutation: async (chat) => {
+              await this.assertHistoryMutationAllowedAsync({
+                operation: 'Thread worktree binding persistence',
+                chatIds: [chat.appChatId],
+                workspaceIds: [chat.workspaceId]
+              })
+            }
+          })
+        )
         // The patcher deliberately avoids synchronous stat/index maintenance.
         // Let the normal cached read validate from disk on the next consumer.
         this.chatRecordCache.delete(chatId)
@@ -6801,7 +7012,7 @@ export class AppStore {
         if (deletedChatIds.has(chatId)) {
           throw new Error('This chat was deleted before its fan-out candidate could be recorded.')
         }
-        const persisted = await write()
+        const persisted = await this.catalogueRecordWrite(chatId, write)
         this.chatRecordCache.delete(chatId)
         return persisted
       })
@@ -6844,18 +7055,20 @@ export class AppStore {
         if (deletedChatIds.has(chatId)) {
           throw new Error('This chat was deleted before its PR watch could be updated.')
         }
-        const persisted = await persistWatchedPrPatch({
-          chatsDir,
-          chatId,
-          watchedPr,
-          admitMutation: async (chat) => {
-            await this.assertHistoryMutationAllowedAsync({
-              operation: 'Watched PR persistence',
-              chatIds: [chat.appChatId],
-              workspaceIds: [chat.workspaceId]
-            })
-          }
-        })
+        const persisted = await this.catalogueRecordWrite(chatId, () =>
+          persistWatchedPrPatch({
+            chatsDir,
+            chatId,
+            watchedPr,
+            admitMutation: async (chat) => {
+              await this.assertHistoryMutationAllowedAsync({
+                operation: 'Watched PR persistence',
+                chatIds: [chat.appChatId],
+                workspaceIds: [chat.workspaceId]
+              })
+            }
+          })
+        )
         this.chatRecordCache.delete(chatId)
         return persisted
       })
@@ -6898,18 +7111,20 @@ export class AppStore {
         if (deletedChatIds.has(chatId)) {
           throw new Error('This chat was deleted before its git workflow could be recorded.')
         }
-        const persisted = await persistChatGitWorkflowPatch({
-          chatsDir,
-          chatId,
-          gitWorkflow,
-          admitMutation: async (chat) => {
-            await this.assertHistoryMutationAllowedAsync({
-              operation: 'Git workflow marker persistence',
-              chatIds: [chat.appChatId],
-              workspaceIds: [chat.workspaceId]
-            })
-          }
-        })
+        const persisted = await this.catalogueRecordWrite(chatId, () =>
+          persistChatGitWorkflowPatch({
+            chatsDir,
+            chatId,
+            gitWorkflow,
+            admitMutation: async (chat) => {
+              await this.assertHistoryMutationAllowedAsync({
+                operation: 'Git workflow marker persistence',
+                chatIds: [chat.appChatId],
+                workspaceIds: [chat.workspaceId]
+              })
+            }
+          })
+        )
         this.chatRecordCache.delete(chatId)
         return persisted
       })
@@ -6939,39 +7154,51 @@ export class AppStore {
       this.chatComposerSelectionWriteTails.get(request.chatId) || Promise.resolve(null)
     const operation = previous
       .catch(() => null)
-      .then(async () => {
-        if (deletedChatIds.has(request.chatId)) {
-          throw new Error('This chat was deleted before its composer selection could be recorded.')
-        }
-        const current = this.getChat(request.chatId)
-        if (!current) throw new Error('Chat not found.')
-        if (this.getSettings().storeLocalChatHistory === false) {
-          const chat = applyChatComposerSelectionPatch(current, request)
-          if (chat !== current) {
+      .then(() =>
+        threadCatalogueWriteGate.admit(request.chatId, async () => {
+          if (deletedChatIds.has(request.chatId)) {
+            throw new Error(
+              'This chat was deleted before its composer selection could be recorded.'
+            )
+          }
+          const current = this.getChat(request.chatId)
+          if (!current) throw new Error('Chat not found.')
+          if (this.getSettings().storeLocalChatHistory === false) {
+            const chat = applyChatComposerSelectionPatch(current, request)
+            if (chat !== current) {
+              const cached = this.chatRecordCache.get(request.chatId)
+              if (cached) cached.record = chat
+            }
+            return { chat, changed: chat !== current }
+          }
+          await this.assertHistoryMutationAllowedAsync({
+            operation: 'Composer selection persistence',
+            chatIds: [current.appChatId],
+            workspaceIds: [current.workspaceId]
+          })
+          const publication = this.threadCataloguePublisher?.begin(request.chatId)
+          let result: Awaited<ReturnType<ChatComposerSelectionOverlayStore['persist']>>
+          try {
+            result = await chatComposerSelectionOverlayStore.persist(current, request)
+            if (publication) this.threadCataloguePublisher?.finish(publication, result.chat)
+          } catch (error) {
+            if (publication) this.threadCataloguePublisher?.fail(publication)
+            throw error
+          }
+          if (result.changed) {
             const cached = this.chatRecordCache.get(request.chatId)
-            if (cached) cached.record = chat
+            if (cached) cached.record = result.chat
+            else {
+              this.rememberChatRecord(request.chatId, {
+                mtimeMs: -1,
+                size: -1,
+                record: result.chat
+              })
+            }
           }
-          return { chat, changed: chat !== current }
-        }
-        await this.assertHistoryMutationAllowedAsync({
-          operation: 'Composer selection persistence',
-          chatIds: [current.appChatId],
-          workspaceIds: [current.workspaceId]
+          return result
         })
-        const result = await chatComposerSelectionOverlayStore.persist(current, request)
-        if (result.changed) {
-          const cached = this.chatRecordCache.get(request.chatId)
-          if (cached) cached.record = result.chat
-          else {
-            this.rememberChatRecord(request.chatId, {
-              mtimeMs: -1,
-              size: -1,
-              record: result.chat
-            })
-          }
-        }
-        return result
-      })
+      )
     this.chatComposerSelectionWriteTails.set(request.chatId, operation)
     const clearTail = (): void => {
       if (this.chatComposerSelectionWriteTails.get(request.chatId) === operation) {
@@ -7654,17 +7881,33 @@ export class AppStore {
     // LegacyStoreWriterGateClosedError — route the save through the Host
     // instead (thread.record.persist). Both branches stay synchronous for the
     // 86 existing call sites.
-    const saved = legacyStoreCanWrite()
-      ? runLegacyStoreWriteAdmission(
-          { operation: 'save-chat', pathFamily: 'chats' },
-          (writerAdmission) => this.saveChatAdmitted(titledChat, options, writerAdmission)
-        )
-      : this.saveChatThroughHost(titledChat, options)
+    const publication = this.getSettings().storeLocalChatHistory
+      ? this.threadCataloguePublisher?.begin(titledChat.appChatId)
+      : undefined
+    let saved: ChatRecord
+    try {
+      saved = legacyStoreCanWrite()
+        ? runLegacyStoreWriteAdmission(
+            { operation: 'save-chat', pathFamily: 'chats' },
+            (writerAdmission) => this.saveChatAdmitted(titledChat, options, writerAdmission)
+          )
+        : this.saveChatThroughHost(titledChat, options)
+    } catch (error) {
+      if (publication) this.threadCataloguePublisher?.fail(publication)
+      throw error
+    }
+    if (publication)
+      this.threadCataloguePublisher?.finishAfter(
+        publication,
+        saved,
+        incrementalChatPersistence.awaitDeferredDurability(saved.appChatId)
+      )
     const producerEnvelope = chatUpdateProducerEnvelopeFor(saved)
     if (producerEnvelope) attachChatUpdateProducerEnvelope(chat, producerEnvelope)
     chat.persistenceRevision = saved.persistenceRevision
     chat.updatedAt = saved.updatedAt
     observeComposerContinuationPersisted(saved.appChatId)
+    this.threadCatalogueMirror?.observe(projectThreadCatalogueRecord(saved))
     return saved
   }
 
@@ -7732,6 +7975,7 @@ export class AppStore {
     // is the live truncation hole — a windowed TranscriptPage passed as a whole
     // record would persist over the durable prefix. Fail loudly instead.
     assertAuthoritativeChatForSave(chat, previousChatForFeedback, options)
+    assertPeopleDonorMutationAllowed(userDataPath, previousChatForFeedback, chat)
     // Same main-owned-field protection as the admitted path: renderer-owned
     // records can lag main's async patchers, and a lean chat-list ensemble row
     // must never erase the stored roster.
@@ -7746,7 +7990,7 @@ export class AppStore {
     const chatWithMainOwnedFields: ChatRecord = {
       ...rendererOwnedChat,
       runs: preserveContinuityRunReceipts(
-        chat.runs || [],
+        preserveSettledRunSeals(chat.runs || [], previousChatForFeedback?.runs || []),
         previousChatForFeedback?.runs || [],
         options.authoritativeContinuityDelivery
       ),
@@ -7884,6 +8128,7 @@ export class AppStore {
     // merge below only fills missing rows when the incoming revision is STALE;
     // a current-revision page would otherwise overwrite the durable prefix.
     assertAuthoritativeChatForSave(chat, previousChatForFeedback, options)
+    assertPeopleDonorMutationAllowed(userDataPath, previousChatForFeedback, chat)
     // These fields are written only by main-owned async patchers. Renderer
     // chat records can lag those writes, so a later whole-record save must not
     // erase a durable isolated-worktree binding, an explicit PR watch, or the
@@ -7909,7 +8154,7 @@ export class AppStore {
     const chatWithMainOwnedFields: ChatRecord = {
       ...rendererOwnedChat,
       runs: preserveContinuityRunReceipts(
-        chat.runs || [],
+        preserveSettledRunSeals(chat.runs || [], previousChatForFeedback?.runs || []),
         previousChatForFeedback?.runs || [],
         options.authoritativeContinuityDelivery
       ),
@@ -8079,7 +8324,9 @@ export class AppStore {
               indexSourceStat = { mtimeMs: postStatActual.mtimeMs, size: postStatActual.size }
               // When the write was genuinely deferred, the entry already exists
               // and carries the pre-write stat — refresh it now that bytes land.
-              const settled = chatListIndexStore.readEntry(chatId)
+              const settled = this.threadCatalogueMirror
+                ? undefined
+                : chatListIndexStore.readEntry(chatId)
               if (
                 settled &&
                 (settled.sourceChatMtimeMs !== postStatActual.mtimeMs ||
@@ -8105,12 +8352,20 @@ export class AppStore {
             } catch {
               // Cache was already set optimistically; a stale mtimeMs is harmless.
             }
+            if (utilityPublication)
+              this.threadCataloguePublisher?.finish(utilityPublication, normalizedChat)
           }
 
           const enqueueUtilityWrite = utilityWriteEnqueueFor(chatId, legacyWriteReason)
+          const utilityPublication = this.threadCataloguePublisher?.begin(chatId)
           if (!enqueueUtilityWrite) {
-            writeJson(chatPath, normalizedChat)
-            settleAfterDurableWrite()
+            try {
+              writeJson(chatPath, normalizedChat)
+              settleAfterDurableWrite()
+            } catch (error) {
+              if (utilityPublication) this.threadCataloguePublisher?.fail(utilityPublication)
+              throw error
+            }
             return
           }
 
@@ -8124,6 +8379,7 @@ export class AppStore {
               revision: chatPersistenceRevision(normalizedChat)
             })
           } catch (error) {
+            if (utilityPublication) this.threadCataloguePublisher?.fail(utilityPublication)
             outstandingUtilityWriteChatIds.delete(chatId)
             throw error
           }
@@ -8133,6 +8389,7 @@ export class AppStore {
               settleAfterDurableWrite()
             })
             .catch((error) => {
+              if (utilityPublication) this.threadCataloguePublisher?.fail(utilityPublication)
               // No fallback write here on purpose — the queue has already
               // performed it synchronously in FIFO order. Writing again from
               // this callback is the racing-fallback failure its header names.
@@ -8158,8 +8415,10 @@ export class AppStore {
     // entire JSONL plus a summary file per chat (~485 ms on a large profile),
     // and it ran on every save. Under fan-out each lane arms its own flush, so
     // that cost was multiplied by the number of concurrent lanes.
-    const nextItem = this.toChatListItem(normalizedChat, indexSourceStat)
-    this.writeChatListIndexEntryIfAllowed(normalizedChat.appChatId, nextItem)
+    if (!this.threadCatalogueMirror) {
+      const nextItem = this.toChatListItem(normalizedChat, indexSourceStat)
+      this.writeChatListIndexEntryIfAllowed(normalizedChat.appChatId, nextItem)
+    }
     try {
       this.harvestMessageFeedbackReceipts(previousChatForFeedback, normalizedChat)
     } catch (e) {
@@ -8351,6 +8610,8 @@ export class AppStore {
    * outcome.
    */
   static awaitChatRecordPersisted(chatId: string): Promise<void> {
+    if (threadCatalogueWriteGate.isHeld(chatId))
+      return threadCatalogueWriteGate.wait(chatId).then(() => this.awaitChatRecordPersisted(chatId))
     const compatibility = hostChatCompatibility()
     const targetSequence = compatibility.latestSequence(chatId)
     const existing = chatRecordConflictRecoveryBarriers.get(chatId)
@@ -9129,6 +9390,8 @@ export class AppStore {
     if (historyDeletionFailureStepsForTests.has(step)) {
       throw new Error(`Injected history deletion failure at ${step}.`)
     }
+    if (step === 'thread-catalogue')
+      return this.catalogueErasure?.(this.historyDeletionPreparation(intent))
     if (step === 'scheduled-orchestration') {
       const occurrenceMutation = readScheduledOccurrenceMutationJournal()
       if (occurrenceMutation.status !== 'none') {
@@ -9775,17 +10038,24 @@ export class AppStore {
     this.historyDeletionRunning = true
     let settled: void | Promise<void>
     try {
-      settled = this.executeHistoryDeletion(intent)
+      settled = this.catalogueQuiescence
+        ? this.catalogueQuiescence(this.historyDeletionPreparation(intent)).then(() =>
+            this.executeHistoryDeletion(intent)
+          )
+        : this.executeHistoryDeletion(intent)
     } catch (error) {
       this.historyDeletionRunning = false
+      this.catalogueResume?.()
       throw error
     }
     if (settled) {
       return settled.finally(() => {
         this.historyDeletionRunning = false
+        this.catalogueResume?.()
       })
     }
     this.historyDeletionRunning = false
+    this.catalogueResume?.()
   }
 
   private static historyDeletionPreparation(
@@ -9878,17 +10148,24 @@ export class AppStore {
     this.historyDeletionRunning = true
     let settled: void | Promise<void>
     try {
-      settled = this.executeHistoryDeletion(intent)
+      settled = this.catalogueQuiescence
+        ? this.catalogueQuiescence(this.historyDeletionPreparation(intent)).then(() =>
+            this.executeHistoryDeletion(intent)
+          )
+        : this.executeHistoryDeletion(intent)
     } catch (error) {
       this.historyDeletionRunning = false
+      this.catalogueResume?.()
       throw error
     }
     if (settled) {
       return settled.finally(() => {
         this.historyDeletionRunning = false
+        this.catalogueResume?.()
       })
     }
     this.historyDeletionRunning = false
+    this.catalogueResume?.()
   }
 
   private static runHistoryDeletion(input: HistoryDeletionPrepareInput): void | Promise<void> {
@@ -9901,7 +10178,8 @@ export class AppStore {
     return legacyStoreCanWrite()
   }
 
-  static deleteChat(chatId: string, _seen: Set<string> = new Set()): void {
+  static deleteChat(chatId: string, _seen: Set<string> = new Set()): void | Promise<void> {
+    if (this.threadCatalogueMirror) return this.deleteChatViaHost(chatId)
     runLegacyStoreWriteAdmission({ operation: 'delete-chat', pathFamily: 'chats' }, () => {
       if (!isSafeChatId(chatId)) throw new Error('Chat id must be a safe chat id.')
       this.runHistoryDeletion({ kind: 'chat', rootChatId: chatId })
@@ -9920,7 +10198,8 @@ export class AppStore {
     return settled ? settled : Promise.resolve()
   }
 
-  static truncateChatHistory(chatId: string): ChatRecord | null {
+  static truncateChatHistory(chatId: string): ChatRecord | null | Promise<ChatRecord | null> {
+    if (this.threadCatalogueMirror) return this.truncateChatHistoryViaHost(chatId)
     return runLegacyStoreWriteAdmission(
       { operation: 'truncate-chat-history', pathFamily: 'chats' },
       () => {
@@ -9948,7 +10227,8 @@ export class AppStore {
       : Promise.resolve(this.getChat(chatId))
   }
 
-  static clearChats(workspaceId?: string): void {
+  static clearChats(workspaceId?: string): void | Promise<void> {
+    if (this.threadCatalogueMirror) return this.clearChatsViaHost(workspaceId)
     runLegacyStoreWriteAdmission({ operation: 'clear-chats', pathFamily: 'chats' }, () => {
       this.runHistoryDeletion(workspaceId ? { kind: 'workspace', workspaceId } : { kind: 'global' })
     })

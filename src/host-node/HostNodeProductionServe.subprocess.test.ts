@@ -116,6 +116,16 @@ describe('production Host CLI subprocess', () => {
       { cwd: process.cwd(), encoding: 'utf8' }
     )
     expect(compile.status).toBe(0)
+    const workers = spawnSync(
+      process.execPath,
+      [
+        join(process.cwd(), 'scripts', 'build-history-workers.cjs'),
+        '--outdir',
+        join(outDir, 'host-node')
+      ],
+      { cwd: process.cwd(), encoding: 'utf8' }
+    )
+    expect(workers.status, workers.stderr).toBe(0)
     const cli = join(outDir, 'host-runtime', 'cli.js')
     expect(existsSync(cli)).toBe(true)
     const args = [

@@ -100,7 +100,8 @@ function workspaceSummary(workspace: WorkspaceRecord) {
  * counts that change with it.
  */
 function inventoryRowSignature(row: TaskWraithControlInventoryRow): string {
-  if (Number.isSafeInteger(row.persistenceRevision)) return `r${row.persistenceRevision}`
+  if (Number.isSafeInteger(row.persistenceRevision))
+    return `r${row.persistenceRevision}:${(row as typeof row & { catalogueViewKey?: string }).catalogueViewKey ?? ''}`
   const messages = row.messageCount ?? row.messages?.length ?? 0
   const runs = row.runCount ?? row.runs?.length ?? 0
   return `u${row.updatedAt}:m${messages}:r${runs}`

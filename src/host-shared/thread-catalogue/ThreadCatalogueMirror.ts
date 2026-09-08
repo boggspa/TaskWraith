@@ -1,0 +1,279 @@
+import type { ThreadCatalogueProjection } from './ThreadCatalogue'
+import type { ThreadCatalogueReadQuery } from '../../shared/threadCatalogueProtocol'
+import type { ThreadCatalogueOpenResult } from '../../shared/threadCatalogueTypes'
+
+export interface ThreadCatalogueReadPort {
+  query<T = unknown>(query: ThreadCatalogueReadQuery): Promise<T>
+}
+export interface ThreadCatalogueListPage {
+  entries: Array<{ projection: ThreadCatalogueProjection; sourceWitness?: string }>
+  next: { updatedAt: number; chatId: string } | null
+  coverage: 'partial' | 'complete'
+  repairPending: string[]
+}
+interface Changes {
+  progress?: { total: number; indexed: number; failed: number }
+  reset: boolean
+  changes: Array<{ chatId: string; removed: boolean }>
+  position: { incarnation: string; sequence: number }
+}
+
+/** Main/Host display mirror. Refreshes are bounded worker requests, with no disk/body fallback. */
+export class ThreadCatalogueMirror {
+  private readonly witnesses = new Map<string, string>()
+  private readonly rows = new Map<string, ThreadCatalogueProjection>()
+  private readonly pendingLocalReads = new Set<string>()
+  private readGeneration = 0
+  private erasureGeneration = 0
+  private readonly localWriteStamps = new Map<string, number>()
+  private position: Changes['position'] | undefined
+  private timer: ReturnType<typeof setTimeout> | null = null
+  private stopped = false
+  private coverage: 'partial' | 'complete' = 'partial'
+  private error: string | null = null
+  private failures = 0
+  private readonly listeners = new Set<
+    (row: ThreadCatalogueProjection | null, chatId: string) => void
+  >()
+  private polling: Promise<void> | null = null
+  constructor(readonly port: ThreadCatalogueReadPort) {}
+
+  subscribe(listener: (row: ThreadCatalogueProjection | null, chatId: string) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  get status(): { complete: boolean; loaded: number; failed: number; error: string | null } {
+    return {
+      complete: this.complete,
+      loaded: this.rows.size,
+      failed: this.failures,
+      error: this.error
+    }
+  }
+
+  get observationEpoch(): number {
+    return this.readGeneration
+  }
+
+  get complete(): boolean {
+    return this.coverage === 'complete'
+  }
+  sourceWitnessFor(chatId: string): string | undefined {
+    return this.witnesses.get(chatId)
+  }
+  get(chatId: string): ThreadCatalogueProjection | undefined {
+    return this.rows.get(chatId)
+  }
+  projections(): readonly ThreadCatalogueProjection[] {
+    return [...this.rows.values()]
+  }
+  /** Optimistic chrome from an already-loaded writer; no historical read is initiated here. */
+  observe(projection: ThreadCatalogueProjection, witness?: string): void {
+    this.readGeneration += 1
+    this.localWriteStamps.set(projection.summary.chatId, this.readGeneration)
+    this.pendingLocalReads.add(projection.summary.chatId)
+    this.apply(projection, witness)
+  }
+
+  private apply(projection: ThreadCatalogueProjection, witness?: string): void {
+    if (witness) this.witnesses.set(projection.summary.chatId, witness)
+    else this.witnesses.delete(projection.summary.chatId)
+    this.rows.set(projection.summary.chatId, projection)
+    for (const listener of this.listeners) listener(projection, projection.summary.chatId)
+  }
+
+  private canApplyIndexed(chatId: string, startedAt: number): boolean {
+    return (this.localWriteStamps.get(chatId) ?? 0) <= startedAt
+  }
+
+  private applyIndexed(
+    projection: ThreadCatalogueProjection,
+    witness: string | undefined,
+    startedAt: number
+  ): void {
+    if (!this.canApplyIndexed(projection.summary.chatId, startedAt)) return
+    // The worker's list/summary APIs return only rows whose publication and
+    // source witness still match ThreadCatalogue.read(). A request begun after
+    // the local observation is positive current-state evidence, including a
+    // later same-revision metadata-only overlay with a different witness.
+    // Keep the write stamp: an older concurrent refresh may still resume.
+    this.pendingLocalReads.delete(projection.summary.chatId)
+    this.apply(projection, witness)
+  }
+
+  start(): void {
+    void this.poll()
+  }
+
+  private poll(): Promise<void> {
+    if (this.polling) return this.polling
+    this.polling = this.refresh()
+      .catch((error) => {
+        this.error = error instanceof Error ? error.message : 'History is unavailable'
+        this.coverage = 'partial'
+      })
+      .finally(() => {
+        this.polling = null
+        if (!this.stopped) {
+          this.timer = setTimeout(() => {
+            void this.poll()
+          }, 500)
+          this.timer.unref?.()
+        }
+      })
+    return this.polling
+  }
+
+  async refresh(): Promise<void> {
+    if (this.stopped) return
+    const generation = this.erasureGeneration
+    const confirmed = new Set<string>()
+    const valid = (): boolean => {
+      if (generation === this.erasureGeneration && !this.stopped) return true
+      this.position = undefined
+      return false
+    }
+    let changes = await this.port.query<Changes>({
+      method: 'changes',
+      ...(this.position ? { position: this.position } : {})
+    })
+    if (!valid()) return
+    if (!this.position || changes.reset) {
+      // Capture the changes cursor BEFORE listing, then replay anything that
+      // moves between pages. A live reorder cannot silently omit a thread.
+      this.position = changes.position
+      let before: ThreadCatalogueListPage['next'] = null
+      const present = new Set<string>()
+      const listingStartedAt = this.readGeneration
+      do {
+        const pageStartedAt = this.readGeneration
+        const page: ThreadCatalogueListPage = await this.port.query({
+          method: 'list',
+          limit: 100,
+          ...(before ? { before } : {})
+        })
+        if (!valid()) return
+        for (const entry of page.entries) {
+          present.add(entry.projection.summary.chatId)
+          this.applyIndexed(entry.projection, entry.sourceWitness, pageStartedAt)
+        }
+        before = page.next
+        this.coverage = page.coverage
+      } while (before)
+      // Partial indexing is not evidence of deletion. Only a complete listing
+      // or an explicit deletion event may remove an existing displayed thread.
+      if (this.coverage === 'complete')
+        for (const id of this.rows.keys())
+          if (!present.has(id) && this.canApplyIndexed(id, listingStartedAt)) this.removeIndexed(id)
+      changes = await this.port.query<Changes>({ method: 'changes', position: this.position })
+      if (!valid()) return
+    }
+    if (changes.reset) {
+      this.position = undefined
+      return
+    }
+    for (const change of changes.changes) {
+      if (change.removed) {
+        if (this.rows.has(change.chatId) && !confirmed.has(change.chatId)) {
+          confirmed.add(change.chatId)
+          if (!(await this.confirmIndexedState(change.chatId, valid))) return
+        }
+      } else {
+        const summaryStartedAt = this.readGeneration
+        const entry = await this.port.query<{
+          projection: ThreadCatalogueProjection
+          sourceWitness: string
+        } | null>({
+          method: 'summary',
+          chatId: change.chatId
+        })
+        if (!valid()) return
+        if (entry) this.applyIndexed(entry.projection, entry.sourceWitness, summaryStartedAt)
+      }
+    }
+    // Local writes can precede the first changes cursor. Confirm a locally
+    // observed row once even if the first partial listing omitted it. This is
+    // pending read work, never a witness/sequence hold on later authority.
+    for (const chatId of [...this.pendingLocalReads]) {
+      // A local write during confirmation stays queued for the next poll.
+      if (confirmed.has(chatId)) continue
+      confirmed.add(chatId)
+      if (!(await this.confirmIndexedState(chatId, valid))) return
+    }
+    this.error = null
+    this.failures = changes.progress?.failed ?? 0
+    this.position = changes.position
+    if (this.coverage === 'partial') {
+      const page = await this.port.query<ThreadCatalogueListPage>({ method: 'list', limit: 1 })
+      if (!valid()) return
+      this.coverage = page.coverage
+    }
+  }
+
+  forget(chatId: string): void {
+    this.readGeneration += 1
+    this.erasureGeneration += 1
+    this.localWriteStamps.delete(chatId)
+    this.coverage = 'partial'
+    this.position = undefined
+    this.pendingLocalReads.delete(chatId)
+    this.remove(chatId)
+  }
+  forgetAll(): void {
+    this.erasureGeneration += 1
+    this.localWriteStamps.clear()
+    this.coverage = 'partial'
+    this.readGeneration += 1
+    this.position = undefined
+    this.pendingLocalReads.clear()
+    for (const id of this.rows.keys()) this.remove(id)
+  }
+
+  private async confirmIndexedState(chatId: string, valid: () => boolean): Promise<boolean> {
+    let opened: ThreadCatalogueOpenResult | null = null
+    const startedAt = this.readGeneration
+    try {
+      // Removed changes are historical events. One metadata confirmation tells
+      // absence from a recreated source without consulting transcript pages.
+      opened = await this.port.query<ThreadCatalogueOpenResult | null>({
+        method: 'open',
+        chatId,
+        mode: 'metadata'
+      })
+      if (valid() && this.canApplyIndexed(chatId, startedAt)) {
+        // A metadata request can join a record/page import. Its unpublished read
+        // snapshot is not current indexed authority; leave the cursor for retry.
+        if (opened?.entry.snapshot) throw new Error('History changed during indexing')
+        if (opened)
+          this.applyIndexed(opened.entry.projection, opened.entry.sourceWitness, startedAt)
+        else this.removeIndexed(chatId)
+      }
+    } finally {
+      if (opened) await this.port.query({ method: 'release', leaseId: opened.leaseId })
+    }
+    return valid()
+  }
+
+  private removeIndexed(chatId: string): void {
+    this.pendingLocalReads.delete(chatId)
+    this.remove(chatId)
+  }
+
+  private remove(chatId: string): void {
+    this.rows.delete(chatId)
+    this.witnesses.delete(chatId)
+    for (const listener of this.listeners) listener(null, chatId)
+  }
+
+  async dispose(): Promise<void> {
+    this.stopped = true
+    if (this.timer) clearTimeout(this.timer)
+    await this.polling
+    this.listeners.clear()
+    this.rows.clear()
+    this.witnesses.clear()
+    this.pendingLocalReads.clear()
+    this.localWriteStamps.clear()
+  }
+}

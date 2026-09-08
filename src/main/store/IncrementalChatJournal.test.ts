@@ -169,6 +169,41 @@ describe('IncrementalChatJournal', () => {
       expect(deferred.stats().drainedDeferredFsyncs).toBe(1)
     })
 
+    it('acknowledges only fsyncs issued before the async durability barrier', async () => {
+      const { journal: deferred, captured } = deferredJournal()
+      const before = chat()
+      const first = advance(before, 'first')
+      deferred.initialize('chat-1', before)
+      deferred.append(deriveChatRecordMutation(before, first), { durability: 'deferred' })
+      let settled = false
+      const barrier = deferred.awaitDeferredDurability!('chat-1').then(() => {
+        settled = true
+      })
+      const second = advance(first, 'second')
+      deferred.append(deriveChatRecordMutation(first, second), { durability: 'deferred' })
+      await Promise.resolve()
+      expect(settled).toBe(false)
+      expect(deferred.stats().drainedDeferredFsyncs).toBe(0)
+      captured[0].done(null)
+      await barrier
+      expect(settled).toBe(true)
+      captured[1].done(null)
+    })
+
+    it('rejects an async durability barrier when its fsync fails', async () => {
+      const { journal: deferred, captured } = deferredJournal()
+      const before = chat()
+      deferred.initialize('chat-1', before)
+      deferred.append(deriveChatRecordMutation(before, advance(before, 'update')), {
+        durability: 'deferred'
+      })
+      const barrier = deferred.awaitDeferredDurability!('chat-1')
+      const assertion = expect(barrier).rejects.toThrow('flush failed')
+      captured[0].done(new Error('flush failed'))
+      await assertion
+      await expect(deferred.awaitDeferredDurability!('chat-1')).rejects.toThrow('flush failed')
+    })
+
     it('escalates the next append to a synchronous fsync after a deferred failure', () => {
       const { journal: deferred, captured } = deferredJournal()
       const before = chat()
@@ -363,6 +398,21 @@ describe('IncrementalChatJournal', () => {
     expect(journal.checkpointIdle()).toBe(1)
     expect(fs.existsSync(path.join(baseDir, 'chat-1.mutations.jsonl'))).toBe(false)
     expect(journal.replay('chat-1').record).toEqual(after)
+  })
+
+  it('does not discover or decode cold historical journals in main maintenance mode', () => {
+    const first = chat()
+    journal.initialize('chat-1', first)
+    journal.append(deriveChatRecordMutation(first, advance(first, 'unopened tail')))
+    const cold = createIncrementalChatJournal(baseDir, {
+      maintenanceScope: 'opened',
+      now: () => nowMs + 60_000
+    })
+    const before = fs.readFileSync(path.join(baseDir, 'chat-1.mutations.jsonl'), 'utf8')
+    expect(cold.checkpointIdle()).toBe(0)
+    expect(cold.checkpointAll()).toBe(0)
+    expect(cold.stats().replayedBatches).toBe(0)
+    expect(fs.readFileSync(path.join(baseDir, 'chat-1.mutations.jsonl'), 'utf8')).toBe(before)
   })
 
   it('forces a bounded checkpoint during continuously busy mutation traffic', () => {

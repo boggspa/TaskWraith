@@ -11,7 +11,8 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, afterEach, expect, it, vi } from 'vitest'
+import { spawnSync } from 'node:child_process'
 
 import { HostProjectionClient } from '../host-client/HostProjectionClient'
 import {
@@ -27,6 +28,40 @@ import {
 } from '../shared/taskWraithHostPaths.node'
 
 import { createHostNodeProductionServer } from './HostNodeProductionFactory'
+
+const historyWorkers = vi.hoisted(() => ({ directory: '' }))
+vi.mock('./ThreadCatalogueHostClient', async () => {
+  const { Worker } = await import('node:worker_threads')
+  const { join } = await import('node:path')
+  const { ThreadCatalogueClient } =
+    await import('../host-shared/thread-catalogue/ThreadCatalogueClient')
+  return {
+    createHostThreadCatalogue: (profilePath: string, writerId: string) => {
+      const createPort = () =>
+        new Worker(join(historyWorkers.directory, 'ThreadCatalogueWorkerEntry.js'))
+      return new ThreadCatalogueClient(createPort(), {
+        restart: createPort,
+        reader: { profilePath, runtimeInstanceId: writerId, segmented: false },
+        decoderPath: join(historyWorkers.directory, 'ThreadCatalogueDecoderEntry.js'),
+        owner: { writer: 'host', writerId }
+      })
+    }
+  }
+})
+beforeAll(() => {
+  historyWorkers.directory = mkdtempSync(join(tmpdir(), 'host-factory-workers-'))
+  const result = spawnSync(
+    process.execPath,
+    [
+      join(process.cwd(), 'scripts/build-history-workers.cjs'),
+      '--outdir',
+      historyWorkers.directory
+    ],
+    { encoding: 'utf8' }
+  )
+  expect(result.status, result.stderr).toBe(0)
+})
+afterAll(() => rmSync(historyWorkers.directory, { recursive: true, force: true }))
 
 const paths: string[] = []
 afterEach(() => {

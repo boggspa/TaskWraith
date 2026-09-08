@@ -93,6 +93,9 @@ export interface IncrementalChatAppendOptions {
 }
 
 export interface IncrementalChatJournalOptions {
+  beforeSourceMutation?: (chatId: string) => void
+  /** Main's maintenance timers may touch only journals already opened by actual work. */
+  maintenanceScope?: 'opened' | 'all'
   /** Dynamic authority gate; false is strictly replay-only. */
   canWrite?: () => boolean
   /**
@@ -128,6 +131,8 @@ export interface IncrementalChatJournal {
   checkpointAll(reason?: IncrementalChatCheckpointReason): number
   /** Synchronously fsync every journal file with an unsettled deferred flush. */
   drainDeferredDurability(): number
+  /** Await only already-issued fsyncs; never force a compatibility materialization. */
+  awaitDeferredDurability?(chatId: string): Promise<void>
   delete(chatId: string): void
   purge(chatId: string): void
   clear(): void
@@ -292,9 +297,11 @@ export function createIncrementalChatJournal(
   interface PendingDeferredFsync {
     fd: number
     settled: boolean
+    waiters: Array<(error?: NodeJS.ErrnoException | null) => void>
   }
   const pendingDeferredByPath = new Map<string, Set<PendingDeferredFsync>>()
   const fsyncEscalatedChatIds = new Set<string>()
+  const deferredFailureByChat = new Map<string, NodeJS.ErrnoException>()
   let pendingDeferredCount = 0
   if (canWrite()) fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
 
@@ -380,7 +387,7 @@ export function createIncrementalChatJournal(
       entries = new Set()
       pendingDeferredByPath.set(filePath, entries)
     }
-    const entry: PendingDeferredFsync = { fd, settled: false }
+    const entry: PendingDeferredFsync = { fd, settled: false, waiters: [] }
     try {
       fs.writeSync(fd, line)
       entries.add(entry)
@@ -391,6 +398,7 @@ export function createIncrementalChatJournal(
           entry.settled = true
           entries!.delete(entry)
           pendingDeferredCount -= 1
+          for (const waiter of entry.waiters.splice(0)) waiter(error)
         }
         try {
           fs.closeSync(fd)
@@ -398,6 +406,7 @@ export function createIncrementalChatJournal(
           /* already closed handles are the only expected failure here */
         }
         if (!wasSettled && error) {
+          deferredFailureByChat.set(chatId, error)
           deferredFsyncFailures += 1
           fsyncEscalatedChatIds.add(chatId)
           console.error(`[incremental-chat] deferred journal fsync failed for ${chatId}`, error)
@@ -408,6 +417,8 @@ export function createIncrementalChatJournal(
       if (!entry.settled && entries.delete(entry)) pendingDeferredCount -= 1
       try {
         fs.fsyncSync(fd)
+        entry.settled = true
+        for (const waiter of entry.waiters.splice(0)) waiter(null)
       } finally {
         fs.closeSync(fd)
       }
@@ -419,9 +430,15 @@ export function createIncrementalChatJournal(
   const drainDeferredDurability = (): number => {
     assertWritable()
     let drained = 0
-    for (const [filePath, entries] of pendingDeferredByPath) {
+    const paths = new Set([
+      ...pendingDeferredByPath.keys(),
+      ...[...deferredFailureByChat.keys()].map(journalPath)
+    ])
+    for (const filePath of paths) {
+      const entries = pendingDeferredByPath.get(filePath) ?? new Set<PendingDeferredFsync>()
+      const chatId = path.basename(filePath, '.mutations.jsonl')
       const unsettled = [...entries].filter((entry) => !entry.settled)
-      if (unsettled.length === 0) continue
+      if (unsettled.length === 0 && !deferredFailureByChat.has(chatId)) continue
       try {
         // 'r+' rather than 'r': Windows FlushFileBuffers requires write access,
         // so fsync on a read-only handle fails with EPERM. That error landed in
@@ -437,15 +454,46 @@ export function createIncrementalChatJournal(
         // The file is gone (chat deleted/purged mid-flight); nothing to flush.
         continue
       }
+      deferredFailureByChat.delete(chatId)
       for (const entry of unsettled) {
         entry.settled = true
         entries.delete(entry)
         pendingDeferredCount -= 1
         drained += 1
+        for (const waiter of entry.waiters.splice(0)) waiter(null)
       }
     }
     drainedDeferredFsyncs += drained
     return drained
+  }
+
+  const awaitDeferredDurability = async (chatId: string): Promise<void> => {
+    assertChatId(chatId)
+    const failure = deferredFailureByChat.get(chatId)
+    if (failure) throw failure
+    const entries = [...(pendingDeferredByPath.get(journalPath(chatId)) ?? [])].filter(
+      (entry) => !entry.settled
+    )
+    await Promise.all(
+      entries.map(
+        (entry) =>
+          new Promise<void>((resolve, reject) => {
+            entry.waiters.push((error) => (error ? reject(error) : resolve()))
+          })
+      )
+    )
+  }
+
+  const acknowledgeJournalBarrier = (chatId: string): void => {
+    deferredFailureByChat.delete(chatId)
+    const entries = pendingDeferredByPath.get(journalPath(chatId))
+    for (const entry of entries ?? []) {
+      if (entry.settled) continue
+      entry.settled = true
+      pendingDeferredCount -= 1
+      for (const waiter of entry.waiters.splice(0)) waiter(null)
+    }
+    pendingDeferredByPath.delete(journalPath(chatId))
   }
 
   const readCheckpoint = (chatId: string): IncrementalChatCheckpoint | null => {
@@ -515,6 +563,7 @@ export function createIncrementalChatJournal(
 
   const recoverTornTail = (chatId: string, parsed: ParsedJournal): void => {
     if (!parsed.torn) return
+    options.beforeSourceMutation?.(chatId)
     if (parsed.validContent) atomicWrite(journalPath(chatId), parsed.validContent)
     else {
       try {
@@ -585,6 +634,7 @@ export function createIncrementalChatJournal(
   }
 
   const initialize = (chatId: string, record: ChatRecord): void => {
+    options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
     if (record.appChatId !== chatId) throw new Error('Checkpoint chat identity mismatch')
@@ -720,6 +770,7 @@ export function createIncrementalChatJournal(
   }
 
   const checkpoint = (chatId: string, reason: IncrementalChatCheckpointReason): boolean => {
+    options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
     const state = loadState(chatId)
@@ -746,6 +797,7 @@ export function createIncrementalChatJournal(
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
     state.headRevision = replayed.revision
+    acknowledgeJournalBarrier(chatId)
     state.journalEntries = 0
     state.journalBytes = 0
     state.dirtySinceMs = null
@@ -754,6 +806,7 @@ export function createIncrementalChatJournal(
   }
 
   const replaceAuthoritativeCheckpoint = (chatId: string, record: ChatRecord): void => {
+    options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
     if (record.appChatId !== chatId) throw new Error('Checkpoint chat identity mismatch')
@@ -783,6 +836,7 @@ export function createIncrementalChatJournal(
     }
     state.headRevision = revision
     state.journalEntries = 0
+    acknowledgeJournalBarrier(chatId)
     state.journalBytes = 0
     state.dirtySinceMs = null
     state.lastAppendAtMs = null
@@ -792,6 +846,7 @@ export function createIncrementalChatJournal(
     batch: ChatRecordMutationBatch,
     appendOptions?: IncrementalChatAppendOptions
   ): void => {
+    options.beforeSourceMutation?.(batch.chatId)
     assertWritable()
     assertChatId(batch.chatId)
     if (!validMutationBatch(batch, batch.chatId)) throw new Error('Invalid chat mutation batch')
@@ -820,6 +875,7 @@ export function createIncrementalChatJournal(
     const bytes = deferred
       ? appendLineDeferred(journalPath(batch.chatId), line, batch.chatId)
       : appendLine(journalPath(batch.chatId), line)
+    if (!deferred) acknowledgeJournalBarrier(batch.chatId)
     if (deferred) deferredAppends += 1
     appends += 1
     mutationBytesWritten += bytes
@@ -840,6 +896,7 @@ export function createIncrementalChatJournal(
 
   const knownChatIds = (): Set<string> => {
     const ids = new Set(states.keys())
+    if (options.maintenanceScope === 'opened') return ids
     let entries: string[] = []
     try {
       entries = fs.readdirSync(baseDir)
@@ -908,6 +965,7 @@ export function createIncrementalChatJournal(
   }
 
   const deleteChat = (chatId: string): void => {
+    options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
     atomicWrite(tombstonePath(chatId), '')
@@ -930,6 +988,7 @@ export function createIncrementalChatJournal(
   }
 
   const purge = (chatId: string): void => {
+    options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
     for (const filePath of [journalPath(chatId), checkpointPath(chatId), tombstonePath(chatId)]) {
@@ -989,6 +1048,7 @@ export function createIncrementalChatJournal(
     checkpointIdle,
     checkpointAll,
     drainDeferredDurability,
+    awaitDeferredDurability,
     delete: deleteChat,
     purge,
     clear,

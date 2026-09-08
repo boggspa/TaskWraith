@@ -60,6 +60,7 @@ export interface IncrementalChatPersistence {
   purge(chatId: string): void
   clear(): void
   stats(): IncrementalChatPersistenceStats
+  awaitDeferredDurability(chatId: string): Promise<void>
 }
 
 export interface IncrementalChatPersistenceOptions {
@@ -355,6 +356,11 @@ export function createIncrementalChatPersistence(
     persist,
     verify,
     replay: (chatId) => journal.replay(chatId),
+    awaitDeferredDurability: (chatId) => {
+      if (!journal.awaitDeferredDurability)
+        return Promise.reject(new Error('Journal durability acknowledgement unavailable'))
+      return journal.awaitDeferredDurability(chatId)
+    },
     pendingReplayState: (chatId) => journal.pendingReplayState(chatId),
     replaceAuthoritative,
     checkpointIdle,

@@ -226,6 +226,7 @@ export interface HostProductionBootstrapOptions {
   readonly setup?: HostProductionSetupAdapterOptions
   /** Complete canonical history ports; omitted means history remains unavailable. */
   readonly history?: Omit<HostProductionHistoryAdapterOptions, 'getPosition'>
+  readonly threadCatalogueProvider?: HostMainCompositionInput['threadCatalogueProvider']
   /** Extra durable-state flush performed after the Host's own flush. */
   readonly onShutdown?: () => void | Promise<void>
   /** Optional diagnostic logger. */
@@ -572,6 +573,9 @@ export function createHostProductionBootstrap(
     authorityEvaluator,
     healthProvider,
     threadOffersProvider,
+    ...(options.threadCatalogueProvider
+      ? { threadCatalogueProvider: options.threadCatalogueProvider }
+      : {}),
     ...(setupAdapter
       ? {
           setupExecutor: setupAdapter.setupExecutor,

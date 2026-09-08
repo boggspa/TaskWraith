@@ -1,3 +1,4 @@
+import { DeferredTranscriptMessage } from './DeferredTranscriptMessage'
 import {
   Fragment,
   memo,
@@ -5528,7 +5529,9 @@ export const TranscriptPanel = memo(
                         ariaTargetLabel={`${superGroup.size} collapsed transcript steps`}
                       />
                     ) : null}
-                    {isSuperLead && !superGroupExpanded ? null : isRoundHeader ? (
+                    {isSuperLead && !superGroupExpanded ? null : msg.metadata?.kind === 'catalogueDeferredMessage' ? (
+                  <DeferredTranscriptMessage message={msg} chatId={currentChat?.appChatId ?? ''} />
+                ) : isRoundHeader ? (
                   <EnsembleRoundCardHeader
                     key={msg.id}
                     message={msg}

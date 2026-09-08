@@ -28,12 +28,15 @@ import {
   appendFileSync,
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
+  ftruncateSync,
   mkdirSync,
   openSync,
   readFileSync,
   renameSync,
   unlinkSync,
+  writeSync,
   writeFileSync
 } from 'node:fs'
 import { join } from 'node:path'
@@ -181,6 +184,25 @@ export type HostDeltaAppendResult =
       position: HostCursorPosition
     }
 
+export type HostDeltaAppendBatchResult =
+  | {
+      kind: 'appended'
+      results: Array<Extract<HostDeltaAppendResult, { kind: 'appended' }>>
+      position: HostCursorPosition
+    }
+  | {
+      kind: 'rejected'
+      failedAtIndex: number
+      result: Extract<HostDeltaAppendResult, { kind: 'rejected' }>
+      position: HostCursorPosition
+    }
+  | {
+      kind: 'write-failed'
+      detail: string
+      position: HostCursorPosition
+      rollback: 'proven' | 'uncertain'
+    }
+
 /**
  * Post-commit notification emitted only after an append is durable in the
  * journal. Consumers receive clones and cannot mutate the store's retained
@@ -225,6 +247,10 @@ export interface HostDeltaStoreOptions {
   initialGeneration?: HostGeneration
   now?: () => string
   log?: (line: string) => void
+  /** Fault seams for the background batch journal only. */
+  batchWrite?: (descriptor: number, bytes: Uint8Array, offset: number, length: number) => number
+  batchFsync?: (descriptor: number) => void
+  batchTruncate?: (descriptor: number, length: number) => void
 }
 
 interface CheckpointDocument {
@@ -257,6 +283,9 @@ export class HostDeltaStore {
   private readonly initialGeneration: HostGeneration
   private readonly now: () => string
   private readonly log: (line: string) => void
+  private readonly batchWrite: NonNullable<HostDeltaStoreOptions['batchWrite']>
+  private readonly batchFsync: NonNullable<HostDeltaStoreOptions['batchFsync']>
+  private readonly batchTruncate: NonNullable<HostDeltaStoreOptions['batchTruncate']>
 
   private generation: HostGeneration = 1
   private cursor: HostCursor = 0
@@ -268,6 +297,11 @@ export class HostDeltaStore {
   private recoveryState: HostDeltaRecoveryState = 'clean'
   private recoveryWarnings: string[] = []
   private readonly appendListeners = new Set<HostDeltaAppendListener>()
+  private readonly appendNotificationQueue: Array<
+    Extract<HostDeltaAppendResult, { kind: 'appended' }>
+  > = []
+  private notifyingAppends = false
+  private appendAuthorityBlocked = false
 
   constructor(options: HostDeltaStoreOptions) {
     if (!options.dataDir || typeof options.dataDir !== 'string') {
@@ -285,11 +319,20 @@ export class HostDeltaStore {
     this.initialGeneration = Math.max(1, Math.floor(options.initialGeneration ?? 1))
     this.now = options.now ?? (() => new Date().toISOString())
     this.log = options.log ?? (() => {})
+    this.batchWrite =
+      options.batchWrite ??
+      ((descriptor, bytes, offset, length) => writeSync(descriptor, bytes, offset, length, null))
+    this.batchFsync = options.batchFsync ?? fsyncSync
+    this.batchTruncate = options.batchTruncate ?? ftruncateSync
     this.reopen()
   }
 
   /** Re-read checkpoint + journal from disk. */
   reopen(): void {
+    const preserveBlockedAuthority = this.appendAuthorityBlocked
+    this.appendAuthorityBlocked = true
+    this.appendNotificationQueue.length = 0
+    this.notifyingAppends = false
     this.generation = this.initialGeneration
     this.cursor = 0
     this.lowestRetainedCursor = 0
@@ -328,6 +371,7 @@ export class HostDeltaStore {
         'checkpoint unreadable; rebuilt from journal when present'
       )
     }
+    this.appendAuthorityBlocked = preserveBlockedAuthority
   }
 
   getPosition(): HostCursorPosition {
@@ -379,6 +423,7 @@ export class HostDeltaStore {
    * generation-reset kind bumps generation and starts cursor at 1 for that envelope.
    */
   append(input: HostDeltaAppendInput): HostDeltaAppendResult {
+    if (this.appendAuthorityBlocked) throw new Error('Host delta append authority is blocked')
     const kind = input.kind
     if (
       kind !== 'upsert' &&
@@ -480,6 +525,135 @@ export class HostDeltaStore {
   }
 
   /**
+   * Background projection batch. Every envelope is validated before the first
+   * byte is written; the complete JSONL batch is fsynced once before any memory
+   * state or listener can observe it. Commands continue to use append().
+   */
+  appendBatch(inputs: readonly HostDeltaAppendInput[]): HostDeltaAppendBatchResult {
+    if (this.appendAuthorityBlocked) throw new Error('Host delta append authority is blocked')
+    const initial = this.getPosition()
+    if (!Array.isArray(inputs)) {
+      const result: Extract<HostDeltaAppendResult, { kind: 'rejected' }> = {
+        kind: 'rejected',
+        reason: 'invalid_envelope',
+        detail: 'batch must be an array',
+        position: initial
+      }
+      return { kind: 'rejected', failedAtIndex: 0, result, position: initial }
+    }
+    const prepared: Array<{
+      record: HostDeltaStoredRecord
+      result: Extract<HostDeltaAppendResult, { kind: 'appended' }>
+    }> = []
+    let cursor = this.cursor
+    for (let index = 0; index < inputs.length; index += 1) {
+      const input = inputs[index]!
+      const kind = input.kind
+      if (kind !== 'upsert' && kind !== 'remove' && kind !== 'tombstone') {
+        const result: Extract<HostDeltaAppendResult, { kind: 'rejected' }> = {
+          kind: 'rejected',
+          reason: 'invalid_envelope',
+          detail: 'batch kind must be upsert, remove, or tombstone',
+          position: initial
+        }
+        return { kind: 'rejected', failedAtIndex: index, result, position: initial }
+      }
+      let payload = input.payload
+      if (input.payload !== undefined) {
+        const checked = prepareHostDeltaPayload(input.payload)
+        if (!checked.ok) {
+          const result: Extract<HostDeltaAppendResult, { kind: 'rejected' }> = {
+            kind: 'rejected',
+            reason: 'forbidden_payload',
+            code: checked.code,
+            detail: checked.detail,
+            position: initial
+          }
+          return { kind: 'rejected', failedAtIndex: index, result, position: initial }
+        }
+        payload = checked.payload
+      }
+      const nextCursor = cursor + 1
+      const envelope = buildEnvelope({
+        generation: this.generation,
+        cursor: nextCursor,
+        previousCursor: cursor,
+        kind,
+        family: input.family,
+        entityId: input.entityId,
+        payload,
+        tombstone: input.tombstone ?? kind === 'tombstone',
+        at: input.at ?? this.now()
+      })
+      const validation = validateEnvelope(envelope)
+      if (!validation.ok) {
+        const result: Extract<HostDeltaAppendResult, { kind: 'rejected' }> = {
+          kind: 'rejected',
+          reason: 'invalid_envelope',
+          detail: validation.error,
+          position: initial
+        }
+        return { kind: 'rejected', failedAtIndex: index, result, position: initial }
+      }
+      const record: HostDeltaStoredRecord = {
+        schemaVersion: HOST_DELTA_STORE_SCHEMA_VERSION,
+        envelope,
+        contentFingerprint: fingerprintEnvelope(envelope),
+        retainedBytes: estimateBytes(envelope)
+      }
+      prepared.push({
+        record,
+        result: {
+          kind: 'appended',
+          record: cloneRecord(record),
+          position: { generation: this.generation, cursor: nextCursor }
+        }
+      })
+      cursor = nextCursor
+    }
+    if (prepared.length === 0) return { kind: 'appended', results: [], position: initial }
+
+    const write = this.appendJournalBatch(prepared.map(({ record }) => ({ op: 'append', record })))
+    if (!write.ok) {
+      if (!write.rolledBack) this.appendAuthorityBlocked = true
+      return {
+        kind: 'write-failed',
+        detail: write.detail,
+        position: initial,
+        rollback: write.rolledBack ? 'proven' : 'uncertain'
+      }
+    }
+    for (const { record } of prepared) {
+      this.indexRecord(record, { recomputeBytes: false })
+      this.cursor = record.envelope.cursor
+      if (this.recordsByCursor.size === 1) this.lowestRetainedCursor = record.envelope.cursor
+    }
+    try {
+      this.maybeCompact()
+    } catch (error) {
+      // The batch journal fsync is already the commit boundary. Compaction is a
+      // retention optimization and cannot retroactively make these records
+      // uncommitted; leave the journal count due so the next append retries it.
+      try {
+        this.log(
+          `[HostDeltaStore] committed batch compaction deferred: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      } catch {
+        // Diagnostics cannot overturn a batch whose journal fsync succeeded.
+      }
+    }
+    const position = this.getPosition()
+    this.notifyAppends(prepared.map(({ result }) => result))
+    return {
+      kind: 'appended',
+      results: prepared.map(({ result }) => result),
+      position
+    }
+  }
+
+  /**
    * Durable generation discontinuity recorded as a generation-reset delta.
    * Clears retained deltas for the previous generation (they cannot be applied
    * across the fence) and starts a fresh cursor chain at 1.
@@ -488,6 +662,7 @@ export class HostDeltaStore {
     reason?: string,
     family: HostDeltaFamily = 'snapshot-meta'
   ): HostDeltaAppendResult {
+    if (this.appendAuthorityBlocked) throw new Error('Host delta append authority is blocked')
     return this.appendGenerationReset({
       kind: 'generation-reset',
       family,
@@ -600,6 +775,7 @@ export class HostDeltaStore {
 
   /** Force compaction enforcing maxRecords / maxBytes. */
   compact(): void {
+    if (this.appendAuthorityBlocked) throw new Error('Host delta append authority is blocked')
     this.writeCheckpointAndResetJournal()
   }
 
@@ -692,15 +868,36 @@ export class HostDeltaStore {
   }
 
   private notifyAppend(result: Extract<HostDeltaAppendResult, { kind: 'appended' }>): void {
-    for (const listener of this.appendListeners) {
-      try {
-        listener({
-          record: cloneRecord(result.record),
-          position: { ...result.position }
-        })
-      } catch (error) {
-        this.log(`[host-delta-store] append listener failed: ${String(error)}`)
+    this.notifyAppends([result])
+  }
+
+  private notifyAppends(
+    results: readonly Extract<HostDeltaAppendResult, { kind: 'appended' }>[]
+  ): void {
+    this.appendNotificationQueue.push(...results)
+    if (this.notifyingAppends) return
+    this.notifyingAppends = true
+    try {
+      for (;;) {
+        const result = this.appendNotificationQueue.shift()
+        if (!result) break
+        for (const listener of this.appendListeners) {
+          try {
+            listener({
+              record: cloneRecord(result.record),
+              position: { ...result.position }
+            })
+          } catch (error) {
+            try {
+              this.log(`[host-delta-store] append listener failed: ${String(error)}`)
+            } catch {
+              // Diagnostics cannot interrupt delivery after durable commit.
+            }
+          }
+        }
       }
+    } finally {
+      this.notifyingAppends = false
     }
   }
 
@@ -855,22 +1052,19 @@ export class HostDeltaStore {
       nextMap.set(cursor, record)
       nextBytes += record.retainedBytes
     }
-    this.recordsByCursor = nextMap
-    this.orderedCursors = retained
-    this.retainedBytes = nextBytes
-    this.recomputeLowest()
-
     // After compaction, if lowest retained is above 1 and clients may be behind,
     // since() will correctly return retention_gap.
+
+    const nextLowestRetainedCursor = retained[0] ?? 0
 
     const doc: CheckpointDocument = {
       schemaVersion: HOST_DELTA_STORE_SCHEMA_VERSION,
       updatedAt: this.now(),
       generation: this.generation,
       cursor: this.cursor,
-      lowestRetainedCursor: this.lowestRetainedCursor,
+      lowestRetainedCursor: nextLowestRetainedCursor,
       records: retained
-        .map((c) => this.recordsByCursor.get(c))
+        .map((c) => nextMap.get(c))
         .filter((r): r is HostDeltaStoredRecord => Boolean(r))
         .map(cloneRecord)
     }
@@ -885,6 +1079,7 @@ export class HostDeltaStore {
       closeSync(fd)
     }
     renameSync(tmpPath, this.checkpointPath)
+    if (process.platform !== 'win32') this.syncDataDirectory()
 
     try {
       if (existsSync(this.journalPath)) {
@@ -894,7 +1089,12 @@ export class HostDeltaStore {
       this.log(
         `[HostDeltaStore] journal reset failed: ${err instanceof Error ? err.message : String(err)}`
       )
+      return
     }
+    this.recordsByCursor = nextMap
+    this.orderedCursors = retained
+    this.retainedBytes = nextBytes
+    this.lowestRetainedCursor = nextLowestRetainedCursor
     this.journalRecordCount = 0
   }
 
@@ -909,6 +1109,74 @@ export class HostDeltaStore {
       closeSync(descriptor)
     }
     this.journalRecordCount += 1
+  }
+
+  private appendJournalBatch(
+    events: readonly JournalEvent[]
+  ): { ok: true } | { ok: false; detail: string; rolledBack: boolean } {
+    if (events.length === 0) return { ok: true }
+    mkdirSync(this.dataDir, { recursive: true })
+    const existed = existsSync(this.journalPath)
+    let descriptor: number | null = null
+    let previousLength: number | null = null
+    try {
+      descriptor = openSync(this.journalPath, 'a+', 0o600)
+      const stat = fstatSync(descriptor)
+      if (!stat.isFile() || !Number.isSafeInteger(stat.size) || stat.size < 0) {
+        throw new Error('Host delta journal length is invalid')
+      }
+      previousLength = stat.size
+      const bytes = Buffer.from(
+        events.map((event) => `${JSON.stringify(event)}\n`).join(''),
+        'utf8'
+      )
+      let written = 0
+      while (written < bytes.length) {
+        const count = this.batchWrite(descriptor, bytes, written, bytes.length - written)
+        if (!Number.isSafeInteger(count) || count <= 0) {
+          throw new Error('Host delta batch journal write made no progress')
+        }
+        written += count
+      }
+      this.batchFsync(descriptor)
+      if (!existed && process.platform !== 'win32') this.syncDataDirectory()
+      this.journalRecordCount += events.length
+      return { ok: true }
+    } catch (error) {
+      let rolledBack = descriptor === null
+      if (descriptor !== null && previousLength !== null) {
+        try {
+          this.batchTruncate(descriptor, previousLength)
+          this.batchFsync(descriptor)
+          if (!existed && process.platform !== 'win32') this.syncDataDirectory()
+          rolledBack = true
+        } catch {
+          rolledBack = false
+        }
+      }
+      return {
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error),
+        rolledBack
+      }
+    } finally {
+      if (descriptor !== null) {
+        try {
+          closeSync(descriptor)
+        } catch {
+          // The write/fsync or rollback boundary above decides authority.
+        }
+      }
+    }
+  }
+
+  private syncDataDirectory(): void {
+    const descriptor = openSync(this.dataDir, 'r')
+    try {
+      fsyncSync(descriptor)
+    } finally {
+      closeSync(descriptor)
+    }
   }
 
   private noteRecovery(state: HostDeltaRecoveryState, warning: string): void {

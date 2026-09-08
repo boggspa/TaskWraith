@@ -2,6 +2,16 @@
 // doesn't collide with a release build on the same Mac (see devAppName.ts).
 
 import './devAppName'
+import { createCatalogueControlProjection } from './startup/ThreadCatalogueControl'
+import { catalogueIntrospectionEvidence } from './startup/ThreadCatalogueIntrospection'
+import {
+  catalogueExecutionOwnerStatus,
+  startCatalogueExecutionRecovery
+} from './startup/ThreadCatalogueExecutionOwners'
+import { createCatalogueOrphanDrain } from './startup/ThreadCatalogueOrphanDrain'
+import { ThreadCatalogueRemoteCache } from './startup/ThreadCatalogueRemoteCache'
+import { overlayCatalogueRemoteTask } from './store/ThreadCatalogueRemote'
+import { ThreadCatalogueQueueRecovery } from './startup/ThreadCatalogueQueueRecovery'
 import {
   createThreadContinuityHostTools,
   isThreadContinuityToolName,
@@ -15,6 +25,15 @@ import {
 } from './devAppName'
 import { createInstanceResourceEpoch } from './InstanceResourceIdentity'
 import { StartupWindowGate } from './StartupWindowGate'
+import { createThreadCatalogueMessageActivity } from './startup/ThreadCatalogueMessageActivity'
+import { installStartupThreadCatalogue } from './startup/installThreadCatalogue'
+import { gateThreadDispatch, threadCatalogueWriteGate } from './store/ThreadCatalogueWriteGate'
+import { ThreadCatalogueRecovery } from './startup/ThreadCatalogueRecovery'
+import {
+  createCatalogueOperationalRecovery,
+  createCatalogueBlackboardPruner
+} from './startup/ThreadCatalogueOperationalRecovery'
+import { catalogueChatHasLiveWork } from './startup/ThreadCatalogueLiveness'
 import { watchedPrDescriptorFromGitHubUrl } from '../shared/watchedPrNotify'
 import {
   app,
@@ -465,7 +484,6 @@ import {
 import {
   buildMobileApprovalCard,
   buildMobileQuestionCard,
-  buildRemoteEnsembleState,
   buildRemotePluginCapabilityCards,
   buildRemoteProjectionEnvelope,
   buildRemoteShellAppearance,
@@ -668,8 +686,13 @@ import {
 } from './collaboration/ExternalSeatResolution'
 import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAuditLog'
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
-import { PeopleToChannelMigrationFinalizationProductionRunner } from './collaboration/PeopleToChannelMigrationFinalizationProductionRunner'
-import { PeopleToChannelMigrationLegacyWriteGate } from './collaboration/PeopleToChannelMigrationLegacyWriteGate'
+import { forwardingPeopleMigrationGate } from './startup/ThreadCataloguePeopleMigration'
+import { runPeopleMigrationIsolated } from './startup/PeopleMigrationHelper'
+import { createPeopleMigrationHistoryDeletion } from './startup/PeopleMigrationHistoryDeletion'
+import { createPeopleMigrationDeletionBarrier } from './startup/PeopleMigrationDeletionBarrier'
+import { createPeopleMigrationMutationGuard } from './startup/PeopleMigrationMutationGuard'
+import { withPeopleDonorMutationGate } from '../host-shared/thread-catalogue/PeopleDonorMutationGate'
+import { currentEnsembleRuntimeInstanceId } from './EnsembleRuntimeIdentity'
 import {
   degradePeopleToChannelMigrationStartup,
   startPeopleToChannelMigrationBootstrap
@@ -2082,9 +2105,10 @@ import { registerIntrospectionHandlers } from './ipc/introspectionHandlers'
 import { applyMemoryProposal } from './introspection/IntrospectionApplyService'
 import {
   createIntrospectionRunServiceDeps,
-  runManualIntrospection
+  runManualIntrospection,
+  runScheduledIntrospection
 } from './introspection/IntrospectionRunService'
-import { dispatchDueIntrospectionSchedules } from './introspection/IntrospectionScheduler'
+import { dispatchDueIntrospectionSchedulesAsync } from './introspection/IntrospectionScheduler'
 import {
   createBridgeNetworkingTailscaleStatusGetter,
   registerBridgeAllowlistHandlers
@@ -4031,6 +4055,8 @@ let dispatchRunWithProviderPauseRef:
       event: { sender: Electron.WebContents }
     ) => Promise<{ dispatched: boolean; appRunId: string }>)
   | null = null
+let threadCatalogueQueueRecoveryRef: ThreadCatalogueQueueRecovery | null = null
+let threadCatalogueRecoveryRef: ThreadCatalogueRecovery | null = null
 // Scheduled occurrences dispatch through their own facade: MAIN already owns
 // their exact durable prompt + run identity, so one must never be treated as
 // an ordinary user turn (which would clone away the process-local child
@@ -10280,7 +10306,12 @@ function collectSubThreadJoinWorkers(
   groupId: string
 ): SubThreadJoinWorkerState[] {
   const workers = new Map<string, SubThreadJoinWorkerState>()
-  for (const child of AppStore.getChildChats(parentChatId)) {
+  if (AppStore.getThreadCatalogue()) {
+    for (const worker of (threadCatalogueRecoveryRef?.joinWorkers(parentChatId, groupId) ??
+      []) as SubThreadJoinWorkerState[])
+      workers.set(worker.workerRunId || `child:${worker.subThreadId}`, worker)
+  }
+  for (const child of AppStore.getThreadCatalogue() ? [] : AppStore.getChildChats(parentChatId)) {
     const policy = child.delegationContext?.joinPolicy
     if (policy?.groupId === groupId) {
       const key = policy.workerRunId || `child:${child.appChatId}`
@@ -10376,6 +10407,12 @@ function scheduleSubThreadJoinEvaluation(parentChatId: string, groupId: string):
   const existing = subThreadJoinWakeTimers.get(key)
   if (existing) clearTimeout(existing)
   subThreadJoinWakeTimers.delete(key)
+  if (AppStore.getThreadCatalogue() && !threadCatalogueRecoveryRef?.joinsReady) {
+    const retry = setTimeout(() => scheduleSubThreadJoinEvaluation(parentChatId, groupId), 1000)
+    retry.unref?.()
+    subThreadJoinWakeTimers.set(key, retry)
+    return
+  }
 
   const evaluation = evaluateSubThreadJoin(collectSubThreadJoinWorkers(parentChatId, groupId))
   if (!evaluation) return
@@ -10387,6 +10424,10 @@ function scheduleSubThreadJoinEvaluation(parentChatId: string, groupId: string):
   const delayMs = Math.max(0, Math.min(MAX_SCHEDULE_TIMER_DELAY_MS, targetMs - nowMs))
   const timer = setTimeout(() => {
     subThreadJoinWakeTimers.delete(key)
+    if (AppStore.getThreadCatalogue() && !threadCatalogueRecoveryRef?.joinsReady) {
+      scheduleSubThreadJoinEvaluation(parentChatId, groupId)
+      return
+    }
     const current = evaluateSubThreadJoin(collectSubThreadJoinWorkers(parentChatId, groupId))
     if (!current) return
     if (current.status === 'waiting' || current.status === 'debouncing') {
@@ -10759,7 +10800,9 @@ function settleOrphanedRunQueueJobsProjection(
  */
 /** Erasure fence for stale-run sweeps. Null when the destructive intent is
  * unreadable — not evidence the sweep is safe, so the caller skips it. */
-function historyDeletionSweepFence(): { fencedForErasure: (chat: ChatRecord) => boolean } | null {
+function historyDeletionSweepFence(): {
+  fencedForErasure: (chat: Pick<ChatRecord, 'appChatId' | 'workspaceId'>) => boolean
+} | null {
   let pendingDeletion: ReturnType<typeof AppStore.getPendingHistoryDeletion>
   try {
     pendingDeletion = AppStore.getPendingHistoryDeletion()
@@ -10768,7 +10811,7 @@ function historyDeletionSweepFence(): { fencedForErasure: (chat: ChatRecord) => 
     return null
   }
   return {
-    fencedForErasure: (chat: ChatRecord): boolean => {
+    fencedForErasure: (chat: Pick<ChatRecord, 'appChatId' | 'workspaceId'>): boolean => {
       if (!pendingDeletion) return false
       if (pendingDeletion.kind === 'global') return true
       if (pendingDeletion.chatIds.includes(chat.appChatId)) return true
@@ -10784,6 +10827,11 @@ function historyDeletionSweepFence(): { fencedForErasure: (chat: ChatRecord) => 
 function reconcileStaleChatRunsProjection(
   options: { minAgeMs?: number; scope?: 'all' | 'open-runs'; budget?: SweepBudget } = {}
 ): number {
+  if (AppStore.getThreadCatalogue()) {
+    threadCatalogueRecoveryRef?.enqueueAll()
+    threadCatalogueQueueRecoveryRef?.reconcile()
+    return 0
+  }
   // A chat inside a prepared (uncommitted) erasure must not be settled or
   // re-projected. Filter fenced chats up front so the sweep continues over the
   // rest of the batch instead of aborting on the saveChat fence throw.
@@ -10828,7 +10876,8 @@ function reconcileStaleChatRunsProjection(
 function persistStaleRunSweepResult(
   chats: ChatRecord[],
   settlements: StaleChatRunSettlement[],
-  terminalRecoveries: TerminalChatRunRecovery[]
+  terminalRecoveries: TerminalChatRunRecovery[],
+  options: { broadcastInventory?: boolean } = {}
 ): void {
   for (const chat of chats) {
     const saved = saveAndBroadcastChat(chat)
@@ -10844,15 +10893,16 @@ function persistStaleRunSweepResult(
     }
   }
 
-  try {
-    bridgeBroadcasterRef?.broadcastThreadList()
-    bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
-  } catch (err) {
-    console.warn(
-      '[chat-run-reconciler] thread-list/snapshot broadcast failed:',
-      err instanceof Error ? err.message : String(err)
-    )
-  }
+  if (options.broadcastInventory !== false)
+    try {
+      bridgeBroadcasterRef?.broadcastThreadList()
+      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+    } catch (err) {
+      console.warn(
+        '[chat-run-reconciler] thread-list/snapshot broadcast failed:',
+        err instanceof Error ? err.message : String(err)
+      )
+    }
 
   for (const recovery of terminalRecoveries) {
     console.warn(
@@ -10925,6 +10975,10 @@ function persistStaleRunSweepResult(
 }
 
 function recoverSubThreadControlPlane(budget?: SweepBudget): void {
+  if (AppStore.getThreadCatalogue()) {
+    threadCatalogueRecoveryRef?.enqueueAll()
+    return
+  }
   // Universal ChatRun liveness first so iOS task-cards / thread-list stop
   // advertising orphan "running" rows before sub-thread worker control reclaims
   // any remaining control-plane state. Worker recovery remains idempotent.
@@ -11039,6 +11093,11 @@ async function runDeferredSubThreadSweep(): Promise<void> {
  * and wakeups stay behind the ensemble-wakeups flag.
  */
 async function runDeferredBootSweeps(): Promise<void> {
+  if (AppStore.getThreadCatalogue()) {
+    if (!historyDeletionStartupRecoveryBlockedReason && !workspaceLockStartupRecoveryBlockedReason)
+      threadCatalogueRecoveryRef?.start()
+    return
+  }
   if (historyDeletionStartupRecoveryBlockedReason || workspaceLockStartupRecoveryBlockedReason) {
     return
   }
@@ -11994,6 +12053,10 @@ async function handleSoloWakeupTimerFired(wakeupId: string): Promise<void> {
 }
 
 function recoverPersistedEnsembleWakeups(budget?: SweepBudget): void {
+  if (AppStore.getThreadCatalogue()) {
+    threadCatalogueRecoveryRef?.enqueueAll()
+    return
+  }
   const wakeups = budget
     ? AppStore.getChatsWithEnsembleWakeups({ budget }).flatMap((chat) =>
         Object.values(chat.ensemble?.wakeups || {})
@@ -12034,6 +12097,10 @@ function applyEnsembleWakeupRecoveryActions(wakeups: EnsembleWakeupRecord[]): vo
  * solo continuation dispatch.
  */
 function recoverPersistedSoloChatWakeups(budget?: SweepBudget): void {
+  if (AppStore.getThreadCatalogue()) {
+    threadCatalogueRecoveryRef?.enqueueAll()
+    return
+  }
   if (!soloChatWakeupServiceRef) return
   // The bounded pass mirrors SoloChatWakeupService.getAllPersistedWakeups over
   // the most recent candidates; unbounded keeps the service's own scan.
@@ -16541,7 +16608,7 @@ async function deleteChatErasureAware(chatId: string): Promise<void> {
     rootChatId: chatId
   }).chatIds
   if (AppStore.legacyStoreWritesOpen()) {
-    AppStore.deleteChat(chatId)
+    await AppStore.deleteChat(chatId)
     for (const affectedChatId of affectedChatIds) clearDeletedChatUpdateState(affectedChatId)
     return
   }
@@ -17718,31 +17785,40 @@ function emitDueScheduledTasks() {
   }
 }
 
+let introspectionDispatchInFlight = false
 function emitDueIntrospectionSchedules(): void {
-  try {
-    dispatchDueIntrospectionSchedules({
-      getIntrospectionScheduleRecords: () => AppStore.getIntrospectionScheduleRecords(),
-      updateIntrospectionScheduleRecord: (partial) => AppStore.updateIntrospectionSchedule(partial),
-      getIntrospectionRuns: (workspaceId) => AppStore.getIntrospectionRuns(workspaceId),
-      getWorkspacePath: (workspaceId) =>
-        AppStore.getWorkspaces().find((workspace) => workspace.id === workspaceId)?.path,
-      runManualIntrospection: (input) =>
-        runManualIntrospection(
-          createIntrospectionRunServiceDeps({
-            getChats: (workspaceId) => AppStore.getChats(workspaceId),
+  const mirror = AppStore.getThreadCatalogue()
+  if (!mirror || introspectionDispatchInFlight) return
+  introspectionDispatchInFlight = true
+  void dispatchDueIntrospectionSchedulesAsync({
+    getIntrospectionScheduleRecords: () => AppStore.getIntrospectionScheduleRecords(),
+    updateIntrospectionScheduleRecord: (partial) => AppStore.updateIntrospectionSchedule(partial),
+    getIntrospectionRuns: (workspaceId) => AppStore.getIntrospectionRuns(workspaceId),
+    getWorkspacePath: (workspaceId) =>
+      AppStore.getWorkspaces().find((workspace) => workspace.id === workspaceId)?.path,
+    runManualIntrospection: (input) =>
+      runScheduledIntrospection(
+        {
+          now: () => new Date().toISOString(),
+          uuid: () => randomUUID(),
+          getChatEvidence: (window) => catalogueIntrospectionEvidence(mirror, window),
+          store: {
             getRunEvents: (filter) => AppStore.getRunEvents(filter),
             getApprovalLedger: (filter) => AppStore.getApprovalLedger(filter),
             getMessageFeedbackReceipts: (filter) => AppStore.getMessageFeedbackReceipts(filter),
             createIntrospectionRun: (record) => AppStore.createIntrospectionRun(record),
             updateIntrospectionRun: (id, partial) => AppStore.updateIntrospectionRun(id, partial),
             saveMemoryProposalPack: (pack) => AppStore.saveMemoryProposalPack(pack)
-          }),
-          input
-        )
+          }
+        },
+        input
+      )
+  })
+    .catch((error) => console.error('[introspection] scheduled evidence collection failed', error))
+    .finally(() => {
+      introspectionDispatchInFlight = false
+      scheduleNextTaskTimer()
     })
-  } catch {
-    // Scheduler failures must not wedge workflow timers.
-  }
 }
 
 /**
@@ -46425,7 +46501,9 @@ if (isGeminiMcpBridgeProcess) {
       // unavailable.
       console.warn('[antigravity] temporary permission overlay recovery was not verified', error)
     }
-    await installTaskWraithLocalControl(app, () => createBridgeActionExecutor())
+    await installTaskWraithLocalControl(app, () => createBridgeActionExecutor(), {
+      getThreadProjection: createCatalogueControlProjection(() => AppStore.getThreadCatalogue())
+    })
     try {
       await regenerableHistoryByteStore.initializeStrict(
         AppStore.getPendingHistoryDeletion()?.operationId
@@ -47516,10 +47594,10 @@ if (isGeminiMcpBridgeProcess) {
         // initiating run ending is the normal case for a durable graph; what
         // must stop the graph is the thread ceasing to exist or being archived,
         // because then nothing can receive the result or answer for the work.
-        resolveOwnerStatus: (owner) => {
-          const chat = AppStore.getChat(owner.threadId)
-          return chat && !chat.archived ? 'live' : 'missing'
-        },
+        resolveOwnerStatus: (owner) =>
+          catalogueExecutionOwnerStatus(AppStore.getThreadCatalogue(), owner.threadId, (id) =>
+            AppStore.chatRecordExists(id)
+          ),
         cancelActiveRun: async (runId) => {
           const candidate = AppStore.getRunQueueJob(runId)
           const job = candidate?.runId === runId ? candidate : null
@@ -52586,10 +52664,24 @@ if (isGeminiMcpBridgeProcess) {
     // a delete guard. Fails closed until the bootstrap actually wires it.
     let channelAuthorityIsReadable: () => boolean = () => false
 
+    let catalogueRemoteRefresh: ReturnType<typeof setTimeout> | null = null
+    const catalogueRemoteCache = new ThreadCatalogueRemoteCache(
+      () => AppStore.getThreadCatalogue(),
+      () => {
+        if (catalogueRemoteRefresh) return
+        catalogueRemoteRefresh = setTimeout(() => {
+          catalogueRemoteRefresh = null
+          bridgeBroadcasterRef?.resetThrottle()
+          bridgeBroadcasterRef?.broadcastSnapshot()
+        }, 100)
+        catalogueRemoteRefresh.unref?.()
+      }
+    )
     const buildRemoteTaskCardForChat = (
       chat: ChatRecord,
       generatedAt: string,
-      counts = pendingRemoteAttentionCounts()
+      counts = pendingRemoteAttentionCounts(),
+      base?: RemoteTaskCard
     ): { chat: ChatRecord; taskCard: RemoteTaskCard } => {
       const canonicalChat = canonicalizeRemoteWorkspaceRecord(chat)
       const capabilities = remoteTaskCapabilitiesForWorkspace(canonicalChat.workspaceId)
@@ -52635,12 +52727,14 @@ if (isGeminiMcpBridgeProcess) {
       }
       return {
         chat: canonicalChat,
-        taskCard: buildRemoteTaskCard(canonicalChat, {
+        taskCard: (base
+          ? (options) => overlayCatalogueRemoteTask(base, options)
+          : (options) => buildRemoteTaskCard(canonicalChat, options))({
           generatedAt,
           pendingQuestionCount: counts.questionCounts.get(canonicalChat.appChatId) ?? 0,
           pendingApprovalCount: counts.approvalCounts.get(canonicalChat.appChatId) ?? 0,
           capabilities,
-          agentIdentity: remoteAgentIdentityForChat(canonicalChat),
+          agentIdentity: base ? undefined : remoteAgentIdentityForChat(canonicalChat),
           queuedComposerJobs,
           trustedSessionEnabled,
           trustedSessionParticipantIds,
@@ -52767,7 +52861,7 @@ if (isGeminiMcpBridgeProcess) {
     }
 
     const listRemoteProjectionEnvelopes = (): RemoteProjectionEnvelope[] => {
-      const chats = AppStore.getChats()
+      const chats = AppStore.getChatList()
         .map(canonicalizeRemoteWorkspaceRecord)
         .filter((chat) => remoteWorkspaceIsVisible(chat.workspaceId))
       const approvalCards = visibleRemoteApprovalCards()
@@ -52845,7 +52939,18 @@ if (isGeminiMcpBridgeProcess) {
         )
       }
       for (const [chatIndex, chat] of sortedChats.entries()) {
-        const { taskCard } = buildRemoteTaskCardForChat(chat, generatedAt, attentionCounts)
+        const cached = catalogueRemoteCache.get(chat.appChatId, {
+          costDisplay,
+          showRunCompleteSummary: remoteShowRunCompleteSummary(),
+          includeViewport: chatIndex < REMOTE_THREAD_SNAPSHOT_CAP
+        })
+        if (!cached) continue
+        const { taskCard } = buildRemoteTaskCardForChat(
+          chat,
+          generatedAt,
+          attentionCounts,
+          cached.taskCard
+        )
         const capabilities =
           taskCard.capabilities ?? remoteTaskCapabilitiesForWorkspace(chat.workspaceId)
         maybeNotifyRemoteTaskCompletion(taskCard)
@@ -52863,28 +52968,12 @@ if (isGeminiMcpBridgeProcess) {
           })
         )
 
-        if (chatIndex < REMOTE_THREAD_SNAPSHOT_CAP) {
-          const threadSnapshot = projectRemoteThread(chat.messages ?? [], chat.runs ?? [], {
-            notes: chat.pinnedNotes,
-            blackboardEntries: chat.ensemble?.blackboard,
-            threadId: chat.appChatId,
-            // Counts and sender names only; projectRemoteThread never ships bodies.
-            threadMessageInbox: summarizeThreadMessageInbox(
-              AppStore.getThreadMessageInbox(chat.appChatId)
-            ),
-            mode: { kind: 'latestViewportN', n: 24 },
-            previewMaxChars: REMOTE_IOS_PREVIEW_MAX,
-            generatedAt,
-            costDisplay,
-            showRunCompleteSummary: remoteShowRunCompleteSummary(),
-            pooledAgentIdentity: remotePooledAgentIdentityForChat(chat),
-            speakerForMessage: remoteSpeakerForMessage(
-              chat,
-              chat.ensemble?.enabled
-                ? ensembleSpeakerForMessage(chat.ensemble.participants)
-                : undefined
-            )
-          })
+        if (cached.threadSnapshot) {
+          const inbox = summarizeThreadMessageInbox(AppStore.getThreadMessageInbox(chat.appChatId))
+          const threadSnapshot = {
+            ...cached.threadSnapshot,
+            threadMessageInbox: { ...inbox, senders: [...inbox.senders] }
+          }
           const threadPayload = fitRemoteThreadSnapshotToByteBudget({
             ...threadSnapshot,
             taskId: chat.appChatId,
@@ -52929,7 +53018,7 @@ if (isGeminiMcpBridgeProcess) {
           )
         }
 
-        const ensembleState = taskCard.ensembleState ?? buildRemoteEnsembleState(chat)
+        const ensembleState = taskCard.ensembleState
         if (ensembleState) {
           envelopes.push(
             buildRemoteProjectionEnvelope({
@@ -53504,7 +53593,7 @@ if (isGeminiMcpBridgeProcess) {
             // so it can never touch a draft being composed right now.
             const ABANDONED_DRAFT_TTL_MS = 24 * 60 * 60 * 1000
             const reaped = abandonedRemoteDraftIdsToDelete(
-              AppStore.getChats(),
+              AppStore.getAbandonedReapCandidates().chats,
               Date.now(),
               ABANDONED_DRAFT_TTL_MS
             )
@@ -54137,133 +54226,182 @@ if (isGeminiMcpBridgeProcess) {
       userDataPath: app.getPath('userData'),
       appVersion: app.getVersion()
     })
+    const catalogueInventoryListeners = new Set<() => void>()
+    const startupThreadCatalogue = installStartupThreadCatalogue({
+      quiesceRecovery: async () => {
+        await threadCatalogueRecoveryRef?.quiesce()
+      },
+      resumeRecovery: () => threadCatalogueRecoveryRef?.resume(),
+      externalHost: Boolean(preparedExternalHost),
+      broker: desktopHostBroker,
+      ...(inProcessProfileAuthority ? { profileAuthority: inProcessProfileAuthority } : {}),
+      onChat: (chat) => {
+        const projection = chatUpdateInterestRouter.createBroadcastProjectionResolver(chat)
+        for (const window of desktopWindows.all()) enqueueChatUpdated(window, chat, projection)
+        broadcastChatPopoutUpdateExcept(chat, undefined, projection)
+      },
+      onInventoryChanged: () => {
+        broadcastThreadList()
+        for (const listener of catalogueInventoryListeners) listener()
+      }
+    })
+    void startupThreadCatalogue.ready.catch((error) =>
+      console.error('[thread-catalogue] initialization failed', error)
+    )
     const hostChannelAdmin = new HostChannelAdminCommandClient({ broker: desktopHostBroker })
     let channelProductionBootstrap: ReturnType<typeof createChannelProductionBootstrap> | null =
       null
-    let channelMigrationLegacyWriteGate: PeopleToChannelMigrationLegacyWriteGate | null = null
+    const peopleMigrationDeletionBarrier = createPeopleMigrationDeletionBarrier(() =>
+      AppStore.getPendingHistoryDeletion()
+    )
+    let channelMigrationSettled = false
+    const peopleMigrationHandoff: { reload?: () => void; refreshRooms?: () => void } = {}
+    const channelMigrationForwarder = forwardingPeopleMigrationGate()
+    const channelMigrationLegacyWriteGate = channelMigrationForwarder.gate
     let channelAgentDispatchRef: ChannelProductionAgentRuntimeOptions['dispatch'] | null = null
-    try {
-      const channelIdentityStore = new HumanCollaborationIdentityStore(
-        join(app.getPath('userData'), 'human-collaboration-identity.json'),
-        safeStorage,
-        (line) => console.warn(line)
-      )
-      const channelProductionBootstrapOptions = {
-        userDataPath: app.getPath('userData'),
-        loadIdentity: () => channelIdentityStore.load(),
-        safeStorage,
-        relay: createChannelProductionRelayPort({
-          getEmbeddedRelayPort: () => embeddedRelayHandle?.port,
-          getAdvertisedRelayUrls: () => iosRemoteRuntime?.describeHost().relayUrls ?? []
-        }),
-        ipc: ipcMain,
-        getChat: (chatId) => {
-          const chat = AppStore.getChat(chatId)
-          if (!chat) return null
-          return historyClearAdmissionGate.isAuthorityBlocked({
-            chatId: chat.appChatId,
-            chatWorkspaceId: chat.workspaceId
+    const channelMigrationReady = (async () => {
+      await peopleMigrationDeletionBarrier.ready
+      let cacheReadable = true
+      try {
+        await withPeopleDonorMutationGate(externalHostProfilePath, async () => {
+          const channelIdentityStore = new HumanCollaborationIdentityStore(
+            join(app.getPath('userData'), 'human-collaboration-identity.json'),
+            safeStorage,
+            (line) => console.warn(line)
+          )
+          const channelProductionBootstrapOptions = {
+            userDataPath: app.getPath('userData'),
+            loadIdentity: () => channelIdentityStore.load(),
+            safeStorage,
+            relay: createChannelProductionRelayPort({
+              getEmbeddedRelayPort: () => embeddedRelayHandle?.port,
+              getAdvertisedRelayUrls: () => iosRemoteRuntime?.describeHost().relayUrls ?? []
+            }),
+            ipc: ipcMain,
+            getChat: (chatId) => {
+              const chat = AppStore.getChat(chatId)
+              if (!chat) return null
+              return historyClearAdmissionGate.isAuthorityBlocked({
+                chatId: chat.appChatId,
+                chatWorkspaceId: chat.workspaceId
+              })
+                ? null
+                : chat
+            },
+            isMainSender: isMainRendererSender,
+            getOwnedChatId: (senderId) => {
+              const owner = workspacePopoutOwnerForSender(senderId)
+              return owner?.kind === 'chat' ? owner.chatId : undefined
+            },
+            agentManagement: {
+              getSettings: () => AppStore.getSettings(),
+              providerAllowed: (provider, settings) =>
+                selectableProviderIds(settings).includes(provider),
+              getWorkspaces: () => AppStore.getWorkspaces(),
+              canonicalizePath: canonicalPath,
+              getOwnerWindow: (event) => BrowserWindow.fromWebContents(event.sender)
+            },
+            agentExecution: {
+              composeMainOwnedChannelAgentRun: (input, authority) => {
+                const composer = composerServiceRef
+                if (!composer) {
+                  return Promise.reject(new Error('Channel agent composer is unavailable.'))
+                }
+                return composer.composeMainOwnedChannelAgentRun(input, authority)
+              },
+              dispatch: (payload, hooks) => {
+                const dispatch = channelAgentDispatchRef
+                if (!dispatch) {
+                  return Promise.reject(new Error('Channel agent dispatcher is unavailable.'))
+                }
+                return dispatch(payload, hooks)
+              },
+              subscribeRunEvents: (sink) => runEventBus.subscribe(sink),
+              subscribeRunSessions: (listener) => runManager.onChange(listener),
+              claimRunAudience: (runId, sinkIds) => runEventBus.claimRunAudience(runId, sinkIds),
+              reconcileRun: (snapshot) =>
+                reconcileChannelAgentProductionRun(
+                  { getRun: (runId) => runManager.get(runId) },
+                  snapshot
+                )
+            },
+            hostAdmin: hostChannelAdmin,
+            publishToMain: (event) => {
+              if (!mainWindow || mainWindow.isDestroyed()) return
+              desktopWindows.broadcast(CHANNEL_IPC_CHANGED_EVENT, event)
+            },
+            publishToChat: (chatId, event) => {
+              const win = workspacePopoutWindows.get(`chat:${chatId}`)
+              if (!win || win.isDestroyed()) return
+              win.webContents.send(CHANNEL_IPC_CHANGED_EVENT, event)
+            },
+            logger: (line) => console.warn(line)
+          }
+          let completedMigration
+          cacheReadable = false
+          try {
+            completedMigration = await runPeopleMigrationIsolated({
+              runtimeInstanceId: currentEnsembleRuntimeInstanceId(),
+              defaultProvider: AppStore.getSettings().activeProvider
+            })
+          } finally {
+            // The helper may have retired shares even when its response was lost.
+            // Refresh the parent's cached store before any legacy read or handoff.
+            peopleMigrationHandoff.reload?.()
+            cacheReadable = true
+          }
+          const channelMigrationStartup = startPeopleToChannelMigrationBootstrap({
+            runner: { runToCompletion: () => completedMigration },
+            createBootstrap: ({ migratedAdmissionAuthority, migrationHandoff }) =>
+              createChannelProductionBootstrap({
+                ...channelProductionBootstrapOptions,
+                migratedAdmissionAuthority,
+                migrationHandoff
+              })
           })
-            ? null
-            : chat
-        },
-        isMainSender: isMainRendererSender,
-        getOwnedChatId: (senderId) => {
-          const owner = workspacePopoutOwnerForSender(senderId)
-          return owner?.kind === 'chat' ? owner.chatId : undefined
-        },
-        agentManagement: {
-          getSettings: () => AppStore.getSettings(),
-          providerAllowed: (provider, settings) =>
-            selectableProviderIds(settings).includes(provider),
-          getWorkspaces: () => AppStore.getWorkspaces(),
-          canonicalizePath: canonicalPath,
-          getOwnerWindow: (event) => BrowserWindow.fromWebContents(event.sender)
-        },
-        agentExecution: {
-          composeMainOwnedChannelAgentRun: (input, authority) => {
-            const composer = composerServiceRef
-            if (!composer) {
-              return Promise.reject(new Error('Channel agent composer is unavailable.'))
-            }
-            return composer.composeMainOwnedChannelAgentRun(input, authority)
-          },
-          dispatch: (payload, hooks) => {
-            const dispatch = channelAgentDispatchRef
-            if (!dispatch) {
-              return Promise.reject(new Error('Channel agent dispatcher is unavailable.'))
-            }
-            return dispatch(payload, hooks)
-          },
-          subscribeRunEvents: (sink) => runEventBus.subscribe(sink),
-          subscribeRunSessions: (listener) => runManager.onChange(listener),
-          claimRunAudience: (runId, sinkIds) => runEventBus.claimRunAudience(runId, sinkIds),
-          reconcileRun: (snapshot) =>
-            reconcileChannelAgentProductionRun(
-              { getRun: (runId) => runManager.get(runId) },
-              snapshot
-            )
-        },
-        hostAdmin: hostChannelAdmin,
-        publishToMain: (event) => {
-          if (!mainWindow || mainWindow.isDestroyed()) return
-          desktopWindows.broadcast(CHANNEL_IPC_CHANGED_EVENT, event)
-        },
-        publishToChat: (chatId, event) => {
-          const win = workspacePopoutWindows.get(`chat:${chatId}`)
-          if (!win || win.isDestroyed()) return
-          win.webContents.send(CHANNEL_IPC_CHANGED_EVENT, event)
-        },
-        logger: (line) => console.warn(line)
+          channelMigrationForwarder.set(channelMigrationStartup.legacyWriteGate)
+          channelProductionBootstrap = channelMigrationStartup.bootstrap
+          if (channelAgentDispatchRef) channelProductionBootstrap.startAgentExecution()
+        })
+      } catch (error) {
+        const failedBootstrap = channelProductionBootstrap as ReturnType<
+          typeof createChannelProductionBootstrap
+        > | null
+        channelProductionBootstrap = null
+        void failedBootstrap?.stop().catch(() => undefined)
+        // Channels fail closed; the app fails open. A dead launch with no window
+        // is strictly worse than a launch without channels (soaked live: an
+        // undecryptable pinned identity key killed startup before the first
+        // durable write). The degraded gate keeps every People WRITE quiesced.
+        //
+        // It does NOT stop People reads. This comment previously claimed neither
+        // runtime serves collaboration state on a degraded launch; that is false,
+        // and the distinction is load-bearing for any retirement work. Execution
+        // continues past this catch, so HumanCollaborationStore, its runtime and
+        // its IPC handlers are all still constructed, and reopenCollaborationRooms
+        // re-opens the host seat for every enabled share's still-live invite —
+        // including consumed invites whose collaborator is still active, so a
+        // pinned-identity reconnect finds the host listening. Channels are absent
+        // here, so on such a launch that legacy path is the ONLY collaboration
+        // state a user can reach: retiring it removes a live recovery capability
+        // rather than dead code.
+        const degraded = degradePeopleToChannelMigrationStartup(error)
+        channelMigrationForwarder.set(degraded.legacyWriteGate)
+        console.error(
+          '[channels] production bootstrap failed — continuing without channels this launch',
+          degraded.error
+        )
+      } finally {
+        channelMigrationSettled = cacheReadable
+        if (cacheReadable) {
+          try {
+            peopleMigrationHandoff.refreshRooms?.()
+          } catch (error) {
+            console.warn('[collaboration] relay room recovery deferred', error)
+          }
+        }
       }
-      const channelMigrationStartup = startPeopleToChannelMigrationBootstrap({
-        runner: new PeopleToChannelMigrationFinalizationProductionRunner({
-          userDataPath: app.getPath('userData'),
-          safeStorage,
-          loadIdentity: () => channelIdentityStore.load(),
-          hostDisplayName: app.getName().trim() || 'TaskWraith',
-          // P5-C removed the workspace-bootstrap retention port. Workspace
-          // bootstrap is Channel-native: no automatic People share is ever
-          // created, so this root owns no id to retain. A sealed P4 scope stays
-          // readable as compatibility state through the checkpoint, never here.
-          listChats: () => AppStore.getChats()
-        }),
-        createBootstrap: ({ migratedAdmissionAuthority, migrationHandoff }) =>
-          createChannelProductionBootstrap({
-            ...channelProductionBootstrapOptions,
-            migratedAdmissionAuthority,
-            migrationHandoff
-          })
-      })
-      channelMigrationLegacyWriteGate = channelMigrationStartup.legacyWriteGate
-      channelProductionBootstrap = channelMigrationStartup.bootstrap
-    } catch (error) {
-      const failedBootstrap = channelProductionBootstrap
-      channelProductionBootstrap = null
-      void failedBootstrap?.stop().catch(() => undefined)
-      // Channels fail closed; the app fails open. A dead launch with no window
-      // is strictly worse than a launch without channels (soaked live: an
-      // undecryptable pinned identity key killed startup before the first
-      // durable write). The degraded gate keeps every People WRITE quiesced.
-      //
-      // It does NOT stop People reads. This comment previously claimed neither
-      // runtime serves collaboration state on a degraded launch; that is false,
-      // and the distinction is load-bearing for any retirement work. Execution
-      // continues past this catch, so HumanCollaborationStore, its runtime and
-      // its IPC handlers are all still constructed, and reopenCollaborationRooms
-      // re-opens the host seat for every enabled share's still-live invite —
-      // including consumed invites whose collaborator is still active, so a
-      // pinned-identity reconnect finds the host listening. Channels are absent
-      // here, so on such a launch that legacy path is the ONLY collaboration
-      // state a user can reach: retiring it removes a live recovery capability
-      // rather than dead code.
-      const degraded = degradePeopleToChannelMigrationStartup(error)
-      channelMigrationLegacyWriteGate = degraded.legacyWriteGate
-      console.error(
-        '[channels] production bootstrap failed — continuing without channels this launch',
-        degraded.error
-      )
-    }
+    })()
     // Wire the remote task-card channel lookup now that the bootstrap
     // binding exists (see the holder's TDZ note at its declaration). Lazy
     // reads keep this correct on the degraded path: with no bootstrap, or an
@@ -54312,19 +54450,21 @@ if (isGeminiMcpBridgeProcess) {
       console.error('[channels] member production bootstrap failed', error)
     }
 
-    const purgeChannelsForHistoryPreparation = (
-      preparation: HistoryDeletionPreparation
-    ): Promise<unknown> => {
-      const service = channelProductionBootstrap?.service
-      if (!service || service.status().state !== 'running') {
-        throw new Error('Channels history authority is unavailable; history deletion stopped.')
-      }
-      return service.purgeForHistoryDeletionScope(
-        preparation.kind === 'global'
-          ? { kind: 'global' }
-          : { kind: preparation.kind, chatIds: preparation.chatIds }
-      )
-    }
+    const purgeChannelsForHistoryPreparation = createPeopleMigrationHistoryDeletion({
+      profilePath: externalHostProfilePath,
+      initialRecovery: () => peopleMigrationDeletionBarrier.coldPurge(),
+      ready: channelMigrationReady,
+      service: () => channelProductionBootstrap?.service,
+      pending: () => AppStore.getPendingHistoryDeletion(),
+      runMigration: (deletionScope) =>
+        runPeopleMigrationIsolated({
+          runtimeInstanceId: currentEnsembleRuntimeInstanceId(),
+          defaultProvider: AppStore.getSettings().activeProvider,
+          deletionScope
+        }),
+      reload: () => peopleMigrationHandoff.reload?.(),
+      safeStorage
+    })
 
     type BroadHistoryStrictAttempt = {
       promise: Promise<unknown>
@@ -55271,8 +55411,27 @@ if (isGeminiMcpBridgeProcess) {
     }
     const humanCollaborationStore = new HumanCollaborationStore(
       join(app.getPath('userData'), 'human-collaboration.json'),
-      { legacyWriteGate: channelMigrationLegacyWriteGate }
+      {
+        legacyWriteGate: channelMigrationLegacyWriteGate,
+        getHistoryDeletionScope: () => AppStore.getPendingHistoryDeletion()
+      }
     )
+    peopleMigrationHandoff.reload = () => {
+      const previous = humanCollaborationStore.listShares()
+      humanCollaborationStore.reloadFromDisk()
+      const enabled = new Set(
+        humanCollaborationStore
+          .listShares()
+          .filter((share) => share.enabled)
+          .map((share) => share.shareId)
+      )
+      for (const share of previous) {
+        if (enabled.has(share.shareId)) continue
+        for (const invite of share.invites) {
+          if (invite.roomId) humanCollaborationHostTransport?.closeRoom(invite.roomId)
+        }
+      }
+    }
     /**
      * Tri-state presence for external collaborators, owned here so the sweep
      * timer lives with the process rather than inside the pure tracker.
@@ -55349,7 +55508,7 @@ if (isGeminiMcpBridgeProcess) {
       if (kind === 'global') {
         closeRoomsForShares(humanCollaborationStore.listShares())
         humanCollaborationAuditLog.purgeAll()
-        humanCollaborationStore.purgeAllShares()
+        humanCollaborationStore.purgeForHistoryDeletionScope({ kind, chatIds })
         // The queue is a SECOND store of erasable content and it is the one
         // that still holds message bodies. purgeAll drops the tombstones too,
         // which matters: a tombstone carries collaboratorId + clientMessageId
@@ -55378,7 +55537,7 @@ if (isGeminiMcpBridgeProcess) {
       // erasure skips it nothing else will ever remove it.
       externalContributionQueue.purgeChats(chatIds)
       if (kind !== 'truncate') {
-        humanCollaborationStore.purgeChatShares(chatIds)
+        humanCollaborationStore.purgeForHistoryDeletionScope({ kind, chatIds })
         return
       }
       // …but a truncate must not leave the share advertising itself as live
@@ -55415,6 +55574,15 @@ if (isGeminiMcpBridgeProcess) {
       if (changed) broadcastThreadList()
     }
 
+    let orphanStartupDrainCompleted = false
+    const lateOrphanDrain = createCatalogueOrphanDrain({
+      enabled: () => orphanStartupDrainCompleted && !historyDeletionStartupRecoveryBlockedReason,
+      drain: drainOrphanSubThreadsBeforeRunQueue,
+      onError: (error) => console.error('[thread-catalogue] orphan deletion deferred', error)
+    })
+    catalogueInventoryListeners.add(() => lateOrphanDrain.notify())
+    app.once('before-quit', () => lateOrphanDrain.dispose())
+
     reconcileBridgeDaemonFromSettings()
     void startStudioProductionLifecycle({
       userDataPath: app.getPath('userData'),
@@ -55440,11 +55608,9 @@ if (isGeminiMcpBridgeProcess) {
     // and the bootstrap supervisor registry is process-global, not a
     // cross-process fence.
     const hostChatList = createHostProductionChatListCoalescer(AppStore)
-    const hostChannels = channelProductionBootstrap
-      ? createHostProductionChannelAdapter({
-          getService: () => channelProductionBootstrap?.service ?? null
-        })
-      : undefined
+    const hostChannels = createHostProductionChannelAdapter({
+      getService: () => channelProductionBootstrap?.service ?? null
+    })
     const providerTerminalHandlersDeps = {
       resolveCliProviderBinary,
       getUserDataPath: () => app.getPath('userData'),
@@ -55475,6 +55641,7 @@ if (isGeminiMcpBridgeProcess) {
           hostVersion: app.getVersion()
         },
         chatList: hostChatList,
+        threadCatalogueProvider: startupThreadCatalogue.provider,
         bridge: createBridgeActionExecutor(),
         // Governed Host mutations re-read canonical context immediately before
         // Bridge dispatch. Keep these as lazy, wiring-only source callbacks:
@@ -55804,7 +55971,10 @@ if (isGeminiMcpBridgeProcess) {
           failures.push(error)
         } finally {
           try {
+            await threadCatalogueRecoveryRef?.quiesce()
+            threadCatalogueRecoveryRef?.dispose()
             await AppStore.flushAllChatSaves()
+            await startupThreadCatalogue.dispose()
           } catch (error) {
             failures.push(error)
           }
@@ -55951,10 +56121,13 @@ if (isGeminiMcpBridgeProcess) {
       projectReferenceCaptureAdmissionProtected = true
       recoverPendingUsageHistoryMutationBeforeOuterDeletion()
       await recoverPendingHistoryDeletionBeforeRunQueue()
+      peopleMigrationDeletionBarrier.releaseAfterRecovery()
       await drainOrphanSubThreadsBeforeRunQueue()
+      orphanStartupDrainCompleted = true
+      lateOrphanDrain.notify()
       // Only after pending erasure fully resumed: checkpoints whose chat record
       // no longer exists were stranded by pre-join deletions. Delete-only.
-      sessionCheckpointStoreRef?.purgeOrphanRecords((chatId) => Boolean(AppStore.getChat(chatId)))
+      sessionCheckpointStoreRef?.purgeOrphanRecords((chatId) => AppStore.chatRecordExists(chatId))
     } catch (error) {
       if (!projectReferenceCaptureAdmissionProtected) {
         try {
@@ -56017,12 +56190,23 @@ if (isGeminiMcpBridgeProcess) {
           // Queue recovery owns process/transport reconciliation. Only after it has
           // settled those rows may the graph ledger decide whether a claimed
           // attempt is safe to requeue or must stop at requires_action.
-          executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []
-          for (const diagnostic of executionGraphRecoveryDiagnostics) {
-            console.error(
-              `[ExecutionGraph] startup recovery failed for executionId=${diagnostic.executionId}: ${diagnostic.message}`
-            )
-          }
+          const stopExecutionRecovery = startCatalogueExecutionRecovery({
+            mirror: startupThreadCatalogue.mirror,
+            ownerIds: () =>
+              (
+                executionGraphCoordinatorRef?.listExecutions({ includeTerminal: false }) ?? []
+              ).flatMap((execution) => (execution.owner ? [execution.owner.threadId] : [])),
+            recover: () => {
+              executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []
+              for (const diagnostic of executionGraphRecoveryDiagnostics)
+                console.error(
+                  `[ExecutionGraph] startup recovery failed for executionId=${diagnostic.executionId}: ${diagnostic.message}`
+                )
+            },
+            onError: (error) =>
+              console.error('[ExecutionGraph] owner metadata recovery deferred', error)
+          })
+          app.once('before-quit', stopExecutionRecovery)
         } catch (error) {
           executionGraphRecoveryDiagnostics = []
           executionGraphServiceDiagnostics = [
@@ -57333,6 +57517,7 @@ if (isGeminiMcpBridgeProcess) {
     // reconnecting collaborator's frames were dropped. Once the relay is ready,
     // re-open the host `mac` seat for every enabled share's still-live invite.
     const reopenCollaborationRooms = (): void => {
+      if (!channelMigrationSettled) return
       const hostRelay = collaborationHostRelayUrl()
       if (!hostRelay) return
       try {
@@ -57372,7 +57557,9 @@ if (isGeminiMcpBridgeProcess) {
         humanCollaborationHostTransport?.openRoom(hostRelay, roomId)
       }
     }
+    peopleMigrationHandoff.refreshRooms = () => reopenCollaborationRooms()
     const getHumanCollaborationRuntime = () => {
+      if (!channelMigrationSettled) throw new Error('Collaboration history is still loading.')
       if (humanCollaborationRuntime) return humanCollaborationRuntime
       const identity = new HumanCollaborationIdentityStore(
         join(app.getPath('userData'), 'human-collaboration-identity.json'),
@@ -57689,11 +57876,18 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     blackboardExpiryServiceRef = new BlackboardExpiryService({
-      listChats: () => AppStore.getChats(),
+      listChats: () => [],
+      pruneExpired: createCatalogueBlackboardPruner(
+        startupThreadCatalogue.mirror.port,
+        () => threadCatalogueRecoveryRef
+      ),
       getChat: (chatId) => AppStore.getChat(chatId) || null,
       saveChat: saveAndBroadcastChat
     })
     blackboardExpiryServiceRef.start()
+    startupThreadCatalogue.mirror.subscribe((row, id) =>
+      blackboardExpiryServiceRef?.observeExpiry(id, row?.recovery.nextBlackboardExpiryAt ?? null)
+    )
 
     registerBlackboardPollHandlers({
       isMainRendererSender,
@@ -58412,6 +58606,23 @@ if (isGeminiMcpBridgeProcess) {
     deleteChatWithLifecycleRef = deleteChatWithLifecycle
 
     registerChatHandlers({
+      ...createPeopleMigrationMutationGuard(externalHostProfilePath, (id) => AppStore.getChat(id)),
+      observeHistoryChanges: (listener) => {
+        catalogueInventoryListeners.add(listener)
+      },
+      repairIndexedTitle: async (id, mode) => {
+        const row = startupThreadCatalogue.mirror.get(id)
+        const title = row?.summary.chrome?.derivedThreadTitle
+        if (!row || typeof title !== 'string') return null
+        if (mode === 'dry') return { previousTitle: row.summary.title, title, applied: false }
+        const changed = await threadCatalogueRecoveryRef?.mutate(id, {
+          kind: 'repair-title',
+          at: new Date().toISOString()
+        })
+        return changed
+          ? { previousTitle: row.summary.title, title: changed.summary.title, applied: true }
+          : null
+      },
       chatService,
       awaitChatRecordPersisted: (chatId) => AppStore.awaitChatRecordPersisted(chatId),
       readDurableChatRecord: (chatId) => AppStore.readDurableChatRecord(chatId),
@@ -58504,7 +58715,7 @@ if (isGeminiMcpBridgeProcess) {
         // any chat is unshared, so protect every chat rather than delete a
         // shared one. Create-time cleanup resumes once channels are live.
         if (!channelAuthorityIsReadable()) {
-          for (const chat of AppStore.getChats()) chatIds.add(chat.appChatId)
+          for (const chat of AppStore.getChatList()) chatIds.add(chat.appChatId)
         }
         return chatIds
       },
@@ -58539,6 +58750,7 @@ if (isGeminiMcpBridgeProcess) {
       assertSenderCanManageChatCollection: (event) => assertMainRendererSender(event)
     })
     registerChatTranscriptPageHandlers({
+      getCatalogue: () => AppStore.getThreadCatalogue(),
       chatService,
       // Same sender-scope authority as get-chat in registerChatHandlers above.
       resolveSenderChatReadScope: (event) => {
@@ -58756,7 +58968,8 @@ if (isGeminiMcpBridgeProcess) {
       onUsageChanged: () => {
         desktopWindows.broadcast('usage-changed')
       },
-      getChats: () => AppStore.getChats(),
+      getChatList: () => AppStore.getChatList(),
+      getMessageActivity: createThreadCatalogueMessageActivity(startupThreadCatalogue.mirror.port),
       getWorkspaces: () => AppStore.getWorkspaces(),
       getSettings: () => settingsService.getSettings(),
       evaluateRemoteCapability: ({ workspaceId, capability }) =>
@@ -61167,7 +61380,7 @@ if (isGeminiMcpBridgeProcess) {
       wasDurableScheduledRunIdObserved
     }
     const baseDispatchRunWithProviderPause = createRunDispatchFacade(runDispatchFacadeDeps)
-    const dispatchRunWithProviderPause: ParentRunDispatch = (payload, event, observer) => {
+    const dispatchRunWithProviderPauseUnguarded: ParentRunDispatch = (payload, event, observer) => {
       if (historyClearBlocksRunPayload(payload)) {
         return Promise.reject(
           new Error('TaskWraith is clearing all history; new runs are temporarily blocked.')
@@ -61191,8 +61404,13 @@ if (isGeminiMcpBridgeProcess) {
       }
       return baseDispatchRunWithProviderPause(payload, event, observer)
     }
+    const dispatchRunWithProviderPause = gateThreadDispatch(dispatchRunWithProviderPauseUnguarded)
     dispatchRunWithProviderPauseRef = dispatchRunWithProviderPause
-    const dispatchMainOwnedScheduledOccurrence: ParentRunDispatch = (payload, event, observer) => {
+    const dispatchMainOwnedScheduledOccurrenceUnguarded: ParentRunDispatch = (
+      payload,
+      event,
+      observer
+    ) => {
       if (historyClearBlocksRunPayload(payload)) {
         return Promise.reject(
           new Error('TaskWraith is clearing all history; scheduled runs are temporarily blocked.')
@@ -61204,33 +61422,41 @@ if (isGeminiMcpBridgeProcess) {
         observer
       )
     }
+    const dispatchMainOwnedScheduledOccurrence = gateThreadDispatch(
+      dispatchMainOwnedScheduledOccurrenceUnguarded
+    )
     dispatchMainOwnedScheduledOccurrenceRef = dispatchMainOwnedScheduledOccurrence
     // Stage 0b-dispatch: expose the composer + dispatcher to the module-scope
     // scheduler so a windowless app can compose + fire a due SOLO run itself.
     composerServiceRef = composerService
-    channelAgentDispatchRef = async (payload, hooks) => {
-      const isolationLease = channelAgentRunIsolationRegistry.register(payload)
-      try {
-        const sender =
-          mainWindow?.webContents && !mainWindow.webContents.isDestroyed()
-            ? mainWindow.webContents
-            : createHeadlessRunSender()
-        return await baseDispatchRunWithProviderPause(
-          payload,
-          { sender },
-          hooks.observer,
-          hooks.finalAuthorization
-        )
-      } finally {
-        quotaWallSignalByRun.delete(isolationLease.binding.runId)
-        failoverSnapshotByRun.delete(isolationLease.binding.runId)
-        isolationLease.settle()
-      }
-    }
+    channelAgentDispatchRef = (payload, hooks) =>
+      threadCatalogueWriteGate.admit(payload.appChatId ?? '', async () => {
+        const isolationLease = channelAgentRunIsolationRegistry.register(payload)
+        try {
+          const sender =
+            mainWindow?.webContents && !mainWindow.webContents.isDestroyed()
+              ? mainWindow.webContents
+              : createHeadlessRunSender()
+          return await baseDispatchRunWithProviderPause(
+            payload,
+            { sender },
+            hooks.observer,
+            hooks.finalAuthorization
+          )
+        } finally {
+          quotaWallSignalByRun.delete(isolationLease.binding.runId)
+          failoverSnapshotByRun.delete(isolationLease.binding.runId)
+          isolationLease.settle()
+        }
+      })
     try {
-      channelProductionBootstrap?.startAgentExecution()
+      ;(
+        channelProductionBootstrap as ReturnType<typeof createChannelProductionBootstrap> | null
+      )?.startAgentExecution()
     } catch (error) {
-      const failedBootstrap = channelProductionBootstrap
+      const failedBootstrap = channelProductionBootstrap as ReturnType<
+        typeof createChannelProductionBootstrap
+      > | null
       channelProductionBootstrap = null
       channelAgentDispatchRef = null
       void failedBootstrap?.stop().catch(() => undefined)
@@ -63312,6 +63538,83 @@ if (isGeminiMcpBridgeProcess) {
     // full candidate set once the first frame is up (immediately when
     // headless), in slices that yield the event loop so chat IPC stays
     // responsive while the corpus drains.
+    if (
+      !historyDeletionStartupRecoveryBlockedReason &&
+      !workspaceLockStartupRecoveryBlockedReason
+    ) {
+      threadCatalogueQueueRecoveryRef = new ThreadCatalogueQueueRecovery({
+        mirror: startupThreadCatalogue.mirror,
+        jobs: () => AppStore.getRunQueueJobs({ statuses: [...ORPHANED_RUN_QUEUE_JOB_STATUSES] }),
+        isRunLive: (runId) =>
+          ensembleOrchestratorRef?.getParticipantIdForRun(runId) != null ||
+          isActiveRunSessionStatus(runManager.get(runId)?.status ?? 'cancelled'),
+        isErasing: (appChatId, workspaceId) => {
+          const fence = historyDeletionSweepFence()
+          return !fence || fence.fencedForErasure({ appChatId, workspaceId })
+        },
+        settle: (settlement) => {
+          getRunRepository().transitionRunQueueJob(settlement.runId, settlement.nextStatus, {
+            statusReason: ORPHANED_RUN_QUEUE_JOB_REASON
+          })
+          appendDurableRunEvent({
+            runId: settlement.runId,
+            ...(settlement.chatId ? { chatId: settlement.chatId } : {}),
+            kind: 'lifecycle',
+            phase: 'control',
+            source: 'main',
+            summary: 'Settled orphaned run-queue job whose run already sealed',
+            payload: {
+              eventType: 'run_queue_job_reconciled',
+              previousStatus: settlement.previousStatus,
+              settledStatus: settlement.nextStatus,
+              runStatus: settlement.runStatus,
+              reason: ORPHANED_RUN_QUEUE_JOB_REASON
+            }
+          })
+          scheduleRemoteComposerQueuePumpRef?.()
+        }
+      })
+      startupThreadCatalogue.mirror.subscribe(() => threadCatalogueQueueRecoveryRef?.reconcile())
+      threadCatalogueQueueRecoveryRef.reconcile()
+    }
+    threadCatalogueRecoveryRef = new ThreadCatalogueRecovery({
+      catalogue: startupThreadCatalogue,
+      isRunLive: isChatRunLive,
+      isChatLive: (chatId) =>
+        catalogueChatHasLiveWork(chatId, {
+          activeSessions: () =>
+            RUN_MANAGER_PROVIDERS.flatMap((provider) => runManager.getActiveByProvider(provider)),
+          bridge: bridgeRunTranscripts,
+          background: backgroundSubThreadTranscripts,
+          queuedRuns: (id) => AppStore.getRunQueueJobs({ chatId: id }),
+          isRunLive: isChatRunLive
+        }),
+      getRunSession: (runId) => runManager.get(runId),
+      isErasing: (row) => {
+        const fence = historyDeletionSweepFence()
+        return (
+          !fence ||
+          fence.fencedForErasure({
+            appChatId: row.summary.chatId,
+            workspaceId: row.summary.workspaceId
+          })
+        )
+      },
+      onRecovered: (prepared) =>
+        persistStaleRunSweepResult([], prepared.settlements, prepared.terminalRecoveries, {
+          broadcastInventory: false
+        }),
+      onOperationalRecords: createCatalogueOperationalRecovery({
+        recovery: () => threadCatalogueRecoveryRef!,
+        launchAt: startupThreadCatalogue.launchAt,
+        wakeupsEnabled: ensembleWakeupsEnabled,
+        arm: (wakeup) => wakeupTimerServiceRef?.schedule(wakeup),
+        observeExpiry: (id, expiry) => blackboardExpiryServiceRef?.observeExpiry(id, expiry),
+        drainWorker: (id) => maybeDrainSubThreadWorkerQueue(id),
+        scheduleJoin: scheduleSubThreadJoinEvaluation
+      }),
+      onError: (error, id) => console.warn(`[thread-catalogue] recovery deferred for ${id}`, error)
+    })
     scheduleDeferredBootSweeps({
       headless: tuiHeadlessHostSession.isHeadless,
       onFirstPaint: (onPaint) => mainWindow?.webContents.once('did-finish-load', onPaint),

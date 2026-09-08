@@ -22,6 +22,7 @@ import type {
   ApprovalLedgerFilter,
   ApprovalLedgerRecord,
   ChatRecord,
+  IntrospectionEvidenceItem,
   IntrospectionRunRecord,
   IntrospectionRunTrigger,
   MemoryProposalPack,
@@ -149,6 +150,17 @@ export function runManualIntrospection(
     idFactory: deps.uuid
   })
 
+  return finishIntrospection(deps, input, options, run, nowIso, evidenceItems)
+}
+
+function finishIntrospection(
+  deps: Omit<IntrospectionRunServiceDeps, 'store'> & { store: Omit<IntrospectionRunServiceStore, 'getChats'> },
+  input: RunManualIntrospectionInput,
+  options: GenerateProposalsOptions,
+  run: IntrospectionRunRecord,
+  nowIso: string,
+  evidenceItems: IntrospectionEvidenceItem[]
+): RunManualIntrospectionResult {
   deps.store.updateIntrospectionRun(run.id, {
     status: 'analyzing',
     evidenceItems
@@ -207,5 +219,37 @@ export function createIntrospectionRunServiceDeps(
     store,
     now: () => new Date().toISOString(),
     uuid: () => randomUUID()
+  }
+}
+/** Creates the durable daily claim before awaiting an off-main history query. */
+export async function runScheduledIntrospection(
+  deps: Omit<IntrospectionRunServiceDeps, 'store'> & {
+    store: Omit<IntrospectionRunServiceStore, 'getChats'>
+    getChatEvidence(window: IntrospectionHarvestWindow): Promise<IntrospectionEvidenceItem[]>
+  },
+  input: RunManualIntrospectionInput,
+  options: GenerateProposalsOptions = {}
+): Promise<RunManualIntrospectionResult> {
+  const nowIso = deps.now()
+  const window = { windowStart: input.windowStart, windowEnd: input.windowEnd, workspaceId: input.workspaceId }
+  const run = deps.store.createIntrospectionRun({
+    id: deps.uuid(), status: 'collecting', trigger: 'scheduled', workflowId: input.workflowId,
+    chatId: input.chatId, workspacePath: input.workspacePath,
+    ...window, startedAt: nowIso
+  })
+  try {
+    const chatEvidence = await deps.getChatEvidence(window)
+    const filter = input.workspaceId ? { workspaceId: input.workspaceId } : {}
+    const evidenceItems = [...harvestIntrospectionEvidence({
+      window, idFactory: deps.uuid, substrate: {
+        runEvents: deps.store.getRunEvents(filter),
+        approvalRecords: deps.store.getApprovalLedger(filter),
+        feedbackReceipts: deps.store.getMessageFeedbackReceipts(filter)
+      }
+    }), ...chatEvidence].sort((a, b) => (Date.parse(a.timestamp) || 0) - (Date.parse(b.timestamp) || 0))
+    return finishIntrospection(deps, input, options, run, nowIso, evidenceItems)
+  } catch (error) {
+    deps.store.updateIntrospectionRun(run.id, { status: 'failed', endedAt: deps.now(), error: 'History evidence could not be collected' })
+    throw error
   }
 }

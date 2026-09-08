@@ -7,6 +7,7 @@ import os from 'node:os'
 import { basename, isAbsolute, parse, resolve } from 'node:path'
 import { app, protocol } from 'electron'
 import type { Event } from 'electron'
+import { isPeopleMigrationHelper } from './startup/PeopleMigrationHelperProtocol'
 import { isTaskWraithHelperProcess } from './HelperProcessPresentation'
 import { migrateLegacyUserDataSync } from './LegacyUserDataMigration'
 import { bootstrapMainProcess, type SecondInstanceEventArguments } from './MainProcessBootstrap'
@@ -47,7 +48,8 @@ function configureElectronBeforeReady(): void {
   protocol.registerSchemesAsPrivileged([TW_MEDIA_PRIVILEGE, MESH_ASSET_PRIVILEGE, TWEMU_PRIVILEGE])
 }
 
-configureElectronBeforeReady()
+const peopleMigrationHelper = isPeopleMigrationHelper()
+if (!peopleMigrationHelper) configureElectronBeforeReady()
 
 function subscribeSecondInstance(
   listener: (...args: SecondInstanceEventArguments) => void
@@ -168,92 +170,99 @@ app.on('quit', () => {
   releaseInProcessHostLease()
 })
 
-void bootstrapMainProcess({
-  isHelperProcess: isTaskWraithHelperProcess(process.argv, process.env),
-  requestSingleInstanceLock: () => app.requestSingleInstanceLock(),
-  quit: () => app.quit(),
-  // index.ts retains its existing guard during this extraction. Electron's
-  // requestSingleInstanceLock is idempotent for the process that owns it.
-  prepareMainProcess: async () => {
-    const profilePath = canonicalProfilePath(app.getPath('userData'))
-    const migration = migrateLegacyUserDataSync({
-      userDataPath: profilePath,
-      log: {
-        log: () => console.log('[rebrand-migration] legacy userData copied'),
-        warn: () => console.warn('[rebrand-migration] legacy userData migration skipped')
-      }
-    })
-    if (migration.state === 'failed' || migration.state === 'invalid_profile') {
-      throw new Error('Legacy userData migration did not complete safely.')
-    }
-
-    // `chats/` is the Host's domain and HostProfileDomainStore fail-closes on
-    // any entry that is not an owner-only chat record, so legacy residue is
-    // repaired BEFORE either Host is selected. Never fatal: a repair that
-    // cannot run must not stop the app from booting.
-    try {
-      const chatsDir = resolve(profilePath, 'chats')
-      const hygiene = repairChatsDirectoryForHost({
-        chatsDir,
-        overlayDir: composerSelectionOverlayDirectory(chatsDir),
-        deps: nodeChatsDirectoryHygieneDeps()
-      })
-      if (chatsDirectoryHygieneChangedAnything(hygiene)) {
-        console.info(
-          `[chats-hygiene] repaired for the Host: ${hygiene.relocatedOverlayFiles} overlay file(s) relocated, ${hygiene.tightenedFileModes} file mode(s) tightened`
-        )
-      }
-      if (hygiene.unrepairableEntries.length > 0) {
-        console.warn(
-          `[chats-hygiene] ${hygiene.unrepairableEntries.length} entr(y/ies) the Host will still reject: ${hygiene.unrepairableEntries.slice(0, 5).join(', ')}`
-        )
-      }
-    } catch (error) {
-      console.warn(`[chats-hygiene] repair skipped: ${boundedBootstrapError(error)}`)
-    }
-    if (!isDesktopExternalHostEnabled()) {
-      await prepareInProcessHost(profilePath)
-      return
-    }
-    externalHostPreparation = createExternalHostPreparation(profilePath)
-    try {
-      await externalHostPreparation.prepare()
-    } catch (error) {
-      console.error(
-        `[main-bootstrap] external Host unavailable; using in-process Host: ${boundedBootstrapError(error)}`
+void (
+  peopleMigrationHelper
+    ? import('./startup/PeopleMigrationHelperMain').then((module) =>
+        module.startPeopleMigrationHelper()
       )
-      try {
-        await externalHostPreparation.cleanup()
-      } catch (cleanupError) {
-        console.error(
-          `[main-bootstrap] external Host cleanup failed: ${boundedBootstrapError(cleanupError)}`
-        )
-      }
-      externalHostPreparation = null
-      try {
-        await prepareInProcessHost(profilePath)
-      } catch (fallbackError) {
-        if (
-          fallbackError instanceof ProfileWriterLivePeerError ||
-          (fallbackError instanceof Error && fallbackError.name === 'ProfileWriterLivePeerError')
-        ) {
-          throw fallbackError
-        }
-        throw error
-      }
-    }
-  },
-  cleanupPreparedMainProcess: async () => {
-    await externalHostPreparation?.cleanup()
-    releaseInProcessHostLease()
-  },
-  loadMainProcess: () => import('./index'),
-  subscribeSecondInstance,
-  replaySecondInstance: ([event, argv, workingDirectory, additionalData]) => {
-    app.emit('second-instance', event as Event, argv, workingDirectory, additionalData)
-  },
-  log: (message) => console.log(message)
-}).catch((error) => {
+    : bootstrapMainProcess({
+        isHelperProcess: isTaskWraithHelperProcess(process.argv, process.env),
+        requestSingleInstanceLock: () => app.requestSingleInstanceLock(),
+        quit: () => app.quit(),
+        // index.ts retains its existing guard during this extraction. Electron's
+        // requestSingleInstanceLock is idempotent for the process that owns it.
+        prepareMainProcess: async () => {
+          const profilePath = canonicalProfilePath(app.getPath('userData'))
+          const migration = migrateLegacyUserDataSync({
+            userDataPath: profilePath,
+            log: {
+              log: () => console.log('[rebrand-migration] legacy userData copied'),
+              warn: () => console.warn('[rebrand-migration] legacy userData migration skipped')
+            }
+          })
+          if (migration.state === 'failed' || migration.state === 'invalid_profile') {
+            throw new Error('Legacy userData migration did not complete safely.')
+          }
+
+          // `chats/` is the Host's domain and HostProfileDomainStore fail-closes on
+          // any entry that is not an owner-only chat record, so legacy residue is
+          // repaired BEFORE either Host is selected. Never fatal: a repair that
+          // cannot run must not stop the app from booting.
+          try {
+            const chatsDir = resolve(profilePath, 'chats')
+            const hygiene = repairChatsDirectoryForHost({
+              chatsDir,
+              overlayDir: composerSelectionOverlayDirectory(chatsDir),
+              deps: nodeChatsDirectoryHygieneDeps()
+            })
+            if (chatsDirectoryHygieneChangedAnything(hygiene)) {
+              console.info(
+                `[chats-hygiene] repaired for the Host: ${hygiene.relocatedOverlayFiles} overlay file(s) relocated, ${hygiene.tightenedFileModes} file mode(s) tightened`
+              )
+            }
+            if (hygiene.unrepairableEntries.length > 0) {
+              console.warn(
+                `[chats-hygiene] ${hygiene.unrepairableEntries.length} entr(y/ies) the Host will still reject: ${hygiene.unrepairableEntries.slice(0, 5).join(', ')}`
+              )
+            }
+          } catch (error) {
+            console.warn(`[chats-hygiene] repair skipped: ${boundedBootstrapError(error)}`)
+          }
+          if (!isDesktopExternalHostEnabled()) {
+            await prepareInProcessHost(profilePath)
+            return
+          }
+          externalHostPreparation = createExternalHostPreparation(profilePath)
+          try {
+            await externalHostPreparation.prepare()
+          } catch (error) {
+            console.error(
+              `[main-bootstrap] external Host unavailable; using in-process Host: ${boundedBootstrapError(error)}`
+            )
+            try {
+              await externalHostPreparation.cleanup()
+            } catch (cleanupError) {
+              console.error(
+                `[main-bootstrap] external Host cleanup failed: ${boundedBootstrapError(cleanupError)}`
+              )
+            }
+            externalHostPreparation = null
+            try {
+              await prepareInProcessHost(profilePath)
+            } catch (fallbackError) {
+              if (
+                fallbackError instanceof ProfileWriterLivePeerError ||
+                (fallbackError instanceof Error &&
+                  fallbackError.name === 'ProfileWriterLivePeerError')
+              ) {
+                throw fallbackError
+              }
+              throw error
+            }
+          }
+        },
+        cleanupPreparedMainProcess: async () => {
+          await externalHostPreparation?.cleanup()
+          releaseInProcessHostLease()
+        },
+        loadMainProcess: () => import('./index'),
+        subscribeSecondInstance,
+        replaySecondInstance: ([event, argv, workingDirectory, additionalData]) => {
+          app.emit('second-instance', event as Event, argv, workingDirectory, additionalData)
+        },
+        log: (message) => console.log(message)
+      })
+).catch((error) => {
   console.error('[main-bootstrap] failed to load the main process', error)
   app.exit(1)
 })

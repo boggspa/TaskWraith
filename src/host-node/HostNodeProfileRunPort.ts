@@ -1,3 +1,4 @@
+import type { HostCatalogueRunOrigin } from '../shared/threadCatalogueTypes'
 import { lstatSync, realpathSync, statSync } from 'node:fs'
 
 import { hostRunFailureNotice, hostRunFailureReason } from '../shared/hostProtocol'
@@ -65,6 +66,8 @@ function failedRunReasonFloor(provider: string | undefined, errorCode: string | 
 }
 
 export interface HostNodeProfileRunPortOptions {
+  readonly runIdsPreflighted?: boolean
+  readonly hostRunOrigin?: HostCatalogueRunOrigin
   readonly store: HostProfileDomainStore
   readonly events: HostNodeRunEventSink
   readonly permissionConsentAuthority?: HostPermissionConsentAuthorityPort
@@ -221,6 +224,7 @@ function phaseRank(phase: HostProviderRunUpdate['phase']): number {
  */
 export class HostNodeProfileRunPort implements HostProviderRunPort {
   private readonly active = new Map<string, ActiveRun>()
+  private readonly begunLocations = new Map<string, string>()
 
   constructor(private readonly options: HostNodeProfileRunPortOptions) {}
 
@@ -318,10 +322,13 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
     if (!isEnsembleSeatProvider(thread.provider) || normalized.providerId !== thread.provider) {
       throw new Error('Host profile run provider does not match thread')
     }
+    if ((thread.runs ?? []).some((run) => run.runId === normalized.runId))
+      return { kind: 'duplicate' as const }
     if ((thread.runs ?? []).some((run) => run.status === 'running')) {
       throw new Error('Host profile thread already has an active run')
     }
     if (
+      !this.options.runIdsPreflighted &&
       this.options.store
         .listThreadSummaries()
         .some((candidate) => (candidate.runs ?? []).some((run) => run.runId === normalized.runId))
@@ -335,8 +342,12 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
       provider: thread.provider,
       requestedModel: normalized.modelId,
       phase: 'starting',
+      ...(this.options.hostRunOrigin ? { hostRunOrigin: this.options.hostRunOrigin } : {}),
       startedAt: normalized.startedAt
     })
+    this.begunLocations.set(normalized.runId, normalized.threadId)
+    if (this.begunLocations.size > 10_000)
+      this.begunLocations.delete(this.begunLocations.keys().next().value!)
     this.active.set(normalized.runId, {
       threadId: normalized.threadId,
       phase: 'starting',
@@ -461,6 +472,9 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
   }
 
   private threadIdForStoredRun(runId: string): string | null {
+    const known = this.begunLocations.get(runId)
+    if (known) return known
+    if (this.options.runIdsPreflighted) return null
     for (const thread of this.options.store.listThreadSummaries()) {
       if ((thread.runs ?? []).some((run) => run.runId === runId)) return thread.appChatId
     }

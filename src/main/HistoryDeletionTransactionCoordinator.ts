@@ -11,7 +11,7 @@ export interface HistoryDeletionTransactionCoordinatorDeps<THolds> {
    * admission holds and generation fences across an in-process retry. */
   refreshHolds?: (preparation: HistoryDeletionPreparation, holds: THolds) => THolds
   quiesce: (preparation: HistoryDeletionPreparation, holds: THolds) => Promise<void>
-  commit: (operationId: string) => void
+  commit: (operationId: string) => unknown
   releaseHolds: (preparation: HistoryDeletionPreparation, holds: THolds) => void
 }
 
@@ -75,7 +75,7 @@ export class HistoryDeletionTransactionCoordinator<THolds> {
   private async execute(retained: RetainedOperation<THolds>): Promise<void> {
     const { preparation, holds } = retained
     await this.deps.quiesce(preparation, holds)
-    this.deps.commit(preparation.operationId)
+    await this.deps.commit(preparation.operationId)
     this.retainedByOperation.delete(preparation.operationId)
     this.deps.releaseHolds(preparation, holds)
   }

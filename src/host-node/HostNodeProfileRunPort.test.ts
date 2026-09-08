@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   HOST_PROFILE_CHATS_DIRECTORY,
@@ -52,6 +52,52 @@ afterEach(() => {
 })
 
 describe('HostNodeProfileRunPort', () => {
+  it('rejects a completed run id in the canonical target even when history preflight is partial', () => {
+    const { store, threadId } = openStore()
+    store.updateRun({
+      threadId,
+      runId: 'existing',
+      status: 'running',
+      provider: 'muse',
+      startedAt: '2026-08-24T05:00:00.000Z'
+    })
+    store.updateRun({
+      threadId,
+      runId: 'existing',
+      status: 'completed',
+      provider: 'muse',
+      startedAt: '2026-08-24T05:00:00.000Z',
+      endedAt: '2026-08-24T05:01:00.000Z'
+    })
+    const trap = vi.spyOn(store, 'listThreadSummaries').mockImplementation(() => {
+      throw new Error('corpus trap')
+    })
+    const port = new HostNodeProfileRunPort({
+      store,
+      runIdsPreflighted: true,
+      events: { publish: () => {} }
+    })
+    expect(
+      port.beginRun({
+        runId: 'existing',
+        threadId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        startedAt: '2026-08-24T05:02:00.000Z'
+      })
+    ).toEqual({ kind: 'duplicate' })
+    expect(
+      port.beginRun({
+        runId: 'fresh',
+        threadId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        startedAt: '2026-08-24T05:02:00.000Z'
+      })
+    ).toEqual({ kind: 'started' })
+    expect(trap).not.toHaveBeenCalled()
+  })
+
   it('maps only configured canonical Muse workspace threads and persists idempotent lifecycle state', () => {
     const { store, threadId } = openStore()
     const events: HostProviderRunEvent[] = []

@@ -221,7 +221,10 @@ export class ChatUpdateInterestRouter {
 
     const previous = this.compactProjectionByChatId.get(chatId)
     if (!previous) {
-      const seeded = this.store.toChatListItem(chat)
+      const seeded =
+        (chat as Partial<ChatListItem>).summaryOnly === true
+          ? (chat as ChatListItem)
+          : this.store.toChatListItem(chat)
       this.rememberProjection(chatId, seeded)
       return seeded
     }
@@ -266,7 +269,9 @@ export class ChatUpdateInterestRouter {
     const nextRecord = next as unknown as Record<string, unknown>
     const previousRecord = previous as unknown as Record<string, unknown>
     for (const key of PRESERVED_COMPACT_CHAT_LIST_FIELDS) {
-      if (Object.prototype.hasOwnProperty.call(previous, key)) {
+      if (sourceWasSummary && Object.prototype.hasOwnProperty.call(source, key)) {
+        nextRecord[key] = (source as unknown as Record<string, unknown>)[key]
+      } else if (Object.prototype.hasOwnProperty.call(previous, key)) {
         nextRecord[key] = previousRecord[key]
       }
     }

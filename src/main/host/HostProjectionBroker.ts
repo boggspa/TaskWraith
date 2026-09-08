@@ -1,4 +1,8 @@
 import type {
+  ThreadCatalogueReadQuery,
+  ThreadCatalogueMaintenanceQuery
+} from '../../shared/threadCatalogueProtocol'
+import type {
   HostActorIdentity,
   HostAuthenticatedClientIdentity,
   HostCapability,
@@ -21,7 +25,8 @@ const DESKTOP_HOST_CAPABILITIES = [
   'health',
   'commands',
   'receipts',
-  'channels'
+  'channels',
+  'history'
 ] as const
 
 export type HostProjectionSnapshotResult =
@@ -48,9 +53,13 @@ export interface HostProjectionClientPort {
   submitCommand(command: HostCommand): Promise<HostCommandReceipt>
   lookupReceipt(params: { commandId: string }): Promise<HostCommandReceipt>
   close(): void
+  queryThreadCatalogue?<T = unknown>(request: ThreadCatalogueReadQuery): Promise<T>
+  maintainThreadCatalogue?<T = unknown>(request: ThreadCatalogueMaintenanceQuery): Promise<T>
 }
 
 export interface HostProjectionBroker {
+  maintainThreadCatalogue?<T = unknown>(request: ThreadCatalogueMaintenanceQuery): Promise<T>
+  queryThreadCatalogue?<T = unknown>(request: ThreadCatalogueReadQuery): Promise<T>
   snapshot(): Promise<HostProjectionSnapshotResult>
   deltasSince(position: HostCursorPosition): Promise<HostProjectionDeltasResult>
   submitCommand(command: HostCommand): Promise<HostProjectionCommandResult>
@@ -178,6 +187,22 @@ export function createHostProjectionBroker(
   }
 
   const broker: HostProjectionBroker = {
+    async maintainThreadCatalogue<T>(request: ThreadCatalogueMaintenanceQuery): Promise<T> {
+      const outcome = await withClient(async (active) => {
+        if (!active.maintainThreadCatalogue) throw new Error('History maintenance is unavailable')
+        return active.maintainThreadCatalogue<T>(request)
+      })
+      if (!outcome.ok) throw new Error(outcome.error)
+      return outcome.value
+    },
+    async queryThreadCatalogue<T>(request: ThreadCatalogueReadQuery): Promise<T> {
+      const outcome = await withClient(async (active) => {
+        if (!active.queryThreadCatalogue) throw new Error('History catalogue is unavailable')
+        return active.queryThreadCatalogue<T>(request)
+      })
+      if (!outcome.ok) throw new Error(outcome.error)
+      return outcome.value
+    },
     async snapshot() {
       const outcome = await withClient((active) => active.getSnapshot())
       return outcome.ok

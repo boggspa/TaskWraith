@@ -1,3 +1,8 @@
+import {
+  peopleDonorMutationOwned,
+  assertPeopleDonorMutationAllowed
+} from '../host-shared/thread-catalogue/PeopleDonorMutationGate'
+import type { HostCatalogueRunOrigin } from '../shared/threadCatalogueTypes'
 /**
  * Lease-gated, Node-only durable profile domain store.
  *
@@ -140,7 +145,14 @@ export interface HostProfileMessage {
   readonly timestamp: string
 }
 
+export interface HostCatalogueRunWindow {
+  entries: Array<{ chatId: string; run: HostProfileRun }>
+  total: number
+  complete: boolean
+}
+
 export interface HostProfileRun {
+  readonly hostRunOrigin?: HostCatalogueRunOrigin
   readonly runId: string
   readonly provider?: string
   readonly status?: string
@@ -223,6 +235,10 @@ export interface HostProfileDomainStoreOptions {
    *  transcript is 95% of a record and none of it is held. 0 disables the cache
    *  and restores the uncached full re-read. */
   readonly threadCacheMaxBytes?: number
+  /** Production list discovery is asynchronous metadata; never fall back to record decoding. */
+  readonly runSummarySource?: () => HostCatalogueRunWindow
+  readonly threadSummarySource?: () => readonly HostProfileThreadSummary[]
+  readonly beginThreadPublication?: (thread: HostProfileThread) => { commit(): void; abort(): void }
 }
 
 type StoredEnsembleParticipant = Record<string, unknown> & {
@@ -782,6 +798,9 @@ export class HostProfileDomainStore {
   private readonly threadCacheMaxBytes: number
   private threadCacheBytes = 0
   private threadRecordReadCount = 0
+  private readonly runSummarySource?: () => HostCatalogueRunWindow
+  private readonly threadSummarySource?: () => readonly HostProfileThreadSummary[]
+  private readonly beginThreadPublication?: HostProfileDomainStoreOptions['beginThreadPublication']
 
   constructor(options: HostProfileDomainStoreOptions) {
     if (!options?.authority || typeof options.authority.assertProfileAuthority !== 'function') {
@@ -795,6 +814,9 @@ export class HostProfileDomainStore {
     this.idFactory = options.idFactory ?? randomUUID
     this.beforeAtomicPublish = options.beforeAtomicPublish
     this.onThreadQuarantined = options.onThreadQuarantined
+    this.runSummarySource = options.runSummarySource
+    this.threadSummarySource = options.threadSummarySource
+    this.beginThreadPublication = options.beginThreadPublication
     this.threadCacheMaxBytes =
       Number.isFinite(options.threadCacheMaxBytes) && Number(options.threadCacheMaxBytes) >= 0
         ? Math.floor(Number(options.threadCacheMaxBytes))
@@ -1202,7 +1224,15 @@ export class HostProfileDomainStore {
    * the uncached whole-record primitive for a caller that genuinely needs
    * transcripts; nothing on a timer should be calling it.
    */
+  listRunSummaries(): HostCatalogueRunWindow | null {
+    return this.runSummarySource?.() ?? null
+  }
+
   listThreadSummaries(): readonly HostProfileThreadSummary[] {
+    if (this.threadSummarySource) {
+      this.assertAuthority()
+      return this.threadSummarySource()
+    }
     const summaries: HostProfileThreadSummary[] = []
     const visited = this.sweepChatRecords((id, path, stat) => {
       const summary = this.threadSummaryFor(id, path, stat)
@@ -1808,6 +1838,7 @@ export class HostProfileDomainStore {
   }
 
   updateRun(input: {
+    hostRunOrigin?: HostCatalogueRunOrigin
     threadId: string
     runId: string
     status: 'running' | 'completed' | 'failed' | 'cancelled'
@@ -1863,9 +1894,23 @@ export class HostProfileDomainStore {
     ) {
       throw new Error('Invalid run error code')
     }
+    if (
+      input.hostRunOrigin &&
+      (input.hostRunOrigin.schemaVersion !== 1 ||
+        input.hostRunOrigin.kind !== 'host-node' ||
+        !safeId(input.hostRunOrigin.hostId) ||
+        !safeId(input.hostRunOrigin.incarnation))
+    )
+      throw new Error('Invalid Host run origin')
     const runs = [...(current.runs ?? [])]
     const index = runs.findIndex((run) => run.runId === input.runId)
     const prior = index >= 0 ? runs[index] : undefined
+    if (
+      prior &&
+      input.hostRunOrigin &&
+      JSON.stringify(prior.hostRunOrigin) !== JSON.stringify(input.hostRunOrigin)
+    )
+      throw new Error('Host run origin cannot change')
     if (!prior && input.status !== 'running') throw new Error('Run must begin as running')
     const priorTerminalStatus = prior ? this.terminalRunStatus(prior) : null
     if (prior && priorTerminalStatus) {
@@ -1894,6 +1939,7 @@ export class HostProfileDomainStore {
     if (!prior && input.status !== 'running') throw new Error('Run must begin as running')
     const run: HostProfileRun = {
       ...(prior ?? {}),
+      ...(input.hostRunOrigin ? { hostRunOrigin: { ...input.hostRunOrigin } } : {}),
       runId: input.runId,
       status: input.status,
       ...(input.provider !== undefined ? { provider: this.requireText(input.provider, 512) } : {}),
@@ -2065,7 +2111,16 @@ export class HostProfileDomainStore {
   private writeThread(thread: HostProfileThread): void {
     this.assertAuthority()
     this.requireId(thread.appChatId)
-    atomicJson(this.chatPath(thread.appChatId), thread, MAX_CHAT_BYTES, this.beforeAtomicPublish)
+    if (peopleDonorMutationOwned(this.profilePath))
+      assertPeopleDonorMutationAllowed(this.profilePath, this.getThread(thread.appChatId), thread)
+    const publication = this.beginThreadPublication?.(thread)
+    try {
+      atomicJson(this.chatPath(thread.appChatId), thread, MAX_CHAT_BYTES, this.beforeAtomicPublish)
+    } catch (error) {
+      publication?.abort()
+      throw error
+    }
+    publication?.commit()
   }
 
   private chatPath(threadId: string): string {

@@ -1254,7 +1254,9 @@ function ApiSpendView({ options }: { options: ModelUsageApiSpendOptions | undefi
     // derives from — no need to ship every chat's full transcript.
     const chatsPromise =
       typeof window.api?.getChatList === 'function'
-        ? window.api.getChatList().catch(() => [] as ChatListItem[])
+        ? (window.api.getChatRunSummaries?.() ?? window.api.getChatList()).catch(
+            () => [] as ChatListItem[]
+          )
         : Promise.resolve([] as ChatListItem[])
     void Promise.all([usagePromise, chatsPromise]).then(([latestUsage, latestChats]) => {
       if (cancelled) return

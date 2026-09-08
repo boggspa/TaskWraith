@@ -50,6 +50,12 @@ import {
   type ChannelHumanReviewEntry
 } from './ChannelHumanReviewStore'
 import {
+  executeChannelHistoryDeletion,
+  planChannelHistoryDeletion,
+  type ChannelProductionHistoryDeletionResult,
+  type ChannelProductionHistoryDeletionScope
+} from './ChannelHistoryDeletionStore'
+import {
   ChannelMessageLog,
   type ChannelAppendResult,
   type ChannelMessage
@@ -64,6 +70,11 @@ import {
   type ChannelMember,
   type TaskWraithReference
 } from './ChannelStore'
+
+export type {
+  ChannelProductionHistoryDeletionResult,
+  ChannelProductionHistoryDeletionScope
+} from './ChannelHistoryDeletionStore'
 
 export interface ChannelProductionDataPaths {
   root: string
@@ -200,16 +211,6 @@ export interface ChannelProductionStatus {
   channelCount: number
   recoveryBlockedChannelCount: number
   openRoomCount: number
-}
-
-export type ChannelProductionHistoryDeletionScope =
-  | { kind: 'chat' | 'workspace' | 'truncate'; chatIds: readonly string[] }
-  | { kind: 'global' }
-
-export interface ChannelProductionHistoryDeletionResult {
-  kind: ChannelProductionHistoryDeletionScope['kind']
-  purgedChannelIds: string[]
-  preservedChannelIds: string[]
 }
 
 export interface ChannelProductionService {
@@ -1353,93 +1354,42 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
     scope: ChannelProductionHistoryDeletionScope
   ): Promise<ChannelProductionHistoryDeletionResult> {
     const state = this.requireRunning()
-    const channels = state.store.listChannels()
-    let targets: Channel[]
-    if (scope.kind === 'global') {
-      targets = channels
-    } else {
-      if (
-        !Array.isArray(scope.chatIds) ||
-        scope.chatIds.some((chatId) => typeof chatId !== 'string' || !chatId.trim())
-      ) {
-        throw new ChannelError('protocol_unsupported', 'History deletion chat ids are invalid')
-      }
-      const chatIds = new Set(scope.chatIds)
-      targets = channels.filter((channel) => chatIds.has(channel.chatId))
-    }
-    const channelIds = targets.map((channel) => channel.channelId)
-    const chatIdByChannelId = new Map(
-      targets.map((channel) => [channel.channelId, channel.chatId] as const)
-    )
-    const humanPolicyChannelIds =
-      scope.kind === 'global'
-        ? state.humanPolicies.list().map((record) => record.channelId)
-        : channelIds
-    if (scope.kind === 'truncate') {
-      return Promise.resolve({
-        kind: scope.kind,
-        purgedChannelIds: [],
-        preservedChannelIds: channelIds
-      })
-    }
-    if (channelIds.length === 0 && scope.kind !== 'global') {
-      return Promise.resolve({
-        kind: scope.kind,
-        purgedChannelIds: [],
-        preservedChannelIds: []
-      })
-    }
+    const plan = planChannelHistoryDeletion({
+      scope,
+      store: state.store,
+      ...(scope.kind === 'global'
+        ? {
+            listHumanPolicyChannelIds: () =>
+              state.humanPolicies.list().map((record) => record.channelId)
+          }
+        : {})
+    })
+    if (plan.immediateResult) return Promise.resolve(plan.immediateResult)
 
-    for (const channelId of channelIds) this.closingChannelIds.add(channelId)
+    for (const channelId of plan.channelIds) this.closingChannelIds.add(channelId)
     const agentQuiescence = new Map(
-      channelIds.map((channelId) => [
+      plan.channelIds.map((channelId) => [
         channelId,
         state.agentProduction?.quiesceChannel(channelId) ?? Promise.resolve()
       ])
     )
     const operation = this.enqueueAgentManagement(async () => {
       await Promise.all(
-        channelIds.map((channelId) =>
+        plan.channelIds.map((channelId) =>
           this.enqueueChannel(channelId, async () => {
             await agentQuiescence.get(channelId)
             await state.runtime.quiesceChannel(channelId)
           })
         )
       )
-      if (scope.kind === 'global') {
-        state.log.purgeAll()
-        state.audit.purgeAll()
-        state.agentDispatchJournal.purgeAll()
-        state.agentAuthority.purgeAll()
-        state.agentIdentities.purgeAll()
-        state.store.purgeAllChannels()
-        // Delete policy only after Channel authority is gone. A late persistence
-        // failure may leave an orphaned policy, but can never widen a live member.
-        state.humanPolicies.purgeChannels(humanPolicyChannelIds)
-        state.humanReviews.purgeAll()
-      } else {
-        state.log.purgeChannels(channelIds)
-        state.audit.purgeChannels(channelIds)
-        for (const channelId of channelIds) {
-          state.agentDispatchJournal.eraseChannel(channelId)
-          state.agentAuthority.eraseChannel(channelId)
-        }
-        state.store.purgeChannels(channelIds)
-        state.humanPolicies.purgeChannels(humanPolicyChannelIds)
-        state.humanReviews.purgeChannels(channelIds)
-      }
-      for (const channelId of channelIds) {
-        const chatId = chatIdByChannelId.get(channelId)
+      const result = executeChannelHistoryDeletion(state, plan)
+      for (const { channelId, chatId } of plan.targets) {
         this.clearPendingAdmissions(channelId)
         state.recoveryBlockedChannelIds.delete(channelId)
         this.closingChannelIds.delete(channelId)
-        if (chatId) this.notifyChange({ channelId, chatId, reason: 'channel' })
+        this.notifyChange({ channelId, chatId, reason: 'channel' })
       }
-      return {
-        kind: scope.kind,
-        purgedChannelIds: channelIds,
-        preservedChannelIds: []
-      }
+      return result
     })
     return this.track(operation)
   }

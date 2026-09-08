@@ -275,6 +275,16 @@ describe('hostProtocolTransport Wave 3.2', () => {
         case 'thread.history':
           frame = { ...base, kind, params: { threadId: 'thread-1', limit: 25 } }
           break
+        case 'thread.catalogue':
+          frame = { ...base, kind, params: { method: 'list', limit: 25 } }
+          break
+        case 'thread.catalogue.maintenance':
+          frame = {
+            ...base,
+            kind,
+            params: { method: 'owner', owner: { writer: 'desktop', writerId: 'desktop-id' } }
+          }
+          break
         case 'workspace.git.read':
           frame = {
             ...base,

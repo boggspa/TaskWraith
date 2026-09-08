@@ -26,6 +26,7 @@ import {
 import {
   HOST_DELTA_FORBIDDEN_PAYLOAD_CODE,
   prepareHostDeltaPayload,
+  type HostDeltaAppendBatchResult,
   type HostDeltaAppendInput,
   type HostDeltaAppendResult,
   type HostDeltaPayloadPrivacyCode
@@ -48,6 +49,7 @@ export interface HostDomainEffectDto {
 /** Injected sole journal authority — typically HostDeltaStore. */
 export interface HostDomainDeltaStorePort {
   append: (input: HostDeltaAppendInput) => HostDeltaAppendResult
+  appendBatch?: (inputs: readonly HostDeltaAppendInput[]) => HostDeltaAppendBatchResult
   getPosition: () => HostCursorPosition
 }
 
@@ -434,6 +436,75 @@ export class HostDomainDeltaPublisher {
       position,
       count: results.length,
       results
+    }
+  }
+
+  /**
+   * Background reconciliation only. Real HostDeltaStore batches the already
+   * validated inputs behind one fsync; injected legacy ports retain publish().
+   */
+  publishDurableBatch(
+    effects: readonly HostDomainEffectDto[] | readonly unknown[]
+  ): HostDomainDeltaPublishResult {
+    if (!this.store.appendBatch) return this.publish(effects)
+    let prePosition: HostCursorPosition
+    try {
+      prePosition = this.store.getPosition()
+    } catch (error) {
+      return {
+        kind: 'store_error',
+        detail: `getPosition failed: ${error instanceof Error ? error.message : String(error)}`,
+        position: null
+      }
+    }
+    const validated = validateHostDomainEffectBatch(effects)
+    if (!validated.ok) {
+      return {
+        kind: 'rejected',
+        reason: 'validation_failed',
+        failures: validated.failures,
+        position: prePosition
+      }
+    }
+    let batch: HostDeltaAppendBatchResult
+    try {
+      batch = this.store.appendBatch(validated.prepared.map(({ input }) => input))
+    } catch (error) {
+      let position: HostCursorPosition
+      try {
+        position = this.store.getPosition()
+      } catch {
+        position = prePosition
+      }
+      return {
+        kind: 'store_error',
+        detail: error instanceof Error ? error.message : String(error),
+        position
+      }
+    }
+    if (batch.kind === 'write-failed') {
+      return {
+        kind: 'store_error',
+        detail: `${batch.detail} (rollback ${batch.rollback})`,
+        position: batch.position
+      }
+    }
+    if (batch.kind === 'rejected') {
+      const failed = validated.prepared[batch.failedAtIndex]
+      return {
+        kind: 'partial',
+        position: batch.position,
+        publishedCount: 0,
+        results: [],
+        failedAtIndex: failed?.index ?? batch.failedAtIndex,
+        failure: { kind: 'append_rejected', result: batch.result }
+      }
+    }
+    return {
+      kind: 'published',
+      position: batch.position,
+      count: batch.results.length,
+      results: batch.results
     }
   }
 }

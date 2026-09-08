@@ -191,6 +191,32 @@ function handlerFor(channel: string): RegisteredHandler {
 }
 
 describe('registerChatHandlers', () => {
+  it('waits on the migration inventory for creation and rechecks the canonical save after its handoff', async () => {
+    let release!: () => void
+    let held = true
+    const pending = new Promise<void>((resolve) => {
+      release = () => {
+        held = false
+        resolve()
+      }
+    })
+    const deps = createDeps({
+      beforeChatInventoryWrite: () => (held ? pending : undefined),
+      beforeSaveChat: () => (held ? pending : undefined)
+    })
+    registerChatHandlers(deps)
+    const create = handlerFor('create-global-chat')({})
+    const save = handlerFor('save-chat')({}, chat('chat-1', { title: 'After migration' }))
+    expect(deps.chatService.createGlobalChat).not.toHaveBeenCalled()
+    expect(deps.chatService.saveChat).not.toHaveBeenCalled()
+    expect(deps.chatService.getChat).not.toHaveBeenCalled()
+    release()
+    await Promise.all([create, save])
+    expect(deps.chatService.createGlobalChat).toHaveBeenCalledOnce()
+    expect(deps.chatService.saveChat).toHaveBeenCalledOnce()
+    expect(deps.chatService.getChat).toHaveBeenCalledWith('chat-1')
+  })
+
   it('registers residual chat CRUD handlers', () => {
     registerChatHandlers(createDeps())
 

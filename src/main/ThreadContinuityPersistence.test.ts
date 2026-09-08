@@ -106,9 +106,9 @@ describe('checkpoint persistence boundaries', () => {
     ).not.toContain('PRIVATE_CHECKPOINT_SENTINEL')
   })
 
-  it('erases checkpoints when the user truncates the transcript', () => {
+  it('erases checkpoints when the user truncates the transcript', async () => {
     AppStore.saveChat(withCheckpoint(fixture()), { authoritativeContinuityCheckpoints: true })
-    expect(AppStore.truncateChatHistory('chat')?.continuityCheckpoints).toBeUndefined()
+    expect((await AppStore.truncateChatHistory('chat'))?.continuityCheckpoints).toBeUndefined()
     AppStore.resetTransientDeletionGuardsForTests()
     expect(AppStore.getChat('chat')?.continuityCheckpoints).toBeUndefined()
   })

@@ -152,6 +152,8 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'get-pinned-messages': ['optionalString'],
   'get-chat': ['chatId'],
   'get-chat-transcript-page': ['object'],
+  'thread-catalogue:read': ['object'],
+  'thread-catalogue:status': [],
   'create-chat': ['string', 'workspacePath'],
   'create-global-chat': [],
   'create-ensemble-chat': ['optionalObject'],

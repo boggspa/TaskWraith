@@ -1,4 +1,13 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import {
+  existsSync,
+  fsyncSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  writeSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -30,13 +39,21 @@ describe('HostDeltaStore', () => {
     maxRecords?: number
     maxBytes?: number
     compactAfterRecords?: number
+    batchWrite?: ConstructorParameters<typeof HostDeltaStore>[0]['batchWrite']
+    batchFsync?: ConstructorParameters<typeof HostDeltaStore>[0]['batchFsync']
+    batchTruncate?: ConstructorParameters<typeof HostDeltaStore>[0]['batchTruncate']
+    log?: (line: string) => void
   }) {
     return new HostDeltaStore({
       dataDir,
       now: () => clock,
       maxRecords: options?.maxRecords,
       maxBytes: options?.maxBytes,
-      compactAfterRecords: options?.compactAfterRecords
+      compactAfterRecords: options?.compactAfterRecords,
+      batchWrite: options?.batchWrite,
+      batchFsync: options?.batchFsync,
+      batchTruncate: options?.batchTruncate,
+      log: options?.log
     })
   }
 
@@ -97,6 +114,184 @@ describe('HostDeltaStore', () => {
     unsubscribeObserver()
     store.append({ kind: 'upsert', family: 'thread', entityId: 'thread-2' })
     expect(seen).toHaveLength(2)
+  })
+
+  it('batch-publishes one durable ordered chain before memory or listeners can observe it', () => {
+    const seen: number[] = []
+    let fsyncs = 0
+    const store: HostDeltaStore = openStore({
+      batchFsync: (descriptor) => {
+        fsyncs += 1
+        expect(store.getPosition()).toEqual({ generation: 1, cursor: 0 })
+        expect(seen).toEqual([])
+        fsyncSync(descriptor)
+      }
+    })
+    store.subscribe((event) => seen.push(event.position.cursor))
+
+    const result = store.appendBatch([
+      { kind: 'upsert', family: 'thread', entityId: 'one', payload: { id: 'one' } },
+      { kind: 'remove', family: 'thread', entityId: 'one' },
+      { kind: 'upsert', family: 'thread', entityId: 'two', payload: { id: 'two' } }
+    ])
+
+    expect(result).toMatchObject({
+      kind: 'appended',
+      position: { generation: 1, cursor: 3 }
+    })
+    if (result.kind !== 'appended') return
+    expect(result.results.map((entry) => entry.position.cursor)).toEqual([1, 2, 3])
+    expect(fsyncs).toBe(1)
+    expect(seen).toEqual([1, 2, 3])
+    expect(openStore().getPosition()).toEqual({ generation: 1, cursor: 3 })
+  })
+
+  it('rejects a bad middle batch entry before writing any prefix', () => {
+    const store = openStore()
+    const result = store.appendBatch([
+      { kind: 'upsert', family: 'thread', entityId: 'one', payload: { id: 'one' } },
+      { kind: 'generation-reset', family: 'snapshot-meta' },
+      { kind: 'remove', family: 'thread', entityId: 'one' }
+    ])
+
+    expect(result).toMatchObject({ kind: 'rejected', failedAtIndex: 1 })
+    expect(store.getPosition()).toEqual({ generation: 1, cursor: 0 })
+    expect(existsSync(join(dataDir, HOST_DELTA_JOURNAL_FILENAME))).toBe(false)
+  })
+
+  it('rolls a short-write failure back to the exact prior length before reusing the next cursor', () => {
+    let writes = 0
+    const store = openStore({
+      batchWrite: (descriptor, bytes, offset, length) => {
+        writes += 1
+        if (writes === 1) {
+          const count = Math.min(17, length)
+          return writeSync(descriptor, bytes, offset, count, null)
+        }
+        if (writes === 2) throw new Error('injected batch write failure')
+        return writeSync(descriptor, bytes, offset, length, null)
+      }
+    })
+    store.append({ kind: 'upsert', family: 'thread', entityId: 'seed', payload: { id: 'seed' } })
+    const journal = join(dataDir, HOST_DELTA_JOURNAL_FILENAME)
+    const beforeBytes = statSync(journal).size
+    const seen: number[] = []
+    store.subscribe((event) => seen.push(event.position.cursor))
+
+    expect(
+      store.appendBatch([
+        { kind: 'upsert', family: 'thread', entityId: 'one', payload: { id: 'one' } },
+        { kind: 'upsert', family: 'thread', entityId: 'two', payload: { id: 'two' } }
+      ])
+    ).toMatchObject({ kind: 'write-failed', rollback: 'proven' })
+    expect(statSync(journal).size).toBe(beforeBytes)
+    expect(store.getPosition()).toEqual({ generation: 1, cursor: 1 })
+    expect(seen).toEqual([])
+
+    expect(
+      store.appendBatch([
+        { kind: 'upsert', family: 'thread', entityId: 'retry', payload: { id: 'retry' } }
+      ])
+    ).toMatchObject({ kind: 'appended', position: { generation: 1, cursor: 2 } })
+    expect(openStore().getPosition()).toEqual({ generation: 1, cursor: 2 })
+  })
+
+  it('poisons append, reset, compact, and reopen after an unprovable batch rollback', () => {
+    let writes = 0
+    const store = openStore({
+      batchWrite: (descriptor, bytes, offset, length) => {
+        writes += 1
+        if (writes === 1) {
+          const count = Math.min(17, length)
+          return writeSync(descriptor, bytes, offset, count, null)
+        }
+        throw new Error('injected batch write failure')
+      },
+      batchTruncate: () => {
+        throw new Error('injected rollback failure')
+      }
+    })
+    expect(
+      store.appendBatch([
+        { kind: 'upsert', family: 'thread', entityId: 'one', payload: { id: 'one' } }
+      ])
+    ).toMatchObject({ kind: 'write-failed', rollback: 'uncertain' })
+    expect(() => store.append({ kind: 'remove', family: 'thread', entityId: 'one' })).toThrow(
+      'append authority is blocked'
+    )
+    expect(() => store.resetGeneration('unsafe')).toThrow('append authority is blocked')
+    expect(() => store.compact()).toThrow('append authority is blocked')
+    store.reopen()
+    expect(() => store.append({ kind: 'remove', family: 'thread', entityId: 'one' })).toThrow(
+      'append authority is blocked'
+    )
+  })
+
+  it('reports a durable batch committed when later compaction and logging fail', () => {
+    const store = openStore({
+      compactAfterRecords: 1,
+      log: () => {
+        throw new Error('log failed')
+      }
+    })
+    ;(store as unknown as { maybeCompact(): void }).maybeCompact = () => {
+      throw new Error('injected compaction failure')
+    }
+    const seen: number[] = []
+    store.subscribe((event) => seen.push(event.position.cursor))
+    const result = store.appendBatch([
+      { kind: 'upsert', family: 'thread', entityId: 'one', payload: { id: 'one' } },
+      { kind: 'upsert', family: 'thread', entityId: 'two', payload: { id: 'two' } }
+    ])
+
+    expect(result).toMatchObject({ kind: 'appended', position: { generation: 1, cursor: 2 } })
+    expect(seen).toEqual([1, 2])
+    expect(openStore().getPosition()).toEqual({ generation: 1, cursor: 2 })
+  })
+
+  it('drains batch and reentrant single-append notifications in cursor order', () => {
+    const store = openStore()
+    const seen: number[] = []
+    store.subscribe((event) => {
+      seen.push(event.position.cursor)
+      if (event.position.cursor === 1) {
+        store.append({
+          kind: 'upsert',
+          family: 'thread',
+          entityId: 'listener',
+          payload: { id: 'listener' }
+        })
+      }
+    })
+    const result = store.appendBatch([
+      { kind: 'upsert', family: 'thread', entityId: 'one', payload: { id: 'one' } },
+      { kind: 'upsert', family: 'thread', entityId: 'two', payload: { id: 'two' } }
+    ])
+
+    expect(result).toMatchObject({ kind: 'appended', position: { generation: 1, cursor: 2 } })
+    expect(store.getPosition()).toEqual({ generation: 1, cursor: 3 })
+    expect(seen).toEqual([1, 2, 3])
+  })
+
+  it('keeps delivering a committed batch when both a listener and its logger throw', () => {
+    const store = openStore({
+      log: () => {
+        throw new Error('logger failed')
+      }
+    })
+    store.subscribe(() => {
+      throw new Error('listener failed')
+    })
+    const seen: number[] = []
+    store.subscribe((event) => seen.push(event.position.cursor))
+
+    const result = store.appendBatch([
+      { kind: 'upsert', family: 'thread', entityId: 'one', payload: { id: 'one' } },
+      { kind: 'upsert', family: 'thread', entityId: 'two', payload: { id: 'two' } }
+    ])
+
+    expect(result).toMatchObject({ kind: 'appended', position: { generation: 1, cursor: 2 } })
+    expect(seen).toEqual([1, 2])
   })
 
   it('returns deltas since a client cursor and empty when caught up', () => {

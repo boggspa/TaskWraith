@@ -101,12 +101,14 @@ export function isTranscriptPagedShell(chat: ChatRecord | null | undefined): cha
  * proxy for in-memory transcript bytes.
  */
 export function shouldPageTranscriptOnOpen(chat: {
+  catalogueProjection?: boolean
   messageCount?: number
   sourceChatSize?: number
 }): boolean {
   const messageCount = chat.messageCount ?? 0
   const sourceChatSize = chat.sourceChatSize ?? 0
   return (
+    (chat.catalogueProjection === true && sourceChatSize > 2 * 1024 * 1024) ||
     messageCount > DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES ||
     sourceChatSize > DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES * 2
   )

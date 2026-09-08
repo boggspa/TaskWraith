@@ -48,6 +48,7 @@ import {
   type AppStoreHostAuthoritySnapshotDonor,
   type AppStoreHostAuthoritySetupExecutor,
   type AppStoreHostAuthorityThreadHistoryProvider,
+  type AppStoreHostAuthorityThreadCatalogueProvider,
   type AppStoreHostAuthorityThreadOffersProvider
 } from './AppStoreHostAuthority'
 import type { HostAuthority, HostAuthorityCallContext } from './HostAuthority'
@@ -126,6 +127,7 @@ export interface HostMainCompositionInput {
   readonly providerAuthFlowsProvider?: AppStoreHostAuthorityProviderAuthFlowsProvider
   readonly providerAuthStatusProvider?: AppStoreHostAuthorityProviderAuthStatusProvider
   readonly threadHistoryProvider?: AppStoreHostAuthorityThreadHistoryProvider
+  readonly threadCatalogueProvider?: AppStoreHostAuthorityThreadCatalogueProvider
   readonly historySinceProvider?: AppStoreHostAuthorityHistorySinceProvider
   readonly setupExecutor?: AppStoreHostAuthoritySetupExecutor
   readonly host: HostSessionHostIdentity
@@ -315,6 +317,7 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
     ['providerAuthFlowsProvider', input.providerAuthFlowsProvider],
     ['providerAuthStatusProvider', input.providerAuthStatusProvider],
     ['threadHistoryProvider', input.threadHistoryProvider],
+    ['threadCatalogueProvider', input.threadCatalogueProvider],
     ['historySinceProvider', input.historySinceProvider]
   ] as const) {
     if (provider !== undefined) requireFunction(provider, label)
@@ -451,6 +454,9 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
       ...(input.threadHistoryProvider
         ? { threadHistoryProvider: input.threadHistoryProvider }
         : {}),
+      ...(input.threadCatalogueProvider
+        ? { threadCatalogueProvider: input.threadCatalogueProvider }
+        : {}),
       ...(input.historySinceProvider ? { historySinceProvider: input.historySinceProvider } : {}),
       onShutdown: flushDurableState,
       deferredAsk: {
@@ -472,7 +478,7 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
       return result.value
     },
     fetchDeltas: (position) => runtime.deltaStore.since(position),
-    publishEffects: (effects) => projectionPublisher.publish(effects)
+    publishEffects: (effects) => projectionPublisher.publishDurableBatch(effects)
   })
   projectionReconciler = reconciler
 

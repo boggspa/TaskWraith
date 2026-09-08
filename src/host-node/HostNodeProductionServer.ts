@@ -1,3 +1,21 @@
+import { ThreadCatalogueHostRunWindow } from './ThreadCatalogueHostRunWindow'
+import { ThreadCatalogueHostRecovery } from './ThreadCatalogueHostRecovery'
+import type { HostCatalogueRunOrigin } from '../shared/threadCatalogueTypes'
+import { randomUUID } from 'node:crypto'
+import { createHostThreadCatalogue } from './ThreadCatalogueHostClient'
+import { ThreadCatalogueMirror } from '../host-shared/thread-catalogue/ThreadCatalogueMirror'
+import type { ThreadCatalogueClient } from '../host-shared/thread-catalogue/ThreadCatalogueClient'
+import {
+  hostCatalogueSummaries,
+  projectHostCatalogueThread,
+  queryHostCatalogue
+} from './ThreadCatalogueHostMirror'
+import { ThreadCatalogueSourcePublisher } from '../host-shared/thread-catalogue/ThreadCatalogueSourcePublisher'
+import { ThreadCatalogueRecoveryController } from '../host-shared/thread-catalogue/ThreadCatalogueRecoveryController'
+import type {
+  ThreadCatalogueMaintenanceQuery,
+  ThreadCatalogueWireReply
+} from '../shared/threadCatalogueProtocol'
 /**
  * Production pure-Node Host lifecycle.
  *
@@ -56,6 +74,7 @@ export interface HostNodeProductionSignalTarget {
 
 export interface HostNodeProductionServerOptions {
   readonly profilePath: string
+  readonly createThreadCatalogue?: typeof createHostThreadCatalogue
   readonly mode: 'production'
   readonly payloadVersion?: string
   readonly domainOptions?: Omit<HostNodeDomainPortsOptions, 'store' | 'events'>
@@ -131,6 +150,13 @@ export class HostNodeProductionServer {
   private listener: HostNodeProductionListener | null = null
   private disposeResources: (() => boolean | Promise<boolean>) | null = null
   private permissionConsentAuthority: HostNodePermissionConsentAuthority | null = null
+  private threadCatalogue: ThreadCatalogueClient | null = null
+  private threadCatalogueMirror: ThreadCatalogueMirror | null = null
+  private threadCataloguePublisher: ThreadCatalogueSourcePublisher | null = null
+  private hostRunWindow: ThreadCatalogueHostRunWindow | null = null
+  private hostRunOrigin: HostCatalogueRunOrigin | undefined
+  private hostRecovery: ThreadCatalogueHostRecovery | null = null
+  private threadRecovery: ThreadCatalogueRecoveryController | null = null
   identity: HostSessionHostIdentity | null = null
 
   constructor(options: HostNodeProductionServerOptions) {
@@ -212,9 +238,90 @@ export class HostNodeProductionServer {
           }
         })
       }
+      if (usingDefaultAcquire) {
+        const writerId = randomUUID()
+        this.hostRunOrigin = {
+          schemaVersion: 1,
+          kind: 'host-node',
+          hostId: this.identity.hostId,
+          incarnation: writerId
+        }
+        this.threadCatalogue = (this.options.createThreadCatalogue ?? createHostThreadCatalogue)(
+          this.lease.path,
+          writerId
+        )
+        this.threadCatalogueMirror = new ThreadCatalogueMirror(this.threadCatalogue)
+        this.threadCatalogueMirror.subscribe(() => this.queueReconciliation())
+        // Initialization opens only the derived index. History repair runs in
+        // the decoder after launch and contributes ordinary projection deltas.
+        void this.threadCatalogue.ready.catch((error) =>
+          console.warn('[thread-catalogue] reader is restarting', error)
+        )
+        this.threadCataloguePublisher = new ThreadCatalogueSourcePublisher({
+          profilePath: this.lease.path,
+          writer: 'host',
+          writerId,
+          repairSource: (chatId) =>
+            this.threadCatalogue!.query<string>({ method: 'repair-source', chatId }),
+          segmented: process.env.TASKWRAITH_CHAT_STORE_V2 === '1',
+          canWrite: () => {
+            this.lease!.assertHeld()
+            return true
+          },
+          canManageRecoveryHolds: () => {
+            this.lease!.assertHeld()
+            return true
+          },
+          onChanged: (chatId) => {
+            void this.threadCatalogue!.query({ method: 'changed', chatId }).catch(() => undefined)
+          },
+          onError: (error) =>
+            console.error('[thread-catalogue] Host source publication failed', error)
+        })
+        this.threadRecovery = new ThreadCatalogueRecoveryController({
+          client: this.threadCatalogue,
+          publisher: this.threadCataloguePublisher,
+          reader: {
+            profilePath: this.lease.path,
+            runtimeInstanceId: writerId,
+            segmented: process.env.TASKWRAITH_CHAT_STORE_V2 === '1'
+          },
+          incarnation: writerId,
+          assertAuthority: () => this.lease!.assertHeld(),
+          hasLiveWork: (chatId) => !this.domain || this.domain.hasRuntimeWorkForThread(chatId)
+        })
+        this.hostRunWindow = new ThreadCatalogueHostRunWindow(this.threadCatalogueMirror, () =>
+          this.queueReconciliation()
+        )
+        this.threadCatalogueMirror.start()
+      }
       const store = (this.options.createStore ?? ((input) => new HostProfileDomainStore(input)))({
         profilePath: this.lease.path,
         authority: { assertProfileAuthority: () => this.lease!.assertHeld() },
+        ...(this.threadCatalogueMirror
+          ? {
+              threadSummarySource: () => hostCatalogueSummaries(this.threadCatalogueMirror!),
+              runSummarySource: () => this.hostRunWindow!.snapshot()
+            }
+          : {}),
+        ...(this.threadCataloguePublisher
+          ? {
+              beginThreadPublication: (thread) => {
+                const projection = projectHostCatalogueThread(thread)
+                const ticket = this.threadCataloguePublisher!.begin(thread.appChatId)
+                return {
+                  commit: () => {
+                    const witness = this.threadCataloguePublisher!.finishProjection(
+                      ticket,
+                      projection
+                    )
+                    this.threadCatalogueMirror!.observe(projection, witness)
+                  },
+                  abort: () => this.threadCataloguePublisher!.fail(ticket)
+                }
+              }
+            }
+          : {}),
         onThreadQuarantined: (threadId, reason) => {
           // The Host previously refused to start over one bad record; it now
           // skips it, so the skip has to be as loud as the refusal was.
@@ -241,12 +348,38 @@ export class HostNodeProductionServer {
         profilePath: this.lease.path,
         store,
         events,
+        hostRunOrigin: this.hostRunOrigin,
+        ...(this.threadCatalogue
+          ? {
+              runLocator: {
+                find: (runId: string) =>
+                  this.threadCatalogue!.available
+                    ? this.threadCatalogue!.query<{ chatId: string } | null>({
+                        method: 'known-run',
+                        runId
+                      })
+                    : Promise.resolve(null)
+              }
+            }
+          : {}),
         ...(this.permissionConsentAuthority
           ? { permissionConsentAuthority: this.permissionConsentAuthority }
           : {}),
         interactionTimeoutMs: domainOptions.interactionTimeoutMs ?? 5 * 60 * 1000,
         onProjectionDirty: () => projectionDirtyRef.current?.()
       })
+      if (
+        this.threadCatalogue &&
+        this.threadCatalogueMirror &&
+        this.threadRecovery &&
+        this.hostRunOrigin
+      )
+        this.hostRecovery = new ThreadCatalogueHostRecovery({
+          client: this.threadCatalogue,
+          mirror: this.threadCatalogueMirror,
+          controller: this.threadRecovery,
+          origin: this.hostRunOrigin
+        })
       // The first projection is also the baseline for every later Host delta.
       // Resolve account-dependent provider catalogs before that baseline so a
       // cold Host cannot publish the initial empty Ollama/AGY offer set and
@@ -302,6 +435,15 @@ export class HostNodeProductionServer {
         providerAuthFlowsProvider: (providerId) => this.domain!.providerAuthFlows(providerId),
         providerAuthStatusProvider: (providerId) => this.domain!.providerAuthStatus(providerId),
         threadHistoryProvider: (request) => this.domain!.threadHistory(request),
+        ...(this.threadCatalogue
+          ? {
+              threadCatalogueProvider: (request) =>
+                queryHostCatalogue(this.threadCatalogue!, request)
+            }
+          : {}),
+        ...(this.threadCatalogue
+          ? { threadCatalogueMaintenanceProvider: (request) => this.maintainCatalogue(request) }
+          : {}),
         historySinceProvider: (request) => this.domain!.historySince(request)
       })
       projectionDirtyRef.current = () => {
@@ -316,6 +458,10 @@ export class HostNodeProductionServer {
         ...(this.options.payloadVersion ? { payloadVersion: this.options.payloadVersion } : {}),
         session: this.composition.session,
         authority: this.composition.authority,
+        runCommand: (command, execute) =>
+          command.target.threadId && this.threadRecovery
+            ? this.threadRecovery.admit(command.target.threadId, execute)
+            : execute(),
         onAuthenticatedShutdown: () => this.stop(),
         subscribeDeltas: (listener) =>
           this.composition!.subscribeDeltas((event) => listener(event.record.envelope))
@@ -373,6 +519,9 @@ export class HostNodeProductionServer {
         listenerFailure = asError(error)
       }
     }
+    this.hostRunWindow?.dispose()
+    this.hostRecovery?.dispose()
+    this.threadRecovery?.dispose()
     try {
       await this.domain?.shutdown()
     } catch (error) {
@@ -402,6 +551,13 @@ export class HostNodeProductionServer {
       })
     }
     this.permissionConsentAuthority?.dispose()
+    await this.threadCatalogueMirror?.dispose()
+    await this.threadCataloguePublisher?.dispose()
+    await this.threadCatalogue?.dispose()
+    this.threadCatalogueMirror = null
+    this.threadCatalogue = null
+    this.threadCataloguePublisher = null
+    this.threadRecovery = null
     if (this.lease && this.lease.release() !== true) {
       throw new Error('Production Host could not prove profile authority release.')
     }
@@ -463,5 +619,36 @@ export class HostNodeProductionServer {
     if (this.domain?.registry.supportsApprovals) base.push('approvals')
     if (this.domain?.registry.supportsQuestions) base.push('questions')
     return base
+  }
+
+  private async maintainCatalogue(
+    request: ThreadCatalogueMaintenanceQuery
+  ): Promise<ThreadCatalogueWireReply> {
+    const client = this.threadCatalogue
+    const recovery = this.threadRecovery
+    if (!client || !recovery) throw new Error('History recovery is unavailable')
+    if (request.method === 'owner') recovery.registerDesktop(request.owner)
+    if (request.method === 'begin-recovery')
+      return { data: recovery.begin(request.chatId, request.desktopWriterId) }
+    if (request.method === 'end-recovery')
+      return { data: recovery.end(request.chatId, request.recoveryToken) }
+    if (request.method === 'adopt-prepared') {
+      const data = await recovery.adopt(request.chatId, request.recoveryToken, request.preparedId)
+      this.threadCatalogueMirror?.observe(data)
+      return { data }
+    }
+    if (request.method === 'prepare') recovery.assertHeld(request.chatId, request.recoveryToken)
+    if (request.method === 'erase')
+      await this.threadCataloguePublisher?.drain(request.chatId ? [request.chatId] : undefined)
+    const data = await client.query(request)
+    if (request.method === 'finish-erasure' && data === true) {
+      recovery.forgetErased(request.chatId)
+      this.threadCataloguePublisher?.forgetErased(request.chatId)
+    }
+    if (request.method === 'erase') {
+      if (request.chatId) this.threadCatalogueMirror?.forget(request.chatId)
+      else this.threadCatalogueMirror?.forgetAll()
+    }
+    return { data }
   }
 }
