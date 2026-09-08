@@ -4,6 +4,7 @@ import {
   DEFAULT_KEEP_ALL_MIN_WINDOW,
   DEFAULT_SAMPLE_KEEP_EVERY,
   WORK_SPAN_KINDS,
+  WORK_SPAN_REASONS,
   WORK_SPAN_RESOURCES,
   type WorkSpanAttrs,
   type WorkSpanKind
@@ -328,7 +329,9 @@ describe('createWorkSpanRecorder', () => {
   })
 
   it('accepts every declared kind and resource and pins the enum sizes', () => {
-    expect(WORK_SPAN_KINDS).toHaveLength(8)
+    // 9 kinds since A1.1 added round_start; 7 resources unchanged.
+    expect(WORK_SPAN_KINDS).toHaveLength(9)
+    expect(WORK_SPAN_KINDS).toContain('round_start')
     expect(WORK_SPAN_RESOURCES).toHaveLength(7)
 
     const recorder = createWorkSpanRecorder({
@@ -349,11 +352,68 @@ describe('createWorkSpanRecorder', () => {
     for (const kind of WORK_SPAN_KINDS) {
       expect(byKind[kind]?.count).toBe(1)
     }
-    // 8 kinds cycled over 7 resources: the first resource is used twice.
+    // 9 kinds cycled over 7 resources: the first two are used twice.
     expect(byResource[WORK_SPAN_RESOURCES[0]]?.count).toBe(2)
-    for (const resource of WORK_SPAN_RESOURCES.slice(1)) {
+    expect(byResource[WORK_SPAN_RESOURCES[1]]?.count).toBe(2)
+    for (const resource of WORK_SPAN_RESOURCES.slice(2)) {
       expect(byResource[resource]?.count).toBe(1)
     }
+  })
+
+  it('accepts each kind-specific reason and rejects one from the wrong kind', () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 64,
+      now: tickingClock()
+    })
+
+    for (const [kind, reasons] of Object.entries(WORK_SPAN_REASONS)) {
+      for (const reason of reasons) {
+        recorder.record({
+          ...attrs({ kind: kind as WorkSpanKind, reason }),
+          startedAt: 0,
+          durationMs: 1
+        })
+      }
+    }
+    expect(recorder.snapshot().rejected).toBe(0)
+    expect(recorder.snapshot().spans.map((span) => span.reason)).toContain('cohort_drain')
+
+    // A reason from another kind's set, an unknown reason, and a reason on a
+    // kind that declares none are all taxonomy errors.
+    recorder.record({
+      ...attrs({ kind: 'admission_wait', reason: 'cold_start' as never }),
+      startedAt: 0,
+      durationMs: 1
+    })
+    recorder.record({
+      ...attrs({ kind: 'provider_config_wait', reason: 'vibes' as never }),
+      startedAt: 0,
+      durationMs: 1
+    })
+    recorder.record({
+      ...attrs({ kind: 'prompt_build', reason: 'cold_start' as never }),
+      startedAt: 0,
+      durationMs: 1
+    })
+    recorder.begin(attrs({ kind: 'round_start', reason: 'occupancy' as never }))()
+
+    expect(recorder.snapshot().rejected).toBe(4)
+  })
+
+  it('carries round_start spans with full attribution', () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 8,
+      now: tickingClock(5_000, 25)
+    })
+    recorder.begin(attrs({ kind: 'round_start', resource: 'none' }))()
+
+    const snapshot = recorder.snapshot()
+    expect(snapshot.rejected).toBe(0)
+    expect(snapshot.byKind.round_start).toMatchObject({ count: 1, totalMs: 25, p99Ms: 25 })
+    expect(snapshot.byChat['chat-a'].round_start).toMatchObject({ count: 1, maxMs: 25 })
+    expect(snapshot.spans[0]).toMatchObject({ kind: 'round_start', chatId: 'chat-a' })
   })
 
   it('returns snapshot copies so caller mutation cannot corrupt the ring', () => {

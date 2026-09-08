@@ -41,6 +41,7 @@ export const WORK_SPAN_PROCESSES = ['main', 'host', 'renderer'] as const
 export type WorkSpanProcess = (typeof WORK_SPAN_PROCESSES)[number]
 
 export const WORK_SPAN_KINDS = [
+  'round_start',
   'admission_wait',
   'provider_config_wait',
   'prompt_build',
@@ -51,6 +52,26 @@ export const WORK_SPAN_KINDS = [
   'control_response'
 ] as const
 export type WorkSpanKind = (typeof WORK_SPAN_KINDS)[number]
+
+/**
+ * Why a wait happened, per kind (Amendment A1.1). §1.1's bounds are not
+ * actionable without it: "the light thread waited 400 ms on provider
+ * configuration" is a different verdict when the cause is a cold start than
+ * when it is another chat draining a cohort. Closed sets per kind, so an
+ * unrecognised reason is rejected rather than silently attributed.
+ */
+export const WORK_SPAN_REASONS = {
+  provider_config_wait: [
+    'cold_start',
+    'cohort_drain',
+    'runtime_or_credential_domain',
+    'registration_change'
+  ],
+  admission_wait: ['occupancy', 'foreground_reserved', 'lane_reserved', 'queued', 'cancelled']
+} as const satisfies Partial<Record<WorkSpanKind, readonly string[]>>
+
+export type WorkSpanReasonKind = keyof typeof WORK_SPAN_REASONS
+export type WorkSpanReason = (typeof WORK_SPAN_REASONS)[WorkSpanReasonKind][number]
 
 export const WORK_SPAN_RESOURCES = [
   'ensemble_pool',
@@ -76,6 +97,8 @@ export interface WorkSpan {
   resource: WorkSpanResource
   bytes: number
   fallback: boolean
+  /** Present only for kinds that declare a reason set. */
+  reason?: WorkSpanReason
 }
 
 /** Attribution supplied at begin/record time; omitted identities become ''. */
@@ -87,6 +110,11 @@ export interface WorkSpanAttrs {
   laneId?: string
   /** Defaults to 'none'. */
   resource?: WorkSpanResource
+  /**
+   * Why this wait occurred. Valid only for a kind in WORK_SPAN_REASONS, and
+   * only from that kind's closed set; anything else is `rejected`.
+   */
+  reason?: WorkSpanReason
 }
 
 /** A pre-measured span; `process` defaults to the recorder's own process. */
@@ -189,7 +217,7 @@ export interface WorkSpanRecorderOptions {
    * Deterministic sampling seam: return false to skip a span entirely.
    * Receives normalized attrs. A throwing sampler keeps the span (fail-open).
    */
-  sampler?: (attrs: Required<WorkSpanAttrs>) => boolean
+  sampler?: (attrs: NormalizedWorkSpanAttrs) => boolean
   /** Clock for startedAt and durations; defaults to Date.now. */
   now?: () => number
   /**
@@ -225,6 +253,15 @@ export const DEFAULT_MAX_ATTRIBUTED_CHATS = 16
 export const DEFAULT_KEEP_ALL_MIN_WINDOW = 256
 /** Above the keep-all threshold the default sampler keeps 1 in this many. */
 export const DEFAULT_SAMPLE_KEEP_EVERY = 8
+
+/** Attrs after validation: identities defaulted, reason still optional. */
+export type NormalizedWorkSpanAttrs = Required<Omit<WorkSpanAttrs, 'reason'>> & {
+  reason?: WorkSpanReason
+}
+
+const REASON_SETS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
+  Object.entries(WORK_SPAN_REASONS).map(([kind, reasons]) => [kind, new Set<string>(reasons)])
+)
 
 const KIND_SET: ReadonlySet<string> = new Set(WORK_SPAN_KINDS)
 const RESOURCE_SET: ReadonlySet<string> = new Set(WORK_SPAN_RESOURCES)
@@ -266,7 +303,7 @@ function optionalIdentity(value: unknown): string | null {
   return typeof value === 'string' ? value : null
 }
 
-function normalizeAttrs(attrs: WorkSpanAttrs): Required<WorkSpanAttrs> | null {
+function normalizeAttrs(attrs: WorkSpanAttrs): NormalizedWorkSpanAttrs | null {
   if (typeof attrs !== 'object' || attrs === null) return null
   if (typeof attrs.chatId !== 'string' || attrs.chatId.length === 0) return null
   if (!KIND_SET.has(attrs.kind as string)) return null
@@ -276,7 +313,21 @@ function normalizeAttrs(attrs: WorkSpanAttrs): Required<WorkSpanAttrs> | null {
   if (runId === null || participantId === null || laneId === null) return null
   const resource = attrs.resource === undefined ? 'none' : attrs.resource
   if (!RESOURCE_SET.has(resource as string)) return null
-  return { chatId: attrs.chatId, kind: attrs.kind, runId, participantId, laneId, resource }
+  if (attrs.reason !== undefined) {
+    const allowed = REASON_SETS.get(attrs.kind)
+    // A reason on a kind that declares none, or outside that kind's closed
+    // set, is a taxonomy error — never silently dropped or silently kept.
+    if (!allowed || !allowed.has(attrs.reason)) return null
+  }
+  return {
+    chatId: attrs.chatId,
+    kind: attrs.kind,
+    runId,
+    participantId,
+    laneId,
+    resource,
+    reason: attrs.reason
+  }
 }
 
 function finiteNonNegative(value: unknown): value is number {
@@ -364,7 +415,7 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
    * span itself was sampled out — that is the whole point of R2-M1-2.
    */
   const countOffered = (
-    attrs: Required<WorkSpanAttrs>,
+    attrs: NormalizedWorkSpanAttrs,
     decorations: { bytes: number; fallback: boolean; counted: boolean }
   ): void => {
     const targets = [
@@ -415,7 +466,7 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
     windowOffered <= keepAllBelow || windowOffered % DEFAULT_SAMPLE_KEEP_EVERY === 1
   const sampler = options.sampler ?? defaultSampler
 
-  const shouldKeep = (attrs: Required<WorkSpanAttrs>): boolean => {
+  const shouldKeep = (attrs: NormalizedWorkSpanAttrs): boolean => {
     windowOffered += 1
     try {
       return sampler(attrs) !== false

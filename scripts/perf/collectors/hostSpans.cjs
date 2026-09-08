@@ -46,9 +46,13 @@ const { parseCellName } = require('../interferenceMatrix.cjs')
  * WORK_SPAN_RESOURCES / WORK_SPAN_PROCESSES in src/main/perf/WorkSpanRecorder.ts.
  * If either side changes without the other, the harness will validate a
  * stale contract and attribution silently escapes the report.
+ * `round_start` was added by Amendment A1.1 (§1.1 B1: composer send → first
+ * participant dispatch); per-kind wait reasons live with the recorder and
+ * travel on individual spans, not on these aggregates.
  */
 const WORK_SPAN_PROCESSES = Object.freeze(['main', 'host', 'renderer'])
 const WORK_SPAN_KINDS = Object.freeze([
+  'round_start',
   'admission_wait',
   'provider_config_wait',
   'prompt_build',
