@@ -39,6 +39,12 @@ export interface HostNodeRunAdmission {
      * the lease is claimed — inside `admitNow`/`flushWaiters` before the
      * waiter promise resolves — so the caller can install a cancellation
      * latch atomically with the claim. Optional; existing callers unchanged.
+     *
+     * If the hook THROWS, the admission is rolled back (occupancy restored,
+     * no lease escapes) and this `acquire` promise REJECTS with the hook's
+     * own error — on the queued path too, where the failure must never
+     * surface through the releasing owner's `release()`. A hook failure is
+     * a failed latch installation; the start must not proceed without it.
      */
     readonly onClaim?: (lease: HostNodeRunAdmissionLease) => void
   }): Promise<HostNodeRunAdmissionResult>
@@ -73,6 +79,12 @@ interface Waiter {
   readonly threadId: string
   readonly onClaim?: (lease: HostNodeRunAdmissionLease) => void
   readonly resolve: (result: HostNodeRunAdmissionResult) => void
+  /**
+   * Settles the waiter's own `acquire` promise with its own claim-hook
+   * failure. The error must land in the acquiring run's await — never
+   * escape through the releasing owner's `release()` (M2 fix A1).
+   */
+  readonly reject: (error: unknown) => void
 }
 
 function saturatedMessage(maxConcurrentRuns: number, maxQueuedStarts: number): string {
@@ -157,7 +169,19 @@ export function createHostNodeRunAdmission(
     // The claim hook fires BEFORE the result escapes (return or waiter
     // resolution), so a latch installed here precedes any observation of the
     // admission — that atomicity is what closes cancel gap 1.
-    if (onClaim) onClaim(lease)
+    if (onClaim) {
+      try {
+        onClaim(lease)
+      } catch (error) {
+        // A failed claim never became observable: no caller holds the lease
+        // and no latch exists, so retaining occupancy would leak this slot
+        // forever. Roll the admission back and surface the caller's own hook
+        // failure to the caller (M2 fix A1). Never ignore a latch-install
+        // failure and admit anyway — that would reopen cancel gap 1.
+        inflight.delete(commandId)
+        throw error
+      }
+    }
     return { kind: 'admitted', lease }
   }
 
@@ -165,7 +189,17 @@ export function createHostNodeRunAdmission(
     while (!shuttingDown && inflight.size < maxConcurrentRuns && waiters.length > 0) {
       const waiter = waiters.shift()
       if (!waiter) return
-      waiter.resolve(admitNow(waiter.commandId, waiter.threadId, waiter.onClaim))
+      let result: HostNodeRunAdmissionResult
+      try {
+        result = admitNow(waiter.commandId, waiter.threadId, waiter.onClaim)
+      } catch (error) {
+        // The shifted waiter's OWN hook failed. Settle that waiter in its own
+        // await via rejection, keep the releasing owner's cleanup untouched,
+        // and keep flushing: the rolled-back slot belongs to the next waiter.
+        waiter.reject(error)
+        continue
+      }
+      waiter.resolve(result)
     }
   }
 
@@ -196,12 +230,13 @@ export function createHostNodeRunAdmission(
           errorMessage: saturatedMessage(maxConcurrentRuns, maxQueuedStarts)
         }
       }
-      return await new Promise<HostNodeRunAdmissionResult>((resolve) => {
+      return await new Promise<HostNodeRunAdmissionResult>((resolve, reject) => {
         waiters.push({
           commandId: input.commandId,
           threadId: input.threadId,
           onClaim: input.onClaim,
-          resolve
+          resolve,
+          reject
         })
       })
     },
@@ -213,8 +248,12 @@ export function createHostNodeRunAdmission(
     },
     cancelQueuedWithStatus(input) {
       const cancelled = cancelMatchingWaiters(input)
+      // Same identity rule as queued cancellation: a commandId is only "the
+      // target" when it is inflight FOR THIS THREAD. Reporting another
+      // thread's command as inflight would route a cancel to the wrong run's
+      // latch (M2 fix A2).
       const targetInflight = input.commandId
-        ? inflight.has(input.commandId)
+        ? inflight.get(input.commandId) === input.threadId
         : [...inflight.values()].includes(input.threadId)
       return { cancelled, stillQueued: cancelled > 0, targetInflight }
     },

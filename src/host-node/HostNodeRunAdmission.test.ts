@@ -199,4 +199,108 @@ describe('HostNodeRunAdmission', () => {
     await expect(queued).resolves.toMatchObject({ kind: 'rejected' })
     if (first.kind === 'admitted') first.lease.release()
   })
+
+  /**
+   * M2 fixes A1/A2 (Review2 wave-4): a throwing claim hook must never leak
+   * occupancy or surface through the releasing owner, and the inflight
+   * cancel-target check must respect thread identity.
+   */
+  describe('claim-hook failure containment (A1)', () => {
+    it('rolls back a direct admission when the hook throws and frees the slot', async () => {
+      const admission = createHostNodeRunAdmission({ maxConcurrentRuns: 1, maxQueuedStarts: 0 })
+      const explosion = new Error('latch install failed')
+      await expect(
+        admission.acquire({
+          commandId: 'run-1',
+          threadId: 'thread-a',
+          onClaim: () => {
+            throw explosion
+          }
+        })
+      ).rejects.toBe(explosion)
+
+      // The failed claim never became observable: no occupancy, no thread hold.
+      expect(admission.inflightCount()).toBe(0)
+      expect(admission.hasThread('thread-a')).toBe(false)
+
+      // The slot is genuinely reusable, including by the same thread.
+      const retry = await admission.acquire({ commandId: 'run-2', threadId: 'thread-a' })
+      expect(retry.kind).toBe('admitted')
+      if (retry.kind === 'admitted') retry.lease.release()
+    })
+
+    it('rejects the shifted waiter in its own await, keeps the releasing owner clean, and flushes later waiters', async () => {
+      const admission = createHostNodeRunAdmission({ maxConcurrentRuns: 1, maxQueuedStarts: 2 })
+      const first = await admission.acquire({ commandId: 'run-1', threadId: 'thread-a' })
+      if (first.kind !== 'admitted') throw new Error('expected first admit')
+
+      const explosion = new Error('waiter latch failed')
+      const broken = admission.acquire({
+        commandId: 'run-2',
+        threadId: 'thread-b',
+        onClaim: () => {
+          throw explosion
+        }
+      })
+      // Attach the rejection expectation before the flush so the rejection
+      // is observed in the waiter's own await, never as an unhandled error.
+      const brokenSettled = expect(broken).rejects.toBe(explosion)
+      let healthyLatch: string | null = null
+      const healthy = admission.acquire({
+        commandId: 'run-3',
+        threadId: 'thread-c',
+        onClaim: (lease) => {
+          healthyLatch = lease.commandId
+        }
+      })
+      await Promise.resolve()
+      expect(admission.queuedCount()).toBe(2)
+
+      // The releasing owner's own cleanup must not throw or observe the
+      // broken waiter's failure.
+      expect(() => first.lease.release()).not.toThrow()
+
+      await brokenSettled
+      // Flushing continued past the failed waiter: the freed slot belongs to
+      // the next healthy waiter, whose latch installed atomically.
+      const admitted = await healthy
+      expect(admitted.kind).toBe('admitted')
+      expect(healthyLatch).toBe('run-3')
+      expect(admission.inflightCount()).toBe(1)
+      expect(admission.hasThread('thread-b')).toBe(false)
+      if (admitted.kind === 'admitted') admitted.lease.release()
+      expect(admission.inflightCount()).toBe(0)
+    })
+  })
+
+  describe('inflight cancel-target identity (A2)', () => {
+    it('reports targetInflight only for the thread that owns the command', async () => {
+      const admission = createHostNodeRunAdmission({ maxConcurrentRuns: 2, maxQueuedStarts: 0 })
+      const owner = await admission.acquire({ commandId: 'cmd-1', threadId: 'thread-a' })
+      expect(owner.kind).toBe('admitted')
+
+      // Another thread naming this commandId is NOT the target: routing its
+      // cancel to thread-a's latch would cancel the wrong run.
+      expect(
+        admission.cancelQueuedWithStatus({ threadId: 'thread-b', commandId: 'cmd-1' })
+      ).toEqual({ cancelled: 0, stillQueued: false, targetInflight: false })
+
+      // The owning identity still resolves, and so does the no-id thread search.
+      expect(
+        admission.cancelQueuedWithStatus({ threadId: 'thread-a', commandId: 'cmd-1' })
+      ).toEqual({ cancelled: 0, stillQueued: false, targetInflight: true })
+      expect(admission.cancelQueuedWithStatus({ threadId: 'thread-a' })).toEqual({
+        cancelled: 0,
+        stillQueued: false,
+        targetInflight: true
+      })
+
+      // An unknown command is never inflight for anyone.
+      expect(
+        admission.cancelQueuedWithStatus({ threadId: 'thread-a', commandId: 'cmd-404' })
+      ).toEqual({ cancelled: 0, stillQueued: false, targetInflight: false })
+
+      if (owner.kind === 'admitted') owner.lease.release()
+    })
+  })
 })
