@@ -3,7 +3,7 @@
 **Candidate-only** automation that emits machine-readable per-app interference
 results for the Background Drive prototype.
 
-Paired with: `prototypes/appdrive-background/`.
+Paired with: `.local-only/prototypes/appdrive-background/`.
 
 ## What it measures
 

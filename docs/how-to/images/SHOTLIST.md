@@ -119,7 +119,6 @@ The current refresh uses latest-source development apps, not an installed releas
 | `notifications-and-status__participant-health.png` | Electron | ParticipantHealthCard showing ok/warning states for multiple providers | Participant health cards appear automatically, inline in the transcript, in any Ensemble chat — they're inserted just before a round dispatches, as the orchestrator's pre-flight check on each participant. |
 | `notifications-and-status__provider-health-chips.png` | Electron | OllamaHealthChip showing green/connected state next to provider picker | Warning chips appear in the **composer chips row**, just above the prompt input, alongside the queued-run-count chip — the row only renders when there's something to show. |
 | `notifications-and-status__push-notifications.png` | iOS | iOS push notification from TaskWraith on the lock screen | Push notifications arrive as system notifications on the paired iPhone/iPad — there's no in-app notification list to open. |
-| `notifications-and-status__sub-thread-status-ticker.png` | Electron | SubThreadStatusTicker showing running/completed sub-thread states | It renders inline above the transcript of the parent chat, and only appears while at least one of that chat's sub-threads is running — it disappears again once all sub-threads finish or stop. |
 
 ### settings-and-configuration
 

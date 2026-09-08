@@ -351,7 +351,7 @@ demands):**
   The v1.8.4 release did not clear the separate approval ledger.
 
 Release-sensitive code findings and bounded containment hypotheses belong in
-the Security Engineering Ledger (`SECURITY_ENGINEERING_LEDGER.md` — local-only
+the Security Engineering Ledger (`docs/SECURITY_ENGINEERING_LEDGER.md` — local-only
 and gitignored at the repo root since 2026-08-11), not only in `papercuts/` or
 `.local-only/` notes. Preserve an entry when a fix lands, then add owner,
 status, regression evidence, and release disposition.

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "harness": "scripts/appdrive-interference",
-  "prototype": "prototypes/appdrive-background",
+  "prototype": ".local-only/prototypes/appdrive-background",
   "generatedAtMs": 1785788488486,
   "defaultDryRun": true,
   "results": [

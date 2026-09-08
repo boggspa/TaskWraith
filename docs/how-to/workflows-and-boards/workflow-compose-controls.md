@@ -22,4 +22,4 @@ Select **Code**, open **Workflows** in the sidebar, and click **+** (New workflo
 - [Workflow Creator](workflow-creator.md) — the complete creation flow with these controls
 - [Workflows Sidebar Section](workflows-sidebar-section.md) — manage workflows after creation
 - [Permission Elevation Sheet](../approvals-and-permissions/permission-elevation-sheet.md) — unattended level details
-- [Ensemble Orchestration Row](../composer/ensemble-mode-picker.md) — the Fan-Out, Isolate, and Turns controls shown once the draft is an Ensemble
+- [Ensemble Orchestration Row](../composer/ensemble-orchestration-row.md) — the Fan-Out, Isolate, and Turns controls shown once the draft is an Ensemble

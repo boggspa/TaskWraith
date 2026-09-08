@@ -15,4 +15,4 @@ Guides for TaskWraith's multi-provider ensemble chat feature.
 
 ## Cross-links
 
-- [Ensemble Orchestration Row](../composer/ensemble-mode-picker.md) — the composer row holding the Fan-Out toggle, Isolate picker, and Turns limit.
+- [Ensemble Orchestration Row](../composer/ensemble-orchestration-row.md) — the composer row holding the Fan-Out toggle, Isolate picker, and Turns limit.

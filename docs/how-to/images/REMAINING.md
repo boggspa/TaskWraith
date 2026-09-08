@@ -12,7 +12,7 @@ row per page.
 
 Changes in this pass (bookkeeping only — no page or capture was deleted):
 
-- `composer/ensemble-mode-picker.md` **marked pending**. The page was rewritten as
+- `composer/ensemble-orchestration-row.md` **marked pending**. The page was rewritten as
   the Ensemble Orchestration Row and now states there is no Turn/Continuous
   choice. Its capture shows exactly that retired picker and had been unlinked
   from the page without being re-marked, so the page counted as neither captured

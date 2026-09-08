@@ -11,7 +11,7 @@
 | ------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | §12b Foreground AX authority (exact run/window lease, secret refuse, audit, host-global HID idle) | **Shipped production**                          | Already in main; do not re-derive or weaken                                                      |
 | UI/session vertical slice (dock, enforced pause/takeover, display-only cursor, status binding)    | **Merged to `master`**                          | Main-owned admission gate, lifecycle IPC, persistent Drive tab, and normalized cursor projection |
-| Background Drive / interference harness                                                           | **Prototype only** (`prototypes/` + `scripts/`) | Never productize until per-app harness proves non-interference                                   |
+| Background Drive / interference harness                                                           | **Prototype only** (`.local-only/prototypes/` + `scripts/`) | Never productize until per-app harness proves non-interference                                   |
 | Isolated Drive (VM guest HID)                                                                     | **RFC only**                                    | Not profile `--taskwraith-isolated-instance`                                                     |
 | This RFC + shared contract + `AppDriveSliceAcceptance.test.ts`                                    | **Decision lock / acceptance evidence**         | Documentary + invariant tests; no actuation authority                                            |
 
@@ -52,7 +52,7 @@ Productize existing safe backend projection; do **not** widen desktop authority.
 | 3   | Preload/renderer binding of already-safe `status.control`                                      | Boss-owned production wiring later | Wired in preload and App.tsx                                     |
 | 4   | Persistent App Drive dock + display-only virtual cursor                                        | CursorWork1                        | Label Foreground Drive; `pointer-events:none`; no OS cursor control  |
 | 5   | Disclosure/authority model (exact chat/run/launch/process-birth; no bundle-ID authority)       | CursorWork2                        | Pure model + tests; no lease/ledger edits                            |
-| 6   | Background-input prototype + interference harness (candidate-only)                             | GrokWork2                          | Under `prototypes/` + `scripts/`; no production imports              |
+| 6   | Background-input prototype + interference harness (candidate-only)                             | GrokWork2                          | Under `.local-only/prototypes/` + `scripts/`; no production imports              |
 | 7   | This RFC, acceptance matrix, mode-contract + slice acceptance tests                            | CursorWork3                        | Docs + pure shared contract + `AppDriveSliceAcceptance.test.ts` only |
 
 Out of slice (remain RFC/prototype):

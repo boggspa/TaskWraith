@@ -118,7 +118,7 @@ moving out of `Unreleased`, plus published artifacts.
   sensitive writes for a normal project workspace, but a workspace placed
   directly under `$HOME` can leave `$HOME` writable, and network egress is not
   proven blocked. See `CHANGELOG.md`, `src/main/cursor/CursorCliArgs.ts`, and
-  `SECURITY_ENGINEERING_LEDGER.md` (TW-SEC-2026-003).
+  `docs/SECURITY_ENGINEERING_LEDGER.md` (TW-SEC-2026-003).
 - **Source-ahead `canvas_eval` surface window + audit minimisation** — the first
   permitted eval on a live Canvas requires exact transient desktop review and
   opens a 12-hour in-memory window for that canvasId. The same surface remains

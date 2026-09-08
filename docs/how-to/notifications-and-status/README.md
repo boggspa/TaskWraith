@@ -8,7 +8,7 @@ Overview of in-app and push notifications, health indicators, and status surface
 - [Push notifications](./push-notifications.md) — background push to paired iOS devices
 - [Participant health](./participant-health.md) — ensemble participant status cards
 - [Provider health chips](./provider-health-chips.md) — connectivity/model-load state chips
-- [Sub-thread status ticker](./sub-thread-status-ticker.md) — live sub-thread run status
+
 
 ## Related (cross-links)
 

@@ -46,7 +46,7 @@ picker and the **Turns** meter.
 
 ## Tips & related
 
-- [Ensemble Orchestration Row](../composer/ensemble-mode-picker.md) — the composer row this toggle lives on.
+- [Ensemble Orchestration Row](../composer/ensemble-orchestration-row.md) — the composer row this toggle lives on.
 - [Continuous Hops Meter](continuous-hops-meter.md) — the handoff-budget chip beside it.
 - [Create an Ensemble Chat](create-ensemble-chat.md) — start an ensemble chat before this toggle becomes available.
 - [Participant Chip Strip](participant-chip-strip.md) — manage which participants are read-only vs. writer-capable, which determines what each fan-out lane can do.

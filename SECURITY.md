@@ -10,7 +10,7 @@ storage locations, and artifact verification commands, see
 release hygiene.
 
 Open, release-sensitive code findings and bounded containment hypotheses are
-maintained in the local-only `SECURITY_ENGINEERING_LEDGER.md`, which is
+maintained in the local-only `docs/SECURITY_ENGINEERING_LEDGER.md`, which is
 intentionally gitignored and not published.
 Treat its `Block` dispositions as release-candidate gates; continue to report
 new vulnerabilities privately rather than placing exploit details in the

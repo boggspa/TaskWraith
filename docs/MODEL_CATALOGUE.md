@@ -17,7 +17,7 @@ the concise, public reference for the curated picker catalogue.
 
 - **Default** marks TaskWraith's initial selection for a new provider seat.
 - **Reasoning** uses the composer's common ladder: **Light**, **Medium**,
-  **High**, **Extra**, **Max**, and **Ultracode**. A dash means that model has
+  **High**, **Extra**, **Max**, **Ultracode**, **persistent**, and **UltraTask**. A dash means that model has
   no configurable TaskWraith reasoning control.
 - **Fast** is provider-specific: **Toggle** exposes the Fast control in the
   picker, **Included** means the provider's model is always Fast, and **Pair**
@@ -241,7 +241,7 @@ llama-server.
 
 | Model | Vendor | Reasoning (default in bold) | List price (in / out per 1M tokens) | Notes |
 | --- | --- | --- | --- | --- |
-| **SWE-1.6 Slow** `swe-1-6-slow` **(Default)** | Cognition | — | $0.5 / $2.5 | Seat default; the model a fresh Devin CLI install pins in its own config |
+| **SWE-1.6 Slow** `swe-1-6-slow` **(Default)** | Cognition | — | $0.5 / $2.5 | Seat default. Free-plan Devin accounts are restricted to this model. |
 | **SWE-1.6** `swe-1-6` | Cognition | — | $0.5 / $2.5 | — |
 | **SWE-1.6 Fast** `swe-1-6-fast` | Cognition | — | $0.5 / $2.5 | — |
 | **SWE-1.7** `swe-1-7` | Cognition | Medium · **Max** | $0.5 / $2.5 | The family the CLI resolves a bare `swe-1.7` to |
@@ -325,6 +325,7 @@ lane, and their metadata is written into the run's isolated Pi home at launch.
 | **MiMo V2 Pro** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2-pro` | —          | —    | 1M context via the Xiaomi token plan. **Retired 2026-08-30** after Xiaomi sunset it in favor of MiMo V2.5 and MiMo V2.5 Pro; no longer offered for new runs, kept here so older transcripts still decode. |
 | **MiMo V2.5** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.5`   | —            | —    | 1M context via the Xiaomi token plan.       |
 | **MiMo V2.5 Pro** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.5-pro` | —      | —    | 1M context via the Xiaomi token plan.       |
+| **Tencent HY4 Preview** `tencent/hy4-preview`              | —            | —    | Tencent brand added to the Pi catalogue.    |
 | **Devstral 2512** `mistral/devstral-2512`                  | —            | —    | 256K context via Mistral.                   |
 | **Mistral Medium 3.5** `mistral/mistral-medium-3.5`        | High (fixed) | —    | 256K context via Mistral. Always thinks at High. |
 | **Mistral Large 3 (2512)** `mistral/mistral-large-2512`    | —            | —    | 256K context via Mistral. Not a reasoning model. |

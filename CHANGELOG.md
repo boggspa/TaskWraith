@@ -8,6 +8,11 @@ context needed to answer.
 
 ## 1.9.8 - Unreleased
 
+### Added
+- **Performance**: Bounded pre-window sweeps, deferred full sweeps past first paint, and added recency budgets for boot sweeps.
+- **Transcripts**: Oversized chats now snapshot as a transcript page to prevent memory bloat.
+- **UI Responsiveness**: CLI stream turns yield past the G-lag budget to maintain interactivity.
+
 > **Source-ahead — 2026-09-07.** The highlights below describe work landed after
 > the shipped v1.9.7 boundary; they are not a release or artifact claim.
 
