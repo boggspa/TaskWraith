@@ -1,10 +1,15 @@
 import type {
-  ChatListItem,
   ChatRecord,
   ProviderId,
   UsageRecord,
   WorkspaceRecord
 } from '../../../main/store/types'
+import {
+  messageActivityDayKey,
+  messageActivityFromChats,
+  type MessageActivityAggregate,
+  type MessageActivityRequest
+} from '../../../shared/messageActivityAggregate'
 import { canonicalModelIdForProvider, humaniseModelId } from './modelDisplayName'
 import {
   resolveOllamaDisplayBrand,
@@ -351,13 +356,8 @@ const startOfLocalHour = (timestamp: number): number => {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours()).getTime()
 }
 
-const dayKeyFromTimestamp = (timestamp: number): string => {
-  const date = new Date(startOfLocalDay(timestamp))
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
+/** Local YYYY-MM-DD, shared with the message-activity aggregate so both bucket identically. */
+const dayKeyFromTimestamp = messageActivityDayKey
 
 const emptyProviderTotals = (): Record<ProviderId, number> =>
   Object.fromEntries(
@@ -577,9 +577,49 @@ const getWelcomeUsageChartDayCount = (range: WelcomeUsageRange): number => {
   return 30
 }
 
+/**
+ * The cutoffs the dashboard applies to chat messages, as a request for a
+ * message-activity backend: the same reset normalisation and range cutoff
+ * `buildWelcomeUsageDashboardData` uses, so an aggregate built elsewhere sees
+ * exactly the messages the full-record walk would.
+ */
+export const welcomeUsageMessageActivityRequest = (
+  range: WelcomeUsageRange,
+  now: number,
+  statResetAt: number = 0
+): MessageActivityRequest => ({
+  resetAt: Number.isFinite(statResetAt) && statResetAt > 0 ? statResetAt : 0,
+  rangeStart: getWelcomeUsageRangeCutoff(range, now)
+})
+
+/**
+ * Full-record entry point: derives the message-activity aggregate from the
+ * chats in-process (the reference walk) and hands it to
+ * `buildWelcomeUsageDashboardDataFromActivity`. A caller that already holds
+ * an aggregate — the remote dashboard, served by the thread catalogue — calls
+ * that function directly and never needs a transcript.
+ */
 export const buildWelcomeUsageDashboardData = (
   records: UsageRecord[],
   chats: ChatRecord[],
+  range: WelcomeUsageRange,
+  now = Date.now(),
+  workspaces: Pick<WorkspaceRecord, 'id' | 'displayName'>[] = [],
+  statResetAt: number = 0
+): WelcomeUsageDashboardData =>
+  buildWelcomeUsageDashboardDataFromActivity(
+    records,
+    messageActivityFromChats(chats, welcomeUsageMessageActivityRequest(range, now, statResetAt)),
+    range,
+    now,
+    workspaces,
+    statResetAt
+  )
+
+export const buildWelcomeUsageDashboardDataFromActivity = (
+  records: UsageRecord[],
+  /** Chat-side facts for `range` / `statResetAt`; see messageActivityAggregate.ts. */
+  activity: MessageActivityAggregate,
   range: WelcomeUsageRange,
   now = Date.now(),
   /**
@@ -612,30 +652,12 @@ export const buildWelcomeUsageDashboardData = (
   const resetCutoff = Number.isFinite(statResetAt) && statResetAt > 0 ? statResetAt : 0
   const recordsAfterReset =
     resetCutoff > 0 ? records.filter((record) => record.timestamp >= resetCutoff) : records
-  const chatsAfterReset =
-    resetCutoff > 0
-      ? chats.map((chat) => ({
-          ...chat,
-          messages: (chat.messages || []).filter((message) => {
-            const ts = new Date(message.timestamp || '').getTime()
-            return Number.isFinite(ts) && ts >= resetCutoff
-          })
-        }))
-      : chats
   const runRecords = recordsAfterReset
     .filter((record) => record.usageKind !== 'reset_hint')
     .filter((record) => record.timestamp >= cutoff)
-  const messageEvents = chatsAfterReset.flatMap((chat) =>
-    (chat.messages || [])
-      .map((message) => {
-        const timestamp = new Date(message.timestamp || '').getTime()
-        return {
-          chatId: chat.appChatId,
-          timestamp
-        }
-      })
-      .filter((event) => Number.isFinite(event.timestamp) && event.timestamp >= cutoff)
-  )
+  // The chat side of the same cutoffs arrives pre-aggregated (`activity`):
+  // in-range message count, day keys and chat ids, plus the lifetime day set
+  // — see messageActivityAggregate.ts for the exact walk they stand in for.
 
   // Welcome L5 — streaks stay all-time. Current/longest-streak are
   // lifetime metrics; computing them off the range-filtered day set
@@ -752,15 +774,9 @@ export const buildWelcomeUsageDashboardData = (
       wallTime24hMs += duration
     }
   }
-  // Re-walk the original lifetime-active-day loop body that EW44
-  // absorbed into the for-loop above. Keep the chat-message
-  // iteration intact (no durationMs there to merge in).
-  for (const chat of chatsAfterReset) {
-    for (const message of chat.messages || []) {
-      const ts = new Date(message.timestamp || '').getTime()
-      if (Number.isFinite(ts)) lifetimeActiveDayKeys.add(dayKeyFromTimestamp(ts))
-    }
-  }
+  // Chat messages join the lifetime calendar through the aggregate's day set
+  // (post-reset, parseable timestamps only — the walk this loop used to do).
+  for (const dayKey of activity.lifetimeDayKeys) lifetimeActiveDayKeys.add(dayKey)
 
   const activeDayKeys = new Set<string>()
   const sessionIds = new Set<string>()
@@ -794,10 +810,8 @@ export const buildWelcomeUsageDashboardData = (
     { totalTokens: number; providerTotals: Record<ProviderId, number> }
   >()
 
-  for (const event of messageEvents) {
-    activeDayKeys.add(dayKeyFromTimestamp(event.timestamp))
-    sessionIds.add(event.chatId)
-  }
+  for (const dayKey of activity.rangeDayKeys) activeDayKeys.add(dayKey)
+  for (const chatId of activity.rangeChatIds) sessionIds.add(chatId)
 
   for (const record of runRecords) {
     const provider = record.provider || inferProviderFromModelName(record.model || '')
@@ -1028,7 +1042,7 @@ export const buildWelcomeUsageDashboardData = (
   const favoriteProject = favoriteWorkspaceId
     ? workspaces.find((w) => w.id === favoriteWorkspaceId)?.displayName || 'n/a'
     : 'n/a'
-  const hasActivity = runRecords.length > 0 || messageEvents.length > 0
+  const hasActivity = runRecords.length > 0 || activity.rangeMessageCount > 0
   // Welcome L6 — lifetime "has any activity ever" flag. Used by the
   // renderer to decide whether to mount the dashboard at all. Without
   // this, a 24h range that happens to be empty would unmount the
@@ -1040,14 +1054,7 @@ export const buildWelcomeUsageDashboardData = (
   // pre-dating the reset shouldn't make the dashboard claim
   // lifetime activity exists when the visible stats are all zero.
   const lifetimeHasActivity =
-    recordsAfterReset.some((record) => record.usageKind !== 'reset_hint') ||
-    chatsAfterReset.some((chat) => {
-      const summary = chat as ChatListItem
-      if (summary.summaryOnly === true) {
-        return (summary.messageCount ?? 0) > 0
-      }
-      return (chat.messages || []).length > 0
-    })
+    recordsAfterReset.some((record) => record.usageKind !== 'reset_hint') || activity.hasAnyMessage
 
   // 1.0.5-EW51 — Materialise the workspace + daily-cost arrays
   // from the aggregates we built in the lifetime loop above.
@@ -1171,7 +1178,7 @@ export const buildWelcomeUsageDashboardData = (
     lifetimeHasActivity,
     tokens24h,
     sessions: sessionsCount,
-    messages: messageEvents.length || runRecords.length * 2,
+    messages: activity.rangeMessageCount || runRecords.length * 2,
     totalTokens,
     activeDays: activeDayKeys.size,
     currentStreak,

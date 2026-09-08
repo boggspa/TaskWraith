@@ -9,6 +9,11 @@ import type {
 import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
 import { buildDailyTokenSeries } from '../DailyTokenSeries'
 import { buildRemoteWelcomeDashboardThrottled } from '../WelcomeDashboardRemote'
+import type { ChatInventoryRow } from '../BridgeBroadcaster'
+import {
+  messageActivityFromChats,
+  type MessageActivityProvider
+} from '../../shared/messageActivityAggregate'
 import {
   buildRemoteFirstLaunchState,
   type RemoteFirstLaunchWorkspaceSummary
@@ -77,7 +82,10 @@ export interface UsageRatesHandlerDeps {
   getUsage: (workspaceId?: string, chatId?: string) => UsageRecord[]
   getExternalUsageCached: (options?: { maxAgeMs?: number }) => Promise<UsageRecord[]>
   onUsageChanged: () => void
-  getChats: () => ChatRecord[]
+  /** Bounded chat inventory (`AppStore.getChatList`) — never the full-history getter. */
+  getChatList: () => ChatInventoryRow[]
+  /** Chat message activity behind the remote welcome dashboard, answered without transcripts. */
+  getMessageActivity: MessageActivityProvider
   getWorkspaces: () => UsageWorkspaceSummary[]
   getSettings: () => AppSettings
   evaluateRemoteCapability: (input: {
@@ -117,6 +125,31 @@ export interface UsageRatesHandlerDeps {
   registerRemoteUsageRollupTrigger: (trigger: () => void) => void
   registerRemoteModelUsageTrigger: (trigger: () => void) => void
   registerRemoteFirstLaunchStateTrigger: (trigger: () => void) => void
+}
+
+/**
+ * Interim wiring for a store without the thread catalogue: answers both chat
+ * deps from the full-history getter, exactly as the broadcasts did before the
+ * aggregate existed — so it still parses the corpus on the rollup and
+ * first-launch timers. The catalogue backend replaces both members.
+ */
+export const usageRatesChatDepsFromFullRecords = (
+  getChats: () => ChatRecord[]
+): Pick<UsageRatesHandlerDeps, 'getChatList' | 'getMessageActivity'> => ({
+  getChatList: () => getChats(),
+  getMessageActivity: async (request) => messageActivityFromChats(getChats(), request)
+})
+
+/**
+ * A chat with a run in flight, read off whatever the inventory row carries:
+ * the catalogue's distilled running-run count, a full record's run array, or
+ * the run a legacy chat-list row still keeps as `lastRun`.
+ */
+const inventoryRowHasRunningRun = (row: ChatInventoryRow): boolean => {
+  if (row.cataloguePresentation) return row.cataloguePresentation.runningRunCount > 0
+  const runs = row.runs ?? []
+  if (runs.length > 0) return runs.some((run) => run?.status === 'running')
+  return row.lastRun?.status === 'running'
 }
 
 const FIRST_LAUNCH_REMOTE_PROVIDERS: ProviderId[] = [
@@ -303,7 +336,7 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
     if (!deps.hasRemoteBroadcaster()) return
     void deps
       .getExternalUsageCached()
-      .then((externalRecords) => {
+      .then(async (externalRecords) => {
         const now = Date.now()
         const taskwraithRecords = deps.getUsage()
         deps.broadcastUsageRollup({
@@ -312,18 +345,17 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
           externalDaily: buildDailyTokenSeries(externalRecords, now)
         })
         try {
-          deps.broadcastWelcomeDashboard({
-            dashboard: buildRemoteWelcomeDashboardThrottled(taskwraithRecords, now, {
-              getChats: () => deps.getChats(),
-              getWorkspaces: () =>
-                deps
-                  .getWorkspaces()
-                  .map((workspace) => ({ id: workspace.id, displayName: workspace.displayName })),
-              getStatResetAt: () =>
-                (deps.getSettings().dashboardStatPrefs as { resetAt?: number } | undefined)
-                  ?.resetAt ?? 0
-            })
+          const dashboard = await buildRemoteWelcomeDashboardThrottled(taskwraithRecords, now, {
+            getMessageActivity: deps.getMessageActivity,
+            getWorkspaces: () =>
+              deps
+                .getWorkspaces()
+                .map((workspace) => ({ id: workspace.id, displayName: workspace.displayName })),
+            getStatResetAt: () =>
+              (deps.getSettings().dashboardStatPrefs as { resetAt?: number } | undefined)
+                ?.resetAt ?? 0
           })
+          deps.broadcastWelcomeDashboard({ dashboard })
         } catch (err) {
           console.error('[remote] welcome dashboard broadcast failed:', err)
         }
@@ -424,13 +456,11 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
       deps.evaluateRemoteCapability({ workspaceId: workspace.id, capability: 'monitor' })
     )
     const visibleWorkspaceIds = new Set(visibleWorkspaces.map((workspace) => workspace.id))
-    const visibleChats = deps.getChats().filter((chat) => {
+    const visibleChats = deps.getChatList().filter((chat) => {
       const workspaceId = deps.canonicalRemoteWorkspaceId(chat.workspaceId)
       return workspaceId ? visibleWorkspaceIds.has(workspaceId) : false
     })
-    const runningCount = visibleChats.filter((chat) =>
-      (chat.runs ?? []).some((run) => run?.status === 'running')
-    ).length
+    const runningCount = visibleChats.filter(inventoryRowHasRunningRun).length
     const capability = (name: keyof RemoteFirstLaunchWorkspaceSummary['capabilities']) =>
       visibleWorkspaces.some((workspace) =>
         deps.evaluateRemoteCapability({ workspaceId: workspace.id, capability: name })

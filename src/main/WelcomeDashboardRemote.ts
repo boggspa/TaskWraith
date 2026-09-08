@@ -5,8 +5,16 @@
 // its only non-type import is `modelDisplayName`, also pure) keeps the seam in one
 // place and lets the mapper be unit-tested without the Electron app.
 
-import { buildWelcomeUsageDashboardData } from '../renderer/src/lib/welcomeUsageDashboard'
-import type { UsageRecord, ChatRecord, WorkspaceRecord } from './store/types'
+import {
+  buildWelcomeUsageDashboardDataFromActivity,
+  welcomeUsageMessageActivityRequest
+} from '../renderer/src/lib/welcomeUsageDashboard'
+import type {
+  MessageActivityAggregate,
+  MessageActivityProvider,
+  MessageActivityRequest
+} from '../shared/messageActivityAggregate'
+import type { UsageRecord, WorkspaceRecord } from './store/types'
 
 export interface RemoteWelcomeDashboard {
   favoriteModel: string
@@ -59,19 +67,39 @@ export interface RemoteWelcomeDashboard {
   }>
 }
 
+/** The remote dashboard always shows the renderer's default 30-day window. */
+export const REMOTE_WELCOME_DASHBOARD_RANGE = '30d' as const
+
+/** The request the remote dashboard sends its message-activity provider. */
+export const remoteWelcomeDashboardActivityRequest = (
+  now: number,
+  statResetAt: number
+): MessageActivityRequest =>
+  welcomeUsageMessageActivityRequest(REMOTE_WELCOME_DASHBOARD_RANGE, now, statResetAt)
+
 /**
- * Run the renderer aggregator over the main-side record/chat/workspace stores and
- * flatten it for the bridge. `now`/`statResetAt` mirror the renderer's call
- * (App.tsx) — 30-day range, all-history when `statResetAt` is 0.
+ * Run the renderer aggregator over the main-side usage records, the chat-side
+ * message-activity aggregate and the workspace list, and flatten it for the
+ * bridge. `now`/`statResetAt` mirror the renderer's call (App.tsx) — 30-day
+ * range, all-history when `statResetAt` is 0. `activity` must answer
+ * `remoteWelcomeDashboardActivityRequest(now, statResetAt)`; no chat record is
+ * read here.
  */
 export function buildRemoteWelcomeDashboard(
   records: UsageRecord[],
-  chats: ChatRecord[],
+  activity: MessageActivityAggregate,
   workspaces: Pick<WorkspaceRecord, 'id' | 'displayName'>[],
   now: number,
   statResetAt: number
 ): RemoteWelcomeDashboard {
-  const d = buildWelcomeUsageDashboardData(records, chats, '30d', now, workspaces, statResetAt)
+  const d = buildWelcomeUsageDashboardDataFromActivity(
+    records,
+    activity,
+    REMOTE_WELCOME_DASHBOARD_RANGE,
+    now,
+    workspaces,
+    statResetAt
+  )
   // Force every Swift-`Int` field to a finite integer at the boundary: Swift's
   // JSONDecoder rejects an Int decoded from a fractional JSON number, which fails
   // the whole (strict) decode and silently hides the card. UsageRecord token /
@@ -134,44 +162,87 @@ export function buildRemoteWelcomeDashboard(
 }
 
 // — Throttled wrapper —
-// The dashboard rides the usage-rollup broadcast (a 4s prewarm + per-device
-// establish + a 2h interval + on-usage-change), but the aggregation plus its three
-// store reads (chats/workspaces/settings) are far heavier than the sibling rollup
-// work. Rebuild only when the record set changes or the cache is >5 min stale (so
-// time-relative stats like the rolling 24h window stay fresh); otherwise return the
-// cached projection so newly-paired devices still receive it cheaply on establish.
-let cachedDashboard: RemoteWelcomeDashboard | null = null
-let cachedSignature = ''
-let cachedAtMs = 0
+// The dashboard rides the usage-rollup broadcast (a 45s prewarm + per-device
+// establish + a 2h interval + on-usage-change), but the aggregation plus its
+// store reads (activity/workspaces/settings) are far heavier than the sibling
+// rollup work. Rebuild only when the record set changes or the cache is >5 min
+// stale (so time-relative stats like the rolling 24h window stay fresh);
+// otherwise return the cached projection so newly-paired devices still receive
+// it cheaply on establish. The activity provider is asynchronous (the thread
+// catalogue answers from a worker), so a rebuild that is already awaiting its
+// aggregate serves every caller that arrives meanwhile instead of stacking a
+// query per trigger.
 const DASHBOARD_REBUILD_MIN_INTERVAL_MS = 5 * 60_000
+
+export interface RemoteWelcomeDashboardDeps {
+  getMessageActivity: MessageActivityProvider
+  getWorkspaces: () => Pick<WorkspaceRecord, 'id' | 'displayName'>[]
+  getStatResetAt: () => number
+}
+
+export interface RemoteWelcomeDashboardThrottle {
+  build(
+    records: UsageRecord[],
+    now: number,
+    deps: RemoteWelcomeDashboardDeps
+  ): Promise<RemoteWelcomeDashboard>
+}
+
+export function createRemoteWelcomeDashboardThrottle(
+  minIntervalMs = DASHBOARD_REBUILD_MIN_INTERVAL_MS
+): RemoteWelcomeDashboardThrottle {
+  let cachedDashboard: RemoteWelcomeDashboard | null = null
+  let cachedSignature = ''
+  let cachedAtMs = 0
+  let inFlight: { signature: string; promise: Promise<RemoteWelcomeDashboard> } | null = null
+  let latestBuild = 0
+  return {
+    async build(records, now, deps) {
+      // Usage records are append-only, so length is a reliable change signal — and
+      // it avoids the store reads + full aggregation on an unchanged, fresh cache.
+      const signature = String(records.length)
+      if (cachedDashboard && signature === cachedSignature && now - cachedAtMs < minIntervalMs) {
+        return cachedDashboard
+      }
+      if (inFlight && inFlight.signature === signature) return inFlight.promise
+      const build = ++latestBuild
+      const promise = (async () => {
+        const statResetAt = deps.getStatResetAt()
+        const activity = await deps.getMessageActivity(
+          remoteWelcomeDashboardActivityRequest(now, statResetAt)
+        )
+        const dashboard = buildRemoteWelcomeDashboard(
+          records,
+          activity,
+          deps.getWorkspaces(),
+          now,
+          statResetAt
+        )
+        // A build started later may already have answered; never let an older
+        // aggregate overwrite it.
+        if (build === latestBuild) {
+          cachedDashboard = dashboard
+          cachedSignature = signature
+          cachedAtMs = now
+        }
+        return dashboard
+      })()
+      inFlight = { signature, promise }
+      try {
+        return await promise
+      } finally {
+        if (inFlight?.promise === promise) inFlight = null
+      }
+    }
+  }
+}
+
+const sharedThrottle = createRemoteWelcomeDashboardThrottle()
 
 export function buildRemoteWelcomeDashboardThrottled(
   records: UsageRecord[],
   now: number,
-  deps: {
-    getChats: () => ChatRecord[]
-    getWorkspaces: () => Pick<WorkspaceRecord, 'id' | 'displayName'>[]
-    getStatResetAt: () => number
-  }
-): RemoteWelcomeDashboard {
-  // Usage records are append-only, so length is a reliable change signal — and it
-  // avoids the three store reads + full aggregation on an unchanged, fresh cache.
-  const signature = String(records.length)
-  if (
-    cachedDashboard &&
-    signature === cachedSignature &&
-    now - cachedAtMs < DASHBOARD_REBUILD_MIN_INTERVAL_MS
-  ) {
-    return cachedDashboard
-  }
-  cachedDashboard = buildRemoteWelcomeDashboard(
-    records,
-    deps.getChats(),
-    deps.getWorkspaces(),
-    now,
-    deps.getStatResetAt()
-  )
-  cachedSignature = signature
-  cachedAtMs = now
-  return cachedDashboard
+  deps: RemoteWelcomeDashboardDeps
+): Promise<RemoteWelcomeDashboard> {
+  return sharedThrottle.build(records, now, deps)
 }

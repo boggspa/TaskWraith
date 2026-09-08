@@ -1,9 +1,17 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import {
   registerUsageRatesHandlers,
+  usageRatesChatDepsFromFullRecords,
   type UsageRatesSenderScope
 } from './usageRatesHandlers'
+import { buildRemoteWelcomeDashboard } from '../WelcomeDashboardRemote'
+import {
+  emptyMessageActivity,
+  messageActivityDayKey,
+  messageActivityFromChats,
+  type MessageActivityAggregate
+} from '../../shared/messageActivityAggregate'
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -15,6 +23,10 @@ const mockedHandle = vi.mocked(ipcMain.handle)
 
 beforeEach(() => {
   mockedHandle.mockReset()
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 type RegisteredHandler = (event: unknown, ...args: unknown[]) => unknown
@@ -45,10 +57,19 @@ function createDeps() {
       getUsage: vi.fn(() => [] as any[]),
       getExternalUsageCached: vi.fn(async () => [] as any[]),
       onUsageChanged: vi.fn(),
-      getChats: vi.fn(() => [] as any[]),
+      getChatList: vi.fn(() => [] as any[]),
+      getMessageActivity: vi.fn(
+        async (): Promise<MessageActivityAggregate> => emptyMessageActivity()
+      ),
+      /** The full-history getter, deliberately unwired: any broadcast reaching for it goes red. */
+      getChats: vi.fn((): never => {
+        throw new Error('full-history getChats() must not back a remote broadcast')
+      }),
       getWorkspaces: vi.fn(() => [] as any[]),
       getSettings: vi.fn(() => ({ dashboardStatPrefs: { resetAt: 0 } }) as any),
-      evaluateRemoteCapability: vi.fn(() => true),
+      evaluateRemoteCapability: vi.fn(
+        (_input: { workspaceId: string; capability: string }): boolean => true
+      ),
       canonicalRemoteWorkspaceId: vi.fn(
         (workspaceId: string | null | undefined) => workspaceId ?? null
       ),
@@ -337,15 +358,143 @@ describe('registerUsageRatesHandlers', () => {
   it('triggers remote usage rollup and welcome dashboard broadcasts', async () => {
     const { deps, callbacks } = createDeps()
     registerUsageRatesHandlers(deps)
-
+    const NOW = new Date(2026, 4, 22, 12, 0).getTime()
+    const DAY = 86_400_000
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW)
+    const records = [
+      {
+        id: 'r1',
+        provider: 'codex',
+        timestamp: NOW - DAY,
+        workspaceId: 'ws-1',
+        chatId: 'chat-1',
+        runId: 'run-1',
+        model: 'gpt-5-codex',
+        inputTokens: 10,
+        outputTokens: 20,
+        totalTokens: 30,
+        durationMs: 500,
+        usageKind: 'run'
+      }
+    ]
+    const activity: MessageActivityAggregate = {
+      lifetimeDayKeys: [messageActivityDayKey(NOW - 2 * DAY), messageActivityDayKey(NOW)],
+      rangeMessageCount: 3,
+      rangeDayKeys: [messageActivityDayKey(NOW)],
+      rangeChatIds: ['chat-1', 'chat-2'],
+      hasAnyMessage: true
+    }
     deps.getExternalUsageCached.mockResolvedValue([{ source: 'provider' }])
-    deps.getUsage.mockReturnValue([{ value: 1 }])
+    deps.getUsage.mockReturnValue(records)
+    deps.getSettings.mockReturnValue({ dashboardStatPrefs: { resetAt: NOW - 5 * DAY } } as any)
+    deps.getMessageActivity.mockResolvedValue(activity)
 
     callbacks.triggerUsageRollup()
-    await Promise.resolve()
+    await flushAsyncTasks()
 
     expect(deps.broadcastUsageRollup).toHaveBeenCalledTimes(1)
+    // The dashboard is built from the aggregate the provider answered for the
+    // 30-day window after the settings reset — no chat record is read.
+    expect(deps.getMessageActivity).toHaveBeenCalledWith({
+      resetAt: NOW - 5 * DAY,
+      rangeStart: NOW - 30 * DAY
+    })
     expect(deps.broadcastWelcomeDashboard).toHaveBeenCalledTimes(1)
+    expect(deps.broadcastWelcomeDashboard).toHaveBeenCalledWith({
+      dashboard: buildRemoteWelcomeDashboard(records as any, activity, [], NOW, NOW - 5 * DAY)
+    })
+    expect(deps.getChats).not.toHaveBeenCalled()
+  })
+
+  it('logs and skips the welcome dashboard when the activity provider fails', async () => {
+    const { deps, callbacks } = createDeps()
+    registerUsageRatesHandlers(deps)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    deps.getUsage.mockReturnValue([{ value: 1 }, { value: 2 }, { value: 3 }] as any)
+    deps.getMessageActivity.mockRejectedValue(new Error('catalogue unavailable'))
+
+    callbacks.triggerUsageRollup()
+    await flushAsyncTasks()
+
+    expect(deps.broadcastUsageRollup).toHaveBeenCalledTimes(1)
+    expect(deps.broadcastWelcomeDashboard).not.toHaveBeenCalled()
+    expect(error).toHaveBeenCalledWith(
+      '[remote] welcome dashboard broadcast failed:',
+      expect.any(Error)
+    )
+    error.mockRestore()
+  })
+
+  it('offers a full-record adapter for a store without the thread catalogue', async () => {
+    const chats = [
+      {
+        appChatId: 'c1',
+        workspaceId: 'ws-1',
+        runs: [],
+        messages: [{ timestamp: new Date(2026, 4, 22, 12, 0).toISOString() }]
+      }
+    ]
+    const adapter = usageRatesChatDepsFromFullRecords(() => chats as any)
+    expect(adapter.getChatList()).toBe(chats)
+    const request = { resetAt: 0, rangeStart: 0 }
+    expect(await adapter.getMessageActivity(request)).toEqual(
+      messageActivityFromChats(chats, request)
+    )
+  })
+
+  it('counts running first-launch workspaces from inventory rows, never full records', async () => {
+    const { deps, callbacks } = createDeps()
+    registerUsageRatesHandlers(deps)
+    deps.getWorkspaces.mockReturnValue([
+      { id: 'ws-1', displayName: 'One' },
+      { id: 'ws-2', displayName: 'Two' },
+      { id: 'ws-hidden', displayName: 'Hidden' }
+    ])
+    deps.evaluateRemoteCapability.mockImplementation(
+      ({ workspaceId }) => workspaceId !== 'ws-hidden'
+    )
+    const running = { status: 'running', runningRunCount: 2 }
+    const idle = { status: 'idle', runningRunCount: 0 }
+    deps.getChatList.mockReturnValue([
+      // Catalogue rows: the distilled count decides, however many runs it covers.
+      { appChatId: 'c1', workspaceId: 'ws-1', runs: [], cataloguePresentation: running },
+      { appChatId: 'c2', workspaceId: 'ws-1', runs: [], cataloguePresentation: idle },
+      // A full record still answers from its run array.
+      { appChatId: 'c3', workspaceId: 'ws-2', runs: [{ runId: 'r3', status: 'running' }] },
+      // A legacy chat-list row answers from the run it kept.
+      {
+        appChatId: 'c4',
+        workspaceId: 'ws-2',
+        runs: [],
+        lastRun: { runId: 'r4', status: 'running' }
+      },
+      {
+        appChatId: 'c5',
+        workspaceId: 'ws-2',
+        runs: [],
+        lastRun: { runId: 'r5', status: 'success' }
+      },
+      // Invisible or unscoped chats never count.
+      { appChatId: 'c6', workspaceId: 'ws-hidden', runs: [], cataloguePresentation: running },
+      { appChatId: 'c7', workspaceId: undefined, runs: [], cataloguePresentation: running }
+    ])
+
+    callbacks.triggerFirstLaunch()
+    await flushAsyncTasks()
+
+    expect(deps.broadcastFirstLaunchState).toHaveBeenCalledTimes(1)
+    const { state } = deps.broadcastFirstLaunchState.mock.calls[0][0] as {
+      state: { workspace: Record<string, unknown> }
+    }
+    expect(state.workspace).toMatchObject({
+      visibleCount: 2,
+      totalCount: 3,
+      runningCount: 3,
+      hasVisibleWorkspaces: true
+    })
+    expect(deps.getChatList).toHaveBeenCalled()
+    expect(deps.getChats).not.toHaveBeenCalled()
   })
 
   it('triggers remote model usage broadcasts', async () => {
@@ -358,7 +507,6 @@ describe('registerUsageRatesHandlers', () => {
     deps.fetchClaudeUsageSnapshot.mockResolvedValue({ windows: [] })
     deps.fetchKimiUsageSnapshot.mockResolvedValue({ windows: [] })
     deps.fetchCursorUsageSnapshot.mockResolvedValue({ windows: [] })
-    deps.getChats.mockReturnValue([{ workspaceId: 'ws-1', runs: [{ status: 'running' }] }])
 
     callbacks.triggerUsageModel()
     await flushAsyncTasks()
