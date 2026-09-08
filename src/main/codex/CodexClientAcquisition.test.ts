@@ -420,3 +420,148 @@ describe('Codex client accessor parity', () => {
     expect(client.dispose).toHaveBeenCalledOnce()
   })
 })
+
+describe('Codex accessor configuration forwarding', () => {
+  it('restarts for stale credential consent when the MCP configuration is current', () => {
+    const { acquisition } = fixture()
+    const client = acquisition.getCodexClient()
+    expect(client.hasStaleMcpConfig()).toBe(false)
+    client.hasStaleCredentialLeaseConsent.mockReturnValue(true)
+
+    acquisition.getCodexClient()
+    expect(client.dispose).toHaveBeenCalledOnce()
+    client.hasStaleCredentialLeaseConsent.mockReturnValue(false)
+    acquisition.getCodexClient()
+    expect(client.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('forwards actual runtime profiles on initial and subsequent accessor calls', () => {
+    const { acquisition } = fixture()
+    const initial = runtime('initial')
+    const replacement = runtime('replacement')
+    const client = acquisition.getCodexClient(initial)
+
+    expect(client.setRuntimeProfile).toHaveBeenCalledExactlyOnceWith(initial)
+    expect(acquisition.getCodexClient(replacement)).toBe(client)
+    expect(client.setRuntimeProfile.mock.calls).toEqual([[initial], [replacement]])
+  })
+})
+
+describe('live acquisition dependencies', () => {
+  it('does not read any dependency while constructing the factory', () => {
+    const { deps } = fixture()
+    const reads: PropertyKey[] = []
+    const live = new Proxy(deps, {
+      get(target, property, receiver) {
+        reads.push(property)
+        return Reflect.get(target, property, receiver)
+      }
+    })
+
+    const acquisition = createCodexClientAcquisition(live)
+    expect(reads).toEqual([])
+    acquisition.resolveCodexClientStartupConfiguration()
+    expect(reads).toContain('AppStore')
+    expect(reads).toContain('managedUserMcpLaunchAllowlistPolicy')
+  })
+
+  it('uses a client swapped into the shared binding after an earlier accessor call', () => {
+    const { acquisition, deps } = fixture()
+    const first = acquisition.getCodexClient()
+    const replacement = new FakeClient('/replacement')
+    deps.codexClient = replacement
+
+    expect(acquisition.getCodexClient(null)).toBe(replacement)
+    expect(replacement.setRuntimeProfile).toHaveBeenCalledExactlyOnceWith(null)
+    expect(replacement.setMcpConfig).toHaveBeenCalledOnce()
+    expect(first.setMcpConfig).toHaveBeenCalledOnce()
+  })
+
+  it('reads the startup lease count through a live getter on every restart decision', () => {
+    const { acquisition, deps } = fixture()
+    let startupLeaseCount = 0
+    Object.defineProperty(deps, 'codexAppServerStartupLeaseCount', {
+      get: () => startupLeaseCount
+    })
+    const client = acquisition.getCodexClient()
+    client.hasStaleMcpConfig.mockReturnValue(true)
+
+    startupLeaseCount = 1
+    acquisition.getCodexClient()
+    expect(client.dispose).not.toHaveBeenCalled()
+    startupLeaseCount = 0
+    acquisition.getCodexClient()
+    expect(client.dispose).toHaveBeenCalledOnce()
+    startupLeaseCount = 2
+    acquisition.getCodexClient()
+    expect(client.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('honours a replaced lifecycle binding and reads the latest poison callback on release', async () => {
+    const { acquisition, deps } = fixture()
+    const originalPoison = vi.fn()
+    const replacementPoison = vi.fn()
+    let poison = originalPoison
+    Object.defineProperty(deps, 'poisonWorkspaceLockMutationAdmission', {
+      get: () => poison
+    })
+    const lease = await acquisition.acquireCodexClientLifecycleLease('original')
+    const replacement = {
+      token: Symbol('replacement'),
+      label: 'replacement',
+      release: vi.fn()
+    }
+    deps.activeCodexClientLifecycleLease = replacement
+    poison = replacementPoison
+
+    expect(() => acquisition.getCodexClient(undefined, undefined, lease)).toThrow(
+      'reserved by replacement'
+    )
+    lease.release()
+    expect(originalPoison).not.toHaveBeenCalled()
+    expect(replacementPoison).toHaveBeenCalledExactlyOnceWith(
+      'Codex client lifecycle original lost its exact serialization lease.'
+    )
+    expect(deps.activeCodexClientLifecycleLease).toBe(replacement)
+    expect(replacement.release).not.toHaveBeenCalled()
+  })
+
+  it('reads a replaced MCP allowlist callback after factory creation and prior resolution', () => {
+    const { acquisition, deps, settings } = fixture()
+    const stdioPolicy = { allowedTransports: ['stdio'] } as const
+    const httpPolicy = { allowedTransports: ['http'] } as const
+    let resolvePolicy: NonNullable<
+      CodexClientAcquisitionDependencies<FakeClient>['managedUserMcpLaunchAllowlistPolicy']
+    > = () => stdioPolicy
+    Object.defineProperty(deps, 'managedUserMcpLaunchAllowlistPolicy', {
+      get: () => resolvePolicy
+    })
+
+    acquisition.resolveCodexClientStartupConfiguration()
+    expect(deps.buildUserMcpLaunchServers).toHaveBeenLastCalledWith(
+      settings.userMcpServers,
+      expect.objectContaining({ allowlistPolicy: stdioPolicy })
+    )
+    resolvePolicy = () => httpPolicy
+    acquisition.resolveCodexClientStartupConfiguration()
+    expect(deps.buildUserMcpLaunchServers).toHaveBeenLastCalledWith(
+      settings.userMcpServers,
+      expect.objectContaining({ allowlistPolicy: httpPolicy })
+    )
+  })
+
+  it('uses the current teardown callback when a previously opened cohort closes', async () => {
+    const { acquisition, deps } = fixture()
+    const originalFinish = deps.finishCodexClientLifecycle
+    const lease = await acquisition.acquireCodexProviderClientRunLease(gateway, 'run', null)
+    const replacementFinish = vi.fn(async () => undefined)
+    Object.defineProperty(deps, 'finishCodexClientLifecycle', {
+      get: () => replacementFinish
+    })
+
+    await lease.cohortLease.release()
+    expect(originalFinish).not.toHaveBeenCalled()
+    expect(replacementFinish).toHaveBeenCalledExactlyOnceWith(lease.client, lease.lifecycleLease)
+    expect(deps.activeCodexClientLifecycleLease).toBeNull()
+  })
+})

@@ -79,8 +79,10 @@ type ProfileFenceDependencies = Pick<
 export interface CodexClientAcquisitionDependencies<
   TClient extends CodexAcquisitionClient
 > extends ProfileFenceDependencies {
-  // These two bindings remain shared with teardown, maintenance and routing.
-  // The composition root must pass live getters/setters, never copied values.
+  // Mutable host bindings must remain live getters, including readonly ports
+  // such as the startup lease count and policy callbacks. Readonly describes
+  // how acquisition consumes them; it does not promise a fixed value.
+  // These two shared bindings additionally require setters for transitions.
   codexClient: TClient | null
   activeCodexClientLifecycleLease: CodexClientLifecycleLease | null
   readonly codexProviderClientCohorts: CodexClientRunCohortRegistry<
