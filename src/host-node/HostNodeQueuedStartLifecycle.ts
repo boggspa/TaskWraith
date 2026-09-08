@@ -23,14 +23,15 @@
  * - `claim` transfers the admission lease atomically with the cancellation
  *   latch and records a durable execution claim BEFORE spawn may begin
  *   (§7 #4, decided 2026-09-08). If the claim cannot be recorded, the start
- *   must not proceed. Every refused claim leaves the offered lease with the
- *   caller; only `claimed` transfers ownership.
+ *   must not proceed. A valid claim attempt takes temporary custody before
+ *   the durability await. Every result reports leaseCustody; only `caller`
+ *   permits caller cleanup. Aliases never transfer the same lease twice.
  * - `cancel` before the claim settles `cancelled_before_start` and the start
  *   never spawns (`executeStart` skips). After the claim the latch is
  *   retained through BOTH gaps: a cancellation latched before
  *   `providerCancelRegistered(cb)` invokes `cb` exactly once when it lands.
  *   Cross-identity cancellation is rejected without touching state.
- * - `markStarted` is a MONOTONIC persisted-start witness: once recorded it
+ * - `markStarted` retains the caller's durable-start evidence in memory: it
  *   survives immediate finish/cancel; a late success after timeout or any
  *   terminal outcome is fenced (ignored + counted), never un-settles.
  * - `beginShutdown` stops new reservations/claims, settles unclaimed AND
@@ -92,7 +93,11 @@ export function terminalOutcomeToRejectCode(
   }
 }
 
-/** Durable §7 #4 execution claim, recorded BEFORE the first provider side effect. */
+/**
+ * Durable §7 #4 execution claim, recorded BEFORE the first provider side effect.
+ * Identity fields are nonblank opaque strings, preserved exactly (not trimmed).
+ * claimedAt is a finite, nonnegative millisecond timestamp; fractions are valid.
+ */
 export interface HostQueuedStartExecutionClaim {
   readonly commandId: string
   readonly threadId: string
@@ -148,6 +153,8 @@ export interface HostQueuedStartReservationView {
   /** True once the start callback has been handed to foreign code (M2 L2). */
   readonly dispatched: boolean
   readonly providerRunBegan: boolean
+  /** Positive end/no-effects evidence, independent of the receipt outcome. */
+  readonly providerWorkEnded: boolean
   /** Monotonic persisted-start witness; survives finish/cancel once set. */
   readonly startedEvidence: boolean
 }
@@ -163,17 +170,24 @@ export type HostQueuedStartReserveResult =
   | { readonly kind: 'refused'; readonly reason: 'host_shutting_down' }
 
 /**
- * Lease-ownership rule (M2 fix L1): a `claimed` result transfers the offered
- * admission lease to the lifecycle, which then releases it exactly once at
- * the appropriate terminal/teardown point. EVERY `refused` result leaves the
- * lease with the caller — the lifecycle took no ownership, so the caller
- * must release it (or hand it elsewhere). This includes refusals that race
- * a cancel/shutdown landing while the durable claim write was in flight.
+ * Only `leaseCustody: 'caller'` permits the caller to release its offered lease.
+ * A valid attempt takes temporary lifecycle custody SYNCHRONOUSLY before the
+ * store call, including while its promise is pending. Failed/cancelled attempts
+ * release that undispatched lease themselves. Same-object retries cannot gain
+ * cleanup authority over pending, transferred or already-released custody.
+ * A refusal of an independent lease leaves that lease with its caller.
  */
+export type HostQueuedStartLeaseCustody = 'caller' | 'lifecycle' | 'released'
+
 export type HostQueuedStartClaimResult =
-  | { readonly kind: 'claimed'; readonly reservation: HostQueuedStartReservationView }
+  | {
+      readonly kind: 'claimed'
+      readonly leaseCustody: 'lifecycle'
+      readonly reservation: HostQueuedStartReservationView
+    }
   | {
       readonly kind: 'refused'
+      readonly leaseCustody: HostQueuedStartLeaseCustody
       readonly reason:
         | 'unknown'
         | 'already_claimed'
@@ -182,6 +196,17 @@ export type HostQueuedStartClaimResult =
         | 'claim_record_failed'
         | 'lease_identity_mismatch'
     }
+
+/**
+ * Positive evidence supplied by the start/provider owner, never inferred from
+ * an error, missing start hook, receipt outcome, finishRun or clearCancel.
+ * Both variants assert that the start callback and all work it could create
+ * are quiescent: no future side effects may start. `no_effects` additionally
+ * asserts none began; it is refused if a begin signal has already been seen.
+ */
+export type HostQueuedStartEndEvidence =
+  | { readonly kind: 'provider_ended' }
+  | { readonly kind: 'no_effects' }
 
 export type HostQueuedStartCancelResult =
   | {
@@ -231,15 +256,35 @@ interface ReservationRecord {
   claiming: boolean
   /** Settles when the in-flight claim attempt settles either way (L1). */
   claimReady: Promise<void> | null
-  /** The lease object currently being claimed; prevents same-lease aliasing (R2). */
-  pendingLease: HostNodeRunAdmissionLease | null
   /** Set atomically BEFORE the start callback is invoked (L2). */
   dispatched: boolean
   providerRunBegan: boolean
+  providerWorkEnded: boolean
   startedEvidence: boolean
   lease: HostNodeRunAdmissionLease | null
   leaseReleased: boolean
   view: HostQueuedStartReservationView
+}
+
+function isClaimIdentity(value: unknown): value is {
+  commandId: string
+  threadId: string
+  fingerprint: string
+} {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return ['commandId', 'threadId', 'fingerprint'].every((key) => {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) return false
+    const field = (value as Record<string, unknown>)[key]
+    return typeof field === 'string' && field.trim().length > 0
+  })
+}
+
+function isExecutionClaim(value: unknown): value is HostQueuedStartExecutionClaim {
+  if (!isClaimIdentity(value) || !Object.prototype.hasOwnProperty.call(value, 'claimedAt')) {
+    return false
+  }
+  const claimedAt = (value as { claimedAt?: unknown }).claimedAt
+  return typeof claimedAt === 'number' && Number.isFinite(claimedAt) && claimedAt >= 0
 }
 
 /**
@@ -255,6 +300,7 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
   }): HostQueuedStartReserveResult
   claim(commandId: string, lease: HostNodeRunAdmissionLease): Promise<HostQueuedStartClaimResult>
   cancel(input: { commandId: string; threadId?: string }): HostQueuedStartCancelResult
+  /** Callback completion only; neither durable start evidence nor provider-end proof. */
   executeStart(
     commandId: string,
     start: () => void | Promise<void>
@@ -271,8 +317,10 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
   ): { readonly kind: 'registered' | 'invoked' | 'ignored' }
   markStarted(commandId: string): { readonly kind: 'recorded' | 'fenced' | 'unknown' }
   expireStartWait(commandId: string): boolean
+  /** Receipt outcome only; never proof that dispatched provider work ended. */
   settle(commandId: string, outcome: 'completed' | 'cancelled' | 'failed'): boolean
-  providerRunEnded(commandId: string): boolean
+  /** Positive quiescence evidence from the owner; may precede receipt settlement. */
+  providerRunEnded(commandId: string, evidence: HostQueuedStartEndEvidence): boolean
   beginShutdown(): void
   reopen(
     candidates: readonly { commandId: string; threadId: string; fingerprint: string }[]
@@ -289,6 +337,9 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
   const store = options.executionClaimStore ?? createInMemoryExecutionClaimStore()
   const now = options.now ?? (() => Date.now())
   const reservations = new Map<string, ReservationRecord>()
+  // Physical lease identity is checked BEFORE every command/terminal refusal.
+  // Weak keys retain alias custody without extending a lease object's lifetime.
+  const leaseOwners = new WeakMap<HostNodeRunAdmissionLease, ReservationRecord>()
   let shuttingDown = false
   let fencedLateStarts = 0
   let callbackErrors = 0
@@ -306,28 +357,33 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
     }
   }
 
+  const providerWorkPending = (record: ReservationRecord): boolean =>
+    record.dispatched && !record.providerWorkEnded
+
+  const requestCancel = (record: ReservationRecord): void => {
+    record.cancelLatched = true
+    invokeCancelCallback(record)
+  }
+
   const releaseRetainedLease = (record: ReservationRecord): boolean => {
-    if (!record.lease || record.leaseReleased) return false
+    if (!record.lease || record.leaseReleased || providerWorkPending(record)) return false
     record.leaseReleased = true
     record.lease.release()
     return true
   }
 
   /**
-   * Records the single terminal RECEIPT outcome. Capacity is released with it
-   * unless `keepLease` is set (M2 fix L3): once the start callback has been
-   * dispatched, a provider child may be running, so the admission lease must
-   * survive the receipt's terminalization until provider completion/teardown
-   * (`settle` on the ended run, or `providerRunEnded`).
+   * Records the single terminal RECEIPT outcome. Dispatched capacity survives
+   * every outcome until providerRunEnded supplies positive quiescence evidence.
+   * Repeated receipt events cannot release a possibly live provider's lease.
    */
   const settleTerminal = (
     record: ReservationRecord,
-    outcome: HostQueuedStartTerminalOutcome,
-    keepLease = false
+    outcome: HostQueuedStartTerminalOutcome
   ): boolean => {
     if (record.terminalOutcome !== null) return false
     record.terminalOutcome = outcome
-    if (!keepLease) releaseRetainedLease(record)
+    releaseRetainedLease(record)
     if (options.onTerminal) {
       try {
         options.onTerminal(record.view, outcome)
@@ -368,9 +424,9 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
         cancelInvoked: false,
         claiming: false,
         claimReady: null,
-        pendingLease: null,
         dispatched: false,
         providerRunBegan: false,
+        providerWorkEnded: false,
         startedEvidence: false,
         lease: null,
         leaseReleased: false,
@@ -401,6 +457,9 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
         get providerRunBegan() {
           return record.providerRunBegan
         },
+        get providerWorkEnded() {
+          return record.providerWorkEnded
+        },
         get startedEvidence() {
           return record.startedEvidence
         }
@@ -414,66 +473,70 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
       commandId: string,
       lease: HostNodeRunAdmissionLease
     ): Promise<HostQueuedStartClaimResult> {
-      const record = reservations.get(commandId)
-      if (!record) return { kind: 'refused', reason: 'unknown' }
-      // Identity BEFORE durability (M2 fix L1): a lease minted for another
-      // command or thread must never be bound to this reservation, and no
-      // durable claim may be written on its authority.
-      if (lease.commandId !== record.commandId || lease.threadId !== record.threadId) {
-        return { kind: 'refused', reason: 'lease_identity_mismatch' }
-      }
-      if (record.terminalOutcome !== null) return { kind: 'refused', reason: 'already_terminal' }
-      if (shuttingDown) return { kind: 'refused', reason: 'host_shutting_down' }
-      // Ownership is reserved SYNCHRONOUSLY, before the durability await:
-      // a second concurrent claim must lose here, not after both awaits
-      // resolve and the later assignment overwrites the earlier lease (L1).
-      // Track the lease identity to prevent the SAME lease object being offered
-      // twice (R2): a refused same-lease caller must not be able to release
-      // the winner's lease by releasing its alias of the same object.
-      if (record.lease || record.claiming) return { kind: 'refused', reason: 'already_claimed' }
-      if (record.pendingLease && record.pendingLease === lease) {
-        // Same lease object offered again while first attempt is in flight
-        // or after refusal: refuse but do NOT treat this as an ownership
-        // transfer, so the lease stays with its current owner.
-        return { kind: 'refused', reason: 'already_claimed' }
-      }
-      record.claiming = true
-      record.pendingLease = lease
-      const attempt = (async (): Promise<HostQueuedStartClaimResult> => {
-        // §7 #4: the durable execution claim precedes ANY provider side
-        // effect. If it cannot be recorded, this start must not proceed.
-        try {
-          await store.record({
-            commandId: record.commandId,
-            threadId: record.threadId,
-            fingerprint: record.fingerprint,
-            claimedAt: now()
-          })
-        } catch {
-          claimRecordFailures += 1
-          return { kind: 'refused', reason: 'claim_record_failed' }
+      const refuse = (
+        reason: Extract<HostQueuedStartClaimResult, { kind: 'refused' }>['reason']
+      ): HostQueuedStartClaimResult => {
+        const owner = leaseOwners.get(lease)
+        return {
+          kind: 'refused',
+          reason,
+          leaseCustody: owner ? (owner.leaseReleased ? 'released' : 'lifecycle') : 'caller'
         }
-        // A cancel/shutdown that landed while the durable write was in
-        // flight found the reservation still queued and settled it; honour
-        // that over the claim. The offered lease stays with the caller.
-        if (record.terminalOutcome !== null) return { kind: 'refused', reason: 'already_terminal' }
-        if (shuttingDown) return { kind: 'refused', reason: 'host_shutting_down' }
-        record.lease = lease
-        record.phase = 'starting'
-        return { kind: 'claimed', reservation: record.view }
-      })()
-      // Readiness handed to the startup continuation: executeStart awaits
-      // this before deciding, so a start issued while the durable write is
-      // still in flight cannot be lost to a not_claimed skip (L1).
-      record.claimReady = attempt.then(
-        () => undefined,
-        () => undefined
-      )
+      }
+      const record = reservations.get(commandId)
+      // Check physical custody first, including wrong-command and terminal
+      // retries: NONE of these may give a caller the winner's cleanup right.
+      const owner = leaseOwners.get(lease)
+      if (owner) {
+        return refuse(
+          owner !== record
+            ? 'lease_identity_mismatch'
+            : owner.terminalOutcome !== null
+              ? 'already_terminal'
+              : 'already_claimed'
+        )
+      }
+      if (!record) return refuse('unknown')
+      if (lease.commandId !== record.commandId || lease.threadId !== record.threadId) {
+        return refuse('lease_identity_mismatch')
+      }
+      if (record.terminalOutcome !== null) return refuse('already_terminal')
+      if (shuttingDown) return refuse('host_shutting_down')
+      if (record.lease || record.claiming) return refuse('already_claimed')
+
+      // Temporary custody begins BEFORE foreign code. Cancellation/shutdown
+      // during the durable write can release this definitely-undispatched
+      // lease; a refused result will then explicitly report 'released'.
+      record.claiming = true
+      record.lease = lease
+      leaseOwners.set(lease, record)
+      let resolveReady!: () => void
+      record.claimReady = new Promise<void>((resolve) => {
+        resolveReady = resolve
+      })
       try {
-        return await attempt
+        const claim = {
+          commandId: record.commandId,
+          threadId: record.threadId,
+          fingerprint: record.fingerprint,
+          claimedAt: now()
+        }
+        if (!isExecutionClaim(claim)) throw new Error('Invalid execution claim')
+        await store.record(claim)
+        if (record.terminalOutcome !== null) return refuse('already_terminal')
+        if (shuttingDown) {
+          settleTerminal(record, 'host_shutting_down')
+          return refuse('host_shutting_down')
+        }
+        record.phase = 'starting'
+        return { kind: 'claimed', leaseCustody: 'lifecycle', reservation: record.view }
+      } catch {
+        claimRecordFailures += 1
+        settleTerminal(record, 'failed')
+        return refuse('claim_record_failed')
       } finally {
         record.claiming = false
-        record.pendingLease = null
+        resolveReady()
       }
     },
 
@@ -485,13 +548,12 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
         return { kind: 'rejected', reason: 'identity_mismatch' }
       }
       if (record.terminalOutcome !== null) {
+        // Terminal receipt != ended work. A failure may still own a live
+        // child, including one whose begin hook arrived after the timeout.
+        if (providerWorkPending(record)) requestCancel(record)
         return { kind: 'already_terminal', outcome: record.terminalOutcome }
       }
       record.cancelLatched = true
-      if (record.cancelCallback) {
-        invokeCancelCallback(record)
-        return { kind: 'forwarded' }
-      }
       if (!record.dispatched && !record.providerRunBegan) {
         // Pre-claim or post-claim-but-before-DISPATCH: no foreign start code
         // has been handed the callback, so the spawn is fenced off by the
@@ -502,9 +564,14 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
         // stays set so a racing late providerCancelRegistered still receives
         // the cancellation exactly once.
         settleTerminal(record, 'cancelled_before_start')
-        return record.lease
+        invokeCancelCallback(record)
+        return record.phase === 'starting'
           ? { kind: 'latched' }
           : { kind: 'settled', outcome: 'cancelled_before_start' }
+      }
+      if (record.cancelCallback) {
+        invokeCancelCallback(record)
+        return { kind: 'forwarded' }
       }
       return { kind: 'latched' }
     },
@@ -538,24 +605,17 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
       try {
         await start()
       } catch (error) {
-        // Sync throw or async reject in the start callback: one terminal
-        // outcome, no spawn evidence fabricated. If the reservation
-        // terminalized while the dispatch was pending (its lease retained
-        // for a possibly-running provider), this failure proves the start
-        // attempt is over, BUT if providerRunBegan is true the provider may
-        // still be running (R1): keep the lease retained until
-        // providerRunEnded/settle confirms completion/teardown.
-        const keepLease = record.providerRunBegan
-        if (!settleTerminal(record, 'failed', keepLease)) {
-          if (!keepLease) releaseRetainedLease(record)
-        }
+        // Rejection is not no-effects/death proof, even without a begin
+        // hook. Preserve the original error and receipt, retain capacity,
+        // and request cancellation until the owner reports quiescence.
+        settleTerminal(record, 'failed')
+        if (providerWorkPending(record)) requestCancel(record)
         return { kind: 'failed', error }
       }
-      record.providerRunBegan = true
       if (record.terminalOutcome !== null) {
-        // Cancel/timeout/shutdown terminalized the receipt while the start
-        // was executing. The provider DID begin — never report a clean
-        // start against a settled reservation; fence and count it (L2).
+        // The callback completed after receipt terminalization. This is
+        // neither a clean start receipt nor proof that a provider began;
+        // fence/count the late result without changing the recorded outcome.
         fencedLateStarts += 1
         return { kind: 'fenced', outcome: record.terminalOutcome }
       }
@@ -564,8 +624,11 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
 
     providerRunStarted(commandId: string): void {
       const record = reservations.get(commandId)
-      if (!record || record.terminalOutcome !== null) return
+      if (!record || !record.dispatched || record.providerWorkEnded) return
+      // Late resource evidence matters after receipt terminality, but never
+      // changes its outcome, phase or persisted-start witness.
       record.providerRunBegan = true
+      if (record.terminalOutcome !== null) requestCancel(record)
     },
 
     providerCancelRegistered(
@@ -573,7 +636,7 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
       callback: () => void
     ): { readonly kind: 'registered' | 'invoked' | 'ignored' } {
       const record = reservations.get(commandId)
-      if (!record) return { kind: 'ignored' }
+      if (!record || record.providerWorkEnded || record.cancelCallback) return { kind: 'ignored' }
       record.cancelCallback = callback
       if (record.cancelLatched) {
         // Gap 2 closure: the cancellation arrived BEFORE the provider was
@@ -607,9 +670,8 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
         // capacity, latch cancellation and deliver it to any registered
         // provider cancel; the lease is released only at provider
         // completion/teardown (M2 fix L3).
-        const settled = settleTerminal(record, 'start_timeout', true)
-        record.cancelLatched = true
-        invokeCancelCallback(record)
+        const settled = settleTerminal(record, 'start_timeout')
+        if (providerWorkPending(record)) requestCancel(record)
         return settled
       }
       return settleTerminal(record, 'start_timeout')
@@ -618,24 +680,30 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
     settle(commandId: string, outcome: 'completed' | 'cancelled' | 'failed'): boolean {
       const record = reservations.get(commandId)
       if (!record) return false
+      // This is only a receipt event. Even repeated 'completed' events
+      // cannot authorize the release of dispatched work. A newly refused or
+      // cancelled start still needs cancellation while its work is retained.
       const settled = settleTerminal(record, outcome)
-      if (!settled) {
-        // The receipt already terminalized (e.g. start_timeout with retained
-        // capacity). This call is the provider-completion signal, so the
-        // retained lease is released now; the recorded outcome is unchanged.
-        releaseRetainedLease(record)
-      }
+      if (settled && outcome !== 'completed' && providerWorkPending(record)) requestCancel(record)
       return settled
     },
 
     /**
-     * Provider completion/teardown signal for a reservation whose receipt
-     * already terminalized with retained capacity (M2 fix L3). Returns true
-     * when a retained admission lease was released by this call.
+     * The owner has positively observed quiescence of the start callback AND
+     * all provider work, or positively proved no effects began. This is not
+     * inferred from a failed promise, receipt event, finishRun or clearCancel.
+     * It may arrive before the receipt; it never changes that outcome.
+     * Repeated/stale end or cancel-registration signals are inert afterward.
      */
-    providerRunEnded(commandId: string): boolean {
+    providerRunEnded(commandId: string, evidence: HostQueuedStartEndEvidence): boolean {
       const record = reservations.get(commandId)
-      if (!record || record.terminalOutcome === null) return false
+      if (!record || !record.dispatched || record.providerWorkEnded) return false
+      if (!evidence || (evidence.kind !== 'provider_ended' && evidence.kind !== 'no_effects')) {
+        return false
+      }
+      if (evidence.kind === 'no_effects' && record.providerRunBegan) return false
+      record.providerWorkEnded = true
+      record.cancelCallback = null
       return releaseRetainedLease(record)
     },
 
@@ -643,29 +711,15 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
       if (shuttingDown) return
       shuttingDown = true
       for (const record of reservations.values()) {
-        if (record.terminalOutcome !== null) {
-          // Terminal records need no shutdown action: the only path that
-          // leaves a terminal record holding capacity (expireStartWait on a
-          // dispatched run) already latched and delivered cancellation, and
-          // its lease is owed to settle/providerRunEnded at provider end.
-          continue
-        }
-        if (record.lease === null) {
-          // Unclaimed (queued) starts settle immediately as never-started.
+        // ALL possibly live work participates, including failed/timed-out
+        // terminal receipts and starts awaiting a late cancel registration.
+        if (providerWorkPending(record)) {
+          requestCancel(record)
+        } else if (!record.dispatched && record.terminalOutcome === null) {
+          // Only definitely undispatched work is shutting_down. Ended runs
+          // may still owe publication/receipt settlement; let their owner drain.
+          // Pending claim writes resolve with released custody behind this fence.
           settleTerminal(record, 'host_shutting_down')
-        } else if (!record.dispatched && !record.providerRunBegan) {
-          // Claimed but never dispatched: no foreign start code exists and
-          // executeStart refuses behind the fence, so nothing will ever
-          // settle or release this work later. Settle it now and free its
-          // capacity instead of leaving a nonterminal lease open forever
-          // (M2 fix L3).
-          settleTerminal(record, 'host_shutting_down')
-        } else {
-          // Dispatched starts are DRAINED: cancellation is latched and
-          // handed to a registered provider cancel; executeStart refuses
-          // from here, so no late spawn can follow the shutdown fence.
-          record.cancelLatched = true
-          invokeCancelCallback(record)
         }
       }
     },
@@ -681,39 +735,26 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
       // evidence, never absence. Anything less proves nothing, and unproven
       // work is indeterminate (a provider may already have started).
       let claimedCommandIds: ReadonlySet<string> | null = null
-      if (store.declaresDurableCoverage === true) {
+      let covered = false
+      try {
+        covered = store.declaresDurableCoverage === true
+      } catch {
+        // Unreadable coverage cannot establish an absence proof either.
+      }
+      if (covered) {
         try {
           const listed = await store.list()
           if (Array.isArray(listed)) {
             const ids = new Set<string>()
             let malformed = false
             for (const entry of listed) {
-              // R3: full claim record validation. A malformed or incomplete
-              // record poisons the whole absence argument.
-              if (entry === null || typeof entry !== 'object') {
+              // Malformed evidence could conceal any candidate's claim.
+              // Validate every field without normalizing stored identities.
+              if (!isExecutionClaim(entry)) {
                 malformed = true
                 break
               }
-              const { commandId, threadId, fingerprint, claimedAt } = entry as {
-                commandId?: unknown
-                threadId?: unknown
-                fingerprint?: unknown
-                claimedAt?: unknown
-              }
-              if (
-                typeof commandId !== 'string' ||
-                commandId === '' ||
-                typeof threadId !== 'string' ||
-                threadId === '' ||
-                typeof fingerprint !== 'string' ||
-                fingerprint === '' ||
-                typeof claimedAt !== 'number' ||
-                !Number.isFinite(claimedAt)
-              ) {
-                malformed = true
-                break
-              }
-              ids.add(commandId)
+              ids.add(entry.commandId)
             }
             if (!malformed) claimedCommandIds = ids
           }
@@ -723,7 +764,11 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
         }
       }
       return candidates.map((candidate) => {
-        if (claimedCommandIds === null || claimedCommandIds.has(candidate.commandId)) {
+        if (
+          !isClaimIdentity(candidate) ||
+          claimedCommandIds === null ||
+          claimedCommandIds.has(candidate.commandId)
+        ) {
           return { commandId: candidate.commandId, outcome: 'indeterminate', resubmittable: null }
         }
         // Provably unclaimed: the durable-coverage store would have recorded
