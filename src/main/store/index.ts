@@ -1,3 +1,5 @@
+import { readCanonicalCatalogueChat } from './ThreadCatalogueCanonicalRead'
+import { normalizeCatalogueChatRecord } from './ThreadCatalogueNormalize'
 import { preserveContinuityRunReceipts } from '../../shared/threadContinuity'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -20,15 +22,12 @@ import {
 import { redactSecrets } from '../../shared/secretRedaction'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../shared/diffStatColors'
 import { DEFAULT_THEME_ACCENT_COLOR, resolveThemeAccentColor } from '../../shared/themeAccentColor'
-import { normalizeEnsembleAuthority } from '../../shared/ensembleAuthority'
 import { projectChatForCommitAttribution } from '../../shared/commitAttributionProjection'
-import { stripExternalProviderThreadImportContinuity } from '../../shared/externalProviderThreadImport'
 import {
   normalizeSystemThemeAppearance,
   resolveSystemThemeAppearance
 } from '../../shared/systemThemeAppearance'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
-import { resolveActiveGoalForEnsemble } from '../GoalState'
 import { MissionFactLedgerRepository } from '../missionLedger/MissionFactLedger'
 import { MissionFactShadowService } from '../missionLedger/MissionFactShadowService'
 import {
@@ -142,7 +141,6 @@ import {
   EnsembleConfig,
   EnsembleParticipant,
   SideChatMode,
-  SideChatLifecycleState,
   RunRecoveryFilter,
   RunRecoveryRecord,
   WorkspaceChangeFilter,
@@ -233,7 +231,6 @@ import type {
   ProjectWorkProfile
 } from '../../shared/projects'
 import { createDefaultEnsembleConfig, withMinimumEnsembleRoster } from '../EnsembleDefaults'
-import { discardForeignEnsembleTurnTransition } from '../EnsembleRuntimeIdentity'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import { isCursorGrokModelId, isGrokReasoningModelId } from '../../shared/grok45Models'
 import { createHash, randomUUID } from 'crypto'
@@ -504,14 +501,6 @@ function cloneEnsembleForSideChat(parent: ChatRecord, provider: ProviderId) {
     escalationSignals: undefined,
     updatedAt: new Date().toISOString()
   }
-}
-
-function normalizeSideChatLifecycleState(
-  value: unknown,
-  fallback: SideChatLifecycleState
-): SideChatLifecycleState {
-  if (value === 'active' || value === 'closed' || value === 'terminated') return value
-  return fallback
 }
 
 const storeRuntime = requireConfiguredHostStoreRuntime()
@@ -5441,116 +5430,7 @@ export class AppStore {
 
   // Chats
   static normalizeChatRecord(chat: ChatRecord): ChatRecord {
-    chat = stripExternalProviderThreadImportContinuity(chat)
-    const scope = chat.scope === 'global' ? 'global' : 'workspace'
-    const chatKind = chat.chatKind === 'ensemble' ? 'ensemble' : 'single'
-    const workflowMode = normalizeChatWorkflowMode(chat.workflowMode)
-    const parentChatRelation = chat.parentChatId
-      ? chat.parentChatRelation === 'sideChat'
-        ? 'sideChat'
-        : 'subThread'
-      : undefined
-    const providerMetadata = chat.providerMetadata
-      ? canonicalizeExternalPathGrantMetadata(chat.providerMetadata)
-      : chat.providerMetadata
-    const sideChatContext =
-      parentChatRelation === 'sideChat'
-        ? {
-            createdAt:
-              typeof chat.sideChatContext?.createdAt === 'number'
-                ? chat.sideChatContext.createdAt
-                : chat.createdAt || Date.now(),
-            ...(chat.sideChatContext || {}),
-            lifecycleState: normalizeSideChatLifecycleState(
-              chat.sideChatContext?.lifecycleState,
-              chat.archived ? 'terminated' : 'active'
-            )
-          }
-        : chat.sideChatContext
-    const ensemble =
-      chatKind === 'ensemble'
-        ? (() => {
-            const defaults = createDefaultEnsembleConfig(
-              chat.provider || this.getSettings().activeProvider
-            )
-            const stored = chat.ensemble
-            const participants =
-              Array.isArray(stored?.participants) && stored.participants.length > 0
-                ? stored.participants
-                : defaults.participants
-            const authority = normalizeEnsembleAuthority({
-              participants,
-              bossmanParticipantId: stored?.bossmanParticipantId ?? defaults.bossmanParticipantId,
-              captainParticipantIds:
-                stored && Object.prototype.hasOwnProperty.call(stored, 'captainParticipantIds')
-                  ? stored.captainParticipantIds
-                  : stored
-                    ? undefined
-                    : defaults.captainParticipantIds,
-              secondInCommandParticipantId:
-                stored?.secondInCommandParticipantId ??
-                (stored ? undefined : defaults.secondInCommandParticipantId)
-            })
-            const activeRound = stored?.activeRound
-              ? (() => {
-                  const runtimeOwnedRound = discardForeignEnsembleTurnTransition(stored.activeRound)
-                  const roundAuthority = normalizeEnsembleAuthority({
-                    participants: runtimeOwnedRound.participants.map((participant) => ({
-                      id: participant.participantId,
-                      order: participant.order
-                    })),
-                    bossmanParticipantId: runtimeOwnedRound.bossmanParticipantId,
-                    captainParticipantIds: runtimeOwnedRound.captainParticipantIds,
-                    secondInCommandParticipantId: runtimeOwnedRound.secondInCommandParticipantId
-                  })
-                  return {
-                    ...runtimeOwnedRound,
-                    bossmanParticipantId: roundAuthority.bossmanParticipantId,
-                    captainParticipantIds: roundAuthority.captainParticipantIds,
-                    secondInCommandParticipantId: roundAuthority.secondInCommandParticipantId
-                  }
-                })()
-              : undefined
-            return {
-              ...defaults,
-              ...(stored || {}),
-              participants,
-              bossmanParticipantId: authority.bossmanParticipantId,
-              captainParticipantIds: authority.captainParticipantIds,
-              secondInCommandParticipantId: authority.secondInCommandParticipantId,
-              ...(activeRound ? { activeRound } : {})
-            }
-          })()
-        : undefined
-    const activeGoal =
-      chatKind === 'ensemble' ? resolveActiveGoalForEnsemble(chat.activeGoal) : chat.activeGoal
-    if (scope === 'global') {
-      const { workspaceId: _workspaceId, workspacePath: _workspacePath, ...rest } = chat
-      return {
-        ...rest,
-        scope,
-        chatKind,
-        parentChatRelation,
-        sideChatContext,
-        workflowMode,
-        ...(activeGoal ? { activeGoal } : {}),
-        ...(ensemble ? { ensemble } : {}),
-        providerMetadata
-      }
-    }
-    return {
-      ...chat,
-      scope,
-      chatKind,
-      parentChatRelation,
-      sideChatContext,
-      workflowMode,
-      ...(activeGoal ? { activeGoal } : {}),
-      ...(ensemble ? { ensemble } : {}),
-      providerMetadata,
-      workspaceId: chat.workspaceId || '',
-      workspacePath: chat.workspacePath || ''
-    }
+    return normalizeCatalogueChatRecord(chat, () => this.getSettings().activeProvider)
   }
 
   /** Mirrors renderer modelUsageTable.runDiffFileCount — keep in sync. */
@@ -6110,88 +5990,19 @@ export class AppStore {
       this.touchChatRecord(chatId)
       return record
     }
-    // Stage 3 dual-read: assemble the v2 candidate once (flag-gated). Any v2
-    // defect — missing, corrupt, unhealthy — yields null and the legacy path
-    // below remains the fallback, so disabling the flag fully restores
-    // legacy reads (ADR rollback safety).
-    let v2Candidate: ChatRecord | null = null
-    if (isSegmentedChatStoreEnabled()) {
-      try {
-        const v2 = segmentedChatStore.readFull(chatId)
-        v2Candidate = v2 ? this.normalizeChatRecord(v2.record) : null
-      } catch (error) {
-        console.error(
-          `[chat-store-v2] read failed for ${chatId}; using the compatibility record`,
-          error
-        )
-      }
-    }
-    const chat = readJson<ChatRecord | null>(chatPath, null)
-    if (!chat) {
-      if (v2Candidate) {
-        const record = chatComposerSelectionOverlayStore.apply(v2Candidate)
-        this.rememberChatRecord(chatId, { mtimeMs: stat.mtimeMs, size: stat.size, record })
-        return record
-      }
-      return null
-    }
-    const legacyRecord = this.normalizeChatRecord(chat)
-    let record = legacyRecord
-    const legacyRevision = chatPersistenceRevision(legacyRecord)
-    // Skip the fat checkpoint re-parse when a full replay provably cannot change
-    // the served record: a chat whose journal has been folded away (no tail)
-    // and whose checkpoint does not lead the legacy record replays back to a
-    // revision the block below already resolves to `legacyRecord`. A boot pass
-    // that re-reads the corpus was paying a 25-32MB checkpoint parse per read
-    // for exactly these folded chats (256 of 258 on a real profile) only to
-    // discard the result — the dominant per-read cost behind the cold-boot
-    // stall. A live tail, a leading checkpoint, or an unreadable header (null)
-    // all still take the real replay, so behaviour is unchanged wherever replay
-    // could actually matter.
-    const pendingReplay = incrementalChatPersistence.pendingReplayState(chatId)
-    const replayCannotLead =
-      !pendingReplay.hasTail &&
-      pendingReplay.checkpointRevision !== null &&
-      pendingReplay.checkpointRevision <= legacyRevision
-    try {
-      const replayed = replayCannotLead ? null : incrementalChatPersistence.replay(chatId).record
-      if (replayed) {
-        const incrementalRecord = this.normalizeChatRecord(replayed)
-        const incrementalRevision = chatPersistenceRevision(incrementalRecord)
-        if (
-          incrementalRevision > legacyRevision ||
-          (incrementalRevision === legacyRevision &&
-            isDeepStrictEqual(incrementalRecord, legacyRecord))
-        ) {
-          record = incrementalRecord
-        } else if (incrementalRevision === legacyRevision) {
-          console.warn(
-            `[incremental-chat] equal-revision replay mismatch for ${chatId}; ` +
-              'using the compatibility checkpoint'
-          )
-        }
-      }
-    } catch (error) {
-      console.error(
-        `[incremental-chat] replay failed for ${chatId}; using the compatibility checkpoint`,
-        error
-      )
-    }
-    // Stage 3: healthy v2 wins when it leads the compatibility record; on
-    // equal revisions the legacy+journal record stays (v1 remains the write
-    // authority). A lagging or divergent v2 never overrides legacy.
-    if (v2Candidate) {
-      const v2Revision = chatPersistenceRevision(v2Candidate)
-      if (v2Revision > chatPersistenceRevision(record)) {
-        record = v2Candidate
-      } else if (
-        v2Revision === chatPersistenceRevision(record) &&
-        isDeepStrictEqual(v2Candidate, record)
-      ) {
-        record = v2Candidate
-      }
-    }
-    record = chatComposerSelectionOverlayStore.apply(record)
+    const canonical = readCanonicalCatalogueChat({
+      chatId,
+      legacyFileExists: true,
+      normalize: (record) => this.normalizeChatRecord(record),
+      readLegacy: () => readJson<ChatRecord | null>(chatPath, null),
+      readIncremental: () => incrementalChatPersistence.replay(chatId).record,
+      pendingReplayState: () => incrementalChatPersistence.pendingReplayState(chatId),
+      ...(isSegmentedChatStoreEnabled()
+        ? { readSegmented: () => segmentedChatStore.readFull(chatId)?.record ?? null }
+        : {})
+    })
+    if (!canonical) return null
+    const record = chatComposerSelectionOverlayStore.apply(canonical)
     this.rememberChatRecord(chatId, { mtimeMs: stat.mtimeMs, size: stat.size, record })
     return record
   }
