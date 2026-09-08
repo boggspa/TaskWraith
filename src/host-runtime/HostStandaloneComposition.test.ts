@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { WorkSpanAggregates } from '../host-shared/perf/WorkSpanRecorder'
 import { HOST_PROTOCOL_VERSION, type HostCommand } from '../shared/hostProtocol'
+import { createHostPerfInstrumentation } from './HostPerfSnapshot'
 import type { HostPerfSnapshotFileFs, HostPerfSnapshotFileTimers } from './HostPerfSnapshotFile'
 import {
   createHostStandaloneComposition,
@@ -359,5 +360,145 @@ describe('HostStandaloneComposition', () => {
     } finally {
       await composition.shutdown()
     }
+  })
+
+  it('leaves no diagnostic armed when the snapshot transport cannot be started', () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-perf-arm-'))
+    paths.push(runtimePath)
+    const real = createHostPerfInstrumentation()
+    let starts = 0
+    let stops = 0
+    const instrumentation = {
+      ...real,
+      start: () => {
+        starts += 1
+        real.start()
+      },
+      stop: () => {
+        stops += 1
+        real.stop()
+      }
+    }
+    expect(() =>
+      createHostStandaloneComposition({
+        ...input(runtimePath, { assertHeld: vi.fn() }),
+        perf: {
+          instrumentation,
+          snapshotFile: {
+            path: join(runtimePath, 'perf', 'host-snapshot.json'),
+            fs: { writeFileSync: () => undefined, renameSync: () => undefined },
+            timers: {
+              setInterval: () => {
+                throw new Error('timer unavailable')
+              },
+              clearInterval: () => undefined
+            },
+            ensureDirectory: () => undefined
+          }
+        }
+      })
+    ).toThrow('timer unavailable')
+    // The meter was armed before the transport threw; activation rolled it back.
+    expect(starts).toBe(1)
+    expect(stops).toBe(1)
+    expect(real.snapshot().eventLoopLag.sampling).toBe(false)
+  })
+
+  it('keeps the activation error when rollback itself fails', () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-perf-rollback-'))
+    paths.push(runtimePath)
+    const real = createHostPerfInstrumentation()
+    const instrumentation = {
+      ...real,
+      stop: () => {
+        real.stop()
+        throw new Error('stop failed')
+      }
+    }
+    expect(() =>
+      createHostStandaloneComposition({
+        ...input(runtimePath, { assertHeld: vi.fn() }),
+        perf: {
+          instrumentation,
+          snapshotFile: {
+            path: join(runtimePath, 'perf', 'host-snapshot.json'),
+            fs: { writeFileSync: () => undefined, renameSync: () => undefined },
+            timers: {
+              setInterval: () => {
+                throw new Error('timer unavailable')
+              },
+              clearInterval: () => undefined
+            },
+            ensureDirectory: () => undefined
+          }
+        }
+      })
+    ).toThrow('timer unavailable')
+    expect(real.snapshot().eventLoopLag.sampling).toBe(false)
+  })
+
+  it('refuses a malformed timer seam before arming anything', () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-perf-timers-'))
+    paths.push(runtimePath)
+    let starts = 0
+    const instrumentation = {
+      ...createHostPerfInstrumentation(),
+      start: () => {
+        starts += 1
+      }
+    }
+    expect(() =>
+      createHostStandaloneComposition({
+        ...input(runtimePath, { assertHeld: vi.fn() }),
+        perf: {
+          instrumentation,
+          snapshotFile: {
+            path: join(runtimePath, 'perf', 'host-snapshot.json'),
+            timers: { setInterval: 'soon' } as never,
+            ensureDirectory: () => undefined
+          }
+        }
+      })
+    ).toThrow('Host perf snapshot timers must supply setInterval and clearInterval')
+    expect(starts).toBe(0)
+  })
+
+  it('arms no transport timer when the meter refuses to start', () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-perf-meter-'))
+    paths.push(runtimePath)
+    let stops = 0
+    const instrumentation = {
+      ...createHostPerfInstrumentation(),
+      start: () => {
+        throw new Error('meter unavailable')
+      },
+      stop: () => {
+        stops += 1
+      }
+    }
+    let armed = 0
+    expect(() =>
+      createHostStandaloneComposition({
+        ...input(runtimePath, { assertHeld: vi.fn() }),
+        perf: {
+          instrumentation,
+          snapshotFile: {
+            path: join(runtimePath, 'perf', 'host-snapshot.json'),
+            fs: { writeFileSync: () => undefined, renameSync: () => undefined },
+            timers: {
+              setInterval: () => {
+                armed += 1
+                return null
+              },
+              clearInterval: () => undefined
+            },
+            ensureDirectory: () => undefined
+          }
+        }
+      })
+    ).toThrow('meter unavailable')
+    // Meter first, transport second: a refused meter never arms the timer.
+    expect(armed).toBe(0)
+    expect(stops).toBe(1)
   })
 })

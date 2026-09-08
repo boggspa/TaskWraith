@@ -80,6 +80,8 @@ export interface HostStandaloneCompositionPerfSnapshotFileInput {
 }
 
 export interface HostStandaloneCompositionPerfInput {
+  /** Injection seam for tests; production constructs the native meter + recorder. */
+  readonly instrumentation?: HostPerfInstrumentation
   /**
    * Opt-in bounded file transport for the Host perf snapshot. Absent means no
    * file is ever written; the in-process meter and recorder still run.
@@ -142,14 +144,31 @@ function requireFunction(value: unknown, label: string): void {
   if (typeof value !== 'function') throw new Error(`HostStandaloneComposition requires ${label}`)
 }
 
+/** Runs a rollback step; its own failure is contained so the cause survives. */
+function quietly(operation: () => void): void {
+  try {
+    operation()
+  } catch {
+    // Rollback is best effort; the activation error is what the caller sees.
+  }
+}
+
 function createSnapshotFileTransport(
   options: HostStandaloneCompositionPerfSnapshotFileInput,
   instrumentation: HostPerfInstrumentation,
   identity: HostPerfSnapshotFileIdentity,
   now: (() => Date) | undefined
 ): HostPerfSnapshotFileWriter {
-  // Option validation (path, cadence, cap, identity) throws here, before the
-  // meter starts: a misconfigured opt-in fails composition, not a later tick.
+  // Option validation (path, cadence, cap, identity, timer seam shape) throws
+  // here, before the meter starts: a misconfigured opt-in fails composition,
+  // not a later tick.
+  const timers = options.timers
+  if (
+    timers !== undefined &&
+    (typeof timers.setInterval !== 'function' || typeof timers.clearInterval !== 'function')
+  ) {
+    throw new Error('Host perf snapshot timers must supply setInterval and clearInterval.')
+  }
   const writer = createHostPerfSnapshotFileWriter({
     instrumentation,
     path: options.path,
@@ -200,9 +219,15 @@ export function createHostStandaloneComposition(
   const activationPermit = createHostStandaloneAuthorityActivationPermit(input.lease)
   const runtime = new HostRuntimeBootstrap({ hostDataDir: input.runtimePath })
   // M1: the Host meters its own loop and attributes its own queue waits. The
-  // identity is fixed here so the file transport and any poller agree on it;
-  // generation is the durable journal generation this runtime reopened.
-  const hostPerf = createHostPerfInstrumentation(input.perf?.now ? { now: input.perf.now } : {})
+  // identity is fixed here so the file transport and any poller agree on it.
+  // `generation` is the durable journal generation this runtime reopened — a
+  // journal coordinate, not a restart counter: two boots of the same profile
+  // without a journal reset share it, and `pid` (with the file's sequence
+  // restarting at 1) is what tells a collector the Host restarted. It is
+  // stamped once here; a later journal reset does not re-stamp the identity.
+  const hostPerf =
+    input.perf?.instrumentation ??
+    createHostPerfInstrumentation(input.perf?.now ? { now: input.perf.now } : {})
   const perfIdentity: HostPerfSnapshotFileIdentity = Object.freeze({
     process: 'host' as const,
     instanceId: input.host.hostId,
@@ -293,10 +318,19 @@ export function createHostStandaloneComposition(
     hostCapabilityOffer: input.hostCapabilityOffer,
     ...(input.sessionIdFactory ? { sessionIdFactory: input.sessionIdFactory } : {})
   })
-  // Everything that can refuse construction has run; only now does the meter
-  // sample and the transport tick, so a failed composition leaves neither armed.
-  hostPerf.start()
-  snapshotFile?.start()
+  // Everything that can refuse construction has run. Activation is
+  // transactional: if arming the transport throws (an injected timer seam),
+  // the meter it would have read is stopped again and the original error
+  // propagates, so a failed composition leaves nothing sampling or ticking.
+  try {
+    hostPerf.start()
+    snapshotFile?.start()
+  } catch (error) {
+    // A rollback failure must not replace the activation error.
+    quietly(() => snapshotFile?.stop())
+    quietly(() => hostPerf.stop())
+    throw error
+  }
   return {
     authority,
     session,

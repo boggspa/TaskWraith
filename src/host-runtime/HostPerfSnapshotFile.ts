@@ -42,7 +42,12 @@ export interface HostPerfSnapshotFileIdentity {
   readonly process: 'host'
   /** Stable id for this Host instance (composition-chosen, e.g. a UUID). */
   readonly instanceId: string
-  /** Monotonic restart generation; lets the reader spot a stale artifact. */
+  /**
+   * Generation coordinate of the Host instance; lets the reader spot an
+   * artifact from another generation. The standalone composition stamps its
+   * durable journal generation, which is NOT a restart counter: `pid` (and
+   * the sequence restarting at 1) is what marks a restart.
+   */
   readonly generation: number
   readonly pid: number
 }
