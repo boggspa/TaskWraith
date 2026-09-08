@@ -11,6 +11,7 @@ import {
   hostRunFailureNotice,
   hostRunFailureReason,
   HOST_QUESTION_ANSWER_MAX_CHARS,
+  HOST_QUEUED_START_PHASES,
   HOST_RECEIPT_STATUSES,
   HOST_THREAD_RECORD_TRANSFER_MAX_BYTES,
   applyHostDeltaCursor,
@@ -438,6 +439,39 @@ describe('Host protocol Wave 2A contract', () => {
       ok: false,
       error: 'commandFingerprint must be lowercase SHA-256 hex'
     })
+  })
+
+  it('round-trips the M2 queued-start receipt phase and rejects invalid markers', () => {
+    // Exact-set pin first so the round-trip loop below cannot go vacuous if
+    // the phase allowlist is ever emptied or widened silently.
+    expect(HOST_QUEUED_START_PHASES).toEqual(['queued', 'starting', 'started'])
+
+    // Known phases ride the wire unchanged (Amendment A1.3): queued/starting
+    // are pending-status markers; started is a phase marker separate from
+    // receipt status.
+    for (const phase of HOST_QUEUED_START_PHASES) {
+      const decoded = decodeHostCommandReceipt(sampleReceipt({ status: 'pending', phase }))
+      if (!decoded.ok) throw new Error(`expected phase ${phase} to decode`)
+      expect(decoded.value.phase).toBe(phase)
+    }
+
+    // Absent stays absent — never defaulted, never invented
+    // (exactOptionalPropertyTypes discipline).
+    const absent = decodeHostCommandReceipt(sampleReceipt())
+    if (!absent.ok) throw new Error('expected receipt without phase to decode')
+    expect('phase' in absent.value).toBe(false)
+
+    // Unknown, empty, non-string and null markers are rejected: seat
+    // decoders are allowlists, and a foreign phase must not slip through as
+    // pseudo-absent.
+    for (const phase of ['launching', '', 42, null] as unknown[]) {
+      expect(
+        decodeHostCommandReceipt({
+          ...sampleReceipt({ status: 'pending' }),
+          phase
+        })
+      ).toEqual({ ok: false, error: 'receipt phase is invalid' })
+    }
   })
 
   it('detects same-idempotency-key / different-fingerprint conflicts', () => {
