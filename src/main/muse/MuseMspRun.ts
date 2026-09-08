@@ -26,6 +26,7 @@ import type { AcpChildProcess } from '../acp/AcpTurnClient'
 import { loadMainAuthorizedAcpImageContents } from '../acp/AcpTurnClient'
 import {
   buildMuseServeArgv,
+  MUSE_DEFAULT_PROVIDER,
   museWriteCapable,
   normalizeMuseReasoningEffort,
   type MuseReasoningEffort,
@@ -328,6 +329,9 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
       clientVersion: input.clientVersion,
       workspaceRoot: workspacePath,
       input: turnInput,
+      // Match exec's explicit --provider meta. Muse's implicit "muse" route
+      // is reconstructed as "meta" on resume, breaking opaque-history replay.
+      providerId: MUSE_DEFAULT_PROVIDER,
       modelId: input.model || undefined,
       reasoningEffort: museMspReasoningEffortFor(effort),
       approvalMode: museMspApprovalModeFor(input.approvalMode, Boolean(input.onApprovalRequest)),

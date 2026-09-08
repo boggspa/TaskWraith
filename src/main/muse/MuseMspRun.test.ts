@@ -227,6 +227,18 @@ describe('MSP vocabularies', () => {
 })
 
 describe('runMuseMspProvider', () => {
+  it('pins the same native provider as exec so resumed reasoning retains its route', async () => {
+    const child = new FakeMspChild()
+    const pending = run(child, { model: 'muse-spark-1.3' })
+    await playTurn(child)
+    await pending
+
+    expect(child.sentMethod('session/start')?.params).toMatchObject({
+      providerId: 'meta',
+      modelId: 'muse-spark-1.3'
+    })
+  })
+
   it('reports the provider session id, assistant text and a success terminal', async () => {
     const child = new FakeMspChild()
     const pending = run(child, { durableSeat: seat('outcome') })

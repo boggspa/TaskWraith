@@ -277,6 +277,8 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
 
   let sessionId = ''
   let activeTurnId = ''
+  let awaitingTurnStart = false
+  const earlyTurnNotifications: { method: string; params: Record<string, unknown> }[] = []
   let turnTerminal: string | null = null
   let turnError: MuseMspTurnError | null = null
   let sawTurnCompleted = false
@@ -722,6 +724,19 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   }
 
   const handleNotification = (method: string, params: Record<string, unknown>): void => {
+    if (method === 'turn/started' || method === 'turn/completed' || method === 'turn/unqueued') {
+      if (sawTurnCompleted) return
+      if (text(params.sessionId) && text(params.sessionId) !== sessionId) return
+      // Resume can cancel an interrupted PRIOR turn before our turn/start ack.
+      // The ack owns the new identity, even when notifications share its stdout
+      // chunk. Buffer lifecycle events until then; never infer our turn from a
+      // notification or let a foreign turn/started replace the acknowledged id.
+      if (!activeTurnId) {
+        if (awaitingTurnStart) earlyTurnNotifications.push({ method, params })
+        return
+      }
+      if (text(params.turnId) !== activeTurnId) return
+    }
     switch (method) {
       case 'item/delta': {
         // `field` is NOT required, and the schema says "absent means `text`".
@@ -818,7 +833,6 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         return
       }
       case 'turn/started': {
-        activeTurnId = text(params.turnId) || activeTurnId
         emit({
           type: 'run_started',
           payloadType: 'msp.turn.started',
@@ -829,10 +843,6 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         return
       }
       case 'turn/completed': {
-        // A resumed session can carry a still-running prior turn; its terminal
-        // is not ours. Same guard the unqueued arm already applies.
-        const completedTurnId = text(params.turnId)
-        if (completedTurnId && activeTurnId && completedTurnId !== activeTurnId) return
         sawTurnCompleted = true
         turnTerminal = text(params.terminal) || 'completed'
         // Mid-turn failures arrive HERE and never as a JSON-RPC error, and the
@@ -867,7 +877,6 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         // A reclaimed submit never launches, so NO turn/started or
         // turn/completed follows for that turnId. Without this the lane waits
         // for a terminal that can never arrive and the host idles.
-        if (text(params.turnId) && text(params.turnId) !== activeTurnId) return
         sawTurnCompleted = true
         turnTerminal = turnTerminal ?? 'cancelled'
         emit({
@@ -1133,15 +1142,25 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       raw: { sessionId, resumed }
     })
 
-    const turn = record(
-      await call('turn/start', {
-        commandId: mintCommandId(),
-        sessionId,
-        input: options.input,
-        ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {})
-      })
-    )
-    activeTurnId = text(turn.turnId) || activeTurnId
+    awaitingTurnStart = true
+    try {
+      const turn = record(
+        await call('turn/start', {
+          commandId: mintCommandId(),
+          sessionId,
+          input: options.input,
+          ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {})
+        })
+      )
+      activeTurnId = text(turn.turnId)
+      if (!activeTurnId) throw new Error('Muse turn/start did not return a turn id')
+      for (const notification of earlyTurnNotifications.splice(0)) {
+        handleNotification(notification.method, notification.params)
+      }
+    } finally {
+      awaitingTurnStart = false
+      earlyTurnNotifications.length = 0
+    }
   }
 
   // Armed BEFORE the handshake, not after it: a host that spawns and never

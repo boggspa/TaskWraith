@@ -1078,6 +1078,98 @@ describe('runMuseMspTurn — lifecycle hardening (review findings)', () => {
     expect(events.filter((e) => e.type === 'terminal')).toHaveLength(0)
     expect(child.killed).toHaveLength(0)
   })
+
+  it('waits for the turn/start ack before accepting a recovered prior-turn cancellation', async () => {
+    const { child, events, handle } = start({ resumeSessionId: 'stored-1' })
+    try {
+      await flush()
+      child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+      await flush()
+      child.emit({ jsonrpc: '2.0', id: 2, result: { session: { sessionId: 'stored-1' } } })
+      await flush()
+      // Real Muse recovery delivers this before acknowledging the new submit.
+      child.emit({
+        jsonrpc: '2.0',
+        method: 'turn/completed',
+        params: { sessionId: 'stored-1', turnId: 'previous-turn', terminal: 'cancelled' }
+      })
+      expect(child.killed).toHaveLength(0)
+      expect(events.filter((event) => event.type === 'terminal')).toHaveLength(0)
+      child.emit({ jsonrpc: '2.0', id: 3, result: { turnId: 'new-turn' } })
+      await flush()
+      child.emit({
+        jsonrpc: '2.0',
+        method: 'turn/completed',
+        params: { sessionId: 'stored-1', turnId: 'new-turn', terminal: 'completed' }
+      })
+      await handle.closed
+      expect(events.filter((event) => event.type === 'terminal')).toMatchObject([
+        { runId: 'new-turn', terminal: 'completed' }
+      ])
+    } finally {
+      handle.cancel()
+      await handle.closed
+    }
+  })
+
+  it.each(['turn/completed', 'turn/unqueued'])(
+    'retains our own %s when it arrives before the authoritative ack',
+    async (method) => {
+      const { child, events, handle } = start()
+      try {
+        await flush()
+        child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+        await flush()
+        child.emit({ jsonrpc: '2.0', id: 2, result: { session: { sessionId: 'sess-1' } } })
+        await flush()
+        child.emit({
+          jsonrpc: '2.0',
+          method,
+          params: { sessionId: 'sess-1', turnId: 'new-turn', terminal: 'completed' }
+        })
+        expect(child.killed).toHaveLength(0)
+        child.emit({ jsonrpc: '2.0', id: 3, result: { turnId: 'new-turn' } })
+        await flush()
+        expect(events.filter((event) => event.type === 'terminal')).toMatchObject([
+          { runId: 'new-turn', terminal: method === 'turn/unqueued' ? 'cancelled' : 'completed' }
+        ])
+        await handle.closed
+      } finally {
+        handle.cancel()
+        await handle.closed
+      }
+    }
+  )
+
+  it('does not let a foreign turn/started replace the acknowledged turn identity', async () => {
+    const { child, events, handle } = start()
+    try {
+      await driveToTurn(child)
+      child.emit({
+        jsonrpc: '2.0',
+        method: 'turn/started',
+        params: { sessionId: 'sess-1', turnId: 'previous-turn' }
+      })
+      child.emit({
+        jsonrpc: '2.0',
+        method: 'turn/completed',
+        params: { sessionId: 'sess-1', turnId: 'previous-turn', terminal: 'cancelled' }
+      })
+      expect(child.killed).toHaveLength(0)
+      child.emit({
+        jsonrpc: '2.0',
+        method: 'turn/completed',
+        params: { sessionId: 'sess-1', turnId: 'turn-1', terminal: 'completed' }
+      })
+      await handle.closed
+      expect(events.filter((event) => event.type === 'terminal')).toMatchObject([
+        { runId: 'turn-1', terminal: 'completed' }
+      ])
+    } finally {
+      handle.cancel()
+      await handle.closed
+    }
+  })
 })
 
 describe('runMuseMspTurn — approvals that arrive malformed or get rejected', () => {

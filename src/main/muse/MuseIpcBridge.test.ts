@@ -210,48 +210,64 @@ describe('runMuseProviderFromIpc', () => {
     delete process.env.TASKWRAITH_MUSE_MSP
   })
 
-  it("shows Muse's own opening before automatically starting work and settling only once", async () => {
-    const order: string[] = []
-    const sendCompatLine = vi.fn((_, payload) => {
-      order.push(`emit:${payload.type}`)
-    })
-    const introStats = { ...successOutcome().providerStats, input_tokens: 10, total_tokens: 10 }
-    await runMuseProviderFromIpc(
-      event,
-      basePayload(),
-      baseDeps({
-        sendCompatLine,
-        generateIntroduction: async () => {
-          order.push('generate-introduction')
-          return { text: 'I will read and check the files.', stats: introStats }
-        },
-        runMuseProvider: async (input) => {
-          order.push('start-work')
-          expect(input.introductionText).toBe('I will read and check the files.')
-          expect(sendCompatLine.mock.calls.some((call) => call[1].type === 'result')).toBe(false)
-          return successOutcome()
-        },
-        sendExit: () => {
-          order.push('exit')
-        }
+  it.each(['exec', 'msp'])(
+    "shows Muse's opening before %s work and settles only once",
+    async (lane) => {
+      process.env.TASKWRAITH_MUSE_MSP = lane === 'msp' ? '1' : '0'
+      const order: string[] = []
+      const sendCompatLine = vi.fn((_, payload) => {
+        order.push(`emit:${payload.type}`)
       })
-    )
-    expect(order).toEqual([
-      'emit:init',
-      'generate-introduction',
-      'emit:content',
-      'start-work',
-      'emit:result',
-      'exit'
-    ])
-    expect(sendCompatLine.mock.calls[1][1]).toMatchObject({
-      type: 'content',
-      text: 'I will read and check the files.\n\n',
-      provider: 'muse',
-      complete: true
-    })
-    expect(sendCompatLine.mock.calls.at(-1)?.[1].stats.input_tokens).toBe(10)
-  })
+      const introStats = { ...successOutcome().providerStats, input_tokens: 10, total_tokens: 10 }
+      const work = async (input: Pick<MuseRunInput, 'introductionText' | 'onEvent'>) => {
+        order.push('start-work')
+        expect(input.introductionText).toBe('I will read and check the files.')
+        expect(sendCompatLine.mock.calls.some((call) => call[1].type === 'result')).toBe(false)
+        input.onEvent?.({
+          type: 'tool_use',
+          payloadType: 'test',
+          toolId: 'read-1',
+          toolName: 'read_file',
+          raw: {}
+        })
+        input.onEvent?.({ type: 'terminal', payloadType: 'test', terminal: 'completed', raw: {} })
+        expect(sendCompatLine.mock.calls.some((call) => call[1].type === 'result')).toBe(false)
+        return successOutcome()
+      }
+      await runMuseProviderFromIpc(
+        event,
+        basePayload({ taskWraithMcpAdvertised: false }),
+        baseDeps({
+          sendCompatLine,
+          generateIntroduction: async () => {
+            order.push('generate-introduction')
+            return { text: 'I will read and check the files.', stats: introStats }
+          },
+          runMuseProvider: work,
+          runMuseMspProvider: work,
+          sendExit: () => {
+            order.push('exit')
+          }
+        })
+      )
+      expect(order).toEqual([
+        'emit:init',
+        'generate-introduction',
+        'emit:content',
+        'start-work',
+        'emit:tool_use',
+        'emit:result',
+        'exit'
+      ])
+      expect(sendCompatLine.mock.calls[1][1]).toMatchObject({
+        type: 'content',
+        text: 'I will read and check the files.\n\n',
+        provider: 'muse',
+        complete: true
+      })
+      expect(sendCompatLine.mock.calls.at(-1)?.[1].stats.input_tokens).toBe(10)
+    }
+  )
 
   it('routes reasoning through standard Thinking activities under the same chat and run', async () => {
     const sendCompatLine = vi.fn()

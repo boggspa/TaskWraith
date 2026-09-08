@@ -30,7 +30,7 @@ export const MUSE_MSP_CLIENT_NAME_PATTERN = /^[a-z0-9_]+$/
  * build: it is what a server-side compatibility rule would key on, and it must
  * change when the wire behaviour here changes rather than on every release.
  */
-export const MUSE_MSP_CLIENT_VERSION = '1'
+export const MUSE_MSP_CLIENT_VERSION = '2'
 
 export type MuseMspJsonRpcId = number | string
 
