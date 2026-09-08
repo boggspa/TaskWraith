@@ -1,8 +1,49 @@
 import { readFileSync } from 'node:fs'
+import ts from 'typescript'
 
 import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+const extracted = readFileSync(
+  new URL('./codex/CodexClientAcquisition.ts', import.meta.url),
+  'utf8'
+)
+const implementations = [extracted]
+if (hasFunction(source, 'acquireCodexProviderClientRunLease')) implementations.push(source)
+const functionCache = new Map<string, Map<string, string>>()
+
+function functionText(text: string, name: string): string {
+  let functions = functionCache.get(text)
+  if (!functions) {
+    functions = new Map()
+    const file = ts.createSourceFile('integration.ts', text, ts.ScriptTarget.Latest, true)
+    const visit = (node: ts.Node): void => {
+      if (ts.isFunctionDeclaration(node) && node.name) {
+        if (functions!.has(node.name.text)) {
+          // Only queried names need to be unique; unrelated nested helpers may repeat.
+          functions!.set(node.name.text, '')
+        } else functions!.set(node.name.text, node.getText(file))
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(file)
+    functionCache.set(text, functions)
+  }
+  const result = functions.get(name)
+  expect(result, 'missing or ambiguous function: ' + name).toBeTruthy()
+  return result!
+}
+
+// Dependency rebinding is explicit in the module. Ignore that prefix when
+// checking the same ownership/order contract in the still-active legacy route.
+function implementationText(text: string, name: string): string {
+  return functionText(text, name).replace(/\bdeps\s*\.\s*/g, '')
+}
+
+function hasFunction(text: string, name: string): boolean {
+  const file = ts.createSourceFile('main.ts', text, ts.ScriptTarget.Latest, true)
+  return file.statements.some((node) => ts.isFunctionDeclaration(node) && node.name?.text === name)
+}
 
 function section(start: string, end: string): string {
   const startIndex = source.indexOf(start)
@@ -23,24 +64,23 @@ describe('Codex production workspace-lock lifecycle wiring', () => {
       'async function runCodexAppServer(',
       'async function runCodexAppServerWithClient('
     )
-    const cohort = section(
-      'async function acquireCodexProviderClientRunLease(',
-      '/**\n * 1.0.4-AD — pre-flight reachability probe'
-    )
 
     expect(provider).toContain('workspaceLockRunLifecycle.run(runId, async () => {')
     expect(provider).toContain('createCodexWorkspaceLockStartupBinding(payload)')
     expect(provider).toContain('acquireCodexProviderClientRunLease(')
     expect(provider).toContain('bindCodexRunClient(runId, client, runClientLease.lifecycleLease)')
     expect(provider).toContain('await runClientLease.cohortLease.release()')
-    expect(cohort).toContain('codexProviderClientCohorts.tryJoin(runId, compatibilityKey)')
-    expect(cohort).toContain(
-      "workspaceLockOwnerId ? `${workspaceLockOwnerId}\\0${runId}` : 'unowned'"
-    )
-    expect(cohort).toContain('await disposeCodexClientForOwnerTransition(lifecycleLease)')
-    expect(cohort).toContain('client.setWorkspaceLockOwnerId(workspaceLockOwnerId)')
-    expect(cohort).toContain('async () => finishCodexClientLifecycle(client!, lifecycleLease)')
-    expect(cohort).toContain('() => lifecycleLease.release()')
+    for (const text of implementations) {
+      const cohort = implementationText(text, 'acquireCodexProviderClientRunLease')
+      expect(cohort).toContain('codexProviderClientCohorts.tryJoin(runId, compatibilityKey)')
+      expect(cohort).toContain(
+        "workspaceLockOwnerId ? `${workspaceLockOwnerId}\\0${runId}` : 'unowned'"
+      )
+      expect(cohort).toContain('await disposeCodexClientForOwnerTransition(lifecycleLease)')
+      expect(cohort).toContain('client.setWorkspaceLockOwnerId(workspaceLockOwnerId)')
+      expect(cohort).toContain('async () => finishCodexClientLifecycle(client!, lifecycleLease)')
+      expect(cohort).toContain('() => lifecycleLease.release()')
+    }
     expect(provider).not.toContain('createDedicatedWorkspaceLockClient')
   })
 
@@ -85,7 +125,7 @@ describe('Codex production workspace-lock lifecycle wiring', () => {
       'async function runCodexAppServerWithClient(',
       'async function runCodexExecFallback('
     )
-    const dispatch = section('function dispatchCodexMessageFromClient(', 'function getCodexClient(')
+    const dispatch = functionText(source, 'dispatchCodexMessageFromClient')
     const notifications = section(
       'function handleCodexNotification(',
       'function formatCodexApprovalRequest('
@@ -145,10 +185,7 @@ describe('Codex production workspace-lock lifecycle wiring', () => {
       expect(reply).toMatch(/^respondingClient\.(?:respond|reject)\($/)
     }
     expect(source).toContain('getCodexClient: onlyBoundCodexRunClient')
-    const stderr = section(
-      'function handleCodexStderrFromClient(',
-      'interface CodexClientStartupConfiguration'
-    )
+    const stderr = functionText(source, 'handleCodexStderrFromClient')
     expect(stderr).toContain('if (states.length !== 1)')
     expect(stderr).toContain(
       "console.warn('[codex] shared app-server stderr lacked exact turn attribution', chunk)"
