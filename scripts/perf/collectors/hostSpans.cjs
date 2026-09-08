@@ -10,7 +10,12 @@
  * span kind, on WHICH shared resource, cost the light thread how much,
  * while the heavy thread ran.
  *
- * WIRING STATUS: the section providers are dependency-injected closures.
+ * HOST POLLING: no Host perf transport is specified yet. sampleHostSpans
+ * always emits hostPerf: { unsupported: 'host_perf_transport_unspecified' }.
+ * Main sampling uses the existing preload getMainPerfSnapshot IPC through a
+ * caller-supplied renderer Runtime.evaluate session; absent spans stay unsupported.
+ *
+ * WIRING STATUS: the legacy section providers are dependency-injected closures.
  * Production wiring (main's `workSpans` snapshot section, Host's
  * HostPerfSnapshot meter) is @IntegrationOwner work gated on the live
  * startup-redesign session releasing index.ts / HostStandaloneComposition.ts.
@@ -273,6 +278,61 @@ function cellNameSafe(cell) {
   return cellName(cell)
 }
 
+/**
+ * Normalize the main snapshot independently of its polling transport. The
+ * snapshot's `host` field is OS load, not Node Host perf, and is never used as
+ * a substitute for the unavailable Host snapshot transport.
+ */
+function normalizeHostSpanSnapshot(snapshot) {
+  const hostPerf = { unsupported: 'host_perf_transport_unspecified' }
+  if (!isPlainObject(snapshot) || !isPlainObject(snapshot.sections)) {
+    return { workSpans: { unsupported: 'main_perf_snapshot_unavailable' }, hostPerf }
+  }
+  const section = snapshot.sections.workSpans
+  if (section === undefined || section === null) {
+    return { workSpans: { unsupported: 'main_work_spans_section_unavailable' }, hostPerf }
+  }
+  const checked = normalizeWorkSpanSection(section, 'main')
+  if (!checked.ok) {
+    return { workSpans: { unsupported: 'main_work_spans_invalid: ' + checked.reason }, hostPerf }
+  }
+  return { workSpans: JSON.parse(JSON.stringify(checked.section)), hostPerf }
+}
+
+/**
+ * Same injected Runtime.evaluate/post seam and return-by-value extraction as
+ * mainPersistenceStatsCollector. This sampler uses a renderer CDP session:
+ * the existing preload getMainPerfSnapshot IPC supplies the main snapshot.
+ * No new global handle, launch or inspector attachment is created here.
+ */
+async function sampleHostSpans(session) {
+  const unsupported = (reason) => ({
+    workSpans: { unsupported: reason },
+    hostPerf: { unsupported: 'host_perf_transport_unspecified' }
+  })
+  if (!session || typeof session.post !== 'function') {
+    return unsupported('renderer_runtime_session_required')
+  }
+  const expression = `(async () => {
+    if (!globalThis.api || typeof globalThis.api.getMainPerfSnapshot !== 'function') return null
+    return await globalThis.api.getMainPerfSnapshot({ resetLagWindow: false })
+  })()`
+  let result
+  try {
+    result = await Promise.resolve(
+      session.post('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
+    )
+  } catch (error) {
+    return unsupported('main_perf_snapshot_evaluation_failed: ' + String(error))
+  }
+  if (isPlainObject(result) && result.exceptionDetails) {
+    return unsupported('main_perf_snapshot_evaluation_exception')
+  }
+  const value =
+    isPlainObject(result) && isPlainObject(result.result) ? result.result.value : undefined
+  return normalizeHostSpanSnapshot(value)
+}
+
 module.exports = {
   WORK_SPAN_PROCESSES,
   WORK_SPAN_KINDS,
@@ -283,5 +343,7 @@ module.exports = {
   normalizeWorkSpanSection,
   validateCrossThreadBlock,
   sampleWorkSpanSections,
-  applyCrossThreadToMetrics
+  applyCrossThreadToMetrics,
+  normalizeHostSpanSnapshot,
+  sampleHostSpans
 }

@@ -10,7 +10,7 @@
  * plus validators — no launch, no replay, no fixtures. Drivers that can
  * actually REACH every cell (multi-chat concurrency, provider saturation,
  * control actions under load) are later milestone work; a cell existing here
- * is a reachability claim about the matrix, not about today's harness.
+ * is a scenario definition. Every enumerated cell explicitly lists today's missing drivers.
  *
  * Cell names are `<history>/<chats>/<path>/<mix>/<saturation>` exactly as
  * Appendix A specifies; the pairing role (`light-alone` vs `light-beside`)
@@ -192,7 +192,8 @@ function enumerateMatrixCells() {
       for (const path of PATH_STATES) {
         for (const mix of PROVIDER_MIXES) {
           for (const saturation of SATURATION_MODES) {
-            cells.push({ history, chats, path, mix, saturation })
+            const cell = { history, chats, path, mix, saturation }
+            cells.push({ ...cell, name: cellName(cell), ...cellReachability(cell) })
           }
         }
       }
@@ -259,6 +260,297 @@ function assertPairedRunCompatibility(alone, beside) {
   return reasons.length === 0 ? { ok: true } : { ok: false, reasons }
 }
 
+/** Missing drivers are current harness facts, not measurements or new limits. */
+const MISSING_DRIVER_CAPABILITIES = Object.freeze([
+  'concurrent_per_chat_replay_lanes',
+  'deterministic_replay_provider',
+  'ensemble_pool_saturation_driver',
+  'host_native_saturation_driver',
+  'control_action_replay_events'
+])
+
+function cellReachability(cell) {
+  const check = validateMatrixCell(cell)
+  if (!check.ok) throw new Error(check.errors.join('; '))
+  const missingCapability = ['deterministic_replay_provider', 'control_action_replay_events']
+  if (cell.chats > 1) missingCapability.push('concurrent_per_chat_replay_lanes')
+  if (cell.saturation === 'ensemble_pool_30_join') {
+    missingCapability.push('ensemble_pool_saturation_driver')
+  }
+  if (cell.saturation === 'host_queue_16_active_1_queued') {
+    missingCapability.push('host_native_saturation_driver')
+  }
+  return { reachable: false, missingCapability }
+}
+
+function fixtureVersionsKey(value) {
+  if (!isPlainObject(value) || Object.keys(value).length === 0) return null
+  const entries = Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
+  if (
+    entries.some(
+      ([key, version]) =>
+        !key ||
+        !(
+          (typeof version === 'string' && version.trim()) ||
+          (Number.isSafeInteger(version) && version > 0)
+        )
+    )
+  )
+    return null
+  return JSON.stringify(entries)
+}
+
+function validPercentiles(value) {
+  return (
+    isPlainObject(value) &&
+    MATRIX_SAMPLING.percentiles.every(
+      (key) => typeof value[key] === 'number' && Number.isFinite(value[key]) && value[key] >= 0
+    ) &&
+    value.p50 <= value.p95 &&
+    value.p95 <= value.p99
+  )
+}
+
+/**
+ * Compare measured percentile summaries; never derive p99 from p95 aggregates.
+ * The older assertPairedRunCompatibility helper remains available for its
+ * legacy descriptors. This evidence-producing boundary additionally requires
+ * fixture versions, build identity, three repetitions and actual signal data.
+ */
+function pairRuns(lightAlone, lightBeside) {
+  const compatibility = assertPairedRunCompatibility(lightAlone, lightBeside)
+  if (!compatibility.ok) return compatibility
+  const reasons = []
+  const versions = fixtureVersionsKey(lightAlone.fixtureVersions)
+  if (versions === null || versions !== fixtureVersionsKey(lightBeside.fixtureVersions)) {
+    reasons.push('fixture versions missing or different')
+  }
+  for (const [label, run] of [
+    ['light-alone', lightAlone],
+    ['light-beside', lightBeside]
+  ]) {
+    if (run.repetitions !== MATRIX_SAMPLING.repetitions) {
+      reasons.push(label + ' repetitions must be 3')
+    }
+    if (typeof run.workload !== 'string' || !run.workload.trim()) {
+      reasons.push(label + ' workload required')
+    }
+    if (!Number.isSafeInteger(run.seed)) reasons.push(label + ' seed must be an integer')
+    if (typeof run.buildId !== 'string' || !run.buildId.trim()) {
+      reasons.push(label + ' buildId required')
+    }
+    if (!isPlainObject(run.signals) || Object.keys(run.signals).length === 0) {
+      reasons.push(label + ' measured signals required')
+    } else {
+      for (const [name, summary] of Object.entries(run.signals)) {
+        if (!name.trim() || !validPercentiles(summary)) {
+          reasons.push(label + ' invalid p50/p95/p99 for signal ' + name)
+        }
+      }
+    }
+  }
+  if (lightAlone.buildId !== lightBeside.buildId) reasons.push('build identities differ')
+  const aloneNames = Object.keys(lightAlone.signals || {}).sort()
+  const besideNames = Object.keys(lightBeside.signals || {}).sort()
+  if (JSON.stringify(aloneNames) !== JSON.stringify(besideNames)) {
+    reasons.push('measured signal sets differ')
+  }
+  if (reasons.length) return { ok: false, reasons }
+  const deltas = Object.fromEntries(
+    aloneNames.map((name) => [
+      name,
+      Object.fromEntries(
+        MATRIX_SAMPLING.percentiles.map((percentile) => [
+          percentile,
+          lightBeside.signals[name][percentile] - lightAlone.signals[name][percentile]
+        ])
+      )
+    ])
+  )
+  return {
+    ok: true,
+    pair: {
+      cellName: lightAlone.cellName,
+      // Detach the receipt from mutable caller-owned samples.
+      lightAlone: JSON.parse(JSON.stringify(lightAlone)),
+      lightBeside: JSON.parse(JSON.stringify(lightBeside)),
+      deltas
+    }
+  }
+}
+
+/**
+ * Read provenance only when called; importing this module never launches or
+ * attaches anything. Boolean/numeric flag values are retained. Other injected
+ * context and credential values are represented by presence, never copied.
+ */
+function environmentRecord(options = {}) {
+  const os = require('node:os')
+  const fs = require('node:fs')
+  const { collectRepoProvenance, detectAppVersion } = require('./repoProvenance.cjs')
+  const repoRoot = options.repoRoot || process.cwd()
+  const env = options.env || process.env
+  const collect = options.collectRepoProvenance || collectRepoProvenance
+  const now = options.now || (() => new Date())
+  let electronVersion
+  try {
+    const packagePath = require.resolve('electron/package.json', { paths: [repoRoot] })
+    electronVersion = JSON.parse(fs.readFileSync(packagePath, 'utf8')).version
+  } catch {
+    electronVersion = { unsupported: 'resolved_electron_version_unavailable' }
+  }
+  const taskwraithFlags = Object.fromEntries(
+    Object.keys(env)
+      .filter((key) => /^TASKWRAITH_[A-Z0-9_]+$/.test(key) && env[key] !== undefined)
+      .sort()
+      .map((key) => [
+        key,
+        /SECRET|TOKEN|PASSWORD|CREDENTIAL|KEY/.test(key)
+          ? '<redacted>'
+          : /^(?:true|false|yes|no|on|off|[0-9]+(?:\.[0-9]+)?)$/i.test(String(env[key]))
+            ? String(env[key])
+            : '<present>'
+      ])
+  )
+  const ceiling = Number(env.OLLAMA_MAX_LOADED_MODELS)
+  const cpus = os.cpus()
+  return {
+    capturedAt: now().toISOString(),
+    repoProvenance: collect({ repoRoot }),
+    appVersion: detectAppVersion(repoRoot),
+    nodeVersion: process.version,
+    electronVersion,
+    machine: {
+      platform: os.platform(),
+      arch: os.arch(),
+      release: os.release(),
+      cpuModel: cpus[0]?.model || 'unknown',
+      cpuCount: cpus.length,
+      totalMemoryBytes: os.totalmem()
+    },
+    ollamaMaxLoadedModels: Number.isSafeInteger(ceiling) && ceiling > 0 ? ceiling : null,
+    taskwraithFlags
+  }
+}
+
+function validateInterferenceEnvironment(environment) {
+  if (!isPlainObject(environment)) return ['environment required']
+  const errors = []
+  for (const name of ['capturedAt', 'appVersion', 'nodeVersion']) {
+    if (typeof environment[name] !== 'string' || !environment[name].trim()) {
+      errors.push('environment.' + name + ' required')
+    }
+  }
+  if (
+    typeof environment.capturedAt !== 'string' ||
+    !Number.isFinite(Date.parse(environment.capturedAt))
+  ) {
+    errors.push('environment.capturedAt must be a timestamp')
+  }
+  const electron = environment.electronVersion
+  if (
+    !(typeof electron === 'string' && electron.trim()) &&
+    !(isPlainObject(electron) && typeof electron.unsupported === 'string' && electron.unsupported)
+  )
+    errors.push('environment.electronVersion or unsupported reason required')
+  const provenance = environment.repoProvenance
+  if (
+    !isPlainObject(provenance) ||
+    typeof provenance.gitSha !== 'string' ||
+    !provenance.gitSha ||
+    typeof provenance.dirty !== 'boolean' ||
+    !Array.isArray(provenance.dirtyPaths) ||
+    !provenance.dirtyPaths.every((entry) => typeof entry === 'string') ||
+    typeof provenance.dirtyTreeFingerprint !== 'string' ||
+    typeof provenance.isolatedWorktree !== 'boolean' ||
+    typeof provenance.authoritativeBaseline !== 'boolean'
+  ) {
+    errors.push('environment.repoProvenance invalid')
+  } else if (
+    provenance.authoritativeBaseline &&
+    (provenance.dirty || !provenance.isolatedWorktree)
+  ) {
+    errors.push('dirty or non-isolated provenance cannot be authoritative')
+  }
+  const machine = environment.machine
+  if (
+    !isPlainObject(machine) ||
+    ['platform', 'arch', 'release', 'cpuModel'].some(
+      (name) => typeof machine[name] !== 'string' || !machine[name]
+    ) ||
+    !Number.isSafeInteger(machine.cpuCount) ||
+    machine.cpuCount < 0 ||
+    !Number.isSafeInteger(machine.totalMemoryBytes) ||
+    machine.totalMemoryBytes <= 0
+  )
+    errors.push('environment.machine invalid')
+  const ceiling = environment.ollamaMaxLoadedModels
+  if (ceiling !== null && !(Number.isSafeInteger(ceiling) && ceiling > 0)) {
+    errors.push('environment.ollamaMaxLoadedModels must be a positive integer or null')
+  }
+  if (
+    !isPlainObject(environment.taskwraithFlags) ||
+    Object.entries(environment.taskwraithFlags).some(
+      ([key, value]) => !/^TASKWRAITH_[A-Z0-9_]+$/.test(key) || typeof value !== 'string'
+    )
+  )
+    errors.push('environment.taskwraithFlags invalid')
+  return errors
+}
+
+/** Independent document schema; does not change the existing perf report. */
+function validateInterferenceReport(report) {
+  if (!isPlainObject(report)) return { ok: false, errors: ['report required'] }
+  const errors = validateInterferenceEnvironment(report.environment)
+  if (report.schemaVersion !== MATRIX_SCHEMA_VERSION) errors.push('unsupported schemaVersion')
+  if (!Array.isArray(report.cells) || report.cells.length === 0) {
+    errors.push('nonempty cells required')
+  }
+  const names = new Set()
+  for (const cell of Array.isArray(report.cells) ? report.cells : []) {
+    const check = validateMatrixCell(cell)
+    if (!check.ok) {
+      errors.push(...check.errors)
+      continue
+    }
+    const name = cellName(cell)
+    if (cell.name !== name || names.has(name)) errors.push('invalid or duplicate cell name')
+    names.add(name)
+    const reachability = cellReachability(cell)
+    if (
+      cell.reachable !== reachability.reachable ||
+      JSON.stringify(cell.missingCapability) !== JSON.stringify(reachability.missingCapability)
+    )
+      errors.push('cell ' + name + ' must disclose current missing drivers')
+  }
+  if (!Array.isArray(report.pairs)) errors.push('pairs must be an array')
+  const pairedNames = new Set()
+  for (const pair of Array.isArray(report.pairs) ? report.pairs : []) {
+    if (!isPlainObject(pair)) {
+      errors.push('invalid pair')
+      continue
+    }
+    const checked = pairRuns(pair.lightAlone, pair.lightBeside)
+    if (
+      !checked.ok ||
+      pair.cellName !== checked.pair.cellName ||
+      !names.has(pair.cellName) ||
+      pairedNames.has(pair.cellName) ||
+      JSON.stringify(pair.deltas) !== JSON.stringify(checked.pair.deltas)
+    )
+      errors.push('invalid or inconsistent pair for ' + pair.cellName)
+    pairedNames.add(pair.cellName)
+  }
+  return { ok: errors.length === 0, errors }
+}
+
+function createInterferenceReport({ environment, cells = enumerateMatrixCells(), pairs = [] }) {
+  const report = { schemaVersion: MATRIX_SCHEMA_VERSION, environment, cells, pairs }
+  const check = validateInterferenceReport(report)
+  if (!check.ok) throw new Error('invalid interferenceReport: ' + check.errors.join('; '))
+  return JSON.parse(JSON.stringify(report))
+}
+
 module.exports = {
   MATRIX_SCHEMA_VERSION,
   MATRIX_SAMPLING,
@@ -277,5 +569,11 @@ module.exports = {
   parseCellName,
   enumerateMatrixCells,
   pairedRunNames,
-  assertPairedRunCompatibility
+  assertPairedRunCompatibility,
+  MISSING_DRIVER_CAPABILITIES,
+  cellReachability,
+  pairRuns,
+  environmentRecord,
+  validateInterferenceReport,
+  createInterferenceReport
 }
