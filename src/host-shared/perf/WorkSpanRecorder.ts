@@ -111,9 +111,39 @@ export interface WorkSpanKeyAggregate {
   totalMs: number
   p50Ms: number
   p95Ms: number
+  p99Ms: number
   maxMs: number
   bytes: number
   fallbackCount: number
+}
+
+/**
+ * Exact, NEVER-SAMPLED counters over every span the recorder was OFFERED,
+ * including spans the sampler declined. `count`/`bytes`/`fallbackCount` in
+ * the aggregates above cover ACCEPTED spans only, so a sampled-out fallback
+ * is invisible there — a zero sampled `fallbackCount` can never prove zero
+ * fallbacks occurred (§1.1 B7). These counters are the authoritative
+ * coverage evidence; only durations remain sampled.
+ */
+export interface WorkSpanOfferedCounters {
+  offeredCount: number
+  offeredFallbackCount: number
+  offeredBytes: number
+}
+
+export interface WorkSpanExactCounters extends WorkSpanOfferedCounters {
+  byKind: Partial<Record<WorkSpanKind, WorkSpanOfferedCounters>>
+  byResource: Partial<Record<WorkSpanResource, WorkSpanOfferedCounters>>
+}
+
+/** Per-chat attributed durations; the light-vs-heavy evidence G-X needs. */
+export interface WorkSpanChatAggregate {
+  count: number
+  totalMs: number
+  p50Ms: number
+  p95Ms: number
+  p99Ms: number
+  maxMs: number
 }
 
 export interface WorkSpanAggregates {
@@ -134,6 +164,16 @@ export interface WorkSpanAggregates {
    * diagnostic was dropped.
    */
   degraded: number
+  /** Exact offered-span counters; unaffected by sampling. */
+  exact: WorkSpanExactCounters
+  /**
+   * Bounded per-chat, per-kind attributed durations. Process-wide byKind /
+   * byResource cannot tell a light thread from a heavy one, so paired G-X
+   * comparisons read this map instead.
+   */
+  byChat: Record<string, Partial<Record<WorkSpanKind, WorkSpanChatAggregate>>>
+  /** Offered spans whose chat was not admitted to `byChat` (bound reached). */
+  attributionOverflow: number
 }
 
 export interface WorkSpanSnapshot extends WorkSpanAggregates {
@@ -152,6 +192,13 @@ export interface WorkSpanRecorderOptions {
   sampler?: (attrs: Required<WorkSpanAttrs>) => boolean
   /** Clock for startedAt and durations; defaults to Date.now. */
   now?: () => number
+  /**
+   * How many distinct chats may hold a `byChat` entry. Admission is
+   * first-come and never evicts, so a light thread active from the start of
+   * the window is always attributed; spans from later chats beyond the bound
+   * only increment `attributionOverflow`. Never an unbounded map.
+   */
+  maxAttributedChats?: number
 }
 
 export interface WorkSpanRecorder {
@@ -171,6 +218,9 @@ export interface WorkSpanRecorder {
   section: () => WorkSpanAggregates
 }
 
+/** Default `byChat` bound: enough for a paired light/heavy matrix cell. */
+export const DEFAULT_MAX_ATTRIBUTED_CHATS = 16
+
 /** Default sampler keeps everything until this many spans in one window. */
 export const DEFAULT_KEEP_ALL_MIN_WINDOW = 256
 /** Above the keep-all threshold the default sampler keeps 1 in this many. */
@@ -186,6 +236,29 @@ interface MutableTotals {
   maxMs: number
   bytes: number
   fallbackCount: number
+}
+
+interface MutableOffered {
+  offeredCount: number
+  offeredFallbackCount: number
+  offeredBytes: number
+}
+
+function offeredFor<K>(counters: Map<K, MutableOffered>, key: K): MutableOffered {
+  let entry = counters.get(key)
+  if (!entry) {
+    entry = { offeredCount: 0, offeredFallbackCount: 0, offeredBytes: 0 }
+    counters.set(key, entry)
+  }
+  return entry
+}
+
+function readOffered<K extends string>(
+  counters: Map<K, MutableOffered>
+): Partial<Record<K, WorkSpanOfferedCounters>> {
+  const out: Partial<Record<K, WorkSpanOfferedCounters>> = {}
+  for (const [key, entry] of counters) out[key] = { ...entry }
+  return out
 }
 
 function optionalIdentity(value: unknown): string | null {
@@ -237,6 +310,7 @@ function buildKeyAggregates<K extends string>(
       totalMs: entry.totalMs,
       p50Ms: nearestRank(durations, 50),
       p95Ms: nearestRank(durations, 95),
+      p99Ms: nearestRank(durations, 99),
       maxMs: entry.maxMs,
       bytes: entry.bytes,
       fallbackCount: entry.fallbackCount
@@ -263,12 +337,63 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
   let ringCursor = 0
   let byKind = new Map<WorkSpanKind, MutableTotals>()
   let byResource = new Map<WorkSpanResource, MutableTotals>()
+  const maxAttributedChats = finiteNonNegative(options.maxAttributedChats)
+    ? Math.max(1, Math.floor(options.maxAttributedChats))
+    : DEFAULT_MAX_ATTRIBUTED_CHATS
+
+  let ringByChat = new Map<string, Map<WorkSpanKind, MutableTotals>>()
+  let attributionOverflow = 0
+  let offeredTotals: MutableOffered = {
+    offeredCount: 0,
+    offeredFallbackCount: 0,
+    offeredBytes: 0
+  }
+  let offeredByKind = new Map<WorkSpanKind, MutableOffered>()
+  let offeredByResource = new Map<WorkSpanResource, MutableOffered>()
   let recorded = 0
   let dropped = 0
   let sampledOut = 0
   let rejected = 0
   let degraded = 0
   let windowOffered = 0
+
+  /**
+   * Exact accounting, applied to EVERY offered span before the sampler is
+   * consulted. `begin()` reports its bytes/fallback late (they arrive at
+   * end), so the handle calls this again with the decorations even when the
+   * span itself was sampled out — that is the whole point of R2-M1-2.
+   */
+  const countOffered = (
+    attrs: Required<WorkSpanAttrs>,
+    decorations: { bytes: number; fallback: boolean; counted: boolean }
+  ): void => {
+    const targets = [
+      offeredTotals,
+      offeredFor(offeredByKind, attrs.kind),
+      offeredFor(offeredByResource, attrs.resource)
+    ]
+    for (const target of targets) {
+      if (decorations.counted) target.offeredCount += 1
+      target.offeredBytes += decorations.bytes
+      if (decorations.fallback) target.offeredFallbackCount += 1
+    }
+  }
+
+  /** Bounded per-chat attribution; admission is first-come and never evicts. */
+  const attribute = (span: WorkSpan): void => {
+    let kinds = ringByChat.get(span.chatId)
+    if (!kinds) {
+      if (ringByChat.size >= maxAttributedChats) {
+        attributionOverflow += 1
+        return
+      }
+      ringByChat.set(span.chatId, (kinds = new Map()))
+    }
+    const totals = totalsFor(kinds, span.kind)
+    totals.count += 1
+    totals.totalMs += span.durationMs
+    totals.maxMs = Math.max(totals.maxMs, span.durationMs)
+  }
 
   /**
    * The injected clock is caller code on the hot path, so it is treated as
@@ -309,6 +434,7 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
       totals.bytes += span.bytes
       if (span.fallback) totals.fallbackCount += 1
     }
+    attribute(span)
     if (ring.length < maxRetained) {
       ring.push(span)
     } else {
@@ -324,9 +450,22 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
       rejected += 1
       return () => {}
     }
+    countOffered(normalized, { bytes: 0, fallback: false, counted: true })
     if (!shouldKeep(normalized)) {
       sampledOut += 1
-      return () => {}
+      // Exact coverage still owes this span's late decorations: a fallback
+      // reported at end must be counted even though nothing is retained.
+      let decorated = false
+      return (endOptions?: WorkSpanEndOptions) => {
+        if (decorated) return
+        decorated = true
+        const bytes = endOptions?.bytes
+        countOffered(normalized, {
+          bytes: finiteNonNegative(bytes) ? bytes : 0,
+          fallback: endOptions?.fallback === true,
+          counted: false
+        })
+      }
     }
     const startedAt = readClock()
     if (startedAt === null) {
@@ -337,12 +476,17 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
     return (endOptions?: WorkSpanEndOptions) => {
       if (ended) return
       ended = true
+      const bytes = endOptions?.bytes
+      countOffered(normalized, {
+        bytes: finiteNonNegative(bytes) ? bytes : 0,
+        fallback: endOptions?.fallback === true,
+        counted: false
+      })
       const endedAt = readClock()
       if (endedAt === null) {
         degraded += 1
         return
       }
-      const bytes = endOptions?.bytes
       accept({
         process: options.process,
         ...normalized,
@@ -369,6 +513,11 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
       rejected += 1
       return
     }
+    countOffered(normalized, {
+      bytes: span.bytes ?? 0,
+      fallback: span.fallback === true,
+      counted: true
+    })
     if (!shouldKeep(normalized)) {
       sampledOut += 1
       return
@@ -407,8 +556,52 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
       dropped,
       sampledOut,
       rejected,
-      degraded
+      degraded,
+      exact: {
+        ...offeredTotals,
+        byKind: readOffered(offeredByKind),
+        byResource: readOffered(offeredByResource)
+      },
+      byChat: collectByChat(),
+      attributionOverflow
     }
+  }
+
+  /**
+   * Per-chat aggregates: counts/totals are exact over accepted spans (they
+   * survive ring eviction), percentiles are nearest-rank over the retained
+   * window for that chat and kind — the same split as byKind/byResource.
+   */
+  const collectByChat = (): Record<
+    string,
+    Partial<Record<WorkSpanKind, WorkSpanChatAggregate>>
+  > => {
+    const durations = new Map<string, Map<WorkSpanKind, number[]>>()
+    for (const span of orderedRing()) {
+      if (!ringByChat.has(span.chatId)) continue
+      let kinds = durations.get(span.chatId)
+      if (!kinds) durations.set(span.chatId, (kinds = new Map()))
+      let list = kinds.get(span.kind)
+      if (!list) kinds.set(span.kind, (list = []))
+      list.push(span.durationMs)
+    }
+    const out: Record<string, Partial<Record<WorkSpanKind, WorkSpanChatAggregate>>> = {}
+    for (const [chatId, kinds] of ringByChat) {
+      const perKind: Partial<Record<WorkSpanKind, WorkSpanChatAggregate>> = {}
+      for (const [kind, totals] of kinds) {
+        const retained = [...(durations.get(chatId)?.get(kind) ?? [])].sort((a, b) => a - b)
+        perKind[kind] = {
+          count: totals.count,
+          totalMs: totals.totalMs,
+          p50Ms: nearestRank(retained, 50),
+          p95Ms: nearestRank(retained, 95),
+          p99Ms: nearestRank(retained, 99),
+          maxMs: totals.maxMs
+        }
+      }
+      out[chatId] = perKind
+    }
+    return out
   }
 
   const reset = (): void => {
@@ -422,6 +615,11 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
     rejected = 0
     degraded = 0
     windowOffered = 0
+    ringByChat = new Map()
+    attributionOverflow = 0
+    offeredTotals = { offeredCount: 0, offeredFallbackCount: 0, offeredBytes: 0 }
+    offeredByKind = new Map()
+    offeredByResource = new Map()
   }
 
   const snapshot = (snapshotOptions?: { reset?: boolean }): WorkSpanSnapshot => {

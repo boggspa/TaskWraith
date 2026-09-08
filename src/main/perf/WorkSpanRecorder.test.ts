@@ -179,6 +179,7 @@ describe('createWorkSpanRecorder', () => {
       totalMs: 550,
       p50Ms: 50,
       p95Ms: 100,
+      p99Ms: 100,
       maxMs: 100,
       bytes: 1_000,
       fallbackCount: 1
@@ -188,6 +189,7 @@ describe('createWorkSpanRecorder', () => {
       totalMs: 7,
       p50Ms: 7,
       p95Ms: 7,
+      p99Ms: 7,
       maxMs: 7,
       bytes: 0,
       fallbackCount: 0
@@ -248,7 +250,16 @@ describe('createWorkSpanRecorder', () => {
       dropped: 0,
       sampledOut: 0,
       rejected: 0,
-      degraded: 0
+      degraded: 0,
+      exact: {
+        offeredCount: 0,
+        offeredFallbackCount: 0,
+        offeredBytes: 0,
+        byKind: {},
+        byResource: {}
+      },
+      byChat: {},
+      attributionOverflow: 0
     })
   })
 
@@ -478,9 +489,117 @@ describe('createWorkSpanRecorder', () => {
       totalMs: 70,
       p50Ms: 10,
       p95Ms: 20,
+      p99Ms: 20,
       maxMs: 40,
       bytes: 0,
       fallbackCount: 0
     })
+  })
+
+  it('counts every offered fallback exactly, including sampled-out record() spans', () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 4,
+      now: tickingClock()
+    })
+    // Review2's probe: 257 ordinary offers, then the ONLY true fallback lands
+    // on offer 258 — which the default sampler declines.
+    for (let i = 0; i < 257; i += 1) {
+      recorder.record({ ...attrs(), startedAt: i, durationMs: 1 })
+    }
+    recorder.record({ ...attrs(), startedAt: 257, durationMs: 1, bytes: 64, fallback: true })
+
+    const snapshot = recorder.snapshot()
+    expect(snapshot.sampledOut).toBe(1)
+    // Sampled aggregates legitimately miss it...
+    expect(snapshot.byKind.admission_wait?.fallbackCount).toBe(0)
+    // ...but the exact counters never can.
+    expect(snapshot.exact.offeredCount).toBe(258)
+    expect(snapshot.exact.offeredFallbackCount).toBe(1)
+    expect(snapshot.exact.offeredBytes).toBe(64)
+    expect(snapshot.exact.byKind.admission_wait?.offeredFallbackCount).toBe(1)
+    expect(snapshot.exact.byResource.ensemble_pool?.offeredFallbackCount).toBe(1)
+  })
+
+  it('counts a fallback decorated at end even when the span was sampled out', () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 4,
+      now: tickingClock()
+    })
+    for (let i = 0; i < 257; i += 1) {
+      recorder.record({ ...attrs(), startedAt: i, durationMs: 1 })
+    }
+    // begin() is sampled out here, so its handle is the no-op path — the late
+    // fallback/bytes decoration must still reach the exact counters.
+    const end = recorder.begin(attrs())
+    end({ bytes: 32, fallback: true })
+    end({ bytes: 32, fallback: true })
+
+    const snapshot = recorder.snapshot()
+    expect(snapshot.sampledOut).toBe(1)
+    expect(snapshot.byKind.admission_wait?.fallbackCount).toBe(0)
+    expect(snapshot.exact.offeredCount).toBe(258)
+    expect(snapshot.exact.offeredFallbackCount).toBe(1)
+    expect(snapshot.exact.offeredBytes).toBe(32)
+  })
+
+  it('attributes durations per chat so a light thread is distinguishable from a heavy one', () => {
+    const measure = (lightMs: number, heavyMs: number) => {
+      const recorder = createWorkSpanRecorder({
+        process: 'main',
+        maxRetained: 32,
+        now: tickingClock()
+      })
+      for (const [chatId, durationMs] of [
+        ['chat-light', lightMs],
+        ['chat-heavy', heavyMs]
+      ] as const) {
+        recorder.record({
+          ...attrs({ chatId, kind: 'host_queue_wait', resource: 'host_chain' }),
+          startedAt: 0,
+          durationMs
+        })
+      }
+      return recorder.snapshot()
+    }
+
+    // Review2's experiment: same kind, same resource, swapped durations.
+    const a = measure(10, 1_000)
+    const b = measure(1_000, 10)
+
+    // The process-wide aggregate genuinely cannot tell these apart...
+    expect(a.byKind.host_queue_wait).toEqual(b.byKind.host_queue_wait)
+    // ...and byChat must.
+    expect(a.byChat).not.toEqual(b.byChat)
+    expect(a.byChat['chat-light'].host_queue_wait).toMatchObject({
+      count: 1,
+      totalMs: 10,
+      p95Ms: 10,
+      p99Ms: 10,
+      maxMs: 10
+    })
+    expect(b.byChat['chat-light'].host_queue_wait).toMatchObject({ maxMs: 1_000, p99Ms: 1_000 })
+    expect(a.attributionOverflow).toBe(0)
+  })
+
+  it('bounds byChat and counts the overflow instead of growing without limit', () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 64,
+      now: tickingClock(),
+      maxAttributedChats: 2
+    })
+    for (const chatId of ['chat-a', 'chat-b', 'chat-c', 'chat-d', 'chat-a']) {
+      recorder.record({ ...attrs({ chatId }), startedAt: 0, durationMs: 5 })
+    }
+
+    const snapshot = recorder.snapshot()
+    expect(Object.keys(snapshot.byChat).sort()).toEqual(['chat-a', 'chat-b'])
+    // First-come admission never evicts, so the early (light) thread keeps
+    // accumulating while late arrivals only raise the overflow counter.
+    expect(snapshot.byChat['chat-a'].admission_wait?.count).toBe(2)
+    expect(snapshot.attributionOverflow).toBe(2)
+    expect(snapshot.recorded).toBe(5)
   })
 })

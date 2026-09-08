@@ -10,6 +10,16 @@
  * span kind, on WHICH shared resource, cost the light thread how much,
  * while the heavy thread ran.
  *
+ * ATTRIBUTION (Amendment A1, Review2 R2-M1-1/2): process-wide byKind /
+ * byResource maps CANNOT distinguish a light thread from a heavy one —
+ * swapping their durations leaves them byte-identical — so the recorder's
+ * per-chat `byChat` map is the acceptance evidence and this collector
+ * carries it through validated. Likewise `exact` holds never-sampled
+ * offered counters: a zero sampled `fallbackCount` never proves zero
+ * fallbacks, `exact.offeredFallbackCount` does. Both are validated when
+ * present and absent-tolerated, so pre-attribution reports keep validating
+ * while a malformed block still fails closed.
+ *
  * HOST POLLING: no Host perf transport is specified yet. sampleHostSpans
  * always emits hostPerf: { unsupported: 'host_perf_transport_unspecified' }.
  * Main sampling uses the existing preload getMainPerfSnapshot IPC through a
@@ -69,8 +79,31 @@ const SPAN_AGGREGATE_FIELDS = Object.freeze([
   'fallbackCount'
 ])
 
+/**
+ * Fields a newer recorder adds. Validated WHEN PRESENT, never required: a
+ * report captured by an older recorder must keep validating, and a silently
+ * unvalidated field is exactly how attribution escapes the schema.
+ */
+const SPAN_AGGREGATE_OPTIONAL_FIELDS = Object.freeze(['p99Ms'])
+
+/** Per-chat attributed aggregate fields (WorkSpanChatAggregate). */
+const SPAN_CHAT_AGGREGATE_FIELDS = Object.freeze([
+  'count',
+  'totalMs',
+  'p50Ms',
+  'p95Ms',
+  'p99Ms',
+  'maxMs'
+])
+
+/** Exact never-sampled offered counters (WorkSpanOfferedCounters). */
+const SPAN_OFFERED_FIELDS = Object.freeze(['offeredCount', 'offeredFallbackCount', 'offeredBytes'])
+
 /** WorkSpanAggregates counters (WorkSpanRecorder.ts). */
 const SPAN_COUNTER_FIELDS = Object.freeze(['recorded', 'dropped', 'sampledOut', 'rejected'])
+
+/** Counters a newer recorder adds; validated when present (see above). */
+const SPAN_COUNTER_OPTIONAL_FIELDS = Object.freeze(['degraded', 'attributionOverflow'])
 
 /** Schema version of the `metrics.crossThread` block this collector writes. */
 const CROSS_THREAD_SCHEMA_VERSION = 1
@@ -106,6 +139,92 @@ function validateAggregateMap(map, allowedKeys, label, errors) {
         errors.push(`${label}.${key}.${field} must be finite`)
       }
     }
+    for (const field of SPAN_AGGREGATE_OPTIONAL_FIELDS) {
+      if (aggregate[field] !== undefined && !isFiniteNumber(aggregate[field])) {
+        errors.push(`${label}.${key}.${field} must be finite when present`)
+      }
+    }
+  }
+}
+
+/**
+ * Exact offered counters: totals plus optional per-kind / per-resource maps.
+ * Absent entirely on a pre-attribution recorder; malformed when present is
+ * always an error — §1.1 B7 reads these as the authoritative coverage
+ * evidence, so they may never be half-imported.
+ */
+function validateExactCounters(exact, errors) {
+  if (exact === undefined) return
+  if (!isPlainObject(exact)) {
+    errors.push('exact must be an object')
+    return
+  }
+  for (const field of SPAN_OFFERED_FIELDS) {
+    if (!isFiniteNumber(exact[field])) errors.push(`exact.${field} must be finite`)
+  }
+  for (const [label, allowed] of [
+    ['byKind', KIND_SET],
+    ['byResource', RESOURCE_SET]
+  ]) {
+    const map = exact[label]
+    if (map === undefined) continue
+    if (!isPlainObject(map)) {
+      errors.push(`exact.${label} must be an object`)
+      continue
+    }
+    for (const [key, counters] of Object.entries(map)) {
+      if (!allowed.has(key)) {
+        errors.push(`exact.${label}.${key} is not a known span taxonomy member`)
+        continue
+      }
+      if (!isPlainObject(counters)) {
+        errors.push(`exact.${label}.${key} must be a counters object`)
+        continue
+      }
+      for (const field of SPAN_OFFERED_FIELDS) {
+        if (!isFiniteNumber(counters[field])) {
+          errors.push(`exact.${label}.${key}.${field} must be finite`)
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Per-chat attribution: `byChat[chatId][kind] = WorkSpanChatAggregate`. This
+ * is the light-vs-heavy evidence a paired G-X comparison reads, so an
+ * unknown kind or a non-finite percentile is an error, not a warning.
+ */
+function validateByChat(byChat, errors) {
+  if (byChat === undefined) return
+  if (!isPlainObject(byChat)) {
+    errors.push('byChat must be an object')
+    return
+  }
+  for (const [chatId, kinds] of Object.entries(byChat)) {
+    if (typeof chatId !== 'string' || chatId.length === 0) {
+      errors.push('byChat keys must be non-empty chat ids')
+      continue
+    }
+    if (!isPlainObject(kinds)) {
+      errors.push(`byChat.${chatId} must be an object`)
+      continue
+    }
+    for (const [kind, aggregate] of Object.entries(kinds)) {
+      if (!KIND_SET.has(kind)) {
+        errors.push(`byChat.${chatId}.${kind} is not a known span kind`)
+        continue
+      }
+      if (!isPlainObject(aggregate)) {
+        errors.push(`byChat.${chatId}.${kind} must be an aggregate object`)
+        continue
+      }
+      for (const field of SPAN_CHAT_AGGREGATE_FIELDS) {
+        if (!isFiniteNumber(aggregate[field])) {
+          errors.push(`byChat.${chatId}.${kind}.${field} must be finite`)
+        }
+      }
+    }
   }
 }
 
@@ -132,6 +251,13 @@ function normalizeWorkSpanSection(payload, processName) {
       errors.push(`${field} must be finite`)
     }
   }
+  for (const field of SPAN_COUNTER_OPTIONAL_FIELDS) {
+    if (payload[field] !== undefined && !isFiniteNumber(payload[field])) {
+      errors.push(`${field} must be finite when present`)
+    }
+  }
+  validateExactCounters(payload.exact, errors)
+  validateByChat(payload.byChat, errors)
   if (errors.length > 0) return { ok: false, reason: errors.join('; ') }
   return { ok: true, section: payload }
 }
@@ -268,7 +394,9 @@ function applyCrossThreadToMetrics(metrics, cell, sections, options = {}) {
   }
   metrics.crossThread.cells[name] = {
     capturedAt: now().toISOString(),
-    processes: { ...sections }
+    // Deep copy: sections may be live recorder output (byChat/exact are
+    // rebuilt per snapshot), and a stored report must not alias it.
+    processes: JSON.parse(JSON.stringify(sections))
   }
   return metrics
 }
@@ -338,7 +466,11 @@ module.exports = {
   WORK_SPAN_KINDS,
   WORK_SPAN_RESOURCES,
   SPAN_AGGREGATE_FIELDS,
+  SPAN_AGGREGATE_OPTIONAL_FIELDS,
+  SPAN_CHAT_AGGREGATE_FIELDS,
+  SPAN_OFFERED_FIELDS,
   SPAN_COUNTER_FIELDS,
+  SPAN_COUNTER_OPTIONAL_FIELDS,
   CROSS_THREAD_SCHEMA_VERSION,
   normalizeWorkSpanSection,
   validateCrossThreadBlock,
