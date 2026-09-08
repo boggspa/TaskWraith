@@ -26,7 +26,7 @@ import type {
  */
 
 import type { HostCapability, HostHealthProjection } from '../shared/hostProtocol'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import type { HostLocalServerOptions } from '../host-runtime/HostLocalServer'
 import { HostLocalServer } from '../host-runtime/HostLocalServer'
 import { HostProfileAuthorityLease } from '../host-runtime/HostProfileAuthorityLease'
@@ -77,6 +77,11 @@ export interface HostNodeProductionServerOptions {
   readonly createThreadCatalogue?: typeof createHostThreadCatalogue
   readonly mode: 'production'
   readonly payloadVersion?: string
+  /**
+   * Environment consulted for opt-in diagnostics (HOST_PERF_SNAPSHOT_PATH_ENV);
+   * defaults to process.env. Read once, when the composition is built.
+   */
+  readonly environment?: Readonly<NodeJS.ProcessEnv>
   readonly domainOptions?: Omit<HostNodeDomainPortsOptions, 'store' | 'events'>
   /** Lease-late resource assembly; runs only after lease → identity → store. */
   readonly createDomainResources?: (input: {
@@ -131,6 +136,24 @@ function asError(value: unknown): Error {
 
 function defaultRuntimePath(profilePath: string): string {
   return join(profilePath, 'host-runtime')
+}
+
+/**
+ * Opt-in Host perf snapshot file (Independent Threads Programme M1, A1.2).
+ * The variable names the destination file — absolute, or resolved under the
+ * profile directory. Unset or blank keeps the transport off: the Host then
+ * writes nothing on a timer. This is the only environment read for it; the
+ * composition never touches process.env.
+ */
+export const HOST_PERF_SNAPSHOT_PATH_ENV = 'TASKWRAITH_PERF_HOST_SNAPSHOT_PATH'
+
+function resolveHostPerfSnapshotFile(
+  profilePath: string,
+  environment: Readonly<NodeJS.ProcessEnv>
+): { readonly path: string } | null {
+  const configured = environment[HOST_PERF_SNAPSHOT_PATH_ENV]?.trim()
+  if (!configured) return null
+  return { path: isAbsolute(configured) ? configured : join(profilePath, configured) }
 }
 
 /** Signal-supervised standalone production Host. No parent-death behavior exists here. */
@@ -402,11 +425,16 @@ export class HostNodeProductionServer {
       }
       if (this.stopRequested) return
       const capabilities = this.capabilities()
+      const perfSnapshotFile = resolveHostPerfSnapshotFile(
+        this.lease.path,
+        this.options.environment ?? process.env
+      )
       this.composition = (this.options.createComposition ?? createHostStandaloneComposition)({
         runtimePath: (this.options.runtimePath ?? defaultRuntimePath)(this.lease.path),
         lease: this.lease,
         host: this.identity,
         hostCapabilityOffer: capabilities,
+        ...(perfSnapshotFile ? { perf: { snapshotFile: perfSnapshotFile } } : {}),
         snapshotDonor: () => this.domain!.snapshotDonor(),
         authorityEvaluator: async (command, context) => {
           const prepared = await this.domain!.prepareAuthorityEvaluation?.(context, command)

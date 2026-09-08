@@ -9,7 +9,7 @@ import {
   readHostProfileWriterFence,
   writeHostProfileWriterFence
 } from '../host-runtime/HostProfileWriterFence'
-import { HostNodeProductionServer } from './HostNodeProductionServer'
+import { HOST_PERF_SNAPSHOT_PATH_ENV, HostNodeProductionServer } from './HostNodeProductionServer'
 import { HostNodeInteractionRegistry } from './HostNodeInteractionRegistry'
 import { HostPermissionConsentAuthority } from '../host-runtime/HostPermissionConsent'
 
@@ -38,6 +38,7 @@ function harness(overrides: Record<string, unknown> = {}) {
   let composedGitReadProvider:
     | ((context: unknown, request: unknown) => Promise<unknown> | unknown)
     | undefined
+  let composedPerf: unknown
   const lease = {
     path: '/profile',
     assertHeld: vi.fn(() => order.push('lease.assert')),
@@ -135,6 +136,7 @@ function harness(overrides: Record<string, unknown> = {}) {
       order.push('composition')
       capabilityOffer = input.hostCapabilityOffer
       composedGitReadProvider = input.gitReadProvider as typeof composedGitReadProvider
+      composedPerf = input.perf
       return composition as never
     },
     createListener: (input) => {
@@ -155,6 +157,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     signalListeners,
     capabilityOffer: () => capabilityOffer,
     gitReadProvider: () => composedGitReadProvider,
+    compositionPerf: () => composedPerf,
     domainProfilePath: () => domainProfilePath,
     domainPermissionConsentAuthority: () => domainPermissionConsentAuthority,
     listenerPayloadVersion: () => listenerPayloadVersion,
@@ -552,5 +555,35 @@ describe('HostNodeProductionServer', () => {
       }
     })
     await h.server.stop()
+  })
+
+  it('arms the Host perf snapshot file only when the environment names a destination', async () => {
+    const absent = harness({ environment: {} })
+    await absent.server.start()
+    expect(absent.compositionPerf()).toBeUndefined()
+    await absent.server.stop()
+
+    const blank = harness({ environment: { [HOST_PERF_SNAPSHOT_PATH_ENV]: '   ' } })
+    await blank.server.start()
+    expect(blank.compositionPerf()).toBeUndefined()
+    await blank.server.stop()
+
+    const relative = harness({
+      environment: { [HOST_PERF_SNAPSHOT_PATH_ENV]: 'perf/host-snapshot.json' }
+    })
+    await relative.server.start()
+    expect(relative.compositionPerf()).toEqual({
+      snapshotFile: { path: join('/profile', 'perf', 'host-snapshot.json') }
+    })
+    await relative.server.stop()
+
+    const absolute = harness({
+      environment: { [HOST_PERF_SNAPSHOT_PATH_ENV]: join(tmpdir(), 'host-snapshot.json') }
+    })
+    await absolute.server.start()
+    expect(absolute.compositionPerf()).toEqual({
+      snapshotFile: { path: join(tmpdir(), 'host-snapshot.json') }
+    })
+    await absolute.server.stop()
   })
 })
