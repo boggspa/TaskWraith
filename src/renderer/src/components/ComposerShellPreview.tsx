@@ -494,7 +494,14 @@ export function ComposerShellPreview({
                         sections={PREVIEW_PLUS_SECTIONS}
                         triggerIcon={<PlusSymbolIcon />}
                       />
-                      {composerStyle === 'codex' || composerStyle === 'chatgpt' && (
+                      {/* Codex-ONLY by real-composer parity: Composer.tsx
+                          mounts ContextMeterPopover in this cluster solely for
+                          composerStyle === 'codex' — the ChatGPT shell has no
+                          donut there. (A 2026-09-07 chatgpt-parity sweep added
+                          `|| chatgpt &&` here, which && precedence turned into
+                          "codex renders bare `true`, chatgpt gets the donut" —
+                          both halves wrong.) */}
+                      {composerStyle === 'codex' && (
                         <ContextMeterPopover
                           meter={previewContextMeter}
                           percent={previewContextPercent}
