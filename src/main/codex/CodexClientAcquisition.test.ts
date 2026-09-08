@@ -421,6 +421,33 @@ describe('Codex client accessor parity', () => {
   })
 })
 
+describe('queued lifecycle cancellation baseline', () => {
+  it('keeps the cohort closed after the last queued lifecycle abort (current behaviour, M3 step 3 target)', async () => {
+    const { acquisition, deps } = fixture()
+    const first = await acquisition.acquireCodexProviderClientRunLease(gateway, 'first', null)
+    const controller = new AbortController()
+    const pending = acquisition.acquireCodexClientLifecycleLease('maintenance', controller.signal)
+    const rejected = expect(pending).rejects.toBeInstanceOf(AcquireAbortedError)
+    controller.abort()
+    await rejected
+
+    expect(deps.codexProviderClientCohorts.tryBorrow('read-after-abort')).toBeNull()
+    let acquired = false
+    const nextPending = acquisition
+      .acquireCodexProviderClientRunLease(gateway, 'next', null)
+      .then((lease) => {
+        acquired = true
+        return lease
+      })
+    await Promise.resolve()
+    expect(acquired).toBe(false)
+    await first.cohortLease.release()
+    const next = await nextPending
+    expect(next.lifecycleLease).not.toBe(first.lifecycleLease)
+    await next.cohortLease.release()
+  })
+})
+
 describe('Codex accessor configuration forwarding', () => {
   it('restarts for stale credential consent when the MCP configuration is current', () => {
     const { acquisition } = fixture()
