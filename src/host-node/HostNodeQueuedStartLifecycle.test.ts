@@ -888,6 +888,52 @@ describe('M2 physical custody and end authority (R1-R3)', () => {
     }
   )
 
+  it.each([
+    ['first', 'early'],
+    ['first', 'late'],
+    ['duplicate', 'early'],
+    ['duplicate', 'late']
+  ] as const)(
+    'never cancels completed work from a late/duplicate begin with %s signal and %s registration',
+    async (signal, registration) => {
+      const { admission, lifecycle, lease } = await admittedLifecycle()
+      await lifecycle.claim('cmd-1', lease)
+      await lifecycle.executeStart('cmd-1', () => {})
+      let cancels = 0
+      if (registration === 'early') {
+        lifecycle.providerCancelRegistered('cmd-1', () => {
+          cancels += 1
+        })
+      }
+      expect(lifecycle.settle('cmd-1', 'completed')).toBe(true)
+      expect(cancels).toBe(0)
+      expect(lifecycle.getReservation('cmd-1')?.cancelLatched).toBe(false)
+      expect(admission.inflightCount()).toBe(1)
+      if (signal === 'first') {
+        lifecycle.providerRunStarted('cmd-1')
+      } else {
+        lifecycle.providerRunStarted('cmd-1')
+        lifecycle.providerRunStarted('cmd-1')
+      }
+      expect(cancels).toBe(0)
+      expect(lifecycle.getReservation('cmd-1')?.cancelLatched).toBe(false)
+      expect(admission.inflightCount()).toBe(1)
+      if (registration === 'late') {
+        lifecycle.providerCancelRegistered('cmd-1', () => {
+          cancels += 1
+        })
+      }
+      if (registration === 'early') {
+        lifecycle.cancel({ commandId: 'cmd-1' })
+      } else {
+        lifecycle.beginShutdown()
+      }
+      expect(cancels).toBe(1)
+      lifecycle.providerRunEnded('cmd-1', { kind: 'provider_ended' })
+      expect(admission.inflightCount()).toBe(0)
+    }
+  )
+
   it('treats unreadable coverage metadata as unknown without consulting the listing', async () => {
     let lists = 0
     const lifecycle = createHostNodeQueuedStartLifecycle({

@@ -628,7 +628,8 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
       // Late resource evidence matters after receipt terminality, but never
       // changes its outcome, phase or persisted-start witness.
       record.providerRunBegan = true
-      if (record.terminalOutcome !== null) requestCancel(record)
+      if (record.terminalOutcome !== null && record.terminalOutcome !== 'completed')
+        requestCancel(record)
     },
 
     providerCancelRegistered(
