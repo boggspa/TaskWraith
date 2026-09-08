@@ -719,11 +719,9 @@ describe('HostNodeQueuedStartLifecycle M2 repair (L1-L4)', () => {
     it('R1: start callback rejection retains lease when providerRunBegan, releasing only on providerRunEnded', async () => {
       const { lifecycle, holder } = await claimedLifecycle()
       const gate = deferred()
-      let providerRunBegan = false
       const start = lifecycle.executeStart('cmd-1', () => {
         // Simulate providerRunBegan being signalled before the callback rejects
         lifecycle.providerRunStarted('cmd-1')
-        providerRunBegan = true
         return gate.promise
       })
       await settleMicrotasks()
@@ -753,8 +751,7 @@ describe('HostNodeQueuedStartLifecycle M2 repair (L1-L4)', () => {
       const first = lifecycle.claim('cmd-1', sharedLease)
       const second = await lifecycle.claim('cmd-1', sharedLease)
       // Second must be refused
-      expect(second.kind).toBe('refused')
-      expect(second.reason).toBe('already_claimed')
+      expect(second).toEqual({ kind: 'refused', reason: 'already_claimed' })
       // The lease object is shared, but the lifecycle tracks pendingLease (R2 fix)
       // so the winner's claim should succeed
       expect((await first).kind).toBe('claimed')
