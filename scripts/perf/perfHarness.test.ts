@@ -3642,6 +3642,6 @@ describe('M1 hostSpans collector', () => {
     expect(Object.keys(metrics.crossThread.cells).length).toBe(2)
 
     expect(() => applyCrossThreadToMetrics(metrics, { ...MATRIX_CELL, chats: 3 }, {})).toThrow()
-    expect(() =>
-      applyCrossThreadToMetrics(metrics, MATRIX_CELL, {})
-    ).toThrow()
+    expect(() => applyCrossThreadToMetrics(metrics, MATRIX_CELL, {})).toThrow()
+  })
+})
