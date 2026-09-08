@@ -69,7 +69,13 @@ const STATIC_PROVIDER_COLORS = {
   groq: '#088482',
   openrouter: '#E02948',
   thinkingmachines: '#C24E68',
-  xiaomi: '#008844'
+  xiaomi: '#008844',
+  // Hy4 / Mercury Preview brand overrides (e6f026ed5, f348daf0f) shipped
+  // outside this mirror AND outside the AA band — the contrast loop threw at
+  // tencent first, so inception's own failure was masked until both joined.
+  // Same hues as the brand picks, moved to AA-on-both-grounds luminance.
+  tencent: '#4E73CA',
+  inception: '#7C5BE9'
 } as const
 
 const PROVIDER_ALIASES = {
@@ -101,7 +107,9 @@ const IOS_PROVIDER_CASES = [
   ['case "poolside"', '#0C8194'],
   ['case "openrouter"', '#E02948'],
   ['case "thinkingmachines"', '#C24E68'],
-  ['case "devin"', '#4878AE']
+  ['case "devin"', '#4878AE'],
+  ['case "tencent"', '#4E73CA'],
+  ['case "inception"', '#7C5BE9']
 ] as const
 
 const PROVIDER_RGB_TRIPLETS = {

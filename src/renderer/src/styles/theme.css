@@ -302,10 +302,13 @@
    * confused with: liquid dE 9.3, and openrouter dE 9.5 — #E02948 stays the
    * generic OpenRouter fallback rather than becoming Inkling's colour. */
   --provider-thinkingmachines-color: #C24E68;
-  /* Tencent corporate blue — matches the Hunyuan / Hy4 brand identity. */
-  --provider-tencent-color: #3458B0;
-  /* Inception Labs purple — matches the Mercury dLLM brand identity. */
-  --provider-inception-color: #9675FF;
+  /* Tencent corporate blue (Hunyuan / Hy4) raised to this palette's
+   * AA-on-both-grounds luminance — same hue and saturation as the brand's
+   * #3458B0, which sat at 3.17:1 on black. */
+  --provider-tencent-color: #4E73CA;
+  /* Inception Labs purple (Mercury dLLM) lowered into the same AA band —
+   * the brand's #9675FF sat at 3.34:1 on white. */
+  --provider-inception-color: #7C5BE9;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill

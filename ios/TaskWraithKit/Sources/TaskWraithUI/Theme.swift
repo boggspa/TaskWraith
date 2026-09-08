@@ -212,8 +212,12 @@ public enum TWTheme {
         // a chip strip. The blue band is full, so Inkling wears a rose of its
         // own: dE 9.28 from liquid and 9.50 from the openrouter fallback.
         case "thinkingmachines": return 0xC24E68
-        case "tencent": return 0x3458B0
-        case "inception": return 0x9675FF
+        // Hy4 / Mercury Preview brand hues, raised (tencent) and lowered
+        // (inception) to this palette's AA-on-both-grounds luminance. The
+        // shipped brand values — 0x3458B0 and 0x9675FF — both failed a
+        // 4.5:1 ground. Mirrors theme.css.
+        case "tencent": return 0x4E73CA
+        case "inception": return 0x7C5BE9
         default: return chroma1Hex
         }
     }
@@ -253,7 +257,7 @@ public enum TWTheme {
         "google", "pi", "muse", "ensemble", "grok", "alibaba", "qwen", "deep-reinforce", "ornith",
         "ibm", "liquid", "meta", "cohere", "essential", "nvidia", "openbmb", "poolside",
         "deepseek", "zai", "minimax", "mistral", "cerebras", "groq", "openrouter", "xiaomi",
-        "thinkingmachines", "devin"
+        "thinkingmachines", "devin", "tencent", "inception"
     ]
 
     /// The whole table as `provider id -> 0xRRGGBB`, for shipping to the Mac.
