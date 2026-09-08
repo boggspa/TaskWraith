@@ -3,6 +3,8 @@ import {
   createWorkSpanRecorder,
   DEFAULT_KEEP_ALL_MIN_WINDOW,
   DEFAULT_SAMPLE_KEEP_EVERY,
+  WORK_SPAN_KINDS,
+  WORK_SPAN_RESOURCES,
   type WorkSpanAttrs,
   type WorkSpanKind
 } from './WorkSpanRecorder'
@@ -292,5 +294,98 @@ describe('createWorkSpanRecorder', () => {
     const snapshot = recorder.snapshot()
     expect(snapshot.recorded).toBe(1)
     expect(snapshot.sampledOut).toBe(0)
+  })
+
+  it('pins the exact default sampling ratio above the keep-all threshold', () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 4,
+      now: tickingClock()
+    })
+    // Literals on purpose: 272 offers = 256 kept below the keep-all threshold
+    // plus 16 offered at the 1-in-8 cadence (2 kept, 14 sampled out). Deriving
+    // these from the exported constants would let the constants drift without
+    // reddening this pin.
+    for (let i = 0; i < 272; i += 1) {
+      recorder.record({ ...attrs(), startedAt: i, durationMs: 1 })
+    }
+
+    const snapshot = recorder.snapshot()
+    expect(snapshot.recorded).toBe(258)
+    expect(snapshot.sampledOut).toBe(14)
+  })
+
+  it('accepts every declared kind and resource and pins the enum sizes', () => {
+    expect(WORK_SPAN_KINDS).toHaveLength(8)
+    expect(WORK_SPAN_RESOURCES).toHaveLength(7)
+
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 64,
+      now: tickingClock()
+    })
+    for (const [index, kind] of WORK_SPAN_KINDS.entries()) {
+      recorder.record({
+        ...attrs({ kind, resource: WORK_SPAN_RESOURCES[index % WORK_SPAN_RESOURCES.length] }),
+        startedAt: index,
+        durationMs: 1
+      })
+    }
+
+    const { byKind, byResource, rejected } = recorder.snapshot()
+    expect(rejected).toBe(0)
+    for (const kind of WORK_SPAN_KINDS) {
+      expect(byKind[kind]?.count).toBe(1)
+    }
+    // 8 kinds cycled over 7 resources: the first resource is used twice.
+    expect(byResource[WORK_SPAN_RESOURCES[0]]?.count).toBe(2)
+    for (const resource of WORK_SPAN_RESOURCES.slice(1)) {
+      expect(byResource[resource]?.count).toBe(1)
+    }
+  })
+
+  it('returns snapshot copies so caller mutation cannot corrupt the ring', () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 4,
+      now: tickingClock()
+    })
+    recorder.record({ ...attrs(), startedAt: 0, durationMs: 10 })
+
+    const first = recorder.snapshot()
+    first.spans.push({ ...first.spans[0], runId: 'forged' })
+    first.spans[0].durationMs = 9_999
+    const forgedAggregate = first.byKind.admission_wait
+    expect(forgedAggregate).toBeDefined()
+    if (forgedAggregate) forgedAggregate.count = 42
+
+    const second = recorder.snapshot()
+    expect(second.spans).toHaveLength(1)
+    expect(second.spans[0]).toMatchObject({ runId: 'run-1', durationMs: 10 })
+    expect(second.byKind.admission_wait?.count).toBe(1)
+    expect(second.byKind.admission_wait?.p95Ms).toBe(10)
+  })
+
+  it('pins retained-window percentiles beside exact totals across eviction', () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 2,
+      now: tickingClock()
+    })
+    for (const durationMs of [40, 10, 20]) {
+      recorder.record({ ...attrs({ kind: 'checkpoint_prepare' }), startedAt: 0, durationMs })
+    }
+
+    // 40 was evicted: totals stay exact while percentiles cover the retained
+    // [10, 20] window — so p95 (20) and maxMs (40) legitimately disagree.
+    expect(recorder.snapshot().byKind.checkpoint_prepare).toEqual({
+      count: 3,
+      totalMs: 70,
+      p50Ms: 10,
+      p95Ms: 20,
+      maxMs: 40,
+      bytes: 0,
+      fallbackCount: 0
+    })
   })
 })

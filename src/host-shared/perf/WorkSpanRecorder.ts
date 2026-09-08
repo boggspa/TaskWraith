@@ -388,7 +388,12 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
   }
 
   const snapshot = (snapshotOptions?: { reset?: boolean }): WorkSpanSnapshot => {
-    const result: WorkSpanSnapshot = { ...collectAggregates(), spans: orderedRing() }
+    // Callers get span copies: mutating a returned snapshot must never be
+    // able to corrupt the retained ring or later percentile computations.
+    const result: WorkSpanSnapshot = {
+      ...collectAggregates(),
+      spans: orderedRing().map((span) => ({ ...span }))
+    }
     if (snapshotOptions?.reset) reset()
     return result
   }
