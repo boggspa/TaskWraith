@@ -220,11 +220,13 @@ export function createHostStandaloneComposition(
   const runtime = new HostRuntimeBootstrap({ hostDataDir: input.runtimePath })
   // M1: the Host meters its own loop and attributes its own queue waits. The
   // identity is fixed here so the file transport and any poller agree on it.
-  // `generation` is the durable journal generation this runtime reopened — a
-  // journal coordinate, not a restart counter: two boots of the same profile
-  // without a journal reset share it, and `pid` (with the file's sequence
-  // restarting at 1) is what tells a collector the Host restarted. It is
-  // stamped once here; a later journal reset does not re-stamp the identity.
+  // `generation` is a journal coordinate captured at construction, not a
+  // restart counter; later journal resets do not update this identity.
+  // A PID may distinguish different live processes. Sequence is local to a
+  // writer and resets on recreation; neither guarantees unique boot identity.
+  // The current collector does not infer restarts or check sequence monotonicity.
+  // A trustworthy boot/instance epoch and collector binding remain separate,
+  // unimplemented work.
   const hostPerf =
     input.perf?.instrumentation ??
     createHostPerfInstrumentation(input.perf?.now ? { now: input.perf.now } : {})

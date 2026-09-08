@@ -43,10 +43,13 @@ export interface HostPerfSnapshotFileIdentity {
   /** Stable id for this Host instance (composition-chosen, e.g. a UUID). */
   readonly instanceId: string
   /**
-   * Generation coordinate of the Host instance; lets the reader spot an
-   * artifact from another generation. The standalone composition stamps its
-   * durable journal generation, which is NOT a restart counter: `pid` (and
-   * the sequence restarting at 1) is what marks a restart.
+   * The standalone composition captures its journal generation at
+   * construction, not a restart counter; later resets do not update it.
+   * A PID may distinguish different live processes. Sequence is local to a
+   * writer and resets on recreation; neither guarantees unique boot identity.
+   * The current collector does not infer restarts or check sequence monotonicity.
+   * A trustworthy boot/instance epoch and collector binding remain separate,
+   * unimplemented work.
    */
   readonly generation: number
   readonly pid: number
