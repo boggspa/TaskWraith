@@ -360,6 +360,28 @@ describe('createWorkSpanRecorder', () => {
     }
   })
 
+  it('pins both reason sets exactly, including the scheduler waiter outcomes', () => {
+    // Exact-set pins: the accept-each-reason loop below iterates whatever the
+    // taxonomy declares, so deleting an entry would silently shrink that
+    // loop's coverage. These equality pins are what actually red on removal.
+    expect(WORK_SPAN_REASONS.admission_wait).toEqual([
+      'occupancy',
+      'foreground_reserved',
+      'lane_reserved',
+      'queued',
+      'cancelled',
+      'admitted',
+      'rejected',
+      'shutdown'
+    ])
+    expect(WORK_SPAN_REASONS.provider_config_wait).toEqual([
+      'cold_start',
+      'cohort_drain',
+      'runtime_or_credential_domain',
+      'registration_change'
+    ])
+  })
+
   it('accepts each kind-specific reason and rejects one from the wrong kind', () => {
     const recorder = createWorkSpanRecorder({
       process: 'main',

@@ -1,4 +1,5 @@
 import type { ProviderId } from '../store/types'
+import type { WorkSpanRecordInput } from '../perf/WorkSpanRecorder'
 
 /**
  * Process-wide backpressure for Electron-hosted Ensemble provider runs.
@@ -167,6 +168,16 @@ export interface EnsembleHostAdmissionSchedulerOptions {
    * tests may inject a deterministic task queue.
    */
   readonly schedule?: (task: () => void) => void
+  /**
+   * Optional M1 measurement seam (Amendment A1.1): one `admission_wait`
+   * span per settled waiter — reason `admitted`, `cancelled`, `shutdown`
+   * or `rejected` — on resource `ensemble_pool`, attributed by
+   * chat/run/participant (and laneId for lane-kind runs). Absent recorder
+   * means the seam does not exist: no span is built and no sink is
+   * consulted. A throwing recorder is swallowed; instrumentation must
+   * never break admission. Aggregate metrics are unchanged either way.
+   */
+  readonly spans?: { record(span: WorkSpanRecordInput): void }
 }
 
 interface QueuedWaiter {
@@ -302,6 +313,7 @@ export class EnsembleHostAdmissionScheduler {
   private readonly maxQueued: number
   private readonly now: () => number
   private readonly scheduleTask: (task: () => void) => void
+  private readonly spans?: { record(span: WorkSpanRecordInput): void }
   private readonly activeByRunId = new Map<string, ActiveAdmission>()
   private readonly queuedByRunId = new Map<string, QueuedWaiter>()
   private readonly chats = new Map<string, ChatQueue>()
@@ -352,6 +364,38 @@ export class EnsembleHostAdmissionScheduler {
     )
     this.now = options.now ?? Date.now
     this.scheduleTask = options.schedule ?? defaultSchedule
+    this.spans = options.spans
+  }
+
+  /**
+   * One span per settled waiter, at the moment its queue wait ends. An
+   * admitted-then-cancelled-unclaimed run emits no second span: its wait
+   * already ended (and was measured) at admission. Never throws — a broken
+   * recorder loses the measurement, never the admission.
+   */
+  private emitAdmissionSpan(
+    identity: EnsembleHostAdmissionIdentity,
+    queuedForMs: number,
+    reason: 'admitted' | 'cancelled' | 'shutdown' | 'rejected'
+  ): void {
+    const spans = this.spans
+    if (!spans) return
+    try {
+      spans.record({
+        chatId: identity.chatId,
+        runId: identity.runId,
+        ...(identity.participantId === undefined ? {} : { participantId: identity.participantId }),
+        // A lane-kind run IS the lane; foreground runs carry no laneId.
+        ...(identity.kind === 'lane' ? { laneId: identity.runId } : {}),
+        kind: 'admission_wait',
+        resource: 'ensemble_pool',
+        reason,
+        startedAt: identity.queuedAt,
+        durationMs: queuedForMs
+      })
+    } catch {
+      // Instrumentation must never break admission.
+    }
   }
 
   reserve(request: EnsembleHostAdmissionRequest): EnsembleHostAdmissionReservationResult {
@@ -396,11 +440,13 @@ export class EnsembleHostAdmissionScheduler {
       waiter.state = 'rejected'
       this.metricsState.overflowRejected += 1
       const cancelledAt = this.now()
+      const queuedForMs = Math.max(0, cancelledAt - identity.queuedAt)
+      this.emitAdmissionSpan(identity, queuedForMs, 'rejected')
       waiter.resolve({
         kind: 'cancelled',
         identity,
         cancelledAt,
-        queuedForMs: Math.max(0, cancelledAt - identity.queuedAt),
+        queuedForMs,
         reason: 'Ensemble host queue capacity was exceeded.'
       })
       return this.rejection(
@@ -655,6 +701,7 @@ export class EnsembleHostAdmissionScheduler {
       queuedForMs
     )
     if (shutdown) this.metricsState.shutdownCancelledQueued += 1
+    this.emitAdmissionSpan(waiter.identity, queuedForMs, shutdown ? 'shutdown' : 'cancelled')
     waiter.resolve({
       kind: 'cancelled',
       identity: waiter.identity,
@@ -749,6 +796,7 @@ export class EnsembleHostAdmissionScheduler {
       queuedForMs
     )
     this.recordHighWaterMarks()
+    this.emitAdmissionSpan(waiter.identity, queuedForMs, 'admitted')
 
     const lease: EnsembleHostAdmissionLease = Object.freeze({
       identity: waiter.identity,

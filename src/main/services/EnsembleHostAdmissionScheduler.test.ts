@@ -681,3 +681,205 @@ describe('EnsembleHostAdmissionScheduler ownership and cancellation', () => {
     })
   })
 })
+
+/**
+ * M1 A1.1 measurement seam: one `admission_wait` span per settled waiter.
+ * Every pre-existing test above runs without the `spans` option and is the
+ * byte-unchanged proof that the seam's absence changes nothing.
+ */
+describe('EnsembleHostAdmissionScheduler admission_wait span seam', () => {
+  function spanSink() {
+    const spans: unknown[] = []
+    return { spans, record: (span: unknown) => spans.push(span) }
+  }
+
+  it('emits one admitted span per waiter with exact identity, wait and reason', async () => {
+    const tasks = createTaskQueue()
+    let at = 1_000
+    const sink = spanSink()
+    const scheduler = new EnsembleHostAdmissionScheduler({
+      maxActive: 1,
+      maxForeground: 1,
+      now: () => at,
+      schedule: tasks.schedule,
+      spans: sink
+    })
+
+    const first = await admittedLease(scheduler.reserve(request('run-1', { chatId: 'chat-light' })))
+    const second = reservation(scheduler.reserve(request('run-2', { chatId: 'chat-heavy' })))
+    expect(second.initialState).toBe('queued')
+    expect(sink.spans).toEqual([
+      {
+        chatId: 'chat-light',
+        runId: 'run-1',
+        participantId: 'participant-run-1',
+        laneId: 'run-1',
+        kind: 'admission_wait',
+        resource: 'ensemble_pool',
+        reason: 'admitted',
+        startedAt: 1_000,
+        durationMs: 0
+      }
+    ])
+
+    at = 1_450
+    first.release()
+    tasks.runOne()
+    await second.admission
+    expect(sink.spans).toHaveLength(2)
+    expect(sink.spans[1]).toEqual({
+      chatId: 'chat-heavy',
+      runId: 'run-2',
+      participantId: 'participant-run-2',
+      laneId: 'run-2',
+      kind: 'admission_wait',
+      resource: 'ensemble_pool',
+      reason: 'admitted',
+      startedAt: 1_000,
+      durationMs: 450
+    })
+  })
+
+  it('omits laneId and participantId when the waiter genuinely has neither', async () => {
+    const sink = spanSink()
+    const scheduler = new EnsembleHostAdmissionScheduler({
+      now: () => 5,
+      schedule: () => {},
+      spans: sink
+    })
+    await admittedLease(
+      scheduler.reserve({ runId: 'fg-1', chatId: 'chat-a', provider: 'codex', kind: 'foreground' })
+    )
+    expect(sink.spans).toEqual([
+      {
+        chatId: 'chat-a',
+        runId: 'fg-1',
+        kind: 'admission_wait',
+        resource: 'ensemble_pool',
+        reason: 'admitted',
+        startedAt: 5,
+        durationMs: 0
+      }
+    ])
+  })
+
+  it('distinguishes cancelled, shutdown and rejected waiter outcomes by reason', async () => {
+    // Cancelled while queued.
+    let at = 100
+    const cancelSink = spanSink()
+    const cancelScheduler = new EnsembleHostAdmissionScheduler({
+      maxActive: 1,
+      maxForeground: 1,
+      now: () => at,
+      schedule: () => {},
+      spans: cancelSink
+    })
+    await admittedLease(cancelScheduler.reserve(request('run-1')))
+    const queued = reservation(cancelScheduler.reserve(request('run-2')))
+    at = 175
+    expect(queued.cancel('caller changed its mind')).toBe(true)
+    expect(cancelSink.spans).toHaveLength(2)
+    expect(cancelSink.spans[1]).toMatchObject({
+      runId: 'run-2',
+      reason: 'cancelled',
+      startedAt: 100,
+      durationMs: 75
+    })
+
+    // Settled by shutdown.
+    const shutdownSink = spanSink()
+    const shutdownScheduler = new EnsembleHostAdmissionScheduler({
+      maxActive: 1,
+      maxForeground: 1,
+      now: () => 10,
+      schedule: () => {},
+      spans: shutdownSink
+    })
+    await admittedLease(shutdownScheduler.reserve(request('run-1')))
+    reservation(shutdownScheduler.reserve(request('run-2')))
+    shutdownScheduler.shutdown()
+    expect(shutdownSink.spans).toHaveLength(2)
+    expect(shutdownSink.spans[1]).toMatchObject({ runId: 'run-2', reason: 'shutdown' })
+
+    // Refused by queue overflow.
+    const overflowSink = spanSink()
+    const overflowScheduler = new EnsembleHostAdmissionScheduler({
+      maxActive: 1,
+      maxForeground: 1,
+      maxQueued: 0,
+      now: () => 20,
+      schedule: () => {},
+      spans: overflowSink
+    })
+    await admittedLease(overflowScheduler.reserve(request('run-1')))
+    const refused = overflowScheduler.reserve(request('run-2'))
+    expect(refused.kind).toBe('rejected')
+    expect(overflowSink.spans).toHaveLength(2)
+    expect(overflowSink.spans[1]).toMatchObject({ runId: 'run-2', reason: 'rejected' })
+  })
+
+  it('never emits a second span for an admitted-then-cancelled-unclaimed run', async () => {
+    const sink = spanSink()
+    const scheduler = new EnsembleHostAdmissionScheduler({
+      now: () => 50,
+      schedule: () => {},
+      spans: sink
+    })
+    const reserved = reservation(scheduler.reserve(request('run-1')))
+    const outcome = await reserved.admission
+    expect(outcome.kind).toBe('admitted')
+    // Cancel after grant but before claim: the wait already ended at admit.
+    expect(reserved.cancel('no longer needed')).toBe(true)
+    expect(sink.spans).toHaveLength(1)
+    expect(sink.spans[0]).toMatchObject({ reason: 'admitted' })
+  })
+
+  it('aggregates through a real recorder under admission_wait / ensemble_pool with per-chat attribution', async () => {
+    const { createWorkSpanRecorder } = await import('../perf/WorkSpanRecorder')
+    const recorder = createWorkSpanRecorder({ process: 'main', maxRetained: 64 })
+    let at = 0
+    const scheduler = new EnsembleHostAdmissionScheduler({
+      maxActive: 1,
+      maxForeground: 1,
+      now: () => at,
+      schedule: () => {},
+      spans: recorder,
+      maxQueued: 8
+    })
+    await admittedLease(scheduler.reserve(request('run-1', { chatId: 'chat-light' })))
+    const queued = reservation(scheduler.reserve(request('run-2', { chatId: 'chat-heavy' })))
+    at = 300
+    queued.cancel('measured cancellation')
+
+    const snapshot = recorder.snapshot()
+    expect(snapshot.byKind.admission_wait?.count).toBe(2)
+    expect(snapshot.byResource.ensemble_pool?.count).toBe(2)
+    expect(snapshot.rejected).toBe(0)
+    // The attribution the aggregate-only shape cannot make: which chat waited.
+    expect(snapshot.byChat['chat-heavy']?.admission_wait?.totalMs).toBe(300)
+    expect(snapshot.byChat['chat-light']?.admission_wait?.totalMs).toBe(0)
+  })
+
+  it('contains a throwing recorder: admission, cancellation and metrics are untouched', async () => {
+    const scheduler = new EnsembleHostAdmissionScheduler({
+      maxActive: 1,
+      maxForeground: 1,
+      now: () => 7,
+      schedule: () => {},
+      spans: {
+        record: () => {
+          throw new Error('recorder exploded')
+        }
+      }
+    })
+    const lease = await admittedLease(scheduler.reserve(request('run-1')))
+    const queued = reservation(scheduler.reserve(request('run-2')))
+    expect(queued.cancel()).toBe(true)
+    expect(lease.release()).toBe(true)
+    expect(scheduler.snapshot().metrics).toMatchObject({
+      admitted: 1,
+      cancelledQueued: 1,
+      released: 1
+    })
+  })
+})

@@ -67,7 +67,18 @@ export const WORK_SPAN_REASONS = {
     'runtime_or_credential_domain',
     'registration_change'
   ],
-  admission_wait: ['occupancy', 'foreground_reserved', 'lane_reserved', 'queued', 'cancelled']
+  admission_wait: [
+    'occupancy',
+    'foreground_reserved',
+    'lane_reserved',
+    'queued',
+    'cancelled',
+    // Scheduler waiter outcomes (M1 A1.1): one admission_wait span per
+    // settled waiter, its reason naming how the wait ended.
+    'admitted',
+    'rejected',
+    'shutdown'
+  ]
 } as const satisfies Partial<Record<WorkSpanKind, readonly string[]>>
 
 export type WorkSpanReasonKind = keyof typeof WORK_SPAN_REASONS
