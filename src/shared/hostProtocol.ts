@@ -832,6 +832,23 @@ export const HOST_RECEIPT_STATUSES: readonly HostReceiptStatus[] = [
 ] as const
 
 /**
+ * M2 queued-start lifecycle phase (Independent Threads Programme, Amendment
+ * A1.3) — a versioned phase SEPARATE from HostReceiptStatus, which never
+ * changes: `queued`/`starting` ride on the wire as status `pending`, and
+ * `succeeded` still requires durable start evidence plus published start
+ * effects. Emitted only when the TASKWRAITH_HOST_QUEUED_START gate (default
+ * off) is wired by the integration owner; absent on receipts that predate or
+ * bypass the lifecycle.
+ */
+export type HostQueuedStartPhase = 'queued' | 'starting' | 'started'
+
+export const HOST_QUEUED_START_PHASES: readonly HostQueuedStartPhase[] = [
+  'queued',
+  'starting',
+  'started'
+] as const
+
+/**
  * Durable command receipt — reconnect-safe lookup by commandId or idempotencyKey.
  * Persistence is owned by Host storage (Wave 2B+); this type is the wire contract.
  */
@@ -844,6 +861,13 @@ export interface HostCommandReceipt {
   actor: HostActorIdentity
   authority: HostAuthorityDecision
   status: HostReceiptStatus
+  /**
+   * M2 (Amendment A1.3): queued-start lifecycle phase, present only under the
+   * TASKWRAITH_HOST_QUEUED_START gate (default off). `queued`/`starting`
+   * imply status `pending`; `started` is a phase marker and does not by
+   * itself make the receipt `succeeded`.
+   */
+  phase?: HostQueuedStartPhase
   /**
    * Lowercase SHA-256 hex digest of the canonical command body.
    * Required for idempotency replay/conflict; never raw args on the wire.
@@ -1897,6 +1921,13 @@ export function decodeHostCommandReceipt(value: unknown): HostDecodeResult<HostC
   if (!commandFingerprint) {
     return { ok: false, error: 'commandFingerprint must be lowercase SHA-256 hex' }
   }
+  if (
+    value.phase !== undefined &&
+    (typeof value.phase !== 'string' ||
+      !(HOST_QUEUED_START_PHASES as readonly string[]).includes(value.phase))
+  ) {
+    return { ok: false, error: 'receipt phase is invalid' }
+  }
   if (!isNonNegativeInt(value.generation) || !isNonNegativeInt(value.cursor)) {
     return { ok: false, error: 'generation/cursor must be non-negative integers' }
   }
@@ -1951,6 +1982,9 @@ export function decodeHostCommandReceipt(value: unknown): HostDecodeResult<HostC
   }
   if (value.resultSummary !== undefined) {
     receipt.resultSummary = value.resultSummary
+  }
+  if (value.phase !== undefined) {
+    receipt.phase = value.phase as HostQueuedStartPhase
   }
   if (value.errorCode !== undefined) {
     receipt.errorCode = value.errorCode
