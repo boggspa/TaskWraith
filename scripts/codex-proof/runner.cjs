@@ -1,4 +1,3 @@
-[read_file: lines 1-631 of 631]
 'use strict'
 
 const fs = require('node:fs')

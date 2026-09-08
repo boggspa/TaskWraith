@@ -1,4 +1,3 @@
-[read_file: lines 1-261 of 261]
 'use strict'
 
 const { EventEmitter } = require('node:events')

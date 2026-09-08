@@ -1,4 +1,3 @@
-[read_file: lines 1-225 of 225]
 #!/usr/bin/env node
 'use strict'
 

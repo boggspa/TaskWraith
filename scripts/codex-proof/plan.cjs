@@ -1,4 +1,3 @@
-[read_file: lines 1-398 of 398]
 'use strict'
 
 const path = require('node:path')

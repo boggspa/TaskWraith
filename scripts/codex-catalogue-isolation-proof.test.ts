@@ -1,4 +1,3 @@
-[read_file: lines 1-920 of 920]
 import { createRequire } from 'node:module'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
