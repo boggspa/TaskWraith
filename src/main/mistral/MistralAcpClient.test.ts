@@ -8,6 +8,7 @@ import type { AcpPermissionRequest } from '../grok/GrokAcpProtocol'
 import {
   MISTRAL_TOOL_FAILURE_CONTINUITY_PROMPT,
   MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT,
+  MISTRAL_UNATTRIBUTED_REFUSAL_CONTINUITY_PROMPT,
   formatMistralSteerPrompt,
   mistralTaskWraithBrokerToolRequested,
   normalizeMistralVibePermissionRequest,
@@ -730,10 +731,8 @@ const toolResult = (
         toolCallId,
         status,
         // Real Vibe carries the outcome as an ACP content block, which is what
-        // `acpToolContentToText` reads to populate `lastFailedToolOutput` — the
-        // only input that selects between the two continuity prompts. A bare
-        // status update leaves that null, so a fixture without content can only
-        // ever exercise the generic branch.
+        // `acpToolContentToText` reads to populate `lastFailedToolOutput`.
+        // Provider-authored rejection wording does not establish who decided.
         ...(output
           ? { content: [{ type: 'content', content: { type: 'text', text: output } }] }
           : {})
@@ -816,12 +815,7 @@ describe('runMistralAcpTurn denied-tool recovery', () => {
     await handle.closed
   })
 
-  it('selects the declined-tool prompt when the tool was rejected by the user', async () => {
-    // The MEASURED shape, not a constructed one. A denied tool comes back as
-    // `status:'failed'` carrying Vibe's own decline text, and `lastFailedToolOutput`
-    // is the sole input that routes the recovery to the declined prompt. Asserting
-    // the generic prompt here would pass on a fixture that never populated it, so
-    // this pins the branch the real run takes.
+  it('does not promote Vibe rejection wording into a human decision', async () => {
     const child = new FakeAcpChild()
     const { events, handle } = runMistral(child)
     sessionReady(child)
@@ -834,12 +828,155 @@ describe('runMistralAcpTurn denied-tool recovery', () => {
     const prompts = promptFrames(child)
     expect(prompts).toHaveLength(2)
     const recovery = promptText(prompts[1])
-    expect(recovery).toBe(MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT)
+    expect(recovery).toBe(MISTRAL_UNATTRIBUTED_REFUSAL_CONTINUITY_PROMPT)
+    expect(recovery).not.toBe(MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT)
     // Both directions: the two prompts are different strings, so pinning only
     // one of them cannot show which branch ran.
     expect(recovery).not.toBe(MISTRAL_TOOL_FAILURE_CONTINUITY_PROMPT)
     expect(events.filter((event) => event.type === 'provider_warning')).toHaveLength(1)
 
+    child.emit({ jsonrpc: '2.0', id: 5, result: { stopReason: 'end_turn' } })
+    await handle.closed
+  })
+
+  it.each(['host-containment', 'host-policy', 'human'] as const)(
+    'uses the exact %s decision receipt instead of Vibe wording',
+    async (origin) => {
+      const child = new FakeAcpChild()
+      const events: NormalizedGrokRunEvent[] = []
+      const onPermissionRefusal = vi.fn()
+      const handle = runMistralAcpTurn({
+        skipIntroduction: true,
+        prompt: 'work',
+        cwd: '/tmp/workspace',
+        appVersion: 'test',
+        spawnProcess: () => child,
+        onEvent: (event) => events.push(event),
+        onPermissionRequest: () => ({ decision: 'deny', origin, reason: 'Exact refusal reason.' }),
+        onPermissionRefusal
+      })
+      sessionReady(child)
+      toolCall(child, 'shell-1', 'bash', 'execute')
+      child.emit({
+        jsonrpc: '2.0',
+        id: 9,
+        method: 'session/request_permission',
+        params: {
+          sessionId: 'session-1',
+          toolCall: { toolCallId: 'shell-1', title: 'bash', kind: 'execute' },
+          options: permissionRequest({}).options
+        }
+      })
+      await tick()
+      toolResult(
+        child,
+        'shell-1',
+        'failed',
+        'User rejected the tool call; provide an alternative plan'
+      )
+      child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
+      await tick(40)
+      const recovery = promptText(promptFrames(child)[1])!
+      expect(child.sent().find((frame) => frame.id === 9)).toMatchObject({
+        result: { outcome: { optionId: 'reject' } }
+      })
+      expect(onPermissionRefusal).toHaveBeenCalledOnce()
+      expect(events.find((event) => event.type === 'tool_result')?.toolOutput).toContain(
+        'TaskWraith refusal receipt:'
+      )
+      if (origin === 'human') {
+        expect(recovery).toBe(MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT)
+      } else {
+        expect(recovery).toContain('no human was asked')
+        expect(recovery).toContain('Exact refusal reason.')
+        expect(recovery.includes('once through')).toBe(origin === 'host-containment')
+      }
+      // A reused id in the recovery prompt has no authority from the old call.
+      failedTool(child, 'User rejected the tool call; provide an alternative plan')
+      expect(onPermissionRefusal).toHaveBeenCalledOnce()
+      expect(
+        events.filter((event) => event.type === 'tool_result').at(-1)?.toolOutput
+      ).not.toContain('TaskWraith refusal receipt:')
+      child.emit({ jsonrpc: '2.0', id: 5, result: { stopReason: 'end_turn' } })
+      await handle.closed
+      expect(promptFrames(child)).toHaveLength(2)
+    }
+  )
+
+  it('does not use an earlier native refusal to explain a later broker refusal', async () => {
+    const child = new FakeAcpChild()
+    const handle = runMistralAcpTurn({
+      skipIntroduction: true,
+      prompt: 'work',
+      cwd: '/tmp/workspace',
+      appVersion: 'test',
+      spawnProcess: () => child,
+      onEvent: () => {},
+      onPermissionRequest: () => ({
+        decision: 'deny',
+        origin: 'host-containment',
+        reason: 'Native shell is contained.'
+      })
+    })
+    sessionReady(child)
+    toolCall(child, 'shell-1', 'bash', 'execute')
+    child.emit({
+      jsonrpc: '2.0',
+      id: 9,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 'session-1',
+        toolCall: { toolCallId: 'shell-1' },
+        options: permissionRequest({}).options
+      }
+    })
+    await tick()
+    toolResult(child, 'shell-1', 'failed', 'User rejected the tool call')
+    toolCall(child, 'broker-2', 'TaskWraith_run_shell_command', 'other')
+    toolResult(child, 'broker-2', 'failed', 'User rejected the tool call')
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
+    await tick(40)
+    expect(promptText(promptFrames(child)[1])).toBe(MISTRAL_UNATTRIBUTED_REFUSAL_CONTINUITY_PROMPT)
+    child.emit({ jsonrpc: '2.0', id: 5, result: { stopReason: 'end_turn' } })
+    await handle.closed
+  })
+
+  it('keeps the host origin when Vibe cancels without a tool result and audit projection fails', async () => {
+    const child = new FakeAcpChild()
+    const onPermissionRefusal = vi.fn(() => {
+      throw new Error('projection failed')
+    })
+    const handle = runMistralAcpTurn({
+      skipIntroduction: true,
+      prompt: 'work',
+      cwd: '/tmp/workspace',
+      appVersion: 'test',
+      spawnProcess: () => child,
+      onEvent: () => {},
+      onPermissionRefusal,
+      onPermissionRequest: () => ({
+        decision: 'deny',
+        origin: 'host-containment',
+        reason: 'No native sandbox.'
+      })
+    })
+    sessionReady(child)
+    toolCall(child, 'shell-1', 'bash', 'execute')
+    child.emit({
+      jsonrpc: '2.0',
+      id: 9,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 'session-1',
+        toolCall: { toolCallId: 'shell-1' },
+        options: permissionRequest({}).options
+      }
+    })
+    await tick()
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    await tick(40)
+    expect(onPermissionRefusal).toHaveBeenCalledOnce()
+    expect(promptText(promptFrames(child)[1])).toContain('no human was asked')
     child.emit({ jsonrpc: '2.0', id: 5, result: { stopReason: 'end_turn' } })
     await handle.closed
   })

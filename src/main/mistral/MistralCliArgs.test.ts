@@ -222,6 +222,17 @@ describe('prompt preamble', () => {
     // steer is preventive UX, and the host gate remains the actual safety floor.
     expect(applyMistralPromptPreamble('x', false)).toContain('do NOT end your turn')
   })
+
+  it('names the broker edit route and attributes native refusals without promising human approval', () => {
+    const prompt = applyMistralPromptPreamble('x', true)
+    expect(prompt).toContain('TaskWraith_replace')
+    expect(prompt).toContain('do not open a human approval card')
+    expect(prompt).toContain('host-containment versus host-policy')
+    expect(prompt).toContain('same refusal repeats without new evidence')
+    expect(prompt).not.toContain('expect an approval round-trip')
+    expect(prompt).not.toContain('use your edit tools')
+    expect(applyMistralPromptPreamble('x', false)).toContain('within your assigned workspace scope')
+  })
 })
 
 describe('normalizeMistralPlanId', () => {

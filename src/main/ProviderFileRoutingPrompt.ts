@@ -11,7 +11,7 @@ export function stripProviderFileRoutingPromptPrefix(prompt: string): string {
   return end >= 0 ? prompt.slice(end + suffix.length) : prompt
 }
 
-const TASKWRAITH_MCP_FILE_PROVIDERS = new Set<ProviderId>(['codex', 'cursor', 'kimi'])
+const TASKWRAITH_MCP_FILE_PROVIDERS = new Set<ProviderId>(['codex', 'cursor', 'kimi', 'mistral'])
 
 type FileRoutingPermissions = Pick<EffectiveRunPermissions, 'agenticServices'>
 
@@ -61,7 +61,9 @@ export function buildProviderFileRoutingPrompt(input: {
     `- Prefer \`${patchTool}\` or \`${replaceTool}\` for an existing file. Use \`${writeTool}\` only to create a new file; a long existing file is not a reason to rewrite it wholesale.`,
     input.provider === 'kimi'
       ? `- TaskWraith rejects native Kimi Edit/Write permission requests itself, before a human is asked. Use the run capability receipt to distinguish host containment from an actual human refusal. A broker tool must be present in your current tool list; use its exact name for the original scoped edit. If absent, report the missing route and finish the lane. Never emit native Edit while describing it as \`${replaceTool}\`.`
-      : `- A refusal from a ${nativeToolFamily} apply_patch/edit/write tool that mentions a read-only sandbox or user approval settings describes that native containment route; it does not cancel the effective TaskWraith file grant. Do not repeat or reinterpret the native refusal. Route the original edit once through \`${patchTool}\` or the matching listed TaskWraith file tool.`,
+      : input.provider === 'mistral'
+        ? '- TaskWraith automatically decides native Mistral permission requests; native edit/write refusals do not ask a human. Vibe may label that response "user rejected". Consult the exact-run approval_status receipt with includePreview=true for the host origin and reason. Do not repeat a native edit. Respect policy, scope, and actual human refusals; use the listed broker for an original scoped edit only when the refusal is host containment.'
+        : `- A refusal from a ${nativeToolFamily} apply_patch/edit/write tool that mentions a read-only sandbox or user approval settings describes that native containment route; it does not cancel the effective TaskWraith file grant. Do not repeat or reinterpret the native refusal. Route the original edit once through \`${patchTool}\` or the matching listed TaskWraith file tool.`,
     '- The brokered call is the write attempt: it enforces the signed permission posture, approved lane scope, exact path claims, and audit identity through TaskWraith locks, audit, and grants. If that TaskWraith call is unavailable, denied, or scope-blocked, report that exact blocker and do not probe another write transport.',
     '- Successful brokered or native file tools appear as ordinary tool-call rows in the TaskWraith transcript (the same ActivityStack cards as other providers), not a separate presentation element.',
     TASKWRAITH_FILE_ROUTING_PROMPT_CLOSE,

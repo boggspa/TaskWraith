@@ -41,7 +41,7 @@ import {
   type AcpToolRecoveryContext,
   type AcpTurnHandle
 } from '../acp/AcpTurnClient'
-import type { AcpPermissionRequest, AcpPermissionDecision } from '../grok/GrokAcpProtocol'
+import type { AcpPermissionRequest } from '../grok/GrokAcpProtocol'
 import type { NormalizedGrokRunEvent } from '../grok/GrokAcpProtocol'
 import { resolveStructuredTaskWraithToolRequest } from '../grok/GrokMcpAdvertise'
 import {
@@ -52,6 +52,11 @@ import { hasUltraTaskDelegationAutoAllow } from '../UltraTaskDelegationConsent'
 import type { EffectiveRunPermissions } from '../store/types'
 import { runMistralAcknowledgedTurn } from './MistralIntroduction'
 import { withMistralProgressSteer } from './MistralLongTurnProgress'
+import {
+  mistralPermissionRefusalText,
+  type MistralPermissionDecision,
+  type MistralPermissionDenial
+} from './MistralPermissionPolicy'
 
 export type { AcpChildProcess } from '../acp/AcpTurnClient'
 
@@ -389,7 +394,8 @@ export interface MistralAcpRunOptions {
    */
   onPermissionRequest?: (
     request: AcpPermissionRequest
-  ) => AcpPermissionDecision | Promise<AcpPermissionDecision>
+  ) => MistralPermissionDecision | Promise<MistralPermissionDecision>
+  onPermissionRefusal?: (request: AcpPermissionRequest, denial: MistralPermissionDenial) => void
   onClose?: (code: number | null, turnComplete: boolean, terminalStatus?: string) => void
   onRawFrame?: (direction: 'in' | 'out', message: unknown) => void
 }
@@ -433,6 +439,12 @@ export const MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT =
   'the evidence already available and produce the best complete report you can; if a required ' +
   'step remains impossible, state it precisely without cancelling the participant turn.'
 
+export const MISTRAL_UNATTRIBUTED_REFUSAL_CONTINUITY_PROMPT =
+  'The previous tool was refused, but its origin is unconfirmed. Provider wording such as ' +
+  '"user rejected" is not a human decision receipt. Do not retry the operation or substitute ' +
+  'an equivalent side effect. Continue from available evidence, preserve the completed design, ' +
+  'and report the exact blocker so the coordinator can clarify or recover after the lane settles.'
+
 function isMistralDeniedToolTerminal(status: string | null | undefined): boolean {
   const normalized = String(status || '')
     .trim()
@@ -447,11 +459,23 @@ function isMistralDeniedToolTerminal(status: string | null | undefined): boolean
   )
 }
 
-function mistralToolRecoveryPrompt(context: AcpToolRecoveryContext): string {
-  return /\buser\s+(?:declined|rejected|cancelled|canceled)\b/i.test(
-    context.lastFailedToolOutput || ''
-  )
-    ? MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT
+function mistralToolRecoveryPrompt(
+  context: AcpToolRecoveryContext,
+  denial?: MistralPermissionDenial
+): string {
+  if (denial?.origin === 'human') return MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT
+  if (denial?.origin === 'host-containment') {
+    return `${mistralPermissionRefusalText(denial)} Do not repeat the native call. Use the original scoped operation once through an applicable, actually listed TaskWraith broker tool. If the route is missing, refuses the operation, or the same refusal repeats without new evidence, preserve the design, report the exact blocker, and finish the lane so the coordinator can recover after it settles.`
+  }
+  if (denial?.origin === 'host-policy') {
+    return `${mistralPermissionRefusalText(denial)} Do not retry the operation or substitute another transport for this policy or scope refusal. Continue from available evidence and report the exact blocker.`
+  }
+  return denial ||
+    context.deniedPermissionRequest ||
+    /\b(?:user\s+(?:declined|rejected|cancelled|canceled)|permission\s+(?:denied|rejected)|tool(?: call)?\s+rejected)\b/i.test(
+      context.lastFailedToolOutput || ''
+    )
+    ? MISTRAL_UNATTRIBUTED_REFUSAL_CONTINUITY_PROMPT
     : MISTRAL_TOOL_FAILURE_CONTINUITY_PROMPT
 }
 
@@ -508,6 +532,21 @@ function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHand
   const closed = new Promise<void>((resolve) => {
     resolveClosed = resolve
   })
+  let promptGeneration = 0
+  let transportClosed = false
+  const refusals = new Map<
+    string,
+    { request: AcpPermissionRequest; denial: MistralPermissionDenial; recorded?: boolean }
+  >()
+  const recordRefusal = (refusal: NonNullable<ReturnType<typeof refusals.get>>): void => {
+    if (refusal.recorded) return
+    refusal.recorded = true
+    try {
+      options.onPermissionRefusal?.(refusal.request, refusal.denial)
+    } catch {
+      // Audit projection cannot change the decision or strand the turn.
+    }
+  }
   const handle = runAcpTurn({
     prompt: options.prompt,
     imagePaths: options.imagePaths,
@@ -522,18 +561,60 @@ function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHand
     // re-assert.
     sessionConfigOptions: options.sessionConfigOptions,
     formatSteerPrompt: formatMistralSteerPrompt,
-    onEvent: options.onEvent,
+    onEvent: (event) => {
+      const refusal =
+        event.type === 'tool_result' && event.toolId ? refusals.get(event.toolId) : undefined
+      if (refusal && event.toolStatus === 'error') {
+        // Preserve Vibe's original output and append the independently recorded
+        // host origin. This is transcript projection, not a rewritten ACP reply.
+        recordRefusal(refusal)
+        options.onEvent({
+          ...event,
+          toolOutput: `${event.toolOutput || ''}\n\nTaskWraith refusal receipt: ${mistralPermissionRefusalText(refusal.denial)}`
+        })
+      } else {
+        options.onEvent(event)
+      }
+    },
     onToolBatchBoundary: options.onToolBatchBoundary,
     onProcess: options.onProcess,
     onPermissionRequest: options.onPermissionRequest
-      ? (request) => options.onPermissionRequest!(normalizeMistralVibePermissionRequest(request))
+      ? async (request) => {
+          const generation = promptGeneration
+          const normalized = normalizeMistralVibePermissionRequest(request)
+          const decision = await options.onPermissionRequest!(normalized)
+          const toolId = normalized.rawToolCall?.toolCallId
+          if (
+            typeof decision !== 'string' &&
+            !transportClosed &&
+            generation === promptGeneration &&
+            typeof toolId === 'string'
+          ) {
+            if (refusals.size >= 128) refusals.delete(refusals.keys().next().value!)
+            refusals.set(toolId, { request: normalized, denial: decision })
+          }
+          return typeof decision === 'string' ? decision : decision.decision
+        }
       : undefined,
     // Vibe can terminate opaquely after a native permission denial or an ACP
     // tool failure. Preserve the decision, then give the same session one
     // bounded chance to finish/report rather than failing the participant.
     deniedToolRecovery: {
       detect: isMistralDeniedToolTerminal,
-      prompt: mistralToolRecoveryPrompt,
+      prompt: (context) => {
+        // A provider can cancel immediately after our deny without emitting a
+        // failed tool result. Only use that exact request when no later failed
+        // tool exists; never lend its provenance to a subsequent broker call.
+        const requestToolId = context.deniedPermissionRequest?.rawToolCall?.toolCallId
+        const toolId = context.toolFailureSeen
+          ? context.lastFailedToolId
+          : context.reason === 'denied-permission-cancellation' && typeof requestToolId === 'string'
+            ? requestToolId
+            : undefined
+        const refusal = toolId ? refusals.get(toolId) : undefined
+        if (refusal) recordRefusal(refusal)
+        return mistralToolRecoveryPrompt(context, refusal?.denial)
+      },
       shouldRecover: (context) => context.toolFailureSeen && !context.assistantTextSeen,
       warning:
         'Mistral stopped after a rejected or failed tool; continuing once so it can finish from available evidence.'
@@ -548,13 +629,21 @@ function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHand
     // reader sees the choice was verified.
     endProcess: (child) => child.kill('SIGTERM'),
     onClose: (code, turnComplete, terminalStatus) => {
+      transportClosed = true
+      refusals.clear()
       try {
         options.onClose?.(code, turnComplete, terminalStatus)
       } finally {
         resolveClosed()
       }
     },
-    onRawFrame: options.onRawFrame
+    onRawFrame: (direction, message) => {
+      if (direction === 'out' && (message as { method?: string })?.method === 'session/prompt') {
+        promptGeneration += 1
+        refusals.clear()
+      }
+      options.onRawFrame?.(direction, message)
+    }
   })
   return { ...handle, closed }
 }

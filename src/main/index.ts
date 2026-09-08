@@ -1745,6 +1745,7 @@ import {
 } from './mistral/MistralCliArgs'
 import { resolveMistralCredentialLaunch } from './mistral/MistralCredentialLane'
 import { createMistralTurnAbortController, runMistralAcpTurn } from './mistral/MistralAcpClient'
+import { createMistralPermissionHandler, mistralPermissionLedgerRecord } from './mistral/MistralPermissionPolicy'
 // Devin: ACP-over-stdio seat (`devin acp`). Launch policy + credential lanes in
 // devin/DevinCliArgs + DevinCredentialLane + DevinCredentialStore, gates in
 // devin/devinGate.ts (same pure-env constraint as mistralGate), ACP hooks in
@@ -25658,49 +25659,22 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
     return child as unknown as AcpChildProcess
   }
 
-  // Client-mediated tool approval. Vibe asks before running ANY tool in the two
-  // modes this seat selects, so unlike Grok this handler is the primary gate
-  // rather than defence-in-depth. The ACP core turns a 'deny' into a rejected
-  // outcome, so nothing runs without an explicit allow.
-  const mistralPermissionHandler = async (request: AcpPermissionRequest) => {
-    // TaskWraith broker tools are independently gated by the broker. Allowing
-    // the ACP hop here avoids a duplicate provider card; it does not bypass the
-    // signed service policy or exact mutation transaction.
-    if (mistralTaskWraithBrokerToolRequested(request)) return 'allow'
-    const networkRead = grokAcpNetworkReadRequested('mistral', request)
-    if (networkRead && !grokNetworkAccessAllowed(state)) return 'deny'
-    const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
+  // Preserve the existing native gate and attach its host refusal provenance.
+  const mistralPermissionHandler = createMistralPermissionHandler({
+    isBrokerTool: mistralTaskWraithBrokerToolRequested,
+    isNetworkRead: (request) => Boolean(grokAcpNetworkReadRequested('mistral', request)),
+    networkAllowed: () => grokNetworkAccessAllowed(state),
+    preflight: (request) => preflightNativeWorkspaceTool({
       provider: 'mistral',
       toolName: request.toolName,
       toolKind: request.toolKind,
       rawToolCall: request.rawToolCall,
       workspacePath: payload.scope === 'global' ? undefined : payload.workspace,
-      // Vibe exposes a permission hook but no workspace-rooted native shell
-      // sandbox. File tools can be path-preflighted; shell stays fail-closed
-      // until a runtime can attest one.
       runtimeSandboxed: false
-    })
-    if (nativeWorkspacePreflight.kind === 'deny') return 'deny'
-    if (networkRead) return 'allow'
-    if (nativeWorkspacePreflight.kind === 'allow' && nativeWorkspacePreflight.access === 'read') {
-      return 'allow'
-    }
-    if (grokReadOnlyShellRequestAllowed(request)) return 'allow'
-    if (mistralReadOnlySeat) {
-      // Deliberate divergence from Grok's read-only ACP handler, which denies
-      // every shell call. Grok can afford that because its read-only argv
-      // (`--deny 'Bash(*)'`) stops it ATTEMPTING one; this seat has no argv, so
-      // the only thing standing between the read-only preamble's promise
-      // ("you CAN run ls, cat, grep, find, git log/status/diff") and a
-      // dead-ended turn is this branch. isReadOnlyShellCommand is the
-      // fail-closed authority — anything it cannot prove read-only, including
-      // anything it cannot parse, falls through to the deny below.
-      return 'deny'
-    }
-    // A write-capable seat remains useful for brokered exact edits, but its
-    // opaque native mutators never bypass the transaction boundary.
-    return 'deny'
-  }
+    }),
+    isReadOnlyShell: grokReadOnlyShellRequestAllowed,
+    readOnlySeat: mistralReadOnlySeat
+  })
 
   const finishMistralAcpTurn = (
     code: number | null,
@@ -25883,6 +25857,13 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
         cliProviderProcesses.set('mistral', proc)
       },
       onPermissionRequest: mistralPermissionHandler,
+      onPermissionRefusal: (request, denial) => recordApprovalLedgerDecision(
+        mistralPermissionLedgerRecord({
+          runId: route.appRunId!,
+          chatId: route.appChatId,
+          workspacePath: payload.workspace
+        }, request, denial)
+      ),
       onEvent: (evt) => applyMistralRunEvent(state, evt),
       onToolBatchBoundary: () => scheduleQueuedSteerToolBoundary('mistral', route.appRunId!),
       onRawFrame: (direction, message) => maybeLogMistralRawAcp(direction, message),

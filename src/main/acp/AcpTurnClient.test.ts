@@ -1249,7 +1249,11 @@ describe('runAcpTurn — neutral core', () => {
 
   it('recovers once from a failed tool terminal even without a permission request', async () => {
     const child = new FakeAcpChild()
-    const contexts: Array<{ tool?: string | null; output?: string | null }> = []
+    const contexts: Array<{
+      tool?: string | null
+      toolId?: string | null
+      output?: string | null
+    }> = []
     const onWirePrompt = vi.fn()
     baseOptions(child, {
       onWirePrompt,
@@ -1258,6 +1262,7 @@ describe('runAcpTurn — neutral core', () => {
         shouldRecover: (context) => {
           contexts.push({
             tool: context.lastFailedToolName,
+            toolId: context.lastFailedToolId,
             output: context.lastFailedToolOutput
           })
           return context.toolFailureSeen && !context.assistantTextSeen
@@ -1297,7 +1302,7 @@ describe('runAcpTurn — neutral core', () => {
     child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
     await new Promise((resolve) => setTimeout(resolve, 40))
 
-    expect(contexts).toEqual([{ tool: 'read_file', output: 'permission denied' }])
+    expect(contexts).toEqual([{ tool: 'read_file', toolId: 'tool-1', output: 'permission denied' }])
     const prompts = child.sent().filter((message) => message.method === 'session/prompt')
     expect(prompts).toHaveLength(2)
     expect(JSON.stringify(prompts[1])).toContain('Continue after read_file failed.')

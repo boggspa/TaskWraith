@@ -91,6 +91,8 @@ export interface AcpToolRecoveryContext {
   readonly assistantTextSeen: boolean
   readonly toolFailureSeen: boolean
   readonly lastFailedToolName: string | null
+  /** Exact correlation for provider-owned refusal provenance; names alone can repeat. */
+  readonly lastFailedToolId?: string | null
   readonly lastFailedToolOutput: string | null
 }
 
@@ -748,6 +750,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   let assistantTextSeen = false
   let toolFailureSeen = false
   let lastFailedToolName: string | null = null
+  let lastFailedToolId: string | null = null
   let lastFailedToolOutput: string | null = null
   let lastObservedToolName: string | null = null
   const toolNamesById = new Map<string, string>()
@@ -972,6 +975,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     assistantTextSeen = false
     toolFailureSeen = false
     lastFailedToolName = null
+    lastFailedToolId = null
     lastFailedToolOutput = null
     lastObservedToolName = null
     toolNamesById.clear()
@@ -1685,6 +1689,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
           const toolOutput = nonEmptyString(event.toolOutput)
           if (event.toolStatus === 'error' || toolOutputIndicatesFailure(toolOutput)) {
             toolFailureSeen = true
+            lastFailedToolId = event.toolId || null
             lastFailedToolName =
               (event.toolId ? toolNamesById.get(event.toolId) : undefined) ||
               lastObservedToolName ||
@@ -1730,6 +1735,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
               assistantTextSeen,
               toolFailureSeen,
               lastFailedToolName,
+              lastFailedToolId,
               lastFailedToolOutput
             }
             let failedToolRecovery = false

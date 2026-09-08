@@ -5,6 +5,14 @@ import {
 } from './TaskWraithMcpPromptNames'
 
 describe('TaskWraithMcpPromptNames', () => {
+  it('uses Vibe current single-underscore names and requires the actually listed surface', () => {
+    expect(taskWraithToolNameForProvider('mistral', 'replace')).toBe('TaskWraith_replace')
+    expect(taskWraithToolNameForProvider('mistral', 'run_shell_command')).toBe(
+      'TaskWraith_run_shell_command'
+    )
+    expect(taskWraithToolNamespaceHint('mistral')).toContain('exact listed name')
+    expect(taskWraithToolNamespaceHint('mistral')).toContain('managed by TaskWraith')
+  })
   it('describes the managed Cursor gateway and its tool namespace', () => {
     expect(taskWraithToolNameForProvider('cursor', 'apply_patch')).toBe('taskwraith__apply_patch')
 

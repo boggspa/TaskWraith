@@ -94,13 +94,36 @@ describe('buildProviderFileRoutingPrompt', () => {
     ).toBe('')
   })
 
+  it('gives Mistral broker edit guidance without treating native refusals as human decisions', () => {
+    const prompt = buildProviderFileRoutingPrompt({
+      provider: 'mistral',
+      effectivePermissions: permissions('allow')
+    })
+    expect(prompt).toContain('TaskWraith_replace')
+    expect(prompt).toContain('TaskWraith_apply_patch')
+    expect(prompt).toContain('do not ask a human')
+    expect(prompt).toContain('approval_status')
+    expect(prompt).toContain('scope, and actual human refusals')
+    expect(prompt).not.toContain('Codex-native')
+    for (const [files, mcp] of [
+      ['deny', 'allow'],
+      ['allow', 'deny']
+    ] as const) {
+      expect(
+        buildProviderFileRoutingPrompt({
+          provider: 'mistral',
+          effectivePermissions: permissions(files, mcp)
+        })
+      ).toBe('')
+    }
+  })
+
   it('does not add the broker route to providers without Cursor-style dual surfaces', () => {
     for (const provider of [
       'claude',
       'gemini',
       'ollama',
       'grok',
-      'mistral',
       'antigravity',
       'pi',
       'muse'

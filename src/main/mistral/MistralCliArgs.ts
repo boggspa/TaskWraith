@@ -270,8 +270,9 @@ export function normalizeMistralThinkingLevel(
 
 export const MISTRAL_READ_ONLY_PROMPT_PREAMBLE =
   'You are running in READ-ONLY mode (recon / investigation). You CAN read and ' +
-  'inspect freely — read files and run read-only shell commands such as ls, ' +
-  'cat, grep, find, and git log / status / diff. An explicit no-tools instruction ' +
+  'inspect within your assigned workspace scope. Prefer the listed TaskWraith ' +
+  'shell for ls, cat, grep, find, and git log / status / diff; native shell ' +
+  'remains subject to the host workspace preflight. An explicit no-tools instruction ' +
   'in the user request or role brief overrides that allowance: do not call read, ' +
   'shell, file, or any other tool. File writes and edits, and MUTATING shell ' +
   'commands (anything that changes files or git state, installs packages, or has ' +
@@ -281,9 +282,14 @@ export const MISTRAL_READ_ONLY_PROMPT_PREAMBLE =
   'did and answer the user directly.'
 
 export const MISTRAL_WRITE_MODE_PROMPT_PREAMBLE =
-  'When the task requests file changes, use your edit tools; each call is ' +
-  'reviewed by the host before it runs, so expect an approval round-trip rather ' +
-  'than an instant result. An explicit no-tools instruction in the user request ' +
+  'When the task requests file changes, use the actually listed TaskWraith ' +
+  'replace/apply_patch tools for existing files and write_file for new files. ' +
+  'Use the listed TaskWraith run_shell_command for shell work. Current Vibe ' +
+  'names include TaskWraith_replace and TaskWraith_run_shell_command; copy the ' +
+  'exact name from your current tool list. Native edit/write tools are refused ' +
+  'automatically by TaskWraith; they do not open a human approval card. Brokered ' +
+  'operations enforce the effective grants and assigned paths, asking only when ' +
+  'the policy requires it. An explicit no-tools instruction in the user request ' +
   'or role brief overrides that allowance: do not call shell, file, or any other ' +
   'tool. If the user declines a tool request, respect that decision: do not retry ' +
   'the operation, reword the same edit, or substitute another tool for the same ' +
@@ -292,11 +298,23 @@ export const MISTRAL_WRITE_MODE_PROMPT_PREAMBLE =
   'allowed route once if one is available; otherwise report the failure and ' +
   'answer from the evidence already available.'
 
+export const MISTRAL_REFUSAL_ATTRIBUTION_PREAMBLE =
+  'TaskWraith decides native ACP permission requests automatically. Vibe may ' +
+  'render a host refusal as "User rejected the tool call"; that wording alone ' +
+  'does not establish a human decision. Exact-run approval_status records identify ' +
+  'host-containment versus host-policy refusals; includePreview=true returns the exact reason. A broker refusal ' +
+  'can still be an actual human decline: respect its receipt. For host containment, ' +
+  'route the original scoped action once through an applicable listed broker tool. ' +
+  'Do not route around scope or policy refusals. For an unknown origin, do not ' +
+  'attribute it to the user or retry the side effect. If the required route is absent ' +
+  'or the same refusal repeats without new evidence, preserve the design and exact ' +
+  'blocker, finish the lane, and let the coordinator recover after it settles.'
+
 export function applyMistralPromptPreamble(prompt: string, writeCapable: boolean): string {
   const preamble = writeCapable
     ? MISTRAL_WRITE_MODE_PROMPT_PREAMBLE
     : MISTRAL_READ_ONLY_PROMPT_PREAMBLE
-  return `${preamble}\n\n${prompt}`
+  return `${preamble}\n\n${MISTRAL_REFUSAL_ATTRIBUTION_PREAMBLE}\n\n${prompt}`
 }
 
 /**

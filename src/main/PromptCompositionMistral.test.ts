@@ -116,12 +116,12 @@ describe('composeRunPrompt — Mistral runtime preamble', () => {
     expect(resumed.contextualPrompt).toContain(TASKWRAITH_RUNTIME_PREAMBLE_VERSION)
   })
 
-  it('uses the unprefixed TaskWraith delegate tool name', () => {
+  it('uses Vibe single-underscore TaskWraith delegate tool names', () => {
     const result = composeMistral({
       taskWraithMcpProfileId: TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
     })
-    expect(result.contextualPrompt).toContain('TaskWraith__delegate_to_subthread')
-    expect(result.contextualPrompt).toContain('TaskWraith__delegate_wave')
+    expect(result.contextualPrompt).toContain('TaskWraith_delegate_to_subthread')
+    expect(result.contextualPrompt).toContain('TaskWraith_delegate_wave')
     expect(result.contextualPrompt).not.toContain('mcp__TaskWraith__delegate_to_subthread')
     expect(result.contextualPrompt).not.toContain('mcp__TaskWraith__delegate_wave')
   })
