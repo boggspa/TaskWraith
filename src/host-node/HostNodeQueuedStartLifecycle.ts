@@ -231,6 +231,8 @@ interface ReservationRecord {
   claiming: boolean
   /** Settles when the in-flight claim attempt settles either way (L1). */
   claimReady: Promise<void> | null
+  /** The lease object currently being claimed; prevents same-lease aliasing (R2). */
+  pendingLease: HostNodeRunAdmissionLease | null
   /** Set atomically BEFORE the start callback is invoked (L2). */
   dispatched: boolean
   providerRunBegan: boolean
@@ -366,6 +368,7 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
         cancelInvoked: false,
         claiming: false,
         claimReady: null,
+        pendingLease: null,
         dispatched: false,
         providerRunBegan: false,
         startedEvidence: false,
@@ -424,8 +427,18 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
       // Ownership is reserved SYNCHRONOUSLY, before the durability await:
       // a second concurrent claim must lose here, not after both awaits
       // resolve and the later assignment overwrites the earlier lease (L1).
+      // Track the lease identity to prevent the SAME lease object being offered
+      // twice (R2): a refused same-lease caller must not be able to release
+      // the winner's lease by releasing its alias of the same object.
       if (record.lease || record.claiming) return { kind: 'refused', reason: 'already_claimed' }
+      if (record.pendingLease && record.pendingLease === lease) {
+        // Same lease object offered again while first attempt is in flight
+        // or after refusal: refuse but do NOT treat this as an ownership
+        // transfer, so the lease stays with its current owner.
+        return { kind: 'refused', reason: 'already_claimed' }
+      }
       record.claiming = true
+      record.pendingLease = lease
       const attempt = (async (): Promise<HostQueuedStartClaimResult> => {
         // §7 #4: the durable execution claim precedes ANY provider side
         // effect. If it cannot be recorded, this start must not proceed.
@@ -460,6 +473,7 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
         return await attempt
       } finally {
         record.claiming = false
+        record.pendingLease = null
       }
     },
 
@@ -528,8 +542,13 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
         // outcome, no spawn evidence fabricated. If the reservation
         // terminalized while the dispatch was pending (its lease retained
         // for a possibly-running provider), this failure proves the start
-        // attempt is over, so the retained capacity is released now.
-        if (!settleTerminal(record, 'failed')) releaseRetainedLease(record)
+        // attempt is over, BUT if providerRunBegan is true the provider may
+        // still be running (R1): keep the lease retained until
+        // providerRunEnded/settle confirms completion/teardown.
+        const keepLease = record.providerRunBegan
+        if (!settleTerminal(record, 'failed', keepLease)) {
+          if (!keepLease) releaseRetainedLease(record)
+        }
         return { kind: 'failed', error }
       }
       record.providerRunBegan = true
@@ -669,10 +688,28 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
             const ids = new Set<string>()
             let malformed = false
             for (const entry of listed) {
-              const commandId = (entry as { commandId?: unknown } | null)?.commandId
-              if (typeof commandId !== 'string') {
-                // One unreadable entry poisons the whole absence argument:
-                // it could be the claim for any candidate.
+              // R3: full claim record validation. A malformed or incomplete
+              // record poisons the whole absence argument.
+              if (entry === null || typeof entry !== 'object') {
+                malformed = true
+                break
+              }
+              const { commandId, threadId, fingerprint, claimedAt } = entry as {
+                commandId?: unknown
+                threadId?: unknown
+                fingerprint?: unknown
+                claimedAt?: unknown
+              }
+              if (
+                typeof commandId !== 'string' ||
+                commandId === '' ||
+                typeof threadId !== 'string' ||
+                threadId === '' ||
+                typeof fingerprint !== 'string' ||
+                fingerprint === '' ||
+                typeof claimedAt !== 'number' ||
+                !Number.isFinite(claimedAt)
+              ) {
                 malformed = true
                 break
               }

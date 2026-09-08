@@ -712,4 +712,129 @@ describe('HostNodeQueuedStartLifecycle M2 repair (L1-L4)', () => {
     expect(admission.inflightCount()).toBe(0)
     expect(admission.hasThread('thread-b')).toBe(false)
   })
+
+  describe('R1–R3 regression probes', () => {
+    // R1: start callback rejection must NOT release retained lease if
+    // providerRunBegan is true (the provider may still be running).
+    it('R1: start callback rejection retains lease when providerRunBegan, releasing only on providerRunEnded', async () => {
+      const { lifecycle, holder } = await claimedLifecycle()
+      const gate = deferred()
+      let providerRunBegan = false
+      const start = lifecycle.executeStart('cmd-1', () => {
+        // Simulate providerRunBegan being signalled before the callback rejects
+        lifecycle.providerRunStarted('cmd-1')
+        providerRunBegan = true
+        return gate.promise
+      })
+      await settleMicrotasks()
+      expect(lifecycle.getReservation('cmd-1')?.providerRunBegan).toBe(true)
+      expect(lifecycle.getReservation('cmd-1')?.dispatched).toBe(true)
+
+      // Reject the start callback
+      gate.reject(new Error('post-spawn setup failure'))
+      expect(await start).toEqual({ kind: 'failed', error: expect.any(Error) })
+      // Lease MUST be retained (R1 fix): provider may still be live
+      expect(holder.state.releases).toBe(0)
+      expect(lifecycle.getReservation('cmd-1')?.terminalOutcome).toBe('failed')
+
+      // providerRunEnded releases the retained lease
+      expect(lifecycle.providerRunEnded('cmd-1')).toBe(true)
+      expect(holder.state.releases).toBe(1)
+    })
+
+    // R2: same lease object offered twice must not allow the loser to release
+    // the winner's lease (they share the same object).
+    it('R2: same lease object offered to concurrent claims - loser refusal does not release winner', async () => {
+      const lifecycle = createHostNodeQueuedStartLifecycle()
+      lifecycle.reserve(reserveInput())
+      // Same lease object offered to both calls
+      const holder = fakeLease('cmd-1')
+      const sharedLease = holder.lease
+      const first = lifecycle.claim('cmd-1', sharedLease)
+      const second = await lifecycle.claim('cmd-1', sharedLease)
+      // Second must be refused
+      expect(second.kind).toBe('refused')
+      expect(second.reason).toBe('already_claimed')
+      // The lease object is shared, but the lifecycle tracks pendingLease (R2 fix)
+      // so the winner's claim should succeed
+      expect((await first).kind).toBe('claimed')
+      // Only one release should happen when we cancel
+      lifecycle.cancel({ commandId: 'cmd-1' })
+      // The shared lease's release was called exactly once
+      expect(holder.state.releases).toBe(1)
+    })
+
+    // R3: reopen must reject malformed/incomplete claim records
+    it('R3: reopen rejects malformed claim records - empty commandId', async () => {
+      const store: HostQueuedStartExecutionClaimStore = {
+        declaresDurableCoverage: true,
+        record() {},
+        list() {
+          return [
+            {
+              commandId: '',
+              threadId: 't',
+              fingerprint: 'f',
+              claimedAt: 1
+            } as unknown as HostQueuedStartExecutionClaim
+          ]
+        }
+      }
+      const lifecycle = createHostNodeQueuedStartLifecycle({ executionClaimStore: store })
+      const outcomes = await lifecycle.reopen([
+        { commandId: 'cmd-1', threadId: 'thread-a', fingerprint: 'fp-1' }
+      ])
+      // Malformed record poisons the absence argument → everything indeterminate
+      expect(outcomes).toEqual([
+        { commandId: 'cmd-1', outcome: 'indeterminate', resubmittable: null }
+      ])
+    })
+
+    it('R3: reopen rejects incomplete claim records - missing threadId', async () => {
+      const store: HostQueuedStartExecutionClaimStore = {
+        declaresDurableCoverage: true,
+        record() {},
+        list() {
+          return [
+            {
+              commandId: 'cmd-1',
+              fingerprint: 'f',
+              claimedAt: 1
+            } as unknown as HostQueuedStartExecutionClaim
+          ]
+        }
+      }
+      const lifecycle = createHostNodeQueuedStartLifecycle({ executionClaimStore: store })
+      const outcomes = await lifecycle.reopen([
+        { commandId: 'cmd-1', threadId: 'thread-a', fingerprint: 'fp-1' }
+      ])
+      expect(outcomes).toEqual([
+        { commandId: 'cmd-1', outcome: 'indeterminate', resubmittable: null }
+      ])
+    })
+
+    it('R3: reopen rejects claim records with non-finite claimedAt', async () => {
+      const store: HostQueuedStartExecutionClaimStore = {
+        declaresDurableCoverage: true,
+        record() {},
+        list() {
+          return [
+            {
+              commandId: 'cmd-1',
+              threadId: 't',
+              fingerprint: 'f',
+              claimedAt: NaN
+            } as unknown as HostQueuedStartExecutionClaim
+          ]
+        }
+      }
+      const lifecycle = createHostNodeQueuedStartLifecycle({ executionClaimStore: store })
+      const outcomes = await lifecycle.reopen([
+        { commandId: 'cmd-1', threadId: 'thread-a', fingerprint: 'fp-1' }
+      ])
+      expect(outcomes).toEqual([
+        { commandId: 'cmd-1', outcome: 'indeterminate', resubmittable: null }
+      ])
+    })
+  })
 })
