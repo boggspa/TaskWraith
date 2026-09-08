@@ -26,7 +26,7 @@ const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 10))
 
 const emptyAppStore = {
   getWorkspaces: () => [],
-  getChats: () => [],
+  getChatList: () => [],
   getChat: () => null
 }
 

@@ -1,10 +1,15 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import {
   BRIDGE_BROADCAST_METHODS,
   BridgeBroadcaster,
   chatRecordToSummary,
   workspaceRecordToSummary,
-  type BridgeBroadcasterAppStore
+  type BridgeBroadcasterAppStore,
+  type CatalogueRunPresentation,
+  type ChatInventoryRow,
+  type ThreadSummary,
+  type ThreadSummaryStatus,
+  type WorkspaceSummary
 } from './BridgeBroadcaster'
 import { buildRemoteProjectionEnvelope, buildRemoteTaskCard } from './RemoteTaskProjection'
 import {
@@ -12,19 +17,59 @@ import {
   RemoteWorkspaceAllowlist,
   type RemoteWorkspaceCapability
 } from './RemoteWorkspaceAllowlist'
-import type { ChatRecord, WorkspaceRecord } from './store/types'
+import type { ChatListItem, ChatRecord, ProviderId, WorkspaceRecord } from './store/types'
+
+/** The store port plus the full-history getter the real `AppStore` still
+ * exposes. Inventory builders must never reach for it: it parses the whole
+ * profile, and the list broadcasts fire on every inventory tick. */
+type FakeStore = BridgeBroadcasterAppStore & {
+  getChats: Mock<(workspaceId?: string) => ChatRecord[]>
+  getChatList: Mock<(workspaceId?: string) => ChatListItem[]>
+}
+
+/** Chat-list row the way `AppStore.getChatList` shapes one, except that the
+ * fixture's `runs` stay attached: that is the ordinary full-record flavour
+ * whose run-derived status must keep working unchanged. */
+function asListRow(chat: ChatInventoryRow): ChatListItem {
+  return {
+    ...chat,
+    summaryOnly: true,
+    messageCount: chat.messages.length,
+    runCount: chat.runs.length
+  }
+}
+
+const runningPresentation: CatalogueRunPresentation = {
+  status: 'running',
+  runId: 'run-live',
+  startedAt: '2026-05-15T12:00:00Z',
+  runningRunCount: 1
+}
+const idlePresentation: CatalogueRunPresentation = { status: 'idle', runningRunCount: 0 }
+
+/** Row the thread-catalogue mirror hands `getChatList`: no run array, the
+ * decoder's distilled presentation in its place. */
+function makeCatalogueRow(
+  presentation: CatalogueRunPresentation,
+  overrides: Partial<ChatRecord> = {}
+): ChatInventoryRow {
+  return { ...asListRow(makeChat(overrides)), runs: [], cataloguePresentation: presentation }
+}
 
 /** Build a stub AppStore that returns the supplied fixtures. The
- * broadcaster only calls `getWorkspaces`, `getChats`, `getChat` — no
- * mutators — so a frozen-in-time snapshot is sufficient. */
-function makeFakeStore(
-  workspaces: WorkspaceRecord[],
-  chats: ChatRecord[]
-): BridgeBroadcasterAppStore {
+ * broadcaster only calls `getWorkspaces`, `getChatList`, `getChat` — no
+ * mutators — so a frozen-in-time snapshot is sufficient. `getChats` is a
+ * trap: any builder that regresses onto the full-history getter throws. */
+function makeFakeStore(workspaces: WorkspaceRecord[], chats: ChatInventoryRow[]): FakeStore {
   return {
     getWorkspaces: () => workspaces,
-    getChats: (workspaceId?: string) =>
-      workspaceId ? chats.filter((c) => c.workspaceId === workspaceId) : chats,
+    getChatList: vi.fn((workspaceId?: string) => {
+      const rows = chats.map(asListRow)
+      return workspaceId ? rows.filter((row) => row.workspaceId === workspaceId) : rows
+    }),
+    getChats: vi.fn((): ChatRecord[] => {
+      throw new Error('full-history getChats() must not back an inventory broadcast')
+    }),
     getChat: (chatId: string) => chats.find((c) => c.appChatId === chatId) ?? null
   }
 }
@@ -138,6 +183,20 @@ describe('workspaceRecordToSummary', () => {
     const summary = workspaceRecordToSummary(makeWorkspace(), [])
     expect(summary.chatCount).toBe(0)
     expect(summary.runningChatCount).toBe(0)
+  })
+  it('counts running chats from catalogue presentations as well as run arrays', () => {
+    const chats: ChatInventoryRow[] = [
+      makeCatalogueRow(runningPresentation, { appChatId: 'catalogue-running' }),
+      makeCatalogueRow(idlePresentation, { appChatId: 'catalogue-idle' }),
+      makeChat({
+        appChatId: 'full-running',
+        runs: [{ runId: 'run-full', startedAt: '2026-05-15T12:00:00.000Z', status: 'running' }]
+      })
+    ]
+    expect(workspaceRecordToSummary(makeWorkspace(), chats)).toMatchObject({
+      chatCount: 3,
+      runningChatCount: 2
+    })
   })
 })
 
@@ -373,9 +432,138 @@ describe('chatRecordToSummary', () => {
       expect(summary.provider).toBe(provider)
     }
   })
+  describe('catalogue rows', () => {
+    it('takes status and the live run from the presentation, not the empty run array', () => {
+      expect(chatRecordToSummary(makeCatalogueRow(runningPresentation))).toMatchObject({
+        status: 'running',
+        runId: 'run-live',
+        runStartedAt: '2026-05-15T12:00:00.000Z'
+      })
+    })
+
+    it('collapses presentation statuses exactly like full-record statuses', () => {
+      const cases: Array<[CatalogueRunPresentation['status'], ThreadSummaryStatus]> = [
+        ['idle', 'idle'],
+        ['queued', 'running'],
+        ['awaitingApproval', 'running'],
+        ['awaitingQuestion', 'running'],
+        ['success', 'success'],
+        ['failed', 'failed'],
+        ['cancelled', 'failed']
+      ]
+      for (const [status, expected] of cases) {
+        const summary = chatRecordToSummary(
+          makeCatalogueRow({ ...runningPresentation, status, runningRunCount: 0 })
+        )
+        expect(summary.status, status).toBe(expected)
+        expect(summary.runId, status).toBe(expected === 'running' ? 'run-live' : undefined)
+      }
+    })
+
+    it('omits the run when a running presentation names none', () => {
+      const summary = chatRecordToSummary(
+        makeCatalogueRow({ status: 'running', runningRunCount: 0 })
+      )
+      expect(summary.status).toBe('running')
+      expect(summary.runId).toBeUndefined()
+      expect(summary.runStartedAt).toBeUndefined()
+    })
+
+    it('trusts the presentation over runs left on the row', () => {
+      const row = makeCatalogueRow({ status: 'success', runningRunCount: 0 })
+      row.runs = [{ runId: 'stale', startedAt: '2026-05-15T12:00:00Z', status: 'running' }]
+      expect(chatRecordToSummary(row).status).toBe('success')
+      expect(chatRecordToSummary(row).runId).toBeUndefined()
+    })
+
+    it('falls back to lastRun on a chat-list row that carries no presentation', () => {
+      // A legacy chat-list index row: `runs` is stripped, `lastRun` survives.
+      const live: ChatInventoryRow = {
+        ...asListRow(makeChat()),
+        runs: [],
+        lastRun: { runId: 'run-last', startedAt: '2026-05-15T12:00:00Z', status: 'running' }
+      }
+      expect(chatRecordToSummary(live)).toMatchObject({
+        status: 'running',
+        runId: 'run-last',
+        runStartedAt: '2026-05-15T12:00:00.000Z'
+      })
+      const finished: ChatInventoryRow = {
+        ...live,
+        lastRun: { runId: 'run-last', startedAt: '2026-05-15T12:00:00Z', status: 'success' }
+      }
+      expect(chatRecordToSummary(finished).status).toBe('success')
+      expect(chatRecordToSummary(finished).runId).toBeUndefined()
+    })
+
+    it('treats an empty catalogue provider as the legacy gemini default', () => {
+      const row = makeCatalogueRow(idlePresentation, { provider: '' as ProviderId })
+      expect(chatRecordToSummary(row).provider).toBe('gemini')
+    })
+  })
 })
 
 describe('BridgeBroadcaster', () => {
+  it('inventory builders read the metadata-only chat list and never the full-history getter', () => {
+    const notify = vi.fn()
+    const store = makeFakeStore(
+      [makeWorkspace({ id: 'ws-1' })],
+      [makeChat({ workspaceId: 'ws-1' })]
+    )
+    const broadcaster = new BridgeBroadcaster({
+      daemon: { notify },
+      appStore: store,
+      now: () => 1000
+    })
+    const builders: Array<[string, () => void]> = [
+      ['broadcastWorkspaceList', () => broadcaster.broadcastWorkspaceList()],
+      ['broadcastThreadList', () => broadcaster.broadcastThreadList()],
+      ['broadcastWorkspaceUpdated', () => broadcaster.broadcastWorkspaceUpdated('ws-1')],
+      ['emitSnapshotTo', () => void broadcaster.emitSnapshotTo(vi.fn())]
+    ]
+    for (const [name, build] of builders) {
+      store.getChatList.mockClear()
+      store.getChats.mockClear()
+      build()
+      expect(store.getChatList, name).toHaveBeenCalled()
+      expect(store.getChats, name).not.toHaveBeenCalled()
+    }
+    // The trap never nulled a payload: every broadcast actually shipped.
+    expect(notify.mock.calls.map((call) => call[0])).toEqual([
+      BRIDGE_BROADCAST_METHODS.workspaceList,
+      BRIDGE_BROADCAST_METHODS.threadList,
+      BRIDGE_BROADCAST_METHODS.workspaceUpdated
+    ])
+  })
+
+  it('ships catalogue presentation facts through the thread list and workspace counts', () => {
+    const notify = vi.fn()
+    const store = makeFakeStore(
+      [makeWorkspace({ id: 'ws-1' })],
+      [
+        makeCatalogueRow(runningPresentation, {
+          appChatId: 'catalogue-running',
+          workspaceId: 'ws-1'
+        }),
+        makeCatalogueRow(idlePresentation, { appChatId: 'catalogue-idle', workspaceId: 'ws-1' })
+      ]
+    )
+    const broadcaster = new BridgeBroadcaster({
+      daemon: { notify },
+      appStore: store,
+      now: () => 1000
+    })
+    broadcaster.broadcastWorkspaceList()
+    broadcaster.broadcastThreadList()
+    const { workspaces } = notify.mock.calls[0][1] as { workspaces: WorkspaceSummary[] }
+    expect(workspaces).toMatchObject([{ workspaceId: 'ws-1', chatCount: 2, runningChatCount: 1 }])
+    const { threads } = notify.mock.calls[1][1] as { threads: ThreadSummary[] }
+    expect(threads.map((thread) => [thread.chatId, thread.status, thread.runId])).toEqual([
+      ['catalogue-running', 'running', 'run-live'],
+      ['catalogue-idle', 'idle', undefined]
+    ])
+  })
+
   it('broadcastWorkspaceList calls daemon.notify exactly once with the right shape', () => {
     const notify = vi.fn()
     const store = makeFakeStore(
