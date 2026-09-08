@@ -79,6 +79,11 @@ class FakeWriteWorker {
     })
   }
 
+  failNext(): void {
+    const job = this.pending[0]
+    if (job) this.messageHandler?.({ type: 'error', jobId: job.jobId, message: 'injected failure' })
+  }
+
   crash(code = 1): void {
     this.pending = []
     this.exitHandler?.(code)
@@ -153,6 +158,279 @@ describe('durable write primitive', () => {
 
     expect(fs.readFileSync(path.join(doomed, 'keep.txt'), 'utf-8')).toBe('intact')
     expect(fs.readdirSync(dir).filter((entry) => entry.includes('.tmp'))).toHaveLength(0)
+  })
+})
+
+describe('PersistenceWriteQueue byte observations (M1, no byte enforcement)', () => {
+  const bytes = (data: unknown): number => Buffer.byteLength(JSON.stringify(data, null, 2), 'utf8')
+
+  it('counts UTF-8 from one serialization, transfers FIFO ownership, and releases on ACK', async () => {
+    const worker = new FakeWriteWorker()
+    const queue = new PersistenceWriteQueue({ channelFactory: () => worker.channel() })
+    let serializations = 0
+    const firstData = { revision: 1, body: '€🙂漢字' }
+    const secondData = { revision: 2, body: 'é'.repeat(20) }
+    const firstBytes = bytes(firstData)
+    const secondBytes = bytes(secondData)
+    expect(firstBytes).toBeGreaterThan(JSON.stringify(firstData, null, 2).length)
+    expect(queue.stats).toMatchObject({
+      queuedBytes: 0,
+      inFlightBytes: 0,
+      localBytes: 0,
+      retainedBytes: 0,
+      peakQueuedBytes: 0,
+      peakRetainedBytes: 0,
+      maxQueueBytes: null,
+      maxQueueDepth: 64,
+      disposed: false
+    })
+    const first = queue.enqueueWrite({
+      chatId: 'chat-a',
+      filePath: chatPath,
+      data: {
+        toJSON: () => {
+          serializations++
+          return firstData
+        }
+      }
+    })
+    const second = queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: secondData })
+    expect(serializations).toBe(1)
+    const snapshot = queue.stats
+    expect(snapshot).toMatchObject({
+      queuedBytes: secondBytes,
+      inFlightBytes: firstBytes,
+      localBytes: 0,
+      retainedBytes: firstBytes + secondBytes,
+      peakRetainedBytes: firstBytes + secondBytes,
+      peakQueuedBytes: Math.max(firstBytes, secondBytes)
+    })
+    worker.ackNext()
+    expect(queue.stats).toMatchObject({
+      queuedBytes: 0,
+      inFlightBytes: secondBytes,
+      retainedBytes: secondBytes,
+      writtenByWorker: 1
+    })
+    expect(snapshot.retainedBytes).toBe(firstBytes + secondBytes)
+    worker.ackAll()
+    await Promise.all([first, second])
+    expect(queue.stats).toMatchObject({
+      queuedBytes: 0,
+      inFlightBytes: 0,
+      localBytes: 0,
+      retainedBytes: 0,
+      peakRetainedBytes: firstBytes + secondBytes,
+      writtenByWorker: 2
+    })
+    worker.ackBogusJobId(1)
+    expect(queue.stats.retainedBytes).toBe(0)
+    expect(queue.stats.written).toBe(2)
+    queue.dispose()
+  })
+
+  it('observes large retained payloads without a byte-triggered fallback and keeps depth saturation FIFO', async () => {
+    const worker = new FakeWriteWorker()
+    const data = [1, 2, 3, 4].map((revision) => ({ revision, body: '🙂'.repeat(100_000) }))
+    const sizes = data.map(bytes)
+    const observations: ReturnType<typeof getStats>[] = []
+    const queue = new PersistenceWriteQueue({
+      channelFactory: () => worker.channel(),
+      maxQueueDepth: 2,
+      onDegraded: () => observations.push(getStats())
+    })
+    function getStats() {
+      return queue.stats
+    }
+    const pending = data
+      .slice(0, 3)
+      .map((item) => queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: item }))
+    expect(queue.stats.writtenSynchronously).toBe(0)
+    expect(queue.stats.maxQueueBytes).toBeNull()
+    expect(queue.stats.retainedBytes).toBe(sizes.slice(0, 3).reduce((a, b) => a + b, 0))
+    pending.push(queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: data[3] }))
+    await Promise.all(pending)
+    const total = sizes.reduce((a, b) => a + b, 0)
+    expect(observations).toHaveLength(1)
+    expect(observations[0]).toMatchObject({
+      queuedBytes: 0,
+      inFlightBytes: 0,
+      localBytes: total,
+      retainedBytes: total,
+      peakRetainedBytes: total
+    })
+    expect(queue.stats).toMatchObject({ retainedBytes: 0, localBytes: 0, writtenSynchronously: 4 })
+    expect(readRevision()).toBe(4)
+    queue.dispose()
+  })
+
+  it('moves a crashed worker payload into synchronous replay then counts the next worker exactly once', async () => {
+    const workers = [new FakeWriteWorker(), new FakeWriteWorker()]
+    let starts = 0
+    const queue = new PersistenceWriteQueue({
+      channelFactory: () => workers[starts++].channel(),
+      maxRestarts: 1
+    })
+    const first = queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(1) })
+    const second = queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(2) })
+    workers[0].crash()
+    await Promise.all([first, second])
+    expect(queue.stats).toMatchObject({
+      retainedBytes: 0,
+      localBytes: 0,
+      restarts: 1,
+      writtenSynchronously: 2
+    })
+    const third = queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(3) })
+    expect(starts).toBe(2)
+    expect(queue.stats).toMatchObject({
+      inFlightBytes: bytes(payload(3)),
+      queuedBytes: 0,
+      retainedBytes: bytes(payload(3))
+    })
+    workers[1].ackAll()
+    await third
+    expect(queue.stats).toMatchObject({ retainedBytes: 0, written: 3, writtenByWorker: 1 })
+    expect(readRevision()).toBe(3)
+    queue.dispose()
+  })
+
+  it('releases error-path bytes even when synchronous replay rejects one job and completes its sibling', async () => {
+    const worker = new FakeWriteWorker()
+    const queue = new PersistenceWriteQueue({
+      channelFactory: () => worker.channel(),
+      maxRestarts: 0
+    })
+    const occupied = path.join(dir, 'occupied')
+    fs.mkdirSync(occupied)
+    fs.writeFileSync(path.join(occupied, 'keep'), 'intact')
+    const failed = queue.enqueueWrite({ chatId: 'bad', filePath: occupied, data: payload(1) }).then(
+      () => 'unexpected success',
+      () => 'rejected'
+    )
+    const good = queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(2) })
+    worker.failNext()
+    expect(await failed).toBe('rejected')
+    await good
+    expect(queue.stats).toMatchObject({
+      queuedBytes: 0,
+      inFlightBytes: 0,
+      localBytes: 0,
+      retainedBytes: 0,
+      degraded: true,
+      written: 1,
+      writtenSynchronously: 1
+    })
+    await expect(
+      queue.enqueueWrite({ chatId: 'bad', filePath: occupied, data: payload(3) })
+    ).rejects.toThrow()
+    expect(queue.stats.retainedBytes).toBe(0)
+    await queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(4) })
+    expect(queue.stats).toMatchObject({ retainedBytes: 0, localBytes: 0, writtenSynchronously: 2 })
+    expect(readRevision()).toBe(4)
+    queue.dispose()
+  })
+
+  it('clears bytes after timeout, post failure and initial spawn failure', async () => {
+    const worker = new FakeWriteWorker()
+    const timeout = new PersistenceWriteQueue({
+      channelFactory: () => worker.channel(),
+      ackTimeoutMs: 1
+    })
+    await timeout.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(1) })
+    expect(timeout.stats).toMatchObject({
+      retainedBytes: 0,
+      localBytes: 0,
+      writtenSynchronously: 1
+    })
+    timeout.dispose()
+    for (const channelFactory of [
+      () => {
+        throw new Error('spawn failed')
+      },
+      () => ({
+        ...worker.channel(),
+        post: () => {
+          throw new Error('post failed')
+        }
+      })
+    ]) {
+      const queue = new PersistenceWriteQueue({ channelFactory })
+      await queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(2) })
+      expect(queue.stats).toMatchObject({
+        retainedBytes: 0,
+        localBytes: 0,
+        writtenSynchronously: 1
+      })
+      expect(queue.stats.peakRetainedBytes).toBe(bytes(payload(2)))
+      queue.dispose()
+    }
+  })
+
+  it('keeps disposed payload retention visible until the existing explicit drain releases it', async () => {
+    const worker = new FakeWriteWorker()
+    const queue = new PersistenceWriteQueue({ channelFactory: () => worker.channel() })
+    const first = queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(1) })
+    const second = queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(2) })
+    const retained = bytes(payload(1)) + bytes(payload(2))
+    queue.dispose()
+    expect(queue.stats).toMatchObject({
+      disposed: true,
+      retainedBytes: retained,
+      queuedBytes: bytes(payload(2)),
+      inFlightBytes: bytes(payload(1))
+    })
+    await queue.enqueueWrite({
+      chatId: 'other',
+      filePath: path.join(dir, 'other.json'),
+      data: payload(3)
+    })
+    expect(queue.stats).toMatchObject({
+      retainedBytes: retained,
+      localBytes: 0,
+      peakRetainedBytes: retained + bytes(payload(3))
+    })
+    expect(queue.drainSync()).toBe(2)
+    await Promise.all([first, second])
+    expect(queue.stats).toMatchObject({
+      retainedBytes: 0,
+      queuedBytes: 0,
+      inFlightBytes: 0,
+      localBytes: 0
+    })
+    expect(queue.drainSync()).toBe(0)
+    worker.ackBogusJobId(1)
+    expect(queue.stats.retainedBytes).toBe(0)
+    expect(readRevision()).toBe(2)
+  })
+
+  it('does not count failed serialization or keep detached bytes when the existing degrade callback throws', async () => {
+    const worker = new FakeWriteWorker()
+    const queue = new PersistenceWriteQueue({
+      channelFactory: () => worker.channel(),
+      maxQueueDepth: 1,
+      onDegraded: () => {
+        throw new Error('existing callback failure')
+      }
+    })
+    const cyclic: { self?: unknown } = {}
+    cyclic.self = cyclic
+    expect(() => queue.enqueueWrite({ chatId: 'bad', filePath: chatPath, data: cyclic })).toThrow()
+    expect(queue.stats.peakRetainedBytes).toBe(0)
+    void queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(1) })
+    void queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(2) })
+    expect(() =>
+      queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(3) })
+    ).toThrow('existing callback failure')
+    // The original path discards the detached batch when that callback throws.
+    // Observations must not keep reporting roots the queue no longer retains.
+    expect(queue.stats).toMatchObject({
+      retainedBytes: 0,
+      queuedBytes: 0,
+      inFlightBytes: 0,
+      localBytes: 0
+    })
+    queue.dispose()
   })
 })
 

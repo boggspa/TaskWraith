@@ -268,6 +268,25 @@ export interface PersistenceWriteQueueStats {
   writtenSynchronously: number
   restarts: number
   degraded: boolean
+  /** Serialized UTF-8 payload bytes waiting in the FIFO; excludes in-flight work. */
+  queuedBytes: number
+  /** Serialized UTF-8 payload bytes owned by the current worker job. */
+  inFlightBytes: number
+  /** Payloads held by active enqueue / synchronous drain calls, outside the FIFO. */
+  localBytes: number
+  /**
+   * queuedBytes + inFlightBytes + localBytes, counted once per request.
+   * Logical payload retention, not V8 heap size or the worker's IPC copy.
+   * dispose() retains the existing pending roots; only ACK/drain releases them.
+   */
+  retainedBytes: number
+  peakQueuedBytes: number
+  peakRetainedBytes: number
+  /** No byte cap is enforced today. M5 owns backpressure; these gauges only observe. */
+  maxQueueBytes: null
+  /** The existing job-count threshold; not a bound on serialized bytes. */
+  maxQueueDepth: number
+  disposed: boolean
 }
 
 interface QueuedJob {
@@ -275,6 +294,7 @@ interface QueuedJob {
   chatId: string
   filePath: string
   serialized: string
+  serializedBytes: number
   revision?: number
   resolve: () => void
   reject: (error: unknown) => void
@@ -301,6 +321,11 @@ export class PersistenceWriteQueue {
   private permanentlySynchronous = false
   private disposed = false
 
+  private queuedBytes = 0
+  private localBytes = 0
+  private peakQueuedBytes = 0
+  private peakRetainedBytes = 0
+
   private written = 0
   private writtenByWorker = 0
   private writtenSynchronously = 0
@@ -319,7 +344,16 @@ export class PersistenceWriteQueue {
       writtenByWorker: this.writtenByWorker,
       writtenSynchronously: this.writtenSynchronously,
       restarts: this.restarts,
-      degraded: this.permanentlySynchronous
+      degraded: this.permanentlySynchronous,
+      queuedBytes: this.queuedBytes,
+      inFlightBytes: this.inFlight?.serializedBytes ?? 0,
+      localBytes: this.localBytes,
+      retainedBytes: this.queuedBytes + (this.inFlight?.serializedBytes ?? 0) + this.localBytes,
+      peakQueuedBytes: this.peakQueuedBytes,
+      peakRetainedBytes: this.peakRetainedBytes,
+      maxQueueBytes: null,
+      maxQueueDepth: this.maxQueueDepth,
+      disposed: this.disposed
     }
   }
 
@@ -330,31 +364,50 @@ export class PersistenceWriteQueue {
    */
   enqueueWrite(request: PersistenceWriteRequest): Promise<void> {
     const serialized = serializeForDurableWrite(request.data)
+    // JSON.stringify can return undefined for malformed non-JSON callers.
+    // Observing bytes must not add a new throw to that existing failure path.
+    const serializedBytes =
+      typeof serialized === 'string' ? Buffer.byteLength(serialized, 'utf8') : 0
+    this.localBytes += serializedBytes
+    this.peakRetainedBytes = Math.max(
+      this.peakRetainedBytes,
+      this.queuedBytes + (this.inFlight?.serializedBytes ?? 0) + this.localBytes
+    )
+    let retainedLocally = true
+    try {
+      if (this.disposed || this.permanentlySynchronous) {
+        return this.writeInlineOrdered(request.filePath, serialized)
+      }
 
-    if (this.disposed || this.permanentlySynchronous) {
-      return this.writeInlineOrdered(request.filePath, serialized)
-    }
+      // Existing depth backpressure is unchanged. No byte cap or new fallback:
+      // M1 observes the unbounded-byte synchronous path; M5 owns enforcement.
+      if (this.queue.length >= this.maxQueueDepth) {
+        this.degrade(`queue saturated at ${this.queue.length} pending writes`, {
+          allowRestart: true
+        })
+        return this.writeInlineOrdered(request.filePath, serialized)
+      }
 
-    // Backpressure. Note this drains rather than bypassing: writing the new job
-    // inline while older jobs for the same chat are still queued would let it
-    // land FIRST and then be overwritten by stale content.
-    if (this.queue.length >= this.maxQueueDepth) {
-      this.degrade(`queue saturated at ${this.queue.length} pending writes`, { allowRestart: true })
-      return this.writeInlineOrdered(request.filePath, serialized)
-    }
-
-    return new Promise<void>((resolve, reject) => {
-      this.queue.push({
-        jobId: this.nextJobId++,
-        chatId: request.chatId,
-        filePath: request.filePath,
-        serialized,
-        revision: request.revision,
-        resolve,
-        reject
+      return new Promise<void>((resolve, reject) => {
+        this.queue.push({
+          jobId: this.nextJobId++,
+          chatId: request.chatId,
+          filePath: request.filePath,
+          serialized,
+          serializedBytes,
+          revision: request.revision,
+          resolve,
+          reject
+        })
+        this.queuedBytes += serializedBytes
+        this.localBytes -= serializedBytes
+        retainedLocally = false
+        this.peakQueuedBytes = Math.max(this.peakQueuedBytes, this.queuedBytes)
+        this.pump()
       })
-      this.pump()
-    })
+    } finally {
+      if (retainedLocally) this.localBytes -= serializedBytes
+    }
   }
 
   dispose(): void {
@@ -379,17 +432,24 @@ export class PersistenceWriteQueue {
     this.clearAckTimer()
     this.killChannel()
     const jobs = this.inFlight ? [this.inFlight, ...this.queue] : [...this.queue]
+    const drainingBytes = this.queuedBytes + (this.inFlight?.serializedBytes ?? 0)
     this.inFlight = null
     this.queue = []
-    for (const job of jobs) {
-      try {
-        writeSerializedDurably(job.filePath, job.serialized)
-        this.written++
-        this.writtenSynchronously++
-        job.resolve()
-      } catch (error) {
-        job.reject(error)
+    this.queuedBytes = 0
+    this.localBytes += drainingBytes
+    try {
+      for (const job of jobs) {
+        try {
+          writeSerializedDurably(job.filePath, job.serialized)
+          this.written++
+          this.writtenSynchronously++
+          job.resolve()
+        } catch (error) {
+          job.reject(error)
+        }
       }
+    } finally {
+      this.localBytes -= drainingBytes
     }
     return jobs.length
   }
@@ -423,6 +483,7 @@ export class PersistenceWriteQueue {
     }
 
     const job = this.queue.shift()!
+    this.queuedBytes -= job.serializedBytes
     this.inFlight = job
     this.ackTimer = setTimeout(() => {
       this.degrade(`worker did not ACK job ${job.jobId} within ${this.ackTimeoutMs}ms`, {
@@ -510,27 +571,34 @@ export class PersistenceWriteQueue {
 
     const pending: QueuedJob[] = []
     if (this.inFlight) pending.push(this.inFlight)
+    const drainingBytes = this.queuedBytes + (this.inFlight?.serializedBytes ?? 0)
     this.inFlight = null
     pending.push(...this.queue)
     this.queue = []
+    this.queuedBytes = 0
+    this.localBytes += drainingBytes
 
-    const canRestart = options.allowRestart && this.restarts < this.maxRestarts
-    if (canRestart) {
-      this.restarts++
-    } else {
-      this.permanentlySynchronous = true
-    }
-    this.onDegraded?.(reason)
-
-    for (const job of pending) {
-      try {
-        writeSerializedDurably(job.filePath, job.serialized)
-        this.written++
-        this.writtenSynchronously++
-        job.resolve()
-      } catch (error) {
-        job.reject(error)
+    try {
+      const canRestart = options.allowRestart && this.restarts < this.maxRestarts
+      if (canRestart) {
+        this.restarts++
+      } else {
+        this.permanentlySynchronous = true
       }
+      this.onDegraded?.(reason)
+
+      for (const job of pending) {
+        try {
+          writeSerializedDurably(job.filePath, job.serialized)
+          this.written++
+          this.writtenSynchronously++
+          job.resolve()
+        } catch (error) {
+          job.reject(error)
+        }
+      }
+    } finally {
+      this.localBytes -= drainingBytes
     }
   }
 
