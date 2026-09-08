@@ -53,6 +53,26 @@ const {
 } = require('./replayDriver.cjs')
 const { runBaselineCli } = require('./runBaseline.cjs')
 const { dirtyTreeFingerprint, collectRepoProvenance } = require('./repoProvenance.cjs')
+const {
+  MATRIX_SAMPLING,
+  PROVIDER_MIXES,
+  SATURATION_MODES,
+  PAIRING_ROLES,
+  validateMatrixCell,
+  cellName,
+  parseCellName,
+  enumerateMatrixCells,
+  pairedRunNames,
+  assertPairedRunCompatibility
+} = require('./interferenceMatrix.cjs')
+const {
+  CROSS_THREAD_SCHEMA_VERSION,
+  normalizeWorkSpanSection,
+  validateCrossThreadBlock,
+  sampleWorkSpanSections,
+  applyCrossThreadToMetrics
+} = require('./collectors/hostSpans.cjs')
+const { PERF_GATE_THRESHOLDS, PROPOSED_CROSS_THREAD_BOUNDS } = require('./perfGateThresholds.cjs')
 
 function baseEnv(overrides = {}) {
   return {
@@ -3378,3 +3398,250 @@ describe('T9a runner wiring (the producer must actually be invoked)', () => {
     expect(src).toContain("PERF_PRELOAD_PROBE: '1'")
   })
 })
+
+/* ------------------------------------------------------------------ */
+/* M1 — cross-thread interference matrix, span collector, G-X bounds   */
+/* ------------------------------------------------------------------ */
+
+function spanAggregate(overrides: Record<string, unknown> = {}) {
+  return {
+    count: 1,
+    totalMs: 12,
+    p50Ms: 12,
+    p95Ms: 12,
+    maxMs: 12,
+    bytes: 0,
+    fallbackCount: 0,
+    ...overrides
+  }
+}
+
+function spanSection(process: string = 'main', overrides: Record<string, unknown> = {}) {
+  return {
+    process,
+    byKind: { admission_wait: spanAggregate() },
+    byResource: { host_chain: spanAggregate() },
+    recorded: 1,
+    dropped: 0,
+    sampledOut: 0,
+    rejected: 0,
+    ...overrides
+  }
+}
+
+const MATRIX_CELL = {
+  history: 'small',
+  chats: 2,
+  path: 'warm',
+  mix: 'codex_profiles_solo_ensemble_mesh',
+  saturation: 'none'
+}
+
+describe('M1 interference matrix (programme Appendix A)', () => {
+  it('names cells <history>/<chats>/<path>/<mix>/<saturation> and round-trips them', () => {
+    const name = cellName(MATRIX_CELL)
+    expect(name).toBe('small/2/warm/codex_profiles_solo_ensemble_mesh/none')
+    expect(parseCellName(name)).toEqual(MATRIX_CELL)
+    expect(parseCellName('small/2/warm')).toBeNull()
+    expect(parseCellName('small/3/warm/codex_bridge_disabled/none')).toBeNull()
+    expect(parseCellName('not-a-cell')).toBeNull()
+  })
+
+  it('enumerates the full Appendix A cross product with every cell valid', () => {
+    const cells = enumerateMatrixCells()
+    expect(cells.length).toBe(2 * 4 * 2 * PROVIDER_MIXES.length * SATURATION_MODES.length)
+    for (const cell of cells) {
+      expect(validateMatrixCell(cell).ok).toBe(true)
+    }
+    expect(PROVIDER_MIXES).toContain('ollama_distinct_beyond_ceiling')
+    expect(SATURATION_MODES).toContain('host_queue_16_active_1_queued')
+  })
+
+  it('pins the fixed sampling window: 120 s, three repetitions, p50/p95/p99', () => {
+    expect(MATRIX_SAMPLING.windowMs).toBe(120_000)
+    expect(MATRIX_SAMPLING.repetitions).toBe(3)
+    expect(MATRIX_SAMPLING.percentiles).toEqual(['p50', 'p95', 'p99'])
+  })
+
+  it('carries the pairing role on the run name, never the cell name', () => {
+    const names = pairedRunNames(MATRIX_CELL)
+    expect(names.alone).toBe(`${cellName(MATRIX_CELL)}::light-alone`)
+    expect(names.beside).toBe(`${cellName(MATRIX_CELL)}::light-beside`)
+    expect(PAIRING_ROLES).toEqual(['light-alone', 'light-beside'])
+  })
+
+  it('keeps the proposed §1.1 bounds out of the enforced gate thresholds', () => {
+    expect(PROPOSED_CROSS_THREAD_BOUNDS.maxRoundStartLatencyOverLightAloneP95Ms).toBe(250)
+    expect(PROPOSED_CROSS_THREAD_BOUNDS.maxPersistenceBarrierOverLightAloneP95Ms).toBe(300)
+    expect(PROPOSED_CROSS_THREAD_BOUNDS.maxControlResponseEndToEndP95Ms).toBe(300)
+    expect(PROPOSED_CROSS_THREAD_BOUNDS.maxHostQueueWaitUnrelatedCommandP95Ms).toBe(50)
+    expect(PROPOSED_CROSS_THREAD_BOUNDS.maxHostEventLoopLagP95Ms).toBe(25)
+    expect(PROPOSED_CROSS_THREAD_BOUNDS.maxAsyncWriterFallbackCount).toBe(0)
+    // Unratified numbers must never gate a run: nothing §1.1 leaks into the
+    // map evaluatePerfGates consumes.
+    for (const key of Object.keys(PROPOSED_CROSS_THREAD_BOUNDS)) {
+      expect(Object.keys(PERF_GATE_THRESHOLDS)).not.toContain(key)
+    }
+  })
+})
+
+describe('M1 paired-run fixture/window self-test (G-X pairing rule)', () => {
+  function runDescriptor(role: string, overrides: Record<string, unknown> = {}) {
+    const fixture = generatePerfFixture({ workload: 'dual_run', seed: 4242 })
+    return {
+      cellName: cellName(MATRIX_CELL),
+      role,
+      fixtureFingerprint: fixtureFingerprint(fixture),
+      workload: 'dual_run',
+      seed: 4242,
+      windowMs: MATRIX_SAMPLING.windowMs,
+      ...overrides
+    }
+  }
+
+  it('accepts paired runs with identical fixtures, windows, workload and seed', () => {
+    // Same seed twice → identical fingerprints; the pairing is comparable.
+    const alone = runDescriptor('light-alone')
+    const beside = runDescriptor('light-beside')
+    expect(alone.fixtureFingerprint).toBe(beside.fixtureFingerprint)
+    expect(assertPairedRunCompatibility(alone, beside)).toEqual({ ok: true })
+  })
+
+  it('refuses paired runs whose fixtures differ', () => {
+    const alone = runDescriptor('light-alone')
+    const otherFixture = generatePerfFixture({ workload: 'dual_run', seed: 9999 })
+    const beside = runDescriptor('light-beside', {
+      fixtureFingerprint: fixtureFingerprint(otherFixture),
+      seed: 9999
+    })
+    const check = assertPairedRunCompatibility(alone, beside)
+    expect(check.ok).toBe(false)
+    expect(check.reasons!.some((r: string) => r.includes('fixture fingerprints differ'))).toBe(true)
+  })
+
+  it('refuses a wrong-window or role-swapped pairing', () => {
+    const alone = runDescriptor('light-alone')
+    const shortWindow = runDescriptor('light-beside', { windowMs: 60_000 })
+    const windowCheck = assertPairedRunCompatibility(alone, shortWindow)
+    expect(windowCheck.ok).toBe(false)
+    expect(windowCheck.reasons!.some((r: string) => r.includes('windowMs'))).toBe(true)
+
+    const swapped = assertPairedRunCompatibility(
+      runDescriptor('light-beside'),
+      runDescriptor('light-alone')
+    )
+    expect(swapped.ok).toBe(false)
+    expect(swapped.reasons!.some((r: string) => r.includes('role'))).toBe(true)
+  })
+})
+
+describe('M1 crossThread report block (schema seam)', () => {
+  function crossThreadBlock(sections: Record<string, unknown>) {
+    return {
+      schemaVersion: CROSS_THREAD_SCHEMA_VERSION,
+      cells: {
+        [cellName(MATRIX_CELL)]: { capturedAt: '2026-09-08T13:00:00.000Z', processes: sections }
+      }
+    }
+  }
+
+  it('keeps pre-M1 reports valid: the block is optional-when-absent', () => {
+    const metrics = createEmptyPerfMetrics()
+    expect(metrics.crossThread).toBeUndefined()
+    expect(validatePerfMetrics(metrics).ok).toBe(true)
+  })
+
+  it('accepts a well-formed block, including per-process { error } degradation', () => {
+    const metrics = createEmptyPerfMetrics()
+    metrics.crossThread = crossThreadBlock({
+      main: spanSection('main'),
+      host: { error: 'host snapshot unavailable' }
+    })
+    expect(validatePerfMetrics(metrics).ok).toBe(true)
+  })
+
+  it('rejects present-but-malformed blocks loudly', () => {
+    const withBadCellName = createEmptyPerfMetrics()
+    withBadCellName.crossThread = {
+      schemaVersion: CROSS_THREAD_SCHEMA_VERSION,
+      cells: { 'not/a/real/cell/name/at/all': { processes: { main: spanSection('main') } } }
+    }
+    expect(validatePerfMetrics(withBadCellName).ok).toBe(false)
+
+    const withUnknownKind = createEmptyPerfMetrics()
+    withUnknownKind.crossThread = crossThreadBlock({
+      main: spanSection('main', { byKind: { invented_kind: spanAggregate() } })
+    })
+    const kindCheck = validatePerfMetrics(withUnknownKind)
+    expect(kindCheck.ok).toBe(false)
+    expect(kindCheck.errors!.some((e: string) => e.includes('invented_kind'))).toBe(true)
+
+    const withBrokenAggregate = createEmptyPerfMetrics()
+    withBrokenAggregate.crossThread = crossThreadBlock({
+      main: spanSection('main', {
+        byKind: { admission_wait: spanAggregate({ p95Ms: Number.NaN }) }
+      })
+    })
+    expect(validatePerfMetrics(withBrokenAggregate).ok).toBe(false)
+
+    const withBadVersion = createEmptyPerfMetrics()
+    withBadVersion.crossThread = { schemaVersion: 999, cells: {} }
+    expect(validatePerfMetrics(withBadVersion).ok).toBe(false)
+  })
+})
+
+describe('M1 hostSpans collector', () => {
+  it('normalizes a WorkSpanRecorder section and refuses malformed payloads', () => {
+    expect(normalizeWorkSpanSection(spanSection('main'), 'main').ok).toBe(true)
+    expect(normalizeWorkSpanSection(null, 'main').ok).toBe(false)
+    expect(normalizeWorkSpanSection(spanSection('main'), 'host').ok).toBe(false)
+    expect(normalizeWorkSpanSection(spanSection('main', { recorded: Number.NaN }), 'main').ok).toBe(
+      false
+    )
+    expect(
+      normalizeWorkSpanSection(
+        spanSection('main', { byResource: { mars: spanAggregate() } }),
+        'main'
+      ).ok
+    ).toBe(false)
+  })
+
+  it('degrades one sick process without erasing the others, and refuses when none are valid', async () => {
+    const sample = await sampleWorkSpanSections({
+      main: () => spanSection('main'),
+      host: () => {
+        throw new Error('host meter exploded')
+      }
+    })
+    expect(sample.ok).toBe(true)
+    expect(Object.keys(sample.sections!)).toEqual(['main'])
+    expect(sample.errors!.host).toContain('host meter exploded')
+
+    const empty = await sampleWorkSpanSections({
+      host: () => null,
+      renderer: () => spanSection('renderer', { recorded: 'lots' })
+    })
+    expect(empty.ok).toBe(false)
+    expect(empty.reason).toContain('no process yielded a valid span section')
+
+    const unknown = await sampleWorkSpanSections({ renderer2: () => spanSection('renderer') })
+    expect(unknown.ok).toBe(false)
+  })
+
+  it('folds sampled sections into metrics.crossThread keyed by cell', () => {
+    const metrics = createEmptyPerfMetrics()
+    const name = cellName(MATRIX_CELL)
+    applyCrossThreadToMetrics(metrics, MATRIX_CELL, { main: spanSection('main') })
+    expect(metrics.crossThread.cells[name].processes.main.recorded).toBe(1)
+    expect(validateCrossThreadBlock(metrics.crossThread)).toEqual([])
+    expect(validatePerfMetrics(metrics).ok).toBe(true)
+
+    // A second cell merges beside the first instead of replacing it.
+    const otherCell = { ...MATRIX_CELL, saturation: 'ensemble_pool_30_join' }
+    applyCrossThreadToMetrics(metrics, otherCell, { host: spanSection('host') })
+    expect(Object.keys(metrics.crossThread.cells).length).toBe(2)
+
+    expect(() => applyCrossThreadToMetrics(metrics, { ...MATRIX_CELL, chats: 3 }, {})).toThrow()
+    expect(() =>
+      applyCrossThreadToMetrics(metrics, MATRIX_CELL, {})
+    ).toThrow()

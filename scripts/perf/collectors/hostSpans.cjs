@@ -1,0 +1,287 @@
+'use strict'
+
+/**
+ * M1 cross-thread work-span collector (Independent Threads Programme,
+ * Appendix B of docs/performance/independent-threads-programme.md).
+ *
+ * Folds per-process WorkSpanRecorder aggregates into the report's
+ * `metrics.crossThread` block, keyed by interference-matrix cell. The block
+ * is what §1.1's paired light-alone/light-beside comparisons read: WHICH
+ * span kind, on WHICH shared resource, cost the light thread how much,
+ * while the heavy thread ran.
+ *
+ * WIRING STATUS: the section providers are dependency-injected closures.
+ * Production wiring (main's `workSpans` snapshot section, Host's
+ * HostPerfSnapshot meter) is @IntegrationOwner work gated on the live
+ * startup-redesign session releasing index.ts / HostStandaloneComposition.ts.
+ * Until then this collector is exercised by tests only.
+ *
+ * FAIL-CLOSED, two levels — same contract as mainPersistenceStatsCollector:
+ * a malformed section is never half-imported (normalize refuses it), and a
+ * collection where NO process yields a valid section refuses outright. A
+ * single degraded process degrades to an `{ error }` marker (the
+ * MainPerfSnapshot section pattern) so one sick process cannot erase the
+ * attribution the others captured under the same load.
+ */
+
+const { parseCellName } = require('../interferenceMatrix.cjs')
+
+/**
+ * Span taxonomy — must stay in lockstep with WORK_SPAN_KINDS /
+ * WORK_SPAN_RESOURCES / WORK_SPAN_PROCESSES in src/main/perf/WorkSpanRecorder.ts.
+ * If either side changes without the other, the harness will validate a
+ * stale contract and attribution silently escapes the report.
+ */
+const WORK_SPAN_PROCESSES = Object.freeze(['main', 'host', 'renderer'])
+const WORK_SPAN_KINDS = Object.freeze([
+  'admission_wait',
+  'provider_config_wait',
+  'prompt_build',
+  'checkpoint_prepare',
+  'host_queue_wait',
+  'durable_commit',
+  'receipt_delivery',
+  'control_response'
+])
+const WORK_SPAN_RESOURCES = Object.freeze([
+  'ensemble_pool',
+  'host_chain',
+  'codex_daemon',
+  'cursor_overlay',
+  'ollama_model',
+  'workspace_lock',
+  'none'
+])
+
+/** WorkSpanKeyAggregate fields (WorkSpanRecorder.ts). */
+const SPAN_AGGREGATE_FIELDS = Object.freeze([
+  'count',
+  'totalMs',
+  'p50Ms',
+  'p95Ms',
+  'maxMs',
+  'bytes',
+  'fallbackCount'
+])
+
+/** WorkSpanAggregates counters (WorkSpanRecorder.ts). */
+const SPAN_COUNTER_FIELDS = Object.freeze(['recorded', 'dropped', 'sampledOut', 'rejected'])
+
+/** Schema version of the `metrics.crossThread` block this collector writes. */
+const CROSS_THREAD_SCHEMA_VERSION = 1
+
+const PROCESS_SET = new Set(WORK_SPAN_PROCESSES)
+const KIND_SET = new Set(WORK_SPAN_KINDS)
+const RESOURCE_SET = new Set(WORK_SPAN_RESOURCES)
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isFiniteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function validateAggregateMap(map, allowedKeys, label, errors) {
+  if (!isPlainObject(map)) {
+    errors.push(`${label} must be an object`)
+    return
+  }
+  for (const [key, aggregate] of Object.entries(map)) {
+    if (!allowedKeys.has(key)) {
+      errors.push(`${label}.${key} is not a known span taxonomy member`)
+      continue
+    }
+    if (!isPlainObject(aggregate)) {
+      errors.push(`${label}.${key} must be an aggregate object`)
+      continue
+    }
+    for (const field of SPAN_AGGREGATE_FIELDS) {
+      if (!isFiniteNumber(aggregate[field])) {
+        errors.push(`${label}.${key}.${field} must be finite`)
+      }
+    }
+  }
+}
+
+/**
+ * Validate one process's WorkSpanAggregates section (the shape
+ * `WorkSpanRecorder.section()` emits) before anyone treats it as evidence.
+ *
+ * @param {unknown} payload
+ * @param {string} [processName] when given, the section's `process` must match
+ * @returns {{ ok: true, section: object } | { ok: false, reason: string }}
+ */
+function normalizeWorkSpanSection(payload, processName) {
+  const errors = []
+  if (!isPlainObject(payload)) return { ok: false, reason: 'section is not an object' }
+  if (!PROCESS_SET.has(payload.process)) {
+    errors.push(`process must be one of ${WORK_SPAN_PROCESSES.join('|')}`)
+  } else if (processName !== undefined && payload.process !== processName) {
+    errors.push(`section.process ${payload.process} does not match provider ${processName}`)
+  }
+  validateAggregateMap(payload.byKind, KIND_SET, 'byKind', errors)
+  validateAggregateMap(payload.byResource, RESOURCE_SET, 'byResource', errors)
+  for (const field of SPAN_COUNTER_FIELDS) {
+    if (!isFiniteNumber(payload[field])) {
+      errors.push(`${field} must be finite`)
+    }
+  }
+  if (errors.length > 0) return { ok: false, reason: errors.join('; ') }
+  return { ok: true, section: payload }
+}
+
+/**
+ * Validate a whole `metrics.crossThread` block. Returns an array of error
+ * strings (empty when valid) so schema.cjs can fold it into its own error
+ * list — the report schema owns the verdict, this module owns the shape.
+ *
+ * OPTIONAL-WHEN-ABSENT at the schema level (pre-M1 baselines carry no block
+ * and must keep validating); PRESENT-BUT-MALFORMED is always an error.
+ */
+function validateCrossThreadBlock(block) {
+  const errors = []
+  if (!isPlainObject(block)) return ['block must be an object']
+  if (block.schemaVersion !== CROSS_THREAD_SCHEMA_VERSION) {
+    errors.push(`schemaVersion must be ${CROSS_THREAD_SCHEMA_VERSION}`)
+  }
+  if (!isPlainObject(block.cells)) {
+    errors.push('cells required')
+    return errors
+  }
+  for (const [name, cell] of Object.entries(block.cells)) {
+    if (parseCellName(name) === null) {
+      errors.push(`cell ${JSON.stringify(name)} is not a valid matrix cell name`)
+      continue
+    }
+    if (!isPlainObject(cell) || !isPlainObject(cell.processes)) {
+      errors.push(`cell ${name}.processes required`)
+      continue
+    }
+    const processNames = Object.keys(cell.processes)
+    if (processNames.length === 0) {
+      errors.push(`cell ${name} carries no process sections`)
+    }
+    for (const processName of processNames) {
+      if (!PROCESS_SET.has(processName)) {
+        errors.push(`cell ${name}.processes.${processName} is not a known process`)
+        continue
+      }
+      const section = cell.processes[processName]
+      if (isPlainObject(section) && typeof section.error === 'string') continue
+      const check = normalizeWorkSpanSection(section, processName)
+      if (!check.ok) {
+        errors.push(`cell ${name}.${processName}: ${check.reason}`)
+      }
+    }
+  }
+  return errors
+}
+
+/**
+ * Sample every offered process section. Each provider is an injected closure
+ * returning (or resolving) one WorkSpanAggregates-shaped object; a throw,
+ * an `{ error }` marker, null, or a malformed payload degrades THAT process
+ * to an `{ error }` entry. If no process yields a valid section the whole
+ * sample refuses — an empty crossThread block reads as "measured, nothing
+ * happened", which is a claim this collector never makes.
+ *
+ * @param {Record<string, () => unknown>} providers keyed by process name
+ * @returns {Promise<{ ok: true, sections: object, errors: object }
+ *                 | { ok: false, reason: string }>}
+ */
+async function sampleWorkSpanSections(providers) {
+  if (!isPlainObject(providers)) {
+    return { ok: false, reason: 'providers map required' }
+  }
+  const sections = {}
+  const errors = {}
+  for (const [processName, provider] of Object.entries(providers)) {
+    if (!PROCESS_SET.has(processName)) {
+      return { ok: false, reason: `unknown process provider ${JSON.stringify(processName)}` }
+    }
+    if (typeof provider !== 'function') {
+      errors[processName] = 'provider is not a function'
+      continue
+    }
+    let value
+    try {
+      value = await Promise.resolve(provider())
+    } catch (error) {
+      errors[processName] = error instanceof Error ? error.message : String(error)
+      continue
+    }
+    if (isPlainObject(value) && typeof value.error === 'string') {
+      errors[processName] = value.error
+      continue
+    }
+    const check = normalizeWorkSpanSection(value, processName)
+    if (!check.ok) {
+      errors[processName] = check.reason
+      continue
+    }
+    sections[processName] = check.section
+  }
+  if (Object.keys(sections).length === 0) {
+    const detail = Object.entries(errors)
+      .map(([proc, reason]) => `${proc}: ${reason}`)
+      .join('; ')
+    return {
+      ok: false,
+      reason: `no process yielded a valid span section${detail ? ` (${detail})` : ''}`
+    }
+  }
+  return { ok: true, sections, errors }
+}
+
+/**
+ * Fold sampled sections into `metrics.crossThread.cells[cell]`. Mutates and
+ * returns `metrics` so the caller keeps one object identity (the
+ * applyPersistenceStatsToMetrics pattern). Degraded processes are recorded
+ * as `{ error }` markers beside the valid ones.
+ *
+ * Throws on a bad cell name or an unsampled sections object — the sample
+ * step above is the fail-closed boundary; by this point inputs are evidence.
+ */
+function applyCrossThreadToMetrics(metrics, cell, sections, options = {}) {
+  if (!isPlainObject(metrics)) {
+    throw new Error('metrics required')
+  }
+  const name = typeof cell === 'string' ? cell : cellNameSafe(cell)
+  if (parseCellName(name) === null) {
+    throw new Error(`invalid matrix cell: ${JSON.stringify(name)}`)
+  }
+  if (!isPlainObject(sections) || Object.keys(sections).length === 0) {
+    throw new Error('sampled sections required')
+  }
+  const now = typeof options.now === 'function' ? options.now : () => new Date()
+  if (!isPlainObject(metrics.crossThread)) {
+    metrics.crossThread = { schemaVersion: CROSS_THREAD_SCHEMA_VERSION, cells: {} }
+  }
+  if (!isPlainObject(metrics.crossThread.cells)) {
+    metrics.crossThread.cells = {}
+  }
+  metrics.crossThread.cells[name] = {
+    capturedAt: now().toISOString(),
+    processes: { ...sections }
+  }
+  return metrics
+}
+
+function cellNameSafe(cell) {
+  const { cellName } = require('../interferenceMatrix.cjs')
+  return cellName(cell)
+}
+
+module.exports = {
+  WORK_SPAN_PROCESSES,
+  WORK_SPAN_KINDS,
+  WORK_SPAN_RESOURCES,
+  SPAN_AGGREGATE_FIELDS,
+  SPAN_COUNTER_FIELDS,
+  CROSS_THREAD_SCHEMA_VERSION,
+  normalizeWorkSpanSection,
+  validateCrossThreadBlock,
+  sampleWorkSpanSections,
+  applyCrossThreadToMetrics
+}

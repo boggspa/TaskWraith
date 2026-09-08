@@ -7,6 +7,9 @@
 
 const crypto = require('crypto')
 const { PERF_GATE_THRESHOLDS, MIN_PROFILE_BYTES } = require('./perfGateThresholds.cjs')
+// The crossThread block shape lives with the span collector that writes it;
+// schema.cjs owns only the verdict (block errors fold into `errors` below).
+const { validateCrossThreadBlock } = require('./collectors/hostSpans.cjs')
 
 const WORKLOADS = Object.freeze(['30seat', '50seat', 'dual_run', '455_soak', '50_chat_switch'])
 
@@ -359,6 +362,18 @@ function validatePerfMetrics(metrics) {
 
   if (!isPlainObject(metrics.profiles)) {
     errors.push('profiles required')
+  }
+
+  // M1 cross-thread span block (Independent Threads Programme, Appendix B).
+  // Optional-when-absent on purpose — the same T4b seam rule: pre-M1
+  // baselines carry no crossThread block and must keep validating, or the
+  // paired comparisons they are the denominator for could never run.
+  // Present-but-malformed is an error, so a partially wired span pipeline
+  // fails loudly instead of silently reporting an unattributable run.
+  if (metrics.crossThread != null) {
+    for (const error of validateCrossThreadBlock(metrics.crossThread)) {
+      errors.push(`crossThread: ${error}`)
+    }
   }
 
   return errors.length === 0 ? { ok: true, value: metrics } : { ok: false, errors }

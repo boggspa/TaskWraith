@@ -41,9 +41,39 @@ const PERF_GATE_THRESHOLDS = Object.freeze({
   windowedRateWindowMs: 60 * 1000
 })
 
+/**
+ * §1.1 proposed G-X cross-thread bounds (Independent Threads Programme) —
+ * NOT ratified, NOT enforced. They are deliberately kept OUT of
+ * PERF_GATE_THRESHOLDS: evaluatePerfGates consumes that map, and an
+ * unratified number must never fail a run. Ratification is an M1-exit
+ * amendment recorded in the programme doc by the programme owner, after the
+ * paired light-alone/light-beside baselines exist.
+ *
+ * `...OverLightAloneP95Ms` bounds are deltas against the paired light-alone
+ * run of the SAME matrix cell (scripts/perf/interferenceMatrix.cjs), not
+ * absolutes.
+ */
+const PROPOSED_CROSS_THREAD_BOUNDS = Object.freeze({
+  /** Round start (composer send → first participant dispatch) over light-alone p95 (ms). */
+  maxRoundStartLatencyOverLightAloneP95Ms: 250,
+  /** Persistence barrier (awaitChatRecordPersisted) over light-alone p95 (ms). */
+  maxPersistenceBarrierOverLightAloneP95Ms: 300,
+  /** Control response (cancel / approval / answer) end-to-end p95 (ms), Desktop + Host-native. */
+  maxControlResponseEndToEndP95Ms: 300,
+  /** Host command queue wait p95 for a command on an unrelated thread (ms). */
+  maxHostQueueWaitUnrelatedCommandP95Ms: 50,
+  /** Host event-loop lag p95 under heavy-thread load (ms); the Host had no meter before M1. */
+  maxHostEventLoopLagP95Ms: 25,
+  /** Async-writer queue bytes must stay within the configured cap (boolean requirement). */
+  requireAsyncWriterQueueBytesWithinCap: true,
+  /** Fallback counters at zero — asynchronous accumulation guard. */
+  maxAsyncWriterFallbackCount: 0
+})
+
 module.exports = {
   BYTES_1_5_GIB,
   BYTES_20_GIB,
   MIN_PROFILE_BYTES,
-  PERF_GATE_THRESHOLDS
+  PERF_GATE_THRESHOLDS,
+  PROPOSED_CROSS_THREAD_BOUNDS
 }
