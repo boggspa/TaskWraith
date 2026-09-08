@@ -2,7 +2,7 @@
  * ModelUsageCard — Phase L6 slice 1 extraction.
  *
  * The "Model Usage" card that lives in the TaskWraith sidebar
- * (provider stack with per-window progress bars and reset times).
+ * (period groups with per-window progress bars and reset times).
  * Extracted from `Sidebar.tsx`'s inline JSX so the redesign work
  * (L6 slices 2-6) lands here without growing the already-large
  * Sidebar file further.
@@ -25,6 +25,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent
@@ -55,6 +56,12 @@ import {
 } from '../lib/ollamaMemoryAggregation'
 import { computeQuotaPace } from '../lib/QuotaPace'
 import { quotaSegmentCount } from '../lib/quotaSegments'
+import {
+  QUOTA_PERIODS,
+  quotaPeriodForWindow,
+  quotaPeriodRowLabel,
+  type QuotaPeriod
+} from '../lib/quotaPeriods'
 import { loadRendererUsageRecords } from '../lib/usageRecordsCache'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import { formatResetShort } from '../lib/UsageFormat'
@@ -835,15 +842,22 @@ export function CompactModelUsageGrid({
 
 function UsageWindowRow({
   provider,
-  windowEntry
+  windowEntry,
+  inlineProvider = false,
+  planName
 }: {
   provider: ModelUsageProviderId
   windowEntry: UsageWindowAggregate
+  inlineProvider?: boolean
+  planName?: string
 }) {
   const fraction = fillFractionForWindow(windowEntry)
   const percentText = `${Math.round(fraction * 100)}%`
   const windowReset = formatResetShort({ resetAt: windowEntry.resetAt })
-  const title = `${windowEntry.label}: ${windowEntry.limitLabel}${
+  const providerTitle = inlineProvider
+    ? `${modelUsageProviderName(provider)}${planName ? ` (${planName})` : ''} `
+    : ''
+  const title = `${providerTitle}${windowEntry.label}: ${windowEntry.limitLabel}${
     windowReset ? ` · resets ${windowReset}` : ''
   }`
   // Phase L6 slice 2 — accent picks up the provider colour token so
@@ -851,14 +865,34 @@ function UsageWindowRow({
   // variable name matches the token set defined in theme.css.
   const accent = `var(--provider-${provider}-color)`
   const glyph = usageWindowGlyph(provider, windowEntry)
+  const label = (
+    <>
+      {glyph ? (
+        <span className="model-usage-window-glyph" aria-hidden="true">{`${glyph} `}</span>
+      ) : null}
+      {windowEntry.label}
+    </>
+  )
   return (
     <div key={`${provider}-${windowEntry.id}`} className="model-usage-window" title={title}>
       <div className="model-usage-window-row">
         <span className="model-usage-window-label">
-          {glyph ? (
-            <span className="model-usage-window-glyph" aria-hidden="true">{`${glyph} `}</span>
-          ) : null}
-          {windowEntry.label}
+          {inlineProvider ? (
+            <>
+              <ProviderLogoTile provider={provider} size={12} />
+              <span className="model-usage-period-label-text">
+                {glyph ? (
+                  <>
+                    {modelUsageProviderName(provider)} {label}
+                  </>
+                ) : (
+                  quotaPeriodRowLabel(modelUsageProviderName(provider), windowEntry.label)
+                )}
+              </span>
+            </>
+          ) : (
+            label
+          )}
         </span>
         {windowReset && <span className="model-usage-window-reset">resets {windowReset}</span>}
         <span className="model-usage-window-percent">{windowEntry.valueText || percentText}</span>
@@ -879,6 +913,131 @@ function UsageWindowRow({
       <div className="model-usage-window-meta">
         <span>{windowEntry.limitLabel}</span>
       </div>
+    </div>
+  )
+}
+
+/** Expanded sidebar only; Settings keeps its provider headings. Bespoke meters
+ * reuse their existing views so amount provenance and loading states survive. */
+export function PeriodicModelUsageList({
+  quotaEntries,
+  grokUsage,
+  mistralQuota,
+  currency,
+  locale
+}: {
+  quotaEntries: ModelUsageAggregate[]
+  grokUsage?: GrokCreditsMeterViewProps
+  mistralQuota?: MistralQuotaMeterViewProps
+  currency?: DisplayCurrency
+  locale?: string
+}) {
+  type Row = { key: string; content: ReactNode; meterCount: number }
+  const rows = new Map<QuotaPeriod, Row[]>(QUOTA_PERIODS.map(({ id }) => [id, []]))
+  const idle: Row[] = []
+  const providers = orderExpandedUsageProviders([
+    ...quotaEntries.map((entry) => entry.provider),
+    ...(grokUsage ? (['grok'] as const) : []),
+    ...(mistralQuota?.snapshot ? (['mistral'] as const) : [])
+  ])
+  for (const provider of providers) {
+    for (const [entryIndex, entry] of quotaEntries.entries()) {
+      if (entry.provider !== provider) continue
+      if (!entry.windows?.length) {
+        idle.push({
+          key: `${provider}-${entryIndex}-unavailable`,
+          meterCount: 0,
+          content: (
+            <div
+              className="model-usage-period-unavailable"
+              role="status"
+              title={[modelUsageProviderName(provider), entry.planName, entry.quotaError]
+                .filter(Boolean)
+                .join(' · ')}
+            >
+              <ProviderLabel provider={provider} planName={entry.planName} />
+              <span>No data</span>
+            </div>
+          )
+        })
+      }
+      for (const windowEntry of entry.windows ?? []) {
+        rows.get(quotaPeriodForWindow(provider, windowEntry))!.push({
+          key: `${provider}-${entryIndex}-${windowEntry.id}`,
+          meterCount: 1,
+          content: (
+            <div
+              className={`model-usage-period-row provider-${provider}`}
+              style={
+                {
+                  '--model-usage-provider-glow': `var(--provider-${provider}-color)`
+                } as CSSProperties
+              }
+            >
+              <UsageWindowRow
+                provider={provider}
+                windowEntry={windowEntry}
+                planName={entry.planName}
+                inlineProvider
+              />
+            </div>
+          )
+        })
+      }
+    }
+    if (provider === 'grok' && grokUsage) {
+      const row = {
+        key: 'grok-credits',
+        content: <GrokCreditsMeterView {...grokUsage} inlineProvider />,
+        meterCount: 1
+      }
+      if (grokUsage.snapshot?.confidence === 'observed') {
+        rows
+          .get(grokUsage.snapshot.usageKind === 'weekly_limit' ? 'weekly' : 'monthlyAndApi')!
+          .push(row)
+      } else idle.push({ ...row, meterCount: 0 })
+    }
+    if (provider === 'mistral' && mistralQuota?.snapshot) {
+      rows.get('monthlyAndApi')!.push({
+        key: 'mistral-quota',
+        content: (
+          <MistralQuotaMeterView
+            {...mistralQuota}
+            currency={currency}
+            locale={locale}
+            inlineProvider
+          />
+        ),
+        meterCount: mistralQuota.snapshot.estimate.apiUsage ? 2 : 1
+      })
+    }
+  }
+  const sections = QUOTA_PERIODS.filter(({ id }) => rows.get(id)!.length > 0)
+  if (idle.length > 0) {
+    if (sections.length === 0) sections.push(QUOTA_PERIODS[3])
+    rows.get(sections[sections.length - 1].id)!.push(...idle)
+  }
+  return (
+    <div className="model-usage-period-list">
+      {sections.map(({ id, label }) => {
+        const sectionRows = rows.get(id)!
+        const count = sectionRows.reduce((total, row) => total + row.meterCount, 0)
+        return (
+          <section key={id} className="model-usage-period-section" aria-label={`${label} usage`}>
+            <div className="model-usage-period-heading">
+              <h3>{label}</h3>
+              <span>
+                {count} {count === 1 ? 'meter' : 'meters'}
+              </span>
+            </div>
+            <div className="model-usage-period-rows">
+              {sectionRows.map((row) => (
+                <Fragment key={row.key}>{row.content}</Fragment>
+              ))}
+            </div>
+          </section>
+        )
+      })}
     </div>
   )
 }
@@ -1711,6 +1870,14 @@ export function ModelUsageCard({
               <ApiSpendView options={apiSpend} />
             ) : effectiveView === 'context' ? (
               <ContextLengthsView />
+            ) : isSidebarVariant ? (
+              <PeriodicModelUsageList
+                quotaEntries={quotaEntries}
+                grokUsage={grokAvailable ? grokUsage : undefined}
+                mistralQuota={mistralQuotaAvailable ? mistralQuota : undefined}
+                currency={apiSpend?.currency}
+                locale={apiSpend?.locale}
+              />
             ) : (
               <div className="model-usage-list">
                 {expandedUsageProviders.map((provider) => (

@@ -462,6 +462,99 @@
   display: none;
 }
 
+/* Period sections share the existing glass, quota bars and pacing marks. */
+.model-usage-period-section + .model-usage-period-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid
+    color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 22%, transparent);
+}
+
+.model-usage-period-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--sidebar-text, var(--text-primary));
+}
+
+.model-usage-period-heading h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 740;
+  line-height: 1.3;
+}
+
+.model-usage-period-heading > span {
+  color: var(--sidebar-text-secondary, var(--text-secondary));
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-usage-period-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.app-sidebar .model-usage-period-rows .model-usage-item + .model-usage-item {
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.app-sidebar .model-usage-period-rows .model-usage-item + .model-usage-item::before {
+  content: none;
+}
+
+.app-sidebar .model-usage-period-rows .model-usage-window-label {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 5px;
+}
+
+.model-usage-period-label-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-usage-period-rows .provider-logo-tile {
+  flex: 0 0 auto;
+}
+
+.app-sidebar .model-usage-period-rows .model-usage-window-reset {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-usage-period-unavailable {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10.5px;
+}
+
+.model-usage-period-unavailable > span:last-child {
+  flex: 0 0 auto;
+  color: var(--sidebar-text-secondary, var(--text-secondary));
+}
+
+.model-usage-period-unavailable .model-usage-tier-badge {
+  display: none;
+}
+
+.model-usage-period-unavailable .provider-logo-tile {
+  width: 12px !important;
+  height: 12px !important;
+}
+
 .app-sidebar .model-usage-summary--sidebar.is-resizing {
   cursor: ns-resize;
   user-select: none;

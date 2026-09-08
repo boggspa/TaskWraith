@@ -9,6 +9,7 @@ import {
   CompactModelUsageGrid,
   EXPANDED_USAGE_PROVIDER_ORDER,
   ModelUsageCard,
+  PeriodicModelUsageList,
   orderExpandedQuotaWindows,
   orderExpandedUsageProviders,
   type ModelUsageApiSpendOptions
@@ -101,6 +102,105 @@ function quotaEntry(overrides: Partial<ModelUsageAggregate> = {}): ModelUsageAgg
 }
 
 describe('ModelUsageCard', () => {
+  it('groups sidebar meters by period while preserving every provider window and its bar', () => {
+    const entries = [
+      quotaEntry({
+        provider: 'kimi',
+        windows: [
+          {
+            id: 'month',
+            label: 'Monthly',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '41% used',
+            usedPercent: 41
+          },
+          ...quotaEntry().windows!
+        ]
+      }),
+      quotaEntry({
+        provider: 'codex',
+        planName: 'Pro',
+        windows: [
+          {
+            id: 'spark-5h',
+            label: 'Spark 5H',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '25% used',
+            usedPercent: 25
+          },
+          {
+            id: 'weekly',
+            label: 'Weekly',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '77% used',
+            usedPercent: 77
+          }
+        ]
+      }),
+      quotaEntry({
+        provider: 'devin',
+        windows: [
+          {
+            id: 'daily',
+            label: 'Daily quota',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '10% used',
+            usedPercent: 10
+          }
+        ]
+      })
+    ]
+    const html = renderToStaticMarkup(<PeriodicModelUsageList quotaEntries={entries} />)
+    const periods = [...html.matchAll(/aria-label="([^"]+ usage)"/g)].map((match) => match[1])
+    expect(periods).toEqual(['5H usage', 'Daily usage', 'Weekly usage', 'Monthly + API usage'])
+    expect(html.match(/class="model-usage-window"/g)).toHaveLength(6)
+    expect(html.indexOf('Codex ')).toBeLessThan(html.indexOf('Kimi '))
+    expect(html).toContain('Codex (Pro) Spark 5H: 25% used')
+    expect(html).toContain('model-usage-window-glyph')
+    const barParts = (markup: string) =>
+      [...markup.matchAll(/class="quota-[^"]*"[^>]*>/g)].map((match) => match[0]).sort()
+    const original = renderToStaticMarkup(<ModelUsageCard usageSummary={entries} />)
+    expect(barParts(html)).toEqual(barParts(original))
+    expect(original).not.toContain('model-usage-period-section')
+    expect(
+      renderToStaticMarkup(<ModelUsageCard usageSummary={entries} variant="sidebar" />)
+    ).toContain('model-usage-period-section')
+  })
+
+  it('keeps bespoke Grok and Mistral readings and puts unavailable providers at the end', () => {
+    const grok = parseGrokUsage('Credits used: 38%\nResets at: Jul 1, 2026 12:00 PM')
+    grok.usageKind = 'weekly_limit'
+    const mistral = mistralSnapshot(3, 'mistral', 0.1)
+    const html = renderToStaticMarkup(
+      <PeriodicModelUsageList
+        quotaEntries={[
+          quotaEntry({
+            provider: 'antigravity',
+            windows: [],
+            quotaConfigured: true,
+            quotaError: 'Official quota probe timed out.'
+          })
+        ]}
+        grokUsage={{ snapshot: grok, loading: false, errored: false, stale: true }}
+        mistralQuota={{ snapshot: mistral, loading: false }}
+      />
+    )
+    expect(html).toContain('aria-label="Weekly usage"')
+    expect(html).toContain('Grok Weekly')
+    expect(html).toContain('38%')
+    expect(html).toContain('stale')
+    expect(html).toContain('aria-label="Monthly + API usage"')
+    expect(html).toContain('tracked locally since reading')
+    expect(html).toContain('Official quota probe timed out.')
+    expect(html.indexOf('Mistral ')).toBeLessThan(html.indexOf('Antigravity'))
+    expect(html).not.toContain('model-usage-provider-heading')
+    expect(html).not.toContain('aria-label="Daily usage"')
+  })
+
   it('renders cached zero-usage quota windows instead of dropping the provider', () => {
     const html = renderToStaticMarkup(<ModelUsageCard usageSummary={[quotaEntry()]} />)
 

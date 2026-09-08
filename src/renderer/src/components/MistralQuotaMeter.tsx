@@ -146,6 +146,8 @@ export interface MistralQuotaMeterViewProps {
    *  Defaults to USD when unset (tests, older callers). */
   currency?: DisplayCurrency
   locale?: string
+  /** Compact period rows repeat the provider beside each existing meter. */
+  inlineProvider?: boolean
 }
 
 /**
@@ -174,7 +176,8 @@ export function MistralQuotaMeterView({
   snapshot,
   loading,
   currency,
-  locale
+  locale,
+  inlineProvider = false
 }: MistralQuotaMeterViewProps): ReactElement | null {
   // No cycle ⇒ no row at all. Deliberately not a "loading"/"unavailable"
   // placeholder: there is nothing pending to wait for, and an empty Mistral row
@@ -230,14 +233,18 @@ export function MistralQuotaMeterView({
     .join(' · ')
 
   return (
-    <div className="model-usage-item provider-mistral quota-only mistral-quota-meter">
-      <div className="model-usage-provider-heading">
-        <span className="sidebar-provider-label provider-mistral">
-          <ProviderLogoTile provider="mistral" />
-          <span className="model-usage-provider-name">Mistral</span>
-          {planName ? <span className="model-usage-tier-badge">{planName}</span> : null}
-        </span>
-      </div>
+    <div
+      className={`model-usage-item provider-mistral quota-only mistral-quota-meter${inlineProvider ? ' model-usage-period-row' : ''}`}
+    >
+      {!inlineProvider && (
+        <div className="model-usage-provider-heading">
+          <span className="sidebar-provider-label provider-mistral">
+            <ProviderLogoTile provider="mistral" />
+            <span className="model-usage-provider-name">Mistral</span>
+            {planName ? <span className="model-usage-tier-badge">{planName}</span> : null}
+          </span>
+        </div>
+      )}
       <div className="model-usage-window-list">
         {estimate.apiUsage ? (
           // The console's shared "API usage" bar (Studio / Vibe Code / API),
@@ -255,7 +262,23 @@ export function MistralQuotaMeterView({
             ].join(' ')}
           >
             <div className="model-usage-window-row">
-              <span className="model-usage-window-label">API usage</span>
+              <span
+                className="model-usage-window-label"
+                title={
+                  inlineProvider
+                    ? `Mistral${planName ? ` · ${planName}` : ''} API usage`
+                    : undefined
+                }
+              >
+                {inlineProvider ? (
+                  <>
+                    <ProviderLogoTile provider="mistral" size={12} />
+                    <span className="model-usage-period-label-text">Mistral API usage</span>
+                  </>
+                ) : (
+                  'API usage'
+                )}
+              </span>
               <span className="model-usage-window-percent">
                 {estimate.apiUsage.declared
                   ? [
@@ -293,8 +316,22 @@ export function MistralQuotaMeterView({
           data-band={estimate.band}
         >
           <div className="model-usage-window-row">
-            <span className="model-usage-window-label mistral-quota-band-label">
-              {estimate.label}
+            <span
+              className="model-usage-window-label mistral-quota-band-label"
+              title={
+                inlineProvider
+                  ? `Mistral${planName ? ` · ${planName}` : ''}: ${estimate.label}`
+                  : undefined
+              }
+            >
+              {inlineProvider ? (
+                <>
+                  <ProviderLogoTile provider="mistral" size={12} />
+                  <span>Mistral {estimate.label}</span>
+                </>
+              ) : (
+                estimate.label
+              )}
             </span>
             <span
               className="model-usage-window-percent"

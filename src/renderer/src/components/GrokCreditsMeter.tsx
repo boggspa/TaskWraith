@@ -47,6 +47,8 @@ export interface GrokCreditsMeterViewProps {
   errored: boolean
   /** True when `snapshot` is a prior reading shown after a failed refresh. */
   stale: boolean
+  /** Compact period rows repeat the provider beside the meter label. */
+  inlineProvider?: boolean
 }
 
 export interface GrokCreditsMeterProps {
@@ -59,7 +61,8 @@ export function GrokCreditsMeterView({
   snapshot,
   loading,
   errored,
-  stale
+  stale,
+  inlineProvider = false
 }: GrokCreditsMeterViewProps): React.ReactElement {
   const observed = snapshot?.confidence === 'observed'
   const percent = snapshot?.creditsUsedPercent ?? null
@@ -110,19 +113,35 @@ export function GrokCreditsMeterView({
   })
 
   return (
-    <div className="model-usage-item provider-grok quota-only">
-      <div className="model-usage-provider-heading">
-        <span className="sidebar-provider-label provider-grok">
-          <ProviderLogoTile provider="grok" />
-          <span className="model-usage-provider-name">Grok</span>
-          {planName ? <span className="model-usage-tier-badge">{planName}</span> : null}
-        </span>
-      </div>
+    <div
+      className={`model-usage-item provider-grok quota-only${inlineProvider ? ' model-usage-period-row' : ''}`}
+    >
+      {!inlineProvider && (
+        <div className="model-usage-provider-heading">
+          <span className="sidebar-provider-label provider-grok">
+            <ProviderLogoTile provider="grok" />
+            <span className="model-usage-provider-name">Grok</span>
+            {planName ? <span className="model-usage-tier-badge">{planName}</span> : null}
+          </span>
+        </div>
+      )}
       <div className="model-usage-window-list">
         {observed ? (
-          <div className="model-usage-window" title={`Grok ${kindText.toLowerCase()}`}>
+          <div
+            className="model-usage-window"
+            title={`Grok ${kindText.toLowerCase()}${inlineProvider && planName ? ` · ${planName}` : ''}${stale ? ' · stale' : ''}`}
+          >
             <div className="model-usage-window-row">
-              <span className="model-usage-window-label">{windowLabel}</span>
+              <span className="model-usage-window-label">
+                {inlineProvider ? (
+                  <>
+                    <ProviderLogoTile provider="grok" size={12} />
+                    <span className="model-usage-period-label-text">Grok {windowLabel}</span>
+                  </>
+                ) : (
+                  windowLabel
+                )}
+              </span>
               {snapshot?.resetAtText ? (
                 <span className="model-usage-window-reset">
                   resets {formatResetWindow(snapshot.resetAtText)}
@@ -143,7 +162,16 @@ export function GrokCreditsMeterView({
         ) : (
           <div className="model-usage-window" title="Grok usage">
             <div className="model-usage-window-row">
-              <span className="model-usage-window-label">Usage</span>
+              <span className="model-usage-window-label">
+                {inlineProvider ? (
+                  <>
+                    <ProviderLogoTile provider="grok" size={12} />
+                    <span className="model-usage-period-label-text">Grok Usage</span>
+                  </>
+                ) : (
+                  'Usage'
+                )}
+              </span>
               <span className="model-usage-window-percent">{loading ? '…' : '—'}</span>
             </div>
             <div className="model-usage-window-meta">
