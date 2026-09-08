@@ -20,10 +20,17 @@
  * present and absent-tolerated, so pre-attribution reports keep validating
  * while a malformed block still fails closed.
  *
- * HOST POLLING: no Host perf transport is specified yet. sampleHostSpans
- * always emits hostPerf: { unsupported: 'host_perf_transport_unspecified' }.
- * Main sampling uses the existing preload getMainPerfSnapshot IPC through a
- * caller-supplied renderer Runtime.evaluate session; absent spans stay unsupported.
+ * HOST POLLING: the Host transport is an opt-in snapshot FILE written by
+ * src/host-runtime/HostPerfSnapshotFile.ts. When a `hostPerfSnapshotPath`
+ * option or TASKWRAITH_PERF_HOST_SNAPSHOT_PATH env var names that file,
+ * readHostPerfSnapshotFile reads it and validates identity, sequence and
+ * freshness; ONLY a valid fresh read replaces the unsupported marker.
+ * Unconfigured stays { unsupported: 'host_perf_transport_unspecified' };
+ * configured-but-wrong reports the specific refusal (stale / identity
+ * mismatch / invalid) so a broken transport can never impersonate a
+ * pre-transport baseline. Main sampling uses the existing preload
+ * getMainPerfSnapshot IPC through a caller-supplied renderer
+ * Runtime.evaluate session; absent spans stay unsupported.
  *
  * WIRING STATUS: the legacy section providers are dependency-injected closures.
  * Production wiring (main's `workSpans` snapshot section, Host's
@@ -410,13 +417,131 @@ function cellNameSafe(cell) {
   return cellName(cell)
 }
 
+const HOST_PERF_UNSPECIFIED = 'host_perf_transport_unspecified'
+
+/** Reader freshness bound: outside ±this window the file is not evidence. */
+const DEFAULT_HOST_SNAPSHOT_MAX_AGE_MS = 15_000
+
+function resolveHostPerfSnapshotPath(options) {
+  if (typeof options.hostPerfSnapshotPath === 'string' && options.hostPerfSnapshotPath.length > 0) {
+    return options.hostPerfSnapshotPath
+  }
+  const env = isPlainObject(options.env) ? options.env : process.env
+  const fromEnv = env.TASKWRAITH_PERF_HOST_SNAPSHOT_PATH
+  return typeof fromEnv === 'string' && fromEnv.length > 0 ? fromEnv : null
+}
+
+/**
+ * Read one Host perf snapshot file (HostPerfSnapshotFile.ts writer format:
+ * { identity, sequence, capturedAt, truncated?, snapshot }) and validate it
+ * into a hostPerf block. Every refusal is a specific `{ unsupported }`
+ * marker — never a throw, and never a silent fall-through to the
+ * pre-transport 'host_perf_transport_unspecified', which is reserved for
+ * the genuinely unconfigured case.
+ *
+ * options: hostPerfSnapshotPath | env (defaults process.env) picks the
+ * file; expectedIdentity { instanceId?, generation?, pid? } pins which Host
+ * instance may supply evidence; maxAgeMs bounds freshness both directions
+ * (a future-dated artifact is as untrustworthy as a stale one); fs/now are
+ * injection seams.
+ */
+function readHostPerfSnapshotFile(options = {}) {
+  const path = resolveHostPerfSnapshotPath(options)
+  if (path === null) return { unsupported: HOST_PERF_UNSPECIFIED }
+  const fs =
+    isPlainObject(options.fs) && typeof options.fs.readFileSync === 'function'
+      ? options.fs
+      : require('node:fs')
+  const now = typeof options.now === 'function' ? options.now : () => new Date()
+  const maxAgeMs =
+    Number.isFinite(options.maxAgeMs) && options.maxAgeMs > 0
+      ? options.maxAgeMs
+      : DEFAULT_HOST_SNAPSHOT_MAX_AGE_MS
+
+  let raw
+  try {
+    raw = fs.readFileSync(path, 'utf8')
+  } catch (error) {
+    const code = error && typeof error.code === 'string' ? error.code : String(error)
+    return { unsupported: 'host_perf_snapshot_unreadable: ' + code }
+  }
+  let payload
+  try {
+    payload = JSON.parse(raw)
+  } catch {
+    return { unsupported: 'host_perf_snapshot_invalid: parse_error' }
+  }
+  if (!isPlainObject(payload)) {
+    return { unsupported: 'host_perf_snapshot_invalid: payload_shape' }
+  }
+  const identity = payload.identity
+  if (
+    !isPlainObject(identity) ||
+    identity.process !== 'host' ||
+    typeof identity.instanceId !== 'string' ||
+    identity.instanceId.length === 0 ||
+    !Number.isInteger(identity.generation) ||
+    identity.generation < 0 ||
+    !Number.isInteger(identity.pid) ||
+    identity.pid <= 0
+  ) {
+    return { unsupported: 'host_perf_snapshot_invalid: identity' }
+  }
+
+  const expected = isPlainObject(options.expectedIdentity) ? options.expectedIdentity : null
+  if (expected) {
+    for (const key of ['instanceId', 'generation', 'pid']) {
+      if (expected[key] !== undefined && expected[key] !== identity[key]) {
+        return { unsupported: 'host_perf_snapshot_identity_mismatch' }
+      }
+    }
+  }
+  if (!Number.isInteger(payload.sequence) || payload.sequence <= 0) {
+    return { unsupported: 'host_perf_snapshot_invalid: sequence' }
+  }
+  const capturedAtMs =
+    typeof payload.capturedAt === 'string' ? Date.parse(payload.capturedAt) : Number.NaN
+  if (!Number.isFinite(capturedAtMs)) {
+    return { unsupported: 'host_perf_snapshot_invalid: capturedAt' }
+  }
+  const ageMs = now().getTime() - capturedAtMs
+  if (ageMs > maxAgeMs || ageMs < -maxAgeMs) {
+    return { unsupported: 'host_perf_snapshot_stale' }
+  }
+
+  const snapshot = payload.snapshot
+  if (!isPlainObject(snapshot) || !isPlainObject(snapshot.sections)) {
+    return { unsupported: 'host_perf_snapshot_invalid: snapshot_shape' }
+  }
+  const checked = normalizeWorkSpanSection(snapshot.sections.workSpans, 'host')
+  if (!checked.ok) {
+    return { unsupported: 'host_perf_snapshot_invalid: ' + checked.reason }
+  }
+  return {
+    identity: {
+      process: 'host',
+      instanceId: identity.instanceId,
+      generation: identity.generation,
+      pid: identity.pid
+    },
+    sequence: payload.sequence,
+    capturedAt: payload.capturedAt,
+    ...(payload.truncated === true ? { truncated: true } : {}),
+    eventLoopLag: isPlainObject(snapshot.eventLoopLag)
+      ? JSON.parse(JSON.stringify(snapshot.eventLoopLag))
+      : null,
+    // Deep copy, same rule as applyCrossThreadToMetrics: a stored report
+    // must not alias parsed input a caller may mutate.
+    workSpans: JSON.parse(JSON.stringify(checked.section))
+  }
+}
+
 /**
  * Normalize the main snapshot independently of its polling transport. The
  * snapshot's `host` field is OS load, not Node Host perf, and is never used as
  * a substitute for the unavailable Host snapshot transport.
  */
-function normalizeHostSpanSnapshot(snapshot) {
-  const hostPerf = { unsupported: 'host_perf_transport_unspecified' }
+function normalizeHostSpanSnapshot(snapshot, hostPerf = { unsupported: HOST_PERF_UNSPECIFIED }) {
   if (!isPlainObject(snapshot) || !isPlainObject(snapshot.sections)) {
     return { workSpans: { unsupported: 'main_perf_snapshot_unavailable' }, hostPerf }
   }
@@ -437,10 +562,14 @@ function normalizeHostSpanSnapshot(snapshot) {
  * the existing preload getMainPerfSnapshot IPC supplies the main snapshot.
  * No new global handle, launch or inspector attachment is created here.
  */
-async function sampleHostSpans(session) {
+async function sampleHostSpans(session, options = {}) {
+  // Resolved once per sample: the Host file transport is independent of the
+  // renderer session, so a Host read outcome (fresh, stale, mismatched)
+  // rides along even when main sampling itself is unsupported.
+  const hostPerf = readHostPerfSnapshotFile(options)
   const unsupported = (reason) => ({
     workSpans: { unsupported: reason },
-    hostPerf: { unsupported: 'host_perf_transport_unspecified' }
+    hostPerf
   })
   if (!session || typeof session.post !== 'function') {
     return unsupported('renderer_runtime_session_required')
@@ -462,10 +591,11 @@ async function sampleHostSpans(session) {
   }
   const value =
     isPlainObject(result) && isPlainObject(result.result) ? result.result.value : undefined
-  return normalizeHostSpanSnapshot(value)
+  return normalizeHostSpanSnapshot(value, hostPerf)
 }
 
 module.exports = {
+  DEFAULT_HOST_SNAPSHOT_MAX_AGE_MS,
   WORK_SPAN_PROCESSES,
   WORK_SPAN_KINDS,
   WORK_SPAN_RESOURCES,
@@ -481,5 +611,6 @@ module.exports = {
   sampleWorkSpanSections,
   applyCrossThreadToMetrics,
   normalizeHostSpanSnapshot,
+  readHostPerfSnapshotFile,
   sampleHostSpans
 }
