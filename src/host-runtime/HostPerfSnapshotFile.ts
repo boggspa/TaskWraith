@@ -13,9 +13,10 @@
  * unsupported marker.
  *
  * Contract, in order of importance:
- * - OFF the hot path. Capture, serialize and write happen inside the timer
- *   callback only; nothing runs inside a Host command. The timer is unref'd
- *   so an idle Host can still exit.
+ * - Outside Host commands, on an unref'd timer (or explicit writeOnce).
+ *   Capture, JSON.stringify and filesystem writes are still synchronous on
+ *   the Host loop. maxBytes bounds only output; full snapshot materialization
+ *   and serialization cost remain measurable work, not off-loop I/O.
  * - Never throws into the Host loop. A throwing snapshot provider, a
  *   non-serializable section, or a failing filesystem increments
  *   `writeFailures` and leaves the last good file in place.
@@ -99,6 +100,7 @@ interface HostPerfSnapshotFilePayload {
   sequence: number
   capturedAt: string
   truncated?: true
+  truncation?: { extraSections: boolean; byChat: boolean }
   snapshot: unknown
 }
 
@@ -185,18 +187,21 @@ export function createHostPerfSnapshotFileWriter(
   const byteLength = (json: string): number => Buffer.byteLength(json, 'utf8')
 
   /**
-   * Degrade an over-budget payload: keep only the workSpans section, then
-   * strip its byChat attribution. Aggregates and counters — the exact
-   * coverage evidence — are always the last thing standing.
+   * Stage one removes only extra sections. Stage two removes attribution
+   * only if the first measured candidate still exceeds the output budget.
+   * Capture/stringification still run synchronously on the Host timer;
+   * maxBytes bounds output, not capture cost, heap use, or loop occupancy.
    */
-  const degrade = (payload: HostPerfSnapshotFilePayload): HostPerfSnapshotFilePayload => {
+  const degrade = (
+    payload: HostPerfSnapshotFilePayload,
+    dropByChat: boolean
+  ): HostPerfSnapshotFilePayload => {
     const snapshot = payload.snapshot
     let degradedSnapshot: unknown = snapshot
     if (isPlainObject(snapshot) && isPlainObject(snapshot.sections)) {
-      const sections = snapshot.sections
-      const workSpans = sections.workSpans
-      let degradedWorkSpans: unknown = workSpans
-      if (isPlainObject(workSpans) && 'byChat' in workSpans) {
+      const workSpans = snapshot.sections.workSpans
+      let degradedWorkSpans = workSpans
+      if (dropByChat && isPlainObject(workSpans)) {
         const { byChat: _dropped, ...rest } = workSpans
         degradedWorkSpans = rest
       }
@@ -205,50 +210,54 @@ export function createHostPerfSnapshotFileWriter(
         sections: workSpans === undefined ? {} : { workSpans: degradedWorkSpans }
       }
     }
-    return { ...payload, truncated: true, snapshot: degradedSnapshot }
+    return {
+      ...payload,
+      truncated: true,
+      truncation: { extraSections: true, byChat: dropByChat },
+      snapshot: degradedSnapshot
+    }
   }
 
   const writeOnce = (): boolean => {
-    let snapshot: HostPerfSnapshot
+    // One outer boundary also contains clock/conversion failures and getters
+    // supplied by an injected snapshot. Sequence advances only after rename.
     try {
-      snapshot = instrumentation.snapshot({ resetLagWindow: false })
-    } catch {
-      writeFailures += 1
-      return false
-    }
-    const payload: HostPerfSnapshotFilePayload = {
-      identity: frozenIdentity,
-      sequence: sequence + 1,
-      capturedAt: now().toISOString(),
-      snapshot
-    }
-    let json = serialize(payload)
-    if (json === null) {
-      writeFailures += 1
-      return false
-    }
-    let truncated = false
-    if (byteLength(json) > maxBytes) {
-      json = serialize(degrade(payload))
-      if (json === null || byteLength(json) > maxBytes) {
-        // Still over budget: fail closed and keep the last good artifact
-        // rather than publish an over-cap file the reader must distrust.
-        writeFailures += 1
-        return false
+      const snapshot = instrumentation.snapshot({ resetLagWindow: false })
+      const captured = now()
+      const time = captured.getTime()
+      const capturedAt = captured.toISOString()
+      if (!Number.isFinite(time) || Date.parse(capturedAt) !== time) {
+        throw new Error('Host perf snapshot clock is invalid.')
       }
-      truncated = true
-    }
-    try {
+      const payload: HostPerfSnapshotFilePayload = {
+        identity: frozenIdentity,
+        sequence: sequence + 1,
+        capturedAt,
+        snapshot
+      }
+      let json = serialize(payload)
+      if (json === null) throw new Error('Host perf snapshot is not serializable.')
+      let truncated = false
+      if (byteLength(json) > maxBytes) {
+        json = serialize(degrade(payload, false))
+        if (json === null) throw new Error('Host perf snapshot is not serializable.')
+        if (byteLength(json) > maxBytes) json = serialize(degrade(payload, true))
+        if (json === null || byteLength(json) > maxBytes) {
+          // Keep the last good artifact; never publish an oversized candidate.
+          throw new Error('Host perf snapshot exceeds its output cap.')
+        }
+        truncated = true
+      }
       fs.writeFileSync(tmpPath, json)
       fs.renameSync(tmpPath, path)
+      sequence += 1
+      writes += 1
+      if (truncated) truncatedWrites += 1
+      return true
     } catch {
       writeFailures += 1
       return false
     }
-    sequence += 1
-    writes += 1
-    if (truncated) truncatedWrites += 1
-    return true
   }
 
   const start = (): void => {

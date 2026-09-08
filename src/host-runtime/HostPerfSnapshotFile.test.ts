@@ -136,7 +136,7 @@ describe('createHostPerfSnapshotFileWriter', () => {
     ).toThrow(/snapshot/)
   })
 
-  it('degrades an over-budget payload: extra sections then byChat, marked truncated', () => {
+  it('drops extra sections first and keeps byChat when that candidate fits', () => {
     const instrumentation = createHostPerfInstrumentation({
       sections: { bulky: () => 'x'.repeat(4000) }
     })
@@ -163,7 +163,8 @@ describe('createHostPerfSnapshotFileWriter', () => {
     const payload = JSON.parse(fs.files.get('/perf/host-snapshot.json')!)
     expect(payload.truncated).toBe(true)
     expect(payload.snapshot.sections.bulky).toBeUndefined()
-    expect(payload.snapshot.sections.workSpans.byChat).toBeUndefined()
+    expect(payload.snapshot.sections.workSpans.byChat['chat-a']).toBeDefined()
+    expect(payload.truncation).toEqual({ extraSections: true, byChat: false })
     // Aggregates and exact counters are the last thing standing.
     expect(payload.snapshot.sections.workSpans.byKind.host_queue_wait.count).toBe(1)
     expect(payload.snapshot.sections.workSpans.exact).toBeDefined()
@@ -249,6 +250,50 @@ describe('createHostPerfSnapshotFileWriter', () => {
     expect(diskless.writeOnce()).toBe(false)
     expect(failingOps).toEqual(['write:/perf/host-snapshot.json.4242.tmp'])
     expect(diskless.stats()).toMatchObject({ writeFailures: 1, writes: 0, sequence: 0 })
+  })
+
+  it('contains clock and conversion failures on direct writes and timer ticks, then recovers', () => {
+    let clock = () => new Date(FIXED_AT)
+    let tick: (() => void) | undefined
+    const fixture = writer({
+      now: () => clock(),
+      timers: {
+        setInterval: (callback) => {
+          tick = callback
+          return { unref: () => {} }
+        },
+        clearInterval: () => {}
+      }
+    })
+    expect(fixture.created.writeOnce()).toBe(true)
+    const good = fixture.fs.files.get('/perf/host-snapshot.json')
+    fixture.created.start()
+    const brokenConversion = new Date(FIXED_AT)
+    brokenConversion.toISOString = () => {
+      throw new Error('conversion failed')
+    }
+    const invalidReading = new Date(FIXED_AT)
+    invalidReading.getTime = () => NaN
+    const failures = [
+      () => {
+        throw new Error('clock failed')
+      },
+      () => new Date(NaN),
+      () => brokenConversion,
+      () => invalidReading
+    ]
+    for (const failure of failures) {
+      clock = failure
+      expect(fixture.created.writeOnce()).toBe(false)
+      expect(() => tick!()).not.toThrow()
+      expect(fixture.fs.files.get('/perf/host-snapshot.json')).toBe(good)
+      expect(fixture.created.stats().sequence).toBe(1)
+    }
+    expect(fixture.created.stats().writeFailures).toBe(8)
+    clock = () => new Date(FIXED_AT)
+    expect(() => tick!()).not.toThrow()
+    expect(fixture.created.stats()).toMatchObject({ sequence: 2, writes: 2, writeFailures: 8 })
+    fixture.created.stop()
   })
 
   it('start arms one unref-ed interval, ticks write, and stop/start are idempotent', () => {

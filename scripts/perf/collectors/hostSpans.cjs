@@ -240,6 +240,201 @@ function validateByChat(byChat, errors) {
 }
 
 /**
+ * Versioned metadata lives INSIDE workSpans so existing section-only folding
+ * cannot discard the Host identity, freshness or coverage decision.
+ * "available" is attribution availability, not a paired performance verdict.
+ */
+function hostIdentityValid(identity) {
+  return (
+    isPlainObject(identity) &&
+    identity.process === 'host' &&
+    typeof identity.instanceId === 'string' &&
+    identity.instanceId.length > 0 &&
+    Number.isSafeInteger(identity.generation) &&
+    identity.generation >= 0 &&
+    Number.isSafeInteger(identity.pid) &&
+    identity.pid > 0
+  )
+}
+
+function identityIsPinned(identity, expected) {
+  return (
+    isPlainObject(expected) &&
+    ['instanceId', 'generation', 'pid'].every(
+      (key) => expected[key] !== undefined && expected[key] === identity[key]
+    )
+  )
+}
+
+function attributionCoverage(section, meta, requiredChatIds) {
+  const availableChatIds = isPlainObject(section.byChat) ? Object.keys(section.byChat).sort() : []
+  const missingChatIds = requiredChatIds.filter(
+    (id) =>
+      !isPlainObject(section.byChat?.[id]) ||
+      !Object.values(section.byChat[id]).some(
+        (aggregate) =>
+          isPlainObject(aggregate) && isFiniteNumber(aggregate.count) && aggregate.count > 0
+      )
+  )
+  let status = 'available'
+  let reason = null
+  if (!identityIsPinned(meta.identity, meta.expectedIdentity)) {
+    status = 'unsupported'
+    reason = 'expected_identity_required'
+  } else if (requiredChatIds.length === 0) {
+    status = 'unsupported'
+    reason = 'designated_population_required'
+  } else if (meta.truncation?.byChat || (meta.truncated && meta.truncation === null)) {
+    status = 'censored'
+    reason = 'transport_attribution_truncated'
+  } else if (!isPlainObject(section.byChat) || missingChatIds.length) {
+    status = 'censored'
+    reason = 'designated_population_missing'
+  } else if (section.attributionOverflow === undefined) {
+    status = 'unsupported'
+    reason = 'population_coverage_unknown'
+  }
+  return {
+    status,
+    reason,
+    requiredChatIds,
+    availableChatIds,
+    missingChatIds,
+    // These remain sampled-population diagnostics. No claim of an unsampled
+    // window or process-wide zero fallback is inferred from attributed timing.
+    sourceCoverage: Object.fromEntries(
+      [...SPAN_COUNTER_FIELDS, ...SPAN_COUNTER_OPTIONAL_FIELDS].map((key) => [
+        key,
+        section[key] ?? null
+      ])
+    )
+  }
+}
+
+const HOST_LAG_FIELDS = ['observedForMs', 'p50Ms', 'p95Ms', 'p99Ms', 'maxMs', 'meanMs']
+
+function normalizeHostLag(lag) {
+  if (!isPlainObject(lag)) return { unsupported: 'host_perf_lag_invalid: object_required' }
+  for (const key of HOST_LAG_FIELDS) {
+    if (!isFiniteNumber(lag[key]) || lag[key] < 0)
+      return { unsupported: 'host_perf_lag_invalid: ' + key }
+  }
+  if (typeof lag.sampling !== 'boolean') return { unsupported: 'host_perf_lag_invalid: sampling' }
+  if (
+    lag.p50Ms > lag.p95Ms ||
+    lag.p95Ms > lag.p99Ms ||
+    lag.p99Ms > lag.maxMs ||
+    lag.meanMs > lag.maxMs
+  ) {
+    return { unsupported: 'host_perf_lag_invalid: range' }
+  }
+  if (!lag.sampling || lag.observedForMs === 0) return { unsupported: 'host_perf_lag_unobserved' }
+  return Object.fromEntries([...HOST_LAG_FIELDS, 'sampling'].map((key) => [key, lag[key]]))
+}
+
+function sameJson(left, right) {
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => sameJson(value, right[index]))
+    )
+  }
+  if (isPlainObject(left) || isPlainObject(right)) {
+    return (
+      isPlainObject(left) &&
+      isPlainObject(right) &&
+      Object.keys(left).length === Object.keys(right).length &&
+      Object.keys(left).every((key) => Object.hasOwn(right, key) && sameJson(left[key], right[key]))
+    )
+  }
+  return left === right
+}
+
+function validateHostSnapshotMetadata(meta, section, errors) {
+  if (meta === undefined) return // Legacy sections remain diagnostic-compatible.
+  const invalid = (reason) => errors.push('hostSnapshot.' + reason)
+  if (!isPlainObject(meta) || meta.schemaVersion !== 1 || section.process !== 'host') {
+    invalid('schema')
+    return
+  }
+  if (
+    !hostIdentityValid(meta.identity) ||
+    !Number.isSafeInteger(meta.sequence) ||
+    meta.sequence <= 0 ||
+    meta.sequenceMonotonicity !== 'not_checked'
+  ) {
+    invalid('identity_or_sequence')
+    return
+  }
+  if (meta.expectedIdentity !== null && !isPlainObject(meta.expectedIdentity)) {
+    invalid('expectedIdentity')
+    return
+  }
+  if (
+    meta.expectedIdentity &&
+    Object.keys(meta.expectedIdentity).some(
+      (key) =>
+        !['instanceId', 'generation', 'pid'].includes(key) ||
+        meta.expectedIdentity[key] !== meta.identity[key]
+    )
+  ) {
+    invalid('expectedIdentity_mismatch')
+    return
+  }
+  if (meta.identityVerified !== identityIsPinned(meta.identity, meta.expectedIdentity))
+    invalid('identityVerified')
+  const captured = typeof meta.capturedAt === 'string' ? Date.parse(meta.capturedAt) : NaN
+  const read = typeof meta.readAt === 'string' ? Date.parse(meta.readAt) : NaN
+  if (
+    !Number.isFinite(captured) ||
+    !Number.isFinite(read) ||
+    !isFiniteNumber(meta.maxAgeMs) ||
+    meta.maxAgeMs <= 0 ||
+    !isFiniteNumber(meta.ageMs) ||
+    meta.ageMs !== read - captured ||
+    Math.abs(meta.ageMs) > meta.maxAgeMs
+  )
+    invalid('freshness')
+  if (
+    !Number.isSafeInteger(meta.bytesRead) ||
+    meta.bytesRead < 0 ||
+    !Number.isSafeInteger(meta.maxBytes) ||
+    meta.maxBytes <= 0 ||
+    meta.bytesRead > meta.maxBytes
+  )
+    invalid('byte_coverage')
+  if (
+    typeof meta.truncated !== 'boolean' ||
+    (meta.truncation !== null &&
+      (!isPlainObject(meta.truncation) ||
+        typeof meta.truncation.extraSections !== 'boolean' ||
+        typeof meta.truncation.byChat !== 'boolean')) ||
+    (!meta.truncated && meta.truncation !== null)
+  ) {
+    invalid('truncation')
+    return
+  }
+  const population = meta.attribution?.requiredChatIds
+  if (
+    !Array.isArray(population) ||
+    population.some((id) => typeof id !== 'string' || !id.trim()) ||
+    new Set(population).size !== population.length
+  ) {
+    invalid('attribution_population')
+    return
+  }
+  if (!sameJson(meta.attribution, attributionCoverage(section, meta, population)))
+    invalid('attribution_coverage')
+  if (!isPlainObject(meta.eventLoopLag) || typeof meta.eventLoopLag.unsupported !== 'string') {
+    const normalized = normalizeHostLag(meta.eventLoopLag)
+    if (normalized.unsupported || !sameJson(meta.eventLoopLag, normalized)) invalid('eventLoopLag')
+  } else if (!meta.eventLoopLag.unsupported.startsWith('host_perf_lag_'))
+    invalid('eventLoopLag_unsupported')
+}
+
+/**
  * Validate one process's WorkSpanAggregates section (the shape
  * `WorkSpanRecorder.section()` emits) before anyone treats it as evidence.
  *
@@ -269,6 +464,7 @@ function normalizeWorkSpanSection(payload, processName) {
   }
   validateExactCounters(payload.exact, errors)
   validateByChat(payload.byChat, errors)
+  validateHostSnapshotMetadata(payload.hostSnapshot, payload, errors)
   if (errors.length > 0) return { ok: false, reason: errors.join('; ') }
   return { ok: true, section: payload }
 }
@@ -396,7 +592,24 @@ function applyCrossThreadToMetrics(metrics, cell, sections, options = {}) {
   if (!isPlainObject(sections) || Object.keys(sections).length === 0) {
     throw new Error('sampled sections required')
   }
+  if (options.requireHostAttribution === true) {
+    const checked = normalizeWorkSpanSection(sections.host, 'host')
+    if (!checked.ok || checked.section.hostSnapshot?.attribution.status !== 'available') {
+      throw new Error(
+        'Host attribution requires pinned identity and available designated population.'
+      )
+    }
+  }
   const now = typeof options.now === 'function' ? options.now : () => new Date()
+  let capturedAt
+  try {
+    const clock = now()
+    const ms = clock.getTime()
+    capturedAt = clock.toISOString()
+    if (!Number.isFinite(ms) || Date.parse(capturedAt) !== ms) throw new Error('invalid clock')
+  } catch {
+    throw new Error('cross_thread_clock_unavailable')
+  }
   if (!isPlainObject(metrics.crossThread)) {
     metrics.crossThread = { schemaVersion: CROSS_THREAD_SCHEMA_VERSION, cells: {} }
   }
@@ -404,7 +617,7 @@ function applyCrossThreadToMetrics(metrics, cell, sections, options = {}) {
     metrics.crossThread.cells = {}
   }
   metrics.crossThread.cells[name] = {
-    capturedAt: now().toISOString(),
+    capturedAt,
     // Deep copy: sections may be live recorder output (byChat/exact are
     // rebuilt per snapshot), and a stored report must not alias it.
     processes: JSON.parse(JSON.stringify(sections))
@@ -421,6 +634,8 @@ const HOST_PERF_UNSPECIFIED = 'host_perf_transport_unspecified'
 
 /** Reader freshness bound: outside ±this window the file is not evidence. */
 const DEFAULT_HOST_SNAPSHOT_MAX_AGE_MS = 15_000
+/** Reader input bound, independent of the writer's configured output bound. */
+const DEFAULT_HOST_SNAPSHOT_MAX_BYTES = 1024 * 1024
 
 function resolveHostPerfSnapshotPath(options) {
   if (typeof options.hostPerfSnapshotPath === 'string' && options.hostPerfSnapshotPath.length > 0) {
@@ -441,98 +656,208 @@ function resolveHostPerfSnapshotPath(options) {
  *
  * options: hostPerfSnapshotPath | env (defaults process.env) picks the
  * file; expectedIdentity { instanceId?, generation?, pid? } pins which Host
- * instance may supply evidence; maxAgeMs bounds freshness both directions
- * (a future-dated artifact is as untrustworthy as a stale one); fs/now are
- * injection seams.
+ * instance may supply diagnostics; full identity plus requiredChatIds are
+ * required for attribution availability. maxAgeMs bounds freshness both ways;
+ * maxBytes bounds descriptor input independently of the writer. fs must expose
+ * lstat/open/fstat/read/closeSync. Positive sequence does not prove monotonic
+ * consumption. Metadata embedded in workSpans survives existing report folds;
+ * requireHostAttribution:true on the fold refuses missing/censored evidence.
  */
-function readHostPerfSnapshotFile(options = {}) {
-  const path = resolveHostPerfSnapshotPath(options)
-  if (path === null) return { unsupported: HOST_PERF_UNSPECIFIED }
-  const fs =
-    isPlainObject(options.fs) && typeof options.fs.readFileSync === 'function'
-      ? options.fs
-      : require('node:fs')
-  const now = typeof options.now === 'function' ? options.now : () => new Date()
-  const maxAgeMs =
-    Number.isFinite(options.maxAgeMs) && options.maxAgeMs > 0
-      ? options.maxAgeMs
-      : DEFAULT_HOST_SNAPSHOT_MAX_AGE_MS
-
-  let raw
+function readBoundedHostSnapshot(path, options) {
+  const nodeFs = require('node:fs')
+  const fs = options.fs === undefined ? nodeFs : options.fs
+  const maxBytes =
+    options.maxBytes === undefined ? DEFAULT_HOST_SNAPSHOT_MAX_BYTES : options.maxBytes
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    return { unsupported: 'host_perf_snapshot_invalid: maxBytes' }
+  }
+  const methods = ['lstatSync', 'openSync', 'fstatSync', 'readSync', 'closeSync']
+  if (!isPlainObject(fs) || methods.some((name) => typeof fs[name] !== 'function')) {
+    return { unsupported: 'host_perf_snapshot_unreadable: fs_contract' }
+  }
+  const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino
+  let fd
   try {
-    raw = fs.readFileSync(path, 'utf8')
+    const named = fs.lstatSync(path)
+    if (!named.isFile()) return { unsupported: 'host_perf_snapshot_nonregular' }
+    const flags =
+      nodeFs.constants.O_RDONLY |
+      (nodeFs.constants.O_NONBLOCK || 0) |
+      (nodeFs.constants.O_NOFOLLOW || 0)
+    fd = fs.openSync(path, flags)
+    const before = fs.fstatSync(fd)
+    if (!before.isFile()) return { unsupported: 'host_perf_snapshot_nonregular' }
+    if (!sameFile(named, before)) return { unsupported: 'host_perf_snapshot_replaced' }
+    if (!Number.isSafeInteger(before.size) || before.size < 0)
+      return { unsupported: 'host_perf_snapshot_unreadable: size' }
+    if (before.size > maxBytes) return { unsupported: 'host_perf_snapshot_oversized' }
+    // A small fixed buffer, never a file-size or caller-cap allocation. Read at
+    // most cap+1 bytes so growth after fstat cannot bypass the input bound.
+    const buffer = Buffer.alloc(Math.min(64 * 1024, maxBytes + 1))
+    const chunks = []
+    let total = 0
+    while (total <= maxBytes) {
+      const length = Math.min(buffer.length, maxBytes + 1 - total)
+      const count = fs.readSync(fd, buffer, 0, length, total)
+      if (!Number.isSafeInteger(count) || count < 0 || count > length) {
+        return { unsupported: 'host_perf_snapshot_unreadable: read_count' }
+      }
+      if (count === 0) break
+      total += count
+      if (total > maxBytes) return { unsupported: 'host_perf_snapshot_oversized' }
+      chunks.push(Buffer.from(buffer.subarray(0, count)))
+    }
+    const after = fs.fstatSync(fd)
+    const current = fs.lstatSync(path)
+    if (!current.isFile() || !sameFile(before, current) || !sameFile(before, after)) {
+      return { unsupported: 'host_perf_snapshot_replaced' }
+    }
+    if (after.size > maxBytes || current.size > maxBytes)
+      return { unsupported: 'host_perf_snapshot_oversized' }
+    if (after.size > before.size || current.size > before.size)
+      return { unsupported: 'host_perf_snapshot_changed: grew' }
+    if (after.size < before.size || current.size < before.size)
+      return { unsupported: 'host_perf_snapshot_changed: shrunk' }
+    if (
+      total !== before.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs ||
+      before.mtimeMs !== current.mtimeMs ||
+      before.ctimeMs !== current.ctimeMs
+    ) {
+      return { unsupported: 'host_perf_snapshot_changed: modified_or_short_read' }
+    }
+    return { raw: Buffer.concat(chunks, total).toString('utf8'), bytesRead: total, maxBytes }
   } catch (error) {
-    const code = error && typeof error.code === 'string' ? error.code : String(error)
-    return { unsupported: 'host_perf_snapshot_unreadable: ' + code }
-  }
-  let payload
-  try {
-    payload = JSON.parse(raw)
-  } catch {
-    return { unsupported: 'host_perf_snapshot_invalid: parse_error' }
-  }
-  if (!isPlainObject(payload)) {
-    return { unsupported: 'host_perf_snapshot_invalid: payload_shape' }
-  }
-  const identity = payload.identity
-  if (
-    !isPlainObject(identity) ||
-    identity.process !== 'host' ||
-    typeof identity.instanceId !== 'string' ||
-    identity.instanceId.length === 0 ||
-    !Number.isInteger(identity.generation) ||
-    identity.generation < 0 ||
-    !Number.isInteger(identity.pid) ||
-    identity.pid <= 0
-  ) {
-    return { unsupported: 'host_perf_snapshot_invalid: identity' }
-  }
-
-  const expected = isPlainObject(options.expectedIdentity) ? options.expectedIdentity : null
-  if (expected) {
-    for (const key of ['instanceId', 'generation', 'pid']) {
-      if (expected[key] !== undefined && expected[key] !== identity[key]) {
-        return { unsupported: 'host_perf_snapshot_identity_mismatch' }
+    const code = error && typeof error.code === 'string' ? error.code : 'io_error'
+    return {
+      unsupported:
+        code === 'ELOOP'
+          ? 'host_perf_snapshot_nonregular'
+          : 'host_perf_snapshot_unreadable: ' + code
+    }
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd)
+      } catch {
+        /* Failure remains diagnostic-only. */
       }
     }
   }
-  if (!Number.isInteger(payload.sequence) || payload.sequence <= 0) {
+}
+
+function readHostPerfSnapshotFile(options = {}) {
+  const path = resolveHostPerfSnapshotPath(options)
+  if (path === null) return { unsupported: HOST_PERF_UNSPECIFIED }
+  const bounded = readBoundedHostSnapshot(path, options)
+  if (bounded.unsupported) return bounded
+  let payload
+  try {
+    payload = JSON.parse(bounded.raw)
+  } catch {
+    return { unsupported: 'host_perf_snapshot_invalid: parse_error' }
+  }
+  if (!isPlainObject(payload)) return { unsupported: 'host_perf_snapshot_invalid: payload_shape' }
+  const identity = payload.identity
+  if (!hostIdentityValid(identity)) return { unsupported: 'host_perf_snapshot_invalid: identity' }
+  const expected = isPlainObject(options.expectedIdentity)
+    ? Object.fromEntries(
+        ['instanceId', 'generation', 'pid']
+          .filter((key) => options.expectedIdentity[key] !== undefined)
+          .map((key) => [key, options.expectedIdentity[key]])
+      )
+    : null
+  if (expected && Object.keys(expected).some((key) => expected[key] !== identity[key])) {
+    return { unsupported: 'host_perf_snapshot_identity_mismatch' }
+  }
+  if (!Number.isSafeInteger(payload.sequence) || payload.sequence <= 0) {
     return { unsupported: 'host_perf_snapshot_invalid: sequence' }
   }
-  const capturedAtMs =
-    typeof payload.capturedAt === 'string' ? Date.parse(payload.capturedAt) : Number.NaN
-  if (!Number.isFinite(capturedAtMs)) {
+  const capturedAtMs = typeof payload.capturedAt === 'string' ? Date.parse(payload.capturedAt) : NaN
+  if (!Number.isFinite(capturedAtMs))
     return { unsupported: 'host_perf_snapshot_invalid: capturedAt' }
+  let readAt
+  let readAtMs
+  try {
+    const now = (typeof options.now === 'function' ? options.now : () => new Date())()
+    readAtMs = now.getTime()
+    readAt = now.toISOString()
+    if (!Number.isFinite(readAtMs) || Date.parse(readAt) !== readAtMs)
+      throw new Error('invalid clock')
+  } catch {
+    return { unsupported: 'host_perf_snapshot_clock_unavailable' }
   }
-  const ageMs = now().getTime() - capturedAtMs
-  if (ageMs > maxAgeMs || ageMs < -maxAgeMs) {
-    return { unsupported: 'host_perf_snapshot_stale' }
-  }
-
+  const maxAgeMs =
+    isFiniteNumber(options.maxAgeMs) && options.maxAgeMs > 0
+      ? options.maxAgeMs
+      : DEFAULT_HOST_SNAPSHOT_MAX_AGE_MS
+  const ageMs = readAtMs - capturedAtMs
+  if (Math.abs(ageMs) > maxAgeMs) return { unsupported: 'host_perf_snapshot_stale' }
   const snapshot = payload.snapshot
   if (!isPlainObject(snapshot) || !isPlainObject(snapshot.sections)) {
     return { unsupported: 'host_perf_snapshot_invalid: snapshot_shape' }
   }
   const checked = normalizeWorkSpanSection(snapshot.sections.workSpans, 'host')
-  if (!checked.ok) {
-    return { unsupported: 'host_perf_snapshot_invalid: ' + checked.reason }
+  if (!checked.ok) return { unsupported: 'host_perf_snapshot_invalid: ' + checked.reason }
+  if (payload.truncated !== undefined && typeof payload.truncated !== 'boolean') {
+    return { unsupported: 'host_perf_snapshot_invalid: truncated' }
   }
-  return {
+  const truncation = payload.truncation ?? null
+  if (
+    truncation !== null &&
+    (!payload.truncated ||
+      !isPlainObject(truncation) ||
+      typeof truncation.extraSections !== 'boolean' ||
+      typeof truncation.byChat !== 'boolean')
+  ) {
+    return { unsupported: 'host_perf_snapshot_invalid: truncation' }
+  }
+  const requiredChatIds = options.requiredChatIds === undefined ? [] : options.requiredChatIds
+  if (
+    !Array.isArray(requiredChatIds) ||
+    requiredChatIds.some((id) => typeof id !== 'string' || !id.trim()) ||
+    new Set(requiredChatIds).size !== requiredChatIds.length
+  ) {
+    return { unsupported: 'host_perf_snapshot_invalid: requiredChatIds' }
+  }
+  const eventLoopLag = normalizeHostLag(snapshot.eventLoopLag)
+  const meta = {
+    schemaVersion: 1,
     identity: {
       process: 'host',
       instanceId: identity.instanceId,
       generation: identity.generation,
       pid: identity.pid
     },
+    expectedIdentity: expected,
+    identityVerified: identityIsPinned(identity, expected),
     sequence: payload.sequence,
+    // Positivity is shape validation; this stateless reader does NOT enforce
+    // ordered consumption, deduplication, or restart monotonicity.
+    sequenceMonotonicity: 'not_checked',
     capturedAt: payload.capturedAt,
-    ...(payload.truncated === true ? { truncated: true } : {}),
-    eventLoopLag: isPlainObject(snapshot.eventLoopLag)
-      ? JSON.parse(JSON.stringify(snapshot.eventLoopLag))
-      : null,
-    // Deep copy, same rule as applyCrossThreadToMetrics: a stored report
-    // must not alias parsed input a caller may mutate.
-    workSpans: JSON.parse(JSON.stringify(checked.section))
+    readAt,
+    ageMs,
+    maxAgeMs,
+    bytesRead: bounded.bytesRead,
+    maxBytes: bounded.maxBytes,
+    truncated: payload.truncated === true,
+    truncation,
+    eventLoopLag
+  }
+  meta.attribution = attributionCoverage(checked.section, meta, [...requiredChatIds].sort())
+  const section = { ...checked.section, hostSnapshot: meta }
+  const validated = normalizeWorkSpanSection(section, 'host')
+  if (!validated.ok) return { unsupported: 'host_perf_snapshot_invalid: ' + validated.reason }
+  return {
+    identity: { ...meta.identity },
+    sequence: meta.sequence,
+    capturedAt: meta.capturedAt,
+    ...(meta.truncated ? { truncated: true } : {}),
+    ...(truncation ? { truncation: { ...truncation } } : {}),
+    eventLoopLag: JSON.parse(JSON.stringify(eventLoopLag)),
+    workSpans: JSON.parse(JSON.stringify(section))
   }
 }
 
@@ -596,6 +921,7 @@ async function sampleHostSpans(session, options = {}) {
 
 module.exports = {
   DEFAULT_HOST_SNAPSHOT_MAX_AGE_MS,
+  DEFAULT_HOST_SNAPSHOT_MAX_BYTES,
   WORK_SPAN_PROCESSES,
   WORK_SPAN_KINDS,
   WORK_SPAN_RESOURCES,
