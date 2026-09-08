@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { resolveStructuredTaskWraithToolRequest } from '../grok/GrokMcpAdvertise'
 import type { AcpPermissionRequest } from '../grok/GrokAcpProtocol'
 import {
@@ -319,6 +319,7 @@ describe('runMistralAcpTurn live steering continuity', () => {
   it('re-prompts Vibe with the already-delivered assistant tail and user steer', async () => {
     const child = new FakeAcpChild()
     const handle = runMistralAcpTurn({
+      skipIntroduction: true,
       prompt: 'emit D001 through D300',
       cwd: '/tmp/workspace',
       appVersion: '1.9.6-test',
@@ -360,6 +361,7 @@ describe('runMistralAcpTurn permission normalization', () => {
     const child = new FakeAcpChild()
     const seen: AcpPermissionRequest[] = []
     const handle = runMistralAcpTurn({
+      skipIntroduction: true,
       prompt: 'write the marker',
       cwd: '/tmp/workspace',
       appVersion: '1.9.2-test',
@@ -438,6 +440,7 @@ function runMistral(child: FakeAcpChild): {
 } {
   const events: NormalizedGrokRunEvent[] = []
   const handle = runMistralAcpTurn({
+    skipIntroduction: true,
     prompt: 'inspect the workspace',
     cwd: '/tmp/workspace',
     appVersion: '1.9.7-test',
@@ -451,6 +454,132 @@ const sessionReady = (child: FakeAcpChild): void => {
   child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
   child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-1' } })
 }
+
+describe('Mistral opening-to-work adapter', () => {
+  it('keeps model selection and the working MCP route while the private terminal stays private', async () => {
+    const children: FakeAcpChild[] = []
+    const events: NormalizedGrokRunEvent[] = []
+    const onClose = vi.fn()
+    const servers = [{ name: 'TaskWraith', command: 'fixture', args: [], env: [] }]
+    const handle = runMistralAcpTurn({
+      prompt: 'Inspect and fix pricing.py, then verify it.',
+      cwd: '/tmp/workspace',
+      appVersion: '1.9.7-test',
+      mcpServers: servers,
+      sessionConfigOptions: [
+        { configId: 'mode', value: 'ask' },
+        { configId: 'model', value: 'glm-5-2' },
+        { configId: 'thinking', value: 'high' }
+      ],
+      spawnProcess: () => {
+        const child = new FakeAcpChild()
+        children.push(child)
+        return child
+      },
+      onEvent: (event) => events.push(event),
+      onClose
+    })
+    const driveToPrompt = async (child: FakeAcpChild, sessionId: string) => {
+      const seen = new Set<unknown>()
+      const values: Record<string, string> = {
+        mode: 'ask',
+        model: 'mistral-medium-3.5',
+        thinking: 'off'
+      }
+      const choices: Record<string, string[]> = {
+        mode: ['ask', 'plan'],
+        model: ['mistral-medium-3.5', 'glm-5-2'],
+        thinking: ['off', 'high']
+      }
+      const configOptions = () =>
+        Object.keys(values).map((id) => ({
+          id,
+          currentValue: values[id],
+          options: choices[id].map((value) => ({ value }))
+        }))
+      for (let round = 0; round < 15; round += 1) {
+        for (const frame of child.sent()) {
+          if (frame.method === 'session/prompt') return frame
+          if (frame.id === undefined || seen.has(frame.id)) continue
+          seen.add(frame.id)
+          const params = frame.params as Record<string, string>
+          const result =
+            frame.method === 'initialize'
+              ? { protocolVersion: 1 }
+              : frame.method === 'session/new'
+                ? { sessionId, configOptions: configOptions() }
+                : ((values[params.configId] = params.value), { configOptions: configOptions() })
+          child.emit({ jsonrpc: '2.0', id: frame.id, result })
+        }
+        await tick()
+      }
+      throw new Error('No working prompt was submitted')
+    }
+    const emitText = (child: FakeAcpChild, sessionId: string, text: string, thinking = false) =>
+      child.emit({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId,
+          update: {
+            sessionUpdate: thinking ? 'agent_thought_chunk' : 'agent_message_chunk',
+            content: { type: 'text', text }
+          }
+        }
+      })
+    try {
+      const intro = children[0]
+      const introPrompt = await driveToPrompt(intro, 'intro-session')
+      expect(promptText(introPrompt)).toContain('separate working phase')
+      expect(intro.sent().find((f) => f.method === 'session/new')?.params).toMatchObject({
+        mcpServers: []
+      })
+      emitText(intro, 'intro-session', 'private introduction reasoning', true)
+      emitText(
+        intro,
+        'intro-session',
+        JSON.stringify({ opening: 'I will inspect pricing.py and verify the fix.' })
+      )
+      intro.emit({ jsonrpc: '2.0', id: introPrompt.id, result: { stopReason: 'end_turn' } })
+      await vi.waitFor(() => expect(children).toHaveLength(2), { interval: 5, timeout: 1_000 })
+      expect(onClose).not.toHaveBeenCalled()
+      const work = children[1]
+      const workPrompt = await driveToPrompt(work, 'work-session')
+      expect(promptText(workPrompt)).toContain('Begin the actual work now')
+      expect(promptText(workPrompt)).toContain('Inspect and fix pricing.py, then verify it.')
+      expect(work.sent().find((f) => f.method === 'session/new')?.params).toMatchObject({
+        mcpServers: servers
+      })
+      expect(
+        work
+          .sent()
+          .filter((f) => f.method === 'session/set_config_option')
+          .map((f) => f.params)
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ configId: 'model', value: 'glm-5-2' }),
+          expect.objectContaining({ configId: 'thinking', value: 'high' })
+        ])
+      )
+      expect(events.some((event) => event.type === 'thinking')).toBe(false)
+      expect(events[0]).toMatchObject({
+        type: 'content',
+        text: 'I will inspect pricing.py and verify the fix.\n\n'
+      })
+      emitText(work, 'work-session', 'working reasoning', true)
+      emitText(work, 'work-session', 'Verified the fix.')
+      work.emit({ jsonrpc: '2.0', id: workPrompt.id, result: { stopReason: 'end_turn' } })
+      await handle.closed
+      expect(onClose).toHaveBeenCalledExactlyOnceWith(0, true, 'end_turn')
+      expect(
+        events.filter((event) => event.type === 'thinking').map((event) => event.text)
+      ).toEqual(['working reasoning'])
+    } finally {
+      handle.cancel()
+      await handle.closed
+    }
+  })
+})
 
 const toolCall = (child: FakeAcpChild, toolCallId: string, title: string, kind: string): void => {
   child.emit({

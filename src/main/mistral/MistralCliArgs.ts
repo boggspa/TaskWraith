@@ -285,10 +285,12 @@ export const MISTRAL_WRITE_MODE_PROMPT_PREAMBLE =
   'reviewed by the host before it runs, so expect an approval round-trip rather ' +
   'than an instant result. An explicit no-tools instruction in the user request ' +
   'or role brief overrides that allowance: do not call shell, file, or any other ' +
-  'tool. If a tool call is refused or fails, do not end your turn; retry only the ' +
-  'same requested operation with an equivalent allowed tool, and never substitute ' +
-  'an unrelated shell or file call for a failed one. Otherwise report the failure ' +
-  'and answer in prose.'
+  'tool. If the user declines a tool request, respect that decision: do not retry ' +
+  'the operation, reword the same edit, or substitute another tool for the same ' +
+  'side effect. Report the blocker and continue only with other requested work ' +
+  'that remains permitted. For a technical tool failure, use an applicable ' +
+  'allowed route once if one is available; otherwise report the failure and ' +
+  'answer from the evidence already available.'
 
 export function applyMistralPromptPreamble(prompt: string, writeCapable: boolean): string {
   const preamble = writeCapable

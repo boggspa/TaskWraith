@@ -50,6 +50,8 @@ import {
 } from '../index.constants'
 import { hasUltraTaskDelegationAutoAllow } from '../UltraTaskDelegationConsent'
 import type { EffectiveRunPermissions } from '../store/types'
+import { runMistralAcknowledgedTurn } from './MistralIntroduction'
+import { withMistralProgressSteer } from './MistralLongTurnProgress'
 
 export type { AcpChildProcess } from '../acp/AcpTurnClient'
 
@@ -310,6 +312,8 @@ export function formatMistralProcessError(err: Error): string {
 
 export interface MistralAcpRunOptions {
   prompt: string
+  /** Internal transport-test seam; desktop turns keep the private opening enabled. */
+  skipIntroduction?: boolean
   /** Main-authorized images; the exact ACP runtime negotiates support. */
   imagePaths?: readonly string[]
   cwd: string
@@ -435,6 +439,41 @@ export function createMistralTurnAbortController(handle: { cancel: () => void })
 }
 
 export function runMistralAcpTurn(options: MistralAcpRunOptions): MistralAcpRunHandle {
+  const initializeParams = buildMistralInitializeParams(options.appVersion)
+  if (options.skipIntroduction) return runMistralWorkingTurn(options)
+  return runMistralAcknowledgedTurn({
+    prompt: options.prompt,
+    onEvent: options.onEvent,
+    onClose: options.onClose,
+    startIntroduction: (prompt, onEvent, onClose) =>
+      runAcpTurn({
+        prompt,
+        cwd: options.cwd,
+        cwdLifetime: 'run',
+        initializeParams,
+        spawnProcess: options.spawnProcess,
+        mcpServers: [],
+        sessionConfigOptions: [
+          { configId: 'mode', value: 'ask', fallbackValues: ['default'] },
+          ...(options.sessionConfigOptions || []).filter((option) => option.configId === 'model'),
+          { configId: 'thinking', value: 'off' }
+        ],
+        onProcess: options.onProcess,
+        onPermissionRequest: () => 'deny',
+        onEvent,
+        onClose,
+        formatProcessError: formatMistralProcessError,
+        endProcess: (child) => child.kill('SIGTERM')
+      }),
+    startWork: (introduction) =>
+      runMistralWorkingTurn({
+        ...options,
+        prompt: withMistralProgressSteer(options.prompt, introduction)
+      })
+  })
+}
+
+function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHandle {
   let resolveClosed!: () => void
   const closed = new Promise<void>((resolve) => {
     resolveClosed = resolve
