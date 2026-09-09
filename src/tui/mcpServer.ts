@@ -63,6 +63,28 @@ export const TASKWRAITH_MCP_TOOLS = [
     }
   },
   {
+    name: 'read_thread',
+    description:
+      'Read the most recent messages in a TaskWraith chat, newest last. Use it to collect the reply after send_prompt, or to catch up on what a thread has been doing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        thread: {
+          type: 'string',
+          description:
+            'Thread id, or a title substring that matches exactly one thread. An ambiguous title is refused with the candidates listed.'
+        },
+        limit: {
+          type: 'number',
+          description: 'How many of the newest rows to return. The host caps this.'
+        },
+        cwd: CWD_PROPERTY,
+        all: ALL_PROPERTY
+      },
+      required: ['thread']
+    }
+  },
+  {
     name: 'send_prompt',
     description:
       'Send one prompt into a TaskWraith chat. A live Ensemble round absorbs it as a steer; an idle Ensemble starts a round with it; a busy solo chat queues it until the run reaches a boundary. The transcript row names the sending process, so the text does not need to attribute itself.',
@@ -122,6 +144,24 @@ function commandFor(
     return {
       kind: 'threads',
       ...(query ? { query } : {}),
+      ...scopeOf(args, defaultCwd),
+      json: false
+    }
+  }
+  if (tool === 'read_thread') {
+    const selector = trimmedString(args.thread)
+    if (!selector) return { refusal: 'read_thread needs a thread id or a title to match.' }
+    const limit = args.limit
+    if (
+      limit !== undefined &&
+      (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1)
+    ) {
+      return { refusal: 'read_thread limit must be a positive whole number of rows.' }
+    }
+    return {
+      kind: 'read',
+      selector,
+      ...(limit === undefined ? {} : { limit }),
       ...scopeOf(args, defaultCwd),
       json: false
     }

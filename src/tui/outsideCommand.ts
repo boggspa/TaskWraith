@@ -26,6 +26,15 @@ export type OutsideCommand =
       json: boolean
     }
   | {
+      kind: 'read'
+      /** Exact thread id, or a title substring that must match exactly one. */
+      selector: string
+      /** Newest rows to return; the host clamps this to its own ceiling. */
+      limit?: number
+      cwd?: string
+      json: boolean
+    }
+  | {
       kind: 'mcp'
       /** Default scope for tool calls that name no working tree of their own. */
       cwd: string
@@ -38,14 +47,14 @@ export type OutsideCommand =
  */
 export type OutsideSocketCommand = Exclude<OutsideCommand, { kind: 'mcp' }>
 
-export const OUTSIDE_COMMAND_NAMES = ['threads', 'send', 'mcp'] as const
+export const OUTSIDE_COMMAND_NAMES = ['threads', 'send', 'read', 'mcp'] as const
 
 export interface OutsideCommandDefaults {
   /** Working tree to scope to unless `--all` or `--cwd` says otherwise. */
   cwd: string
 }
 
-type FlagName = '--query' | '--cwd' | '--from'
+type FlagName = '--query' | '--cwd' | '--from' | '--limit'
 
 function takeValue(args: readonly string[], index: number, flag: string): [string, number] {
   const value = args[index + 1]
@@ -93,6 +102,15 @@ function parseFlags(
   return { values, all, json, rest: args.slice(index) }
 }
 
+/** A row count must be a whole number of rows, not a truthy string. */
+function positiveCount(raw: string): number {
+  const value = Number(raw)
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error('--limit expects a positive whole number of rows.')
+  }
+  return value
+}
+
 function scope(cwd: string | undefined, all: boolean, fallback: string): { cwd?: string } {
   if (all) return {}
   return { cwd: cwd ?? fallback }
@@ -120,6 +138,22 @@ export function parseOutsideCommand(
     return {
       kind: 'threads',
       ...(query ? { query } : {}),
+      ...scope(values['--cwd'], all, defaults.cwd),
+      json
+    }
+  }
+
+  if (verb === 'read') {
+    const { values, all, json, rest } = parseFlags(args, ['--cwd', '--limit'])
+    const selector = rest[0]
+    if (!selector) {
+      throw new Error('read needs a thread id or a title to match: tw read <thread>')
+    }
+    const limit = values['--limit'] === undefined ? undefined : positiveCount(values['--limit'])
+    return {
+      kind: 'read',
+      selector,
+      ...(limit !== undefined ? { limit } : {}),
       ...scope(values['--cwd'], all, defaults.cwd),
       json
     }

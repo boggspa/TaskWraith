@@ -372,6 +372,7 @@ tw threads                        # threads in this working tree
 tw threads --query host --json    # machine-readable, filtered
 tw send <thread|title> <text…>    # send one prompt
 echo "…" | tw send <thread>       # or pipe the body in
+tw read <thread|title>            # newest messages, to collect the reply
 ```
 
 `send` resolves its first argument as an exact thread id, or as a title
@@ -384,6 +385,11 @@ searches every workspace.
 What happens on arrival depends on the thread: a live Ensemble round absorbs
 the prompt as a steer, an idle Ensemble starts a round with it, and a busy solo
 chat queues it behind the active run and flushes it at the boundary.
+
+`read` is the other half of a send: an agent that steers a thread can collect
+what came back without opening the app. It prints the newest rows, oldest
+first, and takes `--limit`. The host caps how far back it will go and never
+serves older history than that, so this is a tail, not an export.
 
 **The row says who sent it.** The host stamps the sender it observed at the
 handshake onto the transcript row, which then reads "Sent from PID 84536 /
@@ -408,8 +414,8 @@ call them as tools instead of shelling out. Register it once per client:
 { "mcpServers": { "taskwraith": { "command": "tw", "args": ["mcp"] } } }
 ```
 
-It offers `list_threads` and `send_prompt`, with the same behaviour as the
-commands above — same thread resolution, same working-tree scoping, same
+It offers `list_threads`, `send_prompt` and `read_thread`, with the same
+behaviour as the commands above — same thread resolution, same working-tree scoping, same
 refusal on an ambiguous title — because the tools run the commands rather than
 reimplementing them. Each tool takes an optional `cwd` and `all`; without them
 a call is scoped to the directory the server was started in, which for an

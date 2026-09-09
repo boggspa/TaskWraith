@@ -69,6 +69,32 @@ describe('parseOutsideCommand', () => {
     })
   })
 
+  it('parses a read as a thread selector scoped to the working tree', () => {
+    expect(parseOutsideCommand(['read', 'host-persistence'], defaults)).toEqual({
+      kind: 'read',
+      selector: 'host-persistence',
+      cwd: '/repo/worktree',
+      json: false
+    })
+  })
+
+  it('accepts a row limit and machine output on a read', () => {
+    expect(parseOutsideCommand(['read', '--limit', '5', '--json', 't-1'], defaults)).toMatchObject({
+      kind: 'read',
+      selector: 't-1',
+      limit: 5,
+      json: true
+    })
+  })
+
+  it('refuses a read with no thread, and a limit that is not a positive count', () => {
+    expect(() => parseOutsideCommand(['read'], defaults)).toThrow(/thread/i)
+    expect(() => parseOutsideCommand(['read', '--limit', 'lots', 't-1'], defaults)).toThrow(
+      /--limit/
+    )
+    expect(() => parseOutsideCommand(['read', '--limit', '0', 't-1'], defaults)).toThrow(/--limit/)
+  })
+
   it('parses the mcp verb, which always carries a default scope for its tool calls', () => {
     expect(parseOutsideCommand(['mcp'], defaults)).toEqual({ kind: 'mcp', cwd: '/repo/worktree' })
     expect(parseOutsideCommand(['mcp', '--cwd', '/elsewhere'], defaults)).toEqual({

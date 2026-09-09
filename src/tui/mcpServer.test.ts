@@ -78,7 +78,11 @@ describe('buildTaskWraithMcpResponse — tools/list', () => {
       { jsonrpc: '2.0', id: 4, method: 'tools/list' },
       deps()
     )) as { result: { tools: Array<{ name: string; inputSchema: { required?: string[] } }> } }
-    expect(response.result.tools.map((tool) => tool.name)).toEqual(['list_threads', 'send_prompt'])
+    expect(response.result.tools.map((tool) => tool.name)).toEqual([
+      'list_threads',
+      'read_thread',
+      'send_prompt'
+    ])
     expect(response.result.tools).toEqual(TASKWRAITH_MCP_TOOLS)
     const send = response.result.tools.find((tool) => tool.name === 'send_prompt')
     expect(send?.inputSchema.required).toEqual(['thread', 'text'])
@@ -147,6 +151,45 @@ describe('buildTaskWraithMcpResponse — tools/call', () => {
     const d = deps()
     for (const args of [{ text: 'go' }, { thread: 't-1' }, { thread: '  ', text: 'go' }]) {
       const response = (await buildTaskWraithMcpResponse(call('send_prompt', args), d)) as {
+        result: { isError?: boolean }
+      }
+      expect(response.result.isError).toBe(true)
+    }
+    expect(d.runCommand).not.toHaveBeenCalled()
+  })
+
+  it('reads a thread back, scoped and limited', async () => {
+    const d = deps({ code: 0, out: ['Codex · 10:00', 'thanks'], err: [] })
+    const response = (await buildTaskWraithMcpResponse(
+      call('read_thread', { thread: 't-1', limit: 5 }),
+      d
+    )) as { result: { content: Array<{ text: string }>; isError?: boolean } }
+    expect(d.runCommand).toHaveBeenCalledWith({
+      kind: 'read',
+      selector: 't-1',
+      limit: 5,
+      cwd: '/repo/worktree',
+      json: false
+    })
+    expect(response.result.content[0].text).toContain('thanks')
+    expect(response.result.isError).toBeUndefined()
+  })
+
+  it('reads without a limit when the caller names none', async () => {
+    const d = deps()
+    await buildTaskWraithMcpResponse(call('read_thread', { thread: 't-1' }), d)
+    expect(d.runCommand.mock.calls[0][0]).not.toHaveProperty('limit')
+  })
+
+  it('refuses a read with no thread, and a limit that is not a positive count', async () => {
+    const d = deps()
+    for (const args of [
+      {},
+      { thread: '  ' },
+      { thread: 't-1', limit: 0 },
+      { thread: 't-1', limit: 'lots' }
+    ]) {
+      const response = (await buildTaskWraithMcpResponse(call('read_thread', args), d)) as {
         result: { isError?: boolean }
       }
       expect(response.result.isError).toBe(true)

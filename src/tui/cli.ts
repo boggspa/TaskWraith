@@ -340,8 +340,10 @@ function outsideClientIo(
     openClient: async (resolved) =>
       new TaskWraithControlClient({
         clientVersion: TUI_VERSION,
-        // Compose only: asking for `snapshot`/`transcript` would put the host
-        // back on a whole-profile poll for the life of this connection.
+        // Compose only, even for a read: `thread.select` answers on request
+        // either way, and asking for `snapshot`/`transcript` would put the
+        // host on a whole-profile poll for the life of this connection and
+        // push a fresh snapshot after every change.
         capabilities: ['compose'],
         clientPid: resolved.pid,
         ...(resolved.label ? { clientLabel: resolved.label } : {})

@@ -1,6 +1,7 @@
 import type {
   TaskWraithControlThreadFindParams,
   TaskWraithControlThreadFindResult,
+  TaskWraithControlThreadSnapshot,
   TaskWraithControlThreadSummary
 } from '../shared/taskWraithControlProtocol'
 import type { OutsideCommand, OutsideSocketCommand } from './outsideCommand'
@@ -15,6 +16,7 @@ export interface OutsideClientPort {
   connect(): Promise<unknown>
   findThreads(params: TaskWraithControlThreadFindParams): Promise<TaskWraithControlThreadFindResult>
   sendPrompt(threadId: string, text: string): Promise<{ dispatched: boolean; message: string }>
+  selectThread(threadId: string, limit?: number): Promise<TaskWraithControlThreadSnapshot>
   close(): void
 }
 
@@ -81,6 +83,79 @@ async function runThreads(
   })
 }
 
+/**
+ * One selector rule for every verb that names a thread: an exact id wins, a
+ * title may match one thread and no more. Returns the refusal text instead of
+ * a thread when it cannot land on exactly one, so both callers refuse alike.
+ */
+async function resolveThread(
+  client: OutsideClientPort,
+  selector: string,
+  cwd: string | undefined
+): Promise<TaskWraithControlThreadSummary | { refusal: string[] }> {
+  const found = await client.findThreads({ query: selector, ...scopeParams(cwd) })
+  const exact = found.threads.find((candidate) => candidate.id === selector)
+  const matches = exact ? [exact] : found.threads
+  if (!matches.length) {
+    return {
+      refusal: [
+        cwd
+          ? `No thread matching "${selector}" in ${cwd}. Use --all to search every workspace.`
+          : `No thread matching "${selector}".`
+      ]
+    }
+  }
+  if (matches.length > 1) {
+    return {
+      refusal: [
+        `"${selector}" matches ${matches.length} threads. Use an id:`,
+        ...matches.map(describe)
+      ]
+    }
+  }
+  return matches[0]
+}
+
+async function runRead(
+  command: Extract<OutsideSocketCommand, { kind: 'read' }>,
+  io: OutsideCommandIo
+): Promise<number> {
+  return withClient(io, async (client) => {
+    const target = await resolveThread(client, command.selector, command.cwd)
+    if ('refusal' in target) {
+      for (const line of target.refusal) io.writeError(line)
+      return EXIT_REFUSED
+    }
+    const snapshot = await client.selectThread(target.id, command.limit)
+    if (command.json) {
+      io.write(
+        JSON.stringify(
+          {
+            threadId: target.id,
+            title: target.title,
+            totalRows: snapshot.totalRows,
+            hasMoreAbove: snapshot.hasMoreAbove,
+            rows: snapshot.rows
+          },
+          null,
+          2
+        )
+      )
+      return EXIT_OK
+    }
+    if (!snapshot.rows.length) {
+      io.write(`${target.title}: no messages yet.`)
+      return EXIT_OK
+    }
+    for (const row of snapshot.rows) {
+      io.write(`${row.speaker} · ${row.timestamp}`)
+      io.write(row.text + (row.truncated ? ' …' : ''))
+      io.write('')
+    }
+    return EXIT_OK
+  })
+}
+
 async function runSend(
   command: Extract<OutsideCommand, { kind: 'send' }>,
   io: OutsideCommandIo
@@ -91,29 +166,11 @@ async function runSend(
     return EXIT_USAGE
   }
   return withClient(io, async (client) => {
-    const found = await client.findThreads({
-      query: command.selector,
-      ...scopeParams(command.cwd)
-    })
-    // An id is exact; a title is a substring and may legitimately match more
-    // than one thread. Prefer the exact id so a selector that also appears
-    // inside somebody else's title is never ambiguous.
-    const exact = found.threads.find((candidate) => candidate.id === command.selector)
-    const matches = exact ? [exact] : found.threads
-    if (!matches.length) {
-      io.writeError(
-        command.cwd
-          ? `No thread matching "${command.selector}" in ${command.cwd}. Use --all to search every workspace.`
-          : `No thread matching "${command.selector}".`
-      )
+    const target = await resolveThread(client, command.selector, command.cwd)
+    if ('refusal' in target) {
+      for (const line of target.refusal) io.writeError(line)
       return EXIT_REFUSED
     }
-    if (matches.length > 1) {
-      io.writeError(`"${command.selector}" matches ${matches.length} threads. Send to an id:`)
-      for (const candidate of matches) io.writeError(describe(candidate))
-      return EXIT_REFUSED
-    }
-    const target = matches[0]
     const result = await client.sendPrompt(target.id, text)
     if (command.json) {
       io.write(
@@ -139,5 +196,7 @@ export async function runOutsideCommand(
   command: OutsideSocketCommand,
   io: OutsideCommandIo
 ): Promise<number> {
-  return command.kind === 'threads' ? runThreads(command, io) : runSend(command, io)
+  if (command.kind === 'threads') return runThreads(command, io)
+  if (command.kind === 'read') return runRead(command, io)
+  return runSend(command, io)
 }
