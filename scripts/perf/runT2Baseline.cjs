@@ -1207,10 +1207,12 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
 
       // Ruling P2 (wave-8): the external Host bundle is NOT part of
       // runIsolatedBuild. Hard-fail BEFORE launch when out/host/host-runtime/
-      // cli.js is missing or older than the newest build-input source under
-      // src/host-runtime, src/host-node, src/shared — with the exact rebuild
-      // command. Never rebuild implicitly. Runs on every launch path,
-      // including --skip-build (which never builds anything).
+      // cli.js is missing, or older than the newest source in the bundle's
+      // own compilation closure — derived from the emitted output rather than
+      // read off a directory list, so it tracks the build. See
+      // checkHostBundleFreshness for the derivation and its residual. Emit
+      // the exact rebuild command; never rebuild implicitly. Runs on every
+      // launch path, including --skip-build (which never builds anything).
       setCapturePhase('host_bundle_preflight', {}, { log: true })
       const hostBundleCheck = checkHostBundleFreshness(repoRoot, options.hostBundleAdapters || {})
       report.hostBundlePreflight = hostBundleCheck
