@@ -3,7 +3,7 @@ import type {
   TaskWraithControlThreadFindResult,
   TaskWraithControlThreadSummary
 } from '../shared/taskWraithControlProtocol'
-import type { OutsideCommand } from './outsideCommand'
+import type { OutsideCommand, OutsideSocketCommand } from './outsideCommand'
 import type { SenderIdentity } from './senderIdentity'
 
 /**
@@ -136,7 +136,7 @@ async function runSend(
 
 /** Run one non-interactive `tw` verb. Returns the process exit code. */
 export async function runOutsideCommand(
-  command: OutsideCommand,
+  command: OutsideSocketCommand,
   io: OutsideCommandIo
 ): Promise<number> {
   return command.kind === 'threads' ? runThreads(command, io) : runSend(command, io)

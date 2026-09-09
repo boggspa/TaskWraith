@@ -4,7 +4,7 @@ import type {
   TaskWraithControlThreadFindResult,
   TaskWraithControlThreadSummary
 } from '../shared/taskWraithControlProtocol'
-import type { OutsideCommand } from './outsideCommand'
+import type { OutsideSocketCommand } from './outsideCommand'
 import {
   runOutsideCommand,
   type OutsideClientPort,
@@ -56,8 +56,8 @@ function harness(threads: TaskWraithControlThreadSummary[]) {
   return { io, out, err, findThreads, sendPrompt, close, port }
 }
 
-const threadsCommand: OutsideCommand = { kind: 'threads', cwd: '/repo/worktree', json: false }
-const sendCommand: OutsideCommand = {
+const threadsCommand: OutsideSocketCommand = { kind: 'threads', cwd: '/repo/worktree', json: false }
+const sendCommand: OutsideSocketCommand = {
   kind: 'send',
   selector: 'Host persistence',
   text: 'nice work',
@@ -147,10 +147,10 @@ describe('runOutsideCommand — send', () => {
     const h = harness([thread()])
     h.io.readStdin = vi.fn(async () => '  piped body\n')
     const { text: _dropped, ...withoutText } = sendCommand as Extract<
-      OutsideCommand,
+      OutsideSocketCommand,
       { kind: 'send' }
     >
-    await runOutsideCommand(withoutText as OutsideCommand, h.io)
+    await runOutsideCommand(withoutText as OutsideSocketCommand, h.io)
     expect(h.sendPrompt).toHaveBeenCalledWith('thread-1', 'piped body')
   })
 
@@ -158,10 +158,10 @@ describe('runOutsideCommand — send', () => {
     const h = harness([thread()])
     h.io.readStdin = vi.fn(async () => '   \n')
     const { text: _dropped, ...withoutText } = sendCommand as Extract<
-      OutsideCommand,
+      OutsideSocketCommand,
       { kind: 'send' }
     >
-    expect(await runOutsideCommand(withoutText as OutsideCommand, h.io)).toBe(2)
+    expect(await runOutsideCommand(withoutText as OutsideSocketCommand, h.io)).toBe(2)
     expect(h.sendPrompt).not.toHaveBeenCalled()
   })
 

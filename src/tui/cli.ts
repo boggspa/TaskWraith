@@ -28,8 +28,13 @@ import {
 } from './settings'
 import { TaskWraithTui } from './TaskWraithTui'
 import { TaskWraithControlClient } from './client/TaskWraithControlClient'
-import { parseOutsideCommand, type OutsideCommand } from './outsideCommand'
-import { runOutsideCommand } from './outsideClientRunner'
+import {
+  parseOutsideCommand,
+  type OutsideCommand,
+  type OutsideSocketCommand
+} from './outsideCommand'
+import { runOutsideCommand, type OutsideCommandIo } from './outsideClientRunner'
+import { serveTaskWraithMcp } from './mcpServer'
 import { resolveSenderIdentity } from './senderIdentity'
 import {
   parseTaskWraithTuiArgs,
@@ -322,13 +327,15 @@ async function readAllStdin(): Promise<string> {
  * local-control socket: it is the only transport that reaches a live Ensemble
  * round today, and it is where the host stamps the sender onto the row.
  */
-async function runOutsideVerb(command: OutsideCommand): Promise<number> {
+function outsideClientIo(
+  command: OutsideSocketCommand
+): Pick<OutsideCommandIo, 'identity' | 'openClient'> {
   const identity = resolveSenderIdentity(
     process.env,
     process.pid,
     command.kind === 'send' ? command.from : undefined
   )
-  return runOutsideCommand(command, {
+  return {
     identity,
     openClient: async (resolved) =>
       new TaskWraithControlClient({
@@ -338,16 +345,55 @@ async function runOutsideVerb(command: OutsideCommand): Promise<number> {
         capabilities: ['compose'],
         clientPid: resolved.pid,
         ...(resolved.label ? { clientLabel: resolved.label } : {})
-      }),
+      })
+  }
+}
+
+async function runOutsideVerb(command: OutsideSocketCommand): Promise<number> {
+  return runOutsideCommand(command, {
+    ...outsideClientIo(command),
     write: (line) => process.stdout.write(`${line}\n`),
     writeError: (line) => process.stderr.write(`${line}\n`),
     readStdin: readAllStdin
   })
 }
 
+/**
+ * Serve the MCP tools on stdio. Output is captured rather than written:
+ * stdout IS the JSON-RPC transport here, so a stray line desynchronises the
+ * client. stdin is the transport too, which is why a tool call can never read
+ * a prompt from it.
+ */
+function serveMcp(command: Extract<OutsideCommand, { kind: 'mcp' }>): void {
+  serveTaskWraithMcp({
+    stdin: process.stdin,
+    stdout: { write: (chunk: string) => process.stdout.write(chunk) },
+    exit: (code) => process.exit(code ?? 0),
+    deps: {
+      serverVersion: TUI_VERSION,
+      defaultCwd: command.cwd,
+      runCommand: async (inner) => {
+        const out: string[] = []
+        const err: string[] = []
+        const code = await runOutsideCommand(inner, {
+          ...outsideClientIo(inner),
+          write: (line) => out.push(line),
+          writeError: (line) => err.push(line),
+          readStdin: async () => ''
+        })
+        return { code, out, err }
+      }
+    }
+  })
+}
+
 async function main(): Promise<void> {
   const outside = parseOutsideCommand(process.argv.slice(2), { cwd: process.cwd() })
   if (outside) {
+    if (outside.kind === 'mcp') {
+      serveMcp(outside)
+      return
+    }
     process.exitCode = await runOutsideVerb(outside)
     return
   }

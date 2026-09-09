@@ -25,8 +25,20 @@ export type OutsideCommand =
       cwd?: string
       json: boolean
     }
+  | {
+      kind: 'mcp'
+      /** Default scope for tool calls that name no working tree of their own. */
+      cwd: string
+    }
 
-export const OUTSIDE_COMMAND_NAMES = ['threads', 'send'] as const
+/**
+ * The verbs that actually talk to the control socket. `mcp` is not one: it
+ * serves the others over stdio, so anything reaching the socket runner or the
+ * MCP tool bridge is narrowed to this.
+ */
+export type OutsideSocketCommand = Exclude<OutsideCommand, { kind: 'mcp' }>
+
+export const OUTSIDE_COMMAND_NAMES = ['threads', 'send', 'mcp'] as const
 
 export interface OutsideCommandDefaults {
   /** Working tree to scope to unless `--all` or `--cwd` says otherwise. */
@@ -93,6 +105,14 @@ export function parseOutsideCommand(
   const verb = argv[0]
   if (!verb || !(OUTSIDE_COMMAND_NAMES as readonly string[]).includes(verb)) return null
   const args = argv.slice(1)
+
+  if (verb === 'mcp') {
+    const { values, rest } = parseFlags(args, ['--cwd'])
+    if (rest.length) {
+      throw new Error(`mcp takes no arguments; it serves tools over stdio. Got: ${rest[0]}`)
+    }
+    return { kind: 'mcp', cwd: values['--cwd'] ?? defaults.cwd }
+  }
 
   if (verb === 'threads') {
     const { values, all, json, rest } = parseFlags(args, ['--query', '--cwd'])

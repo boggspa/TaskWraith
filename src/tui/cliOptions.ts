@@ -45,6 +45,7 @@ Usage:
   tw [options]
   tw threads [--query <text>] [--cwd <path>] [--all] [--json]
   tw send <thread|title> <text…> [--from <label>] [--cwd <path>] [--all] [--json]
+  tw mcp [--cwd <path>]
 
 Commands (non-interactive, for scripts and coding agents):
   threads                List threads in this working tree (--all: everywhere)
@@ -52,6 +53,9 @@ Commands (non-interactive, for scripts and coding agents):
                          absorbs it as a steer. With no text, reads stdin.
                          The host labels the row with the sending process —
                          set --from or TW_CLIENT_LABEL to name your tool.
+  mcp                    Serve the same two verbs as MCP tools over stdio, so
+                         a Claude Code or Codex session can call them. Register
+                         it as an MCP server: command "tw", args ["mcp"].
 
 Options:
   --demo                 Run the self-contained presentation demo

@@ -69,6 +69,19 @@ describe('parseOutsideCommand', () => {
     })
   })
 
+  it('parses the mcp verb, which always carries a default scope for its tool calls', () => {
+    expect(parseOutsideCommand(['mcp'], defaults)).toEqual({ kind: 'mcp', cwd: '/repo/worktree' })
+    expect(parseOutsideCommand(['mcp', '--cwd', '/elsewhere'], defaults)).toEqual({
+      kind: 'mcp',
+      cwd: '/elsewhere'
+    })
+  })
+
+  it('refuses stray arguments after mcp rather than silently ignoring them', () => {
+    expect(() => parseOutsideCommand(['mcp', 'send'], defaults)).toThrow(/mcp/i)
+    expect(() => parseOutsideCommand(['mcp', '--nope'], defaults)).toThrow(/--nope/)
+  })
+
   it('refuses a send with no thread selector', () => {
     expect(() => parseOutsideCommand(['send'], defaults)).toThrow(/thread/i)
   })

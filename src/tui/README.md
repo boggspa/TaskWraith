@@ -399,6 +399,26 @@ These verbs deliberately advertise only the `compose` capability, so a sender
 never puts the host on the per-tick projection poll that serving a snapshot
 costs.
 
+### As an MCP server
+
+`tw mcp` serves those same two verbs as MCP tools over stdio, so an agent can
+call them as tools instead of shelling out. Register it once per client:
+
+```json
+{ "mcpServers": { "taskwraith": { "command": "tw", "args": ["mcp"] } } }
+```
+
+It offers `list_threads` and `send_prompt`, with the same behaviour as the
+commands above — same thread resolution, same working-tree scoping, same
+refusal on an ambiguous title — because the tools run the commands rather than
+reimplementing them. Each tool takes an optional `cwd` and `all`; without them
+a call is scoped to the directory the server was started in, which for an
+editor-launched MCP server is the project the agent has open.
+
+A failed call comes back as an MCP tool error carrying exactly what the CLI
+would have printed, and a dead socket fails the call rather than the server, so
+the client keeps its session and can retry once the app is back.
+
 ## Outside clients on the legacy local-control socket (v1)
 
 The Electron app still serves the v1 local-control socket the first TUI used.
