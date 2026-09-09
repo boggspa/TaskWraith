@@ -4692,7 +4692,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               {!ensembleBinding &&
                                 effectiveSelectedModel === 'custom' &&
                                 effectiveProvider !== 'kimi' && (
-                                  <span className="composer-inline-custom-model">
+                                  <span
+                                    className="composer-inline-custom-model"
+                                    data-composer-control="custom-model"
+                                  >
                                     <input
                                       className="composer-inline-input"
                                       type="text"

@@ -1321,7 +1321,7 @@
 /* Hide the same extra controls Gemini hides. */
 [data-composer-style="grok"] .composer-top-toggles,
 [data-composer-style="grok"] .composer-chips,
-[data-composer-style="grok"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
+[data-composer-style="grok"] .composer-inline-pickers-left > *:not([data-composer-control="custom-model"]):not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
   display: none !important;
 }
 
@@ -2069,7 +2069,7 @@
 /* Hide the same extra controls Gemini hides. */
 :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-top-toggles,
 :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-chips,
-:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="voice"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-inline-pickers-left > *:not([data-composer-control="custom-model"]):not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="voice"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
   display: none !important;
 }
 
