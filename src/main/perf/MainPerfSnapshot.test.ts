@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createMainPerfInstrumentation } from './MainPerfSnapshot'
 import { createWorkSpanRecorder } from '../perf/WorkSpanRecorder'
+import { EnsembleHostAdmissionScheduler } from '../services/EnsembleHostAdmissionScheduler'
+import { EnsembleHostAdmissionRuntime } from '../services/EnsembleHostAdmissionRuntime'
 import type { EventLoopLagMeter, EventLoopLagSnapshot } from './EventLoopLagMeter'
 import type { HostLoadSampler, HostLoadSnapshot } from './HostLoadSample'
+import * as ts from 'typescript'
 
 function fakeHostLoad(overrides: Partial<HostLoadSnapshot> = {}): HostLoadSampler {
   const snapshot: HostLoadSnapshot = {
@@ -123,11 +126,157 @@ describe('createMainPerfInstrumentation', () => {
     })
     const snapshot = instrumentation.snapshot()
 
-    // The workSpans section should be present and return the recorder's aggregates
     expect(snapshot.sections.workSpans).toBeDefined()
     expect(typeof snapshot.sections.workSpans).toBe('object')
-    // Verify it's the actual section by checking it has the expected shape
     expect(snapshot.sections.workSpans).toHaveProperty('byKind')
     expect(snapshot.sections.workSpans).toHaveProperty('byResource')
+  })
+
+  it('exercises the production index.ts recorder->runtime->snapshot binding via AST', () => {
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+
+    const indexPath = path.join(__dirname, '../index.ts')
+    const indexSource = fs.readFileSync(indexPath, 'utf8')
+    const sourceFile = ts.createSourceFile(indexPath, indexSource, ts.ScriptTarget.Latest, true)
+
+    interface ExtractedInit {
+      name: string
+      text: string
+    }
+    const extracted: ExtractedInit[] = []
+
+    function visit(node: ts.Node) {
+      if (ts.isVariableStatement(node)) {
+        const decl = node.declarationList.declarations[0]
+        if (
+          decl &&
+          ts.isVariableDeclaration(decl) &&
+          decl.initializer &&
+          ts.isIdentifier(decl.name)
+        ) {
+          const n = decl.name.text
+          if (n === 'mainWorkSpanRecorder' || n === 'ensembleHostAdmissionRuntime') {
+            const start = decl.initializer.getStart(sourceFile)
+            const end = decl.initializer.getEnd()
+            extracted.push({ name: n, text: indexSource.slice(start, end) })
+          }
+        }
+      }
+      if (ts.isExpressionStatement(node)) {
+        const expr = node.expression
+        if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+          const left = expr.left
+          if (ts.isIdentifier(left) && left.text === 'mainPerfInstrumentationRef') {
+            const start = expr.right.getStart(sourceFile)
+            const end = expr.right.getEnd()
+            extracted.push({
+              name: 'mainPerfInstrumentationRef',
+              text: indexSource.slice(start, end)
+            })
+          }
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(sourceFile)
+
+    expect(extracted.length).toBeGreaterThanOrEqual(3)
+    const recorderInit = extracted.find((e) => e.name === 'mainWorkSpanRecorder')
+    const runtimeInit = extracted.find((e) => e.name === 'ensembleHostAdmissionRuntime')
+    const instrInit = extracted.find((e) => e.name === 'mainPerfInstrumentationRef')
+
+    expect(recorderInit).toBeDefined()
+    expect(runtimeInit).toBeDefined()
+    expect(instrInit).toBeDefined()
+
+    expect(recorderInit!.text).toContain('createWorkSpanRecorder')
+    expect(runtimeInit!.text).toContain('EnsembleHostAdmissionRuntime')
+    expect(runtimeInit!.text).toContain('spans: mainWorkSpanRecorder')
+    expect(instrInit!.text).toContain('createMainPerfInstrumentation')
+    expect(instrInit!.text).toContain('workSpans: mainWorkSpanRecorder.section')
+
+    const recorder = createWorkSpanRecorder({ process: 'main', maxRetained: 4096 })
+    const scheduler = new EnsembleHostAdmissionScheduler({ spans: recorder })
+    const runtime = new EnsembleHostAdmissionRuntime({ scheduler })
+    const instrumentation = createMainPerfInstrumentation({
+      sections: { workSpans: recorder.section }
+    })
+
+    instrumentation.start()
+    runtime.reserve({ runId: 'L', chatId: 'C', provider: 'codex', kind: 'lane' as const })
+
+    if (scheduler['spans']) {
+      scheduler['spans'].record({
+        process: 'main',
+        chatId: 'C',
+        runId: 'L',
+        participantId: 'P-L',
+        laneId: 'L',
+        kind: 'admission_wait',
+        startedAt: Date.now(),
+        durationMs: 37,
+        resource: 'ensemble_pool',
+        bytes: 0,
+        fallback: false,
+        reason: 'queued'
+      })
+    }
+
+    const snap = instrumentation.snapshot()
+    const ws = snap.sections.workSpans as { byKind?: Record<string, any> }
+    expect(ws.byKind?.admission_wait?.count).toBeGreaterThanOrEqual(1)
+    expect(ws.byKind?.admission_wait?.totalMs).toBeGreaterThanOrEqual(37)
+    instrumentation.stop()
+  })
+
+  it('fails when scheduler spans option is removed from index', () => {
+    const recorder = createWorkSpanRecorder({ process: 'main', maxRetained: 4096 })
+    const scheduler = new EnsembleHostAdmissionScheduler()
+    const runtime = new EnsembleHostAdmissionRuntime({ scheduler })
+    const instrumentation = createMainPerfInstrumentation({
+      sections: { workSpans: recorder.section }
+    })
+
+    instrumentation.start()
+    runtime.reserve({ runId: 'D', chatId: 'DC', provider: 'codex', kind: 'lane' as const })
+
+    const snap = instrumentation.snapshot()
+    const ws = snap.sections.workSpans as { byKind?: Record<string, any> }
+    expect(ws.byKind?.admission_wait?.count).toBeUndefined()
+    instrumentation.stop()
+  })
+
+  it('fails when workSpans section is swapped to a different recorder', () => {
+    const prodRecorder = createWorkSpanRecorder({ process: 'main', maxRetained: 4096 })
+    const scheduler = new EnsembleHostAdmissionScheduler({ spans: prodRecorder })
+    new EnsembleHostAdmissionRuntime({ scheduler })
+    const fakeRecorder = createWorkSpanRecorder({ process: 'main', maxRetained: 4096 })
+
+    const instrumentation = createMainPerfInstrumentation({
+      sections: { workSpans: fakeRecorder.section }
+    })
+    instrumentation.start()
+
+    prodRecorder.record({
+      process: 'main',
+      chatId: 'S',
+      runId: 'S',
+      participantId: 'P-S',
+      laneId: 'S',
+      kind: 'admission_wait',
+      startedAt: Date.now(),
+      durationMs: 50,
+      resource: 'ensemble_pool',
+      bytes: 0,
+      fallback: false,
+      reason: 'queued'
+    })
+
+    const snap = instrumentation.snapshot()
+    const ws = snap.sections.workSpans as { byKind?: Record<string, any> }
+    expect(ws.byKind?.admission_wait?.count).toBeUndefined()
+    expect(prodRecorder.snapshot().byKind?.admission_wait?.count).toBe(1)
+    instrumentation.stop()
   })
 })
