@@ -3725,7 +3725,8 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     collectT2HostSpanEvidence,
     runT2BaselineCli,
     parseArgs,
-    HOST_BUNDLE_REBUILD_COMMAND
+    HOST_BUNDLE_REBUILD_COMMAND,
+    HOST_BUNDLE_DECLARED_ENTRY_SEGMENTS
   } = require('./runT2Baseline.cjs')
   const { buildElectronSpawnPlan } = require('./electronChildSession.cjs')
   const { validateCrossThreadBlock } = require('./collectors/hostSpans.cjs')
@@ -4052,8 +4053,17 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
         ],
         bundleMtime
       ),
+      // The second renamed bundle, one first-party input of its own. BOTH
+      // declared entries must be present: a partial build (tsc without the
+      // esbuild stage) is the fourth-defect fixture below.
+      ...emitted(
+        'out/host/host-node/ThreadCatalogueDecoderEntry.js',
+        ['src/main/workers/threadCatalogueDecoder.ts'],
+        bundleMtime
+      ),
       'src/main/workers/threadCatalogueWorker.ts': sourceMtime - 800,
       'src/main/workers/threadCatalogueCodec.ts': sourceMtime - 850,
+      'src/main/workers/threadCatalogueDecoder.ts': sourceMtime - 950,
       // Both deliberately far newer than the bundle: if either exclusion ever
       // stopped applying, this fixture would read STALE and the freshness
       // assertions below would fail. Neither exclusion is vacuous.
@@ -4079,11 +4089,11 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
   }
 
   /**
-   * Seven tsc sources plus the two first-party inputs the bundled worker's map
-   * names; the node_modules entry is excluded and the include root, whose two
-   * files are already derived, adds nothing new.
+   * Seven tsc sources plus the three first-party inputs the two bundled
+   * entries' maps name; the node_modules entry is excluded and the include
+   * root, whose two files are already derived, adds nothing new.
    */
-  const BUNDLE_TREE_INPUT_COUNT = 9
+  const BUNDLE_TREE_INPUT_COUNT = 10
 
   it('P2: bundle freshness watches the whole compilation closure and fails closed', () => {
     expect(HOST_BUNDLE_REBUILD_COMMAND).toBe('npm run host:build')
@@ -4153,6 +4163,65 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
       expect(bundled.newestSourcePath).toBe(relPath.split('/').join(path.sep))
       expect(bundled.newestSourceMtimeMs).toBe(5000)
     }
+
+    // THE FOURTH DEFECT, and the A/B that proves it: a DECLARED entry
+    // artifact that was never emitted (a partial build — tsc without the
+    // esbuild worker stage) removes its own bundled closure from the derived
+    // set, because the inputs appear in no surviving map. The codec is
+    // reachable through NO other artifact, so with the worker bundle absent
+    // its edit is invisible: the same tree WITH the artifact reds STALE above
+    // and WITHOUT it used to read FRESH. Now it must refuse, naming the
+    // missing artifact. (Reproduced against the real exported function before
+    // fixing: ok:true with the codec at mtime 5000 against a bundle at 1000.)
+    const partial = bundleTree(1000, 900, {
+      'src/main/workers/threadCatalogueCodec.ts': 5000
+    })
+    delete nodeAt(partial, 'out/host/host-node')['ThreadCatalogueWorkerEntry.js']
+    delete nodeAt(partial, 'out/host/host-node')['ThreadCatalogueWorkerEntry.js.map']
+    const incomplete = checkHostBundleFreshness('/repo', { fs: memFs(partial) })
+    expect(incomplete.ok).toBe(false)
+    expect(incomplete.reason).toBe(
+      `host_bundle_incomplete_output: ${path.join(
+        'out',
+        'host',
+        'host-node',
+        'ThreadCatalogueWorkerEntry.js'
+      )}`
+    )
+    expect(incomplete.rebuildCommand).toBe('npm run host:build')
+
+    // Either declared entry triggers it...
+    const missingDecoder = bundleTree(1000, 900)
+    delete nodeAt(missingDecoder, 'out/host/host-node')['ThreadCatalogueDecoderEntry.js']
+    delete nodeAt(missingDecoder, 'out/host/host-node')['ThreadCatalogueDecoderEntry.js.map']
+    const incompleteDecoder = checkHostBundleFreshness('/repo', { fs: memFs(missingDecoder) })
+    expect(incompleteDecoder.ok).toBe(false)
+    expect(incompleteDecoder.reason).toBe(
+      `host_bundle_incomplete_output: ${path.join(
+        'out',
+        'host',
+        'host-node',
+        'ThreadCatalogueDecoderEntry.js'
+      )}`
+    )
+
+    // ...and anything that is not a regular file where a declared entry
+    // belongs — a directory left by a half-finished bundling step — is the
+    // same incomplete build, not an artifact whose mtime means something.
+    const entryNotAFile = bundleTree(1000, 900)
+    nodeAt(entryNotAFile, 'out/host/host-node')['ThreadCatalogueDecoderEntry.js'] = {
+      children: {}
+    }
+    const incompleteNonRegular = checkHostBundleFreshness('/repo', { fs: memFs(entryNotAFile) })
+    expect(incompleteNonRegular.ok).toBe(false)
+    expect(incompleteNonRegular.reason).toBe(
+      `host_bundle_incomplete_output: ${path.join(
+        'out',
+        'host',
+        'host-node',
+        'ThreadCatalogueDecoderEntry.js'
+      )}`
+    )
 
     // A source ADDED to the tsconfig include root is a build input with no
     // importer, so it has no emitted output to invert and is walked directly.
@@ -4351,18 +4420,32 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     // A compiled input that lives OUTSIDE the include root and outside every
     // directory the old list named: reachable only through the import graph.
     const graphSource = 'src/host-shared/perf/WorkSpanRecorder.ts'
+    // The declared worker entries must exist or the preflight refuses the
+    // build as incomplete; each map names its one real first-party input.
+    const declaredEntries = HOST_BUNDLE_DECLARED_ENTRY_SEGMENTS.map((segments) =>
+      segments.join('/')
+    )
+    expect(declaredEntries.length).toBe(2)
+    const workerSources = [
+      'src/main/workers/threadCatalogueWorker.ts',
+      'src/main/workers/threadCatalogueDecoder.ts'
+    ]
     const baseFiles: Record<string, number | FileSpec> = {
       ...emitted(emittedFor(entrySource), [entrySource], 1000),
       ...emitted(emittedFor(graphSource), [graphSource], 1000),
+      ...emitted(declaredEntries[0], [workerSources[0]], 1000),
+      ...emitted(declaredEntries[1], [workerSources[1]], 1000),
       [entrySource]: 900,
-      [graphSource]: 900
+      [graphSource]: 900,
+      [workerSources[0]]: 900,
+      [workerSources[1]]: 900
     }
     // The preflight's own bundle path must be one of the emitted outputs.
     expect(Object.keys(baseFiles)).toContain(rel(path.join(outDirAbs, 'host-runtime', 'cli.js')))
 
     const clean = checkHostBundleFreshness(repoRoot, { fs: memFs(treeOf(baseFiles), repoRoot) })
     expect(clean.ok).toBe(true)
-    expect(clean.checkedFileCount).toBe(2)
+    expect(clean.checkedFileCount).toBe(4)
 
     const graphStale = checkHostBundleFreshness(repoRoot, {
       fs: memFs(treeOf({ ...baseFiles, [graphSource]: 5000 }), repoRoot)
@@ -4388,7 +4471,7 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
       )
     })
     expect(addedTestInIncludeRoot.ok).toBe(true)
-    expect(addedTestInIncludeRoot.checkedFileCount).toBe(2)
+    expect(addedTestInIncludeRoot.checkedFileCount).toBe(4)
   })
 
   it('P2: the preflight is pinned to the REAL host:build pipeline, not just its tsc stage', () => {
@@ -4440,6 +4523,32 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     // one, so a sourceRoot here would refuse every launch. Non-vacuous: the
     // toContain assertions above prove `bundler` is the real script's content.
     expect(bundler).not.toContain('sourceRoot')
+
+    // DECLARED vs EMITTED, reconciled against the real producer. The
+    // preflight refuses when a DECLARED entry artifact is absent (a partial
+    // build leaves its bundled closure invisible), so the declared list must
+    // be exactly what this script emits: its `entryPoints` keys under its
+    // default outdir, one renamed `<Key>.js` each. Derive both from the
+    // script's own text — never from a copy of the values here — so a renamed
+    // or added entry point reds this test instead of drifting the preflight.
+    const entryPointsBlock = bundler.match(/entryPoints:\s*\{([\s\S]*?)\}/)
+    expect(
+      entryPointsBlock,
+      'build-history-workers entryPoints block not found — re-check the declared-entry list'
+    ).not.toBe(null)
+    const declaredKeys = [...entryPointsBlock![1].matchAll(/([A-Za-z_$][\w$]*)\s*:/g)].map(
+      (match) => match[1]
+    )
+    expect(declaredKeys.length).toBeGreaterThan(0)
+    const outdirDefault = bundler.match(/outdir:[\s\S]*?:\s*'([^']+)'/)
+    expect(
+      outdirDefault,
+      'build-history-workers outdir default branch not found — re-check the declared-entry list'
+    ).not.toBe(null)
+    const expectedDeclared = declaredKeys.map((key) => `${outdirDefault![1]}/${key}.js`)
+    expect(HOST_BUNDLE_DECLARED_ENTRY_SEGMENTS.map((segments) => segments.join('/'))).toEqual(
+      expectedDeclared
+    )
   })
 
   it('P2: the preflight derives cleanly from the REAL emitted tree (skipped with no host build)', () => {
@@ -4459,16 +4568,22 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     const real = checkHostBundleFreshness(repoRoot)
     // `host_bundle_stale` is a TRUE answer about a legitimate local state —
     // edit a Host source, do not rebuild — so asserting ok:true here would red
-    // on an ordinary working tree. What must never happen is a failure to
+    // on an ordinary working tree. `host_bundle_incomplete_output` is the same
+    // category: a partial build (tsc without the esbuild stage) is a tree that
+    // is not currently launchable, not a defect in the derivation logic, and
+    // redding the whole perf suite on it would be the build-order landmine
+    // this test exists to avoid. What must never happen is a failure to
     // DERIVE: an unprovable artifact, an orphan, zero sources or an I/O
     // refusal all mean the preflight cannot read this repo's own build output.
     // The live defect this slice repairs was `host_bundle_orphan_output`, so
     // this discrimination keeps every bit of the detection and none of the
     // false positives.
     expect(
-      [null, 'host_bundle_stale'],
+      real.reason === null ||
+        real.reason === 'host_bundle_stale' ||
+        real.reason.startsWith('host_bundle_incomplete_output:'),
       `real out/host: ${real.reason} (newest ${real.newestSourcePath})`
-    ).toContain(real.reason)
+    ).toBe(true)
     expect(real.checkedFileCount).toBeGreaterThan(0)
   })
 

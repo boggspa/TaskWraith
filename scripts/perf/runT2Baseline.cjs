@@ -108,6 +108,22 @@ const HOST_BUNDLE_SOURCE_ROOT = 'src'
 // Every other compiled tree is reached through the import graph, so a new
 // input there always arrives with an edit to a file that is already emitted.
 const HOST_BUNDLE_INCLUDE_ROOT_SEGMENTS = Object.freeze(['src', 'host-runtime'])
+// DECLARED vs EMITTED. The derivation above recovers inputs only through
+// artifacts that exist, so an output that was never emitted — a PARTIAL
+// build that ran tsc but not the esbuild worker stage — silently unwatches
+// that artifact's whole bundled closure: all of src/main/workers/* is
+// reachable through no other output and has no importer route in, so neither
+// the importer argument nor the include-root walk covers it. The build
+// DECLARES these renamed entry artifacts (scripts/build-history-workers.cjs
+// `entryPoints` keys under its default outdir); a declared artifact that is
+// absent is an incomplete bundle, not a fresh one. This list is reconciled
+// against the real build script by the pipeline pin in perfHarness.test.ts,
+// and a FUTURE stage that emits differently is caught by that pin's exact
+// stage list — not by anything here.
+const HOST_BUNDLE_DECLARED_ENTRY_SEGMENTS = Object.freeze([
+  Object.freeze(['out', 'host', 'host-node', 'ThreadCatalogueWorkerEntry.js']),
+  Object.freeze(['out', 'host', 'host-node', 'ThreadCatalogueDecoderEntry.js'])
+])
 const HOST_BUNDLE_REBUILD_COMMAND = 'npm run host:build'
 const HOST_PERF_SNAPSHOT_FILE_NAME = 'host-perf-snapshot.json'
 
@@ -163,9 +179,13 @@ const HOST_PERF_SNAPSHOT_FILE_NAME = 'host-perf-snapshot.json'
  * zero inputs and fails closed instead of passing vacuously. Every I/O
  * failure fails closed, as do a missing bundle, an emitted artifact whose
  * sourcemap is absent, unparseable or missing its `sources` array, and a
- * mapped source that no longer exists. Provenance that cannot be READ is
- * never assumed: there is deliberately no fallback to guessing the source
- * from the output name, because that guess is what this replaced.
+ * mapped source that no longer exists. A DECLARED entry artifact that is
+ * absent fails closed too (`host_bundle_incomplete_output`): a partial build
+ * that skipped the esbuild stage is not a launchable Host, and without the
+ * check its bundled closure — 111 inputs, all of src/main/workers/* — would
+ * be silently unwatched. Provenance that cannot be READ is never assumed:
+ * there is deliberately no fallback to guessing the source from the output
+ * name, because that guess is what this replaced.
  *
  * That makes the preflight depend on the host tsconfig keeping
  * `sourceMap: true`. Turning it off strips every map and this then refuses
@@ -301,6 +321,7 @@ function checkHostBundleFreshness(repoRoot, adapters = {}) {
     }
   }
   let orphanOutputRelPath = null
+  let incompleteOutputRelPath = null
   try {
     collectEmittedInputs(outputRoot)
     if (unprovenOutputRelPath === null) {
@@ -323,6 +344,27 @@ function checkHostBundleFreshness(repoRoot, adapters = {}) {
       if (stat.mtimeMs > newestSourceMtimeMs) {
         newestSourceMtimeMs = stat.mtimeMs
         newestSourcePath = relPath
+      }
+    }
+    if (unprovenOutputRelPath === null && orphanOutputRelPath === null) {
+      // A declared entry artifact that was never emitted removes its own
+      // inputs from the derived set above — they appear in no map because the
+      // artifact holding the map does not exist. Check the DECLARED side so a
+      // partial build refuses instead of passing with that closure invisible.
+      for (const segments of HOST_BUNDLE_DECLARED_ENTRY_SEGMENTS) {
+        const declaredRelPath = path.join(...segments)
+        let declaredStat
+        try {
+          declaredStat = fsImpl.statSync(path.join(repoRoot, ...segments))
+        } catch (error) {
+          const code = error && typeof error.code === 'string' ? error.code : 'io_error'
+          if (code !== 'ENOENT') throw error
+          declaredStat = null
+        }
+        if (declaredStat === null || !declaredStat.isFile()) {
+          incompleteOutputRelPath = declaredRelPath
+          break
+        }
       }
     }
   } catch (error) {
@@ -369,6 +411,20 @@ function checkHostBundleFreshness(repoRoot, adapters = {}) {
       newestSourceMtimeMs: null,
       newestSourcePath: null,
       checkedFileCount: 0
+    }
+  }
+  if (incompleteOutputRelPath !== null) {
+    // A declared worker bundle is absent: the build ran without its esbuild
+    // stage, so this is not a launchable Host — and its bundled closure is
+    // invisible to the derivation, so freshness cannot be proven either.
+    return {
+      ...base,
+      ok: false,
+      reason: `host_bundle_incomplete_output: ${incompleteOutputRelPath}`,
+      bundleMtimeMs: bundleStat.mtimeMs,
+      newestSourceMtimeMs: null,
+      newestSourcePath: incompleteOutputRelPath,
+      checkedFileCount
     }
   }
   const stale = bundleStat.mtimeMs < newestSourceMtimeMs
@@ -1942,6 +1998,7 @@ module.exports = {
   DEFAULT_MIN_FREE_DISK_BYTES,
   DEFAULT_MAX_CAPTURE_PHASE_MS,
   HOST_BUNDLE_REBUILD_COMMAND,
+  HOST_BUNDLE_DECLARED_ENTRY_SEGMENTS,
   createT2ProgressJournal,
   checkDiskHeadroom,
   checkHostBundleFreshness,
