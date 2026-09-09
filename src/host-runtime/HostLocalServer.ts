@@ -131,6 +131,9 @@ const MAX_LARGE_RESPONSE_LINE_BYTES = TW_MISSION_MAX_BUNDLE_BYTES + 65_536
 // TUI's connection every few seconds, forever.
 const MAX_SOCKET_WRITE_BACKLOG_BYTES = MAX_LARGE_RESPONSE_LINE_BYTES * 2
 
+/** Matches the composition's mint and the welcome codec's validator exactly. */
+const HOST_BOOT_EPOCH_PATTERN = /^[0-9a-f]{64}$/
+
 // ---------------------------------------------------------------------------
 // Options
 // ---------------------------------------------------------------------------
@@ -148,6 +151,22 @@ export interface HostLocalServerOptions {
   hostVersion: string
   /** Exact static payload identity — discovery-only, never Host identity. */
   payloadVersion?: string
+  /**
+   * Opaque per-incarnation boot epoch minted by the composition, attached to
+   * the welcome frame on the way out. A client compares it for EQUALITY only:
+   * it encodes no time, no counter and no ordering, so it cannot be
+   * differenced, sorted, or read as a clock. Absent means "legacy Host", which
+   * is why an invalid value is refused at construction rather than dropped —
+   * a dropped epoch is indistinguishable downstream from a Host too old to
+   * mint one, so it would silently disarm the client's reconnect check.
+   *
+   * SECURITY: never pass the transport auth token here. Both this and
+   * `this.token` are `randomBytes(32).toString('hex')`, so the two are
+   * indistinguishable by inspection and a swap would hand the credential to
+   * every peer that completes a handshake — the welcome is public to any
+   * authenticated client. `HostLocalServer boot epoch` pins that they differ.
+   */
+  bootEpoch?: string
   /** Authenticated session binder. */
   session: HostSession
   /** Transport-neutral Authority facade for request routing.
@@ -371,6 +390,12 @@ export class HostLocalServer {
       !isHostPayloadVersion(this.options.payloadVersion)
     ) {
       throw new Error('Host local payload identity is invalid.')
+    }
+    if (
+      this.options.bootEpoch !== undefined &&
+      !HOST_BOOT_EPOCH_PATTERN.test(this.options.bootEpoch)
+    ) {
+      throw new Error('Host local boot epoch is invalid.')
     }
     this.token = randomBytes(32).toString('hex')
     const canonicalUserDataPath = realpathSync(options.userDataPath)
@@ -914,10 +939,18 @@ export class HostLocalServer {
 
     state.binding = bindResult.value
 
+    // The epoch is attached here rather than inside the binding because the
+    // session owns capability negotiation, not process identity. `binding`
+    // therefore keeps the session's own welcome; only the wire frame carries
+    // the epoch. Nothing reads `binding.welcome` for identity, so the two
+    // cannot disagree in a way any caller can observe.
     const welcome: HostLocalTransportHostFrame = {
       type: 'welcome',
       transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
-      welcome: bindResult.value.welcome
+      welcome:
+        this.options.bootEpoch === undefined
+          ? bindResult.value.welcome
+          : { ...bindResult.value.welcome, bootEpoch: this.options.bootEpoch }
     }
     socketWrite(state.socket, welcome)
   }

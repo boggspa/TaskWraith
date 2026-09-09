@@ -484,6 +484,13 @@ export class HostNodeProductionServer {
         hostId: this.identity.hostId,
         hostVersion: this.identity.hostVersion,
         ...(this.options.payloadVersion ? { payloadVersion: this.options.payloadVersion } : {}),
+        // Same epoch the perf snapshot writer stamps, so a collector reading
+        // the file and a client reading the welcome agree on which incarnation
+        // they are talking to. Conditional so a composition that never minted
+        // one still produces a byte-identical welcome.
+        ...(this.composition.perf.identity.bootEpoch
+          ? { bootEpoch: this.composition.perf.identity.bootEpoch }
+          : {}),
         session: this.composition.session,
         authority: this.composition.authority,
         runCommand: (command, execute) =>

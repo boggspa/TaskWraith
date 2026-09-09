@@ -25,7 +25,10 @@ afterEach(() => {
   while (profiles.length > 0) rmSync(profiles.pop()!, { recursive: true, force: true })
 })
 
-function harness(overrides: Record<string, unknown> = {}) {
+function harness(
+  overrides: Record<string, unknown> = {},
+  harnessOptions: { compositionBootEpoch?: string } = {}
+) {
   const order: string[] = []
   let eventPublish: (() => void) | null = null
   let authenticatedShutdown: (() => Promise<void> | void) | undefined
@@ -35,6 +38,7 @@ function harness(overrides: Record<string, unknown> = {}) {
   let domainProfilePath: string | undefined
   let domainPermissionConsentAuthority: unknown
   let listenerPayloadVersion: string | undefined
+  let listenerInput: Record<string, unknown> | undefined
   let composedGitReadProvider:
     | ((context: unknown, request: unknown) => Promise<unknown> | unknown)
     | undefined
@@ -58,6 +62,24 @@ function harness(overrides: Record<string, unknown> = {}) {
   const composition = {
     authority: {},
     session: {},
+    // Mirrors the real HostStandaloneCompositionPerf surface. The production
+    // server reads perf.identity to thread the boot epoch to the listener, so
+    // a mock without it would not just fail — it would fail everywhere at
+    // once and hide which behaviour actually broke.
+    perf: {
+      snapshot: vi.fn(() => ({})),
+      spans: {},
+      snapshotFile: null,
+      identity: {
+        process: 'host' as const,
+        instanceId: 'host',
+        generation: 0,
+        pid: process.pid,
+        ...(harnessOptions.compositionBootEpoch === undefined
+          ? {}
+          : { bootEpoch: harnessOptions.compositionBootEpoch })
+      }
+    },
     startProjectionReconciliation: vi.fn(async () => order.push('reconcile.start')),
     reconcileProjection: vi.fn(async () => order.push('reconcile.now')),
     subscribeDeltas: vi.fn(() => () => {}),
@@ -143,6 +165,7 @@ function harness(overrides: Record<string, unknown> = {}) {
       order.push('listener')
       authenticatedShutdown = input.onAuthenticatedShutdown
       listenerPayloadVersion = input.payloadVersion
+      listenerInput = input as unknown as Record<string, unknown>
       return listener
     },
     ...overrides
@@ -161,6 +184,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     domainProfilePath: () => domainProfilePath,
     domainPermissionConsentAuthority: () => domainPermissionConsentAuthority,
     listenerPayloadVersion: () => listenerPayloadVersion,
+    listenerInput: () => listenerInput,
     authenticatedShutdown: () => authenticatedShutdown,
     eventPublish: () => eventPublish?.(),
     projectionDirty: () => projectionDirty?.(),
@@ -585,5 +609,28 @@ describe('HostNodeProductionServer', () => {
       snapshotFile: { path: join(tmpdir(), 'host-snapshot.json') }
     })
     await absolute.server.stop()
+  })
+
+  // The perf snapshot writer and the welcome must name the SAME incarnation.
+  // If the server minted or forwarded a second value, a collector reading the
+  // file and a client reading the welcome would disagree about which Host they
+  // are attached to — worse than neither having an epoch, because both look
+  // authoritative.
+  it('threads the composition boot epoch to the listener, from the same identity the writer stamps', async () => {
+    const epoch = 'f'.repeat(64)
+    const h = harness({}, { compositionBootEpoch: epoch })
+    await h.server.start()
+    expect(h.listenerInput()?.bootEpoch).toBe(epoch)
+    await h.server.stop()
+  })
+
+  it('omits bootEpoch from the listener when the composition minted none', async () => {
+    const h = harness()
+    await h.server.start()
+    // Absent, not undefined: HostLocalServer refuses a present-but-invalid
+    // epoch, and an explicitly-undefined key would still read as "supplied"
+    // to any future exact-shape assertion on the listener input.
+    expect(Object.prototype.hasOwnProperty.call(h.listenerInput() ?? {}, 'bootEpoch')).toBe(false)
+    await h.server.stop()
   })
 })

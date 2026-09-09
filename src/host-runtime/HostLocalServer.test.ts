@@ -12,7 +12,7 @@
 
 /* eslint-disable @typescript-eslint/no-require-imports -- source-isolation probes intentionally load Node modules dynamically. */
 
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -26,6 +26,7 @@ import {
 import {
   HOST_PROTOCOL_VERSION,
   HOST_PROJECTION_VERSION,
+  decodeHostBootstrapWelcome,
   type HostCommand,
   type HostCapability,
   type HostClientClass,
@@ -2142,6 +2143,115 @@ describe('HostLocalServer', () => {
       } finally {
         await fleet.stop()
       }
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Boot epoch
+  //
+  // The welcome already names the Host (hostId) and its position (generation,
+  // cursor). None of those distinguish INCARNATIONS: a same-process restart
+  // under a surviving authority lease republishes the same hostId and replays
+  // to the same generation, so a reconnecting client cannot tell "the Host I
+  // was talking to" from "a new one wearing its name". The epoch is the only
+  // field that changes, and it is compared for equality only.
+  // -----------------------------------------------------------------------
+
+  describe('boot epoch', () => {
+    const EPOCH = 'd4f6a1b8'.repeat(8)
+
+    async function startWith(bootEpoch?: string): Promise<void> {
+      server = new HostLocalServer({
+        userDataPath: tmpUserDataPath(),
+        hostId: 'test-host',
+        hostVersion: '0.0.0-test',
+        session: session as unknown as HostSession,
+        authority: authority as unknown as HostAuthority,
+        ...(bootEpoch === undefined ? {} : { bootEpoch }),
+        now: () => 1754300000000
+      })
+      await server.start()
+    }
+
+    async function readWelcome(): Promise<
+      Extract<HostLocalTransportHostFrame, { type: 'welcome' }>
+    > {
+      const token = readFileSync(server.tokenPath, 'utf8').trim()
+      const client = await connectClient(server.socketPath)
+      client.writeLine(JSON.stringify(makeClientHello(token, ['bootstrap'])))
+      const frame = await client.readFrame()
+      client.close()
+      if (frame.type !== 'welcome') throw new Error(`expected welcome, got ${frame.type}`)
+      return frame
+    }
+
+    it('carries the minted epoch to the client on the wire', async () => {
+      await startWith(EPOCH)
+      const frame = await readWelcome()
+      expect(frame.welcome.bootEpoch).toBe(EPOCH)
+
+      // Reaching the socket is not enough: the value must also survive the
+      // real welcome decoder. A client that REJECTED the frame would drop the
+      // whole connection, so a bad epoch would read as "Host unreachable"
+      // rather than as "Host without an epoch".
+      const decoded = decodeHostBootstrapWelcome(JSON.parse(JSON.stringify(frame.welcome)))
+      expect(decoded).toEqual({ ok: true, value: expect.objectContaining({ bootEpoch: EPOCH }) })
+    })
+
+    it('omits the key entirely when no epoch was minted', async () => {
+      await startWith(undefined)
+      const frame = await readWelcome()
+
+      // Default-safe: not `undefined`, ABSENT. An explicit `bootEpoch:
+      // undefined` would serialize away here but still change the object a
+      // future exact-shape assertion sees, and `'bootEpoch' in welcome` is
+      // how a client decides whether the Host can be pinned at all.
+      expect(Object.prototype.hasOwnProperty.call(frame.welcome, 'bootEpoch')).toBe(false)
+      expect(JSON.stringify(frame.welcome)).not.toContain('bootEpoch')
+    })
+
+    it('refuses a malformed boot epoch instead of dropping it', () => {
+      // Dropping a bad epoch is the dangerous failure: downstream, absence
+      // means "legacy Host", so a silently dropped epoch disarms the client's
+      // incarnation check while every surface still looks healthy.
+      for (const bad of [
+        '',
+        'not-hex',
+        'A'.repeat(64), // uppercase
+        'a'.repeat(63), // short
+        'a'.repeat(65), // long
+        ` ${'a'.repeat(64)}`
+      ]) {
+        expect(
+          () =>
+            new HostLocalServer({
+              userDataPath: tmpUserDataPath(),
+              hostId: 'test-host',
+              hostVersion: '0.0.0-test',
+              session: session as unknown as HostSession,
+              authority: authority as unknown as HostAuthority,
+              bootEpoch: bad
+            })
+        ).toThrow('Host local boot epoch is invalid.')
+      }
+    })
+
+    it('never puts the transport auth token on the welcome', async () => {
+      // SECURITY. The token and the epoch are both
+      // randomBytes(32).toString('hex'), so they are indistinguishable by
+      // inspection and a future refactor could swap one for the other without
+      // anything looking wrong. The welcome is public to every authenticated
+      // peer, so that swap would hand out the credential.
+      const minted = randomBytes(32).toString('hex')
+      await startWith(minted)
+      const token = readFileSync(server.tokenPath, 'utf8').trim()
+      const frame = await readWelcome()
+
+      expect(frame.welcome.bootEpoch).toBe(minted)
+      expect(frame.welcome.bootEpoch).not.toBe(token)
+      // Not just this field — the token must not appear ANYWHERE in the frame.
+      expect(token).toMatch(/^[0-9a-f]{64}$/)
+      expect(JSON.stringify(frame)).not.toContain(token)
     })
   })
 })
