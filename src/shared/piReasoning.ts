@@ -131,7 +131,6 @@ const PI_MODEL_REASONING: Readonly<Record<string, PiReasoningSupport>> = {
   // Cerebras reasoning docs, verified 2026-09-08:
   // https://inference-docs.cerebras.ai/capabilities/reasoning
   // Gemma's low/medium/high all enable the same thinking mode; default is Off.
-  'cerebras/gemma-4-31b': ladder(['high'], 'off'),
   // Cerebras High selects Qwen's native xhigh mode; Off maps to API `none`.
   'cerebras/qwen-3.8-27b': ladder(['low', 'medium', 'high'], 'high'),
 

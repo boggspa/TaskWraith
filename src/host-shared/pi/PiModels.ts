@@ -418,16 +418,6 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     images: false
   },
   {
-    wireId: 'cerebras/gemma-4-31b',
-    upstream: 'cerebras',
-    modelId: 'gemma-4-31b',
-    label: 'Gemma 4 31B (Cerebras)',
-    contextWindow: 131_072,
-    maxOutputTokens: 40_000,
-    thinking: true,
-    images: true
-  },
-  {
     // Added after Pi 0.84.2; registered in the isolated home before launch.
     wireId: 'cerebras/qwen-3.8-27b',
     upstream: 'cerebras',

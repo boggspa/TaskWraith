@@ -7,9 +7,8 @@ import {
 import { findPiStaticModel } from './PiModels'
 
 /**
- * Pi 0.84.2 lacks Qwen 3.8 27B and gives Gemma a larger output ceiling than
- * Cerebras's console reports. Register only the selected new route, combining
- * any user completion cap in the same exclusive models.json write.
+ * Pi 0.84.2 lacks Qwen 3.8 27B. Register only the selected new route,
+ * combining any user completion cap in the same exclusive models.json write.
  *
  * Sources (2026-09-08): Cerebras Cloud console model limits and
  * https://inference-docs.cerebras.ai/capabilities/reasoning
@@ -30,10 +29,7 @@ export function writePiCerebrasModelRegistration(input: {
       `Pi Cerebras completion cap must be a whole number from 1 to ${PI_CEREBRAS_MODEL_MAX_COMPLETION_TOKENS}.`
     )
   }
-  const model =
-    modelId === 'gemma-4-31b' || modelId === 'qwen-3.8-27b'
-      ? findPiStaticModel(`cerebras/${modelId}`)
-      : undefined
+  const model = modelId === 'qwen-3.8-27b' ? findPiStaticModel(`cerebras/${modelId}`) : undefined
   if (!model && cap === undefined) return false
 
   const cerebras = model
@@ -52,8 +48,8 @@ export function writePiCerebrasModelRegistration(input: {
             thinkingLevelMap: {
               off: 'none',
               minimal: null,
-              low: modelId === 'qwen-3.8-27b' ? 'low' : null,
-              medium: modelId === 'qwen-3.8-27b' ? 'medium' : null,
+              low: 'low',
+              medium: 'medium',
               high: 'high',
               xhigh: null,
               max: null

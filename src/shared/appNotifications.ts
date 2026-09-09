@@ -138,7 +138,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: "Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair on OpenRouter via Pi, GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Gemma 4 31B and Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
+    body: "Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair on OpenRouter via Pi, GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
       {
@@ -387,12 +387,6 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             name: 'Nex-N2.5-Mini (OpenRouter Free)',
             blurb: 'The lighter free Nex-N2.5 — the same 262K window and effort ladder, text only.',
             accentProvider: 'nexagi'
-          },
-          {
-            name: 'Gemma 4 31B (Cerebras)',
-            blurb:
-              "Google's 31B model via Cerebras — 131K context, vision and optional thinking; preview access.",
-            accentProvider: 'cerebras'
           },
           {
             name: 'Qwen 3.8 27B (Cerebras)',

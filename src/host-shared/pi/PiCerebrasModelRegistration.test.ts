@@ -16,10 +16,7 @@ afterEach(() => {
 })
 
 describe('writePiCerebrasModelRegistration', () => {
-  it.each([
-    ['gemma-4-31b', 'Gemma 4 31B (Cerebras)', 40_000],
-    ['qwen-3.8-27b', 'Qwen 3.8 27B (Cerebras)', 40_960]
-  ] as const)(
+  it.each([['qwen-3.8-27b', 'Qwen 3.8 27B (Cerebras)', 40_960]] as const)(
     'registers %s without requiring a user completion cap',
     (modelId, label, maxTokens) => {
       const home = isolatedHome()
@@ -48,30 +45,16 @@ describe('writePiCerebrasModelRegistration', () => {
     }
   )
 
-  it.each(['gemma-4-31b', 'qwen-3.8-27b'])(
-    'combines the user cap with %s registration in one file',
-    (modelId) => {
-      const home = isolatedHome()
-      writePiCerebrasModelRegistration({
-        isolatedHomeDir: home,
-        modelId,
-        maxCompletionTokens: 16_384
-      })
-      const config = JSON.parse(readFileSync(join(home, 'models.json'), 'utf8'))
-      expect(config.providers.cerebras.models[0].maxTokens).toBe(16_384)
-      expect(config.providers.cerebras.modelOverrides).toBeUndefined()
-    }
-  )
-
-  it('respects Gemma’s model ceiling when the shared user cap is larger', () => {
+  it.each(['qwen-3.8-27b'])('combines the user cap with %s registration in one file', (modelId) => {
     const home = isolatedHome()
     writePiCerebrasModelRegistration({
       isolatedHomeDir: home,
-      modelId: 'gemma-4-31b',
-      maxCompletionTokens: 40_960
+      modelId,
+      maxCompletionTokens: 16_384
     })
     const config = JSON.parse(readFileSync(join(home, 'models.json'), 'utf8'))
-    expect(config.providers.cerebras.models[0].maxTokens).toBe(40_000)
+    expect(config.providers.cerebras.models[0].maxTokens).toBe(16_384)
+    expect(config.providers.cerebras.modelOverrides).toBeUndefined()
   })
 
   it('keeps bundled GPT-OSS defaults when there is no explicit cap', () => {

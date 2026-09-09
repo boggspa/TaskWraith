@@ -333,7 +333,7 @@ describe('HostNodePiProvider selection validation', () => {
 })
 
 describe('HostNodePiProvider containment', () => {
-  it.each(['gemma-4-31b', 'qwen-3.8-27b'])(
+  it.each(['qwen-3.8-27b'])(
     'registers Cerebras %s from the real offer catalogue before spawning Pi',
     async (modelId) => {
       const runPort = new FakeRunPort()

@@ -492,7 +492,6 @@ const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'groq/qwen/qwen3-32b', label: 'Qwen3 32B (Groq)' },
   { id: 'cerebras/zai-glm-4.7', label: 'GLM-4.7 (Cerebras)' },
   { id: 'cerebras/gpt-oss-120b', label: 'GPT-OSS 120B (Cerebras)' },
-  { id: 'cerebras/gemma-4-31b', label: 'Gemma 4 31B (Cerebras)' },
   { id: 'cerebras/qwen-3.8-27b', label: 'Qwen 3.8 27B (Cerebras)' },
   { id: 'openrouter/stealth/ox-alpha', label: 'Ox Alpha' },
   { id: 'openrouter/z-ai/glm-5.2', label: 'GLM 5.2' },

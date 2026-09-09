@@ -22,7 +22,6 @@ describe('resolvePiReasoningSupport', () => {
     ['zai/glm-5.1', ['off', 'high']],
     // Qwen exposes `enable_thinking` plus a token budget, never a level.
     ['qwen-token-plan/qwen3.8-max', ['off', 'high']],
-    ['cerebras/gemma-4-31b', ['off', 'high']],
     ['cerebras/qwen-3.8-27b', ['off', 'low', 'medium', 'high']],
     ['minimax/MiniMax-M3', ['off', 'high']],
     ['xiaomi-token-plan-sgp/mimo-v2.5-pro', ['off', 'high']],
@@ -132,7 +131,6 @@ describe('defaultPiReasoningEffort', () => {
   it('starts a seat on a stop its own model offers', () => {
     expect(defaultPiReasoningEffort('zai/glm-5.2')).toBe('max')
     expect(defaultPiReasoningEffort('deepseek/deepseek-v4-pro')).toBe('high')
-    expect(defaultPiReasoningEffort('cerebras/gemma-4-31b')).toBe('off')
     expect(defaultPiReasoningEffort('cerebras/qwen-3.8-27b')).toBe('high')
     expect(defaultPiReasoningEffort('openrouter/zai/glm-5.2')).toBe('high')
     expect(defaultPiReasoningEffort('openrouter/cohere/north-mini-code:free')).toBe('high')

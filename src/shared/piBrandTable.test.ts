@@ -49,7 +49,7 @@ describe('splitPiWireModelId', () => {
 })
 
 describe('resolvePiUpstreamBrand', () => {
-  it.each(['cerebras/gemma-4-31b', 'cerebras/qwen-3.8-27b'])(
+  it.each(['cerebras/gpt-oss-120b', 'cerebras/qwen-3.8-27b'])(
     'keeps the Cerebras serving brand for %s',
     (wireId) => {
       expect(resolvePiUpstreamBrand(wireId)).toEqual({ label: 'Cerebras', hueClass: 'cerebras' })
