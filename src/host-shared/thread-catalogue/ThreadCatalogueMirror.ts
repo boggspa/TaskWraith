@@ -18,6 +18,20 @@ interface Changes {
   position: { incarnation: string; sequence: number }
 }
 
+/**
+ * A full listing in progress. It outlives the refresh that began it so a page
+ * that fails resumes where it stopped instead of discarding the pages that
+ * already landed. `position` is the cursor captured before the first page and
+ * is adopted only once the listing completes.
+ */
+interface Listing {
+  position: Changes['position']
+  before: ThreadCatalogueListPage['next']
+  present: Set<string>
+  startedAt: number
+  suspended: boolean
+}
+
 /** Main/Host display mirror. Refreshes are bounded worker requests, with no disk/body fallback. */
 export class ThreadCatalogueMirror {
   private readonly witnesses = new Map<string, string>()
@@ -27,6 +41,7 @@ export class ThreadCatalogueMirror {
   private erasureGeneration = 0
   private readonly localWriteStamps = new Map<string, number>()
   private position: Changes['position'] | undefined
+  private listing: Listing | undefined
   private timer: ReturnType<typeof setTimeout> | null = null
   private stopped = false
   private coverage: 'partial' | 'complete' = 'partial'
@@ -132,6 +147,7 @@ export class ThreadCatalogueMirror {
     const valid = (): boolean => {
       if (generation === this.erasureGeneration && !this.stopped) return true
       this.position = undefined
+      this.listing = undefined
       return false
     }
     let changes = await this.port.query<Changes>({
@@ -139,33 +155,54 @@ export class ThreadCatalogueMirror {
       ...(this.position ? { position: this.position } : {})
     })
     if (!valid()) return
-    if (!this.position || changes.reset) {
+    // A suspended listing still owns the cursor it captured, so only its own
+    // resumption may adopt it. A pass that finds another one still in flight
+    // leaves it alone and takes the incremental path.
+    if ((!this.position && !this.listing) || changes.reset || this.listing?.suspended) {
       // Capture the changes cursor BEFORE listing, then replay anything that
       // moves between pages. A live reorder cannot silently omit a thread.
-      this.position = changes.position
-      let before: ThreadCatalogueListPage['next'] = null
-      const present = new Set<string>()
-      const listingStartedAt = this.readGeneration
-      do {
-        const pageStartedAt = this.readGeneration
-        const page: ThreadCatalogueListPage = await this.port.query({
-          method: 'list',
-          limit: 100,
-          ...(before ? { before } : {})
-        })
-        if (!valid()) return
-        for (const entry of page.entries) {
-          present.add(entry.projection.summary.chatId)
-          this.applyIndexed(entry.projection, entry.sourceWitness, pageStartedAt)
+      // The cursor is adopted only once the listing completes: a page that
+      // throws must leave the listing resumable, never permanently skipped.
+      if (!this.listing || changes.reset)
+        this.listing = {
+          position: changes.position,
+          before: null,
+          present: new Set<string>(),
+          startedAt: this.readGeneration,
+          suspended: false
         }
-        before = page.next
-        this.coverage = page.coverage
-      } while (before)
+      const listing = this.listing
+      listing.suspended = false
+      try {
+        do {
+          const pageStartedAt = this.readGeneration
+          const page: ThreadCatalogueListPage = await this.port.query({
+            method: 'list',
+            limit: 100,
+            ...(listing.before ? { before: listing.before } : {})
+          })
+          if (!valid()) return
+          for (const entry of page.entries) {
+            listing.present.add(entry.projection.summary.chatId)
+            this.applyIndexed(entry.projection, entry.sourceWitness, pageStartedAt)
+          }
+          // Advance the resume cursor before the next request so a failure
+          // restarts at the page that failed, not at the ones already applied.
+          listing.before = page.next
+          this.coverage = page.coverage
+        } while (listing.before)
+      } catch (error) {
+        listing.suspended = true
+        throw error
+      }
       // Partial indexing is not evidence of deletion. Only a complete listing
       // or an explicit deletion event may remove an existing displayed thread.
       if (this.coverage === 'complete')
         for (const id of this.rows.keys())
-          if (!present.has(id) && this.canApplyIndexed(id, listingStartedAt)) this.removeIndexed(id)
+          if (!listing.present.has(id) && this.canApplyIndexed(id, listing.startedAt))
+            this.removeIndexed(id)
+      this.position = listing.position
+      this.listing = undefined
       changes = await this.port.query<Changes>({ method: 'changes', position: this.position })
       if (!valid()) return
     }
@@ -217,6 +254,7 @@ export class ThreadCatalogueMirror {
     this.localWriteStamps.delete(chatId)
     this.coverage = 'partial'
     this.position = undefined
+    this.listing = undefined
     this.pendingLocalReads.delete(chatId)
     this.remove(chatId)
   }
@@ -226,6 +264,7 @@ export class ThreadCatalogueMirror {
     this.coverage = 'partial'
     this.readGeneration += 1
     this.position = undefined
+    this.listing = undefined
     this.pendingLocalReads.clear()
     for (const id of this.rows.keys()) this.remove(id)
   }
@@ -275,5 +314,6 @@ export class ThreadCatalogueMirror {
     this.witnesses.clear()
     this.pendingLocalReads.clear()
     this.localWriteStamps.clear()
+    this.listing = undefined
   }
 }

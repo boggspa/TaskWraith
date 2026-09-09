@@ -370,6 +370,111 @@ describe('ThreadCatalogueMirror local streaming isolation', () => {
     expect(mirror.sourceWitnessFor('chat-one')).toBe('local-witness')
   })
 
+  it('re-lists after a first page fails instead of adopting a cursor it never listed against', async () => {
+    let attempts = 0
+    const port: ThreadCatalogueReadPort = {
+      query: async (query) => {
+        if (query.method === 'changes') return changes(4) as never
+        if (query.method === 'list') {
+          attempts++
+          if (attempts <= 2) throw new Error('History read failed')
+          return {
+            entries: [{ projection: identified('cold-one', 'Cold one') }],
+            next: null,
+            coverage: 'complete',
+            repairPending: []
+          } as never
+        }
+        throw new Error(`Unexpected query ${query.method}`)
+      }
+    }
+    const mirror = new ThreadCatalogueMirror(port)
+    await expect(mirror.refresh()).rejects.toThrow('History read failed')
+    // The failed pass must not leave the mirror believing it is caught up: a
+    // second pass that skips the listing would hide the whole corpus forever.
+    await expect(mirror.refresh()).rejects.toThrow('History read failed')
+    expect(attempts).toBe(2)
+    expect(mirror.projections()).toEqual([])
+    expect(mirror.complete).toBe(false)
+
+    await mirror.refresh()
+    expect(attempts).toBe(3)
+    expect(mirror.get('cold-one')?.summary.title).toBe('Cold one')
+    expect(mirror.complete).toBe(true)
+  })
+
+  it('resumes a failed listing at the page that failed and keeps the pages already applied', async () => {
+    const firstPage = { updatedAt: 1, chatId: 'cold-one' }
+    let secondAttempts = 0
+    const requested: Array<{ updatedAt: number; chatId: string } | null> = []
+    const port: ThreadCatalogueReadPort = {
+      query: async (query) => {
+        if (query.method === 'changes') return changes(7) as never
+        if (query.method === 'list') {
+          requested.push(query.before ?? null)
+          if (!query.before)
+            return {
+              entries: [{ projection: identified('cold-one', 'Cold one') }],
+              next: firstPage,
+              coverage: 'complete',
+              repairPending: []
+            } as never
+          if (++secondAttempts === 1) throw new Error('History page failed')
+          return {
+            entries: [{ projection: identified('cold-two', 'Cold two') }],
+            next: null,
+            coverage: 'complete',
+            repairPending: []
+          } as never
+        }
+        throw new Error(`Unexpected query ${query.method}`)
+      }
+    }
+    const mirror = new ThreadCatalogueMirror(port)
+    await expect(mirror.refresh()).rejects.toThrow('History page failed')
+    expect(mirror.get('cold-one')?.summary.title).toBe('Cold one')
+    expect(mirror.get('cold-two')).toBeUndefined()
+
+    await mirror.refresh()
+    expect(mirror.get('cold-one')?.summary.title).toBe('Cold one')
+    expect(mirror.get('cold-two')?.summary.title).toBe('Cold two')
+    // The resumed pass asks for the failed page only; page one is never replayed.
+    expect(requested).toEqual([null, firstPage, firstPage])
+  })
+
+  it('does not remove a row listed before a resumed listing completes', async () => {
+    let secondAttempts = 0
+    const port: ThreadCatalogueReadPort = {
+      query: async (query) => {
+        if (query.method === 'changes') return changes(9) as never
+        if (query.method === 'list') {
+          if (!query.before)
+            return {
+              entries: [{ projection: identified('cold-one', 'Cold one') }],
+              next: { updatedAt: 1, chatId: 'cold-one' },
+              coverage: 'complete',
+              repairPending: []
+            } as never
+          if (++secondAttempts === 1) throw new Error('History page failed')
+          return {
+            entries: [{ projection: identified('cold-two', 'Cold two') }],
+            next: null,
+            coverage: 'complete',
+            repairPending: []
+          } as never
+        }
+        throw new Error(`Unexpected query ${query.method}`)
+      }
+    }
+    const mirror = new ThreadCatalogueMirror(port)
+    await expect(mirror.refresh()).rejects.toThrow('History page failed')
+    // cold-one arrived on the resumed listing's own first page, so the
+    // completeness sweep must not read its absence from page two as deletion.
+    await mirror.refresh()
+    expect(mirror.get('cold-one')?.summary.title).toBe('Cold one')
+    expect(mirror.get('cold-two')?.summary.title).toBe('Cold two')
+  })
+
   it('invalidates all old pages on erasure even though ordinary local writes no longer invalidate the poll', async () => {
     const second = deferred<unknown>()
     const secondStarted = deferred<void>()
