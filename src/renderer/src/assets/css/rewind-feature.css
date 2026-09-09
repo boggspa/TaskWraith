@@ -4,6 +4,13 @@
   background-color: var(--background-secondary);
   border: 1px solid var(--border-focused);
   padding: 8px;
+  /* A user bubble is shrink-to-fit, so without this the editor collapses onto
+   * the textarea's default 20-column intrinsic width — roughly half the prompt
+   * it replaced. Stretch to the column and let the shared
+   * `.message-bubble.user` cap (`min(76%, 820px)`, 92% under the 760px
+   * breakpoint) do the clamping, so the editor is exactly as wide as the
+   * transcript prompt underneath it. */
+  width: 100%;
 }
 
 .message-bubble.user.is-editing .user-message-content {
