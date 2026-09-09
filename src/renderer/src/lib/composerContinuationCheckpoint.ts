@@ -85,7 +85,7 @@ export function buildComposerContinuationCheckpoint(
       ? [
           chat.ensemble.activeRound.roundId,
           chat.ensemble.activeRound.status,
-          chat.ensemble.activeRound.participants.map((participant) => [
+          (chat.ensemble.activeRound.participants || []).map((participant) => [
             participant.participantId,
             participant.status
           ])

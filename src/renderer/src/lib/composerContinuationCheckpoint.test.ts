@@ -51,6 +51,36 @@ describe('buildComposerContinuationCheckpoint', () => {
     ).not.toBe(first.id)
   })
 
+  // A thread-catalogue summary row (`ChatListItem`, `catalogueProjection: true`)
+  // is spread onto a ChatRecord by `catalogueChatListItem`, and
+  // `ThreadCatalogueChrome` projects `ensemble.activeRound` down to a scalar
+  // whitelist — the round's `participants` and `lanes` are dropped. The row is
+  // structurally a ChatRecord, so tsc cannot flag the read; the Composer
+  // renders one on first selection, before hydration replaces it.
+  it('survives a catalogue summary round that carries no participants or lanes', () => {
+    const projectedRound = {
+      roundId: 'round-1',
+      status: 'running',
+      startedAt: '2026-08-30T00:00:00.000Z',
+      activeParticipantId: 'participant-1'
+    } as unknown as NonNullable<NonNullable<ChatRecord['ensemble']>['activeRound']>
+    const projected = chat({
+      chatKind: 'ensemble',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 6,
+        participants: [],
+        activeRound: projectedRound
+      }
+    })
+
+    const checkpoint = buildComposerContinuationCheckpoint(projected)!
+
+    expect(checkpoint.schemaVersion).toBe(2)
+    expect(checkpoint.roundState).toBe('none')
+    expect(checkpoint.id).toContain('continuation-v2:')
+  })
+
   it('suppresses draft generation after a completed goal and title generation after user rename', () => {
     const checkpoint = buildComposerContinuationCheckpoint(
       chat({
