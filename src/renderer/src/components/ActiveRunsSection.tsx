@@ -353,7 +353,7 @@ function transitionFallbackEntry(
   const configuredParticipant = chat.ensemble?.participants.find(
     (participant) => participant.id === participantId
   )
-  const roundParticipant = round.participants.find(
+  const roundParticipant = (round.participants || []).find(
     (participant) => participant.participantId === participantId
   )
   const provider = configuredParticipant?.provider || roundParticipant?.provider || chat.provider

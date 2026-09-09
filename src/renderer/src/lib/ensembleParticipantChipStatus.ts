@@ -73,7 +73,7 @@ export function deriveEnsembleParticipantChipStatus(
   round: EnsembleRoundState | undefined,
   participantId: string
 ): EnsembleParticipantChipStatusProjection {
-  const participantState = round?.participants.find(
+  const participantState = (round?.participants || []).find(
     (participant) => participant.participantId === participantId
   )
   const isSerialSpeaker = round?.status === 'running' && round.activeParticipantId === participantId
