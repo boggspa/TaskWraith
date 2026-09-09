@@ -76,6 +76,33 @@ export function antigravityRefusalLedgerRecord(
 
 /** agy's hook can carry a reason. Preserve the actual human/system decision
  * when one was observed; an unexplained false must not be labelled user/tier. */
+/**
+ * A refusal TaskWraith decided on its own, for a call it could not even
+ * attribute to a tool id.
+ *
+ * The agy hook rejects two shapes outright: a tool claiming TaskWraith's
+ * reserved MCP namespace without being a declared catalog action, and an MCP
+ * call naming no server. Both are denied before any tool id is minted, so the
+ * refusal has no provider call to correlate against. `operationId` is what
+ * keeps two such refusals in one run distinguishable; without it they would be
+ * indistinguishable rows sharing a null call id.
+ */
+export function agyHostPolicyRefusal(input: {
+  toolName: string
+  operationId: string
+  reason: string
+}): Omit<ToolRefusalReceipt, 'generation'> {
+  return {
+    toolCallId: null,
+    toolName: input.toolName,
+    operationId: input.operationId,
+    origin: 'host-policy',
+    decisionSource: 'system',
+    reason: input.reason,
+    reply: 'transport-written'
+  }
+}
+
 export async function captureAgyApproval(input: {
   toolCallId: string
   toolName: string

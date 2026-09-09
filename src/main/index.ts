@@ -1753,7 +1753,7 @@ import {
   sealRunToolReceipt,
   sealRunToolReceiptAfter
 } from './providers/RunToolCapabilitySettlement'
-import { createAntigravityAcpPermissionHandler, antigravityRefusalLedgerRecord, captureAgyApproval } from './antigravity/AntigravityToolPermission'
+import { createAntigravityAcpPermissionHandler, antigravityRefusalLedgerRecord, captureAgyApproval, agyHostPolicyRefusal } from './antigravity/AntigravityToolPermission'
 import { attributedToolRefusalText } from './acp/AcpToolRefusalAttribution'
 // Devin: ACP-over-stdio seat (`devin acp`). Launch policy + credential lanes in
 // devin/DevinCliArgs + DevinCredentialLane + DevinCredentialStore, gates in
@@ -37244,10 +37244,19 @@ async function runAntigravityAgyProvider(
           return { decision: 'allow' }
         }
         if (kind === 'invalid-taskwraith-mcp') {
+          const reason =
+            "This tool claims TaskWraith's reserved MCP namespace but is not a declared catalog action. It was denied rather than treated as a native tool."
           return {
             decision: 'deny',
-            reason:
-              "This tool claims TaskWraith's reserved MCP namespace but is not a declared catalog action. It was denied rather than treated as a native tool."
+            reason,
+            onReplyWritten: () =>
+              agyToolReceipt?.refusal(
+                agyHostPolicyRefusal({
+                  toolName: toolCall.name,
+                  operationId: `agy-reserved-namespace-${++toolSeq}`,
+                  reason
+                })
+              )
           }
         }
         if (kind === 'shell') {
@@ -37312,10 +37321,19 @@ async function runAntigravityAgyProvider(
             return { decision: 'allow' }
           }
           if (!server) {
+            const reason =
+              'TaskWraith could not attribute this MCP call to a server while the leased agy permission layer is open, so it was denied rather than run unreviewed. Name the server explicitly and retry.'
             return {
               decision: 'deny',
-              reason:
-                'TaskWraith could not attribute this MCP call to a server while the leased agy permission layer is open, so it was denied rather than run unreviewed. Name the server explicitly and retry.'
+              reason,
+              onReplyWritten: () =>
+                agyToolReceipt?.refusal(
+                  agyHostPolicyRefusal({
+                    toolName: toolCall.name,
+                    operationId: `agy-unattributed-mcp-${++toolSeq}`,
+                    reason
+                  })
+                )
             }
           }
           const toolId = `agy-mcp-${Date.now()}-${++toolSeq}`
