@@ -33,17 +33,30 @@ export function sealRunToolReceipt(receipt: SealableRunToolReceipt | null | unde
 }
 
 /**
- * Run a run's cleanup work and seal its receipt afterwards, whether or not that
- * cleanup succeeded. The cleanup's own rejection still propagates unchanged, so
- * callers keep the failure they would have seen before.
+ * Run every cleanup step, then seal, then rethrow the first failure.
+ *
+ * A step that rejects must not skip the steps after it. The agy lane drains its
+ * transcript monitor and then releases the permission lease, and that lease is
+ * what restores the user's temporary agy settings overlay — so a drain failure
+ * silently leaving the overlay in place is a worse outcome than the drain
+ * failure itself. Sealing still happens whatever the steps do, and the caller
+ * still sees the first error, so the run fails exactly as it did before.
  */
-export async function sealRunToolReceiptAfter<T>(
+export async function sealRunToolReceiptAfterCleanup(
   receipt: SealableRunToolReceipt | null | undefined,
-  cleanup: () => Promise<T> | T
-): Promise<T> {
+  steps: ReadonlyArray<() => Promise<unknown> | unknown>
+): Promise<void> {
+  let failure: { error: unknown } | null = null
   try {
-    return await cleanup()
+    for (const step of steps) {
+      try {
+        await step()
+      } catch (error) {
+        failure = failure ?? { error }
+      }
+    }
   } finally {
     sealRunToolReceipt(receipt)
   }
+  if (failure) throw failure.error
 }

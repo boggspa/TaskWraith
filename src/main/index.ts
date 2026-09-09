@@ -1751,7 +1751,7 @@ import { createRuntimeToolCapabilityRecorder, configureRunManagedToolReceipt } f
 import { readRunToolCapabilityReceipt } from './providers/RunToolCapabilityStore'
 import {
   sealRunToolReceipt,
-  sealRunToolReceiptAfter
+  sealRunToolReceiptAfterCleanup
 } from './providers/RunToolCapabilitySettlement'
 import { createAntigravityAcpPermissionHandler, antigravityRefusalLedgerRecord, captureAgyApproval, agyHostPolicyRefusal } from './antigravity/AntigravityToolPermission'
 import { attributedToolRefusalText } from './acp/AcpToolRefusalAttribution'
@@ -37665,12 +37665,15 @@ async function runAntigravityAgyProvider(
       }
     )
   } finally {
-    // Seal the receipt whatever the cleanup does: releasePermissionLease
-    // rethrows, and an unsealed receipt reads as a run still resolving tools.
-    await sealRunToolReceiptAfter(agyToolReceipt, async () => {
-      await brainTranscriptMonitor.stopAndDrain()
-      await releasePermissionLease()
-    })
+    // Every step runs even if an earlier one rejects, then the receipt is
+    // sealed, then the first failure is rethrown. Releasing the lease is what
+    // restores the user's temporary agy settings overlay, so a failed drain
+    // must never skip it; an unsealed receipt reads as a run still resolving
+    // tools. The run still fails with the same first error it did before.
+    await sealRunToolReceiptAfterCleanup(agyToolReceipt, [
+      () => brainTranscriptMonitor.stopAndDrain(),
+      () => releasePermissionLease()
+    ])
   }
 }
 

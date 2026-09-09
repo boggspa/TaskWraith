@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 
-import { sealRunToolReceipt, sealRunToolReceiptAfter } from './RunToolCapabilitySettlement'
+import { sealRunToolReceipt, sealRunToolReceiptAfterCleanup } from './RunToolCapabilitySettlement'
 
 const mainSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
 
@@ -15,45 +15,60 @@ function providerRegion(signature: string): string[] {
   return rest.slice(0, end).split('\n')
 }
 
-describe('sealRunToolReceiptAfter', () => {
-  it('seals after the cleanup resolves, and returns the cleanup value', async () => {
+describe('sealRunToolReceiptAfterCleanup', () => {
+  it('runs a later step even when an earlier one rejects', async () => {
+    const order: string[] = []
     const settle = vi.fn()
-    await expect(sealRunToolReceiptAfter({ settle }, async () => 'drained')).resolves.toBe(
-      'drained'
-    )
-    expect(settle).toHaveBeenCalledTimes(1)
-  })
-
-  it('still seals when the cleanup rejects, and propagates that rejection unchanged', async () => {
-    const settle = vi.fn()
-    const failure = new Error('permission lease release failed')
     await expect(
-      sealRunToolReceiptAfter({ settle }, async () => {
-        throw failure
-      })
-    ).rejects.toBe(failure)
-    expect(settle).toHaveBeenCalledTimes(1)
-  })
-
-  it('never lets a reporting failure replace the failure that ended the run', async () => {
-    const failure = new Error('permission lease release failed')
-    await expect(
-      sealRunToolReceiptAfter(
-        {
-          settle: () => {
-            throw new Error('receipt reporting blew up')
-          }
+      sealRunToolReceiptAfterCleanup({ settle }, [
+        async () => {
+          order.push('drain')
+          throw new Error('drain failed')
         },
         async () => {
-          throw failure
+          order.push('release')
         }
-      )
-    ).rejects.toBe(failure)
+      ])
+    ).rejects.toThrow('drain failed')
+    // The release step is the one that restores the user's settings overlay.
+    expect(order).toEqual(['drain', 'release'])
+    expect(settle).toHaveBeenCalledTimes(1)
   })
 
-  it('tolerates a run that never created a receipt', async () => {
-    await expect(sealRunToolReceiptAfter(undefined, async () => 'ok')).resolves.toBe('ok')
-    await expect(sealRunToolReceiptAfter(null, () => 'ok')).resolves.toBe('ok')
+  it('rethrows the FIRST failure, not the last', async () => {
+    const first = new Error('drain failed')
+    const second = new Error('release failed')
+    await expect(
+      sealRunToolReceiptAfterCleanup(undefined, [
+        () => Promise.reject(first),
+        () => Promise.reject(second)
+      ])
+    ).rejects.toBe(first)
+  })
+
+  it('seals once and resolves when every step succeeds', async () => {
+    const settle = vi.fn()
+    const order: string[] = []
+    await expect(
+      sealRunToolReceiptAfterCleanup({ settle }, [
+        () => order.push('a'),
+        async () => void order.push('b')
+      ])
+    ).resolves.toBeUndefined()
+    expect(order).toEqual(['a', 'b'])
+    expect(settle).toHaveBeenCalledTimes(1)
+  })
+
+  it('seals even when every step rejects, and tolerates no receipt', async () => {
+    const settle = vi.fn()
+    await expect(
+      sealRunToolReceiptAfterCleanup({ settle }, [
+        () => Promise.reject(new Error('one')),
+        () => Promise.reject(new Error('two'))
+      ])
+    ).rejects.toThrow('one')
+    expect(settle).toHaveBeenCalledTimes(1)
+    await expect(sealRunToolReceiptAfterCleanup(null, [])).resolves.toBeUndefined()
   })
 })
 
@@ -103,7 +118,11 @@ describe('every AntiGravity terminal path seals its run tool receipt', () => {
 
   it('the agy cleanup seals the receipt even when releasing the permission lease rejects', () => {
     const region = providerRegion('async function runAntigravityAgyProvider(').join('\n')
-    expect(region).toContain('sealRunToolReceiptAfter(agyToolReceipt')
+    expect(region).toContain('sealRunToolReceiptAfterCleanup(agyToolReceipt, [')
+    // Both steps must be present: dropping the lease release is the failure
+    // this ordering exists to prevent.
+    expect(region).toContain('brainTranscriptMonitor.stopAndDrain()')
+    expect(region).toContain('releasePermissionLease()')
     // The previous ordering sealed only after an awaited cleanup that rethrows.
     expect(region).not.toMatch(/await releasePermissionLease\(\)\n\s*agyToolReceipt\?\.settle\(\)/)
   })
