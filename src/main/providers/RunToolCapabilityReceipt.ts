@@ -77,6 +77,18 @@ export interface RunToolCapabilityReceipt extends RunToolCapabilityContext {
     attached: ToolCatalogueEvidence | null
     observed: ToolCatalogueEvidence | null
     executed: string[]
+    /**
+     * Whether `executed` is the COMPLETE set of tools that ran on this surface.
+     *
+     * False everywhere today, and deliberately so: no lane can currently prove
+     * it observed every execution. A name's presence proves that tool ran; its
+     * absence proves nothing. Without this a reader has to infer closure from a
+     * non-empty list, which is the same unknown-versus-absent confusion the
+     * rest of this receipt exists to remove. A future producer that can prove
+     * completeness must also force this back to false wherever
+     * `boundRunToolCapabilityReceipt` trims the list.
+     */
+    executedComplete?: boolean
   }
   managed: {
     advertised: ToolCatalogueEvidence | null
@@ -84,6 +96,18 @@ export interface RunToolCapabilityReceipt extends RunToolCapabilityContext {
     attached: ToolCatalogueEvidence | null
     observed: ToolCatalogueEvidence | null
     executed: string[]
+    /**
+     * Whether `executed` is the COMPLETE set of tools that ran on this surface.
+     *
+     * False everywhere today, and deliberately so: no lane can currently prove
+     * it observed every execution. A name's presence proves that tool ran; its
+     * absence proves nothing. Without this a reader has to infer closure from a
+     * non-empty list, which is the same unknown-versus-absent confusion the
+     * rest of this receipt exists to remove. A future producer that can prove
+     * completeness must also force this back to false wherever
+     * `boundRunToolCapabilityReceipt` trims the list.
+     */
+    executedComplete?: boolean
   }
   connection: 'unknown' | 'configured' | 'ready' | 'unavailable'
   requiredManagedTools: string[]
@@ -255,8 +279,22 @@ export function createRunToolCapabilityReceipt(
     revision: 0,
     timestamp: new Date(now()).toISOString(),
     permissionSource: context.effectivePermissions ? 'host-resolved-run' : 'unknown',
-    native: { advertised: null, served: null, attached: null, observed: null, executed: [] },
-    managed: { advertised: null, served: null, attached: null, observed: null, executed: [] },
+    native: {
+      advertised: null,
+      served: null,
+      attached: null,
+      observed: null,
+      executed: [],
+      executedComplete: false
+    },
+    managed: {
+      advertised: null,
+      served: null,
+      attached: null,
+      observed: null,
+      executed: [],
+      executedComplete: false
+    },
     connection: 'unknown',
     requiredManagedTools: [],
     requiredManagedToolsComplete: true,
@@ -311,6 +349,8 @@ export function createRunToolCapabilityReceipt(
       receipt.managed.attached = null
       receipt.native.executed = []
       receipt.managed.executed = []
+      receipt.native.executedComplete = false
+      receipt.managed.executedComplete = false
       receipt.connection = 'unknown'
       receipt.blocker = null
       assess()

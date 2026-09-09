@@ -1755,6 +1755,7 @@ import {
 } from './providers/RunToolCapabilitySettlement'
 import { createAntigravityAcpPermissionHandler, antigravityRefusalLedgerRecord, captureAgyApproval, agyHostPolicyRefusal } from './antigravity/AntigravityToolPermission'
 import { attributedToolRefusalText } from './acp/AcpToolRefusalAttribution'
+import { recordAgyExecutedTool } from './antigravity/AgyExecutedToolEvidence'
 // Devin: ACP-over-stdio seat (`devin acp`). Launch policy + credential lanes in
 // devin/DevinCliArgs + DevinCredentialLane + DevinCredentialStore, gates in
 // devin/devinGate.ts (same pure-env constraint as mistralGate), ACP hooks in
@@ -37617,13 +37618,17 @@ async function runAntigravityAgyProvider(
     workspace: payload.workspace,
     providerSessionId: payload.providerSessionId,
     receiptBeforeFreshProject,
-    emit: (transcriptEvent) =>
+    emit: (transcriptEvent) => {
+      // agy's own durable step log is the only place this lane learns that a
+      // native tool actually RAN; the PreToolUse hook fires before execution.
+      recordAgyExecutedTool(agyToolReceipt, transcriptEvent)
       sendAgentCompatLine(
         event.sender,
         'antigravity',
         { ...transcriptEvent, provider: 'antigravity' },
         route
       )
+    }
   })
   await brainTranscriptMonitor.prime()
   brainTranscriptMonitor.start()

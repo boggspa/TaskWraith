@@ -268,3 +268,38 @@ it('fits maximum refusal/catalogue detail into the real durable envelope with di
   expect(snapshot.refusals.at(-1)?.toolCallId).toBe('call-63')
   expect(snapshot.managed.observed?.complete).toBe(false)
 })
+
+describe('executed tools are always reported as a lower bound', () => {
+  const reporter = () =>
+    createRunToolCapabilityReceipt({
+      runId: 'run',
+      chatId: 'chat',
+      provider: 'antigravity',
+      model: null,
+      transport: 'agy-print',
+      effectivePermissions: null,
+      scope: { kind: 'global', workspacePath: null, paths: [] }
+    })
+
+  it('never claims the executed list is closed, even once tools have run', () => {
+    const r = reporter()
+    expect(r.snapshot().native.executedComplete).toBe(false)
+    expect(r.snapshot().managed.executedComplete).toBe(false)
+
+    expect(r.executed('native', 'view_file')).toBe(true)
+    const after = r.snapshot()
+    // A name proves that tool ran; the absence of a name proves nothing, so a
+    // non-empty list must still not read as an exact set.
+    expect(after.native.executed).toEqual(['view_file'])
+    expect(after.native.executedComplete).toBe(false)
+  })
+
+  it('resets the claim with the rest of the generation state', () => {
+    const r = reporter()
+    r.executed('native', 'view_file')
+    r.beginGeneration()
+    const after = r.snapshot()
+    expect(after.native.executed).toEqual([])
+    expect(after.native.executedComplete).toBe(false)
+  })
+})
