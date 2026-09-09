@@ -1013,8 +1013,8 @@ describe('ComposerService', () => {
       { userInput: 'Use a subagent to review this and delegate a pass.' }
     )
     expect(payload.prompt).toContain('TaskWraith MCP server')
-    expect(payload.prompt).toContain('TaskWraith__delegate_to_subthread')
-    expect(payload.prompt).toContain('TaskWraith__delegate_wave')
+    expect(payload.prompt).toContain('mcp__taskwraith__delegate_to_subthread')
+    expect(payload.prompt).toContain('mcp__taskwraith__delegate_wave')
     expect(payload.prompt).toContain('workers')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
     expect(payload.prompt).toContain("provider: 'claude'")
