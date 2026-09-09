@@ -11,6 +11,10 @@ import {
   devinWriteCapable,
   scrubDevinCredentialEnv
 } from './DevinCliArgs'
+import {
+  AMBIGUOUS_NO_TOOLS_OVERRIDE_PHRASE,
+  noToolsOverrideClause
+} from '../providers/NoToolsOverrideClause'
 
 describe('devin binary + argv', () => {
   it('targets the devin CLI and its acp subcommand', () => {
@@ -141,5 +145,19 @@ describe('prompt preamble', () => {
       'read-only shell commands such as ls, cat, grep, find, and git log / status / diff'
     )
     expect(readOnly).toContain('do NOT end your turn')
+  })
+})
+
+describe('no-tools clause in the Devin preambles', () => {
+  it('embeds the conditional clause, not the phrasing a seat misread as a ban', () => {
+    expect(DEVIN_READ_ONLY_PROMPT_PREAMBLE).toContain(
+      noToolsOverrideClause('read, shell, file, or any other tool')
+    )
+    expect(DEVIN_WRITE_MODE_PROMPT_PREAMBLE).toContain(
+      noToolsOverrideClause('shell, file, or any other tool')
+    )
+    for (const preamble of [DEVIN_READ_ONLY_PROMPT_PREAMBLE, DEVIN_WRITE_MODE_PROMPT_PREAMBLE]) {
+      expect(preamble).not.toContain(AMBIGUOUS_NO_TOOLS_OVERRIDE_PHRASE)
+    }
   })
 })

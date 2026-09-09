@@ -4,9 +4,11 @@ import {
   MISTRAL_DEFAULT_MODEL,
   MISTRAL_MODEL_DEVSTRAL_SMALL,
   MISTRAL_MODEL_MEDIUM,
+  MISTRAL_READ_ONLY_PROMPT_PREAMBLE,
   MISTRAL_SEAT_MODELS,
   MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS,
   MISTRAL_UNGATED_SESSION_MODES,
+  MISTRAL_WRITE_MODE_PROMPT_PREAMBLE,
   applyMistralPromptPreamble,
   buildMistralAcpCliArgs,
   mistralCredentialEnvScrubbed,
@@ -19,6 +21,10 @@ import {
   normalizeMistralThinkingLevel,
   scrubMistralCredentialEnv
 } from './MistralCliArgs'
+import {
+  AMBIGUOUS_NO_TOOLS_OVERRIDE_PHRASE,
+  noToolsOverrideClause
+} from '../providers/NoToolsOverrideClause'
 
 describe('mistral binary + argv', () => {
   it('targets vibe-acp, never the interactive TUI', () => {
@@ -249,5 +255,22 @@ describe('normalizeMistralPlanId', () => {
     expect(normalizeMistralPlanId('enterprise')).toBe('unknown')
     expect(normalizeMistralPlanId('')).toBe('unknown')
     expect(normalizeMistralPlanId(null)).toBe('unknown')
+  })
+})
+
+describe('no-tools clause in the Mistral preambles', () => {
+  it('embeds the conditional clause, not the phrasing a seat misread as a ban', () => {
+    expect(MISTRAL_READ_ONLY_PROMPT_PREAMBLE).toContain(
+      noToolsOverrideClause('read, shell, file, or any other tool')
+    )
+    expect(MISTRAL_WRITE_MODE_PROMPT_PREAMBLE).toContain(
+      noToolsOverrideClause('shell, file, or any other tool')
+    )
+    for (const preamble of [
+      MISTRAL_READ_ONLY_PROMPT_PREAMBLE,
+      MISTRAL_WRITE_MODE_PROMPT_PREAMBLE
+    ]) {
+      expect(preamble).not.toContain(AMBIGUOUS_NO_TOOLS_OVERRIDE_PHRASE)
+    }
   })
 })

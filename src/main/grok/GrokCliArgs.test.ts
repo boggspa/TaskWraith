@@ -21,6 +21,10 @@ import {
   GROK_READ_ONLY_DENY_RULES,
   GROK_WRITE_MODE_DENY_RULES
 } from './GrokCliArgs'
+import {
+  AMBIGUOUS_NO_TOOLS_OVERRIDE_PHRASE,
+  noToolsOverrideClause
+} from '../providers/NoToolsOverrideClause'
 import type { ActiveGoal } from '../store/types'
 
 const grokNativeGoal: ActiveGoal = {
@@ -574,5 +578,26 @@ describe('applyGrokReadOnlyPromptPreamble', () => {
     expect(lower).toContain('no-tools instruction')
     expect(lower).toContain('do not call read, shell, file, goal, or any other tool')
     expect(lower).toContain('do not substitute unrelated workspace or goal tools')
+  })
+})
+
+describe('no-tools clause in the Grok preambles', () => {
+  it('embeds the conditional clause, not the phrasing a seat misread as a ban', () => {
+    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toContain(
+      noToolsOverrideClause('read, shell, file, goal, or any other tool')
+    )
+    expect(GROK_WRITE_MODE_PROMPT_PREAMBLE).toContain(
+      noToolsOverrideClause('shell, file, goal, or any other tool')
+    )
+    expect(GROK_WRITE_MODE_NO_BROKER_PROMPT_PREAMBLE).toContain(
+      noToolsOverrideClause('file, goal, or any other tool')
+    )
+    for (const preamble of [
+      GROK_READ_ONLY_PROMPT_PREAMBLE,
+      GROK_WRITE_MODE_PROMPT_PREAMBLE,
+      GROK_WRITE_MODE_NO_BROKER_PROMPT_PREAMBLE
+    ]) {
+      expect(preamble).not.toContain(AMBIGUOUS_NO_TOOLS_OVERRIDE_PHRASE)
+    }
   })
 })

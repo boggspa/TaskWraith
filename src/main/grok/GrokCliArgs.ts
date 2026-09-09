@@ -25,6 +25,7 @@
 import type { ActiveGoal } from '../store/types'
 import { isGrok45ReasoningModelId, isGrokReasoningModelId } from '../../shared/grok45Models'
 import { GROK_BROKER_MCP_TOOL_NAMESPACE } from '../index.constants'
+import { noToolsOverrideClause } from '../providers/NoToolsOverrideClause'
 
 const GROK_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh'])
 // TaskWraith's top-of-ladder tiers (Ultra/Ultracode/UltraTask/Max) all clamp to
@@ -122,9 +123,8 @@ export const GROK_READ_ONLY_PROMPT_PREAMBLE =
   'inspect through the native read/file tools that are actually listed. Native Bash/Shell ' +
   'are unavailable in this seat — do not attempt them. If a TaskWraith MCP shell tool is ' +
   'listed, that is the shell route and the host will prompt the user before it runs. ' +
-  'An explicit no-tools instruction ' +
-  'in the user request or role brief overrides that allowance: do not call read, ' +
-  'shell, file, goal, or any other tool. File writes and edits are refused by the host — do not ' +
+  `${noToolsOverrideClause('read, shell, file, goal, or any other tool')} ` +
+  'File writes and edits are refused by the host — do not ' +
   'attempt them; if the task would need one, describe what you would change ' +
   'instead. If a tool call is refused, do NOT end your turn — summarise what ' +
   'you found from the reads you did and answer the user directly. Do not substitute ' +
@@ -152,9 +152,9 @@ export const GROK_MCP_SHELL_PROMPT_NOTE =
 export const GROK_WRITE_MODE_PROMPT_PREAMBLE =
   'When the task requests file changes, use the TaskWraith MCP file tools; native Write/Edit ' +
   'cannot participate in exact edit transactions. For supported shell work, use the TaskWraith ' +
-  'MCP run_shell_command tool — native Bash/Shell are unavailable. An explicit no-tools instruction in the user ' +
-  'request or role brief overrides that allowance: do not call shell, file, goal, ' +
-  'or any other tool. If a tool call is refused or fails, do not end your turn; ' +
+  'MCP run_shell_command tool — native Bash/Shell are unavailable. ' +
+  `${noToolsOverrideClause('shell, file, goal, or any other tool')} ` +
+  'If a tool call is refused or fails, do not end your turn; ' +
   'retry only the same requested operation with an equivalent allowed tool. Never ' +
   'substitute unrelated shell, file, or goal calls for a failed coordination call; ' +
   'otherwise report the failure and answer in prose.'
@@ -167,8 +167,8 @@ export const GROK_WRITE_MODE_PROMPT_PREAMBLE =
 export const GROK_WRITE_MODE_NO_BROKER_PROMPT_PREAMBLE =
   'The TaskWraith mutation broker is not verified for this turn, so this run can inspect and explain but cannot change files. ' +
   'Native Write/Edit/Bash/Shell are unavailable. ' +
-  'Do not call, search for, or retry a TaskWraith shell tool. An explicit no-tools instruction in the user ' +
-  'request or role brief overrides that allowance: do not call file, goal, or any other tool. ' +
+  'Do not call, search for, or retry a TaskWraith shell tool. ' +
+  `${noToolsOverrideClause('file, goal, or any other tool')} ` +
   'If shell work is required, report that exact blocker and answer from the evidence already available; ' +
   'do not substitute unrelated side effects.'
 

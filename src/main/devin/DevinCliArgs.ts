@@ -23,6 +23,8 @@
 /**
  * The binary. `devin` is the CLI; `devin acp` starts the ACP stdio server.
  */
+import { noToolsOverrideClause } from '../providers/NoToolsOverrideClause'
+
 export const DEVIN_BINARY_NAME = 'devin'
 
 /**
@@ -117,9 +119,9 @@ export function devinWriteCapable(approvalMode: string | null | undefined): bool
 export const DEVIN_READ_ONLY_PROMPT_PREAMBLE =
   'You are running in READ-ONLY mode (recon / investigation). You CAN read and ' +
   'inspect freely — read files and run read-only shell commands such as ls, ' +
-  'cat, grep, find, and git log / status / diff. An explicit no-tools instruction ' +
-  'in the user request or role brief overrides that allowance: do not call read, ' +
-  'shell, file, or any other tool. File writes and edits, and MUTATING shell ' +
+  'cat, grep, find, and git log / status / diff. ' +
+  `${noToolsOverrideClause('read, shell, file, or any other tool')} ` +
+  'File writes and edits, and MUTATING shell ' +
   'commands (anything that changes files or git state, installs packages, or has ' +
   'other side effects) are refused by the host — do not attempt them; if the task ' +
   'would need one, describe what you would change instead. If a tool call is ' +
@@ -129,9 +131,9 @@ export const DEVIN_READ_ONLY_PROMPT_PREAMBLE =
 export const DEVIN_WRITE_MODE_PROMPT_PREAMBLE =
   'When the task requests file changes, use your edit tools; each call is ' +
   'reviewed by the host before it runs, so expect an approval round-trip rather ' +
-  'than an instant result. An explicit no-tools instruction in the user request ' +
-  'or role brief overrides that allowance: do not call shell, file, or any other ' +
-  'tool. If a tool call is refused or fails, do not end your turn; retry only the ' +
+  'than an instant result. ' +
+  `${noToolsOverrideClause('shell, file, or any other tool')} ` +
+  'If a tool call is refused or fails, do not end your turn; retry only the ' +
   'same requested operation with an equivalent allowed tool, and never substitute ' +
   'an unrelated shell or file call for a failed one. Otherwise report the failure ' +
   'and answer in prose.'

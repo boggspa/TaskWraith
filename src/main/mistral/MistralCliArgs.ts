@@ -43,6 +43,7 @@
 // mutations underneath it.
 
 import type { MistralPlanId } from './MistralQuotaEstimate'
+import { noToolsOverrideClause } from '../providers/NoToolsOverrideClause'
 
 /**
  * The binary. NOT `mistral` and NOT `vibe` — `vibe` is the interactive TUI and
@@ -272,9 +273,9 @@ export const MISTRAL_READ_ONLY_PROMPT_PREAMBLE =
   'You are running in READ-ONLY mode (recon / investigation). You CAN read and ' +
   'inspect within your assigned workspace scope. Prefer the listed TaskWraith ' +
   'shell for ls, cat, grep, find, and git log / status / diff; native shell ' +
-  'remains subject to the host workspace preflight. An explicit no-tools instruction ' +
-  'in the user request or role brief overrides that allowance: do not call read, ' +
-  'shell, file, or any other tool. File writes and edits, and MUTATING shell ' +
+  'remains subject to the host workspace preflight. ' +
+  `${noToolsOverrideClause('read, shell, file, or any other tool')} ` +
+  'File writes and edits, and MUTATING shell ' +
   'commands (anything that changes files or git state, installs packages, or has ' +
   'other side effects) are refused by the host — do not attempt them; if the task ' +
   'would need one, describe what you would change instead. If a tool call is ' +
@@ -289,9 +290,9 @@ export const MISTRAL_WRITE_MODE_PROMPT_PREAMBLE =
   'exact name from your current tool list. Native edit/write tools are refused ' +
   'automatically by TaskWraith; they do not open a human approval card. Brokered ' +
   'operations enforce the effective grants and assigned paths, asking only when ' +
-  'the policy requires it. An explicit no-tools instruction in the user request ' +
-  'or role brief overrides that allowance: do not call shell, file, or any other ' +
-  'tool. If the user declines a tool request, respect that decision: do not retry ' +
+  'the policy requires it. ' +
+  `${noToolsOverrideClause('shell, file, or any other tool')} ` +
+  'If the user declines a tool request, respect that decision: do not retry ' +
   'the operation, reword the same edit, or substitute another tool for the same ' +
   'side effect. Report the blocker and continue only with other requested work ' +
   'that remains permitted. For a technical tool failure, use an applicable ' +
