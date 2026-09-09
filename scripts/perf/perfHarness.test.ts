@@ -124,6 +124,12 @@ function freshHostBundleFs() {
     },
     readdirSync(_target: string, _options?: unknown) {
       return [{ name: 'Fresh.ts', isFile: () => true, isDirectory: () => false }]
+    },
+    // The walk yields no `.js`, so no sourcemap is ever read. This exists only
+    // to satisfy the fs contract, so the test exercises the freshness
+    // comparison rather than short-circuiting on fs_contract.
+    readFileSync(target: string, _encoding?: unknown) {
+      throw Object.assign(new Error(`ENOENT: ${target}`), { code: 'ENOENT' })
     }
   }
 }
@@ -147,6 +153,12 @@ function staleHostBundleFs() {
     },
     readdirSync(_target: string, _options?: unknown) {
       return [{ name: 'Fresh.ts', isFile: () => true, isDirectory: () => false }]
+    },
+    // As above: no `.js` in the walk, so this is never called. Without it the
+    // preflight would refuse on fs_contract and the test would pass for the
+    // WRONG reason — the same trap this stub's own comment already records.
+    readFileSync(target: string, _encoding?: unknown) {
+      throw Object.assign(new Error(`ENOENT: ${target}`), { code: 'ENOENT' })
     }
   }
 }
@@ -3875,17 +3887,28 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
   // Host bundle freshness preflight (ruling P2)
   // -------------------------------------------------------------------------
 
-  type FsNode = { mtimeMs?: number; children?: Record<string, FsNode>; symlink?: true }
+  type FsNode = {
+    mtimeMs?: number
+    content?: string
+    children?: Record<string, FsNode>
+    symlink?: true
+  }
+  /** A file carrying bytes as well as an mtime — a sourcemap needs both. */
+  type FileSpec = { mtimeMs: number; content: string }
 
-  /** Flat repo-relative path -> mtime, expanded into a directory tree. */
-  function treeOf(files: Record<string, number>): Record<string, FsNode> {
+  /** Flat repo-relative path -> mtime (or mtime + bytes), expanded into a tree. */
+  function treeOf(files: Record<string, number | FileSpec>): Record<string, FsNode> {
     const root: Record<string, FsNode> = {}
-    for (const [relPath, mtimeMs] of Object.entries(files)) {
+    for (const [relPath, spec] of Object.entries(files)) {
+      const leaf: FsNode =
+        typeof spec === 'number'
+          ? { mtimeMs: spec }
+          : { mtimeMs: spec.mtimeMs, content: spec.content }
       const segments = relPath.split('/')
       let level = root
       segments.forEach((segment, index) => {
         if (index === segments.length - 1) {
-          level[segment] = { mtimeMs }
+          level[segment] = leaf
           return
         }
         if (!level[segment]) level[segment] = { children: {} }
@@ -3893,6 +3916,15 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
       })
     }
     return root
+  }
+
+  /** The children map of a directory inside a built tree, for surgical removal. */
+  function nodeAt(tree: Record<string, FsNode>, relPath: string): Record<string, FsNode> {
+    let level = tree
+    for (const segment of relPath.split('/')) {
+      level = level[segment].children as Record<string, FsNode>
+    }
+    return level
   }
 
   function memFs(root: Record<string, FsNode>, repoRoot = '/repo') {
@@ -3927,6 +3959,36 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
           isFile: () => child.children === undefined && child.symlink !== true,
           isDirectory: () => child.children !== undefined && child.symlink !== true
         }))
+      },
+      // Sourcemaps are read, not walked: a `.js` with no readable map cannot
+      // have its provenance proven, so this throwing IS a tested outcome.
+      readFileSync(target: string, _encoding?: unknown) {
+        const node = resolveNode(String(target))
+        if (!node || node.children || node.content === undefined) throw enoent(String(target))
+        return node.content
+      }
+    }
+  }
+
+  /**
+   * An emitted `.js` paired with the `.js.map` that records what produced it.
+   * Sources are stored relative to the MAP, exactly as a real map stores them,
+   * so the preflight has to resolve them rather than being handed absolutes.
+   */
+  function emitted(
+    jsRel: string,
+    sourceRels: string[],
+    mtimeMs: number
+  ): Record<string, number | FileSpec> {
+    const mapDir = path.posix.dirname(jsRel)
+    return {
+      [jsRel]: mtimeMs,
+      [`${jsRel}.map`]: {
+        mtimeMs,
+        content: JSON.stringify({
+          version: 3,
+          sources: sourceRels.map((source) => path.posix.relative(mapDir, source))
+        })
       }
     }
   }
@@ -3941,18 +4003,65 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
   function bundleTree(
     bundleMtime: number,
     sourceMtime: number,
-    overrides: Record<string, number> = {}
+    overrides: Record<string, number | FileSpec> = {}
   ): Record<string, FsNode> {
     return treeOf({
-      [BUNDLE_REL]: bundleMtime,
-      // A sourcemap is not a compiled input and must never be inverted.
-      'out/host/host-runtime/cli.js.map': bundleMtime,
-      'out/host/host-runtime/HostStandaloneComposition.js': bundleMtime,
-      'out/host/host-node/HostNodeProductionServer.js': bundleMtime,
-      'out/host/host-shared/perf/WorkSpanRecorder.js': bundleMtime,
-      'out/host/host-client/HostClient.js': bundleMtime,
-      'out/host/main/perf/hostPerfSnapshot.js': bundleMtime,
-      'out/host/shared/hostProtocol.js': bundleMtime,
+      // Stage two of `host:build`: tsc, one source per output.
+      ...emitted(BUNDLE_REL, ['src/host-runtime/cli.ts'], bundleMtime),
+      ...emitted(
+        'out/host/host-runtime/HostStandaloneComposition.js',
+        ['src/host-runtime/HostStandaloneComposition.ts'],
+        bundleMtime
+      ),
+      ...emitted(
+        'out/host/host-node/HostNodeProductionServer.js',
+        ['src/host-node/HostNodeProductionServer.ts'],
+        bundleMtime
+      ),
+      ...emitted(
+        'out/host/host-shared/perf/WorkSpanRecorder.js',
+        ['src/host-shared/perf/WorkSpanRecorder.ts'],
+        bundleMtime
+      ),
+      ...emitted(
+        'out/host/host-client/HostClient.js',
+        ['src/host-client/HostClient.ts'],
+        bundleMtime
+      ),
+      ...emitted(
+        'out/host/main/perf/hostPerfSnapshot.js',
+        ['src/main/perf/hostPerfSnapshot.ts'],
+        bundleMtime
+      ),
+      ...emitted('out/host/shared/hostProtocol.js', ['src/shared/hostProtocol.ts'], bundleMtime),
+      // STAGE THREE, AND THE REGRESSION FOR THIS DEFECT. `host:build` also
+      // esbuild-bundles worker entrypoints into this same tree under RENAMED
+      // outputs. Inverting the output NAME declares this an orphan of a
+      // src/host-node/ThreadCatalogueWorkerEntry.ts that has never existed and
+      // refuses a valid bundle — the live failure this fixture reproduces. Its
+      // own map names the real inputs instead: one shared with no other
+      // output, one reachable through NO other output at all, and a
+      // node_modules entry that is not this repo's to make stale.
+      ...emitted(
+        'out/host/host-node/ThreadCatalogueWorkerEntry.js',
+        [
+          'src/main/workers/threadCatalogueWorker.ts',
+          'src/main/workers/threadCatalogueCodec.ts',
+          'src/main/workers/threadCatalogueWorker.test.ts',
+          'node_modules/better-sqlite3/lib/index.ts'
+        ],
+        bundleMtime
+      ),
+      'src/main/workers/threadCatalogueWorker.ts': sourceMtime - 800,
+      'src/main/workers/threadCatalogueCodec.ts': sourceMtime - 850,
+      // Both deliberately far newer than the bundle: if either exclusion ever
+      // stopped applying, this fixture would read STALE and the freshness
+      // assertions below would fail. Neither exclusion is vacuous.
+      // A test file is never a build input whatever names it — the same rule
+      // the tsconfig's exclude states, applied to mapped sources too.
+      'src/main/workers/threadCatalogueWorker.test.ts': 9e9,
+      // Third-party code is not this repo's to make stale.
+      'node_modules/better-sqlite3/lib/index.ts': 9e9,
       'src/host-runtime/cli.ts': sourceMtime - 300,
       'src/host-runtime/HostStandaloneComposition.ts': sourceMtime,
       'src/host-node/HostNodeProductionServer.ts': sourceMtime - 100,
@@ -3969,8 +4078,12 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     })
   }
 
-  /** The seven inverted `.js` outputs above; the include root adds nothing new. */
-  const BUNDLE_TREE_INPUT_COUNT = 7
+  /**
+   * Seven tsc sources plus the two first-party inputs the bundled worker's map
+   * names; the node_modules entry is excluded and the include root, whose two
+   * files are already derived, adds nothing new.
+   */
+  const BUNDLE_TREE_INPUT_COUNT = 9
 
   it('P2: bundle freshness watches the whole compilation closure and fails closed', () => {
     expect(HOST_BUNDLE_REBUILD_COMMAND).toBe('npm run host:build')
@@ -4023,6 +4136,24 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
       expect(quiet.checkedFileCount).toBe(BUNDLE_TREE_INPUT_COUNT)
     }
 
+    // THE SECOND DEFECT THIS CLOSES, and the one that refused every launch:
+    // `host:build` stage three emits RENAMED bundles, so inverting an output
+    // NAME is structurally wrong for them. Both of these are build inputs only
+    // because that bundle's map says so — the codec through no other output at
+    // all — and a name inversion reached neither.
+    for (const relPath of [
+      'src/main/workers/threadCatalogueWorker.ts',
+      'src/main/workers/threadCatalogueCodec.ts'
+    ]) {
+      const bundled = checkHostBundleFreshness('/repo', {
+        fs: memFs(bundleTree(1000, 900, { [relPath]: 5000 }))
+      })
+      expect(bundled.ok, `${relPath} is a bundled input`).toBe(false)
+      expect(bundled.reason).toBe('host_bundle_stale')
+      expect(bundled.newestSourcePath).toBe(relPath.split('/').join(path.sep))
+      expect(bundled.newestSourceMtimeMs).toBe(5000)
+    }
+
     // A source ADDED to the tsconfig include root is a build input with no
     // importer, so it has no emitted output to invert and is walked directly.
     const added = checkHostBundleFreshness('/repo', {
@@ -4067,6 +4198,42 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
       `host_bundle_orphan_output: ${path.join('src', 'shared', 'hostProtocol.ts')}`
     )
 
+    // Provenance that cannot be READ is never assumed. Each of these is an
+    // emitted artifact whose map yields no usable source list, and each must
+    // REFUSE rather than fall back to guessing the source from the output
+    // name — that guess is exactly what this derivation replaced.
+    const unprovenArtifact = 'out/host/host-client/HostClient.js'
+    const unprovenCases: Array<[string, Record<string, number | FileSpec> | null]> = [
+      ['map absent', null],
+      [
+        'map unparseable',
+        { [`${unprovenArtifact}.map`]: { mtimeMs: 1000, content: '{ not json' } }
+      ],
+      [
+        'map without a sources array',
+        { [`${unprovenArtifact}.map`]: { mtimeMs: 1000, content: '{"version":3}' } }
+      ],
+      [
+        'map with a non-string source',
+        {
+          [`${unprovenArtifact}.map`]: {
+            mtimeMs: 1000,
+            content: '{"version":3,"sources":[17]}'
+          }
+        }
+      ]
+    ]
+    for (const [label, override] of unprovenCases) {
+      const unprovenTree = bundleTree(1000, 900, override ?? {})
+      if (override === null)
+        delete nodeAt(unprovenTree, 'out/host/host-client')['HostClient.js.map']
+      const unproven = checkHostBundleFreshness('/repo', { fs: memFs(unprovenTree) })
+      expect(unproven.ok, label).toBe(false)
+      expect(unproven.reason, label).toBe(
+        `host_bundle_preflight_unproven_output: ${path.join(...unprovenArtifact.split('/'))}`
+      )
+    }
+
     // A never-built or deleted out/host derives an EMPTY input set, so it must
     // fail on the bundle itself rather than pass vacuously on zero inputs.
     const tree = bundleTree(1000, 900)
@@ -4075,6 +4242,17 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     expect(missing.ok).toBe(false)
     expect(missing.reason).toBe('host_bundle_missing')
     expect(missing.checkedFileCount).toBe(0)
+
+    // The bundle PATH existing is not enough. Anything that is not a regular
+    // file where cli.js belongs — a directory left by a half-finished build —
+    // has an mtime that means nothing, so it must refuse rather than compare
+    // it. Found by a surviving mutant: this branch had no test at all.
+    const notAFile = bundleTree(1000, 900)
+    nodeAt(notAFile, 'out/host/host-runtime')['cli.js'] = { children: {} }
+    const nonRegular = checkHostBundleFreshness('/repo', { fs: memFs(notAFile) })
+    expect(nonRegular.ok).toBe(false)
+    expect(nonRegular.reason).toBe('host_bundle_missing')
+    expect(nonRegular.checkedFileCount).toBe(0)
 
     // Symlinks are never followed, so an out/host reached through one yields
     // NO derived inputs. With an empty include root that is zero inputs, which
@@ -4093,7 +4271,8 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
         statSync: () => ({ isFile: () => true, mtimeMs: 1 }),
         readdirSync: () => {
           throw Object.assign(new Error('nope'), { code: 'EACCES' })
-        }
+        },
+        readFileSync: () => '{"version":3,"sources":[]}'
       }
     })
     expect(walkFailure.ok).toBe(false)
@@ -4115,11 +4294,14 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     const rootDirAbs = path.resolve(tsconfigDir, tsconfig.compilerOptions.rootDir)
     const outDirAbs = path.resolve(tsconfigDir, tsconfig.compilerOptions.outDir)
 
-    // Inverting out/host/<rel>.js back to src/<rel>.ts is sound only while the
-    // host build keeps this 1:1 rootDir/outDir mapping and emits no
-    // declarations. If any of that changes, the derivation must be revisited.
+    // rootDir/outDir fix WHICH tree is walked and which sources are in scope;
+    // `sourceMap` is now a hard dependency, because provenance is read from
+    // each artifact's own map. Turning it off strips every map and the
+    // preflight then refuses every launch — the safe direction, loudly — but
+    // this assertion is what says WHY rather than leaving a bare refusal.
     expect(rootDirAbs).toBe(path.join(repoRoot, 'src'))
     expect(outDirAbs).toBe(path.join(repoRoot, 'out', 'host'))
+    expect(tsconfig.compilerOptions.sourceMap).toBe(true)
     expect(tsconfig.compilerOptions.declaration).toBe(false)
     expect(tsconfig.compilerOptions.noEmit).toBe(false)
     // The include root: where a file is an input with nothing importing it.
@@ -4139,9 +4321,9 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     // A compiled input that lives OUTSIDE the include root and outside every
     // directory the old list named: reachable only through the import graph.
     const graphSource = 'src/host-shared/perf/WorkSpanRecorder.ts'
-    const baseFiles: Record<string, number> = {
-      [emittedFor(entrySource)]: 1000,
-      [emittedFor(graphSource)]: 1000,
+    const baseFiles: Record<string, number | FileSpec> = {
+      ...emitted(emittedFor(entrySource), [entrySource], 1000),
+      ...emitted(emittedFor(graphSource), [graphSource], 1000),
       [entrySource]: 900,
       [graphSource]: 900
     }
@@ -4177,6 +4359,82 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     })
     expect(addedTestInIncludeRoot.ok).toBe(true)
     expect(addedTestInIncludeRoot.checkedFileCount).toBe(2)
+  })
+
+  it('P2: the preflight is pinned to the REAL host:build pipeline, not just its tsc stage', () => {
+    // THE LESSON OF THIS DEFECT, made mechanical. The first derivation read
+    // the host tsconfig, verified it, and treated it as THE BUILD. It is stage
+    // two of four: a later stage esbuild-bundles worker entrypoints into the
+    // SAME out/host tree under RENAMED outputs, so no output-name inversion
+    // could ever be sound. The implementation, its fixtures and two
+    // independent reviews all shared that single blind spot, because none of
+    // them read the build script. Pin the pipeline itself, so a stage that
+    // emits differently reds HERE rather than passing.
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+    const stages = String(pkg.scripts['host:build'])
+      .split('&&')
+      .map((stage) => stage.trim())
+
+    // A change here is not necessarily a break — it is a signal that the
+    // derivation's assumptions must be re-checked against the new pipeline.
+    expect(stages, 'host:build changed — re-check the freshness derivation').toEqual([
+      'node scripts/clean-host-output.cjs',
+      'tsc -p src/host-runtime/tsconfig.json',
+      'node scripts/build-history-workers.cjs',
+      `node -e "require('node:fs').chmodSync('out/host/host-runtime/cli.js', 0o755)"`
+    ])
+
+    const bundler = readFileSync(
+      path.join(repoRoot, 'scripts', 'build-history-workers.cjs'),
+      'utf8'
+    )
+    // Stage three emits INTO out/host, which is why the walk meets artifacts
+    // tsc never wrote. `outdir` is a ternary; pin the DEFAULT branch, because
+    // host:build invokes the script with no --outdir override, so the default
+    // is the only path T2 ever runs against.
+    expect(bundler).toContain(": 'out/host/host-node'")
+    // ...under names that are NOT derivable from their sources, which is the
+    // entire reason provenance is read rather than inferred...
+    expect(bundler).toContain(
+      "ThreadCatalogueWorkerEntry: 'src/main/workers/threadCatalogueWorker.ts'"
+    )
+    expect(bundler).toContain(
+      "ThreadCatalogueDecoderEntry: 'src/main/workers/threadCatalogueDecoder.ts'"
+    )
+    // ...and it must keep emitting maps, or its artifacts become unprovable
+    // and the preflight refuses every launch.
+    expect(bundler).toContain('sourcemap: true')
+  })
+
+  it('P2: the preflight derives cleanly from the REAL emitted tree (skipped with no host build)', () => {
+    // Every other assertion in this file injects a fake fs, so the suite is
+    // structurally unable to observe the tree this function actually runs
+    // against in production. That is why a defect which refused EVERY launch
+    // still left the whole suite green. This is the one check that looks at
+    // reality, and it is the cheapest of the three layers.
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    if (!existsSync(path.join(repoRoot, ...['out', 'host', 'host-runtime', 'cli.js']))) {
+      // No host build present (fresh clone, or CI that does not run
+      // host:build): there is nothing for a bundle to be fresh AGAINST, so a
+      // skip is the correct answer rather than a build-order landmine.
+      return
+    }
+
+    const real = checkHostBundleFreshness(repoRoot)
+    // `host_bundle_stale` is a TRUE answer about a legitimate local state —
+    // edit a Host source, do not rebuild — so asserting ok:true here would red
+    // on an ordinary working tree. What must never happen is a failure to
+    // DERIVE: an unprovable artifact, an orphan, zero sources or an I/O
+    // refusal all mean the preflight cannot read this repo's own build output.
+    // The live defect this slice repairs was `host_bundle_orphan_output`, so
+    // this discrimination keeps every bit of the detection and none of the
+    // false positives.
+    expect(
+      [null, 'host_bundle_stale'],
+      `real out/host: ${real.reason} (newest ${real.newestSourcePath})`
+    ).toContain(real.reason)
+    expect(real.checkedFileCount).toBeGreaterThan(0)
   })
 
   it('P2: a stale Host bundle hard-fails --launch BEFORE spawn, naming the rebuild command', async () => {

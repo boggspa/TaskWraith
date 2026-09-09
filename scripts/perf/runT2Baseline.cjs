@@ -95,9 +95,11 @@ const DEFAULT_MAX_CAPTURE_PHASE_MS = PERF_GATE_THRESHOLDS.maxCapturePhaseMs
 // because an implicit rebuild papers over exactly the staleness this
 // preflight exists to detect.
 const HOST_BUNDLE_PATH_SEGMENTS = Object.freeze(['out', 'host', 'host-runtime', 'cli.js'])
-// The emitted tree is the authority on what the bundle was built from. The
-// host tsconfig sets rootDir '..' (= src) and outDir '../../out/host', so
-// out/host/<rel>.js came from exactly src/<rel>.ts.
+// Each emitted artifact's OWN sourcemap is the authority on what produced it.
+// `npm run host:build` runs two different producers into this one tree — tsc
+// for the Host itself, then esbuild for two bundled worker entrypoints — so
+// no naming convention maps output back to input for all of it. A sourcemap
+// records its real inputs either way.
 const HOST_BUNDLE_OUTPUT_SEGMENTS = Object.freeze(['out', 'host'])
 const HOST_BUNDLE_SOURCE_ROOT = 'src'
 // The tsconfig lives in src/host-runtime and its include is './**\/*.ts', so
@@ -112,17 +114,28 @@ const HOST_PERF_SNAPSHOT_FILE_NAME = 'host-perf-snapshot.json'
 /**
  * Compare the Host bundle mtime against the newest build-input source file.
  *
- * The build-input set is DERIVED FROM THE EMITTED OUTPUT rather than declared
- * as a directory list. The host tsconfig (src/host-runtime/tsconfig.json) sets
- * `rootDir: '..'` and `outDir: '../../out/host'`, so each `out/host/<rel>.js`
- * was compiled from exactly `src/<rel>.ts`. Inverting that mapping recovers
- * the closure the LAST BUILD compiled — every tree the import graph reaches,
- * and none of the ~1400 files in `src/main` that it does not — and it tracks
- * the build automatically instead of drifting from a hand-kept list.
+ * The build-input set is DERIVED FROM THE EMITTED SOURCEMAPS rather than
+ * declared as a directory list or guessed from output filenames. Every
+ * `out/host/**\/*.js` has a `.js.map` whose `sources` array names the exact
+ * files that produced it, resolved relative to the map. Keeping the entries
+ * that land inside `src/` recovers the closure the LAST BUILD read — and it
+ * tracks the build automatically instead of drifting from a hand-kept list.
+ *
+ * Reading provenance rather than inferring it is load-bearing, not tidiness.
+ * `npm run host:build` is `clean-host-output && tsc -p
+ * src/host-runtime/tsconfig.json && node scripts/build-history-workers.cjs`,
+ * and that last step ESBUILD-BUNDLES two worker entrypoints into the same
+ * `out/host/host-node/` tree under RENAMED outputs:
+ *   ThreadCatalogueWorkerEntry.js  <- src/main/workers/threadCatalogueWorker.ts
+ *   ThreadCatalogueDecoderEntry.js <- src/main/workers/threadCatalogueDecoder.ts
+ * So `out/host/<rel>.js` does NOT correspond to `src/<rel>.ts` for all of this
+ * tree; inverting the name declares those two outputs orphaned and refuses a
+ * valid bundle. Their maps also carry the whole bundled closure (147 and 31
+ * entries), which name inversion could never have reached at all.
  *
  * By construction that set cannot contain a source ADDED since the build: it
- * has no output to invert. Two things close the gap, and neither is a promise
- * about the future.
+ * appears in no map. Two things close the gap, and neither is a promise about
+ * the future.
  *   1. The tsconfig's include root (`src/host-runtime`, include `./**\/*.ts`
  *      EXCLUDING `./**\/*.test.ts`) is walked directly. It is the
  *      compilation's ROOT SET, so a file added there is a build input even
@@ -131,21 +144,37 @@ const HOST_PERF_SNAPSHOT_FILE_NAME = 'host-perf-snapshot.json'
  *      file there is not an input until something imports it — and writing
  *      that import edits a file which IS in the derived set and bumps its
  *      mtime. Such an addition is caught through its importer, not directly.
- * The residual is an added file that nothing imports, which the compiler does
- * not read either. This is the exact claim the previous comment got wrong:
- * the tsconfig `include` covers only src/host-runtime, and host-shared, main,
- * shared, host-node and host-client arrive through the import graph — so a
- * directory list could never have "mirrored the build-input set".
+ * The residual is an added file that nothing imports, which no producer reads
+ * either. This is the exact claim an earlier comment got wrong: the tsconfig
+ * `include` covers only src/host-runtime, and host-shared, main, shared,
+ * host-node and host-client arrive through the import graph — so a directory
+ * list could never have "mirrored the build-input set".
+ *
+ * WHAT THIS COSTS, so the growth is not a surprise: 329 inputs against the
+ * 218 a name inversion reached, and `src/main` goes 24 -> 103. Those 111 are
+ * the two bundles' transitive closures — every one a file the bundler really
+ * read — and 103 is nothing like the 1464-file wholesale walk of `src/main`
+ * that this preflight deliberately refuses. Nothing is watched that no
+ * producer reads.
  *
  * A newer test file cannot fail the preflight, and any newer compiled source
  * must. Symlinked entries are never followed (a symlink cannot escape into
  * unbounded trees), which is also why an out/host reached through one derives
  * zero inputs and fails closed instead of passing vacuously. Every I/O
- * failure fails closed, as do a missing bundle and an emitted output whose
- * source is gone.
+ * failure fails closed, as do a missing bundle, an emitted artifact whose
+ * sourcemap is absent, unparseable or missing its `sources` array, and a
+ * mapped source that no longer exists. Provenance that cannot be READ is
+ * never assumed: there is deliberately no fallback to guessing the source
+ * from the output name, because that guess is what this replaced.
+ *
+ * That makes the preflight depend on the host tsconfig keeping
+ * `sourceMap: true`. Turning it off strips every map and this then refuses
+ * every launch — the safe direction, loudly, rather than a silent pass — and
+ * the tsconfig contract assertion in perfHarness.test.ts reds first. Parsing
+ * all 220 maps costs ~16 ms, negligible against the launch it guards.
  *
  * @param {string} repoRoot
- * @param {{ fs?: { statSync: Function, readdirSync: Function } }} [adapters]
+ * @param {{ fs?: { statSync: Function, readdirSync: Function, readFileSync: Function } }} [adapters]
  * @returns {{ ok: boolean, reason: string|null, bundlePath: string, rebuildCommand: string,
  *             bundleMtimeMs: number|null, newestSourceMtimeMs: number|null,
  *             newestSourcePath: string|null, checkedFileCount: number }}
@@ -157,7 +186,8 @@ function checkHostBundleFreshness(repoRoot, adapters = {}) {
   if (
     !fsImpl ||
     typeof fsImpl.statSync !== 'function' ||
-    typeof fsImpl.readdirSync !== 'function'
+    typeof fsImpl.readdirSync !== 'function' ||
+    typeof fsImpl.readFileSync !== 'function'
   ) {
     return {
       ...base,
@@ -205,6 +235,8 @@ function checkHostBundleFreshness(repoRoot, adapters = {}) {
   // and a genuinely stale bundle read as fresh.
   const inputRelPaths = new Set()
   const outputRoot = path.join(repoRoot, ...HOST_BUNDLE_OUTPUT_SEGMENTS)
+  const sourceRootPrefix = path.join(repoRoot, HOST_BUNDLE_SOURCE_ROOT) + path.sep
+  let unprovenOutputRelPath = null
   const collectEmittedInputs = (dir) => {
     const entries = fsImpl.readdirSync(dir, { withFileTypes: true })
     for (const entry of entries) {
@@ -214,12 +246,33 @@ function checkHostBundleFreshness(repoRoot, adapters = {}) {
         continue
       }
       if (!entry.isFile()) continue
-      // Source maps end in `.map`, declarations are disabled.
+      // The maps are read through their artifacts, never walked as inputs.
       if (!entry.name.endsWith('.js')) continue
-      const emittedRel = path.relative(outputRoot, full)
-      inputRelPaths.add(
-        path.join(HOST_BUNDLE_SOURCE_ROOT, `${emittedRel.slice(0, -'.js'.length)}.ts`)
-      )
+      if (unprovenOutputRelPath !== null) return
+      let sources
+      try {
+        const map = JSON.parse(String(fsImpl.readFileSync(`${full}.map`, 'utf8')))
+        sources = map === null || typeof map !== 'object' ? null : map.sources
+      } catch {
+        sources = null
+      }
+      if (!Array.isArray(sources)) {
+        // An artifact whose provenance cannot be read cannot be proven fresh.
+        unprovenOutputRelPath = path.relative(repoRoot, full)
+        return
+      }
+      for (const source of sources) {
+        if (typeof source !== 'string' || source === '') {
+          unprovenOutputRelPath = path.relative(repoRoot, full)
+          return
+        }
+        // Bundled artifacts also name node_modules inputs; only first-party
+        // TypeScript under src/ is a source this repo can make stale.
+        const absolute = path.resolve(path.dirname(full), source)
+        if (!absolute.startsWith(sourceRootPrefix)) continue
+        if (!absolute.endsWith('.ts') || absolute.endsWith('.test.ts')) continue
+        inputRelPaths.add(path.relative(repoRoot, absolute))
+      }
     }
   }
   // The include root additionally catches an ADDED source that has never been
@@ -240,8 +293,10 @@ function checkHostBundleFreshness(repoRoot, adapters = {}) {
   let orphanOutputRelPath = null
   try {
     collectEmittedInputs(outputRoot)
-    collectIncludeRootInputs(path.join(repoRoot, ...HOST_BUNDLE_INCLUDE_ROOT_SEGMENTS))
-    for (const relPath of [...inputRelPaths].sort()) {
+    if (unprovenOutputRelPath === null) {
+      collectIncludeRootInputs(path.join(repoRoot, ...HOST_BUNDLE_INCLUDE_ROOT_SEGMENTS))
+    }
+    for (const relPath of unprovenOutputRelPath === null ? [...inputRelPaths].sort() : []) {
       let stat
       try {
         stat = fsImpl.statSync(path.join(repoRoot, relPath))
@@ -269,6 +324,17 @@ function checkHostBundleFreshness(repoRoot, adapters = {}) {
       bundleMtimeMs: bundleStat.mtimeMs,
       newestSourceMtimeMs: null,
       newestSourcePath: null,
+      checkedFileCount
+    }
+  }
+  if (unprovenOutputRelPath !== null) {
+    return {
+      ...base,
+      ok: false,
+      reason: `host_bundle_preflight_unproven_output: ${unprovenOutputRelPath}`,
+      bundleMtimeMs: bundleStat.mtimeMs,
+      newestSourceMtimeMs: null,
+      newestSourcePath: unprovenOutputRelPath,
       checkedFileCount
     }
   }
@@ -1208,8 +1274,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       // Ruling P2 (wave-8): the external Host bundle is NOT part of
       // runIsolatedBuild. Hard-fail BEFORE launch when out/host/host-runtime/
       // cli.js is missing, or older than the newest source in the bundle's
-      // own compilation closure — derived from the emitted output rather than
-      // read off a directory list, so it tracks the build. See
+      // own compilation closure — read from the emitted sourcemaps rather
+      // than a hand-kept directory list, so it tracks the build. See
       // checkHostBundleFreshness for the derivation and its residual. Emit
       // the exact rebuild command; never rebuild implicitly. Runs on every
       // launch path, including --skip-build (which never builds anything).
