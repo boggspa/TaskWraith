@@ -5,7 +5,15 @@ import { join } from 'node:path'
 import { createRequire } from 'module'
 import { afterAll, describe, expect, it } from 'vitest'
 import { createHostPerfInstrumentation } from '../../../src/host-runtime/HostPerfSnapshot'
-import { createHostPerfSnapshotFileWriter } from '../../../src/host-runtime/HostPerfSnapshotFile'
+import {
+  createHostPerfSnapshotFileWriter,
+  type HostPerfSnapshotFileIdentity
+} from '../../../src/host-runtime/HostPerfSnapshotFile'
+import {
+  buildHostBootstrapWelcome,
+  decodeHostBootstrapWelcome,
+  type HostCapability
+} from '../../../src/shared/hostProtocol'
 
 /**
  * End-to-end proof of the M1 A1.2 Host transport: the file the Host writer
@@ -851,5 +859,280 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
     // Unconfigured sampleHostSpans is byte-identical to the pre-transport shape.
     const unconfigured = await sampleHostSpans(null, { env: {} })
     expect(unconfigured.hostPerf).toEqual({ unsupported: 'host_perf_transport_unspecified' })
+  })
+})
+
+/**
+ * Boot-epoch validator LOCKSTEP across the three independent enforcement
+ * points landed by the M1 additive slices (22e34e0d2 / ccb6786dc / 3eed790f3):
+ *
+ *   src/host-runtime/HostPerfSnapshotFile.ts  BOOT_EPOCH_PATTERN      (writer)
+ *   src/shared/hostProtocol.ts                HOST_BOOT_EPOCH_PATTERN (codec)
+ *   scripts/perf/collectors/hostSpans.cjs     HOST_BOOT_EPOCH_PATTERN (collector)
+ *
+ * They live in three bundles with no shared definition, and each per-slice
+ * test only exercises its own pattern — so a one-sided relaxation (say, a
+ * codec made lenient for an external producer) would accept an epoch at one
+ * boundary and reject it at another, producing exactly the
+ * accepted-vs-unsupported ambiguity the equality-only design exists to
+ * prevent. This suite drives ONE shared corpus through all THREE real
+ * enforcement paths and asserts the decisions never split.
+ *
+ * The probes are BEHAVIOURAL, not regex-text comparisons, so the guard
+ * survives a refactor that changes how the rule is expressed:
+ *   writer    — createHostPerfSnapshotFileWriter throws /bootEpoch/ at
+ *               construction for a malformed identity epoch (validated
+ *               before any other identity field or fs touch);
+ *   codec     — buildHostBootstrapWelcome forwards into
+ *               decodeHostBootstrapWelcome, whose single refusal path names
+ *               bootEpoch;
+ *   collector — readHostPerfSnapshotFile refuses the WHOLE read as
+ *               'host_perf_snapshot_invalid: identity' when the file
+ *               identity carries a malformed epoch (hostIdentityValid), and
+ *               a pinned valid epoch reads back identityVerified with
+ *               attribution available.
+ *
+ * The second test pins the ABSOLUTE decision per corpus member, so all three
+ * validators relaxing together (lockstep drift of the rule itself) also
+ * fails rather than passing vacuously.
+ */
+describe('boot epoch validator lockstep (writer × codec × collector)', () => {
+  const VALID_A = '0123456789abcdef'.repeat(4)
+  const VALID_B = '0'.repeat(64)
+
+  /** [label, candidate epoch value, decision the ratified rule requires] */
+  const CORPUS: ReadonlyArray<readonly [string, unknown, boolean]> = [
+    ['valid 64 lowercase hex', VALID_A, true],
+    ['valid all-zero 64 hex', VALID_B, true],
+    ['absent (undefined)', undefined, true],
+    ['uppercase hex', '0123456789ABCDEF'.repeat(4), false],
+    ['63 characters', VALID_A.slice(0, 63), false],
+    ['65 characters', VALID_A + '0', false],
+    ['non-hex leading character', 'g' + '0'.repeat(63), false],
+    ['empty string', '', false],
+    ['number 42', 42, false],
+    ['null', null, false],
+    ['space padded', ` ${VALID_A} `, false],
+    ['newline terminated', `${VALID_A}\n`, false]
+  ]
+
+  const LOCK_IDENTITY = {
+    process: 'host' as const,
+    instanceId: 'host-lockstep',
+    generation: 5,
+    pid: 31337
+  }
+  const LOCK_PIN = {
+    instanceId: LOCK_IDENTITY.instanceId,
+    generation: LOCK_IDENTITY.generation,
+    pid: LOCK_IDENTITY.pid
+  }
+  const LOCK_MINT_INPUT = {
+    hostId: 'host-local-1',
+    hostVersion: '1.9.2',
+    sessionId: 'sess-lockstep-1',
+    generation: 7,
+    cursor: 21,
+    authenticatedClient: {
+      clientId: 'client-desktop-1',
+      clientClass: 'desktop' as const,
+      clientVersion: '1.9.2'
+    },
+    hostCapabilityOffer: ['bootstrap', 'snapshot'] as readonly HostCapability[],
+    clientCapabilityRequest: ['snapshot'] as readonly HostCapability[],
+    freshness: 'live' as const
+  }
+
+  function lockFakeFs() {
+    const files = new Map<string, string>()
+    return {
+      files,
+      writeFileSync: (path: string, data: string) => {
+        files.set(path, data)
+      },
+      renameSync: (from: string, to: string) => {
+        const data = files.get(from)
+        if (data === undefined) throw new Error(`rename source missing: ${from}`)
+        files.delete(from)
+        files.set(to, data)
+      }
+    }
+  }
+
+  /** Probe 1 — the Host writer constructor: accept = no throw. */
+  function writerProbe(candidate: unknown): { accepted: boolean; reason?: string } {
+    try {
+      createHostPerfSnapshotFileWriter({
+        instrumentation: createHostPerfInstrumentation(),
+        path: '/perf/lockstep.json',
+        intervalMs: 1000,
+        maxBytes: 64 * 1024,
+        identity: {
+          ...LOCK_IDENTITY,
+          bootEpoch: candidate
+        } as unknown as HostPerfSnapshotFileIdentity,
+        now: () => WRITE_AT,
+        fs: lockFakeFs()
+      })
+      return { accepted: true }
+    } catch (error) {
+      return { accepted: false, reason: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  /** Probe 2 — the welcome codec (build forwards into decode): accept = ok. */
+  function codecProbe(candidate: unknown): { accepted: boolean; reason?: string } {
+    const result = buildHostBootstrapWelcome({ ...LOCK_MINT_INPUT, bootEpoch: candidate as string })
+    if (result.ok) return { accepted: true }
+    return { accepted: false, reason: result.error }
+  }
+
+  let lockBaselineRaw: string | null = null
+  let lockProbeCounter = 0
+  /** One real epoch-free snapshot file, written by the real writer to real fs. */
+  function lockBaselineSnapshotRaw(): string {
+    if (lockBaselineRaw !== null) return lockBaselineRaw
+    const instrumentation = createHostPerfInstrumentation()
+    instrumentation.spans.record({
+      chatId: 'chat-heavy',
+      kind: 'host_queue_wait',
+      resource: 'host_chain',
+      startedAt: 5,
+      durationMs: 120
+    })
+    const path = join(scratchDir(), 'lockstep-baseline.json')
+    const writer = createHostPerfSnapshotFileWriter({
+      instrumentation,
+      path,
+      intervalMs: 1000,
+      maxBytes: 256 * 1024,
+      identity: LOCK_IDENTITY,
+      now: () => WRITE_AT
+    })
+    expect(writer.writeOnce()).toBe(true)
+    lockBaselineRaw = fs.readFileSync(path, 'utf8')
+    return lockBaselineRaw
+  }
+
+  /**
+   * Probe 3 — the collector reader: patch the candidate into the FILE
+   * identity of a real otherwise-valid snapshot and read it back with the
+   * epoch-free legacy pin, so the decision isolates the file-side pattern.
+   * Accept = the whole read is not refused.
+   */
+  function collectorProbe(candidate: unknown): { accepted: boolean; reason?: string } {
+    const payload = JSON.parse(lockBaselineSnapshotRaw())
+    if (candidate === undefined) delete payload.identity.bootEpoch
+    else payload.identity.bootEpoch = candidate
+    const path = join(scratchDir(), `lockstep-probe-${lockProbeCounter++}.json`)
+    writeFileSync(path, JSON.stringify(payload))
+    const result = readHostPerfSnapshotFile({
+      hostPerfSnapshotPath: path,
+      expectedIdentity: { ...LOCK_PIN },
+      now: () => FRESH_AT
+    })
+    if (result.unsupported === undefined) return { accepted: true }
+    return { accepted: false, reason: String(result.unsupported) }
+  }
+
+  it('reaches identical accept/reject decisions for one shared corpus', () => {
+    for (const [label, candidate, expected] of CORPUS) {
+      const w = writerProbe(candidate)
+      const c = codecProbe(candidate)
+      const r = collectorProbe(candidate)
+
+      // The lockstep itself: three independent validators, one decision. A
+      // split here is the accepted-vs-unsupported ambiguity this guard
+      // exists to catch.
+      expect(
+        { corpus: label, codec: c.accepted, collector: r.accepted },
+        `lockstep split on corpus member: ${label}`
+      ).toEqual({ corpus: label, codec: w.accepted, collector: w.accepted })
+
+      // Absolute rule pin: identical decisions that RELAX together (all
+      // three accepting uppercase, say) must still fail against the
+      // ratified rule.
+      expect(w.accepted, `ratified-rule decision violated on: ${label}`).toBe(expected)
+
+      if (!expected) {
+        // Rejections must be attributable to the epoch validator, not an
+        // unrelated refusal that happens to agree.
+        expect(w.reason, `writer rejection must name bootEpoch: ${label}`).toMatch(/bootEpoch/)
+        expect(c.reason, `codec rejection must name bootEpoch: ${label}`).toMatch(/bootEpoch/)
+        expect(r.reason, `collector must refuse as invalid identity: ${label}`).toBe(
+          'host_perf_snapshot_invalid: identity'
+        )
+      }
+    }
+  })
+
+  it('carries accepted epochs through payload, wire and a pinned verified read; absent stays legacy', () => {
+    for (const candidate of [VALID_A, VALID_B, undefined]) {
+      // Writer: the accepted value reaches the SERIALIZED payload; absent
+      // keeps the legacy shape byte-identical (no own key, no raw text).
+      const fake = lockFakeFs()
+      const writer = createHostPerfSnapshotFileWriter({
+        instrumentation: createHostPerfInstrumentation(),
+        path: '/perf/lockstep-carry.json',
+        intervalMs: 1000,
+        maxBytes: 64 * 1024,
+        identity: {
+          ...LOCK_IDENTITY,
+          bootEpoch: candidate
+        } as unknown as HostPerfSnapshotFileIdentity,
+        now: () => WRITE_AT,
+        fs: fake
+      })
+      expect(writer.writeOnce()).toBe(true)
+      const raw = fake.files.get('/perf/lockstep-carry.json')!
+      const written = JSON.parse(raw)
+      if (candidate === undefined) {
+        expect(raw).not.toContain('bootEpoch')
+        expect(Object.prototype.hasOwnProperty.call(written.identity, 'bootEpoch')).toBe(false)
+      } else {
+        expect(written.identity.bootEpoch).toBe(candidate)
+      }
+
+      // Codec: mint → JSON wire → decode preserves the accepted value;
+      // absent keeps the legacy wire shape (no own key).
+      const minted = buildHostBootstrapWelcome({
+        ...LOCK_MINT_INPUT,
+        bootEpoch: candidate as string
+      })
+      expect(minted.ok).toBe(true)
+      if (minted.ok) {
+        const decoded = decodeHostBootstrapWelcome(JSON.parse(JSON.stringify(minted.value)))
+        expect(decoded).toEqual(minted)
+        if (candidate === undefined) {
+          expect(Object.prototype.hasOwnProperty.call(minted.value, 'bootEpoch')).toBe(false)
+        } else {
+          expect(minted.value.bootEpoch).toBe(candidate)
+        }
+      }
+
+      // Collector: the same candidate in the file identity, now PINNED,
+      // reads back strictly verified with attribution available; absent
+      // keeps the legacy 'absent' coverage semantics.
+      const payload = JSON.parse(lockBaselineSnapshotRaw())
+      if (candidate === undefined) delete payload.identity.bootEpoch
+      else payload.identity.bootEpoch = candidate
+      const path = join(scratchDir(), `lockstep-carry-${lockProbeCounter++}.json`)
+      writeFileSync(path, JSON.stringify(payload))
+      const pinned = readHostPerfSnapshotFile({
+        hostPerfSnapshotPath: path,
+        expectedIdentity:
+          candidate === undefined ? { ...LOCK_PIN } : { ...LOCK_PIN, bootEpoch: candidate },
+        requiredChatIds: ['chat-heavy'],
+        now: () => FRESH_AT
+      })
+      expect(pinned.unsupported).toBeUndefined()
+      expect(pinned.workSpans.hostSnapshot.identityVerified).toBe(true)
+      expect(pinned.workSpans.hostSnapshot.attribution.status).toBe('available')
+      if (candidate === undefined) {
+        expect(Object.prototype.hasOwnProperty.call(pinned.identity, 'bootEpoch')).toBe(false)
+      } else {
+        expect(pinned.identity.bootEpoch).toBe(candidate)
+      }
+    }
   })
 })
