@@ -13101,6 +13101,14 @@ Next action:
     const construction = indexSource.slice(start, end)
     expect(construction).toContain('resolveExternalSeats:')
     expect(construction).toContain('externalContributionQueue')
+    // Same class, M1: `hostAdmissionRuntime` is optional, so dropping this one
+    // property makes the orchestrator silently build its OWN unwired runtime
+    // (EnsembleOrchestrator: `deps.hostAdmissionRuntime ?? new ...`), every
+    // admission wait goes unrecorded, and the perf binding regression STILL
+    // passes -- it evaluates index.ts's construction expression and never
+    // checks that the orchestrator receives that instance. TypeScript is
+    // silent because the dep is optional.
+    expect(construction).toContain('hostAdmissionRuntime:')
   })
 
   describe('external seat turns', () => {
