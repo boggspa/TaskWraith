@@ -909,9 +909,10 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
  *               field, so a malformed epoch on the wire can never silently
  *               become the legacy absent pin.
  *
- * The second test pins the ABSOLUTE decision per corpus member, so all four
- * validators relaxing together (lockstep drift of the rule itself) also
- * fails rather than passing vacuously.
+ * That same first test also pins the ABSOLUTE decision per corpus member, so
+ * all four validators relaxing together (lockstep drift of the rule itself)
+ * also fails rather than passing vacuously. The second test is the carry:
+ * an accepted epoch must survive payload, wire and a pinned verified read.
  */
 describe('boot epoch validator lockstep (writer × codec × collector × probe)', () => {
   const VALID_A = '0123456789abcdef'.repeat(4)
@@ -1093,7 +1094,7 @@ describe('boot epoch validator lockstep (writer × codec × collector × probe)'
       })
 
       // Absolute rule pin: identical decisions that RELAX together (all
-      // three accepting uppercase, say) must still fail against the
+      // four accepting uppercase, say) must still fail against the
       // ratified rule.
       expect(w.accepted, `ratified-rule decision violated on: ${label}`).toBe(expected)
 
