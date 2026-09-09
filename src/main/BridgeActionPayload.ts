@@ -52,6 +52,7 @@ import {
   isReservedWorktreeName
 } from '../shared/worktreeNamespace'
 import { isEnsembleSeatProvider } from '../shared/retiredProviders'
+import type { ChatMessageOrigin } from '../shared/messageOrigin'
 
 /** Wire mirror of the store's `AgentApprovalAction` — kept literal (this
  * module deliberately avoids store imports) with a lockstep test in
@@ -203,6 +204,12 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
    * pending, so a second device tapping Approve in the projection-latency
    * window cannot fire a duplicate write-capable implement run. */
   proposedPlanImplementOf?: string
+  /** HOST-STAMPED provenance for a prompt that arrived through a machine
+   * channel (the local-control socket). Never accepted from the wire —
+   * `decodeBridgeActionPayload` strips it — so a paired device cannot dress
+   * a send up as another process. The seeded user row carries it as
+   * `metadata.origin`; see `ChatMessageOrigin`. */
+  origin?: ChatMessageOrigin
 }
 
 export interface BridgeComposerQueuePromptAction
@@ -1118,6 +1125,8 @@ export interface BridgeEnsembleSteerAction extends BridgeActionMetadata {
   message?: string
   /** Phone-attached images — same shape/caps as composerPrompt's. */
   imageAttachments?: BridgeImageAttachment[]
+  /** HOST-STAMPED provenance; stripped from the wire exactly as on composerPrompt. */
+  origin?: ChatMessageOrigin
 }
 
 export interface BridgeSetYoloModeAction extends BridgeActionMetadata {
@@ -1354,8 +1363,21 @@ export function decodeBridgeActionPayload(payloadBase64: string): DecodedActionP
     )
   }
 
+  stripHostStampedFields(parsed)
   const payload = coerceToPayload(parsed)
   return { payload, rawJson: parsed }
+}
+
+/**
+ * Fields the host stamps on an action AFTER decoding — provenance it observed
+ * itself — must never arrive over the wire, or a paired device could claim
+ * them. Stripped in place, before the type gate, so neither the payload nor
+ * `rawJson` carries a value the sender chose.
+ */
+function stripHostStampedFields(parsed: unknown): void {
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    delete (parsed as Record<string, unknown>).origin
+  }
 }
 
 /** Extract the workspace id from a payload variant for allowlist lookups.

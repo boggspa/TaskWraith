@@ -530,3 +530,33 @@ describe('planLiveSteerDelivery', () => {
     }
   })
 })
+
+describe('buildMidRunSteeringMessage host-stamped origin', () => {
+  const ORIGIN = { channel: 'local-control' as const, pid: 4242, label: 'Claude Code' }
+
+  it('carries the origin on a host row and never on an external one', () => {
+    expect(
+      buildMidRunSteeringMessage({
+        id: 'msg-o',
+        content: 'sent through the socket',
+        timestampIso: NOW,
+        author: HOST_MIDRUN_STEERING_AUTHOR,
+        origin: ORIGIN
+      }).metadata
+    ).toEqual({ kind: 'midRunSteering', origin: ORIGIN })
+    expect(
+      buildMidRunSteeringMessage({
+        id: 'msg-x',
+        content: 'sent through the socket',
+        timestampIso: NOW,
+        author: {
+          kind: 'externalCollaborator',
+          shareId: 'share-1',
+          collaboratorId: 'collab-1',
+          collaboratorDisplayName: 'Alex'
+        },
+        origin: ORIGIN
+      }).metadata
+    ).not.toHaveProperty('origin')
+  })
+})

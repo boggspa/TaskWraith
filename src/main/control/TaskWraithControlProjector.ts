@@ -2,6 +2,7 @@ import { basename } from 'node:path'
 import { deriveRemoteTaskStatusForChat } from '../RemoteTaskProjection'
 import { projectRemoteThread, type RemoteThreadRow } from '../RemoteThreadProjection'
 import { collectExternalPathGrantsFromMetadata } from '../store/ExternalPathGrants'
+import { messageOriginLabel } from '../../shared/messageOrigin'
 import type {
   ChatListItem,
   ChatMessage,
@@ -315,7 +316,7 @@ function projectedSpeaker(
   row: RemoteThreadRow,
   presentation?: TaskWraithControlProviderPresentation
 ): string {
-  if (message.role === 'user') return 'You'
+  if (message.role === 'user') return messageOriginLabel(message.metadata?.origin) ?? 'You'
   if (row.speaker) return row.speaker
   if (message.role === 'assistant')
     return presentation?.displayProvider ?? taskWraithProviderLabel(chat.provider || '')

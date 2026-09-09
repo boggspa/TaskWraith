@@ -25,6 +25,7 @@ import {
   taskWraithControlSocketPath,
   taskWraithControlTokenPath
 } from '../../shared/taskWraithControlPaths.node'
+import type { ChatMessageOrigin } from '../../shared/messageOrigin'
 
 export interface TaskWraithLocalControlFacade {
   snapshot(): TaskWraithControlSnapshot | Promise<TaskWraithControlSnapshot>
@@ -35,7 +36,9 @@ export interface TaskWraithLocalControlFacade {
   sendPrompt(
     threadId: string,
     text: string,
-    selection?: { model?: string; reasoningEffort?: string }
+    selection?: { model?: string; reasoningEffort?: string },
+    /** What the host observed at hello; stamped on the prompt, never trusted from its text. */
+    origin?: ChatMessageOrigin
   ): Promise<{ dispatched: boolean; message: string }>
   cancelRun(threadId: string): Promise<{ cancelled: boolean; message: string }>
   threadOffers(
@@ -69,6 +72,8 @@ interface ClientState {
   buffer: string
   /** What the client asked to be pushed. Projection work is owed only for these. */
   capabilities: Set<TaskWraithControlCapability>
+  /** Who is on the other end, as observed at hello; stamped onto every prompt it sends. */
+  origin: ChatMessageOrigin | null
   selectedThreadId: string | null
   selectedThreadLimit: number
   /** Digest of the last snapshot this client received; per client, so a skipped push is retried. */
@@ -336,6 +341,7 @@ export class LocalControlServer {
       authenticated: false,
       buffer: '',
       capabilities: new Set(),
+      origin: null,
       selectedThreadId: null,
       selectedThreadLimit: 80,
       lastSnapshotDigest: '',
@@ -413,6 +419,12 @@ export class LocalControlServer {
         KNOWN_CAPABILITIES.has(capability)
       )
     )
+    state.origin = {
+      channel: 'local-control',
+      ...(message.clientPid !== undefined ? { pid: message.clientPid } : {}),
+      ...(message.clientLabel ? { label: message.clientLabel } : {}),
+      clientVersion: message.clientVersion
+    }
     // Start from the projection the host last published: a fresh subscriber
     // pulls its first snapshot itself rather than being pushed one it did not
     // ask for, exactly as before per-client digests existed.
@@ -455,13 +467,14 @@ export class LocalControlServer {
             model || reasoningEffort
               ? { ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}) }
               : undefined
-          result = selection
-            ? await this.options.facade.sendPrompt(
-                request.params.threadId,
-                request.params.text,
-                selection
-              )
-            : await this.options.facade.sendPrompt(request.params.threadId, request.params.text)
+          // The host stamps what it observed at hello onto the prompt, so the
+          // text a sender writes never has to attribute itself.
+          result = await this.options.facade.sendPrompt(
+            request.params.threadId,
+            request.params.text,
+            selection,
+            state.origin ?? undefined
+          )
           break
         }
         case 'run.cancel':

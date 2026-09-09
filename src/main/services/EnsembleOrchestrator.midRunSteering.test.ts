@@ -1856,3 +1856,55 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     ).toBe(false)
   })
 })
+
+describe('EnsembleOrchestrator host-stamped origin', () => {
+  const ORIGIN = { channel: 'local-control' as const, pid: 4242, label: 'Claude Code' }
+
+  it('hands an absorbed interjection origin to the transcript append seam', async () => {
+    const harness = makeHarness()
+    seedCompletedGoal(harness)
+    const roundId = await reachFinalLiveSeat(harness)
+    expect(
+      harness.orchestrator.absorbMidRunSteering({
+        chatId: CHAT_ID,
+        roundId,
+        text: STEER_TEXT,
+        origin: ORIGIN
+      })
+    ).toEqual({ status: 'steered', roundId })
+    expect(harness.appendMidRunSteering).toHaveBeenCalledWith(
+      expect.objectContaining({ text: STEER_TEXT, origin: ORIGIN })
+    )
+  })
+
+  it('stamps the origin on the user row of a round it starts, and only then', async () => {
+    const harness = makeHarness()
+    seedCompletedGoal(harness)
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Sent through the socket.',
+      event: { sender: {} as Electron.WebContents },
+      origin: ORIGIN
+    })
+    expect(started.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const rows = harness.chat.messages.filter(
+      (message) => message.role === 'user' && message.metadata?.kind === 'ensembleRoundPrompt'
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.metadata?.origin).toEqual(ORIGIN)
+
+    const plain = makeHarness()
+    seedCompletedGoal(plain)
+    plain.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Typed at the desk.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(plain.dispatched).toHaveLength(1))
+    const plainRow = plain.chat.messages.find(
+      (message) => message.role === 'user' && message.metadata?.kind === 'ensembleRoundPrompt'
+    )
+    expect(plainRow?.metadata).not.toHaveProperty('origin')
+  })
+})

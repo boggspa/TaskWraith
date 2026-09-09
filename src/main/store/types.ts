@@ -6,6 +6,7 @@ import type { AppIconVariant } from '../../shared/iconVariants'
 import type { DiffStatColors } from '../../shared/diffStatColors'
 import type { ClaudeWorkflowTelemetry } from '../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../shared/codexReview'
+import type { ChatMessageOrigin } from '../../shared/messageOrigin'
 import type { CodexMultiAgentTelemetry } from '../../shared/codexMultiAgent'
 import type { ContextCompactionProvenance } from '../../shared/contextCompaction'
 import type { SeatChangeLink, SeatChangeRowPayload } from '../../shared/seatChange'
@@ -3687,6 +3688,10 @@ export interface ChatMessage {
    * (link back to the sub-thread, distinct visual treatment, etc.). */
   metadata?: {
     kind?: 'subThreadReturn' | 'subThreadDelegation' | 'guestParticipantReply' | string
+    /** Provenance of a user row that arrived through a machine channel (the
+     * local-control socket). Host-stamped; the transcript labels the row
+     * "Sent from PID … / …" instead of "You". See `ChatMessageOrigin`. */
+    origin?: ChatMessageOrigin
     /** Sub-thread id for `kind: 'subThreadReturn' | 'subThreadDelegation'`. */
     subThreadId?: string
     /** Sub-thread's provider for badge/icon rendering. */

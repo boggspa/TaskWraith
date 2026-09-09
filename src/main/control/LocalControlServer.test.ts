@@ -146,7 +146,12 @@ describe('LocalControlServer', () => {
     await expect(client.cancelRun('demo-thread')).resolves.toMatchObject({
       cancelled: true
     })
-    expect(sendPrompt).toHaveBeenCalledWith('demo-thread', 'hello')
+    expect(sendPrompt).toHaveBeenCalledWith(
+      'demo-thread',
+      'hello',
+      undefined,
+      expect.objectContaining({ channel: 'local-control', pid: process.pid })
+    )
     expect(cancelRun).toHaveBeenCalledWith('demo-thread')
 
     await expect(client.threadOffers('demo-thread')).resolves.toMatchObject({
@@ -160,10 +165,12 @@ describe('LocalControlServer', () => {
         reasoningEffort: 'medium'
       })
     ).resolves.toMatchObject({ dispatched: true })
-    expect(sendPrompt).toHaveBeenLastCalledWith('demo-thread', 'tuned', {
-      model: 'claude-opus-4-8-1m',
-      reasoningEffort: 'medium'
-    })
+    expect(sendPrompt).toHaveBeenLastCalledWith(
+      'demo-thread',
+      'tuned',
+      { model: 'claude-opus-4-8-1m', reasoningEffort: 'medium' },
+      expect.objectContaining({ channel: 'local-control', pid: process.pid })
+    )
     await expect(client.toggleEnsembleSeat('demo-thread', 'review', false)).resolves.toMatchObject({
       updated: true
     })
@@ -720,5 +727,56 @@ describe('LocalControlServer subscriber gating and push backpressure', () => {
     )
     expect(findThreads).toHaveBeenCalledWith({ query: 'persistence', workspacePath: '/repo/src' })
     expect(snapshot).not.toHaveBeenCalled()
+  })
+
+  it('stamps what it observed at hello onto every prompt the client sends', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-control-origin-'))
+    const demo = createTaskWraithTuiDemoState(1_000)
+    if (!demo.snapshot || !demo.thread) throw new Error('Demo projection is incomplete.')
+    const sendPrompt = vi.fn(async () => ({ dispatched: true, message: 'ok' }))
+    const server = new LocalControlServer({
+      userDataPath,
+      hostVersion: '1.9.8-test',
+      facade: {
+        ...unusedFacadeStubs,
+        sendPrompt,
+        snapshot: () => demo.snapshot!,
+        selectThread: () => demo.thread!
+      }
+    })
+    await server.start()
+    cleanup.push(() => server.stop())
+    const token = (await readFile(server.tokenPath, 'utf8')).trim()
+    const sender = await connectRaw(server.socketPath)
+    cleanup.push(() => {
+      sender.destroy()
+    })
+    const { frames } = collectFrames(sender)
+    sender.write(
+      `${JSON.stringify({
+        type: 'hello',
+        protocolVersion: 1,
+        client: 'taskwraith-tui',
+        clientVersion: 'claude-steer-0.1',
+        clientPid: 4242,
+        clientLabel: 'Claude Code',
+        token,
+        capabilities: ['compose']
+      })}\n`
+    )
+    await vi.waitFor(() =>
+      expect(frames).toContainEqual(expect.objectContaining({ type: 'welcome' }))
+    )
+    sender.write(request('send-1', 'composer.send', { threadId: 'demo-thread', text: 'hello' }))
+    await vi.waitFor(() =>
+      expect(frames).toContainEqual(expect.objectContaining({ type: 'response', id: 'send-1' }))
+    )
+    // Host-observed, never sender-asserted: the text carried no attribution.
+    expect(sendPrompt).toHaveBeenCalledWith('demo-thread', 'hello', undefined, {
+      channel: 'local-control',
+      pid: 4242,
+      label: 'Claude Code',
+      clientVersion: 'claude-steer-0.1'
+    })
   })
 })

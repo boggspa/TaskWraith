@@ -706,6 +706,12 @@ export class NoopActionExecutor implements BridgeActionExecutor {
   }
 }
 
+/** Audit suffix for a host-stamped origin (see BridgeComposerPromptAction.origin). */
+function originLogSuffix(origin: BridgeComposerPromptAction['origin']): string {
+  if (!origin) return ''
+  return ` origin=${origin.channel} pid=${origin.pid ?? '-'} label=${origin.label ?? '-'}`
+}
+
 function notWired(kind: string, id: string): BridgeActionExecutionResult {
   return {
     executed: false,
@@ -1934,7 +1940,7 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       return notWired('composerPrompt', action.threadId)
     }
     this.log(
-      `[BridgeActionExecutor] composerPrompt provider=${action.provider} ws=${action.workspaceId} thread=${action.threadId}`
+      `[BridgeActionExecutor] composerPrompt provider=${action.provider} ws=${action.workspaceId} thread=${action.threadId}${originLogSuffix(action.origin)}`
     )
     try {
       const result = await this.deps.composerPromptFn(action)
@@ -2297,6 +2303,11 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
   async executeEnsembleSteer(
     action: BridgeEnsembleSteerAction
   ): Promise<BridgeActionExecutionResult> {
+    if (action.origin) {
+      this.log(
+        `[BridgeActionExecutor] ensembleSteer thread=${action.threadId}${originLogSuffix(action.origin)}`
+      )
+    }
     return this.executeEnsembleAction(
       'ensembleSteer',
       action.threadId,

@@ -721,3 +721,53 @@ describe('TaskWraithControlFacade thread.find', () => {
     expect(byId.threads.map((thread) => thread.id)).toEqual([ensemble.appChatId])
   })
 })
+
+describe('TaskWraithControlFacade origin stamping', () => {
+  beforeEach(() => {
+    fs.rmSync(userDataPath, { recursive: true, force: true })
+    fs.mkdirSync(join(userDataPath, 'chats'), { recursive: true })
+    setRemoteEnsemblePresetsFromRaw([])
+  })
+
+  it('carries the host-observed origin on solo and ensemble actions, and nothing without one', async () => {
+    const origin = { channel: 'local-control' as const, pid: 4242, label: 'Claude Code' }
+    const workspace = AppStore.addOrUpdateWorkspace('/origin-repo', {
+      id: 'workspace-origin',
+      displayName: 'Origin'
+    })
+    const solo: ChatRecord = {
+      ...AppStore.createChat(workspace.id, workspace.path),
+      provider: 'claude',
+      title: 'Solo'
+    }
+    AppStore.saveChat(solo)
+    const ensemble = AppStore.createEnsembleChat({
+      workspaceId: workspace.id,
+      workspacePath: workspace.path
+    })
+    AppStore.saveChat(ensemble)
+    const executeComposerPrompt = vi.fn(async () => ({ executed: true, message: 'ok' }))
+    const executeEnsembleSteer = vi.fn(async () => ({ executed: true, message: 'ok' }))
+    const facade = createTaskWraithControlFacade({
+      executeComposerPrompt,
+      executeCancelRun: vi.fn(),
+      executeEnsembleSteer,
+      executeEnsembleCancelRound: vi.fn(),
+      executeEnsembleRosterUpdate: vi.fn(),
+      now: () => 10_000
+    })
+
+    await facade.sendPrompt(solo.appChatId, 'hello', undefined, origin)
+    expect(executeComposerPrompt).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kind: 'composerPrompt', text: 'hello', origin })
+    )
+    await facade.sendPrompt(ensemble.appChatId, 'steer', undefined, origin)
+    expect(executeEnsembleSteer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kind: 'ensembleSteer', text: 'steer', origin })
+    )
+
+    await facade.sendPrompt(solo.appChatId, 'plain')
+    const plainAction = (executeComposerPrompt.mock.calls.at(-1) as unknown[] | undefined)?.[0]
+    expect(plainAction).not.toHaveProperty('origin')
+  })
+})

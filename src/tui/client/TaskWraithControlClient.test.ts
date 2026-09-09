@@ -385,4 +385,24 @@ describe('TaskWraithControlClient', () => {
     )
     await expect(pending).resolves.toMatchObject({ total: 1 })
   })
+
+  it('reports its pid and label in the hello so the host can stamp prompts', async () => {
+    const host = await startFakeHost()
+    const client = new TaskWraithControlClient({
+      clientVersion: '0.1.0-test',
+      clientLabel: 'Claude Code',
+      discoveryPath: host.discoveryPath
+    })
+    cleanup.push(() => client.close())
+    const connectPromise = client.connect()
+    const socket = await host.nextClient()
+    const hello = await readLine(socket)
+    expect(hello).toMatchObject({
+      type: 'hello',
+      clientPid: process.pid,
+      clientLabel: 'Claude Code'
+    })
+    sendWelcome(socket)
+    await connectPromise
+  })
 })

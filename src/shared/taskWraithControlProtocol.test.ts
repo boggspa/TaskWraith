@@ -100,4 +100,33 @@ describe('TaskWraith local-control protocol decoder', () => {
       })
     ).toMatchObject({ ok: false, error: 'query must be a bounded string' })
   })
+
+  it('accepts a hello that names the sending process and rejects a malformed one', () => {
+    const hello = {
+      type: 'hello',
+      protocolVersion: TASKWRAITH_CONTROL_PROTOCOL_VERSION,
+      client: TASKWRAITH_CONTROL_CLIENT_NAME,
+      clientVersion: '0.1.0',
+      token: 'secret',
+      capabilities: ['compose']
+    }
+    expect(
+      decodeTaskWraithControlClientMessage({
+        ...hello,
+        clientPid: 4242,
+        clientLabel: 'Claude Code'
+      }).ok
+    ).toBe(true)
+    expect(decodeTaskWraithControlClientMessage({ ...hello, clientPid: 0 })).toMatchObject({
+      ok: false,
+      error: 'clientPid must be a positive integer'
+    })
+    expect(decodeTaskWraithControlClientMessage({ ...hello, clientPid: '4242' })).toMatchObject({
+      ok: false,
+      error: 'clientPid must be a positive integer'
+    })
+    expect(
+      decodeTaskWraithControlClientMessage({ ...hello, clientLabel: 'x'.repeat(81) })
+    ).toMatchObject({ ok: false, error: 'clientLabel must be a bounded string' })
+  })
 })

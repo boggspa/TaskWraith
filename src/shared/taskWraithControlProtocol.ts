@@ -318,6 +318,14 @@ export interface TaskWraithControlHello {
   clientVersion: string
   token: string
   capabilities: TaskWraithControlCapability[]
+  /**
+   * The sending process and a short label it chose for itself, e.g. "Claude
+   * Code". The host stamps both onto every prompt this connection sends, so
+   * the transcript can say "Sent from PID 84536 / Claude Code" instead of
+   * "You". Optional: the TUI itself is the user at the keyboard.
+   */
+  clientPid?: number
+  clientLabel?: string
 }
 
 export type TaskWraithControlClientMessage = TaskWraithControlHello | TaskWraithControlRequest
@@ -394,6 +402,17 @@ export function decodeTaskWraithControlClientMessage(
     }
     if (!isNonEmptyString(value.clientVersion, 80)) {
       return { ok: false, error: 'clientVersion is required' }
+    }
+    if (
+      value.clientPid !== undefined &&
+      (typeof value.clientPid !== 'number' ||
+        !Number.isSafeInteger(value.clientPid) ||
+        value.clientPid <= 0)
+    ) {
+      return { ok: false, error: 'clientPid must be a positive integer' }
+    }
+    if (value.clientLabel !== undefined && !isNonEmptyString(value.clientLabel, 80)) {
+      return { ok: false, error: 'clientLabel must be a bounded string' }
     }
     if (!isNonEmptyString(value.token, 512)) {
       return { ok: false, error: 'token is required' }

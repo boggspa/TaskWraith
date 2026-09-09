@@ -36,6 +36,7 @@ import {
   closeoutProviderFromMetadata,
   TASKWRAITH_CLOSEOUT_KIND
 } from '../../../shared/taskWraithCloseout'
+import { messageOriginLabel } from '../../../shared/messageOrigin'
 import { ensembleRoundStatusClass } from '../lib/ensembleRoundStatusClass'
 import { getChatProvider } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
@@ -6064,7 +6065,13 @@ export const TranscriptPanel = memo(
                         // into to tint the "You" label with the same
                         // hue as the bubble. See `[data-user-bubble-
                         // color]` rules in `main.css`.
-                        return <div className="message-meta user-meta">You</div>
+                        // A row that arrived through a machine channel keeps the
+                        // user bubble but names its sender instead of "You".
+                        return (
+                          <div className="message-meta user-meta">
+                            {messageOriginLabel(msg.metadata?.origin) ?? 'You'}
+                          </div>
+                        )
                       }
                       if (msg.role === 'error') {
                         return <div className="message-meta">Error</div>

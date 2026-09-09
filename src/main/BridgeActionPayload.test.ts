@@ -3341,3 +3341,33 @@ describe('ensembleRosterUpdate stageRole (staged fan-out)', () => {
     }
   })
 })
+
+describe('host-stamped fields never arrive over the wire', () => {
+  it('strips origin from composerPrompt and ensembleSteer payloads before the type gate', () => {
+    const spoofed = { channel: 'local-control', pid: 1, label: 'Not really Claude Code' }
+    const composer = decodeBridgeActionPayload(
+      encode({
+        kind: 'composerPrompt',
+        workspaceId: 'ws-1',
+        threadId: 't-1',
+        text: 'hi',
+        provider: 'claude',
+        origin: spoofed
+      })
+    )
+    expect(composer.payload.kind).toBe('composerPrompt')
+    expect(composer.payload).not.toHaveProperty('origin')
+    expect(composer.rawJson).not.toHaveProperty('origin')
+    const steer = decodeBridgeActionPayload(
+      encode({
+        kind: 'ensembleSteer',
+        workspaceId: 'ws-1',
+        threadId: 't-1',
+        text: 'go',
+        origin: spoofed
+      })
+    )
+    expect(steer.payload.kind).toBe('ensembleSteer')
+    expect(steer.payload).not.toHaveProperty('origin')
+  })
+})

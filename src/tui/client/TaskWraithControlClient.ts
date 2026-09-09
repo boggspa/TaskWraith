@@ -25,6 +25,12 @@ import {
 
 export interface TaskWraithControlClientOptions {
   clientVersion: string
+  /**
+   * A short label the host stamps on every prompt this client sends, so the
+   * transcript reads "Sent from PID … / <label>" instead of "You". Leave it
+   * unset for the TUI, which is the user at the keyboard.
+   */
+  clientLabel?: string
   userDataPath?: string
   discoveryPath?: string
   connectTimeoutMs?: number
@@ -141,6 +147,8 @@ export class TaskWraithControlClient extends EventEmitter<TaskWraithControlClien
             protocolVersion: TASKWRAITH_CONTROL_PROTOCOL_VERSION,
             client: TASKWRAITH_CONTROL_CLIENT_NAME,
             clientVersion: this.options.clientVersion,
+            clientPid: process.pid,
+            ...(this.options.clientLabel ? { clientLabel: this.options.clientLabel } : {}),
             token,
             capabilities: CLIENT_CAPABILITIES
           })}\n`

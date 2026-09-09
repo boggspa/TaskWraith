@@ -707,3 +707,31 @@ describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', (
     })
   })
 })
+
+describe('normalizeAgentRunPayload — host-stamped origin', () => {
+  it('keeps a well-formed origin in its sanitised shape and drops anything else', () => {
+    const base = {
+      provider: 'codex',
+      scope: 'workspace',
+      workspace: '/repo',
+      prompt: 'hello',
+      approvalMode: 'auto_edit',
+      effectivePermissions: VALID_PERMS,
+      effectivePermissionsSignature: 'deadbeef'
+    }
+    const deps = makeDeps({ verifyRunPosture: vi.fn(() => true) })
+    expect(
+      normalizeAgentRunPayload(
+        {
+          ...base,
+          origin: { channel: 'local-control', pid: 4242, label: ' Claude Code ', token: 'x' }
+        },
+        deps
+      ).origin
+    ).toEqual({ channel: 'local-control', pid: 4242, label: 'Claude Code' })
+    expect(
+      normalizeAgentRunPayload({ ...base, origin: { channel: 'ios-bridge', pid: 1 } }, deps)
+    ).not.toHaveProperty('origin')
+    expect(normalizeAgentRunPayload(base, deps)).not.toHaveProperty('origin')
+  })
+})

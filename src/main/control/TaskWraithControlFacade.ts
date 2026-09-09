@@ -9,6 +9,7 @@ import type {
 } from '../BridgeActionPayload'
 import type { BridgeActionExecutionResult } from '../BridgeActionExecutor'
 import { AppStore } from '../store'
+import type { ChatMessageOrigin } from '../../shared/messageOrigin'
 import { getCachedRemoteEnsemblePresets } from '../remote/EnsembleRosterPresetsCache'
 import type { ChatRecord, WorkspaceRecord } from '../store/types'
 import type {
@@ -338,7 +339,8 @@ export function createTaskWraithControlFacade(options: TaskWraithControlFacadeOp
   const sendPrompt = async (
     threadId: string,
     text: string,
-    selection?: { model?: string; reasoningEffort?: string }
+    selection?: { model?: string; reasoningEffort?: string },
+    origin?: ChatMessageOrigin
   ) => {
     const chat = store.getChat(threadId)
     if (!chat) throw new Error('Thread not found.')
@@ -362,6 +364,7 @@ export function createTaskWraithControlFacade(options: TaskWraithControlFacadeOp
           ? { roundId: chat.ensemble.activeRound.roundId }
           : {}),
         text: prompt,
+        ...(origin ? { origin } : {}),
         message: 'Sent from the local TaskWraith TUI.'
       }
       const result = await options.executeEnsembleSteer(action)
@@ -390,6 +393,7 @@ export function createTaskWraithControlFacade(options: TaskWraithControlFacadeOp
       workspaceId,
       threadId,
       text: prompt,
+      ...(origin ? { origin } : {}),
       provider,
       ...(overrideModel ? { model: overrideModel } : defaultModel ? { model: defaultModel } : {}),
       ...(chat.workflowMode ? { workflowMode: chat.workflowMode } : {}),

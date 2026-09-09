@@ -122,6 +122,7 @@ import type {
   UsageRecord
 } from '../store/types'
 import { resolveEnsembleFanoutIsolationPolicy } from '../store/types'
+import type { ChatMessageOrigin } from '../../shared/messageOrigin'
 import { ChatTranscriptMutationAuthor } from '../store/ChatTranscriptMutationAuthoring'
 import type { AuthoredChatTranscriptMutation } from '../store/ChatRecordMutation'
 import { mapPreserveIdentity } from '../store/EnsembleStreamChatApply'
@@ -2877,6 +2878,7 @@ export class EnsembleOrchestrator {
     externalPathGrants?: ExternalPathGrant[]
     discordContextSnapshots?: DiscordContextSnapshot[]
     projectReferenceContextSelection?: ProjectReferenceContextSelection
+    origin?: ChatMessageOrigin
   }): EnsembleQueuedSteerResult {
     const { result, receipt } = this.absorbMidRunSteeringWithReceipt(input)
     if (result.status === 'steered' && receipt) {
@@ -2939,6 +2941,7 @@ export class EnsembleOrchestrator {
     externalPathGrants?: ExternalPathGrant[]
     discordContextSnapshots?: DiscordContextSnapshot[]
     projectReferenceContextSelection?: ProjectReferenceContextSelection
+    origin?: ChatMessageOrigin
   }): { result: EnsembleQueuedSteerResult; receipt?: MidRunSteeringAppendReceipt } {
     const text = input.text.trim()
     if (!text || !this.canAbsorbMidRunSteering(input.chatId, input.roundId)) {
@@ -2965,6 +2968,7 @@ export class EnsembleOrchestrator {
       chatId: input.chatId,
       roundId: input.roundId,
       text,
+      ...(input.origin ? { origin: input.origin } : {}),
       ...(imageAttachments.length > 0 ? { imageAttachments } : {}),
       ...(imageThumbnails.length > 0 ? { imageThumbnails } : {})
     })
@@ -3230,6 +3234,12 @@ export class EnsembleOrchestrator {
      * the edited prompt to the transcript.
      */
     rewind?: EnsembleRewindRoundOptions
+    /**
+     * Host-stamped provenance when the prompt arrived through a machine
+     * channel (the local-control socket). It lands on the round's user row
+     * as `metadata.origin` so the transcript can say who sent it.
+     */
+    origin?: ChatMessageOrigin
   }): { status: 'started' | 'queued' | 'steered' | 'ignored' | 'busy'; roundId?: string } {
     if (input.prepareFreshChat && !input.requireFreshRound) {
       throw new Error('A prepared Ensemble chat requires fresh-round ownership.')
@@ -3424,7 +3434,8 @@ export class EnsembleOrchestrator {
       input.projectReferenceContextSelection,
       // Rewind hints ride only with an explicit steer-mode restart; a normal
       // send never carries them (the IPC handler enforces the same split).
-      input.mode === 'steer' ? input.rewind : undefined
+      input.mode === 'steer' ? input.rewind : undefined,
+      input.origin
     )
     return { status: 'started', roundId }
   }
@@ -14193,7 +14204,9 @@ export class EnsembleOrchestrator {
      * Present only when this round REPLACES a cancelled one at the user's
      * "edit & resend from here" gesture.
      */
-    rewind?: EnsembleRewindRoundOptions
+    rewind?: EnsembleRewindRoundOptions,
+    /** Host-stamped provenance for the round's user row (see startRound). */
+    origin?: ChatMessageOrigin
   ): string {
     const storedChat = this.deps.getChat(chatId)
     if (!storedChat?.ensemble) throw new Error('Ensemble chat not found.')
@@ -14367,6 +14380,7 @@ export class EnsembleOrchestrator {
       metadata: {
         kind: 'ensembleRoundPrompt',
         ensembleRoundId: roundId,
+        ...(origin ? { origin } : {}),
         ...(normalizedImageAttachments.length
           ? {
               imageAttachments: normalizedImageAttachments,

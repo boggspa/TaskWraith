@@ -1,4 +1,5 @@
 import type { AgentRunPayload } from './AgentRunTypes'
+import { chatMessageOriginFrom, type ChatMessageOrigin } from '../../shared/messageOrigin'
 import type {
   ActiveGoal,
   AppSettings,
@@ -285,6 +286,7 @@ export function normalizeAgentRunPayload(
     runtimeProfileId: optionalString(payload.runtimeProfileId),
     geminiAuthProfileId: optionalStringOrNull(payload.geminiAuthProfileId),
     handoffSourceRunId: optionalString(payload.handoffSourceRunId),
+    ...hostStampedOriginField(payload.origin),
     failoverHopCount:
       typeof payload.failoverHopCount === 'number' && Number.isFinite(payload.failoverHopCount)
         ? payload.failoverHopCount
@@ -440,4 +442,13 @@ function normalizeGoalRuntimeLedger(value: unknown): ActiveGoal['runtimeLedger']
     ...(endStatus === 'completed' || endStatus === 'cancelled' ? { endStatus } : {}),
     intervals
   }
+}
+
+/**
+ * The host-stamped origin survives normalization only in its sanitised shape;
+ * anything else (a wire payload, a renderer guess) yields no field at all.
+ */
+function hostStampedOriginField(value: unknown): { origin?: ChatMessageOrigin } {
+  const origin = chatMessageOriginFrom(value)
+  return origin ? { origin } : {}
 }

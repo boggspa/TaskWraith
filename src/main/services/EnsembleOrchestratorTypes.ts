@@ -1,4 +1,5 @@
 import type { EnsembleRosterPreset } from '../../shared/EnsembleRosterPresetContract'
+import type { ChatMessageOrigin } from '../../shared/messageOrigin'
 import type { ContextCompactionProgressEvent } from '../../shared/contextCompaction'
 import type { ExternalSeatInput } from '../../shared/effectiveEnsembleRoster'
 import type { ResolvedInstructionContext } from '../../shared/instructions/InstructionTypes'
@@ -436,6 +437,8 @@ export interface EnsembleOrchestratorDeps {
     text: string
     imageAttachments?: EnsembleImageAttachment[]
     imageThumbnails?: EnsembleImageThumbnail[]
+    /** Host-stamped provenance of the interjection (see ChatMessageOrigin). */
+    origin?: ChatMessageOrigin
   }) => MidRunSteeringAppendReceipt
   /**
    * Registry ids that no participant prompt has carried yet. The orchestrator

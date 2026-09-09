@@ -359,3 +359,31 @@ local-control client cannot reach them. The cross-process single-writer fence
 consumed on both sides of the process boundary, and `bootstrap.ts` handles
 `ProfileWriterLivePeerError` on fallback (`bbda6a371`, `f4081926b`). The
 standalone TUI path remains independent either way.
+
+## Outside clients on the legacy local-control socket (v1)
+
+The Electron app still serves the v1 local-control socket the first TUI used.
+It is the door for a shell client or another coding agent on the same Mac to
+send a prompt into a chat — including a steer into a live Ensemble round —
+until Host-owned execution retires it. The contract, all newline-delimited
+JSON over the owner-only socket:
+
+- Discovery: `<userData>/taskwraith-control-v1.json` names the socket and the
+  owner-only token file. Send
+  `{ "type": "hello", "protocolVersion": 1, "client": "taskwraith-tui",
+"clientVersion": "<yours>", "clientPid": <pid>, "clientLabel": "Claude Code",
+"token": "<token>", "capabilities": ["compose"] }` and wait for `welcome`.
+- Advertise only what you need. The host runs projection work — a
+  whole-profile snapshot every 450 ms — only for clients that asked for
+  `snapshot` or `transcript`; a compose-only client costs it nothing per tick.
+- Find the thread with `thread.find` (`query`, `workspacePath` = your cwd,
+  `status`, `limit`). It answers slim rows and never the snapshot, which the
+  transport cannot carry once a profile is large.
+- Send with `composer.send { threadId, text }`. A live Ensemble round absorbs
+  it as a steer; an idle Ensemble starts a round; a busy solo chat queues it
+  behind the active run.
+- The host stamps what it observed at hello onto the row, so the transcript
+  reads "Sent from PID 84536 / Claude Code" instead of "You". Nothing in the
+  text has to attribute itself, and nothing in the text can change who it is
+  attributed to.
+- Disconnect when you are done.

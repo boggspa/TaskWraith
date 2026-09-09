@@ -32,6 +32,7 @@
  * fire-time message.
  */
 import type { ChatMessage, ProviderId, ScheduledTask } from '../store/types'
+import type { ChatMessageOrigin } from '../../shared/messageOrigin'
 
 export type MidRunSteeringSource =
   | 'ensembleSteer'
@@ -313,6 +314,12 @@ export function buildMidRunSteeringMessage(input: {
   content: string
   timestampIso: string
   author: MidRunSteeringAuthor
+  /**
+   * Host-stamped provenance for a host-authored row that arrived through a
+   * machine channel. It does not change authorship — the row is still the
+   * host's — so an external row never carries one.
+   */
+  origin?: ChatMessageOrigin
   ensembleRoundId?: string
   imageAttachments?: Array<{ id?: string; path: string; name?: string }>
   imagePaths?: string[]
@@ -359,6 +366,7 @@ export function buildMidRunSteeringMessage(input: {
             collaboratorDisplayName: external.collaboratorDisplayName
           }
         : {}),
+      ...(!external && input.origin ? { origin: input.origin } : {}),
       ...(imageAttachments.length > 0 ? { imageAttachments } : {}),
       ...(imagePaths.length > 0 ? { imagePaths } : {}),
       ...(imageThumbnails.length > 0 ? { imageThumbnails } : {})

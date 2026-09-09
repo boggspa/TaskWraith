@@ -845,3 +845,32 @@ describe('taskWraithControlThreadFactsFromInventoryRow', () => {
     expect(hydrateTaskWraithControlThread(facts, { now: NOW }).wallTimeMs).toBe(5 * MINUTE)
   })
 })
+
+describe('projectTaskWraithControlThread speaker for socket-sent rows', () => {
+  it('labels a user row that carries an origin instead of "You"', () => {
+    const workspace = AppStore.addOrUpdateWorkspace('/origin-repo', {
+      id: 'ws-origin',
+      displayName: 'Origin'
+    })
+    const created = AppStore.createChat(workspace.id, workspace.path)
+    AppStore.saveChat({
+      ...created,
+      title: 'Origin rows',
+      messages: [
+        { id: 'o-1', role: 'user', content: 'typed at the desk', timestamp: iso(NOW - MINUTE) },
+        {
+          id: 'o-2',
+          role: 'user',
+          content: 'sent through the socket',
+          timestamp: iso(NOW),
+          metadata: {
+            kind: 'midRunSteering',
+            origin: { channel: 'local-control', pid: 4242, label: 'Claude Code' }
+          }
+        }
+      ]
+    })
+    const rows = projectTaskWraithControlThread(chat(created.appChatId), { limit: 5 }, 'fixed').rows
+    expect(rows.map((row) => row.speaker)).toEqual(['You', 'Sent from PID 4242 / Claude Code'])
+  })
+})
