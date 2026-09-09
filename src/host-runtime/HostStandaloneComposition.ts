@@ -16,7 +16,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
-import type { HostCapability } from '../shared/hostProtocol'
+import { isBootEpoch, type HostCapability } from '../shared/hostProtocol'
 import type { WorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
 import {
   AppStoreHostAuthority,
@@ -65,9 +65,6 @@ import { randomBytes } from 'node:crypto'
 /** Snapshot-file cadence and output cap the programme's harness collector expects. */
 export const HOST_PERF_SNAPSHOT_FILE_INTERVAL_MS = 5000
 export const HOST_PERF_SNAPSHOT_FILE_MAX_BYTES = 256 * 1024
-
-/** Matches the writer's and the welcome codec's validators exactly. */
-const HOST_BOOT_EPOCH_PATTERN = /^[0-9a-f]{64}$/
 
 /**
  * One public opaque boot epoch. 32 bytes of CSPRNG output rendered as 64
@@ -258,7 +255,7 @@ export function createHostStandaloneComposition(
   // by inspection and a future swap would look like nothing. The epoch is
   // minted HERE, independently; this composition never receives the token.
   const bootEpoch = (input.bootEpochFactory ?? mintBootEpoch)()
-  if (typeof bootEpoch !== 'string' || !HOST_BOOT_EPOCH_PATTERN.test(bootEpoch)) {
+  if (!isBootEpoch(bootEpoch)) {
     // Refuse rather than drop. A dropped epoch reads downstream as legacy
     // absence rather than as a fault, silently disarming the collector's pin.
     throw new Error('HostStandaloneComposition requires a 64 lowercase hex bootEpoch')

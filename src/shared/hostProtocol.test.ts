@@ -10,6 +10,7 @@ import {
   HOST_PROTOCOL_MAX_WARNING,
   hostRunFailureNotice,
   hostRunFailureReason,
+  isBootEpoch,
   HOST_QUESTION_ANSWER_MAX_CHARS,
   HOST_QUEUED_START_PHASES,
   HOST_RECEIPT_STATUSES,
@@ -1579,6 +1580,57 @@ describe('Host protocol Wave 2D-1 read frames', () => {
       expect(buildHostBootstrapWelcome({ ...mintInput, bootEpoch: bootEpoch as string }).ok).toBe(
         false
       )
+    }
+  })
+
+  it('exports isBootEpoch as the shared rule, matching what the codec enforces', () => {
+    const BOOT_EPOCH = '0123456789abcdef'.repeat(4)
+    const mintInput = {
+      hostId: 'host-local-1',
+      hostVersion: '1.9.2',
+      sessionId: 'sess-epoch-guard',
+      generation: 7,
+      cursor: 21,
+      authenticatedClient: client,
+      hostCapabilityOffer: ['bootstrap', 'snapshot'] as readonly HostCapability[],
+      clientCapabilityRequest: ['snapshot'] as readonly HostCapability[],
+      freshness: 'live' as const
+    }
+
+    // The standalone mint and the local server import this guard instead of
+    // re-deriving the pattern, so its contract is load-bearing OUTSIDE this
+    // module. Everything above reaches the rule only THROUGH decode/mint: if
+    // the guard were weakened while decode kept a private check of its own,
+    // this file would stay green while both Host modules silently began
+    // accepting epochs the collector will later refuse. Pin it directly.
+    expect(isBootEpoch(BOOT_EPOCH)).toBe(true)
+    expect(isBootEpoch('a'.repeat(64))).toBe(true)
+
+    for (const rejected of [
+      '0123456789ABCDEF'.repeat(4), // uppercase hex
+      BOOT_EPOCH.slice(0, 63), // 63 characters
+      BOOT_EPOCH + '0', // 65 characters
+      'g' + '0'.repeat(63), // non-hex
+      ` ${BOOT_EPOCH}`, // leading space — the anchors, not a bare .test
+      `${BOOT_EPOCH}\n`, // trailing newline — $ alone would accept this
+      '', // empty
+      42,
+      null,
+      undefined
+    ]) {
+      expect(isBootEpoch(rejected)).toBe(false)
+    }
+
+    // The guard and the decoder must agree, or the wire and the Host modules
+    // would enforce different rules from the same source file.
+    const valid = buildHostBootstrapWelcome(mintInput)
+    expect(valid.ok).toBe(true)
+    for (const candidate of [BOOT_EPOCH, 'A'.repeat(64), 'zz', '']) {
+      const decoded = decodeHostBootstrapWelcome({
+        ...(valid.ok ? valid.value : {}),
+        bootEpoch: candidate
+      })
+      expect(decoded.ok).toBe(isBootEpoch(candidate))
     }
   })
 

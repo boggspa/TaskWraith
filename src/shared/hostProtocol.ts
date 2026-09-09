@@ -1141,7 +1141,19 @@ const HOST_FRESHNESS = new Set<string>(['live', 'cached', 'stale'])
  */
 const HOST_BOOT_EPOCH_PATTERN = /^[0-9a-f]{64}$/
 
-function isBootEpoch(value: unknown): value is string {
+/**
+ * Exported as the SINGLE definition of the epoch rule for every enforcement
+ * point that can import TypeScript — the standalone mint and the local server
+ * both consume this rather than re-deriving the pattern. The whole design is
+ * an equality comparison across a process boundary, so a second copy that
+ * drifted would make one side accept what the other rejects: the collector
+ * would read a live epoch as a legacy absence and silently stop pinning.
+ *
+ * Two copies necessarily remain and are pinned in lockstep instead: the perf
+ * snapshot writer, and the harness collector, which is `.cjs` and genuinely
+ * cannot import this module.
+ */
+export function isBootEpoch(value: unknown): value is string {
   return typeof value === 'string' && HOST_BOOT_EPOCH_PATTERN.test(value)
 }
 const HOST_STATUSES = new Set<string>(['ok', 'degraded', 'recovering', 'offline'])

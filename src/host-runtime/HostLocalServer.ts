@@ -55,6 +55,7 @@ import {
 } from '../shared/hostProtocolTransport'
 import {
   HOST_PROTOCOL_VERSION,
+  isBootEpoch,
   type HostCommand,
   type HostCursorPosition,
   type HostDeltaEnvelope
@@ -130,9 +131,6 @@ const MAX_LARGE_RESPONSE_LINE_BYTES = TW_MISSION_MAX_BUNDLE_BYTES + 65_536
 // live profile: a 725 KB snapshot poll plus the next routine delta killed the
 // TUI's connection every few seconds, forever.
 const MAX_SOCKET_WRITE_BACKLOG_BYTES = MAX_LARGE_RESPONSE_LINE_BYTES * 2
-
-/** Matches the composition's mint and the welcome codec's validator exactly. */
-const HOST_BOOT_EPOCH_PATTERN = /^[0-9a-f]{64}$/
 
 // ---------------------------------------------------------------------------
 // Options
@@ -391,10 +389,7 @@ export class HostLocalServer {
     ) {
       throw new Error('Host local payload identity is invalid.')
     }
-    if (
-      this.options.bootEpoch !== undefined &&
-      !HOST_BOOT_EPOCH_PATTERN.test(this.options.bootEpoch)
-    ) {
+    if (this.options.bootEpoch !== undefined && !isBootEpoch(this.options.bootEpoch)) {
       throw new Error('Host local boot epoch is invalid.')
     }
     this.token = randomBytes(32).toString('hex')
