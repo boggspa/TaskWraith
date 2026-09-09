@@ -25,6 +25,7 @@ import { truncateOpaqueMarkdown, wrapOpaqueMarkdownBlock } from './MarkdownFence
 import { buildPendingThreadMessageContextBlock } from './ThreadMessageContext'
 import type { ThreadMessageEvent } from '../shared/threadMessage'
 import { nativeSubAgentPromptInstruction } from './NativeSubAgentPolicy'
+import { messageOriginLabel } from '../shared/messageOrigin'
 import {
   isExternalUntrustedMessage,
   isHumanCollaboratorComment
@@ -973,7 +974,14 @@ function renderConversationProjection(
   if (messages.length === 0) return { block: '', suppliedMessageIds: [] }
   const lines = messages.map((item) => ({
     id: item.id,
-    text: `${item.role === 'user' ? 'User' : 'Assistant'}: ${sanitizeContextText(item.content, budget.maxCharsPerTurn)}`
+    // A row that arrived over the local-control socket is NOT the operator
+    // speaking, and this projection's whole shape is `Speaker: text` — so the
+    // honest fix is to name the speaker, not to bolt a marker onto the body.
+    // Assistant rows are never renamed: origin only ever rides a user row, and
+    // reading it off any other role would let stored metadata rewrite an
+    // author. The label is space-collapsed and length-bounded upstream, so it
+    // cannot open a second line and pose as host text.
+    text: `${item.role === 'user' ? (messageOriginLabel(item.metadata?.origin) ?? 'User') : 'Assistant'}: ${sanitizeContextText(item.content, budget.maxCharsPerTurn)}`
   }))
   const contextBlock = [header, ...lines.map((line) => line.text)].join('\n')
   if (contextBlock.length <= budget.maxBlockChars) {
