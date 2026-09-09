@@ -78,3 +78,44 @@ describe('composer custom-model control', () => {
     ])
   })
 })
+
+describe('composer custom-model persistence wiring', () => {
+  const composerSource = (): string =>
+    readFileSync(join(rendererRoot, 'components/Composer.tsx'), 'utf8')
+
+  /** The JSX for the custom-model field, from its class down to its clear button. */
+  function customModelFieldSource(source: string): string {
+    const start = source.indexOf('className="composer-inline-custom-model"')
+    expect(start, 'custom-model field missing from Composer').toBeGreaterThanOrEqual(0)
+    const end = source.indexOf('aria-label="Remove custom model"', start)
+    expect(end, 'clear button missing from the custom-model field').toBeGreaterThan(start)
+    return source.slice(start, end)
+  }
+
+  it('saves the typed id on commit, never per keystroke', () => {
+    const field = customModelFieldSource(composerSource())
+    // Enter and blur are the two commit points; onChange must stay a pure
+    // state update or the list fills with every prefix of the tag.
+    expect(field).toContain('onBlur={saveCurrentCustomModel}')
+    expect(field).toMatch(/onKeyDown=\{[\s\S]{0,200}saveCurrentCustomModel\(\)/)
+    const onChange = field.slice(field.indexOf('onChange='), field.indexOf('onKeyDown='))
+    expect(onChange).not.toContain('saveCurrentCustomModel')
+    expect(onChange).not.toContain('addCustomProviderModel')
+  })
+
+  it('forgets a saved id when the field is cleared', () => {
+    const field = customModelFieldSource(composerSource())
+    expect(field).toContain('removeCustomProviderModel(')
+    expect(field).toContain('persistCustomProviderModels(')
+  })
+
+  it('builds picker rows and the selected id through the shared helpers', () => {
+    const source = composerSource()
+    // Both must come from lib/customModelPickerRows: re-deriving either inline
+    // is how the saved rows and the check mark drift apart.
+    expect(source).toContain("from '../lib/customModelPickerRows'")
+    expect(source).toContain('spliceSavedCustomModelRows(savedCustomModelStore')
+    expect(source).toContain('customModelPickerSelectionId(')
+    expect(source).toContain('selectedModelId={pickerSelectedModelId}')
+  })
+})

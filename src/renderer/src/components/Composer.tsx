@@ -219,6 +219,19 @@ import {
   getStoredWorkspaceTerminalHeight,
   setStoredWorkspaceTerminalHeight
 } from '../lib/panelWidths'
+import {
+  addCustomProviderModel,
+  customModelIdFromRowId,
+  normalizeCustomModelId,
+  removeCustomProviderModel,
+  sanitizeCustomProviderModels,
+  CUSTOM_MODEL_ENTRY_ID
+} from '../../../shared/customProviderModels'
+import type { CustomProviderModels } from '../../../shared/customProviderModels'
+import {
+  customModelPickerSelectionId,
+  withSavedCustomModelRows as spliceSavedCustomModelRows
+} from '../lib/customModelPickerRows'
 import { createPortal } from 'react-dom'
 
 /**
@@ -1233,6 +1246,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     : undefined
   const composerSuggestionDescriptionId = useId()
 
+  /** Bind the picker-row splice to this composer's saved-model store. */
+  const withSavedCustomModelRows = (
+    targetProvider: ProviderId,
+    options: CombinedModelPickerModelOption[]
+  ): CombinedModelPickerModelOption[] =>
+    spliceSavedCustomModelRows(savedCustomModelStore, targetProvider, options)
   const buildPickerModelOptions = (
     targetProvider: ProviderId,
     models: CodexModelOption[],
@@ -1245,14 +1264,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       // each family into ONE readable row; the reasoning slider swaps the
       // concrete variant, and the row id follows the selected variant so the
       // picker's own id === selectedModelId check works unchanged.
-      return [
+      return withSavedCustomModelRows(targetProvider, [
         ...groupAntigravityModelRows(models, selectedModelId),
         ...(includeCustom && !models.some((model) => model.id === 'custom')
           ? [{ id: 'custom', label: 'Custom…' }]
           : [])
-      ]
+      ])
     }
-    return buildGenericPickerModelOptions(targetProvider, models, includeCustom)
+    return withSavedCustomModelRows(
+      targetProvider,
+      buildGenericPickerModelOptions(targetProvider, models, includeCustom)
+    )
   }
   const buildGenericPickerModelOptions = (
     targetProvider: ProviderId,
@@ -1437,6 +1459,25 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   }
 
   const agentApprovalCardRef = useRef<HTMLDivElement | null>(null)
+  /*
+   * Saved custom model IDs.
+   *
+   * `settings` arrives as a prop from App.tsx and there is no push channel for
+   * settings, so a write through `window.api.updateSettings` would not be
+   * reflected here until the next reload — the id the user just saved would be
+   * missing from the picker they are still looking at. Mirror the write locally
+   * and let the mirror win once it exists; the persisted value takes over again
+   * on the next load. This key has exactly one writer (below), so the mirror
+   * cannot shadow someone else's change.
+   */
+  const [savedCustomModelsOverride, setSavedCustomModelsOverride] =
+    useState<CustomProviderModels | null>(null)
+  const savedCustomModelStore =
+    savedCustomModelsOverride ?? sanitizeCustomProviderModels(settings?.customProviderModels)
+  const persistCustomProviderModels = (next: CustomProviderModels): void => {
+    setSavedCustomModelsOverride(next)
+    void window.api.updateSettings({ customProviderModels: next }).catch(() => {})
+  }
   const [trustedSessionConfirmOpen, setTrustedSessionConfirmOpen] = useState(false)
   const [trustedSessionApprovalId, setTrustedSessionApprovalId] = useState<string | null>(null)
   const agentApprovalTimeoutMs = pendingAgentApproval
@@ -3878,6 +3919,31 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             typeof soloPendingProviderMetadata?.customModel === 'string'
                               ? soloPendingProviderMetadata.customModel
                               : customModel
+                          const pickerSelectedModelId = customModelPickerSelectionId(
+                            savedCustomModelStore,
+                            effectiveProvider,
+                            effectiveSelectedModel,
+                            effectiveCustomModel
+                          )
+                          /**
+                           * Keep whatever the user committed in the field, so
+                           * the next chat can pick it from the picker instead of
+                           * retyping the tag. Unusable input (blank, whitespace,
+                           * the `custom` sentinel) normalises to '' and is
+                           * simply not saved — typing is not an error state.
+                           */
+                          const saveCurrentCustomModel = (): void => {
+                            if (effectiveSelectedModel !== CUSTOM_MODEL_ENTRY_ID) return
+                            const modelId = normalizeCustomModelId(effectiveCustomModel)
+                            if (!modelId) return
+                            const next = addCustomProviderModel(
+                              savedCustomModelStore,
+                              effectiveProvider,
+                              modelId
+                            )
+                            if (next === savedCustomModelStore) return
+                            persistCustomProviderModels(next)
+                          }
                           const effectiveCodexReasoning =
                             ensembleResolved?.provider === 'codex'
                               ? ensembleResolved.reasoningEffort
@@ -4216,7 +4282,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             ]
                           }
 
-                          const handleCombinedModelChange = (nextModel: string) => {
+                          const handleCombinedModelChange = (rawNextModel: string) => {
+                            /*
+                             * A saved custom-model row carries the real model
+                             * id behind a `custom:` prefix. Strip it once here:
+                             * everything downstream (availability preflight,
+                             * ensemble seat patch) wants the real id, and only
+                             * the solo composer needs to know the selection is
+                             * "custom" rather than a catalogue model.
+                             */
+                            const savedCustomModelId = customModelIdFromRowId(rawNextModel)
+                            const nextModel = savedCustomModelId || rawNextModel
                             if (effectiveProvider === 'ollama') {
                               onOllamaModelSelected?.(
                                 nextModel,
@@ -4238,6 +4314,26 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   modelOption
                                 )
                               )
+                              return
+                            }
+                            if (savedCustomModelId) {
+                              // Solo composer: reuse the established custom
+                              // contract (`selectedModelType: 'custom'` plus a
+                              // separately persisted `customModel`) rather than
+                              // storing a bare id no catalogue lookup resolves.
+                              if (shouldUpdateLiveComposerState) {
+                                setSelectedModelType(CUSTOM_MODEL_ENTRY_ID)
+                                setCustomModel(savedCustomModelId)
+                              }
+                              rememberCurrentChatComposerSelection({
+                                selectedModelType: CUSTOM_MODEL_ENTRY_ID,
+                                customModel: savedCustomModelId
+                              })
+                              if (effectiveProvider === 'gemini') {
+                                markPersistentSessionRestartNeeded(
+                                  'Gemini custom model changed. Restart the persistent session to apply the new model.'
+                                )
+                              }
                               return
                             }
                             if (shouldUpdateLiveComposerState && nextModel !== 'custom') {
@@ -4669,7 +4765,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 provider={effectiveProvider}
                                 composerStyle={appearance.composerStyle}
                                 modelOptions={combinedModelOptions}
-                                selectedModelId={effectiveSelectedModel}
+                                selectedModelId={pickerSelectedModelId}
                                 onSelectModel={handleCombinedModelChange}
                                 providerGroups={unifiedProviderGroups}
                                 onSelectProviderModel={handleCombinedProviderModelChange}
@@ -4713,11 +4809,20 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                           )
                                         }
                                       }}
+                                      onKeyDown={(e) => {
+                                        if (e.key !== 'Enter') return
+                                        e.preventDefault()
+                                        saveCurrentCustomModel()
+                                      }}
+                                      // Save on commit, never per keystroke:
+                                      // char-by-char would fill the list with
+                                      // every prefix of the tag being typed.
+                                      onBlur={saveCurrentCustomModel}
                                       placeholder="Model ID"
                                       title={
                                         isCurrentComposerLocked
                                           ? 'Custom model for the next turn'
-                                          : 'Custom model'
+                                          : 'Custom model — press Enter to keep it in the picker'
                                       }
                                       data-pending-next-turn={
                                         isCurrentComposerLocked ? 'true' : 'false'
@@ -4736,6 +4841,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                           effectiveModelOptionsRaw.find(
                                             (option) => !option.disabled
                                           )?.id
+                                        // Switching away from a custom model is
+                                        // what the picker is for, so this button
+                                        // is the one place that means "forget
+                                        // it" — otherwise a saved id could only
+                                        // ever be evicted by the cap.
+                                        const forgotten = removeCustomProviderModel(
+                                          savedCustomModelStore,
+                                          effectiveProvider,
+                                          effectiveCustomModel
+                                        )
+                                        if (forgotten !== savedCustomModelStore) {
+                                          persistCustomProviderModels(forgotten)
+                                        }
                                         if (shouldUpdateLiveComposerState) {
                                           setCustomModel('')
                                         }
@@ -4749,10 +4867,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                       }}
                                       title={
                                         isCurrentComposerLocked
-                                          ? 'Cancel custom model for the next turn'
-                                          : 'Cancel custom model'
+                                          ? 'Remove custom model for the next turn'
+                                          : 'Remove custom model'
                                       }
-                                      aria-label="Cancel custom model"
+                                      aria-label="Remove custom model"
                                     >
                                       <XSymbolIcon />
                                     </button>
