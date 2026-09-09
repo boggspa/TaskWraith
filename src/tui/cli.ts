@@ -27,6 +27,10 @@ import {
   writeTuiSettings
 } from './settings'
 import { TaskWraithTui } from './TaskWraithTui'
+import { TaskWraithControlClient } from './client/TaskWraithControlClient'
+import { parseOutsideCommand, type OutsideCommand } from './outsideCommand'
+import { runOutsideCommand } from './outsideClientRunner'
+import { resolveSenderIdentity } from './senderIdentity'
 import {
   parseTaskWraithTuiArgs,
   taskWraithTuiUsage,
@@ -304,7 +308,49 @@ async function exportTwMission(options: TaskWraithTuiCliOptions): Promise<void> 
 
 let activeTui: TaskWraithTui | null = null
 
+async function readAllStdin(): Promise<string> {
+  // A terminal with nothing piped would block forever waiting for EOF, so a
+  // missing prompt is reported as usage rather than as a hang.
+  if (process.stdin.isTTY) return ''
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+/**
+ * The non-interactive verbs (`tw threads`, `tw send`) run over the v1
+ * local-control socket: it is the only transport that reaches a live Ensemble
+ * round today, and it is where the host stamps the sender onto the row.
+ */
+async function runOutsideVerb(command: OutsideCommand): Promise<number> {
+  const identity = resolveSenderIdentity(
+    process.env,
+    process.pid,
+    command.kind === 'send' ? command.from : undefined
+  )
+  return runOutsideCommand(command, {
+    identity,
+    openClient: async (resolved) =>
+      new TaskWraithControlClient({
+        clientVersion: TUI_VERSION,
+        // Compose only: asking for `snapshot`/`transcript` would put the host
+        // back on a whole-profile poll for the life of this connection.
+        capabilities: ['compose'],
+        clientPid: resolved.pid,
+        ...(resolved.label ? { clientLabel: resolved.label } : {})
+      }),
+    write: (line) => process.stdout.write(`${line}\n`),
+    writeError: (line) => process.stderr.write(`${line}\n`),
+    readStdin: readAllStdin
+  })
+}
+
 async function main(): Promise<void> {
+  const outside = parseOutsideCommand(process.argv.slice(2), { cwd: process.cwd() })
+  if (outside) {
+    process.exitCode = await runOutsideVerb(outside)
+    return
+  }
   const options = parseTaskWraithTuiArgs(process.argv.slice(2))
   if (options.help) {
     process.stdout.write(`${taskWraithTuiUsage(TUI_VERSION)}\n`)

@@ -31,6 +31,20 @@ export interface TaskWraithControlClientOptions {
    * unset for the TUI, which is the user at the keyboard.
    */
   clientLabel?: string
+  /**
+   * Pid to present at hello. Defaults to this process. A one-shot `tw send`
+   * passes the OWNING agent's pid instead: its own process lives about a
+   * second, so its pid names nothing a human could look up in the transcript
+   * afterwards.
+   */
+  clientPid?: number
+  /**
+   * Capabilities to advertise at hello. Defaults to everything the terminal
+   * UI drives. A one-shot sender should pass `['compose']`: the host runs its
+   * projection poll only for clients that asked for `snapshot`/`transcript`,
+   * so a narrow request costs the host nothing per tick.
+   */
+  capabilities?: readonly TaskWraithControlCapability[]
   userDataPath?: string
   discoveryPath?: string
   connectTimeoutMs?: number
@@ -147,10 +161,10 @@ export class TaskWraithControlClient extends EventEmitter<TaskWraithControlClien
             protocolVersion: TASKWRAITH_CONTROL_PROTOCOL_VERSION,
             client: TASKWRAITH_CONTROL_CLIENT_NAME,
             clientVersion: this.options.clientVersion,
-            clientPid: process.pid,
+            clientPid: this.options.clientPid ?? process.pid,
             ...(this.options.clientLabel ? { clientLabel: this.options.clientLabel } : {}),
             token,
-            capabilities: CLIENT_CAPABILITIES
+            capabilities: this.options.capabilities ?? CLIENT_CAPABILITIES
           })}\n`
         )
       })

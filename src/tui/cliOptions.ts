@@ -43,6 +43,15 @@ export function taskWraithTuiUsage(version: string): string {
 Usage:
   taskwraith [options]
   tw [options]
+  tw threads [--query <text>] [--cwd <path>] [--all] [--json]
+  tw send <thread|title> <text…> [--from <label>] [--cwd <path>] [--all] [--json]
+
+Commands (non-interactive, for scripts and coding agents):
+  threads                List threads in this working tree (--all: everywhere)
+  send                   Send one prompt into a thread; a live Ensemble round
+                         absorbs it as a steer. With no text, reads stdin.
+                         The host labels the row with the sending process —
+                         set --from or TW_CLIENT_LABEL to name your tool.
 
 Options:
   --demo                 Run the self-contained presentation demo

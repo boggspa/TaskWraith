@@ -360,6 +360,45 @@ consumed on both sides of the process boundary, and `bootstrap.ts` handles
 `ProfileWriterLivePeerError` on fallback (`bbda6a371`, `f4081926b`). The
 standalone TUI path remains independent either way.
 
+## Sending into a chat from a script or a coding agent
+
+`tw` has two non-interactive verbs for anything outside the app that wants to
+talk to a running chat — a shell script, or a Claude Code / Codex session
+working in the same checkout. Both are one shot: they connect, do the thing,
+and disconnect.
+
+```
+tw threads                        # threads in this working tree
+tw threads --query host --json    # machine-readable, filtered
+tw send <thread|title> <text…>    # send one prompt
+echo "…" | tw send <thread>       # or pipe the body in
+```
+
+`send` resolves its first argument as an exact thread id, or as a title
+substring that must match exactly one thread — an ambiguous title is refused
+with the candidates listed rather than guessed at. Both verbs scope to the
+working tree by default (the cwd resolves to its registered workspace), so the
+same command in two checkouts talks to two different sets of threads. `--all`
+searches every workspace.
+
+What happens on arrival depends on the thread: a live Ensemble round absorbs
+the prompt as a steer, an idle Ensemble starts a round with it, and a busy solo
+chat queues it behind the active run and flushes it at the boundary.
+
+**The row says who sent it.** The host stamps the sender it observed at the
+handshake onto the transcript row, which then reads "Sent from PID 84536 /
+Claude Code" in place of "You". Nothing in the message text has to attribute
+itself, and nothing in the message text can change the attribution. The label
+is detected for runtimes we have verified (Claude Code exports `CLAUDECODE`);
+anywhere else, pass `--from "<tool>"` or set `TW_CLIENT_LABEL`, and the pid
+alone is shown if neither is given. A tool whose own process outlives the
+`tw` call can name itself with `TW_CLIENT_PID` so the row points at the
+session a human can actually find.
+
+These verbs deliberately advertise only the `compose` capability, so a sender
+never puts the host on the per-tick projection poll that serving a snapshot
+costs.
+
 ## Outside clients on the legacy local-control socket (v1)
 
 The Electron app still serves the v1 local-control socket the first TUI used.
