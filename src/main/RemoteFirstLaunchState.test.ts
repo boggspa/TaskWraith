@@ -478,6 +478,11 @@ describe('buildRemoteFirstLaunchState', () => {
     const piGroup = newAdditions?.groups?.find((group) => group.provider === 'pi')
     expect(piGroup?.label).toBe('Pi')
     expect(piGroup?.models.map((model) => model.name)).toEqual([
+      'Mercury 2.5 (OpenRouter)',
+      'Nex-N2.5-Pro (OpenRouter Free)',
+      'Nex-N2.5-Mini (OpenRouter Free)',
+      'Gemma 4 31B (Cerebras)',
+      'Qwen 3.8 27B (Cerebras)',
       'North Mini Code (OpenRouter Free)',
       'MiniMax M3 (OpenRouter Free)',
       'Inkling (OpenRouter Free)',
@@ -491,6 +496,11 @@ describe('buildRemoteFirstLaunchState', () => {
       'Nemotron 3 Ultra'
     ])
     expect(piGroup?.models.map((model) => model.accentProvider)).toEqual([
+      'inception',
+      'nexagi',
+      'nexagi',
+      'cerebras',
+      'cerebras',
       'cohere',
       'minimax',
       'thinkingmachines',

@@ -2798,7 +2798,7 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-09-08","kind":"addition","title":"New Additions","body":"GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Gemma 4 31B and Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-09-09","kind":"addition","title":"New Additions","body":"Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair on OpenRouter via Pi, GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Gemma 4 31B and Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"codex","label":"Codex","models":[
               {"name":"GPT-6 Astra","blurb":"OpenAI's newest frontier model. Rolling out by organisation."}
             ]},
@@ -2851,6 +2851,9 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Rnj-1","blurb":"Essential AI's 8B agentic coding model with native tools.","accentProvider":"essential"}
             ]},
             {"provider":"pi","label":"Pi","models":[
+              {"name":"Mercury 2.5 (OpenRouter)","blurb":"Inception's GA diffusion LLM — 260K context, Off-to-Max effort, $0.20/$0.75 per Mtok.","accentProvider":"inception"},
+              {"name":"Nex-N2.5-Pro (OpenRouter Free)","blurb":"Nex AGI's free 262K agentic coder with vision and Off-to-Max effort; 30-day retention.","accentProvider":"nexagi"},
+              {"name":"Nex-N2.5-Mini (OpenRouter Free)","blurb":"The lighter free Nex-N2.5 — the same 262K window and effort ladder, text only.","accentProvider":"nexagi"},
               {"name":"Gemma 4 31B (Cerebras)","blurb":"Google's 31B model via Cerebras — 131K context, vision and optional thinking; preview access.","accentProvider":"cerebras"},
               {"name":"Qwen 3.8 27B (Cerebras)","blurb":"Alibaba's 27B model via Cerebras — 131K context, vision and Off/Low/Medium/High reasoning.","accentProvider":"cerebras"},
               {"name":"North Mini Code (OpenRouter Free)","blurb":"Cohere's 256K agentic coder via OpenRouter, with interleaved reasoning and tool use.","accentProvider":"cohere"},

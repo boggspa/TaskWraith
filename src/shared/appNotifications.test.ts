@@ -267,6 +267,10 @@ describe('notification registry', () => {
     ])
     const pi = groups.find((g) => g.provider === 'pi')
     expect(pi?.models.map((m) => m.name)).toEqual([
+      // The 2026-09-08 OpenRouter trio leads: it is the newest story on the card.
+      'Mercury 2.5 (OpenRouter)',
+      'Nex-N2.5-Pro (OpenRouter Free)',
+      'Nex-N2.5-Mini (OpenRouter Free)',
       'Gemma 4 31B (Cerebras)',
       'Qwen 3.8 27B (Cerebras)',
       'North Mini Code (OpenRouter Free)',
@@ -284,6 +288,11 @@ describe('notification registry', () => {
     // Every Pi row wears the hue of the BYOK upstream that serves it — a
     // missing accent would silently fall back to the Pi seat slate.
     expect(pi?.models.map((m) => m.accentProvider)).toEqual([
+      // Mercury reuses the Inception override; both Nex rows wear the new
+      // nexagi hue rather than falling back to the generic OpenRouter red.
+      'inception',
+      'nexagi',
+      'nexagi',
       'cerebras',
       'cerebras',
       'cohere',
@@ -303,6 +312,15 @@ describe('notification registry', () => {
     )
     expect(pi?.models.find((m) => m.name === 'Inkling Small (OpenRouter Free)')?.blurb).toMatch(
       /avoid sensitive data.*logged free endpoint/i
+    )
+    expect(pi?.models.find((m) => m.name === 'Mercury 2.5 (OpenRouter)')?.blurb).toMatch(
+      /260K.*Off-to-Max.*\$0\.20\/\$0\.75/
+    )
+    expect(pi?.models.find((m) => m.name === 'Nex-N2.5-Pro (OpenRouter Free)')?.blurb).toMatch(
+      /262K.*vision.*Off-to-Max/i
+    )
+    expect(pi?.models.find((m) => m.name === 'Nex-N2.5-Mini (OpenRouter Free)')?.blurb).toMatch(
+      /262K.*text only/i
     )
     // New Cerebras routes do not resurrect the retired GLM-4.7 announcement.
     expect(pi?.models.map((m) => m.name)).not.toContain('GLM-4.7 (Cerebras)')

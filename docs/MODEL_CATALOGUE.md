@@ -353,11 +353,16 @@ lane, and their metadata is written into the run's isolated Pi home at launch.
 | **MiniMax M3 (OpenRouter Free)** `openrouter/minimax/minimax-m3:free` | Off / High | — | 1M multimodal context via OpenRouter.       |
 | **Inkling (OpenRouter Free)** `openrouter/thinkingmachines/inkling:free` | Off → Max | — | 1M text/image context, 256K output; Minimal, Low, Medium, High, and Max (no Extra High). |
 | **Inkling Small (OpenRouter Free)** `openrouter/thinkingmachines/inkling-small:free` | Off → Max | — | Faster Inkling route with the same 1M context and effort ladder. |
+| **Hy4 Preview** `openrouter/tencent/hy4-preview`           | Off / Low / High | — | 1M context, 64K output via OpenRouter. Tencent's 770B MoE (49B active). |
+| **Mercury 2.5 Preview** `openrouter/inception/mercury-2.5-preview` | Off → Max | — | 260K context, 32K output. Superseded by the GA row below; kept so seats pinned to the preview id keep working. |
+| **Mercury 2.5** `openrouter/inception/mercury-2.5`         | Off → Max    | —    | Inception's GA diffusion LLM — 260K context, 65,536 output, text only. Minimal, Low, Medium, High and Max (no Extra High), defaulting to Medium. Listed $0.20/$0.75 per Mtok with $0.02 cache read; OpenRouter is discounting the launch 80%. |
+| **Nex-N2.5-Mini (OpenRouter Free)** `openrouter/nex-agi/nex-n2.5-mini:free` | Off → Max | — | Nex AGI's free agentic coder — 262K context, 235,929 output, text only, same Medium-default ladder. |
+| **Nex-N2.5-Pro (OpenRouter Free)** `openrouter/nex-agi/nex-n2.5-pro:free` | Off → Max | — | The larger free Nex-N2.5 — same window and output, plus image input for its visual feedback loop. |
 
 Pi sends `--thinking` only when a reasoning choice is set, and every picker is
 filtered through the selected route's own ladder. Boolean routes expose only
-Off and High; always-on routes hide Off; Inkling keeps Off and Minimal distinct
-and omits unsupported Extra High. UltraTask/top-tier requests clamp to the
+Off and High; always-on routes hide Off; Inkling, Mercury and the Nex-N2.5 pair
+keep Off and Minimal distinct and omit unsupported Extra High. UltraTask/top-tier requests clamp to the
 selected model's real ceiling instead of forwarding a level that route ignores.
 Leaving the control unset preserves the upstream default.
 
