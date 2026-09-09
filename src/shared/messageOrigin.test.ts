@@ -1,18 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { chatMessageOriginFrom, messageOriginLabel } from './messageOrigin'
+import {
+  chatMessageOriginFrom,
+  messageOriginBadges,
+  messageOriginLabel,
+  messageOriginSpeaker
+} from './messageOrigin'
 
 describe('messageOriginLabel', () => {
-  it('names the sending process and its label in place of "You"', () => {
+  it('names the sender in place of "You"', () => {
     expect(messageOriginLabel({ channel: 'local-control', pid: 84536, label: 'Claude Code' })).toBe(
-      'Sent from PID 84536 / Claude Code'
+      'External Agent \u00b7 Claude Code \u00b7 PID 84536'
     )
-    expect(messageOriginLabel({ channel: 'local-control', pid: 84536 })).toBe('Sent from PID 84536')
+    expect(messageOriginLabel({ channel: 'local-control', pid: 84536 })).toBe(
+      'External Agent \u00b7 PID 84536'
+    )
     expect(messageOriginLabel({ channel: 'local-control', label: 'Codex CLI' })).toBe(
-      'Sent from Codex CLI'
+      'External Agent \u00b7 Codex CLI'
     )
-    expect(messageOriginLabel({ channel: 'local-control' })).toBe(
-      'Sent from the local control socket'
-    )
+    expect(messageOriginLabel({ channel: 'local-control' })).toBe('External Agent')
   })
 
   it('is undefined for an ordinary user row and for anything that is not a local-control origin', () => {
@@ -24,19 +29,17 @@ describe('messageOriginLabel', () => {
 
   it('bounds and normalises what reaches the transcript', () => {
     expect(
-      messageOriginLabel({
+      messageOriginBadges({
         channel: 'local-control',
         pid: 7,
         label: `  Claude\n  Code ${'x'.repeat(200)}`
       })
-    ).toBe(`Sent from PID 7 / ${`Claude Code ${'x'.repeat(200)}`.slice(0, 80)}`)
+    ).toEqual([`Claude Code ${'x'.repeat(200)}`.slice(0, 80), 'PID 7'])
     // A pid that is not a positive safe integer is not a pid.
-    expect(messageOriginLabel({ channel: 'local-control', pid: -3, label: 'Codex' })).toBe(
-      'Sent from Codex'
-    )
-    expect(messageOriginLabel({ channel: 'local-control', pid: '84536' })).toBe(
-      'Sent from the local control socket'
-    )
+    expect(messageOriginBadges({ channel: 'local-control', pid: -3, label: 'Codex' })).toEqual([
+      'Codex'
+    ])
+    expect(messageOriginBadges({ channel: 'local-control', pid: '84536' })).toEqual([])
   })
 })
 
@@ -59,5 +62,48 @@ describe('chatMessageOriginFrom', () => {
     expect(chatMessageOriginFrom({ channel: 'local-control', label: '   ' })).toEqual({
       channel: 'local-control'
     })
+  })
+})
+
+describe('External Agent speaker and badges', () => {
+  const origin = (extra: Record<string, unknown>) => ({ channel: 'local-control', ...extra })
+
+  it('names every socket row the same speaker, whatever identified it', () => {
+    expect(messageOriginSpeaker(origin({ pid: 84536, label: 'Claude Code' }))).toBe(
+      'External Agent'
+    )
+    expect(messageOriginSpeaker(origin({ pid: 84536 }))).toBe('External Agent')
+    expect(messageOriginSpeaker(origin({}))).toBe('External Agent')
+  })
+
+  it('leaves an ordinary user row without a speaker of its own', () => {
+    expect(messageOriginSpeaker(undefined)).toBeUndefined()
+    expect(messageOriginSpeaker({ channel: 'not-ours' })).toBeUndefined()
+  })
+
+  it('carries the tool and the pid as separate badges, in that order', () => {
+    expect(messageOriginBadges(origin({ pid: 84536, label: 'Claude Code' }))).toEqual([
+      'Claude Code',
+      'PID 84536'
+    ])
+  })
+
+  it('emits only the badge it actually has', () => {
+    expect(messageOriginBadges(origin({ pid: 84536 }))).toEqual(['PID 84536'])
+    expect(messageOriginBadges(origin({ label: 'Codex' }))).toEqual(['Codex'])
+  })
+
+  it('emits no badge at all when nothing identified the sender', () => {
+    expect(messageOriginBadges(origin({}))).toEqual([])
+    expect(messageOriginBadges(undefined)).toEqual([])
+  })
+
+  it('flattens to one line for plain-text surfaces that cannot draw a badge', () => {
+    expect(messageOriginLabel(origin({ pid: 84536, label: 'Claude Code' }))).toBe(
+      'External Agent · Claude Code · PID 84536'
+    )
+    expect(messageOriginLabel(origin({ pid: 84536 }))).toBe('External Agent · PID 84536')
+    expect(messageOriginLabel(origin({}))).toBe('External Agent')
+    expect(messageOriginLabel(undefined)).toBeUndefined()
   })
 })

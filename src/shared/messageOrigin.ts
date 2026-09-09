@@ -55,15 +55,46 @@ export function chatMessageOriginFrom(value: unknown): ChatMessageOrigin | undef
 }
 
 /**
- * The speaker label a transcript shows in place of "You" for a row that
- * carries an origin; `undefined` for an ordinary user row.
+ * What every row that came through the socket is called, whatever tool sent
+ * it. One name, so a reader learns it once: the detail of WHICH agent lives in
+ * the badges beside it, not in the speaker.
+ */
+export const CHAT_MESSAGE_ORIGIN_SPEAKER = 'External Agent'
+
+/** Separator between the speaker and its badges on flat text surfaces. */
+const BADGE_SEPARATOR = ' · '
+
+/**
+ * The speaker a transcript shows in place of "You" for a row that carries an
+ * origin; `undefined` for an ordinary user row.
+ */
+export function messageOriginSpeaker(value: unknown): string | undefined {
+  return chatMessageOriginFrom(value) ? CHAT_MESSAGE_ORIGIN_SPEAKER : undefined
+}
+
+/**
+ * The identifying chips shown beside the speaker: the tool that named itself,
+ * then the process it ran as. Either can be absent — an unidentified sender is
+ * still an External Agent, just an anonymous one — so this is often shorter
+ * than two entries and sometimes empty.
+ */
+export function messageOriginBadges(value: unknown): string[] {
+  const origin = chatMessageOriginFrom(value)
+  if (!origin) return []
+  return [
+    ...(origin.label ? [origin.label] : []),
+    ...(origin.pid !== undefined ? [`PID ${origin.pid}`] : [])
+  ]
+}
+
+/**
+ * The whole identity flattened onto one line, for surfaces that cannot draw a
+ * badge (the terminal UI, exports). Rich surfaces should render
+ * `messageOriginSpeaker` and `messageOriginBadges` as separate elements
+ * instead, so the speaker stays legible when the chips are styled down.
  */
 export function messageOriginLabel(value: unknown): string | undefined {
-  const origin = chatMessageOriginFrom(value)
-  if (!origin) return undefined
-  if (origin.pid !== undefined && origin.label)
-    return `Sent from PID ${origin.pid} / ${origin.label}`
-  if (origin.pid !== undefined) return `Sent from PID ${origin.pid}`
-  if (origin.label) return `Sent from ${origin.label}`
-  return 'Sent from the local control socket'
+  const speaker = messageOriginSpeaker(value)
+  if (!speaker) return undefined
+  return [speaker, ...messageOriginBadges(value)].join(BADGE_SEPARATOR)
 }

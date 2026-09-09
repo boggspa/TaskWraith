@@ -871,6 +871,9 @@ describe('projectTaskWraithControlThread speaker for socket-sent rows', () => {
       ]
     })
     const rows = projectTaskWraithControlThread(chat(created.appChatId), { limit: 5 }, 'fixed').rows
-    expect(rows.map((row) => row.speaker)).toEqual(['You', 'Sent from PID 4242 / Claude Code'])
+    expect(rows.map((row) => row.speaker)).toEqual([
+      'You',
+      'External Agent \u00b7 Claude Code \u00b7 PID 4242'
+    ])
   })
 })

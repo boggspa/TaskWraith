@@ -36,7 +36,7 @@ import {
   closeoutProviderFromMetadata,
   TASKWRAITH_CLOSEOUT_KIND
 } from '../../../shared/taskWraithCloseout'
-import { messageOriginLabel } from '../../../shared/messageOrigin'
+import { messageOriginBadges, messageOriginSpeaker } from '../../../shared/messageOrigin'
 import { ensembleRoundStatusClass } from '../lib/ensembleRoundStatusClass'
 import { getChatProvider } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
@@ -6066,10 +6066,22 @@ export const TranscriptPanel = memo(
                         // hue as the bubble. See `[data-user-bubble-
                         // color]` rules in `main.css`.
                         // A row that arrived through a machine channel keeps the
-                        // user bubble but names its sender instead of "You".
+                        // user bubble but names its sender instead of "You", with
+                        // the tool and pid as chips beside it. Label + badges as
+                        // separate elements, the same shape an external human
+                        // collaborator gets: flattening them into one string makes
+                        // the speaker compete with its own provenance.
+                        const originSpeaker = messageOriginSpeaker(msg.metadata?.origin)
                         return (
                           <div className="message-meta user-meta">
-                            {messageOriginLabel(msg.metadata?.origin) ?? 'You'}
+                            <span className="message-meta-label">
+                              {originSpeaker ?? 'You'}
+                            </span>
+                            {messageOriginBadges(msg.metadata?.origin).map((badge) => (
+                              <span key={badge} className="message-meta-model-badge">
+                                {badge}
+                              </span>
+                            ))}
                           </div>
                         )
                       }
