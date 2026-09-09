@@ -150,7 +150,8 @@ export interface CodexClientAcquisitionDependencies<
 }
 
 /**
- * Acquisition extracted from index.ts at d93fb8a65, intentionally unwired.
+ * Acquisition extracted from index.ts at d93fb8a65; wired from the
+ * composition root at adfdd1400.
  * Default mode preserves the existing compatibility and FIFO behavior.
  * The composition root supplies flags.cohortFairness from
  * process.env.TASKWRAITH_CODEX_COHORT_FAIRNESS === '1'; this module never reads it.
