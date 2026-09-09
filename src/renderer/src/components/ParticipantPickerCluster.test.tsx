@@ -344,35 +344,30 @@ describe('ParticipantPickerCluster', () => {
     ['openrouter/inception/mercury-2.5', 'Mercury 2.5'],
     ['openrouter/nex-agi/nex-n2.5-mini:free', 'Nex-N2.5-Mini'],
     ['openrouter/nex-agi/nex-n2.5-pro:free', 'Nex-N2.5-Pro']
-  ])(
-    'humanises the Pi Add Participant row for %s and starts it at Medium',
-    (model, label) => {
-      // Separate from the High block above on purpose: these three routes
-      // advertise `reasoning_effort` with no enumerated supported_efforts, so
-      // their ladder default is Medium rather than Inkling's High.
-      const html = renderToStaticMarkup(
-        <ParticipantPickerCluster
-          participant={
-            participant({
-              provider: 'pi',
-              model,
-              reasoningEffort: undefined,
-              permissionPresetId: 'default'
-            })
-          }
-          configuredProviderSnapshot={{ ready: true, providerIds: ['pi'] }}
-          composerStyle="default"
-          grokAvailable
-          cursorAvailable
-          onPatch={() => undefined}
-        />
-      )
+  ])('humanises the Pi Add Participant row for %s and starts it at Medium', (model, label) => {
+    // Separate from the High block above on purpose: these three routes
+    // advertise `reasoning_effort` with no enumerated supported_efforts, so
+    // their ladder default is Medium rather than Inkling's High.
+    const html = renderToStaticMarkup(
+      <ParticipantPickerCluster
+        participant={participant({
+          provider: 'pi',
+          model,
+          reasoningEffort: undefined,
+          permissionPresetId: 'default'
+        })}
+        configuredProviderSnapshot={{ ready: true, providerIds: ['pi'] }}
+        composerStyle="default"
+        grokAvailable
+        cursorAvailable
+        onPatch={() => undefined}
+      />
+    )
 
-      expect(html).toContain(`composer-combined-picker-trigger-primary">${label}</span>`)
-      expect(html).toContain('data-selected-reasoning="medium"')
-      expect(html).toContain('composer-combined-picker-trigger-suffix">Medium</span>')
-    }
-  )
+    expect(html).toContain(`composer-combined-picker-trigger-primary">${label}</span>`)
+    expect(html).toContain('data-selected-reasoning="medium"')
+    expect(html).toContain('composer-combined-picker-trigger-suffix">Medium</span>')
+  })
 
   it('marks a HighSpeed Kimi participant as Fast while retaining the K2.7 model row', () => {
     const html = renderToStaticMarkup(
