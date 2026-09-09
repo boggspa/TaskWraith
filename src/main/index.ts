@@ -1749,6 +1749,10 @@ import { createMistralTurnAbortController, runMistralAcpTurn } from './mistral/M
 import { createMistralPermissionHandler, mistralPermissionLedgerRecord } from './mistral/MistralPermissionPolicy'
 import { createRuntimeToolCapabilityRecorder, configureRunManagedToolReceipt } from './providers/RunToolCapabilityRuntime'
 import { readRunToolCapabilityReceipt } from './providers/RunToolCapabilityStore'
+import {
+  sealRunToolReceipt,
+  sealRunToolReceiptAfter
+} from './providers/RunToolCapabilitySettlement'
 import { createAntigravityAcpPermissionHandler, antigravityRefusalLedgerRecord, captureAgyApproval } from './antigravity/AntigravityToolPermission'
 import { attributedToolRefusalText } from './acp/AcpToolRefusalAttribution'
 // Devin: ACP-over-stdio seat (`devin acp`). Launch policy + credential lanes in
@@ -36925,6 +36929,8 @@ async function runAntigravityOfficialAcpProvider(
       // event and finishRun releases persistence authority — exit BEFORE finish.
       sendAgentCompatExit(event.sender, 'antigravity', failed ? 1 : (code ?? 0), route)
     } finally {
+      // First, so a throwing run-manager handoff cannot strand the receipt.
+      sealRunToolReceipt(agyAcpToolReceipt)
       if (route.appRunId) {
         try {
           runManager.finish(route.appRunId, failed ? 'failed' : 'completed')
@@ -37163,6 +37169,7 @@ async function runAntigravityAgyProvider(
       setupRequired: true,
       fallback: false
     })
+    sealRunToolReceipt(agyToolReceipt)
     return
   }
 
@@ -37433,6 +37440,7 @@ async function runAntigravityAgyProvider(
           setupRequired: false,
           fallback: false
         })
+        sealRunToolReceipt(agyToolReceipt)
         return
       }
     }
@@ -37484,6 +37492,7 @@ async function runAntigravityAgyProvider(
         payload.providerSetupAbortSignal?.aborted
       ) {
         settleDeniedProviderTransportLaunch(route)
+        sealRunToolReceipt(agyToolReceipt)
         return
       }
       settleVisibleProviderSetupFailure({
@@ -37496,6 +37505,7 @@ async function runAntigravityAgyProvider(
         setupRequired: false,
         fallback: false
       })
+      sealRunToolReceipt(agyToolReceipt)
       return
     }
   }
@@ -37637,9 +37647,12 @@ async function runAntigravityAgyProvider(
       }
     )
   } finally {
-    await brainTranscriptMonitor.stopAndDrain()
-    await releasePermissionLease()
-    agyToolReceipt?.settle()
+    // Seal the receipt whatever the cleanup does: releasePermissionLease
+    // rethrows, and an unsealed receipt reads as a run still resolving tools.
+    await sealRunToolReceiptAfter(agyToolReceipt, async () => {
+      await brainTranscriptMonitor.stopAndDrain()
+      await releasePermissionLease()
+    })
   }
 }
 
