@@ -114,6 +114,8 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'openrouter/minimax/minimax-m3:free': 1_048_576,
   'openrouter/thinkingmachines/inkling:free': 1_048_576,
   'openrouter/thinkingmachines/inkling-small:free': 1_048_576,
+  'openrouter/tencent/hy4-preview': 1_048_576,
+  'openrouter/inception/mercury-2.5-preview': 260_000,
   // Codex
   'gpt-6-astra': 1_050_000,
   // GPT-5.6 trio (GA 2026-07-09): official raw API window is 1,050,000 on all

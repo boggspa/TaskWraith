@@ -52,7 +52,9 @@ describe('piModelPolicyVerdict', () => {
       'cohere/north-mini-code:free',
       'minimax/minimax-m3:free',
       'thinkingmachines/inkling:free',
-      'thinkingmachines/inkling-small:free'
+      'thinkingmachines/inkling-small:free',
+      'inception/mercury-2.5-preview',
+      'tencent/hy4-preview'
     ])
   })
 
@@ -73,7 +75,9 @@ describe('piModelPolicyVerdict', () => {
       'cohere/north-mini-code:free',
       'minimax/minimax-m3:free',
       'thinkingmachines/inkling:free',
-      'thinkingmachines/inkling-small:free'
+      'thinkingmachines/inkling-small:free',
+      'inception/mercury-2.5-preview',
+      'tencent/hy4-preview'
     ]) {
       expect(piModelPolicyVerdict('openrouter', modelId).allowed, modelId).toBe(true)
     }
@@ -165,7 +169,9 @@ describe('catalog/policy lockstep', () => {
       'openrouter/cohere/north-mini-code:free',
       'openrouter/minimax/minimax-m3:free',
       'openrouter/thinkingmachines/inkling:free',
-      'openrouter/thinkingmachines/inkling-small:free'
+      'openrouter/thinkingmachines/inkling-small:free',
+      'openrouter/inception/mercury-2.5-preview',
+      'openrouter/tencent/hy4-preview'
     ])
   })
 

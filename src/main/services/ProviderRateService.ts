@@ -1490,6 +1490,24 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'OpenRouter :free variant (verified 2026-08-30); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/tencent/hy4-preview',
+        inputUsdPerMillion: 0.834,
+        outputUsdPerMillion: 2.501,
+        sourceUrl: 'https://openrouter.ai/tencent/hy4-preview',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Paid OpenRouter route (verified 2026-09-09); mirrors the cost block in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/inception/mercury-2.5-preview',
+        inputUsdPerMillion: 0.2,
+        outputUsdPerMillion: 0.75,
+        sourceUrl: 'https://openrouter.ai/inception/mercury-2.5-preview',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Paid OpenRouter route (verified 2026-09-09); mirrors the cost block in PiOpenRouterModelRegistration.'
       }
     ]
   },

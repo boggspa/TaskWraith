@@ -120,7 +120,11 @@ export const PI_OPENROUTER_ALLOWED_MODEL_IDS = [
   'cohere/north-mini-code:free',
   'minimax/minimax-m3:free',
   'thinkingmachines/inkling:free',
-  'thinkingmachines/inkling-small:free'
+  'thinkingmachines/inkling-small:free',
+  // Catalogued 2026-08-28/2026-08-31 but never admitted here, so every run on
+  // them was refused by this wall while the pickers still offered the row.
+  'inception/mercury-2.5-preview',
+  'tencent/hy4-preview'
 ] as const
 
 /**
@@ -169,7 +173,7 @@ export function piModelPolicyVerdict(
   ) {
     return {
       allowed: false,
-      reason: `Pi's OpenRouter lane is limited to specific models (GLM 5.2, Laguna S 2.1, Nemotron 3 Ultra, North Mini Code, MiniMax M3, Inkling, and Inkling Small).`
+      reason: `Pi's OpenRouter lane is limited to specific models (GLM 5.2, Laguna S 2.1, Nemotron 3 Ultra, North Mini Code, MiniMax M3, Inkling, Inkling Small, Mercury 2.5 Preview, and Hy4 Preview).`
     }
   }
   for (const pattern of PI_DENIED_MODEL_PATTERNS) {

@@ -111,6 +111,8 @@ public enum ModelContextLengths {
                 (id: "openrouter/minimax/minimax-m3:free", label: "M3 (OpenRouter)"),
                 (id: "openrouter/thinkingmachines/inkling:free", label: "Inkling"),
                 (id: "openrouter/thinkingmachines/inkling-small:free", label: "Inkling Small"),
+                (id: "openrouter/tencent/hy4-preview", label: "Hy4 Preview"),
+                (id: "openrouter/inception/mercury-2.5-preview", label: "Mercury 2.5 Preview"),
             ]
         case "grok":
             return [

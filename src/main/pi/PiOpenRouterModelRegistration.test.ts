@@ -32,8 +32,19 @@ describe('writePiOpenRouterModelRegistration', () => {
   })
 
   it('registers the four 2026-08-30 free routes with verified metadata', () => {
+    // Selected by id, not by `slice(-4)`: a positional window silently
+    // retargets itself onto whatever was appended last, so this fixture would
+    // stop covering the routes it names as soon as newer models land after them.
+    const addedOn20260830 = [
+      'cohere/north-mini-code:free',
+      'minimax/minimax-m3:free',
+      'thinkingmachines/inkling:free',
+      'thinkingmachines/inkling-small:free'
+    ]
     const additions = Object.fromEntries(
-      PI_OPENROUTER_CUSTOM_MODELS.slice(-4).map((model) => [model.modelId, model])
+      PI_OPENROUTER_CUSTOM_MODELS.filter((model) => addedOn20260830.includes(model.modelId)).map(
+        (model) => [model.modelId, model]
+      )
     )
     expect(additions).toEqual({
       'cohere/north-mini-code:free': {
