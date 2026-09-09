@@ -37,6 +37,7 @@ const {
   applyCrossThreadToMetrics,
   validateCrossThreadBlock
 } = require('./hostSpans.cjs')
+const { decodeProbedWelcome } = require('../hostWelcomeProbe.cjs')
 
 const CELL = 'large/2/warm/codex_profiles_solo_ensemble_mesh/none'
 const WRITE_AT = new Date('2026-09-08T16:00:00.000Z')
@@ -863,20 +864,32 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
 })
 
 /**
- * Boot-epoch validator LOCKSTEP across the three independent enforcement
- * points landed by the M1 additive slices (22e34e0d2 / ccb6786dc / 3eed790f3):
+ * Boot-epoch validator LOCKSTEP across the four independent enforcement
+ * points landed by the M1 slices (22e34e0d2 / ccb6786dc / 3eed790f3 /
+ * 1cb5e6fc0):
  *
  *   src/host-runtime/HostPerfSnapshotFile.ts  BOOT_EPOCH_PATTERN      (writer)
  *   src/shared/hostProtocol.ts                HOST_BOOT_EPOCH_PATTERN (codec)
  *   scripts/perf/collectors/hostSpans.cjs     HOST_BOOT_EPOCH_PATTERN (collector)
+ *   scripts/perf/hostWelcomeProbe.cjs         HOST_BOOT_EPOCH_PATTERN (probe)
  *
- * They live in three bundles with no shared definition, and each per-slice
- * test only exercises its own pattern — so a one-sided relaxation (say, a
- * codec made lenient for an external producer) would accept an epoch at one
- * boundary and reject it at another, producing exactly the
- * accepted-vs-unsupported ambiguity the equality-only design exists to
- * prevent. This suite drives ONE shared corpus through all THREE real
- * enforcement paths and asserts the decisions never split.
+ * The codec now EXPORTS isBootEpoch (8d91f828c) and the Host modules import
+ * it, so the codec copy is the source of truth. The other three cannot reach
+ * it: the writer predates the export, and the collector and probe are .cjs
+ * and cannot import TypeScript at all. Each per-slice test only exercises
+ * its own pattern — so a one-sided relaxation (say, a probe made lenient for
+ * an external producer) would accept an epoch at one boundary and reject it
+ * at another, producing exactly the accepted-vs-unsupported ambiguity the
+ * equality-only design exists to prevent. This suite drives ONE shared
+ * corpus through all FOUR real enforcement paths and asserts the decisions
+ * never split.
+ *
+ * The probe is not a fourth instance of the same check. It is the only
+ * validator on the INBOUND WIRE, reader-side: the T2 harness reads the live
+ * welcome frame through it to build expectedIdentity. If it alone relaxed,
+ * a malformed epoch would be carried into a pin the collector then refuses,
+ * or dropped so the run silently degrades to the legacy epoch-free path —
+ * the one remaining way a measurement run could lose its incarnation proof.
  *
  * The probes are BEHAVIOURAL, not regex-text comparisons, so the guard
  * survives a refactor that changes how the rule is expressed:
@@ -891,12 +904,16 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
  *               identity carries a malformed epoch (hostIdentityValid), and
  *               a pinned valid epoch reads back identityVerified with
  *               attribution available.
+ *   probe     — decodeProbedWelcome refuses the WHOLE welcome as
+ *               'host_welcome_invalid: bootEpoch' rather than dropping the
+ *               field, so a malformed epoch on the wire can never silently
+ *               become the legacy absent pin.
  *
- * The second test pins the ABSOLUTE decision per corpus member, so all three
+ * The second test pins the ABSOLUTE decision per corpus member, so all four
  * validators relaxing together (lockstep drift of the rule itself) also
  * fails rather than passing vacuously.
  */
-describe('boot epoch validator lockstep (writer × codec × collector)', () => {
+describe('boot epoch validator lockstep (writer × codec × collector × probe)', () => {
   const VALID_A = '0123456789abcdef'.repeat(4)
   const VALID_B = '0'.repeat(64)
 
@@ -1035,19 +1052,45 @@ describe('boot epoch validator lockstep (writer × codec × collector)', () => {
     return { accepted: false, reason: String(result.unsupported) }
   }
 
+  /**
+   * Probe 4 — the harness welcome probe: the INBOUND WIRE validator, and the
+   * only one on the reader side. decodeProbedWelcome is a pure exported
+   * predicate (no socket, no fs, no DI), so the candidate is varied while
+   * every other welcome field is held valid and the decision isolates the
+   * epoch rule. Absent is genuinely absent (key omitted), matching the
+   * collector probe. Accept = the whole welcome decodes.
+   */
+  function welcomeProbeProbe(candidate: unknown): { accepted: boolean; reason?: string } {
+    const welcome: Record<string, unknown> = {
+      hostId: LOCK_MINT_INPUT.hostId,
+      hostVersion: LOCK_MINT_INPUT.hostVersion,
+      generation: LOCK_MINT_INPUT.generation
+    }
+    if (candidate !== undefined) welcome.bootEpoch = candidate
+    const result = decodeProbedWelcome(welcome)
+    if (result.ok) return { accepted: true }
+    return { accepted: false, reason: String(result.reason) }
+  }
+
   it('reaches identical accept/reject decisions for one shared corpus', () => {
     for (const [label, candidate, expected] of CORPUS) {
       const w = writerProbe(candidate)
       const c = codecProbe(candidate)
       const r = collectorProbe(candidate)
+      const p = welcomeProbeProbe(candidate)
 
-      // The lockstep itself: three independent validators, one decision. A
+      // The lockstep itself: four independent validators, one decision. A
       // split here is the accepted-vs-unsupported ambiguity this guard
       // exists to catch.
       expect(
-        { corpus: label, codec: c.accepted, collector: r.accepted },
+        { corpus: label, codec: c.accepted, collector: r.accepted, probe: p.accepted },
         `lockstep split on corpus member: ${label}`
-      ).toEqual({ corpus: label, codec: w.accepted, collector: w.accepted })
+      ).toEqual({
+        corpus: label,
+        codec: w.accepted,
+        collector: w.accepted,
+        probe: w.accepted
+      })
 
       // Absolute rule pin: identical decisions that RELAX together (all
       // three accepting uppercase, say) must still fail against the
@@ -1061,6 +1104,9 @@ describe('boot epoch validator lockstep (writer × codec × collector)', () => {
         expect(c.reason, `codec rejection must name bootEpoch: ${label}`).toMatch(/bootEpoch/)
         expect(r.reason, `collector must refuse as invalid identity: ${label}`).toBe(
           'host_perf_snapshot_invalid: identity'
+        )
+        expect(p.reason, `probe must refuse the welcome on bootEpoch: ${label}`).toBe(
+          'host_welcome_invalid: bootEpoch'
         )
       }
     }
@@ -1132,6 +1178,24 @@ describe('boot epoch validator lockstep (writer × codec × collector)', () => {
         expect(Object.prototype.hasOwnProperty.call(pinned.identity, 'bootEpoch')).toBe(false)
       } else {
         expect(pinned.identity.bootEpoch).toBe(candidate)
+      }
+
+      // Probe: the accepted value must be PRESERVED into the decoded
+      // welcome, never merely tolerated. A probe that accepted and then
+      // dropped the epoch would satisfy the decision lockstep above while
+      // handing the harness an epoch-free pin — the silent degrade to the
+      // legacy path this seam exists to prevent. Absent stays absent.
+      const probed = decodeProbedWelcome({
+        hostId: LOCK_MINT_INPUT.hostId,
+        hostVersion: LOCK_MINT_INPUT.hostVersion,
+        generation: LOCK_MINT_INPUT.generation,
+        ...(candidate === undefined ? {} : { bootEpoch: candidate })
+      })
+      expect(probed.ok).toBe(true)
+      if (candidate === undefined) {
+        expect(Object.prototype.hasOwnProperty.call(probed.welcome, 'bootEpoch')).toBe(false)
+      } else {
+        expect(probed.welcome.bootEpoch).toBe(candidate)
       }
     }
   })

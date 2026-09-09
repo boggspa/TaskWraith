@@ -64,9 +64,18 @@ const DEFAULT_DISCOVERY_POLL_INTERVAL_MS = 500
 /**
  * Public opaque boot epoch (additive M1 identity field): 64 lowercase hex,
  * minted per Host incarnation, compared for equality only — never a
- * timestamp, never a counter, never the auth token. Kept byte-identical to
- * the collector/writer/codec pattern; the lockstep test in
- * collectors/hostSpans.transport.test.ts pins all three together.
+ * timestamp, never a counter, never the auth token.
+ *
+ * This is a DELIBERATE COPY of the rule, not a shared import. The codec
+ * exports isBootEpoch (src/shared/hostProtocol.ts) as the single source of
+ * truth, but this module is .cjs and cannot import TypeScript — the same
+ * constraint that keeps collectors/hostSpans.cjs on its own copy.
+ *
+ * Drift is therefore pinned by TEST, not by the type system: the lockstep in
+ * collectors/hostSpans.transport.test.ts drives one shared corpus through
+ * ALL FOUR enforcement points — writer, codec, collector and this probe via
+ * decodeProbedWelcome — and fails if any one of them splits from the others
+ * or if all of them relax together. Change this pattern and that test reds.
  */
 const HOST_BOOT_EPOCH_PATTERN = /^[0-9a-f]{64}$/
 /** Minimal hello: the probe disconnects at the welcome, so it needs no projection capabilities. */
