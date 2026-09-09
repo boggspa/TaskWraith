@@ -285,3 +285,45 @@ describe('classifyRemoteComposerQueueDispatchFailure', () => {
     ).toBe('13')
   })
 })
+
+describe('buildRemoteComposerQueueDispatchAction origin', () => {
+  const remoteComposer = {
+    workspaceId: 'ws-phone',
+    threadId: 'thread-phone',
+    provider: 'codex',
+    text: 'Keep going.'
+  }
+
+  it('re-emits the host-stamped origin so a flushed socket prompt keeps its sender label', () => {
+    const origin = { channel: 'local-control' as const, pid: 84536, label: 'Claude Code' }
+    const job = makeJob({
+      request: {
+        scope: 'workspace',
+        prompt: 'Keep going.',
+        selectedModelType: 'cli-default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: [],
+        remoteComposer: { ...remoteComposer, origin }
+      }
+    })
+    expect(buildRemoteComposerQueueDispatchAction(job)?.action.origin).toEqual(origin)
+  })
+
+  it('leaves origin off the flushed action when the queued request carried none', () => {
+    const job = makeJob({
+      request: {
+        scope: 'workspace',
+        prompt: 'Keep going.',
+        selectedModelType: 'cli-default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: [],
+        remoteComposer
+      }
+    })
+    expect(buildRemoteComposerQueueDispatchAction(job)?.action).not.toHaveProperty('origin')
+  })
+})

@@ -448,6 +448,7 @@ import {
 import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
 import { midRunQueuedMessageId } from '../shared/midRunSteeringQueue'
 import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
+import type { ChatMessageOrigin } from '../shared/messageOrigin'
 import { buildEstimatedStreamUsage, visiblePayloadChars } from '../shared/tokenEstimate'
 import { AGENT_QUESTION_TIMEOUT_MS } from '../shared/interactionTimeouts'
 import {
@@ -7627,6 +7628,8 @@ function prepareIosComposerPromptChat(args: {
   workspace: WorkspaceRecord | null
   imagePaths?: string[]
   imageThumbnails?: Array<{ dataBase64: string; mimeType: string; width?: number; height?: number }>
+  /** Host-stamped origin of a prompt that arrived over a machine channel (local-control socket). */
+  origin?: ChatMessageOrigin
 }): ChatRecord {
   const { action, workspace } = args
   const { provider } = args
@@ -7670,11 +7673,12 @@ function prepareIosComposerPromptChat(args: {
     role: 'user',
     content: prompt,
     timestamp,
-    ...(args.imagePaths?.length || args.imageThumbnails?.length
+    ...(args.imagePaths?.length || args.imageThumbnails?.length || args.origin
       ? {
           metadata: {
             ...(args.imagePaths?.length ? { imagePaths: args.imagePaths } : {}),
-            ...(args.imageThumbnails?.length ? { imageThumbnails: args.imageThumbnails } : {})
+            ...(args.imageThumbnails?.length ? { imageThumbnails: args.imageThumbnails } : {}),
+            ...(args.origin ? { origin: args.origin } : {})
           }
         }
       : {})
@@ -17425,6 +17429,8 @@ function appendEnsembleSteerIntoLiveRound(
       width?: number
       height?: number
     }>
+    /** Host-stamped origin of a steer that arrived over the local-control socket. */
+    origin?: ChatMessageOrigin
   }
 ): { messageId: string; entryId: string } {
   const chat = AppStore.getChat(chatId)
@@ -17446,7 +17452,8 @@ function appendEnsembleSteerIntoLiveRound(
         ? { ensembleRoundId: chat.ensemble.activeRound.roundId }
         : {}),
       ...(imageAttachments.length > 0 ? { imageAttachments } : {}),
-      ...(imageThumbnails.length > 0 ? { imageThumbnails } : {})
+      ...(imageThumbnails.length > 0 ? { imageThumbnails } : {}),
+      ...(extras?.origin ? { origin: extras.origin } : {})
     })
   )
   const entry = midRunSteeringRegistry.register({
@@ -48507,6 +48514,7 @@ if (isGeminiMcpBridgeProcess) {
         threadId: string
         provider: string
         text: string
+        origin?: ChatMessageOrigin
         approvalMode?: string
         workflowMode?: 'normal' | 'plan'
         permissionPresetId?: string
@@ -48726,6 +48734,7 @@ if (isGeminiMcpBridgeProcess) {
               threadId: action.threadId,
               provider,
               text,
+              ...(action.origin ? { origin: action.origin } : {}),
               ...(action.approvalMode ? { approvalMode: action.approvalMode } : {}),
               ...(workflowMode === 'plan' ? { workflowMode } : {}),
               // Preserve the user's top-tier request for audit/projection; the
@@ -50256,7 +50265,8 @@ if (isGeminiMcpBridgeProcess) {
                   }
                 : {}),
               ...(steerImageThumbnails.length ? { imageThumbnails: steerImageThumbnails } : {}),
-              ...(dmTargetParticipantId ? { dmTargetParticipantId } : {})
+              ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
+              ...(action.origin ? { origin: action.origin } : {})
             })
             if (absorbed?.status === 'steered') {
               broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
@@ -50282,7 +50292,8 @@ if (isGeminiMcpBridgeProcess) {
                   }))
                 }
               : {}),
-            ...(steerImageThumbnails.length ? { imageThumbnails: steerImageThumbnails } : {})
+            ...(steerImageThumbnails.length ? { imageThumbnails: steerImageThumbnails } : {}),
+            ...(action.origin ? { origin: action.origin } : {})
           })
           if (result?.status === 'started' || result?.status === 'steered') {
             // Durability barrier: persist the round-started record through the
@@ -51185,6 +51196,7 @@ if (isGeminiMcpBridgeProcess) {
                 threadId: action.threadId,
                 provider: action.provider,
                 text: action.text,
+                ...(action.origin ? { origin: action.origin } : {}),
                 approvalMode: action.approvalMode,
                 workflowMode: action.workflowMode,
                 permissionPresetId: action.permissionPresetId,
@@ -51553,7 +51565,8 @@ if (isGeminiMcpBridgeProcess) {
             provider,
             workspace: workspaceRecord,
             imagePaths: iosImagePaths,
-            imageThumbnails: iosImageThumbnails
+            imageThumbnails: iosImageThumbnails,
+            ...(action.origin ? { origin: action.origin } : {})
           })
           // Desktop runs carry the composer's runtime-profile choice; with no
           // profile at all, providers fall back to raw adapter defaults that
@@ -52021,6 +52034,7 @@ if (isGeminiMcpBridgeProcess) {
               ? { geminiAuthProfileId: inheritedGeminiAuthProfileId }
               : {}),
             ...(iosImagePaths.length ? { imagePaths: iosImagePaths } : {}),
+            ...(action.origin ? { origin: action.origin } : {}),
             ...(extraWorkspacePaths.length
               ? {
                   externalPathGrants: extraWorkspacePaths.map((grantPath) =>
@@ -61609,8 +61623,12 @@ if (isGeminiMcpBridgeProcess) {
       cancelWakeupTimer: (wakeupId) => wakeupTimerServiceRef?.cancel(wakeupId),
       persistSessionCheckpoint: (chat, reason) =>
         sessionCheckpointStoreRef?.upsertFromChat(chat, reason),
-      appendMidRunSteering: ({ chatId, text, imageAttachments, imageThumbnails }) =>
-        appendEnsembleSteerIntoLiveRound(chatId, text, { imageAttachments, imageThumbnails }),
+      appendMidRunSteering: ({ chatId, text, imageAttachments, imageThumbnails, origin }) =>
+        appendEnsembleSteerIntoLiveRound(chatId, text, {
+          imageAttachments,
+          imageThumbnails,
+          origin
+        }),
       deliverSideMessageSteering: (input) =>
         steerEnsembleSideMessageToActiveRuns(
           {

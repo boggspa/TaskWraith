@@ -124,7 +124,8 @@ export function buildRemoteComposerQueueDispatchAction(
         ? { kimiThinkingEnabled: remote.kimiThinkingEnabled }
         : {}),
       ...(typeof remote.contextTurns === 'number' ? { contextTurns: remote.contextTurns } : {}),
-      ...(remote.extraWorkspaceIds?.length ? { extraWorkspaceIds: remote.extraWorkspaceIds } : {})
+      ...(remote.extraWorkspaceIds?.length ? { extraWorkspaceIds: remote.extraWorkspaceIds } : {}),
+      ...(remote.origin ? { origin: remote.origin } : {})
     }
   }
 }

@@ -6394,6 +6394,8 @@ export interface RunQueueRequestSnapshot {
     contextTurns?: number
     extraWorkspaceIds?: string[]
     scheduledRunAt?: string
+    /** Host-stamped origin of a socket prompt, re-emitted on the flushed action. */
+    origin?: ChatMessageOrigin
     /** Phone-attached images, materialized into the chat-owned transcript
      * media store AT ENQUEUE time (durable across restart) — never raw
      * base64 in the job record, which would bloat run-queue persistence.
