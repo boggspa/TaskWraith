@@ -382,7 +382,12 @@ send confidential or personal data through those free endpoints.
 Ollama now has two lanes, and the picker separates them. **Local** models are
 discovered from the local daemon, so only pulled model tags can run; the
 curated presets below make common choices easy to find, and **Custom model ID**
-accepts another compatible installed tag.
+accepts another compatible installed tag. An ID you enter there is kept: press
+Enter (or click away) and it joins the picker as its own row, just above
+**Custom model ID**, so the next use is a click rather than retyping the tag.
+The clear button beside the field forgets it again. Saved IDs are per provider,
+capped at 20 with the oldest dropped, and every provider that offers a custom
+row keeps its own list.
 
 **Cloud** models are discovered from your signed-in Ollama account rather than
 from pulled tags, so they run without being present on disk (shipped in
@@ -438,7 +443,7 @@ tool, vision, and thinking capabilities remain model-specific.
 | GLM-4.7-Flash (30B-A3B Q4) | `glm-4.7-flash:q4_K_M` | 203K; tools, thinking.                        |
 | North Mini Code 1.0 (30B-A3B Q4) | `north-mini-code-1.0:q4_K_M` | 500K; tools, thinking.          |
 | Llama 3.2 (3B Param)       | `llama3.2:3b`        | 131K; tools.                                    |
-| Custom model ID            | `custom`             | Enter a compatible locally installed model tag. |
+| Custom model ID            | `custom`             | Enter a compatible locally installed model tag; it is remembered as a picker row. |
 
 ## Historical standalone provider
 
