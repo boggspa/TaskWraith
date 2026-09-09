@@ -259,6 +259,37 @@ export class HostPersistenceDiagnostics {
     }
   }
 
+  lineage(
+    input?: Pick<HostPersistenceObservationFields, 'parentOperationId' | 'attempt'>
+  ): HostPersistenceObservationFields {
+    const copied: { parentOperationId?: string | null; attempt?: number } = {}
+    try {
+      const value = input?.parentOperationId
+      if (value === null || (typeof value === 'string' && value.trim() && value.length <= 512))
+        copied.parentOperationId = value
+    } catch {
+      /* Optional lineage cannot affect a direct persist. */
+    }
+    try {
+      const value = input?.attempt
+      if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)
+        copied.attempt = value
+    } catch {
+      /* Optional lineage cannot affect a direct persist. */
+    }
+    return copied
+  }
+
+  /** Read both the outer property and allowlisted inner fields under containment. */
+  contextFrom(input?: HostThreadRecordPersistInput): HostPersistenceDiagnosticContext | undefined {
+    try {
+      const context = input?.diagnosticContext
+      return context == null ? undefined : this.context(context)
+    } catch {
+      return undefined
+    }
+  }
+
   context(
     context?: HostPersistenceDiagnosticContext,
     lineageId?: string | null
@@ -367,7 +398,11 @@ export class HostPersistenceDiagnostics {
 
 /** Error messages, causes, receipts and provider contents never enter telemetry. */
 function diagnosticError(error: unknown): HostPersistenceObservationFields {
-  return { errorCode: error instanceof HostThreadRecordPersistError ? error.code : 'unknown' }
+  try {
+    return { errorCode: error instanceof HostThreadRecordPersistError ? error.code : 'unknown' }
+  } catch {
+    return { errorCode: 'unknown' }
+  }
 }
 
 export interface HostThreadRecordPersistInput {
@@ -375,6 +410,96 @@ export interface HostThreadRecordPersistInput {
   readonly record: ChatRecord
   readonly expectedRevision: number
   readonly diagnosticContext?: HostPersistenceDiagnosticContext
+}
+
+/**
+ * Reconstructed business inputs never spread optional properties: an enumerable
+ * diagnostic getter (or an unrelated getter) must not participate in a CAS write.
+ *
+ * Without a sink, forward the descriptor, not its value. A present accessor is
+ * the new input's context source; only structurally absent/nullish data inherits
+ * the fallback. This avoids evaluating lazy metadata merely to choose a fallback.
+ * Forwarding getters are reused, so repeated reconstruction retains at most the
+ * original accessor/receiver, not a chain of previous checkpoint bodies.
+ */
+const forwardedContextGetters = new WeakSet<() => unknown>()
+
+function contextDescriptor(input?: HostThreadRecordPersistInput): PropertyDescriptor | undefined {
+  try {
+    let current: object | null = input ?? null
+    // Bound unusual/proxy prototype walks; unavailable metadata stays optional.
+    for (let depth = 0; current && depth < 32; depth += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(current, 'diagnosticContext')
+      if (descriptor) return descriptor
+      current = Object.getPrototypeOf(current)
+    }
+  } catch {
+    // Proxy/descriptor failure cannot replace a persistence outcome.
+  }
+  return undefined
+}
+
+export function copyHostPersistenceInput(
+  input: HostThreadRecordPersistInput,
+  options: {
+    expectedRevision?: number
+    diagnostics?: HostPersistenceDiagnostics
+    fallback?: HostThreadRecordPersistInput
+    lineageId?: string | null
+    preserveInput?: boolean
+  } = {}
+): HostThreadRecordPersistInput {
+  const copyBusinessFields = (): HostThreadRecordPersistInput => ({
+    chatId: input.chatId,
+    record: input.record,
+    expectedRevision: options.expectedRevision ?? input.expectedRevision
+  })
+  if (options.diagnostics) {
+    const context =
+      options.diagnostics.contextFrom(input) ?? options.diagnostics.contextFrom(options.fallback)
+    return {
+      ...copyBusinessFields(),
+      diagnosticContext: options.diagnostics.context(context, options.lineageId)
+    }
+  }
+  let source = input
+  let descriptor = contextDescriptor(source)
+  if (!descriptor || ('value' in descriptor && descriptor.value == null)) {
+    source = options.fallback ?? input
+    descriptor = contextDescriptor(source)
+  }
+  if (options.preserveInput && (source === input || !descriptor)) return input
+  const copied = copyBusinessFields()
+  if (!descriptor) return copied
+  try {
+    if ('value' in descriptor) {
+      Object.defineProperty(copied, 'diagnosticContext', {
+        value: descriptor.value,
+        enumerable: true,
+        configurable: true
+      })
+    } else if (descriptor.get) {
+      const original = descriptor.get
+      const get = forwardedContextGetters.has(original)
+        ? original
+        : () => {
+            try {
+              return original.call(source)
+            } catch {
+              return undefined
+            }
+          }
+      forwardedContextGetters.add(get)
+      Object.defineProperty(copied, 'diagnosticContext', {
+        get,
+        enumerable: true,
+        configurable: true
+      })
+    }
+  } catch {
+    // Even metadata forwarding is best effort; the business input remains valid.
+  }
+  return copied
 }
 
 /** The seam the AppStore/orchestrator slice depends on. That slice owns its own files. */
@@ -577,16 +702,16 @@ export class HostThreadRecordPersistClient
     this.assertInput(input)
     const operation = this.diagnostics?.begin('persist', {
       chatId: input.chatId,
-      context: input.diagnosticContext,
+      context: this.diagnostics.contextFrom(input),
       expectedRevision: input.expectedRevision,
-      ...lineage
+      ...this.diagnostics.lineage(lineage)
     })
     try {
       const transferId = this.nextTransferId()
       const staging = this.diagnostics?.begin('transfer_stage', {
         chatId: input.chatId,
         parentOperationId: operation?.operationId,
-        context: input.diagnosticContext,
+        context: this.diagnostics.contextFrom(input),
         expectedRevision: input.expectedRevision
       })
 
@@ -628,11 +753,7 @@ export class HostThreadRecordPersistClient
       }
 
       try {
-        const receipt = await this.execute(
-          command,
-          operation,
-          this.diagnostics ? input.diagnosticContext : undefined
-        )
+        const receipt = await this.execute(command, operation, this.diagnostics?.contextFrom(input))
         try {
           this.onPersisted?.(input, receipt)
         } catch {
@@ -689,7 +810,7 @@ export class HostThreadRecordPersistClient
     if (lane.superseded) {
       this.diagnostics?.event('superseded', 'superseded', {
         chatId: input.chatId,
-        context: input.diagnosticContext,
+        context: this.diagnostics.contextFrom(input),
         count: 1
       })
       return
@@ -700,7 +821,7 @@ export class HostThreadRecordPersistClient
     const tail = lane.queued[lane.queued.length - 1]
     const queuedId = this.diagnostics?.event('enqueue', 'pending', {
       chatId: input.chatId,
-      context: input.diagnosticContext,
+      context: this.diagnostics.contextFrom(input),
       expectedRevision: input.expectedRevision
     })
     if (tail?.expectedRevision === input.expectedRevision) {
@@ -876,7 +997,7 @@ export class HostThreadRecordPersistClient
                 chatId,
                 parentOperationId,
                 attempt: conflictAttempt + 1,
-                context: next.diagnosticContext
+                context: this.diagnostics.contextFrom(next)
               })
               const recovered = await this.recoverConflict(next, error, conflictAttempt)
               conflictAttempt += 1
@@ -888,10 +1009,11 @@ export class HostThreadRecordPersistClient
                     'Conflict recovery changed the target chat.'
                   )
                 }
-                next =
-                  !recovered.diagnosticContext && next.diagnosticContext
-                    ? { ...recovered, diagnosticContext: next.diagnosticContext }
-                    : recovered
+                next = copyHostPersistenceInput(recovered, {
+                  diagnostics: this.diagnostics,
+                  fallback: next,
+                  preserveInput: true
+                })
                 continue
               }
             }

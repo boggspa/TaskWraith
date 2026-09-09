@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   HostThreadRecordPersistClient,
+  HostPersistenceDiagnostics,
+  copyHostPersistenceInput,
   type HostPersistenceDiagnosticOptions,
   type HostPersistenceObservation,
   type HostThreadRecordPersistInput
@@ -743,5 +745,305 @@ describe('compatibility persistence observations', () => {
     expect(
       events.filter((event) => event.phase === 'persist' && event.outcome === 'succeeded')
     ).toHaveLength(1)
+  })
+})
+
+describe('diagnostic metadata containment', () => {
+  const modes = [
+    { wrapper: false, client: false },
+    { wrapper: false, client: true },
+    { wrapper: true, client: false },
+    { wrapper: true, client: true }
+  ]
+
+  function realPair(mode: (typeof modes)[number]) {
+    const events: HostPersistenceObservation[] = []
+    const enqueued: HostThreadRecordPersistInput[] = []
+    const published: HostThreadRecordPersistInput['record'][] = []
+    const revisions: number[] = []
+    const calls: string[] = []
+    let ids = 0
+    const observer = (event: HostPersistenceObservation) => {
+      events.push(event)
+    }
+    const client = new HostThreadRecordPersistClient({
+      profilePath: '/not-used',
+      ...(mode.client ? { observer } : {}),
+      createId: () => {
+        calls.push('id')
+        return `id-${++ids}`
+      },
+      nowMs: () => {
+        calls.push('now')
+        return 1
+      },
+      transfer: {
+        publish: ({ record, transferId }) => {
+          calls.push('publish')
+          published.push(record as HostThreadRecordPersistInput['record'])
+          return { transferId, sha256: 'a'.repeat(64), byteLength: 42 }
+        },
+        remove: () => true
+      },
+      broker: {
+        submitCommand: async (command) => {
+          calls.push('submit')
+          revisions.push(command.arguments.expectedRevision as number)
+          return {
+            ok: true,
+            receipt: {
+              type: 'host.receipt',
+              protocolVersion: command.protocolVersion,
+              commandId: command.commandId,
+              idempotencyKey: command.idempotencyKey,
+              name: command.name,
+              actor: command.actor,
+              status: 'succeeded'
+            } as HostCommandReceipt
+          }
+        },
+        lookupReceipt: async () => {
+          throw new Error('unexpected lookup')
+        }
+      }
+    })
+    const persistence = new HostChatCompatibilityPersistence(
+      {
+        enqueue: (entry) => {
+          enqueued.push(entry)
+          client.enqueue(entry)
+        },
+        drain: (chatId) => client.drain(chatId),
+        drainAll: () => client.drainAll()
+      },
+      mode.wrapper ? { observer } : {}
+    )
+    return { persistence, client, events, enqueued, published, revisions, calls }
+  }
+
+  it.each(modes)(
+    'never acknowledges an unsent checkpoint after a one-shot outer getter failure (%j)',
+    async (mode) => {
+      const f = realPair(mode)
+      const entry = input('C', 4, 3)
+      let reads = 0
+      Object.defineProperty(entry, 'diagnosticContext', {
+        enumerable: true,
+        get: () => {
+          reads += 1
+          if (reads === 2) throw new Error('one-shot materialize metadata')
+          return { runId: 'R' }
+        }
+      })
+      f.persistence.stage(entry)
+      let materializeError: unknown
+      try {
+        f.persistence.materialize('C')
+      } catch (error) {
+        materializeError = error
+      }
+      const barrier = f.persistence.barrier('C')
+      expect(f.persistence.barrier('C')).toBe(barrier)
+      await barrier
+      expect(f.enqueued).toHaveLength(1)
+      expect(f.published).toEqual([entry.record])
+      expect(f.published[0]).toBe(entry.record)
+      expect(f.calls).toEqual(['id', 'publish', 'id', 'now', 'submit'])
+      expect(materializeError).toBeUndefined()
+      expect(f.persistence.hasUnconfirmed('C')).toBe(false)
+      expect(f.client.pending('C')).toBe(0)
+      if (!mode.wrapper && !mode.client) expect(reads).toBe(0)
+    }
+  )
+
+  it.each(modes)(
+    'preserves latest replacement and original CAS with throwing outer metadata (%j)',
+    async (mode) => {
+      const f = realPair(mode)
+      const latest = input('C', 9, 8)
+      let reads = 0
+      Object.defineProperty(latest, 'diagnosticContext', {
+        enumerable: true,
+        get: () => {
+          reads += 1
+          throw new Error('metadata')
+        }
+      })
+      f.persistence.stage(input('C', 4, 3))
+      expect(f.persistence.stage(latest)).toBe('replaced')
+      await f.persistence.barrier('C')
+      expect(f.published[0]).toBe(latest.record)
+      expect(f.revisions).toEqual([3])
+      if (!mode.wrapper && !mode.client) expect(reads).toBe(0)
+    }
+  )
+
+  it.each([false, true])(
+    'restores newest reference and first CAS while preserving the original drain Error (observer=%s)',
+    async (enabled) => {
+      let reject!: (error: unknown) => void
+      const held = new Promise<void>((_resolve, fail) => {
+        reject = fail
+      })
+      const enqueued: HostThreadRecordPersistInput[] = []
+      const port = {
+        enqueue: vi.fn((entry: HostThreadRecordPersistInput) => {
+          enqueued.push(entry)
+        }),
+        drain: vi.fn(() => held),
+        drainAll: vi.fn(async () => {})
+      }
+      const persistence = new HostChatCompatibilityPersistence(
+        port,
+        enabled ? { observer: () => {} } : {}
+      )
+      const latest = input('C', 9, 8)
+      let reads = 0
+      Object.defineProperty(latest, 'diagnosticContext', {
+        get: () => {
+          reads += 1
+          throw new Error('metadata')
+        }
+      })
+      persistence.stage(input('C', 4, 3))
+      const first = persistence.barrier('C')
+      expect(persistence.barrier('C')).toBe(first)
+      await waitForLength(enqueued, 1)
+      persistence.stage(latest)
+      const original = new Error('real drain failure')
+      const rejection = expect(first).rejects.toBe(original)
+      reject(original)
+      await rejection
+      expect(persistence.hasUnconfirmed('C')).toBe(true)
+      vi.mocked(port.drain).mockResolvedValue(undefined)
+      await persistence.barrier('C')
+      expect(enqueued[1].record).toBe(latest.record)
+      expect(enqueued[1].expectedRevision).toBe(3)
+      if (!enabled) expect(reads).toBe(0)
+    }
+  )
+
+  it.each([false, true])(
+    'rebases a submitted lineage with throwing old and new context getters (observer=%s)',
+    async (enabled) => {
+      let release!: () => void
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const port = { enqueue: vi.fn(), drain: vi.fn(() => held), drainAll: vi.fn(async () => {}) }
+      const persistence = new HostChatCompatibilityPersistence(
+        port,
+        enabled ? { observer: () => {} } : {}
+      )
+      let reads = 0
+      const first = input('C', 4, 3)
+      const recovered = input('C', 6, 5)
+      for (const entry of [first, recovered])
+        Object.defineProperty(entry, 'diagnosticContext', {
+          get: () => {
+            reads += 1
+            throw new Error('metadata')
+          }
+        })
+      persistence.stage(first)
+      const barrier = persistence.barrier('C')
+      await Promise.resolve()
+      expect(persistence.rebase(recovered)).toBe(true)
+      release()
+      await barrier
+      expect(port.enqueue).toHaveBeenCalledTimes(1)
+      expect(persistence.hasUnconfirmed('C')).toBe(false)
+      if (!enabled) expect(reads).toBe(0)
+    }
+  )
+
+  it('preserves lazy receiver-sensitive metadata from an unobserved wrapper to an observed client', async () => {
+    const f = realPair({ wrapper: false, client: true })
+    let reads = 0
+    const entry = Object.assign(input('C', 9, 8), { origin: 'receiver-run' })
+    Object.defineProperty(entry, 'diagnosticContext', {
+      get: function (this: typeof entry) {
+        reads += 1
+        return { runId: this.origin }
+      }
+    })
+    f.persistence.stage(input('C', 4, 3))
+    f.persistence.stage(entry)
+    expect(reads).toBe(0)
+    await f.persistence.barrier('C')
+    expect(f.events.find((event) => event.phase === 'persist')?.context?.runId).toBe('receiver-run')
+    expect(f.published[0]).toBe(entry.record)
+    expect(f.revisions).toEqual([3])
+  })
+
+  it('forwards metadata through repeated unobserved reconstruction without accessor chains', () => {
+    const source = Object.assign(input('C', 4, 3), { origin: 'R' })
+    let reads = 0
+    Object.defineProperty(source, 'diagnosticContext', {
+      get: function (this: typeof source) {
+        reads += 1
+        return { runId: this.origin }
+      }
+    })
+    let copied = copyHostPersistenceInput(source, { expectedRevision: 2 })
+    const get = Object.getOwnPropertyDescriptor(copied, 'diagnosticContext')!.get
+    for (let i = 0; i < 2000; i += 1)
+      copied = copyHostPersistenceInput(copied, { expectedRevision: 2 })
+    expect(reads).toBe(0)
+    expect(Object.getOwnPropertyDescriptor(copied, 'diagnosticContext')!.get).toBe(get)
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    expect(diagnostics.contextFrom(copied)).toEqual({ runId: 'R' })
+    expect(reads).toBe(1)
+    expect(copied.record).toBe(source.record)
+  })
+
+  it('inherits structurally missing context across an unobserved rebase for a later observed consumer', () => {
+    const source = input('C', 4, 3)
+    let reads = 0
+    Object.defineProperty(source, 'diagnosticContext', {
+      get: () => {
+        reads += 1
+        return { roundId: 'round-preserved' }
+      }
+    })
+    const recovered = input('C', 9, 8)
+    const copied = copyHostPersistenceInput(recovered, { fallback: source, preserveInput: true })
+    expect(reads).toBe(0)
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    expect(diagnostics.contextFrom(copied)).toEqual({ roundId: 'round-preserved' })
+    expect(copied.record).toBe(recovered.record)
+    expect(copied.expectedRevision).toBe(8)
+  })
+
+  it('contains descriptor traps without reading optional values when no observer is installed', async () => {
+    const f = realPair({ wrapper: false, client: false })
+    const latest = new Proxy(input('C', 9, 8), {
+      getOwnPropertyDescriptor: () => {
+        throw new Error('optional descriptor')
+      },
+      get(target, property, receiver) {
+        if (property === 'diagnosticContext') throw new Error('must not read')
+        return Reflect.get(target, property, receiver)
+      }
+    })
+    f.persistence.stage(input('C', 4, 3))
+    expect(f.persistence.stage(latest)).toBe('replaced')
+    await f.persistence.barrier('C')
+    expect(f.published[0]).toBe(latest.record)
+    expect(f.revisions).toEqual([3])
+  })
+
+  it('does not evaluate unrelated enumerable getters during observed materialization or rebase', async () => {
+    const f = realPair({ wrapper: true, client: true })
+    const entry = input('C', 4, 3)
+    Object.defineProperty(entry, 'unrelated', {
+      enumerable: true,
+      get: () => {
+        throw new Error('unrelated')
+      }
+    })
+    f.persistence.stage(entry)
+    await f.persistence.barrier('C')
+    expect(f.calls.filter((call) => call === 'submit')).toHaveLength(1)
   })
 })

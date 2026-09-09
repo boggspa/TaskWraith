@@ -1354,6 +1354,152 @@ describe('Host persistence local observations', () => {
     expect(hoisted.submitted.at(-1)?.actor).toEqual(TASKWRAITH_DESKTOP_HOST_ACTOR)
   })
 
+  it.each([false, true])(
+    'contains outer context failures on direct persist (observer=%s)',
+    async (enabled) => {
+      const f = observed(
+        (command) => [receiptFor(command, 'succeeded')],
+        enabled ? {} : { observer: undefined }
+      )
+      const entry = request()
+      let reads = 0
+      Object.defineProperty(entry, 'diagnosticContext', {
+        get: () => {
+          reads += 1
+          throw new Error('diagnostic outer getter')
+        }
+      })
+      await expect(f.client.persist(entry)).resolves.toMatchObject({ status: 'succeeded' })
+      expect(f.broker.commands).toHaveLength(1)
+      expect(f.calls).toEqual(['id', 'publish', 'id', 'now', 'submit'])
+      expect(enabled ? reads > 0 : reads === 0).toBe(true)
+    }
+  )
+
+  it.each([false, true])(
+    'preserves a conflict retry despite both outer getters throwing (observer=%s)',
+    async (enabled) => {
+      const previous = request()
+      const recovered = { chatId: previous.chatId, record: previous.record, expectedRevision: 4 }
+      let reads = 0
+      for (const value of [previous, recovered])
+        Object.defineProperty(value, 'diagnosticContext', {
+          enumerable: true,
+          get: () => {
+            reads += 1
+            throw new Error('optional metadata')
+          }
+        })
+      // No reconstruction may spread unrelated optional accessors either.
+      Object.defineProperty(recovered, 'unrelated', {
+        enumerable: true,
+        get: () => {
+          throw new Error('unrelated')
+        }
+      })
+      let submissions = 0
+      const f = observed(
+        (command) => [
+          receiptFor(
+            command,
+            ++submissions === 1 ? 'conflict' : 'succeeded',
+            submissions === 1 ? { errorCode: 'revision_conflict' } : {}
+          )
+        ],
+        {
+          ...(enabled ? {} : { observer: undefined }),
+          recoverConflict: () => recovered
+        }
+      )
+      f.client.enqueue(previous)
+      await expect(f.client.drain(previous.chatId)).resolves.toBeUndefined()
+      expect(f.broker.commands.map((command) => command.commandId)).toEqual(['id-2', 'id-4'])
+      expect(f.broker.commands.map((command) => command.arguments.expectedRevision)).toEqual([3, 4])
+      expect(f.calls.filter((call) => call === 'id')).toHaveLength(4)
+      expect(enabled ? reads > 0 : reads === 0).toBe(true)
+    }
+  )
+
+  it('keeps the original submission error when reading diagnostic metadata also fails', async () => {
+    const original = new Error('real submission')
+    const f = observed(() => {
+      throw original
+    })
+    const entry = request()
+    Object.defineProperty(entry, 'diagnosticContext', {
+      get: () => {
+        throw new Error('metadata')
+      }
+    })
+    await expect(f.client.persist(entry)).rejects.toBe(original)
+    expect((f.transfer as ReturnType<typeof fakeTransfer>).removed).toEqual(['id-1'])
+  })
+
+  it('bounds and contains inner metadata getters reached through an outer accessor', async () => {
+    const f = observed((command) => [receiptFor(command, 'succeeded')])
+    const entry = request()
+    const context = { runId: 'run-safe', requestId: 'x'.repeat(257) }
+    Object.defineProperty(context, 'roundId', {
+      get: () => {
+        throw new Error('inner')
+      }
+    })
+    Object.defineProperty(entry, 'diagnosticContext', { get: () => context })
+    await f.client.persist(entry)
+    expect(f.events.find((event) => event.phase === 'persist')?.context).toEqual({
+      runId: 'run-safe'
+    })
+  })
+
+  it('contains optional direct-call lineage getters without reading them when unobserved', async () => {
+    for (const enabled of [false, true]) {
+      let reads = 0
+      const lineage = Object.defineProperties(
+        {},
+        {
+          parentOperationId: {
+            enumerable: true,
+            get: () => {
+              reads += 1
+              throw new Error('lineage')
+            }
+          },
+          attempt: {
+            enumerable: true,
+            get: () => {
+              reads += 1
+              throw new Error('lineage')
+            }
+          }
+        }
+      )
+      const f = observed(
+        (command) => [receiptFor(command, 'succeeded')],
+        enabled ? {} : { observer: undefined }
+      )
+      await expect(f.client.persist(request(), lineage)).resolves.toMatchObject({
+        status: 'succeeded'
+      })
+      expect(f.calls).toEqual(['id', 'publish', 'id', 'now', 'submit'])
+      expect(reads).toBe(enabled ? 2 : 0)
+    }
+  })
+
+  it('does not replace the original error when its diagnostic code getter throws', async () => {
+    const original = new HostThreadRecordPersistError('host_rejected', 'real failure')
+    Object.defineProperty(original, 'code', {
+      get: () => {
+        throw new Error('unreadable diagnostic code')
+      }
+    })
+    const f = observed(() => {
+      throw original
+    })
+    await expect(f.client.persist(request())).rejects.toBe(original)
+    expect((f.transfer as ReturnType<typeof fakeTransfer>).removed).toEqual(['id-1'])
+    expect(ends(f.events, 'persist')).toMatchObject([{ outcome: 'failed', errorCode: 'unknown' }])
+  })
+
   it('labels deletion receipt waits separately from persistence', async () => {
     const f = observed((command) => [receiptFor(command, 'succeeded')])
     await f.client.deleteRecord({ chatId: 'chat-1', expectedRevision: 3 })

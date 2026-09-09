@@ -1,5 +1,6 @@
 import {
   HostPersistenceDiagnostics,
+  copyHostPersistenceInput,
   type HostPersistenceDiagnosticOptions,
   type HostPersistenceObservationOperation,
   type HostThreadRecordPersistInput,
@@ -171,12 +172,10 @@ export class HostChatCompatibilityPersistence {
       // Keep the first Host CAS base while replacing only the full-record
       // reference. The body is never spread or cloned here.
       state.pending = {
-        input: {
-          chatId: input.chatId,
-          record: input.record,
+        input: copyHostPersistenceInput(input, {
           expectedRevision: state.pending.input.expectedRevision,
-          ...(input.diagnosticContext ? { diagnosticContext: input.diagnosticContext } : {})
-        },
+          diagnostics: this.diagnostics
+        }),
         sequence
       }
       this.observeStage(state.pending.input, 'replaced', sequence, previousSequence)
@@ -202,28 +201,30 @@ export class HostChatCompatibilityPersistence {
     }
 
     const entry = state.pending
-    state.pending = null
-    state.submitted = entry
-    state.materializeAfterSubmitted = false
+    // Snapshot optional metadata before changing custody. A failed diagnostic
+    // read cannot create a submitted checkpoint that never crossed enqueue.
+    const prepared = this.diagnostics
+      ? copyHostPersistenceInput(entry.input, { diagnostics: this.diagnostics })
+      : entry.input
     const observation = this.diagnostics?.begin('materialize', {
       chatId,
       parentOperationId: barrierOperationId,
-      context: entry.input.diagnosticContext,
+      context: this.diagnostics.contextFrom(prepared),
       sequence: entry.sequence,
       expectedRevision: entry.input.expectedRevision
     })
+    const submission =
+      observation && this.diagnostics
+        ? copyHostPersistenceInput(prepared, {
+            diagnostics: this.diagnostics,
+            lineageId: observation.operationId
+          })
+        : prepared
+    state.pending = null
+    state.submitted = entry
+    state.materializeAfterSubmitted = false
     try {
-      this.port.enqueue(
-        observation && this.diagnostics
-          ? {
-              ...entry.input,
-              diagnosticContext: this.diagnostics.context(
-                entry.input.diagnosticContext,
-                observation.operationId
-              )
-            }
-          : entry.input
-      )
+      this.port.enqueue(submission)
       observation?.finish('succeeded')
       return true
     } catch (error) {
@@ -245,9 +246,11 @@ export class HostChatCompatibilityPersistence {
     validateInput(input)
     const state = this.states.get(input.chatId)
     if (!state) return false
-    const priorContext = (state.pending ?? state.submitted)?.input.diagnosticContext
-    if (!input.diagnosticContext && priorContext)
-      input = { ...input, diagnosticContext: priorContext }
+    input = copyHostPersistenceInput(input, {
+      diagnostics: this.diagnostics,
+      fallback: (state.pending ?? state.submitted)?.input,
+      preserveInput: true
+    })
 
     if (state.submitted) {
       const latestSequence = Math.max(
@@ -256,7 +259,7 @@ export class HostChatCompatibilityPersistence {
       )
       this.diagnostics?.event('rebase', 'succeeded', {
         chatId: input.chatId,
-        context: input.diagnosticContext,
+        context: this.diagnostics.contextFrom(input),
         sequence: latestSequence,
         relatedSequence: state.submitted.sequence,
         expectedRevision: input.expectedRevision
@@ -274,7 +277,7 @@ export class HostChatCompatibilityPersistence {
     state.pending = { input, sequence: state.pending.sequence }
     this.diagnostics?.event('rebase', 'succeeded', {
       chatId: input.chatId,
-      context: input.diagnosticContext,
+      context: this.diagnostics.contextFrom(input),
       sequence: state.pending.sequence,
       expectedRevision: input.expectedRevision
     })
@@ -384,7 +387,7 @@ export class HostChatCompatibilityPersistence {
     const observation = this.diagnostics?.begin('barrier', {
       chatId,
       sequence: targetSequence,
-      context: (state.pending ?? state.submitted)?.input.diagnosticContext,
+      context: this.diagnostics.contextFrom((state.pending ?? state.submitted)?.input),
       relatedOperationId: state.activeBarrier?.observation?.operationId
     })
     const predecessor = state.activeBarrier?.promise.catch(() => undefined) ?? Promise.resolve()
@@ -479,7 +482,7 @@ export class HostChatCompatibilityPersistence {
       reason === 'staged' || reason === 'replaced' ? 'pending' : 'skipped',
       {
         chatId: input.chatId,
-        context: input.diagnosticContext,
+        context: this.diagnostics.contextFrom(input),
         expectedRevision: input.expectedRevision,
         sequence,
         relatedSequence,
@@ -564,14 +567,10 @@ export class HostChatCompatibilityPersistence {
       return
     }
     state.pending = {
-      input: {
-        chatId: state.pending.input.chatId,
-        record: state.pending.input.record,
+      input: copyHostPersistenceInput(state.pending.input, {
         expectedRevision: entry.input.expectedRevision,
-        ...(state.pending.input.diagnosticContext
-          ? { diagnosticContext: state.pending.input.diagnosticContext }
-          : {})
-      },
+        diagnostics: this.diagnostics
+      }),
       sequence: state.pending.sequence
     }
   }
