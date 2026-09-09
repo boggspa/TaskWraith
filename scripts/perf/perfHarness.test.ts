@@ -4221,6 +4221,33 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
             content: '{"version":3,"sources":[17]}'
           }
         }
+      ],
+      // A sourceRoot prefixes every entry in sources. The derivation resolves
+      // relative to the map and never honours it, so rather than misresolve
+      // every entry — each silently skipped as outside src/ — the artifact is
+      // refused. The sources below DO resolve without the prefix, so only the
+      // sourceRoot refusal itself keeps this case red.
+      [
+        'map with a non-empty sourceRoot',
+        {
+          [`${unprovenArtifact}.map`]: {
+            mtimeMs: 1000,
+            content:
+              '{"version":3,"sourceRoot":"../../..","sources":["../../../src/host-client/HostClient.ts"]}'
+          }
+        }
+      ],
+      // A present-but-EMPTY sources array passes Array.isArray and then
+      // contributes nothing — the artifact looks fine while watching zero
+      // inputs. No provenance is unproven provenance.
+      [
+        'map with an empty sources array',
+        {
+          [`${unprovenArtifact}.map`]: {
+            mtimeMs: 1000,
+            content: '{"version":3,"sources":[]}'
+          }
+        }
       ]
     ]
     for (const [label, override] of unprovenCases) {
@@ -4304,6 +4331,9 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     expect(tsconfig.compilerOptions.sourceMap).toBe(true)
     expect(tsconfig.compilerOptions.declaration).toBe(false)
     expect(tsconfig.compilerOptions.noEmit).toBe(false)
+    // A sourceRoot would prefix every mapped source; the derivation refuses
+    // such maps rather than misresolve them, so the build must never emit one.
+    expect(tsconfig.compilerOptions.sourceRoot).toBeUndefined()
     // The include root: where a file is an input with nothing importing it.
     expect(tsconfig.include).toEqual(['./**/*.ts'])
     expect(tsconfig.exclude).toEqual(['./**/*.test.ts'])
@@ -4405,6 +4435,11 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     // ...and it must keep emitting maps, or its artifacts become unprovable
     // and the preflight refuses every launch.
     expect(bundler).toContain('sourcemap: true')
+    // It must also never SET a sourceRoot (esbuild honours it): the derivation
+    // resolves sources relative to the map and refuses any map that declares
+    // one, so a sourceRoot here would refuse every launch. Non-vacuous: the
+    // toContain assertions above prove `bundler` is the real script's content.
+    expect(bundler).not.toContain('sourceRoot')
   })
 
   it('P2: the preflight derives cleanly from the REAL emitted tree (skipped with no host build)', () => {

@@ -250,13 +250,23 @@ function checkHostBundleFreshness(repoRoot, adapters = {}) {
       if (!entry.name.endsWith('.js')) continue
       if (unprovenOutputRelPath !== null) return
       let sources
+      let sourceRoot
       try {
         const map = JSON.parse(String(fsImpl.readFileSync(`${full}.map`, 'utf8')))
         sources = map === null || typeof map !== 'object' ? null : map.sources
+        sourceRoot = map === null || typeof map !== 'object' ? null : map.sourceRoot
       } catch {
         sources = null
       }
-      if (!Array.isArray(sources)) {
+      // A sourceRoot prefixes every mapped source, and this derivation does
+      // not resolve it — honouring it wrongly would misresolve every entry
+      // outside src/, silently under-watching the bundle. An EMPTY sources
+      // array is no provenance at all. Both are unreadable provenance.
+      if (
+        !Array.isArray(sources) ||
+        sources.length === 0 ||
+        (sourceRoot !== undefined && sourceRoot !== null && sourceRoot !== '')
+      ) {
         // An artifact whose provenance cannot be read cannot be proven fresh.
         unprovenOutputRelPath = path.relative(repoRoot, full)
         return
