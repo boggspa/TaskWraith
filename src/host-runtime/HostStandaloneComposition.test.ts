@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,6 +14,7 @@ import {
 } from './HostStandaloneComposition'
 
 const paths: string[] = []
+const BOOT_EPOCH_A = 'a'.repeat(64)
 const actor = { actorId: 'actor-1', clientId: 'client-1', clientClass: 'test' as const }
 const context = {
   actor,
@@ -303,7 +305,8 @@ describe('HostStandaloneComposition', () => {
           }
         },
         now: () => new Date('2026-09-08T20:00:00.000Z')
-      }
+      },
+      bootEpochFactory: () => BOOT_EPOCH_A
     })
     try {
       expect(directories).toEqual([join(runtimePath, 'perf')])
@@ -312,7 +315,8 @@ describe('HostStandaloneComposition', () => {
         process: 'host',
         instanceId: 'standalone-host',
         generation: composition.getPosition().generation,
-        pid: process.pid
+        pid: process.pid,
+        bootEpoch: BOOT_EPOCH_A
       })
       await composition.authority.command(context, command())
       expect(composition.perf.snapshotFile?.writeOnce()).toBe(true)
@@ -500,5 +504,168 @@ describe('HostStandaloneComposition', () => {
     // Meter first, transport second: a refused meter never arms the timer.
     expect(armed).toBe(0)
     expect(stops).toBe(1)
+  })
+})
+
+/**
+ * The boot epoch exists for exactly one reason: pid, journal generation and
+ * writer sequence all REPEAT across a same-process recreation, so a stale
+ * snapshot file from the previous incarnation is otherwise indistinguishable
+ * from the live one. These cases prove the mint is the only field that breaks
+ * that tie, that a malformed epoch is refused rather than dropped, and that
+ * the epoch is never the shape-identical transport auth token.
+ */
+describe('HostStandaloneComposition boot epoch', () => {
+  function snapshotWriterSeams(): {
+    files: Map<string, string>
+    fs: HostPerfSnapshotFileFs
+    timers: HostPerfSnapshotFileTimers
+  } {
+    const files = new Map<string, string>()
+    return {
+      files,
+      fs: {
+        writeFileSync: (target, data) => {
+          files.set(target, data)
+        },
+        renameSync: (from, to) => {
+          files.set(to, files.get(from)!)
+          files.delete(from)
+        }
+      },
+      timers: {
+        setInterval: () => ({ unref: () => undefined }),
+        clearInterval: () => undefined
+      }
+    }
+  }
+
+  it('mints a distinct epoch per incarnation while pid, generation and sequence repeat', async () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-boot-epoch-'))
+    paths.push(runtimePath)
+    const path = join(runtimePath, 'perf', 'host-snapshot.json')
+
+    // Two incarnations on the SAME runtime path — the crash-loop recreation
+    // that keeps the authority lease, the pid and the journal alive. The
+    // default production mint is used deliberately: this must hold for the
+    // real randomBytes path, not an injected fixture.
+    const written: Record<string, unknown>[] = []
+    for (let incarnation = 0; incarnation < 2; incarnation += 1) {
+      const { files, fs, timers } = snapshotWriterSeams()
+      const composition = createHostStandaloneComposition({
+        ...input(runtimePath, { assertHeld: vi.fn() }),
+        perf: {
+          snapshotFile: { path, fs, timers, ensureDirectory: () => undefined },
+          now: () => new Date('2026-09-08T20:00:00.000Z')
+        }
+      })
+      try {
+        expect(composition.perf.snapshotFile?.writeOnce()).toBe(true)
+        written.push(JSON.parse(files.get(path)!))
+      } finally {
+        await composition.shutdown()
+      }
+    }
+
+    const [first, second] = written as {
+      identity: Record<string, unknown>
+      sequence: number
+    }[]
+
+    // Everything a reader could otherwise pin on is IDENTICAL across the two
+    // files — this is the counterexample, stated as an assertion.
+    expect(second.identity.pid).toBe(first.identity.pid)
+    expect(second.identity.generation).toBe(first.identity.generation)
+    expect(second.identity.instanceId).toBe(first.identity.instanceId)
+    expect(second.sequence).toBe(first.sequence)
+    expect(second.sequence).toBe(1)
+
+    // The epoch is the only discriminator, and both are well formed.
+    expect(first.identity.bootEpoch).toMatch(/^[0-9a-f]{64}$/)
+    expect(second.identity.bootEpoch).toMatch(/^[0-9a-f]{64}$/)
+    expect(second.identity.bootEpoch).not.toBe(first.identity.bootEpoch)
+
+    // Non-vacuous, and the whole point: the two identities differ in NOTHING
+    // but the epoch, so a collector pinning the pre-epoch fields could not
+    // reject the stale file. Only the identity is compared — the surrounding
+    // payload carries live loop-lag measurements that differ between any two
+    // captures, which would make a whole-artifact comparison flaky rather
+    // than stronger.
+    expect(second.identity).toEqual({ ...first.identity, bootEpoch: second.identity.bootEpoch })
+
+    // Guards the assertion above against passing on a degenerate identity:
+    // if the epoch were the only field, "differs in nothing but the epoch"
+    // would be trivially true.
+    expect(Object.keys(first.identity).sort()).toEqual([
+      'bootEpoch',
+      'generation',
+      'instanceId',
+      'pid',
+      'process'
+    ])
+  })
+
+  it('refuses a malformed minted epoch instead of dropping it', () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-boot-epoch-bad-'))
+    paths.push(runtimePath)
+    // A dropped epoch would read downstream as legacy absence rather than as
+    // a fault, silently disarming the collector's pin — so every one of these
+    // must throw at construction.
+    const malformed: [string, unknown][] = [
+      ['uppercase', 'A'.repeat(64)],
+      ['63 chars', 'a'.repeat(63)],
+      ['65 chars', 'a'.repeat(65)],
+      ['non-hex', `g${'a'.repeat(63)}`],
+      ['empty', ''],
+      ['not a string', 42]
+    ]
+    for (const [label, value] of malformed) {
+      expect(
+        () =>
+          createHostStandaloneComposition({
+            ...input(runtimePath, { assertHeld: vi.fn() }),
+            bootEpochFactory: () => value as string
+          }),
+        label
+      ).toThrow(/bootEpoch/)
+    }
+  })
+
+  it('never reuses the transport auth token, which shares its exact shape', () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-boot-epoch-token-'))
+    paths.push(runtimePath)
+    // HostLocalServer mints its secret with randomBytes(32).toString('hex') —
+    // byte-for-byte the same shape as this public epoch. Nothing structural
+    // would catch a future swap, so pin independence explicitly.
+    const tokens = new Set<string>()
+    const epochs = new Set<string>()
+    for (let index = 0; index < 64; index += 1) {
+      tokens.add(randomBytes(32).toString('hex'))
+      const composition = createHostStandaloneComposition({
+        ...input(runtimePath, { assertHeld: vi.fn() })
+      })
+      epochs.add(composition.perf.identity.bootEpoch!)
+      void composition.shutdown()
+    }
+    expect(epochs.size).toBe(64)
+    for (const epoch of epochs) expect(tokens.has(epoch)).toBe(false)
+  })
+
+  it('mints independently of host identity and runtime path', () => {
+    const first = mkdtempSync(join(tmpdir(), 'host-standalone-boot-epoch-i1-'))
+    const second = mkdtempSync(join(tmpdir(), 'host-standalone-boot-epoch-i2-'))
+    paths.push(first, second)
+    // Identical inputs must not yield a reproducible epoch: an epoch derived
+    // from stable inputs would be predictable and would repeat across a
+    // restart, defeating the whole point.
+    const a = createHostStandaloneComposition({ ...input(first, { assertHeld: vi.fn() }) })
+    const b = createHostStandaloneComposition({ ...input(second, { assertHeld: vi.fn() }) })
+    try {
+      expect(a.perf.identity.instanceId).toBe(b.perf.identity.instanceId)
+      expect(a.perf.identity.bootEpoch).not.toBe(b.perf.identity.bootEpoch)
+    } finally {
+      void a.shutdown()
+      void b.shutdown()
+    }
   })
 })

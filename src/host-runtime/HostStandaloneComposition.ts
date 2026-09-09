@@ -60,10 +60,21 @@ import {
 import { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import { createHostProjectionSerialQueue } from './HostProjectionSerialQueue'
 import { HostSession, type HostSessionHostIdentity, type HostSessionIdFactory } from './HostSession'
+import { randomBytes } from 'node:crypto'
 
 /** Snapshot-file cadence and output cap the programme's harness collector expects. */
 export const HOST_PERF_SNAPSHOT_FILE_INTERVAL_MS = 5000
 export const HOST_PERF_SNAPSHOT_FILE_MAX_BYTES = 256 * 1024
+
+/** Matches the writer's and the welcome codec's validators exactly. */
+const HOST_BOOT_EPOCH_PATTERN = /^[0-9a-f]{64}$/
+
+/**
+ * One public opaque boot epoch. 32 bytes of CSPRNG output rendered as 64
+ * lowercase hex, drawn independently of every input so it cannot be predicted
+ * from host id, path or clock, and never derived from the transport token.
+ */
+const mintBootEpoch = (): string => randomBytes(32).toString('hex')
 
 export interface HostStandaloneCompositionPerfSnapshotFileInput {
   /** Destination file; the writer's temp sibling is `<path>.<pid>.tmp`. */
@@ -126,6 +137,12 @@ export interface HostStandaloneCompositionInput {
   readonly sessionIdFactory?: HostSessionIdFactory
   readonly now?: () => string
   readonly perf?: HostStandaloneCompositionPerfInput
+  /**
+   * Injected for tests; production mints `randomBytes(32).toString('hex')`.
+   * Exactly one epoch is minted per composition incarnation — see the mint
+   * site below for why that is the only value here that can witness a restart.
+   */
+  readonly bootEpochFactory?: () => string
 }
 
 export interface HostStandaloneComposition {
@@ -220,13 +237,32 @@ export function createHostStandaloneComposition(
   const runtime = new HostRuntimeBootstrap({ hostDataDir: input.runtimePath })
   // M1: the Host meters its own loop and attributes its own queue waits. The
   // identity is fixed here so the file transport and any poller agree on it.
+  //
   // `generation` is a journal coordinate captured at construction, not a
-  // restart counter; later journal resets do not update this identity.
-  // A PID may distinguish different live processes. Sequence is local to a
-  // writer and resets on recreation; neither guarantees unique boot identity.
-  // The current collector does not infer restarts or check sequence monotonicity.
-  // A trustworthy boot/instance epoch and collector binding remain separate,
-  // unimplemented work.
+  // restart counter; later journal resets do not update this identity. A PID
+  // may distinguish different live processes but the OS reuses it. The writer
+  // sequence is local to a writer and restarts at 1 on recreation. A
+  // same-process recreation under a surviving authority lease reproduces all
+  // three IDENTICALLY — which is exactly why none of them witnesses a
+  // restart: a stale snapshot file from the previous incarnation would be
+  // indistinguishable from the live one.
+  //
+  // `bootEpoch` is the value that can. One public opaque token, minted per
+  // composition incarnation and compared for EQUALITY only, so PID reuse, a
+  // frozen clock and a reset sequence are all irrelevant by construction. It
+  // carries no timestamp, counter or ordering.
+  //
+  // SECURITY: the epoch is PUBLIC — written into the perf snapshot file and
+  // carried on the welcome frame. The transport auth token has the exact same
+  // shape (`randomBytes(32).toString('hex')`), so the two are indistinguishable
+  // by inspection and a future swap would look like nothing. The epoch is
+  // minted HERE, independently; this composition never receives the token.
+  const bootEpoch = (input.bootEpochFactory ?? mintBootEpoch)()
+  if (typeof bootEpoch !== 'string' || !HOST_BOOT_EPOCH_PATTERN.test(bootEpoch)) {
+    // Refuse rather than drop. A dropped epoch reads downstream as legacy
+    // absence rather than as a fault, silently disarming the collector's pin.
+    throw new Error('HostStandaloneComposition requires a 64 lowercase hex bootEpoch')
+  }
   const hostPerf =
     input.perf?.instrumentation ??
     createHostPerfInstrumentation(input.perf?.now ? { now: input.perf.now } : {})
@@ -234,7 +270,8 @@ export function createHostStandaloneComposition(
     process: 'host' as const,
     instanceId: input.host.hostId,
     generation: runtime.getPosition().generation,
-    pid: process.pid
+    pid: process.pid,
+    bootEpoch
   })
   const snapshotFile = input.perf?.snapshotFile
     ? createSnapshotFileTransport(input.perf.snapshotFile, hostPerf, perfIdentity, input.perf.now)
