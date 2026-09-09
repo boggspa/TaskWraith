@@ -325,7 +325,6 @@ lane, and their metadata is written into the run's isolated Pi home at launch.
 | **MiMo V2 Pro** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2-pro` | —          | —    | 1M context via the Xiaomi token plan. **Retired 2026-08-30** after Xiaomi sunset it in favor of MiMo V2.5 and MiMo V2.5 Pro; no longer offered for new runs, kept here so older transcripts still decode. |
 | **MiMo V2.5** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.5`   | —            | —    | 1M context via the Xiaomi token plan.       |
 | **MiMo V2.5 Pro** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.5-pro` | —      | —    | 1M context via the Xiaomi token plan.       |
-| **Tencent HY4 Preview** `tencent/hy4-preview`              | —            | —    | Tencent brand added to the Pi catalogue.    |
 | **Devstral 2512** `mistral/devstral-2512`                  | —            | —    | 256K context via Mistral.                   |
 | **Mistral Medium 3.5** `mistral/mistral-medium-3.5`        | High (fixed) | —    | 256K context via Mistral. Always thinks at High. |
 | **Mistral Large 3 (2512)** `mistral/mistral-large-2512`    | —            | —    | 256K context via Mistral. Not a reasoning model. |
