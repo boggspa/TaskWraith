@@ -1046,4 +1046,128 @@ describe('diagnostic metadata containment', () => {
     await f.persistence.barrier('C')
     expect(f.calls.filter((call) => call === 'submit')).toHaveLength(1)
   })
+
+  it('never substitutes the fallback when descriptor inspection is unavailable', () => {
+    const older = Object.assign(input('C', 4, 3), { diagnosticContext: { runId: 'OLD-RUN' } })
+    const target = Object.assign(input('C', 9, 8), { diagnosticContext: { runId: 'NEW-RUN' } })
+    const recovered = new Proxy(target, {
+      getOwnPropertyDescriptor: () => {
+        throw new Error('descriptor trap')
+      }
+    })
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    expect(diagnostics.contextFrom(recovered)).toEqual({ runId: 'NEW-RUN' })
+    expect(copyHostPersistenceInput(recovered, { fallback: older, preserveInput: true })).toBe(
+      recovered
+    )
+    const copied = copyHostPersistenceInput(recovered, { fallback: older, expectedRevision: 8 })
+    expect(copied.record).toBe(target.record)
+    expect(copied.expectedRevision).toBe(8)
+    expect(diagnostics.contextFrom(copied)).toEqual({ runId: 'NEW-RUN' })
+  })
+
+  it('never substitutes the fallback when a prototype walk is unavailable', () => {
+    const older = Object.assign(input('C', 4, 3), { diagnosticContext: { runId: 'OLD-RUN' } })
+    const base = Object.assign(
+      Object.create({ diagnosticContext: { runId: 'NEW-RUN' } }),
+      input('C', 9, 8)
+    ) as HostThreadRecordPersistInput
+    const recovered = new Proxy(base, {
+      getPrototypeOf: () => {
+        throw new Error('prototype trap')
+      }
+    })
+    const copied = copyHostPersistenceInput(recovered, { fallback: older, expectedRevision: 8 })
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    expect(diagnostics.contextFrom(copied)).toEqual({ runId: 'NEW-RUN' })
+    expect(copied.record).toBe(base.record)
+  })
+
+  it('never substitutes the fallback when the bounded prototype walk is exhausted', () => {
+    const older = Object.assign(input('C', 4, 3), { diagnosticContext: { runId: 'OLD-RUN' } })
+    let chain: object = { diagnosticContext: { runId: 'NEW-RUN' } }
+    for (let depth = 0; depth < 40; depth += 1) chain = Object.create(chain)
+    const recovered = Object.assign(chain, input('C', 9, 8)) as HostThreadRecordPersistInput
+    const copied = copyHostPersistenceInput(recovered, { fallback: older, expectedRevision: 8 })
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    expect(diagnostics.contextFrom(copied)).toEqual({ runId: 'NEW-RUN' })
+    expect(copied.record).toBe(recovered.record)
+  })
+
+  it('carries unknown inspection through repeated copies without resurrecting the stale fallback', () => {
+    const older = Object.assign(input('C', 4, 3), { diagnosticContext: { runId: 'OLD-RUN' } })
+    const target = Object.assign(input('C', 9, 8), { diagnosticContext: { runId: 'NEW-RUN' } })
+    const recovered = new Proxy(target, {
+      getOwnPropertyDescriptor: () => {
+        throw new Error('descriptor trap')
+      }
+    })
+    let copied = copyHostPersistenceInput(recovered, { fallback: older, expectedRevision: 8 })
+    const get = Object.getOwnPropertyDescriptor(copied, 'diagnosticContext')!.get
+    for (let attempt = 0; attempt < 3; attempt += 1)
+      copied = copyHostPersistenceInput(copied, { fallback: older, expectedRevision: 8 })
+    expect(Object.getOwnPropertyDescriptor(copied, 'diagnosticContext')!.get).toBe(get)
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    expect(diagnostics.contextFrom(copied)).toEqual({ runId: 'NEW-RUN' })
+    expect(JSON.stringify(diagnostics.contextFrom(copied))).not.toContain('OLD-RUN')
+  })
+
+  it('keeps unreadable unknown metadata uncorrelated on later copies instead of inheriting the fallback', () => {
+    const older = Object.assign(input('C', 4, 3), { diagnosticContext: { runId: 'OLD-RUN' } })
+    const target = input('C', 9, 8)
+    const unreadable = new Proxy(target, {
+      getOwnPropertyDescriptor: () => {
+        throw new Error('descriptor trap')
+      },
+      get(object, property, receiver) {
+        if (property === 'diagnosticContext') throw new Error('unreadable metadata')
+        return Reflect.get(object, property, receiver)
+      }
+    })
+    let copied = copyHostPersistenceInput(unreadable, { fallback: older, expectedRevision: 8 })
+    copied = copyHostPersistenceInput(copied, { fallback: older, expectedRevision: 8 })
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    expect(diagnostics.contextFrom(copied)).toBeUndefined()
+    expect(copied.record).toBe(target.record)
+  })
+
+  it('does not substitute the fallback when an observed copy cannot read the outer context', () => {
+    const older = Object.assign(input('C', 4, 3), { diagnosticContext: { runId: 'OLD-RUN' } })
+    const recovered = input('C', 9, 8)
+    Object.defineProperty(recovered, 'diagnosticContext', {
+      get: () => {
+        throw new Error('unreadable metadata')
+      }
+    })
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    const copied = copyHostPersistenceInput(recovered, {
+      diagnostics,
+      fallback: older,
+      lineageId: 'lineage-1'
+    })
+    expect(copied.diagnosticContext).toEqual({ lineageId: 'lineage-1' })
+    const inherited = copyHostPersistenceInput(input('C', 9, 8), { diagnostics, fallback: older })
+    expect(inherited.diagnosticContext).toEqual({ runId: 'OLD-RUN' })
+  })
+
+  it('emits rebased metadata instead of the stale fallback from an unobserved wrapper to an observed client', async () => {
+    const f = realPair({ wrapper: false, client: true })
+    const old = Object.assign(input('C', 4, 3), { diagnosticContext: { runId: 'OLD-RUN' } })
+    expect(f.persistence.stage(old)).toBe('staged')
+    const target = Object.assign(input('C', 9, 5), { diagnosticContext: { runId: 'NEW-RUN' } })
+    const recovered = new Proxy(target, {
+      getOwnPropertyDescriptor: () => {
+        throw new Error('descriptor trap')
+      }
+    })
+    expect(f.persistence.rebase(recovered)).toBe(true)
+    await f.persistence.barrier('C')
+    expect(f.calls.filter((call) => call === 'submit')).toHaveLength(1)
+    expect(f.published[0]).toBe(target.record)
+    expect(f.revisions).toEqual([5])
+    const persisted = f.events.filter((event) => event.phase === 'persist')
+    expect(persisted.length).toBeGreaterThan(0)
+    for (const event of persisted) expect(event.context?.runId).toBe('NEW-RUN')
+    expect(JSON.stringify(f.events)).not.toContain('OLD-RUN')
+  })
 })

@@ -421,22 +421,63 @@ export interface HostThreadRecordPersistInput {
  * the fallback. This avoids evaluating lazy metadata merely to choose a fallback.
  * Forwarding getters are reused, so repeated reconstruction retains at most the
  * original accessor/receiver, not a chain of previous checkpoint bodies.
+ *
+ * Unknown is not absence: a descriptor/prototype trap failure or an exhausted
+ * walk leaves this input's metadata UNKNOWN, and only proven structural absence
+ * licenses the fallback. An unknown source is forwarded as a lazy contained
+ * read of that source instead, so a later observed consumer sees the source's
+ * own metadata when it is readable, or nothing — never an older substituted
+ * identity — and the forwarded accessor keeps a later copy from mistaking the
+ * dropped inspection for proven absence.
  */
 const forwardedContextGetters = new WeakSet<() => unknown>()
 
-function contextDescriptor(input?: HostThreadRecordPersistInput): PropertyDescriptor | undefined {
+type HostPersistenceContextInspection =
+  | { readonly kind: 'present'; readonly descriptor: PropertyDescriptor }
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'unavailable' }
+
+function inspectContextDescriptor(
+  input: HostThreadRecordPersistInput
+): HostPersistenceContextInspection {
   try {
-    let current: object | null = input ?? null
-    // Bound unusual/proxy prototype walks; unavailable metadata stays optional.
-    for (let depth = 0; current && depth < 32; depth += 1) {
+    let current: object | null = input
+    // Bound unusual/proxy prototype walks; a chain outliving the bound is unknown.
+    for (let depth = 0; current; depth += 1) {
+      if (depth >= 32) return { kind: 'unavailable' }
       const descriptor = Object.getOwnPropertyDescriptor(current, 'diagnosticContext')
-      if (descriptor) return descriptor
+      if (descriptor) return { kind: 'present', descriptor }
       current = Object.getPrototypeOf(current)
     }
+    return { kind: 'absent' }
   } catch {
     // Proxy/descriptor failure cannot replace a persistence outcome.
+    return { kind: 'unavailable' }
   }
-  return undefined
+}
+
+/** Lazy contained read of an unknown-inspection metadata source; never eager. */
+function forwardContextRead(
+  copied: HostThreadRecordPersistInput,
+  source: HostThreadRecordPersistInput
+): void {
+  try {
+    const get = (): HostPersistenceDiagnosticContext | undefined => {
+      try {
+        return source.diagnosticContext
+      } catch {
+        return undefined
+      }
+    }
+    forwardedContextGetters.add(get)
+    Object.defineProperty(copied, 'diagnosticContext', {
+      get,
+      enumerable: true,
+      configurable: true
+    })
+  } catch {
+    // Even metadata forwarding is best effort; the business input remains valid.
+  }
 }
 
 export function copyHostPersistenceInput(
@@ -455,22 +496,44 @@ export function copyHostPersistenceInput(
     expectedRevision: options.expectedRevision ?? input.expectedRevision
   })
   if (options.diagnostics) {
-    const context =
-      options.diagnostics.contextFrom(input) ?? options.diagnostics.contextFrom(options.fallback)
+    let context: HostPersistenceDiagnosticContext | undefined
+    let unavailable = false
+    try {
+      const value = input.diagnosticContext
+      if (value != null) context = value
+    } catch {
+      // An unreadable outer property is unknown metadata, not proven absence;
+      // the fallback would substitute an older identity for this input's own.
+      unavailable = true
+    }
+    if (context === undefined && !unavailable)
+      context = options.diagnostics.contextFrom(options.fallback)
     return {
       ...copyBusinessFields(),
       diagnosticContext: options.diagnostics.context(context, options.lineageId)
     }
   }
   let source = input
-  let descriptor = contextDescriptor(source)
-  if (!descriptor || ('value' in descriptor && descriptor.value == null)) {
+  let inspection = inspectContextDescriptor(source)
+  if (
+    inspection.kind === 'absent' ||
+    (inspection.kind === 'present' &&
+      'value' in inspection.descriptor &&
+      inspection.descriptor.value == null)
+  ) {
+    // Only structurally absent/nullish data licenses the fallback; unknown
+    // inspection keeps this input as the sole metadata source.
     source = options.fallback ?? input
-    descriptor = contextDescriptor(source)
+    if (source !== input) inspection = inspectContextDescriptor(source)
   }
-  if (options.preserveInput && (source === input || !descriptor)) return input
+  if (options.preserveInput && (source === input || inspection.kind !== 'present')) return input
   const copied = copyBusinessFields()
-  if (!descriptor) return copied
+  if (inspection.kind === 'unavailable') {
+    forwardContextRead(copied, source)
+    return copied
+  }
+  if (inspection.kind === 'absent') return copied
+  const descriptor = inspection.descriptor
   try {
     if ('value' in descriptor) {
       Object.defineProperty(copied, 'diagnosticContext', {
