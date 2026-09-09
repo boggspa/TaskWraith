@@ -105,7 +105,6 @@ public enum PiBrandTable {
         "groq/qwen/qwen3-32b": "Qwen3 32B (Groq)",
         "cerebras/zai-glm-4.7": "GLM-4.7 (Cerebras)",
         "cerebras/gpt-oss-120b": "GPT-OSS 120B (Cerebras)",
-        "cerebras/gemma-4-31b": "Gemma 4 31B (Cerebras)",
         "cerebras/qwen-3.8-27b": "Qwen 3.8 27B (Cerebras)",
         "openrouter/stealth/ox-alpha": "Ox Alpha",
         "openrouter/z-ai/glm-5.2": "GLM 5.2",
