@@ -18,10 +18,18 @@ import {
   type AcpChildProcess,
   type AcpSessionConfigSelection,
   type AcpSteerPromptContext,
-  type AcpToolRecoveryContext,
   type AcpTurnHandle
 } from '../acp/AcpTurnClient'
-import type { AcpPermissionDecision, AcpPermissionRequest, AcpRunEvent } from '../acp/AcpProtocol'
+import type { AcpPermissionRequest, AcpRunEvent } from '../acp/AcpProtocol'
+import {
+  createAcpToolRefusalAttribution,
+  type AcpAttributedPermissionDecision
+} from '../acp/AcpToolRefusalAttribution'
+import {
+  formatRunToolCapabilityReceipt,
+  type ToolRefusalReceipt
+} from '../providers/RunToolCapabilityReceipt'
+import type { RunToolCapabilityReporter } from '../providers/RunToolCapabilityRuntime'
 import {
   ANTIGRAVITY_ACP_MODEL_ID_PREFIX,
   isAntigravityAcpCatalogModelId
@@ -207,7 +215,9 @@ export interface AntigravityAcpRunOptions {
   onProcess?: (child: AcpChildProcess) => void
   onPermissionRequest?: (
     request: AcpPermissionRequest
-  ) => AcpPermissionDecision | Promise<AcpPermissionDecision>
+  ) => AcpAttributedPermissionDecision | Promise<AcpAttributedPermissionDecision>
+  onPermissionRefusal?: (request: AcpPermissionRequest, receipt: ToolRefusalReceipt) => void
+  toolReceipt?: RunToolCapabilityReporter
   onClose?: (code: number | null, turnComplete: boolean, terminalStatus?: string) => void
   onRawFrame?: (direction: 'in' | 'out', message: unknown) => void
 }
@@ -240,12 +250,6 @@ export function formatAntigravityAcpSteerPrompt(context: AcpSteerPromptContext):
   ].join('\n\n')
 }
 
-const ANTIGRAVITY_ACP_USER_DECLINED_TOOL_CONTINUITY_PROMPT =
-  'The user declined the previous tool request. Respect that decision: do not retry the same ' +
-  'tool, request the same permission, or substitute an equivalent side effect. Continue from ' +
-  'the evidence already available and produce the best complete report you can; if a required ' +
-  'step remains impossible, state it precisely without cancelling the participant turn.'
-
 function isAntigravityAcpDeniedToolTerminal(status: string | null | undefined): boolean {
   const normalized = String(status || '')
     .trim()
@@ -260,14 +264,6 @@ function isAntigravityAcpDeniedToolTerminal(status: string | null | undefined): 
   )
 }
 
-function antigravityAcpToolRecoveryPrompt(context: AcpToolRecoveryContext): string {
-  return /\buser\s+(?:declined|rejected|cancelled|canceled)\b/i.test(
-    context.lastFailedToolOutput || ''
-  )
-    ? ANTIGRAVITY_ACP_USER_DECLINED_TOOL_CONTINUITY_PROMPT
-    : ANTIGRAVITY_ACP_TOOL_FAILURE_CONTINUITY_PROMPT
-}
-
 export function createAntigravityAcpTurnAbortController(handle: {
   cancel: () => void
 }): AbortController {
@@ -279,8 +275,17 @@ export function runAntigravityAcpTurn(options: AntigravityAcpRunOptions): Antigr
   const closed = new Promise<void>((resolve) => {
     resolveClosed = resolve
   })
+  const attribution = createAcpToolRefusalAttribution({
+    mediate: options.onPermissionRequest,
+    onRefusal: (request, receipt) => {
+      options.toolReceipt?.refusal(receipt, receipt.generation)
+      options.onPermissionRefusal?.(request, receipt)
+    },
+    routeObserved: () => options.toolReceipt?.snapshot().readiness === 'available',
+    routeUnavailable: () => options.toolReceipt?.snapshot().readiness === 'degraded'
+  })
   const handle = runAcpTurn({
-    prompt: options.prompt,
+    prompt: `${options.prompt}\n\n${options.toolReceipt ? formatRunToolCapabilityReceipt(options.toolReceipt.snapshot()) : ''}\nTaskWraith native ACP permission decisions are automatic. Provider wording such as "user rejected" does not establish a human decline. Use actually listed TaskWraith tools within the assigned scope. If a required route is absent or the same refusal repeats, preserve the design and report the exact blocker; the coordinator can recover after the lane settles.`,
     cwdLifetime: 'run',
     cwd: options.cwd,
     spawnProcess: options.spawnProcess,
@@ -290,26 +295,35 @@ export function runAntigravityAcpTurn(options: AntigravityAcpRunOptions): Antigr
     // Selects the user's model on the freshly opened session. Without this the
     // seat silently ran whatever the server defaulted to, discarding the pick.
     formatSteerPrompt: formatAntigravityAcpSteerPrompt,
-    onEvent: options.onEvent,
+    onEvent: (event) => options.onEvent(attribution.project(event)),
     onToolBatchBoundary: options.onToolBatchBoundary,
     onProcess: options.onProcess,
-    onPermissionRequest: options.onPermissionRequest,
+    onPermissionRequest: options.onPermissionRequest ? attribution.onPermissionRequest : undefined,
+    onPermissionResponse: attribution.onPermissionResponse,
     deniedToolRecovery: {
       detect: isAntigravityAcpDeniedToolTerminal,
-      prompt: antigravityAcpToolRecoveryPrompt,
+      prompt: attribution.recoveryPrompt,
       shouldRecover: (context) => context.toolFailureSeen && !context.assistantTextSeen,
       warning:
         'Antigravity ACP stopped after a rejected or failed tool; continuing once so it can finish from available evidence.'
     },
     formatProcessError: formatAntigravityAcpProcessError,
     onClose: (code, turnComplete, terminalStatus) => {
+      attribution.close()
       try {
         options.onClose?.(code, turnComplete, terminalStatus)
       } finally {
+        options.toolReceipt?.settle()
         resolveClosed()
       }
     },
-    onRawFrame: options.onRawFrame
+    onRawFrame: (direction, message) => {
+      const previous = attribution.generation()
+      attribution.onRawFrame(direction, message)
+      if (previous > 0 && attribution.generation() !== previous)
+        options.toolReceipt?.beginGeneration()
+      options.onRawFrame?.(direction, message)
+    }
   })
   return { ...handle, closed }
 }

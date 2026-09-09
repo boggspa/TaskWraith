@@ -51,6 +51,9 @@ import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../shared/retiredProviders'
 import type { NativeCapabilitySnapshot } from '../NativeCapabilities'
 import type { KimiRunCapabilityReceipt } from '../kimi/KimiRunCapabilities'
 import { kimiRunCapabilityCache } from '../kimi/KimiRunCapabilityStore'
+import { runToolCapabilityCache } from '../providers/RunToolCapabilityStore'
+import type { RunToolCapabilityReceipt } from '../providers/RunToolCapabilityReceipt'
+import { recordedRunToolCapabilityReceipt, withRunToolApprovalRefusals } from '../providers/RunToolCapabilityRuntime'
 import type {
   ScopedAttachedWindowRendererProjection,
   ScopedAttachedWindowSnapshot,
@@ -222,6 +225,7 @@ export interface DesktopToolExecutorDeps {
   store: DesktopToolStore
   runRepository: DesktopRunRepository
   readKimiCapabilityReceipt?: (runId: string, chatId: string) => Promise<KimiRunCapabilityReceipt | null>
+  readToolCapabilityReceipt?: (runId: string, chatId: string, provider: ProviderId) => Promise<RunToolCapabilityReceipt | null>
   shell: DesktopShell
   providerAuth?: DesktopProviderAuthDeps
   notifyRenderer?: (channel: string, payload: unknown) => void
@@ -2036,7 +2040,7 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     const exactRun = activeChat?.runs?.find((run) => run.runId === exactRunId)
     const provider = args.provider
       ? assertProviderId(args.provider)
-      : optionalString(args.runId) && exactRun
+      : optionalString(args.runId) && exactRun?.provider
         ? exactRun.provider
         : parentProvider
     const sameChatQuery = !optionalString(args.chatId) || args.chatId === context.appChatId
@@ -2047,11 +2051,23 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
           (await deps.readKimiCapabilityReceipt?.(matchedRun.runId, context.appChatId)) ||
           null
         : null
+    let toolCapabilityReceipt = matchedRun && context.appChatId
+      ? runToolCapabilityCache.get(matchedRun.runId, context.appChatId, provider) ||
+        await deps.readToolCapabilityReceipt?.(matchedRun.runId, context.appChatId, provider) || null
+      : null
+    if (toolCapabilityReceipt && (toolCapabilityReceipt.runId !== exactRunId ||
+      toolCapabilityReceipt.chatId !== context.appChatId || toolCapabilityReceipt.provider !== provider)) toolCapabilityReceipt = null
+    const runtimeToolReceiptObserved = Boolean(toolCapabilityReceipt)
     if (matchedRun && context.appChatId) {
-      matchedRun = deps.store
-        .getChat(context.appChatId)
+      const currentChat = deps.store.getChat(context.appChatId)
+      matchedRun = currentChat
         ?.runs?.find((run) => run.runId === matchedRun?.runId && run.provider === provider)
-      if (!matchedRun) capabilityReceipt = null
+      if (!matchedRun) {
+        capabilityReceipt = null
+        toolCapabilityReceipt = null
+      } else if (!toolCapabilityReceipt && currentChat) {
+        toolCapabilityReceipt = recordedRunToolCapabilityReceipt(matchedRun, currentChat, provider)
+      }
     }
     const runServices =
       matchedRun?.permissionPosture?.agenticServices ||
@@ -2076,6 +2092,11 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       limit: clampInteger(args.limit, 25, 1, 200)
     }
     const approvals = deps.store.getApprovalLedger(filter)
+    if (toolCapabilityReceipt) {
+      toolCapabilityReceipt = withRunToolApprovalRefusals(toolCapabilityReceipt,
+        deps.store.getApprovalLedger({ provider, runId: toolCapabilityReceipt.runId,
+          chatId: toolCapabilityReceipt.chatId || undefined, includeExpired: true, limit: 64 }))
+    }
     const countsByStatus = approvals.reduce<Record<string, number>>((acc, record) => {
       acc[record.status] = (acc[record.status] || 0) + 1
       return acc
@@ -2102,13 +2123,16 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       servicesSource: runServices ? 'recorded-run-posture' : 'configured-defaults',
       configuredServices: settings.agenticServices,
       capabilityReceipt,
+      toolCapabilityReceipt,
+      toolCapabilityReceiptStatus: toolCapabilityReceipt
+        ? runtimeToolReceiptObserved ? 'recorded' : 'recorded-run-only' : 'unavailable',
       capabilityReceiptStatus: capabilityReceipt
         ? 'recorded'
         : exactRunId
           ? 'unavailable'
           : 'query-not-run-scoped',
       capabilityNotice:
-        'Approval history does not prove tool availability. A missing capability receipt is unknown: the live cache and bounded durable tail may not contain it. Host-containment refusals are in capabilityReceipt.refusals; only approval records with decisionSource=user establish a human decision.',
+        'Approval history does not prove tool availability. toolCapabilityReceipt separates configured, served, attached, observed and executed tools; recorded-run-only has no runtime catalogue evidence. A missing observation is unknown. Only host decision receipts with decisionSource=user establish a human decision. The legacy Kimi capabilityReceipt remains available.',
       workspaceGrants: (settings.agenticWorkspaceGrants || []).filter(
         (grant) =>
           (grant.provider === 'agents' || grant.provider === provider) &&

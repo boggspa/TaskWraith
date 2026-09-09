@@ -4,7 +4,6 @@ import type { AcpChildProcess } from '../acp/AcpTurnClient'
 import {
   ANTIGRAVITY_ACP_AUTH_METHODS,
   ANTIGRAVITY_ACP_PREFERRED_AUTH_METHOD,
-  ANTIGRAVITY_ACP_TOOL_FAILURE_CONTINUITY_PROMPT,
   buildAntigravityAcpInitializeParams,
   createAntigravityAcpClient,
   createAntigravityAcpTurnAbortController,
@@ -267,7 +266,8 @@ describe('runAntigravityAcpTurn', () => {
     await tick(40)
     const prompts = child.sent().filter((message) => message.method === 'session/prompt')
     expect(prompts).toHaveLength(2)
-    expect(promptText(prompts[1])).toBe(ANTIGRAVITY_ACP_TOOL_FAILURE_CONTINUITY_PROMPT)
+    expect(promptText(prompts[1])).toContain('The tool failed.')
+    expect(promptText(prompts[1])).not.toContain('user declined')
     handle.cancel()
     await handle.closed
   })

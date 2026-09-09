@@ -136,8 +136,16 @@ describe.each(transports)('%s / %s common tool receipt acceptance', (provider, t
     expect(toolRecoveryDisposition({ refusal, routeObserved: true, attempts: 1 })).toBe(
       'report-blocker'
     )
+    expect(
+      toolRecoveryDisposition({
+        refusal,
+        routeObserved: false,
+        routeUnavailable: true,
+        attempts: 0
+      })
+    ).toBe('report-blocker')
     expect(toolRecoveryDisposition({ refusal, routeObserved: false, attempts: 0 })).toBe(
-      'report-blocker'
+      'verify-listed-route'
     )
     for (const origin of [
       'host-policy',

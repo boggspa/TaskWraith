@@ -11,6 +11,16 @@ import {
 const servers: AgyHookBridgeServer[] = []
 const mainSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
 
+it('acknowledges a written refusal without serializing its host-only observer', async () => {
+  const server = await startServer()
+  const token = createAgyHookBridgeToken()
+  let written = 0
+  server.registerRun(token, async () => ({ decision: 'deny', reason: 'The approval timed out.', onReplyWritten: () => { written += 1 } }))
+  const result = await post(server.port, { toolCall: { name: 'run_command', args: { CommandLine: 'pwd' } } }, token)
+  expect(result).toEqual({ decision: 'deny', reason: 'The approval timed out.' })
+  expect(written).toBe(1)
+})
+
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()))
 })

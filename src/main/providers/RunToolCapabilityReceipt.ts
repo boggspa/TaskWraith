@@ -93,6 +93,7 @@ export interface RunToolCapabilityReceipt extends RunToolCapabilityContext {
   missingManagedToolsComplete: boolean
   refusals: ToolRefusalReceipt[]
   refusalCount: number
+  refusalCountIsLowerBound?: boolean
   detailsTruncated: boolean
   blocker: string | null
   lifecycleSettled: boolean
@@ -108,7 +109,9 @@ function names(values: readonly string[]): string[] {
 
 /** Leave room inside RunEventStore's 80,000-character envelope. Truncation is
  * explicit and never turns a partial list into proof that a tool is missing. */
-function boundedSnapshot(receipt: RunToolCapabilityReceipt): RunToolCapabilityReceipt {
+export function boundRunToolCapabilityReceipt(
+  receipt: RunToolCapabilityReceipt
+): RunToolCapabilityReceipt {
   const out = structuredClone(receipt)
   while (JSON.stringify(out).length > 64_000) {
     const candidates: Array<{ size: number; trim: () => void }> = []
@@ -216,6 +219,7 @@ export function resolveRunToolScope(input: {
 
 export type ToolRecoveryDisposition =
   | 'retry-listed-route-once'
+  | 'verify-listed-route'
   | 'report-blocker'
   | 'respect-human-decision'
 
@@ -223,18 +227,19 @@ export type ToolRecoveryDisposition =
 export function toolRecoveryDisposition(input: {
   refusal: Pick<ToolRefusalReceipt, 'origin' | 'decisionSource' | 'reply'>
   routeObserved: boolean
+  routeUnavailable?: boolean
   attempts: number
 }): ToolRecoveryDisposition {
   if (input.refusal.origin === 'human' && input.refusal.decisionSource === 'user') {
     return 'respect-human-decision'
   }
-  return input.refusal.origin === 'host-containment' &&
+  const contained =
+    input.refusal.origin === 'host-containment' &&
     input.refusal.decisionSource === 'system' &&
     (input.refusal.reply === 'host-result' || input.refusal.reply === 'transport-written') &&
-    input.routeObserved &&
     input.attempts === 0
-    ? 'retry-listed-route-once'
-    : 'report-blocker'
+  if (!contained || input.routeUnavailable) return 'report-blocker'
+  return input.routeObserved ? 'retry-listed-route-once' : 'verify-listed-route'
 }
 
 export function createRunToolCapabilityReceipt(
@@ -264,7 +269,7 @@ export function createRunToolCapabilityReceipt(
     blocker: null,
     lifecycleSettled: false
   }
-  const snapshot = (): RunToolCapabilityReceipt => boundedSnapshot(receipt)
+  const snapshot = (): RunToolCapabilityReceipt => boundRunToolCapabilityReceipt(receipt)
   const publish = (): void => {
     receipt.revision += 1
     receipt.timestamp = new Date(now()).toISOString()

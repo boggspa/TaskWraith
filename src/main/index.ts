@@ -1695,7 +1695,6 @@ import {
 import {
   grokToolKindToService,
   type AcpPermissionRequest,
-  type AcpPermissionDecision
 } from './grok/GrokAcpProtocol'
 import {
   grokTaskWraithBrokerToolRequested,
@@ -1747,6 +1746,10 @@ import {
 import { resolveMistralCredentialLaunch } from './mistral/MistralCredentialLane'
 import { createMistralTurnAbortController, runMistralAcpTurn } from './mistral/MistralAcpClient'
 import { createMistralPermissionHandler, mistralPermissionLedgerRecord } from './mistral/MistralPermissionPolicy'
+import { createRuntimeToolCapabilityRecorder, configureRunManagedToolReceipt } from './providers/RunToolCapabilityRuntime'
+import { readRunToolCapabilityReceipt } from './providers/RunToolCapabilityStore'
+import { createAntigravityAcpPermissionHandler, antigravityRefusalLedgerRecord, captureAgyApproval } from './antigravity/AntigravityToolPermission'
+import { attributedToolRefusalText } from './acp/AcpToolRefusalAttribution'
 // Devin: ACP-over-stdio seat (`devin acp`). Launch policy + credential lanes in
 // devin/DevinCliArgs + DevinCredentialLane + DevinCredentialStore, gates in
 // devin/devinGate.ts (same pure-env constraint as mistralGate), ACP hooks in
@@ -4979,6 +4982,8 @@ function publishNativeWindowRendererEvent(event: NativeWindowCoordinatorRenderer
 }
 
 const desktopToolExecutors = createDesktopToolExecutors({
+  readToolCapabilityReceipt: (runId, chatId, provider) =>
+    readRunToolCapabilityReceipt({ userDataPath: app.getPath('userData'), runId, chatId, provider }),
   readKimiCapabilityReceipt: (runId, chatId) =>
     readKimiRunCapabilityReceipt({ userDataPath: app.getPath('userData'), runId, chatId }),
   getBridgeDaemon: () => bridgeDaemonRef,
@@ -14768,6 +14773,13 @@ function appendDurableRunEventForRoute(
     payload: durablePayload
   })
 }
+
+const recordProviderToolCapability = createRuntimeToolCapabilityRecorder({
+  getChat: (chatId) => AppStore.getChat(chatId) || null,
+  record: (receipt) => appendDurableRunEventForRoute(receipt.provider,
+    { appRunId: receipt.runId, appChatId: receipt.chatId || undefined }, 'lifecycle', 'control',
+    'Provider tool capability receipt', { type: receipt.type, toolCapabilityReceipt: receipt })
+})
 
 function runItemIdentityForRoute(
   provider: ProviderId,
@@ -36851,44 +36863,25 @@ async function runAntigravityOfficialAcpProvider(
   // outcome, and its documented default is DENY: a missing, throwing,
   // rejecting, or late/stale handler can never resolve to an allow. Nothing
   // below weakens any of those properties.
-  const antigravityAcpPermissionHandler = async (
-    request: AcpPermissionRequest
-  ): Promise<AcpPermissionDecision> => {
-    // TaskWraith broker tools are independently gated by the broker itself.
-    // Allowing the ACP hop here avoids a duplicate provider card; it does not
-    // bypass the signed service policy or the exact mutation transaction. The
-    // length guard is stricter than the sibling seats: this allow is
-    // unreachable unless a broker was actually attached above.
-    if (antigravityAcpMcpServers.length > 0 && antigravityAcpBrokerToolRequested(request)) {
-      return 'allow'
-    }
-    // The same closed-adapter gate the sibling ACP seats use, resolved against
-    // the antigravity native-action catalogue (view_file/read_file/list_dir are
-    // reads; write_to_file/replace_file_content/delete_file are mutations;
-    // run_command is shell).
-    const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
-      provider: 'antigravity',
-      toolName: request.toolName,
-      toolKind: request.toolKind,
+  const agyAcpToolReceipt = recordProviderToolCapability('antigravity', route, payload, 'antigravity-acp')
+  configureRunManagedToolReceipt(agyAcpToolReceipt, {
+    attached: antigravityAcpMcpServers.length > 0,
+    namespace: antigravityAcpReadOnlySeat ? ANTIGRAVITY_ACP_SCOPED_MCP_SERVER_NAME : GEMINI_MCP_SERVER_NAME,
+    profileId: payload.taskWraithMcpProfileId,
+    safeSubset: antigravityAcpReadOnlySeat,
+    planSubset: payload.effectivePermissions?.presetId === 'plan',
+    reason: antigravityAcpMcpServers.length ? undefined : 'The official AntiGravity ACP run has no attached TaskWraith broker.'
+  })
+  const antigravityAcpPermissionHandler = createAntigravityAcpPermissionHandler({
+    isBrokerTool: (request) => antigravityAcpMcpServers.length > 0 && antigravityAcpBrokerToolRequested(request),
+    preflight: (request) => preflightNativeWorkspaceTool({
+      provider: 'antigravity', toolName: request.toolName, toolKind: request.toolKind,
       rawToolCall: request.rawToolCall,
       workspacePath: payload.scope === 'global' ? undefined : payload.workspace,
-      // The official ACP server exposes a permission hook but no
-      // workspace-rooted native shell sandbox TaskWraith can attest. File tools
-      // can be path-preflighted; shell stays fail-closed.
       runtimeSandboxed: false
-    })
-    if (nativeWorkspacePreflight.kind === 'deny') return 'deny'
-    if (nativeWorkspacePreflight.kind === 'allow' && nativeWorkspacePreflight.access === 'read') {
-      return 'allow'
-    }
-    if (grokReadOnlyShellRequestAllowed(request)) return 'allow'
-    // Anything unresolved or not provably read falls through to DENY, including
-    // the 'not_applicable' classification. Native mutators never bypass the
-    // mutation transaction boundary, exactly as on the Devin and Vibe seats: a
-    // write-capable seat is served by brokered exact edits, not opaque provider
-    // writes. The seat's configured posture is therefore never widened here.
-    return 'deny'
-  }
+    }),
+    isReadOnlyShell: grokReadOnlyShellRequestAllowed
+  })
   // Thin per-run projection modeled on the other ACP seats' compat lines,
   // deliberately minimal: no usage estimation, thinking projection, or
   // session resume yet.
@@ -36940,6 +36933,10 @@ async function runAntigravityOfficialAcpProvider(
       prompt: payload.prompt,
       cwd,
       onPermissionRequest: antigravityAcpPermissionHandler,
+      toolReceipt: agyAcpToolReceipt,
+      onPermissionRefusal: (request, receipt) => recordApprovalLedgerDecision(
+        antigravityRefusalLedgerRecord({ runId: route.appRunId!, chatId: route.appChatId, workspacePath: payload.workspace }, request, receipt)
+      ),
       // Brokered TaskWraith tools are this seat's write path; native mutators
       // stay denied. Empty list when the two attach gates did not both pass.
       mcpServers: antigravityAcpMcpServers,
@@ -37055,6 +37052,7 @@ async function runAntigravityAgyProvider(
   payload: AgentRunPayload
 ) {
   const route = routeWithRunId('antigravity', payload)
+  const agyToolReceipt = recordProviderToolCapability('antigravity', route, payload, 'agy-print')
   const isolatedMutationWorkspace = Boolean(
     payload.runtimeWorktree?.status === 'selected' &&
     payload.runtimeWorktree.effectiveWorkspacePath &&
@@ -37239,13 +37237,15 @@ async function runAntigravityAgyProvider(
           }
         }
         if (kind === 'shell') {
-          if (!toolCall.command) return { decision: 'none' }
-          const approvalService = antigravityShellApprovalService(toolCall.command)
+          const command = toolCall.command
+          if (!command) return { decision: 'none' }
+          const approvalService = antigravityShellApprovalService(command)
           const toolId = `agy-shell-${Date.now()}-${++toolSeq}`
           emitAgyHookToolEvent(toolId, 'tool_use', toolCall.name, {
-            command: toolCall.command
+            command
           })
-          const allowed = await requestAgenticServiceApproval(
+          const approval = await captureAgyApproval({ toolCallId: toolId, toolName: toolCall.name,
+            request: (receiptHooks) => requestAgenticServiceApproval(
             event.sender,
             'antigravity',
             approvalService,
@@ -37256,21 +37256,22 @@ async function runAntigravityAgyProvider(
                 approvalService === 'externalPublish'
                   ? 'AntiGravity external publish'
                   : 'AntiGravity shell command',
-              body: toolCall.command,
+              body: command,
               preview: {
                 toolName: 'run_command',
-                command: toolCall.command,
-                params: { command: toolCall.command }
+                command,
+                params: { command }
               },
-              runId: route.appRunId
+              runId: route.appRunId,
+              ...receiptHooks
             }
-          )
-          const decision: AgyHookBridgeDecision = allowed
+          ) })
+          const decision: AgyHookBridgeDecision = approval.allowed
             ? { decision: 'allow' }
             : {
                 decision: 'deny',
-                reason:
-                  'TaskWraith declined this command under the current permission tier. Continue with permitted read-only inspection or adjust the approach.'
+                reason: attributedToolRefusalText(approval.refusal!),
+                onReplyWritten: () => agyToolReceipt?.refusal({ ...approval.refusal!, reply: 'transport-written' })
               }
           emitAgyHookToolEvent(
             toolId,
@@ -37308,7 +37309,8 @@ async function runAntigravityAgyProvider(
             server,
             ...(toolCall.mcpToolName ? { tool: toolCall.mcpToolName } : {})
           })
-          const allowed = await requestAgenticServiceApproval(
+          const approval = await captureAgyApproval({ toolCallId: toolId, toolName: toolCall.name,
+            request: (receiptHooks) => requestAgenticServiceApproval(
             event.sender,
             'antigravity',
             'mcpTools',
@@ -37317,14 +37319,16 @@ async function runAntigravityAgyProvider(
               method: 'agy_native_mcp',
               title: 'AntiGravity MCP tool',
               body: `${server}${toolCall.mcpToolName ? ` · ${toolCall.mcpToolName}` : ''}`,
-              runId: route.appRunId
+              runId: route.appRunId,
+              ...receiptHooks
             }
-          )
-          const decision: AgyHookBridgeDecision = allowed
+          ) })
+          const decision: AgyHookBridgeDecision = approval.allowed
             ? { decision: 'allow' }
             : {
                 decision: 'deny',
-                reason: 'TaskWraith declined this MCP call under the current permission tier.'
+                reason: attributedToolRefusalText(approval.refusal!),
+                onReplyWritten: () => agyToolReceipt?.refusal({ ...approval.refusal!, reply: 'transport-written' })
               }
           emitAgyHookToolEvent(
             toolId,
@@ -37354,9 +37358,13 @@ async function runAntigravityAgyProvider(
           const reason =
             'This run is read-only (plan mode), so file changes cannot be applied. Describe the intended edits in your response instead of writing them.'
           emitAgyHookToolEvent(toolId, 'tool_result', toolCall.name, {}, 'error', reason)
-          return { decision: 'deny', reason }
+          return { decision: 'deny', reason, onReplyWritten: () => agyToolReceipt?.refusal({
+            toolCallId: toolId, toolName: toolCall.name, origin: 'host-policy', decisionSource: 'system',
+            reason, reply: 'transport-written'
+          }) }
         }
-        const allowed = await requestAgenticServiceApproval(
+        const approval = await captureAgyApproval({ toolCallId: toolId, toolName: toolCall.name,
+            request: (receiptHooks) => requestAgenticServiceApproval(
           event.sender,
           'antigravity',
           'fileChanges',
@@ -37369,15 +37377,16 @@ async function runAntigravityAgyProvider(
               toolName: toolCall.name,
               ...(target ? { path: target, params: { path: target } } : {})
             },
-            runId: route.appRunId
+            runId: route.appRunId,
+            ...receiptHooks
           }
-        )
-        const decision: AgyHookBridgeDecision = allowed
+        ) })
+        const decision: AgyHookBridgeDecision = approval.allowed
           ? { decision: 'allow' }
           : {
               decision: 'deny',
-              reason:
-                'TaskWraith declined this file change under the current permission tier. Continue without editing this path or adjust the approach.'
+              reason: attributedToolRefusalText(approval.refusal!),
+              onReplyWritten: () => agyToolReceipt?.refusal({ ...approval.refusal!, reply: 'transport-written' })
             }
         emitAgyHookToolEvent(
           toolId,
@@ -37531,6 +37540,12 @@ async function runAntigravityAgyProvider(
     }
   }
 
+  configureRunManagedToolReceipt(agyToolReceipt, { attached: Boolean(permissionLease?.mcpRegistered),
+    namespace: 'TaskWraith', profileId: payload.taskWraithMcpProfileId,
+    safeSubset: payload.effectivePermissions?.readOnly, planSubset: payload.effectivePermissions?.presetId === 'plan',
+    reason: permissionLease?.mcpRegistered ? undefined : 'TaskWraith MCP registration was not available for this agy run; native tools retain their existing policy.'
+  })
+
   const releasePermissionLease = async (): Promise<void> => {
     releaseHookBridgeRun?.()
     releaseHookBridgeRun = undefined
@@ -37617,6 +37632,7 @@ async function runAntigravityAgyProvider(
   } finally {
     await brainTranscriptMonitor.stopAndDrain()
     await releasePermissionLease()
+    agyToolReceipt?.settle()
   }
 }
 

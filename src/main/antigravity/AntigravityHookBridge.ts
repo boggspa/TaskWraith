@@ -48,6 +48,8 @@ export interface AgyHookBridgeDecision {
   /** `none` responds `{}` — no decision, agy's native flow proceeds. */
   decision: 'allow' | 'deny' | 'none'
   reason?: string
+  /** Host-only audit callback; never serialized into the provider reply. */
+  onReplyWritten?: () => void
 }
 
 export interface AgyHookToolCall {
@@ -338,7 +340,10 @@ export async function startAgyHookBridgeServer(): Promise<AgyHookBridgeServer> {
   const runs = new Map<string, (toolCall: AgyHookToolCall) => Promise<AgyHookBridgeDecision>>()
 
   const server: Server = createServer((request, response) => {
-    const respond = (payload: Record<string, unknown>): void => {
+    const respond = (payload: Record<string, unknown>, onWritten?: () => void): void => {
+      if (onWritten) response.once('finish', () => {
+        try { onWritten() } catch { /* Audit cannot alter a completed reply. */ }
+      })
       const text = JSON.stringify(payload)
       response.writeHead(200, {
         'Content-Type': 'application/json',
@@ -402,7 +407,8 @@ export async function startAgyHookBridgeServer(): Promise<AgyHookBridgeServer> {
               ? { decision: 'deny', ...(decision.reason ? { reason: decision.reason } : {}) }
               : decision.decision === 'allow'
                 ? { decision: 'allow' }
-                : {}
+                : {},
+            decision.onReplyWritten
           ),
         denyBridgeFailure
       )

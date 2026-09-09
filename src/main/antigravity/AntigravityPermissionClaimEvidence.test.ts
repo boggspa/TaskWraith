@@ -60,6 +60,8 @@ describe('AntiGravity permission-claim evidence', () => {
     const qualified = qualifyUnsupportedAntigravityPermissionClaim(falseRefusal, [activity()])
     expect(qualified).toContain(ANTIGRAVITY_UNSUPPORTED_PERMISSION_CLAIM_NOTE)
     expect(qualified).toContain(falseRefusal)
+    expect(qualified).toContain('unconfirmed')
+    expect(qualified).not.toContain('retry the requested in-workspace operation')
     expect(qualifyUnsupportedAntigravityPermissionClaim(qualified, [activity()])).toBe(qualified)
   })
 })
