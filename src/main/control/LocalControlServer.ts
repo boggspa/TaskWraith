@@ -7,6 +7,7 @@ import {
   TASKWRAITH_CONTROL_MAX_LINE_BYTES,
   TASKWRAITH_CONTROL_PROTOCOL_VERSION,
   decodeTaskWraithControlClientMessage,
+  type TaskWraithControlCapability,
   type TaskWraithControlClientMessage,
   type TaskWraithControlDiscovery,
   type TaskWraithControlEvent,
@@ -60,8 +61,12 @@ interface ClientState {
   socket: Socket
   authenticated: boolean
   buffer: string
+  /** What the client asked to be pushed. Projection work is owed only for these. */
+  capabilities: Set<TaskWraithControlCapability>
   selectedThreadId: string | null
   selectedThreadLimit: number
+  /** Digest of the last snapshot this client received; per client, so a skipped push is retried. */
+  lastSnapshotDigest: string
   lastThreadDigest: string
   handshakeTimer: ReturnType<typeof setTimeout>
 }
@@ -76,6 +81,8 @@ const SERVER_CAPABILITIES = [
   'configure'
 ] as const
 
+const KNOWN_CAPABILITIES: ReadonlySet<string> = new Set(SERVER_CAPABILITIES)
+
 function stableDigest(value: unknown): string {
   return JSON.stringify(value, (key, entry) =>
     key === 'generatedAt' || key === 'sequence' ? undefined : entry
@@ -88,12 +95,14 @@ function safeTokenEquals(expected: string, received: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-function socketWrite(socket: Socket, message: TaskWraithControlHostMessage): boolean {
-  if (socket.destroyed || !socket.writable) return false
+type SocketWriteResult = 'written' | 'too-large' | 'unwritable'
+
+function socketWrite(socket: Socket, message: TaskWraithControlHostMessage): SocketWriteResult {
+  if (socket.destroyed || !socket.writable) return 'unwritable'
   let line = `${JSON.stringify(message)}\n`
   let bytes = Buffer.byteLength(line, 'utf8')
   if (bytes > TASKWRAITH_CONTROL_MAX_LINE_BYTES) {
-    if (message.type !== 'response') return false
+    if (message.type !== 'response') return 'too-large'
     line = `${JSON.stringify({
       type: 'response',
       id: message.id,
@@ -107,10 +116,10 @@ function socketWrite(socket: Socket, message: TaskWraithControlHostMessage): boo
   }
   if (socket.writableLength + bytes > TASKWRAITH_CONTROL_MAX_LINE_BYTES * 2) {
     socket.destroy(new Error('TaskWraith local-control client is not draining responses.'))
-    return false
+    return 'unwritable'
   }
   socket.write(line)
-  return true
+  return 'written'
 }
 
 async function socketIsLive(socketPath: string): Promise<boolean> {
@@ -320,8 +329,10 @@ export class LocalControlServer {
       socket,
       authenticated: false,
       buffer: '',
+      capabilities: new Set(),
       selectedThreadId: null,
       selectedThreadLimit: 80,
+      lastSnapshotDigest: '',
       lastThreadDigest: '',
       handshakeTimer: setTimeout(() => socket.destroy(), 5_000)
     }
@@ -391,6 +402,15 @@ export class LocalControlServer {
       return
     }
     state.authenticated = true
+    state.capabilities = new Set(
+      message.capabilities.filter((capability): capability is TaskWraithControlCapability =>
+        KNOWN_CAPABILITIES.has(capability)
+      )
+    )
+    // Start from the projection the host last published: a fresh subscriber
+    // pulls its first snapshot itself rather than being pushed one it did not
+    // ask for, exactly as before per-client digests existed.
+    state.lastSnapshotDigest = this.lastSnapshotDigest
     clearTimeout(state.handshakeTimer)
     const welcome: TaskWraithControlWelcome = {
       type: 'welcome',
@@ -473,42 +493,74 @@ export class LocalControlServer {
     }
   }
 
+  /** A push is queued only when the client's previous one has fully flushed. */
+  private static canPush(client: ClientState): boolean {
+    return !client.socket.destroyed && client.socket.writable && client.socket.writableLength === 0
+  }
+
+  /**
+   * Projection work is owed only to clients that subscribed to it: a
+   * compose-only client (a shell steer, an outside agent) costs the host
+   * nothing per tick, while the TUI advertises every capability and is served
+   * exactly as before. A client whose previous push has not flushed is
+   * skipped, never queued behind — when the host's own loop is the slow side,
+   * stacking pushes is what tripped the not-draining guard — and the next
+   * tick retries with whatever is newest, so a skipped intermediate is never
+   * owed.
+   */
   private async poll(): Promise<void> {
-    if (![...this.clients].some((client) => client.authenticated)) return
+    const subscribers: ClientState[] = []
+    const watchers: ClientState[] = []
+    for (const client of this.clients) {
+      if (!client.authenticated) continue
+      if (client.capabilities.has('snapshot')) subscribers.push(client)
+      if (client.capabilities.has('transcript') && client.selectedThreadId) watchers.push(client)
+    }
+    if (subscribers.length === 0 && watchers.length === 0) return
     if (this.polling) return
     this.polling = true
     try {
-      const snapshot = await this.options.facade.snapshot()
-      const digest = stableDigest(snapshot)
-      if (digest !== this.lastSnapshotDigest) {
+      if (subscribers.length > 0) {
+        const snapshot = await this.options.facade.snapshot()
+        const digest = stableDigest(snapshot)
         this.lastSnapshotDigest = digest
-        const event: TaskWraithControlEvent = {
-          type: 'event',
-          event: 'snapshot.changed',
-          sequence: ++this.snapshotSequence,
-          payload: snapshot
-        }
-        for (const client of this.clients) {
-          if (client.authenticated) socketWrite(client.socket, event)
+        let event: TaskWraithControlEvent | null = null
+        for (const client of subscribers) {
+          if (client.lastSnapshotDigest === digest || !LocalControlServer.canPush(client)) continue
+          if (!event) {
+            event = {
+              type: 'event',
+              event: 'snapshot.changed',
+              sequence: ++this.snapshotSequence,
+              payload: snapshot
+            }
+          }
+          // A projection too large for the transport is not retried every
+          // tick: the client cannot receive it, and its own snapshot.get
+          // reports the same bounded error.
+          if (socketWrite(client.socket, event) !== 'unwritable') {
+            client.lastSnapshotDigest = digest
+          }
         }
       }
 
-      for (const client of this.clients) {
-        if (!client.authenticated || !client.selectedThreadId) continue
+      for (const client of watchers) {
+        const threadId = client.selectedThreadId
+        if (!threadId || !LocalControlServer.canPush(client)) continue
         try {
           const thread = await this.options.facade.selectThread(
-            client.selectedThreadId,
+            threadId,
             client.selectedThreadLimit
           )
           const threadDigest = stableDigest(thread)
           if (threadDigest === client.lastThreadDigest) continue
-          client.lastThreadDigest = threadDigest
-          socketWrite(client.socket, {
+          const outcome = socketWrite(client.socket, {
             type: 'event',
             event: 'thread.changed',
             sequence: ++this.snapshotSequence,
             payload: thread
           })
+          if (outcome !== 'unwritable') client.lastThreadDigest = threadDigest
         } catch {
           client.selectedThreadId = null
           client.lastThreadDigest = ''

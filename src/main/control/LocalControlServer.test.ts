@@ -494,3 +494,164 @@ describe('LocalControlServer', () => {
     await withDeadline(stale.stop(), 500, 'Control server shutdown did not settle.')
   })
 })
+
+function helloWith(token: string, capabilities: string[]): string {
+  return `${JSON.stringify({
+    type: 'hello',
+    protocolVersion: 1,
+    client: 'taskwraith-tui',
+    clientVersion: '0.1.0-test',
+    token,
+    capabilities
+  })}\n`
+}
+
+/** Every newline-delimited frame the host writes, for as long as the socket lives. */
+function collectFrames(socket: Socket): { frames: Array<Record<string, unknown>> } {
+  const frames: Array<Record<string, unknown>> = []
+  let buffer = ''
+  socket.on('data', (chunk: Buffer | string) => {
+    buffer += chunk.toString()
+    let newline = buffer.indexOf('\n')
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline)
+      buffer = buffer.slice(newline + 1)
+      if (line.trim()) frames.push(JSON.parse(line) as Record<string, unknown>)
+      newline = buffer.indexOf('\n')
+    }
+  })
+  return { frames }
+}
+
+function request(id: string, method: string, params: Record<string, unknown>): string {
+  return `${JSON.stringify({ type: 'request', id, method, params })}\n`
+}
+
+function eventsOf(frames: Array<Record<string, unknown>>, event: string) {
+  return frames.filter((frame) => frame.type === 'event' && frame.event === event)
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const unusedFacadeStubs = {
+  sendPrompt: async () => ({ dispatched: true, message: 'ok' }),
+  cancelRun: async () => ({ cancelled: true, message: 'ok' }),
+  threadOffers: () => {
+    throw new Error('offers not stubbed')
+  },
+  toggleEnsembleSeat: async () => ({ updated: false, message: 'not stubbed' })
+}
+
+describe('LocalControlServer subscriber gating and push backpressure', () => {
+  it('never polls the facade for a client that did not subscribe to snapshots', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-control-gating-'))
+    const demo = createTaskWraithTuiDemoState(1_000)
+    if (!demo.snapshot || !demo.thread) throw new Error('Demo projection is incomplete.')
+    const snapshot = vi.fn(() => demo.snapshot!)
+    const selectThread = vi.fn(() => demo.thread!)
+    const server = new LocalControlServer({
+      userDataPath,
+      hostVersion: '1.9.8-test',
+      pollIntervalMs: 5,
+      facade: { ...unusedFacadeStubs, snapshot, selectThread }
+    })
+    await server.start()
+    cleanup.push(() => server.stop())
+    const token = (await readFile(server.tokenPath, 'utf8')).trim()
+
+    // A sender: it will only ever compose, so the host owes it no projection work.
+    const sender = await connectRaw(server.socketPath)
+    cleanup.push(() => {
+      sender.destroy()
+    })
+    const { frames } = collectFrames(sender)
+    sender.write(helloWith(token, ['compose']))
+    await vi.waitFor(() =>
+      expect(frames).toContainEqual(expect.objectContaining({ type: 'welcome' }))
+    )
+    await sleep(60)
+    expect(snapshot).not.toHaveBeenCalled()
+
+    sender.write(request('send-1', 'composer.send', { threadId: 'demo-thread', text: 'hello' }))
+    await vi.waitFor(() =>
+      expect(frames).toContainEqual(expect.objectContaining({ type: 'response', id: 'send-1' }))
+    )
+    await sleep(60)
+    expect(snapshot).not.toHaveBeenCalled()
+
+    // Without the transcript capability a thread.select is a one-shot page:
+    // answered once, never re-projected, never pushed.
+    sender.write(request('select-1', 'thread.select', { threadId: 'demo-thread', limit: 5 }))
+    await vi.waitFor(() =>
+      expect(frames).toContainEqual(
+        expect.objectContaining({ type: 'response', id: 'select-1', ok: true })
+      )
+    )
+    await sleep(60)
+    expect(selectThread).toHaveBeenCalledTimes(1)
+    expect(snapshot).not.toHaveBeenCalled()
+    expect(eventsOf(frames, 'snapshot.changed')).toHaveLength(0)
+    expect(eventsOf(frames, 'thread.changed')).toHaveLength(0)
+    expect(sender.destroyed).toBe(false)
+  })
+
+  it('skips a snapshot push while the previous one is unflushed, then delivers the latest', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-control-backpressure-'))
+    const demo = createTaskWraithTuiDemoState(1_000)
+    if (!demo.snapshot || !demo.thread) throw new Error('Demo projection is incomplete.')
+    // Each push is far larger than the socket buffers, so a paused reader
+    // leaves the previous push unflushed on the host side.
+    const padding = 'x'.repeat(256 * 1024)
+    let calls = 0
+    const snapshot = vi.fn(() => {
+      calls += 1
+      return {
+        ...demo.snapshot!,
+        workspaces: [{ ...demo.snapshot!.workspaces[0]!, name: `${padding}${calls}` }]
+      }
+    })
+    const server = new LocalControlServer({
+      userDataPath,
+      hostVersion: '1.9.8-test',
+      pollIntervalMs: 5,
+      facade: { ...unusedFacadeStubs, snapshot, selectThread: () => demo.thread! }
+    })
+    await server.start()
+    cleanup.push(() => server.stop())
+    const token = (await readFile(server.tokenPath, 'utf8')).trim()
+
+    const subscriber = await connectRaw(server.socketPath)
+    cleanup.push(() => {
+      subscriber.destroy()
+    })
+    const { frames } = collectFrames(subscriber)
+    subscriber.write(helloWith(token, ['snapshot']))
+    await vi.waitFor(() =>
+      expect(frames).toContainEqual(expect.objectContaining({ type: 'welcome' }))
+    )
+    subscriber.pause()
+    await sleep(150)
+    const callsAtResume = calls
+    expect(callsAtResume).toBeGreaterThanOrEqual(10)
+    subscriber.resume()
+
+    const sequenceOf = (frame: Record<string, unknown>): number => {
+      const payload = frame.payload as { workspaces?: Array<{ name?: string }> } | undefined
+      return Number(String(payload?.workspaces?.[0]?.name ?? '').slice(padding.length))
+    }
+    await vi.waitFor(
+      () => {
+        const delivered = eventsOf(frames, 'snapshot.changed').map(sequenceOf)
+        expect(Math.max(...delivered)).toBeGreaterThanOrEqual(callsAtResume)
+      },
+      { timeout: 2_000 }
+    )
+    const delivered = eventsOf(frames, 'snapshot.changed').map(sequenceOf)
+    // The stale intermediates were never queued behind the unflushed push —
+    // far fewer pushes than polls, each newer than the one before — and the
+    // subscriber was never mistaken for a client that stopped draining.
+    expect(delivered.length).toBeLessThan(callsAtResume / 2)
+    expect(delivered).toEqual([...delivered].sort((a, b) => a - b))
+    expect(subscriber.destroyed).toBe(false)
+  })
+})
