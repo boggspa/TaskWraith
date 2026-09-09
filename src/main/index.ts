@@ -1845,6 +1845,11 @@ import {
 import { PiLiveSteerTracker, parsePiQueueUpdate, piLiveSteerEnabled } from './pi/PiSteerDelivery'
 import { buildPiRpcArgs } from './pi/PiCliArgs'
 import {
+  configurePiRunToolReceipt,
+  piToolsFromArgs,
+  recordPiAttachedTools
+} from './pi/PiToolCapabilityEvidence'
+import {
   PI_TASKWRAITH_TOOLS_READY_MARKER,
   piTaskWraithToolsReadyPromptAppendix,
   piTaskWraithToolsUnavailablePromptAppendix,
@@ -24057,6 +24062,22 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     )
   })
 
+  // Created here, after every setup gate has passed, so no early return can
+  // leave a receipt unsealed. The advertised lists come from the argv this run
+  // actually carries rather than from the constants that built it, so the
+  // receipt cannot drift from what Pi was told.
+  const piToolReceipt = recordProviderToolCapability('pi', route, payload, 'pi-rpc')
+  const piManagedToolNames: readonly string[] = preparedTaskWraithTools
+    ? preparedTaskWraithTools.toolNames
+    : []
+  const piLaunchTools = piToolsFromArgs(args)
+  configurePiRunToolReceipt(piToolReceipt, {
+    nativeTools: piLaunchTools.filter((name) => !piManagedToolNames.includes(name)),
+    managedTools: piManagedToolNames.filter((name) => piLaunchTools.includes(name)),
+    managedPrepared: Boolean(preparedTaskWraithTools),
+    ...(taskWraithToolsPreparationFailure ? { failure: taskWraithToolsPreparationFailure } : {})
+  })
+
   // Base env (PATH + TASKWRAITH markers) → credential firewall → pi switches.
   const baseEnv = createCliProviderRunEnv({
     provider: 'pi',
@@ -24144,7 +24165,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
             ]
     })
   }
-  await runCliProviderProcess(event, 'pi', resolved.binaryPath, args, payload, {
+  const piTurn = runCliProviderProcess(event, 'pi', resolved.binaryPath, args, payload, {
     fallback: false,
     resolvedEnv,
     ...((managedToolsExpected || ephemeralSession) && !preparedTaskWraithTools
@@ -24167,6 +24188,9 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
             timeoutMs: 3_000,
             fallbackInitialLines: [piPromptLine(managedToolsFallbackPrompt)],
             onReady: () => {
+              // Pi prints this marker only once the managed extension attached
+              // with exactly this list, which is the whole of what it proves.
+              recordPiAttachedTools(piToolReceipt, piManagedToolNames)
               emitWirePromptCapture({
                 appRunId: route.appRunId,
                 appChatId: route.appChatId,
@@ -24309,6 +24333,9 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
       }
     }
   })
+  // Seal on every terminal path, success or throw, so approval_status never
+  // reports a finished Pi run as though its tools were still resolving.
+  await sealRunToolReceiptAfterCleanup(piToolReceipt, [() => piTurn])
 }
 
 // 1.0.6-G4/G6 — Grok over ACP (`grok agent stdio`, bidirectional

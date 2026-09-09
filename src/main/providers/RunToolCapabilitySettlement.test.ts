@@ -88,6 +88,37 @@ describe('sealRunToolReceipt', () => {
   })
 })
 
+describe('the Pi lane seals its run tool receipt', () => {
+  it('creates the receipt after every early exit, so none can strand it', () => {
+    const lines = providerRegion('async function runPiProvider(')
+    const created = lines.findIndex((line) =>
+      line.includes('const piToolReceipt = recordProviderToolCapability(')
+    )
+    expect(created).toBeGreaterThan(-1)
+
+    // Every early exit in this function sits at two or three indent levels;
+    // deeper returns belong to inner callbacks, which cannot end the turn.
+    // Matching `return` anywhere on the line catches `if (x) return` too.
+    const earlyExit = (line: string): boolean => /^ {2,6}(\S.*\s)?return\b/.test(line)
+    // Pi validates model, images, isolation and tool preparation BEFORE the
+    // receipt exists, which is what makes one seal at the end sufficient.
+    // Moving creation above those gates, or adding any exit below it, reds this.
+    expect(lines.filter((line, index) => index > created && earlyExit(line))).toEqual([])
+    // Without this the assertion above passes vacuously should the region
+    // extraction ever stop matching the real early exits.
+    expect(
+      lines.filter((line, index) => index < created && earlyExit(line)).length
+    ).toBeGreaterThan(0)
+  })
+
+  it('seals on any turn outcome and records the extension handshake', () => {
+    const region = providerRegion('async function runPiProvider(').join('\n')
+    expect(region).toContain('sealRunToolReceiptAfterCleanup(piToolReceipt, [() => piTurn])')
+    // The marker callback is the only attachment evidence this lane has.
+    expect(region).toContain('recordPiAttachedTools(piToolReceipt, piManagedToolNames)')
+  })
+})
+
 describe('every AntiGravity terminal path seals its run tool receipt', () => {
   it.each([
     ['agy print-mode', 'async function runAntigravityAgyProvider(', 'agyToolReceipt'],

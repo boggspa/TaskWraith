@@ -226,7 +226,7 @@ describe('provider dispatch integration', () => {
     )
     expect(pi).toContain('isolatedHomeDir: isolatedHomeLease.path')
     expect(pi.indexOf('writePiCerebrasCompletionCapOverride({')).toBeLessThan(
-      pi.indexOf('await runCliProviderProcess(')
+      pi.indexOf('runCliProviderProcess(')
     )
   })
 
@@ -237,7 +237,7 @@ describe('provider dispatch integration', () => {
     expect(pi).toContain('writePiMistralModelRegistration({')
     expect(pi).toContain('isolatedHomeDir: isolatedHomeLease.path')
     expect(pi.indexOf('writePiMistralModelRegistration({')).toBeLessThan(
-      pi.indexOf('await runCliProviderProcess(')
+      pi.indexOf('runCliProviderProcess(')
     )
   })
 
@@ -248,7 +248,7 @@ describe('provider dispatch integration', () => {
     expect(pi).toContain('writePiOpenRouterModelRegistration({')
     expect(pi).toContain('isolatedHomeDir: isolatedHomeLease.path')
     expect(pi.indexOf('writePiOpenRouterModelRegistration({')).toBeLessThan(
-      pi.indexOf('await runCliProviderProcess(')
+      pi.indexOf('runCliProviderProcess(')
     )
   })
 
@@ -278,7 +278,7 @@ describe('provider dispatch integration', () => {
       pi.indexOf('const verdict = piModelPolicyVerdict(')
     )
     expect(pi.indexOf('const compatibilityRecipient')).toBeLessThan(
-      pi.indexOf('await runCliProviderProcess(')
+      pi.indexOf('runCliProviderProcess(')
     )
   })
 
@@ -289,7 +289,7 @@ describe('provider dispatch integration', () => {
     expect(pi).toContain('TASKWRAITH_PI_COORDINATION_TOKEN = piTaskWraithBrokerToken!')
     expect(pi).toContain('mcpBridgeRuntime.revokePiTaskWraithCredential(piTaskWraithBrokerToken)')
     expect(pi.indexOf('issuePiTaskWraithCredential(')).toBeLessThan(
-      pi.indexOf('await runCliProviderProcess(')
+      pi.indexOf('runCliProviderProcess(')
     )
     expect(pi).toContain('exactFileToolsExpected,')
   })
