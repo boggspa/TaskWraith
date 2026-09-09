@@ -54,7 +54,10 @@ describe('piModelPolicyVerdict', () => {
       'thinkingmachines/inkling:free',
       'thinkingmachines/inkling-small:free',
       'inception/mercury-2.5-preview',
-      'tencent/hy4-preview'
+      'tencent/hy4-preview',
+      'inception/mercury-2.5',
+      'nex-agi/nex-n2.5-mini:free',
+      'nex-agi/nex-n2.5-pro:free'
     ])
   })
 
@@ -77,7 +80,10 @@ describe('piModelPolicyVerdict', () => {
       'thinkingmachines/inkling:free',
       'thinkingmachines/inkling-small:free',
       'inception/mercury-2.5-preview',
-      'tencent/hy4-preview'
+      'tencent/hy4-preview',
+      'inception/mercury-2.5',
+      'nex-agi/nex-n2.5-mini:free',
+      'nex-agi/nex-n2.5-pro:free'
     ]) {
       expect(piModelPolicyVerdict('openrouter', modelId).allowed, modelId).toBe(true)
     }
@@ -171,7 +177,10 @@ describe('catalog/policy lockstep', () => {
       'openrouter/thinkingmachines/inkling:free',
       'openrouter/thinkingmachines/inkling-small:free',
       'openrouter/inception/mercury-2.5-preview',
-      'openrouter/tencent/hy4-preview'
+      'openrouter/tencent/hy4-preview',
+      'openrouter/inception/mercury-2.5',
+      'openrouter/nex-agi/nex-n2.5-mini:free',
+      'openrouter/nex-agi/nex-n2.5-pro:free'
     ])
   })
 

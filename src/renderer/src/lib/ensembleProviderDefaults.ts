@@ -509,7 +509,10 @@ const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
     label: 'Inkling Small'
   },
   { id: 'openrouter/tencent/hy4-preview', label: 'Hy4 Preview' },
-  { id: 'openrouter/inception/mercury-2.5-preview', label: 'Mercury 2.5 Preview' }
+  { id: 'openrouter/inception/mercury-2.5-preview', label: 'Mercury 2.5 Preview' },
+  { id: 'openrouter/inception/mercury-2.5', label: 'Mercury 2.5' },
+  { id: 'openrouter/nex-agi/nex-n2.5-mini:free', label: 'Nex-N2.5-Mini' },
+  { id: 'openrouter/nex-agi/nex-n2.5-pro:free', label: 'Nex-N2.5-Pro' }
 ]
 const PI_MODELS = withCuratedUltraTaskSupport(PI_MODEL_ROWS)
 

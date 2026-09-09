@@ -50,7 +50,10 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
   'openrouter/nvidia': { label: 'NVIDIA', hueClass: 'nvidia' },
   'openrouter/thinkingmachines': { label: 'Thinking Machines', hueClass: 'thinkingmachines' },
   'openrouter/tencent': { label: 'Tencent', hueClass: 'tencent' },
-  'openrouter/inception': { label: 'Inception', hueClass: 'inception' }
+  'openrouter/inception': { label: 'Inception', hueClass: 'inception' },
+  // OpenRouter spells the namespace `nex-agi`; the hue class drops the hyphen
+  // so it stays a valid `--provider-<class>-color` token and CSS class name.
+  'openrouter/nex-agi': { label: 'Nex AGI', hueClass: 'nexagi' }
 }
 
 /**
@@ -115,7 +118,10 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
   'openrouter/thinkingmachines/inkling:free': 'Inkling',
   'openrouter/thinkingmachines/inkling-small:free': 'Inkling Small',
   'openrouter/tencent/hy4-preview': 'Hy4 Preview',
-  'openrouter/inception/mercury-2.5-preview': 'Mercury 2.5 Preview'
+  'openrouter/inception/mercury-2.5-preview': 'Mercury 2.5 Preview',
+  'openrouter/inception/mercury-2.5': 'Mercury 2.5',
+  'openrouter/nex-agi/nex-n2.5-mini:free': 'Nex-N2.5-Mini',
+  'openrouter/nex-agi/nex-n2.5-pro:free': 'Nex-N2.5-Pro'
 }
 
 /**

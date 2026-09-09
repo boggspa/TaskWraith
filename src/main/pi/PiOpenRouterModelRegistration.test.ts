@@ -106,6 +106,61 @@ describe('writePiOpenRouterModelRegistration', () => {
     })
   })
 
+  it('registers the three 2026-09-08 routes with verified metadata', () => {
+    const tunableLadder = {
+      off: 'none',
+      minimal: 'minimal',
+      low: 'low',
+      medium: 'medium',
+      high: 'high',
+      max: 'max'
+    }
+    const addedOn20260908 = [
+      'inception/mercury-2.5',
+      'nex-agi/nex-n2.5-mini:free',
+      'nex-agi/nex-n2.5-pro:free'
+    ]
+    const additions = Object.fromEntries(
+      PI_OPENROUTER_CUSTOM_MODELS.filter((model) => addedOn20260908.includes(model.modelId)).map(
+        (model) => [model.modelId, model]
+      )
+    )
+    expect(additions).toEqual({
+      'inception/mercury-2.5': {
+        modelId: 'inception/mercury-2.5',
+        label: 'Mercury 2.5',
+        reasoning: true,
+        thinkingLevelMap: tunableLadder,
+        input: ['text'],
+        contextWindow: 260_000,
+        maxTokens: 65_536,
+        // The LIST rate, not the launch promotion — see the module comment.
+        cost: { input: 0.2, output: 0.75, cacheRead: 0.02, cacheWrite: 0 }
+      },
+      'nex-agi/nex-n2.5-mini:free': {
+        modelId: 'nex-agi/nex-n2.5-mini:free',
+        label: 'Nex-N2.5-Mini',
+        reasoning: true,
+        thinkingLevelMap: tunableLadder,
+        input: ['text'],
+        contextWindow: 262_144,
+        maxTokens: 235_929,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+      },
+      'nex-agi/nex-n2.5-pro:free': {
+        modelId: 'nex-agi/nex-n2.5-pro:free',
+        label: 'Nex-N2.5-Pro',
+        reasoning: true,
+        thinkingLevelMap: tunableLadder,
+        // Only the Pro route takes images; the Mini is text-only.
+        input: ['text', 'image'],
+        contextWindow: 262_144,
+        maxTokens: 235_929,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+      }
+    })
+  })
+
   it('preserves GLM 5.2 Extra High while keeping unsupported extended stops hidden', () => {
     expect(
       PI_OPENROUTER_CUSTOM_MODELS.find((model) => model.modelId === 'z-ai/glm-5.2')

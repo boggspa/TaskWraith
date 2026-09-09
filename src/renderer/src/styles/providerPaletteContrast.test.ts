@@ -75,7 +75,10 @@ const STATIC_PROVIDER_COLORS = {
   // tencent first, so inception's own failure was masked until both joined.
   // Same hues as the brand picks, moved to AA-on-both-grounds luminance.
   tencent: '#4E73CA',
-  inception: '#7C5BE9'
+  inception: '#7C5BE9',
+  // Nex AGI's mark is monochrome, so this hue is a TaskWraith design token,
+  // not a brand value — the most distinct near-neutral in the AA band.
+  nexagi: '#747A42'
 } as const
 
 const PROVIDER_ALIASES = {
@@ -109,7 +112,8 @@ const IOS_PROVIDER_CASES = [
   ['case "thinkingmachines"', '#C24E68'],
   ['case "devin"', '#4878AE'],
   ['case "tencent"', '#4E73CA'],
-  ['case "inception"', '#7C5BE9']
+  ['case "inception"', '#7C5BE9'],
+  ['case "nexagi"', '#747A42']
 ] as const
 
 const PROVIDER_RGB_TRIPLETS = {

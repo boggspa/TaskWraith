@@ -14947,6 +14947,12 @@ button.diff-file-row {
 .notification-newadditions-model.provider-thinkingmachines {
   color: var(--provider-thinkingmachines-color, #c24e68);
 }
+.notification-newadditions-model.provider-inception {
+  color: var(--provider-inception-color, #7c5be9);
+}
+.notification-newadditions-model.provider-nexagi {
+  color: var(--provider-nexagi-color, #747a42);
+}
 
 .notification-newadditions-model.provider-groq {
   color: var(--provider-groq-color, #088482);

@@ -1508,6 +1508,35 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'Paid OpenRouter route (verified 2026-09-09); mirrors the cost block in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/inception/mercury-2.5',
+        inputUsdPerMillion: 0.2,
+        outputUsdPerMillion: 0.75,
+        sourceUrl: 'https://openrouter.ai/inception/mercury-2.5',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'List price (verified 2026-09-09). OpenRouter is discounting the launch 80% to $0.04/$0.15; the estimate tracks the list rate so it does not under-bill when that promotion ends.'
+      },
+      {
+        modelId: 'openrouter/nex-agi/nex-n2.5-mini:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/nex-agi/nex-n2.5-mini:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'OpenRouter :free variant (verified 2026-09-09); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/nex-agi/nex-n2.5-pro:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/nex-agi/nex-n2.5-pro:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'OpenRouter :free variant (verified 2026-09-09); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
       }
     ]
   },

@@ -162,6 +162,21 @@ const PI_MODEL_REASONING: Readonly<Record<string, PiReasoningSupport>> = {
   'openrouter/inception/mercury-2.5-preview': ladder(
     ['minimal', 'low', 'medium', 'high', 'max'],
     'medium'
+  ),
+  // Mercury 2.5 GA keeps the preview's surface: `reasoning_effort` is offered
+  // and supported_efforts is unenumerated, so the gateway takes every value it
+  // spells. Extra High is not one of them.
+  'openrouter/inception/mercury-2.5': ladder(['minimal', 'low', 'medium', 'high', 'max'], 'medium'),
+  // Both Nex-N2.5 routes advertise `reasoning_effort` with no enumerated
+  // supported_efforts — the same shape as Mercury, not Laguna's bare
+  // `reasoning` boolean, so they get the ladder rather than an on/off stop.
+  'openrouter/nex-agi/nex-n2.5-mini:free': ladder(
+    ['minimal', 'low', 'medium', 'high', 'max'],
+    'medium'
+  ),
+  'openrouter/nex-agi/nex-n2.5-pro:free': ladder(
+    ['minimal', 'low', 'medium', 'high', 'max'],
+    'medium'
   )
 }
 

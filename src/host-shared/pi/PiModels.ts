@@ -547,6 +547,43 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     maxOutputTokens: 64_000,
     thinking: true,
     images: false
+  },
+  {
+    // Inception Mercury 2.5 — the GA diffusion LLM, released 2026-09-08. Kept
+    // BESIDE `inception/mercury-2.5-preview`: the preview id is still a live
+    // OpenRouter route, so retiring it here would break saved chats and seats.
+    wireId: 'openrouter/inception/mercury-2.5',
+    upstream: 'openrouter',
+    modelId: 'inception/mercury-2.5',
+    label: 'Mercury 2.5',
+    contextWindow: 260_000,
+    maxOutputTokens: 65_536,
+    thinking: true,
+    images: false
+  },
+  {
+    // Nex AGI Nex-N2.5-Mini — agentic coder, released 2026-09-08. Free route,
+    // BF16, Singapore. Text-only; the Pro sibling below is the vision one.
+    wireId: 'openrouter/nex-agi/nex-n2.5-mini:free',
+    upstream: 'openrouter',
+    modelId: 'nex-agi/nex-n2.5-mini:free',
+    label: 'Nex-N2.5-Mini',
+    contextWindow: 262_144,
+    maxOutputTokens: 235_929,
+    thinking: true,
+    images: false
+  },
+  {
+    // Nex AGI Nex-N2.5-Pro — the larger agentic coder, released 2026-09-08.
+    // Free route, FP8, Singapore. Accepts image input for its visual loop.
+    wireId: 'openrouter/nex-agi/nex-n2.5-pro:free',
+    upstream: 'openrouter',
+    modelId: 'nex-agi/nex-n2.5-pro:free',
+    label: 'Nex-N2.5-Pro',
+    contextWindow: 262_144,
+    maxOutputTokens: 235_929,
+    thinking: true,
+    images: true
   }
 ]
 

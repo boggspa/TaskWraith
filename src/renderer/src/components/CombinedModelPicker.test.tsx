@@ -464,6 +464,25 @@ describe('CombinedModelPicker', () => {
       label: 'Inkling Small',
       brand: 'Thinking Machines',
       hueClass: 'thinkingmachines'
+    },
+    {
+      // GA Mercury reuses the Inception override the Preview row minted.
+      id: 'openrouter/inception/mercury-2.5',
+      label: 'Mercury 2.5',
+      brand: 'Inception',
+      hueClass: 'inception'
+    },
+    {
+      id: 'openrouter/nex-agi/nex-n2.5-mini:free',
+      label: 'Nex-N2.5-Mini',
+      brand: 'Nex AGI',
+      hueClass: 'nexagi'
+    },
+    {
+      id: 'openrouter/nex-agi/nex-n2.5-pro:free',
+      label: 'Nex-N2.5-Pro',
+      brand: 'Nex AGI',
+      hueClass: 'nexagi'
     }
   ])('humanises and brands the $label Pi picker row', ({ id, label, brand, hueClass }) => {
     const model = { id, label: PI_MODEL_LABELS[id] }

@@ -309,6 +309,12 @@
   /* Inception Labs purple (Mercury dLLM) lowered into the same AA band —
    * the brand's #9675FF sat at 3.34:1 on white. */
   --provider-inception-color: #7C5BE9;
+  /* Nex AGI ships a strictly monochrome mark (black fill, white stroke), so
+   * there is no brand hue to honour. This is the most perceptually distinct
+   * near-neutral available inside the palette's iso-luminant AA band — dE 26
+   * from its closest neighbour (cohere), and deliberately not another violet,
+   * because Mercury 2.5 lands in the same picker section wearing inception. */
+  --provider-nexagi-color: #747A42;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill

@@ -124,7 +124,12 @@ export const PI_OPENROUTER_ALLOWED_MODEL_IDS = [
   // Catalogued 2026-08-28/2026-08-31 but never admitted here, so every run on
   // them was refused by this wall while the pickers still offered the row.
   'inception/mercury-2.5-preview',
-  'tencent/hy4-preview'
+  'tencent/hy4-preview',
+  // Released 2026-09-08. Mercury 2.5 is the GA of the preview two rows up;
+  // both stay admitted so a seat pinned to the preview id keeps working.
+  'inception/mercury-2.5',
+  'nex-agi/nex-n2.5-mini:free',
+  'nex-agi/nex-n2.5-pro:free'
 ] as const
 
 /**
@@ -173,7 +178,7 @@ export function piModelPolicyVerdict(
   ) {
     return {
       allowed: false,
-      reason: `Pi's OpenRouter lane is limited to specific models (GLM 5.2, Laguna S 2.1, Nemotron 3 Ultra, North Mini Code, MiniMax M3, Inkling, Inkling Small, Mercury 2.5 Preview, and Hy4 Preview).`
+      reason: `Pi's OpenRouter lane is limited to specific models (GLM 5.2, Laguna S 2.1, Nemotron 3 Ultra, North Mini Code, MiniMax M3, Inkling, Inkling Small, Mercury 2.5, Hy4 Preview, and the Nex-N2.5 pair).`
     }
   }
   for (const pattern of PI_DENIED_MODEL_PATTERNS) {

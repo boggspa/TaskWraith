@@ -218,6 +218,10 @@ public enum TWTheme {
         // 4.5:1 ground. Mirrors theme.css.
         case "tencent": return 0x4E73CA
         case "inception": return 0x7C5BE9
+        // Nex AGI's mark is monochrome, so this is a TaskWraith design token
+        // rather than a brand claim: the most distinct near-neutral left in
+        // this palette's AA band. Mirrors theme.css.
+        case "nexagi": return 0x747A42
         default: return chroma1Hex
         }
     }
@@ -257,7 +261,7 @@ public enum TWTheme {
         "google", "pi", "muse", "ensemble", "grok", "alibaba", "qwen", "deep-reinforce", "ornith",
         "ibm", "liquid", "meta", "cohere", "essential", "nvidia", "openbmb", "poolside",
         "deepseek", "zai", "minimax", "mistral", "cerebras", "groq", "openrouter", "xiaomi",
-        "thinkingmachines", "devin", "tencent", "inception"
+        "thinkingmachines", "devin", "tencent", "inception", "nexagi"
     ]
 
     /// The whole table as `provider id -> 0xRRGGBB`, for shipping to the Mac.

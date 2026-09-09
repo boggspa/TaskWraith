@@ -54,6 +54,8 @@ public enum PiBrandTable {
             label: "Tencent", hueClass: "tencent"),
         "openrouter/inception": Brand(
             label: "Inception", hueClass: "inception"),
+        "openrouter/nex-agi": Brand(
+            label: "Nex AGI", hueClass: "nexagi"),
     ]
 
     /// Wire id -> human display label for the curated Pi catalog.
@@ -115,6 +117,9 @@ public enum PiBrandTable {
         "openrouter/thinkingmachines/inkling-small:free": "Inkling Small",
         "openrouter/tencent/hy4-preview": "Hy4 Preview",
         "openrouter/inception/mercury-2.5-preview": "Mercury 2.5 Preview",
+        "openrouter/inception/mercury-2.5": "Mercury 2.5",
+        "openrouter/nex-agi/nex-n2.5-mini:free": "Nex-N2.5-Mini",
+        "openrouter/nex-agi/nex-n2.5-pro:free": "Nex-N2.5-Pro",
     ]
 
     /// Split a Pi wire id on the FIRST slash: upstream vs pi model id.

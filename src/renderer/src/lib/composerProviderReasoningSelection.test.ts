@@ -21,6 +21,25 @@ describe('resolveComposerModelReasoningDefault', () => {
     ).toBe('high')
   })
 
+  it.each([
+    'openrouter/inception/mercury-2.5',
+    'openrouter/nex-agi/nex-n2.5-mini:free',
+    'openrouter/nex-agi/nex-n2.5-pro:free'
+  ])('seeds %s at Medium, its own ladder default, rather than Off or High', (modelId) => {
+    const reasoningOptions = optionsForPiModel(modelId)
+    expect(reasoningOptions.map((option) => option.value)).toEqual([
+      'off',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'max'
+    ])
+    expect(
+      resolveComposerModelReasoningDefault({ provider: 'pi', modelId, reasoningOptions })
+    ).toBe('medium')
+  })
+
   it('keeps Inkling Minimal available without making it the fresh-model default', () => {
     const modelId = 'openrouter/thinkingmachines/inkling:free'
     const reasoningOptions = optionsForPiModel(modelId)

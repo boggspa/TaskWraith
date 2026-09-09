@@ -139,6 +139,9 @@ public enum ContextWindows {
         "openrouter/thinkingmachines/inkling-small:free": 1_048_576,
         "openrouter/tencent/hy4-preview": 1_048_576,
         "openrouter/inception/mercury-2.5-preview": 260_000,
+        "openrouter/inception/mercury-2.5": 260_000,
+        "openrouter/nex-agi/nex-n2.5-mini:free": 262_144,
+        "openrouter/nex-agi/nex-n2.5-pro:free": 262_144,
         // Kimi
         "kimi-k3": 1_048_576,
         "kimi-k3-256k": 262_144,
