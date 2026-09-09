@@ -4335,7 +4335,12 @@ describe('inter-seat transcript rows', () => {
     expect(next).toBeGreaterThan(start)
     expect(html).toContain('ensemble-fanout-result-card')
     expect(html).toContain('FANOUT_CARD_MARKER')
-    expect(sideBlock).toContain('Claude / Reviewer')
+    // The speaker line names the ROUTE, not just the provider that spoke: this
+    // note was ADDRESSED to the reader, and that is half of what it says.
+    expect(sideBlock).toContain('aria-label="Reviewer to You"')
+    expect(sideBlock).toContain('ensemble-side-party is-user')
+    // ...which is why the body no longer repeats it as prose.
+    expect(sideBlock).not.toContain('Reviewer to User:')
     expect(sideBlock).toContain('message-bubble assistant ensemble-side-message')
     expect(sideBlock).toContain('SIDE_MESSAGE_MARKER')
     expect(sideBlock).toContain('<code>kimi</code>')

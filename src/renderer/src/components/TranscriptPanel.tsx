@@ -26,7 +26,11 @@ import {
   summarizeCollapsedSuperGroup
 } from '../lib/collapsedActivityStack'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
-import { isEnsembleSideMessage } from '../../../shared/ensembleSideMessage'
+import {
+  ensembleSideMessageBody,
+  ensembleSideMessageRoute,
+  isEnsembleSideMessage
+} from '../../../shared/ensembleSideMessage'
 import { isExecutionGraphInternalTranscriptMessage } from '../../../shared/executionGraphTranscriptVisibility'
 import {
   isEnsembleParticipantAuthoredMessage,
@@ -221,6 +225,7 @@ import { EnsembleRoundCardHeader } from './EnsembleRoundCardHeader'
 import { EnsembleFanoutViewportHeader } from './EnsembleFanoutViewportHeader'
 import { ParallelResultViewportHeader } from './ParallelResultViewportHeader'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
+import { EnsembleSideMessageMeta } from './EnsembleSideMessageMeta'
 import {
   classifyCompactFanoutLaneRows,
   classifyFanoutLaneSlots,
@@ -6189,6 +6194,23 @@ export const TranscriptPanel = memo(
                           </div>
                         )
                       }
+                      if (
+                        isInterSeatMessage &&
+                        // Decoded here as well as inside the element so the
+                        // fallthrough stays honest: a row with no recoverable
+                        // route keeps the provider label it has always shown,
+                        // rather than an empty meta line. Both decodes are pure
+                        // string work over one small metadata object.
+                        ensembleSideMessageRoute(msg, currentChat?.ensemble)
+                      ) {
+                        // The one assistant-level row whose speaker is half the
+                        // answer: it was ADDRESSED to someone. Naming both ends
+                        // here is what lets the body below stop carrying the
+                        // route as prose.
+                        return (
+                          <EnsembleSideMessageMeta message={msg} roster={currentChat?.ensemble} />
+                        )
+                      }
                       if (isAssistantLevelMessage) {
                         const rawChatPooledIdentity =
                           currentChat?.providerMetadata?.pooledAgentIdentity
@@ -6465,11 +6487,19 @@ export const TranscriptPanel = memo(
                     ) : (
                       (() => {
                         const mediaRefs = collectMessageMediaRefs(msg)
+                        // The route now leads the row's meta line and the
+                        // reason has its own footnote below, so neither is left
+                        // duplicated inside the note's own words.
+                        const sideMessageParts = isInterSeatMessage
+                          ? ensembleSideMessageBody(msg)
+                          : null
                         const displayContent =
                           agentQuestionHeaderOverride ??
                           (isYieldMessage
                             ? formatEnsembleYieldContentForDisplay(msg.content)
-                            : msg.content)
+                            : sideMessageParts
+                              ? sideMessageParts.body
+                              : msg.content)
                         const messageStreamRunId =
                           typeof msg.runId === 'string' && msg.runId
                             ? msg.runId
@@ -6554,6 +6584,16 @@ export const TranscriptPanel = memo(
                               )
                             ) : (
                               msg.content
+                            )}
+                            {sideMessageParts?.reason && (
+                              /* Why the note was sent, as its own muted line
+                                 rather than a closing paragraph of the note.
+                                 The sender wrote it into a separate tool field,
+                                 and a body paragraph is not what they said. */
+                              <div className="ensemble-side-message-reason">
+                                <span className="ensemble-side-message-reason-label">reason</span>
+                                <span>{sideMessageParts.reason}</span>
+                              </div>
                             )}
                             {stripRefs.length > 0 && (
                               <ChatMessageMediaStrip

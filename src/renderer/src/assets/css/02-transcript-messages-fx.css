@@ -5311,6 +5311,124 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   opacity: 0.6;
 }
 
+/* ══════════════════════════════════════════════════════════════
+ * INTER-SEAT NOTE ROUTING HEADER (`ensemble_send`)
+ * --------------------------------------------------------------
+ * The route replaces the provider name on this row's meta line:
+ * `[crown] #1 Boss  ->  [hat] #2 Capt`, drawn with the same seat
+ * vocabulary as `.seat-change-role` — the authority/stage glyph,
+ * `#N Role`, and the seat's own provider accent (set inline by
+ * the component, because the hue resolves from the humanised
+ * model label and re-deriving it here would drift for Ollama and
+ * Pi seats). Names only: the composer chip cluster states a
+ * seat's CONFIGURATION, which is not what a line of conversation
+ * is asking.
+ * ══════════════════════════════════════════════════════════════ */
+
+.ensemble-side-message-meta {
+  /* Wider than the meta line's default `--space-sm` so the two ends of the
+   * route do not read as one name, and wrapping so a fan-out to three seats
+   * degrades to a second line instead of overflowing. */
+  gap: 10px;
+  flex-wrap: wrap;
+  /* `.message-group` aligns its children to flex-start, so a meta line
+   * shrink-wraps its content and `margin-left: auto` on the trailing time has
+   * no free space to consume. Claiming the row is what puts the time at the
+   * far edge (mock-approved 2026-09-09) rather than tucked against the last
+   * recipient's name. */
+  width: 100%;
+}
+
+.ensemble-side-party {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  /* Matches `.seat-change-role`: this is the same element, in a meta line. */
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* The reader is not a seat, so it wears no provider accent — the plain
+ * primary text colour, which is what "You" reads as everywhere else. */
+.ensemble-side-party.is-user {
+  color: var(--text-primary);
+}
+
+.ensemble-side-party.is-user .ensemble-side-party-icon {
+  opacity: 0.7;
+}
+
+.ensemble-side-party-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+/* Consecutive recipients need a mark between them: two accent-tinted names
+ * separated only by the flex gap read as one two-tone name. Not a comma —
+ * the middot is already this line's separator convention (`.message-meta-
+ * model-badge::before`). */
+.ensemble-side-party + .ensemble-side-party::before {
+  content: '·';
+  margin-right: 9px;
+  font-weight: 400;
+  color: color-mix(in srgb, var(--text-primary) 34%, transparent);
+}
+
+.ensemble-side-route-arrow {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--text-primary) 32%, transparent);
+}
+
+.ensemble-side-route-arrow svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* "+5" — the recipients the line elided. Weighted like the timestamp, not
+ * like a name: it is a count, and dressing it as a seat would invite the
+ * reader to look for the seat it names. */
+.ensemble-side-route-more {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 40%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The `reason` field, under the note's own words.
+ *
+ * Muted and small, sharing the timestamp's treatment, because it is the
+ * sender's annotation ABOUT the note rather than part of it — it arrived in a
+ * separate tool field, and rendering it as a closing paragraph put words in
+ * their mouth. The label is lower-case for the same reason a footnote marker
+ * is: it names the line without competing with it. */
+.ensemble-side-message-reason {
+  display: flex;
+  gap: 7px;
+  margin-top: 8px;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--text-primary) 48%, transparent);
+}
+
+.ensemble-side-message-reason-label {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--text-primary) 36%, transparent);
+}
+
+/* Trailing, as on every other transcript row that carries its own time. */
+.ensemble-side-route-time {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 40%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
 .taskwraith-closeout-meta {
   color: color-mix(in srgb, var(--text-muted) 92%, var(--text-primary));
 }
