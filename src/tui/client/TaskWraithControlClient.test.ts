@@ -365,4 +365,24 @@ describe('TaskWraithControlClient', () => {
     expect(options.connectTimeoutMs).toBe(customConnectTimeout)
     expect(options.requestTimeoutMs).toBe(customRequestTimeout)
   })
+
+  it('sends thread.find and resolves the slim result', async () => {
+    const { hostSocket, client } = await connectedPair()
+    const pending = client.findThreads({ query: 'persistence', limit: 3 })
+    const frame = await readLine(hostSocket)
+    expect(frame).toMatchObject({
+      type: 'request',
+      method: 'thread.find',
+      params: { query: 'persistence', limit: 3 }
+    })
+    hostSocket.write(
+      `${JSON.stringify({
+        type: 'response',
+        id: (frame as { id: string }).id,
+        ok: true,
+        result: { threads: [{ id: 'thread-1', title: 'Host persistence programme' }], total: 1 }
+      })}\n`
+    )
+    await expect(pending).resolves.toMatchObject({ total: 1 })
+  })
 })

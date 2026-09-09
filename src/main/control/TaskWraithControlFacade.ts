@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { basename } from 'node:path'
+import { basename, resolve, sep } from 'node:path'
 import type {
   BridgeCancelRunAction,
   BridgeComposerPromptAction,
@@ -13,8 +13,12 @@ import { getCachedRemoteEnsemblePresets } from '../remote/EnsembleRosterPresetsC
 import type { ChatRecord, WorkspaceRecord } from '../store/types'
 import type {
   TaskWraithControlSnapshot,
+  TaskWraithControlThread,
+  TaskWraithControlThreadFindParams,
+  TaskWraithControlThreadFindResult,
   TaskWraithControlThreadOffers,
-  TaskWraithControlThreadSnapshot
+  TaskWraithControlThreadSnapshot,
+  TaskWraithControlThreadSummary
 } from '../../shared/taskWraithControlProtocol'
 import {
   clampTaskWraithControlThreadLimit,
@@ -82,6 +86,59 @@ export interface StartTaskWraithLocalControlOptions extends TaskWraithControlFac
   hostVersion: string
   log?: (line: string) => void
   platform?: NodeJS.Platform
+}
+
+function normalizeWorkspacePath(path: string): string {
+  const resolved = resolve(path)
+  return resolved.length > 1 ? resolved.replace(/[\\/]+$/, '') : resolved
+}
+
+/**
+ * The registered workspace a path lives in — the deepest one when workspaces
+ * nest — so a caller can scope by its own cwd without knowing workspace ids.
+ */
+export function workspaceForPath<T extends { path: string }>(
+  workspaces: readonly T[],
+  candidate: string
+): T | undefined {
+  const target = normalizeWorkspacePath(candidate)
+  let best: T | undefined
+  let bestLength = -1
+  for (const workspace of workspaces) {
+    const root = normalizeWorkspacePath(workspace.path)
+    if (target !== root && !target.startsWith(`${root}${sep}`)) continue
+    if (root.length > bestLength) {
+      best = workspace
+      bestLength = root.length
+    }
+  }
+  return best
+}
+
+function threadSummary(
+  thread: TaskWraithControlThread,
+  workspace: WorkspaceRecord | undefined
+): TaskWraithControlThreadSummary {
+  return {
+    id: thread.id,
+    title: thread.title,
+    status: thread.status,
+    chatKind: thread.chatKind,
+    workspaceId: thread.workspaceId,
+    ...(workspace
+      ? {
+          workspaceName: workspace.displayName || basename(workspace.path),
+          workspacePath: workspace.path
+        }
+      : {}),
+    archived: thread.archived,
+    updatedAt: thread.updatedAt,
+    messageCount: thread.messageCount,
+    provider: {
+      displayProvider: thread.provider.displayProvider,
+      ...(thread.provider.model ? { model: thread.provider.model } : {})
+    }
+  }
 }
 
 function workspaceSummary(workspace: WorkspaceRecord) {
@@ -213,6 +270,49 @@ export function createTaskWraithControlFacade(options: TaskWraithControlFacadeOp
       workspaces: store.getWorkspaces(),
       presetName
     })
+  }
+
+  /**
+   * One chat-list read, filtered here, answered as slim rows: the cost of the
+   * snapshot's list read without its wire size. A cwd scopes to the workspace
+   * that contains it; a cwd inside no workspace finds nothing, never everything.
+   */
+  const findThreads = (
+    params: TaskWraithControlThreadFindParams
+  ): TaskWraithControlThreadFindResult => {
+    const at = now()
+    const workspaces = store.getWorkspaces()
+    let workspaceId = params.workspaceId
+    if (!workspaceId && params.workspacePath) {
+      const scoped = workspaceForPath(workspaces, params.workspacePath)
+      if (!scoped) return { threads: [], total: 0 }
+      workspaceId = scoped.id
+    }
+    const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]))
+    const limit = Math.min(100, Math.max(1, Math.trunc(params.limit ?? 20)))
+    const exactId = params.query?.trim()
+    const query = exactId?.toLowerCase()
+    const statuses = params.status?.length ? new Set(params.status) : null
+    const matched = refreshRows()
+      .map((row) =>
+        hydrateTaskWraithControlThread(taskWraithControlThreadFactsFromInventoryRow(row), {
+          now: at,
+          presetName
+        })
+      )
+      .filter((thread) => params.includeArchived === true || !thread.archived)
+      .filter((thread) => !workspaceId || thread.workspaceId === workspaceId)
+      .filter((thread) => !statuses || statuses.has(thread.status))
+      .filter(
+        (thread) => !query || thread.id === exactId || thread.title.toLowerCase().includes(query)
+      )
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+    return {
+      threads: matched
+        .slice(0, limit)
+        .map((thread) => threadSummary(thread, workspaceById.get(thread.workspaceId ?? ''))),
+      total: matched.length
+    }
   }
 
   const threadOffers = (threadId: string): TaskWraithControlThreadOffers => {
@@ -395,7 +495,15 @@ export function createTaskWraithControlFacade(options: TaskWraithControlFacadeOp
     return { cancelled: result.executed, message: result.message }
   }
 
-  return { snapshot, selectThread, sendPrompt, cancelRun, threadOffers, toggleEnsembleSeat }
+  return {
+    snapshot,
+    selectThread,
+    sendPrompt,
+    cancelRun,
+    threadOffers,
+    findThreads,
+    toggleEnsembleSeat
+  }
 }
 
 export async function startTaskWraithLocalControl(

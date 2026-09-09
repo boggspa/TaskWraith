@@ -28,14 +28,17 @@ export interface TaskWraithControlWorkspace {
   updatedAt: number
 }
 
-export type TaskWraithControlThreadStatus =
-  | 'idle'
-  | 'working'
-  | 'needs-input'
-  | 'queued'
-  | 'failed'
-  | 'cancelled'
-  | 'complete'
+export const TASKWRAITH_CONTROL_THREAD_STATUSES = [
+  'idle',
+  'working',
+  'needs-input',
+  'queued',
+  'failed',
+  'cancelled',
+  'complete'
+] as const
+
+export type TaskWraithControlThreadStatus = (typeof TASKWRAITH_CONTROL_THREAD_STATUSES)[number]
 
 export interface TaskWraithControlProviderPresentation {
   runtimeProvider: string
@@ -210,6 +213,49 @@ export interface TaskWraithControlPostureOffer {
   requiresExplicitConsent: boolean
 }
 
+/**
+ * One row of a `thread.find` answer: enough to pick a thread and address it,
+ * and nothing that scales with the thread — no roster, no run window, no cost.
+ * A sender that only ever composes reads this instead of the whole-profile
+ * snapshot, which the transport cannot carry once a profile is large.
+ */
+export interface TaskWraithControlThreadSummary {
+  id: string
+  title: string
+  status: TaskWraithControlThreadStatus
+  chatKind: 'single' | 'ensemble'
+  workspaceId: string | null
+  workspaceName?: string
+  workspacePath?: string
+  archived: boolean
+  updatedAt: number
+  messageCount: number
+  provider: { displayProvider: string; model?: string }
+}
+
+export type TaskWraithControlThreadFindParams = {
+  /** Case-insensitive substring of the title, or an exact thread id. */
+  query?: string
+  workspaceId?: string
+  /**
+   * Any path inside a registered workspace — typically the caller's cwd —
+   * resolves to that workspace; a path inside no workspace matches nothing.
+   */
+  workspacePath?: string
+  status?: TaskWraithControlThreadStatus[]
+  /** Archived threads are omitted unless asked for. */
+  includeArchived?: boolean
+  /** 1..100, default 20. */
+  limit?: number
+}
+
+export interface TaskWraithControlThreadFindResult {
+  /** Newest first, at most `limit` rows. */
+  threads: TaskWraithControlThreadSummary[]
+  /** How many threads matched before `limit` applied. */
+  total: number
+}
+
 export type TaskWraithControlRequest =
   | {
       type: 'request'
@@ -251,6 +297,12 @@ export type TaskWraithControlRequest =
        * roster entries; the facade replays the canonical roster with only this
        * flag flipped through the same main-owned roster action iOS uses. */
       params: { threadId: string; participantId: string; enabled: boolean }
+    }
+  | {
+      type: 'request'
+      id: string
+      method: 'thread.find'
+      params?: TaskWraithControlThreadFindParams
     }
   | {
       type: 'request'
@@ -366,6 +418,7 @@ export function decodeTaskWraithControlClientMessage(
       'run.cancel',
       'thread.offers',
       'ensemble.seat.toggle',
+      'thread.find',
       'ping'
     ].includes(value.method)
   ) {
@@ -384,6 +437,39 @@ export function decodeTaskWraithControlClientMessage(
         params.limit > 200)
     ) {
       return { ok: false, error: 'limit must be an integer from 1 to 200' }
+    }
+  }
+  if (value.method === 'thread.find') {
+    if (params.query !== undefined && !isNonEmptyString(params.query, 200)) {
+      return { ok: false, error: 'query must be a bounded string' }
+    }
+    if (params.workspaceId !== undefined && !isNonEmptyString(params.workspaceId, 512)) {
+      return { ok: false, error: 'workspaceId must be a bounded string' }
+    }
+    if (params.workspacePath !== undefined && !isNonEmptyString(params.workspacePath, 4_096)) {
+      return { ok: false, error: 'workspacePath must be a bounded string' }
+    }
+    if (
+      params.status !== undefined &&
+      (!Array.isArray(params.status) ||
+        params.status.length > TASKWRAITH_CONTROL_THREAD_STATUSES.length ||
+        !params.status.every((status) =>
+          (TASKWRAITH_CONTROL_THREAD_STATUSES as readonly unknown[]).includes(status)
+        ))
+    ) {
+      return { ok: false, error: 'status must list known thread statuses' }
+    }
+    if (params.includeArchived !== undefined && typeof params.includeArchived !== 'boolean') {
+      return { ok: false, error: 'includeArchived must be a boolean' }
+    }
+    if (
+      params.limit !== undefined &&
+      (typeof params.limit !== 'number' ||
+        !Number.isInteger(params.limit) ||
+        params.limit < 1 ||
+        params.limit > 100)
+    ) {
+      return { ok: false, error: 'limit must be an integer from 1 to 100' }
     }
   }
   if (value.method === 'composer.send') {

@@ -14,6 +14,8 @@ import {
   type TaskWraithControlHostMessage,
   type TaskWraithControlRequest,
   type TaskWraithControlSnapshot,
+  type TaskWraithControlThreadFindParams,
+  type TaskWraithControlThreadFindResult,
   type TaskWraithControlThreadOffers,
   type TaskWraithControlThreadSnapshot,
   type TaskWraithControlWelcome
@@ -39,6 +41,10 @@ export interface TaskWraithLocalControlFacade {
   threadOffers(
     threadId: string
   ): TaskWraithControlThreadOffers | Promise<TaskWraithControlThreadOffers>
+  /** Slim, filtered thread rows for senders that never need the snapshot. */
+  findThreads(
+    params: TaskWraithControlThreadFindParams
+  ): TaskWraithControlThreadFindResult | Promise<TaskWraithControlThreadFindResult>
   toggleEnsembleSeat(
     threadId: string,
     participantId: string,
@@ -463,6 +469,9 @@ export class LocalControlServer {
           break
         case 'thread.offers':
           result = await this.options.facade.threadOffers(request.params.threadId)
+          break
+        case 'thread.find':
+          result = await this.options.facade.findThreads(request.params ?? {})
           break
         case 'ensemble.seat.toggle':
           result = await this.options.facade.toggleEnsembleSeat(

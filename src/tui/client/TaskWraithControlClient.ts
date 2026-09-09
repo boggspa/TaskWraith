@@ -12,6 +12,8 @@ import {
   type TaskWraithControlHostMessage,
   type TaskWraithControlRequest,
   type TaskWraithControlSnapshot,
+  type TaskWraithControlThreadFindParams,
+  type TaskWraithControlThreadFindResult,
   type TaskWraithControlThreadOffers,
   type TaskWraithControlThreadSnapshot,
   type TaskWraithControlWelcome
@@ -191,6 +193,13 @@ export class TaskWraithControlClient extends EventEmitter<TaskWraithControlClien
 
   async threadOffers(threadId: string): Promise<TaskWraithControlThreadOffers> {
     return this.request('thread.offers', { threadId })
+  }
+
+  /** Slim thread rows for a sender; never needs the whole-profile snapshot. */
+  async findThreads(
+    params: TaskWraithControlThreadFindParams = {}
+  ): Promise<TaskWraithControlThreadFindResult> {
+    return this.request('thread.find', { ...params })
   }
 
   async toggleEnsembleSeat(

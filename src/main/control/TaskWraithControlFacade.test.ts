@@ -608,3 +608,116 @@ describe('TaskWraithControlFacade catalogue projections', () => {
     await expect(facade.selectThread('gone', 10)).rejects.toThrow('Thread not found.')
   })
 })
+
+describe('TaskWraithControlFacade thread.find', () => {
+  beforeEach(() => {
+    fs.rmSync(userDataPath, { recursive: true, force: true })
+    fs.mkdirSync(join(userDataPath, 'chats'), { recursive: true })
+    setRemoteEnsemblePresetsFromRaw([])
+  })
+
+  function facadeForFind() {
+    return createTaskWraithControlFacade({
+      executeComposerPrompt: vi.fn(),
+      executeCancelRun: vi.fn(),
+      executeEnsembleSteer: vi.fn(),
+      executeEnsembleCancelRound: vi.fn(),
+      executeEnsembleRosterUpdate: vi.fn(),
+      now: () => 50_000
+    })
+  }
+
+  it('returns slim summaries scoped by title, cwd, status and archive state, newest first', async () => {
+    const repo = AppStore.addOrUpdateWorkspace('/repo', { id: 'ws-repo', displayName: 'Repo' })
+    const other = AppStore.addOrUpdateWorkspace('/elsewhere', {
+      id: 'ws-other',
+      displayName: 'Elsewhere'
+    })
+    const ensemble = AppStore.createEnsembleChat({ workspaceId: repo.id, workspacePath: repo.path })
+    AppStore.saveChat({
+      ...ensemble,
+      title: 'Host persistence programme',
+      updatedAt: 3_000,
+      ensemble: {
+        ...ensemble.ensemble!,
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          prompt: 'go',
+          startedAt: new Date(0).toISOString(),
+          activeParticipantId: ensemble.ensemble!.participants[0]!.id,
+          participants: ensemble.ensemble!.participants.map((participant) => ({
+            participantId: participant.id,
+            provider: participant.provider,
+            role: participant.role,
+            order: participant.order,
+            status: 'running'
+          }))
+        }
+      }
+    })
+    AppStore.saveChat({
+      ...AppStore.createChat(repo.id, repo.path),
+      provider: 'claude',
+      title: 'Persistence notes (old)',
+      archived: true,
+      updatedAt: 2_000
+    })
+    AppStore.saveChat({
+      ...AppStore.createChat(repo.id, repo.path),
+      provider: 'codex',
+      title: 'Unrelated idle chat',
+      updatedAt: 4_000
+    })
+    AppStore.saveChat({
+      ...AppStore.createChat(other.id, other.path),
+      provider: 'claude',
+      title: 'Persistence elsewhere',
+      updatedAt: 5_000
+    })
+    const facade = facadeForFind()
+
+    const byTitle = await facade.findThreads({ query: 'persist' })
+    expect(byTitle.total).toBe(2)
+    expect(byTitle.threads.map((thread) => thread.title)).toEqual([
+      'Persistence elsewhere',
+      'Host persistence programme'
+    ])
+    const programme = byTitle.threads[1]!
+    expect(programme).toMatchObject({
+      id: ensemble.appChatId,
+      status: 'working',
+      chatKind: 'ensemble',
+      workspaceId: repo.id,
+      workspaceName: 'Repo',
+      workspacePath: '/repo',
+      archived: false
+    })
+    expect(programme.provider.displayProvider).toEqual(expect.any(String))
+    // Slim by construction: no roster, no run window, no cost text ride along.
+    expect(programme).not.toHaveProperty('ensemble')
+    expect(programme).not.toHaveProperty('wallTimeMs')
+
+    // A cwd anywhere inside a registered workspace scopes to that workspace.
+    const scoped = await facade.findThreads({ query: 'persist', workspacePath: '/repo/src/deep' })
+    expect(scoped.threads.map((thread) => thread.title)).toEqual(['Host persistence programme'])
+    // A cwd outside every workspace finds nothing rather than everything.
+    expect(facade.findThreads({ workspacePath: '/nowhere' })).toEqual({ threads: [], total: 0 })
+
+    const working = await facade.findThreads({ status: ['working'] })
+    expect(working.threads.map((thread) => thread.id)).toEqual([ensemble.appChatId])
+
+    const withArchived = await facade.findThreads({ query: 'persist', includeArchived: true })
+    expect(withArchived.total).toBe(3)
+    expect(withArchived.threads.some((thread) => thread.archived)).toBe(true)
+
+    const limited = await facade.findThreads({ limit: 1 })
+    expect(limited.total).toBe(3)
+    expect(limited.threads).toHaveLength(1)
+    expect(limited.threads[0]!.title).toBe('Persistence elsewhere')
+
+    // An exact id matches even when the title does not contain it.
+    const byId = await facade.findThreads({ query: ensemble.appChatId })
+    expect(byId.threads.map((thread) => thread.id)).toEqual([ensemble.appChatId])
+  })
+})
