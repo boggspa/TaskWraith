@@ -191,7 +191,8 @@ function validateHostPayload(hostRoot, label) {
       'DevinPlanInfoRows.js',
       'DevinPlanState.js',
       'DevinUsage.js'
-    ].map((name) => path.join('devin', name))
+    ].map((name) => path.join('devin', name)),
+    ...['NoToolsOverrideClause.js'].map((name) => path.join('providers', name))
   ])
   const mainRoot = path.join(hostRoot, 'main')
   if (!fs.existsSync(mainRoot)) {

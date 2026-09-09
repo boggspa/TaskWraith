@@ -13,6 +13,7 @@ const HOST_SHARED_ROOT = resolve(REPO_ROOT, 'src/host-shared')
 const MAIN_MUSE_ROOT = resolve(REPO_ROOT, 'src/main/muse')
 const MAIN_MISTRAL_ROOT = resolve(REPO_ROOT, 'src/main/mistral')
 const MAIN_DEVIN_ROOT = resolve(REPO_ROOT, 'src/main/devin')
+const MAIN_PROVIDERS_ROOT = resolve(REPO_ROOT, 'src/main/providers')
 const HOST_NODE_AGY_PTY_CAPTURE = resolve(HOST_NODE_ROOT, 'HostNodeAgyPtyCapture.ts')
 const ROOT_MODULES = [
   resolve(HOST_NODE_ROOT, 'HostNodeMuseProvider.ts'),
@@ -71,10 +72,16 @@ const PURE_DEVIN_CLOSURE = new Set([
   'DevinUsage.ts'
 ])
 
+/** Deliberate production closure shared by the Mistral, Devin and Grok
+ * adapters: the conditional no-tools clause is one pure string-formatting
+ * module with zero imports and no Node/Electron surface. */
+const PURE_PROVIDERS_CLOSURE = new Set(['NoToolsOverrideClause.ts'])
+
 const PINNED_MAIN_PROVIDER_CLOSURES = new Map<string, ReadonlySet<string>>([
   [MAIN_MUSE_ROOT, PURE_MUSE_CLOSURE],
   [MAIN_MISTRAL_ROOT, PURE_MISTRAL_CLOSURE],
-  [MAIN_DEVIN_ROOT, PURE_DEVIN_CLOSURE]
+  [MAIN_DEVIN_ROOT, PURE_DEVIN_CLOSURE],
+  [MAIN_PROVIDERS_ROOT, PURE_PROVIDERS_CLOSURE]
 ])
 
 const PINNED_EXTERNAL_IMPORTS = new Map<string, ReadonlySet<string>>([
