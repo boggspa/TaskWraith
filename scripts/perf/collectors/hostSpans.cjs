@@ -253,7 +253,9 @@ function hostIdentityValid(identity) {
     Number.isSafeInteger(identity.generation) &&
     identity.generation >= 0 &&
     Number.isSafeInteger(identity.pid) &&
-    identity.pid > 0
+    identity.pid > 0 &&
+    (identity.bootEpoch === undefined ||
+      (typeof identity.bootEpoch === 'string' && HOST_BOOT_EPOCH_PATTERN.test(identity.bootEpoch)))
   )
 }
 
@@ -264,6 +266,28 @@ function identityIsPinned(identity, expected) {
       (key) => expected[key] !== undefined && expected[key] === identity[key]
     )
   )
+}
+
+/**
+ * Boot-epoch coverage between the file identity and the reader pin:
+ * 'absent' when neither side carries an epoch (legacy files and legacy pins
+ * keep their exact prior semantics), 'verified' when the pin carries one and
+ * it matches exactly, 'unpinned' when the file carries an epoch the pin does
+ * not (the incarnation is unprovable), 'mismatch' when a pinned epoch is
+ * absent from or different in the file. hostIdentityValid rejects malformed
+ * file epochs before coverage is consulted, so a bad shape never matches.
+ */
+function bootEpochCoverage(identity, expected) {
+  const fileEpoch = isPlainObject(identity) ? identity.bootEpoch : undefined
+  const pinEpoch = isPlainObject(expected) ? expected.bootEpoch : undefined
+  if (pinEpoch !== undefined) return pinEpoch === fileEpoch ? 'verified' : 'mismatch'
+  return fileEpoch !== undefined ? 'unpinned' : 'absent'
+}
+
+/** Legacy pin satisfied AND the boot epoch, if either side has one, agreed. */
+function identityStrictlyPinned(identity, expected) {
+  const coverage = bootEpochCoverage(identity, expected)
+  return identityIsPinned(identity, expected) && (coverage === 'absent' || coverage === 'verified')
 }
 
 function attributionCoverage(section, meta, requiredChatIds) {
@@ -278,9 +302,18 @@ function attributionCoverage(section, meta, requiredChatIds) {
   )
   let status = 'available'
   let reason = null
+  const epochCoverage = bootEpochCoverage(meta.identity, meta.expectedIdentity)
   if (!identityIsPinned(meta.identity, meta.expectedIdentity)) {
     status = 'unsupported'
     reason = 'expected_identity_required'
+  } else if (epochCoverage === 'unpinned') {
+    // The file proves an incarnation the pin cannot vouch for: legacy
+    // diagnostics stay valid, strict attribution does not.
+    status = 'unsupported'
+    reason = 'boot_epoch_unpinned'
+  } else if (epochCoverage === 'mismatch') {
+    status = 'unsupported'
+    reason = 'boot_epoch_mismatch'
   } else if (requiredChatIds.length === 0) {
     status = 'unsupported'
     reason = 'designated_population_required'
@@ -376,14 +409,14 @@ function validateHostSnapshotMetadata(meta, section, errors) {
     meta.expectedIdentity &&
     Object.keys(meta.expectedIdentity).some(
       (key) =>
-        !['instanceId', 'generation', 'pid'].includes(key) ||
+        !['instanceId', 'generation', 'pid', 'bootEpoch'].includes(key) ||
         meta.expectedIdentity[key] !== meta.identity[key]
     )
   ) {
     invalid('expectedIdentity_mismatch')
     return
   }
-  if (meta.identityVerified !== identityIsPinned(meta.identity, meta.expectedIdentity))
+  if (meta.identityVerified !== identityStrictlyPinned(meta.identity, meta.expectedIdentity))
     invalid('identityVerified')
   const captured = typeof meta.capturedAt === 'string' ? Date.parse(meta.capturedAt) : NaN
   const read = typeof meta.readAt === 'string' ? Date.parse(meta.readAt) : NaN
@@ -636,6 +669,14 @@ const HOST_PERF_UNSPECIFIED = 'host_perf_transport_unspecified'
 const DEFAULT_HOST_SNAPSHOT_MAX_AGE_MS = 15_000
 /** Reader input bound, independent of the writer's configured output bound. */
 const DEFAULT_HOST_SNAPSHOT_MAX_BYTES = 1024 * 1024
+/**
+ * Public opaque boot epoch (additive M1 identity field): 64 lowercase hex
+ * characters, minted per Host incarnation and compared for equality only —
+ * never a timestamp, never a counter, never the auth token. A malformed
+ * epoch fails the whole file identity; an epoch the reader pin does not
+ * carry downgrades strict attribution but never legacy diagnostics.
+ */
+const HOST_BOOT_EPOCH_PATTERN = /^[0-9a-f]{64}$/
 
 function resolveHostPerfSnapshotPath(options) {
   if (typeof options.hostPerfSnapshotPath === 'string' && options.hostPerfSnapshotPath.length > 0) {
@@ -655,9 +696,13 @@ function resolveHostPerfSnapshotPath(options) {
  * the genuinely unconfigured case.
  *
  * options: hostPerfSnapshotPath | env (defaults process.env) picks the
- * file; expectedIdentity { instanceId?, generation?, pid? } pins which Host
- * instance may supply diagnostics; full identity plus requiredChatIds are
- * required for attribution availability. maxAgeMs bounds freshness both ways;
+ * file; expectedIdentity { instanceId?, generation?, pid?, bootEpoch? } pins
+ * which Host instance may supply diagnostics; full identity plus
+ * requiredChatIds are required for attribution availability. A pinned
+ * bootEpoch must match exactly: a mismatch, or a file without the pinned
+ * epoch, refuses the whole read as identity mismatch; an epoch the pin does
+ * not carry downgrades strict attribution to 'boot_epoch_unpinned' while
+ * legacy diagnostics stay valid. maxAgeMs bounds freshness both ways;
  * maxBytes bounds descriptor input independently of the writer. fs must expose
  * lstat/open/fstat/read/closeSync. Positive sequence does not prove monotonic
  * consumption. Metadata embedded in workSpans survives existing report folds;
@@ -763,7 +808,7 @@ function readHostPerfSnapshotFile(options = {}) {
   if (!hostIdentityValid(identity)) return { unsupported: 'host_perf_snapshot_invalid: identity' }
   const expected = isPlainObject(options.expectedIdentity)
     ? Object.fromEntries(
-        ['instanceId', 'generation', 'pid']
+        ['instanceId', 'generation', 'pid', 'bootEpoch']
           .filter((key) => options.expectedIdentity[key] !== undefined)
           .map((key) => [key, options.expectedIdentity[key]])
       )
@@ -828,10 +873,11 @@ function readHostPerfSnapshotFile(options = {}) {
       process: 'host',
       instanceId: identity.instanceId,
       generation: identity.generation,
-      pid: identity.pid
+      pid: identity.pid,
+      ...(identity.bootEpoch === undefined ? {} : { bootEpoch: identity.bootEpoch })
     },
     expectedIdentity: expected,
-    identityVerified: identityIsPinned(identity, expected),
+    identityVerified: identityStrictlyPinned(identity, expected),
     sequence: payload.sequence,
     // Positivity is shape validation; this stateless reader does NOT enforce
     // ordered consumption, deduplication, or restart monotonicity.

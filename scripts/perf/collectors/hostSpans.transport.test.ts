@@ -68,6 +68,31 @@ function writeRealSnapshot(): { path: string } {
   return { path }
 }
 
+/** Same real-writer proof with a caller-chosen identity (e.g. a boot epoch). */
+function writeRealSnapshotWithIdentity(identity: typeof IDENTITY & { bootEpoch?: string }): {
+  path: string
+} {
+  const instrumentation = createHostPerfInstrumentation()
+  instrumentation.spans.record({
+    chatId: 'chat-heavy',
+    kind: 'host_queue_wait',
+    resource: 'host_chain',
+    startedAt: 5,
+    durationMs: 120
+  })
+  const path = join(scratchDir(), 'host-snapshot.json')
+  const writer = createHostPerfSnapshotFileWriter({
+    instrumentation,
+    path,
+    intervalMs: 1000,
+    maxBytes: 256 * 1024,
+    identity,
+    now: () => WRITE_AT
+  })
+  expect(writer.writeOnce()).toBe(true)
+  return { path }
+}
+
 describe('Host perf snapshot file transport (writer → collector reader)', () => {
   it('stays host_perf_transport_unspecified when nothing configures a path', () => {
     expect(readHostPerfSnapshotFile()).toEqual({
@@ -284,6 +309,11 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
       },
       (meta: any) => {
         meta.eventLoopLag = {}
+      },
+      (meta: any) => {
+        // A well-formed epoch the pin never vouched for: strict pinning and
+        // attribution coverage must both recompute against the claimed values.
+        meta.identity.bootEpoch = 'deadbeef'.repeat(8)
       }
     ]) {
       const section = JSON.parse(JSON.stringify(read.workSpans))
@@ -637,6 +667,114 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
         })
       ).toEqual({ unsupported: 'host_perf_snapshot_identity_mismatch' })
     }
+  })
+
+  describe('boot epoch pinning (additive)', () => {
+    const BOOT_EPOCH = '0123456789abcdef'.repeat(4)
+
+    it('verifies a pinned bootEpoch end-to-end and carries it through metadata', () => {
+      const { path } = writeRealSnapshotWithIdentity({ ...IDENTITY, bootEpoch: BOOT_EPOCH })
+      const read = readHostPerfSnapshotFile({
+        hostPerfSnapshotPath: path,
+        expectedIdentity: { ...IDENTITY, bootEpoch: BOOT_EPOCH },
+        requiredChatIds: ['chat-heavy'],
+        now: () => FRESH_AT
+      })
+      expect(read.unsupported).toBeUndefined()
+      expect(read.identity).toEqual({ ...IDENTITY, bootEpoch: BOOT_EPOCH })
+      const meta = read.workSpans.hostSnapshot
+      expect(meta.identity.bootEpoch).toBe(BOOT_EPOCH)
+      expect(meta.expectedIdentity.bootEpoch).toBe(BOOT_EPOCH)
+      expect(meta.identityVerified).toBe(true)
+      expect(meta.attribution).toMatchObject({ status: 'available', reason: null })
+      // The epoch-carrying block is full Host evidence under the strict fold.
+      const metrics: any = {}
+      applyCrossThreadToMetrics(
+        metrics,
+        CELL,
+        { host: read.workSpans },
+        { requireHostAttribution: true }
+      )
+      expect(validateCrossThreadBlock(metrics.crossThread)).toEqual([])
+    })
+
+    it('degrades an epoch the pin does not carry: legacy diagnostics valid, strict attribution unsupported', () => {
+      const { path } = writeRealSnapshotWithIdentity({ ...IDENTITY, bootEpoch: BOOT_EPOCH })
+      const read = readHostPerfSnapshotFile({
+        hostPerfSnapshotPath: path,
+        expectedIdentity: IDENTITY,
+        requiredChatIds: ['chat-heavy'],
+        now: () => FRESH_AT
+      })
+      expect(read.unsupported).toBeUndefined()
+      expect(read.eventLoopLag).toBeDefined()
+      expect(read.workSpans.byChat['chat-heavy'].host_queue_wait.totalMs).toBe(120)
+      const meta = read.workSpans.hostSnapshot
+      expect(meta.identity.bootEpoch).toBe(BOOT_EPOCH)
+      expect(meta.identityVerified).toBe(false)
+      expect(meta.attribution).toMatchObject({
+        status: 'unsupported',
+        reason: 'boot_epoch_unpinned'
+      })
+      expect(() =>
+        applyCrossThreadToMetrics(
+          {},
+          CELL,
+          { host: read.workSpans },
+          { requireHostAttribution: true }
+        )
+      ).toThrow(/pinned identity/)
+      // Without the strict flag the block still validates as legacy diagnostics.
+      const metrics: any = {}
+      applyCrossThreadToMetrics(metrics, CELL, { host: read.workSpans })
+      expect(validateCrossThreadBlock(metrics.crossThread)).toEqual([])
+    })
+
+    it('refuses a pinned bootEpoch the file lacks or carries differently', () => {
+      const { path: legacyPath } = writeRealSnapshot()
+      expect(
+        readHostPerfSnapshotFile({
+          hostPerfSnapshotPath: legacyPath,
+          expectedIdentity: { ...IDENTITY, bootEpoch: BOOT_EPOCH },
+          now: () => FRESH_AT
+        })
+      ).toEqual({ unsupported: 'host_perf_snapshot_identity_mismatch' })
+      const { path: otherPath } = writeRealSnapshotWithIdentity({
+        ...IDENTITY,
+        bootEpoch: 'f'.repeat(64)
+      })
+      expect(
+        readHostPerfSnapshotFile({
+          hostPerfSnapshotPath: otherPath,
+          expectedIdentity: { ...IDENTITY, bootEpoch: BOOT_EPOCH },
+          now: () => FRESH_AT
+        })
+      ).toEqual({ unsupported: 'host_perf_snapshot_identity_mismatch' })
+    })
+
+    it('fails closed on a malformed bootEpoch inside the file identity', () => {
+      const { path } = writeRealSnapshotWithIdentity({ ...IDENTITY, bootEpoch: BOOT_EPOCH })
+      for (const bootEpoch of [
+        '0123456789ABCDEF'.repeat(4), // uppercase hex
+        BOOT_EPOCH.slice(0, 63), // 63 characters
+        BOOT_EPOCH + '0', // 65 characters
+        'g' + '0'.repeat(63), // non-hex
+        42,
+        null
+      ]) {
+        // The real writer refuses malformed epochs, so tamper the artifact.
+        const artifact = JSON.parse(fs.readFileSync(path, 'utf8'))
+        artifact.identity.bootEpoch = bootEpoch
+        fs.writeFileSync(path, JSON.stringify(artifact))
+        expect(
+          readHostPerfSnapshotFile({
+            hostPerfSnapshotPath: path,
+            expectedIdentity: IDENTITY,
+            now: () => FRESH_AT
+          })
+        ).toEqual({ unsupported: 'host_perf_snapshot_invalid: identity' })
+      }
+    })
   })
 
   it('fails closed on unreadable or malformed artifacts with specific reasons', () => {
