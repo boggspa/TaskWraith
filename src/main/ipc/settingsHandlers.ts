@@ -231,6 +231,12 @@ function rendererChatSettings(
       : {}),
     ...(providerRunPauses ? { providerRunPauses } : {}),
     ...(settings.ollamaDefaultModel ? { ollamaDefaultModel: settings.ollamaDefaultModel } : {}),
+    // The composer picker lists these back to the user, so the renderer needs
+    // them in its own settings copy — omitting the key here makes a saved
+    // custom model appear to persist and then vanish on the next reload.
+    ...(settings.customProviderModels
+      ? { customProviderModels: settings.customProviderModels }
+      : {}),
     ensembleModeEnabled: settings.ensembleModeEnabled,
     geminiCheckpointingEnabled: settings.geminiCheckpointingEnabled,
     chatContextTurns: settings.chatContextTurns,

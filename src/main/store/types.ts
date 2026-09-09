@@ -4,6 +4,7 @@ import type { FleetWaveClaim } from '../SubThreadWaveClaims'
 import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
 import type { AppIconVariant } from '../../shared/iconVariants'
 import type { DiffStatColors } from '../../shared/diffStatColors'
+import type { CustomProviderModels } from '../../shared/customProviderModels'
 import type { ClaudeWorkflowTelemetry } from '../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../shared/codexReview'
 import type { ChatMessageOrigin } from '../../shared/messageOrigin'
@@ -2602,6 +2603,12 @@ export interface AppSettings {
    */
   devinApiServerUrl?: string
   ollamaDefaultModel?: string
+  /** Model ids the user typed into the composer's "Custom model ID"
+   * field, keyed by provider and listed back in the picker so a local
+   * tag does not have to be retyped every turn. Renderer-writable
+   * through the generic settings patch; shape-checked on write by
+   * `sanitizeCustomProviderModels`. */
+  customProviderModels?: CustomProviderModels
   /**
    * Optional, user-selected Pi/Cerebras completion ceiling. Unset retains the
    * full model maximum; lower values help organizations whose Cerebras TPM

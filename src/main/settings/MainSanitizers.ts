@@ -8,6 +8,7 @@ import type { AppearanceMode } from '../store/types'
 import { normalizeSystemThemeAppearance } from '../../shared/systemThemeAppearance'
 import { MIN_INSPECTOR_PANEL_WIDTH, MAX_INSPECTOR_PANEL_WIDTH } from '../../shared/panelWidthLimits'
 import { normalizeDiffStatColors } from '../../shared/diffStatColors'
+import { sanitizeCustomProviderModels } from '../../shared/customProviderModels'
 import { normalizeThemeAccentColor } from '../../shared/themeAccentColor'
 import { normalizeAgentThemeTokenOverrides } from '../../shared/agentThemeTokens'
 import { clampEnsembleIngestOverrideChars } from '../../shared/ensembleSeatIngest'
@@ -174,6 +175,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'simulatorControlEnabled',
   'ollamaBaseUrl',
   'ollamaDefaultModel',
+  'customProviderModels',
   'devinApiServerUrl',
   'piCerebrasMaxCompletionTokens',
   'ensembleModelIngestChars',
@@ -1774,6 +1776,13 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('providerRunPauses' in sanitized) {
       sanitized.providerRunPauses = sanitizeProviderRunPauses(sanitized.providerRunPauses)
+    }
+    if ('customProviderModels' in sanitized) {
+      // Free text the user typed into the composer. Normalizing on WRITE keeps
+      // an unusable id (whitespace, control bytes, the `custom` sentinel) out
+      // of the persisted list, where it would otherwise show up as a picker row
+      // that can be selected but never runs.
+      sanitized.customProviderModels = sanitizeCustomProviderModels(sanitized.customProviderModels)
     }
     if ('cliPathDirectories' in sanitized) {
       // These directories are searched FIRST for every external CLI, so a
