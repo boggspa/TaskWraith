@@ -354,6 +354,7 @@ describe('Cursor Path-B broker receipt names the live listed tools', () => {
     expect(plan.prompt).toContain('taskwraith-broker')
     expect(plan.prompt).toContain('Do not use GetDynamicTools')
     expect(plan.prompt).toContain('CallDynamicTool')
+    expect(plan.prompt).toContain('TaskWraith ids retired in earlier builds')
     expect(plan.prompt).toContain('capability_search')
     expect(plan.prompt).toContain('ask_user_question')
     expect(plan.prompt).not.toContain('ensemble_fanout')

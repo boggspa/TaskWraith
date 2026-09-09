@@ -53,6 +53,15 @@ describe('buildCursorPathBBrokerReceipt', () => {
     expect(receipt).toContain('ask_user_question')
   })
 
+  it('attributes the warned-off namespaces to TaskWraith, not to Cursor or the user', () => {
+    const receipt = buildCursorPathBBrokerReceipt({ listedTools: ['ask_user_question'] })
+    expect(receipt).toContain('those are TaskWraith ids retired in earlier builds')
+    expect(receipt).toContain('nothing answering under them is governed by this run')
+    expect(receipt).toContain('even if Cursor lists one')
+    expect(receipt).not.toContain('user-owned')
+    expect(receipt).not.toContain('Cursor IDE')
+  })
+
   it('falls back when the listed set is empty', () => {
     const receipt = buildCursorPathBBrokerReceipt({ listedTools: [] })
     expect(receipt).toContain('none beyond what GetMcpTools returns')

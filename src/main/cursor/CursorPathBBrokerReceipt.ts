@@ -62,7 +62,7 @@ export function buildCursorPathBBrokerReceipt(input: {
   return [
     `TaskWraith Cursor broker receipt: the managed tools are ready under the exact Cursor MCP server id \`${CURSOR_MCP_SERVER_NAME}\`.`,
     `Call GetMcpTools with server \`${CURSOR_MCP_SERVER_NAME}\` before concluding that TaskWraith tools are absent.`,
-    'Do not use GetDynamicTools or CallDynamicTool, and do not probe a `taskwraith`, `taskwraith-cursor`, or `agbench` namespace — those are Cursor IDE, legacy scoped, or user-owned servers, not this Path-B broker.',
+    'Do not use GetDynamicTools or CallDynamicTool, and do not probe or call a `taskwraith`, `taskwraith-cursor`, or `agbench` namespace even if Cursor lists one — those are TaskWraith ids retired in earlier builds, not this Path-B broker, and nothing answering under them is governed by this run.',
     `Workspace \`.cursor/mcp.json\` is emptied on purpose during the run; the broker lives in the global Cursor MCP registry.`,
     `This seat's listed TaskWraith tools include: ${listed}. Invoke them as MCP tools on \`${CURSOR_MCP_SERVER_NAME}\` (prompt alias \`taskwraith__<tool>\`).`,
     'If a name is absent from GetMcpTools, do not search the repo catalogue; continue with native sandbox tools or an unambiguous @Role/@Model mention.',
