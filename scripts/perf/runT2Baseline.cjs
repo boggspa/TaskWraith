@@ -95,18 +95,54 @@ const DEFAULT_MAX_CAPTURE_PHASE_MS = PERF_GATE_THRESHOLDS.maxCapturePhaseMs
 // because an implicit rebuild papers over exactly the staleness this
 // preflight exists to detect.
 const HOST_BUNDLE_PATH_SEGMENTS = Object.freeze(['out', 'host', 'host-runtime', 'cli.js'])
-const HOST_BUNDLE_SOURCE_DIRS = Object.freeze(['src/host-runtime', 'src/host-node', 'src/shared'])
+// The emitted tree is the authority on what the bundle was built from. The
+// host tsconfig sets rootDir '..' (= src) and outDir '../../out/host', so
+// out/host/<rel>.js came from exactly src/<rel>.ts.
+const HOST_BUNDLE_OUTPUT_SEGMENTS = Object.freeze(['out', 'host'])
+const HOST_BUNDLE_SOURCE_ROOT = 'src'
+// The tsconfig lives in src/host-runtime and its include is './**\/*.ts', so
+// THIS tree is the compilation's root set: a new file here is a build input
+// with zero imports and therefore has no emitted output to be derived from.
+// Every other compiled tree is reached through the import graph, so a new
+// input there always arrives with an edit to a file that is already emitted.
+const HOST_BUNDLE_INCLUDE_ROOT_SEGMENTS = Object.freeze(['src', 'host-runtime'])
 const HOST_BUNDLE_REBUILD_COMMAND = 'npm run host:build'
 const HOST_PERF_SNAPSHOT_FILE_NAME = 'host-perf-snapshot.json'
 
 /**
  * Compare the Host bundle mtime against the newest build-input source file.
- * The host tsconfig (src/host-runtime/tsconfig.json) includes `./**\/*.ts`
- * and EXCLUDES `./**\/*.test.ts`, so the freshness comparison mirrors exactly
- * that build-input set: a newer test file cannot fail the preflight, and any
- * newer non-test source under the three compiled trees must. Symlinked
- * entries are never followed (a symlink cannot escape into unbounded trees).
- * Every I/O failure fails closed.
+ *
+ * The build-input set is DERIVED FROM THE EMITTED OUTPUT rather than declared
+ * as a directory list. The host tsconfig (src/host-runtime/tsconfig.json) sets
+ * `rootDir: '..'` and `outDir: '../../out/host'`, so each `out/host/<rel>.js`
+ * was compiled from exactly `src/<rel>.ts`. Inverting that mapping recovers
+ * the closure the LAST BUILD compiled — every tree the import graph reaches,
+ * and none of the ~1400 files in `src/main` that it does not — and it tracks
+ * the build automatically instead of drifting from a hand-kept list.
+ *
+ * By construction that set cannot contain a source ADDED since the build: it
+ * has no output to invert. Two things close the gap, and neither is a promise
+ * about the future.
+ *   1. The tsconfig's include root (`src/host-runtime`, include `./**\/*.ts`
+ *      EXCLUDING `./**\/*.test.ts`) is walked directly. It is the
+ *      compilation's ROOT SET, so a file added there is a build input even
+ *      with nothing importing it.
+ *   2. Every other tree is reached ONLY through the import graph, so a new
+ *      file there is not an input until something imports it — and writing
+ *      that import edits a file which IS in the derived set and bumps its
+ *      mtime. Such an addition is caught through its importer, not directly.
+ * The residual is an added file that nothing imports, which the compiler does
+ * not read either. This is the exact claim the previous comment got wrong:
+ * the tsconfig `include` covers only src/host-runtime, and host-shared, main,
+ * shared, host-node and host-client arrive through the import graph — so a
+ * directory list could never have "mirrored the build-input set".
+ *
+ * A newer test file cannot fail the preflight, and any newer compiled source
+ * must. Symlinked entries are never followed (a symlink cannot escape into
+ * unbounded trees), which is also why an out/host reached through one derives
+ * zero inputs and fails closed instead of passing vacuously. Every I/O
+ * failure fails closed, as do a missing bundle and an emitted output whose
+ * source is gone.
  *
  * @param {string} repoRoot
  * @param {{ fs?: { statSync: Function, readdirSync: Function } }} [adapters]
@@ -162,27 +198,67 @@ function checkHostBundleFreshness(repoRoot, adapters = {}) {
   let newestSourceMtimeMs = -1
   let newestSourcePath = null
   let checkedFileCount = 0
-  const walk = (dir) => {
+  // Build-input set, derived rather than declared. A hand-maintained list of
+  // directories silently drifts from what the compiler actually reads: the
+  // previous list named three trees while the bundle is emitted from six, so
+  // 74 real inputs — including the Host's own span recorder — were invisible
+  // and a genuinely stale bundle read as fresh.
+  const inputRelPaths = new Set()
+  const outputRoot = path.join(repoRoot, ...HOST_BUNDLE_OUTPUT_SEGMENTS)
+  const collectEmittedInputs = (dir) => {
     const entries = fsImpl.readdirSync(dir, { withFileTypes: true })
     for (const entry of entries) {
       const full = path.join(dir, entry.name)
       if (entry.isDirectory()) {
-        walk(full)
+        collectEmittedInputs(full)
+        continue
+      }
+      if (!entry.isFile()) continue
+      // Source maps end in `.map`, declarations are disabled.
+      if (!entry.name.endsWith('.js')) continue
+      const emittedRel = path.relative(outputRoot, full)
+      inputRelPaths.add(
+        path.join(HOST_BUNDLE_SOURCE_ROOT, `${emittedRel.slice(0, -'.js'.length)}.ts`)
+      )
+    }
+  }
+  // The include root additionally catches an ADDED source that has never been
+  // compiled, which by definition has no emitted output to derive from.
+  const collectIncludeRootInputs = (dir) => {
+    const entries = fsImpl.readdirSync(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        collectIncludeRootInputs(full)
         continue
       }
       if (!entry.isFile()) continue
       if (!entry.name.endsWith('.ts') || entry.name.endsWith('.test.ts')) continue
-      const stat = fsImpl.statSync(full)
+      inputRelPaths.add(path.relative(repoRoot, full))
+    }
+  }
+  let orphanOutputRelPath = null
+  try {
+    collectEmittedInputs(outputRoot)
+    collectIncludeRootInputs(path.join(repoRoot, ...HOST_BUNDLE_INCLUDE_ROOT_SEGMENTS))
+    for (const relPath of [...inputRelPaths].sort()) {
+      let stat
+      try {
+        stat = fsImpl.statSync(path.join(repoRoot, relPath))
+      } catch (error) {
+        const code = error && typeof error.code === 'string' ? error.code : 'io_error'
+        if (code !== 'ENOENT') throw error
+        // The bundle carries output compiled from a source that no longer
+        // exists, so it cannot correspond to this working tree.
+        orphanOutputRelPath = relPath
+        break
+      }
+      if (!stat.isFile()) continue
       checkedFileCount += 1
       if (stat.mtimeMs > newestSourceMtimeMs) {
         newestSourceMtimeMs = stat.mtimeMs
-        newestSourcePath = path.relative(repoRoot, full)
+        newestSourcePath = relPath
       }
-    }
-  }
-  try {
-    for (const dir of HOST_BUNDLE_SOURCE_DIRS) {
-      walk(path.join(repoRoot, ...dir.split('/')))
     }
   } catch (error) {
     const code = error && typeof error.code === 'string' ? error.code : 'io_error'
@@ -193,6 +269,17 @@ function checkHostBundleFreshness(repoRoot, adapters = {}) {
       bundleMtimeMs: bundleStat.mtimeMs,
       newestSourceMtimeMs: null,
       newestSourcePath: null,
+      checkedFileCount
+    }
+  }
+  if (orphanOutputRelPath !== null) {
+    return {
+      ...base,
+      ok: false,
+      reason: `host_bundle_orphan_output: ${orphanOutputRelPath}`,
+      bundleMtimeMs: bundleStat.mtimeMs,
+      newestSourceMtimeMs: null,
+      newestSourcePath: orphanOutputRelPath,
       checkedFileCount
     }
   }

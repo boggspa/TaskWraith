@@ -3875,14 +3875,33 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
   // Host bundle freshness preflight (ruling P2)
   // -------------------------------------------------------------------------
 
-  type FsNode = { mtimeMs?: number; children?: Record<string, FsNode> }
+  type FsNode = { mtimeMs?: number; children?: Record<string, FsNode>; symlink?: true }
 
-  function memFs(root: Record<string, FsNode>) {
+  /** Flat repo-relative path -> mtime, expanded into a directory tree. */
+  function treeOf(files: Record<string, number>): Record<string, FsNode> {
+    const root: Record<string, FsNode> = {}
+    for (const [relPath, mtimeMs] of Object.entries(files)) {
+      const segments = relPath.split('/')
+      let level = root
+      segments.forEach((segment, index) => {
+        if (index === segments.length - 1) {
+          level[segment] = { mtimeMs }
+          return
+        }
+        if (!level[segment]) level[segment] = { children: {} }
+        level = level[segment].children as Record<string, FsNode>
+      })
+    }
+    return root
+  }
+
+  function memFs(root: Record<string, FsNode>, repoRoot = '/repo') {
+    const prefix = `${repoRoot}${path.sep}`
     const resolveNode = (target: string): FsNode | null => {
-      if (target === '/repo') return { children: root }
-      if (!target.startsWith('/repo/')) return null
+      if (target === repoRoot) return { children: root }
+      if (!target.startsWith(prefix)) return null
       let node: FsNode = { children: root }
-      for (const seg of target.slice('/repo/'.length).split('/')) {
+      for (const seg of target.slice(prefix.length).split(path.sep)) {
         if (!seg) continue
         if (!node.children || !node.children[seg]) return null
         node = node.children[seg]
@@ -3895,6 +3914,7 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
       statSync(target: string) {
         const node = resolveNode(String(target))
         if (!node) throw enoent(String(target))
+        // statSync FOLLOWS symlinks, so a symlinked directory still resolves.
         return { isFile: () => node.children === undefined, mtimeMs: node.mtimeMs ?? 0 }
       },
       readdirSync(target: string, _opts?: unknown) {
@@ -3902,48 +3922,63 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
         if (!node || !node.children) throw enoent(String(target))
         return Object.entries(node.children).map(([name, child]) => ({
           name,
-          isFile: () => child.children === undefined,
-          isDirectory: () => child.children !== undefined
+          // A real Dirent reports a symlink as NEITHER file nor directory, so
+          // neither walk ever descends through one.
+          isFile: () => child.children === undefined && child.symlink !== true,
+          isDirectory: () => child.children !== undefined && child.symlink !== true
         }))
       }
     }
   }
 
-  function bundleTree(bundleMtime: number, sourceMtime: number, testMtime?: number) {
-    return {
-      out: {
-        children: {
-          host: {
-            children: { 'host-runtime': { children: { 'cli.js': { mtimeMs: bundleMtime } } } }
-          }
-        }
-      },
-      src: {
-        children: {
-          'host-runtime': {
-            children: {
-              'HostStandaloneComposition.ts': { mtimeMs: sourceMtime },
-              ...(testMtime === undefined
-                ? {}
-                : { 'HostStandaloneComposition.test.ts': { mtimeMs: testMtime } })
-            }
-          },
-          'host-node': {
-            children: { 'HostNodeProductionServer.ts': { mtimeMs: sourceMtime - 100 } }
-          },
-          shared: { children: { 'hostProtocol.ts': { mtimeMs: sourceMtime - 200 } } }
-        }
-      }
-    } as Record<string, FsNode>
+  const BUNDLE_REL = 'out/host/host-runtime/cli.js'
+
+  /**
+   * A repo shaped like the real one: SIX trees are compiled into out/host, and
+   * a much larger remainder of src/main and src/shared is not. `overrides`
+   * adds or re-stamps individual repo-relative paths.
+   */
+  function bundleTree(
+    bundleMtime: number,
+    sourceMtime: number,
+    overrides: Record<string, number> = {}
+  ): Record<string, FsNode> {
+    return treeOf({
+      [BUNDLE_REL]: bundleMtime,
+      // A sourcemap is not a compiled input and must never be inverted.
+      'out/host/host-runtime/cli.js.map': bundleMtime,
+      'out/host/host-runtime/HostStandaloneComposition.js': bundleMtime,
+      'out/host/host-node/HostNodeProductionServer.js': bundleMtime,
+      'out/host/host-shared/perf/WorkSpanRecorder.js': bundleMtime,
+      'out/host/host-client/HostClient.js': bundleMtime,
+      'out/host/main/perf/hostPerfSnapshot.js': bundleMtime,
+      'out/host/shared/hostProtocol.js': bundleMtime,
+      'src/host-runtime/cli.ts': sourceMtime - 300,
+      'src/host-runtime/HostStandaloneComposition.ts': sourceMtime,
+      'src/host-node/HostNodeProductionServer.ts': sourceMtime - 100,
+      'src/host-shared/perf/WorkSpanRecorder.ts': sourceMtime - 400,
+      'src/host-client/HostClient.ts': sourceMtime - 500,
+      'src/main/perf/hostPerfSnapshot.ts': sourceMtime - 600,
+      'src/shared/hostProtocol.ts': sourceMtime - 200,
+      // Never compiled into the Host bundle — the import graph does not reach
+      // them. Watching these would fire on every unrelated main edit.
+      'src/main/index.ts': sourceMtime - 700,
+      'src/main/chat/ChatStore.ts': sourceMtime - 700,
+      'src/shared/rendererOnlyTypes.ts': sourceMtime - 700,
+      ...overrides
+    })
   }
 
-  it('P2: bundle freshness mirrors the host tsconfig inputs and fails closed', () => {
+  /** The seven inverted `.js` outputs above; the include root adds nothing new. */
+  const BUNDLE_TREE_INPUT_COUNT = 7
+
+  it('P2: bundle freshness watches the whole compilation closure and fails closed', () => {
     expect(HOST_BUNDLE_REBUILD_COMMAND).toBe('npm run host:build')
 
     const fresh = checkHostBundleFreshness('/repo', { fs: memFs(bundleTree(1000, 900)) })
     expect(fresh.ok).toBe(true)
     expect(fresh.reason).toBe(null)
-    expect(fresh.checkedFileCount).toBe(3)
+    expect(fresh.checkedFileCount).toBe(BUNDLE_TREE_INPUT_COUNT)
     expect(fresh.newestSourcePath).toBe(
       path.join('src', 'host-runtime', 'HostStandaloneComposition.ts')
     )
@@ -3956,45 +3991,192 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     )
     expect(stale.rebuildCommand).toBe('npm run host:build')
 
+    // THE DEFECT THIS CLOSES. Every one of these is compiled into the bundle,
+    // but the preflight used to watch a hand-kept list of three directories
+    // that named none of their trees, so a genuinely stale bundle read FRESH.
+    for (const relPath of [
+      'src/host-shared/perf/WorkSpanRecorder.ts',
+      'src/host-client/HostClient.ts',
+      'src/main/perf/hostPerfSnapshot.ts'
+    ]) {
+      const result = checkHostBundleFreshness('/repo', {
+        fs: memFs(bundleTree(1000, 900, { [relPath]: 5000 }))
+      })
+      expect(result.ok, `${relPath} is a compiled input`).toBe(false)
+      expect(result.reason).toBe('host_bundle_stale')
+      expect(result.newestSourcePath).toBe(relPath.split('/').join(path.sep))
+      expect(result.newestSourceMtimeMs).toBe(5000)
+    }
+
+    // ...and the converse, which is why the fix is not "watch src/main too":
+    // the Host compiles 24 of that tree's ~1500 files. A newer UNCOMPILED file
+    // must stay green, or the preflight cries wolf and the team mutes it.
+    for (const relPath of [
+      'src/main/index.ts',
+      'src/main/chat/ChatStore.ts',
+      'src/shared/rendererOnlyTypes.ts'
+    ]) {
+      const quiet = checkHostBundleFreshness('/repo', {
+        fs: memFs(bundleTree(1000, 900, { [relPath]: 9e9 }))
+      })
+      expect(quiet.ok, `${relPath} is not a build input`).toBe(true)
+      expect(quiet.checkedFileCount).toBe(BUNDLE_TREE_INPUT_COUNT)
+    }
+
+    // A source ADDED to the tsconfig include root is a build input with no
+    // importer, so it has no emitted output to invert and is walked directly.
+    const added = checkHostBundleFreshness('/repo', {
+      fs: memFs(bundleTree(1000, 900, { 'src/host-runtime/NeverCompiled.ts': 5000 }))
+    })
+    expect(added.ok).toBe(false)
+    expect(added.reason).toBe('host_bundle_stale')
+    expect(added.checkedFileCount).toBe(BUNDLE_TREE_INPUT_COUNT + 1)
+    expect(added.newestSourcePath).toBe(path.join('src', 'host-runtime', 'NeverCompiled.ts'))
+
+    // The gap a derived set cannot close on its own: a source added OUTSIDE
+    // the include root has no emitted output either. It is not yet a build
+    // input, and it becomes one only when something imports it — which edits
+    // a file that IS derived and bumps its mtime. The addition is caught
+    // through its importer, so the preflight does not fail OPEN on it.
+    const importer = 'src/host-shared/perf/WorkSpanRecorder.ts'
+    const addedViaImporter = checkHostBundleFreshness('/repo', {
+      fs: memFs(
+        bundleTree(1000, 900, { 'src/host-shared/NeverCompiled.ts': 5000, [importer]: 5001 })
+      )
+    })
+    expect(addedViaImporter.ok).toBe(false)
+    expect(addedViaImporter.reason).toBe('host_bundle_stale')
+    expect(addedViaImporter.newestSourcePath).toBe(importer.split('/').join(path.sep))
+    expect(addedViaImporter.newestSourceMtimeMs).toBe(5001)
+
     // A NEWER TEST FILE must not fail the preflight: the host tsconfig
     // excludes ./**/*.test.ts, so tests are not build inputs.
     const testOnlyNewer = checkHostBundleFreshness('/repo', {
-      fs: memFs(bundleTree(1000, 900, 5000))
+      fs: memFs(bundleTree(1000, 900, { 'src/host-runtime/NeverCompiled.test.ts': 5000 }))
     })
     expect(testOnlyNewer.ok).toBe(true)
-    expect(testOnlyNewer.checkedFileCount).toBe(3)
+    expect(testOnlyNewer.checkedFileCount).toBe(BUNDLE_TREE_INPUT_COUNT)
 
-    // Missing bundle.
+    // An emitted output whose source is GONE means the bundle cannot
+    // correspond to this working tree — fail closed rather than skip it.
+    const deleted = bundleTree(1000, 900)
+    delete (deleted.src.children as Record<string, FsNode>).shared
+    const orphan = checkHostBundleFreshness('/repo', { fs: memFs(deleted) })
+    expect(orphan.ok).toBe(false)
+    expect(orphan.reason).toBe(
+      `host_bundle_orphan_output: ${path.join('src', 'shared', 'hostProtocol.ts')}`
+    )
+
+    // A never-built or deleted out/host derives an EMPTY input set, so it must
+    // fail on the bundle itself rather than pass vacuously on zero inputs.
     const tree = bundleTree(1000, 900)
     delete tree.out
     const missing = checkHostBundleFreshness('/repo', { fs: memFs(tree) })
     expect(missing.ok).toBe(false)
     expect(missing.reason).toBe('host_bundle_missing')
+    expect(missing.checkedFileCount).toBe(0)
 
-    // Compiled trees absent entirely → fail closed, never "fresh by vacuity".
-    const emptySources = checkHostBundleFreshness('/repo', {
-      fs: memFs({
-        out: {
-          children: {
-            host: { children: { 'host-runtime': { children: { 'cli.js': { mtimeMs: 1 } } } } }
-          }
-        },
-        src: {
-          children: {
-            'host-runtime': { children: {} },
-            'host-node': { children: {} },
-            shared: { children: {} }
-          }
-        }
-      })
-    })
+    // Symlinks are never followed, so an out/host reached through one yields
+    // NO derived inputs. With an empty include root that is zero inputs, which
+    // fails closed rather than reporting "fresh by vacuity".
+    const symlinked = treeOf({ [BUNDLE_REL]: 1, 'src/host-runtime/README.md': 1 })
+    const hostOut = (symlinked.out.children as Record<string, FsNode>).host
+    ;((hostOut.children as Record<string, FsNode>)['host-runtime'] as FsNode).symlink = true
+    const emptySources = checkHostBundleFreshness('/repo', { fs: memFs(symlinked) })
     expect(emptySources.ok).toBe(false)
     expect(emptySources.reason).toBe('host_bundle_preflight_no_sources')
+    expect(emptySources.checkedFileCount).toBe(0)
+
+    // A walk failure that is not a missing source → fail closed.
+    const walkFailure = checkHostBundleFreshness('/repo', {
+      fs: {
+        statSync: () => ({ isFile: () => true, mtimeMs: 1 }),
+        readdirSync: () => {
+          throw Object.assign(new Error('nope'), { code: 'EACCES' })
+        }
+      }
+    })
+    expect(walkFailure.ok).toBe(false)
+    expect(walkFailure.reason).toBe('host_bundle_preflight_io: EACCES')
 
     // fs contract failure → fail closed.
     const noFs = checkHostBundleFreshness('/repo', { fs: {} })
     expect(noFs.ok).toBe(false)
     expect(noFs.reason).toBe('host_bundle_preflight_io: fs_contract')
+  })
+
+  it('P2: the input set is derived from the REAL host tsconfig, not a hand-kept list', () => {
+    // Everything this test expects is computed from src/host-runtime/tsconfig.json
+    // — the actual build contract — and never from a constant in runT2Baseline.cjs.
+    // A preflight that silently narrows back to a directory list reds here.
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const tsconfigDir = path.join(repoRoot, 'src', 'host-runtime')
+    const tsconfig = JSON.parse(readFileSync(path.join(tsconfigDir, 'tsconfig.json'), 'utf8'))
+    const rootDirAbs = path.resolve(tsconfigDir, tsconfig.compilerOptions.rootDir)
+    const outDirAbs = path.resolve(tsconfigDir, tsconfig.compilerOptions.outDir)
+
+    // Inverting out/host/<rel>.js back to src/<rel>.ts is sound only while the
+    // host build keeps this 1:1 rootDir/outDir mapping and emits no
+    // declarations. If any of that changes, the derivation must be revisited.
+    expect(rootDirAbs).toBe(path.join(repoRoot, 'src'))
+    expect(outDirAbs).toBe(path.join(repoRoot, 'out', 'host'))
+    expect(tsconfig.compilerOptions.declaration).toBe(false)
+    expect(tsconfig.compilerOptions.noEmit).toBe(false)
+    // The include root: where a file is an input with nothing importing it.
+    expect(tsconfig.include).toEqual(['./**/*.ts'])
+    expect(tsconfig.exclude).toEqual(['./**/*.test.ts'])
+
+    const rel = (abs: string) => path.relative(repoRoot, abs).split(path.sep).join('/')
+    const emittedFor = (source: string) =>
+      rel(
+        path.join(
+          outDirAbs,
+          `${path.relative(rootDirAbs, path.join(repoRoot, source)).slice(0, -'.ts'.length)}.js`
+        )
+      )
+    const includeRootRel = rel(tsconfigDir)
+    const entrySource = `${includeRootRel}/cli.ts`
+    // A compiled input that lives OUTSIDE the include root and outside every
+    // directory the old list named: reachable only through the import graph.
+    const graphSource = 'src/host-shared/perf/WorkSpanRecorder.ts'
+    const baseFiles: Record<string, number> = {
+      [emittedFor(entrySource)]: 1000,
+      [emittedFor(graphSource)]: 1000,
+      [entrySource]: 900,
+      [graphSource]: 900
+    }
+    // The preflight's own bundle path must be one of the emitted outputs.
+    expect(Object.keys(baseFiles)).toContain(rel(path.join(outDirAbs, 'host-runtime', 'cli.js')))
+
+    const clean = checkHostBundleFreshness(repoRoot, { fs: memFs(treeOf(baseFiles), repoRoot) })
+    expect(clean.ok).toBe(true)
+    expect(clean.checkedFileCount).toBe(2)
+
+    const graphStale = checkHostBundleFreshness(repoRoot, {
+      fs: memFs(treeOf({ ...baseFiles, [graphSource]: 5000 }), repoRoot)
+    })
+    expect(graphStale.ok).toBe(false)
+    expect(graphStale.reason).toBe('host_bundle_stale')
+    expect(graphStale.newestSourcePath).toBe(graphSource.split('/').join(path.sep))
+
+    // The include side, asserted against the tsconfig's own LOCATION and its
+    // include/exclude globs rather than against any watched-directory list.
+    const addedInIncludeRoot = checkHostBundleFreshness(repoRoot, {
+      fs: memFs(treeOf({ ...baseFiles, [`${includeRootRel}/NeverCompiled.ts`]: 5000 }), repoRoot)
+    })
+    expect(addedInIncludeRoot.ok).toBe(false)
+    expect(addedInIncludeRoot.newestSourcePath).toBe(
+      path.join(...includeRootRel.split('/'), 'NeverCompiled.ts')
+    )
+
+    const addedTestInIncludeRoot = checkHostBundleFreshness(repoRoot, {
+      fs: memFs(
+        treeOf({ ...baseFiles, [`${includeRootRel}/NeverCompiled.test.ts`]: 5000 }),
+        repoRoot
+      )
+    })
+    expect(addedTestInIncludeRoot.ok).toBe(true)
+    expect(addedTestInIncludeRoot.checkedFileCount).toBe(2)
   })
 
   it('P2: a stale Host bundle hard-fails --launch BEFORE spawn, naming the rebuild command', async () => {
