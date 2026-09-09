@@ -44,7 +44,7 @@ export function applyRecoveryRecordsToEnsembleRounds(
 
     const recoveredRunIds = new Set(recordByRunId.keys())
     const roundHasRecoveredRun =
-      activeRound.participants.some(
+      (activeRound.participants || []).some(
         (participant) => participant.runId && recoveredRunIds.has(participant.runId)
       ) ||
       Object.values(activeRound.lanes || {}).some(
@@ -53,7 +53,7 @@ export function applyRecoveryRecordsToEnsembleRounds(
     if (!roundHasRecoveredRun) return chat
 
     let roundChanged = false
-    const participants = activeRound.participants.map((participant) => {
+    const participants = (activeRound.participants || []).map((participant) => {
       const record = participant.runId ? recordByRunId.get(participant.runId) : undefined
       if (!record) return participant
       const status = mapRecoveryStatusToParticipantStatus(record.recoveredStatus)

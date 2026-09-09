@@ -767,3 +767,49 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
     ).toBeNull()
   })
 })
+
+describe('thread-catalogue summary rows', () => {
+  // `ThreadCatalogueChrome` projects `ensemble` (and its `activeRound`) down to
+  // a bounded field whitelist, and `copy()` OMITS any field it cannot fit or
+  // does not whitelist — the round's `participants`/`lanes` always, and any
+  // other field once the 40KB budget is spent. `catalogueChatListItem` spreads
+  // that chrome onto a `ChatListItem`, which `extends ChatRecord`, so tsc sees
+  // a complete record while the roster arrays are undefined at runtime.
+  const projectedChat = (): ChatRecord =>
+    ({
+      appChatId: 'ensemble-chat',
+      title: 'Ensemble chat',
+      chatKind: 'ensemble',
+      provider: 'codex',
+      createdAt: 0,
+      updatedAt: 0,
+      archived: false,
+      messages: [],
+      runs: [],
+      ensemble: {
+        enabled: true,
+        maxParticipants: 2,
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          startedAt: '2026-07-01T00:00:00.000Z',
+          activeParticipantId: 'codex-builder'
+        }
+      }
+    }) as unknown as ChatRecord
+
+  it('derives no presentation instead of throwing on a projected round', () => {
+    expect(() => deriveActiveEnsembleWorkingPresentation(projectedChat())).not.toThrow()
+    expect(deriveActiveEnsembleWorkingPresentation(projectedChat())).toBeNull()
+  })
+
+  it('derives an empty list instead of throwing on a projected round mid-compaction', () => {
+    const compaction = [
+      { chatId: 'ensemble-chat', participantId: 'codex-builder', status: 'started' as const }
+    ]
+    expect(() =>
+      deriveActiveEnsembleWorkingPresentations(projectedChat(), compaction)
+    ).not.toThrow()
+    expect(deriveActiveEnsembleWorkingPresentations(projectedChat(), compaction)).toEqual([])
+  })
+})
