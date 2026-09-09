@@ -293,6 +293,72 @@ it('fits maximum refusal/catalogue detail into the real durable envelope with di
   expect(snapshot.managed.observed?.complete).toBe(false)
 })
 
+describe('a new generation keeps the host wiring it never re-proves', () => {
+  it('keeps a recorded absent broker across a second prompt', () => {
+    const r = createRunToolCapabilityReceipt(receiptContext('antigravity', 'antigravity-acp'))
+    r.connection(
+      'unavailable',
+      'The official AntiGravity ACP run has no attached TaskWraith broker.'
+    )
+    r.beginGeneration('session-2')
+    expect(r.snapshot()).toMatchObject({
+      connection: 'unavailable',
+      blocker: 'The official AntiGravity ACP run has no attached TaskWraith broker.',
+      readiness: 'degraded'
+    })
+  })
+
+  it('never lets ready outlive the attachment that proved it', () => {
+    const r = createRunToolCapabilityReceipt(receiptContext('pi', 'pi-rpc'))
+    r.connection('configured')
+    r.catalogue('managed', {
+      names: ['replace'],
+      source: 'extension-ready',
+      complete: true,
+      namespace: null
+    })
+    r.connection('ready')
+    expect(r.snapshot().connection).toBe('ready')
+
+    r.beginGeneration()
+    const after = r.snapshot()
+    expect(after.managed.attached).toBeNull()
+    expect(after.connection).toBe('configured')
+  })
+
+  it('drops a reason recorded with discovery evidence when that evidence goes', () => {
+    const r = createRunToolCapabilityReceipt(receiptContext('pi', 'pi-rpc'))
+    r.connection('configured')
+    r.connection('ready', 'The managed extension attached late.')
+    expect(r.snapshot().blocker).toBe('The managed extension attached late.')
+
+    r.beginGeneration()
+    expect(r.snapshot()).toMatchObject({ connection: 'configured', blocker: null })
+  })
+
+  it('still tells the model to report a known blocker rather than go looking', () => {
+    const r = createRunToolCapabilityReceipt(receiptContext('antigravity', 'antigravity-acp'))
+    r.connection(
+      'unavailable',
+      'The official AntiGravity ACP run has no attached TaskWraith broker.'
+    )
+    r.beginGeneration()
+    const s = r.snapshot()
+    expect(
+      toolRecoveryDisposition({
+        refusal: {
+          origin: 'host-containment',
+          decisionSource: 'system',
+          reply: 'transport-written'
+        },
+        routeObserved: s.readiness === 'available',
+        routeUnavailable: s.readiness === 'degraded',
+        attempts: 0
+      })
+    ).toBe('report-blocker')
+  })
+})
+
 describe('executed tools are always reported as a lower bound', () => {
   const reporter = () =>
     createRunToolCapabilityReceipt({

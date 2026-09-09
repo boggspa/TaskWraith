@@ -318,6 +318,27 @@ export function createRunToolCapabilityReceipt(
       /* Reporting cannot change run authority. */
     }
   }
+  /**
+   * The last host statement about how this run's broker was wired, with the
+   * reason it carried.
+   *
+   * `configured` and `unavailable` are decided before the provider process
+   * opens its session: the ACP `mcpServers` array rides `session/new`, and a
+   * new generation is only another `session/prompt` on that same session. They
+   * stay true across a generation and must survive it, exactly as `advertised`
+   * and `requiredManagedTools` already do. Only `ready` is discovery-derived,
+   * resting on the `attached` evidence a new generation clears, so only `ready`
+   * is given back — and given back to a REMEMBERED value, never an inferred
+   * one, because the receipt must not guess which wiring a cleared `ready` was
+   * standing on. A `ready` recorded over a remembered `unavailable` would
+   * therefore restore that `unavailable`; no producer writes that sequence
+   * today, and resolving it would mean inventing a wiring fact rather than
+   * reading one.
+   */
+  let wiring: { status: 'unknown' | 'configured' | 'unavailable'; blocker: string | null } = {
+    status: 'unknown',
+    blocker: null
+  }
   const current = (generation: number): boolean =>
     !receipt.lifecycleSettled && generation === receipt.generation
   const assess = (): void => {
@@ -357,8 +378,8 @@ export function createRunToolCapabilityReceipt(
       receipt.managed.executed = []
       receipt.native.executedComplete = false
       receipt.managed.executedComplete = false
-      receipt.connection = 'unknown'
-      receipt.blocker = null
+      receipt.connection = wiring.status
+      receipt.blocker = wiring.blocker
       assess()
       publish()
       return receipt.generation
@@ -405,6 +426,11 @@ export function createRunToolCapabilityReceipt(
       if (!current(generation)) return false
       receipt.connection = status
       if (reason) receipt.blocker = reason.slice(0, 2_000)
+      // `ready` is proven by attachment evidence a new generation clears; every
+      // other status is the host's own wiring statement for the whole run. The
+      // blocker is read back after the guard above, so a status set with no
+      // reason keeps the standing one, matching in-generation behaviour.
+      if (status !== 'ready') wiring = { status, blocker: receipt.blocker }
       assess()
       publish()
       return true
