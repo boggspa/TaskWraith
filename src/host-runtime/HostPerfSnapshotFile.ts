@@ -53,6 +53,13 @@ export interface HostPerfSnapshotFileIdentity {
    */
   readonly generation: number
   readonly pid: number
+  /**
+   * Public opaque boot epoch minted per standalone composition incarnation.
+   * 64 lowercase hex characters. A random token compared for equality —
+   * no timestamps, no counters — so PID reuse, same-ms, or backward clocks
+   * are irrelevant by construction. Never the auth token.
+   */
+  readonly bootEpoch?: string
 }
 
 /** Injection seam; production passes node:fs. Sync keeps rename atomic. */
@@ -133,6 +140,17 @@ const requireNonNegativeInteger = (value: unknown, label: string): number => {
   return value
 }
 
+/** Public opaque boot epoch: 64 lowercase hex characters (32 random bytes). */
+const BOOT_EPOCH_PATTERN = /^[0-9a-f]{64}$/
+
+const requireOptionalBootEpoch = (value: unknown, label: string): string | undefined => {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !BOOT_EPOCH_PATTERN.test(value)) {
+    throw new Error(`${label} must be 64 lowercase hex characters when present.`)
+  }
+  return value
+}
+
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -157,11 +175,16 @@ export function createHostPerfSnapshotFileWriter(
   if (!isPlainObject(identity) || identity.process !== 'host') {
     throw new Error("Host perf snapshot identity.process must be 'host'.")
   }
+  // Validated before anything is frozen: a malformed epoch refuses the writer
+  // at construction rather than shipping an artifact no reader can pin. The
+  // conditional spread keeps the legacy payload byte-identical when absent.
+  const bootEpoch = requireOptionalBootEpoch(identity.bootEpoch, 'Host perf snapshot bootEpoch')
   const frozenIdentity: HostPerfSnapshotFileIdentity = Object.freeze({
     process: 'host',
     instanceId: requireNonEmptyString(identity.instanceId, 'Host perf snapshot instanceId'),
     generation: requireNonNegativeInteger(identity.generation, 'Host perf snapshot generation'),
-    pid: requirePositiveInteger(identity.pid, 'Host perf snapshot pid')
+    pid: requirePositiveInteger(identity.pid, 'Host perf snapshot pid'),
+    ...(bootEpoch === undefined ? {} : { bootEpoch })
   })
   const now = options.now ?? (() => new Date())
   const fs = options.fs ?? defaultFs

@@ -136,6 +136,40 @@ describe('createHostPerfSnapshotFileWriter', () => {
     ).toThrow(/snapshot/)
   })
 
+  it('carries a valid bootEpoch through the frozen identity into the payload', () => {
+    const bootEpoch = '0123456789abcdef'.repeat(4)
+    const { created, fs } = writer({ identity: { ...IDENTITY, bootEpoch } })
+    expect(created.writeOnce()).toBe(true)
+    const payload = JSON.parse(fs.files.get('/perf/host-snapshot.json')!)
+    expect(payload.identity).toEqual({ ...IDENTITY, bootEpoch })
+  })
+
+  it('omits bootEpoch entirely when absent, keeping the legacy payload byte shape', () => {
+    const { created, fs } = writer()
+    expect(created.writeOnce()).toBe(true)
+    const raw = fs.files.get('/perf/host-snapshot.json')!
+    expect(raw).not.toContain('bootEpoch')
+    expect(Object.prototype.hasOwnProperty.call(JSON.parse(raw).identity, 'bootEpoch')).toBe(false)
+  })
+
+  it('rejects a malformed bootEpoch at construction', () => {
+    const valid = '0123456789abcdef'.repeat(4)
+    const invalid: unknown[] = [
+      '0123456789ABCDEF'.repeat(4), // uppercase hex
+      valid.slice(0, 63), // 63 characters
+      valid + '0', // 65 characters
+      'g' + '0'.repeat(63), // non-hex
+      '', // empty
+      42,
+      null
+    ]
+    for (const bootEpoch of invalid) {
+      expect(() =>
+        writer({ identity: { ...IDENTITY, bootEpoch } as HostPerfSnapshotFileIdentity })
+      ).toThrow(/bootEpoch/)
+    }
+  })
+
   it('drops extra sections first and keeps byChat when that candidate fits', () => {
     const instrumentation = createHostPerfInstrumentation({
       sections: { bulky: () => 'x'.repeat(4000) }
