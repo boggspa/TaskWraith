@@ -1,13 +1,27 @@
 import { useEffect, useState } from 'react'
+import {
+  threadCatalogueStatusIsDegraded,
+  threadCataloguePreflightBanner,
+  type ThreadCatalogueStatusSnapshot
+} from '../lib/threadCataloguePreflightBanner'
 
-export function ThreadCatalogueStatus(): React.JSX.Element | null {
-  const [status, setStatus] = useState<{
-    complete: boolean
-    loaded: number
-    failed: number
-    error: string | null
-  } | null>(null)
+interface ThreadCatalogueStatusProps {
+  /**
+   * Startup has revealed the app beneath the boot mask. Required, not
+   * defaulted: a call site that forgets it would silently restore the
+   * never-ending overlay this component exists to bound.
+   */
+  bootRevealed: boolean
+}
+
+export function ThreadCatalogueStatus({
+  bootRevealed
+}: ThreadCatalogueStatusProps): React.JSX.Element | null {
+  const [status, setStatus] = useState<ThreadCatalogueStatusSnapshot | null>(null)
   useEffect(() => {
+    // Reveal ends the poll for the life of the window: nothing downstream reads
+    // this status once the bubble can no longer be shown.
+    if (bootRevealed) return
     let cancelled = false
     let timer: ReturnType<typeof setTimeout>
     const refresh = async (): Promise<void> => {
@@ -34,29 +48,23 @@ export function ThreadCatalogueStatus(): React.JSX.Element | null {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [])
-  if (!status || (status.complete && !status.error && !status.failed)) return null
+  }, [bootRevealed])
+  useEffect(() => {
+    // Losing the overlay must not lose the signal. A mirror still degraded at
+    // reveal means the sidebar list and the sidebar search are both serving an
+    // arbitrary partial subset, which reads as missing threads rather than as a
+    // failure; leave one line in the renderer log so it stays diagnosable.
+    // Runs exactly once: the poll above is torn down in the same commit, so
+    // `status` never moves again after reveal.
+    if (!bootRevealed) return
+    if (threadCatalogueStatusIsDegraded(status))
+      console.warn('[thread-catalogue] history still degraded when the app was revealed', status)
+  }, [bootRevealed, status])
+  const line = threadCataloguePreflightBanner({ bootRevealed, status })
+  if (!line) return null
   return (
-    <div
-      role="status"
-      style={{
-        position: 'fixed',
-        bottom: 12,
-        left: 12,
-        zIndex: 1000,
-        padding: '8px 12px',
-        borderRadius: 8,
-        background: 'var(--bg-secondary, #252525)',
-        color: 'var(--text-primary, #eee)',
-        fontSize: 12,
-        maxWidth: 420
-      }}
-    >
-      {status.error
-        ? 'History is temporarily unavailable. Retrying…'
-        : status.failed
-          ? `${status.loaded} threads ready. ${status.failed} could not be read; their saved history is retained.`
-          : `Loading history… ${status.loaded} threads ready.`}
+    <div role="status" className="app-boot-history-note">
+      {line}
     </div>
   )
 }

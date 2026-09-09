@@ -86,6 +86,28 @@
 }
 
 /*
+ * The thread-catalogue note is a launch-screen surface only (the gate lives in
+ * lib/threadCataloguePreflightBanner.ts). It has to ride ON TOP of the mask —
+ * opaque at 10001, with the booting drag strip at 10002 — because underneath it
+ * was hidden for the one phase where "history is still loading" is the honest
+ * thing to say, and visible for every phase after it. Drag like the mask, so it
+ * cannot punch a dead spot into a window that is draggable everywhere else.
+ */
+.app-boot-history-note {
+  position: fixed;
+  bottom: 12px;
+  left: 12px;
+  z-index: 10003;
+  max-width: 420px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-secondary, #252525);
+  color: var(--text-primary, #eee);
+  font-size: 12px;
+  -webkit-app-region: drag;
+}
+
+/*
  * Input is released the instant boot is ready, independently of the visual.
  * The mask is a full-window overlay with `-webkit-app-region: drag`, and a drag
  * region swallows mouse input regardless of `pointer-events`, so both have to

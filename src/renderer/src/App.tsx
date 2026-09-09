@@ -32452,7 +32452,7 @@ function App(): React.JSX.Element {
   return (
     <UsageSummaryStoreContext.Provider value={usageSummaryStore}>
       {appView}
-      <ThreadCatalogueStatus />
+      <ThreadCatalogueStatus bootRevealed={isBootReady} />
       <RendererChatConflictNotice
         chatId={currentChat?.appChatId}
         drafts={pendingChatDraftsRef.current}
