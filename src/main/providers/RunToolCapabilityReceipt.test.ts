@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ProviderId } from '../store/types'
 import { prepareRunEventPayload } from '../RunEventStore'
 import {
+  boundRunToolCapabilityReceipt,
   createRunToolCapabilityReceipt,
   resolveRunToolScope,
   toolRecoveryDisposition,
@@ -116,11 +117,34 @@ describe.each(transports)('%s / %s common tool receipt acceptance', (provider, t
       complete: false,
       namespace: 'broker'
     })
-    expect(r.snapshot()).toMatchObject({ readiness: 'unverified', missingManagedTools: [] })
+    expect(r.snapshot()).toMatchObject({
+      readiness: 'unverified',
+      missingManagedTools: [],
+      missingManagedToolsComplete: false
+    })
     r.connection('unavailable', 'Exact broker endpoint unavailable.')
     expect(r.snapshot()).toMatchObject({
       readiness: 'degraded',
       blocker: 'Exact broker endpoint unavailable.'
+    })
+  })
+
+  it('marks the missing set closed only once a complete catalogue backs it', () => {
+    const r = createRunToolCapabilityReceipt(receiptContext(provider, transport))
+    r.requireManagedTools(['replace'])
+    expect(r.snapshot()).toMatchObject({
+      missingManagedTools: [],
+      missingManagedToolsComplete: false
+    })
+    r.catalogue('managed', {
+      names: ['replace', 'read_file'],
+      source: 'provider-catalogue',
+      complete: true,
+      namespace: 'broker'
+    })
+    expect(r.snapshot()).toMatchObject({
+      missingManagedTools: [],
+      missingManagedToolsComplete: true
     })
   })
 
@@ -280,6 +304,17 @@ describe('executed tools are always reported as a lower bound', () => {
       effectivePermissions: null,
       scope: { kind: 'global', workspacePath: null, paths: [] }
     })
+
+  it('never leaves a trimmed executed list marked complete', () => {
+    const receipt = reporter().snapshot()
+    receipt.native.executed = Array.from({ length: 512 }, (_, i) => `${i}-${'x'.repeat(190)}`)
+    receipt.native.executedComplete = true
+    const bounded = boundRunToolCapabilityReceipt(receipt)
+    expect(bounded.native.executed.length).toBeGreaterThan(0)
+    expect(bounded.native.executed.length).toBeLessThan(512)
+    expect(bounded.detailsTruncated).toBe(true)
+    expect(bounded.native.executedComplete).toBe(false)
+  })
 
   it('never claims the executed list is closed, even once tools have run', () => {
     const r = reporter()

@@ -161,6 +161,7 @@ export function boundRunToolCapabilityReceipt(
             surface.executed = surface.executed.slice(
               Math.max(1, Math.ceil(surface.executed.length / 2))
             )
+            surface.executedComplete = false
           }
         })
     }
@@ -324,6 +325,11 @@ export function createRunToolCapabilityReceipt(
     receipt.missingManagedTools = observed?.complete
       ? receipt.requiredManagedTools.filter((name) => !observed.names.includes(name))
       : []
+    // An empty missing list from an absent or partial catalogue is ignorance, not
+    // proof that nothing is missing.
+    receipt.missingManagedToolsComplete =
+      receipt.requiredManagedToolsComplete &&
+      (receipt.requiredManagedTools.length === 0 || observed?.complete === true)
     receipt.readiness =
       receipt.connection === 'unavailable' || receipt.missingManagedTools.length > 0
         ? 'degraded'
