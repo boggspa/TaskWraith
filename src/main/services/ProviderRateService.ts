@@ -297,6 +297,23 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.6-luna',
         lastVerified: RATE_TABLE_VERSION
       },
+      // GPT-6 Astra — flagship, leads the picker from 2026-09-03. Unlike the
+      // 5.6 trio above, its long-context tier IS modelled: the pricing page
+      // publishes the rates outright rather than leaving them as a multiplier.
+      {
+        modelId: 'gpt-6-astra',
+        inputUsdPerMillion: 10.0,
+        outputUsdPerMillion: 50.0,
+        cachedInputUsdPerMillion: 1.0,
+        longContextThresholdTokens: 272_000,
+        longContextInputUsdPerMillion: 20.0,
+        longContextOutputUsdPerMillion: 75.0,
+        longContextCachedInputUsdPerMillion: 2.0,
+        sourceUrl: 'https://developers.openai.com/api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Standard tier; prompts at or above 272K tokens bill every token at the long-context tier. Codex CLI typically billed via ChatGPT subscription, not per-token.'
+      },
       {
         modelId: 'gpt-5.5',
         inputUsdPerMillion: 5.0,
