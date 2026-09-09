@@ -1404,6 +1404,15 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes: 'Paid tier; Cerebras also has a free 1M tokens/day tier.'
       },
       {
+        modelId: 'cerebras/qwen-3.8-27b',
+        inputUsdPerMillion: 0.99,
+        outputUsdPerMillion: 1.49,
+        sourceUrl: 'https://www.cerebras.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Listed on the Cerebras Developer Tier pricing table (~1,500 tokens/s); ~2.8x the gpt-oss-120b input rate.'
+      },
+      {
         modelId: 'cerebras/zai-glm-4.7',
         inputUsdPerMillion: 2.25,
         outputUsdPerMillion: 2.75,
