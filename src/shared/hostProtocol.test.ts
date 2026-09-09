@@ -1529,6 +1529,59 @@ describe('Host protocol Wave 2D-1 read frames', () => {
     ).toMatchObject({ ok: false, error: 'hostId is required' })
   })
 
+  it('carries an optional bootEpoch through mint and decode, and rejects malformed epochs', () => {
+    const BOOT_EPOCH = '0123456789abcdef'.repeat(4)
+    const mintInput = {
+      hostId: 'host-local-1',
+      hostVersion: '1.9.2',
+      sessionId: 'sess-epoch-1',
+      generation: 7,
+      cursor: 21,
+      authenticatedClient: client,
+      hostCapabilityOffer: ['bootstrap', 'snapshot'] as readonly HostCapability[],
+      clientCapabilityRequest: ['snapshot'] as readonly HostCapability[],
+      freshness: 'live' as const
+    }
+
+    // With an epoch: mint → wire → decode round-trip preserves it exactly.
+    const minted = buildHostBootstrapWelcome({ ...mintInput, bootEpoch: BOOT_EPOCH })
+    expect(minted.ok).toBe(true)
+    if (minted.ok) {
+      expect(minted.value.bootEpoch).toBe(BOOT_EPOCH)
+      const decoded = decodeHostBootstrapWelcome(JSON.parse(JSON.stringify(minted.value)))
+      expect(decoded).toEqual(minted)
+    }
+
+    // Without an epoch: the legacy wire shape is preserved — no new key.
+    const legacy = buildHostBootstrapWelcome(mintInput)
+    expect(legacy.ok).toBe(true)
+    if (legacy.ok) {
+      expect(Object.prototype.hasOwnProperty.call(legacy.value, 'bootEpoch')).toBe(false)
+      const decoded = decodeHostBootstrapWelcome(JSON.parse(JSON.stringify(legacy.value)))
+      expect(decoded).toEqual(legacy)
+    }
+
+    // Malformed epochs are refused at decode, and therefore at mint.
+    const valid = legacy.ok ? legacy.value : undefined
+    for (const bootEpoch of [
+      '0123456789ABCDEF'.repeat(4), // uppercase hex
+      BOOT_EPOCH.slice(0, 63), // 63 characters
+      BOOT_EPOCH + '0', // 65 characters
+      'g' + '0'.repeat(63), // non-hex
+      '', // empty
+      42,
+      null
+    ]) {
+      expect(decodeHostBootstrapWelcome({ ...valid, bootEpoch })).toMatchObject({
+        ok: false,
+        error: 'bootEpoch must be 64 lowercase hex characters when present'
+      })
+      expect(buildHostBootstrapWelcome({ ...mintInput, bootEpoch: bootEpoch as string }).ok).toBe(
+        false
+      )
+    }
+  })
+
   it('keeps read-shaped HostCommandName values wire-compatible', () => {
     for (const name of ['snapshot.get', 'deltas.since', 'receipt.lookup', 'ping'] as const) {
       const decoded = decodeHostCommand(

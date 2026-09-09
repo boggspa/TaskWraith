@@ -580,6 +580,12 @@ export interface HostBootstrapWelcome {
   authenticatedClient: HostAuthenticatedClientIdentity
   capabilities: HostCapability[]
   freshness: HostProjectionFreshness
+  /**
+   * Optional public opaque boot epoch (64 lowercase hex), minted per Host
+   * incarnation and compared for equality only. Never the auth token.
+   * Absent on pre-epoch hosts; decoders accept both shapes.
+   */
+  bootEpoch?: string
 }
 
 /**
@@ -621,6 +627,8 @@ export interface HostBootstrapWelcomeMintInput {
   hostCapabilityOffer: readonly HostCapability[]
   clientCapabilityRequest: readonly HostCapability[]
   freshness: HostProjectionFreshness
+  /** Optional public opaque boot epoch; decode validates 64 lowercase hex. */
+  bootEpoch?: string
 }
 
 export type HostDeltaKind = 'upsert' | 'remove' | 'tombstone' | 'generation-reset'
@@ -1125,6 +1133,17 @@ const HOST_DELTA_FAMILIES = new Set<string>([
 ])
 
 const HOST_FRESHNESS = new Set<string>(['live', 'cached', 'stale'])
+/**
+ * Public opaque boot epoch (Independent Threads Programme M1): 64 lowercase
+ * hex characters minted per Host incarnation, compared for equality only —
+ * never a timestamp, never a counter, never the auth token. Optional on the
+ * wire so pre-epoch hosts and clients keep decoding each other.
+ */
+const HOST_BOOT_EPOCH_PATTERN = /^[0-9a-f]{64}$/
+
+function isBootEpoch(value: unknown): value is string {
+  return typeof value === 'string' && HOST_BOOT_EPOCH_PATTERN.test(value)
+}
 const HOST_STATUSES = new Set<string>(['ok', 'degraded', 'recovering', 'offline'])
 const HOST_CONNECTION_PHASES = new Set<string>([
   'connecting',
@@ -1656,6 +1675,10 @@ export function decodeHostBootstrapWelcome(value: unknown): HostDecodeResult<Hos
   if (value.freshness !== 'live' && value.freshness !== 'cached' && value.freshness !== 'stale') {
     return { ok: false, error: 'freshness is invalid' }
   }
+  const bootEpoch = value.bootEpoch
+  if (bootEpoch !== undefined && !isBootEpoch(bootEpoch)) {
+    return { ok: false, error: 'bootEpoch must be 64 lowercase hex characters when present' }
+  }
   const authenticatedClient = decodeClientIdentity(value.authenticatedClient, 'authenticatedClient')
   if (!authenticatedClient.ok) return authenticatedClient
   const capabilities = decodeCapabilities(value.capabilities)
@@ -1674,7 +1697,8 @@ export function decodeHostBootstrapWelcome(value: unknown): HostDecodeResult<Hos
       cursor: value.cursor,
       authenticatedClient: authenticatedClient.value,
       capabilities: capabilities.value,
-      freshness: value.freshness
+      freshness: value.freshness,
+      ...(bootEpoch === undefined ? {} : { bootEpoch })
     }
   }
 }
@@ -3420,7 +3444,8 @@ export function buildHostBootstrapWelcome(
     cursor: input.cursor,
     authenticatedClient: authenticatedClient.value,
     capabilities,
-    freshness: input.freshness
+    freshness: input.freshness,
+    ...(input.bootEpoch === undefined ? {} : { bootEpoch: input.bootEpoch })
   }
   return decodeHostBootstrapWelcome(welcome)
 }
