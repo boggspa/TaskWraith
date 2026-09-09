@@ -449,6 +449,7 @@ import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
 import { midRunQueuedMessageId } from '../shared/midRunSteeringQueue'
 import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
 import type { ChatMessageOrigin } from '../shared/messageOrigin'
+import { externalAgentAttribution } from '../shared/messageOrigin'
 import { buildEstimatedStreamUsage, visiblePayloadChars } from '../shared/tokenEstimate'
 import { AGENT_QUESTION_TIMEOUT_MS } from '../shared/interactionTimeouts'
 import {
@@ -51524,9 +51525,17 @@ if (isGeminiMcpBridgeProcess) {
               iosImageThumbnails = []
             }
           }
-          const providerPrompt =
+          // A solo chat has no ensemble serializer to attribute the row on the
+          // way to the model, so the attribution goes on the turn's own prompt
+          // here. It wraps the RESOLVED body, so a prompt that waited in the
+          // queue is attributed exactly like one that arrived live.
+          const soloOriginAttribution = externalAgentAttribution(action.origin)
+          const providerPromptBody =
             internalQueueDispatch?.providerPrompt ??
             appendRemoteImageMarkupToPrompt(action.text, iosMarkupPromptText)
+          const providerPrompt = soloOriginAttribution
+            ? `${soloOriginAttribution}\n${providerPromptBody}`
+            : providerPromptBody
           // Proposed-plan implement-run idempotency (slice 2c-iii). An
           // Approve-origin run names the plan it implements. We re-read OUR
           // canonical status (never the phone's) and, in ONE synchronous block

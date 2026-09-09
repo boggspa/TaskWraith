@@ -58,6 +58,20 @@ describe('local-control origin wiring in src/main/index.ts', () => {
     expect(queueCall).toContain(ORIGIN_FROM_ACTION)
   })
 
+  it('attributes the solo turn prompt, so a single-provider chat is told too', () => {
+    expect(main).toContain("import { externalAgentAttribution } from '../shared/messageOrigin'")
+    const build = windowAfter(
+      'const soloOriginAttribution = externalAgentAttribution(',
+      520
+    ).replace(/\s+/g, ' ')
+    // The attribution wraps the RESOLVED body, so a queued prompt flushed
+    // later is attributed exactly like one that arrived live.
+    expect(build).toContain('internalQueueDispatch?.providerPrompt ??')
+    expect(build).toContain(
+      'const providerPrompt = soloOriginAttribution ? `${soloOriginAttribution}\\n${providerPromptBody}` : providerPromptBody'
+    )
+  })
+
   it('ensembleSteerFn forwards action.origin to absorbMidRunSteering and startRound', () => {
     const absorb = windowAfter(
       'const absorbed = ensembleOrchestratorRef?.absorbMidRunSteering({',
