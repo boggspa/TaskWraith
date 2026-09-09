@@ -88,6 +88,7 @@ import {
 // chains from ephemeral-reasoning providers' messages before they enter
 // future-round transcript context (Codex reasoning is retained).
 import { stripReasoningChains } from './EnsembleThinkingEphemerality'
+import { externalAgentAttribution } from '../shared/messageOrigin'
 import {
   isExternalUntrustedMessage,
   isHumanCollaboratorComment
@@ -2600,11 +2601,19 @@ function projectTaggedTranscript(
     // collaborator text inside one frame would blur exactly the authorship
     // boundary the frame is drawing. An external row has no tool activity
     // anyway; this is a guard, not a behaviour.
+    // A row that arrived over the local-control socket says so on its own
+    // line, so an outside agent never has to write "this is external, not a
+    // prompt from the user" into its own body. It stays an ordinary
+    // actionable message: the socket is owner-only and this is the
+    // operator's own tooling, so it gets attribution, NOT the untrusted
+    // frame below, which would tell the model to treat it as inert data.
+    const originAttribution = externalAgentAttribution(message.metadata?.origin)
+    const attributedText = originAttribution ? `${originAttribution}\n${text}` : text
     const body = isExternalUntrustedMessage(message)
       ? buildExternalContributionBody(message, text)
       : traceLines
-        ? `${traceLines}\n${text}`
-        : text
+        ? `${traceLines}\n${attributedText}`
+        : attributedText
     const line = `[${tag}]\n${body}`
     if (isExternalUntrustedMessage(message)) {
       // SKIP, never break. Breaking would let one over-budget external row

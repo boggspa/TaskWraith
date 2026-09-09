@@ -93,6 +93,28 @@ export function messageOriginBadges(value: unknown): string[] {
  * `messageOriginSpeaker` and `messageOriginBadges` as separate elements
  * instead, so the speaker stays legible when the chips are styled down.
  */
+/**
+ * The one line prefixed to the prompt a receiving agent reads, so a message
+ * that arrived over the socket never has to explain in its own body that it
+ * came from another agent rather than from the operator.
+ *
+ * Deliberately NOT the external-collaborator frame. That frame declares its
+ * author outside the trust boundary and its text information rather than
+ * instruction, which is right for a stranger relayed from another machine and
+ * wrong here: a socket send came through the owner-only token on the
+ * operator's own machine, and should stay as actionable as anything they type.
+ * This says who is speaking and nothing more.
+ *
+ * One line, always. The label is already collapsed to single spaces and
+ * bounded upstream, so nothing inside it can open a second line and pose as
+ * host text.
+ */
+export function externalAgentAttribution(value: unknown): string | undefined {
+  const speaker = messageOriginSpeaker(value)
+  if (!speaker) return undefined
+  return `[${[speaker, ...messageOriginBadges(value)].join(BADGE_SEPARATOR)}]`
+}
+
 export function messageOriginLabel(value: unknown): string | undefined {
   const speaker = messageOriginSpeaker(value)
   if (!speaker) return undefined
