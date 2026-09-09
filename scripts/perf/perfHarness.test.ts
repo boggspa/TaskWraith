@@ -12,7 +12,13 @@ import { tmpdir } from 'os'
 import path from 'path'
 import { createRequire } from 'module'
 import { fileURLToPath } from 'url'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
+import { createHostPerfInstrumentation } from '../../src/host-runtime/HostPerfSnapshot'
+import {
+  createHostPerfSnapshotFileWriter,
+  type HostPerfSnapshotFileIdentity
+} from '../../src/host-runtime/HostPerfSnapshotFile'
+import { createWorkSpanRecorder } from '../../src/host-shared/perf/WorkSpanRecorder'
 
 /* eslint-disable @typescript-eslint/no-empty-function -- adapter fakes intentionally expose no-op lifecycle methods. */
 
@@ -97,6 +103,51 @@ function baseEnv(overrides = {}) {
       isolatedWorktree: false
     },
     ...overrides
+  }
+}
+
+/**
+ * Wave-8: the host bundle freshness preflight reads the real repo's
+ * out/host + src mtimes by default. Launch simulations decouple from that
+ * with this DI fs: the virtual bundle is always newer than the single
+ * virtual source file per compiled tree, so the preflight passes and the
+ * tests keep exercising the attach/teardown behaviour they were written for.
+ */
+function freshHostBundleFs() {
+  const bundleSuffix = ['out', 'host', 'host-runtime', 'cli.js'].join(path.sep)
+  return {
+    statSync(target: string) {
+      return {
+        isFile: () => true,
+        mtimeMs: String(target).endsWith(bundleSuffix) ? 1e12 : 1
+      }
+    },
+    readdirSync(_target: string, _options?: unknown) {
+      return [{ name: 'Fresh.ts', isFile: () => true, isDirectory: () => false }]
+    }
+  }
+}
+
+/**
+ * Wave-8: the STALE counterpart of freshHostBundleFs for the launch-blocking
+ * test — suffix-matched against the REAL repoRoot, every virtual source
+ * newer than the bundle. The first version of that test reused the
+ * '/repo'-rooted memFs and passed for the WRONG reason under mutation
+ * (host_bundle_missing matches the same regex as host_bundle_stale); the
+ * red-check caught it, and the assertion now names the stale source.
+ */
+function staleHostBundleFs() {
+  const bundleSuffix = ['out', 'host', 'host-runtime', 'cli.js'].join(path.sep)
+  return {
+    statSync(target: string) {
+      return {
+        isFile: () => true,
+        mtimeMs: String(target).endsWith(bundleSuffix) ? 1 : 1e12
+      }
+    },
+    readdirSync(_target: string, _options?: unknown) {
+      return [{ name: 'Fresh.ts', isFile: () => true, isDirectory: () => false }]
+    }
   }
 }
 
@@ -1954,6 +2005,8 @@ describe('T2 runner (no Electron launch)', () => {
             buildAdapters: {
               build: async () => ({ code: 0 })
             },
+            // Wave-8: decouple the host bundle preflight from real out/host mtimes.
+            hostBundleAdapters: { fs: freshHostBundleFs() },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: () => {
@@ -2143,6 +2196,8 @@ describe('T2 runner (no Electron launch)', () => {
             buildAdapters: {
               build: async () => ({ code: 0 })
             },
+            // Wave-8: decouple the host bundle preflight from real out/host mtimes.
+            hostBundleAdapters: { fs: freshHostBundleFs() },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: () => {
@@ -2566,6 +2621,8 @@ describe('T2 runner (no Electron launch)', () => {
             buildAdapters: {
               build: async () => ({ code: 0 })
             },
+            // Wave-8: decouple the host bundle preflight from real out/host mtimes.
+            hostBundleAdapters: { fs: freshHostBundleFs() },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: (cmd, _args, opts) => {
@@ -2873,6 +2930,8 @@ describe('T2 runner (no Electron launch)', () => {
             buildAdapters: {
               build: async () => ({ code: 0 })
             },
+            // Wave-8: decouple the host bundle preflight from real out/host mtimes.
+            hostBundleAdapters: { fs: freshHostBundleFs() },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: (cmd, _args, opts) => {
@@ -3078,6 +3137,8 @@ describe('T2 harness amendment — disk preflight, windowed rate, capture deadli
             buildAdapters: {
               build: async () => ({ code: 0 })
             },
+            // Wave-8: decouple the host bundle preflight from real out/host mtimes.
+            hostBundleAdapters: { fs: freshHostBundleFs() },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: () => {
@@ -3643,5 +3704,589 @@ describe('M1 hostSpans collector', () => {
 
     expect(() => applyCrossThreadToMetrics(metrics, { ...MATRIX_CELL, chats: 3 }, {})).toThrow()
     expect(() => applyCrossThreadToMetrics(metrics, MATRIX_CELL, {})).toThrow()
+  })
+})
+
+describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding (M1)', () => {
+  const {
+    checkHostBundleFreshness,
+    collectT2HostSpanEvidence,
+    runT2BaselineCli,
+    parseArgs,
+    HOST_BUNDLE_REBUILD_COMMAND
+  } = require('./runT2Baseline.cjs')
+  const { buildElectronSpawnPlan } = require('./electronChildSession.cjs')
+  const { validateCrossThreadBlock } = require('./collectors/hostSpans.cjs')
+
+  const EPOCH = 'cd'.repeat(32)
+  const OTHER_EPOCH = 'ef'.repeat(32)
+  const WRITE_AT = new Date('2026-09-09T04:00:00.000Z')
+  const FRESH_AT = new Date('2026-09-09T04:00:01.000Z')
+  const TOKEN_BAIT = 'tok3nBAIT0123456789abcdef'
+  const CELL_NAME = cellName(MATRIX_CELL)
+  const HOST_IDENTITY = {
+    process: 'host',
+    instanceId: 'host-abc',
+    generation: 2,
+    pid: 777
+  } as const satisfies HostPerfSnapshotFileIdentity
+
+  const tempDirs: string[] = []
+  afterAll(() => {
+    while (tempDirs.length) {
+      const dir = tempDirs.pop()
+      if (dir) rmSync(dir, { recursive: true, force: true })
+    }
+  })
+  function tempDir(prefix: string): string {
+    const dir = mkdtempSync(path.join(tmpdir(), prefix))
+    tempDirs.push(dir)
+    return dir
+  }
+
+  /** One REAL writer-produced snapshot file (transport-test pattern). */
+  function writeRealHostSnapshot(identity: HostPerfSnapshotFileIdentity): string {
+    const file = path.join(tempDir('tw-t2-w8-snapshot-'), 'host-perf-snapshot.json')
+    const instrumentation = createHostPerfInstrumentation()
+    instrumentation.spans.record({
+      chatId: 'chat-heavy',
+      kind: 'host_queue_wait',
+      resource: 'host_chain',
+      startedAt: 5,
+      durationMs: 120
+    })
+    const writer = createHostPerfSnapshotFileWriter({
+      instrumentation,
+      path: file,
+      intervalMs: 1000,
+      maxBytes: 256 * 1024,
+      identity,
+      now: () => WRITE_AT
+    })
+    expect(writer.writeOnce()).toBe(true)
+    return file
+  }
+
+  function tickingClock(start = 1000, stepMs = 10): () => number {
+    let at = start - stepMs
+    return () => (at += stepMs)
+  }
+
+  /** A REAL main-process recorder section served through the preload IPC seam. */
+  function realMainSection(): Record<string, unknown> {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 64,
+      now: tickingClock()
+    })
+    for (const [chatId, durationMs] of [
+      ['chat-light', 10],
+      ['chat-heavy', 90]
+    ] as const) {
+      recorder.record({
+        chatId,
+        runId: `run-${chatId}`,
+        kind: 'admission_wait',
+        resource: 'ensemble_pool',
+        startedAt: 0,
+        durationMs
+      })
+    }
+    return recorder.section() as unknown as Record<string, unknown>
+  }
+
+  function rendererServing(section: Record<string, unknown>) {
+    return {
+      post: async (_method: string, _params: unknown) => ({
+        result: { value: { sections: { workSpans: section } } }
+      })
+    }
+  }
+
+  /** The probe contract from hostWelcomeProbe.cjs, as DI. */
+  function okProbe(epoch?: string) {
+    return async () => ({
+      ok: true,
+      expectedIdentity: {
+        instanceId: 'host-abc',
+        generation: 2,
+        pid: 777,
+        ...(epoch === undefined ? {} : { bootEpoch: epoch })
+      },
+      welcome: {
+        hostId: 'host-abc',
+        generation: 2,
+        ...(epoch === undefined ? {} : { bootEpoch: epoch })
+      },
+      discovery: { pid: 777, startedAt: '2026-09-09T03:59:58.000Z' }
+    })
+  }
+
+  // -------------------------------------------------------------------------
+  // Spawn-plan extraEnv (electronChildSession.cjs)
+  // -------------------------------------------------------------------------
+
+  it('extraEnv is inert when unset and only ever injects TASKWRAITH_PERF_* keys', () => {
+    const base = {
+      instanceId: 'perfW8Env01',
+      repoRoot: path.resolve(__dirname, '..', '..'),
+      workload: 'dual_run',
+      fxPosture: 'reduce_motion',
+      platform: 'darwin',
+      remoteDebuggingPort: 9451,
+      mainInspectorPort: 9851,
+      adapters: { resolveElectronPath: () => '/virtual/electron-bin' }
+    } as Record<string, unknown>
+
+    const plain = buildElectronSpawnPlan(base)
+    // The base plan already carries TASKWRAITH_PERF_WORKLOAD/FX_POSTURE from
+    // buildIsolatedLaunchPlan; "inert when unset" means NO snapshot-path key
+    // and NO injected shell assignments beyond the pre-extraEnv shape.
+    expect(plain.env.TASKWRAITH_PERF_WORKLOAD).toBe('dual_run')
+    expect(plain.env.TASKWRAITH_PERF_HOST_SNAPSHOT_PATH).toBeUndefined()
+    expect(plain.shellCommand).not.toContain('TASKWRAITH_PERF_HOST_SNAPSHOT_PATH')
+    expect(plain.shellCommand).not.toContain('TASKWRAITH_PERF_WORKLOAD=')
+
+    const snapshotPath = '/virtual/artifacts/host-perf-snapshot.json'
+    const armed = buildElectronSpawnPlan({
+      ...base,
+      extraEnv: { TASKWRAITH_PERF_HOST_SNAPSHOT_PATH: snapshotPath }
+    })
+    expect(armed.env.TASKWRAITH_PERF_HOST_SNAPSHOT_PATH).toBe(snapshotPath)
+    expect(armed.shellCommand).toContain('TASKWRAITH_PERF_HOST_SNAPSHOT_PATH=')
+    expect(armed.shellCommand).toContain(snapshotPath)
+    // Isolation-critical env and argv shape are untouched by the injection.
+    expect(armed.env.HOME).toBeUndefined()
+    expect(armed.argv).toEqual(plain.argv)
+
+    expect(() => buildElectronSpawnPlan({ ...base, extraEnv: { HOME: '/evil' } })).toThrow(
+      /TASKWRAITH_PERF_\*/
+    )
+    expect(() => buildElectronSpawnPlan({ ...base, extraEnv: { TASKWRAITH_PERF_X: '' } })).toThrow(
+      /non-empty string/
+    )
+    expect(() =>
+      buildElectronSpawnPlan({ ...base, extraEnv: { TASKWRAITH_PERF_BAD$key: 'v' } })
+    ).toThrow(/TASKWRAITH_PERF_\*/)
+    expect(() => buildElectronSpawnPlan({ ...base, extraEnv: 'nope' })).toThrow(/plain object/)
+  })
+
+  // -------------------------------------------------------------------------
+  // Host bundle freshness preflight (ruling P2)
+  // -------------------------------------------------------------------------
+
+  type FsNode = { mtimeMs?: number; children?: Record<string, FsNode> }
+
+  function memFs(root: Record<string, FsNode>) {
+    const resolveNode = (target: string): FsNode | null => {
+      if (target === '/repo') return { children: root }
+      if (!target.startsWith('/repo/')) return null
+      let node: FsNode = { children: root }
+      for (const seg of target.slice('/repo/'.length).split('/')) {
+        if (!seg) continue
+        if (!node.children || !node.children[seg]) return null
+        node = node.children[seg]
+      }
+      return node
+    }
+    const enoent = (target: string) =>
+      Object.assign(new Error(`ENOENT: ${target}`), { code: 'ENOENT' })
+    return {
+      statSync(target: string) {
+        const node = resolveNode(String(target))
+        if (!node) throw enoent(String(target))
+        return { isFile: () => node.children === undefined, mtimeMs: node.mtimeMs ?? 0 }
+      },
+      readdirSync(target: string, _opts?: unknown) {
+        const node = resolveNode(String(target))
+        if (!node || !node.children) throw enoent(String(target))
+        return Object.entries(node.children).map(([name, child]) => ({
+          name,
+          isFile: () => child.children === undefined,
+          isDirectory: () => child.children !== undefined
+        }))
+      }
+    }
+  }
+
+  function bundleTree(bundleMtime: number, sourceMtime: number, testMtime?: number) {
+    return {
+      out: {
+        children: {
+          host: {
+            children: { 'host-runtime': { children: { 'cli.js': { mtimeMs: bundleMtime } } } }
+          }
+        }
+      },
+      src: {
+        children: {
+          'host-runtime': {
+            children: {
+              'HostStandaloneComposition.ts': { mtimeMs: sourceMtime },
+              ...(testMtime === undefined
+                ? {}
+                : { 'HostStandaloneComposition.test.ts': { mtimeMs: testMtime } })
+            }
+          },
+          'host-node': {
+            children: { 'HostNodeProductionServer.ts': { mtimeMs: sourceMtime - 100 } }
+          },
+          shared: { children: { 'hostProtocol.ts': { mtimeMs: sourceMtime - 200 } } }
+        }
+      }
+    } as Record<string, FsNode>
+  }
+
+  it('P2: bundle freshness mirrors the host tsconfig inputs and fails closed', () => {
+    expect(HOST_BUNDLE_REBUILD_COMMAND).toBe('npm run host:build')
+
+    const fresh = checkHostBundleFreshness('/repo', { fs: memFs(bundleTree(1000, 900)) })
+    expect(fresh.ok).toBe(true)
+    expect(fresh.reason).toBe(null)
+    expect(fresh.checkedFileCount).toBe(3)
+    expect(fresh.newestSourcePath).toBe(
+      path.join('src', 'host-runtime', 'HostStandaloneComposition.ts')
+    )
+
+    const stale = checkHostBundleFreshness('/repo', { fs: memFs(bundleTree(1000, 1100)) })
+    expect(stale.ok).toBe(false)
+    expect(stale.reason).toBe('host_bundle_stale')
+    expect(stale.newestSourcePath).toBe(
+      path.join('src', 'host-runtime', 'HostStandaloneComposition.ts')
+    )
+    expect(stale.rebuildCommand).toBe('npm run host:build')
+
+    // A NEWER TEST FILE must not fail the preflight: the host tsconfig
+    // excludes ./**/*.test.ts, so tests are not build inputs.
+    const testOnlyNewer = checkHostBundleFreshness('/repo', {
+      fs: memFs(bundleTree(1000, 900, 5000))
+    })
+    expect(testOnlyNewer.ok).toBe(true)
+    expect(testOnlyNewer.checkedFileCount).toBe(3)
+
+    // Missing bundle.
+    const tree = bundleTree(1000, 900)
+    delete tree.out
+    const missing = checkHostBundleFreshness('/repo', { fs: memFs(tree) })
+    expect(missing.ok).toBe(false)
+    expect(missing.reason).toBe('host_bundle_missing')
+
+    // Compiled trees absent entirely → fail closed, never "fresh by vacuity".
+    const emptySources = checkHostBundleFreshness('/repo', {
+      fs: memFs({
+        out: {
+          children: {
+            host: { children: { 'host-runtime': { children: { 'cli.js': { mtimeMs: 1 } } } } }
+          }
+        },
+        src: {
+          children: {
+            'host-runtime': { children: {} },
+            'host-node': { children: {} },
+            shared: { children: {} }
+          }
+        }
+      })
+    })
+    expect(emptySources.ok).toBe(false)
+    expect(emptySources.reason).toBe('host_bundle_preflight_no_sources')
+
+    // fs contract failure → fail closed.
+    const noFs = checkHostBundleFreshness('/repo', { fs: {} })
+    expect(noFs.ok).toBe(false)
+    expect(noFs.reason).toBe('host_bundle_preflight_io: fs_contract')
+  })
+
+  it('P2: a stale Host bundle hard-fails --launch BEFORE spawn, naming the rebuild command', async () => {
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const homesRoot = path.join(repoRoot, 'perf-homes')
+    mkdirSync(homesRoot, { recursive: true })
+    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-w8-stale-'))
+    tempDirs.push(home)
+    let spawned = false
+    await expect(
+      runT2BaselineCli(
+        [
+          '--workload=dual_run',
+          '--launch',
+          '--i-accept-isolated-launch',
+          '--materialize-instance-userdata',
+          '--lean',
+          '--scale-down=40',
+          '--instance-id=perfW8Stl01',
+          `--home=${home}`,
+          '--port=9451',
+          '--inspect-port=9851',
+          '--max-replay-events=1'
+        ],
+        {
+          repoRoot,
+          forceIsolated: true,
+          allowDirtyLaunch: true,
+          allowNonIsolatedLaunch: true,
+          platform: 'darwin',
+          provenance: {
+            gitSha: 'a'.repeat(40),
+            dirty: false,
+            dirtyTreeFingerprint: 'b'.repeat(64),
+            dirtyPaths: [],
+            isolatedWorktree: true,
+            authoritativeBaseline: true
+          },
+          buildAdapters: { build: async () => ({ code: 0 }) },
+          hostBundleAdapters: { fs: staleHostBundleFs() },
+          spawnAdapters: {
+            resolveElectronPath: () => '/virtual/Electron',
+            spawn: () => {
+              spawned = true
+              throw new Error('preflight must run before any spawn')
+            }
+          },
+          portAdapters: {
+            probePort: async (port: number) => ({ port, occupied: false }),
+            probeCdp: async () => ({ port: 9451, reachable: false }),
+            listInstancePids: () => []
+          },
+          terminateOptions: { waitMs: 20, sleep: async () => {} }
+        }
+      )
+    ).rejects.toThrow(/is older than .*Fresh\.ts.*npm run host:build/)
+    expect(spawned).toBe(false)
+  })
+
+  // -------------------------------------------------------------------------
+  // T9b host span binding + qualification call (ruling P4)
+  // -------------------------------------------------------------------------
+
+  function evidenceOptions(overrides: Record<string, unknown> = {}) {
+    return {
+      userDataPath: '/virtual/userdata',
+      requiredChatIds: ['chat-heavy'],
+      cell: CELL_NAME,
+      metrics: createEmptyPerfMetrics(),
+      now: () => FRESH_AT,
+      ...overrides
+    } as Record<string, unknown>
+  }
+
+  it('qualifies and folds ONLY a boot-epoch-verified read: real writer file, real collector, live pin', async () => {
+    const snapshotPath = writeRealHostSnapshot({ ...HOST_IDENTITY, bootEpoch: EPOCH })
+    const options = evidenceOptions({
+      hostPerfSnapshotPath: snapshotPath,
+      probe: okProbe(EPOCH),
+      renderer: rendererServing(realMainSection())
+    })
+    const result = await collectT2HostSpanEvidence(options)
+    expect(result.ok).toBe(true)
+    const record = result.record
+    expect(record.marker).toBe(null)
+    expect(record.qualified).toBe(true)
+    expect(record.folded).toBe(true)
+    expect(record.cell).toBe(CELL_NAME)
+    expect(record.discoveryPid).toBe(777)
+    expect(record.welcome).toEqual({ hostId: 'host-abc', generation: 2, bootEpoch: EPOCH })
+    expect(record.expectedIdentity).toEqual({
+      instanceId: 'host-abc',
+      generation: 2,
+      pid: 777,
+      bootEpoch: EPOCH
+    })
+    expect(record.identity).toEqual({ ...HOST_IDENTITY, bootEpoch: EPOCH })
+    expect(record.attribution.status).toBe('available')
+    expect(record.ageMs).toBe(1000)
+    expect(record.sequence).toBe(1)
+
+    const metrics = options.metrics as Record<string, any>
+    const cell = metrics.crossThread.cells[CELL_NAME]
+    expect(cell.processes.host.hostSnapshot.identity.bootEpoch).toBe(EPOCH)
+    expect(cell.processes.host.hostSnapshot.identityVerified).toBe(true)
+    expect(cell.processes.main.process).toBe('main')
+    expect(validateCrossThreadBlock(metrics.crossThread)).toEqual([])
+    expect(validatePerfMetrics(metrics).ok).toBe(true)
+  })
+
+  it('P4: a legacy epoch-free run is recorded and left UNQUALIFIED — never green', async () => {
+    const snapshotPath = writeRealHostSnapshot(HOST_IDENTITY)
+    const options = evidenceOptions({
+      hostPerfSnapshotPath: snapshotPath,
+      probe: okProbe(),
+      renderer: rendererServing(realMainSection())
+    })
+    const result = await collectT2HostSpanEvidence(options)
+    expect(result.ok).toBe(false)
+    expect(result.record.marker).toBe('host_evidence_unqualified: boot_epoch_absent')
+    expect(result.record.qualified).toBe(false)
+    expect((options.metrics as Record<string, any>).crossThread).toBeUndefined()
+    // The read itself stayed legacy-valid: identity pinned, attribution available.
+    expect(result.record.identity).toEqual({ ...HOST_IDENTITY })
+    expect(result.record.attribution.status).toBe('available')
+  })
+
+  it('P4: a stale incarnation (pinned epoch missing from the file) refuses the whole read', async () => {
+    const snapshotPath = writeRealHostSnapshot({ ...HOST_IDENTITY, bootEpoch: OTHER_EPOCH })
+    const options = evidenceOptions({
+      hostPerfSnapshotPath: snapshotPath,
+      probe: okProbe(EPOCH),
+      renderer: rendererServing(realMainSection())
+    })
+    const result = await collectT2HostSpanEvidence(options)
+    expect(result.ok).toBe(false)
+    expect(result.record.marker).toBe('host_snapshot_refused: host_perf_snapshot_identity_mismatch')
+    expect(result.record.qualified).toBe(false)
+    expect((options.metrics as Record<string, any>).crossThread).toBeUndefined()
+  })
+
+  it('P4: a file epoch the pin lacks degrades to unverified — diagnostics valid, strict attribution not', async () => {
+    const snapshotPath = writeRealHostSnapshot({ ...HOST_IDENTITY, bootEpoch: EPOCH })
+    const options = evidenceOptions({
+      hostPerfSnapshotPath: snapshotPath,
+      probe: okProbe(),
+      renderer: rendererServing(realMainSection())
+    })
+    const result = await collectT2HostSpanEvidence(options)
+    expect(result.ok).toBe(false)
+    expect(result.record.marker).toBe('host_evidence_unqualified: identity_unverified')
+    expect(result.record.attribution.status).toBe('unsupported')
+    expect(result.record.attribution.reason).toBe('boot_epoch_unpinned')
+    expect((options.metrics as Record<string, any>).crossThread).toBeUndefined()
+  })
+
+  it('names host-unsupported (no discovery) and welcome-refusal markers without sampling', async () => {
+    let sampled = false
+    const tripwireSampler = async () => {
+      sampled = true
+      return {
+        workSpans: { unsupported: 'must_not_run' },
+        hostPerf: { unsupported: 'must_not_run' }
+      }
+    }
+    const absent = await collectT2HostSpanEvidence(
+      evidenceOptions({
+        hostPerfSnapshotPath: '/virtual/none.json',
+        sampler: tripwireSampler,
+        probe: async () => ({ ok: false, stage: 'discovery', reason: 'host_discovery_absent' })
+      })
+    )
+    expect(absent.record.marker).toBe('host_discovery_unavailable: host_discovery_absent')
+    expect(absent.record.qualified).toBe(false)
+
+    const refused = await collectT2HostSpanEvidence(
+      evidenceOptions({
+        hostPerfSnapshotPath: '/virtual/none.json',
+        sampler: tripwireSampler,
+        probe: async () => ({ ok: false, stage: 'welcome', reason: 'host_welcome_timeout' })
+      })
+    )
+    expect(refused.record.marker).toBe('host_welcome_unavailable: host_welcome_timeout')
+    expect(sampled).toBe(false)
+  })
+
+  it('never folds one-sided evidence: degraded main section or unspecified cell disqualify', async () => {
+    const snapshotPath = writeRealHostSnapshot({ ...HOST_IDENTITY, bootEpoch: EPOCH })
+
+    // Renderer session present but without .post → main side unavailable; the
+    // host file read still rides along (session-independence) and is recorded.
+    const noMain = await collectT2HostSpanEvidence(
+      evidenceOptions({ hostPerfSnapshotPath: snapshotPath, probe: okProbe(EPOCH), renderer: {} })
+    )
+    expect(noMain.record.marker).toBe(
+      'main_perf_section_unavailable: renderer_runtime_session_required'
+    )
+    expect(noMain.record.qualified).toBe(false)
+    expect(noMain.record.identity.bootEpoch).toBe(EPOCH)
+
+    // Fully qualified evidence but no canonical cell → recorded, not folded.
+    const noCell = await collectT2HostSpanEvidence(
+      evidenceOptions({
+        hostPerfSnapshotPath: snapshotPath,
+        probe: okProbe(EPOCH),
+        renderer: rendererServing(realMainSection()),
+        cell: null
+      })
+    )
+    expect(noCell.record.marker).toBe('cross_thread_cell_unspecified')
+    expect(noCell.record.qualified).toBe(false)
+    expect(noCell.record.cell as string | null).toBe(null)
+  })
+
+  it('TOKEN CONTAINMENT: the record and folded report copy bounded identity fields only', async () => {
+    const snapshotPath = writeRealHostSnapshot({ ...HOST_IDENTITY, bootEpoch: EPOCH })
+    // A probe result deliberately carrying bait beyond the bounded contract:
+    // the runner's copies must drop it structurally, not by convention.
+    const leakyProbe = async () => ({
+      ok: true,
+      expectedIdentity: { instanceId: 'host-abc', generation: 2, pid: 777, bootEpoch: EPOCH },
+      welcome: {
+        hostId: 'host-abc',
+        generation: 2,
+        bootEpoch: EPOCH,
+        token: TOKEN_BAIT,
+        tokenPath: '/bait/token'
+      },
+      discovery: {
+        pid: 777,
+        startedAt: '2026-09-09T03:59:58.000Z',
+        tokenPath: '/bait/token',
+        socketPath: '/bait/socket'
+      }
+    })
+    const options = evidenceOptions({
+      hostPerfSnapshotPath: snapshotPath,
+      probe: leakyProbe,
+      renderer: rendererServing(realMainSection())
+    })
+    const result = await collectT2HostSpanEvidence(options)
+    expect(result.ok).toBe(true)
+    expect(result.record.welcome).toEqual({ hostId: 'host-abc', generation: 2, bootEpoch: EPOCH })
+    const serialized = JSON.stringify({
+      hostSpans: result.record,
+      crossThread: (options.metrics as Record<string, any>).crossThread
+    })
+    expect(serialized).not.toContain(TOKEN_BAIT)
+    expect(serialized).not.toContain('/bait/token')
+    expect(serialized).not.toContain('/bait/socket')
+    expect(serialized).not.toContain('tokenPath')
+  })
+
+  it('validates --cell at parse time and refuses a non-canonical cell before any I/O', async () => {
+    expect(parseArgs(['--cell=small/2/warm/codex_bridge_disabled/none']).cell).toBe(
+      'small/2/warm/codex_bridge_disabled/none'
+    )
+    await expect(
+      runT2BaselineCli(['--workload=dual_run', '--dry-run', '--cell=bogus'])
+    ).rejects.toThrow(/canonical matrix cell/)
+  })
+
+  it('T9b producer + preflight + env arming are wired in the runner (source-region guards)', () => {
+    // Same discipline as the T9a wiring guards: a seam built and never invoked
+    // is the failure these anchors exist to catch. Comment-only lines are
+    // stripped first so commented-out code cannot satisfy a guard.
+    const src = readFileSync(path.join(__dirname, 'runT2Baseline.cjs'), 'utf8')
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
+      .join('\n')
+
+    // 1. The spawn env arms the writer only for a real launch.
+    expect(src).toContain(
+      'extraEnv: willLaunch ? { TASKWRAITH_PERF_HOST_SNAPSHOT_PATH: hostSnapshotPath } : undefined'
+    )
+
+    // 2. The bundle preflight runs BEFORE any spawn.
+    const preflightAt = src.search(
+      /^\s*const hostBundleCheck = checkHostBundleFreshness\(repoRoot, options\.hostBundleAdapters \|\| \{\}\)\s*$/m
+    )
+    const spawnAt = src.search(/^\s*childSession = spawnExactElectronChild\(\{\s*$/m)
+    expect(preflightAt).toBeGreaterThan(-1)
+    expect(spawnAt).toBeGreaterThan(preflightAt)
+
+    // 3. The T9b producer is invoked and recorded BEFORE the renderer closes.
+    const collectAt = src.search(
+      /^\s*const hostSpanEvidence = await collectT2HostSpanEvidence\(\{\s*$/m
+    )
+    const assignAt = src.search(/^\s*report\.hostSpans = hostSpanEvidence\.record\s*$/m)
+    const rendererCloseAt = src.search(/^\s*renderer\.close\(\)\s*$/m)
+    expect(collectAt).toBeGreaterThan(-1)
+    expect(assignAt).toBeGreaterThan(collectAt)
+    expect(rendererCloseAt).toBeGreaterThan(assignAt)
   })
 })

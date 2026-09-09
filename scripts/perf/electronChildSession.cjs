@@ -93,6 +93,7 @@ function resolveElectronBinary(options = {}) {
  * @param {string} [options.fxPosture]
  * @param {string} [options.userDataPath] — recorded for provenance; Electron derives via INSTANCE_ID + HOME
  * @param {string} [options.home] — synthetic isolated HOME propagated into child env (blocker F)
+ * @param {Record<string, string>} [options.extraEnv] — additive TASKWRAITH_PERF_* child env only (inert when unset; all other keys refused)
  * @param {NodeJS.Platform} [options.platform=process.platform]
  * @param {{ resolveElectronPath?: Function, requireElectron?: Function }} [options.adapters]
  */
@@ -134,6 +135,38 @@ function buildElectronSpawnPlan(options) {
     }
   }
 
+  // Additive perf-harness env injection (M1 host span transport), INERT WHEN
+  // UNSET: only `TASKWRAITH_PERF_*` keys with non-empty string values are
+  // accepted, so this option can never override isolation-critical env
+  // (HOME, CFFIXED_USER_HOME, TASKWRAITH_INSTANCE_ID, IOS_REMOTE_TRUE, PATH,
+  // ELECTRON_RUN_AS_NODE, ...). The T2 runner uses it to pass
+  // TASKWRAITH_PERF_HOST_SNAPSHOT_PATH into the spawned app, which main's
+  // bootstrap forwards to the external Host launch (env: process.env),
+  // arming the Host perf snapshot writer at an absolute artifact path.
+  const extraEnvKeys = []
+  if (options.extraEnv !== undefined) {
+    if (
+      !options.extraEnv ||
+      typeof options.extraEnv !== 'object' ||
+      Array.isArray(options.extraEnv)
+    ) {
+      throw new Error('extraEnv must be a plain object of non-empty string values')
+    }
+    for (const key of Object.keys(options.extraEnv).sort()) {
+      const value = options.extraEnv[key]
+      if (!/^TASKWRAITH_PERF_[A-Z0-9_]+$/.test(key)) {
+        throw new Error(
+          `extraEnv refuses key ${JSON.stringify(key)}: only TASKWRAITH_PERF_* keys may be injected`
+        )
+      }
+      if (typeof value !== 'string' || value.length === 0) {
+        throw new Error(`extraEnv value for ${key} must be a non-empty string`)
+      }
+      env[key] = value
+      extraEnvKeys.push(key)
+    }
+  }
+
   let electronBinary = null
   try {
     electronBinary = resolveElectronBinary({
@@ -156,11 +189,18 @@ function buildElectronSpawnPlan(options) {
   ]
 
   const binaryForShell = electronBinary || '<resolve-require-electron-at-spawn>'
+  // Provenance fidelity: injected extraEnv assignments appear in the recorded
+  // shell command exactly as the spawned child receives them. Built from the
+  // injected key list only (the base plan already carries its own
+  // TASKWRAITH_PERF_WORKLOAD/FX_POSTURE), so with extraEnv unset the recorded
+  // command is byte-identical to the pre-extraEnv shape.
+  const extraEnvAssignments = extraEnvKeys.map((key) => `${key}=${shellQuote(env[key])}`)
   const shellCommand = [
     `TASKWRAITH_INSTANCE_ID=${shellQuote(env.TASKWRAITH_INSTANCE_ID)}`,
     'IOS_REMOTE_TRUE=0',
     ...(env.HOME ? [`HOME=${shellQuote(env.HOME)}`] : []),
     ...(env.CFFIXED_USER_HOME ? [`CFFIXED_USER_HOME=${shellQuote(env.CFFIXED_USER_HOME)}`] : []),
+    ...extraEnvAssignments,
     `${shellQuote(binaryForShell)}${usesMockKeychain ? ' --use-mock-keychain' : ''} ${shellQuote(entry)} --remote-debugging-port=${base.remoteDebuggingPort} --inspect=${mainInspectorPort}`
   ].join(' ')
 

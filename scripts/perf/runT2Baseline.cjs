@@ -60,8 +60,12 @@ const {
   sampleOsBundle,
   verifyArtifactFile,
   sampleMainPersistenceStats,
-  applyPersistenceStatsToMetrics
+  applyPersistenceStatsToMetrics,
+  sampleHostSpans,
+  applyCrossThreadToMetrics
 } = require('./collectors/index.cjs')
+const { probeHostBootstrapIdentity } = require('./hostWelcomeProbe.cjs')
+const { parseCellName } = require('./interferenceMatrix.cjs')
 const {
   runDeterministicReplay,
   createCdpPageApiAdapter,
@@ -78,6 +82,347 @@ const DEFAULT_REPLAY_PROGRESS_INTERVAL_MS = 10 * 1000
 const DEFAULT_WINDOWED_RATE_WINDOW_MS = PERF_GATE_THRESHOLDS.windowedRateWindowMs
 const DEFAULT_MIN_FREE_DISK_BYTES = PERF_GATE_THRESHOLDS.minFreeDiskBytes
 const DEFAULT_MAX_CAPTURE_PHASE_MS = PERF_GATE_THRESHOLDS.maxCapturePhaseMs
+
+// ---------------------------------------------------------------------------
+// Host bundle freshness preflight (wave-8 ruling P2)
+// ---------------------------------------------------------------------------
+// runIsolatedBuild covers the Swift bridge daemon and the Electron build —
+// NOT the external Host bundle (`npm run host:build` → out/host/host-runtime/
+// cli.js). A stale bundle would launch a pre-contract Host whose welcome
+// carries no boot epoch, silently degrading every crossThread cell to the
+// legacy path. The runner HARD-FAILS before launch with an actionable
+// message naming the exact rebuild command; it NEVER rebuilds implicitly,
+// because an implicit rebuild papers over exactly the staleness this
+// preflight exists to detect.
+const HOST_BUNDLE_PATH_SEGMENTS = Object.freeze(['out', 'host', 'host-runtime', 'cli.js'])
+const HOST_BUNDLE_SOURCE_DIRS = Object.freeze(['src/host-runtime', 'src/host-node', 'src/shared'])
+const HOST_BUNDLE_REBUILD_COMMAND = 'npm run host:build'
+const HOST_PERF_SNAPSHOT_FILE_NAME = 'host-perf-snapshot.json'
+
+/**
+ * Compare the Host bundle mtime against the newest build-input source file.
+ * The host tsconfig (src/host-runtime/tsconfig.json) includes `./**\/*.ts`
+ * and EXCLUDES `./**\/*.test.ts`, so the freshness comparison mirrors exactly
+ * that build-input set: a newer test file cannot fail the preflight, and any
+ * newer non-test source under the three compiled trees must. Symlinked
+ * entries are never followed (a symlink cannot escape into unbounded trees).
+ * Every I/O failure fails closed.
+ *
+ * @param {string} repoRoot
+ * @param {{ fs?: { statSync: Function, readdirSync: Function } }} [adapters]
+ * @returns {{ ok: boolean, reason: string|null, bundlePath: string, rebuildCommand: string,
+ *             bundleMtimeMs: number|null, newestSourceMtimeMs: number|null,
+ *             newestSourcePath: string|null, checkedFileCount: number }}
+ */
+function checkHostBundleFreshness(repoRoot, adapters = {}) {
+  const fsImpl = adapters.fs === undefined ? fs : adapters.fs
+  const bundlePath = path.join(repoRoot, ...HOST_BUNDLE_PATH_SEGMENTS)
+  const base = { bundlePath, rebuildCommand: HOST_BUNDLE_REBUILD_COMMAND }
+  if (
+    !fsImpl ||
+    typeof fsImpl.statSync !== 'function' ||
+    typeof fsImpl.readdirSync !== 'function'
+  ) {
+    return {
+      ...base,
+      ok: false,
+      reason: 'host_bundle_preflight_io: fs_contract',
+      bundleMtimeMs: null,
+      newestSourceMtimeMs: null,
+      newestSourcePath: null,
+      checkedFileCount: 0
+    }
+  }
+  let bundleStat
+  try {
+    bundleStat = fsImpl.statSync(bundlePath)
+  } catch (error) {
+    const code = error && typeof error.code === 'string' ? error.code : 'io_error'
+    return {
+      ...base,
+      ok: false,
+      reason: code === 'ENOENT' ? 'host_bundle_missing' : `host_bundle_preflight_io: ${code}`,
+      bundleMtimeMs: null,
+      newestSourceMtimeMs: null,
+      newestSourcePath: null,
+      checkedFileCount: 0
+    }
+  }
+  if (!bundleStat.isFile()) {
+    return {
+      ...base,
+      ok: false,
+      reason: 'host_bundle_missing',
+      bundleMtimeMs: null,
+      newestSourceMtimeMs: null,
+      newestSourcePath: null,
+      checkedFileCount: 0
+    }
+  }
+  let newestSourceMtimeMs = -1
+  let newestSourcePath = null
+  let checkedFileCount = 0
+  const walk = (dir) => {
+    const entries = fsImpl.readdirSync(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        walk(full)
+        continue
+      }
+      if (!entry.isFile()) continue
+      if (!entry.name.endsWith('.ts') || entry.name.endsWith('.test.ts')) continue
+      const stat = fsImpl.statSync(full)
+      checkedFileCount += 1
+      if (stat.mtimeMs > newestSourceMtimeMs) {
+        newestSourceMtimeMs = stat.mtimeMs
+        newestSourcePath = path.relative(repoRoot, full)
+      }
+    }
+  }
+  try {
+    for (const dir of HOST_BUNDLE_SOURCE_DIRS) {
+      walk(path.join(repoRoot, ...dir.split('/')))
+    }
+  } catch (error) {
+    const code = error && typeof error.code === 'string' ? error.code : 'io_error'
+    return {
+      ...base,
+      ok: false,
+      reason: `host_bundle_preflight_io: ${code}`,
+      bundleMtimeMs: bundleStat.mtimeMs,
+      newestSourceMtimeMs: null,
+      newestSourcePath: null,
+      checkedFileCount
+    }
+  }
+  if (checkedFileCount === 0) {
+    // The compiled trees are absent entirely — not a bundle this repo built.
+    return {
+      ...base,
+      ok: false,
+      reason: 'host_bundle_preflight_no_sources',
+      bundleMtimeMs: bundleStat.mtimeMs,
+      newestSourceMtimeMs: null,
+      newestSourcePath: null,
+      checkedFileCount: 0
+    }
+  }
+  const stale = bundleStat.mtimeMs < newestSourceMtimeMs
+  return {
+    ...base,
+    ok: !stale,
+    reason: stale ? 'host_bundle_stale' : null,
+    bundleMtimeMs: bundleStat.mtimeMs,
+    newestSourceMtimeMs,
+    newestSourcePath,
+    checkedFileCount
+  }
+}
+
+/**
+ * T9b — Host span evidence collection and the runner-side QUALIFICATION CALL
+ * (wave-8 ruling P4).
+ *
+ * The collector stays legacy-tolerant at its layer and cannot make this call;
+ * the runner makes it. A cell is QUALIFIED only when ALL of:
+ *   1. the live authenticated welcome + discovery supplied the pin
+ *      (probeHostBootstrapIdentity — out-of-band, never the snapshot file);
+ *   2. the snapshot read was accepted whole (any refusal marker disqualifies);
+ *   3. the snapshot identity CARRIES a bootEpoch and it is verified against
+ *      the pin (identityVerified) — a legacy epoch-free run is recorded and
+ *      left UNQUALIFIED, never green;
+ *   4. attribution is 'available' for the designated chat population;
+ *   5. the main-process section sampled validly (cross-thread evidence needs
+ *      both sides);
+ *   6. a canonical matrix cell was specified (--cell) and the fold through
+ *      applyCrossThreadToMetrics({ requireHostAttribution: true }) succeeded.
+ * Every other outcome records an explicit NAMED marker in report.hostSpans
+ * and leaves the cell unqualified. A report carrying zero qualified host
+ * evidence is visibly unqualified.
+ *
+ * TOKEN CONTAINMENT: the discovery tokenPath/token never enter the record —
+ * the probe result is already token-free and only bounded identity fields
+ * are copied here. Named tests pin this at both layers.
+ *
+ * @param {object} options
+ * @param {string} options.userDataPath — inspector-observed when available
+ * @param {string} options.hostPerfSnapshotPath — the armed artifact path
+ * @param {string[]} options.requiredChatIds — the fixture's designated chats
+ * @param {string|null} options.cell — canonical matrix cell name or null
+ * @param {object|null} options.renderer — renderer CDP session (.post)
+ * @param {object} options.metrics — report.metrics, folded in place when qualified
+ * @param {Function} [options.probe] — DI override for probeHostBootstrapIdentity
+ * @param {Function} [options.sampler] — DI override for sampleHostSpans
+ * @param {object} [options.fs] — discovery fs DI
+ * @param {object} [options.snapshotFs] — collector fs DI (lstat/open/fstat/read/closeSync contract)
+ * @param {Function} [options.connect] — socket factory DI for the welcome probe
+ * @param {Function} [options.sleep] — discovery poll sleep DI
+ * @param {number} [options.maxWaitMs] / @param {number} [options.intervalMs] — discovery poll bounds
+ * @param {number} [options.welcomeTimeoutMs]
+ * @param {Function} [options.now] — Date-returning clock for freshness + capturedAt
+ * @param {number} [options.maxAgeMs]
+ * @returns {Promise<{ ok: boolean, record: object }>}
+ */
+async function collectT2HostSpanEvidence(options) {
+  const metrics = options.metrics
+  const cell = options.cell == null ? null : String(options.cell)
+  const requiredChatIds = Array.isArray(options.requiredChatIds) ? options.requiredChatIds : []
+  const probe = typeof options.probe === 'function' ? options.probe : probeHostBootstrapIdentity
+  const sampler = typeof options.sampler === 'function' ? options.sampler : sampleHostSpans
+  const record = {
+    qualified: false,
+    marker: null,
+    cell,
+    folded: false,
+    discoveryPid: null,
+    welcome: null,
+    expectedIdentity: null,
+    identity: null,
+    attribution: null,
+    ageMs: null,
+    sequence: null
+  }
+  const fail = (marker) => {
+    // Bounded marker: reasons come from enumerated code sets (probe/collector),
+    // but the runner never lets an upstream string of unbounded length into
+    // the report.
+    record.marker = String(marker).slice(0, 200)
+    return { ok: false, record }
+  }
+  const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+
+  // 1. Live pin: discovery + ONE authenticated hello → welcome → disconnect.
+  const probed = await probe({
+    userDataPath: options.userDataPath,
+    ...(options.fs === undefined ? {} : { fs: options.fs }),
+    ...(options.connect === undefined ? {} : { connect: options.connect }),
+    ...(options.sleep === undefined ? {} : { sleep: options.sleep }),
+    ...(options.nowMs === undefined ? {} : { nowMs: options.nowMs }),
+    ...(options.maxWaitMs === undefined ? {} : { maxWaitMs: options.maxWaitMs }),
+    ...(options.intervalMs === undefined ? {} : { intervalMs: options.intervalMs }),
+    ...(options.welcomeTimeoutMs === undefined ? {} : { timeoutMs: options.welcomeTimeoutMs })
+  })
+  if (!isObject(probed) || probed.ok !== true || !isObject(probed.expectedIdentity)) {
+    const stage = isObject(probed) && probed.stage === 'welcome' ? 'welcome' : 'discovery'
+    const reason =
+      isObject(probed) && typeof probed.reason === 'string' ? probed.reason : 'probe_invalid_result'
+    return fail(`host_${stage}_unavailable: ${reason}`)
+  }
+  record.discoveryPid = isObject(probed.discovery) ? probed.discovery.pid : null
+  // Bounded copies (token containment is STRUCTURAL, not contractual): only
+  // the identity fields the collector pin needs may enter the report. A
+  // probe result carrying anything else — token, tokenPath, socketPath,
+  // unknown keys — is dropped here, never forwarded.
+  const probedWelcome = isObject(probed.welcome) ? probed.welcome : null
+  record.welcome = probedWelcome
+    ? {
+        hostId: typeof probedWelcome.hostId === 'string' ? probedWelcome.hostId : null,
+        generation: Number.isSafeInteger(probedWelcome.generation)
+          ? probedWelcome.generation
+          : null,
+        ...(typeof probedWelcome.hostVersion === 'string'
+          ? { hostVersion: probedWelcome.hostVersion }
+          : {}),
+        ...(typeof probedWelcome.bootEpoch === 'string'
+          ? { bootEpoch: probedWelcome.bootEpoch }
+          : {})
+      }
+    : null
+  const pin = probed.expectedIdentity
+  record.expectedIdentity = {
+    instanceId: pin.instanceId,
+    generation: pin.generation,
+    pid: pin.pid,
+    ...(pin.bootEpoch === undefined ? {} : { bootEpoch: pin.bootEpoch })
+  }
+
+  // 2. Sample: the main section rides the renderer session; the Host file
+  //    read rides along independently (session-independence is pinned by the
+  //    transport tests).
+  const sampled = await sampler(options.renderer == null ? null : options.renderer, {
+    ...(options.hostPerfSnapshotPath === undefined
+      ? {}
+      : { hostPerfSnapshotPath: options.hostPerfSnapshotPath }),
+    expectedIdentity: probed.expectedIdentity,
+    requiredChatIds,
+    ...(options.snapshotFs === undefined ? {} : { fs: options.snapshotFs }),
+    ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.maxAgeMs === undefined ? {} : { maxAgeMs: options.maxAgeMs })
+  })
+  const hostPerf = isObject(sampled) && isObject(sampled.hostPerf) ? sampled.hostPerf : null
+  if (!hostPerf) return fail('host_snapshot_refused: sampler_invalid_result')
+  if (typeof hostPerf.unsupported === 'string') {
+    return fail(`host_snapshot_refused: ${hostPerf.unsupported}`)
+  }
+  const hostSection = hostPerf.workSpans
+  const meta = isObject(hostSection) ? hostSection.hostSnapshot : null
+  if (!isObject(meta)) return fail('host_snapshot_refused: host_snapshot_metadata_missing')
+  record.identity = meta.identity
+  record.attribution = meta.attribution
+  record.ageMs = typeof meta.ageMs === 'number' ? meta.ageMs : null
+  record.sequence = Number.isSafeInteger(meta.sequence) ? meta.sequence : null
+
+  // 3. Qualification (ruling P4): epoch present AND verified. The reader
+  //    gate already refuses a pinned epoch that is missing or different
+  //    (whole-read identity_mismatch), and coverage 'unpinned' forces
+  //    identityVerified false — so these checks re-derive the qualification
+  //    from the committed metadata without needing the collector's internal
+  //    bootEpochCoverage (which is not exported).
+  if (!isObject(meta.identity) || meta.identity.bootEpoch === undefined) {
+    return fail('host_evidence_unqualified: boot_epoch_absent')
+  }
+  if (meta.identityVerified !== true) {
+    return fail('host_evidence_unqualified: identity_unverified')
+  }
+  // Defence in depth for future callers (unreachable through today's reader
+  // gate, per Review2's M5 note): the identity epoch must equal the pin.
+  if (
+    isObject(probed.expectedIdentity) &&
+    probed.expectedIdentity.bootEpoch !== undefined &&
+    meta.identity.bootEpoch !== probed.expectedIdentity.bootEpoch
+  ) {
+    return fail('host_evidence_unqualified: boot_epoch_mismatch')
+  }
+  if (!isObject(meta.attribution) || meta.attribution.status !== 'available') {
+    const reason =
+      isObject(meta.attribution) && typeof meta.attribution.reason === 'string'
+        ? meta.attribution.reason
+        : 'unavailable'
+    return fail(`host_evidence_unqualified: attribution_${reason}`)
+  }
+
+  // 4. Cross-thread evidence needs BOTH sides: a degraded main section is
+  //    recorded, never folded.
+  const mainSection = isObject(sampled) && isObject(sampled.workSpans) ? sampled.workSpans : null
+  if (!mainSection || typeof mainSection.unsupported === 'string') {
+    const reason =
+      mainSection && typeof mainSection.unsupported === 'string'
+        ? mainSection.unsupported
+        : 'sampler_invalid_result'
+    return fail(`main_perf_section_unavailable: ${reason}`)
+  }
+
+  // 5. Fold — only through applyCrossThreadToMetrics with the strict host
+  //    attribution requirement, and only into a canonical cell.
+  if (cell === null) return fail('cross_thread_cell_unspecified')
+  if (parseCellName(cell) === null) return fail(`cross_thread_cell_invalid: ${cell}`)
+  if (!isObject(metrics)) return fail('cross_thread_fold_failed: metrics_required')
+  try {
+    applyCrossThreadToMetrics(
+      metrics,
+      cell,
+      { main: mainSection, host: hostSection },
+      { requireHostAttribution: true, ...(options.now === undefined ? {} : { now: options.now }) }
+    )
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error).slice(0, 200)
+    return fail(`cross_thread_fold_failed: ${message}`)
+  }
+  record.qualified = true
+  record.folded = true
+  return { ok: true, record }
+}
 
 /**
  * Atomic, explicitly non-authoritative phase/replay heartbeat.
@@ -280,6 +625,7 @@ function parseArgs(argv) {
     } else if (arg.startsWith('--replay-stall-timeout-ms=')) {
       out.replayStallTimeoutMs = arg.slice('--replay-stall-timeout-ms='.length)
     } else if (arg.startsWith('--home=')) out.home = arg.slice('--home='.length)
+    else if (arg.startsWith('--cell=')) out.cell = arg.slice('--cell='.length)
     else {
       throw new Error(`Unknown argument: ${arg}`)
     }
@@ -320,6 +666,8 @@ Options:
   --inspect-port=<n>                Main inspector port (must differ)
   --workload=… --seed=… --mode=… --fx-posture=… --lean --scale-down=… --max-replay-events=…
   --replay-stall-timeout-ms=<n>     Fail closed if one replay event makes no progress (default: 300000)
+  --cell=<canonical>                Canonical matrix cell (<history>/<chats>/<path>/<mix>/<saturation>) for the
+                                    crossThread host-span fold; omitted → host evidence recorded, never folded
   --skip-build                      Skip build (NON-AUTHORITATIVE; refuses official-baseline path)
   --help
 `.trim()
@@ -350,6 +698,15 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   const workload = args.workload
   if (!workload || !WORKLOADS.includes(workload)) {
     throw new Error(`--workload required (${WORKLOADS.join('|')})`)
+  }
+
+  // Optional canonical matrix cell for the crossThread fold (T9b). Validated
+  // here so a typo fails before any I/O, never at fold time.
+  const crossThreadCell = args.cell == null ? null : String(args.cell)
+  if (crossThreadCell !== null && parseCellName(crossThreadCell) === null) {
+    throw new Error(
+      `--cell must be a canonical matrix cell name (<history>/<chats>/<path>/<mix>/<saturation>): ${crossThreadCell}`
+    )
   }
 
   // Default refuse launch
@@ -435,6 +792,22 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     throw new Error(`fxPosture must be one of ${FX_POSTURES.join('|')}`)
   }
 
+  // Resolved before the spawn plan so the launch env can carry the armed
+  // Host perf snapshot artifact path (M1 host span transport). mkdir stays
+  // at its original position below.
+  const artifactDir = path.resolve(
+    String(
+      args.artifactDir ||
+        args.outDir ||
+        path.join(os.tmpdir(), `taskwraith-perf-t2-${userDataResolved.sanitizedInstanceId}`)
+    )
+  )
+  // Absolute artifact path handed to the app via TASKWRAITH_PERF_HOST_SNAPSHOT_PATH;
+  // main's bootstrap forwards process.env to the external Host launch, and
+  // HostNodeProductionServer arms the snapshot writer with it (absolute used
+  // as-is). Only set for a real launch — dry runs must not arm anything.
+  const hostSnapshotPath = path.join(artifactDir, HOST_PERF_SNAPSHOT_FILE_NAME)
+
   const spawnPlan = buildElectronSpawnPlan({
     instanceId: userDataResolved.sanitizedInstanceId,
     repoRoot,
@@ -444,7 +817,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     fxPosture,
     userDataPath: userDataResolved.userDataPath,
     home,
-    platform: options.platform || process.platform
+    platform: options.platform || process.platform,
+    extraEnv: willLaunch ? { TASKWRAITH_PERF_HOST_SNAPSHOT_PATH: hostSnapshotPath } : undefined
   })
 
   const fixture = generatePerfFixture({
@@ -455,13 +829,6 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   })
   const fingerprint = fixtureFingerprint(fixture)
 
-  const artifactDir = path.resolve(
-    String(
-      args.artifactDir ||
-        args.outDir ||
-        path.join(os.tmpdir(), `taskwraith-perf-t2-${userDataResolved.sanitizedInstanceId}`)
-    )
-  )
   fs.mkdirSync(artifactDir, { recursive: true })
 
   let materializeResult = null
@@ -580,12 +947,19 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     mainInspectorPort: spawnPlan.mainInspectorPort,
     userDataPath: userDataResolved.userDataPath,
     home,
+    // Provenance of the armed Host perf snapshot transport (null unless a
+    // real launch carries TASKWRAITH_PERF_HOST_SNAPSHOT_PATH into the child).
+    hostPerfSnapshotPath: willLaunch ? hostSnapshotPath : null,
     safety: spawnPlan.safety
   }
   report.isolation = isolationVerification
   report.diskHeadroom = null
   report.captureDeadline = null
   report.replayWindowedRate = null
+  // Wave-8 M1 seams; populated only on a real launch (preflight hard-fails a
+  // stale Host bundle; hostSpans carries the qualification call, ruling P4).
+  report.hostBundlePreflight = null
+  report.hostSpans = null
 
   const progressJournal = willLaunch
     ? createT2ProgressJournal({
@@ -742,6 +1116,29 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           )
         }
         setCapturePhase('build_complete', {}, { log: true })
+      }
+
+      // Ruling P2 (wave-8): the external Host bundle is NOT part of
+      // runIsolatedBuild. Hard-fail BEFORE launch when out/host/host-runtime/
+      // cli.js is missing or older than the newest build-input source under
+      // src/host-runtime, src/host-node, src/shared — with the exact rebuild
+      // command. Never rebuild implicitly. Runs on every launch path,
+      // including --skip-build (which never builds anything).
+      setCapturePhase('host_bundle_preflight', {}, { log: true })
+      const hostBundleCheck = checkHostBundleFreshness(repoRoot, options.hostBundleAdapters || {})
+      report.hostBundlePreflight = hostBundleCheck
+      if (!hostBundleCheck.ok) {
+        const detail =
+          hostBundleCheck.reason === 'host_bundle_missing'
+            ? 'Host bundle out/host/host-runtime/cli.js is missing'
+            : hostBundleCheck.reason === 'host_bundle_stale'
+              ? `Host bundle out/host/host-runtime/cli.js is older than ${hostBundleCheck.newestSourcePath}`
+              : `Host bundle preflight could not prove freshness (${hostBundleCheck.reason})`
+        const bundleErr = new Error(
+          `Refusing launch: ${detail}. Run \`${HOST_BUNDLE_REBUILD_COMMAND}\` and retry — this runner never rebuilds the Host bundle implicitly.`
+        )
+        bundleErr.code = 'T2_HOST_BUNDLE_STALE'
+        throw bundleErr
       }
 
       // Blocker G: re-prove containment immediately before Electron spawn.
@@ -1133,6 +1530,39 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         }
       }
 
+      // T9b — HOST SPAN BINDING (M1). The spawn env armed the writer
+      // (TASKWRAITH_PERF_HOST_SNAPSHOT_PATH → external Host → snapshot file);
+      // this block is the ONLY production consumer. The live pin comes from
+      // the authenticated welcome (out-of-band — never the snapshot file
+      // itself), the runner makes the qualification call (ruling P4), and the
+      // fold goes only through applyCrossThreadToMetrics with
+      // requireHostAttribution. Failures here never throw: they record a
+      // NAMED marker and leave the cell visibly unqualified. Sampled while
+      // the renderer session is still attached, after the replay, so the
+      // counters describe the measured window (same posture as T9a).
+      setCapturePhase('host_span_sample', {}, { log: true })
+      const hostSpanEvidence = await collectT2HostSpanEvidence({
+        userDataPath: isolationVerification.observedUserDataPath || userDataResolved.userDataPath,
+        hostPerfSnapshotPath: hostSnapshotPath,
+        requiredChatIds: fixture.chats.map((chat) => chat.appChatId),
+        cell: crossThreadCell,
+        renderer,
+        metrics: report.metrics,
+        probe: options.hostWelcomeProbe,
+        sampler: options.hostSpansSampler,
+        fs: options.hostDiscoveryFs,
+        snapshotFs: options.hostSnapshotFs,
+        connect: options.hostSocketConnect,
+        sleep: options.hostDiscoverySleep,
+        nowMs: options.hostDiscoveryNowMs,
+        maxWaitMs: options.hostDiscoveryMaxWaitMs,
+        intervalMs: options.hostDiscoveryIntervalMs,
+        welcomeTimeoutMs: options.hostWelcomeTimeoutMs,
+        now: options.hostNow,
+        maxAgeMs: options.hostSnapshotMaxAgeMs
+      })
+      report.hostSpans = hostSpanEvidence.record
+
       report.replayWindowedRate = windowedRate ? windowedRate.snapshot() : null
       setCapturePhase(
         'capture_complete',
@@ -1346,8 +1776,11 @@ module.exports = {
   DEFAULT_WINDOWED_RATE_WINDOW_MS,
   DEFAULT_MIN_FREE_DISK_BYTES,
   DEFAULT_MAX_CAPTURE_PHASE_MS,
+  HOST_BUNDLE_REBUILD_COMMAND,
   createT2ProgressJournal,
   checkDiskHeadroom,
+  checkHostBundleFreshness,
+  collectT2HostSpanEvidence,
   createWindowedRateTracker,
   parseArgs,
   runT2BaselineCli
