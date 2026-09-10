@@ -10,6 +10,7 @@ import {
   type HostCommand
 } from '../shared/hostProtocol'
 import { HostProfileDomainStore } from '../host-runtime/HostProfileDomainStore'
+import { createWorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
 import {
   HostPermissionConsentAuthority,
   createHostPermissionConsentProof
@@ -2594,5 +2595,294 @@ describe('HostNodeDomainPorts', () => {
     expect(store.getThread(secondThread.appChatId)?.runs ?? []).toEqual([])
     releaseRun()
     await expect(stopping).resolves.toMatchObject({ stopped: true })
+  })
+
+  describe('control_response spans', () => {
+    function createControlledRecorder(now: () => number) {
+      return createWorkSpanRecorder({ process: 'host', maxRetained: 64, now })
+    }
+
+    function expectOneControlResponseSpan(
+      snapshot: ReturnType<ReturnType<typeof createControlledRecorder>['snapshot']>,
+      expectedChatId: string
+    ) {
+      expect(snapshot.spans).toHaveLength(1)
+      expect(snapshot.spans[0]).toMatchObject({
+        chatId: expectedChatId,
+        kind: 'control_response',
+        process: 'host',
+        resource: 'none'
+      })
+      expect(snapshot.spans[0].durationMs).toBeGreaterThanOrEqual(0)
+      expect(snapshot.byKind.control_response?.count).toBe(1)
+    }
+
+    function createInteractionProvider(supports: {
+      supportsApprovals: boolean
+      supportsQuestions: boolean
+    }): HostNodeProvider {
+      return {
+        providerId: 'muse',
+        displayProvider: 'Muse',
+        shortCode: 'MUSE',
+        offers: museOffers,
+        supportsApprovals: supports.supportsApprovals,
+        supportsQuestions: supports.supportsQuestions,
+        create: () => ({
+          providerId: 'muse',
+          getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+          getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+          getAuthFlows: async () => [],
+          beginAuth: async () => undefined,
+          cancelAuth: async () => false,
+          run: async () => ({ runId: 'run-1', status: 'completed' as const }),
+          cancel: () => true,
+          shutdown: async () => undefined
+        })
+      }
+    }
+
+    it('emits a control_response span for run.cancel', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        postureConsent: true
+      })
+
+      let clock = 1000
+      const recorder = createControlledRecorder(() => (clock += 5))
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        workSpanRecorder: recorder
+      })
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-cancel-span-start',
+            { threadId: thread.appChatId },
+            { text: 'start run to cancel' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'run.cancel',
+            'cmd-cancel-span',
+            { threadId: thread.appChatId },
+            { expectedWorkId: 'run-cancel-span-start' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_cancellation_requested' })
+      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId)
+      releaseRun()
+    })
+
+    it('emits a control_response span for approval.decide', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        postureConsent: true
+      })
+
+      let clock = 2000
+      const recorder = createControlledRecorder(() => (clock += 3))
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        providers: [
+          createInteractionProvider({ supportsApprovals: true, supportsQuestions: false })
+        ],
+        workSpanRecorder: recorder
+      })
+      domainWithRecorder.runPort.beginRun({
+        runId: 'run-approval-span',
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        startedAt: '2026-08-24T05:00:00.000Z'
+      })
+      domainWithRecorder.interactions.register({
+        id: 'ap-span-1',
+        kind: 'approval',
+        providerId: 'muse',
+        runId: 'run-approval-span',
+        threadId: thread.appChatId,
+        title: 'Approve tool',
+        summary: 'Allow tool execution',
+        createdAt: '2026-08-24T05:00:00.000Z'
+      })
+
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'approval.decide',
+            'cmd-approval-span',
+            { approvalId: 'ap-span-1' },
+            { decision: 'accept' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'approval_decided' })
+      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId)
+    })
+
+    it('emits a control_response span for question.answer', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        postureConsent: true
+      })
+
+      let clock = 3000
+      const recorder = createControlledRecorder(() => (clock += 4))
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        providers: [
+          createInteractionProvider({ supportsApprovals: false, supportsQuestions: true })
+        ],
+        workSpanRecorder: recorder
+      })
+      domainWithRecorder.runPort.beginRun({
+        runId: 'run-question-span',
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        startedAt: '2026-08-24T05:00:00.000Z'
+      })
+      domainWithRecorder.interactions.register({
+        id: 'q-span-1',
+        kind: 'question',
+        providerId: 'muse',
+        runId: 'run-question-span',
+        threadId: thread.appChatId,
+        title: 'Choose option',
+        summary: 'Pick one',
+        options: ['a', 'b'],
+        createdAt: '2026-08-24T05:00:00.000Z'
+      })
+
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'question.answer',
+            'cmd-question-span',
+            { questionId: 'q-span-1' },
+            { decision: 'dismiss' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'question_answered' })
+      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId)
+    })
+
+    it('emits a control_response span for ensemble.seat.toggle', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+      store.setThreadKind({ threadId: thread.appChatId, targetKind: 'ensemble' })
+      const record = store.getThread(thread.appChatId)!
+      const participants = (record.ensemble as { participants: Array<{ id: string }> }).participants
+
+      let clock = 4000
+      const recorder = createControlledRecorder(() => (clock += 2))
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        workSpanRecorder: recorder
+      })
+
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'ensemble.seat.toggle',
+            'cmd-seat-span',
+            { threadId: thread.appChatId },
+            { participantId: participants[0]!.id, enabled: false }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'ensemble_seat_disabled' })
+      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId)
+    })
+
+    it('contains a throwing recorder so the command result is unchanged', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+      store.setThreadKind({ threadId: thread.appChatId, targetKind: 'ensemble' })
+      const record = store.getThread(thread.appChatId)!
+      const participants = (record.ensemble as { participants: Array<{ id: string }> }).participants
+
+      const throwingRecorder = createWorkSpanRecorder({ process: 'host', maxRetained: 64 })
+      throwingRecorder.record = () => {
+        throw new Error('recorder must not break control commands')
+      }
+      const domainWithThrowingRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        workSpanRecorder: throwingRecorder
+      })
+
+      await expect(
+        domainWithThrowingRecorder.executeCommand(
+          context,
+          command(
+            'ensemble.seat.toggle',
+            'cmd-seat-throw',
+            { threadId: thread.appChatId },
+            { participantId: participants[0]!.id, enabled: false }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'ensemble_seat_disabled' })
+    })
+
+    it('behaves identically when no recorder is supplied', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+      store.setThreadKind({ threadId: thread.appChatId, targetKind: 'ensemble' })
+      const record = store.getThread(thread.appChatId)!
+      const participants = (record.ensemble as { participants: Array<{ id: string }> }).participants
+      const domain = new HostNodeDomainPorts(domainOptions)
+
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'ensemble.seat.toggle',
+            'cmd-seat-norecorder',
+            { threadId: thread.appChatId },
+            { participantId: participants[0]!.id, enabled: false }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'ensemble_seat_disabled' })
+    })
   })
 })

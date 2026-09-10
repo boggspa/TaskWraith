@@ -69,6 +69,7 @@ import type {
 } from '../host-runtime/HostPermissionConsent'
 import { HostFullAccessGrantRegistry } from '../host-runtime/HostPermissionConsent'
 import type { HostRunEventTarget } from '../host-runtime/HostRunEventTarget'
+import type { WorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
 import {
   HostNodeInteractionRegistry,
   type HostNodeInteractionActor
@@ -157,6 +158,8 @@ export interface HostNodeDomainPortsOptions {
   readonly maxConcurrentRuns?: number
   /** Bounded waiter limit for starts that cannot admit yet. Overflow rejects. */
   readonly maxQueuedStarts?: number
+  /** Optional recorder for control-response span telemetry. Absence is safe. */
+  readonly workSpanRecorder?: WorkSpanRecorder
 }
 
 type AuthOperation = {
@@ -431,6 +434,24 @@ export class HostNodeDomainPorts {
     readonly alreadyStopped: boolean
     readonly cancelledRuns: number
   }> | null = null
+
+  private chatIdForCommandThread(threadId: string): string | undefined {
+    return this.options.store.getThread(threadId)?.appChatId
+  }
+
+  private recordControlResponse(chatId: string | undefined, startedAt: number): void {
+    if (chatId === undefined || this.options.workSpanRecorder === undefined) return
+    try {
+      this.options.workSpanRecorder.record({
+        chatId,
+        kind: 'control_response',
+        startedAt,
+        durationMs: Math.max(0, this.now() - startedAt)
+      })
+    } catch {
+      // Instrumentation must never alter a control command result.
+    }
+  }
 
   constructor(private readonly options: HostNodeDomainPortsOptions) {
     this.now = options.now ?? (() => Date.now())
@@ -926,55 +947,85 @@ export class HostNodeDomainPorts {
     }
 
     if (command.name === 'run.cancel') {
-      const expectedWorkId = decoded.value.arguments.expectedWorkId
-      const cancelledQueued = this.runAdmission.cancelQueued({
-        threadId: command.target.threadId,
-        ...(typeof expectedWorkId === 'string' ? { commandId: expectedWorkId } : {})
-      })
-      if (cancelledQueued > 0) {
-        return { status: 'succeeded', resultSummary: 'run_cancellation_requested' }
+      const startedAt = this.now()
+      const chatId = this.chatIdForCommandThread(command.target.threadId)
+      try {
+        const expectedWorkId = decoded.value.arguments.expectedWorkId
+        const cancelledQueued = this.runAdmission.cancelQueued({
+          threadId: command.target.threadId,
+          ...(typeof expectedWorkId === 'string' ? { commandId: expectedWorkId } : {})
+        })
+        if (cancelledQueued > 0) {
+          return { status: 'succeeded', resultSummary: 'run_cancellation_requested' }
+        }
+        const outcome = this.runPort.cancelThread(
+          command.target.threadId,
+          typeof expectedWorkId === 'string' ? expectedWorkId : undefined
+        )
+        return outcome === 'cancelled'
+          ? { status: 'succeeded', resultSummary: 'run_cancellation_requested' }
+          : failed(
+              outcome === 'identity_mismatch'
+                ? 'run_identity_mismatch'
+                : outcome === 'not_found'
+                  ? 'run_not_found'
+                  : 'run_not_cancellable'
+            )
+      } finally {
+        this.recordControlResponse(chatId, startedAt)
       }
-      const outcome = this.runPort.cancelThread(
-        command.target.threadId,
-        typeof expectedWorkId === 'string' ? expectedWorkId : undefined
-      )
-      return outcome === 'cancelled'
-        ? { status: 'succeeded', resultSummary: 'run_cancellation_requested' }
-        : failed(
-            outcome === 'identity_mismatch'
-              ? 'run_identity_mismatch'
-              : outcome === 'not_found'
-                ? 'run_not_found'
-                : 'run_not_cancellable'
-          )
     }
 
     if (command.name === 'approval.decide') {
-      const id = command.target.approvalId
-      const decision = command.arguments.decision as HostApprovalDecideDecision
-      const result = this.interactions.decide({ id, decision, actor: actorFromContext(context) })
-      return result.settled
-        ? { status: 'succeeded', resultSummary: 'approval_decided' }
-        : failed('approval_not_found')
+      const startedAt = this.now()
+      let chatId: string | undefined
+      try {
+        const id = command.target.approvalId
+        const decision = command.arguments.decision as HostApprovalDecideDecision
+        const result = this.interactions.decide({ id, decision, actor: actorFromContext(context) })
+        if (result.settled) {
+          chatId = this.chatIdForCommandThread(result.settled.threadId)
+        }
+        return result.settled
+          ? { status: 'succeeded', resultSummary: 'approval_decided' }
+          : failed('approval_not_found')
+      } finally {
+        this.recordControlResponse(chatId, startedAt)
+      }
     }
 
     if (command.name === 'question.answer') {
-      const id = command.target.questionId
-      const decision = command.arguments.decision as HostQuestionAnswerDecision
-      const answer = command.arguments.answer as string | undefined
-      const result = this.interactions.answer({
-        id,
-        decision,
-        answer,
-        actor: actorFromContext(context)
-      })
-      return result.settled
-        ? { status: 'succeeded', resultSummary: 'question_answered' }
-        : failed('question_not_found')
+      const startedAt = this.now()
+      let chatId: string | undefined
+      try {
+        const id = command.target.questionId
+        const decision = command.arguments.decision as HostQuestionAnswerDecision
+        const answer = command.arguments.answer as string | undefined
+        const result = this.interactions.answer({
+          id,
+          decision,
+          answer,
+          actor: actorFromContext(context)
+        })
+        if (result.settled) {
+          chatId = this.chatIdForCommandThread(result.settled.threadId)
+        }
+        return result.settled
+          ? { status: 'succeeded', resultSummary: 'question_answered' }
+          : failed('question_not_found')
+      } finally {
+        this.recordControlResponse(chatId, startedAt)
+      }
     }
 
     if (command.name === 'ensemble.seat.toggle') {
-      return this.toggleEnsembleSeat(decoded.value)
+      const startedAt = this.now()
+      const chatId = this.chatIdForCommandThread(decoded.value.target.threadId)
+      try {
+        return this.toggleEnsembleSeat(decoded.value)
+      } finally {
+        this.recordControlResponse(chatId, startedAt)
+      }
     }
 
     // thread.select acknowledges a client-side thread switch. Unlike the desktop
