@@ -165,6 +165,7 @@ import {
 } from '../../shared/runStreamMetrics'
 import { MULTIVIEW_LAYOUT_IDS } from '../../shared/multiviewLayouts'
 import type { MultiviewLayout } from '../../shared/multiviewLayouts'
+import { acceptedProviderReasoningEfforts } from './lib/composerProviderReasoningSelection'
 import { nextComposerSurfaceRequest, composerSurfaceOpenSignal } from './lib/composerSurfaceRequest'
 import type { ComposerSurfaceId, ComposerSurfaceRequest } from './lib/composerSurfaceRequest'
 import { fastModeToggleAvailable, nextFastModeToggle } from './lib/fastModeToggle'
@@ -6274,19 +6275,13 @@ function App(): React.JSX.Element {
       selected,
       providerModelOption
     )
-    const providerReasoningEfforts = new Set(
-      providerModelOption?.supportedReasoningEfforts
-        ? providerModelOption.supportedReasoningEfforts
-            .filter((option) => !option.disabled)
-            .map((option) => option.reasoningEffort)
-        : providerReasoningOptions
-            .filter((option) => !option.disabled)
-            .map((option) => option.value)
-    )
-    // UltraTask rides the top of the ladder as a synthetic token; outbound
-    // normalizers clamp it to each provider's real ceiling. Without this the
-    // persisted value is rejected on read-back and the slider snaps back.
-    providerReasoningEfforts.add('ultraTask')
+    // Mirror of the rungs the pickers OFFER, kept in the shared helper so the
+    // offer side and this accept side cannot drift apart again.
+    const providerReasoningEfforts = acceptedProviderReasoningEfforts({
+      reasoningOptions: providerReasoningOptions,
+      supportedReasoningEfforts: providerModelOption?.supportedReasoningEfforts,
+      ultraTaskSupported: providerModelOption?.ultraTaskSupported
+    })
     const ollamaHealedReasoning = resolveOllamaComposerReasoningEffort(
       selected,
       metadata.ollamaReasoningEffort

@@ -1475,3 +1475,66 @@ describe('Pi add-participant model options', () => {
     expect(offered).toEqual(catalogued)
   })
 })
+
+describe('seat reasoning read-back accepts every rung the seat picker offers', () => {
+  // The seat pickers seed an explicit Off bottom stop whenever a model's base
+  // ladder is empty (`withUltraTaskLadderBottom`), so Off is a rung the user
+  // can really pick. `resolveEnsembleParticipantSettings` returned '' for
+  // exactly those rows, so the pick was erased on the very next read and the
+  // slider snapped to the model default.
+  const PROVIDERS = [
+    'codex',
+    'claude',
+    'kimi',
+    'grok',
+    'cursor',
+    'muse',
+    'mistral',
+    'devin',
+    'pi',
+    'ollama'
+  ] as const
+
+  const emptyLadderRows = PROVIDERS.flatMap((provider) =>
+    getEnsembleModelDefaults(provider)
+      .modelOptions.filter(
+        (model) =>
+          getEnsembleReasoningOptions(provider, model.id).filter((option) => !option.disabled)
+            .length === 0
+      )
+      .map((model) => ({ provider, modelId: model.id }))
+  )
+
+  it('has rows with an empty base ladder to speak about', () => {
+    // Non-vacuity guard: without it the sweep below could pass by iterating
+    // nothing at all.
+    expect(emptyLadderRows.length).toBeGreaterThan(0)
+  })
+
+  it('holds an Off pick on every empty-ladder row instead of snapping it away', () => {
+    const snapped = emptyLadderRows
+      .map(({ provider, modelId }) => {
+        const resolved = resolveEnsembleParticipantSettings({
+          provider,
+          model: modelId,
+          reasoningEffort: 'off'
+        } as unknown as EnsembleParticipant)
+        return resolved.reasoningEffort === 'off'
+          ? null
+          : `${provider}/${modelId}: off -> ${resolved.reasoningEffort || "''"}`
+      })
+      .filter((row): row is string => row !== null)
+
+    expect(snapped).toEqual([])
+  })
+
+  it('still snaps a rung the seat picker never offered', () => {
+    const [row] = emptyLadderRows
+    const resolved = resolveEnsembleParticipantSettings({
+      provider: row.provider,
+      model: row.modelId,
+      reasoningEffort: 'not-a-rung'
+    } as unknown as EnsembleParticipant)
+    expect(resolved.reasoningEffort).not.toBe('not-a-rung')
+  })
+})

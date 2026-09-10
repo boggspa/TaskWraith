@@ -1467,7 +1467,14 @@ export function resolveEnsembleParticipantSettings(
     participant.reasoningEffort === 'ultraTask'
       ? 'ultraTask'
       : enabledReasoningOptions.length === 0
-        ? ''
+        ? // An empty base ladder is exactly the case where the seat pickers
+          // seed an explicit Off bottom stop beside the injected UltraTask
+          // (`withUltraTaskLadderBottom`), so Off is a rung the user can
+          // genuinely pick here. Returning '' erased that pick on the very
+          // next read and the slider snapped to the model default.
+          participant.reasoningEffort === 'off'
+          ? 'off'
+          : ''
         : participant.reasoningEffort && reasoningValues.has(participant.reasoningEffort)
           ? participant.reasoningEffort
           : modelDefaultReasoning && reasoningValues.has(modelDefaultReasoning)

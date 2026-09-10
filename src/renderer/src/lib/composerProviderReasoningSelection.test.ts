@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { resolvePiReasoningSupport } from '../../../shared/piReasoning'
-import { resolveComposerModelReasoningDefault } from './composerProviderReasoningSelection'
+import {
+  acceptedProviderReasoningEfforts,
+  resolveComposerModelReasoningDefault
+} from './composerProviderReasoningSelection'
 
 describe('resolveComposerModelReasoningDefault', () => {
   const optionsForPiModel = (modelId: string): Array<{ value: string }> =>
@@ -74,5 +77,50 @@ describe('resolveComposerModelReasoningDefault', () => {
         reasoningOptions: [{ value: 'off' }, { value: 'high' }]
       })
     ).toBe('off')
+  })
+})
+
+describe('acceptedProviderReasoningEfforts', () => {
+  it('accepts the Off rung the pickers seed onto an empty ladder', () => {
+    // Mistral/Cursor/Ollama/Grok/Devin rows without thinking tiers get an
+    // explicit Off bottom stop beside the injected UltraTask, so Off is
+    // genuinely pickable. Rejecting it on read-back is what snapped the
+    // slider to the provider default.
+    const accepted = acceptedProviderReasoningEfforts({
+      reasoningOptions: [],
+      ultraTaskSupported: true
+    })
+    expect(accepted.has('off')).toBe(true)
+    expect(accepted.has('ultraTask')).toBe(true)
+  })
+
+  it('does not invent an Off rung on a model that never offers one', () => {
+    const accepted = acceptedProviderReasoningEfforts({
+      reasoningOptions: [{ value: 'low' }, { value: 'high' }],
+      ultraTaskSupported: true
+    })
+    expect(accepted.has('off')).toBe(false)
+    expect([...accepted].sort()).toEqual(['high', 'low', 'ultraTask'])
+  })
+
+  it('does not seed Off when the model cannot take UltraTask either', () => {
+    // No injection happens on this row, so there is no Off stop to accept.
+    const accepted = acceptedProviderReasoningEfforts({
+      reasoningOptions: [],
+      ultraTaskSupported: false
+    })
+    expect(accepted.has('off')).toBe(false)
+  })
+
+  it('prefers the model capability list over the rendered options, minus disabled', () => {
+    const accepted = acceptedProviderReasoningEfforts({
+      reasoningOptions: [{ value: 'ignored' }],
+      supportedReasoningEfforts: [
+        { reasoningEffort: 'medium' },
+        { reasoningEffort: 'blocked', disabled: true }
+      ],
+      ultraTaskSupported: true
+    })
+    expect([...accepted].sort()).toEqual(['medium', 'ultraTask'])
   })
 })
