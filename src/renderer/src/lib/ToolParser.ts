@@ -339,6 +339,16 @@ export function extractResultOutput(resultEvent: any): string {
 
 export function extractStatus(resultEvent: any): ToolActivityStatus {
   if (!resultEvent || typeof resultEvent !== 'object') return 'success'
+  // `is_error` is the compat wire's own error flag — Cursor, Grok, Muse, the
+  // canvas sanitizer and the channel collector all publish failures that way,
+  // and `RunItemEventCompat.statusFromPayload` has always honoured it. This
+  // function did not, so the same failed call rendered as an error through the
+  // run-item lane and as a SUCCESS through the legacy `pairToolResult` lane.
+  // That is not cosmetic: `isErroredToolStatus` below is what keeps a failed or
+  // denied edit out of the run diff, the "N files changed" count and the
+  // Create-PR diff, so a missed error let a mutation that never happened be
+  // counted as one.
+  if (resultEvent.is_error === true) return 'error'
   if (resultEvent.error || resultEvent.status === 'error') return 'error'
   if (resultEvent.status === 'warning') return 'warning'
   return 'success'

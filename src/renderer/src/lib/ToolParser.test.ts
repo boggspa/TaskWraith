@@ -6,6 +6,7 @@ import {
   extractToolKind,
   extractResultOutput,
   extractStatus,
+  isErroredToolStatus,
   getToolCategory,
   isReasoningToolName,
   mapToolKindToCategory,
@@ -118,6 +119,19 @@ describe('ToolParser', () => {
     })
     it('returns success by default', () => {
       expect(extractStatus({})).toBe('success')
+    })
+    // The compat wire's own error flag. RunItemEventCompat has always honoured
+    // it, so before this the SAME failed call was an error through the run-item
+    // lane and a success through the legacy pairToolResult lane.
+    it('returns error for the compat wire is_error flag', () => {
+      expect(extractStatus({ is_error: true })).toBe('error')
+    })
+    it('does not treat a falsy or non-boolean is_error as a failure', () => {
+      expect(extractStatus({ is_error: false })).toBe('success')
+      expect(extractStatus({ is_error: 'false' })).toBe('success')
+    })
+    it('keeps a failed is_error result out of the diff via isErroredToolStatus', () => {
+      expect(isErroredToolStatus(extractStatus({ is_error: true }))).toBe(true)
     })
   })
 
