@@ -2705,14 +2705,15 @@ describe('HostNodeDomainPorts', () => {
       snapshot: ReturnType<ReturnType<typeof createControlledRecorder>['snapshot']>,
       expectedChatId: string
     ) {
-      expect(snapshot.spans).toHaveLength(1)
-      expect(snapshot.spans[0]).toMatchObject({
+      const control = snapshot.spans.filter((span) => span.kind === 'control_response')
+      expect(control).toHaveLength(1)
+      expect(control[0]).toMatchObject({
         chatId: expectedChatId,
         kind: 'control_response',
         process: 'host',
         resource: 'none'
       })
-      expect(snapshot.spans[0].durationMs).toBeGreaterThanOrEqual(0)
+      expect(control[0]!.durationMs).toBeGreaterThanOrEqual(0)
       expect(snapshot.byKind.control_response?.count).toBe(1)
     }
 
@@ -3211,6 +3212,195 @@ describe('HostNodeDomainPorts', () => {
       ).resolves.toEqual({ status: 'succeeded', resultSummary: 'ensemble_seat_disabled' })
       expect(recorder.snapshot().spans).toHaveLength(0)
       getThread.mockRestore()
+    })
+  })
+
+  describe('round_start spans', () => {
+    function createControlledRecorder(now: () => number) {
+      return createWorkSpanRecorder({ process: 'host', maxRetained: 64, now })
+    }
+
+    function configureMuseThread(store: HostProfileDomainStore, threadId: string): void {
+      store.configureThread({
+        threadId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        postureConsent: true
+      })
+    }
+
+    it('emits a round_start span at provider dispatch for composer.send', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      configureMuseThread(store, thread.appChatId)
+
+      let clock = 1000
+      const recorder = createControlledRecorder(() => (clock += 5))
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        workSpanRecorder: recorder
+      })
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-round-start',
+            { threadId: thread.appChatId },
+            { text: 'dispatch me' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+
+      const snapshot = recorder.snapshot()
+      expect(snapshot.spans).toHaveLength(1)
+      expect(snapshot.spans[0]).toMatchObject({
+        chatId: thread.appChatId,
+        runId: 'run-round-start',
+        kind: 'round_start',
+        process: 'host',
+        resource: 'none'
+      })
+      expect(snapshot.spans[0].durationMs).toBeGreaterThanOrEqual(0)
+      expect(snapshot.byKind.round_start?.count).toBe(1)
+      releaseRun()
+    })
+
+    it('does not emit round_start when admission rejects before dispatch', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const firstThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      const secondThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      configureMuseThread(store, firstThread.appChatId)
+      configureMuseThread(store, secondThread.appChatId)
+
+      const recorder = createControlledRecorder(() => 1000)
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        maxConcurrentRuns: 1,
+        maxQueuedStarts: 0,
+        shutdownTimeoutMs: 1_000,
+        workSpanRecorder: recorder
+      })
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-cap-hold',
+            { threadId: firstThread.appChatId },
+            { text: 'hold' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      expect(recorder.snapshot().byKind.round_start?.count).toBe(1)
+
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-cap-reject',
+            { threadId: secondThread.appChatId },
+            { text: 'overflow' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toMatchObject({ status: 'failed', errorCode: 'host_saturated' })
+      expect(recorder.snapshot().spans.filter((span) => span.kind === 'round_start')).toHaveLength(
+        1
+      )
+      expect(recorder.snapshot().spans[0]?.runId).toBe('run-cap-hold')
+      releaseRun()
+      await domainWithRecorder.shutdown()
+    })
+
+    it('does not emit round_start for a queued start until it is actually dispatched', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const firstThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      const secondThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      configureMuseThread(store, firstThread.appChatId)
+      configureMuseThread(store, secondThread.appChatId)
+
+      const recorder = createControlledRecorder(() => 2000)
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        maxConcurrentRuns: 1,
+        maxQueuedStarts: 1,
+        shutdownTimeoutMs: 1_000,
+        workSpanRecorder: recorder
+      })
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-hold-dispatch',
+            { threadId: firstThread.appChatId },
+            { text: 'hold' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+
+      const queued = domainWithRecorder.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-queued-dispatch',
+          { threadId: secondThread.appChatId },
+          { text: 'queued prompt' }
+        ),
+        { id: 'target' }
+      )
+      await vi.waitFor(() =>
+        expect(domainWithRecorder.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 1 })
+      )
+      expect(recorder.snapshot().spans.filter((span) => span.kind === 'round_start')).toEqual([
+        expect.objectContaining({ runId: 'run-hold-dispatch', kind: 'round_start' })
+      ])
+
+      releaseRun()
+      await expect(queued).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      expect(recorder.snapshot().spans.filter((span) => span.kind === 'round_start')).toEqual([
+        expect.objectContaining({ runId: 'run-hold-dispatch', kind: 'round_start' }),
+        expect.objectContaining({ runId: 'run-queued-dispatch', kind: 'round_start' })
+      ])
+      await domainWithRecorder.shutdown()
+    })
+
+    it('contains a throwing recorder so composer.send still dispatches', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      configureMuseThread(store, thread.appChatId)
+
+      const throwingRecorder = createWorkSpanRecorder({ process: 'host', maxRetained: 64 })
+      throwingRecorder.record = () => {
+        throw new Error('recorder must not break composer.send')
+      }
+      const domainWithThrowingRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        workSpanRecorder: throwingRecorder
+      })
+      await expect(
+        domainWithThrowingRecorder.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-round-throw',
+            { threadId: thread.appChatId },
+            { text: 'still dispatch' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      releaseRun()
     })
   })
 })

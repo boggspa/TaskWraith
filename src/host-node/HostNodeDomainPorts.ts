@@ -158,7 +158,7 @@ export interface HostNodeDomainPortsOptions {
   readonly maxConcurrentRuns?: number
   /** Bounded waiter limit for starts that cannot admit yet. Overflow rejects. */
   readonly maxQueuedStarts?: number
-  /** Optional recorder for control-response span telemetry. Absence is safe. */
+  /** Optional recorder for control_response and round_start span telemetry. Absence is safe. */
   readonly workSpanRecorder?: WorkSpanRecorder
 }
 
@@ -471,6 +471,35 @@ export class HostNodeDomainPorts {
       })
     } catch {
       // Instrumentation must never alter a control command result.
+    }
+  }
+
+  /**
+   * Composer send → first actual provider dispatch (A1.2). Ends at
+   * `provider.run`, never at admission queue insertion and never after the
+   * persisted-start wait. No dispatch → no span.
+   */
+  private recordRoundStart(
+    chatId: string | undefined,
+    startedAt: number | undefined,
+    runId: string
+  ): void {
+    if (
+      chatId === undefined ||
+      startedAt === undefined ||
+      this.options.workSpanRecorder === undefined
+    )
+      return
+    try {
+      this.options.workSpanRecorder.record({
+        chatId,
+        runId,
+        kind: 'round_start',
+        startedAt,
+        durationMs: Math.max(0, this.now() - startedAt)
+      })
+    } catch {
+      // Instrumentation must never alter a composer.send result.
     }
   }
 
@@ -1109,6 +1138,8 @@ export class HostNodeDomainPorts {
     )
     const profileThread = this.options.store.getThread(command.target.threadId)
 
+    const roundStartedAt = this.controlResponseStartedAt()
+    const roundChatId = this.chatIdForCommandThread(command.target.threadId)
     const admission = await this.runAdmission.acquire({
       commandId: command.commandId,
       threadId: command.target.threadId
@@ -1117,6 +1148,9 @@ export class HostNodeDomainPorts {
       return failed(admission.errorCode, admission.errorMessage)
     }
     const lease = admission.lease
+
+    // End the span at dispatch, not queue insertion and not persisted-start.
+    this.recordRoundStart(roundChatId, roundStartedAt, command.commandId)
 
     let completion: ReturnType<typeof provider.run>
     try {
