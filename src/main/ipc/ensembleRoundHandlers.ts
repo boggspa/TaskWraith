@@ -166,16 +166,21 @@ export async function handleRunEnsembleRound(
   // the prompt against the current roster. Structured legacy links and a
   // separately transported picker selection retain exact identity, while
   // ambiguous or stale targets fail before launch.
+  // `participants` is declared required, so tsc sees nothing here -- but a
+  // catalogue projection drops it once the chrome budget is spent, and the
+  // alias resolver then dereferences undefined. Refuse with a named error
+  // instead of a TypeError the renderer cannot classify.
+  const roster = ensembleChat.ensemble.participants
+  if (!Array.isArray(roster)) {
+    throw new Error('Ensemble roster is unavailable; reopen the thread and retry.')
+  }
   const dmTargetResolution = resolveEnsembleDmTargetForDispatch({
     text: prompt,
-    participants: ensembleChat.ensemble.participants,
+    participants: roster,
     advisoryParticipantId: payload?.dmTargetParticipantId,
     exactPickerParticipantId: payload?.exactPickerParticipantId
   })
-  const dmTargetError = ensembleDmTargetResolutionError(
-    dmTargetResolution,
-    ensembleChat.ensemble.participants
-  )
+  const dmTargetError = ensembleDmTargetResolutionError(dmTargetResolution, roster)
   if (dmTargetError) throw new Error(dmTargetError)
   const dmTargetParticipantId =
     dmTargetResolution.kind === 'target' ? dmTargetResolution.participantId : undefined

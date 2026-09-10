@@ -608,6 +608,40 @@ export class ThreadCatalogue {
     })
   }
 
+  /**
+   * Chat ids whose hold file EXISTS but which no token can ever name.
+   *
+   * `recoveryHold` returns the `'unreadable'` sentinel for a hold that is
+   * present but fails validation -- a torn write, a zero-byte file, a
+   * mismatched chatId. Such a hold is a permanent wedge:
+   * `assertRecoveryHoldAllows` throws on it while IGNORING the token,
+   * `releaseRecoveryHold` refuses it, `holdRecovery` refuses to overwrite it,
+   * and `recoveryHolds()` filters it out so the incarnation sweep cannot see
+   * it either. Nothing in the app could clear one, across any number of
+   * restarts. This is the read half of the escape hatch.
+   */
+  unreadableRecoveryHoldChatIds(): string[] {
+    const directory = path.join(this.controlDirectory, 'recovery-holds')
+    if (!fs.existsSync(directory)) return []
+    return fs.readdirSync(directory).flatMap((name) => {
+      const id = name.endsWith('.json') ? name.slice(0, -5) : ''
+      if (!isSafeChatId(id)) return []
+      return this.recoveryHold(id) === 'unreadable' ? [id] : []
+    })
+  }
+
+  /**
+   * Discard a hold no token can name. Deliberately NOT token-checked: there is
+   * no token that could match, which is precisely what makes it unreleasable.
+   */
+  releaseUnreadableRecoveryHold(chatId: string): boolean {
+    if (!this.options.canManageRecoveryHolds?.()) return false
+    if (this.recoveryHold(chatId) !== 'unreadable') return false
+    fs.unlinkSync(this.recoveryHoldPath(chatId))
+    this.syncDirectory(path.dirname(this.recoveryHoldPath(chatId)))
+    return true
+  }
+
   private copyTicket(ticket: ThreadCatalogueTicket): ThreadCatalogueTicket {
     return Object.freeze({
       chatId: ticket.chatId,

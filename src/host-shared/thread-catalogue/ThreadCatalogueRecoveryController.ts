@@ -45,6 +45,17 @@ export class ThreadCatalogueRecoveryController {
       if (hold.hostIncarnation !== options.incarnation)
         options.publisher.catalogue.releaseRecoveryHold(hold.chatId, hold.token)
     }
+    // A hold no token can name belongs to no live recovery in any incarnation,
+    // and no other code path can ever clear it. Sweeping it here is the only
+    // escape from a permanent, restart-surviving block on that chat. Failure
+    // to unlink must never take the process down with it.
+    for (const chatId of options.publisher.catalogue.unreadableRecoveryHoldChatIds()) {
+      try {
+        options.publisher.catalogue.releaseUnreadableRecoveryHold(chatId)
+      } catch {
+        // Left for the next incarnation rather than failing start-up.
+      }
+    }
   }
 
   forgetErased(chatId?: string): void {

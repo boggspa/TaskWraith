@@ -44,6 +44,18 @@ export function createThreadCatalogueReads(invoke: Invoke) {
     if (hex !== item.reference.sha256) throw new Error('History object changed during reading')
     return JSON.parse(new TextDecoder().decode(bytes)) as T
   }
+  /**
+   * Releasing a lease is best-effort cleanup. Awaiting it bare inside a
+   * `finally` meant a failed release REPLACED a completed read's value with
+   * its own rejection -- turning a successful load into a blank surface.
+   */
+  const releaseLease = async (leaseId: string): Promise<void> => {
+    try {
+      await query({ method: 'release', leaseId })
+    } catch {
+      // The main-side registry expires leases on its own schedule.
+    }
+  }
   const one = async <T>(
     leaseId: string,
     kind: ThreadIndexedObjectKind,
@@ -112,7 +124,7 @@ export function createThreadCatalogueReads(invoke: Invoke) {
           }
           chat.runsSummary = summaries
         } finally {
-          await query({ method: 'release', leaseId })
+          await releaseLease(leaseId)
         }
       }
       return chats
@@ -130,23 +142,29 @@ export function createThreadCatalogueReads(invoke: Invoke) {
         })
         return ordinal === null ? null : await one<ChatMessage>(leaseId, 'message', ordinal)
       } finally {
-        await query({ method: 'release', leaseId })
+        await releaseLease(leaseId)
       }
     },
     async getChat(chatId: string): Promise<ChatRecord | null> {
       const reply = await open(chatId, 'record')
       if (!reply.available) return invoke('get-chat', chatId)
-      if (!reply.data) return null
+      // The index is a CACHE over chats/<id>.json, not the record's owner, so
+      // a per-chat miss is not proof the chat is gone -- only the canonical
+      // read can answer that. An erasure in flight REJECTS out of
+      // ensureIndexed rather than resolving null, so this cannot serve back
+      // history the user asked to delete.
+      if (!reply.data) return invoke('get-chat', chatId)
       try {
         return await one<ChatRecord>(reply.data.leaseId, 'record')
       } finally {
-        await query({ method: 'release', leaseId: reply.data.leaseId })
+        await releaseLease(reply.data.leaseId)
       }
     },
     async getChatTranscriptPage(request: TranscriptPageRequest): Promise<TranscriptPage | null> {
       const reply = await open(request.chatId, 'pages')
       if (!reply.available) return invoke('get-chat-transcript-page', request)
-      if (!reply.data) return null
+      // Same reasoning as getChat: a per-chat miss is a cache miss, not proof.
+      if (!reply.data) return invoke('get-chat-transcript-page', request)
       const { leaseId, entry } = reply.data
       try {
         const total = entry.projection.summary.messageCount
@@ -292,7 +310,7 @@ export function createThreadCatalogueReads(invoke: Invoke) {
           ...(shell ? { shell } : {})
         }
       } finally {
-        await query({ method: 'release', leaseId })
+        await releaseLease(leaseId)
       }
     }
   }

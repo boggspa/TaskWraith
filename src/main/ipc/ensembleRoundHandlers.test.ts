@@ -170,6 +170,28 @@ describe('handleRunEnsembleRound delegation', () => {
     expect(harness.absorbMidRunSteering).not.toHaveBeenCalled()
   })
 
+  it('refuses a round when the roster was projected away, instead of a TypeError', async () => {
+    const harness = makeHarness()
+    // A catalogue projection drops `ensemble.participants` once the chrome
+    // budget is spent. It is declared required, so only a runtime guard helps.
+    const rosterless = makeChat()
+    delete (rosterless.ensemble as { participants?: unknown }).participants
+    harness.getChat.mockReturnValue(rosterless)
+    await expect(handleRunEnsembleRound(harness.deps, harness.event, payload())).rejects.toThrow(
+      'Ensemble roster is unavailable; reopen the thread and retry.'
+    )
+    expect(harness.startRound).not.toHaveBeenCalled()
+  })
+
+  it('still dispatches when the roster is legitimately empty', async () => {
+    const harness = makeHarness()
+    harness.startRound.mockReturnValue({ status: 'started' } as ReturnType<
+      OrchestratorStub['startRound']
+    >)
+    await handleRunEnsembleRound(harness.deps, harness.event, payload())
+    expect(harness.startRound).toHaveBeenCalledTimes(1)
+  })
+
   it('returns undefined without a barrier when the orchestrator is missing', async () => {
     const harness = makeHarness()
     harness.setOrchestrator(null)

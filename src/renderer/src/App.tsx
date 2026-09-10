@@ -173,6 +173,7 @@ import { canonicalKimiTaskWraithModelId } from '../../shared/kimiModels'
 // 1.0.5-EW25 — User-currency cost formatting helper.
 import { setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
 import { selectCurrentChatRun } from './lib/activeRunSelection'
+import { ensembleRoundDispatchRefusal } from './lib/ensembleRoundDispatchReceipt'
 import { computeCumulativeRunBaseMs } from './lib/cumulativeRunTimecode'
 import type {
   AppSettings,
@@ -6601,11 +6602,17 @@ function App(): React.JSX.Element {
       // whole transcript there). A missing page falls back to full hydration.
       void (
         shouldPageTranscriptOnOpen(chat)
-          ? hydratePagedChatShell(chat.appChatId, chat).then((paged) =>
-              paged
-                ? applyPagedHydratedChat(paged.shell, paged.page)
-                : refreshSingleChat(chat.appChatId)
-            )
+          ? hydratePagedChatShell(chat.appChatId, chat)
+              // Paging is an optimisation, never a correctness gate. Only a
+              // RESOLVED null escalated; a rejection fell through to the outer
+              // .catch and left the transcript blank forever. Every other chat
+              // surface already catches here (chatSurfacePagedHydration.ts).
+              .catch(() => null)
+              .then((paged) =>
+                paged
+                  ? applyPagedHydratedChat(paged.shell, paged.page)
+                  : refreshSingleChat(chat.appChatId)
+              )
           : refreshSingleChat(chat.appChatId)
       )
         .then((resolved) => {
@@ -14489,7 +14496,7 @@ function App(): React.JSX.Element {
             ? appendOptimisticEnsembleQueuedPrompt(runChat.appChatId, optimisticQueuedPrompt)
             : false
         try {
-          await window.api.runEnsembleRound({
+          const dispatchReceipt = await window.api.runEnsembleRound({
             chatId: runChat.appChatId,
             prompt: request.prompt,
             ...(request.scheduledTaskId ? { scheduledTaskId: request.scheduledTaskId } : {}),
@@ -14534,6 +14541,19 @@ function App(): React.JSX.Element {
                 }
               : {})
           })
+          const dispatchRefusal = ensembleRoundDispatchRefusal(dispatchReceipt)
+          if (dispatchRefusal) {
+            if (didOptimisticallyQueue) {
+              removeOptimisticEnsembleQueuedPrompt(runChat.appChatId, optimisticQueuedPrompt)
+            }
+            updateRunQueueJobStatus(currentRunId, 'failed', dispatchRefusal.message)
+            settleProjectReferenceContextForRequest(request, 'rejected')
+            appendThreadRawLog(runChat.appChatId, {
+              type: 'stderr',
+              content: dispatchRefusal.message
+            })
+            return
+          }
           const acceptedQueueWrapperReason = acceptedEnsembleRunQueueWrapperReason({
             mode,
             scheduledTaskId: request.scheduledTaskId,

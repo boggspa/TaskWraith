@@ -422,3 +422,90 @@ describe('durable thread catalogue publication', () => {
     expect(fs.readdirSync(profile)).toEqual([])
   })
 })
+
+describe('a recovery hold that no token can name', () => {
+  let profile: string
+
+  beforeEach(() => {
+    profile = fs.mkdtempSync(join(tmpdir(), 'thread-catalogue-hold-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(profile, { recursive: true, force: true })
+  })
+
+  function holdingCatalogue(): ThreadCatalogue {
+    return new ThreadCatalogue({
+      profilePath: profile,
+      writer: 'desktop',
+      writerId: 'desktop-1',
+      canWrite: () => true,
+      canManageRecoveryHolds: () => true,
+      writerLifecycle: () => 'active',
+      canPublishResolution: () => true,
+      canErase: () => true,
+      isSourceDurabilityProven: () => true,
+      isIndexedGenerationCommitted: () => true,
+      isSourceWitnessCurrent: () => true
+    })
+  }
+
+  function holdFile(chatId: string): string {
+    return join(profile, 'thread-history-control-v1', 'recovery-holds', `${chatId}.json`)
+  }
+
+  it('is invisible to every existing clearing path once its file is torn', () => {
+    const store = holdingCatalogue()
+    store.holdRecovery({
+      chatId: 'chat-1',
+      token: 'token-1',
+      desktopWriterId: 'desktop-1',
+      hostIncarnation: 'incarnation-1'
+    })
+    // A crash partway through writeJson leaves exactly this.
+    fs.writeFileSync(holdFile('chat-1'), '{')
+
+    expect(store.recoveryHold('chat-1')).toBe('unreadable')
+    // Blocks every save for this chat...
+    expect(() => store.assertRecoveryHoldAllows('chat-1', 'token-1')).toThrow(
+      'Chat history recovery is in progress'
+    )
+    // ...while being unreleasable, unoverwritable, and invisible to the sweep.
+    expect(store.releaseRecoveryHold('chat-1', 'token-1')).toBe(false)
+    expect(store.recoveryHolds()).toEqual([])
+    expect(fs.existsSync(holdFile('chat-1'))).toBe(true)
+  })
+
+  it('is discoverable and clearable through the unreadable-hold escape hatch', () => {
+    const store = holdingCatalogue()
+    store.holdRecovery({
+      chatId: 'chat-1',
+      token: 'token-1',
+      desktopWriterId: 'desktop-1',
+      hostIncarnation: 'incarnation-1'
+    })
+    fs.writeFileSync(holdFile('chat-1'), '{')
+
+    expect(store.unreadableRecoveryHoldChatIds()).toEqual(['chat-1'])
+    expect(store.releaseUnreadableRecoveryHold('chat-1')).toBe(true)
+    expect(fs.existsSync(holdFile('chat-1'))).toBe(false)
+    expect(() => store.assertRecoveryHoldAllows('chat-1', 'token-1')).not.toThrow()
+  })
+
+  it('never discards a hold that is merely held by someone else', () => {
+    const store = holdingCatalogue()
+    store.holdRecovery({
+      chatId: 'chat-1',
+      token: 'token-1',
+      desktopWriterId: 'desktop-1',
+      hostIncarnation: 'incarnation-1'
+    })
+    // Intact holds are not "unreadable" and must survive the sweep untouched.
+    expect(store.unreadableRecoveryHoldChatIds()).toEqual([])
+    expect(store.releaseUnreadableRecoveryHold('chat-1')).toBe(false)
+    expect(fs.existsSync(holdFile('chat-1'))).toBe(true)
+    expect(() => store.assertRecoveryHoldAllows('chat-1', 'other-token')).toThrow(
+      'Chat history recovery is in progress'
+    )
+  })
+})
