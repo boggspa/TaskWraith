@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
 
+const require = createRequire(import.meta.url)
+const { childTerminationRecord } = require('./runT2Baseline.cjs')
 const src = readFileSync(new URL('./runT2Baseline.cjs', import.meta.url), 'utf8')
 
 describe('T2 capture hang guards (source pins)', () => {
@@ -31,5 +34,40 @@ describe('T2 capture hang guards (source pins)', () => {
     expect(src).toContain('MATRIX_SAMPLING.windowMs')
     expect(src).toContain('MATRIX_SAMPLING.repetitions')
     expect(src).toContain('aloneReplayWindows:')
+  })
+})
+
+describe('stray reap audit record', () => {
+  it('keeps the force and stray-kill facts that a clean-looking shutdown hides', () => {
+    expect(
+      childTerminationRecord({
+        pid: 1,
+        terminated: true,
+        usedForce: true,
+        killedProcessGroup: true,
+        strayKills: [{ pid: 42, reason: 'listening on owned inspector port' }]
+      })
+    ).toEqual({
+      usedForce: true,
+      killedProcessGroup: true,
+      strayKills: [{ pid: 42, reason: 'listening on owned inspector port' }]
+    })
+  })
+
+  it('records no termination at all rather than an empty one, and invents no kills', () => {
+    expect(childTerminationRecord(null)).toBeNull()
+    expect(childTerminationRecord(undefined)).toBeNull()
+    // A truthy non-record must not become a claim about force or kills.
+    expect(childTerminationRecord({ usedForce: 'yes', strayKills: 'two' })).toEqual({
+      usedForce: false,
+      killedProcessGroup: false,
+      strayKills: []
+    })
+  })
+
+  it('carries the record into the report, the cleanup journal and the abort path', () => {
+    expect(src).toContain('report.childTermination = childTermination')
+    expect(src).toContain('{ childTermination }')
+    expect(src).toContain('abortTermination: record')
   })
 })

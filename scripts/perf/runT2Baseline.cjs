@@ -733,6 +733,28 @@ function createT2ProgressJournal(options) {
 }
 
 /**
+ * The force/reap facts `terminateExactChild` returns, in the shape the report
+ * and the progress journal carry them.
+ *
+ * `strayKills` names processes this run SIGKILLed but never spawned directly —
+ * the port and userData-path reap. Both call sites dropped the return value, so
+ * a forced ejection left no trace in any artifact: the run read as a clean
+ * shutdown. Recorded unconditionally, because "nothing failed" is exactly the
+ * case where a silent SIGKILL is invisible.
+ *
+ * @param {object|null} termination
+ * @returns {{ usedForce: boolean, killedProcessGroup: boolean, strayKills: Array<object> }|null}
+ */
+function childTerminationRecord(termination) {
+  if (!termination || typeof termination !== 'object') return null
+  return {
+    usedForce: termination.usedForce === true,
+    killedProcessGroup: termination.killedProcessGroup === true,
+    strayKills: Array.isArray(termination.strayKills) ? termination.strayKills : []
+  }
+}
+
+/**
  * Check free disk space on the volume containing `dirPath`. Fails closed
  * when statfs is unavailable or free space is below minFreeBytes.
  *
@@ -1370,7 +1392,20 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         ...(options.terminateOptions || {}),
         userDataPath: userDataResolved.userDataPath
       })
-    ).catch(() => {})
+    )
+      .then((termination) => {
+        const record = childTerminationRecord(termination)
+        if (!record) return
+        // The cleanup block never runs on an abort, so the journal is the only
+        // artifact left that can carry the reap. Best effort: a failed journal
+        // write must not mask the abort it is describing.
+        try {
+          updateProgress({ abortTermination: record }, { log: false })
+        } catch {
+          /* nothing to escalate to during an abort */
+        }
+      })
+      .catch(() => {})
   }
   if (options.signal) {
     if (options.signal.aborted) abortOwnedLaunch()
@@ -2000,6 +2035,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     } finally {
       // C: always close sessions + terminate exact owned tree; preserve primary error.
       let childTerminationSucceeded = childSession == null
+      /** @type {object|null} — force/reap facts, journaled even when nothing failed */
+      let childTermination = null
       if (renderer && typeof renderer.close === 'function') {
         try {
           renderer.close()
@@ -2022,10 +2059,12 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       }
       if (childSession) {
         try {
-          await terminateExactChild(childSession, {
-            ...(options.terminateOptions || {}),
-            userDataPath: userDataResolved.userDataPath
-          })
+          childTermination = childTerminationRecord(
+            await terminateExactChild(childSession, {
+              ...(options.terminateOptions || {}),
+              userDataPath: userDataResolved.userDataPath
+            })
+          )
           childTerminationSucceeded = true
         } catch (error) {
           cleanupFailures.push({
@@ -2034,6 +2073,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           })
         }
       }
+      if (childTermination) report.childTermination = childTermination
       if (cleanupFailures.length) {
         report.cleanupFailures = cleanupFailures
         if (launchError) {
@@ -2048,6 +2088,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
                 completed: true,
                 childTerminationAttempted: Boolean(childSession),
                 childTerminationSucceeded,
+                ...(childTermination == null ? {} : { childTermination }),
                 failures: cleanupFailures
               }
             },
@@ -2307,6 +2348,7 @@ module.exports = {
   checkHostBundleFreshness,
   collectT2HostSpanEvidence,
   createWindowedRateTracker,
+  childTerminationRecord,
   parseArgs,
   runT2BaselineCli
 }
