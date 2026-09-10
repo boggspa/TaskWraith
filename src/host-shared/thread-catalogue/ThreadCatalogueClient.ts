@@ -6,6 +6,15 @@ export type {
   ThreadCatalogueOwner,
   ThreadCatalogueOpenResult
 } from '../../shared/threadCatalogueTypes'
+/**
+ * Per-request budget for every history query that crosses this client.
+ *
+ * Named because a recovery hold's expiry must be sized against THIS budget:
+ * the recovery controller and `ThreadCatalogueHostRecovery` both await this
+ * client, not the shorter `HostProjectionClient` one.
+ */
+export const THREAD_CATALOGUE_REQUEST_TIMEOUT_MS = 150_000
+
 export interface ThreadCatalogueProcessPort {
   postMessage(value: unknown): void
   on(event: 'message', listener: (value: unknown) => void): unknown
@@ -96,7 +105,7 @@ export class ThreadCatalogueClient {
     return this.call(query) as Promise<T>
   }
 
-  private call(query: unknown, timeoutMs = 150_000): Promise<unknown> {
+  private call(query: unknown, timeoutMs = THREAD_CATALOGUE_REQUEST_TIMEOUT_MS): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error('History worker is unavailable'))
     const id = ++this.nextId
     return new Promise((resolve, reject) => {

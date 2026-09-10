@@ -1,11 +1,36 @@
 import { randomUUID } from 'node:crypto'
-import type { ThreadCatalogueClient } from './ThreadCatalogueClient'
+import {
+  THREAD_CATALOGUE_REQUEST_TIMEOUT_MS,
+  type ThreadCatalogueClient
+} from './ThreadCatalogueClient'
 import type { ThreadCatalogueSourcePublisher } from './ThreadCatalogueSourcePublisher'
 import type { ThreadCatalogueReaderOptions } from './ThreadCatalogueWitness'
 import type { PreparedThreadMutation } from '../../shared/threadCatalogueTypes'
 import { adoptPreparedThreadRecord } from './ThreadCatalogueAdoption'
 import type { ThreadCatalogueRecoveryHold, ThreadCatalogueProjection } from './ThreadCatalogue'
 import { ThreadCatalogueWriteGate } from './ThreadCatalogueWriteGate'
+
+/**
+ * How long a recovery hold survives with no token-bearing request naming it.
+ *
+ * Durable state is committed on the begin-recovery REQUEST -- the admission
+ * hold, the fsynced hold file and the `pending` entry all land before the
+ * reply is sent. A lost reply therefore leaves the caller holding no token it
+ * could ever cancel with, while `ThreadCatalogueWriteGate.admit` waits on that
+ * admission with no timeout and no rejection: every command for the chat hangs
+ * until the Host restarts. This expiry is the only thing that ends such a
+ * strand, so it is sized to be unreachable by any recovery that is still
+ * making progress.
+ *
+ * Sizing: the Desktop recovery and `ThreadCatalogueHostRecovery` both await
+ * `ThreadCatalogueClient`. The longest gap between two token-bearing requests
+ * on a path that succeeds today is the Desktop's begin-recovery -> open ->
+ * release -> prepare, and each of those two intervening queries can burn a
+ * full request budget before returning -- so two budgets is the floor, and
+ * this is double that. Sizing against a shorter budget (HostProjectionClient's
+ * 30s, say) would cancel live holders on paths that work today.
+ */
+export const THREAD_CATALOGUE_RECOVERY_HOLD_TTL_MS = 4 * THREAD_CATALOGUE_REQUEST_TIMEOUT_MS
 
 /** Runs on the source-authoritative parent, never inside its decoder. */
 export class ThreadCatalogueRecoveryController {
@@ -19,7 +44,12 @@ export class ThreadCatalogueRecoveryController {
   private readonly admission = new ThreadCatalogueWriteGate()
   private readonly pending = new Map<
     string,
-    { hold: ThreadCatalogueRecoveryHold; release(): void; promise: Promise<void> }
+    {
+      hold: ThreadCatalogueRecoveryHold
+      release(): void
+      promise: Promise<void>
+      timer?: ReturnType<typeof setTimeout>
+    }
   >()
   private readonly completed = new Map<
     string,
@@ -145,7 +175,38 @@ export class ThreadCatalogueRecoveryController {
         release()
       }
     })
+    this.renew(chatId, hold.token)
     return hold
+  }
+
+  /**
+   * Arm, or restart, this hold's expiry. Every token-bearing request proves a
+   * live holder, so each one renews; a token that does not name the current
+   * pending hold renews nothing.
+   *
+   * Deliberately NOT one-shot. The entry stays in `pending` across the attempt
+   * and is re-armed afterwards, so an `end()` that throws -- authority in flux,
+   * an unlink that fails -- costs one more TTL instead of disarming the expiry
+   * and restoring the immortal hold this exists to prevent. A successful
+   * `end()` has already removed the entry, which makes the re-arm a no-op.
+   */
+  private renew(chatId: string, token: string): void {
+    const pending = this.pending.get(chatId)
+    if (!pending || pending.hold.token !== token) return
+    if (pending.timer) clearTimeout(pending.timer)
+    const timer = setTimeout(() => {
+      const current = this.pending.get(chatId)
+      if (!current || current.hold.token !== token) return
+      current.timer = undefined
+      try {
+        this.end(chatId, token)
+      } catch {
+        // Left for the next expiry rather than taking the source parent down.
+      }
+      this.renew(chatId, token)
+    }, THREAD_CATALOGUE_RECOVERY_HOLD_TTL_MS)
+    timer.unref?.()
+    pending.timer = timer
   }
 
   cancelForReplacedDesktop(writerId: string): void {
@@ -163,6 +224,7 @@ export class ThreadCatalogueRecoveryController {
       this.pending.get(chatId)?.hold.token !== token
     )
       throw new Error('History recovery admission changed')
+    this.renew(chatId, token)
   }
 
   end(chatId: string, token: string): boolean {
@@ -174,6 +236,7 @@ export class ThreadCatalogueRecoveryController {
     // A cancellation ACK therefore excludes every later commit for this token.
     this.options.publisher.catalogue.releaseRecoveryHold(chatId, token)
     this.pending.delete(chatId)
+    if (pending?.timer) clearTimeout(pending.timer)
     pending?.release()
     return true
   }
@@ -183,6 +246,9 @@ export class ThreadCatalogueRecoveryController {
     token: string,
     preparedId: string
   ): Promise<ThreadCatalogueProjection> {
+    // The request itself proves a live holder, and the `prepared` query below
+    // can burn a whole request budget before `assert` renews again.
+    this.renew(chatId, token)
     const prior = this.completed.get(preparedId)
     if (
       prior &&
@@ -210,6 +276,7 @@ export class ThreadCatalogueRecoveryController {
         this.options.hasLiveWork(chatId)
       )
         throw new Error('History recovery admission changed')
+      this.renew(chatId, token)
     }
     assert()
     const ticket = this.options.publisher.begin(chatId, token)
@@ -236,6 +303,9 @@ export class ThreadCatalogueRecoveryController {
   }
 
   dispose(): void {
+    // Disarm first: a throwing `end()` below must not leave an expiry armed on
+    // a controller that is going away.
+    for (const pending of this.pending.values()) if (pending.timer) clearTimeout(pending.timer)
     for (const { hold } of this.pending.values()) this.end(hold.chatId, hold.token)
   }
 }
