@@ -493,6 +493,27 @@ describe('IpcValidation', () => {
     }
   })
 
+  it('registers every shared-workspace contribution channel', () => {
+    for (const channel of [
+      'git:shared-workspace',
+      'git:contribution-preview',
+      'git:contribution-action'
+    ]) {
+      expect(channel in IPC_ARGUMENT_SCHEMAS, `${channel} must be registered`).toBe(true)
+      expect(() => validateIpcArgs(channel, [])).not.toThrow()
+      expect(() =>
+        validateIpcArgs(channel, [{ workspacePath: '/repo', worktreePath: '/repo/wt' }])
+      ).not.toThrow()
+      expect(() => validateIpcArgs(channel, ['not-an-object'])).toThrow(/object/)
+      expect(() => validateIpcArgs(channel, [[]])).toThrow(/object/)
+    }
+    expect(() =>
+      validateIpcArgs('git:contribution-action', [
+        { workspacePath: '/repo', id: 'c-1', generation: 'g-1', action: 'commit' }
+      ])
+    ).not.toThrow()
+  })
+
   it('accepts optional provider usage refresh options', () => {
     expect(() => validateIpcArgs('get-agent-rate-limits', ['claude'])).not.toThrow()
     expect(() =>
