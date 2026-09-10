@@ -2,6 +2,7 @@
 'use strict'
 
 const { runHostProductionCli, runHostShutdownCli } = require('../dist/host/host-runtime/cli.js')
+const { HostProductionCliError } = require('../dist/host/host-runtime/HostProductionCli.js')
 
 async function main() {
   const args = process.argv.slice(2)
@@ -16,5 +17,5 @@ void main().catch((error) => {
   process.stderr.write(
     `taskwraith-host: ${error instanceof Error ? error.message : String(error)}\n`
   )
-  process.exitCode = 1
+  process.exitCode = error instanceof HostProductionCliError ? 2 : 1
 })

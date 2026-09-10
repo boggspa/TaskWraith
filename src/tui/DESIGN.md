@@ -53,10 +53,10 @@ hex, a second glyph set, or a parallel density resolver. `theme.ts` stays
 the sole token authority; `ghostBanner.ts` composes printable banner lines
 from those tokens (hand-authored art, not an SVG→ASCII generator).
 
-The mark is drawn in the **heavy** Box Drawing weight, matching the source
-SVG's monoline rather than under-reading it at raster scale. Heavy has no
-counterpart to the arcs or diagonals, so the crown's outward flare is stepped
-rather than curved; the flare is the feature, the radius is not.
+The mark is drawn in the light Box Drawing weight. At six rows it reads like
+the white PNG mark instead of a second headline competing with the
+provider/model identity beneath it; the crown's outward flare stays curved
+rather than stepped, and the flare is the feature, the radius is not.
 
 Colour over the banner belongs to [`ghostBannerSweep.ts`](./ghostBannerSweep.ts),
 which is where the home-frame sweep lives. `ghostBanner.ts` stays free of ANSI

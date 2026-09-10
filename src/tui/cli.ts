@@ -53,6 +53,7 @@ import { ensureTuiHostAvailable, type EnsureTuiHostAvailableResult } from './hos
 import { renderTaskWraithTui } from './render'
 import { createTaskWraithTuiDemoState, type TaskWraithTuiState } from './state'
 import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
+import { TuiUsageError } from './tuiUsageError'
 
 const TUI_VERSION = '0.2.0'
 
@@ -524,5 +525,5 @@ void main().catch((error) => {
   process.stderr.write(
     `TaskWraith TUI: ${error instanceof Error ? error.message : String(error)}\n`
   )
-  process.exitCode = 1
+  process.exitCode = error instanceof TuiUsageError ? 2 : 1
 })

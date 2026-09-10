@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseOutsideCommand } from './outsideCommand'
+import { TuiUsageError } from './tuiUsageError'
 
 const defaults = { cwd: '/repo/worktree' }
 
@@ -119,5 +120,11 @@ describe('parseOutsideCommand', () => {
 
   it('refuses a flag that is missing its value', () => {
     expect(() => parseOutsideCommand(['send', '--from'], defaults)).toThrow(/--from/)
+  })
+
+  it('reports malformed verbs as usage errors for the exit-code contract', () => {
+    expect(() => parseOutsideCommand(['send'], defaults)).toThrow(TuiUsageError)
+    expect(() => parseOutsideCommand(['threads', '--nope'], defaults)).toThrow(TuiUsageError)
+    expect(() => parseOutsideCommand(['mcp', 'send'], defaults)).toThrow(TuiUsageError)
   })
 })

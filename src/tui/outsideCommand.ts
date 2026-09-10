@@ -7,6 +7,8 @@
  * its own flags unchanged. It is pure: stdin, discovery and the socket belong
  * to the caller.
  */
+import { TuiUsageError } from './tuiUsageError'
+
 export type OutsideCommand =
   | {
       kind: 'threads'
@@ -59,7 +61,7 @@ type FlagName = '--query' | '--cwd' | '--from' | '--limit'
 function takeValue(args: readonly string[], index: number, flag: string): [string, number] {
   const value = args[index + 1]
   if (value === undefined || value.startsWith('--')) {
-    throw new Error(`${flag} requires a value.`)
+    throw new TuiUsageError(`${flag} requires a value.`)
   }
   return [value, index + 1]
 }
@@ -96,7 +98,7 @@ function parseFlags(
         index = consumed
       }
     } else {
-      throw new Error(`Unknown option: ${flag}`)
+      throw new TuiUsageError(`Unknown option: ${flag}`)
     }
   }
   return { values, all, json, rest: args.slice(index) }
@@ -106,7 +108,7 @@ function parseFlags(
 function positiveCount(raw: string): number {
   const value = Number(raw)
   if (!Number.isInteger(value) || value < 1) {
-    throw new Error('--limit expects a positive whole number of rows.')
+    throw new TuiUsageError('--limit expects a positive whole number of rows.')
   }
   return value
 }
@@ -127,7 +129,7 @@ export function parseOutsideCommand(
   if (verb === 'mcp') {
     const { values, rest } = parseFlags(args, ['--cwd'])
     if (rest.length) {
-      throw new Error(`mcp takes no arguments; it serves tools over stdio. Got: ${rest[0]}`)
+      throw new TuiUsageError(`mcp takes no arguments; it serves tools over stdio. Got: ${rest[0]}`)
     }
     return { kind: 'mcp', cwd: values['--cwd'] ?? defaults.cwd }
   }
@@ -147,7 +149,7 @@ export function parseOutsideCommand(
     const { values, all, json, rest } = parseFlags(args, ['--cwd', '--limit'])
     const selector = rest[0]
     if (!selector) {
-      throw new Error('read needs a thread id or a title to match: tw read <thread>')
+      throw new TuiUsageError('read needs a thread id or a title to match: tw read <thread>')
     }
     const limit = values['--limit'] === undefined ? undefined : positiveCount(values['--limit'])
     return {
@@ -162,7 +164,7 @@ export function parseOutsideCommand(
   const { values, all, json, rest } = parseFlags(args, ['--cwd', '--from'])
   const selector = rest[0]
   if (!selector) {
-    throw new Error('send needs a thread id or a title to match: tw send <thread> <text…>')
+    throw new TuiUsageError('send needs a thread id or a title to match: tw send <thread> <text…>')
   }
   const text = rest.slice(1).join(' ').trim()
   return {

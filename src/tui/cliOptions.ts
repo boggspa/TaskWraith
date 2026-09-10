@@ -6,6 +6,7 @@ import {
 } from '../shared/taskWraithControlPaths.node'
 import { detectAnsiColorMode, type AnsiColorMode } from './ansi'
 import type { TuiHostLaunchProfile } from './hostProcessManager'
+import { TuiUsageError } from './tuiUsageError'
 
 export const TASKWRAITH_NODE_PACKAGE_ENV = 'TASKWRAITH_CLI_PACKAGE'
 
@@ -97,19 +98,19 @@ they cannot issue commands or write live Host state.`
 function positiveInteger(raw: string | undefined, flag: string): number {
   const value = Number(raw)
   if (!Number.isInteger(value) || value < 1) {
-    throw new Error(`${flag} expects a positive integer.`)
+    throw new TuiUsageError(`${flag} expects a positive integer.`)
   }
   return value
 }
 
 function parseColorMode(raw: string | undefined): AnsiColorMode {
   if (raw === 'truecolor' || raw === 'ansi256' || raw === 'none') return raw
-  throw new Error('--color expects truecolor, ansi256, or none.')
+  throw new TuiUsageError('--color expects truecolor, ansi256, or none.')
 }
 
 function takeValue(args: string[], index: number, flag: string): [string, number] {
   const value = args[index + 1]
-  if (!value || value.startsWith('--')) throw new Error(`${flag} expects a value.`)
+  if (!value || value.startsWith('--')) throw new TuiUsageError(`${flag} expects a value.`)
   return [value, index + 1]
 }
 
@@ -179,7 +180,7 @@ export function parseTaskWraithTuiArgs(
       else options.replayPath = resolve(value)
       index = consumed
     } else {
-      throw new Error(`Unknown option: ${argument}`)
+      throw new TuiUsageError(`Unknown option: ${argument}`)
     }
   }
 
@@ -201,22 +202,24 @@ export function parseTaskWraithTuiArgs(
             ? 'node-package'
             : 'production'
   if (options.json && options.snapshot) {
-    throw new Error('--json and --snapshot select different output formats.')
+    throw new TuiUsageError('--json and --snapshot select different output formats.')
   }
   if (options.exportPath && options.replayPath) {
-    throw new Error('--export and --replay cannot be combined.')
+    throw new TuiUsageError('--export and --replay cannot be combined.')
   }
   if (
     options.exportPath &&
     (options.demo || options.snapshot || options.json || options.threadId)
   ) {
-    throw new Error('--export cannot be combined with --demo, --snapshot, --json, or --thread.')
+    throw new TuiUsageError(
+      '--export cannot be combined with --demo, --snapshot, --json, or --thread.'
+    )
   }
   if (options.replayPath && (options.demo || options.dev)) {
-    throw new Error('--replay cannot be combined with --demo or --dev.')
+    throw new TuiUsageError('--replay cannot be combined with --demo or --dev.')
   }
   if (options.force && !options.exportPath) {
-    throw new Error('--force is only valid with --export.')
+    throw new TuiUsageError('--force is only valid with --export.')
   }
   return options
 }

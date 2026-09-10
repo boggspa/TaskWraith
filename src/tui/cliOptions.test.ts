@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { parseTaskWraithTuiArgs, taskWraithTuiUsage } from './cliOptions'
+import { TuiUsageError } from './tuiUsageError'
 
 describe('TaskWraith TUI CLI options', () => {
   it('parses machine JSON, compact export, and detached replay paths', () => {
@@ -57,6 +58,12 @@ describe('TaskWraith TUI CLI options', () => {
     expect(() => parseTaskWraithTuiArgs(['--export=a', '--replay=b'])).toThrow(/cannot be combined/)
     expect(() => parseTaskWraithTuiArgs(['--replay=a', '--dev'])).toThrow(/cannot be combined/)
     expect(() => parseTaskWraithTuiArgs(['--force'])).toThrow(/only valid with --export/)
+  })
+
+  it('reports malformed invocations as usage errors for the exit-code contract', () => {
+    expect(() => parseTaskWraithTuiArgs(['--nope'])).toThrow(TuiUsageError)
+    expect(() => parseTaskWraithTuiArgs(['--json', '--snapshot'])).toThrow(TuiUsageError)
+    expect(() => parseTaskWraithTuiArgs(['--width', 'lots'])).toThrow(TuiUsageError)
   })
 
   it('documents mission control, JSON, export, and replay', () => {
