@@ -72,6 +72,19 @@ export function isCapabilityGatewayToolName(value: unknown): value is Capability
  * `coalesceMirroredTaskWraithActivities` proves the nested mirror, keeps the
  * enriched host activity (including +N/-N), and copies the native round-trip
  * timing onto it, so the user still sees exactly one row.
+ *
+ * MUSE IS ABSENT FOR A DIFFERENT REASON: it twins, but only on a transport the
+ * 2026-08-18 measurement could not see. That corpus predates the MSP lane
+ * entirely, so Muse was never a candidate for this list. Measured 2026-09-10
+ * over the full run-event corpus, only two Muse runs carry MCP rows at all —
+ * both MSP-lane, both twinning 38/38 — and NO exec-lane Muse run has ever
+ * carried one, so that lane's twin rate is not merely low, it is unmeasured.
+ * Adding `muse` here would therefore suppress the host receipt on a lane where
+ * nothing has been shown to replace it, which deletes the card rather than
+ * deduplicating it. It is handled in the renderer instead, like Kimi and
+ * Mistral: `coalesceMirroredTaskWraithActivities` folds the pair when a
+ * genuine twin is present and is a no-op when it is not, so the exec lane
+ * stays correct without waiting for a measurement.
  */
 const PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS: readonly string[] = [
   'codex',
