@@ -174,6 +174,24 @@ describe('App wires the live surfaces through this seam', () => {
     expect(app).not.toContain('currentChat.runs[currentChat.runs.length - 1]')
   })
 
+  it('resolves the side-pane run through the seam, not a bare tail read', () => {
+    expect(app).toContain('const sideRun = selectCurrentChatRun(')
+    expect(app).not.toContain('sideChat?.runs?.[sideChat.runs.length - 1]')
+  })
+
+  it('resolves both multiview pane runs through the seam', () => {
+    // The pane sites were never converted with the focused composer, so a
+    // paged or summaryOnly pane painted 00:00:00:00 under a live "Working"
+    // chip while the focused composer ticked correctly beside it.
+    expect(app).not.toContain('viewerChat.runs?.[viewerChat.runs.length - 1]')
+    // Positive half, so the negative above cannot pass by the sites vanishing:
+    // the pane shell and the pane composer ctx each resolve one.
+    expect(app.split('const viewerRun =').length - 1).toBe(2)
+    expect(
+      app.split('resolveCurrentChatTranscriptWindow(viewerChat, null).runs').length - 1
+    ).toBe(2)
+  })
+
   it('imports the helper', () => {
     expect(app).toMatch(/selectCurrentChatRun[^\n]*from '\.\/lib\/activeRunSelection'/)
   })

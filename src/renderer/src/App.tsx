@@ -805,7 +805,10 @@ import { ChatUpdateHydrationQueue } from './lib/chatUpdateHydrationQueue'
 import { commitHydratedChat, resolveChatHydration } from './lib/chatHydrationMerge'
 import { hydratePagedChatShell } from './lib/chatTranscriptPager'
 import { createSurfaceChatHydrator, isSurfaceChatHydrated } from './lib/chatSurfacePagedHydration'
-import { useCurrentChatTranscriptWindow } from './lib/currentChatTranscriptWindow'
+import {
+  resolveCurrentChatTranscriptWindow,
+  useCurrentChatTranscriptWindow
+} from './lib/currentChatTranscriptWindow'
 import { shouldDeferTranscriptPresentation } from './lib/approvalPresentationGate'
 import {
   isTranscriptPagedShell,
@@ -22458,7 +22461,13 @@ function App(): React.JSX.Element {
   // "Working". Resolving through the loaded window is a pure widening: for a
   // hydrated record the window IS `chat.runs`, so the value is unchanged.
   const currentRun = selectCurrentChatRun(currentChat?.runs, currentChatTranscript.runs)
-  const sideRun = sideChat?.runs?.[sideChat.runs.length - 1]
+  // Same widening as `currentRun` above, for the side pane. Passing `null` for
+  // the payload is deliberate: it is the summaryOnly projections that strip
+  // `runs` while keeping `lastRun`, and those need no store subscription.
+  const sideRun = selectCurrentChatRun(
+    sideChat?.runs,
+    resolveCurrentChatTranscriptWindow(sideChat, null).runs
+  )
   const hasSideChatActiveRunQueueJob = Boolean(
     sideChat?.appChatId && chatHasActiveRunQueueJob(sideChat.appChatId)
   )
@@ -22483,8 +22492,6 @@ function App(): React.JSX.Element {
     sideProvider === 'ollama' || sideProvider === 'pi'
       ? sideRun?.actualModel ||
         sideRun?.requestedModel ||
-        sideChat?.runs?.[sideChat.runs.length - 1]?.actualModel ||
-        sideChat?.runs?.[sideChat.runs.length - 1]?.requestedModel ||
         ''
       : ''
   const sideThinkingPresentation = resolveWorkingIndicatorProviderPresentation(
@@ -29577,7 +29584,11 @@ function App(): React.JSX.Element {
         messages: viewerChat.messages || EMPTY_CHAT_MESSAGES,
         isCurrentChatRunning: viewerIsRunning
       })
-    const viewerRun = viewerChat.runs?.[viewerChat.runs.length - 1] || null
+    const viewerRun =
+      selectCurrentChatRun(
+        viewerChat.runs,
+        resolveCurrentChatTranscriptWindow(viewerChat, null).runs
+      ) || null
     // ── Per-pane agent-aura inputs ─────────────────────────────────────────
     // Mirror App's app-global `auraProviderKey` + `runFxStatus` (see ~15834)
     // but scoped to THIS pane's chat, so a non-focused pane self-tints from its
@@ -30529,7 +30540,11 @@ function App(): React.JSX.Element {
           messages: viewerChat.messages || EMPTY_CHAT_MESSAGES,
           isCurrentChatRunning: viewerIsRunning
         })
-      const viewerRun = viewerChat.runs?.[viewerChat.runs.length - 1] || null
+      const viewerRun =
+        selectCurrentChatRun(
+          viewerChat.runs,
+          resolveCurrentChatTranscriptWindow(viewerChat, null).runs
+        ) || null
       // (Per-pane agent-aura inputs are shell-only and live in
       // `renderMultiviewPaneCell`; the composer ctx doesn't need them.)
       const viewerSelection = paneCtxHelpers.getChatComposerSelection(viewerChat, viewerProvider)
