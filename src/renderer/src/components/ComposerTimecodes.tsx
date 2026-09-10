@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import { createPortal } from 'react-dom'
 import type { ComposerStyle } from '../../../main/store/types'
 import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
-import { useSharedNowTick } from '../hooks/useSharedNowTick'
+import {
+  paintLiveAttribute,
+  paintLiveText,
+  useSharedNowEffect,
+  useSharedNowTick
+} from '../hooks/useSharedNowTick'
 import { ClockSymbolIcon } from './AppChromeSymbols'
 
 const ZERO_RUN_TIMECODE = '00:00:00:00'
@@ -27,12 +32,18 @@ export interface ComposerTimecodePresentation {
 }
 
 /**
- * Live "now" tick shared by the interactive timecode button and the pane-bottom
- * timecode bar. One rAF for the first paint (turn start only), then the
- * renderer-wide 1s shared tick while a run is in flight (idle threads don't
- * subscribe). `now` is sampled in the same render as the tick — no
- * effect→setState echo per second. `startedAt` restarts the first-paint rAF
- * when a new turn begins.
+ * Live "now" tick for `ComposerTimecode`, the interactive timecode button.
+ *
+ * NOT used by the shipping pane-bottom bar any more — `ComposerThreadTimecodeBar`
+ * moved to a declarative first paint plus `useSharedNowEffect`, because
+ * subscribing here costs a Sync-lane re-render every second. Do not reintroduce
+ * this hook there, even indirectly; `useSharedNowTick.test.ts` refuses both the
+ * direct call and this wrapper for exactly that reason.
+ *
+ * One rAF for the first paint (turn start only), then the renderer-wide 1s
+ * shared tick while a run is in flight (idle threads don't subscribe). `now` is
+ * sampled in the same render as the tick — no effect→setState echo per second.
+ * `startedAt` restarts the first-paint rAF when a new turn begins.
  */
 export function useTimecodeNow(running: boolean, startedAt?: string | null): number {
   const nowTick = useSharedNowTick(running)
@@ -206,7 +217,7 @@ export function ComposerTimecode({
                 width: `${position.width}px`,
                 minWidth: 0,
                 maxWidth: 'calc(100vw - 16px)',
-                transform: 'translateY(-100%)',
+                transform: 'translateY(-100%)'
               } as CSSProperties
             }
             role="dialog"
@@ -262,7 +273,16 @@ export function ComposerTimecode({
  * timecode picker into a standalone, pane-aligned row that sits glued under the
  * composer: the current turn / round elapsed time on the left, the total thread
  * wall time on the right. Static (no popover / no interactivity) — it reuses the
- * pure presentation helper + the shared live tick so both values update in step.
+ * pure presentation helper so both values stay in step.
+ *
+ * It renders the first value declaratively and then advances the digits by
+ * WRITING THE DOM DIRECTLY on the shared 1s cadence (`useSharedNowEffect`),
+ * never by re-rendering. This bar lives inside the composer, so a Sync-lane
+ * re-render every second would reconcile the textarea, pickers and overlay
+ * alongside it — the same pathology `ApprovalTimeoutCountdown` was extracted to
+ * avoid. Keep the first paint declarative: refs do not attach and effects do
+ * not run under `renderToStaticMarkup`, which is how this repo tests renderer
+ * components.
  */
 export function ComposerThreadTimecodeBar({
   running,
@@ -278,33 +298,58 @@ export function ComposerThreadTimecodeBar({
    * keeps the turn/total columns stable. */
   center?: ReactNode
 }) {
-  const now = useTimecodeNow(running, startedAt)
+  const turnRef = useRef<HTMLSpanElement | null>(null)
+  const turnValueRef = useRef<HTMLSpanElement | null>(null)
+  const totalRef = useRef<HTMLSpanElement | null>(null)
+  const totalValueRef = useRef<HTMLSpanElement | null>(null)
+
+  // FIRST PAINT ONLY. This deliberately does NOT join the shared tick: the bar
+  // sits inside the composer, and a Sync-lane re-render here every second is
+  // exactly the churn the timecodes must not add. `Date.now()` is laundered
+  // through useMemo (the repo-wide idiom) and re-samples only when the turn
+  // itself changes, so a new run still repaints declaratively. Every later
+  // second is written straight to the DOM by useSharedNowEffect below.
+  const initialNow = useMemo(() => Date.now(), [running, startedAt, cumulativeBaseMs])
   const { turnLabel, totalLabel } = getComposerTimecodePresentation({
     running,
     startedAt,
     cumulativeBaseMs,
-    nowMs: now
+    nowMs: initialNow
+  })
+
+  useSharedNowEffect(running, (nowMs) => {
+    const live = getComposerTimecodePresentation({ running, startedAt, cumulativeBaseMs, nowMs })
+    paintLiveText(turnValueRef.current, live.turnLabel)
+    paintLiveAttribute(turnRef.current, 'aria-label', `Current turn elapsed time ${live.turnLabel}`)
+    paintLiveText(totalValueRef.current, live.totalLabel)
+    paintLiveAttribute(totalRef.current, 'aria-label', `Total thread wall time ${live.totalLabel}`)
   })
 
   return (
     <div className="composer-thread-timecodes" data-running={running ? 'true' : 'false'}>
       <span
+        ref={turnRef}
         className="composer-thread-timecode composer-thread-timecode--turn"
         title="Current turn / round elapsed time"
         aria-label={`Current turn elapsed time ${turnLabel}`}
       >
         <ClockSymbolIcon />
         <span className="composer-thread-timecode-label">Turn</span>
-        <span className="composer-thread-timecode-value">{turnLabel}</span>
+        <span ref={turnValueRef} className="composer-thread-timecode-value">
+          {turnLabel}
+        </span>
       </span>
       <div className="composer-thread-timecodes-center">{center}</div>
       <span
+        ref={totalRef}
         className="composer-thread-timecode composer-thread-timecode--total"
         title="Total thread wall time"
         aria-label={`Total thread wall time ${totalLabel}`}
       >
         <span className="composer-thread-timecode-label">Total thread</span>
-        <span className="composer-thread-timecode-value">{totalLabel}</span>
+        <span ref={totalValueRef} className="composer-thread-timecode-value">
+          {totalLabel}
+        </span>
         <ClockSymbolIcon />
       </span>
     </div>

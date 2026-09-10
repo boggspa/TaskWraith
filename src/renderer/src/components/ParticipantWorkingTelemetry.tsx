@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState, type JSX } from 'react'
-import { useSharedNowTick } from '../hooks/useSharedNowTick'
+import { paintLiveAttribute, paintLiveText, useSharedNowEffect } from '../hooks/useSharedNowTick'
 import type { ProviderId } from '../../../main/store/types'
 import { useParticipantWorkingTokenSnapshot } from '../lib/participantWorkingTelemetryStore'
 import {
@@ -99,11 +99,20 @@ function ParticipantWorkingTelemetry({
     setDisplayState(reconciledDisplayState)
   }
   const displayedTokens = reconciledDisplayState.tokens
-  const nowTick = useSharedNowTick()
   // Compaction resets only the token epoch. Elapsed time remains anchored to
   // the active run/turn, so a mid-run reset never restarts this timer.
   const turnKey = `${runId || 'no-run'}:${startedAt || 'no-start'}`
-  const nowMs = useMemo(() => Date.now(), [nowTick, turnKey])
+  // FIRST PAINT ONLY. This row lives in the transcript and used to join the
+  // shared tick with no argument at all, so simply being mounted cost a
+  // Sync-lane re-render every second purely to advance a digit. The live value
+  // is written straight to the DOM by useSharedNowEffect below instead, so a
+  // subscription no longer costs a render.
+  const nowMs = useMemo(() => Date.now(), [turnKey])
+  // An unparseable-but-non-empty startedAt would subscribe forever to advance a
+  // value pinned at "0s", so gate on what the formatter can actually use.
+  const hasLiveElapsed = Number.isFinite(Date.parse(startedAt ?? ''))
+  const rootRef = useRef<HTMLSpanElement | null>(null)
+  const elapsedRef = useRef<HTMLSpanElement | null>(null)
 
   useEffect(() => {
     targetTokensRef.current = targetTokens
@@ -165,15 +174,27 @@ function ParticipantWorkingTelemetry({
         : isEstimated
           ? 'live output estimate'
           : 'latest persisted context snapshot'
-  const title = isPostCompactionUnknown
-    ? `${elapsed} elapsed · post-compaction context unavailable; waiting for the next provider snapshot`
-    : isUnavailable
-      ? `${elapsed} elapsed · current-context token usage unavailable`
-      : `${elapsed} elapsed · ${displayedTokens.toLocaleString()} current-context tokens (${source})`
+  // One spelling of the title, used by both the declarative first paint and the
+  // per-second DOM write, so the two can never drift apart.
+  const buildTitle = (elapsedText: string): string =>
+    isPostCompactionUnknown
+      ? `${elapsedText} elapsed · post-compaction context unavailable; waiting for the next provider snapshot`
+      : isUnavailable
+        ? `${elapsedText} elapsed · current-context token usage unavailable`
+        : `${elapsedText} elapsed · ${displayedTokens.toLocaleString()} current-context tokens (${source})`
+  const title = buildTitle(elapsed)
+
+  useSharedNowEffect(hasLiveElapsed, (tickNowMs) => {
+    const live = formatParticipantWorkingElapsed(startedAt, tickNowMs)
+    paintLiveText(elapsedRef.current, live)
+    paintLiveAttribute(rootRef.current, 'title', buildTitle(live))
+  })
 
   return (
-    <span className="message-working-telemetry" title={title} aria-hidden="true">
-      <span className="message-working-elapsed">{elapsed}</span>
+    <span className="message-working-telemetry" ref={rootRef} title={title} aria-hidden="true">
+      <span ref={elapsedRef} className="message-working-elapsed">
+        {elapsed}
+      </span>
       <span className="message-working-telemetry-separator">·</span>
       <span className="message-working-token-count">
         {isUnavailable ? (
