@@ -172,6 +172,7 @@ import { isKimiAcpProductionPosture } from '../../shared/kimiAcpPosture'
 import { canonicalKimiTaskWraithModelId } from '../../shared/kimiModels'
 // 1.0.5-EW25 — User-currency cost formatting helper.
 import { setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
+import { selectCurrentChatRun } from './lib/activeRunSelection'
 import { computeCumulativeRunBaseMs } from './lib/cumulativeRunTimecode'
 import type {
   AppSettings,
@@ -14314,7 +14315,16 @@ function App(): React.JSX.Element {
         : { ...baseRequest, appRunId: createAppRunId() }
       requestForClaimCleanup = request
       let runChat = request.chatRecord || currentChat
-      if (runChat && isChatSummaryRecord(runChat)) {
+      // A projection is un-dispatchable whether it ADVERTISES itself with
+      // `summaryOnly` or merely DROPS the transcript: `messages`/`runs` are
+      // declared required on ChatRecord, so tsc cannot flag the reads below,
+      // yet catalogue rows ship without them. Hydrate on either signal.
+      if (
+        runChat &&
+        (isChatSummaryRecord(runChat) ||
+          !Array.isArray(runChat.messages) ||
+          !Array.isArray(runChat.runs))
+      ) {
         const hydrated = await refreshSingleChat(runChat.appChatId)
         if (hydrated) {
           runChat = hydrated
@@ -14750,7 +14760,20 @@ function App(): React.JSX.Element {
       const dispatchChatBase = preAppendedPromptMessage
         ? chatByIdRef.current.get(runChat.appChatId) || runChat
         : runChat
-      const chatToUpdate = { ...dispatchChatBase, provider: effectiveRunProvider }
+      // Hydration above is BEST EFFORT: `refreshSingleChat` returns null when
+      // `getChat` yields nothing, which is exactly a brand-new thread with
+      // nothing on disk yet, so `runChat` can still arrive without a
+      // transcript. Normalise once here instead of guarding each read that
+      // follows -- an undefined `messages` threw "Cannot read properties of
+      // undefined (reading 'length')" out of dispatch, and because the throw
+      // landed AFTER setIsThinking(true) but BEFORE the ChatRun was created,
+      // the turn died with no run at all under a stuck "Working" chip.
+      const chatToUpdate = {
+        ...dispatchChatBase,
+        provider: effectiveRunProvider,
+        messages: Array.isArray(dispatchChatBase.messages) ? dispatchChatBase.messages : [],
+        runs: Array.isArray(dispatchChatBase.runs) ? dispatchChatBase.runs : []
+      }
       if (composerMetadata.clearLinkedGeminiSession) {
         chatToUpdate.linkedGeminiSessionId = undefined
       }
@@ -16019,6 +16042,19 @@ function App(): React.JSX.Element {
 
       console.warn('[executeRun] uncaught exception:', error)
       const message = `Run execution failed unexpectedly: ${redactLog(String(error))}`
+      // UNWIND. A throw anywhere between the visibility block and the
+      // provider dispatch lands here with setIsThinking(true) already applied
+      // and runSchedulerBusyRef pinned true, while every clearing call lives
+      // downstream inside the stream-adapter callback that now never fires.
+      // Without this the surface stays on "Working" forever over a thread
+      // that has no run, and the scheduler refuses the next turn. The inner
+      // dispatch catch already unwinds its own context; this is the same duty
+      // for aborts that never reached it. Both calls are idempotent, so this
+      // is safe on the paths that did unwind.
+      if (!dispatchAccepted) {
+        setIsThinking(false)
+        syncRunningState()
+      }
       if (
         currentRunIdForCleanup &&
         !dispatchAccepted &&
@@ -22342,7 +22378,10 @@ function App(): React.JSX.Element {
         }
       }
       if (currentProvider === 'ollama' || currentProvider === 'pi') {
-        const latestRun = currentChat?.runs?.[currentChat.runs.length - 1]
+        // Same paged-shell hazard as `currentRun` below: a bare tail read
+        // resolves to undefined on a paged chat, so the working chip fell back
+        // to the DEFAULT model name instead of the one actually running.
+        const latestRun = selectCurrentChatRun(currentChat?.runs, currentChatTranscript.runs)
         const model =
           latestRun?.actualModel ||
           latestRun?.requestedModel ||
@@ -22376,7 +22415,15 @@ function App(): React.JSX.Element {
     chat: currentChat,
     runQueueJobs
   })
-  const currentRun = currentChat?.runs?.[currentChat.runs.length - 1]
+  // The canonical `runs` array is EMPTY BY CONSTRUCTION on a paged chat --
+  // `buildChatShell` stamps `runs: []`, and `ChatUpdateInterestRouter` replaces
+  // every mid-run `chat-updated` for a non-`full` target with a compact
+  // `summaryOnly` invalidation carrying `runs: []`. A bare tail read therefore
+  // returned undefined, `startedAt` resolved to null, and the composer painted
+  // 00:00:00:00 while renderer-local `runningChatIds` kept the surface on
+  // "Working". Resolving through the loaded window is a pure widening: for a
+  // hydrated record the window IS `chat.runs`, so the value is unchanged.
+  const currentRun = selectCurrentChatRun(currentChat?.runs, currentChatTranscript.runs)
   const sideRun = sideChat?.runs?.[sideChat.runs.length - 1]
   const hasSideChatActiveRunQueueJob = Boolean(
     sideChat?.appChatId && chatHasActiveRunQueueJob(sideChat.appChatId)
