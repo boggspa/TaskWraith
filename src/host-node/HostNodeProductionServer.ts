@@ -41,6 +41,7 @@ import {
   type HostStandaloneComposition,
   type HostStandaloneCompositionInput
 } from '../host-runtime/HostStandaloneComposition'
+import { createHostPerfInstrumentation } from '../host-runtime/HostPerfSnapshot'
 import type { HostSessionHostIdentity } from '../host-runtime/HostSession'
 import { HostNodeDomainPorts, type HostNodeDomainPortsOptions } from './HostNodeDomainPorts'
 
@@ -366,12 +367,16 @@ export class HostNodeProductionServer {
       if (!domainOptions) throw new Error('Production Host domain resources are unavailable')
       if (this.stopRequested) return
       const projectionDirtyRef: { current: (() => void) | null } = { current: null }
+      // One Host recorder: Domain persist and composition receipts both write
+      // into composition.perf.spans (A1.10 durable_commit / receipt_delivery).
+      const hostPerf = createHostPerfInstrumentation()
       this.domain = (this.options.createDomain ?? ((input) => new HostNodeDomainPorts(input)))({
         ...domainOptions,
         profilePath: this.lease.path,
         store,
         events,
         hostRunOrigin: this.hostRunOrigin,
+        workSpanRecorder: hostPerf.spans,
         ...(this.threadCatalogue
           ? {
               runLocator: {
@@ -434,7 +439,10 @@ export class HostNodeProductionServer {
         lease: this.lease,
         host: this.identity,
         hostCapabilityOffer: capabilities,
-        ...(perfSnapshotFile ? { perf: { snapshotFile: perfSnapshotFile } } : {}),
+        perf: {
+          instrumentation: hostPerf,
+          ...(perfSnapshotFile ? { snapshotFile: perfSnapshotFile } : {})
+        },
         snapshotDonor: () => this.domain!.snapshotDonor(),
         authorityEvaluator: async (command, context) => {
           const prepared = await this.domain!.prepareAuthorityEvaluation?.(context, command)

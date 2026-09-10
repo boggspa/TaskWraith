@@ -582,14 +582,23 @@ describe('HostNodeProductionServer', () => {
   })
 
   it('arms the Host perf snapshot file only when the environment names a destination', async () => {
+    const instrumentation = expect.objectContaining({
+      spans: expect.objectContaining({ record: expect.any(Function) })
+    })
     const absent = harness({ environment: {} })
     await absent.server.start()
-    expect(absent.compositionPerf()).toBeUndefined()
+    expect(absent.compositionPerf()).toEqual({ instrumentation })
+    expect(
+      (absent.compositionPerf() as { snapshotFile?: unknown } | undefined)?.snapshotFile
+    ).toBeUndefined()
     await absent.server.stop()
 
     const blank = harness({ environment: { [HOST_PERF_SNAPSHOT_PATH_ENV]: '   ' } })
     await blank.server.start()
-    expect(blank.compositionPerf()).toBeUndefined()
+    expect(blank.compositionPerf()).toEqual({ instrumentation })
+    expect(
+      (blank.compositionPerf() as { snapshotFile?: unknown } | undefined)?.snapshotFile
+    ).toBeUndefined()
     await blank.server.stop()
 
     const relative = harness({
@@ -597,6 +606,7 @@ describe('HostNodeProductionServer', () => {
     })
     await relative.server.start()
     expect(relative.compositionPerf()).toEqual({
+      instrumentation,
       snapshotFile: { path: join('/profile', 'perf', 'host-snapshot.json') }
     })
     await relative.server.stop()
@@ -606,6 +616,7 @@ describe('HostNodeProductionServer', () => {
     })
     await absolute.server.start()
     expect(absolute.compositionPerf()).toEqual({
+      instrumentation,
       snapshotFile: { path: join(tmpdir(), 'host-snapshot.json') }
     })
     await absolute.server.stop()

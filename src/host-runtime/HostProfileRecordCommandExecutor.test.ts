@@ -10,6 +10,7 @@ import {
   type HostCommand
 } from '../shared/hostProtocol'
 import { HostProfileDomainStore } from './HostProfileDomainStore'
+import { createWorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
 import {
   HostProfileRecordCommandExecutor,
   isHostProfileRecordMutationName
@@ -111,6 +112,147 @@ describe('HostProfileRecordCommandExecutor', () => {
       ensemble: record.ensemble
     })
     expect(authority.assertProfileAuthority).toHaveBeenCalled()
+  })
+
+  it('emits a durable_commit span after a successful persist', () => {
+    const profilePath = profile()
+    const authority = { assertProfileAuthority: vi.fn() }
+    const store = new HostProfileDomainStore({ profilePath, authority, now: () => 200 })
+    let clock = 1000
+    const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 16, now: () => clock })
+    const executor = new HostProfileRecordCommandExecutor({
+      profilePath,
+      store,
+      workSpanRecorder: recorder,
+      now: () => (clock += 5)
+    })
+    const record = {
+      appChatId: 'thread-1',
+      scope: 'workspace',
+      workspaceId: 'workspace-1',
+      workspacePath: profilePath,
+      title: 'Ensemble',
+      archived: false,
+      messages: [],
+      updatedAt: 100,
+      ensemble: {
+        participants: [
+          {
+            id: 'seat-1',
+            provider: 'codex',
+            enabled: true,
+            role: 'Worker',
+            instructions: 'Work',
+            order: 0
+          }
+        ]
+      }
+    }
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath,
+      transferId: 'transfer-span-1',
+      record
+    })
+    expect(
+      executor.execute(
+        command(
+          'thread.record.persist',
+          { threadId: 'thread-1' },
+          { ...descriptor, expectedRevision: 0 }
+        )
+      )
+    ).toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+    const snapshot = recorder.snapshot()
+    expect(snapshot.spans).toHaveLength(1)
+    expect(snapshot.spans[0]).toMatchObject({
+      chatId: 'thread-1',
+      runId: '11111111-1111-4111-8111-111111111111',
+      kind: 'durable_commit',
+      process: 'host'
+    })
+    expect(snapshot.spans[0]!.durationMs).toBeGreaterThanOrEqual(0)
+  })
+
+  it('does not emit durable_commit when the transfer is missing', () => {
+    const profilePath = profile()
+    const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 8 })
+    const executor = new HostProfileRecordCommandExecutor({
+      profilePath,
+      store: {
+        upsertWorkspaceRecord: vi.fn(),
+        removeWorkspaceRecord: vi.fn(),
+        clearWorkspaceRecords: vi.fn(),
+        deleteThreadRecord: vi.fn(),
+        persistThreadRecord: vi.fn()
+      },
+      workSpanRecorder: recorder
+    })
+    expect(
+      executor.execute(
+        command(
+          'thread.record.persist',
+          { threadId: 'thread-1' },
+          {
+            transferId: 'missing-transfer',
+            sha256: 'a'.repeat(64),
+            byteLength: 10,
+            expectedRevision: 0
+          }
+        )
+      )
+    ).toEqual({ status: 'failed', errorCode: 'thread_record_transfer_missing' })
+    expect(recorder.snapshot().spans).toEqual([])
+  })
+
+  it('contains a throwing recorder so persist still succeeds', () => {
+    const profilePath = profile()
+    const authority = { assertProfileAuthority: vi.fn() }
+    const store = new HostProfileDomainStore({ profilePath, authority, now: () => 200 })
+    const throwing = createWorkSpanRecorder({ process: 'host', maxRetained: 8 })
+    throwing.record = () => {
+      throw new Error('recorder must not break persist')
+    }
+    const executor = new HostProfileRecordCommandExecutor({
+      profilePath,
+      store,
+      workSpanRecorder: throwing
+    })
+    const record = {
+      appChatId: 'thread-2',
+      scope: 'workspace',
+      workspaceId: 'workspace-1',
+      workspacePath: profilePath,
+      title: 'Ensemble',
+      archived: false,
+      messages: [],
+      updatedAt: 100,
+      ensemble: {
+        participants: [
+          {
+            id: 'seat-1',
+            provider: 'codex',
+            enabled: true,
+            role: 'Worker',
+            instructions: 'Work',
+            order: 0
+          }
+        ]
+      }
+    }
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath,
+      transferId: 'transfer-throw-1',
+      record
+    })
+    expect(
+      executor.execute(
+        command(
+          'thread.record.persist',
+          { threadId: 'thread-2' },
+          { ...descriptor, expectedRevision: 0 }
+        )
+      )
+    ).toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
   })
 
   it('returns the stable transfer-missing code before touching the store', () => {

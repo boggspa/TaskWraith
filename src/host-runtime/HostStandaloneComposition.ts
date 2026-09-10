@@ -231,7 +231,6 @@ export function createHostStandaloneComposition(
   // Must be first profile-affecting operation: permit factory synchronously
   // invokes lease.assertHeld before the runtime opens any files.
   const activationPermit = createHostStandaloneAuthorityActivationPermit(input.lease)
-  const runtime = new HostRuntimeBootstrap({ hostDataDir: input.runtimePath })
   // M1: the Host meters its own loop and attributes its own queue waits. The
   // identity is fixed here so the file transport and any poller agree on it.
   //
@@ -263,6 +262,10 @@ export function createHostStandaloneComposition(
   const hostPerf =
     input.perf?.instrumentation ??
     createHostPerfInstrumentation(input.perf?.now ? { now: input.perf.now } : {})
+  const runtime = new HostRuntimeBootstrap({
+    hostDataDir: input.runtimePath,
+    receipts: { spans: hostPerf.spans }
+  })
   const perfIdentity: HostPerfSnapshotFileIdentity = Object.freeze({
     process: 'host' as const,
     instanceId: input.host.hostId,

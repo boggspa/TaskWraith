@@ -9,6 +9,7 @@
  */
 
 import type { HostCommand } from '../shared/hostProtocol'
+import type { WorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
 import { validateHostCommandArguments } from './HostCommandArguments'
 import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
 import type { HostProfileDomainStore } from './HostProfileDomainStore'
@@ -51,6 +52,9 @@ export interface HostProfileRecordCommandExecutorOptions {
   /** Canonical profile directory containing owner-only transfer artifacts. */
   readonly profilePath?: string
   readonly store: HostProfileRecordCommandStore
+  /** Optional M1 durable_commit sink. Absence is safe. */
+  readonly workSpanRecorder?: WorkSpanRecorder
+  readonly now?: () => number
 }
 
 function failed(errorCode: string): HostCommandExecutionResult {
@@ -60,6 +64,8 @@ function failed(errorCode: string): HostCommandExecutionResult {
 export class HostProfileRecordCommandExecutor {
   private readonly profilePath: string
   private readonly store: HostProfileRecordCommandStore
+  private readonly workSpanRecorder?: WorkSpanRecorder
+  private readonly now: () => number
 
   constructor(options: HostProfileRecordCommandExecutorOptions) {
     if (
@@ -74,6 +80,27 @@ export class HostProfileRecordCommandExecutor {
     }
     this.profilePath = options.profilePath ?? ''
     this.store = options.store
+    this.workSpanRecorder = options.workSpanRecorder
+    this.now = options.now ?? (() => Date.now())
+  }
+
+  /**
+   * thread.record.persist → durable write (A1.2 durable_commit). Ends after
+   * persistThreadRecord returns; transfer-missing and CAS failures emit nothing.
+   */
+  private recordDurableCommit(chatId: string, commandId: string, startedAt: number): void {
+    if (this.workSpanRecorder === undefined) return
+    try {
+      this.workSpanRecorder.record({
+        chatId,
+        runId: commandId,
+        kind: 'durable_commit',
+        startedAt,
+        durationMs: Math.max(0, this.now() - startedAt)
+      })
+    } catch {
+      // Instrumentation must never alter a persist result.
+    }
   }
 
   execute(command: HostCommand): HostCommandExecutionResult {
@@ -186,11 +213,20 @@ export class HostProfileRecordCommandExecutor {
     }
 
     try {
+      let startedAt: number | undefined
+      try {
+        startedAt = this.now()
+      } catch {
+        startedAt = undefined
+      }
       this.store.persistThreadRecord({
         threadId: command.target.threadId,
         record,
         expectedRevision: command.arguments.expectedRevision as number
       })
+      if (startedAt !== undefined) {
+        this.recordDurableCommit(command.target.threadId, command.commandId, startedAt)
+      }
       return { status: 'succeeded', resultSummary: 'thread_record_persisted' }
     } catch (error) {
       const message = error instanceof Error ? error.message : ''

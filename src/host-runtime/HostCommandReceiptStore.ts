@@ -42,6 +42,7 @@ import {
   type HostCommandName,
   type HostResultRef
 } from '../shared/hostProtocol'
+import type { WorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
 
 export const HOST_COMMAND_RECEIPT_SCHEMA_VERSION = 1 as const
 export const HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME = 'command-receipts.checkpoint.json'
@@ -316,6 +317,10 @@ export interface HostCommandReceiptStoreOptions {
   compactAfterRecords?: number
   now?: () => string
   log?: (line: string) => void
+  /** Optional M1 receipt_delivery sink. Absence is safe. */
+  spans?: WorkSpanRecorder
+  /** Millisecond clock for receipt_delivery durations; defaults to Date.now. */
+  nowMs?: () => number
 }
 
 interface CheckpointDocument {
@@ -342,6 +347,8 @@ export class HostCommandReceiptStore {
   private readonly getPosition: () => HostCommandReceiptPosition
   private readonly now: () => string
   private readonly log: (line: string) => void
+  private readonly spans?: WorkSpanRecorder
+  private readonly nowMs: () => number
 
   private recordsByCommandId = new Map<string, HostCommandReceiptRecord>()
   private commandIdByIdempotencyKey = new Map<string, string>()
@@ -367,7 +374,27 @@ export class HostCommandReceiptStore {
     this.getPosition = options.getPosition
     this.now = options.now ?? (() => new Date().toISOString())
     this.log = options.log ?? (() => {})
+    this.spans = options.spans
+    this.nowMs = options.nowMs ?? (() => Date.now())
     this.reopen()
+  }
+
+  private recordReceiptDelivery(record: HostCommandReceiptRecord, startedAt: number): void {
+    if (this.spans === undefined) return
+    const chatId =
+      record.target.kind === 'thread' && record.target.id ? record.target.id : undefined
+    if (chatId === undefined) return
+    try {
+      this.spans.record({
+        chatId,
+        runId: record.commandId,
+        kind: 'receipt_delivery',
+        startedAt,
+        durationMs: Math.max(0, this.nowMs() - startedAt)
+      })
+    } catch {
+      // Instrumentation must never alter a receipt result.
+    }
   }
 
   /**
@@ -641,6 +668,12 @@ export class HostCommandReceiptStore {
       )
     }
 
+    let startedAt: number | undefined
+    try {
+      startedAt = this.nowMs()
+    } catch {
+      startedAt = undefined
+    }
     const completedAt = input.completedAt ?? this.now()
     const resultRef =
       input.status === 'succeeded' && input.resultRef !== undefined
@@ -671,6 +704,7 @@ export class HostCommandReceiptStore {
     this.indexRecord(next)
     this.appendJournalEvent({ op: 'upsert', record: next })
     this.maybeCompact()
+    if (startedAt !== undefined) this.recordReceiptDelivery(next, startedAt)
     return cloneRecord(next)
   }
 

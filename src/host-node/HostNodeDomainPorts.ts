@@ -513,7 +513,10 @@ export class HostNodeDomainPorts {
     })
     this.profileRecordExecutor = new HostProfileRecordCommandExecutor({
       ...(options.profilePath ? { profilePath: options.profilePath } : {}),
-      store: options.store
+      store: options.store,
+      ...(options.workSpanRecorder
+        ? { workSpanRecorder: options.workSpanRecorder, now: this.now }
+        : {})
     })
     this.runPort = new HostNodeProfileRunPort({
       hostRunOrigin: options.hostRunOrigin,

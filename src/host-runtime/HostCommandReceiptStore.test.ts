@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createWorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
 
 import {
   HostCommandReceiptStore,
@@ -142,6 +143,59 @@ describe('HostCommandReceiptStore', () => {
     // Position is mint-time; completion does not invent a new journal.
     expect(completed?.generation).toBe(3)
     expect(completed?.cursor).toBe(7)
+  })
+
+  it('emits a receipt_delivery span when a thread receipt completes', () => {
+    let ms = 1000
+    const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 16 })
+    const store = new HostCommandReceiptStore({
+      dataDir,
+      getPosition: () => ({ ...position }),
+      now: () => clock,
+      spans: recorder,
+      nowMs: () => (ms += 4)
+    })
+    expect(store.begin(baseInput()).kind).toBe('created')
+    store.complete({ commandId: 'cmd-1', status: 'succeeded', resultSummary: 'sent' })
+    const snapshot = recorder.snapshot()
+    expect(snapshot.spans).toHaveLength(1)
+    expect(snapshot.spans[0]).toMatchObject({
+      chatId: 'thread-1',
+      runId: 'cmd-1',
+      kind: 'receipt_delivery',
+      process: 'host'
+    })
+    expect(snapshot.spans[0]!.durationMs).toBeGreaterThanOrEqual(0)
+    store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+    expect(recorder.snapshot().spans).toHaveLength(1)
+  })
+
+  it('does not emit receipt_delivery without a thread target', () => {
+    const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 8 })
+    const store = new HostCommandReceiptStore({
+      dataDir,
+      getPosition: () => ({ ...position }),
+      now: () => clock,
+      spans: recorder
+    })
+    store.begin(baseInput({ target: { kind: 'host' } }))
+    store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+    expect(recorder.snapshot().spans).toEqual([])
+  })
+
+  it('contains a throwing recorder so complete still succeeds', () => {
+    const throwing = createWorkSpanRecorder({ process: 'host', maxRetained: 8 })
+    throwing.record = () => {
+      throw new Error('recorder must not break receipts')
+    }
+    const store = new HostCommandReceiptStore({
+      dataDir,
+      getPosition: () => ({ ...position }),
+      now: () => clock,
+      spans: throwing
+    })
+    expect(store.begin(baseInput()).kind).toBe('created')
+    expect(store.complete({ commandId: 'cmd-1', status: 'succeeded' })?.status).toBe('succeeded')
   })
 
   it('persists thread.record.persist as a durable governed command name', () => {

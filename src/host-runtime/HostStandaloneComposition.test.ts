@@ -253,8 +253,10 @@ describe('HostStandaloneComposition', () => {
       const workSpans = composition.perf.snapshot().sections.workSpans as WorkSpanAggregates
       expect(workSpans.process).toBe('host')
       expect(workSpans.byKind.host_queue_wait).toMatchObject({ count: 1 })
+      expect(workSpans.byKind.receipt_delivery).toMatchObject({ count: 1 })
       expect(workSpans.byResource.host_chain).toMatchObject({ count: 1 })
       expect(workSpans.exact.byKind.host_queue_wait).toMatchObject({ offeredCount: 1 })
+      expect(workSpans.exact.byKind.receipt_delivery).toMatchObject({ offeredCount: 1 })
     } finally {
       await composition.shutdown()
     }
