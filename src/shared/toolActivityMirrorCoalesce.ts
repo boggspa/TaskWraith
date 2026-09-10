@@ -154,6 +154,68 @@ function isMirroredKimiTaskWraithActivity(
   return providerEnd === null || hostEnd === null || hostEnd <= providerEnd + 250
 }
 
+/**
+ * Muse streams its own MSP `call_…` row for every TaskWraith MCP invocation and
+ * ALSO receives the host mirror, because `muse` is absent from
+ * `PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS` — its MSP transport landed after
+ * that list's 2026-08-18 run-event measurement, so it was never measured. The
+ * fix belongs here rather than in that list: only the MSP lane was observed
+ * twinning (38/38 native↔mirror across the two Muse runs that carry MCP rows),
+ * and no exec-lane Muse run carries MCP rows at all, so suppressing the mirror
+ * at the gateway would DELETE an exec-lane card instead of deduplicating it.
+ *
+ * Coalescing therefore proves the twin from both rows and is a no-op whenever
+ * only one of them is present. The MSP row reframes a failure as
+ * `tool failed: <reserialised payload>`, so its result text is deliberately NOT
+ * required to match on the error path — the host receipt owns the governed
+ * text, and the shared arguments are what prove the pair.
+ */
+function isMirroredMuseTaskWraithActivity(
+  providerActivity: ToolActivity,
+  hostActivity: ToolActivity
+): boolean {
+  const canonicalToolName = taskWraithWrapperCanonicalToolName(providerActivity)
+  // Only MSP call ids were measured. An exec-lane or legacy row carrying some
+  // other id shape is unproven, and folding it would delete a card.
+  if (!canonicalToolName || !/^call_/i.test(providerActivity.id)) return false
+  if (activityProvider(providerActivity) !== 'muse' || activityProvider(hostActivity) !== 'muse') {
+    return false
+  }
+  if (resolveCanonicalToolName(hostActivity.toolName) !== canonicalToolName) return false
+  if (!hostActivity.id.toLowerCase().startsWith(`muse-mcp-${canonicalToolName}-`)) return false
+
+  const providerLive = isLiveActivityStatus(providerActivity.status)
+  const hostLive = isLiveActivityStatus(hostActivity.status)
+  if (!providerLive && !hostLive) {
+    if (providerActivity.status !== hostActivity.status) return false
+    // A successful pair was byte-identical in every measured row, so require it.
+    // The errored pair cannot be: the MSP row prefixes and reserialises.
+    if (
+      hostActivity.status === 'success' &&
+      providerActivity.resultSummary !== hostActivity.resultSummary
+    ) {
+      return false
+    }
+  }
+
+  if (
+    mirroredParameterSignature(providerActivity.parameters) !==
+    mirroredParameterSignature(hostActivity.parameters)
+  ) {
+    return false
+  }
+
+  const providerStart = parsedActivityTime(providerActivity.startedAt)
+  const providerEnd = parsedActivityTime(providerActivity.endedAt)
+  const hostStart = parsedActivityTime(hostActivity.startedAt)
+  const hostEnd = parsedActivityTime(hostActivity.endedAt)
+  if (providerStart === null || hostStart === null || hostStart < providerStart) return false
+  if (hostStart - providerStart > 1_000) return false
+  if (providerEnd !== null && hostStart > providerEnd + 250) return false
+  if (hostEnd !== null && hostEnd < hostStart) return false
+  return providerEnd === null || hostEnd === null || hostEnd <= providerEnd + 250
+}
+
 function isMirroredMistralTaskWraithActivity(
   providerActivity: ToolActivity,
   hostActivity: ToolActivity
@@ -240,22 +302,23 @@ export function coalesceMirroredTaskWraithActivities(
       continue
     }
 
-    let kimiProviderIndex = -1
-    let mistralProviderIndex = -1
+    // Kimi, Mistral and Muse all keep the enriched HOST receipt and copy the
+    // provider wrapper's round-trip timing onto it, so one index serves all
+    // three: the search breaks on the first match, so at most one can win.
+    let hostRetainedProviderIndex = -1
     for (let index = coalesced.length - 1; index >= 0; index -= 1) {
-      if (isMirroredKimiTaskWraithActivity(coalesced[index], activity)) {
-        kimiProviderIndex = index
-        break
-      }
-      if (isMirroredMistralTaskWraithActivity(coalesced[index], activity)) {
-        mistralProviderIndex = index
+      if (
+        isMirroredKimiTaskWraithActivity(coalesced[index], activity) ||
+        isMirroredMistralTaskWraithActivity(coalesced[index], activity) ||
+        isMirroredMuseTaskWraithActivity(coalesced[index], activity)
+      ) {
+        hostRetainedProviderIndex = index
         break
       }
     }
-    if (kimiProviderIndex >= 0 || mistralProviderIndex >= 0) {
-      const providerIndex = kimiProviderIndex >= 0 ? kimiProviderIndex : mistralProviderIndex
-      const providerActivity = coalesced[providerIndex]
-      coalesced.splice(providerIndex, 1)
+    if (hostRetainedProviderIndex >= 0) {
+      const providerActivity = coalesced[hostRetainedProviderIndex]
+      coalesced.splice(hostRetainedProviderIndex, 1)
       coalesced.push(mergeHostTiming(providerActivity, activity))
       continue
     }
