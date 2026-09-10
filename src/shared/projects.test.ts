@@ -170,7 +170,55 @@ describe('applyProjectOp determinism', () => {
   }
 
   it('replays an op script to an identical state — the optimistic/authoritative contract', () => {
-    expect(replay()).toEqual(replay())
+    expect(replay()).toMatchInlineSnapshot(`
+      [
+        {
+          "createdAt": 100,
+          "hue": 200,
+          "icon": {
+            "iconKind": "seed",
+            "seed": "project-a",
+          },
+          "id": "project-a",
+          "memberChatIds": [],
+          "name": "Alpha",
+          "order": 3,
+          "parentId": null,
+          "schemaVersion": 1,
+          "updatedAt": 190,
+        },
+        {
+          "createdAt": 110,
+          "hue": 20,
+          "icon": {
+            "iconKind": "seed",
+            "seed": "project-b",
+          },
+          "id": "project-b",
+          "memberChatIds": [],
+          "name": "Beta Renamed",
+          "order": 1,
+          "parentId": null,
+          "schemaVersion": 1,
+          "updatedAt": 160,
+        },
+        {
+          "createdAt": 120,
+          "hue": 30,
+          "icon": {
+            "iconKind": "seed",
+            "seed": "project-child",
+          },
+          "id": "project-child",
+          "memberChatIds": [],
+          "name": "Child",
+          "order": 2,
+          "parentId": null,
+          "schemaVersion": 1,
+          "updatedAt": 190,
+        },
+      ]
+    `)
   })
 
   it('reports changed=false for no-op ops so callers skip persist/broadcast', () => {

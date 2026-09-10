@@ -554,7 +554,8 @@ function liveness(marker, side, now) {
   // The hook also shells to `status --hook` before deciding, so a single run
   // could print "claimed by nobody" naming the path it then blocked on.
   const leaseHeld = marker.expiresMs !== null && !expired
-  const ownerHeld = Boolean(marker.lockOwnerId) && leaseHeld
+  const validOpaqueId = Boolean(marker.lockOwnerId) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(marker.lockOwnerId)
+  const ownerHeld = validOpaqueId && leaseHeld
   return {
     live: heartbeatFresh || (alive && !expired) || ownerHeld,
     heartbeatFresh,

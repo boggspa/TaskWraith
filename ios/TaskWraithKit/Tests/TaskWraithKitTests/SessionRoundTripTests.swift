@@ -68,7 +68,13 @@ struct SessionRoundTripTests {
         wire.pump()
         #expect(wire.mac.isEstablished)
         #expect(wire.iphone.isEstablished)
-        #expect(wire.iphone.takeConfirmCode() != nil)
+        
+        let iphoneCode = wire.iphone.takeConfirmCode()
+        let macCode = wire.mac.takeConfirmCode()
+        
+        #expect(iphoneCode != nil, "iPhone should generate a confirm code")
+        #expect(macCode != nil, "Mac should generate a confirm code")
+        #expect(iphoneCode == macCode, "Both sides should establish with the same confirm code")
     }
 
     @Test("app messages round-trip both directions")

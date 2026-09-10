@@ -251,7 +251,7 @@ describe('liveness — an owner-id-only seat claim has no pid', () => {
       root,
       writeMarker(root, 'seat', {
         pid: null,
-        lockOwnerId: 'seat-owner-1',
+        lockOwnerId: '11111111-1111-4111-a111-111111111111',
         expires: iso(NOW + 3_600_000),
         paths: ['src/']
       })
@@ -272,7 +272,7 @@ describe('liveness — an owner-id-only seat claim has no pid', () => {
       root,
       writeMarker(root, 'seat-clean', {
         pid: null,
-        lockOwnerId: 'seat-owner-2',
+        lockOwnerId: '22222222-2222-4222-a222-222222222222',
         expires: iso(NOW + 3_600_000),
         paths: ['src/untouched.ts']
       })
@@ -286,7 +286,7 @@ describe('liveness — an owner-id-only seat claim has no pid', () => {
       root,
       writeMarker(root, 'seat-expired', {
         pid: null,
-        lockOwnerId: 'seat-owner-3',
+        lockOwnerId: '33333333-3333-4333-a333-333333333333',
         expires: iso(NOW - 60_000),
         paths: ['src/']
       })
@@ -300,7 +300,7 @@ describe('liveness — an owner-id-only seat claim has no pid', () => {
       root,
       writeMarker(root, 'seat-2099', {
         pid: null,
-        lockOwnerId: 'seat-owner-5',
+        lockOwnerId: '55555555-5555-4555-a555-555555555555',
         started: iso(NOW - 25 * 60_000),
         expires: '2099-01-01T00:00:00Z',
         paths: ['src/']
@@ -315,7 +315,7 @@ describe('liveness — an owner-id-only seat claim has no pid', () => {
       root,
       writeMarker(root, 'seat-fresh', {
         pid: null,
-        lockOwnerId: 'seat-owner-6',
+        lockOwnerId: '66666666-6666-4666-a666-666666666666',
         started: iso(NOW - 5 * 60_000),
         expires: '2099-01-01T00:00:00Z',
         paths: ['src/']
@@ -329,7 +329,7 @@ describe('liveness — an owner-id-only seat claim has no pid', () => {
     const file = '.WORK-IN-PROGRESS-unbounded.md'
     writeFileSync(
       join(root, file),
-      `---\nlockOwnerId: seat-owner-7\nexpires: 2099-01-01T00:00:00Z\npaths:\n  - src/\n---\nbody\n`
+      `---\nlockOwnerId: 77777777-7777-4777-a777-777777777777\nexpires: 2099-01-01T00:00:00Z\npaths:\n  - src/\n---\nbody\n`
     )
     expect(liveness(markerFor(root, file), {}, NOW).live).toBe(false)
   })
@@ -381,7 +381,7 @@ describe('liveness — an owner-id-only seat claim has no pid', () => {
     const file = '.WORK-IN-PROGRESS-seat-leaseless.md'
     writeFileSync(
       join(root, file),
-      '---\nsession: test\nagent: test agent\nlockOwnerId: seat-owner-4\npaths:\n  - src/\n---\nbody\n'
+      '---\nsession: test\nagent: test agent\nlockOwnerId: 44444444-4444-4444-a444-444444444444\npaths:\n  - src/\n---\nbody\n'
     )
     const seat = markerFor(root, file)
     expect(seat.expiresMs).toBeNull()
