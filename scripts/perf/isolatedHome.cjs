@@ -14,6 +14,18 @@
  * components from the worktree perf-homes boundary through HOME, canonicalize
  * with realpath, and prove lexical + canonical HOME/userData via the main
  * inspector before replay.
+ *
+ * macOS `/tmp` is a symlink to `/private/tmp`. Node `path.resolve` preserves
+ * whichever form `--home` used; Electron `app.getPath('userData')` is derived
+ * from `app.getPath('appData')` (TaskWraith `InstanceLaunchPosture` joins the
+ * dev app name onto that) through Chromium/Foundation path standardization.
+ * `-[NSString stringByStandardizingPath]` replaces a `/private/tmp` prefix
+ * with `/tmp`. Evidence-v1 2026-09-10: `--home=/private/tmp/...` passed the
+ * HOME env lexical check, then isolation_verify refused because userData was
+ * observed as `/tmp/...`. Canonical realpath of both is `/private/tmp/...` —
+ * same directory, not an isolation escape. Inspector verification therefore
+ * treats lexical `/tmp` vs `/private/tmp` as the same location when realpaths
+ * match. Realpath mismatch still fails.
  */
 
 const path = require('path')
@@ -153,11 +165,27 @@ function assertDirectoryChain(root, target, options = {}) {
 }
 
 /**
- * @param {string} absPath
- * @param {typeof fs} fsApi
- * @param {string} label
- * @returns {string}
+ * True when two already-resolved paths name the same location.
+ * Lexical equality always counts. Differing `/tmp` vs `/private/tmp` forms
+ * count only when both canonical realpaths are non-empty and equal.
+ *
+ * @param {string} observed
+ * @param {string} expected
+ * @param {string} observedRealpath
+ * @param {string} expectedRealpath
+ * @returns {boolean}
  */
+function isolatedPathsReferToSameLocation(observed, expected, observedRealpath, expectedRealpath) {
+  if (observed === expected) return true
+  return (
+    typeof observedRealpath === 'string' &&
+    typeof expectedRealpath === 'string' &&
+    observedRealpath.length > 0 &&
+    expectedRealpath.length > 0 &&
+    observedRealpath === expectedRealpath
+  )
+}
+
 function realpathOrThrow(absPath, fsApi, label) {
   if (typeof fsApi.realpathSync !== 'function') {
     throw new Error(`Refuse isolated HOME: realpathSync unsupported while resolving ${label}`)
@@ -473,12 +501,26 @@ async function verifyIsolatedHomeAndUserDataViaMainInspector(mainInspector, expe
   const observedHomeRealpath = path.resolve(value.homeRealpath)
   const observedUserDataRealpath = path.resolve(value.userDataRealpath)
 
-  if (observedHome !== expectedHome) {
+  if (
+    !isolatedPathsReferToSameLocation(
+      observedHome,
+      expectedHome,
+      observedHomeRealpath,
+      expectedHomeRealpath
+    )
+  ) {
     throw new Error(
       `Refuse replay: process.env.HOME mismatch (expected ${expectedHome}, observed ${observedHome})`
     )
   }
-  if (observedUserDataPath !== expectedUserDataPath) {
+  if (
+    !isolatedPathsReferToSameLocation(
+      observedUserDataPath,
+      expectedUserDataPath,
+      observedUserDataRealpath,
+      expectedUserDataRealpath
+    )
+  ) {
     throw new Error(
       `Refuse replay: app.getPath('userData') mismatch (expected ${expectedUserDataPath}, observed ${observedUserDataPath})`
     )
@@ -514,6 +556,7 @@ module.exports = {
   perfHomesBoundary,
   pathPrefixes,
   isPathEqualOrBeneath,
+  isolatedPathsReferToSameLocation,
   assertExistingComponentIsRealDirectory,
   assertDirectoryChain,
   assertAuthoritativeIsolatedHome,

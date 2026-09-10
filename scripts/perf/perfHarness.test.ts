@@ -2530,6 +2530,34 @@ describe('T2 runner (no Electron launch)', () => {
     expect(probeExpression).toContain("process.getBuiltinModule('module').createRequire")
     expect(probeExpression).not.toMatch(/(^|[^A-Za-z])require\s*\(/)
 
+    // Evidence-v1 2026-09-10: --home=/private/tmp/... , Electron userData /tmp/...
+    const privateHome = '/private/tmp/tw-evidence-v1/8ec2ed74d/perf-homes/ev1'
+    const tmpUserData =
+      '/tmp/tw-evidence-v1/8ec2ed74d/perf-homes/ev1/Library/Application Support/TaskWraith Dev ev1-small-2-cold'
+    const privateUserData =
+      '/private/tmp/tw-evidence-v1/8ec2ed74d/perf-homes/ev1/Library/Application Support/TaskWraith Dev ev1-small-2-cold'
+    const alias = await verifyIsolatedHomeAndUserDataViaMainInspector(
+      {
+        post: async () => ({
+          result: {
+            value: {
+              home: privateHome,
+              userData: tmpUserData,
+              homeRealpath: privateHome,
+              userDataRealpath: privateUserData
+            }
+          }
+        })
+      },
+      {
+        home: privateHome,
+        userDataPath: privateUserData,
+        homeRealpath: privateHome,
+        userDataRealpath: privateUserData
+      }
+    )
+    expect(alias.ok).toBe(true)
+
     await expect(
       verifyIsolatedHomeAndUserDataViaMainInspector(
         {
