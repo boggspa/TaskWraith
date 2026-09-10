@@ -1590,6 +1590,11 @@ function previewModelForPicker(entry: PreviewModelCatalogEntry) {
     ...(entry.defaultReasoningEffort
       ? { defaultReasoningEffort: entry.defaultReasoningEffort }
       : {}),
-    ...(entry.additionalSpeedTiers ? { additionalSpeedTiers: entry.additionalSpeedTiers } : {})
+    ...(entry.additionalSpeedTiers ? { additionalSpeedTiers: entry.additionalSpeedTiers } : {}),
+    // Spread only when set, so a preview row that is not the default keeps the
+    // exact shape it had before; declaring it here is what lets the merged
+    // picker list be read for the flag at all (a static row's isDefault is
+    // unreadable while one member of the union omits the property).
+    ...(entry.isDefault ? { isDefault: entry.isDefault } : {})
   }
 }

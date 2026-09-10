@@ -25,6 +25,10 @@ export interface PreviewModelCatalogEntry {
   additionalSpeedTiers?: string[]
   /** Whether this model supports UltraTask orchestration */
   ultraTaskSupported?: boolean
+  /** Set when this row is its provider's catalogue default. Preview rows are
+   *  access-gated so none carries it today; it is declared so the picker list
+   *  that merges preview and static rows can be read for the flag uniformly. */
+  isDefault?: boolean
 }
 
 export const PREVIEW_MODEL_ACCESS_REASON = 'Requires preview access'
