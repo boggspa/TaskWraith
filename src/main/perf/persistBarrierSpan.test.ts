@@ -37,6 +37,36 @@ describe('observePersistBarrierSpan', () => {
     ])
   })
 
+  it('resolves Host command id at emit so drain-minted ids join the barrier', async () => {
+    const recorder = createWorkSpanRecorder({ process: 'main', maxRetained: 8 })
+    let commandId: string | undefined
+    const inner = Promise.resolve('drained')
+    const observed = observePersistBarrierSpan(
+      recorder,
+      {
+        chatId: 'chat-join-key',
+        reason: 'barrier',
+        resolveRunId: () => commandId
+      },
+      () => {
+        commandId = 'host-cmd-7'
+        return inner
+      },
+      tickingClock()
+    )
+    expect(observed).toBe(inner)
+    await observed
+    expect(recorder.snapshot().spans).toEqual([
+      expect.objectContaining({
+        kind: 'persist_barrier',
+        reason: 'barrier',
+        chatId: 'chat-join-key',
+        runId: 'host-cmd-7',
+        resource: 'host_chain'
+      })
+    ])
+  })
+
   it('records receipt_poll with the Host command id and keeps a rejection', async () => {
     const recorder = createWorkSpanRecorder({ process: 'main', maxRetained: 8 })
     const inner = Promise.reject(new Error('poll timeout'))

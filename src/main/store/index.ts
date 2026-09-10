@@ -596,6 +596,19 @@ const hostThreadRecordPersist = (): HostThreadRecordPersistPort => {
   return hostThreadRecordPersistPort
 }
 
+/** Trap 1: Host command id for persist_barrier/barrier `runId`. Fake ports omit this. */
+function lastPersistBarrierHostCommandId(chatId: string): string | undefined {
+  const client = hostThreadRecordPersist() as HostThreadRecordPersistPort & {
+    lastHostCommandId?: (id: string) => string | undefined
+  }
+  try {
+    const id = client.lastHostCommandId?.(chatId)
+    return typeof id === 'string' && id.trim().length > 0 ? id.trim() : undefined
+  } catch {
+    return undefined
+  }
+}
+
 const hostChatCompatibility = (): HostChatCompatibilityPersistence => {
   const port = hostThreadRecordPersist()
   if (!hostChatCompatibilityPersistence || hostChatCompatibilityPersistPort !== port) {
@@ -8622,8 +8635,14 @@ export class AppStore {
    * outcome.
    */
   static awaitChatRecordPersisted(chatId: string): Promise<void> {
-    return observePersistBarrierSpan(mainWorkSpanSink(), { chatId, reason: 'barrier' }, () =>
-      this.awaitChatRecordPersistedWork(chatId)
+    return observePersistBarrierSpan(
+      mainWorkSpanSink(),
+      {
+        chatId,
+        reason: 'barrier',
+        resolveRunId: () => lastPersistBarrierHostCommandId(chatId)
+      },
+      () => this.awaitChatRecordPersistedWork(chatId)
     )
   }
 

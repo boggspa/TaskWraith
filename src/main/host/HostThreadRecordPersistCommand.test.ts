@@ -1599,6 +1599,7 @@ describe('HostThreadRecordPersistClient persist_barrier receipt_poll spans', () 
       }
     })
     await polling.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    expect(polling.lastHostCommandId('chat-1')).toBe(pendingThenOk.commands[0].commandId)
     expect(spans.filter((span) => span.kind === 'persist_barrier')).toEqual([
       expect.objectContaining({
         kind: 'persist_barrier',

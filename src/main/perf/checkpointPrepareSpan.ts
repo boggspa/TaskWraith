@@ -36,6 +36,9 @@ function emitCheckpointPrepare(
       startedAt,
       durationMs: Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 0,
       bytes: Number.isFinite(bytes) && bytes >= 0 ? bytes : 0,
+      // Transfer publish is local fs (stringify/write/fsync/rename). It does
+      // not take the MCP/git workspace lock (A1.27).
+      resource: 'none',
       ...(isNonEmptyString(attrs.runId) ? { runId: attrs.runId.trim() } : {})
     })
   } catch {

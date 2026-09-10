@@ -22,6 +22,11 @@ export interface PersistBarrierSpanAttrs {
   readonly chatId?: string
   readonly runId?: string
   readonly reason: PersistBarrierReason
+  /**
+   * Host command id resolved at emit time (Trap 1). The persist client mints
+   * `commandId` during drain, after awaitChatRecordPersisted has started.
+   */
+  readonly resolveRunId?: () => string | undefined
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -32,6 +37,17 @@ function isPersistBarrierReason(value: unknown): value is PersistBarrierReason {
   return value === 'barrier' || value === 'receipt_poll'
 }
 
+function resolvedRunId(attrs: PersistBarrierSpanAttrs): string | undefined {
+  if (isNonEmptyString(attrs.runId)) return attrs.runId.trim()
+  if (typeof attrs.resolveRunId !== 'function') return undefined
+  try {
+    const id = attrs.resolveRunId()
+    return isNonEmptyString(id) ? id.trim() : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function emitPersistBarrier(
   sink: PersistBarrierSpanSink,
   attrs: PersistBarrierSpanAttrs,
@@ -40,6 +56,7 @@ function emitPersistBarrier(
   durationMs: number
 ): void {
   try {
+    const runId = resolvedRunId(attrs)
     sink.record({
       chatId,
       kind: 'persist_barrier',
@@ -47,7 +64,7 @@ function emitPersistBarrier(
       durationMs: Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 0,
       resource: 'host_chain',
       reason: attrs.reason,
-      ...(isNonEmptyString(attrs.runId) ? { runId: attrs.runId.trim() } : {})
+      ...(runId ? { runId } : {})
     })
   } catch {
     // Instrumentation must never alter persistence.

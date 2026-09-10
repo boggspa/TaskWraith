@@ -39,6 +39,8 @@ function emitPromptBuild(
       startedAt,
       durationMs: Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 0,
       bytes: Number.isFinite(bytes) && bytes >= 0 ? bytes : 0,
+      // Main-thread CPU; the closed resource set has no cost-centre token (A1.27).
+      resource: 'none',
       ...(isNonEmptyString(attrs.runId) ? { runId: attrs.runId.trim() } : {}),
       ...(isNonEmptyString(attrs.participantId)
         ? { participantId: attrs.participantId.trim() }

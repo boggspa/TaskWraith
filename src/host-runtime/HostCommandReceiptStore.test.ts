@@ -303,6 +303,36 @@ describe('HostCommandReceiptStore', () => {
     expect(store.spanChatIdCacheSize).toBe(0)
   })
 
+  it('forgets span chatIds when complete journal compaction throws', () => {
+    const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 8 })
+    const store = new HostCommandReceiptStore({
+      dataDir,
+      getPosition: () => ({ ...position }),
+      now: () => clock,
+      spans: recorder,
+      resolveSpanChatId: () => 'thread-from-approval'
+    })
+    expect(
+      store.begin(
+        baseInput({
+          commandId: 'cmd-appr-throw',
+          idempotencyKey: 'idem-appr-throw',
+          commandName: 'approval.decide',
+          target: { kind: 'approval', id: 'appr-throw' }
+        })
+      ).kind
+    ).toBe('created')
+    expect(store.spanChatIdCacheSize).toBe(1)
+    const throwing = store as unknown as { maybeCompact: () => void }
+    throwing.maybeCompact = () => {
+      throw new Error('compact failed')
+    }
+    expect(() => store.complete({ commandId: 'cmd-appr-throw', status: 'succeeded' })).toThrow(
+      'compact failed'
+    )
+    expect(store.spanChatIdCacheSize).toBe(0)
+  })
+
   it('contains a throwing recorder so complete still succeeds', () => {
     const throwing = createWorkSpanRecorder({ process: 'host', maxRetained: 8 })
     throwing.record = () => {

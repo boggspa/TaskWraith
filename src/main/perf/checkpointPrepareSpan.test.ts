@@ -29,7 +29,8 @@ describe('recordCheckpointPrepareSpan', () => {
         runId: 'cmd-1',
         startedAt: 5_000,
         durationMs: 25,
-        bytes: 4096
+        bytes: 4096,
+        resource: 'none'
       })
     ])
   })

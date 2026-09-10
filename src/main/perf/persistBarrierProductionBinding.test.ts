@@ -13,6 +13,9 @@ describe('persist_barrier production binding', () => {
     expect(storeSource).toContain('mainWorkSpanSink()')
     expect(storeSource).toContain("reason: 'barrier'")
     expect(storeSource).toContain('awaitChatRecordPersistedWork(')
+    expect(storeSource).toContain('resolveRunId:')
+    expect(storeSource).toContain('lastPersistBarrierHostCommandId(')
+    expect(persistSource).toContain('this.lastHostCommandIdByChat.set(input.chatId, commandId)')
   })
 
   it('wraps the persist-client receipt poll with the Host command id', () => {

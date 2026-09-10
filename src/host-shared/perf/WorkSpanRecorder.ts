@@ -88,6 +88,13 @@ export const WORK_SPAN_REASONS = {
 export type WorkSpanReasonKind = keyof typeof WORK_SPAN_REASONS
 export type WorkSpanReason = (typeof WORK_SPAN_REASONS)[WorkSpanReasonKind][number]
 
+/**
+ * Contended shared resource, not a cost centre (A1.27). `host_chain` is the
+ * Host serial queue / persist path; `workspace_lock` is the MCP/git workspace
+ * lock. Main-thread CPU with no contended token (`prompt_build`) and local
+ * transfer publish (`checkpoint_prepare`: stringify/write/fsync/rename, no
+ * workspace lock) use `none`.
+ */
 export const WORK_SPAN_RESOURCES = [
   'ensemble_pool',
   'host_chain',

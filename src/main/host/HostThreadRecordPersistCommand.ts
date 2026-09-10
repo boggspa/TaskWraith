@@ -725,6 +725,7 @@ export class HostThreadRecordPersistClient
   private readonly lanes = new Map<string, PersistLane>()
   private readonly diagnostics?: HostPersistenceDiagnostics
   private readonly spans?: MainWorkSpanSink
+  private readonly lastHostCommandIdByChat = new Map<string, string>()
 
   constructor(options: HostThreadRecordPersistClientOptions) {
     if (
@@ -805,6 +806,7 @@ export class HostThreadRecordPersistClient
       }
 
       const commandId = this.createId()
+      this.lastHostCommandIdByChat.set(input.chatId, commandId)
       const command: HostCommand = {
         type: 'host.command',
         protocolVersion: HOST_PROTOCOL_VERSION,
@@ -958,6 +960,16 @@ export class HostThreadRecordPersistClient
     const lane = this.lanes.get(chatId)
     if (!lane) return 0
     return lane.queued.length + (lane.running ? 1 : 0)
+  }
+
+  /**
+   * Last Host `thread.record.persist` command id minted for this chat.
+   * Trap 1 join key for persist_barrier/barrier (`runId`). Not on the Port
+   * interface so test doubles stay untouched.
+   */
+  lastHostCommandId(chatId: string): string | undefined {
+    if (typeof chatId !== 'string' || chatId.length === 0) return undefined
+    return this.lastHostCommandIdByChat.get(chatId)
   }
 
   /**

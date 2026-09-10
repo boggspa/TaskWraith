@@ -758,12 +758,16 @@ export class HostCommandReceiptStore {
     }
     delete next.recoveryState
 
-    this.indexRecord(next)
-    this.appendJournalEvent({ op: 'upsert', record: next })
-    this.maybeCompact()
-    if (startedAt !== undefined) this.recordReceiptDelivery(next, startedAt)
-    this.forgetSpanChatId(commandId)
-    return cloneRecord(next)
+    try {
+      this.indexRecord(next)
+      this.appendJournalEvent({ op: 'upsert', record: next })
+      this.maybeCompact()
+      if (startedAt !== undefined) this.recordReceiptDelivery(next, startedAt)
+      return cloneRecord(next)
+    } finally {
+      // Journal/compaction throw must not leak the begin-time cache (Kimi A1.22 residual).
+      this.forgetSpanChatId(commandId)
+    }
   }
 
   /**
