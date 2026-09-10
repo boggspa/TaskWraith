@@ -309,6 +309,136 @@ describe('mergeChatUpdatedForRender', () => {
     expect(merged.messages[1].content).toBe('follow-up')
   })
 
+  // Reported 2026-09-10 as "tools keep appearing ABOVE the user prompt — the
+  // transcript should only ever move forward". The renderer authors the prompt
+  // optimistically; main has not persisted it yet, but the run's first tool row
+  // is already in the delivery. Re-appending the prompt at the TAIL puts this
+  // turn's activity above the prompt that caused it, and because the renderer
+  // saves the whole record on the next stream delta, the inversion is durable.
+  it('restores a preserved user row to its live position, not the tail', () => {
+    const toolRow: ChatMessage = {
+      id: 't1',
+      role: 'tool',
+      content: '',
+      timestamp: '3',
+      toolActivities: [{ id: 'act-1', tool: 'delegate_wave', status: 'completed' }]
+    } as unknown as ChatMessage
+    const prompt: ChatMessage = { id: 'u-new', role: 'user', content: 'the prompt', timestamp: '2' }
+    const incomingMessages = [message('a', 'previous answer'), toolRow]
+    const liveMessages = [message('a', 'previous answer'), prompt]
+
+    const merged = mergeChatUpdatedForRender(chat(incomingMessages), {
+      liveChat: chat(liveMessages),
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'u-new', 't1'])
+  })
+
+  // The other direction, so the restore is evidence-based rather than a blanket
+  // "everything the delivery carries goes below the prompt". A row stamped
+  // BEFORE the prompt genuinely preceded it — the renderer's live base merely
+  // never saw it — and must keep its place above.
+  it('leaves a delivered row stamped before the preserved prompt above it', () => {
+    const earlier: ChatMessage = {
+      id: 'earlier',
+      role: 'tool',
+      content: '',
+      timestamp: '2026-09-10T15:00:00.000Z'
+    }
+    const later: ChatMessage = {
+      id: 'later',
+      role: 'tool',
+      content: '',
+      timestamp: '2026-09-10T15:00:02.000Z'
+    }
+    const prompt: ChatMessage = {
+      id: 'u-new',
+      role: 'user',
+      content: 'the prompt',
+      timestamp: '2026-09-10T15:00:01.000Z'
+    }
+    const head = message('a', 'previous answer')
+
+    const merged = mergeChatUpdatedForRender(chat([head, earlier, later]), {
+      liveChat: chat([head, prompt]),
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'earlier', 'u-new', 'later'])
+  })
+
+  // Timestamps only arbitrate where live has no opinion. Live already orders
+  // this delivered row AFTER the preserved one, so a skewed or start-of-run
+  // stamp on it must not drag it back above.
+  it('keeps live order over a stamp for a delivered row live already places later', () => {
+    const closeout: ChatMessage = {
+      id: 'closeout',
+      role: 'system',
+      content: '',
+      timestamp: '2026-09-10T15:00:05.000Z',
+      metadata: { kind: 'taskWraithCloseout' }
+    }
+    const nextTurn: ChatMessage = {
+      id: 'u2',
+      role: 'user',
+      content: 'next turn',
+      timestamp: '2026-09-10T15:00:01.000Z'
+    }
+    const head = message('a', 'answer')
+
+    const merged = mergeChatUpdatedForRender(chat([head, nextTurn]), {
+      liveChat: chat([head, closeout, nextTurn]),
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'closeout', 'u2'])
+  })
+
+  // Same inversion on the path that skips the active-run merge entirely, which
+  // is where a delivery for a finished-and-forgotten run lands.
+  it('restores a preserved user row to its live position with no active run', () => {
+    const toolRow: ChatMessage = { id: 't1', role: 'tool', content: '', timestamp: '3' }
+    const prompt: ChatMessage = { id: 'u-new', role: 'user', content: 'the prompt', timestamp: '2' }
+
+    const merged = mergeChatUpdatedForRender(chat([message('a', 'previous answer'), toolRow]), {
+      liveChat: chat([message('a', 'previous answer'), prompt]),
+      messagesChanged: true,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'u-new', 't1'])
+  })
+
+  // The closeout preservation shares the tail-append, so it inverts the same
+  // way against any row the delivery carries past the closeout's position.
+  it('restores a preserved closeout row to its live position, not the tail', () => {
+    const closeout: ChatMessage = {
+      id: 'closeout',
+      role: 'system',
+      content: '',
+      timestamp: '2',
+      metadata: { kind: 'taskWraithCloseout' }
+    }
+    const nextPrompt: ChatMessage = { id: 'u2', role: 'user', content: 'next turn', timestamp: '3' }
+
+    const merged = mergeChatUpdatedForRender(chat([message('a', 'answer'), nextPrompt]), {
+      liveChat: chat([message('a', 'answer'), closeout, nextPrompt]),
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'closeout', 'u2'])
+  })
+
   it('preserves a renderer-authored closeout outside the recent-run window', () => {
     const incoming = chat([message('a', 'answer')])
     const closeout: ChatMessage = {

@@ -62,6 +62,83 @@ export interface ChatUpdateRenderMergeOptions {
   localGoalIntent?: LocalGoalIntent | null
 }
 
+/**
+ * Put preserved live rows back where they sat, instead of at the tail.
+ *
+ * A preserved row is one the delivery does not carry yet: a prompt the renderer
+ * authored before main persisted it, a close-out, a synthetic card. Re-appending
+ * it at the end inverts the transcript whenever the delivery already carries
+ * rows main appended AFTER that row's position — reported 2026-09-10 as "tools
+ * keep appearing ABOVE the user prompt". Muse makes it near-certain: its first
+ * delegate-wave rows land within milliseconds, so they beat the `saveChat`
+ * round-trip carrying the prompt, and the renderer's next whole-record save
+ * persists the inverted order. The transcript render pipeline is pure array
+ * order (no timestamp sort), so the array IS the reading order.
+ *
+ * Each preserved row is re-anchored to its nearest preceding live neighbour that
+ * the delivery still carries, keeping live order among rows sharing an anchor.
+ * Between that anchor and the next row live already orders after it, the row
+ * settles by timestamp: a delivered row provably OLDER than it genuinely
+ * preceded it and stays above, and everything else — newer, or carrying no
+ * readable stamp — goes below, so an unstamped row can only ever fall on the
+ * forward-only side. A row with no anchor at all (its whole live prefix is
+ * paged out, or the live base is stale) has no position to restore and keeps
+ * the historical tail placement.
+ */
+function restorePreservedLiveRows(
+  deliveredMessages: readonly ChatMessage[],
+  liveMessages: readonly ChatMessage[],
+  preservedIds: ReadonlySet<string>
+): ChatMessage[] {
+  const deliveredIds = new Set(deliveredMessages.map((message) => message.id))
+  const liveIds = new Set(liveMessages.map((message) => message.id))
+  const afterAnchor = new Map<string, ChatMessage[]>()
+  const unanchored: ChatMessage[] = []
+  let anchorId: string | null = null
+  for (const message of liveMessages) {
+    if (deliveredIds.has(message.id)) {
+      anchorId = message.id
+      continue
+    }
+    if (!preservedIds.has(message.id)) continue
+    if (anchorId === null) {
+      unanchored.push(message)
+      continue
+    }
+    const bucket = afterAnchor.get(anchorId)
+    if (bucket) bucket.push(message)
+    else afterAnchor.set(anchorId, [message])
+  }
+  const restored: ChatMessage[] = []
+  let pending: ChatMessage[] = []
+  for (const message of deliveredMessages) {
+    if (pending.length > 0) {
+      const pendingMs = timestampMs(pending[0].timestamp)
+      const deliveredMs = timestampMs(message.timestamp)
+      // A row live already knows about is ordered by live, not by its stamp:
+      // the anchor was the LAST live predecessor, so this one comes after.
+      const precedesPending =
+        !liveIds.has(message.id) &&
+        pendingMs !== null &&
+        deliveredMs !== null &&
+        deliveredMs < pendingMs
+      if (!precedesPending) {
+        restored.push(...pending)
+        pending = []
+      }
+    }
+    restored.push(message)
+    // Consume the bucket so a duplicated id in the delivery cannot re-emit it.
+    const bucket = afterAnchor.get(message.id)
+    if (bucket) {
+      pending.push(...bucket)
+      afterAnchor.delete(message.id)
+    }
+  }
+  restored.push(...pending, ...unanchored)
+  return restored
+}
+
 function mergeLiveMessages(
   incomingMessages: readonly ChatMessage[],
   liveMessages: readonly ChatMessage[]
@@ -111,10 +188,11 @@ function mergeLiveMessages(
       ...orphanedTaskWraithCloseouts
     ].map((message) => message.id)
   )
-  const orphans = liveMessages.filter((message) => orphanIds.has(message.id))
-  if (orphans.length > 0) changed = true
+  if (orphanIds.size > 0) changed = true
   if (!changed) return null
-  return orphans.length > 0 ? [...mergedMessages, ...orphans] : mergedMessages
+  return orphanIds.size > 0
+    ? restorePreservedLiveRows(mergedMessages, liveMessages, orphanIds)
+    : mergedMessages
 }
 
 function timestampMs(value: unknown): number | null {
@@ -174,7 +252,15 @@ function preserveLiveTaskWraithCloseouts(
   const preservable = isTranscriptPagedShell(chat)
     ? filterPagedShellPreservations(chat, liveChat, missingCloseouts)
     : missingCloseouts
-  return preservable.length > 0 ? { ...chat, messages: [...chat.messages, ...preservable] } : chat
+  if (preservable.length === 0) return chat
+  return {
+    ...chat,
+    messages: restorePreservedLiveRows(
+      chat.messages,
+      liveChat.messages,
+      new Set(preservable.map((message) => message.id))
+    )
+  }
 }
 
 function preserveLiveUserMessages(
@@ -189,7 +275,15 @@ function preserveLiveUserMessages(
   const preservable = isTranscriptPagedShell(chat)
     ? filterPagedShellPreservations(chat, liveChat, missingUserMessages)
     : missingUserMessages
-  return preservable.length > 0 ? { ...chat, messages: [...chat.messages, ...preservable] } : chat
+  if (preservable.length === 0) return chat
+  return {
+    ...chat,
+    messages: restorePreservedLiveRows(
+      chat.messages,
+      liveChat.messages,
+      new Set(preservable.map((message) => message.id))
+    )
+  }
 }
 
 /** Normalize a chat/goal/ensemble freshness stamp. `ChatRecord.updatedAt` is
