@@ -59,7 +59,7 @@ function hostCanonicalJson(value: unknown): string {
 function hostToolCallKey(toolName: string, args?: Record<string, unknown>): string {
   const identity: Record<string, unknown> = { ...(args || {}) }
   for (const key of HOST_NARRATION_ARG_KEYS) delete identity[key]
-  return `${toolName}${hostCanonicalJson(identity)}`
+  return `${toolName}\u0001${hostCanonicalJson(identity)}`
 }
 
 export interface OllamaHostToolTurnState {
