@@ -31,8 +31,16 @@ export const MUSE_DEFAULT_MODEL = 'muse-spark-1.2'
 
 export const MUSE_TOOL_SURFACE_VERSION_PIN = '2'
 
-/** Refresh when qualifying a new binary (build.sha from session metadata). */
-export const MUSE_BUILD_SHA_PIN = '427a430436'
+/**
+ * The build this seat was last qualified against — `runtime.session.metadata`
+ * `record.build.sha` in Muse's own session log, here 1.1.1-R2514.1. Refresh
+ * when qualifying a new binary.
+ *
+ * Documentation, not a gate: nothing reads it. The adapter's build.sha check
+ * keys on the per-request `buildShaExpected`, which no production caller sets,
+ * and even a mismatch there only appends a warning.
+ */
+export const MUSE_BUILD_SHA_PIN = 'b934305d21'
 
 /**
  * Env var that overrides Meta account login. Prefer `--api-key-stdin` or a
@@ -170,13 +178,14 @@ export const MUSE_NATIVE_TOOL_POLICY = {
  *   host through the projected auth.json in the per-run isolated home.
  * - `--no-foreign-personal-context` and `--disable-web-tools`, which the exec
  *   builder always emits, are NOT serve flags at all (verified against
- *   `muse serve --help` on 1.0.3-R2198.1). They are therefore absent here
- *   because they cannot be expressed, not because this lane relaxed them —
- *   but the effect is the same, so an MSP seat must suppress foreign personal
- *   context and web tools by another lever (the binary exposes
- *   `MUSE_ENABLE_WEB_TOOLS` and an experimental foreign-context kill) or
- *   accept that it is more permissive than exec on both. UNRESOLVED; do not
- *   describe the two lanes as equivalent until it is settled.
+ *   `muse serve --help` on 1.0.3-R2198.1, still true on 1.1.1-R2514.1, whose
+ *   serve surface is only the sandbox posture plus `--no-session-log`). They
+ *   are therefore absent here because they cannot be expressed, not because
+ *   this lane relaxed them — but the effect is the same, so an MSP seat must
+ *   suppress foreign personal context and web tools by another lever (the
+ *   binary exposes `MUSE_ENABLE_WEB_TOOLS` and an experimental foreign-context
+ *   kill) or accept that it is more permissive than exec on both. UNRESOLVED;
+ *   do not describe the two lanes as equivalent until it is settled.
  *
  * Sandbox posture is fixed for the HOST's lifetime — see
  * `museMspHostPostureIsPerHost` in museGate.ts.

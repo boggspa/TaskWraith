@@ -7,7 +7,9 @@ import {
   MUSE_MSP_CLIENT_NAME_PATTERN,
   MUSE_MSP_COMPACTION_OUTCOMES,
   MUSE_MSP_COMPACTION_TRIGGERS,
-  MUSE_MSP_CONTEXT_PRESSURE_LEVELS
+  MUSE_MSP_CONTEXT_PRESSURE_LEVELS,
+  MUSE_MSP_REASONING_EFFORTS,
+  MUSE_MSP_SCHEMA_FINGERPRINT
 } from './MuseMspProtocol'
 
 function bytes(fill: number): (size: number) => Uint8Array {
@@ -132,5 +134,48 @@ describe('Muse MSP context pressure vs compaction vocabulary', () => {
     expect(MUSE_MSP_CONTEXT_PRESSURE_LEVELS).not.toContain('compacting')
     expect(MUSE_MSP_COMPACTION_TRIGGERS).toEqual(['manual', 'auto'])
     expect(MUSE_MSP_COMPACTION_OUTCOMES).toEqual(['compacted', 'noop', 'failed', 'cancelled'])
+  })
+})
+
+describe('MUSE_MSP_SCHEMA_FINGERPRINT', () => {
+  it('pins the fingerprint the installed binary actually serves', () => {
+    // `muse schema generate-json-schema --out DIR` on 1.1.1-R2514.1; the same
+    // value the manifest publishes and the host echoes from `initialize`.
+    expect(MUSE_MSP_SCHEMA_FINGERPRINT).toBe(
+      'sha256:c669a30c2ee17d63192b227865b424d1d78b5d6c04d9f1c9e9b77b9cf03e6a4f'
+    )
+    // The 1.0.3-R2198.1 value it replaced. A pin left behind a shipped binary
+    // makes the client warn on every healthy run, which is how the warning
+    // that matters gets read as noise.
+    expect(MUSE_MSP_SCHEMA_FINGERPRINT).not.toBe(
+      'sha256:03312c213efd14277a0e0a102f70adeae497a469ca4edf7242f479953ed758b7'
+    )
+  })
+})
+
+describe('MUSE_MSP_REASONING_EFFORTS — the CLOSED ReasoningEffort ladder', () => {
+  it('lists every tier the 1.1.1 schema defines, in schema order', () => {
+    // Closed means an omission is not a tolerated unknown: a tier missing here
+    // is one this lane believes it may not send.
+    expect(MUSE_MSP_REASONING_EFFORTS).toEqual([
+      'none',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra'
+    ])
+  })
+
+  it('defines `max` as its own rung below `ultra`', () => {
+    // The MSP lane used to substitute `ultra` for `max` because this list did
+    // not carry it. They are adjacent, separate tiers — never aliases.
+    expect(MUSE_MSP_REASONING_EFFORTS).toContain('max')
+    const max = (MUSE_MSP_REASONING_EFFORTS as readonly string[]).indexOf('max')
+    const ultra = (MUSE_MSP_REASONING_EFFORTS as readonly string[]).indexOf('ultra')
+    expect(max).toBeGreaterThanOrEqual(0)
+    expect(max).toBeLessThan(ultra)
   })
 })

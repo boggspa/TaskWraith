@@ -16,9 +16,9 @@
 // No Electron/node imports beyond `node:` primitives so the module stays unit
 // testable and inside the Host Node pure closure.
 
-/** Stable-surface schema fingerprint observed on Muse Code 1.0.3 (1.0.3-R2198.1). */
+/** Stable-surface schema fingerprint observed on Muse Code 1.1.1 (1.1.1-R2514.1). */
 export const MUSE_MSP_SCHEMA_FINGERPRINT =
-  'sha256:03312c213efd14277a0e0a102f70adeae497a469ca4edf7242f479953ed758b7'
+  'sha256:c669a30c2ee17d63192b227865b424d1d78b5d6c04d9f1c9e9b77b9cf03e6a4f'
 
 /** `clientInfo.name` is a MACHINE identifier: `^[a-z0-9_]+$` (SS1.4.1). A
  * hyphen is rejected with `-32602 invalidParams`, which reads like a transport
@@ -98,8 +98,14 @@ export const MUSE_MSP_APPROVAL_MODES = [
 ] as const
 export type MuseMspApprovalMode = (typeof MUSE_MSP_APPROVAL_MODES)[number]
 
-/** `ReasoningEffort`. Note MSP publishes `none`, which the exec CLI rejects for
- * `--provider meta` — the two vocabularies are NOT interchangeable. */
+/** `ReasoningEffort` — CLOSED, so a tier missing from this list is not a
+ * tolerated unknown: sending it is `invalidParams` and asserting it is absent
+ * is a claim about the wire. The asymmetry with the exec ladder runs ONE way
+ * only — MSP additionally publishes `none`, which the exec CLI rejects for
+ * `--provider meta`. Every exec tier is spelled identically here, `max`
+ * included (verified against the 1.1.1-R2514.1 schema export); an earlier
+ * translation dropped `max`, and the MSP lane silently upgraded a Max
+ * selection to Ultra on the strength of that omission. */
 export const MUSE_MSP_REASONING_EFFORTS = [
   'none',
   'minimal',
@@ -107,6 +113,7 @@ export const MUSE_MSP_REASONING_EFFORTS = [
   'medium',
   'high',
   'xhigh',
+  'max',
   'ultra'
 ] as const
 export type MuseMspReasoningEffort = (typeof MUSE_MSP_REASONING_EFFORTS)[number]

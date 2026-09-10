@@ -46,7 +46,11 @@ describe('muse constants + policy', () => {
     expect(MUSE_DEFAULT_PROVIDER).toBe('meta')
     expect(MUSE_DEFAULT_MODEL).toBe('muse-spark-1.2')
     expect(MUSE_TOOL_SURFACE_VERSION_PIN).toBe('2')
-    expect(MUSE_BUILD_SHA_PIN).toBe('427a430436')
+    // 1.1.1-R2514.1 (`runtime.session.metadata` -> record.build.sha).
+    expect(MUSE_BUILD_SHA_PIN).toBe('b934305d21')
+    // The stale value it replaced — it named no build on any qualified
+    // machine, so a reader could not tell a real drift from the pin rotting.
+    expect(MUSE_BUILD_SHA_PIN).not.toBe('427a430436')
     expect(MUSE_DEFAULT_SANDBOX_NETWORK).toBe('proxy-only')
   })
 

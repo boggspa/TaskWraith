@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import type { AcpChildProcess } from '../acp/AcpTurnClient'
+import { MUSE_REASONING_EFFORTS } from './MuseCliArgs'
 import { createMuseIsolatedHome } from './MuseIsolatedHome'
 import { buildMuseTaskWraithMcpSettings } from './MuseMcpConfig'
 import {
@@ -191,11 +192,18 @@ describe('MSP turn input', () => {
 })
 
 describe('MSP vocabularies', () => {
-  it('clamps `max` up to ultra rather than dropping it', () => {
-    // `max` is exec-only; sending it would be an invalidParams turn abort.
-    expect(museMspReasoningEffortFor('max')).toBe('ultra')
-    expect(museMspReasoningEffortFor('high')).toBe('high')
-    expect(museMspReasoningEffortFor('minimal')).toBe('minimal')
+  it('widens every exec tier onto MSP unchanged, `max` included', () => {
+    // MSP's ReasoningEffort is CLOSED and does define `max` (1.1.1-R2514.1),
+    // so there is nothing here to clamp. The old `max` -> `ultra` rewrite gave
+    // a user who picked Max a HIGHER tier than they asked for.
+    expect(museMspReasoningEffortFor('max')).toBe('max')
+    expect(museMspReasoningEffortFor('max')).not.toBe('ultra')
+    // Non-vacuous by construction: the exec ladder is a non-empty tuple and
+    // the `max` rung above is asserted on its own.
+    expect(MUSE_REASONING_EFFORTS.length).toBeGreaterThan(0)
+    for (const effort of MUSE_REASONING_EFFORTS) {
+      expect(museMspReasoningEffortFor(effort)).toBe(effort)
+    }
   })
 
   it('denies unmatched tools for a read-only seat, whatever the handler', () => {
@@ -237,6 +245,37 @@ describe('runMuseMspProvider', () => {
       providerId: 'meta',
       modelId: 'muse-spark-1.3'
     })
+  })
+
+  it('puts Max on the wire for a model that publishes it', async () => {
+    const child = new FakeMspChild()
+    const pending = run(child, {
+      durableSeat: seat('effort-max'),
+      model: 'muse-spark-1.3',
+      reasoningEffort: 'max'
+    })
+    await playTurn(child)
+    const outcome = await pending
+
+    // MSP is the DEFAULT transport for a solo Muse turn, so this frame is what
+    // picking Max actually buys. `ultra` here is a silent tier upgrade.
+    expect(child.sentMethod('turn/start')?.params.reasoningEffort).toBe('max')
+    expect(outcome.effort).toBe('max')
+  })
+
+  it('still clamps Max to ultra for a model that does not publish it', async () => {
+    const child = new FakeMspChild()
+    const pending = run(child, {
+      durableSeat: seat('effort-max-unpublished'),
+      model: 'muse-spark-1.2',
+      reasoningEffort: 'max'
+    })
+    await playTurn(child)
+    await pending
+
+    // Widening the MSP vocabulary must not let a model-invalid tier through.
+    // The model guard is upstream, in normalizeMuseReasoningEffort.
+    expect(child.sentMethod('turn/start')?.params.reasoningEffort).toBe('ultra')
   })
 
   it('reports the provider session id, assistant text and a success terminal', async () => {

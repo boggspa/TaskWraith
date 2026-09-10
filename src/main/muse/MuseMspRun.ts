@@ -203,14 +203,30 @@ export function museMspApprovalModeFor(
 /**
  * `MuseReasoningEffort` -> `MuseMspReasoningEffort`.
  *
- * The two ladders overlap but are not the same vocabulary: MSP publishes
- * `none`, which `--provider meta` rejects on the exec lane, and the exec ladder
- * carries `max`, which MSP does not define. `max` clamps UP to `ultra` rather
- * than falling to a default, matching how normalizeMuseReasoningEffort already
- * treats a top-tier selection on a model that cannot take it.
+ * A WIDENING, and it must never rewrite a tier. Every exec tier — `max`
+ * included — is spelled identically in MSP's closed `ReasoningEffort`, so the
+ * only work here is at the type level: if MSP ever drops a tier the exec ladder
+ * still offers, this line stops compiling instead of shipping an
+ * `invalidParams` turn abort.
+ *
+ * It used to clamp `max` up to `ultra`, justified by a claim that MSP did not
+ * define `max`. The 1.1.1-R2514.1 schema export contradicts that, and the cost
+ * of the clamp was borne by the user: MSP is the DEFAULT transport for a solo
+ * Muse turn, so picking Max bought a HIGHER tier than was asked for, silently,
+ * on the lane most turns take.
+ *
+ * The asymmetry that IS real runs the other way: MSP publishes `none`, which
+ * `--provider meta` rejects on the exec lane. `MuseReasoningEffort` has no
+ * `none` to widen from, and `normalizeMuseReasoningEffort` rewrites a requested
+ * `none` to `minimal` upstream, so neither lane can emit it.
+ *
+ * Model fit is decided upstream too, not here: `normalizeMuseReasoningEffort`
+ * already clamps `max` to `ultra` for every model outside
+ * `museModelSupportsMaxReasoning`, so a `max` that reaches this function has
+ * already been proven servable by the selected model.
  */
 export function museMspReasoningEffortFor(effort: MuseReasoningEffort): MuseMspReasoningEffort {
-  return effort === 'max' ? 'ultra' : effort
+  return effort
 }
 
 /**
