@@ -1088,7 +1088,8 @@ import {
 import {
   applyChatComposerSelectionPatch,
   chatComposerSelectionPatchTouchesProviderMetadata,
-  sanitizeChatComposerSelectionPatch
+  sanitizeChatComposerSelectionPatch,
+  shouldDeferProviderScopedComposerSelection
 } from '../../shared/chatComposerSelectionPatch'
 import { ChatComposerSelectionPatchQueue } from './lib/ChatComposerSelectionPatchQueue'
 import {
@@ -6639,9 +6640,13 @@ function App(): React.JSX.Element {
         ? activeRunChatSnapshotRef.current
         : null)
     if (!source) return
-    const deferProviderScoped =
-      source.chatKind !== 'ensemble' && touchesProviderScopedMetadata && isChatBusy(chatId)
     const pendingChange = readPendingProviderChange(source)
+    const deferProviderScoped = shouldDeferProviderScopedComposerSelection({
+      chatKind: source.chatKind,
+      touchesProviderScopedMetadata,
+      busy: isChatBusy(chatId),
+      hasPendingProviderChange: pendingChange !== null
+    })
     const provider = pendingChange?.provider || getChatProvider(source)
     const queuedAt = deferProviderScoped
       ? pendingChange?.queuedAt || new Date().toISOString()

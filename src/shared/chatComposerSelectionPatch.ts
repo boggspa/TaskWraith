@@ -142,6 +142,39 @@ export function chatComposerSelectionPatchTouchesProviderMetadata(
   return Object.keys(patch).some((key) => PROVIDER_METADATA_KEY_SET.has(key))
 }
 
+/**
+ * Whether a provider-scoped composer selection must be written INTO the queued
+ * provider change rather than flat `providerMetadata`.
+ *
+ * The composer READS provider-scoped selection from
+ * `pendingProviderChange.providerMetadata` whenever a queued change exists --
+ * `soloPendingProviderMetadata` in Composer.tsx feeds the model row AND every
+ * per-provider reasoning value -- unconditionally, not only while the chat is
+ * busy. Gating the WRITE on busy-ness alone therefore sent every pick made
+ * after the run's busy flag dropped, but before turn-end finalize drained the
+ * queue, into the slice the picker does not read. The row reverted on the very
+ * next render, and kept reverting until the queued change was drained by a
+ * completed turn or dropped by a provider switch -- which is the "one change
+ * works, then I'm blocked for a while" report.
+ *
+ * The queue's own 200ms debounce widens the window: `deferProviderScoped` is
+ * decided in the renderer at click time and applied by main afterwards, so a
+ * run that ends inside that debounce leaves a queued change on an idle chat
+ * with nothing scheduled to drain it.
+ *
+ * Keep the write where the read looks.
+ */
+export function shouldDeferProviderScopedComposerSelection(input: {
+  chatKind: ChatRecord['chatKind'] | undefined
+  touchesProviderScopedMetadata: boolean
+  busy: boolean
+  hasPendingProviderChange: boolean
+}): boolean {
+  if (input.chatKind === 'ensemble') return false
+  if (!input.touchesProviderScopedMetadata) return false
+  return input.busy || input.hasPendingProviderChange
+}
+
 function patchAlreadyApplied(
   metadata: Record<string, unknown> | undefined,
   patch: ChatComposerSelectionPatch
