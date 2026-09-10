@@ -2983,5 +2983,234 @@ describe('HostNodeDomainPorts', () => {
         )
       ).resolves.toEqual({ status: 'succeeded', resultSummary: 'ensemble_seat_disabled' })
     })
+
+    it('behaves identically without a recorder for run.cancel', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        postureConsent: true
+      })
+      const domain = new HostNodeDomainPorts(domainOptions)
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-cancel-norecorder-start',
+            { threadId: thread.appChatId },
+            { text: 'start run to cancel' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'run.cancel',
+            'cmd-cancel-norecorder',
+            { threadId: thread.appChatId },
+            { expectedWorkId: 'run-cancel-norecorder-start' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_cancellation_requested' })
+      releaseRun()
+    })
+
+    it('behaves identically without a recorder for approval.decide', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        postureConsent: true
+      })
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        providers: [
+          createInteractionProvider({ supportsApprovals: true, supportsQuestions: false })
+        ]
+      })
+      domain.runPort.beginRun({
+        runId: 'run-approval-norecorder',
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        startedAt: '2026-08-24T05:00:00.000Z'
+      })
+      domain.interactions.register({
+        id: 'ap-norecorder-1',
+        kind: 'approval',
+        providerId: 'muse',
+        runId: 'run-approval-norecorder',
+        threadId: thread.appChatId,
+        title: 'Approve tool',
+        summary: 'Allow tool execution',
+        createdAt: '2026-08-24T05:00:00.000Z'
+      })
+
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'approval.decide',
+            'cmd-approval-norecorder',
+            { approvalId: 'ap-norecorder-1' },
+            { decision: 'accept' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'approval_decided' })
+    })
+
+    it('behaves identically without a recorder for question.answer', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        postureConsent: true
+      })
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        providers: [
+          createInteractionProvider({ supportsApprovals: false, supportsQuestions: true })
+        ]
+      })
+      domain.runPort.beginRun({
+        runId: 'run-question-norecorder',
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        startedAt: '2026-08-24T05:00:00.000Z'
+      })
+      domain.interactions.register({
+        id: 'q-norecorder-1',
+        kind: 'question',
+        providerId: 'muse',
+        runId: 'run-question-norecorder',
+        threadId: thread.appChatId,
+        title: 'Choose option',
+        summary: 'Pick one',
+        options: ['a', 'b'],
+        createdAt: '2026-08-24T05:00:00.000Z'
+      })
+
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'question.answer',
+            'cmd-question-norecorder',
+            { questionId: 'q-norecorder-1' },
+            { decision: 'dismiss' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'question_answered' })
+    })
+
+    it('skips the thread lookup and clock read when no recorder is supplied', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      let nowCalls = 0
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        now: () => {
+          nowCalls += 1
+          return 1
+        }
+      })
+      const helpers = domain as unknown as {
+        chatIdForCommandThread(threadId: string): string | undefined
+        controlResponseStartedAt(): number | undefined
+      }
+      const getThread = vi.spyOn(store, 'getThread')
+      expect(helpers.chatIdForCommandThread(thread.appChatId)).toBeUndefined()
+      expect(helpers.controlResponseStartedAt()).toBeUndefined()
+      expect(getThread).not.toHaveBeenCalled()
+      expect(nowCalls).toBe(0)
+      getThread.mockRestore()
+    })
+
+    it('contains a throwing thread lookup and clock so spans stay silent', async () => {
+      const { domainOptions } = open()
+      const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 64 })
+      const throwingStore = {
+        getThread: () => {
+          throw new Error('spiked store read')
+        }
+      }
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        store: throwingStore as unknown as HostProfileDomainStore,
+        now: () => {
+          throw new Error('spiked clock')
+        },
+        workSpanRecorder: recorder
+      })
+      const helpers = domain as unknown as {
+        chatIdForCommandThread(threadId: string): string | undefined
+        controlResponseStartedAt(): number | undefined
+      }
+      expect(helpers.chatIdForCommandThread('any-thread')).toBeUndefined()
+      expect(helpers.controlResponseStartedAt()).toBeUndefined()
+      expect(recorder.snapshot().spans).toHaveLength(0)
+    })
+
+    it('contains a throwing instrumentation lookup so seat.toggle still succeeds without a span', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+      store.setThreadKind({ threadId: thread.appChatId, targetKind: 'ensemble' })
+      const record = store.getThread(thread.appChatId)!
+      const participants = (record.ensemble as { participants: Array<{ id: string }> }).participants
+
+      let clock = 5000
+      const recorder = createControlledRecorder(() => (clock += 2))
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        workSpanRecorder: recorder
+      })
+      // The authority read is call 1; the instrumentation lookup is call 2
+      // (spiked here); the toggle logic follows. Order-coupled by necessity:
+      // inter-read state change is the only production route to this throw.
+      const original = store.getThread.bind(store)
+      let calls = 0
+      const getThread = vi.spyOn(store, 'getThread').mockImplementation((threadId) => {
+        calls += 1
+        if (calls === 2) throw new Error('spiked instrumentation lookup')
+        return original(threadId)
+      })
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'ensemble.seat.toggle',
+            'cmd-seat-spiked-lookup',
+            { threadId: thread.appChatId },
+            { participantId: participants[0]!.id, enabled: false }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'ensemble_seat_disabled' })
+      expect(recorder.snapshot().spans).toHaveLength(0)
+      getThread.mockRestore()
+    })
   })
 })

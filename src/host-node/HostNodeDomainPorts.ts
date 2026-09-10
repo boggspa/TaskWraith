@@ -436,11 +436,32 @@ export class HostNodeDomainPorts {
   }> | null = null
 
   private chatIdForCommandThread(threadId: string): string | undefined {
-    return this.options.store.getThread(threadId)?.appChatId
+    if (this.options.workSpanRecorder === undefined) return undefined
+    try {
+      return this.options.store.getThread(threadId)?.appChatId
+    } catch {
+      // Instrumentation must never alter a control command result.
+      return undefined
+    }
   }
 
-  private recordControlResponse(chatId: string | undefined, startedAt: number): void {
-    if (chatId === undefined || this.options.workSpanRecorder === undefined) return
+  private controlResponseStartedAt(): number | undefined {
+    if (this.options.workSpanRecorder === undefined) return undefined
+    try {
+      return this.now()
+    } catch {
+      // An unreadable clock yields no span, never an error.
+      return undefined
+    }
+  }
+
+  private recordControlResponse(chatId: string | undefined, startedAt: number | undefined): void {
+    if (
+      chatId === undefined ||
+      startedAt === undefined ||
+      this.options.workSpanRecorder === undefined
+    )
+      return
     try {
       this.options.workSpanRecorder.record({
         chatId,
@@ -947,7 +968,7 @@ export class HostNodeDomainPorts {
     }
 
     if (command.name === 'run.cancel') {
-      const startedAt = this.now()
+      const startedAt = this.controlResponseStartedAt()
       const chatId = this.chatIdForCommandThread(command.target.threadId)
       try {
         const expectedWorkId = decoded.value.arguments.expectedWorkId
@@ -977,7 +998,7 @@ export class HostNodeDomainPorts {
     }
 
     if (command.name === 'approval.decide') {
-      const startedAt = this.now()
+      const startedAt = this.controlResponseStartedAt()
       let chatId: string | undefined
       try {
         const id = command.target.approvalId
@@ -995,7 +1016,7 @@ export class HostNodeDomainPorts {
     }
 
     if (command.name === 'question.answer') {
-      const startedAt = this.now()
+      const startedAt = this.controlResponseStartedAt()
       let chatId: string | undefined
       try {
         const id = command.target.questionId
@@ -1019,7 +1040,7 @@ export class HostNodeDomainPorts {
     }
 
     if (command.name === 'ensemble.seat.toggle') {
-      const startedAt = this.now()
+      const startedAt = this.controlResponseStartedAt()
       const chatId = this.chatIdForCommandThread(decoded.value.target.threadId)
       try {
         return this.toggleEnsembleSeat(decoded.value)
