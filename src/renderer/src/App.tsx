@@ -799,6 +799,7 @@ import {
   type WelcomeFitLevel
 } from './lib/welcomeFit'
 import { isChatSummaryRecord, mergeChatRecord, mergeChatRecordValue } from './lib/chatRecordMerge'
+import { resolveDispatchChatBase } from './lib/dispatchChatBase'
 import { ChatUpdateHydrationQueue } from './lib/chatUpdateHydrationQueue'
 import { commitHydratedChat, resolveChatHydration } from './lib/chatHydrationMerge'
 import { hydratePagedChatShell } from './lib/chatTranscriptPager'
@@ -14777,9 +14778,37 @@ function App(): React.JSX.Element {
       const contextApplicationLog = composerMetadata.applicationLog
 
       activeScheduledTaskIdRef.current = request.scheduledTaskId || null
-      const dispatchChatBase = preAppendedPromptMessage
-        ? chatByIdRef.current.get(runChat.appChatId) || runChat
-        : runChat
+      // The visible-run reset only ever needed the chat id, and it must stay
+      // ahead of the thumbnail await below so the "Working" chip still goes up
+      // in the same frame the user pressed Send. `resolveDispatchChatBase`
+      // cannot change the id, so this is the same chat `chatToUpdate` becomes.
+      const selectedChatIdAtRunStart = currentChatIdRef.current || currentChat?.appChatId || null
+      const isRunVisibleAtStart = selectedChatIdAtRunStart === runChat.appChatId
+      liveRunDiffStore.clear(runChat.appChatId)
+      if (isRunVisibleAtStart) {
+        setRunCompleteNotice(null)
+        setRunDiff(null)
+        setPendingPlanChoice(null)
+        setPendingProposedPlan(null)
+        setPendingPlanImport(null)
+        setIsThinking(true)
+      }
+      const authorsPromptMessage = !request.existingPrompt && !preAppendedPromptMessage
+      // Thumbnails are read off disk, one IPC per attachment, so this await is
+      // wide for an image-heavy prompt. It runs BEFORE the dispatch base is
+      // resolved: any await between resolving the base and the `saveChat` below
+      // re-opens the staleness window that base read exists to close.
+      const submittedImageThumbnails = authorsPromptMessage
+        ? await buildSubmittedImageThumbnailMetadata(request.imageAttachments)
+        : null
+      // `runChat` was snapshotted at the top of dispatch, before `composeRun`
+      // and the awaits above. Anything appended during that window lives only
+      // in the live map, and spreading the snapshot dropped it — then made the
+      // loss durable, because this dispatch saves the whole record.
+      const dispatchChatBase = resolveDispatchChatBase(
+        runChat,
+        chatByIdRef.current.get(runChat.appChatId)
+      )
       // Hydration above is BEST EFFORT: `refreshSingleChat` returns null when
       // `getChat` yields nothing, which is exactly a brand-new thread with
       // nothing on disk yet, so `runChat` can still arrive without a
@@ -14797,18 +14826,6 @@ function App(): React.JSX.Element {
       if (composerMetadata.clearLinkedGeminiSession) {
         chatToUpdate.linkedGeminiSessionId = undefined
       }
-      const selectedChatIdAtRunStart = currentChatIdRef.current || currentChat?.appChatId || null
-      const isRunVisibleAtStart = selectedChatIdAtRunStart === chatToUpdate.appChatId
-      liveRunDiffStore.clear(chatToUpdate.appChatId)
-      if (isRunVisibleAtStart) {
-        setRunCompleteNotice(null)
-        setRunDiff(null)
-        setPendingPlanChoice(null)
-        setPendingProposedPlan(null)
-        setPendingPlanImport(null)
-        setIsThinking(true)
-      }
-
       if (
         chatToUpdate.messages.length === 0 &&
         isPlaceholderThreadTitle(chatToUpdate.title) &&
@@ -14820,7 +14837,7 @@ function App(): React.JSX.Element {
 
       let runStartedAt = new Date().toISOString()
       let promptMessageId: string | undefined
-      if (!request.existingPrompt && !preAppendedPromptMessage) {
+      if (authorsPromptMessage) {
         const imageAttachmentMetadata = request.imageAttachments
           .map((attachment) => ({
             id: attachment.id,
@@ -14834,12 +14851,9 @@ function App(): React.JSX.Element {
         if (imageAttachmentMetadata.length > 0) {
           messageMetadata.imageAttachments = imageAttachmentMetadata
         }
-        const imageThumbnailMetadata = await buildSubmittedImageThumbnailMetadata(
-          request.imageAttachments
-        )
-        if (imageThumbnailMetadata.imagePaths.length > 0) {
-          messageMetadata.imagePaths = imageThumbnailMetadata.imagePaths
-          messageMetadata.imageThumbnails = imageThumbnailMetadata.imageThumbnails
+        if (submittedImageThumbnails && submittedImageThumbnails.imagePaths.length > 0) {
+          messageMetadata.imagePaths = submittedImageThumbnails.imagePaths
+          messageMetadata.imageThumbnails = submittedImageThumbnails.imageThumbnails
         }
         if (linkPreviewMetadata.length > 0) {
           messageMetadata.linkPreviews = linkPreviewMetadata
