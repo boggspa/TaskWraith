@@ -65,9 +65,16 @@ const {
   applyCrossThreadToMetrics
 } = require('./collectors/index.cjs')
 const { probeHostBootstrapIdentity } = require('./hostWelcomeProbe.cjs')
-const { parseCellName, PAIRING_ROLES } = require('./interferenceMatrix.cjs')
+const {
+  parseCellName,
+  PAIRING_ROLES,
+  cellReachability,
+  createInterferenceReport,
+  environmentRecord
+} = require('./interferenceMatrix.cjs')
 const { buildT2RunEvidence } = require('./t2RunEvidence.cjs')
 const { runT2WindowedReplay } = require('./t2WindowOrchestration.cjs')
+const { runT2PairedReplay } = require('./t2PairedRuns.cjs')
 const {
   runDeterministicReplay,
   createCdpPageApiAdapter,
@@ -835,7 +842,8 @@ function parseArgs(argv) {
     help: false,
     lean: false,
     skipBuild: false,
-    windowedReplay: false
+    windowedReplay: false,
+    pairedRuns: false
   }
   for (const arg of argv) {
     if (arg === '--help' || arg === '-h') out.help = true
@@ -848,6 +856,7 @@ function parseArgs(argv) {
     else if (arg === '--lean') out.lean = true
     else if (arg === '--skip-build') out.skipBuild = true
     else if (arg === '--windowed-replay') out.windowedReplay = true
+    else if (arg === '--paired-runs') out.pairedRuns = true
     else if (arg.startsWith('--workload=')) out.workload = arg.slice('--workload='.length)
     else if (arg.startsWith('--seed=')) out.seed = arg.slice('--seed='.length)
     else if (arg.startsWith('--out-dir=')) out.outDir = arg.slice('--out-dir='.length)
@@ -940,6 +949,9 @@ Options:
   --build-id=<id>                   Operator-named build identity for pairing; omitted → left undeclared
   --windowed-replay               Replay as fenced 120 s × 3 concurrent lanes (default: sequential);
                                   runs ≥6 min, refuses --max-replay-events, feeds observed windows to runEvidence
+  --paired-runs                   Run light-alone then light-beside and emit report.pairs (implies
+                                  --windowed-replay; ≥12 min). Requires --cell and --build-id; refuses
+                                  --role and --max-replay-events; a single-chat fixture cannot pair
   --skip-build                      Skip build (NON-AUTHORITATIVE; refuses official-baseline path)
   --help
 `.trim()
@@ -990,6 +1002,28 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   const buildId = args.buildId == null ? null : String(args.buildId)
   if (buildId !== null && buildId.trim().length === 0) {
     throw new Error('--build-id must be a non-empty build identity when declared')
+  }
+
+  // Paired runs are a layer on windowed replay: two lane configurations of the
+  // same fixture, then pairRuns. Identity must be declared up front — pairRuns
+  // cannot qualify an undeclared cell or build, and a single --role contradicts
+  // producing both roles.
+  if (args.pairedRuns) {
+    if (pairingRole !== null) {
+      throw new Error('--paired-runs produces both pairing roles; refuse --role with it')
+    }
+    if (crossThreadCell === null) {
+      throw new Error('--paired-runs requires --cell so the pair names a canonical matrix cell')
+    }
+    if (buildId === null) {
+      throw new Error('--paired-runs requires --build-id so the pair shares a named build')
+    }
+    if (args.maxReplayEvents != null) {
+      throw new Error(
+        '--max-replay-events applies to sequential replay only; refuse --paired-runs with it'
+      )
+    }
+    args.windowedReplay = true
   }
 
   // Default refuse launch
@@ -1111,6 +1145,11 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     scaleDown
   })
   const fingerprint = fixtureFingerprint(fixture)
+  if (args.pairedRuns && fixture.chats.length < 2) {
+    throw new Error(
+      '--paired-runs requires a fixture with a heavy chat; a single-chat workload cannot pair'
+    )
+  }
 
   fs.mkdirSync(artifactDir, { recursive: true })
 
@@ -1325,6 +1364,34 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   let replayResult = null
   /** @type {object|null} — lanes-driver result when --windowed-replay selects windowed replay */
   let windowedReplayResult = null
+  /** @type {object|null} — paired-run adapter result when --paired-runs selects both roles */
+  let pairedReplayResult = null
+
+  /**
+   * Shared windowed / paired replay options. Sequential replay keeps its own
+   * progress callbacks; this only selects the lanes-driver path.
+   */
+  async function runWindowedOrPairedReplay(api, extra = {}) {
+    const shared = {
+      fixture,
+      api,
+      ...(crossThreadCell == null ? {} : { cellName: crossThreadCell }),
+      workload,
+      seed,
+      fixtureFingerprint: fingerprint,
+      ...(buildId == null ? {} : { buildId }),
+      ...extra
+    }
+    if (args.pairedRuns) {
+      pairedReplayResult = await runT2PairedReplay(shared)
+      windowedReplayResult = pairedReplayResult.beside
+      return
+    }
+    windowedReplayResult = await runT2WindowedReplay({
+      ...shared,
+      ...(pairingRole == null ? {} : { pairingRole })
+    })
+  }
   let profilesCaptured = false
   // T9a: true only when the main-process persistence counters were genuinely
   // sampled. Gates `claimMetricsCollected` — a run that could not sample must
@@ -1603,15 +1670,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             '--max-replay-events applies to sequential replay only; refuse --windowed-replay with it'
           )
         }
-        windowedReplayResult = await runT2WindowedReplay({
-          fixture,
-          api,
-          ...(crossThreadCell == null ? {} : { cellName: crossThreadCell }),
-          ...(pairingRole == null ? {} : { pairingRole }),
-          workload,
-          seed,
-          fixtureFingerprint: fingerprint,
-          ...(buildId == null ? {} : { buildId }),
+        await runWindowedOrPairedReplay(api, {
           eventTimeoutMs: replayStallTimeoutMs,
           nowMs: replayNowMs,
           ...(options.replayWindowMs == null ? {} : { windowMs: options.replayWindowMs })
@@ -1622,6 +1681,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             completedEvents: windowedTotals.completedEvents,
             currentEvent: null,
             windowedReplay: true,
+            pairedRuns: Boolean(args.pairedRuns),
             replayWindows: windowedTotals.windows
           },
           { log: true }
@@ -1969,17 +2029,9 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           '--max-replay-events applies to sequential replay only; refuse --windowed-replay with it'
         )
       }
-      windowedReplayResult = await runT2WindowedReplay({
-        fixture,
-        api: options.replayApi,
-        ...(crossThreadCell == null ? {} : { cellName: crossThreadCell }),
-        ...(pairingRole == null ? {} : { pairingRole }),
-        workload,
-        seed,
-        fixtureFingerprint: fingerprint,
-        ...(buildId == null ? {} : { buildId }),
-        // Test-only seam: short windows stay validator-ineligible by design,
-        // so this can prove the wiring without manufacturing a measurement.
+      // Test-only seam: short windows stay validator-ineligible by design,
+      // so this can prove the wiring without manufacturing a measurement.
+      await runWindowedOrPairedReplay(options.replayApi, {
         ...(options.replayWindowMs == null ? {} : { windowMs: options.replayWindowMs })
       })
     } else {
@@ -2026,6 +2078,38 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       unsupported: windowedTotals.unsupported.slice(0, 50)
     }
   }
+  if (pairedReplayResult) {
+    const pairing = pairedReplayResult.pairing
+    const pairs = pairing.ok ? [pairing.pair] : []
+    report.pairedRuns = {
+      paired: true,
+      pairingOk: pairing.ok === true,
+      reasons: pairing.ok ? [] : pairing.reasons,
+      lightAloneRole: pairedReplayResult.alone.pairingRole,
+      lightBesideRole: pairedReplayResult.beside.pairingRole,
+      aloneEvidenceEligible: pairedReplayResult.alone.evidenceEligible,
+      besideEvidenceEligible: pairedReplayResult.beside.evidenceEligible
+    }
+    report.pairs = pairs
+    const cell = parseCellName(crossThreadCell)
+    const cells = [{ ...cell, name: crossThreadCell, ...cellReachability(cell) }]
+    const interferenceEnvironment =
+      options.interferenceEnvironment ||
+      environmentRecord({
+        repoRoot,
+        collectRepoProvenance: () => provenance
+      })
+    try {
+      report.interferenceReport = createInterferenceReport({
+        environment: interferenceEnvironment,
+        cells,
+        pairs
+      })
+    } catch (error) {
+      report.interferenceReport = null
+      report.interferenceReportError = String(error && error.message ? error.message : error)
+    }
+  }
 
   report.environment.endedAt = new Date().toISOString()
   const gateProbe = evaluatePerfGates({
@@ -2048,7 +2132,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   // its gaps explicitly via validateRunEvidence.
   report.runEvidence = buildT2RunEvidence({
     cell: crossThreadCell,
-    role: pairingRole,
+    role: pairedReplayResult ? 'light-beside' : pairingRole,
     workload,
     seed,
     fixtureFingerprint: fingerprint,

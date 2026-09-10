@@ -300,8 +300,8 @@ function cellReachability(cell) {
   // saturation mode claims a missing driver.
   const missingCapability = []
   // Reachable means every capability driver the cell needs exists. It does
-  // NOT mean a runner can execute the cell today: pairing (Wall 2) still
-  // gates every measured run, windowed replay stays opt-in, production
+  // NOT mean a runner can execute the cell today: pairing is opt-in on the
+  // T2 runner (`--paired-runs`), windowed replay stays opt-in, production
   // binding is still owed, and reports still declare not-run.
   return { reachable: missingCapability.length === 0, missingCapability }
 }

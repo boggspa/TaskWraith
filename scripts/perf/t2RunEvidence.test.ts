@@ -8,6 +8,7 @@ const require = createRequire(import.meta.url)
 const { buildT2RunEvidence } = require('./t2RunEvidence.cjs')
 const {
   validateRunEvidence,
+  validateInterferenceReport,
   MATRIX_SAMPLING,
   RUN_EVIDENCE_VERSION
 } = require('./interferenceMatrix.cjs')
@@ -328,6 +329,153 @@ describe('T2 windowed-replay wiring (Wall 2 window orchestration)', () => {
   it('refuses --max-replay-events with --windowed-replay', async () => {
     await expect(
       runT2BaselineCli(windowedArgs(['--max-replay-events=10']), windowedOptions())
+    ).rejects.toThrow(/--max-replay-events/)
+  })
+})
+
+describe('T2 paired-run wiring (Wall 2 G-X pairing)', () => {
+  const interferenceEnvironment = {
+    capturedAt: '2026-09-08T18:00:00.000Z',
+    appVersion: 'test',
+    nodeVersion: 'test',
+    electronVersion: { unsupported: 'synthetic-test' },
+    repoProvenance: {
+      gitSha: 'b'.repeat(40),
+      dirty: false,
+      dirtyPaths: [],
+      dirtyTreeFingerprint: 'a'.repeat(64),
+      isolatedWorktree: false,
+      authoritativeBaseline: false
+    },
+    machine: {
+      platform: 'test',
+      arch: 'test',
+      release: 'test',
+      cpuModel: 'test',
+      cpuCount: 1,
+      totalMemoryBytes: 1
+    },
+    ollamaMaxLoadedModels: null,
+    taskwraithFlags: {}
+  }
+
+  function pairedArgs(extra: string[] = []) {
+    return [
+      '--workload=dual_run',
+      '--lean',
+      '--scale-down=40',
+      '--paired-runs',
+      `--cell=${CELL}`,
+      '--build-id=test-build',
+      '--instance-id=perfT2Paired01',
+      `--home=${path.join(tmpdir(), 'tw-t2-home-paired')}`,
+      `--artifact-dir=${mkdtempSync(path.join(tmpdir(), 'tw-t2-paired-'))}`,
+      ...extra
+    ]
+  }
+
+  function fixtureBackedApi(fixture) {
+    const store = new Map()
+    for (const chat of fixture.chats) store.set(chat.appChatId, { ...chat })
+    return {
+      async getChat(chatId: string) {
+        return store.get(chatId) || null
+      },
+      async saveChat(record: { appChatId?: string; persistenceRevision?: number }) {
+        const nextRev = (record.persistenceRevision || 0) + 1
+        store.set(record.appChatId, { ...record, persistenceRevision: nextRev })
+        return { persistenceRevision: nextRev }
+      }
+    }
+  }
+
+  function pairedOptions() {
+    const fixture = generatePerfFixture({
+      workload: 'dual_run',
+      seed: 42,
+      lean: true,
+      scaleDown: 40
+    })
+    return {
+      repoRoot: path.resolve(__dirname, '..', '..'),
+      forceIsolated: true,
+      platform: 'darwin',
+      replayApi: fixtureBackedApi(fixture),
+      replayWindowMs: 50,
+      interferenceEnvironment
+    }
+  }
+
+  it('emits report.pairs and a schema-valid interference document without qualifying short samples', async () => {
+    const result = await runT2BaselineCli(pairedArgs(), pairedOptions())
+    expect(result.ok).toBe(true)
+    expect(result.report.windowedReplay).toMatchObject({ windowed: true, windows: 3 })
+    expect(result.report.pairedRuns).toMatchObject({
+      paired: true,
+      pairingOk: false,
+      lightAloneRole: 'light-alone',
+      lightBesideRole: 'light-beside'
+    })
+    expect(result.report.pairs).toEqual([])
+    expect(result.report.runEvidence.role).toBe('light-beside')
+    expect(result.report.runEvidence.evidence.windows).toHaveLength(3)
+    expect(result.report.pairedRuns.reasons.length).toBeGreaterThan(0)
+    expect(result.report.interferenceReport).toMatchObject({
+      schemaVersion: 2,
+      pairs: []
+    })
+    expect(validateInterferenceReport(result.report.interferenceReport)).toEqual({
+      ok: true,
+      errors: []
+    })
+    expect(validateRunEvidence(result.report.runEvidence)).toContain(
+      'incomplete, overlapping or invalid observed window'
+    )
+  })
+
+  it('implies windowed replay so sequential gap-declaring stays the default', async () => {
+    const args = pairedArgs().filter((arg) => arg !== '--paired-runs')
+    const result = await runT2BaselineCli(args, pairedOptions())
+    expect(result.ok).toBe(true)
+    expect(result.report.pairs).toBeUndefined()
+    expect(result.report.pairedRuns).toBeUndefined()
+    expect(result.report.interferenceReport).toBeUndefined()
+    expect(result.report.windowedReplay).toBeUndefined()
+    expect(validateRunEvidence(result.report.runEvidence)).toContain(
+      'coverage for every repetition required'
+    )
+  })
+
+  it('refuses --role, missing identity, and --max-replay-events before any I/O', async () => {
+    const required = [`--cell=${CELL}`, '--build-id=test-build']
+    await expect(
+      runT2BaselineCli([
+        '--workload=dual_run',
+        '--dry-run',
+        '--paired-runs',
+        ...required,
+        '--role=light-beside'
+      ])
+    ).rejects.toThrow(/--role/)
+    await expect(
+      runT2BaselineCli([
+        '--workload=dual_run',
+        '--dry-run',
+        '--paired-runs',
+        '--build-id=test-build'
+      ])
+    ).rejects.toThrow(/--cell/)
+    await expect(
+      runT2BaselineCli(['--workload=dual_run', '--dry-run', '--paired-runs', `--cell=${CELL}`])
+    ).rejects.toThrow(/--build-id/)
+    await expect(
+      runT2BaselineCli([
+        '--workload=dual_run',
+        '--dry-run',
+        '--paired-runs',
+        ...required,
+        '--max-replay-events=10'
+      ])
     ).rejects.toThrow(/--max-replay-events/)
   })
 })
