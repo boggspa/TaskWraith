@@ -592,10 +592,10 @@ describe('HostNodeProductionServer', () => {
     await h.server.start()
     const perf = h.compositionPerf() as { instrumentation?: { spans?: unknown } }
     expect(h.domainWorkSpanRecorder()).toBe(perf.instrumentation?.spans)
-    const resolve = h.composedResolveReceiptSpanChatId() as
-      | ((record: { target: { kind: string; id?: string } }) => string | undefined)
-      | undefined
-    expect(resolve).toBeTypeOf('function')
+    const resolve = h.composedResolveReceiptSpanChatId()
+    if (typeof resolve !== 'function') {
+      throw new Error('resolveReceiptSpanChatId was not wired')
+    }
     const pending = h.domain.interactions.register({
       id: 'appr-1',
       kind: 'approval',

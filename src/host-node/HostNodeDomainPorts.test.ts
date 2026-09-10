@@ -3374,6 +3374,46 @@ describe('HostNodeDomainPorts', () => {
       await domainWithRecorder.shutdown()
     })
 
+    it('does not emit round_start when provider.run throws before dispatch returns', async () => {
+      const { domainOptions, store, workspace } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      configureMuseThread(store, thread.appChatId)
+
+      const museFactory = domainOptions.providers[0]
+      const throwingFactory = {
+        ...museFactory,
+        create: (input: Parameters<NonNullable<typeof museFactory.create>>[0]) => {
+          const instance = museFactory.create(input)
+          return Object.assign(Object.create(instance) as typeof instance, {
+            run: () => {
+              throw new Error('sync dispatch refused')
+            }
+          })
+        }
+      }
+      const recorder = createControlledRecorder(() => 1000)
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        providers: [throwingFactory],
+        workSpanRecorder: recorder
+      })
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-sync-throw',
+            { threadId: thread.appChatId },
+            { text: 'never dispatched' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toMatchObject({ status: 'failed', errorCode: 'run_not_started' })
+      expect(recorder.snapshot().spans.filter((span) => span.kind === 'round_start')).toEqual([])
+      await domainWithRecorder.shutdown()
+    })
+
     it('contains a throwing recorder so composer.send still dispatches', async () => {
       const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
       const registered = store.registerWorkspace({ path: workspace })

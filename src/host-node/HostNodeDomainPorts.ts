@@ -475,9 +475,10 @@ export class HostNodeDomainPorts {
   }
 
   /**
-   * Composer send → first actual provider dispatch (A1.2). Ends at
-   * `provider.run`, never at admission queue insertion and never after the
-   * persisted-start wait. No dispatch → no span.
+   * Composer send → first actual provider dispatch (A1.2). Ends after
+   * `provider.run` returns, never at admission queue insertion, never on a
+   * synchronous throw from `provider.run`, and never after the persisted-start
+   * wait. No dispatch → no span.
    */
   private recordRoundStart(
     chatId: string | undefined,
@@ -1152,9 +1153,6 @@ export class HostNodeDomainPorts {
     }
     const lease = admission.lease
 
-    // End the span at dispatch, not queue insertion and not persisted-start.
-    this.recordRoundStart(roundChatId, roundStartedAt, command.commandId)
-
     let completion: ReturnType<typeof provider.run>
     try {
       completion = provider.run({
@@ -1179,6 +1177,9 @@ export class HostNodeDomainPorts {
       this.terminalizeRejectedStart(command.commandId, command.target.threadId, reason)
       return failed('run_not_started', reason)
     }
+    // End at synchronous dispatch return, not queue insertion, not a throw
+    // from provider.run, and not persisted-start.
+    this.recordRoundStart(roundChatId, roundStartedAt, command.commandId)
     let rejection: string | undefined
     const tracked = completion
       .catch((error) => {
