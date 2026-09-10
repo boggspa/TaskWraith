@@ -54,7 +54,8 @@ describe('TerminalSessionManager', () => {
       {
         spawn,
         inheritedEnv: { PATH: inheritedPath, SHELL: '/bin/zsh' },
-        resolveCli
+        resolveCli,
+        graftKeychain: () => null
       }
     )
 
@@ -96,7 +97,8 @@ describe('TerminalSessionManager', () => {
         inheritedEnv: { PATH: '/usr/bin', SHELL: '/bin/zsh' },
         resolveCli: vi.fn(async () => {
           throw new Error('Kimi CLI was not found.')
-        })
+        }),
+        graftKeychain: () => null
       }
     )
 
@@ -106,5 +108,55 @@ describe('TerminalSessionManager', () => {
 
     expect(manager.getScrollback('terminal-2')).toContain('[TaskWraith] Kimi CLI was not found.')
     manager.kill('terminal-2')
+  })
+
+  it('grafts macOS keychain access into the isolated workspace home', async () => {
+    const shell = fakePty()
+    let graftedHome: string | undefined
+    const graftKeychain = vi.fn((home: string) => {
+      graftedHome = home
+      return null
+    })
+    const manager = new TerminalSessionManager(
+      join(os.tmpdir(), 'taskwraith-terminal-manager-test'),
+      {
+        spawn: vi.fn(() => shell as unknown as pty.IPty),
+        inheritedEnv: { PATH: '/usr/bin', SHELL: '/bin/zsh' },
+        graftKeychain
+      }
+    )
+
+    const creating = manager.create('/work/AGBench', 'terminal-3')
+    shell.emitData('$ ')
+    await expect(creating).resolves.toBeTruthy()
+
+    expect(graftKeychain).toHaveBeenCalledTimes(1)
+    expect(graftedHome).toContain(`${sep}terminal-home${sep}`)
+    manager.kill('terminal-3')
+  })
+
+  it('still opens the terminal when the keychain graft fails', async () => {
+    const shell = fakePty()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const manager = new TerminalSessionManager(
+        join(os.tmpdir(), 'taskwraith-terminal-manager-test'),
+        {
+          spawn: vi.fn(() => shell as unknown as pty.IPty),
+          inheritedEnv: { PATH: '/usr/bin', SHELL: '/bin/zsh' },
+          graftKeychain: () => {
+            throw new Error('graft exploded')
+          }
+        }
+      )
+
+      const creating = manager.create('/work/AGBench', 'terminal-4')
+      shell.emitData('$ ')
+      await expect(creating).resolves.toBeTruthy()
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('keychain graft failed'))
+      manager.kill('terminal-4')
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

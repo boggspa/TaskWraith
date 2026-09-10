@@ -5,6 +5,7 @@ import { EventEmitter } from 'events'
 import { mkdirSync } from 'fs'
 import crypto from 'crypto'
 import { createInteractiveTerminalEnvironment } from './InteractiveTerminalEnvironment'
+import { graftTerminalKeychainAccess } from './TerminalKeychainGraft'
 import { resolveInteractiveTerminalCli } from './TerminalCliResolver'
 
 export interface TerminalSession {
@@ -23,6 +24,7 @@ export interface TerminalSessionManagerOptions {
   spawn?: typeof pty.spawn
   inheritedEnv?: Readonly<Record<string, string | undefined>>
   resolveCli?: typeof resolveInteractiveTerminalCli
+  graftKeychain?: typeof graftTerminalKeychainAccess
 }
 
 export class TerminalSessionManager extends EventEmitter {
@@ -32,6 +34,7 @@ export class TerminalSessionManager extends EventEmitter {
   private spawnPty: typeof pty.spawn
   private inheritedEnv: Readonly<Record<string, string | undefined>>
   private resolveCli: typeof resolveInteractiveTerminalCli
+  private graftKeychain: typeof graftTerminalKeychainAccess
 
   constructor(userDataPath: string, options: TerminalSessionManagerOptions = {}) {
     super()
@@ -39,6 +42,7 @@ export class TerminalSessionManager extends EventEmitter {
     this.spawnPty = options.spawn ?? pty.spawn
     this.inheritedEnv = options.inheritedEnv ?? process.env
     this.resolveCli = options.resolveCli ?? resolveInteractiveTerminalCli
+    this.graftKeychain = options.graftKeychain ?? graftTerminalKeychainAccess
   }
 
   private getWorkspaceHome(workspacePath: string): string {
@@ -60,6 +64,13 @@ export class TerminalSessionManager extends EventEmitter {
     const home = this.getWorkspaceHome(workspacePath)
     mkdirSync(home, { recursive: true })
     mkdirSync(join(home, 'tmp'), { recursive: true })
+    try {
+      this.graftKeychain(home)
+    } catch (error) {
+      console.warn(
+        `[TaskWraith] Terminal keychain graft failed: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
 
     const env = createInteractiveTerminalEnvironment({
       home,
