@@ -110,7 +110,8 @@ describe('interference matrix reachability', () => {
     for (const cell of cells) {
       expect(cell.name).toBe(cellName(cell))
       expect(cell.name.split('/')).toHaveLength(5)
-      expect(cell.reachable).toBe(cell.saturation !== 'ensemble_pool_30_join')
+      expect(cell.reachable).toBe(true)
+      expect(cell.missingCapability).toEqual([])
       // The deterministic-provider capability LANDED with
       // scripts/perf/deterministicReplayProvider.cjs (M1 P1): the matrix no
       // longer claims it missing.
@@ -121,9 +122,10 @@ describe('interference matrix reachability', () => {
       // The per-chat lanes capability LANDED with scripts/perf/concurrentReplayLanes.cjs
       // (M1 A1.2): the matrix no longer claims it missing.
       expect(cell.missingCapability.includes('concurrent_per_chat_replay_lanes')).toBe(false)
-      expect(cell.missingCapability.includes('ensemble_pool_saturation_driver')).toBe(
-        cell.saturation === 'ensemble_pool_30_join'
-      )
+      // The ensemble-pool saturation capability LANDED with
+      // scripts/perf/ensemblePoolSaturation.cjs (M1 Wall 1): the matrix no
+      // longer claims it missing.
+      expect(cell.missingCapability.includes('ensemble_pool_saturation_driver')).toBe(false)
       // The host-native saturation capability LANDED with
       // scripts/perf/hostNativeSaturation.cjs (M1 Wall 1): the matrix no
       // longer claims it missing.
@@ -131,16 +133,11 @@ describe('interference matrix reachability', () => {
       for (const missing of cell.missingCapability)
         expect(MISSING_DRIVER_CAPABILITIES).toContain(missing)
     }
-    // The host-saturation landing flips the host_queue third after the
-    // provider landing flipped the unsaturated third: reachable means every
-    // capability driver exists, not that a runner can execute.
+    // The ensemble-saturation landing flips the last third: all 480 cells
+    // read reachable. Reachable means every capability driver exists, not
+    // that a runner can execute.
     const reachable = cells.filter((cell: { reachable: boolean }) => cell.reachable)
-    expect(reachable).toHaveLength(320)
-    expect(
-      reachable.every((cell: { saturation: string }) =>
-        ['none', 'host_queue_16_active_1_queued'].includes(cell.saturation)
-      )
-    ).toBe(true)
+    expect(reachable).toHaveLength(480)
   })
 
   it('keeps returned descriptors independent across enumerations', () => {
@@ -223,12 +220,18 @@ describe('standalone interferenceReport', () => {
     duplicate.cells.push(duplicate.cells[0])
     expect(validateInterferenceReport(duplicate).ok).toBe(false)
     const unsupported = valid()
+    // Every cell is genuinely reachable with no missing drivers, so the
+    // false claim now runs the other way: a fabricated missing driver plus a
+    // false unreachable flag must still be rejected.
     const saturatedIdx = unsupported.cells.findIndex(
       (cell: { saturation: string }) => cell.saturation !== 'none'
     )
-    unsupported.cells[saturatedIdx].reachable = true
-    unsupported.cells[saturatedIdx].missingCapability = []
+    unsupported.cells[saturatedIdx].reachable = false
+    unsupported.cells[saturatedIdx].missingCapability = ['fabricated_driver']
     expect(validateInterferenceReport(unsupported).ok).toBe(false)
+    expect(validateInterferenceReport(unsupported).errors).toContain(
+      `cell ${unsupported.cells[saturatedIdx].name} must disclose current missing drivers`
+    )
     const absent = valid()
     delete absent.cells[0].reachable
     expect(validateInterferenceReport(absent).ok).toBe(false)

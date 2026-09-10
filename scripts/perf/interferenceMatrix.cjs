@@ -282,24 +282,27 @@ function assertPairedRunCompatibility(alone, beside) {
   return reasons.length === 0 ? { ok: true } : { ok: false, reasons }
 }
 
-/** Missing drivers are current harness facts, not measurements or new limits. */
-const MISSING_DRIVER_CAPABILITIES = Object.freeze(['ensemble_pool_saturation_driver'])
+/**
+ * Missing drivers are current harness facts, not measurements or new limits.
+ * All Wall 1 capability drivers have landed (lanes, control-action,
+ * provider-turn, host-native and ensemble-pool saturation), so no cell claims
+ * a missing driver today. The list stays exported: a future capability gap
+ * re-lands here, not in a comment.
+ */
+const MISSING_DRIVER_CAPABILITIES = Object.freeze([])
 
 function cellReachability(cell) {
   const check = validateMatrixCell(cell)
   if (!check.ok) throw new Error(check.errors.join('; '))
-  const missingCapability = []
-  if (cell.saturation === 'ensemble_pool_30_join') {
-    missingCapability.push('ensemble_pool_saturation_driver')
-  }
   // The host-native saturation driver LANDED with
-  // scripts/perf/hostNativeSaturation.cjs (M1 Wall 1): host_queue cells no
-  // longer claim it missing.
-  // Reachable means every capability driver the cell needs exists — the
-  // lanes, control, provider-turn, and host-saturation drivers. It does NOT
-  // mean a runner can execute the cell today: pairing (Wall 2) still gates
-  // every measured run, windowed replay stays opt-in, production binding is
-  // still owed, and reports still declare not-run.
+  // scripts/perf/hostNativeSaturation.cjs and the ensemble-pool saturation
+  // driver with scripts/perf/ensemblePoolSaturation.cjs (M1 Wall 1): no
+  // saturation mode claims a missing driver.
+  const missingCapability = []
+  // Reachable means every capability driver the cell needs exists. It does
+  // NOT mean a runner can execute the cell today: pairing (Wall 2) still
+  // gates every measured run, windowed replay stays opt-in, production
+  // binding is still owed, and reports still declare not-run.
   return { reachable: missingCapability.length === 0, missingCapability }
 }
 
