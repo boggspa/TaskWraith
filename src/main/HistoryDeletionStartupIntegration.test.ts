@@ -124,15 +124,14 @@ describe('history deletion startup integration', () => {
       source.indexOf('AppStore.recoverRunQueueAfterStartup()')
     )
     expect(source).toMatch(SCHEDULED_OCCURRENCE_GATE)
-    const wakeupRecovery = indexSource.lastIndexOf('recoverPersistedEnsembleWakeups()')
+    // Sweep-budget args (perf-boot 04989a0e2): the calls take a budget, so pin
+    // the callee name, not the empty parens.
+    const wakeupRecovery = indexSource.lastIndexOf('recoverPersistedEnsembleWakeups(')
     const wakeupGuard = indexSource.lastIndexOf(
       '!historyDeletionStartupRecoveryBlockedReason',
       wakeupRecovery
     )
-    const mailboxRecovery = indexSource.indexOf(
-      'recoverSubThreadControlPlane()',
-      wakeupRecovery
-    )
+    const mailboxRecovery = indexSource.indexOf('recoverSubThreadControlPlane(', wakeupRecovery)
     const mailboxGuard = lastGateIndexAtOrBefore(indexSource, mailboxRecovery)
     expect(wakeupGuard).toBeGreaterThan(end)
     expect(wakeupGuard).toBeLessThan(wakeupRecovery)

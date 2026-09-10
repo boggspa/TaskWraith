@@ -65,7 +65,9 @@ describe('native Canvas approval integration contracts', () => {
     const source = cancelSource.slice(sessionBranch)
     const claim = source.indexOf("runManager.claimTerminalStatus(session.runId, 'cancelled')")
     const cancelApprovals = source.indexOf('approvalService?.cancelForRun(')
-    const terminate = source.indexOf('return terminateExactProviderSession(')
+    // d6fb8f4a7 awaits the terminate into a const for post-cancel delegated-run
+    // reconciliation; the claim -> revoke -> terminate order still holds.
+    const terminate = source.indexOf('terminateExactProviderSession(')
 
     expect(sessionBranch).toBeGreaterThanOrEqual(0)
     expect(claim).toBeGreaterThanOrEqual(0)

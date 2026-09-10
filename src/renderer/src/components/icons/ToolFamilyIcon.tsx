@@ -320,6 +320,9 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'tw_recall_find':
     case 'tw_recall_read':
     case 'tw_recall_read_events':
+    case 'tw_history_search':
+    case 'tw_history_read':
+    case 'tw_checkpoint':
       return 'memory'
     case 'canvas_open':
     case 'canvas_render_html':
@@ -429,6 +432,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
   if (normalised.startsWith('simulator_')) return 'canvas'
   if (normalised.startsWith('emulator_')) return 'canvas'
   if (normalised.startsWith('tw_recall_')) return 'memory'
+  if (normalised.startsWith('tw_history_')) return 'memory'
   if (normalised.startsWith('tw_introspection_')) return 'audit'
   if (normalised.startsWith('workspace_board_')) return 'plan'
   // Outlook mail + calendar (reads and draft creation) share one glyph.

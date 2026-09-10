@@ -29,6 +29,7 @@ import { CAPABILITY_GATEWAY_TOOL_NAMES } from './McpToolGateway'
 import { OUTLOOK_MCP_TOOL_NAMES } from './OutlookToolExecutors'
 import { PROJECT_REFERENCE_MCP_TOOL_NAMES } from './ProjectReferenceToolExecutors'
 import { RECALL_MCP_TOOL_NAMES } from './RecallToolExecutors'
+import { THREAD_CONTINUITY_TOOL_NAMES } from './ThreadContinuityToolExecutors'
 import { THEME_TOKEN_MCP_TOOL_NAMES } from './ThemeTokenToolExecutors'
 import { THREAD_MESSAGE_MCP_TOOL_NAMES } from './ThreadMessageToolExecutors'
 import {
@@ -96,6 +97,7 @@ const DISPATCHER_BRANCH_CONTRACTS = [
   branch('isSimulatorMcpToolName(toolName)', SIMULATOR_MCP_TOOL_NAMES, 'simulator-canvas'),
   branch('isLaunchMcpToolName(toolName)', LAUNCH_MCP_TOOL_NAMES, 'launch-control'),
   branch('isRecallMcpToolName(toolName)', RECALL_MCP_TOOL_NAMES, 'cross-thread-recall'),
+  branch('isThreadContinuityToolName(toolName)', THREAD_CONTINUITY_TOOL_NAMES, 'thread-continuity'),
   branch('isThreadMessageMcpToolName(toolName)', THREAD_MESSAGE_MCP_TOOL_NAMES, 'ensemble-control'),
   branch('isIntrospectionMcpToolName(toolName)', INTROSPECTION_MCP_TOOL_NAMES, 'introspection'),
   branch('isSkillMcpToolName(toolName)', SKILL_MCP_TOOL_NAMES, 'skills'),
@@ -179,14 +181,16 @@ function normalizeSource(value: string): string {
 function executeDispatcherFunction(): ts.FunctionDeclaration {
   let found: ts.FunctionDeclaration | undefined
   const visit = (node: ts.Node): void => {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === 'executeGeminiMcpTool') {
+    // 30db8a4d5 wrapped the dispatcher: executeGeminiMcpTool is now a const
+    // alias and the marked branches live in executeUnscopedGeminiMcpTool.
+    if (ts.isFunctionDeclaration(node) && node.name?.text === 'executeUnscopedGeminiMcpTool') {
       found = node
       return
     }
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
-  if (!found) throw new Error('executeGeminiMcpTool was not found in src/main/index.ts')
+  if (!found) throw new Error('executeUnscopedGeminiMcpTool was not found in src/main/index.ts')
   return found
 }
 

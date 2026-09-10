@@ -46,7 +46,8 @@ function between(start: string, end: string): string {
 
 describe('solo wakeup destructive-history main integration', () => {
   it('keeps solo timer recovery behind the startup deletion-recovery gate', () => {
-    const soloRecovery = indexSource.lastIndexOf('recoverPersistedSoloChatWakeups()')
+    // Sweep-budget args (perf-boot 04989a0e2): pin the callee, not empty parens.
+    const soloRecovery = indexSource.lastIndexOf('recoverPersistedSoloChatWakeups(')
     const guardedBlock = lastMatchIndexAtOrBefore(ENSEMBLE_WAKEUP_GATE, soloRecovery)
     const nextBlock = firstMatchIndexAfter(STARTUP_RECOVERY_GATE, guardedBlock + 1)
 

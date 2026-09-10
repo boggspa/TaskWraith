@@ -38,7 +38,12 @@ describe('Ensemble DM routing ingress integration', () => {
     expect(canonicalChatRead).toBeGreaterThan(attachmentExpansion)
     expect(authoritativeResolution).toBeGreaterThan(canonicalChatRead)
     expect(roundStart).toBeGreaterThan(authoritativeResolution)
-    expect(handler).toContain('participants: ensembleChat.ensemble.participants')
+    // 51010be84 hoisted the roster into a guarded local (a catalogue
+    // projection can drop the field once the chrome budget is spent): the
+    // canonical-roster routing claim now spans two pins plus the fail-closed.
+    expect(handler).toContain('const roster = ensembleChat.ensemble.participants')
+    expect(handler).toContain('participants: roster')
+    expect(handler).toContain('Ensemble roster is unavailable')
     expect(handler).toContain('advisoryParticipantId: payload?.dmTargetParticipantId')
     expect(handler).toContain('exactPickerParticipantId: payload?.exactPickerParticipantId')
     expect(handler).toContain('if (dmTargetError) throw new Error(dmTargetError)')

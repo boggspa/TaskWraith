@@ -191,7 +191,7 @@ Stage selected files or all changes in the active workspace.
 
 ## git_commit
 
-Commit one verified logical slice without consuming the shared Git index. Use mode="pathspec" when you own the complete working-tree content of every declared tracked path. Use mode="private_index" with an isolated patch when committing only selected hunks or adding new files. Use mode="contribution" with the exact captured file set to commit this task’s Git-eligible mediated write_file/replace edits without constructing a patch. A message-only/bare commit is refused. The result includes the commit SHA and exact committed paths.
+Commit one verified logical slice without consuming the shared Git index. Use mode="pathspec" when you own the complete working-tree content of every declared tracked path. Use mode="private_index" with an isolated patch when committing only selected hunks or adding new files. Use mode="contribution" with the exact captured file set to commit this task’s mediated write_file/replace edits with no patch to construct. A message-only/bare commit is refused. The result includes the commit SHA and exact committed paths.
 
 - Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
 - Required args: message, mode, paths
@@ -634,7 +634,7 @@ List AppShots capture targets available to this chat: the attached Screen Watch 
 
 ## approval_status
 
-Return approval policies, workspace grants, and recent approval ledger records. By default the query is scoped to the current run+chat (derived from the calling agent context) so the agent sees only approvals relevant to its own work. Pass `all: true` to widen the query to ALL of the calling agent's provider's approvals across every run+chat — useful for auditing or surfacing historical approvals. Explicit `runId` / `chatId` always override scope inference, regardless of `all`.
+Return recorded run policies (labelled separately from configured defaults), workspace grants, and approval ledger records. For an exact Kimi run in the current chat, also return its available capability receipt: broker discovery, observed tools, assigned scope, and system containment refusals. An unavailable receipt is unknown; an empty approval ledger does not prove tool availability or absence of native refusals. By default the query is scoped to the current run+chat (derived from the calling agent context) so the agent sees only approvals relevant to its own work. Pass `all: true` to widen the query to ALL of the calling agent's provider's approvals across every run+chat — useful for auditing or surfacing historical approvals. Explicit `runId` / `chatId` always override scope inference, regardless of `all`.
 
 - Access: read-only (no approval needed)
 - Required args: none

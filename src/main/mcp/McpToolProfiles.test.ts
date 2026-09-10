@@ -646,6 +646,18 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // catalogue hygiene shrank descriptions/examples and extended pre-approval
     // coverage. Both fresh profiles and the full/gateway ratios dropped.
     //
+    // Re-measured 2026-09-10. 41ab0d4c0 (per-lane fan-out briefs) added the
+    // laneBriefs schema to ensemble_fanout: +61 chars on the mesh transport
+    // (39960 -> 40021), breaching the ceiling. The mesh compactor strips
+    // property descriptions but keeps schema shape, and the anyOf union is
+    // load-bearing for the Gemini declaration mapper, so the growth itself is
+    // irreducible prose-side. The payback (-35 -> 39986) comes from git_commit's
+    // uncompacted contribution/patch prose: "captured" already entails
+    // "Git-eligible", "current" adds nothing to "the task's", and the patch
+    // records' "when needed" is tautological. The tw_history_*/tw_checkpoint
+    // additions are hidden-only and contribute nothing to this transport.
+    // Headroom is 14 chars; the ceiling asserts below stay the tripwire.
+    //
     // Growth is the direction this guard exists to question, so it is justified
     // rather than absorbed: both fresh profiles remain under the 40k ceiling
     // asserted below, which is the real budget — these exact pins are the

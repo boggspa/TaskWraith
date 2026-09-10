@@ -62169,8 +62169,10 @@ if (isGeminiMcpBridgeProcess) {
       )
     })
 
-    ipcMain.handle('run-ensemble-round', async (event, payload: RunEnsembleRoundPayload) =>
-      handleRunEnsembleRound(ensembleRoundHandlerDeps(), event, payload)
+    ipcMain.handle(
+      'run-ensemble-round',
+      async (event, payload: RunEnsembleRoundPayload) =>
+        handleRunEnsembleRound(ensembleRoundHandlerDeps(), event, payload)
     )
 
     // ── First-class mid-turn steering (SteeringOrchestrator) ────────────────

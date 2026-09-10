@@ -24,8 +24,9 @@ describe('Channel member production main integration', () => {
     expect(composition).toContain('ipc: ipcMain')
     expect(composition).toContain('assertMainRendererSender,')
     expect(composition).toContain('channelMemberProductionBootstrap.start()')
+    // Multi-window 8a0c5290a: member events publish via desktopWindows.broadcast.
     expect(composition).toContain(
-      'mainWindow.webContents.send(CHANNEL_MEMBER_IPC_CHANGED_EVENT, event)'
+      'desktopWindows.broadcast(CHANNEL_MEMBER_IPC_CHANGED_EVENT, event)'
     )
 
     const hostStart = source.indexOf('startPeopleToChannelMigrationBootstrap({')

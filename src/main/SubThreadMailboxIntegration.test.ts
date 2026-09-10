@@ -63,9 +63,11 @@ describe('sub-thread return main-process integration (ledger + projection, no au
     expect(timer).toContain('ensureSubThreadJoinDeadlineEvent(parentChatId, current)')
     expect(timer).toContain('failHungEphemeralFleetWorkersOnJoinDeadline(parentChatId, groupId)')
 
+    // Sweep-budget args (perf-boot 04989a0e2): recovery signatures take a
+    // budget now, so markers pin the 'name(' prefix rather than 'name()'.
     const reaper = sourceBetween(
       'async function failHungEphemeralFleetWorkersOnJoinDeadline(',
-      'function recoverSubThreadControlPlane()'
+      'function recoverSubThreadControlPlane('
     )
     expect(reaper).toContain('selectHungEphemeralFleetWorkers(')
     // Stamp `cancelled` on the persisted row BEFORE aborting (flusher contract).
@@ -75,14 +77,17 @@ describe('sub-thread return main-process integration (ledger + projection, no au
 
     // Startup recovery keeps its orphan-run settle + worker-queue + join-timer
     // legs (renamed — the old name advertised the deleted drain leg).
-    expect(indexSource).toContain('recoverSubThreadControlPlane()')
+    expect(indexSource).toContain('recoverSubThreadControlPlane(')
     expect(indexSource).not.toContain('recoverPendingSubThreadMailboxes')
     const recovery = sourceBetween(
-      'function recoverSubThreadControlPlane()',
+      'function recoverSubThreadControlPlane(',
       '/**\n * Surface a sub-thread-dispatch failure'
     )
-    expect(recovery).toContain('reconcileStaleChatRunsProjection({ minAgeMs: 0 })')
-    expect(recovery).toContain('recoverSubThreadWorkerQueues()')
+    // Perf-boot 04989a0e2 threads a budget through the call; the no-age-floor
+    // settle (minAgeMs: 0 in both arms) is the load-bearing half of this pin.
+    expect(recovery).toContain('reconcileStaleChatRunsProjection(')
+    expect(recovery).toContain('{ minAgeMs: 0')
+    expect(recovery).toContain('recoverSubThreadWorkerQueues(')
     expect(recovery).toContain('scheduleSubThreadJoinEvaluation(')
   })
 
@@ -122,9 +127,11 @@ describe('sub-thread return main-process integration (ledger + projection, no au
     expect(finalizer).toContain('backgroundSubThreadDispatchMayStart')
     expect(finalizer).toContain('providerAdapterRunsInFlight.has(runId)')
     expect(finalizer).toContain('providerTransportOperations.get(runId)')
+    // d6fb8f4a7 added three fail-closed seat-execution gate checks to the two
+    // terminal-exit sites; every occurrence stays a dispatch gate, never a leg.
     expect(
       indexSource.match(/backgroundSubThreadDispatchMayStart\(subThreadRunId\)/g)
-    ).toHaveLength(2)
+    ).toHaveLength(5)
     expect(exit.indexOf('finalizeBackgroundSubThreadTranscript(')).toBeGreaterThan(
       exit.indexOf('finalizeBridgeRunTranscript(')
     )

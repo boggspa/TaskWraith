@@ -37,9 +37,11 @@ describe('sub-thread long-lived worker main-process integration', () => {
   })
 
   it('claims and prebinds the stable run identity before normal RunCoordinator dispatch', () => {
+    // Sweep-budget args (perf-boot 04989a0e2): recovery signatures take a
+    // budget now, so markers pin the 'name(' prefix rather than 'name()'.
     const drain = sourceBetween(
       'async function maybeDrainSubThreadWorkerQueue(',
-      'function recoverSubThreadWorkerQueues()'
+      'function recoverSubThreadWorkerQueues('
     )
 
     expectContains(drain, 'claimNextSubThreadWorkerEvent(')
@@ -64,7 +66,7 @@ describe('sub-thread long-lived worker main-process integration', () => {
     )
     const drain = sourceBetween(
       'async function maybeDrainSubThreadWorkerQueue(',
-      'function recoverSubThreadWorkerQueues()'
+      'function recoverSubThreadWorkerQueues('
     )
 
     expectContains(delegation, 'resolveEnsembleDelegatedRunOrigin({')
@@ -102,7 +104,7 @@ describe('sub-thread long-lived worker main-process integration', () => {
   it('fails closed for workers queued by a scheduled parent without waking that parent', () => {
     const drain = sourceBetween(
       'async function maybeDrainSubThreadWorkerQueue(',
-      'function recoverSubThreadWorkerQueues()'
+      'function recoverSubThreadWorkerQueues('
     )
     const localFailure = sourceBetween(
       'function failClaimedScheduledParentSubThreadWorker(',
@@ -135,7 +137,7 @@ describe('sub-thread long-lived worker main-process integration', () => {
   it('settles terminal worker events, drains the next item, and recovers queues on startup', () => {
     expectContains(indexSource, 'settleSubThreadWorkerEvent(')
     expectContains(indexSource, 'recoverSubThreadWorkerControl(')
-    expectContains(indexSource, 'recoverSubThreadWorkerQueues()')
+    expectContains(indexSource, 'recoverSubThreadWorkerQueues(')
     expectContains(indexSource, 'maybeDrainSubThreadWorkerQueue(')
     expectContains(indexSource, 'child.delegationContext?.workerControl?.events')
     expectContains(indexSource, 'isActiveChatRunStatus(run.status)')
@@ -147,7 +149,9 @@ describe('sub-thread long-lived worker main-process integration', () => {
     expectContains(indexSource, "from './ChatRunReconciler'")
     expectContains(indexSource, 'function isChatRunLive(')
     expectContains(indexSource, 'function reconcileStaleChatRunsProjection(')
-    expectContains(indexSource, 'reconcileStaleChatRunsProjection({ minAgeMs: 0 })')
+    // Perf-boot 04989a0e2 threads a budget through the call (ternary arms keep
+    // minAgeMs: 0); pin the callee, with the floor pinned in the mailbox suite.
+    expectContains(indexSource, 'reconcileStaleChatRunsProjection(')
     expectContains(indexSource, 'getRunSession: (runId) => runManager.get(runId)')
     expectContains(indexSource, "eventType: 'chat_run_terminal_recovered'")
     expectContains(indexSource, 'chatRunReconcilerInterval = setInterval')
@@ -156,12 +160,12 @@ describe('sub-thread long-lived worker main-process integration', () => {
     expectContains(indexSource, 'broadcastRemoteProjectionSnapshot()')
     // Universal settle runs before sub-thread worker control recovery.
     const recoverPending = sourceBetween(
-      'function recoverSubThreadControlPlane(): void {',
+      'function recoverSubThreadControlPlane(',
       '/**\n * Surface a sub-thread-dispatch failure'
     )
-    expect(
-      recoverPending.indexOf('reconcileStaleChatRunsProjection({ minAgeMs: 0 })')
-    ).toBeLessThan(recoverPending.indexOf('recoverSubThreadWorkerQueues()'))
+    expect(recoverPending.indexOf('reconcileStaleChatRunsProjection(')).toBeLessThan(
+      recoverPending.indexOf('recoverSubThreadWorkerQueues(')
+    )
   })
 
   it('preserves the frozen Codex startup lease and canonical gateway target dispatch', () => {

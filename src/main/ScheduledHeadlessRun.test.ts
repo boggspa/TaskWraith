@@ -204,7 +204,8 @@ describe('scheduled headless dispatch integration', () => {
       'const SCHEDULED_CHILD_BOUND_EVENT_TYPE'
     )
     expect(indexSource.match(/scheduledOccurrenceTransaction\.settle\(/g)).toHaveLength(1)
-    expect(publisher).toContain("webContents.send('scheduled-tasks-changed'")
+    // Multi-window 8a0c5290a: settlement publishes via desktopWindows.broadcast.
+    expect(publisher).toContain("desktopWindows.broadcast('scheduled-tasks-changed'")
     expect(publisher).toContain("'workflow-definitions-changed'")
     expect(publisher).toContain('requestThrottledRemoteProjectionSnapshot()')
     expect(publisher).toContain('scheduleNextTaskTimer()')
