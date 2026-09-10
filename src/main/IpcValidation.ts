@@ -560,6 +560,15 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'git:unpushed-commits': ['optionalObject'],
   'git:workspace-stats': ['optionalObject'],
   'git:work-provenance': ['optionalObject'],
+  // Workspace Stats -> Contributions. All three resolve their repository through
+  // the same gitPayloadPath/assertSenderScope gate as the rest of this block, so
+  // the structural spec matches its siblings: one optional payload object, and
+  // nothing else. The handlers already treat a missing payload as "unavailable"
+  // rather than crashing, so 'optionalObject' keeps that behaviour while still
+  // rejecting a string/array/number payload before it reaches the handler.
+  'git:shared-workspace': ['optionalObject'],
+  'git:contribution-preview': ['optionalObject'],
+  'git:contribution-action': ['optionalObject'],
   'git:subscribe-snapshot': ['optionalObject'],
   'git:unsubscribe-snapshot': ['optionalObject'],
   'git:invalidate-snapshot': ['optionalObject'],

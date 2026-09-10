@@ -199,6 +199,15 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'git:unpushed-commits',
   'git:workspace-stats',
   'git:work-provenance',
+  // Workspace Stats -> Contributions, alongside the 'git:workspace-stats' read
+  // it is rendered from. The action channel takes the same write scope as
+  // 'git:commit'/'git:push' above and, like them, is narrowed again inside
+  // registerGitHandlers by gitPayloadPath's assertSenderScope on the exact
+  // chat/workspace pair before any contribution is committed, undone, or
+  // recovered.
+  'git:shared-workspace',
+  'git:contribution-preview',
+  'git:contribution-action',
   'git:stage',
   'git:subscribe-snapshot',
   'git:unstage',
