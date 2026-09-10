@@ -110,8 +110,11 @@ describe('interference matrix reachability', () => {
     for (const cell of cells) {
       expect(cell.name).toBe(cellName(cell))
       expect(cell.name.split('/')).toHaveLength(5)
-      expect(cell.reachable).toBe(false)
-      expect(cell.missingCapability).toContain('deterministic_replay_provider')
+      expect(cell.reachable).toBe(cell.saturation === 'none')
+      // The deterministic-provider capability LANDED with
+      // scripts/perf/deterministicReplayProvider.cjs (M1 P1): the matrix no
+      // longer claims it missing.
+      expect(cell.missingCapability.includes('deterministic_replay_provider')).toBe(false)
       // The control-action capability LANDED with scripts/perf/controlActionReplay.cjs
       // (M1 Wall 1): the matrix no longer claims it missing.
       expect(cell.missingCapability.includes('control_action_replay_events')).toBe(false)
@@ -127,12 +130,20 @@ describe('interference matrix reachability', () => {
       for (const missing of cell.missingCapability)
         expect(MISSING_DRIVER_CAPABILITIES).toContain(missing)
     }
+    // The provider landing flips exactly the unsaturated third: reachable
+    // means every capability driver exists, not that a runner can execute.
+    const reachable = cells.filter((cell: { reachable: boolean }) => cell.reachable)
+    expect(reachable).toHaveLength(160)
+    expect(reachable.every((cell: { saturation: string }) => cell.saturation === 'none')).toBe(true)
   })
 
   it('keeps returned descriptors independent across enumerations', () => {
     const cells = enumerateMatrixCells()
-    cells[0].missingCapability.length = 0
-    expect(enumerateMatrixCells()[0].missingCapability).toContain('deterministic_replay_provider')
+    cells[0].missingCapability.push('mutation-probe')
+    expect(enumerateMatrixCells()[0].missingCapability).not.toContain('mutation-probe')
+    expect(enumerateMatrixCells()[0].missingCapability).toEqual(
+      cells[0].missingCapability.filter((entry: string) => entry !== 'mutation-probe')
+    )
   })
 })
 
@@ -190,8 +201,9 @@ describe('standalone interferenceReport', () => {
     })
     expect(Object.keys(report)).toEqual(['schemaVersion', 'environment', 'cells', 'pairs'])
     expect(validateInterferenceReport(report)).toEqual({ ok: true, errors: [] })
-    cells[0].reachable = true
-    expect(report.cells[0].reachable).toBe(false)
+    const liveIdx = cells.findIndex((cell: { reachable: boolean }) => cell.reachable)
+    cells[liveIdx].reachable = false
+    expect(report.cells[liveIdx].reachable).toBe(true)
     report.pairs[0].deltas.roundStartMs.p95 = 1
     expect(validateInterferenceReport(report).ok).toBe(false)
   })
@@ -205,8 +217,11 @@ describe('standalone interferenceReport', () => {
     duplicate.cells.push(duplicate.cells[0])
     expect(validateInterferenceReport(duplicate).ok).toBe(false)
     const unsupported = valid()
-    unsupported.cells[0].reachable = true
-    unsupported.cells[0].missingCapability = []
+    const saturatedIdx = unsupported.cells.findIndex(
+      (cell: { saturation: string }) => cell.saturation !== 'none'
+    )
+    unsupported.cells[saturatedIdx].reachable = true
+    unsupported.cells[saturatedIdx].missingCapability = []
     expect(validateInterferenceReport(unsupported).ok).toBe(false)
     const absent = valid()
     delete absent.cells[0].reachable

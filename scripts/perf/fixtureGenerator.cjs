@@ -712,5 +712,9 @@ module.exports = {
   generatePerfFixture,
   fixtureFingerprint,
   buildReplaySchedule,
-  measureToolSerializedBytes
+  measureToolSerializedBytes,
+  // Additive (M1 Wall 1 deterministic replay provider): the tool-activity
+  // builder, exported so scripted provider turns carry byte-identical
+  // traffic shapes to fixture traffic.
+  buildToolActivity
 }

@@ -10,8 +10,9 @@
  * plus validators — no launch, no replay, no fixtures. Drivers that can
  * actually REACH every cell are landing piecemeal (concurrent per-chat
  * replay lanes: scripts/perf/concurrentReplayLanes.cjs, M1 A1.2; control
- * actions: scripts/perf/controlActionReplay.cjs, M1 Wall 1). Deterministic
- * providers and saturation drivers are still later milestone work.
+ * actions: scripts/perf/controlActionReplay.cjs, M1 Wall 1; deterministic
+ * provider turns: scripts/perf/deterministicReplayProvider.cjs, M1 P1).
+ * Saturation drivers are still later milestone work.
  * A cell existing here is a scenario definition. Every enumerated cell
  * explicitly lists today's missing drivers.
  *
@@ -283,7 +284,6 @@ function assertPairedRunCompatibility(alone, beside) {
 
 /** Missing drivers are current harness facts, not measurements or new limits. */
 const MISSING_DRIVER_CAPABILITIES = Object.freeze([
-  'deterministic_replay_provider',
   'ensemble_pool_saturation_driver',
   'host_native_saturation_driver'
 ])
@@ -291,14 +291,18 @@ const MISSING_DRIVER_CAPABILITIES = Object.freeze([
 function cellReachability(cell) {
   const check = validateMatrixCell(cell)
   if (!check.ok) throw new Error(check.errors.join('; '))
-  const missingCapability = ['deterministic_replay_provider']
+  const missingCapability = []
   if (cell.saturation === 'ensemble_pool_30_join') {
     missingCapability.push('ensemble_pool_saturation_driver')
   }
   if (cell.saturation === 'host_queue_16_active_1_queued') {
     missingCapability.push('host_native_saturation_driver')
   }
-  return { reachable: false, missingCapability }
+  // Reachable means every capability driver the cell needs exists — the
+  // lanes, control, and provider-turn drivers. It does NOT mean a runner
+  // can execute the cell today: window orchestration and pairing (Wall 2)
+  // still gate every measured run, and reports still declare not-run.
+  return { reachable: missingCapability.length === 0, missingCapability }
 }
 
 function fixtureVersionsKey(value) {

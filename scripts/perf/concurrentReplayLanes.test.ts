@@ -237,8 +237,8 @@ describe('concurrentReplayLanes (M1 A1.2 — first B2 driver)', () => {
         {
           ...CELL,
           name: 'small/2/warm/codex_profiles_solo_ensemble_mesh/none',
-          reachable: false,
-          missingCapability: ['deterministic_replay_provider']
+          reachable: true,
+          missingCapability: []
         }
       ],
       pairs: [paired.pair]

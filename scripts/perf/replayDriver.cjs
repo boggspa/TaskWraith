@@ -528,5 +528,9 @@ module.exports = {
   // Additive (M1 A1.2 concurrent replay lanes): the stall-guarded applier,
   // exported so per-chat lane drivers reuse the exact event semantics.
   applyReplayEventWithTimeout,
+  // Additive (M1 Wall 1 deterministic replay provider): the tracked save with
+  // exact compare-and-swap semantics, exported so provider-turn drivers reuse
+  // it instead of reimplementing revision advance.
+  performTrackedSave,
   runDeterministicReplay
 }
