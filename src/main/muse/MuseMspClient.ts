@@ -557,16 +557,34 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
    * Send one decision, retrying ONCE on a stale CAS token or a transient
    * server-side fault.
    *
-   * A rejected decide is not a sent decision. `approvalRequirementStale` is the
-   * expected outcome of racing `approval/updated`, and the refreshed
-   * requirement is already in hand — so retry it. `internal` is the host's own
-   * machinery faulting under us — an approval-ledger flush that had not landed
-   * yet, say — which the next attempt usually clears. Note this is deliberately
-   * NOT `isMuseMspRetryableErrorKind`: that set governs re-running a TURN,
-   * where the "burns the user's money in a loop" objection bites. Re-deciding
-   * spends no model tokens, and a double settle is already caught by the
-   * `approvalAlreadyResolved` arm above. Both kinds retry exactly ONCE, so a
-   * genuinely wedged host cannot spin.
+   * A rejected decide is not a sent decision. The two retried kinds are NOT
+   * equally safe, and the asymmetry is the whole point:
+   *
+   * `approvalRequirementStale` is a CAS rejection, so it PROVES the decide was
+   * not applied. The refreshed requirement is already in hand and the retry is
+   * a re-send of a known no-op.
+   *
+   * `internal` proves nothing about host state — the host may have committed
+   * the decision and only then failed. We retry it anyway because the fault
+   * this was written for reports its own non-commit (an approval-ledger
+   * durability fence leaving records unflushed), and silently discarding a turn
+   * the user has already paid for is the worse trade. The residual risk is
+   * real, though, so state it plainly: the ONLY double-settle guard is the
+   * host-reported `approvalAlreadyResolved` arm below. There is no client-side
+   * settled-approval set here, unlike `settledUserInputs` for prompts. The
+   * retry does re-send the SAME choice and never re-enters
+   * `onApprovalRequest`, so it cannot duplicate the approval card or the ledger
+   * entry; the exposure is a host that re-applies the gated tool call.
+   *
+   * This is deliberately NOT `isMuseMspRetryableErrorKind`, which by exclusion
+   * classes `internal` permanent. That set has a single consumer — the
+   * session/resume degrade near the bottom of this file — and re-deciding is a
+   * local stdio RPC that spends no model tokens, so the "burns the user's money
+   * in a loop" objection does not reach this path.
+   *
+   * Both kinds retry exactly ONCE: the recursion passes literal `false` and
+   * must never thread `mayRetry` through, or a host that always answers
+   * `internal` spins forever on a fresh commandId each time.
    *
    * Anything else — `approvalChoiceInvalid` and friends — fails the same way on
    * a second attempt, and an unsent decision gates the tool call forever, so
