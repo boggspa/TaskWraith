@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { RunItemEvent } from '../../../shared/runItemEvents'
 import {
   isAssistantRunItemDelta,
+  carriesAssistantRunItemText,
+  runItemEventMatchesWireRoute,
   projectRunItemToolEvents,
   projectRunItemToolEvent,
   projectRunItemAssistantDelta
@@ -265,5 +267,40 @@ describe('runItemProjection', () => {
     )
 
     expect(projection?.event.isUse).toBe(true)
+  })
+
+  // The adapter's dual-lane skip and this projector must agree bit for bit:
+  // the adapter disarms the legacy twin — the text's only other copy — for
+  // exactly the events this predicate accepts.
+  it('accepts only assistant deltas that actually carry text', () => {
+    expect(carriesAssistantRunItemText(event({ delta: 'hi' }))).toBe(true)
+    expect(carriesAssistantRunItemText(event({ delta: '' }))).toBe(false)
+    expect(carriesAssistantRunItemText(event({ channel: 'reasoning' }))).toBe(false)
+    expect(carriesAssistantRunItemText(event({ kind: 'item/started' }))).toBe(false)
+    // Agreement is the whole point of the shared predicate.
+    for (const candidate of [
+      event({ delta: 'hi' }),
+      event({ delta: '' }),
+      event({ channel: 'reasoning' }),
+      event({ kind: 'item/started' })
+    ]) {
+      expect(carriesAssistantRunItemText(candidate)).toBe(
+        projectRunItemAssistantDelta(candidate) !== null
+      )
+    }
+  })
+
+  it('scopes a sidecar to the route its own wire line declares', () => {
+    const sidecar = event({ chatId: 'chat-1', runId: 'run-1' })
+    const route = (appChatId: unknown, appRunId: unknown) =>
+      runItemEventMatchesWireRoute(sidecar, { appChatId, appRunId })
+    expect(route('chat-1', 'run-1')).toBe(true)
+    expect(route('chat-2', 'run-1')).toBe(false)
+    expect(route('chat-1', 'run-2')).toBe(false)
+    // A line that declares no route constrains nothing: legacy spawns and
+    // unrouted main emissions must keep their existing dedupe.
+    expect(runItemEventMatchesWireRoute(sidecar, {})).toBe(true)
+    expect(runItemEventMatchesWireRoute(sidecar, null)).toBe(true)
+    expect(runItemEventMatchesWireRoute(sidecar, { appChatId: 42 })).toBe(true)
   })
 })

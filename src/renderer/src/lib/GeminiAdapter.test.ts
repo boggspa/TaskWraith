@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { GeminiStreamAdapter } from './GeminiAdapter'
+import { applyAssistantDelta } from './applyAssistantDelta'
+import { projectRunItemAssistantDelta } from './runItemProjection'
+import type { ChatMessage } from '../../../main/store/types'
 
 describe('GeminiStreamAdapter', () => {
   it('parses complete JSONL lines correctly', () => {
@@ -881,5 +884,221 @@ describe('GeminiStreamAdapter', () => {
     )
     // Coordination never leaks into the generic tool viewport.
     expect(events).not.toContainEqual(expect.objectContaining({ type: 'tool_event' }))
+  })
+})
+
+/*
+ * Dual-lane hand-off — the assistant text must never fall between the lanes.
+ *
+ * Captured 2026-09-10 from a solo Muse turn on the MSP transport (run
+ * `1789001724340-m7x225im22h`, chat `1325574d-…`). The durable ledger records
+ * `item/started` for `<runId>:assistant` at runItem sequence 84, then 27
+ * sequence numbers filtered out of the ledger (`item/delta` is dropped there)
+ * before `run/completed` at 112 — and NO `item/completed`, because Muse's MSP
+ * `content` frames are pure increments that are never re-stated. Main's
+ * compat mapper turns each one into a `type:"content"` wire line carrying BOTH
+ * the legacy `text` and an assistant `item/delta` sidecar, so both lanes hold
+ * the same bytes and exactly one of them must apply.
+ *
+ * The whole 409-character answer never reached the transcript: the user got an
+ * activity header and a close-out reading "The run completed without a final
+ * written summary". The adapter had suppressed the legacy twin on the strength
+ * of the sidecar merely being PRESENT on the line, so whenever the sidecar lane
+ * then declined or faulted, the text had nowhere left to land — no fallback,
+ * no diagnostic, no trace in the raw log.
+ *
+ * The harness below mirrors the two App.tsx lanes (run_item_event apply +
+ * flag-gated legacy skip, including the applier's `chatId === runChatId`
+ * guard) over the REAL adapter, so the wire shapes stay byte-faithful.
+ */
+describe('GeminiStreamAdapter assistant dual-lane hand-off (captured Muse MSP turn)', () => {
+  const CHAT = '1325574d-08ca-4bb6-ad69-057fc54fc29f'
+  const RUN = '1789001724340-m7x225im22h'
+  const ASSISTANT_ITEM = `${RUN}:assistant`
+  const ANSWER =
+    'Done! Added some fresh jokes \u{1F642}\n\n' +
+    '- [jokes.py](/Users/chrisizatt/Documents/Test 1/jokes.py): +4 entries ' +
+    '(2x en, 1x es, 1x pt — now 13 total, new language: Portuguese)\n' +
+    '- `jokes_en.txt` (untracked file): +5 jokes (#21–25, now 25 total)\n\n' +
+    'Verified: `test_jokes.py` — all 4 tests pass. `jokes.py` change committed ' +
+    'as `5854902`; `jokes_en.txt` is untracked so its additions are in the ' +
+    'working tree but not committed.'
+
+  const DELTA_COUNT = 27
+
+  function envelope(sequence: number, sidecarChatId = CHAT) {
+    return {
+      protocolVersion: 1,
+      chatId: sidecarChatId,
+      runId: RUN,
+      provider: 'muse',
+      source: 'adapter',
+      sequence,
+      createdAt: '2026-09-10T00:56:17.153Z'
+    }
+  }
+
+  /** One `type:"content"` wire line exactly as `sendAgentCompatLine` writes it. */
+  function contentLine(
+    delta: string,
+    sequence: number,
+    options: { withItemStarted?: boolean; sidecarChatId?: string } = {}
+  ): string {
+    const sidecars: Record<string, unknown>[] = []
+    let next = sequence
+    if (options.withItemStarted) {
+      sidecars.push({
+        kind: 'item/started',
+        itemId: ASSISTANT_ITEM,
+        itemKind: 'assistant_message',
+        ...envelope(next, options.sidecarChatId)
+      })
+      next += 1
+    }
+    sidecars.push({
+      kind: 'item/delta',
+      itemId: ASSISTANT_ITEM,
+      itemKind: 'assistant_message',
+      channel: 'assistant',
+      delta,
+      cumulative: false,
+      ...envelope(next, options.sidecarChatId)
+    })
+    return (
+      JSON.stringify({
+        type: 'content',
+        text: delta,
+        provider: 'muse',
+        appRunId: RUN,
+        appChatId: CHAT,
+        runItemEvents: sidecars
+      }) + '\n'
+    )
+  }
+
+  /** The terminal `result` line; its sidecar is `run/completed`, sequence 112. */
+  function resultLine(): string {
+    return (
+      JSON.stringify({
+        type: 'result',
+        status: 'success',
+        subtype: 'success',
+        provider: 'muse',
+        providerThreadId: '01a088d0-484a-7950-858c-c20aa6faf8d3',
+        result: ANSWER,
+        appRunId: RUN,
+        appChatId: CHAT,
+        runItemEvents: [
+          {
+            kind: 'run/completed',
+            itemKind: 'run',
+            itemId: `${RUN}:run`,
+            status: 'success',
+            ...envelope(112)
+          }
+        ]
+      }) + '\n'
+    )
+  }
+
+  function deltas(): string[] {
+    const size = Math.ceil(ANSWER.length / DELTA_COUNT)
+    const parts: string[] = []
+    for (let index = 0; index < ANSWER.length; index += size) {
+      parts.push(ANSWER.slice(index, index + size))
+    }
+    return parts
+  }
+
+  interface HarnessOptions {
+    /** The sidecar lane throws while applying — exactly the shape of App's
+     *  sidecar reducer faulting inside `updateChatById`. */
+    sidecarThrows?: boolean
+    /** The sidecar events are addressed to another chat, so App's applier
+     *  (keyed on `runChatId`) drops them. */
+    sidecarChatId?: string
+  }
+
+  function harness(options: HarnessOptions = {}) {
+    let messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'hi Muse', timestamp: '2026-09-10T00:55:24.525Z' },
+      { id: 't1', role: 'tool', content: '', runId: RUN, timestamp: '2026-09-10T00:55:50.101Z' }
+    ]
+    let nextId = 0
+    const deps = {
+      createMessageId: () => `msg-${++nextId}`,
+      now: () => '2026-09-10T00:56:17.153Z'
+    }
+    const seen: string[] = []
+    const adapter = new GeminiStreamAdapter((event) => {
+      seen.push(event.type)
+      if (event.type === 'run_item_event') {
+        const projection = projectRunItemAssistantDelta(event.event)
+        // App.tsx: the sidecar applier is keyed on the RUN's chat id.
+        if (!projection || projection.chatId !== CHAT) return
+        if (options.sidecarThrows) throw new Error('updateChatById reducer failed')
+        messages = applyAssistantDelta(messages, projection.input, deps)
+        return
+      }
+      if (event.type === 'assistant_message_delta') {
+        // App.tsx: flag-set means the sidecar owns the text — skip.
+        if (event.projectedFromRunItem === true) return
+        messages = applyAssistantDelta(messages, { incoming: event.content, runId: RUN }, deps)
+      }
+    })
+    return {
+      play(over: HarnessOptions = options) {
+        let sequence = 84
+        deltas().forEach((delta, index) => {
+          adapter.appendChunk(
+            contentLine(delta, sequence, {
+              withItemStarted: index === 0,
+              ...(over.sidecarChatId ? { sidecarChatId: over.sidecarChatId } : {})
+            })
+          )
+          sequence += index === 0 ? 2 : 1
+        })
+        adapter.appendChunk(resultLine())
+      },
+      assistantText: () =>
+        messages
+          .filter((message) => message.role === 'assistant')
+          .map((message) => message.content)
+          .join(''),
+      assistantMessages: () => messages.filter((message) => message.role === 'assistant'),
+      seen: () => seen
+    }
+  }
+
+  it('lands the captured answer as one assistant message when the sidecar lane applies', () => {
+    const run = harness()
+    run.play()
+    expect(run.assistantMessages()).toHaveLength(1)
+    expect(run.assistantText()).toBe(ANSWER)
+  })
+
+  it('keeps the answer when the sidecar lane faults mid-line (no silent text loss)', () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const run = harness({ sidecarThrows: true })
+      run.play()
+      // The legacy twin on the same line is the only copy left — it must carry
+      // the text rather than being skipped for a sidecar that never landed.
+      expect(run.assistantText()).toBe(ANSWER)
+      // A consumer fault must not delete the rest of the line, and a line that
+      // parsed perfectly must never be reported as provider garbage.
+      expect(run.seen()).toContain('raw_event')
+      expect(run.seen()).not.toContain('malformed_json')
+      // Recoverable AND detectable — but never on a transcript surface.
+      expect(logged).toHaveBeenCalled()
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
+  it('keeps the answer when the sidecar is addressed to another chat than its own line', () => {
+    const run = harness({ sidecarChatId: 'a-different-chat' })
+    run.play({ sidecarChatId: 'a-different-chat' })
+    expect(run.assistantText()).toBe(ANSWER)
   })
 })

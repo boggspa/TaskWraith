@@ -45,12 +45,58 @@ export function isAssistantRunItemDelta(
   return event.kind === 'item/delta' && event.channel === 'assistant'
 }
 
+/**
+ * The exact shape the sidecar lane can carry into the transcript: an
+ * assistant-channel `item/delta` that actually has text in it.
+ *
+ * `GeminiStreamAdapter` suppresses the legacy `assistant_message_delta` twin
+ * on any line whose sidecar matches this, and `projectRunItemAssistantDelta`
+ * below decides what the sidecar lane will apply — so the two MUST agree.
+ * They were spelled out separately (`event.delta.length > 0` in the adapter,
+ * `!event.delta` here) with nothing holding them in step; the moment they
+ * drift, the adapter disarms the only other copy of the text for a delta the
+ * projector then refuses, and the answer is lost with no fallback.
+ */
+export function carriesAssistantRunItemText(
+  event: RunItemEvent
+): event is ItemDeltaRunItemEvent & { channel: 'assistant' } {
+  return isAssistantRunItemDelta(event) && typeof event.delta === 'string' && event.delta.length > 0
+}
+
+/** The route a wire line declares for itself (`sendAgentCompatLine` stamps
+ *  both onto every payload it publishes). */
+export interface RunItemWireRoute {
+  appChatId?: unknown
+  appRunId?: unknown
+}
+
+/**
+ * True when a sidecar event is addressed to the same chat/run as the wire line
+ * that carried it.
+ *
+ * The renderer's sidecar applier is keyed on the RUN's chat (`runChatId`), so a
+ * sidecar addressed anywhere else is dropped there — while the legacy twin on
+ * the same line IS applied to the run's chat. Suppressing that twin for a
+ * sidecar the other lane will refuse is total, silent text loss, so the
+ * dual-lane skip is scoped by this. A line that declares no route (legacy
+ * spawns, unrouted main emissions) constrains nothing and matches.
+ */
+export function runItemEventMatchesWireRoute(
+  event: RunItemEvent,
+  route: RunItemWireRoute | null | undefined
+): boolean {
+  if (!route || typeof route !== 'object') return true
+  const { appChatId, appRunId } = route
+  if (typeof appChatId === 'string' && appChatId && appChatId !== event.chatId) return false
+  if (typeof appRunId === 'string' && appRunId && appRunId !== event.runId) return false
+  return true
+}
+
 export function projectRunItemAssistantDelta(
   event: RunItemEvent,
   providerModelMetadata?: AssistantDeltaInput['providerModelMetadata']
 ): RunItemAssistantProjection | null {
-  if (!isAssistantRunItemDelta(event)) return null
-  if (!event.delta) return null
+  if (!carriesAssistantRunItemText(event)) return null
   return {
     chatId: event.chatId,
     runId: event.runId,
