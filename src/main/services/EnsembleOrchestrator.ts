@@ -195,6 +195,10 @@ import {
 import type { EnsembleHostAdmissionSnapshot } from './EnsembleHostAdmissionScheduler'
 import { EnsembleHostAdmissionRuntime } from './EnsembleHostAdmissionRuntime'
 import {
+  beginEnsembleRoundStart,
+  recordEnsembleRoundStartDispatch
+} from '../perf/ensembleRoundStartSpan'
+import {
   buildEnsembleToolActivity,
   extractToolId,
   getStringParameter,
@@ -1708,6 +1712,11 @@ export class EnsembleOrchestrator {
         schedulerOptions: deps.hostAdmissionSchedulerOptions,
         onSnapshot: deps.onHostAdmissionSnapshot
       })
+  }
+
+  /** Production: recorder already on host admission. Tests may inject deps.spans. */
+  private roundStartRecorder() {
+    return this.deps.spans ?? this.hostAdmission.workSpans
   }
 
   getHostAdmissionSnapshot(): EnsembleHostAdmissionSnapshot {
@@ -14463,6 +14472,11 @@ export class EnsembleOrchestrator {
       ...(unattended && unattendedElevationLevel ? { unattendedElevationLevel } : {})
     }
     this.roundsByChatId.set(chatId, runtime)
+    beginEnsembleRoundStart(runtime, {
+      chatId,
+      roundId,
+      startedAt: this.deps.now()
+    })
     try {
       onRoundReserved?.(roundId)
       for (const mention of backgroundMentionResolution.ambiguities) {
@@ -15664,6 +15678,16 @@ export class EnsembleOrchestrator {
       const acceptAdapterInvocation = (): void => {
         if (adapterInvoked) return
         adapterInvoked = true
+        recordEnsembleRoundStartDispatch(
+          runtime,
+          {
+            runId: run.runId,
+            participantId: participant.id,
+            ...(run.laneId ? { laneId: run.laneId } : {})
+          },
+          this.roundStartRecorder(),
+          this.deps.now
+        )
         run.transportDispatchState = 'accepted'
         runtime.lastForegroundParticipantId = participant.id
         // Review F2c — record prompt receipts only once the provider actually
@@ -18552,6 +18576,16 @@ export class EnsembleOrchestrator {
             const acceptAdapterInvocation = (): void => {
               if (adapterInvoked) return
               adapterInvoked = true
+              recordEnsembleRoundStartDispatch(
+                runtime,
+                {
+                  runId: run.runId,
+                  participantId: participant.id,
+                  ...(run.laneId ? { laneId: run.laneId } : {})
+                },
+                this.roundStartRecorder(),
+                this.deps.now
+              )
               try {
                 run.transportDispatchState = 'accepted'
                 if (!dispatchWasCancelled()) {

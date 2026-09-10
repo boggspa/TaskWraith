@@ -53,6 +53,11 @@ export class EnsembleHostAdmissionRuntime {
       options.scheduler ?? new EnsembleHostAdmissionScheduler(options.schedulerOptions)
   }
 
+  /** Process recorder already wired onto the scheduler; absent means no sink. */
+  get workSpans(): EnsembleHostAdmissionSchedulerOptions['spans'] {
+    return this.scheduler.workSpans
+  }
+
   reserve(request: EnsembleHostAdmissionRequest): EnsembleHostAdmissionReservationResult {
     const result = this.scheduler.reserve(request)
     if (result.kind === 'reserved') {

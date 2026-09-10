@@ -226,6 +226,11 @@ export interface EnsembleOrchestratorDeps {
   hostAdmissionSchedulerOptions?: EnsembleHostAdmissionSchedulerOptions
   /** Shared production runtime; injected so delegated Ensemble children use the same cap. */
   hostAdmissionRuntime?: EnsembleHostAdmissionRuntime
+  /**
+   * Optional M1 round_start sink. Production reads the process recorder
+   * already attached to `hostAdmissionRuntime`; tests may inject a sink.
+   */
+  spans?: EnsembleHostAdmissionSchedulerOptions['spans']
   /** In-memory metrics only; callers decide whether and how to project them. */
   onHostAdmissionSnapshot?: (snapshot: EnsembleHostAdmissionSnapshot) => void
   /**

@@ -367,6 +367,11 @@ export class EnsembleHostAdmissionScheduler {
     this.spans = options.spans
   }
 
+  /** Optional M1 span sink already attached in production schedulerOptions. */
+  get workSpans(): EnsembleHostAdmissionSchedulerOptions['spans'] {
+    return this.spans
+  }
+
   /**
    * One span per settled waiter, at the moment its queue wait ends. An
    * admitted-then-cancelled-unclaimed run emits no second span: its wait

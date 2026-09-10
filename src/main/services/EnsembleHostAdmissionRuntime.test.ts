@@ -50,6 +50,13 @@ describe('EnsembleHostAdmissionRuntime', () => {
     expect(order).toHaveLength(30)
   })
 
+  it('exposes the scheduler span sink already wired in production', () => {
+    const spans = { record: () => undefined }
+    const runtime = new EnsembleHostAdmissionRuntime({ schedulerOptions: { spans } })
+    expect(runtime.workSpans).toBe(spans)
+    expect(new EnsembleHostAdmissionRuntime().workSpans).toBeUndefined()
+  })
+
   it('owns reservation, synchronous claim and idempotent release bookkeeping', async () => {
     const runtime = new EnsembleHostAdmissionRuntime({
       schedulerOptions: {
