@@ -91,6 +91,13 @@ export interface ModelRateEntry {
   subscriptionLane?: true
   /** The provider publishes this model itself at a zero per-token price. */
   freeModel?: true
+  /**
+   * Marks this row as the provider's fallback for an unmatched model id.
+   * `resolveModelRate` prefers it over the positional `models[0]`, so a table
+   * may be reordered without silently repricing the provider. Tables with no
+   * flagged row keep the positional behaviour.
+   */
+  isFallback?: true
   /** Explicit source confidence for the rate value. Missing means
    * baked-in manual table. */
   confidence?: ProviderRateConfidence
@@ -144,6 +151,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
     models: [
       {
         modelId: 'grok-4.6',
+        isFallback: true,
         inputUsdPerMillion: 2.0,
         outputUsdPerMillion: 6.0,
         cachedInputUsdPerMillion: 0.5,
@@ -1117,6 +1125,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
     models: [
       {
         modelId: 'deepseek/deepseek-v4-flash',
+        isFallback: true,
         inputUsdPerMillion: 0.3,
         outputUsdPerMillion: 1.2,
         cachedInputUsdPerMillion: 0.006,
@@ -1862,6 +1871,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
     models: [
       {
         modelId: 'muse-spark-1.2',
+        isFallback: true,
         inputUsdPerMillion: 1.25,
         outputUsdPerMillion: 4.25,
         cachedInputUsdPerMillion: 0.15,

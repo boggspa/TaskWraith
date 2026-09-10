@@ -130,9 +130,13 @@ describe('BAKED_IN_RATES', () => {
       }
     )
 
-    it('keeps the pi default model as the models[0] fallback', () => {
-      expect(piRows[0]?.modelId).toBe(PI_DEFAULT_MODEL_WIRE_ID)
-      expect(piRows[0]?.notes).toMatch(/fallback/i)
+    it('flags the pi default model as the table fallback', () => {
+      // Pinned by the FLAG, not by position: `resolveModelRate` prefers the
+      // flagged row, so reordering this table can no longer silently reprice
+      // every unmatched pi model.
+      const flagged = piRows.filter((entry) => entry.isFallback)
+      expect(flagged.map((entry) => entry.modelId)).toEqual([PI_DEFAULT_MODEL_WIRE_ID])
+      expect(flagged[0]?.notes).toMatch(/fallback/i)
     })
 
     it('prices the subscription lanes at zero rather than a foreign rate', () => {
@@ -191,7 +195,8 @@ describe('BAKED_IN_RATES', () => {
   it('records exact Grok 4.6 direct and Cursor API-equivalent tiers', () => {
     const direct = BAKED_IN_RATES.grok.models.find((model) => model.modelId === 'grok-4.6')
     expect(RATE_TABLE_VERSION).toBe('2026-09-02')
-    expect(BAKED_IN_RATES.grok.models[0]?.modelId).toBe('grok-4.6')
+    expect(BAKED_IN_RATES.grok.models.filter((model) => model.isFallback)).toHaveLength(1)
+    expect(BAKED_IN_RATES.grok.models.find((model) => model.isFallback)?.modelId).toBe('grok-4.6')
     expect(direct).toMatchObject({
       inputUsdPerMillion: 2,
       cachedInputUsdPerMillion: 0.5,
@@ -224,8 +229,11 @@ describe('BAKED_IN_RATES', () => {
     })
   })
 
-  it('prices both Muse Spark 1.3 routes exactly, leaving the 1.2 fallback row first', () => {
-    expect(BAKED_IN_RATES.muse.models[0]?.modelId).toBe('muse-spark-1.2')
+  it('prices both Muse Spark 1.3 routes exactly, leaving 1.2 flagged as the fallback', () => {
+    expect(BAKED_IN_RATES.muse.models.filter((model) => model.isFallback)).toHaveLength(1)
+    expect(BAKED_IN_RATES.muse.models.find((model) => model.isFallback)?.modelId).toBe(
+      'muse-spark-1.2'
+    )
     expect(
       BAKED_IN_RATES.muse.models.find((model) => model.modelId === 'muse-spark-1.3')
     ).toMatchObject({
@@ -251,7 +259,9 @@ describe('BAKED_IN_RATES', () => {
   })
 
   it('records Muse Contributor Spark discounted rates without changing the standard fallback', () => {
-    expect(BAKED_IN_RATES.muse.models[0]?.modelId).toBe('muse-spark-1.2')
+    expect(BAKED_IN_RATES.muse.models.find((model) => model.isFallback)?.modelId).toBe(
+      'muse-spark-1.2'
+    )
     expect(
       BAKED_IN_RATES.muse.models.find((model) => model.modelId === 'muse-spark-1.2-contributor')
     ).toMatchObject({

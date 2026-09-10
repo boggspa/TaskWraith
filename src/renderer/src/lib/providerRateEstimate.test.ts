@@ -154,6 +154,36 @@ describe('resolveModelRate', () => {
     expect(resolveModelRate(RATES, 'codex', 'totally-unknown')?.modelId).toBe('gpt-5.5')
   })
 
+  // The fallback was implicit in ARRAY ORDER (`table[0]`), and that coupling has
+  // already shipped one wrong price: gemini-2.0-flash had no row of its own,
+  // fell through to models[0] and billed at 2.5 Flash rates (recorded in
+  // ProviderRateService.ts). An explicit flag names the fallback row so
+  // reordering a provider's table cannot silently reprice it.
+  it('falls back to the row flagged isFallback rather than to array position', () => {
+    const rates = normalizeProviderRates({
+      baseline: {
+        grok: {
+          models: [
+            { modelId: 'grok-premium', inputUsdPerMillion: 100, outputUsdPerMillion: 200 },
+            {
+              modelId: 'grok-4.6',
+              inputUsdPerMillion: 1,
+              outputUsdPerMillion: 2,
+              isFallback: true
+            }
+          ]
+        }
+      }
+    })
+    expect(resolveModelRate(rates, 'grok', 'grok-unknown-9')?.modelId).toBe('grok-4.6')
+  })
+
+  it('still falls back to the first row when no row is flagged', () => {
+    // Back-compat, so the flag can land provider-by-provider rather than as one
+    // sweep over every baked-in table.
+    expect(resolveModelRate(RATES, 'codex', 'totally-unknown')?.modelId).toBe('gpt-5.5')
+  })
+
   it('resolves default sentinels before falling back to the first rate entry', () => {
     const rates: RendererProviderRates = {
       claude: [

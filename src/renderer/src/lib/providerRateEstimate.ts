@@ -38,6 +38,14 @@ import { isOllamaCloudModelId } from '../../../shared/ollamaModelAvailability'
  * stay defensive about everything else.
  */
 export interface RendererModelRate {
+  /**
+   * Marks the row `resolveModelRate` uses when nothing matches. Explicit,
+   * because the fallback used to be implicit in ARRAY ORDER (`table[0]`) and
+   * that coupling shipped a wrong price once already: gemini-2.0-flash had no
+   * row, fell through to `models[0]` and billed at 2.5 Flash rates. Providers
+   * that have not been annotated keep the positional behaviour.
+   */
+  isFallback?: true
   modelId: string
   inputUsdPerMillion: number
   outputUsdPerMillion: number
@@ -150,6 +158,7 @@ export function normalizeProviderRates(raw: unknown): RendererProviderRates {
           inputUsdPerMillion: m.inputUsdPerMillion,
           outputUsdPerMillion: m.outputUsdPerMillion
         }
+        if (m.isFallback === true) entry.isFallback = true
         if (
           isFiniteNonNeg(m.cachedInputUsdPerMillion) &&
           m.cachedInputUsdPerMillion < m.inputUsdPerMillion
@@ -181,8 +190,9 @@ export function normalizeProviderRates(raw: unknown): RendererProviderRates {
  * Resolve a rate entry for a (provider, model) pair. Matches the model id
  * exactly first, then by case-insensitive prefix (CLIs sometimes report
  * `gpt-5.5-2026-xx` where the table keys `gpt-5.5`), then falls back to the
- * provider's first/cheapest-listed model so a known provider still yields a
- * ballpark rather than nothing. Returns `null` when the provider is unknown
+ * row the provider FLAGS as its fallback so a known provider still yields a
+ * ballpark rather than nothing. A provider with no flagged row keeps the
+ * historical positional fallback (`table[0]`). Returns `null` when the provider is unknown
  * or has no rates (e.g. Cursor's empty list).
  */
 export function resolveModelRate(
@@ -225,7 +235,8 @@ export function resolveModelRate(
     )
     if (prefix) return prefix
   }
-  return table[0]
+  // Explicit flag first; `table[0]` only for tables nobody has annotated yet.
+  return table.find((r) => r.isFallback) ?? table[0]
 }
 
 /**
