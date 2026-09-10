@@ -312,8 +312,8 @@ lane, and their metadata is written into the run's isolated Pi home at launch.
 
 | Model                                                     | Reasoning    | Fast | Notes                                       |
 | ----------------------------------------------------------- | ------------ | ---- | --------------------------------------------- |
-| **DeepSeek V4 Pro** `deepseek/deepseek-v4-pro`             | —            | —    | 1M context via DeepSeek.                    |
-| **DeepSeek V4 Flash** `deepseek/deepseek-v4-flash` **(Default)** | —      | —    | 1M context via DeepSeek.                    |
+| **DeepSeek V4 Pro** `deepseek/deepseek-v4-pro`             | —            | —    | 1M context via DeepSeek. **From 04:00 UTC on 2026-09-14** DeepSeek routes this id to V4.1 Flash and bills it at V4.1 Flash prices, until a future V4.1 Pro ships. Still offered on purpose — the id keeps working and V4.1 Pro is announced, so retiring it would narrow capability we expect back. |
+| **DeepSeek V4 Flash** `deepseek/deepseek-v4-flash` **(Default)** | —      | —    | 1M context via DeepSeek. **Served by V4.1 Flash since 2026-09-10**: DeepSeek released V4.1 Flash under the new id `deepseek-flash` and routes this legacy id to it at V4.1 Flash prices. TaskWraith cannot offer `deepseek/deepseek-flash` as its own row yet — pi bundles its model catalogue, and neither 0.84.2 (pinned) nor 0.85.1 (latest, 2026-09-05) knows that id. Add the row once a pi release ships it; until then this id is the only way to reach V4.1 Flash. |
 | **GLM-5.2** `zai/glm-5.2`                                  | —            | —    | 1M context via Z.ai.                        |
 | **GLM-5.1** `zai/glm-5.1`                                  | —            | —    | 200K context via Z.ai.                      |
 | **GLM-4.7** `zai/glm-4.7`                                  | —            | —    | ~200K context via Z.ai.                     |

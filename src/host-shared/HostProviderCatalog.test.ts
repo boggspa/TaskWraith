@@ -63,7 +63,10 @@ describe('derived reasoning offers', () => {
   })
 
   it('keeps each Pi route on its own upstream ladder', () => {
-    expect(efforts('pi', 'deepseek/deepseek-v4-pro')).toEqual(['off', 'low', 'high', 'max'])
+    // The two DeepSeek routes split on Low: pi maps Pro's `low` to null but
+    // Flash's to a real `low`, so the Host catalogue must not offer it on Pro.
+    expect(efforts('pi', 'deepseek/deepseek-v4-pro')).toEqual(['off', 'high', 'max'])
+    expect(efforts('pi', 'deepseek/deepseek-v4-flash')).toEqual(['off', 'low', 'high', 'max'])
     expect(efforts('pi', 'zai/glm-5.2')).toEqual(['off', 'high', 'max'])
     expect(efforts('pi', 'openrouter/z-ai/glm-5.2')).toEqual(['off', 'high', 'xhigh'])
     // GPT-OSS cannot be switched off on either host.

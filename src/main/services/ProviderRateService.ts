@@ -1096,34 +1096,44 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
   // silently priced at row 0 — i.e. every Z.ai, Qwen, MiniMax, Mistral, Groq
   // and Cerebras run was being projected at DeepSeek V4 Flash rates.
   //
-  // Values come from pi's bundled catalogue
-  // (`@earendil-works/pi-ai/dist/providers/data/<upstream>.json`) plus official
-  // Mistral model cards for deployments newer than pi 0.82.1. Re-check both on
-  // pi upgrades. Table-level `pricingUrl` can only ever verify one vendor, so
-  // each entry carries the vendor's own `sourceUrl` for the human half of the
-  // diligence cycle; expect the probe to report not-verified for the others.
+  // PRICE THESE ROWS FROM EACH ROW'S OWN `sourceUrl` — the vendor's page — and
+  // NEVER by re-syncing pi's bundled catalogue
+  // (`@earendil-works/pi-ai/dist/providers/data/<upstream>.json`). That file is
+  // a convenient list of which wire ids exist, and it is NOT a pricing
+  // authority: it is a snapshot taken whenever pi cut a release, it is not
+  // corrected between releases, and a wrong figure in it looks exactly like a
+  // right one. Measured 2026-09-10: its `deepseek-v4-pro` cost block said
+  // $0.435 / $0.87 while DeepSeek's own page said $0.66 / $1.98 off-peak and
+  // $1.32 / $3.96 peak, and 0.85.1 still shipped the same wrong numbers, so
+  // "re-check on pi upgrades" would have re-confirmed the error rather than
+  // caught it. Model cards / vendor pages are the authority for every upstream
+  // here, Mistral included. Table-level `pricingUrl` can only ever verify one
+  // vendor, so each entry carries the vendor's own `sourceUrl` for the human
+  // half of the diligence cycle; expect the probe to report not-verified for
+  // the others.
   pi: {
     provider: 'pi',
     pricingUrl: 'https://pi.dev/docs/latest/providers',
     models: [
       {
         modelId: 'deepseek/deepseek-v4-flash',
-        inputUsdPerMillion: 0.14,
-        outputUsdPerMillion: 0.28,
-        cachedInputUsdPerMillion: 0.0028,
+        inputUsdPerMillion: 0.3,
+        outputUsdPerMillion: 1.2,
+        cachedInputUsdPerMillion: 0.006,
         sourceUrl: 'https://api-docs.deepseek.com/quick_start/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Pi default model (DeepSeek API direct). First row = fallback rate for unknown pi ids.'
+          'Pi default model (DeepSeek API direct). First row = fallback rate for unknown pi ids. PEAK figures. DeepSeek bills peak 01:00-04:00 and 06:00-10:00 UTC Mon-Fri and half that off-peak ($0.15 / $0.60 / $0.003 cached), which this flat table cannot express; peak is carried so a projection never understates a bill. Re-verified 2026-09-10: DeepSeek released V4.1 Flash on 2026-09-10 under the new id `deepseek-flash` and now routes the legacy `deepseek-v4-flash` id to it at V4.1 Flash prices, so this row prices V4.1 Flash. The old V4 Flash figures ($0.14 / $0.28) are gone from the vendor page; pi 0.84.2 and 0.85.1 both still ship the stale $0.14 / $0.28 cost block, so do NOT re-sync this row from pi bundled data.'
       },
       {
         modelId: 'deepseek/deepseek-v4-pro',
-        inputUsdPerMillion: 0.435,
-        outputUsdPerMillion: 0.87,
-        cachedInputUsdPerMillion: 0.003625,
+        inputUsdPerMillion: 1.32,
+        outputUsdPerMillion: 3.96,
+        cachedInputUsdPerMillion: 0.044,
         sourceUrl: 'https://api-docs.deepseek.com/quick_start/pricing',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'DeepSeek V4 Pro via the Pi seat.'
+        notes:
+          'DeepSeek V4 Pro via the Pi seat. PEAK figures, same window as the flash row above; off-peak is half ($0.66 / $1.98 / $0.022 cached). Re-verified 2026-09-10 against the vendor page. The previous $0.435 / $0.87 came from pi bundled data (`pi-ai/dist/providers/data/deepseek.json`), which disagrees with DeepSeek own published pricing and is still wrong in pi 0.85.1 - price this row from the vendor page, never from pi. SCHEDULED CHANGE: from 12:00 Beijing / 04:00 UTC on 2026-09-14, and until a future V4.1 Pro ships, DeepSeek routes every `deepseek-v4-pro` request to V4.1 Flash and bills at V4.1 Flash prices, so on that date this row should drop to the flash figures above. The flat table cannot express a dated change; this records it the way the gemini-3.6-flash row records its own.'
       },
       // Z.ai + Qwen are SUBSCRIPTION/token-plan lanes: pi publishes no
       // per-token price, so these are genuinely 0 and the display layer renders

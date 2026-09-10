@@ -67,9 +67,24 @@ const BOOLEAN = ladder(['high'], 'high')
 const ALWAYS_ON = ladder(['high'], 'high', false)
 
 const PI_MODEL_REASONING: Readonly<Record<string, PiReasoningSupport>> = {
-  // DeepSeek: low/high/max, default high. `medium` and `xhigh` are documented
-  // aliases for `high`, so surfacing them would be a fake distinction.
-  'deepseek/deepseek-v4-pro': ladder(['low', 'high', 'max'], 'high'),
+  // DeepSeek: default high. `medium` and `xhigh` are documented aliases for
+  // `high`, so surfacing them would be a fake distinction.
+  //
+  // The two routes do NOT share a ladder, though they read as if they should.
+  // pi's own bundled catalogue (`pi-ai/dist/providers/data/deepseek.json`)
+  // carries a per-model `thinkingLevelMap`, and V4 Pro maps `low` to null while
+  // V4 Flash maps it to a real `low`. A null is not a pass-through: pi omits
+  // `--thinking` entirely, so a Pro seat set to Low silently ran at DeepSeek's
+  // own default. Offering Low here was a stop the upstream discards, which is
+  // the exact failure this table exists to prevent. Verified 2026-09-10 against
+  // both pi 0.84.2 (pinned) and 0.85.1 (latest).
+  //
+  // Narrowing is safe for seats already pinned to Low: it is still in
+  // `PI_FULL_LADDER`, so `HostNodePiProvider.validateThread` treats it as a
+  // stale-but-real selection and heals the thread to this route's default
+  // rather than refusing the run, and `normalizePiReasoningEffortForModel`
+  // rounds it the same way before argv.
+  'deepseek/deepseek-v4-pro': ladder(['high', 'max'], 'high'),
   'deepseek/deepseek-v4-flash': ladder(['low', 'high', 'max'], 'high'),
 
   // Z.ai documents seven efforts that collapse to three outcomes:

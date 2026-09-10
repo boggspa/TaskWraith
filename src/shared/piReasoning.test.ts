@@ -13,8 +13,11 @@ describe('resolvePiReasoningSupport', () => {
   // different shapes — a four-tier ladder, a two-tier ladder, a boolean, and a
   // token budget with no ladder at all.
   const CASES: readonly (readonly [string, readonly string[]])[] = [
-    // DeepSeek: medium and xhigh are documented aliases for high.
-    ['deepseek/deepseek-v4-pro', ['off', 'low', 'high', 'max']],
+    // DeepSeek: medium and xhigh are documented aliases for high. The two
+    // routes split on `low` — pi's own `thinkingLevelMap` maps Pro's `low` to
+    // null (no `--thinking` sent at all) but Flash's to a real `low`, so
+    // offering Low on Pro was a stop the upstream discarded.
+    ['deepseek/deepseek-v4-pro', ['off', 'high', 'max']],
     ['deepseek/deepseek-v4-flash', ['off', 'low', 'high', 'max']],
     // Z.ai collapses seven efforts onto two outcomes plus off.
     ['zai/glm-5.2', ['off', 'high', 'max']],
@@ -181,5 +184,17 @@ describe('normalizePiReasoningEffortForModel', () => {
     expect(normalizePiReasoningEffortForModel('mistral/mistral-large-2512', 'high')).toBeNull()
     expect(normalizePiReasoningEffortForModel('deepseek/deepseek-v4-pro', 'ludicrous')).toBeNull()
     expect(normalizePiReasoningEffortForModel('deepseek/deepseek-v4-pro', '')).toBeNull()
+  })
+
+  // The two DeepSeek routes differ on exactly one stop, so a seat pinned to Low
+  // must round UP on Pro and pass THROUGH on Flash. Asserting both directions
+  // from the same token is what makes this test discriminating: a regression
+  // that re-adds Low to Pro's ladder keeps the Flash half green and only this
+  // Pro half reds. Rounding up rather than refusing is also what keeps an
+  // existing Pro seat off the stranding path documented on
+  // `HostNodePiProvider.validateThread`.
+  it('rounds a persisted Low up on V4 Pro while V4 Flash keeps it', () => {
+    expect(normalizePiReasoningEffortForModel('deepseek/deepseek-v4-pro', 'low')).toBe('high')
+    expect(normalizePiReasoningEffortForModel('deepseek/deepseek-v4-flash', 'low')).toBe('low')
   })
 })

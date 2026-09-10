@@ -1257,8 +1257,10 @@ describe('mistral configurable reasoning support', () => {
     // Mistral documents `high` and `none`; the wider schema enum has no
     // defined semantics, so the honest surface is off-or-high.
     expect(values('mistral/mistral-medium-3.5')).toEqual(['off', 'high'])
-    // DeepSeek V4: medium and xhigh are documented aliases for high.
-    expect(values('deepseek/deepseek-v4-pro')).toEqual(['off', 'low', 'high', 'max'])
+    // DeepSeek V4: medium and xhigh are documented aliases for high, and the
+    // two routes split on Low — pi maps Pro's `low` to null, Flash's to `low`.
+    expect(values('deepseek/deepseek-v4-pro')).toEqual(['off', 'high', 'max'])
+    expect(values('deepseek/deepseek-v4-flash')).toEqual(['off', 'low', 'high', 'max'])
     // Z.ai collapses seven efforts onto High and Max.
     expect(values('zai/glm-5.2')).toEqual(['off', 'high', 'max'])
     // GLM 5.1 predates `reasoning_effort` entirely.
