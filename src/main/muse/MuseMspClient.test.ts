@@ -1277,6 +1277,69 @@ describe('runMuseMspTurn — approvals that arrive malformed or get rejected', (
     await flush()
     expect(child.sentMethod('turn/cancel')).toBeUndefined()
   })
+
+  it('retries once when the decide fails with a transient internal error', async () => {
+    // `internal` is a local ledger hiccup inside Muse, not the model saying
+    // "this will fail again". Re-deciding is a pure local RPC that spends no
+    // model tokens, and the `approvalAlreadyResolved` early return already
+    // guards a double settle — so one retry is far cheaper than discarding a
+    // whole turn the user has already paid for.
+    const { child } = start({ onApprovalRequest: vi.fn().mockResolvedValue('deny') })
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'approval/requested',
+      params: {
+        ...base,
+        availableChoices: [{ choiceId: 'no', decision: 'denied', label: 'Deny', scope: 'once' }]
+      }
+    })
+    await flush()
+    const first = child.sent().find((f) => f.method === 'approval/decide')
+    child.emit({
+      jsonrpc: '2.0',
+      id: first!.id,
+      error: {
+        code: -32603,
+        message: 'approval decide settlement failed: approval ledger durability fence',
+        data: { kind: 'internal' }
+      }
+    })
+    await flush()
+    const decides = child.sent().filter((f) => f.method === 'approval/decide')
+    expect(decides).toHaveLength(2)
+    expect(child.sentMethod('turn/cancel')).toBeUndefined()
+  })
+
+  it('cancels the turn when the internal-error retry also fails', async () => {
+    // Bounded to ONE retry: a genuinely wedged ledger must not spin.
+    const { child, warnings } = start({ onApprovalRequest: vi.fn().mockResolvedValue('deny') })
+    await driveToTurn(child)
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'approval/requested',
+      params: {
+        ...base,
+        availableChoices: [{ choiceId: 'no', decision: 'denied', label: 'Deny', scope: 'once' }]
+      }
+    })
+    await flush()
+    const internal = {
+      code: -32603,
+      message: 'approval ledger durability fence',
+      data: { kind: 'internal' }
+    }
+    const first = child.sent().find((f) => f.method === 'approval/decide')
+    child.emit({ jsonrpc: '2.0', id: first!.id, error: internal })
+    await flush()
+    const decides = child.sent().filter((f) => f.method === 'approval/decide')
+    expect(decides).toHaveLength(2)
+    child.emit({ jsonrpc: '2.0', id: decides[1].id, error: internal })
+    await flush()
+    expect(child.sent().filter((f) => f.method === 'approval/decide')).toHaveLength(2)
+    expect(child.sentMethod('turn/cancel')).toBeDefined()
+    expect(warnings.some((w) => w.includes('cancelling the turn'))).toBe(true)
+  })
 })
 
 describe('runMuseMspTurn — userInput prompts', () => {

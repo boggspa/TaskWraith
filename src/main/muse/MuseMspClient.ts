@@ -554,12 +554,23 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   }
 
   /**
-   * Send one decision, retrying ONCE on a stale CAS token.
+   * Send one decision, retrying ONCE on a stale CAS token or a transient
+   * server-side fault.
    *
    * A rejected decide is not a sent decision. `approvalRequirementStale` is the
    * expected outcome of racing `approval/updated`, and the refreshed
-   * requirement is already in hand — so retry it. Anything else leaves the tool
-   * call gated forever, so the turn is cancelled rather than left hanging.
+   * requirement is already in hand — so retry it. `internal` is the host's own
+   * machinery faulting under us — an approval-ledger flush that had not landed
+   * yet, say — which the next attempt usually clears. Note this is deliberately
+   * NOT `isMuseMspRetryableErrorKind`: that set governs re-running a TURN,
+   * where the "burns the user's money in a loop" objection bites. Re-deciding
+   * spends no model tokens, and a double settle is already caught by the
+   * `approvalAlreadyResolved` arm above. Both kinds retry exactly ONCE, so a
+   * genuinely wedged host cannot spin.
+   *
+   * Anything else — `approvalChoiceInvalid` and friends — fails the same way on
+   * a second attempt, and an unsent decision gates the tool call forever, so
+   * the turn is cancelled rather than left hanging.
    */
   const sendApprovalDecision = async (
     request: MuseMspApprovalRequest,
@@ -581,7 +592,7 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
     } catch (error) {
       const kind = error instanceof MuseMspRpcError ? error.kind : ''
       if (kind === 'approvalAlreadyResolved') return
-      if (mayRetry && kind === 'approvalRequirementStale') {
+      if (mayRetry && (kind === 'approvalRequirementStale' || kind === 'internal')) {
         await sendApprovalDecision(request, choice, false)
         return
       }
