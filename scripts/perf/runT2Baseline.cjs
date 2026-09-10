@@ -67,6 +67,7 @@ const {
 const { probeHostBootstrapIdentity } = require('./hostWelcomeProbe.cjs')
 const { parseCellName, PAIRING_ROLES } = require('./interferenceMatrix.cjs')
 const { buildT2RunEvidence } = require('./t2RunEvidence.cjs')
+const { runT2WindowedReplay } = require('./t2WindowOrchestration.cjs')
 const {
   runDeterministicReplay,
   createCdpPageApiAdapter,
@@ -833,7 +834,8 @@ function parseArgs(argv) {
     pretty: false,
     help: false,
     lean: false,
-    skipBuild: false
+    skipBuild: false,
+    windowedReplay: false
   }
   for (const arg of argv) {
     if (arg === '--help' || arg === '-h') out.help = true
@@ -845,6 +847,7 @@ function parseArgs(argv) {
     else if (arg === '--pretty') out.pretty = true
     else if (arg === '--lean') out.lean = true
     else if (arg === '--skip-build') out.skipBuild = true
+    else if (arg === '--windowed-replay') out.windowedReplay = true
     else if (arg.startsWith('--workload=')) out.workload = arg.slice('--workload='.length)
     else if (arg.startsWith('--seed=')) out.seed = arg.slice('--seed='.length)
     else if (arg.startsWith('--out-dir=')) out.outDir = arg.slice('--out-dir='.length)
@@ -872,6 +875,29 @@ function parseArgs(argv) {
     }
   }
   return out
+}
+
+/**
+ * Windowed-replay journal/report totals. The lanes driver owns the observed
+ * windows; this only sums its per-window lane counters for progress UX and
+ * the report block. Evidence eligibility always comes from the descriptor.
+ */
+function summarizeWindowedReplay(result) {
+  const windows = result?.run?.evidence?.windows || []
+  let completedEvents = 0
+  let failedEvents = 0
+  for (const window of windows) {
+    for (const lane of window?.lanes || []) {
+      completedEvents += lane.completedEvents || 0
+      failedEvents += lane.failedEvents || 0
+    }
+  }
+  return {
+    windows: windows.length,
+    completedEvents,
+    failedEvents,
+    unsupported: Array.isArray(result?.unsupported) ? result.unsupported : []
+  }
 }
 
 function printHelp() {
@@ -912,6 +938,8 @@ Options:
                                     evidence recorded, never folded; run identity left undeclared
   --role=<light-alone|light-beside> Pairing role this run measures; omitted → run identity left undeclared
   --build-id=<id>                   Operator-named build identity for pairing; omitted → left undeclared
+  --windowed-replay               Replay as fenced 120 s × 3 concurrent lanes (default: sequential);
+                                  runs ≥6 min, refuses --max-replay-events, feeds observed windows to runEvidence
   --skip-build                      Skip build (NON-AUTHORITATIVE; refuses official-baseline path)
   --help
 `.trim()
@@ -1295,6 +1323,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   let childSession = null
   /** @type {object|null} */
   let replayResult = null
+  /** @type {object|null} — lanes-driver result when --windowed-replay selects windowed replay */
+  let windowedReplayResult = null
   let profilesCaptured = false
   // T9a: true only when the main-process persistence counters were genuinely
   // sampled. Gates `claimMetricsCollected` — a run that could not sample must
@@ -1567,75 +1597,109 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         },
         { log: true }
       )
-      replayResult = await runDeterministicReplay({
-        fixture,
-        api,
-        maxEvents: maxReplayEvents,
-        batchSize: 8,
-        eventTimeoutMs: replayStallTimeoutMs,
-        nowMs: replayNowMs,
-        timers: options.replayTimerAdapters,
-        onEventStart(info) {
-          if (info.eventNumber !== 1) return
-          updateProgress(
-            {
-              currentEvent: {
-                eventNumber: info.eventNumber,
-                totalEvents: info.totalEvents,
-                seq: info.seq,
-                kind: info.kind,
-                startedAtMs: info.startedAtMs
-              }
-            },
-            { log: true }
-          )
-        },
-        onProgress(info) {
-          // Always push to windowed-rate tracker (not just on publish cadence)
-          const win = windowedRate.push(info.completedEvents)
-          const now = info.completedAtMs
-          const shouldPublish =
-            info.completedEvents === 1 ||
-            info.completedEvents === info.totalEvents ||
-            info.completedEvents % progressEventInterval === 0 ||
-            now - lastPublishedAtMs >= progressIntervalMs
-          if (!shouldPublish) return
-          const elapsedMs = Math.max(1, now - replayStartedAtMs)
-          const eventsPerSecond = (info.completedEvents * 1000) / elapsedMs
-          const remainingEvents = Math.max(0, info.totalEvents - info.completedEvents)
-          const etaMs =
-            eventsPerSecond > 0 ? Math.round((remainingEvents / eventsPerSecond) * 1000) : null
-          // Windowed ETA uses the short-window rate for a more realistic projection
-          const windowedEtaMs = win > 0 ? Math.round((remainingEvents / win) * 1000) : null
-          lastPublishedAtMs = now
-          updateProgress(
-            {
-              completedEvents: info.completedEvents,
-              currentEvent: {
-                eventNumber: info.eventNumber,
-                totalEvents: info.totalEvents,
-                seq: info.seq,
-                kind: info.kind,
-                startedAtMs: info.startedAtMs,
-                completedAtMs: info.completedAtMs,
-                elapsedMs: info.elapsedMs
-              },
-              replayElapsedMs: elapsedMs,
-              eventsPerSecond,
-              etaMs,
-              windowedRateEvtPerSec: win,
-              windowedEtaMs,
-              windowedRateWindowMs: windowedRateMs
-            },
-            { log: true }
+      if (args.windowedReplay) {
+        if (args.maxReplayEvents != null) {
+          throw new Error(
+            '--max-replay-events applies to sequential replay only; refuse --windowed-replay with it'
           )
         }
-      })
+        windowedReplayResult = await runT2WindowedReplay({
+          fixture,
+          api,
+          ...(crossThreadCell == null ? {} : { cellName: crossThreadCell }),
+          ...(pairingRole == null ? {} : { pairingRole }),
+          workload,
+          seed,
+          fixtureFingerprint: fingerprint,
+          ...(buildId == null ? {} : { buildId }),
+          eventTimeoutMs: replayStallTimeoutMs,
+          nowMs: replayNowMs,
+          ...(options.replayWindowMs == null ? {} : { windowMs: options.replayWindowMs })
+        })
+        const windowedTotals = summarizeWindowedReplay(windowedReplayResult)
+        updateProgress(
+          {
+            completedEvents: windowedTotals.completedEvents,
+            currentEvent: null,
+            windowedReplay: true,
+            replayWindows: windowedTotals.windows
+          },
+          { log: true }
+        )
+      } else {
+        replayResult = await runDeterministicReplay({
+          fixture,
+          api,
+          maxEvents: maxReplayEvents,
+          batchSize: 8,
+          eventTimeoutMs: replayStallTimeoutMs,
+          nowMs: replayNowMs,
+          timers: options.replayTimerAdapters,
+          onEventStart(info) {
+            if (info.eventNumber !== 1) return
+            updateProgress(
+              {
+                currentEvent: {
+                  eventNumber: info.eventNumber,
+                  totalEvents: info.totalEvents,
+                  seq: info.seq,
+                  kind: info.kind,
+                  startedAtMs: info.startedAtMs
+                }
+              },
+              { log: true }
+            )
+          },
+          onProgress(info) {
+            // Always push to windowed-rate tracker (not just on publish cadence)
+            const win = windowedRate.push(info.completedEvents)
+            const now = info.completedAtMs
+            const shouldPublish =
+              info.completedEvents === 1 ||
+              info.completedEvents === info.totalEvents ||
+              info.completedEvents % progressEventInterval === 0 ||
+              now - lastPublishedAtMs >= progressIntervalMs
+            if (!shouldPublish) return
+            const elapsedMs = Math.max(1, now - replayStartedAtMs)
+            const eventsPerSecond = (info.completedEvents * 1000) / elapsedMs
+            const remainingEvents = Math.max(0, info.totalEvents - info.completedEvents)
+            const etaMs =
+              eventsPerSecond > 0 ? Math.round((remainingEvents / eventsPerSecond) * 1000) : null
+            // Windowed ETA uses the short-window rate for a more realistic projection
+            const windowedEtaMs = win > 0 ? Math.round((remainingEvents / win) * 1000) : null
+            lastPublishedAtMs = now
+            updateProgress(
+              {
+                completedEvents: info.completedEvents,
+                currentEvent: {
+                  eventNumber: info.eventNumber,
+                  totalEvents: info.totalEvents,
+                  seq: info.seq,
+                  kind: info.kind,
+                  startedAtMs: info.startedAtMs,
+                  completedAtMs: info.completedAtMs,
+                  elapsedMs: info.elapsedMs
+                },
+                replayElapsedMs: elapsedMs,
+                eventsPerSecond,
+                etaMs,
+                windowedRateEvtPerSec: win,
+                windowedEtaMs,
+                windowedRateWindowMs: windowedRateMs
+              },
+              { log: true }
+            )
+          }
+        })
+      }
 
       setCapturePhase(
         'replay_complete',
         {
-          completedEvents: replayResult.eventCount,
+          completedEvents:
+            replayResult != null
+              ? replayResult.eventCount
+              : summarizeWindowedReplay(windowedReplayResult).completedEvents,
           currentEvent: null,
           replayCompletedAt: new Date(replayNowMs()).toISOString()
         },
@@ -1899,11 +1963,32 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     }
   } else if (!args.dryRun && options.replayApi) {
     // Unit-test path: exercise replay without Electron
-    replayResult = await runDeterministicReplay({
-      fixture,
-      api: options.replayApi,
-      maxEvents: args.maxReplayEvents == null ? 32 : Number(args.maxReplayEvents)
-    })
+    if (args.windowedReplay) {
+      if (args.maxReplayEvents != null) {
+        throw new Error(
+          '--max-replay-events applies to sequential replay only; refuse --windowed-replay with it'
+        )
+      }
+      windowedReplayResult = await runT2WindowedReplay({
+        fixture,
+        api: options.replayApi,
+        ...(crossThreadCell == null ? {} : { cellName: crossThreadCell }),
+        ...(pairingRole == null ? {} : { pairingRole }),
+        workload,
+        seed,
+        fixtureFingerprint: fingerprint,
+        ...(buildId == null ? {} : { buildId }),
+        // Test-only seam: short windows stay validator-ineligible by design,
+        // so this can prove the wiring without manufacturing a measurement.
+        ...(options.replayWindowMs == null ? {} : { windowMs: options.replayWindowMs })
+      })
+    } else {
+      replayResult = await runDeterministicReplay({
+        fixture,
+        api: options.replayApi,
+        maxEvents: args.maxReplayEvents == null ? 32 : Number(args.maxReplayEvents)
+      })
+    }
   }
 
   finalizePartialT2Report(report, {
@@ -1923,6 +2008,22 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       progressIsAuthoritativeEvidence: false,
       unsupportedCount: replayResult.unsupported.length,
       unsupported: replayResult.unsupported.slice(0, 50)
+    }
+  }
+  if (windowedReplayResult) {
+    const windowedTotals = summarizeWindowedReplay(windowedReplayResult)
+    report.windowedReplay = {
+      windowed: true,
+      pairingRole: windowedReplayResult.pairingRole,
+      windows: windowedTotals.windows,
+      completedEvents: windowedTotals.completedEvents,
+      failedEvents: windowedTotals.failedEvents,
+      stallTimeoutMs: replayStallTimeoutMs,
+      progressIsAuthoritativeEvidence: false,
+      evidenceEligible: windowedReplayResult.evidenceEligible,
+      evidenceErrors: windowedReplayResult.evidenceErrors,
+      unsupportedCount: windowedTotals.unsupported.length,
+      unsupported: windowedTotals.unsupported.slice(0, 50)
     }
   }
 
@@ -1953,6 +2054,12 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     fixtureFingerprint: fingerprint,
     fixtureChatIds: fixture.chats.map((chat) => chat.appChatId),
     buildId,
+    ...(windowedReplayResult == null
+      ? {}
+      : {
+          windows: windowedReplayResult.run.evidence.windows,
+          signals: windowedReplayResult.run.signals
+        }),
     launched: willLaunch
   }).run
 

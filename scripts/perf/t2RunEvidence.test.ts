@@ -11,7 +11,7 @@ const {
   MATRIX_SAMPLING,
   RUN_EVIDENCE_VERSION
 } = require('./interferenceMatrix.cjs')
-const { FIXTURE_GENERATOR_VERSION } = require('./fixtureGenerator.cjs')
+const { FIXTURE_GENERATOR_VERSION, generatePerfFixture } = require('./fixtureGenerator.cjs')
 const { runT2BaselineCli } = require('./runT2Baseline.cjs')
 
 const CELL = 'small/2/warm/codex_bridge_disabled/none'
@@ -229,5 +229,105 @@ describe('T2 runner run-evidence wiring (Wall 2a)', () => {
     await expect(
       runT2BaselineCli(['--workload=dual_run', '--dry-run', '--build-id='])
     ).rejects.toThrow(/--build-id/)
+  })
+})
+
+describe('T2 windowed-replay wiring (Wall 2 window orchestration)', () => {
+  function windowedArgs(extra: string[] = []) {
+    return [
+      '--workload=dual_run',
+      '--lean',
+      '--scale-down=40',
+      '--windowed-replay',
+      '--instance-id=perfT2Windowed01',
+      `--home=${path.join(tmpdir(), 'tw-t2-home-windowed')}`,
+      `--artifact-dir=${mkdtempSync(path.join(tmpdir(), 'tw-t2-windowed-'))}`,
+      ...extra
+    ]
+  }
+
+  // Revision-CAS store over the same deterministic fixture the CLI builds
+  // internally, so every save-kind event lands and run lookups resolve.
+  function revisionCasApi(fixture) {
+    const canonical = new Map()
+    for (const chat of fixture.chats) {
+      canonical.set(chat.appChatId, { revision: chat.persistenceRevision || 1 })
+    }
+    return {
+      async getChat(chatId: string) {
+        const entry = canonical.get(chatId)
+        if (!entry) return null
+        const chat = fixture.chats.find((c) => c.appChatId === chatId)
+        return { ...chat, persistenceRevision: entry.revision }
+      },
+      async saveChat(chat) {
+        const entry = canonical.get(chat.appChatId)
+        if (!entry) return null
+        if ((chat.persistenceRevision || 1) !== entry.revision) {
+          return { appChatId: chat.appChatId, persistenceRevision: entry.revision }
+        }
+        entry.revision += 1
+        return { appChatId: chat.appChatId, persistenceRevision: entry.revision }
+      }
+    }
+  }
+
+  function windowedOptions() {
+    const fixture = generatePerfFixture({
+      workload: 'dual_run',
+      seed: 42,
+      lean: true,
+      scaleDown: 40
+    })
+    return {
+      repoRoot: path.resolve(__dirname, '..', '..'),
+      forceIsolated: true,
+      platform: 'darwin',
+      replayApi: revisionCasApi(fixture),
+      // Test-only seam: short windows stay validator-ineligible by design.
+      replayWindowMs: 50
+    }
+  }
+
+  it('feeds observed windows and signals into the descriptor without qualifying short samples', async () => {
+    const result = await runT2BaselineCli(
+      windowedArgs([`--cell=${CELL}`, '--build-id=test-build']),
+      windowedOptions()
+    )
+    expect(result.ok).toBe(true)
+    expect(result.report.windowedReplay).toMatchObject({ windowed: true, windows: 3 })
+    expect(result.report.windowedReplay.completedEvents).toBeGreaterThan(0)
+    expect(result.report.windowedReplay.evidenceEligible).toBe(false)
+    const run = result.report.runEvidence
+    expect(run.evidence.windows).toHaveLength(3)
+    for (const window of run.evidence.windows) {
+      expect(window.lanes).toHaveLength(run.evidence.populations.length)
+    }
+    const lightSamples = run.evidence.windows.reduce(
+      (total, window) => total + window.lanes.find((lane) => lane.role === 'light').measuredSamples,
+      0
+    )
+    expect(run.signals['light.applyLatencyMs'].count).toBe(lightSamples)
+    const errors = validateRunEvidence(run)
+    expect(errors).toContain('incomplete, overlapping or invalid observed window')
+    expect(errors).not.toContain('coverage for every repetition required')
+  })
+
+  it('default path stays sequential and gap-declaring', async () => {
+    const args = windowedArgs().filter((arg) => arg !== '--windowed-replay')
+    const result = await runT2BaselineCli(args, windowedOptions())
+    expect(result.ok).toBe(true)
+    expect(result.report.replay.eventCount).toBeGreaterThan(0)
+    expect(result.report.windowedReplay).toBeUndefined()
+    expect(result.report.runEvidence.evidence.windows).toEqual([])
+    expect(validateRunEvidence(result.report.runEvidence)).toContain(
+      'coverage for every repetition required'
+    )
+  })
+
+  it('refuses --max-replay-events with --windowed-replay', async () => {
+    await expect(
+      runT2BaselineCli(windowedArgs(['--max-replay-events=10']), windowedOptions())
+    ).rejects.toThrow(/--max-replay-events/)
   })
 })
