@@ -205,9 +205,19 @@ export class ChatComposerSelectionOverlayStore {
     if (next === chat) return { chat, changed: false }
 
     const currentRevision = persistenceRevision(chat)
-    const existing = this.read(chat.appChatId)
-    const extendsOverlay = Boolean(existing && existing.revision === currentRevision)
-    const baseRevision = extendsOverlay ? existing!.baseRevision : currentRevision
+    // Warm the memo before the rollback bookkeeping below reads it, so a failed
+    // write restores an on-disk overlay instead of dropping the memo entry.
+    this.read(chat.appChatId)
+    // The record's CURRENT revision is always the base. `apply()` folds an
+    // overlay in only when the record sits exactly AT `baseRevision`, and bails
+    // earlier still when the record has already reached `overlay.revision`.
+    // Extending a second selection from the FIRST overlay's base therefore
+    // produced `revision === currentRevision`, which `apply()` reads as
+    // "already folded in" — so every selection made after an ordinary save had
+    // folded the previous one in was written to disk and could never be read
+    // back. It hid for so long because the loss only surfaces on restart or
+    // reload, not on the pick itself.
+    const baseRevision = currentRevision
     const revision = baseRevision + 1
     const updatedAt = next.updatedAt
     const overlay = materializeOverlay(next, baseRevision, revision)

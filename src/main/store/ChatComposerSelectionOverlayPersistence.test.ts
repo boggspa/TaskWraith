@@ -203,6 +203,50 @@ describe('ChatComposerSelectionOverlayStore', () => {
     expect(store.apply(checkpointed)).toBe(checkpointed)
   })
 
+  it('replays a selection made after an ordinary save folded the previous one in', async () => {
+    const source = chat()
+    const chatsDir = path.join(testRoot, 'chats')
+    const store = new ChatComposerSelectionOverlayStore(chatsDir)
+
+    const first = await store.persist(
+      source,
+      request({ selectedModelType: 'claude-opus-5' }),
+      () => 42
+    )
+    // The ordinary checkpoint that folds the first pick in lands at base+1.
+    const folded: ChatRecord = { ...first.chat, persistenceRevision: 8 }
+    expect(store.apply(folded)).toBe(folded)
+
+    const second = await store.persist(folded, request({ claudeReasoningEffort: 'high' }), () => 43)
+
+    // The second pick must survive a restart, which is where it used to vanish:
+    // the overlay was written against the FIRST overlay's base, so `apply()`
+    // read it as already-folded-in and returned the record untouched forever.
+    const restarted = new ChatComposerSelectionOverlayStore(chatsDir)
+    const replayed = restarted.apply(folded)
+    expect(replayed.providerMetadata?.claudeReasoningEffort).toBe('high')
+    expect(replayed.providerMetadata?.selectedModelType).toBe('claude-opus-5')
+    expect(replayed.persistenceRevision).toBe(8)
+    expect(second.chat.persistenceRevision).toBe(8)
+  })
+
+  it('still supersedes that second overlay once its own checkpoint lands', async () => {
+    const source = chat()
+    const chatsDir = path.join(testRoot, 'chats')
+    const store = new ChatComposerSelectionOverlayStore(chatsDir)
+    const first = await store.persist(
+      source,
+      request({ selectedModelType: 'claude-opus-5' }),
+      () => 42
+    )
+    const folded: ChatRecord = { ...first.chat, persistenceRevision: 8 }
+    const second = await store.persist(folded, request({ claudeReasoningEffort: 'high' }), () => 43)
+
+    const restarted = new ChatComposerSelectionOverlayStore(chatsDir)
+    const nextCheckpoint: ChatRecord = { ...second.chat, persistenceRevision: 9 }
+    expect(restarted.apply(nextCheckpoint)).toBe(nextCheckpoint)
+  })
+
   it('removes the adjacent overlay with chat deletion', async () => {
     const store = new ChatComposerSelectionOverlayStore(path.join(testRoot, 'chats'))
     await store.persist(chat(), request({ selectedModelType: 'claude-opus-5' }))
