@@ -130,9 +130,15 @@ describe('interference matrix reachability', () => {
       // scripts/perf/hostNativeSaturation.cjs (M1 Wall 1): the matrix no
       // longer claims it missing.
       expect(cell.missingCapability.includes('host_native_saturation_driver')).toBe(false)
-      for (const missing of cell.missingCapability)
-        expect(MISSING_DRIVER_CAPABILITIES).toContain(missing)
     }
+    // The declared list and what the cells actually claim must agree in BOTH
+    // directions. A per-cell subset check is vacuous while every list is
+    // empty; this one still fails if a capability is declared missing that no
+    // cell claims, or claimed by a cell without being declared.
+    const claimed = [
+      ...new Set(cells.flatMap((cell: { missingCapability: string[] }) => cell.missingCapability))
+    ].sort()
+    expect(claimed).toEqual([...MISSING_DRIVER_CAPABILITIES].sort())
     // The ensemble-saturation landing flips the last third: all 480 cells
     // read reachable. Reachable means every capability driver exists, not
     // that a runner can execute.

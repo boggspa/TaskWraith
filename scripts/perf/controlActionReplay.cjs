@@ -27,9 +27,12 @@
  * deadline-cut action whose effect may still land is reported as a pending
  * effect, and its chats stay reserved until the underlying promise settles.
  *
- * WHAT THIS DRIVER DOES NOT DO (still declared missing capabilities in
- * interferenceMatrix.cjs): no provider runs, no Ensemble-pool or Host-native
- * saturation. A timer cannot preempt synchronously blocking adapter work.
+ * WHAT THIS DRIVER DOES NOT DO: no provider runs, no Ensemble-pool or
+ * Host-native saturation — each has its own driver now
+ * (deterministicReplayProvider.cjs, ensemblePoolSaturation.cjs,
+ * hostNativeSaturation.cjs), so interferenceMatrix.cjs declares no missing
+ * capability today; that is capability existence, not executability.
+ * A timer cannot preempt synchronously blocking adapter work.
  */
 
 const { CONTROL_ACTIONS } = require('./interferenceMatrix.cjs')

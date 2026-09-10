@@ -22,11 +22,14 @@
  * alone/beside runs of a pair present identical signal sets; heavy-lane
  * detail lives in `lanes`, not in the compared signals.
  *
- * WHAT THIS DRIVER DOES NOT DO (still declared missing capabilities in
- * interferenceMatrix.cjs): no provider runs (replay exercises the save/hydrate
- * path only), no Ensemble-pool or Host-native saturation. Control actions
- * (cancel/approval/answer/seat toggle) have their own driver now
- * (scripts/perf/controlActionReplay.cjs, M1 Wall 1). A cell run through this
+ * WHAT THIS DRIVER DOES NOT DO: no provider runs (replay exercises the
+ * save/hydrate path only), no Ensemble-pool or Host-native saturation. Those
+ * three have their own drivers now, as do control actions
+ * (cancel/approval/answer/seat toggle) — scripts/perf/controlActionReplay.cjs,
+ * deterministicReplayProvider.cjs, ensemblePoolSaturation.cjs and
+ * hostNativeSaturation.cjs, M1 Wall 1 — so interferenceMatrix.cjs declares no
+ * missing capability at all today. That is capability existence, not
+ * executability. A cell run through this
  * driver alone is NOT a measured Appendix A cell. Qualified pairs require report schema v2
  * and versioned per-window coverage. Old descriptors remain diagnostic data.
  * A timer cannot preempt synchronously blocking adapter or event-loop work.

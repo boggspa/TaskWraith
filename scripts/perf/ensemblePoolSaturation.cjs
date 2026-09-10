@@ -8,21 +8,34 @@
  * everything back to baseline — against an injected pool adapter, and records
  * what the adapter reports. Seat enables ride the validated
  * `ensemble.seat.toggle` control surface (`issueControlAction`, same result
- * contract as the control-action driver); occupancy comes from
- * `readPoolStatus()`, which must report `{ seatCount }`. Step order is fixed;
+ * contract as the control-action driver) in the shape that surface actually
+ * decodes: `target: { threadId }` and arguments exactly
+ * `{ participantId, enabled }` (`validateEnsembleSeatToggle`,
+ * src/host-runtime/HostCommandArguments.ts), so a pass-through adapter has
+ * nothing left to invent. The scripted `threadId` names the one Ensemble
+ * thread whose seat pool is being filled. Occupancy comes from
+ * `readPoolStatus()`, which must report `{ seatCount }`; that read has no
+ * production surface yet, so it is the seam an adapter must supply. Step order is fixed;
  * every adapter wait is bounded by one step timeout plus an optional overall
  * deadline; every step carries an honest outcome (completed, rejected,
  * failed, unsupported, censored, not_attempted).
  *
  * Adapter-declared refusals are recorded verbatim (a capped pool refusing the
- * 31st enable as `pool_full` is saturation evidence, not a driver failure);
- * anything else fails closed as `adapter_invalid_result`; a throw records
- * `adapter_threw`, never the payload. `saturationObserved` is strict: the
- * fill must land exactly `poolTarget` seats above baseline AND the arrival
- * must settle (completed or rejected-verbatim). A pool that refuses below
- * target, or a status read that cannot be used, fails the run with a note —
- * never a reshaped claim. The driver emits no evidence-v1 block. A timer
- * cannot preempt synchronously blocking adapter work.
+ * 31st enable as `pool_full`); anything else fails closed as
+ * `adapter_invalid_result`; a throw records `adapter_threw`, never the
+ * payload. `saturationObserved` is strict about what it measures, and what
+ * it measures is OCCUPANCY: the fill must land exactly `poolTarget` seats
+ * above baseline AND the arrival must settle (completed or
+ * rejected-verbatim). It is deliberately a WEAKER claim than the host-native
+ * driver's flag, which requires the arrival to pend behind a non-empty
+ * queue: an absorbing pool that admits the 31st seat still reads
+ * `saturationObserved: true` here, because the scenario's interference is
+ * the 30-seat load, not a refusal. Read `arrivalRefused` for the refusal
+ * fact and `occupancyDelta` for the fill; never read the flag as "the pool
+ * turned work away". A pool that refuses below target, or a status read that
+ * cannot be used, fails the run with a note — never a reshaped claim. The
+ * driver emits no evidence-v1 block. A timer cannot preempt synchronously
+ * blocking adapter work.
  *
  * WHAT THIS DRIVER DOES NOT DO: no provider runs; no host-native admission
  * (that driver is scripts/perf/hostNativeSaturation.cjs). Attached adapters
@@ -91,6 +104,7 @@ function generateEnsembleSaturationScript(options) {
   return {
     seed: options.seed,
     poolTarget,
+    threadId: `ens-sat-s${options.seed}-thread`,
     seats,
     arrival: { participantId: `ens-sat-s${options.seed}-arrival-01` }
   }
@@ -98,6 +112,11 @@ function generateEnsembleSaturationScript(options) {
 
 function validateScript(script) {
   if (!isPlainObject(script)) throw new Error('script must be an object')
+  // ensemble.seat.toggle decodes an exact string threadId target: a script
+  // without one cannot be handed to the real control surface.
+  if (typeof script.threadId !== 'string' || script.threadId.length === 0) {
+    throw new Error('script threadId must be a non-empty string')
+  }
   if (!Array.isArray(script.seats) || script.seats.length === 0) {
     throw new Error('script seats must be a non-empty array')
   }
@@ -120,6 +139,7 @@ function validateScript(script) {
   return {
     seed: script.seed,
     poolTarget: script.seats.length,
+    threadId: script.threadId,
     seats: script.seats.map((seat) => ({ ...seat })),
     arrival: { ...script.arrival }
   }
@@ -226,7 +246,7 @@ async function runEnsemblePoolSaturation(options) {
         api.issueControlAction({
           seq,
           action: 'seat_toggle',
-          target: { pool: 'ensemble-saturation' },
+          target: { threadId: script.threadId },
           args: { participantId, enabled }
         })
       )
@@ -351,12 +371,20 @@ async function runEnsemblePoolSaturation(options) {
       }
     }
 
+    const occupancyDelta =
+      baseline.outcome === 'completed' && postFill.outcome === 'completed'
+        ? postFill.seatCount - baseline.seatCount
+        : null
+    if (occupancyDelta !== null && occupancyDelta !== script.poolTarget) {
+      notes.push('fill_not_exactly_target')
+    }
+    // Occupancy reached AND the arrival settled. NOT a refusal claim: read
+    // arrivalRefused for that, and the host-native driver for a queue.
     const saturationObserved =
-      baseline.outcome === 'completed' &&
-      postFill.outcome === 'completed' &&
-      postFill.seatCount - baseline.seatCount === script.poolTarget &&
+      occupancyDelta === script.poolTarget &&
       arrival !== null &&
       (arrival.outcome === 'completed' || arrival.outcome === 'rejected')
+    const arrivalRefused = arrival !== null && arrival.outcome === 'rejected'
 
     // Phase 3 — drain: disable every seat this run enabled, in reverse, then
     // re-read. Enables that never completed are not the run's to disable.
@@ -406,7 +434,10 @@ async function runEnsemblePoolSaturation(options) {
       diagnosticOnly: options.diagnosticOnly === true,
       seed: script.seed ?? null,
       poolTarget: script.poolTarget,
+      threadId: script.threadId,
       saturationObserved,
+      occupancyDelta,
+      arrivalRefused,
       baseline,
       fills,
       postFill,

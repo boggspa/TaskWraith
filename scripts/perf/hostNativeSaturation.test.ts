@@ -1,8 +1,14 @@
 import { createRequire } from 'node:module'
 import { describe, expect, it, vi } from 'vitest'
+import {
+  HOST_NODE_MAX_CONCURRENT_RUNS,
+  HOST_NODE_MAX_QUEUED_STARTS
+} from '../../src/host-node/HostNodeRunAdmission'
 
 const require = createRequire(import.meta.url)
 const {
+  DEFAULT_ACTIVE_TARGET,
+  DEFAULT_QUEUED_TARGET,
   generateHostSaturationScript,
   runHostNativeSaturation,
   runDryRun
@@ -242,6 +248,41 @@ describe('runHostNativeSaturation', () => {
     expect(result.arrival.outcome).toBe('completed')
   })
 
+  it('refuses to call a queued-but-unsettled arrival saturation', async () => {
+    // The queue IS observed here; only the second half of the claim fails.
+    const api = createFakeAdmission()
+    const stuck = {
+      ...api,
+      acquire: async (input: { commandId: string; threadId: string }) => {
+        const result = (await api.acquire(input)) as {
+          kind: string
+          lease?: { commandId: string; threadId: string; release: () => void }
+        }
+        // A pool whose releases free nothing: the arrival stays queued.
+        return result.kind === 'admitted'
+          ? { ...result, lease: { ...result.lease!, release: () => {} } }
+          : result
+      }
+    }
+    const result = await saturate(stuck, { acquireTimeoutMs: 20 })
+    expect(result.arrival.queueObserved).toBe(true)
+    expect(result.arrival.outcome).toBe('cancelled')
+    expect(result.saturationObserved).toBe(false)
+    expect(result.ok).toBe(false)
+  })
+
+  it('fails closed when an admitted lease omits the commandId the report cites', async () => {
+    const api = createFakeAdmission()
+    const bare = {
+      ...api,
+      acquire: async () => ({ kind: 'admitted', lease: { release: () => {} } })
+    }
+    const result = await saturate(bare)
+    expect(result.ok).toBe(false)
+    expect(result.holds[0].outcome).toBe('failed')
+    expect(result.holds[0].reason).toBe('adapter_invalid_result')
+  })
+
   it('refuses a script and a seed together, and neither', async () => {
     const api = createFakeAdmission()
     const script = generateHostSaturationScript({ seed: 7 })
@@ -249,6 +290,16 @@ describe('runHostNativeSaturation', () => {
     await expect(
       runHostNativeSaturation({ api, seed: undefined as unknown as number })
     ).rejects.toThrow(/seed/)
+  })
+})
+
+describe('host saturation scenario bounds', () => {
+  it('pins the scripted targets to the production admission capacity', () => {
+    // A capacity change in src must not silently turn the scenario into a
+    // 16-of-24 fill that never queues.
+    expect(DEFAULT_ACTIVE_TARGET).toBe(HOST_NODE_MAX_CONCURRENT_RUNS)
+    expect(DEFAULT_QUEUED_TARGET).toBeGreaterThan(0)
+    expect(DEFAULT_QUEUED_TARGET).toBeLessThanOrEqual(HOST_NODE_MAX_QUEUED_STARTS)
   })
 })
 

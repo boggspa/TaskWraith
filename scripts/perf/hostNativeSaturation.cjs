@@ -23,18 +23,23 @@
  * payload. A missing `persistProbe` records `persist_probe_unavailable` and
  * fails the run: the S3 scenario requires the alongside observation.
  *
- * `saturationObserved` is strict: the arrival must PEND while the adapter
- * reports a non-empty queue. An arrival that settles without queueing, a
- * verbatim rejection, or a pending arrival the adapter never shows queued
- * are all recorded as observed facts — never reshaped into saturation. The
+ * `saturationObserved` is strict and has exactly two halves: the arrival
+ * must PEND while the adapter reports a non-empty queue, AND it must then
+ * settle (admitted, or refused with a verbatim code). An arrival that
+ * settles without queueing, a pending arrival the adapter never shows
+ * queued, and one that is cancelled or left unresolved are all recorded as
+ * observed facts — never reshaped into saturation. Both halves carry their
+ * own regression test; the sibling ensemble driver's flag is a WEAKER claim
+ * (occupancy reached, no queue), so read them per driver. The
  * driver emits no evidence-v1 block and claims no durability: the M2
  * `HostQueuedStartInterference` regression (real Desktop persist durable
  * before release, QUEUE wait measured separately) still needs the real Host
  * out of process. A timer cannot preempt synchronously blocking adapter work.
  *
- * WHAT THIS DRIVER DOES NOT DO (still declared missing capabilities in
- * interferenceMatrix.cjs until the second slice lands): no Ensemble-pool
- * saturation. No provider runs.
+ * WHAT THIS DRIVER DOES NOT DO: no Ensemble-pool saturation (that driver is
+ * scripts/perf/ensemblePoolSaturation.cjs). No provider runs. No runner
+ * imports this file yet: the matrix counts the capability as existing, which
+ * is not the same as a cell being executable.
  */
 
 const MAX_TIMER_MS = 2 ** 31 - 1
@@ -248,7 +253,17 @@ async function runHostNativeSaturation(options) {
   const normalizeAcquire = (value) => {
     if (!isPlainObject(value)) return null
     if (value.kind === 'admitted') {
-      if (!isPlainObject(value.lease) || typeof value.lease.release !== 'function') return null
+      if (
+        !isPlainObject(value.lease) ||
+        typeof value.lease.release !== 'function' ||
+        typeof value.lease.commandId !== 'string' ||
+        value.lease.commandId.length === 0
+      ) {
+        // HostNodeRunAdmissionLease types commandId as a required string and
+        // `release.releasedCommandId` is reported from it: an unvalidated
+        // adapter field must not reach the report.
+        return null
+      }
       return { kind: 'admitted', lease: value.lease }
     }
     if (value.kind === 'rejected') {
