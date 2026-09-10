@@ -14,6 +14,12 @@
  * injects its own actor still passes — that exact mistake was the blocker in
  * 9dcd59d16 that 257 green tests missed. The factory tests pin it.
  *
+ * AND THEREFORE NO CAPABILITY LIST: sharing that identity means sharing the ONE
+ * Host session, and HostSession.bind only retains/narrows a grant, so this
+ * client must inherit TASKWRAITH_DESKTOP_HOST_CAPABILITIES. A narrower request
+ * here strips `history`/`snapshot`/`deltas` from every other consumer until the
+ * Host process restarts.
+ *
  * NO QUEUE HERE, DELIBERATELY. These are awaited one-shot mutations with few
  * callers, unlike the coalescing persist path that exists only because
  * AppStore.saveChat has 86 synchronous call sites.
@@ -23,7 +29,6 @@ import { randomUUID } from 'node:crypto'
 
 import type {
   HostActorIdentity,
-  HostCapability,
   HostCommand,
   HostCommandName,
   HostCommandReceipt
@@ -38,14 +43,6 @@ import type {
   HostProjectionReceiptLookupResult
 } from './HostProjectionBroker'
 import { createHostProjectionBroker } from './HostProjectionBroker'
-
-/** Mirrors the persist client exactly: a proven submit + receipt-poll capability set. */
-const WORKSPACE_HOST_CAPABILITIES = [
-  'bootstrap',
-  'commands',
-  'receipts',
-  'setup'
-] as const satisfies readonly HostCapability[]
 
 export type HostWorkspaceRecordErrorCode =
   | 'invalid_input'
@@ -350,8 +347,7 @@ export function createDesktopHostWorkspaceRecordClient(input: {
       clientClass: TASKWRAITH_DESKTOP_HOST_ACTOR.clientClass,
       clientVersion: input.appVersion
     },
-    actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR },
-    capabilities: WORKSPACE_HOST_CAPABILITIES
+    actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR }
   })
   return new HostWorkspaceRecordClient({ broker, actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR } })
 }

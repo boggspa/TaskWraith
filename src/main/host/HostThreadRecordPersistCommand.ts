@@ -34,12 +34,7 @@ import {
   publishHostThreadRecordTransfer,
   removeHostThreadRecordTransfer
 } from '../../host-runtime/HostThreadRecordTransfer'
-import type {
-  HostActorIdentity,
-  HostCapability,
-  HostCommand,
-  HostCommandReceipt
-} from '../../shared/hostProtocol'
+import type { HostActorIdentity, HostCommand, HostCommandReceipt } from '../../shared/hostProtocol'
 import {
   HOST_PROTOCOL_VERSION,
   TASKWRAITH_DESKTOP_HOST_ACTOR,
@@ -62,14 +57,15 @@ import { createHostProjectionBroker } from './HostProjectionBroker'
  * socket client, the call-context actor, and command.actor. A bespoke id is
  * denied in production while every unit test that injects its own actor still
  * passes. That mismatch shipped once; the factory tests below now pin it.
+ *
+ * AND THEREFORE NO CAPABILITY LIST. HostThreadKindCommand may carry a narrow
+ * one only because it also mints its OWN client id. Sharing the Desktop
+ * identity means sharing the ONE Host session, and HostSession.bind only
+ * retains/narrows a grant, so this client must inherit
+ * TASKWRAITH_DESKTOP_HOST_CAPABILITIES. Copying that module's narrow set
+ * without its dedicated identity is what silently stripped `history` from the
+ * shared session and made every thread.catalogue read fail `unauthorized`.
  */
-/** Mirrors HostThreadKindCommand exactly: a proven submit + receipt-poll capability set. */
-const PERSIST_HOST_CAPABILITIES = [
-  'bootstrap',
-  'commands',
-  'receipts',
-  'setup'
-] as const satisfies readonly HostCapability[]
 
 /**
  * The intersection of two independently authored bounds:
@@ -1280,8 +1276,7 @@ export function createDesktopHostThreadRecordPersistClient(
       clientClass: TASKWRAITH_DESKTOP_HOST_ACTOR.clientClass,
       clientVersion: input.appVersion
     },
-    actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR },
-    capabilities: PERSIST_HOST_CAPABILITIES
+    actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR }
   })
   // bootstrap.ts:146-148 derives both the Host profile path and userDataPath
   // from the same canonicalized app userData directory.

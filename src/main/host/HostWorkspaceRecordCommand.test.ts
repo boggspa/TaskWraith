@@ -11,6 +11,7 @@ import type {
 import {
   HOST_PROTOCOL_VERSION,
   TASKWRAITH_DESKTOP_HOST_ACTOR,
+  TASKWRAITH_DESKTOP_HOST_CAPABILITIES,
   decodeHostCommand
 } from '../../shared/hostProtocol'
 import {
@@ -31,6 +32,7 @@ const hoisted = vi.hoisted(() => ({
   brokerOptions: [] as Array<{
     client: { clientId: string; clientClass: string; clientVersion: string }
     actor: { actorId: string; clientId: string; clientClass: string }
+    capabilities: readonly string[] | undefined
   }>,
   submitted: [] as Array<Record<string, unknown>>
 }))
@@ -39,8 +41,13 @@ vi.mock('./HostProjectionBroker', () => ({
   createHostProjectionBroker: (options: {
     client: { clientId: string; clientClass: string; clientVersion: string }
     actor: { actorId: string; clientId: string; clientClass: string }
+    capabilities?: readonly string[]
   }) => {
-    hoisted.brokerOptions.push({ client: options.client, actor: options.actor })
+    hoisted.brokerOptions.push({
+      client: options.client,
+      actor: options.actor,
+      capabilities: options.capabilities
+    })
     return {
       submitCommand: async (command: Record<string, unknown>) => {
         hoisted.submitted.push(command)
@@ -354,6 +361,7 @@ describe('production factory identity against the real authority gate', () => {
     socketClientClass: HostClientClass
     socketClientVersion: string
     brokerActor: HostActorIdentity
+    brokerCapabilities: readonly string[] | undefined
   }> {
     const client = createDesktopHostWorkspaceRecordClient({
       userDataPath: '/tmp/tw-workspace-profile',
@@ -366,7 +374,8 @@ describe('production factory identity against the real authority gate', () => {
       socketClientId: options.client.clientId,
       socketClientClass: options.client.clientClass as HostClientClass,
       socketClientVersion: options.client.clientVersion,
-      brokerActor: options.actor as HostActorIdentity
+      brokerActor: options.actor as HostActorIdentity,
+      brokerCapabilities: options.capabilities
     }
   }
 
@@ -393,6 +402,26 @@ describe('production factory identity against the real authority gate', () => {
     expect(composed.socketClientId).toBe(TASKWRAITH_DESKTOP_HOST_ACTOR.clientId)
     expect(composed.brokerActor).toMatchObject({ ...TASKWRAITH_DESKTOP_HOST_ACTOR })
     expect(composed.command.actor).toMatchObject({ ...TASKWRAITH_DESKTOP_HOST_ACTOR })
+  })
+
+  /**
+   * Sharing the desktop identity (see this module's header) means sharing the
+   * ONE Host session. HostSession.bind only RETAINS/NARROWS an existing grant,
+   * so a narrower request here strips `history`/`snapshot`/`deltas` from the
+   * desktop's own session until the Host restarts — thread.catalogue then
+   * fails `unauthorized` forever and chats never hydrate.
+   */
+  it('requests the canonical desktop grant so it cannot narrow the shared session', async () => {
+    const composed = await composedIdentity()
+
+    expect(composed.brokerCapabilities ?? TASKWRAITH_DESKTOP_HOST_CAPABILITIES).toEqual([
+      ...TASKWRAITH_DESKTOP_HOST_CAPABILITIES
+    ])
+    for (const capability of ['history', 'snapshot', 'deltas'] as const) {
+      expect(composed.brokerCapabilities ?? TASKWRAITH_DESKTOP_HOST_CAPABILITIES).toContain(
+        capability
+      )
+    }
   })
 })
 

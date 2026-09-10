@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   TASKWRAITH_DESKTOP_HOST_ACTOR,
+  TASKWRAITH_DESKTOP_HOST_CAPABILITIES,
+  TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
   createEmptyHostSnapshot,
   type HostCommand
 } from '../../shared/hostProtocol'
@@ -30,6 +32,60 @@ describe('HostProjectionBroker', () => {
         createClient: vi.fn()
       })
     ).toThrow('actor must match')
+  })
+
+  /**
+   * The regression this guard exists for: three main-process consumers share
+   * TASKWRAITH_DESKTOP_HOST_ACTOR, so they share ONE Host session, and
+   * HostSession.bind only retains/narrows an existing grant. A consumer asking
+   * for less silently stripped `history` from the desktop's own session, so
+   * every thread.catalogue read failed `unauthorized` until the Host restarted.
+   */
+  it('refuses a narrowed capability request under the shared Desktop identity', () => {
+    expect(() =>
+      createHostProjectionBroker({
+        userDataPath: '/tmp/taskwraith-host-broker-test',
+        appVersion: 'test',
+        client: {
+          clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
+          clientClass: 'desktop',
+          clientVersion: 'test'
+        },
+        actor: TASKWRAITH_DESKTOP_HOST_ACTOR,
+        capabilities: ['bootstrap', 'commands', 'receipts'],
+        createClient: vi.fn()
+      })
+    ).toThrow('narrows the shared session')
+  })
+
+  it('admits a narrow grant for a consumer that mints its own client id', () => {
+    expect(() =>
+      createHostProjectionBroker({
+        userDataPath: '/tmp/taskwraith-host-broker-test',
+        appVersion: 'test',
+        client: { clientId: 'thread-kind-client', clientClass: 'desktop', clientVersion: 'test' },
+        actor: {
+          actorId: 'thread-kind-client',
+          clientId: 'thread-kind-client',
+          clientClass: 'desktop'
+        },
+        capabilities: ['bootstrap', 'commands', 'receipts', 'setup'],
+        createClient: vi.fn()
+      })
+    ).not.toThrow()
+  })
+
+  it('defaults the shared Desktop identity to the canonical grant', () => {
+    const createClient = vi.fn()
+    createHostProjectionBroker({
+      userDataPath: '/tmp/taskwraith-host-broker-test',
+      appVersion: 'test',
+      createClient
+    })
+    // Non-vacuous: the canonical set must actually carry what the app reads.
+    expect([...TASKWRAITH_DESKTOP_HOST_CAPABILITIES]).toEqual(
+      expect.arrayContaining(['history', 'snapshot', 'deltas'])
+    )
   })
 
   it('single-flights one authenticated Desktop session across concurrent consumers', async () => {

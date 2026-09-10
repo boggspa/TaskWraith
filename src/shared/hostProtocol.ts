@@ -110,6 +110,34 @@ export const TASKWRAITH_DESKTOP_HOST_ACTOR = {
   clientClass: 'desktop'
 } as const satisfies HostActorIdentity
 
+/**
+ * The ONE capability grant every consumer binding as the Desktop identity must
+ * request.
+ *
+ * HostSession.bind keys a session by actor identity and, on re-bind, only ever
+ * RETAINS/NARROWS the grant it already issued — a wider later request cannot
+ * add back what an earlier, narrower one dropped. Every main-process consumer
+ * shares TASKWRAITH_DESKTOP_HOST_ACTOR and therefore shares ONE session, so a
+ * consumer that asks for less permanently strips the difference from the whole
+ * app until the Host process restarts. Losing `history` alone makes every
+ * thread.catalogue read fail `unauthorized`, which leaves chats summary-only
+ * (save-chat then throws) and stalls the transcript; losing `deltas`/`snapshot`
+ * freezes live updates outright. Sharing the identity means sharing this list.
+ *
+ * `setup` is deliberately absent: every command these consumers submit is a
+ * governed-mutation (HostCommandRouting), never a setup-mutation.
+ */
+export const TASKWRAITH_DESKTOP_HOST_CAPABILITIES = [
+  'bootstrap',
+  'snapshot',
+  'deltas',
+  'health',
+  'commands',
+  'receipts',
+  'channels',
+  'history'
+] as const satisfies readonly HostCapability[]
+
 /** Generation is bumped on discontinuity/reset; not monotonic across resets. */
 export type HostGeneration = number
 /** Cursor is monotonic only within a single generation. */

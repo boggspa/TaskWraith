@@ -14,20 +14,10 @@ import type {
 } from '../../shared/hostProtocol'
 import {
   TASKWRAITH_DESKTOP_HOST_ACTOR,
+  TASKWRAITH_DESKTOP_HOST_CAPABILITIES,
   TASKWRAITH_DESKTOP_HOST_CLIENT_ID
 } from '../../shared/hostProtocol'
 import { HostProjectionClient } from './HostProjectionClient'
-
-const DESKTOP_HOST_CAPABILITIES = [
-  'bootstrap',
-  'snapshot',
-  'deltas',
-  'health',
-  'commands',
-  'receipts',
-  'channels',
-  'history'
-] as const
 
 export type HostProjectionSnapshotResult =
   | { readonly ok: true; readonly snapshot: HostSnapshot }
@@ -82,6 +72,16 @@ function errorText(error: unknown): string {
   return value.length > 0 ? value : 'unknown host projection failure'
 }
 
+/** Order-insensitive set comparison; the wire dedupes but does not sort. */
+function sameCapabilitySet(
+  left: readonly HostCapability[],
+  right: readonly HostCapability[]
+): boolean {
+  const wanted = new Set(right)
+  const got = new Set(left)
+  return wanted.size === got.size && [...wanted].every((capability) => got.has(capability))
+}
+
 /** One authenticated Desktop Host session shared by every main-process consumer. */
 export function createHostProjectionBroker(
   options: HostProjectionBrokerOptions
@@ -107,7 +107,21 @@ export function createHostProjectionBroker(
   ) {
     throw new Error('HostProjectionBroker actor must match its authenticated client')
   }
-  const capabilities = options.capabilities ?? DESKTOP_HOST_CAPABILITIES
+  const capabilities = options.capabilities ?? TASKWRAITH_DESKTOP_HOST_CAPABILITIES
+  // Consumers sharing the Desktop identity share ONE Host session, and
+  // HostSession.bind only retains/narrows an existing grant. A consumer that
+  // asks for less would silently strip the difference from every other
+  // consumer for the life of the Host process, so refuse it loudly instead.
+  // A consumer that genuinely needs a narrower grant needs its OWN client id.
+  if (
+    clientIdentity.clientId === TASKWRAITH_DESKTOP_HOST_CLIENT_ID &&
+    !sameCapabilitySet(capabilities, TASKWRAITH_DESKTOP_HOST_CAPABILITIES)
+  ) {
+    throw new Error(
+      'HostProjectionBroker consumers sharing the Desktop identity must request ' +
+        'TASKWRAITH_DESKTOP_HOST_CAPABILITIES; a narrower request narrows the shared session'
+    )
+  }
 
   const createClient =
     options.createClient ??
