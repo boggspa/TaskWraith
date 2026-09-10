@@ -1056,6 +1056,7 @@ import {
   type MainPerfInstrumentation
 } from './perf/MainPerfSnapshot'
 import { createWorkSpanRecorder } from './perf/WorkSpanRecorder'
+import { bindMainWorkSpanSink } from './perf/mainWorkSpanSink'
 import { resolveHostInstallId } from './host/HostInstallIdentity'
 import { createHostProductionBootstrap } from './host/HostProductionBootstrap'
 import { createHostProductionChatListCoalescer } from './host/HostProductionChatListCoalescer'
@@ -4521,6 +4522,7 @@ const mainWorkSpanRecorder = createWorkSpanRecorder({
   process: 'main',
   maxRetained: 4096
 })
+bindMainWorkSpanSink(mainWorkSpanRecorder)
 const ensembleHostAdmissionRuntime = new EnsembleHostAdmissionRuntime({
   schedulerOptions: { spans: mainWorkSpanRecorder }
 })

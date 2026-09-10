@@ -46,6 +46,8 @@ import type {
   HostProjectionReceiptLookupResult
 } from './HostProjectionBroker'
 import { createHostProjectionBroker } from './HostProjectionBroker'
+import { recordCheckpointPrepareSpan } from '../perf/checkpointPrepareSpan'
+import { mainWorkSpanSink, type MainWorkSpanSink } from '../perf/mainWorkSpanSink'
 
 /**
  * IDENTITY IS LOAD-BEARING — do not give this client its own client id.
@@ -617,6 +619,8 @@ export interface HostThreadRecordPersistClientOptions extends HostPersistenceDia
     attempt: number
   ) => HostThreadRecordPersistInput | null | Promise<HostThreadRecordPersistInput | null>
   readonly maxConflictRetries?: number
+  /** Optional M1 checkpoint_prepare sink. Absence is safe. */
+  readonly spans?: MainWorkSpanSink
 }
 
 interface PersistLane {
@@ -719,6 +723,7 @@ export class HostThreadRecordPersistClient
   private readonly maxConflictRetries: number
   private readonly lanes = new Map<string, PersistLane>()
   private readonly diagnostics?: HostPersistenceDiagnostics
+  private readonly spans?: MainWorkSpanSink
 
   constructor(options: HostThreadRecordPersistClientOptions) {
     if (
@@ -751,6 +756,7 @@ export class HostThreadRecordPersistClient
       Number.isSafeInteger(options.maxConflictRetries) && (options.maxConflictRetries ?? -1) >= 0
         ? options.maxConflictRetries!
         : 3
+    this.spans = options.spans
   }
 
   async persist(
@@ -776,11 +782,17 @@ export class HostThreadRecordPersistClient
 
       let descriptor: { transferId: string; sha256: string; byteLength: number }
       try {
-        descriptor = this.transfer.publish({
-          profilePath: this.profilePath,
-          transferId,
-          record: input.record
-        })
+        descriptor = recordCheckpointPrepareSpan(
+          this.spans,
+          { chatId: input.chatId },
+          () =>
+            this.transfer.publish({
+              profilePath: this.profilePath,
+              transferId,
+              record: input.record
+            }),
+          (published) => published.byteLength
+        )
         staging?.finish('succeeded', { bytes: descriptor.byteLength })
       } catch (error) {
         staging?.finish('failed', { errorCode: 'artifact_publish_failed' })
@@ -1266,6 +1278,7 @@ export function createDesktopHostThreadRecordPersistClient(
     appVersion: string
     onPersisted?: HostThreadRecordPersistClientOptions['onPersisted']
     recoverConflict?: HostThreadRecordPersistClientOptions['recoverConflict']
+    spans?: HostThreadRecordPersistClientOptions['spans']
   }
 ): HostThreadRecordPersistClient {
   const broker = createHostProjectionBroker({
@@ -1288,6 +1301,7 @@ export function createDesktopHostThreadRecordPersistClient(
     diagnosticNowMs: input.diagnosticNowMs,
     diagnosticCreateId: input.diagnosticCreateId,
     ...(input.onPersisted ? { onPersisted: input.onPersisted } : {}),
-    ...(input.recoverConflict ? { recoverConflict: input.recoverConflict } : {})
+    ...(input.recoverConflict ? { recoverConflict: input.recoverConflict } : {}),
+    spans: input.spans ?? mainWorkSpanSink()
   })
 }

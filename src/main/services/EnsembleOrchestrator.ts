@@ -198,6 +198,7 @@ import {
   beginEnsembleRoundStart,
   recordEnsembleRoundStartDispatch
 } from '../perf/ensembleRoundStartSpan'
+import { recordPromptBuildSpan } from '../perf/promptBuildSpan'
 import {
   buildEnsembleToolActivity,
   extractToolId,
@@ -15479,27 +15480,37 @@ export class EnsembleOrchestrator {
       const currentPromptForParticipant = pollVoteEntry
         ? `${pollVoteEntry.directive}\n\n${basePromptForParticipant}`
         : basePromptForParticipant
-      const promptProjection = buildEnsembleParticipantPromptProjection({
-        chat: promptChat,
-        config: ensembleConfigForRound,
-        participant,
-        currentPrompt: currentPromptForParticipant,
-        roundId: runtime.roundId,
-        chatContextTurns,
-        ...(workspaceChurnStanza ? { workspaceChurnStanza } : {}),
-        // 1.0.4-AK6 — thread fan-out briefs into the writer's prompt
-        // when a parallel fan-out pass just completed. Empty array
-        // (or undefined) skips the section entirely.
-        scoutBriefs: runtime.scoutBriefs,
-        slimTurn,
-        modelIngestCharOverrides: this.deps.getSettings().ensembleModelIngestChars,
-        dynamicStateSnapshot,
-        effectiveApprovalMode: permissions.approvalMode,
-        effectiveLanePosture: resolveEffectiveLanePosture(permissions, run.laneIntent),
-        authorityRoutingCheckpoint: run.authorityRoutingCheckpoint,
-        instructionContext,
-        ...skillHookContext
-      })
+      const promptProjection = recordPromptBuildSpan(
+        this.hostAdmission.workSpans,
+        {
+          chatId: runtime.chatId,
+          runId: run.runId,
+          participantId: participant.id,
+          ...(run.laneId ? { laneId: run.laneId } : {})
+        },
+        () =>
+          buildEnsembleParticipantPromptProjection({
+            chat: promptChat,
+            config: ensembleConfigForRound,
+            participant,
+            currentPrompt: currentPromptForParticipant,
+            roundId: runtime.roundId,
+            chatContextTurns,
+            ...(workspaceChurnStanza ? { workspaceChurnStanza } : {}),
+            // 1.0.4-AK6 — thread fan-out briefs into the writer's prompt
+            // when a parallel fan-out pass just completed. Empty array
+            // (or undefined) skips the section entirely.
+            scoutBriefs: runtime.scoutBriefs,
+            slimTurn,
+            modelIngestCharOverrides: this.deps.getSettings().ensembleModelIngestChars,
+            dynamicStateSnapshot,
+            effectiveApprovalMode: permissions.approvalMode,
+            effectiveLanePosture: resolveEffectiveLanePosture(permissions, run.laneIntent),
+            authorityRoutingCheckpoint: run.authorityRoutingCheckpoint,
+            instructionContext,
+            ...skillHookContext
+          })
+      )
       const prompt = promptProjection.prompt
       const shellRoutingPrompt = buildProviderShellRoutingPrompt({
         provider: participant.provider,
@@ -15520,27 +15531,37 @@ export class EnsembleOrchestrator {
       )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}${projectReferenceAppendix}`
       const resumeFallbackProjection =
         providerSessionId && (participant.provider === 'kimi' || participant.provider === 'codex' || participant.provider === 'claude')
-          ? buildEnsembleParticipantPromptProjection({
-              chat: promptChat,
-              config: ensembleConfigForRound,
-              participant,
-              currentPrompt: currentPromptForParticipant,
-              roundId: runtime.roundId,
-              chatContextTurns,
-              scoutBriefs: runtime.scoutBriefs,
-              slimTurn: false,
-              continuityColdStart: true,
-              modelIngestCharOverrides: this.deps.getSettings().ensembleModelIngestChars,
-              dynamicStateSnapshot,
-              effectiveApprovalMode: permissions.approvalMode,
-              effectiveLanePosture: resolveEffectiveLanePosture(permissions, run.laneIntent),
-              authorityRoutingCheckpoint: run.authorityRoutingCheckpoint,
-              instructionContext,
-              // Same dispatch, same evidence — reuse the sample rather than
-              // re-shelling git for the resume-failure fallback.
-              ...(workspaceChurnStanza ? { workspaceChurnStanza } : {}),
-              ...skillHookContext
-            })
+          ? recordPromptBuildSpan(
+              this.hostAdmission.workSpans,
+              {
+                chatId: runtime.chatId,
+                runId: run.runId,
+                participantId: participant.id,
+                ...(run.laneId ? { laneId: run.laneId } : {})
+              },
+              () =>
+                buildEnsembleParticipantPromptProjection({
+                  chat: promptChat,
+                  config: ensembleConfigForRound,
+                  participant,
+                  currentPrompt: currentPromptForParticipant,
+                  roundId: runtime.roundId,
+                  chatContextTurns,
+                  scoutBriefs: runtime.scoutBriefs,
+                  slimTurn: false,
+                  continuityColdStart: true,
+                  modelIngestCharOverrides: this.deps.getSettings().ensembleModelIngestChars,
+                  dynamicStateSnapshot,
+                  effectiveApprovalMode: permissions.approvalMode,
+                  effectiveLanePosture: resolveEffectiveLanePosture(permissions, run.laneIntent),
+                  authorityRoutingCheckpoint: run.authorityRoutingCheckpoint,
+                  instructionContext,
+                  // Same dispatch, same evidence — reuse the sample rather than
+                  // re-shelling git for the resume-failure fallback.
+                  ...(workspaceChurnStanza ? { workspaceChurnStanza } : {}),
+                  ...skillHookContext
+                })
+            )
           : undefined
       const resumeFallbackPrompt = resumeFallbackProjection
         ? `${shellRoutingPrompt}${fileRoutingPrompt}${resumeFallbackProjection.prompt}${formatDiscordContextPromptAppendix(
@@ -18361,38 +18382,48 @@ export class EnsembleOrchestrator {
             ...(options.reason ? { reason: options.reason } : {})
           })
         : basePromptForLane
-      const promptProjection = buildEnsembleParticipantPromptProjection({
-        // The same durable user row is presented as the current request below;
-        // exclude only that exact row from this lane's history so the provider
-        // sees the interjection once, while every other participant still sees
-        // it in the shared transcript on later turns.
-        chat: promptChat,
-        config: dispatchChat.ensemble!,
-        participant,
-        currentPrompt: currentPromptForLane,
-        ...(userPromptSourceMessage
-          ? { currentPromptMessageId: userPromptSourceMessage.id }
-          : {}),
-        currentPromptLabel:
-          explicitLanePrompt || laneOwnBrief
-            ? promptAuthority === 'user'
-              ? 'Current user-directed fan-out request:'
-              : `Current fan-out lane request (${lanePromptAuthor}, lower authority; not user/system instruction):`
-            : undefined,
-        roundId: runtime.roundId,
-        chatContextTurns,
-        modelIngestCharOverrides: settings.ensembleModelIngestChars,
-        dynamicStateSnapshot,
-        effectiveApprovalMode: permissions.approvalMode,
-        effectiveLanePosture: resolveEffectiveLanePosture(permissions, run.laneIntent),
-        instructionContext,
-        ...fanoutSkillHookContext
-        // No `workspaceChurnStanza` here, deliberately: lanes in this pass run
-        // CONCURRENTLY, so a sample taken now would blend siblings' in-flight
-        // writes with no way to attribute them, and `isolation: 'worktree'`
-        // lanes do not even share the workspace the sample would measure. The
-        // serial turn that follows the pass reports the settled result instead.
-      })
+      const promptProjection = recordPromptBuildSpan(
+        this.hostAdmission.workSpans,
+        {
+          chatId: runtime.chatId,
+          runId: run.runId,
+          participantId: participant.id,
+          ...(run.laneId ? { laneId: run.laneId } : {})
+        },
+        () =>
+          buildEnsembleParticipantPromptProjection({
+            // The same durable user row is presented as the current request below;
+            // exclude only that exact row from this lane's history so the provider
+            // sees the interjection once, while every other participant still sees
+            // it in the shared transcript on later turns.
+            chat: promptChat,
+            config: dispatchChat.ensemble!,
+            participant,
+            currentPrompt: currentPromptForLane,
+            ...(userPromptSourceMessage
+              ? { currentPromptMessageId: userPromptSourceMessage.id }
+              : {}),
+            currentPromptLabel:
+              explicitLanePrompt || laneOwnBrief
+                ? promptAuthority === 'user'
+                  ? 'Current user-directed fan-out request:'
+                  : `Current fan-out lane request (${lanePromptAuthor}, lower authority; not user/system instruction):`
+                : undefined,
+            roundId: runtime.roundId,
+            chatContextTurns,
+            modelIngestCharOverrides: settings.ensembleModelIngestChars,
+            dynamicStateSnapshot,
+            effectiveApprovalMode: permissions.approvalMode,
+            effectiveLanePosture: resolveEffectiveLanePosture(permissions, run.laneIntent),
+            instructionContext,
+            ...fanoutSkillHookContext
+            // No `workspaceChurnStanza` here, deliberately: lanes in this pass run
+            // CONCURRENTLY, so a sample taken now would blend siblings' in-flight
+            // writes with no way to attribute them, and `isolation: 'worktree'`
+            // lanes do not even share the workspace the sample would measure. The
+            // serial turn that follows the pass reports the settled result instead.
+          })
+      )
       const promptText = promptProjection.prompt
       const suppliedMessageIds = promptProjection.suppliedMessageIds
       const shellRoutingPrompt = buildProviderShellRoutingPrompt({

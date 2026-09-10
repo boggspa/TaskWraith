@@ -194,6 +194,7 @@ function createClient(
       attempt: number
     ) => HostThreadRecordPersistInput | null
     maxConflictRetries?: number
+    spans?: { record(span: unknown): void }
   } = {}
 ): HostThreadRecordPersistClient {
   let id = 0
@@ -210,7 +211,8 @@ function createClient(
     ...(options.recoverConflict ? { recoverConflict: options.recoverConflict } : {}),
     ...(options.maxConflictRetries !== undefined
       ? { maxConflictRetries: options.maxConflictRetries }
-      : {})
+      : {}),
+    ...(options.spans ? { spans: options.spans } : {})
   })
 }
 
@@ -1539,5 +1541,45 @@ describe('Host persistence local observations', () => {
       { commandName: 'thread.record.delete' }
     ])
     expect(ends(f.events, 'persist')).toEqual([])
+  })
+})
+
+describe('HostThreadRecordPersistClient checkpoint_prepare spans', () => {
+  it('records checkpoint_prepare around transfer publish and skips when the sink is absent', async () => {
+    const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const spans: Array<{ kind: string; chatId: string; bytes: number }> = []
+    const client = createClient(broker, {
+      spans: {
+        record: (span) => {
+          spans.push(span as { kind: string; chatId: string; bytes: number })
+        }
+      }
+    })
+    await client.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    expect(spans).toEqual([
+      expect.objectContaining({
+        kind: 'checkpoint_prepare',
+        chatId: 'chat-1',
+        bytes: 42
+      })
+    ])
+
+    const unlabeled = createClient(scriptedBroker((command) => [receiptFor(command, 'succeeded')]))
+    await unlabeled.persist({ chatId: 'chat-2', record: chatRecord(), expectedRevision: 0 })
+    expect(spans).toHaveLength(1)
+  })
+
+  it('contains a throwing sink so persist still succeeds', async () => {
+    const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const client = createClient(broker, {
+      spans: {
+        record: () => {
+          throw new Error('recorder must not break persist')
+        }
+      }
+    })
+    await expect(
+      client.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    ).resolves.toMatchObject({ status: 'succeeded' })
   })
 })
