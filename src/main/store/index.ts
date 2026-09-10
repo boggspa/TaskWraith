@@ -22,6 +22,7 @@ import {
 } from '../../shared/chatUpdateTransport'
 import { assertAuthoritativeChatForSave } from './assertAuthoritativeChatForSave'
 import { escalateSummaryChatForSave } from './escalateSummaryChatForSave'
+import { durableActiveGoalToRestore } from './durableActiveGoalToRestore'
 import {
   APPROVAL_TIMEOUT_DEFAULTS_VERSION,
   DEFAULT_APPROVAL_TIMEOUTS_MS,
@@ -7987,8 +7988,12 @@ export class AppStore {
       continuityCheckpoints: _rendererContinuityCheckpoints,
       ...rendererOwnedChat
     } = chat
+    // A revision-stale record never saw the stored goal, so its silence about
+    // one is ignorance rather than a Clear. See durableActiveGoalToRestore.
+    const restoredActiveGoal = durableActiveGoalToRestore(chat, previousChatForFeedback)
     const chatWithMainOwnedFields: ChatRecord = {
       ...rendererOwnedChat,
+      ...(restoredActiveGoal ? { activeGoal: restoredActiveGoal } : {}),
       runs: preserveContinuityRunReceipts(
         preserveSettledRunSeals(chat.runs || [], previousChatForFeedback?.runs || []),
         previousChatForFeedback?.runs || [],
@@ -8151,8 +8156,12 @@ export class AppStore {
             previousChatForFeedback.messages || []
           )
         : rendererMessages
+    // Same staleness test as the transcript reconcile above, for the goal:
+    // a record derived from an older revision cannot delete one by omission.
+    const restoredActiveGoal = durableActiveGoalToRestore(chat, previousChatForFeedback)
     const chatWithMainOwnedFields: ChatRecord = {
       ...rendererOwnedChat,
+      ...(restoredActiveGoal ? { activeGoal: restoredActiveGoal } : {}),
       runs: preserveContinuityRunReceipts(
         preserveSettledRunSeals(chat.runs || [], previousChatForFeedback?.runs || []),
         previousChatForFeedback?.runs || [],
