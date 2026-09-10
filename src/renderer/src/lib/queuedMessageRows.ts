@@ -337,6 +337,22 @@ export const preserveOptimisticEnsembleQueue = (
   const localQueue = ensembleQueuedPromptsFromRound(localRound)
   if (localQueue.length <= incomingQueue.length) return incoming
 
+  // An EMPTY authoritative queue is a statement, not a gap: main queued
+  // nothing for this round. Preserving a local-only tail against it mints a
+  // row main has no FIFO slot for -- and the placeholder minted below is
+  // itself `optimistic-queued-tail-...`, which satisfies the
+  // `startsWith('optimistic-queued')` test on the NEXT merge, so the row
+  // re-qualifies forever. Its Delete/Steer/Edit then address an index main
+  // does not have: `resolveQueuedPrompt` answers "Queued item no longer
+  // exists", the renderer logs that to the raw-log ring and the row never
+  // goes away. Observed as five identical undeletable rows against a round
+  // whose durable `queuedPrompts` was `[]`.
+  //
+  // Cost of being right here: the first queued row waits one IPC hop for
+  // main's echo instead of painting instantly. No prompt is lost either way
+  // -- when main really did queue it, the echo restores the row.
+  if (incomingQueue.length === 0) return incoming
+
   // Only preserve when main's queue is a true prefix of local. A shorter
   // authoritative queue that removed a steered/deleted item (or cleared)
   // must win — otherwise a stale mid-run absorb broadcast that still

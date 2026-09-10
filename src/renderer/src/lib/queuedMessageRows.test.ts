@@ -299,6 +299,41 @@ describe('queued message row helpers', () => {
     )
   })
 
+  it('drops a local-only optimistic tail when main queued nothing for the round', () => {
+    // The five-identical-undeletable-rows report. The durable record for that
+    // round carried `queuedPrompts: []` and the session checkpoint agreed, so
+    // every row on screen was renderer-only. An empty authoritative queue is
+    // main saying it queued nothing, not main lagging behind.
+    const incoming = ensembleChat('chat-1', 'round-1', [])
+    const local = ensembleChat(
+      'chat-1',
+      'round-1',
+      ['unechoed'],
+      [entry('optimistic-queued-1-0', 'unechoed')]
+    )
+
+    expect(preserveOptimisticEnsembleQueue(incoming, local)).toBe(incoming)
+  })
+
+  it('never re-qualifies its own optimistic-tail placeholder across repeated merges', () => {
+    // The immortality mechanism: the placeholder minted for a preserved tail is
+    // `optimistic-queued-tail-<roundId>-<i>`, which itself starts with
+    // `optimistic-queued`, so it passed the same gate on every later merge and
+    // the row outlived the round.
+    let local = ensembleChat(
+      'chat-1',
+      'round-1',
+      ['unechoed'],
+      [entry('optimistic-queued-1-0', 'unechoed')]
+    )
+    for (let index = 0; index < 3; index += 1) {
+      local = preserveOptimisticEnsembleQueue(ensembleChat('chat-1', 'round-1', []), local)
+    }
+
+    expect(local.ensemble?.activeRound?.queuedPrompts).toEqual([])
+    expect(local.ensemble?.activeRound?.queuedPromptEntries ?? []).toEqual([])
+  })
+
   it('preserves a longer local ensemble queue over stale hydration for the same running round', () => {
     const incoming = ensembleChat('chat-1', 'round-1', ['first'], [entry('e1', 'first', '/tmp/a.png')])
     const local = ensembleChat('chat-1', 'round-1', ['first', 'second'])
