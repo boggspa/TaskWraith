@@ -337,6 +337,63 @@ describe('mergeChatUpdatedForRender', () => {
     expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'u-new', 't1'])
   })
 
+  // The same inversion at live index 0: a brand-new chat whose first prompt is
+  // still un-persisted when the run's first tool row arrives. Nothing has been
+  // paged out here and no base is stale — the row IS the transcript's head — so
+  // the tail fallback that exists to serve a vanished prefix misfires and puts
+  // this turn's activity above the prompt that caused it.
+  it('restores a preserved first prompt to the head, not the tail', () => {
+    const toolRow: ChatMessage = {
+      id: 't1',
+      role: 'tool',
+      content: '',
+      timestamp: '3',
+      toolActivities: [{ id: 'act-1', tool: 'delegate_wave', status: 'completed' }]
+    } as unknown as ChatMessage
+    const prompt: ChatMessage = { id: 'u-new', role: 'user', content: 'the prompt', timestamp: '2' }
+
+    const merged = mergeChatUpdatedForRender(chat([toolRow]), {
+      liveChat: chat([prompt]),
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['u-new', 't1'])
+  })
+
+  // The head restore stays evidence-based: it applies only where the row has no
+  // live predecessor AT ALL. A prefix the delivery dropped still proves nothing
+  // about position, so such a row keeps the historical tail placement instead of
+  // jumping to the transcript's head.
+  it('keeps a preserved row at the tail when its live prefix is missing from the delivery', () => {
+    const toolRow: ChatMessage = {
+      id: 't1',
+      role: 'tool',
+      content: '',
+      timestamp: '3',
+      toolActivities: [{ id: 'act-1', tool: 'delegate_wave', status: 'completed' }]
+    } as unknown as ChatMessage
+    // A tool row is in none of the orphan-preservation categories, so a live
+    // one the delivery does not carry is genuinely dropped rather than restored.
+    const droppedPrefix: ChatMessage = {
+      id: 't0',
+      role: 'tool',
+      content: '',
+      timestamp: '1'
+    } as unknown as ChatMessage
+    const prompt: ChatMessage = { id: 'u-new', role: 'user', content: 'the prompt', timestamp: '2' }
+
+    const merged = mergeChatUpdatedForRender(chat([toolRow]), {
+      liveChat: chat([droppedPrefix, prompt]),
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['t1', 'u-new'])
+  })
+
   // The other direction, so the restore is evidence-based rather than a blanket
   // "everything the delivery carries goes below the prompt". A row stamped
   // BEFORE the prompt genuinely preceded it — the renderer's live base merely

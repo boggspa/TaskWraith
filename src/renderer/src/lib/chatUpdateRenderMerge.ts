@@ -81,9 +81,17 @@ export interface ChatUpdateRenderMergeOptions {
  * settles by timestamp: a delivered row provably OLDER than it genuinely
  * preceded it and stays above, and everything else — newer, or carrying no
  * readable stamp — goes below, so an unstamped row can only ever fall on the
- * forward-only side. A row with no anchor at all (its whole live prefix is
- * paged out, or the live base is stale) has no position to restore and keeps
- * the historical tail placement.
+ * forward-only side. A row with no anchor at all is read two
+ * ways, because "no anchor" conflates two opposite situations. When its live
+ * prefix is INTACT — every row before it is itself preserved, or there are none
+ * — the row genuinely belongs at the transcript's head and settles against the
+ * delivery by the same timestamp rule as an anchored row. That is the first turn
+ * of a new chat: the prompt sits at live index 0 while the run's first tool row
+ * is already delivered, so a tail fallback there inverts the very turn this
+ * function exists to fix. When instead some live row before it is neither
+ * delivered nor preserved, the prefix was genuinely dropped (paged out, or a
+ * stale base), position proves nothing, and the row keeps the historical tail
+ * placement.
  */
 function restorePreservedLiveRows(
   deliveredMessages: readonly ChatMessage[],
@@ -93,16 +101,22 @@ function restorePreservedLiveRows(
   const deliveredIds = new Set(deliveredMessages.map((message) => message.id))
   const liveIds = new Set(liveMessages.map((message) => message.id))
   const afterAnchor = new Map<string, ChatMessage[]>()
+  const head: ChatMessage[] = []
   const unanchored: ChatMessage[] = []
   let anchorId: string | null = null
+  let prefixIntact = true
   for (const message of liveMessages) {
     if (deliveredIds.has(message.id)) {
       anchorId = message.id
       continue
     }
-    if (!preservedIds.has(message.id)) continue
+    if (!preservedIds.has(message.id)) {
+      prefixIntact = false
+      continue
+    }
     if (anchorId === null) {
-      unanchored.push(message)
+      if (prefixIntact) head.push(message)
+      else unanchored.push(message)
       continue
     }
     const bucket = afterAnchor.get(anchorId)
@@ -110,7 +124,9 @@ function restorePreservedLiveRows(
     else afterAnchor.set(anchorId, [message])
   }
   const restored: ChatMessage[] = []
-  let pending: ChatMessage[] = []
+  // The head bucket seeds `pending`, so a row with no live predecessor settles
+  // against the delivery through the same timestamp rule as an anchored row.
+  let pending: ChatMessage[] = head
   for (const message of deliveredMessages) {
     if (pending.length > 0) {
       const pendingMs = timestampMs(pending[0].timestamp)
