@@ -33,7 +33,13 @@ function requireOptionValue(argv: readonly string[], index: number, option: stri
 }
 
 function parseProfilePath(value: string): string {
-  if (value.trim() !== value || value.includes('\u0000') || !isAbsolute(value)) {
+  // Same control-character policy as the production CLI: reject C0 + DEL, not
+  // just NUL, so both modes fail closed on the same --profile bytes.
+  const hasControlCharacter = [...value].some((character) => {
+    const code = character.charCodeAt(0)
+    return code <= 0x1f || code === 0x7f
+  })
+  if (value.trim() !== value || hasControlCharacter || !isAbsolute(value)) {
     throw new HostDiagnosticCliError('--profile must be an absolute non-root path.')
   }
   const profilePath = resolve(value)

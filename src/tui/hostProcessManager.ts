@@ -255,9 +255,16 @@ export async function resolveTuiHostLaunchCommand(
   const env = input.env ?? process.env
   const pathExists = input.pathExists ?? defaultPathExists
   const userDataPath = String(input.userDataPath || '')
+  // Same control-character policy as the production Host CLI (C0 + DEL): fail
+  // fast here instead of letting the spawned host reject --profile downstream.
+  const hasControlCharacter = [...userDataPath].some((character) => {
+    const code = character.charCodeAt(0)
+    return code <= 0x1f || code === 0x7f
+  })
   if (
     !userDataPath ||
     userDataPath.trim() !== userDataPath ||
+    hasControlCharacter ||
     !pathApi(platform).isAbsolute(userDataPath)
   ) {
     throw new Error('TUI Host launch requires an absolute profile path.')

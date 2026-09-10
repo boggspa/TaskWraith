@@ -43,6 +43,14 @@ describe('parseHostDiagnosticCli', () => {
     }
   })
 
+  it('rejects control characters in --profile like the production CLI', () => {
+    for (const profile of ['/tmp/host\u0000', '/tmp/host\u0007', '/tmp/host\u007f']) {
+      expect(() =>
+        parseHostDiagnosticCli(['serve', '--profile', profile, '--mode', 'diagnostic'])
+      ).toThrow(HostDiagnosticCliError)
+    }
+  })
+
   it('fails closed for production and read-only modes before profile ownership', () => {
     for (const mode of ['production', 'read-only']) {
       expect(() =>

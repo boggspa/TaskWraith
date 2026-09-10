@@ -209,6 +209,25 @@ describe('TUI Host process manager', () => {
     ).rejects.toThrow('absolute profile path')
   })
 
+  it('rejects control characters in the profile path like the production Host CLI', async () => {
+    for (const userDataPath of [
+      '/profiles/host\u0000',
+      '/profiles/host\u0007',
+      '/profiles/host\u007f'
+    ]) {
+      await expect(
+        resolveTuiHostLaunchCommand({
+          profile: 'production',
+          platform: 'darwin',
+          architecture: 'arm64',
+          moduleDir: '/app/resources/tui/tui',
+          userDataPath,
+          pathExists: async () => true
+        })
+      ).rejects.toThrow('absolute profile path')
+    }
+  })
+
   it('uses the same direct Node Host invocation for an isolated package-smoke profile', async () => {
     const executable = '/tmp/TaskWraith-smoke.app/Contents/Resources/tui-runtime/darwin-arm64/node'
     const cli = '/tmp/TaskWraith-smoke.app/Contents/Resources/host/host-runtime/cli.js'
