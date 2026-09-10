@@ -6,6 +6,9 @@ import {
   resolveCurrentChatTranscriptWindow,
   useCurrentChatTranscriptWindow
 } from './currentChatTranscriptWindow'
+import { getComposerTimecodePresentation } from '../components/ComposerTimecodes'
+import { isTranscriptPagedShell } from '../../../shared/transcriptPage'
+import { selectCurrentChatRun } from './activeRunSelection'
 import { ChatTranscriptStore } from './chatTranscriptStore'
 import {
   bindChatTranscriptStore,
@@ -262,5 +265,75 @@ describe('App.tsx read-path source scan (15 audited sites)', () => {
     // full-hydrates summary records before running the updater. Pin the shape.
     expect(source).toContain('buildRunDiffByPath(source.messages, grants,')
     expect(source).toContain('updateChatById(completedRunChatId, (source) =>')
+  })
+})
+
+describe('resolveCurrentChatTranscriptWindow — unmarked summary rows', () => {
+  // `demoteChatToSummary` (lib/chatByteLru), `projectRendererChatListItem`
+  // (state/rendererChatListProjection) and
+  // `ChatUpdateInterestRouter.projectCompactChat` all emit THIS shape:
+  // `summaryOnly` WITHOUT `transcriptPaged`, `runs: []`, and the live run
+  // surviving only on `lastRun`. On a solo thread that is the sole carrier of
+  // the turn's `startedAt`, so losing it painted `TURN 00:00:00:00` and a `0s`
+  // Working chip while the run was plainly live.
+  function unmarkedSummaryRow(lastRun: ChatRun): ChatRecord {
+    return {
+      ...fullChat([]),
+      summaryOnly: true,
+      messageCount: 15,
+      runCount: 3,
+      lastRun
+    } as unknown as ChatRecord
+  }
+
+  const LIVE_STARTED_AT = '2026-09-10T15:32:37.541Z'
+  const liveRun = { runId: 'live', startedAt: LIVE_STARTED_AT, status: 'starting' } as ChatRun
+
+  it('is not a marked paged shell and carries no runs of its own', () => {
+    // Premise guard. Without it the assertions below could pass by accidentally
+    // constructing the MARKED shell shape, which already resolved correctly.
+    const row = unmarkedSummaryRow(liveRun)
+    expect(isTranscriptPagedShell(row)).toBe(false)
+    expect(row.runs).toEqual([])
+  })
+
+  it('exposes an open lastRun as the window so live surfaces have a startedAt', () => {
+    expect(resolveCurrentChatTranscriptWindow(unmarkedSummaryRow(liveRun), null).runs).toEqual([
+      liveRun
+    ])
+  })
+
+  it('makes the composer TURN advance instead of painting 00:00:00:00', () => {
+    const row = unmarkedSummaryRow(liveRun)
+    const run = selectCurrentChatRun(row.runs, resolveCurrentChatTranscriptWindow(row, null).runs)
+    expect(
+      getComposerTimecodePresentation({
+        running: true,
+        startedAt: run?.startedAt ?? null,
+        cumulativeBaseMs: 0,
+        nowMs: Date.parse(LIVE_STARTED_AT) + 9_000
+      }).turnLabel
+    ).toBe('00:00:00:09')
+  })
+
+  it('does not resurrect a terminal lastRun as a live one', () => {
+    // A projection whose tail run has already sealed must keep painting zero,
+    // not count up from an old start.
+    const sealed = {
+      runId: 'old',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      endedAt: '2026-09-01T00:05:00.000Z',
+      status: 'success'
+    } as ChatRun
+    expect(resolveCurrentChatTranscriptWindow(unmarkedSummaryRow(sealed), null).runs).toEqual([])
+  })
+
+  it('leaves a hydrated record on the very same runs array, lastRun or not', () => {
+    // Carries BOTH canonical runs and an open `lastRun`, so the empty-runs
+    // guard is what keeps this a pure widening. Drop that guard and the
+    // canonical array is replaced by the projection's single tail run.
+    const canonical = [{ runId: 'canonical', startedAt: LIVE_STARTED_AT } as ChatRun]
+    const chat = { ...fullChat(['m1']), runs: canonical, lastRun: liveRun } as unknown as ChatRecord
+    expect(resolveCurrentChatTranscriptWindow(chat, null).runs).toBe(canonical)
   })
 })

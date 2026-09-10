@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
-import type { ChatMessage, ChatRecord, ChatRun } from '../../../main/store/types'
+import type { ChatListItem, ChatMessage, ChatRecord, ChatRun } from '../../../main/store/types'
 import { isTranscriptPagedShell } from '../../../shared/transcriptPage'
+import { isOpenChatRun } from './activeRunSelection'
 import { useChatTranscript, type ChatTranscriptPresentationOptions } from './useChatTranscript'
 
 /**
@@ -38,11 +39,31 @@ export function resolveCurrentChatTranscriptWindow(
     return { paged: false, hasOlder: false, messages: EMPTY_MESSAGES, runs: EMPTY_RUNS }
   }
   if (!isTranscriptPagedShell(chat)) {
+    const messages = Array.isArray(chat.messages) ? chat.messages : EMPTY_MESSAGES
+    const runs = Array.isArray(chat.runs) ? chat.runs : EMPTY_RUNS
+    // A summary row that is NOT a MARKED paged shell. `buildChatShell` is the
+    // only producer that stamps `transcriptPaged`, so it is the only one the
+    // paged branch below can serve. `demoteChatToSummary` (lib/chatByteLru),
+    // `projectRendererChatListItem` (state/rendererChatListProjection) and
+    // `ChatUpdateInterestRouter.projectCompactChat` all stamp
+    // `summaryOnly: true` with `runs: []` while STRIPPING `transcriptPaged`,
+    // so they land here with nothing for the live surfaces to read.
+    //
+    // Each of them keeps the tail run on `lastRun`, which on a SOLO thread is
+    // the only surviving carrier of the live turn's `startedAt`. Ensemble
+    // surfaces read `ensemble.activeRound.startedAt` from chat chrome and keep
+    // ticking regardless, which is exactly why only solo threads painted
+    // `TURN 00:00:00:00` and a `0s` Working chip under a live run.
+    //
+    // Gated on openness: a projection whose `lastRun` is the PREVIOUS completed
+    // run must keep painting zero rather than counting up from an old start.
+    // Canonical runs always win, so a hydrated record is returned unchanged.
+    const lastRun = (chat as ChatRecord & Partial<ChatListItem>).lastRun
     return {
       paged: false,
       hasOlder: false,
-      messages: Array.isArray(chat.messages) ? chat.messages : EMPTY_MESSAGES,
-      runs: Array.isArray(chat.runs) ? chat.runs : EMPTY_RUNS
+      messages,
+      runs: runs.length === 0 && isOpenChatRun(lastRun) ? [lastRun as ChatRun] : runs
     }
   }
   return {
