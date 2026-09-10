@@ -19205,8 +19205,12 @@ function App(): React.JSX.Element {
     : `${currentGoalModeLabel} · Set an active goal`
 
   const persistGoalForCurrentChat = (nextGoal: ActiveGoal | null): void => {
-    const chat = currentChat
-    if (!chat) return
+    const stateChat = currentChat
+    if (!stateChat) return
+    // Author from the ref cache, not React state: state can lag the ref by a
+    // flush cycle, and a Clear built on a stale base is a stale omission the
+    // main CAS will (correctly) refuse.
+    const chat = chatByIdRef.current.get(stateChat.appChatId) ?? stateChat
     const updated: ChatRecord = nextGoal
       ? {
           ...chat,
@@ -19223,10 +19227,11 @@ function App(): React.JSX.Element {
     chatByIdRef.current.set(updated.appChatId, updated)
     setCurrentChat(updated)
     setChats((prev) => mergeChatRecord(prev, updated))
-    // Claim the goal for the renderer until this save lands. Deliveries built
-    // before it must not roll the edit back, and deliveries after it carry the
-    // edit themselves, so the claim is released either way once the save
-    // settles.
+    // Claim the goal for the renderer until main's answer is adopted, not
+    // merely until the save settles: releasing on bare settle let a stale
+    // goal-less delivery wipe the optimistic edit before main's confirmation
+    // arrived — flapping the UI back to the editor and sending a goal-less
+    // save that main then refuses as a stale clone.
     const intent: LocalGoalIntent = nextGoal
       ? { goalId: nextGoal.id }
       : { goalId: null, ...(chat.activeGoal ? { clearedGoalId: chat.activeGoal.id } : {}) }
@@ -19235,10 +19240,26 @@ function App(): React.JSX.Element {
     intents.set(chatId, intent)
     void window.api
       .saveChat(updated)
+      .then((canonical) => {
+        // Adopt what main confirmed — including the restored goal on a
+        // refused stale Clear — flush it through the still-guarded merge,
+        // and only then release the claim.
+        chatByIdRef.current.set(chatId, canonical)
+        if (activeRunChatIdRef.current === chatId) {
+          activeRunChatSnapshotRef.current = canonical
+        }
+        flushCoalescedChatsNow()
+        if (intents.get(chatId) === intent) intents.delete(chatId)
+      })
       .catch((err) => {
         console.error('[goal] saveChat failed', err)
-      })
-      .finally(() => {
+        // The save may never have landed: roll the optimistic record back to
+        // the pre-edit base (only if nothing newer has since adopted) and
+        // release, so a stuck claim can't fight main's truth forever.
+        if (chatByIdRef.current.get(chatId) === updated) {
+          chatByIdRef.current.set(chatId, chat)
+          flushCoalescedChatsNow()
+        }
         if (intents.get(chatId) === intent) intents.delete(chatId)
       })
   }
@@ -22087,28 +22108,39 @@ function App(): React.JSX.Element {
       if (!source?.ensemble) return
       const change = buildContinuationHopsChangeRequest(chatId, source.ensemble, nextMax)
       if (!change) return
-      updateChatById(chatId, (source) => {
-        if (!source.ensemble) return source
-        const activeRound = source.ensemble.activeRound
-        const patched: ChatRecord = {
-          ...source,
-          ensemble: {
-            ...source.ensemble,
-            maxContinuationHops: change.maxContinuationHops,
-            ...(activeRound && isEnsembleActiveRoundDispatchLive(activeRound)
-              ? {
-                  activeRound: {
-                    ...activeRound,
-                    maxContinuationHops: change.maxContinuationHops
+      // The live-round-config IPC persists authoritatively main-side (with the
+      // durable transcript event), so this optimistic patch must not ALSO
+      // schedule the debounced whole-record save: the cap's only merge
+      // preservation is stamp-gated, so a post-patch main save still wipes it
+      // from the ref — flapping the UI back to the old value and sending a
+      // goal-less save that main then refuses as a stale clone. Same shape
+      // as the composer picker edits.
+      updateChatById(
+        chatId,
+        (source) => {
+          if (!source.ensemble) return source
+          const activeRound = source.ensemble.activeRound
+          const patched: ChatRecord = {
+            ...source,
+            ensemble: {
+              ...source.ensemble,
+              maxContinuationHops: change.maxContinuationHops,
+              ...(activeRound && isEnsembleActiveRoundDispatchLive(activeRound)
+                ? {
+                    activeRound: {
+                      ...activeRound,
+                      maxContinuationHops: change.maxContinuationHops
+                    }
                   }
-                }
-              : {}),
-            updatedAt: new Date().toISOString()
-          },
-          updatedAt: Date.now()
-        }
-        return withSessionActivityLedger(source, patched)
-      })
+                : {}),
+              updatedAt: new Date().toISOString()
+            },
+            updatedAt: Date.now()
+          }
+          return withSessionActivityLedger(source, patched)
+        },
+        { persistence: 'none' }
+      )
       requestLiveEnsembleRoundConfigUpdate(chatId, {
         maxContinuationHops: change.maxContinuationHops,
         previousMaxContinuationHops: change.previousMaxContinuationHops

@@ -79,6 +79,17 @@ describe('roster-surface wiring', () => {
     expect(appSource).toContain('previousMaxContinuationHops: change.previousMaxContinuationHops')
   })
 
+  it('persists the cap through the authoritative config IPC, not a debounced whole-record save', () => {
+    // The cap's only merge preservation is stamp-gated, so a post-patch main
+    // save wipes the optimistic value from the ref; a delayed whole-record
+    // save would then flap the UI and be refused as a stale clone.
+    const start = appSource.indexOf('const updateEnsembleMaxContinuationHopsForChat = ')
+    const end = appSource.indexOf('const updateSelectedParticipant = useCallback(', start)
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(end).toBeGreaterThan(start)
+    expect(appSource.slice(start, end)).toContain("{ persistence: 'none' }")
+  })
+
   it('uses the same authoritative request from the linked side-chat popover', () => {
     expect(layoutSource).toContain('const updateSideMaxContinuationHops = (value: number): void =>')
     expect(layoutSource).toContain('const change = buildContinuationHopsChangeRequest(')

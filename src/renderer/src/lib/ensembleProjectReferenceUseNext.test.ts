@@ -61,10 +61,13 @@ describe('P1 F6 ensemble Use-next enablement', () => {
       'projectReferenceContextSelection: request.projectReferenceContextSelection'
     )
     // Ensemble accept must settle the one-send claim the same way solo does.
-    const ensembleDispatch = appSource.slice(
-      appSource.indexOf("if (runChat.chatKind === 'ensemble')"),
-      appSource.indexOf("if (runChat.chatKind === 'ensemble')") + 4500
-    )
+    // Sliced to the accept-path terminator, not a char window: the branch
+    // outgrew the old 4500-char window as dispatch legs landed.
+    const ensembleDispatchStart = appSource.indexOf("if (runChat.chatKind === 'ensemble')")
+    const ensembleDispatchEnd = appSource.indexOf('dispatchAccepted = true', ensembleDispatchStart)
+    expect(ensembleDispatchStart).toBeGreaterThanOrEqual(0)
+    expect(ensembleDispatchEnd).toBeGreaterThan(ensembleDispatchStart)
+    const ensembleDispatch = appSource.slice(ensembleDispatchStart, ensembleDispatchEnd)
     expect(ensembleDispatch).toContain(
       "settleProjectReferenceContextForRequest(request, 'accepted')"
     )
