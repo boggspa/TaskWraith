@@ -365,6 +365,10 @@ describe('deadlines retain unresolved effect ownership', () => {
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const pending = start({ api: adapter })
     await vi.advanceTimersByTimeAsync(120_000)
+    // The fence closes the window, then the driver waits out its bounded drain
+    // (`boundedSettle`) for the effect still in flight. This one never settles,
+    // so the window stays incomplete and the run still ends at one repetition.
+    await vi.runAllTimersAsync()
     const result = await pending
     expect(result.run.censored).toBe(true)
     expect(result.run.incomplete).toBe(true)
@@ -381,6 +385,31 @@ describe('deadlines retain unresolved effect ownership', () => {
     expect((await measured({ api: adapter })).evidenceEligible).toBe(true)
   })
 
+  it('starts the next repetition once a late effect settles inside the drain bound', async () => {
+    // The companion to the test above, and the half that makes the 120 s x 3
+    // contract reachable: "until late effects settle" is satisfied by WAITING
+    // for them. The save lands after the fence, so window 1 is censored as a
+    // late event instead of stranded pending, and repetitions 2 and 3 still run.
+    vi.useFakeTimers()
+    const adapter = api()
+    const late = deferred<{ persistenceRevision: number }>()
+    adapter.saveChat.mockImplementationOnce(() => late.promise)
+    const pending = start({ api: adapter, windowMs: 10, cleanupTimeoutMs: 50 })
+    await vi.advanceTimersByTimeAsync(10)
+    // Past the deadline but inside the drain bound: settling ON the deadline
+    // would be an on-time completion, not the late effect this pins.
+    await vi.advanceTimersByTimeAsync(5)
+    late.resolve({ persistenceRevision: 1 })
+    await vi.runAllTimersAsync()
+    const result = await pending
+    expect(result.run.evidence.windows).toHaveLength(3)
+    expect(result.run.evidence.windows[0].lanes[0].pendingEvents).toBe(0)
+    expect(result.run.evidence.windows[0].lanes[0].lateEvents).toBe(1)
+    expect(result.run.evidence.windows[0].outcome).toBe('censored')
+    expect(result.run.incomplete).toBe(false)
+    expect(result.run.censored).toBe(true)
+  })
+
   it('keeps raw effects owned after a per-event timeout and observes late rejection safely', async () => {
     vi.useFakeTimers()
     const adapter = api()
@@ -388,6 +417,7 @@ describe('deadlines retain unresolved effect ownership', () => {
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const pending = start({ api: adapter, eventTimeoutMs: 5 })
     await vi.advanceTimersByTimeAsync(5)
+    await vi.runAllTimersAsync() // expire the bounded post-fence drain
     const result = await pending
     expect(result.run.evidence.windows[0].reason).toBe('event_timeout')
     expect(result.run.evidence.windows).toHaveLength(1)
@@ -409,6 +439,7 @@ describe('deadlines retain unresolved effect ownership', () => {
     })
     const pending = start({ api: adapter, windowMs: 5, cancelPending })
     await vi.advanceTimersByTimeAsync(5)
+    await vi.runAllTimersAsync() // expire the bounded post-fence drain
     const result = await pending
     expect(cancelPending).toHaveBeenCalledExactlyOnceWith({
       reason: 'deadline',
@@ -434,6 +465,7 @@ describe('deadlines retain unresolved effect ownership', () => {
       })
       const pending = start({ api: adapter, windowMs: 5, cleanupTimeoutMs: 7, cancelPending })
       await vi.advanceTimersByTimeAsync(12)
+      await vi.runAllTimersAsync() // expire the bounded post-fence drain
       const result = await pending
       expect(result.cleanup.status).toBe(status)
       expect(result.run.evidence.windows).toHaveLength(1)
@@ -561,6 +593,7 @@ describe('measurement-clock deadline wakeups', () => {
       }
     })
     await vi.advanceTimersByTimeAsync(10)
+    await vi.runAllTimersAsync() // expire the bounded post-fence drain
     const result = await pending
     expect(result.run.failed).toBe(true)
     expect(result.run.evidence.windows).toHaveLength(1)
@@ -593,6 +626,7 @@ describe('measurement-clock deadline wakeups', () => {
         }
       })
       await vi.advanceTimersByTimeAsync(11)
+      await vi.runAllTimersAsync() // expire the bounded post-fence drain
       const result = await pending
       expect(result.run.failed).toBe(true)
       expect(result.evidenceEligible).toBe(false)
@@ -665,6 +699,7 @@ describe('measurement-clock deadline wakeups', () => {
     expect(oldClock).toHaveBeenCalledTimes(reads)
     await expect(start({ api: adapter })).rejects.toThrow('still owned')
     await vi.advanceTimersByTimeAsync(5)
+    await vi.runAllTimersAsync() // expire the bounded post-fence drain
     const result = await newer
     expect(result.run.evidence.windows).toHaveLength(1)
     expect(result.run.incomplete).toBe(true)
@@ -691,6 +726,7 @@ describe('measurement-clock deadline wakeups', () => {
       nowMs: () => Math.max(0, Date.now() - origin - 0.4)
     })
     await vi.advanceTimersByTimeAsync(11)
+    await vi.runAllTimersAsync() // expire the bounded post-fence drain
     const result = await pending
     expect(result.run.evidence.windows[0].reason).toBe('event_timeout')
     expect(result.run.evidence.windows[0].elapsedMs).toBe(10.6)

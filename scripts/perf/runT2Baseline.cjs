@@ -68,6 +68,7 @@ const { probeHostBootstrapIdentity } = require('./hostWelcomeProbe.cjs')
 const {
   parseCellName,
   PAIRING_ROLES,
+  MATRIX_SAMPLING,
   cellReachability,
   createInterferenceReport,
   environmentRecord
@@ -1688,16 +1689,28 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         await runWindowedOrPairedReplay(api, {
           eventTimeoutMs: replayStallTimeoutMs,
           nowMs: replayNowMs,
-          ...(options.replayWindowMs == null ? {} : { windowMs: options.replayWindowMs })
+          // Assert the 120 s x 3 contract at the call site rather than leaning
+          // on the driver's default: MATRIX_SAMPLING is the single source of
+          // truth that validateRunEvidence checks the run back against.
+          // --replay-window-ms stays a deliberately ineligible test-only seam,
+          // and there is no repetitions seam because three is the contract.
+          windowMs:
+            options.replayWindowMs == null ? MATRIX_SAMPLING.windowMs : options.replayWindowMs,
+          repetitions: MATRIX_SAMPLING.repetitions
         })
         const windowedTotals = summarizeWindowedReplay(windowedReplayResult)
+        const aloneTotals = args.pairedRuns
+          ? summarizeWindowedReplay(pairedReplayResult && pairedReplayResult.alone)
+          : null
         updateProgress(
           {
             completedEvents: windowedTotals.completedEvents,
             currentEvent: null,
             windowedReplay: true,
             pairedRuns: Boolean(args.pairedRuns),
-            replayWindows: windowedTotals.windows
+            replayWindows: windowedTotals.windows,
+            replayRepetitions: MATRIX_SAMPLING.repetitions,
+            ...(aloneTotals == null ? {} : { aloneReplayWindows: aloneTotals.windows })
           },
           { log: true }
         )

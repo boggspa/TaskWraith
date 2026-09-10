@@ -24,4 +24,12 @@ describe('T2 capture hang guards (source pins)', () => {
     expect(src).not.toMatch(/args\.lean[\s\S]{0,80}heap_snapshot/)
     expect(src).not.toMatch(/heap_snapshot[\s\S]{0,80}args\.lean/)
   })
+
+  it('passes the 120s × 3 sampling contract into the paired path', () => {
+    expect(src).toContain('MATRIX_SAMPLING')
+    expect(src).toContain('windowMs:')
+    expect(src).toContain('MATRIX_SAMPLING.windowMs')
+    expect(src).toContain('MATRIX_SAMPLING.repetitions')
+    expect(src).toContain('aloneReplayWindows:')
+  })
 })

@@ -170,6 +170,33 @@ describe('concurrentReplayLanes (M1 A1.2 — first B2 driver)', () => {
     expect(beside.lanes.find((l: { role: string }) => l.role === 'heavy')).toBeTruthy()
   })
 
+  it('still records all three repetitions when a long schedule censors window 1', async () => {
+    // Attempt 3 shape: dual_run's schedule outlives one 120 s fence, so window
+    // 1 is censored. Breaking there left replayWindows:1 against 120 s × 3.
+    let tick = 0
+    const nowMs = () => (tick += 10)
+    const result = await runConcurrentReplayLanes({
+      lanes: [lane('light', 'light-chat', 40), lane('heavy', 'heavy-chat', 40)],
+      api: fakeApi(),
+      seed: 4242,
+      windowMs: 25,
+      repetitions: 3,
+      nowMs,
+      ...runMetadata()
+    })
+    expect(result.repetitions).toBe(3)
+    expect(result.run.evidence.windows).toHaveLength(3)
+    expect(
+      result.run.evidence.windows.map((window: { repetition: number }) => window.repetition)
+    ).toEqual([0, 1, 2])
+    expect(result.censored).toBe(true)
+    // Every window censored, none incomplete: an incomplete window still ends
+    // the run, so three of them is only reachable through the censored lane.
+    expect(
+      result.run.evidence.windows.map((window: { outcome: string }) => window.outcome)
+    ).toEqual(['censored', 'censored', 'censored'])
+  })
+
   it('censors a lane whose schedule outlives the sampling window', async () => {
     // A clock that advances on every read: the 25 ms window ends long before
     // 40 events per lane can be applied.

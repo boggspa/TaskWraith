@@ -220,12 +220,48 @@ function boundedCleanup(hook, pending, reason, timers, timeoutMs) {
 }
 
 /**
+ * Wait, bounded, for effects still in flight when the fence fired.
+ *
+ * The next repetition replays the SAME chats from index 0, so an outstanding
+ * save from window N would land unobserved inside window N+1 and contaminate
+ * its samples. `concurrentReplayEvidence` pins that as "does not start a second
+ * repetition or reuse a chat until late effects settle" — settle is the
+ * operative word: waiting satisfies it, charging ahead does not.
+ *
+ * Settling after the deadline is honest and already censors the window
+ * (`lateEvents`). An effect that does NOT settle inside the bound stays pending,
+ * which leaves the window incomplete and still ends the run there.
+ */
+function boundedSettle(pending, timers, timeoutMs) {
+  if (pending.size === 0) return Promise.resolve()
+  return new Promise((resolve) => {
+    let timer = null
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      clearTimer(timers, timer)
+      resolve()
+    }
+    try {
+      timer = timers.setTimeout(finish, Math.ceil(timeoutMs))
+    } catch {
+      // A drain we cannot bound is a drain we do not attempt: leave the effects
+      // pending so the window stays incomplete rather than hanging the driver.
+      finish()
+      return
+    }
+    Promise.allSettled([...pending].map((entry) => entry.promise)).then(finish, finish)
+  })
+}
+
+/**
  * The deadline races RAW effect completion, never a timeout wrapper that can
  * hide an outstanding save. Completion timestamps are captured in the promise
  * settlement handler, not when a later scheduler iteration consumes the item.
  */
 async function runOneWindow(laneStates, options, prng, ownership, repetition) {
-  const { clock, timers, windowMs, maxInFlight } = options
+  const { clock, timers, windowMs, maxInFlight, cleanupTimeoutMs } = options
   let fenceReason = null
   let accepting = true
   let collecting = true
@@ -445,10 +481,12 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     clearTimer(timers, deadline)
     for (const entry of allEntries) clearTimer(timers, entry.timeout)
   }
+  // The window ended at the fence; the drain below must not backdate into it.
+  const endedAtMs = readTime()
+  await boundedSettle(pending, timers, cleanupTimeoutMs)
   // Keep all completions observed at the fence, including results that settled
   // together before Promise.race resumed. Late or unresolved effects are censored.
   for (const entry of [...pending]) if (entry.settled) consume(entry)
-  const endedAtMs = readTime()
   collecting = false
   const lanes = laneStates.map((state) => ({
     role: state.lane.role,
@@ -600,7 +638,7 @@ async function runConcurrentReplayLanes(options) {
       }))
       const window = await runOneWindow(
         states,
-        { ...options, clock, timers, windowMs, maxInFlight },
+        { ...options, clock, timers, windowMs, maxInFlight, cleanupTimeoutMs },
         createPrng(options.seed),
         ownership,
         repetition
@@ -624,7 +662,18 @@ async function runConcurrentReplayLanes(options) {
         )
         if (cleanup.status === 'confirmed_drained') ownership.confirmDrained()
       }
-      if (window.outcome !== 'complete' && window.outcome !== 'diagnostic') break
+      // Censored is the NORMAL outcome when a schedule outlives one 120 s fence
+      // (attempt 3: 1141 of 1313 events, then break), and stopping there recorded
+      // one window against the 120 s x 3 contract -- which `windows.length !==
+      // repetitions` below then marks incomplete, so the run could never be
+      // eligible evidence. A censored window continues; anything we could not
+      // finish or drain still aborts the remaining repetitions.
+      if (
+        window.outcome !== 'complete' &&
+        window.outcome !== 'diagnostic' &&
+        window.outcome !== 'censored'
+      )
+        break
     }
   } finally {
     ownership.finish()
