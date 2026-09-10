@@ -154,8 +154,21 @@ function validateSourceLayout() {
   const packageJsonPath = path.join(repoRoot, 'package.json')
   assertFile(packageJsonPath, 'package.json')
   const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
-  if (pkg.bin?.tw !== './out/tui/tui/cli.js' || pkg.bin?.taskwraith !== './out/tui/tui/cli.js') {
-    fail('package.json#bin must point tw/taskwraith at ./out/tui/tui/cli.js for dev/npm link')
+  if (pkg.bin?.tw !== './bin/taskwraith.cjs' || pkg.bin?.taskwraith !== './bin/taskwraith.cjs') {
+    fail('package.json#bin must point tw/taskwraith at ./bin/taskwraith.cjs for dev/npm link')
+  }
+  // Root bins run under a system Node, so the wrapper must select the
+  // node-package Host profile before the compiled CLI parses argv (the same
+  // flag the published CLI wrapper sets). Desktop launchers use the packaged
+  // payload directly and never set it.
+  const rootLauncherPath = path.join(repoRoot, 'bin', 'taskwraith.cjs')
+  assertFile(rootLauncherPath, 'root taskwraith launcher')
+  const rootLauncher = fs.readFileSync(rootLauncherPath, 'utf8')
+  if (!rootLauncher.includes("process.env.TASKWRAITH_CLI_PACKAGE = '1'")) {
+    fail('bin/taskwraith.cjs must set TASKWRAITH_CLI_PACKAGE=1 before requiring the TUI payload')
+  }
+  if (!rootLauncher.includes('out/tui/tui/cli.js')) {
+    fail('bin/taskwraith.cjs must delegate to the compiled out/tui/tui/cli.js payload')
   }
   if (!pkg.scripts?.['tui:build'] || !pkg.scripts?.['smoke:tui-package']) {
     fail('package.json must define tui:build and smoke:tui-package scripts')

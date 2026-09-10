@@ -323,31 +323,44 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
     // Surface bind failures (EADDRINUSE etc.) as a rejection instead of an
     // uncaught 'error' event — the embedded-relay path in Electron main
     // catches this and disables pairing with a clear log line.
-    http.once('error', (err) => {
+    const releaseOwnedTimers = (): void => {
       clearInterval(sweeper)
+      // Without a handle the caller can never close() us, so release the
+      // owned resolve-directory sweep timer here (a no-op for borrowed state).
+      resolveDirectory.close()
+    }
+    http.once('error', (err) => {
+      releaseOwnedTimers()
       reject(err)
     })
-    http.listen(options.port ?? 0, options.host, () => {
-      const addr = http.address()
-      const port = typeof addr === 'object' && addr ? addr.port : 0
-      resolve({
-        port,
-        roomCount: () => rooms.size,
-        registrationCount: () => resolveDirectory.registrationCount(),
-        close: () =>
-          new Promise<void>((res) => {
-            clearInterval(sweeper)
-            resolveDirectory.close()
-            void options.apnsGateway?.close()
-            for (const room of rooms.values()) {
-              room.mac?.terminate()
-              room.iphone?.terminate()
-            }
-            rooms.clear()
-            wss.close(() => http.close(() => res()))
-          })
+    try {
+      http.listen(options.port ?? 0, options.host, () => {
+        const addr = http.address()
+        const port = typeof addr === 'object' && addr ? addr.port : 0
+        resolve({
+          port,
+          roomCount: () => rooms.size,
+          registrationCount: () => resolveDirectory.registrationCount(),
+          close: () =>
+            new Promise<void>((res) => {
+              clearInterval(sweeper)
+              resolveDirectory.close()
+              void options.apnsGateway?.close()
+              for (const room of rooms.values()) {
+                room.mac?.terminate()
+                room.iphone?.terminate()
+              }
+              rooms.clear()
+              wss.close(() => http.close(() => res()))
+            })
+        })
       })
-    })
+    } catch (error) {
+      // listen() validates synchronously (bad port/host): same owned-timer
+      // release as the async bind-failure path, then reject with the error.
+      releaseOwnedTimers()
+      reject(error)
+    }
   })
 }
 

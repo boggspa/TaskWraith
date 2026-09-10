@@ -5,8 +5,8 @@
   "description": "TaskWraith desktop workspace",
   "main": "./out/main/index.js",
   "bin": {
-    "taskwraith": "./out/tui/tui/cli.js",
-    "tw": "./out/tui/tui/cli.js",
+    "taskwraith": "./bin/taskwraith.cjs",
+    "tw": "./bin/taskwraith.cjs",
     "taskwraith-host": "./out/host/host-runtime/cli.js"
   },
   "author": "Chris Izatt",

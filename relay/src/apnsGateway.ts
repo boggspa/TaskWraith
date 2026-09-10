@@ -332,6 +332,9 @@ export function createApnsGateway(config: ApnsGatewayConfig = {}): ApnsGateway {
     },
     close(): void {
       closed = true
+      // The directory disowns borrowed state, so the gateway — whose lifetime
+      // matches the relay's — releases the shared sweep timer on teardown.
+      config.resolveState?.close()
       table.sweep()
       log('[apns-gateway] close')
     }
