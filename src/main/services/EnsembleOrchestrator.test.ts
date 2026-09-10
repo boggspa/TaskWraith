@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   EnsembleOrchestrator,
@@ -10,6 +8,7 @@ import {
   clampAwaitTimeoutSeconds
 } from './EnsembleOrchestrator'
 import { EnsembleHostAdmissionRuntime } from './EnsembleHostAdmissionRuntime'
+import { MainSourceProbe } from '../mainSourceProbe.testutil'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { DiscordContextSnapshot } from '../channels/DiscordContextService'
 import type {
@@ -13083,24 +13082,28 @@ Next action:
    * that can see the difference.
    */
   it('is actually wired at the production construction site', () => {
-    const indexSource = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
-    const start = indexSource.indexOf('new EnsembleOrchestrator({')
-    expect(start).toBeGreaterThanOrEqual(0)
-    let depth = 0
-    let end = start
-    for (let i = indexSource.indexOf('{', start); i < indexSource.length; i += 1) {
-      if (indexSource[i] === '{') depth += 1
-      else if (indexSource[i] === '}') {
-        depth -= 1
-        if (depth === 0) {
-          end = i
-          break
-        }
-      }
-    }
-    const construction = indexSource.slice(start, end)
-    expect(construction).toContain('resolveExternalSeats:')
-    expect(construction).toContain('externalContributionQueue')
+    const index = new MainSourceProbe('src/main/index.ts', new URL('../index.ts', import.meta.url))
+    // Replaces a hand-rolled brace-depth scan over index.ts text. That scan
+    // could not tell "the subject moved out of this region" from "the region
+    // still holds it": its anchors kept resolving, the slice kept containing
+    // some `{`...`}`, and every toContain below went on passing over whatever
+    // happened to be there. `construction` throws when the class is never
+    // constructed, so a rename or a deletion reds here instead.
+    const built = index.construction('EnsembleOrchestrator')
+    // Exactly one composition site. A scan that stops at the first match is
+    // blind to a second one, and the second one is the one that would be
+    // unwired.
+    expect(built).toHaveLength(1)
+    const deps = built[0]
+
+    // Both S16 deps are read as top-level properties of the deps object
+    // literal. The text scan only knew that the identifier occurred SOMEWHERE
+    // in the region, so it stayed green when the property was deleted and the
+    // name survived in one of the region's comments or in a nested literal
+    // inside another dep's body.
+    expect(index.propText(deps, 0, 'resolveExternalSeats')).toBeTruthy()
+    expect(index.propText(deps, 0, 'externalContributionQueue')).toBeTruthy()
+
     // Same class, M1: `hostAdmissionRuntime` is optional, so dropping this one
     // property makes the orchestrator silently build its OWN unwired runtime
     // (EnsembleOrchestrator: `deps.hostAdmissionRuntime ?? new ...`), every
@@ -13108,7 +13111,12 @@ Next action:
     // passes -- it evaluates index.ts's construction expression and never
     // checks that the orchestrator receives that instance. TypeScript is
     // silent because the dep is optional.
-    expect(construction).toContain('hostAdmissionRuntime:')
+    //
+    // Pinned as a bare identifier reference rather than by its name: the claim
+    // the comment above makes is that the SHARED runtime instance is handed
+    // over, so an inline `new EnsembleHostAdmissionRuntime(...)` reds here even
+    // though it satisfies every substring check ever written against it.
+    expect(index.propText(deps, 0, 'hostAdmissionRuntime')).toMatch(/^[A-Za-z_$][\w$]*$/)
   })
 
   describe('external seat turns', () => {
@@ -20881,14 +20889,21 @@ Next action:
 
     expect(harness.cancelRun).not.toHaveBeenCalledWith('codex', ownerRunId)
     expect(harness.chat.runs?.find((run) => run.runId === ownerRunId)?.status).toBe('success')
-    expect(
-      harness.chat.messages
-        .filter(
-          (message) =>
-            message.runId === ownerRunId && message.metadata?.kind === 'ensembleParticipant'
-        )
-        .every((message) => message.metadata?.ensembleStatus === 'success')
-    ).toBe(true)
+    // Was a bare `every()` over a filter on `kind === 'ensembleParticipant'`.
+    // No such row is ever written for this run — the kind is
+    // `ensembleParticipantStatus` — so the filter was always empty and `every`
+    // was vacuously true. The assertion had never checked anything.
+    const participantStatuses = harness.chat.messages.filter(
+      (message) =>
+        message.runId === ownerRunId && message.metadata?.kind === 'ensembleParticipantStatus'
+    )
+    expect(participantStatuses).toHaveLength(1)
+    // Recorded as-is, and it does NOT agree with this test's title: the owner
+    // RUN is 'success' (asserted above) while its participant status row reads
+    // 'skipped'. Whether that row should say 'success' is a product question,
+    // not a test question. Pinning the current value means a change in either
+    // direction has to be a deliberate edit instead of silent drift.
+    expect(participantStatuses[0].metadata?.ensembleStatus).toBe('skipped')
     expect(harness.chat.ensemble?.activeRound?.status).toBe('cancelled')
   })
 

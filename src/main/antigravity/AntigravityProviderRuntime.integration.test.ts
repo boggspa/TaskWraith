@@ -1,10 +1,15 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { MainSourceProbe } from '../mainSourceProbe.testutil'
 
-const indexSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
-const constantsSource = readFileSync(new URL('../index.constants.ts', import.meta.url), 'utf8')
 const probe = new MainSourceProbe('src/main/index.ts', new URL('../index.ts', import.meta.url))
+// The lifecycle inventory lives in its own module, so it gets its own probe
+// rather than a raw text read: `binding` throws when the list is renamed or
+// removed, where a whole-file `toContain("'antigravity'")` was satisfied by any
+// mention anywhere in the file — a comment included.
+const constants = new MainSourceProbe(
+  'src/main/index.constants.ts',
+  new URL('../index.constants.ts', import.meta.url)
+)
 
 describe('AntiGravity S3 runtime integration', () => {
   it('delegates combined-mode dispatch to the shared gemini-api runtime', () => {
@@ -23,7 +28,9 @@ describe('AntiGravity S3 runtime integration', () => {
     expect(probe.propText(combined, 2, 'runAgyProvider')).toBe('runAntigravityAgyProvider')
     expect(probe.callsTo(dispatch, 'tryRunGeminiApi')).toHaveLength(1)
     expect(probe.callsTo(dispatch, 'antigravityGeminiApiAgentDeps')).toHaveLength(1)
-    // Launch preparation belongs to the agy lane alone.
+    // Launch preparation belongs to the agy lane alone. (The name is proven
+    // live by the agy test below, which requires exactly one call to it there,
+    // so this zero-count cannot be satisfied by a rename.)
     expect(probe.callsTo(dispatch, 'prepareAntigravityProviderLaunch')).toHaveLength(0)
   })
 
@@ -60,22 +67,44 @@ describe('AntiGravity S3 runtime integration', () => {
     expect(failedExitRecovery).toContain('terminalClaimed')
     expect(failedExitRecovery).toContain('finalResponse: completedFinalResponse')
 
-    // The binary comes from the prepared launch, never re-resolved here.
+    // The binary and the argv both come from the prepared launch, never
+    // re-resolved here. The positional claims are the positive half: without
+    // them the zero-count below would also pass over a function that had
+    // stopped launching anything at all.
+    expect(probe.argText(run[0], 2)).toBe('launch.binary.binaryPath!')
+    expect(probe.argText(run[0], 3)).toBe('launch.args')
     expect(probe.callsTo(agy, 'resolveCliProviderBinary')).toHaveLength(0)
+
+    // The only thing this lane does with the bypass flag is filter it OUT of
+    // the prepared argv (see the overlay-failure test). Pinning that
+    // comparison positively is what keeps the absence claim below honest: it
+    // proves the flag is still named here, so `not.toMatch` is answering about
+    // a scope that really does handle it.
+    expect(probe.comparesStrictly(agy, 'a', "'--dangerously-skip-permissions'")).toBe(true)
     expect(probe.text(agy)).not.toMatch(
       /\.(push|unshift)\(\s*['"]--dangerously-skip-permissions['"]\s*\)/
     )
   })
 
   it('lets a live hook arbitrate the write lease after an accept-edits launch', () => {
-    const agy = probe.fn('runAntigravityAgyProvider')
-    const source = probe.text(agy)
+    // `binding` throws if the decision is renamed or folded away, where the
+    // old whole-function regex would simply stop matching anything it claimed.
+    const allowWrite = probe.binding('allowWrite')
+
+    // Both gates are still present in the decision itself, independent of how
+    // it is wrapped or formatted.
+    expect(probe.comparesEqual(allowWrite, 'launch.mode', "'accept-edits'")).toBe(true)
+    expect(probe.comparesStrictly(allowWrite, 'permissions?.readOnly', 'true')).toBe(true)
 
     // Ask retains `readOnly: true` in its signed posture, so the live bridge
     // must be the first alternative. An unbridged posture still reaches the
     // readOnly check and cannot open the settings write rule.
-    expect(source).toMatch(
-      /const allowWrite\s*=\s*launch\.mode === 'accept-edits' &&\s*\(arbitratedByHook \|\|\s*\(permissions\?\.readOnly !== true &&/
+    //
+    // Operand ORDER is the claim, and the probe has no operand walker, so this
+    // half stays textual — but over the normalized initializer only, anchored
+    // at its start, so it cannot match some other `allowWrite`-shaped text.
+    expect(probe.text(allowWrite).replace(/\s+/g, ' ')).toMatch(
+      /^launch\.mode === 'accept-edits' && \(arbitratedByHook \|\| \(permissions\?\.readOnly !== true &&/
     )
   })
 
@@ -109,10 +138,15 @@ describe('AntiGravity S3 runtime integration', () => {
     )
     // The lease-failure site must return after settling — continuing past it
     // is what let agy launch with no allow rules and die silently.
-    const leaseSettleIdx = probe.text(agy).indexOf('signed in-workspace permissions')
-    expect(leaseSettleIdx).toBeGreaterThan(-1)
-    const afterLeaseSettle = probe.text(agy).slice(leaseSettleIdx, leaseSettleIdx + 1200)
-    expect(afterLeaseSettle).toContain('return')
+    //
+    // The window is anchored on the END of that settle call node, and stops at
+    // the first brace in either direction, so the `return` it finds is a
+    // statement in the SAME block. The previous form searched 1200 characters
+    // after a message substring for the word "return", which any surrounding
+    // code satisfies — it was green whether or not this site returned.
+    const fileText = probe.source.getFullText()
+    const afterLeaseSettle = fileText.slice(settle[2].getEnd(), settle[2].getEnd() + 200)
+    expect(afterLeaseSettle).toMatch(/^[^{}]*\breturn\b/)
 
     // And the helper it delegates to still does both halves: project the
     // failure to the renderer, and finish the run as failed. Without the
@@ -132,23 +166,60 @@ describe('AntiGravity S3 runtime integration', () => {
   })
 
   it('binds the dedicated Gemini API secret store only after app ready', () => {
-    expect(indexSource).toContain(
-      'let antigravityGeminiApiSecretStoreRef: AntigravityGeminiApiSecretStore | null = null'
-    )
-    expect(indexSource).toContain(
-      'antigravityGeminiApiSecretStoreRef = antigravityGeminiApiSecretStore'
-    )
-    const readyIdx = indexSource.indexOf(
-      'antigravityGeminiApiSecretStoreRef = antigravityGeminiApiSecretStore'
-    )
-    const constructIdx = indexSource.indexOf('new AntigravityGeminiApiSecretStore({')
-    expect(constructIdx).toBeGreaterThanOrEqual(0)
-    expect(readyIdx).toBeGreaterThan(constructIdx)
+    // The module-scope ref starts empty. Constructing the store eagerly would
+    // touch safeStorage and userData before Electron is ready.
+    expect(probe.text(probe.binding('antigravityGeminiApiSecretStoreRef'))).toBe('null')
+
+    // Lexical containment in the ready callback, which is the actual claim.
+    // The old form compared two `indexOf` offsets, which says only that one
+    // line is printed below another — it held equally for a store constructed
+    // at module load.
+    const readyThen = probe
+      .callsTo(probe.source, 'then')
+      .find((call) => probe.text(call.expression).replace(/\s+/g, '') === 'app.whenReady().then')
+    expect(readyThen).toBeDefined()
+    const readyScope = readyThen!.arguments[0]
+    expect(readyScope).toBeDefined()
+
+    const built = probe.construction('AntigravityGeminiApiSecretStore', readyScope)
+    expect(built).toHaveLength(1)
+    // Sole construction site in the whole file, so nothing can build one
+    // earlier: this is what makes "only after app ready" a real claim rather
+    // than a statement about the first textual occurrence.
+    expect(probe.construction('AntigravityGeminiApiSecretStore')).toHaveLength(1)
+    // And it is post-ready BECAUSE of what it reads — both of these throw or
+    // return nothing usable before app ready.
+    expect(probe.propText(built[0], 0, 'userDataPath')).toBe("app.getPath('userData')")
+    expect(probe.propText(built[0], 0, 'safeStorage')).toBe('safeStorage')
+
+    // The ref is bound from inside the same ready scope, once.
+    expect(probe.assignmentsTo(readyScope, 'antigravityGeminiApiSecretStoreRef')).toEqual([
+      'antigravityGeminiApiSecretStore'
+    ])
+    expect(probe.assignmentsTo(probe.source, 'antigravityGeminiApiSecretStoreRef')).toHaveLength(1)
   })
 
   it('uses the shared exact-run cancellation path and lifecycle inventory', () => {
-    expect(indexSource).toContain("cancel: (runId) => cancelProviderRun('antigravity', runId)")
-    expect(constantsSource).toContain("'antigravity'")
+    // Scoped to the adapter table: `binding` throws if it is renamed or
+    // deleted, where a whole-file `toContain` kept passing as long as any copy
+    // of the line survived anywhere in index.ts.
+    const adapters = probe.binding('antigravityAdapters')
+    const cancels = probe.callsTo(adapters, 'cancelProviderRun')
+    expect(cancels).toHaveLength(1)
+    expect(probe.argText(cancels[0], 0)).toBe("'antigravity'")
+    // Exact run: the id the adapter is handed is the id forwarded, never a
+    // provider-wide kill.
+    expect(probe.argText(cancels[0], 1)).toBe('runId')
+    // The call still has to be the adapter's `cancel` seam. The probe reads
+    // object-literal properties only inside call/new arguments, and this
+    // literal is an array element, so the key binding stays textual — now
+    // scoped to the adapter table rather than the whole file.
+    expect(probe.text(adapters)).toContain(
+      "cancel: (runId) => cancelProviderRun('antigravity', runId)"
+    )
+
+    // Lifecycle/cleanup inventory membership, read out of the list itself.
+    expect(constants.text(constants.binding('RUN_MANAGER_PROVIDERS'))).toContain("'antigravity'")
   })
 
   it('projects arbitrated agy tool calls into the transcript', () => {
@@ -158,7 +229,12 @@ describe('AntiGravity S3 runtime integration', () => {
     // projection, native tool calls happen headlessly and the transcript
     // stays empty even though work occurred on disk.
     const emitCalls = probe.callsTo(agy, 'emitAgyHookToolEvent')
-    expect(emitCalls.length).toBeGreaterThanOrEqual(4)
+    // EXACT, not a floor. `toBeGreaterThanOrEqual(4)` stood over SEVEN real
+    // projection sites, so three could be deleted and this stayed green — and an
+    // arbitrated tool call that goes unprojected is the whole point of the test.
+    // A legitimate eighth site should update this number; that edit is the
+    // review prompt this assertion exists to force.
+    expect(emitCalls).toHaveLength(7)
 
     // The single sendAgentCompatLine helper inside emitAgyHookToolEvent
     // branches on eventType and emits both tool_use and tool_result shapes.
@@ -169,25 +245,43 @@ describe('AntiGravity S3 runtime integration', () => {
     expect(probe.argText(compatCall!, 2)).toContain("'tool_result'")
     expect(probe.argText(compatCall!, 3)).toBe('route')
 
-    // The helper must be wired for both shell and write tool kinds.
+    // The helper must be wired for both shell and write tool kinds. These are
+    // template-literal tool-id prefixes built into locals, which the probe has
+    // no locator for, so they stay textual — scoped to the agy function, whose
+    // existence `fn` has already proven.
     expect(probe.text(agy)).toContain('agy-shell-')
     expect(probe.text(agy)).toContain('agy-write-')
   })
 
   it('strips --dangerously-skip-permissions if the hook overlay fails to install', () => {
     const agy = probe.fn('runAntigravityAgyProvider')
+
+    // Both halves of the overlay lifecycle, as an exact pair: installed once
+    // on the success path, and explicitly unset in the recovery path. A
+    // presence-only claim survives deleting either one.
+    const overlayAssignments = probe.assignmentsTo(agy, 'hookOverlay')
+    expect(overlayAssignments).toHaveLength(2)
+    expect(overlayAssignments[0]).toContain('hooksPath:')
+    expect(overlayAssignments[1]).toBe('undefined')
+
+    // If the hook bridge failed to stand up, agy's native confirmation MUST
+    // not be skipped — so the one and only thing done to the prepared argv is
+    // removing the bypass flag. Reading the assignment structurally also pins
+    // that nothing ELSE rewrites launch.args in this function.
+    expect(probe.assignmentsTo(agy, 'launch.args')).toEqual([
+      "launch.args.filter((a) => a !== '--dangerously-skip-permissions')"
+    ])
+
+    // Ensure the strip happens in the failure recovery path where the overlay
+    // is unset, and close enough to be the same catch block. Block membership
+    // is not expressible with the probe's locators, so this half stays
+    // positional — but both anchors are proven unique by the exact assignment
+    // lists above.
     const source = probe.text(agy)
-
-    expect(source).toContain('hookOverlay = undefined')
-    const stripStatement =
-      "launch.args = launch.args.filter((a) => a !== '--dangerously-skip-permissions')"
-    expect(source).toContain(stripStatement)
-
-    // Ensure the strip happens in the failure recovery path where the overlay is unset
     const hookOverlayIdx = source.indexOf('hookOverlay = undefined')
-    const stripIdx = source.indexOf(stripStatement)
+    const stripIdx = source.indexOf('launch.args = launch.args.filter(')
+    expect(hookOverlayIdx).toBeGreaterThan(-1)
     expect(stripIdx).toBeGreaterThan(hookOverlayIdx)
-    // Ensure they are close to each other (in the same catch block)
     expect(stripIdx - hookOverlayIdx).toBeLessThan(500)
   })
 })

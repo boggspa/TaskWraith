@@ -1,13 +1,14 @@
-import { readFileSync } from 'node:fs'
-
 import { describe, expect, it } from 'vitest'
 import type { AcpPermissionRequest } from '../acp/AcpProtocol'
+import { MainSourceProbe } from '../mainSourceProbe.testutil'
 import type { NativeWorkspaceToolPreflight } from '../native-tools/NativeWorkspaceToolGate'
 import {
   agyHostPolicyRefusal,
   captureAgyApproval,
   createAntigravityAcpPermissionHandler
 } from './AntigravityToolPermission'
+
+const probe = new MainSourceProbe('src/main/index.ts', new URL('../index.ts', import.meta.url))
 
 const request: AcpPermissionRequest = {
   rpcId: 1,
@@ -125,21 +126,40 @@ describe('unattributed agy hook denials', () => {
   })
 
   it('leaves no agy hook denial without a receipt row', () => {
-    const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
-    const start = source.indexOf('async function runAntigravityAgyProvider(')
-    expect(start).toBeGreaterThan(-1)
-    const rest = source.slice(start)
-    const lines = rest.slice(0, rest.indexOf('\n}\n')).split('\n')
+    // Name-anchored instead of text-sliced. `indexOf('async function
+    // runAntigravityAgyProvider(')` reds on any signature reflow, and the end
+    // anchor was worse than brittle: when `indexOf('\n}\n')` missed,
+    // `slice(0, -1)` silently widened the region to the rest of the file, so
+    // denials from unrelated functions could satisfy the loop below. `fn`
+    // throws when the entry point is renamed, moved or deleted, and returns
+    // exactly this function's body.
+    const hook = probe.fn('runAntigravityAgyProvider')
 
-    const denials = lines
-      .map((line, index) => ({ line, index }))
-      .filter((row) => /decision: 'deny'/.test(row.line))
+    // Was a TEN-LINE WINDOW over the hook's text: for each line matching
+    // `decision: 'deny'`, assert the next ten lines mention `onReplyWritten`.
+    // That was wrong in both directions at once. It passed when a denial lost
+    // its own receipt but a NEIGHBOUR's callback fell inside the window
+    // (demonstrated against a doctored index.ts: 7 denials, 6 receipts, green),
+    // and it red when a denial was merely reformatted so its own callback sat
+    // eleven lines below. Read per-object, neither failure is expressible.
+    const denials = probe
+      .objectLiterals(hook)
+      .filter((object) => probe.propOf(object, 'decision') === "'deny'")
 
-    // Guards the loop below against passing vacuously if the hook is restructured.
-    expect(denials.length).toBeGreaterThanOrEqual(6)
-
-    for (const row of denials) {
-      expect(lines.slice(row.index, row.index + 10).join('\n')).toContain('onReplyWritten')
+    // Exact, so a denial that disappears is as loud as one that loses its
+    // receipt, and so the loop below cannot run over an empty collection.
+    expect(denials).toHaveLength(6)
+    for (const denial of denials) {
+      expect(probe.propOf(denial, 'onReplyWritten')).not.toBeNull()
     }
+
+    // Companion to the ten-line window above, which cannot tell a denial's own
+    // `onReplyWritten` from the next denial's a few lines further down. Every
+    // receipt row is written by an `agyToolReceipt?.refusal(...)` call inside
+    // one of those callbacks, so one refusal call per denial is the arithmetic
+    // the window check silently assumes. A denial that loses its receipt reds
+    // here even when the window spills onto a neighbour's, and a refusal call
+    // deleted without its denial reds too.
+    expect(probe.callsTo(hook, 'refusal')).toHaveLength(denials.length)
   })
 })

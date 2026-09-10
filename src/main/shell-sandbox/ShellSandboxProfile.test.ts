@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readFileSync as readFileSyncNode } from 'node:fs'
 import { afterAll, describe, expect, it } from 'vitest'
+import { MainSourceProbe } from '../mainSourceProbe.testutil'
 import {
   buildWorkspaceSandboxProfile,
   resolveShellSandboxPlan,
@@ -424,12 +425,22 @@ describe('resolveShellSandboxPlan — denylist must not deny the workspace', () 
 // these assertions fail if the decision drifts back to a per-call opt-in.
 describe('index.ts containment wiring', () => {
   const indexSource = readFileSyncNode(new URL('../index.ts', import.meta.url), 'utf8')
+  const index = new MainSourceProbe('index.ts', new URL('../index.ts', import.meta.url))
 
   it('reads the plan from the projection scope, not a per-call argument', () => {
-    expect(indexSource).toContain('const sandboxPlan = projectionScope?.shellSandbox')
+    // Structural: a rename of the binding throws here rather than passing over
+    // a slice that no longer contains the thing being claimed.
+    expect(index.text(index.binding('sandboxPlan'))).toBe('projectionScope?.shellSandbox')
+    expect(index.typeMembers('HostCommandProjectionScope')).toContain('shellSandbox')
     // The old opt-in field must be gone: it contained whichever call site
     // remembered to pass it and silently left the rest open.
-    expect(indexSource).not.toContain('sandbox?: ShellSandboxPlan\n}')
+    //
+    // Previously spelled `not.toContain('sandbox?: ShellSandboxPlan\n}')`, which
+    // anchored the claim on the field being the LAST member of its type. That
+    // guard stopped guarding the moment anyone declared a member after it — the
+    // forbidden field could come back, not last, and the test stayed green.
+    expect(index.typeMembers('HostCommandProjectionScope')).not.toContain('sandbox')
+    expect(indexSource).not.toMatch(/(^|[^A-Za-z])sandbox\?: ShellSandboxPlan/m)
   })
 
   // BOTH spawn families must refuse: runHostCommand (run_shell_command,

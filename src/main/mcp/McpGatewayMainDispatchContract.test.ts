@@ -274,8 +274,12 @@ describe('ensemble repair-hint wrapper coverage', () => {
       expect(branch, `${toolName} must serialize through mcpEnsembleJson`).toContain(
         'mcpEnsembleJson('
       )
+      // `[^e]` was load-bearing-looking but wrong twice over: `\bmcpJson\(`
+      // cannot match inside `mcpEnsembleJson(` anyway (no word boundary, and
+      // the literal is absent), while REQUIRING a preceding character meant a
+      // bare `mcpJson(` at offset 0 of the slice slipped through unseen.
       expect(branch, `${toolName} must not bypass the wrapper with bare mcpJson`).not.toMatch(
-        /[^e]\bmcpJson\(/
+        /(^|[^A-Za-z0-9_$])mcpJson\(/
       )
     }
   })

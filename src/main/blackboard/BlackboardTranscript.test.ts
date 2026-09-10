@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { MainSourceProbe } from '../mainSourceProbe.testutil'
 import type { BlackboardEntry, EnsembleParticipant } from '../store/types'
 import {
   buildBlackboardCleanedTranscriptEvent,
@@ -7,7 +7,7 @@ import {
   buildScoutBriefSharedTranscriptEvent
 } from './BlackboardTranscript'
 
-const indexSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
+const probe = new MainSourceProbe('src/main/index.ts', new URL('../index.ts', import.meta.url))
 
 const participant: EnsembleParticipant = {
   id: 'scout-5',
@@ -128,11 +128,46 @@ describe('Blackboard transcript event builder', () => {
   })
 
   it('wires post and cleanup metadata through the run-authored status seam', () => {
-    expect(indexSource).toContain('buildBlackboardPostTranscriptEvent(entry, participant)')
-    expect(indexSource).toContain('buildBlackboardCleanedTranscriptEvent(')
-    expect(indexSource).toContain('buildScoutBriefSharedTranscriptEvent(')
-    expect(indexSource).toMatch(
-      /appendStatusForRun\([\s\S]{0,180}transcriptEvent\.content,[\s\S]{0,80}transcriptEvent\.metadata/
-    )
+    // The builders themselves are exercised above against real inputs. All this
+    // claim owns is the wiring in the composition root, which cannot be
+    // imported: every Blackboard MCP tool that mutates the board must reach a
+    // builder and hand BOTH halves of what it returns to the run-authored
+    // status seam. Scoped to the dispatcher rather than the whole file, so a
+    // call that survives only in a comment or in an unrelated lane no longer
+    // satisfies it.
+    const dispatch = probe.fn('executeUnscopedGeminiMcpTool')
+
+    const post = probe.callsTo(dispatch, 'buildBlackboardPostTranscriptEvent')
+    expect(post).toHaveLength(1)
+    expect(probe.argText(post[0], 0)).toBe('entry')
+    expect(probe.argText(post[0], 1)).toBe('participant')
+
+    // The cleanup line reports how many entries went away, so the count handed
+    // over must be the removed list — the remaining count reads as a plausible
+    // number and would produce a silently wrong transcript line that no
+    // unit test of the builder can see.
+    const cleaned = probe.callsTo(dispatch, 'buildBlackboardCleanedTranscriptEvent')
+    expect(cleaned).toHaveLength(1)
+    expect(probe.argText(cleaned[0], 0)).toBe('result.removed.length')
+
+    // Only the brief the orchestrator actually recorded is shared; the raw tool
+    // arguments are not the same thing (rejected briefs must stay out of the
+    // transcript).
+    const scoutBrief = probe.callsTo(dispatch, 'buildScoutBriefSharedTranscriptEvent')
+    expect(scoutBrief).toHaveLength(1)
+    expect(probe.argText(scoutBrief[0], 0)).toBe('recordedBrief')
+
+    // The seam itself. This replaces a regex that allowed arbitrary text
+    // between `appendStatusForRun(` and the two operands and was matched
+    // against the whole file: one wired site anywhere kept it green, so a
+    // dropped `transcriptEvent.metadata` at either of the other two sites —
+    // which strips the provider attribution off the transcript row — was
+    // invisible to it. Each of the three appends is now checked positionally.
+    const appends = probe.callsTo(dispatch, 'appendStatusForRun')
+    expect(appends).toHaveLength(3)
+    for (const append of appends) {
+      expect(probe.argText(append, 1)).toBe('transcriptEvent.content')
+      expect(probe.argText(append, 2)).toBe('transcriptEvent.metadata')
+    }
   })
 })

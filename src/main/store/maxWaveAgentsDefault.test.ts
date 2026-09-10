@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_MAX_WAVE_AGENTS } from '../../shared/fleetWave'
+import { MainSourceProbe } from '../mainSourceProbe.testutil'
 import { adoptSupersededMaxWaveAgents } from './maxWaveAgentsDefault'
 
 describe('Max Wave Agents default', () => {
@@ -9,10 +9,27 @@ describe('Max Wave Agents default', () => {
     // settings shape, not a derived value), so it can drift from the parser's
     // default silently — and a store default of 8 against a parser default of
     // 12 would refuse the very roster the slider claims to allow.
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
-    const shipped = source.match(/maxWaveAgents: (\d+),/)
-    expect(shipped).not.toBeNull()
-    expect(Number(shipped?.[1])).toBe(DEFAULT_MAX_WAVE_AGENTS)
+    //
+    // Anchored on the `defaultSettings` declaration rather than scanned over
+    // the file: a bare `/maxWaveAgents: (\d+),/` took whichever entry came
+    // first across 14k lines, so any other object literal that grew the field
+    // would have been read in place of the shipped one, and renaming or
+    // deleting `defaultSettings` would have left the check green over the
+    // wrong subject entirely. `binding` throws when the declaration goes, and
+    // the scan then covers only that initializer.
+    const store = new MainSourceProbe(
+      'src/main/store/index.ts',
+      new URL('./index.ts', import.meta.url)
+    )
+    const shipped = [
+      ...store.text(store.binding('defaultSettings')).matchAll(/\bmaxWaveAgents\s*:\s*(\d+)\b/g)
+    ]
+
+    // Exactly one entry: with two, the later one wins at runtime while a
+    // first-match read reports the earlier — the silent-drift shape this test
+    // exists to catch.
+    expect(shipped).toHaveLength(1)
+    expect(Number(shipped[0][1])).toBe(DEFAULT_MAX_WAVE_AGENTS)
   })
 
   it('lifts an install still carrying the superseded default', () => {

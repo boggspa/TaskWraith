@@ -2305,7 +2305,8 @@ const defaultSettings: AppSettings = {
   /** Settings → General Max Wave Agents (clamped 2–64 on read/write).
    *  A literal because `defaultSettings` is the shipped settings shape, not a
    *  computed one; kept in step with shared/fleetWave's DEFAULT_MAX_WAVE_AGENTS
-   *  by maxWaveAgentsDefault.test.ts, which reads this line back as source. */
+   *  by maxWaveAgentsDefault.test.ts, which reads the `defaultSettings`
+   *  declaration structurally rather than matching this line as text. */
   maxWaveAgents: 12,
   dashboardStatPrefs: {
     dashboardSize: 'small'
