@@ -62,9 +62,12 @@ describe('project reference context dispatch acceptance', () => {
     const sendableContent = sourceBetween(
       composerSource,
       'const hasSendablePromptContent =',
-      // 3a2694c1e derived scheduledNowMs from the shared tick (useState → useMemo);
-      // the anchor tracks the declaration, not its hook form.
-      'const scheduledNowMs ='
+      // Was `const scheduledNowMs =` until that clock was extracted into
+      // ScheduledTaskCountdown / GoalRuntimeLabel, which deleted the anchor.
+      // `goalControlDisabled` is the next declaration after it, so the slice is
+      // preserved almost exactly — and it is a plain derived boolean with no
+      // hook form to churn, unlike its predecessor.
+      'const goalControlDisabled ='
     )
     expect(sendableContent).toContain('hasAttachmentPromptContent(prompt, imageAttachments)')
     expect(sendableContent).toContain('hasProjectReferenceContext')

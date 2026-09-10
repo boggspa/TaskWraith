@@ -6,7 +6,6 @@ import { trustedSessionRuntimeProfileForRequest } from '../../../shared/trustedS
 import { planTrustedSessionElevation } from '../lib/trustedSessionElevation'
 import { createWindowDragSession } from '../lib/windowDragSession'
 import { MAX_ACTIVE_GOAL_OBJECTIVE_CHARS } from '../../../main/GoalState'
-import { formatGoalRuntimePopoverLabel } from '../lib/goalRuntimeFormat'
 import type {
   AgenticWorkspaceGrant,
   ChatWorkflowMode,
@@ -38,7 +37,6 @@ import { useComposerDraft } from '../hooks/useComposerDraft'
 import { useComposerAboveRowsMinimized } from '../hooks/useComposerAboveRowsMinimized'
 import { useComposerAboveBarStyleState } from '../hooks/useComposerAboveBarStyleState'
 import { useComposerSuggestion } from '../hooks/useComposerSuggestion'
-import { useSharedNowTick } from '../hooks/useSharedNowTick'
 import { buildComposerContinuationCheckpoint } from '../lib/composerContinuationCheckpoint'
 import { buildContinuationTitleApplyRequest } from '../lib/composerContinuationProposal'
 import { ComposerLinkPreviewStrip } from '../components/ComposerLinkPreviewStrip'
@@ -126,6 +124,8 @@ import { resolveEnsembleParticipantRetryDispatch } from '../lib/ensembleRetryPro
 import { resolveComposerModelReasoningDefault } from '../lib/composerProviderReasoningSelection'
 import { AgentApprovalPreview } from '../lib/agentApprovalPreview'
 import { ApprovalTimeoutCountdown } from './ApprovalTimeoutCountdown'
+import { GoalRuntimeLabel } from './GoalRuntimeLabel'
+import { ScheduledTaskCountdown } from './ScheduledTaskCountdown'
 import { agentApprovalCancelPresentation } from '../lib/agentApprovalLifecycle'
 import { approvalActionPresentation } from '../lib/approvalActionPresentation'
 import {
@@ -141,7 +141,6 @@ import {
 } from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
-import { formatScheduledTaskCountdown } from '../lib/scheduledCountdown'
 import {
   buildCodexModelChangeParticipantPatch,
   buildProviderModelChangeParticipantPatch,
@@ -1389,25 +1388,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     return baseOptions
   }
 
-  const hasVisibleScheduledCountdown =
-    Array.isArray(visibleScheduledTasks) &&
-    visibleScheduledTasks.some((task: any) => task?.status === 'pending' || task?.status === 'due')
   const goalControlDisabled = !currentChat || Boolean(goalControlDisabledReason)
   const goalControlTitle = goalControlDisabledReason || currentGoalButtonTitle
-  const hasGoalRuntimeTicker =
-    goalPopoverOpen &&
-    Boolean(currentActiveGoal?.runtimeLedger) &&
-    currentActiveGoal?.status !== 'completed'
-  const scheduledNowTick = useSharedNowTick(hasVisibleScheduledCountdown || hasGoalRuntimeTicker)
-  const scheduledNowMs = useMemo(
-    () => Date.now(),
-    [scheduledNowTick, hasVisibleScheduledCountdown, hasGoalRuntimeTicker]
-  )
-  const goalRuntimeLabel = formatGoalRuntimePopoverLabel(
-    currentActiveGoal,
-    scheduledNowMs,
-    currentChat?.updatedAt
-  )
+  // NO CLOCK IN THIS COMPONENT. The scheduled-task countdown and the goal
+  // runtime line own their own 1 Hz tick, in `ScheduledTaskCountdown` and
+  // `GoalRuntimeLabel`. Subscribing here reconciled the whole composer every
+  // second, and the old gate fired whenever ANY scheduled task was pending or
+  // due — so one queued task pinned the composer at 1 Hz indefinitely, whether
+  // or not the strip was even on screen. `styles/scheduledCountdownIsolation.test.ts`
+  // refuses a clock here; see `ApprovalTimeoutCountdown` for the precedent.
 
   // Second row of the roster-presets above-row section — Fan-Out / Isolate /
   // Turn Budget. These controls used to crowd the composer's bottom action
@@ -5697,9 +5686,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               content={currentActiveGoal.blockedReason}
                             />
                           )}
-	                          {goalRuntimeLabel && (
-	                            <p className="composer-goal-runtime">{goalRuntimeLabel}</p>
-	                          )}
+                          <GoalRuntimeLabel
+                            goal={currentActiveGoal}
+                            lastActivityAt={currentChat?.updatedAt}
+                          />
 	                          <div className="composer-goal-popover-actions">
 	                            <PillButton
 	                              size="compact"
@@ -5944,9 +5934,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       <span className="scheduled-task-copy" title={task.prompt}>
                         {getProviderLabel(task.provider)} · {formatScheduledRunTime(task.runAt)}
                       </span>
-                      <span className="scheduled-task-countdown">
-                        {formatScheduledTaskCountdown(task, scheduledNowMs)}
-                      </span>
+                      <ScheduledTaskCountdown runAt={task.runAt} status={task.status} />
                       <span className="scheduled-task-status">{task.status}</span>
                       {(task.status === 'pending' ||
                         task.status === 'due' ||
