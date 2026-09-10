@@ -66,6 +66,11 @@ describe('Cursor Path-B production/evidence integration', () => {
     expect(cursorRunSource).toContain(
       'onInstallFailure: workspaceConfigTransaction.onInstallFailure'
     )
+    expect(indexSource).toContain(
+      'const cursorWorkspaceConfigLeases = new CursorWorkspaceConfigLeaseCoordinator({\n  spans: mainWorkSpanRecorder\n})'
+    )
+    expect(cursorRunSource).toContain('chatId: payload.appChatId')
+    expect(cursorRunSource).toContain('runId: payload.appRunId')
   })
 
   it('uses physical registry identity and surfaces unverified cleanup without excluding Cursor', () => {

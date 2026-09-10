@@ -152,6 +152,11 @@ function assertProductionAcquisitionBinding(text: string): void {
     const parameter = setters[0].parameters[0].name.getText(file)
     expect(compact(setters[0].body!.getText(file))).toBe('{' + name + '=' + parameter + '}')
   }
+  const spans = deps.properties.filter(
+    (member) => ts.isGetAccessorDeclaration(member) && member.name.getText(file) === 'spans'
+  ) as ts.GetAccessorDeclaration[]
+  expect(spans, 'production provider_config_wait sink').toHaveLength(1)
+  expect(compact(spans[0].body!.getText(file))).toBe('{returnmainWorkSpanRecorder}')
 }
 
 describe('Codex client lifecycle queue integration', () => {

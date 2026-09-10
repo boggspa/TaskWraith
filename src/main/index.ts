@@ -2716,6 +2716,9 @@ const { acquireCodexClientLifecycleLease, getCodexClient, acquireCodexProviderCl
     },
     get CodexAppServerClient() {
       return CodexAppServerClient
+    },
+    get spans() {
+      return mainWorkSpanRecorder
     }
   })
 
@@ -23180,7 +23183,9 @@ async function runGrokProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
 // the next launch would then skip the one reliable approval recipe and reject
 // every MCP call).
 const cursorMcpApprovedWorkspaceServers = new Set<string>()
-const cursorWorkspaceConfigLeases = new CursorWorkspaceConfigLeaseCoordinator()
+const cursorWorkspaceConfigLeases = new CursorWorkspaceConfigLeaseCoordinator({
+  spans: mainWorkSpanRecorder
+})
 async function ensureCursorMcpApproved(
   binaryPath: string,
   workspace: string,
@@ -23434,7 +23439,9 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         configurationKey: workspaceConfigTransaction.configurationKey,
         signal: payload.providerSetupAbortSignal,
         install: workspaceConfigTransaction.install,
-        onInstallFailure: workspaceConfigTransaction.onInstallFailure
+        onInstallFailure: workspaceConfigTransaction.onInstallFailure,
+        chatId: payload.appChatId,
+        runId: payload.appRunId
       })
       if (!providerTransportLaunchAuthorized('cursor', payload, route)) {
         await releaseCursorConfigurationLeases()

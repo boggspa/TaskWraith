@@ -5,6 +5,7 @@ import { shouldRestartCodexAppServerForMcpConfig } from '../CodexRunRouting'
 import { buildUserMcpLaunchServers } from '../UserMcpServers'
 import * as profileFence from '../mcp/McpSessionProfileFence'
 import type { RuntimeProfile } from '../store/types'
+import { createWorkSpanRecorder } from '../perf/WorkSpanRecorder'
 import {
   createCodexClientAcquisition,
   type CodexClientAcquisitionDependencies,
@@ -32,7 +33,10 @@ class FakeClient {
   setWorkspaceLockOwnerId = vi.fn()
 }
 
-function fixture(cohortFairness?: boolean) {
+function fixture(
+  cohortFairness?: boolean,
+  spans?: CodexClientAcquisitionDependencies<FakeClient>['spans']
+) {
   let client: FakeClient | null = null
   let lease: CodexClientLifecycleLease | null = null
   const settings = {
@@ -45,6 +49,7 @@ function fixture(cohortFairness?: boolean) {
   const deps: CodexClientAcquisitionDependencies<FakeClient> = {
     ...profileFence,
     flags: { cohortFairness },
+    ...(spans ? { spans } : {}),
     get codexClient() {
       return client
     },
@@ -782,5 +787,236 @@ describe('live acquisition dependencies', () => {
     expect(originalFinish).not.toHaveBeenCalled()
     expect(replacementFinish).toHaveBeenCalledExactlyOnceWith(lease.client, lease.lifecycleLease)
     expect(deps.activeCodexClientLifecycleLease).toBeNull()
+  })
+})
+
+function tickingClock(start = 1_000, stepMs = 10): () => number {
+  let at = start - stepMs
+  return () => (at += stepMs)
+}
+
+function waitSpans(recorder: ReturnType<typeof createWorkSpanRecorder>) {
+  return recorder.snapshot().spans.filter((span) => span.kind === 'provider_config_wait')
+}
+
+describe('Codex provider_config_wait spans', () => {
+  it('does not emit on a compatible join or a first-run empty queue', async () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 8,
+      now: tickingClock()
+    })
+    const { acquisition } = fixture(undefined, recorder)
+    const first = await acquisition.acquireCodexProviderClientRunLease(
+      { ...gateway, chatId: 'chat-a' },
+      'first',
+      null
+    )
+    const second = await acquisition.acquireCodexProviderClientRunLease(
+      { ...gateway, chatId: 'chat-b' },
+      'second',
+      null
+    )
+    expect(second.lifecycleLease).toBe(first.lifecycleLease)
+    expect(waitSpans(recorder)).toEqual([])
+    await first.cohortLease.release()
+    await second.cohortLease.release()
+  })
+
+  it('labels an incompatible MCP-profile wait registration_change', async () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 8,
+      now: tickingClock()
+    })
+    const { acquisition } = fixture(undefined, recorder)
+    const first = await acquisition.acquireCodexProviderClientRunLease(
+      { ...solo, chatId: 'chat-heavy' },
+      'first',
+      null
+    )
+    const pending = acquisition.acquireCodexProviderClientRunLease(
+      { ...mesh, chatId: 'chat-light', appChatId: 'ignored-when-chatId-present' },
+      'third',
+      null
+    )
+    expect(waitSpans(recorder)).toEqual([])
+    await first.cohortLease.release()
+    const third = await pending
+    const spans = waitSpans(recorder)
+    expect(spans).toHaveLength(1)
+    expect(spans[0]).toMatchObject({
+      kind: 'provider_config_wait',
+      resource: 'codex_daemon',
+      reason: 'registration_change',
+      chatId: 'chat-light',
+      runId: 'third'
+    })
+    expect(spans[0]?.durationMs).toBeGreaterThan(0)
+    await third.cohortLease.release()
+  })
+
+  it('labels a runtime-profile wait runtime_or_credential_domain', async () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 8,
+      now: tickingClock()
+    })
+    const { acquisition } = fixture(undefined, recorder)
+    const first = await acquisition.acquireCodexProviderClientRunLease(
+      { ...gateway, chatId: 'chat-a' },
+      'first',
+      null
+    )
+    const pending = acquisition.acquireCodexProviderClientRunLease(
+      { ...gateway, chatId: 'chat-b', runtimeProfile: runtime('other') },
+      'second',
+      null
+    )
+    await first.cohortLease.release()
+    const second = await pending
+    expect(waitSpans(recorder)).toEqual([
+      expect.objectContaining({
+        kind: 'provider_config_wait',
+        reason: 'runtime_or_credential_domain',
+        chatId: 'chat-b',
+        runId: 'second',
+        resource: 'codex_daemon'
+      })
+    ])
+    await second.cohortLease.release()
+  })
+
+  it('labels a credential-consent wait runtime_or_credential_domain', async () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 8,
+      now: tickingClock()
+    })
+    const { acquisition, settings } = fixture(undefined, recorder)
+    const first = await acquisition.acquireCodexProviderClientRunLease(
+      { ...gateway, chatId: 'chat-a' },
+      'first',
+      null
+    )
+    settings.codexReuseExistingLogin = true
+    const pending = acquisition.acquireCodexProviderClientRunLease(
+      { ...gateway, chatId: 'chat-b' },
+      'second',
+      null
+    )
+    await first.cohortLease.release()
+    const second = await pending
+    expect(waitSpans(recorder).map((span) => span.reason)).toEqual(['runtime_or_credential_domain'])
+    await second.cohortLease.release()
+  })
+
+  it('labels lock-owned isolation of the same config cohort_drain', async () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 8,
+      now: tickingClock()
+    })
+    const { acquisition } = fixture(undefined, recorder)
+    const first = await acquisition.acquireCodexProviderClientRunLease(
+      { ...gateway, chatId: 'chat-a' },
+      'first',
+      'owner'
+    )
+    const pending = acquisition.acquireCodexProviderClientRunLease(
+      { ...gateway, chatId: 'chat-b' },
+      'second',
+      'owner'
+    )
+    await first.cohortLease.release()
+    const second = await pending
+    expect(waitSpans(recorder)).toEqual([
+      expect.objectContaining({
+        reason: 'cohort_drain',
+        chatId: 'chat-b',
+        resource: 'codex_daemon'
+      })
+    ])
+    await second.cohortLease.release()
+  })
+
+  it('reads production appChatId when chatId is absent and skips when both are empty', async () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 8,
+      now: tickingClock()
+    })
+    const { acquisition } = fixture(undefined, recorder)
+    const first = await acquisition.acquireCodexProviderClientRunLease(
+      { ...solo, appChatId: 'chat-prod' },
+      'first',
+      null
+    )
+    const pending = acquisition.acquireCodexProviderClientRunLease(
+      { ...mesh, appChatId: ' chat-prod-light ' },
+      'second',
+      null
+    )
+    await first.cohortLease.release()
+    const second = await pending
+    expect(waitSpans(recorder)[0]?.chatId).toBe('chat-prod-light')
+    await second.cohortLease.release()
+
+    const unlabeled = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 8,
+      now: tickingClock()
+    })
+    const unlabeledAcquisition = fixture(undefined, unlabeled).acquisition
+    const held = await unlabeledAcquisition.acquireCodexProviderClientRunLease(solo, 'held', null)
+    const waiting = unlabeledAcquisition.acquireCodexProviderClientRunLease(mesh, 'waiting', null)
+    await held.cohortLease.release()
+    await (await waiting).cohortLease.release()
+    expect(waitSpans(unlabeled)).toEqual([])
+  })
+
+  it('records an aborted wait and contains a throwing sink', async () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 8,
+      now: tickingClock()
+    })
+    const { acquisition } = fixture(undefined, recorder)
+    const first = await acquisition.acquireCodexProviderClientRunLease(
+      { ...solo, chatId: 'chat-a' },
+      'first',
+      null
+    )
+    const abort = new AbortController()
+    const pending = acquisition.acquireCodexProviderClientRunLease(
+      { ...mesh, chatId: 'chat-b', providerSetupAbortSignal: abort.signal },
+      'cancelled',
+      null
+    )
+    const rejected = expect(pending).rejects.toBeInstanceOf(AcquireAbortedError)
+    abort.abort()
+    await rejected
+    expect(waitSpans(recorder)).toEqual([
+      expect.objectContaining({
+        kind: 'provider_config_wait',
+        reason: 'registration_change',
+        chatId: 'chat-b',
+        runId: 'cancelled'
+      })
+    ])
+    await first.cohortLease.release()
+
+    const throwing = {
+      begin: () => {
+        throw new Error('recorder must not break acquisition')
+      }
+    }
+    const live = fixture(undefined, throwing).acquisition
+    const lease = await live.acquireCodexProviderClientRunLease(
+      { ...gateway, chatId: 'chat-c' },
+      'ok',
+      null
+    )
+    await lease.cohortLease.release()
   })
 })

@@ -11,6 +11,11 @@ import type {
   UserMcpLaunchAllowlistPolicy
 } from '../UserMcpServers'
 import type * as McpSessionProfileFence from '../mcp/McpSessionProfileFence'
+import {
+  beginProviderConfigWait,
+  type ProviderConfigWaitReason,
+  type ProviderConfigWaitSink
+} from '../perf/providerConfigWaitSpan'
 import type { RuntimeProfile, TaskWraithMcpProfileId } from '../store/types'
 import type { CodexClientLifecycleQueue } from './CodexClientLifecycleQueue'
 import { CodexClientWaiterQueue } from './CodexClientWaiterQueue'
@@ -58,6 +63,12 @@ export interface CodexClientAcquisitionPayload {
   runtimeProfile?: RuntimeProfile | null
   taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
   providerSetupAbortSignal?: AbortSignal
+  /**
+   * Optional M1 attribution for provider_config_wait. Production
+   * AgentRunPayload supplies `appChatId`; tests may pass `chatId`.
+   */
+  chatId?: string
+  appChatId?: string
 }
 
 type CodexClientActiveRunState = NonNullable<
@@ -90,6 +101,8 @@ export interface CodexClientAcquisitionDependencies<
     CodexProviderClientCohortResource<TClient>
   >
   readonly flags?: { readonly cohortFairness?: boolean }
+  /** Optional M1 provider_config_wait sink. Absence is safe. */
+  readonly spans?: ProviderConfigWaitSink
   readonly codexClientLifecycleQueue: CodexClientLifecycleQueue
   readonly CodexClientLifecycleAcquireAbortedError: new (label: string) => Error
   readonly poisonWorkspaceLockMutationAdmission: (reason: string) => void
@@ -159,6 +172,33 @@ export interface CodexClientAcquisitionDependencies<
  * lifetime, so a flag change cannot mix schedulers with queued work in flight.
  * Process launch, credential ownership and teardown remain supplied by the root.
  */
+
+function payloadChatId(payload: CodexClientAcquisitionPayload): string | undefined {
+  const raw = payload.chatId ?? payload.appChatId
+  if (typeof raw !== 'string') return undefined
+  const trimmed = raw.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+function classifyCodexProviderConfigWaitReason(
+  requested: CodexClientStartupConfiguration,
+  current: CodexClientStartupConfiguration | null,
+  hasClient: boolean
+): ProviderConfigWaitReason {
+  if (!current) return hasClient ? 'cohort_drain' : 'cold_start'
+  if (JSON.stringify(requested.mcpConfig) !== JSON.stringify(current.mcpConfig)) {
+    return 'registration_change'
+  }
+  if (
+    JSON.stringify(requested.runtimeProfile ?? null) !==
+      JSON.stringify(current.runtimeProfile ?? null) ||
+    requested.credentialLeaseConsent !== current.credentialLeaseConsent
+  ) {
+    return 'runtime_or_credential_domain'
+  }
+  return 'cohort_drain'
+}
+
 export function createCodexClientAcquisition<TClient extends CodexAcquisitionClient>(
   deps: CodexClientAcquisitionDependencies<TClient>
 ) {
@@ -166,6 +206,7 @@ export function createCodexClientAcquisition<TClient extends CodexAcquisitionCli
     | CodexClientWaiterQueue<CodexProviderClientCohortResource<TClient>>
     | null
     | undefined
+  let lastOpenedConfiguration: CodexClientStartupConfiguration | null = null
 
   function fairnessQueue() {
     if (fairWaiters === undefined) {
@@ -378,74 +419,108 @@ export function createCodexClientAcquisition<TClient extends CodexAcquisitionCli
       .digest('hex')
     const fair = fairnessQueue()
     const lifecycleLabel = `provider-run:${runId}`.trim()
-    const grant = fair
-      ? await fair.acquireCompatible(runId, compatibilityKey, payload.providerSetupAbortSignal)
-      : null
-    if (fair && !grant) {
-      throw new deps.CodexClientLifecycleAcquireAbortedError(lifecycleLabel)
+    const admission = deps.codexProviderClientCohorts.admissionState()
+    const fairQueued = Boolean(fair && fair.snapshot().length > 0)
+    const occupying =
+      Boolean(deps.activeCodexClientLifecycleLease) || admission !== null || fairQueued
+    const canJoinImmediately =
+      admission !== null &&
+      admission.accepting &&
+      admission.compatibilityKey === compatibilityKey &&
+      !fairQueued
+    let endWait =
+      occupying && !canJoinImmediately
+        ? beginProviderConfigWait(deps.spans, {
+            chatId: payloadChatId(payload),
+            runId,
+            resource: 'codex_daemon',
+            reason: classifyCodexProviderConfigWaitReason(
+              configuration,
+              admission ? lastOpenedConfiguration : null,
+              Boolean(deps.codexClient)
+            )
+          })
+        : undefined
+    const finishWait = (): void => {
+      const end = endWait
+      endWait = undefined
+      end?.()
     }
-    const joined =
-      grant?.kind === 'cohort'
-        ? grant.lease
-        : fair
-          ? null
-          : deps.codexProviderClientCohorts.tryJoin(runId, compatibilityKey)
-    if (joined) {
-      const { client, lifecycleLease } = joined.resource
-      if (deps.activeCodexClientLifecycleLease !== lifecycleLease) {
-        deps.codexProviderClientCohorts.stopAccepting()
-        await joined.release().catch(() => undefined)
-        deps.poisonWorkspaceLockMutationAdmission(
-          `Codex run ${runId} joined a client cohort without its exact lifecycle lease.`
-        )
-        throw new Error('Codex compatible client cohort lost lifecycle ownership.')
-      }
-      if (fair && payload.providerSetupAbortSignal?.aborted) {
-        await joined.release()
-        throw new deps.CodexClientLifecycleAcquireAbortedError(lifecycleLabel)
-      }
-      return { client, lifecycleLease, cohortLease: joined }
-    }
-
-    let lifecycleLease: CodexClientLifecycleLease
-    if (grant?.kind === 'lifecycle') {
-      if (payload.providerSetupAbortSignal?.aborted) {
-        grant.release()
-        throw new deps.CodexClientLifecycleAcquireAbortedError(lifecycleLabel)
-      }
-      lifecycleLease = claimCodexClientLifecycleLease(lifecycleLabel, grant)
-    } else {
-      lifecycleLease = await acquireCodexClientLifecycleLease(
-        `provider-run:${runId}`,
-        payload.providerSetupAbortSignal
-      )
-    }
-    let client: TClient | null = null
     try {
-      await deps.disposeCodexClientForOwnerTransition(lifecycleLease)
-      client = getCodexClient(
-        configuration.runtimeProfile,
-        payload.taskWraithMcpProfileId,
-        lifecycleLease,
-        configuration
-      )
-      client.setWorkspaceLockOwnerId(workspaceLockOwnerId)
-      const cohortLease = deps.codexProviderClientCohorts.open(
-        runId,
-        compatibilityKey,
-        { client, lifecycleLease },
-        async () => deps.finishCodexClientLifecycle(client!, lifecycleLease),
-        () => lifecycleLease.release()
-      )
-      fair?.cohortOpened()
-      return { client, lifecycleLease, cohortLease }
-    } catch (error) {
-      try {
-        if (client) await deps.finishCodexClientLifecycle(client, lifecycleLease)
-      } finally {
-        lifecycleLease.release()
+      const grant = fair
+        ? await fair.acquireCompatible(runId, compatibilityKey, payload.providerSetupAbortSignal)
+        : null
+      if (fair && !grant) {
+        throw new deps.CodexClientLifecycleAcquireAbortedError(lifecycleLabel)
       }
-      throw error
+      const joined =
+        grant?.kind === 'cohort'
+          ? grant.lease
+          : fair
+            ? null
+            : deps.codexProviderClientCohorts.tryJoin(runId, compatibilityKey)
+      if (joined) {
+        const { client, lifecycleLease } = joined.resource
+        if (deps.activeCodexClientLifecycleLease !== lifecycleLease) {
+          deps.codexProviderClientCohorts.stopAccepting()
+          await joined.release().catch(() => undefined)
+          deps.poisonWorkspaceLockMutationAdmission(
+            `Codex run ${runId} joined a client cohort without its exact lifecycle lease.`
+          )
+          throw new Error('Codex compatible client cohort lost lifecycle ownership.')
+        }
+        if (fair && payload.providerSetupAbortSignal?.aborted) {
+          await joined.release()
+          throw new deps.CodexClientLifecycleAcquireAbortedError(lifecycleLabel)
+        }
+        lastOpenedConfiguration = configuration
+        return { client, lifecycleLease, cohortLease: joined }
+      }
+
+      let lifecycleLease: CodexClientLifecycleLease
+      if (grant?.kind === 'lifecycle') {
+        if (payload.providerSetupAbortSignal?.aborted) {
+          grant.release()
+          throw new deps.CodexClientLifecycleAcquireAbortedError(lifecycleLabel)
+        }
+        lifecycleLease = claimCodexClientLifecycleLease(lifecycleLabel, grant)
+      } else {
+        lifecycleLease = await acquireCodexClientLifecycleLease(
+          `provider-run:${runId}`,
+          payload.providerSetupAbortSignal
+        )
+      }
+      finishWait()
+      let client: TClient | null = null
+      try {
+        await deps.disposeCodexClientForOwnerTransition(lifecycleLease)
+        client = getCodexClient(
+          configuration.runtimeProfile,
+          payload.taskWraithMcpProfileId,
+          lifecycleLease,
+          configuration
+        )
+        client.setWorkspaceLockOwnerId(workspaceLockOwnerId)
+        const cohortLease = deps.codexProviderClientCohorts.open(
+          runId,
+          compatibilityKey,
+          { client, lifecycleLease },
+          async () => deps.finishCodexClientLifecycle(client!, lifecycleLease),
+          () => lifecycleLease.release()
+        )
+        lastOpenedConfiguration = configuration
+        fair?.cohortOpened()
+        return { client, lifecycleLease, cohortLease }
+      } catch (error) {
+        try {
+          if (client) await deps.finishCodexClientLifecycle(client, lifecycleLease)
+        } finally {
+          lifecycleLease.release()
+        }
+        throw error
+      }
+    } finally {
+      finishWait()
     }
   }
 
