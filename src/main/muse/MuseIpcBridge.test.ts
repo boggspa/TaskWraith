@@ -88,7 +88,6 @@ function baseDeps(overrides: Partial<MuseIpcBridgeDeps> = {}): MuseIpcBridgeDeps
     getTemporaryRoot: () => temporaryRoot,
     spawn: () => fakeSpawnHandle(0),
     sendCompatLine: vi.fn(),
-    generateIntroduction: async () => ({ text: null }),
     readAuthJsonText: async () =>
       JSON.stringify({ providers: { meta: { api_key: 'k'.repeat(24) } } }),
     readMetaApiKeyEnv: () => null,
@@ -211,17 +210,30 @@ describe('runMuseProviderFromIpc', () => {
   })
 
   it.each(['exec', 'msp'])(
-    "shows Muse's opening before %s work and settles only once",
+    'opens straight into %s work with no private pre-turn pass, then seals exit-before-finish',
     async (lane) => {
       process.env.TASKWRAITH_MUSE_MSP = lane === 'msp' ? '1' : '0'
       const order: string[] = []
       const sendCompatLine = vi.fn((_, payload) => {
         order.push(`emit:${payload.type}`)
       })
-      const introStats = { ...successOutcome().providerStats, input_tokens: 10, total_tokens: 10 }
-      const work = async (input: Pick<MuseRunInput, 'introductionText' | 'onEvent'>) => {
+      const workStats = {
+        ...successOutcome().providerStats,
+        input_tokens: 100,
+        output_tokens: 20,
+        total_tokens: 120,
+        reasoning_tokens: 5,
+        _taskwraith_token_count_confidence: 'reported' as const
+      }
+      let providerRuns = 0
+      const work = async (input: Pick<MuseRunInput, 'prompt' | 'introductionText' | 'onEvent'>) => {
+        providerRuns += 1
         order.push('start-work')
-        expect(input.introductionText).toBe('I will read and check the files.')
+        expect(input.prompt).toBe('say hi')
+        // Nothing pre-composes an opening any more. That is precisely what
+        // keeps `composeMuseLaunchPrompt` on its no-introduction path, which
+        // is the path that applies MUSE_OPENING_STEER_NOTE.
+        expect(input.introductionText).toBeUndefined()
         expect(sendCompatLine.mock.calls.some((call) => call[1].type === 'result')).toBe(false)
         input.onEvent?.({
           type: 'tool_use',
@@ -232,40 +244,48 @@ describe('runMuseProviderFromIpc', () => {
         })
         input.onEvent?.({ type: 'terminal', payloadType: 'test', terminal: 'completed', raw: {} })
         expect(sendCompatLine.mock.calls.some((call) => call[1].type === 'result')).toBe(false)
-        return successOutcome()
+        return successOutcome({ providerStats: workStats })
       }
       await runMuseProviderFromIpc(
         event,
         basePayload({ taskWraithMcpAdvertised: false }),
         baseDeps({
           sendCompatLine,
-          generateIntroduction: async () => {
-            order.push('generate-introduction')
-            return { text: 'I will read and check the files.', stats: introStats }
-          },
           runMuseProvider: work,
           runMuseMspProvider: work,
           sendExit: () => {
             order.push('exit')
+          },
+          finishRun: () => {
+            order.push('finish')
           }
         })
       )
+      // Nothing runs between the init line and the first tool call: no second
+      // `muse exec`, so no billed sub-run and no dead latency ahead of work.
       expect(order).toEqual([
         'emit:init',
-        'generate-introduction',
-        'emit:content',
         'start-work',
         'emit:tool_use',
         'emit:result',
-        'exit'
+        'exit',
+        'finish'
       ])
-      expect(sendCompatLine.mock.calls[1][1]).toMatchObject({
-        type: 'content',
-        text: 'I will read and check the files.\n\n',
-        provider: 'muse',
-        complete: true
+      expect(providerRuns).toBe(1)
+      // The pre-turn pass emitted the opening as a `content` line and its own
+      // failure as a `provider_warning` that rendered nowhere. Both are gone.
+      const emitted = sendCompatLine.mock.calls.map((call) => call[1].type)
+      expect(emitted).not.toContain('content')
+      expect(emitted).not.toContain('provider_warning')
+      // The work run is the only run, so its usage is the turn's usage —
+      // carried through field for field rather than summed with a second run.
+      expect(sendCompatLine.mock.calls.at(-1)?.[1].stats).toMatchObject({
+        input_tokens: 100,
+        output_tokens: 20,
+        total_tokens: 120,
+        reasoning_tokens: 5,
+        _taskwraith_token_count_confidence: 'reported'
       })
-      expect(sendCompatLine.mock.calls.at(-1)?.[1].stats.input_tokens).toBe(10)
     }
   )
 

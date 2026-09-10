@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createMuseIsolatedHome } from './MuseIsolatedHome'
 import { buildMuseTaskWraithMcpSettings } from './MuseMcpConfig'
+import { MUSE_LONG_TURN_PROGRESS_NOTE, MUSE_OPENING_STEER_NOTE } from './MuseLongTurnProgress'
 import { runMuseProvider, type MuseRunSpawnHandle } from './MuseRun'
 
 const temps: string[] = []
@@ -95,29 +96,56 @@ function usageSessionLine(sequence: number, runId: string, sessionId: string): s
 }
 
 describe('runMuseProvider', () => {
-  it('bounds the private introductory pass and avoids the working-phase execution steer', async () => {
-    const root = tempDir('muse-run-introduction-')
+  it('launches every turn steered to open in-line, uncapped and at its real seat posture', async () => {
+    const root = tempDir('muse-run-launch-')
     let argv: readonly string[] = []
     const result = await runMuseProvider({
       binaryPath: '/bin/muse',
       workspacePath: root,
-      prompt: 'Write one acknowledgment.',
-      runId: 'intro',
+      prompt: 'Verify the totals.',
+      runId: 'launch',
       temporaryRoot: root,
-      introductionOnly: true,
       approvalMode: 'default',
+      reasoningEffort: 'high',
       resolveSessionLog: async () => ({ row: null, sessionLogPath: null, source: 'missing' }),
       spawn: (input) => {
         argv = input.argv
         return fakeSpawn([stdoutEnvelope({ payload: { text: 'I will verify the totals.' } })])
       }
     })
-    expect(argv).toContain('--disable-write')
-    expect(argv).toContain('--disable-shell')
-    expect(argv[argv.indexOf('--max-model-steps') + 1]).toBe('1')
-    expect(argv[argv.indexOf('--reasoning-effort') + 1]).toBe('minimal')
-    expect(argv.at(-1)).toBe('Write one acknowledgment.')
-    expect(result.writeCapable).toBe(false)
+    // Nothing supplies an introduction any more, so the launch prompt always
+    // takes the no-introduction path — the one that asks for the opening.
+    const launchPrompt = String(argv.at(-1))
+    expect(launchPrompt).toContain(MUSE_OPENING_STEER_NOTE)
+    expect(launchPrompt).toContain(MUSE_LONG_TURN_PROGRESS_NOTE)
+    expect(launchPrompt).toContain('Verify the totals.')
+    expect(launchPrompt).not.toBe('Verify the totals.')
+    // The one-step cap and the forced read-only/minimal posture belonged to
+    // the private pass. A real turn is capped by nothing and keeps its seat.
+    expect(argv).not.toContain('--max-model-steps')
+    expect(argv).not.toContain('--disable-write')
+    expect(argv).not.toContain('--disable-shell')
+    expect(argv[argv.indexOf('--reasoning-effort') + 1]).toBe('high')
+    expect(result.writeCapable).toBe(true)
+  })
+
+  it('still hands a provider-native slash dispatch through on the wire prefix', async () => {
+    const root = tempDir('muse-run-slash-')
+    let argv: readonly string[] = []
+    await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath: root,
+      prompt: '/compact',
+      runId: 'slash',
+      temporaryRoot: root,
+      approvalMode: 'default',
+      resolveSessionLog: async () => ({ row: null, sessionLogPath: null, source: 'missing' }),
+      spawn: (input) => {
+        argv = input.argv
+        return fakeSpawn([stdoutEnvelope({ payload: { text: 'compacted' } })])
+      }
+    })
+    expect(argv.at(-1)).toBe('/compact')
   })
 
   it('keeps the provider answer available when session-log lookups fail', async () => {

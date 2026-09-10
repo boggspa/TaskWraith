@@ -25,12 +25,6 @@ import { museMeterSnapshotToProviderStats, unavailableMuseMeterSnapshot } from '
 import { runMuseMspProvider, type MuseMspSpawnInput } from './MuseMspRun'
 import { createMuseThinkingTranscript } from './MuseThinkingTranscript'
 import {
-  generateMuseIntroduction,
-  museStatsWithIntroduction,
-  type MuseIntroductionInput,
-  type MuseIntroductionResult
-} from './MuseIntroduction'
-import {
   buildMuseTaskWraithMcpSettings,
   MUSE_TASKWRAITH_MCP_SERVER_NAME,
   type MuseMcpSettings,
@@ -162,7 +156,6 @@ export interface MuseIpcBridgeDeps {
   runMuseProvider?: typeof runMuseProvider
   /** Test seam — defaults to the real MSP lifecycle. */
   runMuseMspProvider?: typeof runMuseMspProvider
-  generateIntroduction?: (input: MuseIntroductionInput) => Promise<MuseIntroductionResult>
   now?: () => number
 }
 
@@ -622,41 +615,12 @@ export async function runMuseProviderFromIpc(
       route
     )
 
-    const introduction = await (deps.generateIntroduction ?? generateMuseIntroduction)({
-      binaryPath: resolved.binaryPath,
-      workspacePath,
-      prompt,
-      runId,
-      temporaryRoot: deps.getTemporaryRoot(),
-      model: payload.model,
-      apiKey: credential.apiKey,
-      authJsonText: credential.authJsonText,
-      spawn: deps.spawn,
-      shouldCancel: () => cancelled
-    })
-    if (introduction.text && !cancelled) {
-      deps.sendCompatLine(
-        event.sender,
-        {
-          type: 'content',
-          text: `${introduction.text}\n\n`,
-          complete: true,
-          provider: 'muse'
-        },
-        route
-      )
-    }
-    if (introduction.warning && !cancelled) {
-      deps.sendCompatLine(
-        event.sender,
-        {
-          type: 'provider_warning',
-          provider: 'muse',
-          message: introduction.warning
-        },
-        route
-      )
-    }
+    // Work starts here, with nothing in front of it. The opening is asked for
+    // INSIDE the turn now: the launch prompt carries the opening steer, and
+    // `MuseAnnounceSteer` re-asks mid-turn when the model reaches for a tool
+    // with no prose behind it. The private pre-turn `muse exec` that used to
+    // run at this point cost ~20s of latency and a billed sub-run every turn,
+    // and under Muse Code 1.1.1 its result was discarded every time.
 
     const emitMuseEvent = (museEvent: MuseExecNormalizedEvent): void => {
       // Publish completion once the session tail has supplied final text and
@@ -693,7 +657,6 @@ export async function runMuseProviderFromIpc(
         binaryPath,
         workspacePath,
         prompt,
-        introductionText: introduction.text,
         runId,
         temporaryRoot: deps.getTemporaryRoot(),
         sessionId: museSessionId,
@@ -714,7 +677,6 @@ export async function runMuseProviderFromIpc(
           binaryPath: resolved.binaryPath,
           workspacePath,
           prompt,
-          introductionText: introduction.text,
           runId,
           clientVersion: MUSE_MSP_CLIENT_VERSION,
           spawnMsp: deps.spawnMsp ?? createChildProcessMuseMspSpawn(),
@@ -813,7 +775,11 @@ export async function runMuseProviderFromIpc(
         ...(outcome.sessionId ? { providerThreadId: outcome.sessionId } : {}),
         ...(resultText ? { result: resultText } : {}),
         stats: {
-          ...museStatsWithIntroduction(outcome.providerStats, introduction.stats),
+          // The work run is the only provider run in a turn now, so its usage
+          // IS the turn's usage: every reported field carries through verbatim
+          // (including the confidence marker), with only the host's wall-clock
+          // duration re-stamped over the provider's own.
+          ...outcome.providerStats,
           duration_ms: Date.now() - startedAt
         }
       },

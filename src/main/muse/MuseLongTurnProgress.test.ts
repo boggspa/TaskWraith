@@ -49,6 +49,10 @@ describe('withMuseOpeningSteer', () => {
 })
 
 describe('composeMuseLaunchPrompt', () => {
+  // Vestigial branch: the pre-turn introduction pass that was its only
+  // producer is gone, so no caller reaches this today. Pinned so the branch
+  // cannot be silently hollowed out while the parameter is still threaded
+  // through `MuseMspRun`; both retire together.
   it('continues from a Muse-authored introduction without asking for another announcement', () => {
     const prompt = composeMuseLaunchPrompt('Verify the totals.', 'I will read both files.')
     expect(prompt).toContain('your introduction has already been shown')
@@ -63,6 +67,18 @@ describe('composeMuseLaunchPrompt', () => {
     expect(composeMuseLaunchPrompt('Review the failing test.')).toBe(
       withMuseOpeningSteer(withMuseProgressSteer('Review the failing test.'))
     )
+  })
+
+  it('asks for the opening on every shape a caller can now produce', () => {
+    // With the pre-turn introduction pass removed, the second argument is
+    // never supplied, so the no-introduction path — the one that carries
+    // MUSE_OPENING_STEER_NOTE — is the only path a real turn takes.
+    for (const introduction of [undefined, null, '']) {
+      const prompt = composeMuseLaunchPrompt('Review the failing test.', introduction)
+      expect(prompt).toContain(MUSE_OPENING_STEER_NOTE)
+      expect(prompt).toContain(MUSE_LONG_TURN_PROGRESS_NOTE)
+      expect(prompt).not.toContain('your introduction has already been shown')
+    }
   })
 
   it('is idempotent and leaves slash dispatch untouched', () => {

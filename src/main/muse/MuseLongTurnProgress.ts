@@ -36,6 +36,13 @@ export function withMuseOpeningSteer(prompt: string): string {
 /**
  * Compose the prompt Muse receives on argv. Always applies both steers:
  * isolated-home exec has no durable native conversation to skip the opener.
+ *
+ * `introduction` is vestigial and currently UNREACHABLE: the pre-turn
+ * introduction pass that was its only producer has been removed, so every
+ * caller now takes the no-introduction path below — which is exactly what
+ * applies `MUSE_OPENING_STEER_NOTE`. The parameter survives only because
+ * `MuseMspRun` still threads its own `introductionText` through here; it
+ * retires with that field, in one follow-up across both callers.
  */
 export function composeMuseLaunchPrompt(prompt: string, introduction?: string | null): string {
   if (introduction && !/^\s*\//.test(prompt)) {

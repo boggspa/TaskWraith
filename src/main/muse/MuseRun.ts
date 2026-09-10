@@ -79,8 +79,11 @@ export interface MuseRunInput {
   readonly sessionId?: string | null
   readonly model?: string | null
   readonly reasoningEffort?: string | null
-  /** Internal acknowledgment pass; never a terminal user task or a writable seat. */
-  readonly introductionOnly?: boolean
+  /**
+   * Vestigial: the pre-turn introduction pass that used to supply this is gone,
+   * so nothing populates it any more. Kept only because `composeMuseLaunchPrompt`
+   * still takes the parameter for `MuseMspRun`; both retire together.
+   */
   readonly introductionText?: string | null
   readonly approvalMode?: string | null
   /** Derived only from the main-signed UltraTask delegation consent. */
@@ -193,10 +196,8 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
   const runId = requireNonEmpty(input.runId, 'runId')
   const temporaryRoot = requireNonEmpty(input.temporaryRoot, 'temporaryRoot')
   const sessionId = resolveMuseExecSessionId(input.sessionId)
-  const writeCapable = input.introductionOnly ? false : museWriteCapable(input.approvalMode)
-  const effort = input.introductionOnly
-    ? 'minimal'
-    : normalizeMuseReasoningEffort(input.reasoningEffort, input.model)
+  const writeCapable = museWriteCapable(input.approvalMode)
+  const effort = normalizeMuseReasoningEffort(input.reasoningEffort, input.model)
   const apiKeyStdin = Boolean(input.apiKey && input.apiKey.length > 0)
   const ultraTaskDelegationAutoAllow = input.ultraTaskDelegationAutoAllow === true
   const warnings: string[] = []
@@ -348,17 +349,14 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
 
   // Isolated-home exec has no native resume. Host-side only; never shown.
   const argv = buildMuseExecArgv({
-    prompt: input.introductionOnly
-      ? input.prompt
-      : composeMuseLaunchPrompt(input.prompt, input.introductionText),
+    prompt: composeMuseLaunchPrompt(input.prompt, input.introductionText),
     workspace: workspacePath,
     sessionId,
     model: input.model,
     reasoningEffort: effort,
     readOnlySeat: !writeCapable,
     apiKeyStdin,
-    ultraTaskDelegationAutoAllow,
-    ...(input.introductionOnly ? { maxModelSteps: 1 } : {})
+    ultraTaskDelegationAutoAllow
   })
   assertSafeMuseArgv(argv)
 
