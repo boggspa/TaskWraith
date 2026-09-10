@@ -195,6 +195,31 @@ describe('getStaticProviderModels (Pi lifecycle)', () => {
   })
 })
 
+describe('normalizeCliProviderModel (muse)', () => {
+  it('resolves every sentinel to the concrete catalogue default', () => {
+    // 'cli-default' is TaskWraith-internal. Muse had no branch here, so it fell
+    // through to the generic tail and became 'default' — a second sentinel that
+    // is equally not a model id, and which the MSP lane put on the wire.
+    for (const sentinel of ['cli-default', 'default', 'auto', '', '  ', 'CLI-DEFAULT']) {
+      expect(normalizeCliProviderModel('muse', sentinel)).toBe('muse-spark-1.2')
+    }
+    expect(normalizeCliProviderModel('muse', null)).toBe('muse-spark-1.2')
+    expect(normalizeCliProviderModel('muse', undefined)).toBe('muse-spark-1.2')
+  })
+
+  it('resolves to whichever catalogue row carries isDefault, not a hardcoded id', () => {
+    const flagged = getStaticProviderModels('muse').find((model) => model.isDefault)
+    expect(flagged?.id).toBe(normalizeCliProviderModel('muse', 'cli-default'))
+  })
+
+  it('passes a real Muse model id through untouched', () => {
+    expect(normalizeCliProviderModel('muse', 'muse-spark-1.3')).toBe('muse-spark-1.3')
+    expect(normalizeCliProviderModel('muse', 'muse-spark-1.2-contributor')).toBe(
+      'muse-spark-1.2-contributor'
+    )
+  })
+})
+
 describe('normalizeCliProviderModel (claude)', () => {
   it('strips the TaskWraith-internal -1m marker so the CLI gets the base model id', () => {
     // The 1M window is entitlement-based on the base id.

@@ -1195,6 +1195,10 @@ const MUSE_STATIC_MODELS = [
     ultraTaskSupported: true
   }
 ]
+/** Read off the catalogue's own `isDefault` row so the seat default has one
+ *  owner: moving the flag moves the resolution with it. */
+const MUSE_DEFAULT_MODEL =
+  MUSE_STATIC_MODELS.find((model) => model.isDefault)?.id ?? MUSE_STATIC_MODELS[0].id
 // Devin's rows are one per model family the CLI itself enumerates
 // (`devin models list --format json`), curated once in the shared
 // devinModelCatalog.ts so this side, the renderer's providerModelDefaults.ts,
@@ -1489,6 +1493,19 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
       // base model, not a distinct model id).
       return trimmed.endsWith('-1m') ? trimmed.slice(0, -'-1m'.length) : trimmed
     }
+  }
+  if (provider === 'muse') {
+    // Muse had no branch here, so a sentinel fell through to the generic tail
+    // and became `'default'` — another sentinel, not a model. `'cli-default'`
+    // is TaskWraith-internal and is not a Muse model id: the exec lane strips
+    // it (`resolveModelArg` in MuseCliArgs), but the MSP lane forwarded it
+    // verbatim as `session/start`'s modelId and the turn died. Resolve it to
+    // the concrete catalogue default instead, so no run, record or picker ever
+    // carries the sentinel where a model id belongs.
+    if (!trimmed || lowered === 'cli-default' || lowered === 'default' || lowered === 'auto') {
+      return MUSE_DEFAULT_MODEL
+    }
+    return trimmed
   }
   if (provider === 'devin') {
     // Sentinels — including a legacy 'cli-default' selection — resolve to the

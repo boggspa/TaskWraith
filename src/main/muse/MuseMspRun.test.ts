@@ -247,6 +247,26 @@ describe('runMuseMspProvider', () => {
     })
   })
 
+  it('resolves the cli-default sentinel to the concrete catalogue default', async () => {
+    const child = new FakeMspChild()
+    const pending = run(child, { model: 'cli-default' })
+    await playTurn(child)
+    await pending
+
+    // Not the sentinel, and not absent either: session/start must name the
+    // model the picker shows, so the seat and the run agree.
+    expect(child.sentMethod('session/start')?.params.modelId).toBe('muse-spark-1.2')
+  })
+
+  it('resolves a missing model to the concrete catalogue default', async () => {
+    const child = new FakeMspChild()
+    const pending = run(child, { model: '' })
+    await playTurn(child)
+    await pending
+
+    expect(child.sentMethod('session/start')?.params.modelId).toBe('muse-spark-1.2')
+  })
+
   it('puts Max on the wire for a model that publishes it', async () => {
     const child = new FakeMspChild()
     const pending = run(child, {

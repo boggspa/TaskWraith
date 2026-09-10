@@ -35,6 +35,7 @@ import {
 import type { ContextCompactionSignal } from '../../shared/contextCompaction'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
 import { museAnnounceSteerAppliesToPrompt } from './MuseAnnounceSteer'
+import { normalizeCliProviderModel } from '../providers/StaticProviderModels'
 import { composeMuseLaunchPrompt } from './MuseLongTurnProgress'
 import { createMuseIsolatedHome, projectMuseAuthJson } from './MuseIsolatedHome'
 import type { MuseIsolatedHomeLease } from './MuseIsolatedHome'
@@ -349,7 +350,12 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
       // Match exec's explicit --provider meta. Muse's implicit "muse" route
       // is reconstructed as "meta" on resume, breaking opaque-history replay.
       providerId: MUSE_DEFAULT_PROVIDER,
-      modelId: input.model || undefined,
+      // `input.model` can carry TaskWraith's 'cli-default' sentinel, which is
+      // not a Muse model id. The exec lane strips it (`resolveModelArg`); this
+      // lane forwarded it verbatim and the turn died. Resolve it to the
+      // concrete catalogue default rather than dropping it, so the seat runs
+      // the model the picker shows instead of whatever Muse would pick.
+      modelId: normalizeCliProviderModel('muse', input.model),
       reasoningEffort: museMspReasoningEffortFor(effort),
       approvalMode: museMspApprovalModeFor(input.approvalMode, Boolean(input.onApprovalRequest)),
       resumeSessionId: input.resumeSessionId ?? null,
