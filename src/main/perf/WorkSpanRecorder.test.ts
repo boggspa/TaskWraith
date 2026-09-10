@@ -333,9 +333,10 @@ describe('createWorkSpanRecorder', () => {
   })
 
   it('accepts every declared kind and resource and pins the enum sizes', () => {
-    // 9 kinds since A1.1 added round_start; 7 resources unchanged.
-    expect(WORK_SPAN_KINDS).toHaveLength(9)
+    // 10 kinds since A1.2 added persist_barrier; 7 resources unchanged.
+    expect(WORK_SPAN_KINDS).toHaveLength(10)
     expect(WORK_SPAN_KINDS).toContain('round_start')
+    expect(WORK_SPAN_KINDS).toContain('persist_barrier')
     expect(WORK_SPAN_RESOURCES).toHaveLength(7)
 
     const recorder = createWorkSpanRecorder({
@@ -356,10 +357,11 @@ describe('createWorkSpanRecorder', () => {
     for (const kind of WORK_SPAN_KINDS) {
       expect(byKind[kind]?.count).toBe(1)
     }
-    // 9 kinds cycled over 7 resources: the first two are used twice.
+    // 10 kinds cycled over 7 resources: the first three are used twice.
     expect(byResource[WORK_SPAN_RESOURCES[0]]?.count).toBe(2)
     expect(byResource[WORK_SPAN_RESOURCES[1]]?.count).toBe(2)
-    for (const resource of WORK_SPAN_RESOURCES.slice(2)) {
+    expect(byResource[WORK_SPAN_RESOURCES[2]]?.count).toBe(2)
+    for (const resource of WORK_SPAN_RESOURCES.slice(3)) {
       expect(byResource[resource]?.count).toBe(1)
     }
   })
@@ -384,6 +386,7 @@ describe('createWorkSpanRecorder', () => {
       'runtime_or_credential_domain',
       'registration_change'
     ])
+    expect(WORK_SPAN_REASONS.persist_barrier).toEqual(['barrier', 'receipt_poll'])
   })
 
   it('accepts each kind-specific reason and rejects one from the wrong kind', () => {

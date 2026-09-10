@@ -47,6 +47,7 @@ import type {
 } from './HostProjectionBroker'
 import { createHostProjectionBroker } from './HostProjectionBroker'
 import { recordCheckpointPrepareSpan } from '../perf/checkpointPrepareSpan'
+import { observePersistBarrierSpan } from '../perf/persistBarrierSpan'
 import { mainWorkSpanSink, type MainWorkSpanSink } from '../perf/mainWorkSpanSink'
 
 /**
@@ -1205,40 +1206,51 @@ export class HostThreadRecordPersistClient
         return settled
       }
       const deadline = this.nowMs() + this.timeoutMs
-      while (this.nowMs() < deadline) {
-        phase = fields
-          ? this.diagnostics?.begin('poll_delay', {
-              ...fields,
-              parentOperationId: observation?.operationId,
-              requestedDelayMs: this.pollIntervalMs
-            })
-          : undefined
-        await this.wait(this.pollIntervalMs)
-        phase?.finish('succeeded')
-        phase = fields
-          ? this.diagnostics?.begin('poll_lookup', {
-              ...fields,
-              parentOperationId: observation?.operationId
-            })
-          : undefined
-        const lookup = await this.broker.lookupReceipt(command.commandId)
-        phase?.finish(lookup.ok ? 'succeeded' : 'failed')
-        phase = undefined
-        if (!lookup.ok) {
+      return await observePersistBarrierSpan(
+        this.spans,
+        {
+          chatId: command.target?.threadId,
+          runId: command.commandId,
+          reason: 'receipt_poll'
+        },
+        async () => {
+          while (this.nowMs() < deadline) {
+            phase = fields
+              ? this.diagnostics?.begin('poll_delay', {
+                  ...fields,
+                  parentOperationId: observation?.operationId,
+                  requestedDelayMs: this.pollIntervalMs
+                })
+              : undefined
+            await this.wait(this.pollIntervalMs)
+            phase?.finish('succeeded')
+            phase = fields
+              ? this.diagnostics?.begin('poll_lookup', {
+                  ...fields,
+                  parentOperationId: observation?.operationId
+                })
+              : undefined
+            const lookup = await this.broker.lookupReceipt(command.commandId)
+            phase?.finish(lookup.ok ? 'succeeded' : 'failed')
+            phase = undefined
+            if (!lookup.ok) {
+              throw new HostThreadRecordPersistError(
+                'host_unavailable',
+                lookup.error.slice(0, 200) || 'The Host receipt could not be read.'
+              )
+            }
+            settled = this.settle(command, lookup.receipt, observation)
+            if (settled) {
+              observation?.finish('succeeded', { receiptStatus: settled.status })
+              return settled
+            }
+          }
           throw new HostThreadRecordPersistError(
-            'host_unavailable',
-            lookup.error.slice(0, 200) || 'The Host receipt could not be read.'
+            'host_timeout',
+            'Host record persistence did not settle before the timeout.'
           )
-        }
-        settled = this.settle(command, lookup.receipt, observation)
-        if (settled) {
-          observation?.finish('succeeded', { receiptStatus: settled.status })
-          return settled
-        }
-      }
-      throw new HostThreadRecordPersistError(
-        'host_timeout',
-        'Host record persistence did not settle before the timeout.'
+        },
+        this.nowMs
       )
     } catch (error) {
       phase?.finish('failed', diagnosticError(error))

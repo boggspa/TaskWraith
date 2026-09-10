@@ -162,6 +162,41 @@ describe('HostEnsemblePersistWiring', () => {
     expect(persistPort.drain).toHaveBeenCalledWith('chat-ensemble-round')
   })
 
+  it('records persist_barrier/barrier per waiter without splitting the shared drain', async () => {
+    const { AppStore } = await importStoreWithHostOwnedGate()
+    const { bindMainWorkSpanSink, mainWorkSpanSink } = await import('../perf/mainWorkSpanSink')
+    const { createWorkSpanRecorder } = await import('../perf/WorkSpanRecorder')
+    const previous = mainWorkSpanSink()
+    const recorder = createWorkSpanRecorder({ process: 'main', maxRetained: 8 })
+    bindMainWorkSpanSink(recorder)
+    try {
+      const chatId = 'chat-persist-barrier'
+      AppStore.saveChat(ensembleChatRecord(chatId) as never)
+      const first = AppStore.awaitChatRecordPersisted(chatId)
+      const joined = AppStore.awaitChatRecordPersisted(chatId)
+      expect(joined).toBe(first)
+      await first
+      const barriers = recorder.snapshot().spans.filter((span) => span.kind === 'persist_barrier')
+      expect(barriers).toHaveLength(2)
+      expect(barriers).toEqual([
+        expect.objectContaining({
+          kind: 'persist_barrier',
+          reason: 'barrier',
+          chatId,
+          resource: 'host_chain'
+        }),
+        expect.objectContaining({
+          kind: 'persist_barrier',
+          reason: 'barrier',
+          chatId,
+          resource: 'host_chain'
+        })
+      ])
+    } finally {
+      bindMainWorkSpanSink(previous)
+    }
+  })
+
   it('creates an ensemble chat through the Host path with the create-case revision contract', async () => {
     const { AppStore, enqueued } = await importStoreWithHostOwnedGate()
     const chat = AppStore.createEnsembleChat({}, new Set(['codex'] as never))

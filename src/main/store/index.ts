@@ -102,6 +102,8 @@ import {
   type HostThreadRecordPersistInput,
   type HostThreadRecordPersistPort
 } from '../host/HostThreadRecordPersistCommand'
+import { observePersistBarrierSpan } from '../perf/persistBarrierSpan'
+import { mainWorkSpanSink } from '../perf/mainWorkSpanSink'
 import { HostChatCompatibilityPersistence } from './HostChatCompatibilityPersistence'
 import {
   createDesktopHostWorkspaceRecordClient,
@@ -8620,8 +8622,16 @@ export class AppStore {
    * outcome.
    */
   static awaitChatRecordPersisted(chatId: string): Promise<void> {
+    return observePersistBarrierSpan(mainWorkSpanSink(), { chatId, reason: 'barrier' }, () =>
+      this.awaitChatRecordPersistedWork(chatId)
+    )
+  }
+
+  private static awaitChatRecordPersistedWork(chatId: string): Promise<void> {
     if (threadCatalogueWriteGate.isHeld(chatId))
-      return threadCatalogueWriteGate.wait(chatId).then(() => this.awaitChatRecordPersisted(chatId))
+      return threadCatalogueWriteGate
+        .wait(chatId)
+        .then(() => this.awaitChatRecordPersistedWork(chatId))
     const compatibility = hostChatCompatibility()
     const targetSequence = compatibility.latestSequence(chatId)
     const existing = chatRecordConflictRecoveryBarriers.get(chatId)

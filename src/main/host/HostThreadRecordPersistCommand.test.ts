@@ -1583,3 +1583,68 @@ describe('HostThreadRecordPersistClient checkpoint_prepare spans', () => {
     ).resolves.toMatchObject({ status: 'succeeded' })
   })
 })
+
+describe('HostThreadRecordPersistClient persist_barrier receipt_poll spans', () => {
+  it('records receipt_poll with the Host command id only when the poll loop is entered', async () => {
+    const pendingThenOk = scriptedBroker((command) => [
+      receiptFor(command, 'pending'),
+      receiptFor(command, 'succeeded')
+    ])
+    const spans: Array<Record<string, unknown>> = []
+    const polling = createClient(pendingThenOk, {
+      spans: {
+        record: (span) => {
+          spans.push(span as Record<string, unknown>)
+        }
+      }
+    })
+    await polling.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    expect(spans.filter((span) => span.kind === 'persist_barrier')).toEqual([
+      expect.objectContaining({
+        kind: 'persist_barrier',
+        reason: 'receipt_poll',
+        chatId: 'chat-1',
+        runId: pendingThenOk.commands[0].commandId,
+        resource: 'host_chain'
+      })
+    ])
+
+    const immediateSpans: Array<Record<string, unknown>> = []
+    const immediate = createClient(
+      scriptedBroker((command) => [receiptFor(command, 'succeeded')]),
+      {
+        spans: {
+          record: (span) => {
+            immediateSpans.push(span as Record<string, unknown>)
+          }
+        }
+      }
+    )
+    await immediate.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    expect(immediateSpans.filter((span) => span.kind === 'persist_barrier')).toEqual([])
+  })
+
+  it('records receipt_poll on poll timeout then rethrows', async () => {
+    const broker = scriptedBroker((command) => [receiptFor(command, 'pending')])
+    const spans: Array<Record<string, unknown>> = []
+    const client = createClient(broker, {
+      spans: {
+        record: (span) => {
+          spans.push(span as Record<string, unknown>)
+        }
+      }
+    })
+    await expect(
+      client.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    ).rejects.toMatchObject({ code: 'host_timeout' })
+    expect(spans.filter((span) => span.kind === 'persist_barrier')).toEqual([
+      expect.objectContaining({
+        kind: 'persist_barrier',
+        reason: 'receipt_poll',
+        chatId: 'chat-1',
+        runId: broker.commands[0].commandId,
+        resource: 'host_chain'
+      })
+    ])
+  })
+})

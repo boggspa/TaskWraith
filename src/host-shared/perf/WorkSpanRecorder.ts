@@ -49,7 +49,8 @@ export const WORK_SPAN_KINDS = [
   'host_queue_wait',
   'durable_commit',
   'receipt_delivery',
-  'control_response'
+  'control_response',
+  'persist_barrier'
 ] as const
 export type WorkSpanKind = (typeof WORK_SPAN_KINDS)[number]
 
@@ -78,7 +79,10 @@ export const WORK_SPAN_REASONS = {
     'admitted',
     'rejected',
     'shutdown'
-  ]
+  ],
+  // A1.2: Desktop awaitChatRecordPersisted wait, separate from Host queue /
+  // durable_commit / receipt_delivery and from the 250 ms receipt poll.
+  persist_barrier: ['barrier', 'receipt_poll']
 } as const satisfies Partial<Record<WorkSpanKind, readonly string[]>>
 
 export type WorkSpanReasonKind = keyof typeof WORK_SPAN_REASONS

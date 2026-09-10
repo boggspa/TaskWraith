@@ -67,7 +67,8 @@ const WORK_SPAN_KINDS = Object.freeze([
   'host_queue_wait',
   'durable_commit',
   'receipt_delivery',
-  'control_response'
+  'control_response',
+  'persist_barrier'
 ])
 const WORK_SPAN_RESOURCES = Object.freeze([
   'ensemble_pool',
