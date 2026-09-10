@@ -106,7 +106,7 @@ function deriveToolByteBudgets(toolCount, toolSerializedTargetBytes) {
 
 /**
  * @param {object} options
- * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'} options.workload
+ * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'|'light_beside_large'} options.workload
  */
 function resolveWorkloadShape(options) {
   const workload = options.workload
@@ -229,6 +229,54 @@ function resolveWorkloadShape(options) {
         toolSerializedTargetBytes: Math.round(20 * 1024 * 1024),
         soakTurns: 0,
         messageTargetHint: messageTarget
+      }
+    }
+    case 'light_beside_large': {
+      const largeMessageTarget = 27000
+      const largeSeatCount = 30
+      const largeTurnsPerSeat = Math.ceil((largeMessageTarget - 1) / 30)
+      const largeToolActivity = Math.round(largeMessageTarget * 0.75)
+      const largeChatBytes = Math.round(45 * 1024 * 1024)
+      const largeToolBytes = Math.round(20 * 1024 * 1024)
+
+      const lightMessageTarget = 40
+      const lightSeatCount = 4
+      const lightTurnsPerSeat = Math.ceil((lightMessageTarget - 1) / 4)
+      const lightToolActivity = Math.round(lightMessageTarget * 0.75)
+      const lightChatBytes = Math.round(1 * 1024 * 1024)
+      const lightToolBytes = Math.round(0.5 * 1024 * 1024)
+
+      return {
+        workload,
+        chatCount: 2,
+        seatCount: largeSeatCount,
+        dualConcurrentRuns: true,
+        messageTarget: largeMessageTarget + lightMessageTarget,
+        toolActivityTarget: largeToolActivity + lightToolActivity,
+        chatSerializedTargetBytes: largeChatBytes + lightChatBytes,
+        toolSerializedTargetBytes: largeToolBytes + lightToolBytes,
+        soakTurns: 0,
+        messageTargetHint: largeMessageTarget + lightMessageTarget,
+        chatShapes: [
+          {
+            seatCount: lightSeatCount,
+            turnsPerSeat: lightTurnsPerSeat,
+            toolsPerAssistant: 1,
+            expectedTools: lightTurnsPerSeat * lightSeatCount * 1,
+            toolSerializedTargetBytes: lightToolBytes,
+            dualConcurrentRuns: true,
+            soakTurns: 0
+          },
+          {
+            seatCount: largeSeatCount,
+            turnsPerSeat: largeTurnsPerSeat,
+            toolsPerAssistant: 1,
+            expectedTools: largeTurnsPerSeat * largeSeatCount * 1,
+            toolSerializedTargetBytes: largeToolBytes,
+            dualConcurrentRuns: true,
+            soakTurns: 0
+          }
+        ]
       }
     }
     default: {
@@ -416,7 +464,7 @@ function buildReplaySchedule(fixture) {
 
 /**
  * @param {object} options
- * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'} options.workload
+ * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'|'light_beside_large'} options.workload
  * @param {number} [options.seed=42]
  * @param {number} [options.baseTimestamp]
  * @param {boolean} [options.includeHotRaw=true]
@@ -491,6 +539,12 @@ function generatePerfFixture(options) {
   /** @type {object[]} */
   const chats = []
   for (let c = 0; c < scaledShape.chatCount; c++) {
+    const chatShape = scaledShape.chatShapes ? scaledShape.chatShapes[c] : scaledShape
+    const cExpectedTools = chatShape.expectedTools || (chatShape.turnsPerSeat * chatShape.seatCount * chatShape.toolsPerAssistant)
+    const cDerived = deriveToolByteBudgets(Math.max(1, cExpectedTools), chatShape.toolSerializedTargetBytes || scaledShape.toolSerializedTargetBytes)
+    const cParamBytes = lean ? 24 : options.paramBytes == null ? cDerived.paramBytes : options.paramBytes
+    const cRawBytes = lean ? 32 : options.rawBytes == null ? cDerived.rawBytes : options.rawBytes
+
     const appChatId = `perf-${scaledShape.workload}-chat-${pad(c + 1, 2)}`
     /** @type {object[]} */
     const messages = []
@@ -510,13 +564,14 @@ function generatePerfFixture(options) {
 
     const runA = {
       id: `${appChatId}-run-a`,
-      status: scaledShape.dualConcurrentRuns ? 'running' : 'done',
+      status: chatShape.dualConcurrentRuns !== undefined ? (chatShape.dualConcurrentRuns ? 'running' : 'done') : (scaledShape.dualConcurrentRuns ? 'running' : 'done'),
       provider: participants[0].provider,
       startedAt: new Date(t).toISOString()
     }
     runs.push(runA)
     let runB = null
-    if (scaledShape.dualConcurrentRuns) {
+    const useDual = chatShape.dualConcurrentRuns !== undefined ? chatShape.dualConcurrentRuns : scaledShape.dualConcurrentRuns
+    if (useDual) {
       runB = {
         id: `${appChatId}-run-b`,
         status: 'running',
@@ -535,7 +590,7 @@ function generatePerfFixture(options) {
       const runId = runB && seat.order % 2 === 1 ? runB.id : runA.id
       const assistantId = `${appChatId}-m-${pad(++msgIndex, 5)}`
       const toolActivities = []
-      for (let k = 0; k < scaledShape.toolsPerAssistant; k++) {
+      for (let k = 0; k < chatShape.toolsPerAssistant; k++) {
         const toolName = TOOL_NAMES[(seat.order + turnLabel + k) % TOOL_NAMES.length]
         toolActivities.push(
           buildToolActivity({
@@ -545,8 +600,8 @@ function generatePerfFixture(options) {
             participantId: seat.id,
             startedAt: new Date(t).toISOString(),
             includeRaw: includeHotRaw,
-            paramBytes,
-            rawBytes,
+            paramBytes: cParamBytes,
+            rawBytes: cRawBytes,
             rand
           })
         )
@@ -570,15 +625,15 @@ function generatePerfFixture(options) {
       t += 40
     }
 
-    if (scaledShape.soakTurns > 0) {
+    if (chatShape.soakTurns > 0) {
       // Literal 455-turn (or scaled) mutation schedule: one assistant turn per soak index.
-      for (let turn = 1; turn <= scaledShape.soakTurns; turn++) {
+      for (let turn = 1; turn <= chatShape.soakTurns; turn++) {
         const seat = participants[(turn - 1) % participants.length]
         pushAssistant(seat, turn, { soakTurn: turn, kind: 'perfSoakTurn' })
       }
     } else {
-      for (let turn = 0; turn < scaledShape.turnsPerSeat; turn++) {
-        for (let s = 0; s < scaledShape.seatCount; s++) {
+      for (let turn = 0; turn < chatShape.turnsPerSeat; turn++) {
+        for (let s = 0; s < chatShape.seatCount; s++) {
           pushAssistant(participants[s], turn + 1)
         }
       }

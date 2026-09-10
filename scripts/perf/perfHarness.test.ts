@@ -167,7 +167,7 @@ describe('perf schema (ADR §7 hardened)', () => {
   it('exports workloads, reduce_motion posture, and schema version', () => {
     expect(SCHEMA_VERSION).toBe(1)
     expect(WORKLOADS).toEqual(
-      expect.arrayContaining(['30seat', '50seat', 'dual_run', '455_soak', '50_chat_switch'])
+      expect.arrayContaining(['30seat', '50seat', 'dual_run', '455_soak', '50_chat_switch', 'light_beside_large'])
     )
     expect(FX_POSTURES).toContain('reduce_motion')
   })

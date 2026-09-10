@@ -11,7 +11,7 @@ const { PERF_GATE_THRESHOLDS, MIN_PROFILE_BYTES } = require('./perfGateThreshold
 // schema.cjs owns only the verdict (block errors fold into `errors` below).
 const { validateCrossThreadBlock } = require('./collectors/hostSpans.cjs')
 
-const WORKLOADS = Object.freeze(['30seat', '50seat', 'dual_run', '455_soak', '50_chat_switch'])
+const WORKLOADS = Object.freeze(['30seat', '50seat', 'dual_run', '455_soak', '50_chat_switch', 'light_beside_large'])
 
 const FX_POSTURES = Object.freeze([
   'cinematic_default',
