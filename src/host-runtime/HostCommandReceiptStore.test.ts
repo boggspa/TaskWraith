@@ -252,6 +252,57 @@ describe('HostCommandReceiptStore', () => {
     expect(recorder.snapshot().spans).toEqual([])
   })
 
+  it('does not retain span chatIds without a recorder or after complete', () => {
+    const unlabeled = new HostCommandReceiptStore({
+      dataDir,
+      getPosition: () => ({ ...position }),
+      now: () => clock
+    })
+    for (let i = 0; i < 80; i += 1) {
+      expect(
+        unlabeled.begin(
+          baseInput({
+            commandId: `cmd-unlabeled-${i}`,
+            idempotencyKey: `idem-unlabeled-${i}`
+          })
+        ).kind
+      ).toBe('created')
+      unlabeled.complete({ commandId: `cmd-unlabeled-${i}`, status: 'succeeded' })
+    }
+    expect(unlabeled.spanChatIdCacheSize).toBe(0)
+
+    const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 8 })
+    const store = new HostCommandReceiptStore({
+      dataDir,
+      getPosition: () => ({ ...position }),
+      now: () => clock,
+      spans: recorder,
+      resolveSpanChatId: () => 'thread-from-approval'
+    })
+    for (let i = 0; i < 80; i += 1) {
+      expect(
+        store.begin(
+          baseInput({
+            commandId: `cmd-thread-${i}`,
+            idempotencyKey: `idem-thread-${i}`
+          })
+        ).kind
+      ).toBe('created')
+    }
+    expect(store.spanChatIdCacheSize).toBe(0)
+    store.begin(
+      baseInput({
+        commandId: 'cmd-appr-live',
+        idempotencyKey: 'idem-appr-live',
+        commandName: 'approval.decide',
+        target: { kind: 'approval', id: 'appr-1' }
+      })
+    )
+    expect(store.spanChatIdCacheSize).toBe(1)
+    store.complete({ commandId: 'cmd-appr-live', status: 'succeeded' })
+    expect(store.spanChatIdCacheSize).toBe(0)
+  })
+
   it('contains a throwing recorder so complete still succeeds', () => {
     const throwing = createWorkSpanRecorder({ process: 'host', maxRetained: 8 })
     throwing.record = () => {

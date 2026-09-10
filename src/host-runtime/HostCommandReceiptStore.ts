@@ -405,15 +405,33 @@ export class HostCommandReceiptStore {
     return typeof resolved === 'string' && resolved.trim().length > 0 ? resolved.trim() : undefined
   }
 
+  /**
+   * In-memory begin-time span chatId cache size. Diagnostic only — not durable
+   * and not part of the receipt schema. Retention pin for M1 A1.22.
+   */
+  get spanChatIdCacheSize(): number {
+    return this.spanChatIds.size
+  }
+
   private rememberSpanChatId(record: HostCommandReceiptRecord): void {
+    // Desktop HostMainComposition constructs the receipt store without a
+    // recorder; remembering there would grow forever on every persist.
+    if (this.spans === undefined) return
+    // Thread targets recompute from record.target.id at complete. Only
+    // approval/question need the begin-time lookup (pending card is gone later).
+    if (record.target.kind !== 'approval' && record.target.kind !== 'question') return
     const chatId = this.spanChatIdFor(record)
     if (chatId) this.spanChatIds.set(record.commandId, chatId)
   }
 
+  private forgetSpanChatId(commandId: string): void {
+    this.spanChatIds.delete(commandId)
+  }
+
   private recordReceiptDelivery(record: HostCommandReceiptRecord, startedAt: number): void {
-    if (this.spans === undefined) return
     const chatId = this.spanChatIds.get(record.commandId) ?? this.spanChatIdFor(record)
-    this.spanChatIds.delete(record.commandId)
+    this.forgetSpanChatId(record.commandId)
+    if (this.spans === undefined) return
     if (chatId === undefined) return
     try {
       this.spans.record({
@@ -682,7 +700,10 @@ export class HostCommandReceiptStore {
   complete(input: HostCommandReceiptCompleteInput): HostCommandReceiptRecord | null {
     const commandId = normalizeId(input.commandId, 'commandId')
     const current = this.recordsByCommandId.get(commandId)
-    if (!current) return null
+    if (!current) {
+      this.forgetSpanChatId(commandId)
+      return null
+    }
     // Normalize once before any terminal check or mutation. An invalid
     // post-effect position must fail closed without writing a journal event.
     const position = input.position === undefined ? undefined : normalizePosition(input.position)
@@ -695,8 +716,10 @@ export class HostCommandReceiptStore {
       current.status === 'conflict'
     ) {
       if (current.status === input.status) {
+        this.forgetSpanChatId(commandId)
         return cloneRecord(current)
       }
+      this.forgetSpanChatId(commandId)
       throw new Error(
         `HostCommandReceiptStore: receipt ${commandId} is already terminal (${current.status})`
       )
@@ -739,6 +762,7 @@ export class HostCommandReceiptStore {
     this.appendJournalEvent({ op: 'upsert', record: next })
     this.maybeCompact()
     if (startedAt !== undefined) this.recordReceiptDelivery(next, startedAt)
+    this.forgetSpanChatId(commandId)
     return cloneRecord(next)
   }
 
