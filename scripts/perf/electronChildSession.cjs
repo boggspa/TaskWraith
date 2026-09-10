@@ -15,6 +15,7 @@
 
 const path = require('path')
 const { buildIsolatedLaunchPlan } = require('./isolatedLaunch.cjs')
+const { execFile } = require('child_process')
 const { listListeningPidsForPort, getProcessIdentity } = require('./portGuard.cjs')
 
 const DEFAULT_BRIDGE_BUILD_COMMAND = 'npm run prebuild:bridge-daemon'
@@ -449,7 +450,18 @@ function wrapChild(child) {
 /**
  * Terminate only the exact recorded child / process group. Never broad process search.
  * @param {object} session
- * @param {{ signal?: string, waitMs?: number, forceSignal?: string, sleep?: Function, killProcessGroup?: Function }} [options]
+ * @param {{
+ *   signal?: string,
+ *   waitMs?: number,
+ *   forceSignal?: string,
+ *   sleep?: Function,
+ *   killProcessGroup?: Function,
+ *   killPid?: Function,
+ *   listListeningPidsForPort?: Function,
+ *   listPidsMatchingCommandNeedle?: Function,
+ *   userDataPath?: string,
+ *   portAdapters?: object
+ * }} [options]
  */
 async function terminateExactChild(session, options = {}) {
   if (!session || typeof session.pid !== 'number' || session.pid <= 0) {
@@ -501,14 +513,131 @@ async function terminateExactChild(session, options = {}) {
     await sleep(500)
   }
 
+  const strayKills = await reapOwnedStrays(session, {
+    forceSignal,
+    killPid: options.killPid,
+    listListeningPidsForPort: options.listListeningPidsForPort,
+    listPidsMatchingCommandNeedle: options.listPidsMatchingCommandNeedle,
+    userDataPath: options.userDataPath,
+    portAdapters: options.portAdapters
+  })
+
   return {
     pid: session.pid,
     pgid: session.pgid || null,
     terminated: true,
     neverAutoDeletedArtifacts: true,
-    usedForce: Boolean(raced && raced.timeout),
-    killedProcessGroup: Boolean(session.pgid)
+    usedForce: Boolean(raced && raced.timeout) || strayKills.length > 0,
+    killedProcessGroup: Boolean(session.pgid),
+    strayKills
   }
+}
+
+/**
+ * After the recorded child/group is signalled, kill anything still listening
+ * on the owned CDP/inspector ports and helpers whose command line still
+ * names the isolated userData path. Not a broad pgrep: ports and path are
+ * the ones this session recorded.
+ *
+ * @param {object} session
+ * @param {object} options
+ * @returns {Promise<Array<{ pid: number, reason: string }>>}
+ */
+async function reapOwnedStrays(session, options = {}) {
+  const forceSignal = options.forceSignal || 'SIGKILL'
+  const killPid =
+    typeof options.killPid === 'function'
+      ? options.killPid
+      : (pid, sig) => {
+          process.kill(pid, sig)
+        }
+  const listPorts =
+    typeof options.listListeningPidsForPort === 'function'
+      ? options.listListeningPidsForPort
+      : listListeningPidsForPort
+  const listNeedle =
+    typeof options.listPidsMatchingCommandNeedle === 'function'
+      ? options.listPidsMatchingCommandNeedle
+      : defaultListPidsMatchingCommandNeedle
+  /** @type {Array<{ pid: number, reason: string }>} */
+  const killed = []
+  const seen = new Set()
+
+  const tryKill = (pid, reason) => {
+    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return
+    if (seen.has(pid)) return
+    seen.add(pid)
+    try {
+      killPid(pid, forceSignal)
+      killed.push({ pid, reason })
+    } catch {
+      // ESRCH: already gone
+    }
+  }
+
+  const ports = [session.remoteDebuggingPort, session.mainInspectorPort].filter(
+    (port) => Number.isInteger(port) && port >= 1 && port <= 65535
+  )
+  for (const port of ports) {
+    let pids = []
+    try {
+      pids = await listPorts(port, options.portAdapters || {})
+    } catch {
+      continue
+    }
+    if (!Array.isArray(pids)) continue
+    for (const pid of pids) tryKill(pid, `listen:${port}`)
+  }
+
+  const needle =
+    typeof options.userDataPath === 'string' && options.userDataPath.trim().length >= 12
+      ? options.userDataPath.trim()
+      : ''
+  if (needle) {
+    let helpers = []
+    try {
+      helpers = await listNeedle(needle)
+    } catch {
+      helpers = []
+    }
+    if (Array.isArray(helpers)) {
+      for (const pid of helpers) {
+        if (pid === session.pid) continue
+        tryKill(pid, 'userData-command')
+      }
+    }
+  }
+
+  return killed
+}
+
+/**
+ * @param {string} needle
+ * @returns {Promise<number[]>}
+ */
+function defaultListPidsMatchingCommandNeedle(needle) {
+  if (typeof needle !== 'string' || needle.length < 12) return Promise.resolve([])
+  if (process.platform === 'win32') return Promise.resolve([])
+  return new Promise((resolve) => {
+    execFile(
+      'ps',
+      ['-ax', '-o', 'pid=,command='],
+      { encoding: 'utf8', timeout: 5000 },
+      (err, stdout) => {
+        if (err || typeof stdout !== 'string') {
+          resolve([])
+          return
+        }
+        const pids = []
+        for (const line of stdout.split('\n')) {
+          if (!line.includes(needle)) continue
+          const match = line.trim().match(/^(\d+)\s/)
+          if (match) pids.push(Number(match[1]))
+        }
+        resolve(pids)
+      }
+    )
+  })
 }
 
 /**
@@ -794,6 +923,7 @@ module.exports = {
   createDirectCliBuildAdapter,
   spawnExactElectronChild,
   terminateExactChild,
+  reapOwnedStrays,
   assertExactChildAttach,
   assertExactChildOwnsDebugPorts,
   isPidInOwnedElectronTree,

@@ -75,6 +75,7 @@ const {
 const { buildT2RunEvidence } = require('./t2RunEvidence.cjs')
 const { runT2WindowedReplay } = require('./t2WindowOrchestration.cjs')
 const { runT2PairedReplay } = require('./t2PairedRuns.cjs')
+const { awaitWithTimeout } = require('./boundedAwait.cjs')
 const {
   runDeterministicReplay,
   createCdpPageApiAdapter,
@@ -1360,6 +1361,20 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
 
   /** @type {object|null} */
   let childSession = null
+  const abortOwnedLaunch = () => {
+    const session = childSession
+    if (!session) return
+    Promise.resolve(
+      terminateExactChild(session, {
+        ...(options.terminateOptions || {}),
+        userDataPath: userDataResolved.userDataPath
+      })
+    ).catch(() => {})
+  }
+  if (options.signal) {
+    if (options.signal.aborted) abortOwnedLaunch()
+    else options.signal.addEventListener('abort', abortOwnedLaunch, { once: true })
+  }
   /** @type {object|null} */
   let replayResult = null
   /** @type {object|null} — lanes-driver result when --windowed-replay selects windowed replay */
@@ -1797,14 +1812,28 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         return false
       }
 
+      function remainingCaptureBudgetMs() {
+        if (captureDeadlineExceeded) return 0
+        return Math.max(0, maxCapturePhaseMs - (replayNowMs() - captureStartedAtMs))
+      }
+
       setCapturePhase('profiles_stop', {}, { log: true })
       /** @type {{ path?: string } | null} */
       let rendererStopped = null
       /** @type {{ path?: string } | null} */
       let mainStopped = null
       if (!hasCaptureDeadlineExpired()) {
-        rendererStopped = await rendererCpu.stop()
-        mainStopped = await mainCpu.stop()
+        const stopBudget = remainingCaptureBudgetMs()
+        rendererStopped = await awaitWithTimeout(
+          rendererCpu.stop(),
+          stopBudget,
+          'capture:profiles_stop.renderer'
+        )
+        mainStopped = await awaitWithTimeout(
+          mainCpu.stop(),
+          remainingCaptureBudgetMs(),
+          'capture:profiles_stop.main'
+        )
       } else {
         captureSkippedSteps.push('profiles_stop')
       }
@@ -1815,7 +1844,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       if (!hasCaptureDeadlineExpired()) {
         heapResult = await collectRendererHeapSnapshot(renderer, {
           heapSnapshotPath: heapPath,
-          fs
+          fs,
+          timeoutMs: remainingCaptureBudgetMs()
         })
       } else {
         captureSkippedSteps.push('heap_snapshot')
@@ -1979,7 +2009,10 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       }
       if (childSession) {
         try {
-          await terminateExactChild(childSession, options.terminateOptions || {})
+          await terminateExactChild(childSession, {
+            ...(options.terminateOptions || {}),
+            userDataPath: userDataResolved.userDataPath
+          })
           childTerminationSucceeded = true
         } catch (error) {
           cleanupFailures.push({
@@ -2196,7 +2229,17 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
 }
 
 if (require.main === module) {
-  runT2BaselineCli()
+  const launchAbort = new AbortController()
+  const stopLaunch = () => {
+    try {
+      launchAbort.abort()
+    } catch {
+      // already aborted
+    }
+  }
+  process.once('SIGINT', stopLaunch)
+  process.once('SIGTERM', stopLaunch)
+  runT2BaselineCli(process.argv.slice(2), { signal: launchAbort.signal })
     .then((result) => {
       if (result.helped) process.exit(0)
       if (result.smokePlan) {
@@ -2230,6 +2273,10 @@ if (require.main === module) {
     .catch((error) => {
       console.error(String(error && error.message ? error.message : error))
       process.exit(1)
+    })
+    .finally(() => {
+      process.removeListener('SIGINT', stopLaunch)
+      process.removeListener('SIGTERM', stopLaunch)
     })
 }
 

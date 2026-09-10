@@ -10,9 +10,14 @@
 
 const crypto = require('crypto')
 const path = require('path')
+const { awaitWithTimeout } = require('../boundedAwait.cjs')
 
 const DEFAULT_HEAP_MIN_BYTES = 64
 const DEFAULT_CPU_PROFILE_MIN_BYTES = 32
+/** Inner bound for HeapProfiler.takeHeapSnapshot when the caller omits timeoutMs. */
+const DEFAULT_HEAP_SNAPSHOT_TIMEOUT_MS = 120_000
+/** Hung HeapProfiler.disable must not strand a snapshot that already promoted. */
+const DEFAULT_HEAP_DISABLE_TIMEOUT_MS = 5_000
 
 /**
  * @typedef {object} CdpSessionAdapter
@@ -115,7 +120,11 @@ async function collectRendererCpuProfile(session, options = {}) {
         writeFileSyncChecked(options.fs, pathOut, body)
         if (options.fs) fsyncFile(options.fs, pathOut)
       }
-      await session.send('Profiler.disable').catch(() => {})
+      await awaitWithTimeout(
+        session.send('Profiler.disable'),
+        DEFAULT_HEAP_DISABLE_TIMEOUT_MS,
+        'Profiler.disable'
+      ).catch(() => {})
       return { profile, path: pathOut, bytes, sha256 }
     }
   }
@@ -133,6 +142,8 @@ async function collectRendererCpuProfile(session, options = {}) {
  * @param {(chunk: string) => void} [options.onChunk] — optional extra observer (must not retain all chunks)
  * @param {() => number} [options.nowMs]
  * @param {number} [options.pid]
+ * @param {number} [options.timeoutMs] — bound for takeHeapSnapshot (in-flight abort)
+ * @param {number} [options.disableTimeoutMs]
  */
 async function collectRendererHeapSnapshot(session, options = {}) {
   if (!session || typeof session.send !== 'function') {
@@ -230,10 +241,32 @@ async function collectRendererHeapSnapshot(session, options = {}) {
     if (chunk) writeChunk(chunk)
   })
 
+  const takeTimeoutMs =
+    options.timeoutMs == null ? DEFAULT_HEAP_SNAPSHOT_TIMEOUT_MS : options.timeoutMs
+  const disableTimeoutMs =
+    options.disableTimeoutMs == null ? DEFAULT_HEAP_DISABLE_TIMEOUT_MS : options.disableTimeoutMs
+
+  const disableQuietly = async () => {
+    try {
+      await awaitWithTimeout(
+        session.send('HeapProfiler.disable'),
+        disableTimeoutMs,
+        'HeapProfiler.disable'
+      )
+    } catch {
+      // Disable is best-effort. A hung disable after a promoted snapshot is
+      // the evidence-v1 attempt-3 hang; never strand the capture on it.
+    }
+  }
+
   try {
-    const result = await session.send('HeapProfiler.takeHeapSnapshot', {
-      reportProgress: false
-    })
+    const result = await awaitWithTimeout(
+      session.send('HeapProfiler.takeHeapSnapshot', {
+        reportProgress: false
+      }),
+      takeTimeoutMs,
+      'HeapProfiler.takeHeapSnapshot'
+    )
     // Compatibility: some DI fakes return the snapshot body from send() instead of events.
     if (typeof result === 'string') writeChunk(result)
     else if (result && typeof result.snapshot === 'string') writeChunk(result.snapshot)
@@ -245,11 +278,15 @@ async function collectRendererHeapSnapshot(session, options = {}) {
 
     if (pathOut && tempPath && fsApi) {
       if (stream && typeof stream.end === 'function') {
-        await new Promise((resolve, reject) => {
-          stream.end((err) => (err ? reject(err) : resolve()))
-        }).catch(() => {
-          // sync DI streams may not take callbacks
-        })
+        await awaitWithTimeout(
+          new Promise((resolve, reject) => {
+            stream.end((err) => (err ? reject(err) : resolve()))
+          }).catch(() => {
+            // sync DI streams may not take callbacks
+          }),
+          Math.min(takeTimeoutMs, 15_000),
+          'heap snapshot stream.end'
+        )
       }
       if (fd != null && typeof fsApi.closeSync === 'function') {
         fsApi.closeSync(fd)
@@ -260,7 +297,7 @@ async function collectRendererHeapSnapshot(session, options = {}) {
       tempPath = null
     }
 
-    await session.send('HeapProfiler.disable').catch(() => {})
+    await disableQuietly()
     return {
       path: pathOut,
       bytes,
@@ -271,7 +308,7 @@ async function collectRendererHeapSnapshot(session, options = {}) {
   } catch (error) {
     failed = true
     cleanupTemp()
-    await session.send('HeapProfiler.disable').catch(() => {})
+    await disableQuietly()
     throw error
   } finally {
     if (typeof unsubscribe === 'function') unsubscribe()
@@ -370,6 +407,8 @@ function verifyArtifactFile(filePath, options = {}) {
 module.exports = {
   DEFAULT_HEAP_MIN_BYTES,
   DEFAULT_CPU_PROFILE_MIN_BYTES,
+  DEFAULT_HEAP_SNAPSHOT_TIMEOUT_MS,
+  DEFAULT_HEAP_DISABLE_TIMEOUT_MS,
   collectRendererCpuProfile,
   collectRendererHeapSnapshot,
   collectRendererPerformanceMetrics,

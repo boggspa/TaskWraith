@@ -95,11 +95,27 @@ function openCdpWebSocketSession(options) {
       }
     })
 
+    function failPending(reason) {
+      const err = new Error(reason)
+      for (const [, entry] of pending) {
+        try {
+          entry.reject(err)
+        } catch {
+          // already settled
+        }
+      }
+      pending.clear()
+    }
+
     ws.on('error', (err) => {
       if (settled) return
       settled = true
       cleanupTimer()
       reject(err instanceof Error ? err : new Error(String(err)))
+    })
+
+    ws.on('close', () => {
+      failPending('CDP session closed')
     })
 
     ws.on('open', () => {
@@ -108,10 +124,27 @@ function openCdpWebSocketSession(options) {
       cleanupTimer()
       resolve({
         url,
-        send(method, params) {
+        send(method, params, sendOptions) {
           const id = nextId++
+          const timeoutMs =
+            sendOptions && Number.isFinite(sendOptions.timeoutMs) ? sendOptions.timeoutMs : 0
           return new Promise((res, rej) => {
-            pending.set(id, { resolve: res, reject: rej })
+            let timer = null
+            const settle = (fn) => (value) => {
+              if (timer) clearTimeout(timer)
+              pending.delete(id)
+              fn(value)
+            }
+            pending.set(id, { resolve: settle(res), reject: settle(rej) })
+            if (timeoutMs > 0) {
+              timer = setTimeout(() => {
+                if (!pending.has(id)) return
+                pending.delete(id)
+                const err = new Error(`CDP ${method} timed out after ${timeoutMs}ms`)
+                err.code = 'CAPTURE_TIMEOUT'
+                rej(err)
+              }, timeoutMs)
+            }
             const payload = JSON.stringify({
               id,
               method,
@@ -120,6 +153,7 @@ function openCdpWebSocketSession(options) {
             try {
               ws.send(payload)
             } catch (error) {
+              if (timer) clearTimeout(timer)
               pending.delete(id)
               rej(error instanceof Error ? error : new Error(String(error)))
             }
@@ -130,10 +164,7 @@ function openCdpWebSocketSession(options) {
           return () => eventHandlers.delete(handler)
         },
         close() {
-          for (const [, entry] of pending) {
-            entry.reject(new Error('CDP session closed'))
-          }
-          pending.clear()
+          failPending('CDP session closed')
           eventHandlers.clear()
           try {
             ws.close()
