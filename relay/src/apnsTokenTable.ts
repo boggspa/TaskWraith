@@ -115,8 +115,13 @@ export class ApnsTokenTable {
     if (set && set.size === 0) this.byMac.delete(entry.macIdentityPubKey)
   }
 
-  /** Existing entry for per-pairID×host issuedAt monotonicity (409 on replay). */
+  /**
+   * Existing live entry for per-pairID×host issuedAt monotonicity (409 on replay).
+   * Expiry-swept lazily like listForMac: an expired entry reads as absent (and is
+   * reaped) so the push-delivery path never sends to a dead registration.
+   */
   get(pairID: string, macIdentityPubKey: string): RelayApnsEntry | undefined {
+    this.sweep()
     return this.entries.get(entryKey(pairID, macIdentityPubKey))
   }
 
