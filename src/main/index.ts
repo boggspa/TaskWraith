@@ -56,6 +56,7 @@ import {
 } from 'electron'
 import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent } from 'electron'
 import { DesktopWindowRegistry } from './DesktopWindowRegistry'
+import { runQueueChangedDeliveries } from './runQueue/runQueueChangedDeliveries'
 import { installApplicationMenu } from './ApplicationMenu'
 import { UpdateDialogWindow } from './UpdateDialogWindow'
 import { detectExternalPath } from './services/ExternalPathDetector'
@@ -9618,11 +9619,24 @@ function emitRunQueueChanged(): void {
   // 1.0.4-AQ1 — same disposed-frame race; fires from
   // RunCoordinator state transitions which can land on background
   // ticks while the user is closing the window.
-  safeSendToWebContents(
-    mainWindow,
-    'run-queue-changed',
-    AppStore.getRunQueueJobs({ includeTerminal: true })
-  )
+  //
+  // The recipient set used to be `mainWindow` alone, so a chat pop-out never
+  // learned that a queued job was cancelled and its Delete looked dead. The
+  // per-recipient projection lives in runQueueChangedDeliveries so the scoping
+  // — which mirrors `scopedChatFilter` on the invoke path — is testable without
+  // a window.
+  const deliveries = runQueueChangedDeliveries<BrowserWindow>({
+    jobs: AppStore.getRunQueueJobs({ includeTerminal: true }),
+    mainWindows: desktopWindows.all(),
+    popouts: [...workspacePopoutWindows.entries()].map(([key, window]) => ({
+      window,
+      kind: workspacePopoutOwners.get(key)?.kind,
+      chatId: workspacePopoutOwners.get(key)?.chatId
+    }))
+  })
+  for (const delivery of deliveries) {
+    safeSendToWebContents(delivery.window, 'run-queue-changed', delivery.jobs)
+  }
 }
 
 function emitWorkspaceBoardsChanged(): void {
