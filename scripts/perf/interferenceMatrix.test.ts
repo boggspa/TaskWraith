@@ -110,7 +110,7 @@ describe('interference matrix reachability', () => {
     for (const cell of cells) {
       expect(cell.name).toBe(cellName(cell))
       expect(cell.name.split('/')).toHaveLength(5)
-      expect(cell.reachable).toBe(cell.saturation === 'none')
+      expect(cell.reachable).toBe(cell.saturation !== 'ensemble_pool_30_join')
       // The deterministic-provider capability LANDED with
       // scripts/perf/deterministicReplayProvider.cjs (M1 P1): the matrix no
       // longer claims it missing.
@@ -124,17 +124,23 @@ describe('interference matrix reachability', () => {
       expect(cell.missingCapability.includes('ensemble_pool_saturation_driver')).toBe(
         cell.saturation === 'ensemble_pool_30_join'
       )
-      expect(cell.missingCapability.includes('host_native_saturation_driver')).toBe(
-        cell.saturation === 'host_queue_16_active_1_queued'
-      )
+      // The host-native saturation capability LANDED with
+      // scripts/perf/hostNativeSaturation.cjs (M1 Wall 1): the matrix no
+      // longer claims it missing.
+      expect(cell.missingCapability.includes('host_native_saturation_driver')).toBe(false)
       for (const missing of cell.missingCapability)
         expect(MISSING_DRIVER_CAPABILITIES).toContain(missing)
     }
-    // The provider landing flips exactly the unsaturated third: reachable
-    // means every capability driver exists, not that a runner can execute.
+    // The host-saturation landing flips the host_queue third after the
+    // provider landing flipped the unsaturated third: reachable means every
+    // capability driver exists, not that a runner can execute.
     const reachable = cells.filter((cell: { reachable: boolean }) => cell.reachable)
-    expect(reachable).toHaveLength(160)
-    expect(reachable.every((cell: { saturation: string }) => cell.saturation === 'none')).toBe(true)
+    expect(reachable).toHaveLength(320)
+    expect(
+      reachable.every((cell: { saturation: string }) =>
+        ['none', 'host_queue_16_active_1_queued'].includes(cell.saturation)
+      )
+    ).toBe(true)
   })
 
   it('keeps returned descriptors independent across enumerations', () => {

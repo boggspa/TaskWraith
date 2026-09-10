@@ -283,10 +283,7 @@ function assertPairedRunCompatibility(alone, beside) {
 }
 
 /** Missing drivers are current harness facts, not measurements or new limits. */
-const MISSING_DRIVER_CAPABILITIES = Object.freeze([
-  'ensemble_pool_saturation_driver',
-  'host_native_saturation_driver'
-])
+const MISSING_DRIVER_CAPABILITIES = Object.freeze(['ensemble_pool_saturation_driver'])
 
 function cellReachability(cell) {
   const check = validateMatrixCell(cell)
@@ -295,13 +292,14 @@ function cellReachability(cell) {
   if (cell.saturation === 'ensemble_pool_30_join') {
     missingCapability.push('ensemble_pool_saturation_driver')
   }
-  if (cell.saturation === 'host_queue_16_active_1_queued') {
-    missingCapability.push('host_native_saturation_driver')
-  }
+  // The host-native saturation driver LANDED with
+  // scripts/perf/hostNativeSaturation.cjs (M1 Wall 1): host_queue cells no
+  // longer claim it missing.
   // Reachable means every capability driver the cell needs exists — the
-  // lanes, control, and provider-turn drivers. It does NOT mean a runner
-  // can execute the cell today: window orchestration and pairing (Wall 2)
-  // still gate every measured run, and reports still declare not-run.
+  // lanes, control, provider-turn, and host-saturation drivers. It does NOT
+  // mean a runner can execute the cell today: pairing (Wall 2) still gates
+  // every measured run, windowed replay stays opt-in, production binding is
+  // still owed, and reports still declare not-run.
   return { reachable: missingCapability.length === 0, missingCapability }
 }
 
