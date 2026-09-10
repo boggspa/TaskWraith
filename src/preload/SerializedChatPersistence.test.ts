@@ -471,3 +471,84 @@ describe('SerializedChatPersistence', () => {
     await expect(second).resolves.toMatchObject({ title: 'Canonical main mutation' })
   })
 })
+
+describe('SerializedChatPersistence rejection reporting', () => {
+  function casRemote(initial: ChatRecord) {
+    let canonical = structuredClone(initial)
+    return {
+      canonicalNow: () => canonical,
+      advanceCanonical: (next: ChatRecord) => {
+        canonical = structuredClone(next)
+      },
+      saveRemote: vi.fn(async (record: ChatRecord) => {
+        const previous = structuredClone(canonical)
+        if (record.persistenceRevision !== canonical.persistenceRevision) {
+          return { chat: structuredClone(canonical), previous, accepted: false }
+        }
+        canonical = {
+          ...structuredClone(record),
+          persistenceRevision: (record.persistenceRevision ?? 0) + 1
+        }
+        return { chat: structuredClone(canonical), previous, accepted: true }
+      })
+    }
+  }
+
+  it('reports the revision gap and the fields a refusal discarded', async () => {
+    const remote = casRemote(chat('c1', 5, { title: 'canonical' }))
+    const rejections: unknown[] = []
+    const persistence = new SerializedChatPersistence(remote.saveRemote, (rejection) => {
+      rejections.push(rejection)
+    })
+
+    await persistence.save(chat('c1', 4, { title: 'authored on a stale base' }))
+
+    expect(rejections).toEqual([
+      {
+        chatId: 'c1',
+        snapshotRevision: 4,
+        canonicalRevision: 5,
+        discardedFields: ['title'],
+        rebased: false
+      }
+    ])
+  })
+
+  it('names every discarded field, so a lost goal is legible', async () => {
+    const goal = { id: 'goal-1', objective: 'ship it' } as unknown as ChatRecord['activeGoal']
+    const remote = casRemote(chat('c1', 5))
+    const rejections: Array<{ discardedFields: string[] }> = []
+    const persistence = new SerializedChatPersistence(remote.saveRemote, (rejection) => {
+      rejections.push(rejection)
+    })
+
+    await persistence.save(chat('c1', 4, { activeGoal: goal, title: 'renamed' }))
+
+    expect(rejections).toHaveLength(1)
+    expect(rejections[0].discardedFields).toEqual(['activeGoal', 'title'])
+  })
+
+  it('stays silent when the canonical record accepts the save', async () => {
+    const remote = casRemote(chat('c1', 5))
+    const rejections: unknown[] = []
+    const persistence = new SerializedChatPersistence(remote.saveRemote, (rejection) => {
+      rejections.push(rejection)
+    })
+
+    await persistence.save(chat('c1', 5, { title: 'authored on the current base' }))
+
+    expect(rejections).toEqual([])
+  })
+
+  it('keeps the save resolving to the canonical record when the reporter throws', async () => {
+    const remote = casRemote(chat('c1', 5, { title: 'canonical' }))
+    const persistence = new SerializedChatPersistence(remote.saveRemote, () => {
+      throw new Error('a diagnostic must never break a save')
+    })
+
+    await expect(persistence.save(chat('c1', 4, { title: 'stale' }))).resolves.toMatchObject({
+      title: 'canonical',
+      persistenceRevision: 5
+    })
+  })
+})

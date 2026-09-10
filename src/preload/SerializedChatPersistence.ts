@@ -8,6 +8,30 @@ export interface CanonicalChatSaveResult {
   accepted: boolean
 }
 
+/**
+ * What a canonical refusal discarded.
+ *
+ * `ChatService.saveChatInternal` rejects a whole-record save whose
+ * `persistenceRevision` does not match the canonical record and returns that
+ * canonical record unchanged, so the caller's promise RESOLVES and every field
+ * the payload authored is dropped. In the field that is indistinguishable from
+ * a renderer-side pre-revert, a fence throw, or a delivery that simply never
+ * carried the edit — which is why "I set it and it came back" has been
+ * diagnosed three times from structure alone. Reporting the refusal makes the
+ * revision gap and the discarded field set observable at the moment it happens.
+ */
+export interface ChatSaveRejection {
+  chatId: string
+  /** Revision the payload was derived from. */
+  snapshotRevision: number
+  /** Revision the canonical record actually holds. */
+  canonicalRevision: number
+  /** Top-level fields whose authored value the refusal discarded. */
+  discardedFields: string[]
+  /** Whether this payload had already been rebased onto a known lineage. */
+  rebased: boolean
+}
+
 interface AcceptedChatLineage {
   /** Exact main-returned canonical records that still have queued descendants. */
   basesByRevision: Map<number, ChatRecord>
@@ -88,6 +112,17 @@ function isDeepStrictEqual(left: unknown, right: unknown): boolean {
     (key) =>
       Object.prototype.hasOwnProperty.call(rightRecord, key) &&
       isDeepStrictEqual(leftRecord[key], rightRecord[key])
+  )
+}
+
+/** Default reporter: the preload has no logger of its own, and the renderer
+ *  console is where a live repro is already being watched. */
+function reportChatSaveRejection(rejection: ChatSaveRejection): void {
+  console.warn(
+    `[chat-save] canonical refused a stale whole-record save for ${rejection.chatId}: ` +
+      `payload revision ${rejection.snapshotRevision} vs canonical ${rejection.canonicalRevision}` +
+      `${rejection.rebased ? ' (rebased)' : ''}. Discarded: ` +
+      `${rejection.discardedFields.length > 0 ? rejection.discardedFields.join(', ') : '(nothing)'}`
   )
 }
 
@@ -213,8 +248,42 @@ export class SerializedChatPersistence {
   private readonly pendingRevisionCountsByChatId = new Map<string, Map<number, number>>()
 
   constructor(
-    private readonly saveRemote: (chat: ChatRecord) => Promise<CanonicalChatSaveResult>
+    private readonly saveRemote: (chat: ChatRecord) => Promise<CanonicalChatSaveResult>,
+    private readonly onRejected: (rejection: ChatSaveRejection) => void = reportChatSaveRejection
   ) {}
+
+  /**
+   * Observation only: never changes what `save` returns, what the lineage
+   * retains, or whether a caller sees an error. A reporter that throws is
+   * swallowed for the same reason.
+   */
+  private reportRejection(
+    chatId: string,
+    payload: ChatRecord,
+    canonical: ChatRecord,
+    rebased: boolean
+  ): void {
+    try {
+      const discardedFields: string[] = []
+      const fields = new Set<keyof ChatRecord>([
+        ...(Object.keys(payload) as Array<keyof ChatRecord>),
+        ...(Object.keys(canonical) as Array<keyof ChatRecord>)
+      ])
+      for (const field of fields) {
+        if (MAIN_OWNED_FIELDS.has(field)) continue
+        if (!sameField(payload, canonical, field)) discardedFields.push(String(field))
+      }
+      this.onRejected({
+        chatId,
+        snapshotRevision: persistenceRevision(payload),
+        canonicalRevision: persistenceRevision(canonical),
+        discardedFields: discardedFields.sort(),
+        rebased
+      })
+    } catch {
+      // A diagnostic must never alter the outcome of a save.
+    }
+  }
 
   save(chat: ChatRecord): Promise<ChatRecord> {
     const chatId = chat.appChatId
@@ -233,6 +302,9 @@ export class SerializedChatPersistence {
             : null
         const payload = rebased ?? snapshot
         const result = await this.saveRemote(payload)
+        if (result.accepted === false) {
+          this.reportRejection(chatId, payload, result.chat, rebased !== null)
+        }
         if (result.accepted && result.previous) {
           const previous = structuredClone(result.previous)
           const canonical = structuredClone(result.chat)
