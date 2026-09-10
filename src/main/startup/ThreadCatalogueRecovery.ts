@@ -412,5 +412,24 @@ export class ThreadCatalogueRecovery {
     this.queued.clear()
     for (const timer of this.retries.values()) clearTimeout(timer)
     this.retries.clear()
+    // A deferred cleanup still owns this chat's write-gate hold: its `finish`
+    // is the only thing that calls the `release()` taken in
+    // `runMutation`. Dropping the reference without calling it strands the
+    // hold, and `ThreadCatalogueWriteGate.admit` waits on a held chat with no
+    // timeout and no rejection -- so every later command on that thread, plus
+    // `saveRendererChat`, `mutateTranscript` and `awaitChatRecordPersisted`,
+    // blocks for the lifetime of the process. That is indistinguishable from
+    // the app freezing on one thread.
+    //
+    // These timers also live on the cleanup entry rather than in `retries`,
+    // so they survived dispose and kept retrying an `end-recovery` against a
+    // catalogue that is going away. Cancel them and settle locally: the
+    // durable hold is separately bounded by its own TTL, and leaving the
+    // PROCESS-LOCAL gate shut buys nothing once recovery has stopped.
+    for (const entry of this.cleanup.values()) {
+      if (entry.timer) clearTimeout(entry.timer)
+      entry.finish()
+    }
+    this.cleanup.clear()
   }
 }
