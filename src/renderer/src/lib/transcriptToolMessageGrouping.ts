@@ -362,8 +362,23 @@ export function shouldGroupAdjacentToolMessages(a: ChatMessage, b: ChatMessage):
 }
 
 function mergeToolRun(run: ChatMessage[]): ChatMessage {
-  if (run.length === 1) return run[0]
   const first = run[0]
+  if (run.length === 1) {
+    // A run of ONE is the COMMON shape, not a degenerate case: a solo turn
+    // batches every activity of the turn into a single tool message, and only
+    // an ensemble round emits one message per activity. Mirror coalescing has
+    // to happen here too — a provider that streams its own MCP row alongside
+    // TaskWraith's host receipt doubles every card inside this one message,
+    // and doubles the error tally with it. Returning early skipped that for
+    // every solo turn.
+    //
+    // Identity and grouping metadata stay untouched: one message is not a
+    // group, and the message is returned unchanged when nothing coalesced, so
+    // an ordinary run allocates nothing and cannot churn its React key.
+    const activities = first.toolActivities || []
+    const coalesced = coalesceToolActivityMirrors(activities)
+    return coalesced.length === activities.length ? first : { ...first, toolActivities: coalesced }
+  }
   const toolActivities = coalesceToolActivityMirrors(
     run.flatMap((message) => message.toolActivities || [])
   )

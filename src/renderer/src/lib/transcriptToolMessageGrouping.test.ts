@@ -804,3 +804,61 @@ describe('groupFanoutLaneMessages', () => {
     expect(groupedTranscriptMessageIds(grouped[0])).toEqual(['tool-group-t1', 't1', 't2', 'c1'])
   })
 })
+
+describe('mirror coalescing inside a single ungrouped tool message', () => {
+  // A solo turn batches every activity into ONE tool message; only an ensemble
+  // round emits one message per activity. These shapes are the real Muse MSP
+  // twin measured off a run-events ledger: the provider streams its own
+  // `call_…` row and TaskWraith mirrors it as a `muse-mcp-…` host receipt.
+  const PARAMETERS = { args: [], task: 'test', timeoutMs: 600_000 }
+  const HOST_OUTPUT = '{"ok":false,"tool":"run_task","code":"invalid-call"}'
+
+  const museNative = (): ToolActivity =>
+    activity('call_01a088d084da7113b8f4e1f0a6dfac88', 'shell', {
+      toolName: 'mcp__taskwraith__run_task',
+      status: 'error',
+      startedAt: '2026-09-10T00:56:02.527Z',
+      endedAt: '2026-09-10T00:56:02.570Z',
+      parameters: PARAMETERS,
+      resultSummary: `tool failed: ${HOST_OUTPUT}`,
+      metadata: { provider: 'muse' }
+    })
+
+  const museHost = (): ToolActivity =>
+    activity('muse-mcp-run_task-1789001762549-yxnwxusaqv', 'shell', {
+      toolName: 'run_task',
+      status: 'error',
+      startedAt: '2026-09-10T00:56:02.550Z',
+      endedAt: '2026-09-10T00:56:02.553Z',
+      durationMs: 3,
+      parameters: { ...PARAMETERS, cwd: '/Users/chrisizatt/Documents/Test 1' },
+      resultSummary: HOST_OUTPUT,
+      metadata: { provider: 'muse' }
+    })
+
+  it('collapses a twin that arrives inside one tool message', () => {
+    const grouped = groupAdjacentToolMessages([toolMessage('m1', [museNative(), museHost()])])
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual([
+      'muse-mcp-run_task-1789001762549-yxnwxusaqv'
+    ])
+  })
+
+  it('does not double the error tally for a single errored call', () => {
+    const grouped = groupAdjacentToolMessages([toolMessage('m1', [museNative(), museHost()])])
+    const errors = (grouped[0].toolActivities || []).filter((entry) => entry.status === 'error')
+    expect(errors).toHaveLength(1)
+  })
+
+  it('leaves the lone message its own identity — one message is not a group', () => {
+    const grouped = groupAdjacentToolMessages([toolMessage('m1', [museNative(), museHost()])])
+    expect(grouped[0].id).toBe('m1')
+    expect(grouped[0].metadata?.groupedToolMessageIds).toBeUndefined()
+  })
+
+  it('returns an unmirrored message untouched, allocating nothing', () => {
+    const message = toolMessage('m1', [activity('a1'), activity('a2', 'write')])
+    const grouped = groupAdjacentToolMessages([message])
+    expect(grouped[0]).toBe(message)
+  })
+})
