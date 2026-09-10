@@ -43,6 +43,8 @@ function harness(
     | ((context: unknown, request: unknown) => Promise<unknown> | unknown)
     | undefined
   let composedPerf: unknown
+  let domainWorkSpanRecorder: unknown
+  let composedResolveReceiptSpanChatId: unknown
   const lease = {
     path: '/profile',
     assertHeld: vi.fn(() => order.push('lease.assert')),
@@ -152,6 +154,7 @@ function harness(
       eventPublish = () => input.events.publish({} as never, {} as never)
       projectionDirty = input.onProjectionDirty ?? null
       interactionTimeoutMs = input.interactionTimeoutMs
+      domainWorkSpanRecorder = input.workSpanRecorder
       return domain as never
     },
     createComposition: (input) => {
@@ -159,6 +162,7 @@ function harness(
       capabilityOffer = input.hostCapabilityOffer
       composedGitReadProvider = input.gitReadProvider as typeof composedGitReadProvider
       composedPerf = input.perf
+      composedResolveReceiptSpanChatId = input.resolveReceiptSpanChatId
       return composition as never
     },
     createListener: (input) => {
@@ -181,6 +185,8 @@ function harness(
     capabilityOffer: () => capabilityOffer,
     gitReadProvider: () => composedGitReadProvider,
     compositionPerf: () => composedPerf,
+    domainWorkSpanRecorder: () => domainWorkSpanRecorder,
+    composedResolveReceiptSpanChatId: () => composedResolveReceiptSpanChatId,
     domainProfilePath: () => domainProfilePath,
     domainPermissionConsentAuthority: () => domainPermissionConsentAuthority,
     listenerPayloadVersion: () => listenerPayloadVersion,
@@ -578,6 +584,32 @@ describe('HostNodeProductionServer', () => {
         pid: process.pid
       }
     })
+    await h.server.stop()
+  })
+
+  it('shares one Host recorder between domain persist and composition receipts', async () => {
+    const h = harness()
+    await h.server.start()
+    const perf = h.compositionPerf() as { instrumentation?: { spans?: unknown } }
+    expect(h.domainWorkSpanRecorder()).toBe(perf.instrumentation?.spans)
+    const resolve = h.composedResolveReceiptSpanChatId() as
+      | ((record: { target: { kind: string; id?: string } }) => string | undefined)
+      | undefined
+    expect(resolve).toBeTypeOf('function')
+    const pending = h.domain.interactions.register({
+      id: 'appr-1',
+      kind: 'approval',
+      providerId: 'codex',
+      runId: 'run-1',
+      threadId: 'thread-light',
+      title: 'Shell',
+      summary: 'run ls',
+      createdAt: '2026-09-10T00:00:00.000Z'
+    })
+    pending.catch(() => undefined)
+    expect(resolve({ target: { kind: 'approval', id: 'appr-1' } })).toBe('thread-light')
+    expect(resolve({ target: { kind: 'thread', id: 'thread-1' } })).toBeUndefined()
+    await h.domain.interactions.shutdown()
     await h.server.stop()
   })
 

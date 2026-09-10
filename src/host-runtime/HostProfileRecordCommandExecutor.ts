@@ -95,6 +95,7 @@ export class HostProfileRecordCommandExecutor {
         chatId,
         runId: commandId,
         kind: 'durable_commit',
+        resource: 'host_chain',
         startedAt,
         durationMs: Math.max(0, this.now() - startedAt)
       })

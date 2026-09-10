@@ -349,6 +349,12 @@ function compactTarget(command: HostCommand, targetKind: string): HostCommandRec
   return { kind: targetKind, id }
 }
 
+/** Thread id for host_queue_wait attribution; empty/absent falls through to unlabeled. */
+function projectionQueueLabel(command: HostCommand): string | undefined {
+  const threadId = command?.target?.threadId
+  return typeof threadId === 'string' && threadId.length > 0 ? threadId : undefined
+}
+
 function isValidDeferredAskPorts(ports: HostDeferredAskPorts): boolean {
   if (
     !ports ||
@@ -863,7 +869,10 @@ export class AppStoreHostAuthority implements HostAuthority {
     ) {
       return this.executeCommand(context, command)
     }
-    return this.runProjectionOperation(() => this.executeCommand(context, command))
+    return this.runProjectionOperation(
+      () => this.executeCommand(context, command),
+      projectionQueueLabel(command)
+    )
   }
 
   private async executeCommand(

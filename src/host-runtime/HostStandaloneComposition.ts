@@ -40,6 +40,7 @@ import {
 } from './AppStoreHostAuthority'
 import type { HostAuthority, HostAuthorityCallContext } from './HostAuthority'
 import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
+import type { HostCommandReceiptRecord } from './HostCommandReceiptStore'
 import type { HostDeltaAppendListener } from './HostDeltaStore'
 import {
   createHostPerfInstrumentation,
@@ -140,6 +141,11 @@ export interface HostStandaloneCompositionInput {
    * site below for why that is the only value here that can witness a restart.
    */
   readonly bootEpochFactory?: () => string
+  /**
+   * Optional lookup for receipt_delivery on approval/question targets.
+   * Production supplies the pending-interaction registry; absence skips those kinds.
+   */
+  readonly resolveReceiptSpanChatId?: (record: HostCommandReceiptRecord) => string | undefined
 }
 
 export interface HostStandaloneComposition {
@@ -264,7 +270,12 @@ export function createHostStandaloneComposition(
     createHostPerfInstrumentation(input.perf?.now ? { now: input.perf.now } : {})
   const runtime = new HostRuntimeBootstrap({
     hostDataDir: input.runtimePath,
-    receipts: { spans: hostPerf.spans }
+    receipts: {
+      spans: hostPerf.spans,
+      ...(input.resolveReceiptSpanChatId
+        ? { resolveSpanChatId: input.resolveReceiptSpanChatId }
+        : {})
+    }
   })
   const perfIdentity: HostPerfSnapshotFileIdentity = Object.freeze({
     process: 'host' as const,

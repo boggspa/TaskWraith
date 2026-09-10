@@ -163,6 +163,7 @@ describe('HostCommandReceiptStore', () => {
       chatId: 'thread-1',
       runId: 'cmd-1',
       kind: 'receipt_delivery',
+      resource: 'host_chain',
       process: 'host'
     })
     expect(snapshot.spans[0]!.durationMs).toBeGreaterThanOrEqual(0)
@@ -170,7 +171,7 @@ describe('HostCommandReceiptStore', () => {
     expect(recorder.snapshot().spans).toHaveLength(1)
   })
 
-  it('does not emit receipt_delivery without a thread target', () => {
+  it('does not emit receipt_delivery for a non-thread target that has an id', () => {
     const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 8 })
     const store = new HostCommandReceiptStore({
       dataDir,
@@ -178,8 +179,76 @@ describe('HostCommandReceiptStore', () => {
       now: () => clock,
       spans: recorder
     })
-    store.begin(baseInput({ target: { kind: 'host' } }))
+    store.begin(
+      baseInput({
+        commandName: 'approval.decide',
+        target: { kind: 'approval', id: 'appr-1' }
+      })
+    )
     store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+    const snapshot = recorder.snapshot()
+    expect(snapshot.spans).toEqual([])
+    expect(snapshot.rejected).toBe(0)
+  })
+
+  it('emits receipt_delivery for approval and question targets via the thread lookup', () => {
+    const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 8 })
+    const resolved: string[] = []
+    const store = new HostCommandReceiptStore({
+      dataDir,
+      getPosition: () => ({ ...position }),
+      now: () => clock,
+      spans: recorder,
+      resolveSpanChatId: (record) => {
+        resolved.push(`${record.target.kind}:${record.target.id}`)
+        return record.target.kind === 'approval' ? 'thread-from-approval' : 'thread-from-question'
+      }
+    })
+    store.begin(
+      baseInput({
+        commandId: 'cmd-appr',
+        idempotencyKey: 'idem-appr',
+        commandName: 'approval.decide',
+        target: { kind: 'approval', id: 'appr-1' }
+      })
+    )
+    store.complete({ commandId: 'cmd-appr', status: 'succeeded' })
+    store.begin(
+      baseInput({
+        commandId: 'cmd-q',
+        idempotencyKey: 'idem-q',
+        commandName: 'question.answer',
+        target: { kind: 'question', id: 'q-1' }
+      })
+    )
+    store.complete({ commandId: 'cmd-q', status: 'succeeded' })
+    expect(resolved).toEqual(['approval:appr-1', 'question:q-1'])
+    expect(recorder.snapshot().spans.map((span) => [span.chatId, span.runId, span.kind])).toEqual([
+      ['thread-from-approval', 'cmd-appr', 'receipt_delivery'],
+      ['thread-from-question', 'cmd-q', 'receipt_delivery']
+    ])
+  })
+
+  it('contains a throwing span-chat lookup so complete still succeeds', () => {
+    const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 8 })
+    const store = new HostCommandReceiptStore({
+      dataDir,
+      getPosition: () => ({ ...position }),
+      now: () => clock,
+      spans: recorder,
+      resolveSpanChatId: () => {
+        throw new Error('lookup must not break receipts')
+      }
+    })
+    expect(
+      store.begin(
+        baseInput({
+          commandName: 'approval.decide',
+          target: { kind: 'approval', id: 'appr-1' }
+        })
+      ).kind
+    ).toBe('created')
+    expect(store.complete({ commandId: 'cmd-1', status: 'succeeded' })?.status).toBe('succeeded')
     expect(recorder.snapshot().spans).toEqual([])
   })
 

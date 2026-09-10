@@ -321,6 +321,12 @@ export interface HostCommandReceiptStoreOptions {
   spans?: WorkSpanRecorder
   /** Millisecond clock for receipt_delivery durations; defaults to Date.now. */
   nowMs?: () => number
+  /**
+   * Optional lookup for §1.1 control actions whose receipt target is not a
+   * thread (`approval.decide`, `question.answer`). Called at begin, while the
+   * pending card still exists. Absence skips those kinds. Must not throw.
+   */
+  resolveSpanChatId?: (record: HostCommandReceiptRecord) => string | undefined
 }
 
 interface CheckpointDocument {
@@ -349,6 +355,9 @@ export class HostCommandReceiptStore {
   private readonly log: (line: string) => void
   private readonly spans?: WorkSpanRecorder
   private readonly nowMs: () => number
+  private readonly resolveSpanChatId?: (record: HostCommandReceiptRecord) => string | undefined
+  /** chatId resolved at begin (approval/question lookup is only valid then). */
+  private readonly spanChatIds = new Map<string, string>()
 
   private recordsByCommandId = new Map<string, HostCommandReceiptRecord>()
   private commandIdByIdempotencyKey = new Map<string, string>()
@@ -376,19 +385,42 @@ export class HostCommandReceiptStore {
     this.log = options.log ?? (() => {})
     this.spans = options.spans
     this.nowMs = options.nowMs ?? (() => Date.now())
+    this.resolveSpanChatId = options.resolveSpanChatId
     this.reopen()
+  }
+
+  private spanChatIdFor(record: HostCommandReceiptRecord): string | undefined {
+    if (record.target.kind === 'thread') {
+      const id = record.target.id
+      return typeof id === 'string' && id.trim().length > 0 ? id.trim() : undefined
+    }
+    if (record.target.kind !== 'approval' && record.target.kind !== 'question') return undefined
+    if (!record.target.id || !this.resolveSpanChatId) return undefined
+    let resolved: string | undefined
+    try {
+      resolved = this.resolveSpanChatId(record)
+    } catch {
+      return undefined
+    }
+    return typeof resolved === 'string' && resolved.trim().length > 0 ? resolved.trim() : undefined
+  }
+
+  private rememberSpanChatId(record: HostCommandReceiptRecord): void {
+    const chatId = this.spanChatIdFor(record)
+    if (chatId) this.spanChatIds.set(record.commandId, chatId)
   }
 
   private recordReceiptDelivery(record: HostCommandReceiptRecord, startedAt: number): void {
     if (this.spans === undefined) return
-    const chatId =
-      record.target.kind === 'thread' && record.target.id ? record.target.id : undefined
+    const chatId = this.spanChatIds.get(record.commandId) ?? this.spanChatIdFor(record)
+    this.spanChatIds.delete(record.commandId)
     if (chatId === undefined) return
     try {
       this.spans.record({
         chatId,
         runId: record.commandId,
         kind: 'receipt_delivery',
+        resource: 'host_chain',
         startedAt,
         durationMs: Math.max(0, this.nowMs() - startedAt)
       })
@@ -405,6 +437,7 @@ export class HostCommandReceiptStore {
     this.recordsByCommandId = new Map()
     this.commandIdByIdempotencyKey = new Map()
     this.journalRecordCount = 0
+    this.spanChatIds.clear()
 
     const checkpointRecords = this.readCheckpoint()
     for (const record of checkpointRecords) {
@@ -637,6 +670,7 @@ export class HostCommandReceiptStore {
     this.indexRecord(record)
     this.appendJournalEvent({ op: 'upsert', record })
     this.maybeCompact()
+    this.rememberSpanChatId(record)
     return { kind: 'created', receipt: cloneRecord(record) }
   }
 

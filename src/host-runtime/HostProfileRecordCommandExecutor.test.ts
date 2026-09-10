@@ -168,6 +168,7 @@ describe('HostProfileRecordCommandExecutor', () => {
       chatId: 'thread-1',
       runId: '11111111-1111-4111-8111-111111111111',
       kind: 'durable_commit',
+      resource: 'host_chain',
       process: 'host'
     })
     expect(snapshot.spans[0]!.durationMs).toBeGreaterThanOrEqual(0)

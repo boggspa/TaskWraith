@@ -1,5 +1,6 @@
 import { ThreadCatalogueHostRunWindow } from './ThreadCatalogueHostRunWindow'
 import { ThreadCatalogueHostRecovery } from './ThreadCatalogueHostRecovery'
+import { hostNodeReceiptSpanChatId } from './hostNodeReceiptSpanChatId'
 import type { HostCatalogueRunOrigin } from '../shared/threadCatalogueTypes'
 import { randomUUID } from 'node:crypto'
 import { createHostThreadCatalogue } from './ThreadCatalogueHostClient'
@@ -443,6 +444,8 @@ export class HostNodeProductionServer {
           instrumentation: hostPerf,
           ...(perfSnapshotFile ? { snapshotFile: perfSnapshotFile } : {})
         },
+        resolveReceiptSpanChatId: (record) =>
+          hostNodeReceiptSpanChatId(this.domain!.interactions, record),
         snapshotDonor: () => this.domain!.snapshotDonor(),
         authorityEvaluator: async (command, context) => {
           const prepared = await this.domain!.prepareAuthorityEvaluation?.(context, command)
