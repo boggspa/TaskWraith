@@ -186,7 +186,10 @@ const HOST_PERF_SNAPSHOT_FILE_NAME = 'host-perf-snapshot.json'
  * check its bundled closure — 111 inputs, all of src/main/workers/* — would
  * be silently unwatched. Provenance that cannot be READ is never assumed:
  * there is deliberately no fallback to guessing the source from the output
- * name, because that guess is what this replaced.
+ * name, because that guess is what this replaced. A directory entry that is
+ * neither a regular file nor a directory — a symlink, a socket — refuses as
+ * unproven output rather than being skipped: the walk cannot see through it,
+ * so anything behind it would be silently unwatched.
  *
  * That makes the preflight depend on the host tsconfig keeping
  * `sourceMap: true`. Turning it off strips every map and this then refuses
@@ -261,15 +264,21 @@ function checkHostBundleFreshness(repoRoot, adapters = {}) {
   const collectEmittedInputs = (dir) => {
     const entries = fsImpl.readdirSync(dir, { withFileTypes: true })
     for (const entry of entries) {
+      if (unprovenOutputRelPath !== null) return
       const full = path.join(dir, entry.name)
       if (entry.isDirectory()) {
         collectEmittedInputs(full)
         continue
       }
-      if (!entry.isFile()) continue
+      // Neither a directory nor a regular file — a symlink, a socket — where
+      // an artifact's map should be readable. The walk cannot see through it,
+      // so anything behind it would be silently unwatched: unproven, not skipped.
+      if (!entry.isFile()) {
+        unprovenOutputRelPath = path.relative(repoRoot, full)
+        return
+      }
       // The maps are read through their artifacts, never walked as inputs.
       if (!entry.name.endsWith('.js')) continue
-      if (unprovenOutputRelPath !== null) return
       let sources
       let sourceRoot
       try {
@@ -311,12 +320,18 @@ function checkHostBundleFreshness(repoRoot, adapters = {}) {
   const collectIncludeRootInputs = (dir) => {
     const entries = fsImpl.readdirSync(dir, { withFileTypes: true })
     for (const entry of entries) {
+      if (unprovenOutputRelPath !== null) return
       const full = path.join(dir, entry.name)
       if (entry.isDirectory()) {
         collectIncludeRootInputs(full)
         continue
       }
-      if (!entry.isFile()) continue
+      // Same fail-closed rule as the emitted walk: a non-regular entry where
+      // a source should be watched cannot be proven fresh.
+      if (!entry.isFile()) {
+        unprovenOutputRelPath = path.relative(repoRoot, full)
+        return
+      }
       if (!entry.name.endsWith('.ts') || entry.name.endsWith('.test.ts')) continue
       inputRelPaths.add(path.relative(repoRoot, full))
     }
@@ -340,7 +355,11 @@ function checkHostBundleFreshness(repoRoot, adapters = {}) {
         orphanOutputRelPath = relPath
         break
       }
-      if (!stat.isFile()) continue
+      if (!stat.isFile()) {
+        // A derived input that is not a regular file cannot be mtime-proven.
+        unprovenOutputRelPath = relPath
+        break
+      }
       checkedFileCount += 1
       if (stat.mtimeMs > newestSourceMtimeMs) {
         newestSourceMtimeMs = stat.mtimeMs

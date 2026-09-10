@@ -4350,15 +4350,17 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     expect(nonRegular.reason).toBe('host_bundle_missing')
     expect(nonRegular.checkedFileCount).toBe(0)
 
-    // Symlinks are never followed, so an out/host reached through one yields
-    // NO derived inputs. With an empty include root that is zero inputs, which
-    // fails closed rather than reporting "fresh by vacuity".
+    // A symlinked directory among the outputs refuses as unproven output
+    // naming the path — never followed, and never silently skipped into a
+    // "fresh by vacuity" pass (fifth member: the skip this replaced).
     const symlinked = treeOf({ [BUNDLE_REL]: 1, 'src/host-runtime/README.md': 1 })
     const hostOut = (symlinked.out.children as Record<string, FsNode>).host
     ;((hostOut.children as Record<string, FsNode>)['host-runtime'] as FsNode).symlink = true
     const emptySources = checkHostBundleFreshness('/repo', { fs: memFs(symlinked) })
     expect(emptySources.ok).toBe(false)
-    expect(emptySources.reason).toBe('host_bundle_preflight_no_sources')
+    expect(emptySources.reason).toBe(
+      `host_bundle_preflight_unproven_output: ${path.join('out', 'host', 'host-runtime')}`
+    )
     expect(emptySources.checkedFileCount).toBe(0)
 
     // A walk failure that is not a missing source → fail closed.
@@ -4378,6 +4380,48 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     const noFs = checkHostBundleFreshness('/repo', { fs: {} })
     expect(noFs.ok).toBe(false)
     expect(noFs.reason).toBe('host_bundle_preflight_io: fs_contract')
+  })
+
+  it('P2: non-regular preflight entries refuse as unproven output (fifth member)', () => {
+    // ONE symlinked artifact among regular ones: pre-fix the walk skipped it
+    // and reported fresh; now the closure it hides makes the bundle unproven.
+    const symlinkedArtifact = bundleTree(1000, 900)
+    nodeAt(symlinkedArtifact, 'out/host/host-client')['HostClient.js'].symlink = true
+    const symlinked = checkHostBundleFreshness('/repo', { fs: memFs(symlinkedArtifact) })
+    expect(symlinked.ok).toBe(false)
+    expect(symlinked.reason).toBe(
+      `host_bundle_preflight_unproven_output: ${path.join('out', 'host', 'host-client', 'HostClient.js')}`
+    )
+
+    // Same for the include root: a symlink where a source should be watched.
+    const symlinkedSource = bundleTree(1000, 900)
+    nodeAt(symlinkedSource, 'src/host-runtime')['cli.ts'].symlink = true
+    const symlinkedSrc = checkHostBundleFreshness('/repo', { fs: memFs(symlinkedSource) })
+    expect(symlinkedSrc.ok).toBe(false)
+    expect(symlinkedSrc.reason).toBe(
+      `host_bundle_preflight_unproven_output: ${path.join('src', 'host-runtime', 'cli.ts')}`
+    )
+
+    // A directory where a derived input should be a file: the stat loop must
+    // refuse rather than skip it out of the watched set.
+    const dirAsInput = bundleTree(1000, 900)
+    nodeAt(dirAsInput, 'src/host-runtime')['cli.ts'] = { children: {} }
+    const nonRegular = checkHostBundleFreshness('/repo', { fs: memFs(dirAsInput) })
+    expect(nonRegular.ok).toBe(false)
+    expect(nonRegular.reason).toBe(
+      `host_bundle_preflight_unproven_output: ${path.join('src', 'host-runtime', 'cli.ts')}`
+    )
+
+    // The vacuity guard survives the new refusal: zero derived inputs with no
+    // other defect still refuses as no_sources rather than passing fresh.
+    const hollowTree = treeOf({
+      ...emitted('out/host/host-runtime/cli.js', ['node_modules/only/index.ts'], 1000),
+      'src/host-runtime/README.md': 1
+    })
+    const hollow = checkHostBundleFreshness('/repo', { fs: memFs(hollowTree) })
+    expect(hollow.ok).toBe(false)
+    expect(hollow.reason).toBe('host_bundle_preflight_no_sources')
+    expect(hollow.checkedFileCount).toBe(0)
   })
 
   it('P2: the input set is derived from the REAL host tsconfig, not a hand-kept list', () => {
