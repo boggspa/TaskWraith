@@ -1460,9 +1460,20 @@ export class HostNodeDomainPorts {
 
   private hasPersistedStart(runId: string, threadId: string, prompt: unknown): boolean {
     if (typeof prompt !== 'string') return false
+    // `hasBegun` is an in-memory Map.get (HostNodeProfileRunPort.ts) and is
+    // already a conjunct of the result, so gating the record read on it is
+    // exactly equivalent -- and it keeps a whole-record read out of every poll
+    // taken before the provider has begun. `getThread` is UNCACHED: it stats,
+    // reads and JSON.parses the entire thread record on every call, and
+    // `awaitPersistedStart` polls this predicate every
+    // HOST_PERSISTED_START_POLL_MS for up to HOST_PERSISTED_START_GRACE_MS.
+    // Measured on a real 27.5MB thread that is ~125ms per poll, so the grace
+    // window expired after 16 polls and failed a healthy run as
+    // `run_not_started` -- while holding the global serial command window
+    // (AppStoreHostAuthority) for the full two seconds.
+    if (!this.runPort.hasBegun(runId, threadId)) return false
     const thread = this.options.store.getThread(threadId)
     return Boolean(
-      this.runPort.hasBegun(runId, threadId) &&
       thread?.runs?.some((run) => run.runId === runId && run.status === 'running') &&
       thread.messages.some(
         (message) =>
