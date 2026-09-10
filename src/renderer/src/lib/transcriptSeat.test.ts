@@ -470,7 +470,7 @@ describe('seatFromProviderNativeRun', () => {
           provider: 'codex',
           requestedModel: 'gpt-5.6-sol',
           providerMetadata: { codexReasoningEffort: 'xhigh' }
-        } as ChatRecord
+        } as unknown as ChatRecord
       })
     ).toEqual({
       provider: 'codex',

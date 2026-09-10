@@ -76,6 +76,7 @@ describe('chat record merge helpers', () => {
       transcriptPaged: true,
       ensemble: {
         enabled: true,
+        maxParticipants: 1,
         participants: [
           {
             id: 'seat-1',

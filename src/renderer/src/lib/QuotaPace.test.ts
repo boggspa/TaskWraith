@@ -204,7 +204,7 @@ describe('computeQuotaPace', () => {
       now
     )
     expect(pace?.state).toBe('ahead')
-    expect(pace?.expectedFraction).toBeCloseTo(0.75, 1)
+    expect(pace?.expectedFraction).toBeCloseTo(expectedFraction, 1)
   })
 
   it('infers daily window duration from the "Daily" label for Devin', () => {
@@ -212,8 +212,6 @@ describe('computeQuotaPace', () => {
     const start = Date.now()
     const fakeReset = new Date(start + 18 * 60 * 60 * 1000) // 18 hours from now
     const now = new Date(start)
-    const totalDurationMs = 24 * 60 * 60 * 1000 // 24 hours total
-    const elapsedMs = totalDurationMs - 18 * 60 * 60 * 1000 // 6 hours elapsed = 25%
     const pace = computeQuotaPace(
       makeWindow({
         label: 'Daily',

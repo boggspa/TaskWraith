@@ -1265,7 +1265,7 @@ describe('ToolParser', () => {
       expect(paired.diffSummary).toMatchObject({ additions: 3, deletions: 0 })
       // The INPUT body stays the persisted `content`; the result's status echo
       // ("Wrote notes.md") must not replace or accompany it.
-      expect(paired.parameters.content).toBe('one\ntwo\nthree')
+      expect(paired.parameters?.content).toBe('one\ntwo\nthree')
     })
   })
 })

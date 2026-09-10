@@ -41,6 +41,7 @@ describe('rightDockState', () => {
           hasWorkspaceContext: true,
           isChatMediaPanelOpen: true,
           isProjectReferencesPanelOpen: true,
+          isWebSiteLoginsPanelOpen: true,
           isPinnedMessagesPanelOpen: true,
           isTerminalDockAvailable: true
         })
@@ -54,6 +55,7 @@ describe('rightDockState', () => {
         { id: 'appdrive', label: 'Drive' },
         { id: 'media', label: 'Media' },
         { id: 'references', label: 'Refs' },
+        { id: 'logins', label: 'Logins' },
         { id: 'pins', label: 'Notes' },
         { id: 'terminal', label: 'Term' }
       ])

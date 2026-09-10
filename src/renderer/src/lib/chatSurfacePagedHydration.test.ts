@@ -340,7 +340,7 @@ describe('createSurfaceChatHydrator finalizePagedOpen (post-hydration parity)', 
     expect(getSideChatLifecycleState(result as ChatRecord)).toBe('active')
     expect(result?.sideChatContext?.openedAt).toBeGreaterThan(0)
     // Still a paged shell: the transition must not rehydrate or refill arrays.
-    expect(result?.transcriptPaged).toBe(true)
+    expect((result as unknown as { transcriptPaged?: boolean } | null)?.transcriptPaged).toBe(true)
     expect(result?.messages).toEqual([])
     expect(result?.runs).toEqual([])
   })

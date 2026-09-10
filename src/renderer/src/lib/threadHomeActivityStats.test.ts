@@ -115,6 +115,8 @@ describe('threadHomeRunStats', () => {
       chatKind: 'ensemble',
       runs: [oldRun, first, second],
       ensemble: {
+        enabled: true,
+        maxParticipants: 2,
         participants: [],
         activeRound: {
           roundId: 'round-live',
@@ -209,6 +211,8 @@ describe('threadHomeRunStats', () => {
       chatKind: 'ensemble',
       runs: [finished, live],
       ensemble: {
+        enabled: true,
+        maxParticipants: 4,
         participants: [],
         activeRound: {
           roundId: 'round-live',
@@ -293,6 +297,8 @@ describe('threadHomeRunStats', () => {
       chatKind: 'ensemble',
       runs: [finished],
       ensemble: {
+        enabled: true,
+        maxParticipants: 4,
         participants: [],
         activeRound: {
           roundId: 'round-external',

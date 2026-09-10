@@ -142,7 +142,8 @@ describe('cloneWelcomeBackgroundChat', () => {
                 id: 'grant-1',
                 provider: 'codex',
                 path: '/elsewhere',
-                access: 'read_write',
+                kind: 'directory',
+                access: 'write',
                 duration: 'thisRun',
                 createdAt: '2026-08-27T00:00:00.000Z'
               }
@@ -228,7 +229,8 @@ describe('launchWelcomeBackgroundThread', () => {
           id: 'source-grant',
           provider: 'codex',
           path: '/elsewhere',
-          access: 'read_write',
+          kind: 'directory',
+          access: 'write',
           duration: 'thisRun',
           createdAt: '2026-08-27T00:00:00.000Z'
         }
@@ -248,7 +250,7 @@ describe('launchWelcomeBackgroundThread', () => {
   it('persists and queues an independent project-member chat without navigating', async () => {
     const source = chat({ providerMetadata: { selectedModelType: 'gpt-5.6-sol' } })
     const fresh = chat({ appChatId: 'background', provider: 'gemini' })
-    const saved = { ...fresh, provider: 'codex', persistenceRevision: 2 }
+    const saved: ChatRecord = { ...fresh, provider: 'codex', persistenceRevision: 2 }
     const recordChat = vi.fn()
     const addChatToProject = vi.fn()
     const queueRun = vi.fn()

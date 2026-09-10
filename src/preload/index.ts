@@ -229,6 +229,16 @@ window.addEventListener(
   'paste',
   (event) => {
     if (!event.isTrusted) return
+    // Only pastes directed at the simulator bezel mint a push proof. Without
+    // a target check every paste in the window (chat, settings, terminals)
+    // would authorize a host-to-sim pasteboard sync and send main an IPC
+    // invoke; the renderer only consumes this proof from bezel pastes.
+    // Duck-type the target: preload runs in an isolated world, so cross-realm
+    // instanceof checks are unreliable.
+    const target = event.target as Element | null
+    if (typeof target?.closest !== 'function' || !target.closest('[data-simulator-paste-target]')) {
+      return
+    }
     const token = globalThis.crypto?.randomUUID?.()
     if (!token) return
     pendingSimulatorPasteboardIntent = {

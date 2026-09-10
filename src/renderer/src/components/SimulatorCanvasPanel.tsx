@@ -1180,6 +1180,9 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
           <div
             ref={screenRef}
             className="simulator-canvas-bezel-screen"
+            // Preload contract: only pastes inside this element mint a
+            // simulator pasteboard-intent proof (src/preload/index.ts).
+            data-simulator-paste-target=""
             tabIndex={gesturesEnabled ? 0 : -1}
             onPointerDown={handleBezelPointerDown}
             onPointerMove={handleBezelPointerMove}

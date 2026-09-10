@@ -23,7 +23,10 @@
     "src/preload/*.d.ts",
     "src/main/store/types.ts"
   ],
-  "exclude": ["src/renderer/src/lib"],
+  // No "exclude": src/renderer/src/lib (including its tests) must stay in
+  // this program. The old lib exclude was a residual of the removed composite
+  // "references" block above, and it left lib test files typechecked by no
+  // config at all (tsconfig.node.json cherry-picks only a few lib sources).
   "compilerOptions": {
     "composite": true,
     "jsx": "react-jsx",
