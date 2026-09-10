@@ -34,6 +34,7 @@ import {
 } from './MuseCliArgs'
 import type { ContextCompactionSignal } from '../../shared/contextCompaction'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
+import { museAnnounceSteerAppliesToPrompt } from './MuseAnnounceSteer'
 import { composeMuseLaunchPrompt } from './MuseLongTurnProgress'
 import { createMuseIsolatedHome, projectMuseAuthJson } from './MuseIsolatedHome'
 import type { MuseIsolatedHomeLease } from './MuseIsolatedHome'
@@ -353,6 +354,9 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
       },
       ...(input.onContextCompaction ? { onContextCompaction: input.onContextCompaction } : {}),
       onWarning: noteWarning,
+      // Same contract the launch steers keep: a native slash dispatch reaches
+      // the provider untouched, so it is never steered mid-turn either.
+      announceBeforeTools: museAnnounceSteerAppliesToPrompt(prompt),
       ...(input.onApprovalRequest ? { onApprovalRequest: input.onApprovalRequest } : {}),
       onClose: (code, closeTerminal, error) => {
         exitCode = code

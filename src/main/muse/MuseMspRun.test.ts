@@ -598,3 +598,70 @@ describe('MSP session-log terminal adoption', () => {
     expect(outcome.warnings.some((w) => w.includes('stale log verdict'))).toBe(false)
   })
 })
+
+describe('announcing before tool work', () => {
+  /** Handshake to an accepted turn, then open a tool call with no prose. */
+  async function driveToUnannouncedTool(child: FakeMspChild): Promise<void> {
+    await flush()
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { serverInfo: { name: 'muse', version: '1.1.1' } }
+    })
+    await flush()
+    child.emit({
+      jsonrpc: '2.0',
+      id: 2,
+      result: { session: { sessionId: 'sess-1', turnCount: 0, workspaceRoot: '/ws', modelId: 'm' } }
+    })
+    await flush()
+    child.emit({ jsonrpc: '2.0', id: 3, result: { turnId: 'turn-1', status: 'accepted' } })
+    await flush()
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'item/started',
+      params: {
+        sessionId: 'sess-1',
+        item: {
+          itemId: 'i1',
+          kind: 'toolCall',
+          turnId: 'turn-1',
+          status: 'inProgress',
+          tool: 'read_file'
+        }
+      }
+    })
+    await flush()
+  }
+
+  async function finish(child: FakeMspChild): Promise<void> {
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'turn/completed',
+      params: { sessionId: 'sess-1', turnId: 'turn-1', status: 'completed' }
+    })
+    await flush()
+    child.finish(0)
+    await flush()
+  }
+
+  it('steers an ordinary task that reaches for a tool without speaking', async () => {
+    const child = new FakeMspChild()
+    const pending = run(child, { prompt: 'Add more jokes to the repo.' })
+    await driveToUnannouncedTool(child)
+    const steers = child.sent().filter((frame) => frame.method === 'turn/steer')
+    await finish(child)
+    await pending
+    expect(steers).toHaveLength(1)
+  })
+
+  it('leaves a native slash dispatch unsteered', async () => {
+    const child = new FakeMspChild()
+    const pending = run(child, { prompt: '/compact' })
+    await driveToUnannouncedTool(child)
+    const steers = child.sent().filter((frame) => frame.method === 'turn/steer')
+    await finish(child)
+    await pending
+    expect(steers).toHaveLength(0)
+  })
+})

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AcpChildProcess } from '../acp/AcpTurnClient'
+import { MUSE_ANNOUNCE_STEER_TEXT } from './MuseAnnounceSteer'
 import { runMuseMspTurn, selectMuseMspApprovalChoice } from './MuseMspClient'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
 import { MUSE_MSP_SCHEMA_FINGERPRINT, type MuseMspApprovalChoice } from './MuseMspProtocol'
@@ -1766,5 +1767,89 @@ describe('runMuseMspTurn — inactivity watchdog', () => {
     // a `pressure` that never clears must not resurrect the infinite wedge.
     expect(await settleWithin(handle, 900)).toBe('closed')
     expect(warnings.some((w) => /stopped responding/i.test(w))).toBe(true)
+  })
+})
+
+describe('runMuseMspTurn — announcing before tool work', () => {
+  const itemFrame = (
+    method: 'item/started' | 'item/completed',
+    item: Record<string, unknown>
+  ): Record<string, unknown> => ({
+    jsonrpc: '2.0',
+    method,
+    params: { sessionId: 'sess-1', item: { turnId: 'turn-1', status: 'inProgress', ...item } }
+  })
+  const steers = (child: FakeMspChild): Record<string, any>[] =>
+    child.sent().filter((frame) => frame.method === 'turn/steer')
+
+  it('asks for an opening when the turn reaches for a tool with no prose behind it', async () => {
+    const { child } = start()
+    await driveToTurn(child)
+    child.emit(itemFrame('item/started', { itemId: 'i1', kind: 'toolCall', tool: 'read_file' }))
+    await flush()
+    expect(steers(child)).toHaveLength(1)
+    expect(steers(child)[0].params).toMatchObject({
+      sessionId: 'sess-1',
+      expectedTurnId: 'turn-1',
+      input: [{ type: 'text', text: MUSE_ANNOUNCE_STEER_TEXT }]
+    })
+  })
+
+  it('stays quiet when the model spoke before reaching for a tool', async () => {
+    const { child } = start()
+    await driveToTurn(child)
+    child.emit(itemFrame('item/started', { itemId: 'm1', kind: 'agentMessage' }))
+    child.emit(itemFrame('item/started', { itemId: 'i1', kind: 'toolCall', tool: 'read_file' }))
+    await flush()
+    expect(steers(child)).toHaveLength(0)
+  })
+
+  it('asks once per turn however many tools follow', async () => {
+    const { child } = start()
+    await driveToTurn(child)
+    child.emit(itemFrame('item/started', { itemId: 'i1', kind: 'toolCall', tool: 'read_file' }))
+    child.emit(itemFrame('item/started', { itemId: 'i2', kind: 'toolCall', tool: 'shell' }))
+    child.emit(itemFrame('item/started', { itemId: 'i3', kind: 'toolCall', tool: 'edit_file' }))
+    await flush()
+    expect(steers(child)).toHaveLength(1)
+  })
+
+  it('does not steer a native slash dispatch', async () => {
+    const { child } = start({ announceBeforeTools: false })
+    await driveToTurn(child)
+    child.emit(itemFrame('item/started', { itemId: 'i1', kind: 'toolCall', tool: 'read_file' }))
+    await flush()
+    expect(steers(child)).toHaveLength(0)
+  })
+
+  it('keeps its own steered user message out of the transcript', async () => {
+    const { child, events } = start()
+    await driveToTurn(child)
+    child.emit(
+      itemFrame('item/completed', {
+        itemId: 'u1',
+        kind: 'userMessage',
+        status: 'completed',
+        steered: true,
+        fallbackText: MUSE_ANNOUNCE_STEER_TEXT
+      })
+    )
+    await flush()
+    expect(events.filter((event) => event.type === 'unknown')).toHaveLength(0)
+  })
+
+  it('still surfaces an unsteered user message, so the guard is not blanket', async () => {
+    const { child, events } = start()
+    await driveToTurn(child)
+    child.emit(
+      itemFrame('item/completed', {
+        itemId: 'u2',
+        kind: 'userMessage',
+        status: 'completed',
+        fallbackText: 'typed by the user'
+      })
+    )
+    await flush()
+    expect(events.filter((event) => event.type === 'unknown')).toHaveLength(1)
   })
 })

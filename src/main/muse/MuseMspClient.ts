@@ -30,6 +30,7 @@ import { randomBytes as nodeRandomBytes } from 'node:crypto'
 import type { AcpChildProcess } from '../acp/AcpTurnClient'
 import type { ContextCompactionSignal } from '../../shared/contextCompaction'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
+import { createMuseAnnounceSteerGate, MUSE_ANNOUNCE_STEER_TEXT } from './MuseAnnounceSteer'
 import {
   museMspCompactionItemToSignal,
   museMspContextPressureIndicatesCompactionQuiet
@@ -150,6 +151,12 @@ export interface MuseMspTurnOptions {
    * the pump. A host wires this to a `provider_warning` compat line.
    */
   readonly onWarning?: (message: string) => void
+  /**
+   * Ask for one sentence of prose when the turn opens with a tool call instead
+   * of an announcement. Default true. Pass false for a native slash dispatch,
+   * which must reach the provider unsteered.
+   */
+  readonly announceBeforeTools?: boolean
   readonly onRawFrame?: (direction: 'in' | 'out', frame: unknown) => void
   readonly endProcess?: (child: AcpChildProcess) => void
   readonly endProcessGraceMs?: number
@@ -287,6 +294,7 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   // with an absent `field` (the schema default is `text`) becomes user-visible
   // assistant text AND is concatenated into the final answer.
   const itemKinds = new Map<string, string>()
+  const announceSteer = createMuseAnnounceSteerGate(options.announceBeforeTools !== false)
   // What reasoning text we have already shown per item, so the completed
   // summary is not restated on top of the deltas that built it — the same
   // duplicate suppression MuseReasoningProjection applies on the exec lane.
@@ -633,6 +641,23 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
     }
   }
 
+  const sendSteer = (input: readonly MuseMspTurnInputPart[]): boolean => {
+    if (closed || stdinClosed) return false
+    if (!sessionId || !activeTurnId || sawTurnCompleted || input.length === 0) return false
+    void call('turn/steer', {
+      commandId: mintCommandId(),
+      sessionId,
+      // The race guard: MSP rejects `invalid_target` if this turn already
+      // finished, which is exactly the outcome we want over injecting into a
+      // turn the user was not looking at.
+      expectedTurnId: activeTurnId,
+      input
+    }).catch((error: Error) => {
+      warn(`Muse declined the mid-turn steer: ${error.message}`)
+    })
+    return true
+  }
+
   const itemToEvent = (
     item: MuseMspItem,
     phase: 'started' | 'updated' | 'completed'
@@ -644,6 +669,10 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       runId: text(item.turnId) || activeTurnId,
       raw: item
     }
+    // `steered` marks a mid-turn injection made by turn/steer — ours, not
+    // something the user typed. It belongs in the model's context and nowhere
+    // near the transcript.
+    if (item.kind === 'userMessage' && item.steered === true) return null
     if (item.kind === 'agentMessage') {
       if (phase !== 'completed') return null
       return { ...base, type: 'content', text: text(item.text) }
@@ -801,6 +830,11 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         // value — including one this build has never seen — resumes the idle
         // clock rather than holding the suspension open on a guess.
         const workKind = String(item.kind || itemKinds.get(item.itemId) || '')
+        // Before any early return below: a compaction or agentMessage frame
+        // still has to reach the gate, or prose would go unnoticed.
+        if (announceSteer.observeItem({ kind: workKind, phase })) {
+          sendSteer([{ type: 'text', text: MUSE_ANNOUNCE_STEER_TEXT }])
+        }
         if (MUSE_MSP_LONG_WORK_ITEM_KINDS.has(workKind)) {
           if (phase !== 'completed' && item.status === 'inProgress') {
             openLongWorkItems.add(item.itemId)
@@ -1181,22 +1215,7 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       turnTerminal = turnTerminal ?? 'cancelled'
       cancelTurn()
     },
-    steer: (input) => {
-      if (closed || stdinClosed) return false
-      if (!sessionId || !activeTurnId || sawTurnCompleted || input.length === 0) return false
-      void call('turn/steer', {
-        commandId: mintCommandId(),
-        sessionId,
-        // The race guard: MSP rejects `invalid_target` if this turn already
-        // finished, which is exactly the outcome we want over injecting into a
-        // turn the user was not looking at.
-        expectedTurnId: activeTurnId,
-        input
-      }).catch((error: Error) => {
-        warn(`Muse declined the mid-turn steer: ${error.message}`)
-      })
-      return true
-    },
+    steer: (input) => sendSteer(input),
     closed: closedPromise
   }
 }
