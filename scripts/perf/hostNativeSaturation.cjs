@@ -37,9 +37,11 @@
  * out of process. A timer cannot preempt synchronously blocking adapter work.
  *
  * WHAT THIS DRIVER DOES NOT DO: no Ensemble-pool saturation (that driver is
- * scripts/perf/ensemblePoolSaturation.cjs). No provider runs. No runner
- * imports this file yet: the matrix counts the capability as existing, which
- * is not the same as a cell being executable.
+ * scripts/perf/ensemblePoolSaturation.cjs). No provider runs. No T2 runner
+ * imports this file yet. Production admission is bound through
+ * `bindHostNodeRunAdmissionForSaturation` (`src/host-node/HostNodeRunAdmissionSaturationAdapter.ts`);
+ * `persistProbe` remains injected because a live Desktop persist against an
+ * out-of-process Host is the M2 HostQueuedStartInterference regression.
  */
 
 const MAX_TIMER_MS = 2 ** 31 - 1

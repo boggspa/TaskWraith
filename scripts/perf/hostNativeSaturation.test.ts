@@ -1,9 +1,11 @@
 import { createRequire } from 'node:module'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  createHostNodeRunAdmission,
   HOST_NODE_MAX_CONCURRENT_RUNS,
   HOST_NODE_MAX_QUEUED_STARTS
 } from '../../src/host-node/HostNodeRunAdmission'
+import { bindHostNodeRunAdmissionForSaturation } from '../../src/host-node/HostNodeRunAdmissionSaturationAdapter'
 
 const require = createRequire(import.meta.url)
 const {
@@ -15,9 +17,9 @@ const {
 } = require('./hostNativeSaturation.cjs')
 
 // Test double mirroring HostNodeRunAdmission semantics (16 active, 8 queued,
-// thread_busy identity rule, cancel resolves the waiter as rejected). It is a
-// double, not the production admission: attached adapters arrive with
-// production binding (B1/M2, still owed).
+// thread_busy identity rule, cancel resolves the waiter as rejected). Used
+// for driver-strictness cases that need hangs, lying counters, or garbage
+// results. Production admission is bound in the dedicated test below.
 function createFakeAdmission(options: Record<string, unknown> = {}) {
   const maxActive = (options.maxActive as number) ?? 16
   const maxQueued = (options.maxQueued as number) ?? 8
@@ -290,6 +292,27 @@ describe('runHostNativeSaturation', () => {
     await expect(
       runHostNativeSaturation({ api, seed: undefined as unknown as number })
     ).rejects.toThrow(/seed/)
+  })
+})
+
+describe('production HostNodeRunAdmission bind', () => {
+  it('observes saturation against createHostNodeRunAdmission, not the test double', async () => {
+    const admission = createHostNodeRunAdmission()
+    const persistProbe = vi.fn(async () => {
+      expect(admission.queuedCount()).toBeGreaterThan(0)
+      return { probed: true }
+    })
+    const api = bindHostNodeRunAdmissionForSaturation(admission, persistProbe)
+    const result = await saturate(api)
+    expect(result.ok).toBe(true)
+    expect(result.saturationObserved).toBe(true)
+    expect(result.arrival.queuedBeforeAdmit).toBe(true)
+    expect(result.probe.whileQueued).toBe(true)
+    expect(persistProbe).toHaveBeenCalledTimes(1)
+    expect(result.drain.inflightCount).toBe(0)
+    expect(result.drain.queuedCount).toBe(0)
+    expect(admission.inflightCount()).toBe(0)
+    expect(admission.queuedCount()).toBe(0)
   })
 })
 
