@@ -65,7 +65,8 @@ const {
   applyCrossThreadToMetrics
 } = require('./collectors/index.cjs')
 const { probeHostBootstrapIdentity } = require('./hostWelcomeProbe.cjs')
-const { parseCellName } = require('./interferenceMatrix.cjs')
+const { parseCellName, PAIRING_ROLES } = require('./interferenceMatrix.cjs')
+const { buildT2RunEvidence } = require('./t2RunEvidence.cjs')
 const {
   runDeterministicReplay,
   createCdpPageApiAdapter,
@@ -845,6 +846,8 @@ function parseArgs(argv) {
       out.replayStallTimeoutMs = arg.slice('--replay-stall-timeout-ms='.length)
     } else if (arg.startsWith('--home=')) out.home = arg.slice('--home='.length)
     else if (arg.startsWith('--cell=')) out.cell = arg.slice('--cell='.length)
+    else if (arg.startsWith('--role=')) out.role = arg.slice('--role='.length)
+    else if (arg.startsWith('--build-id=')) out.buildId = arg.slice('--build-id='.length)
     else {
       throw new Error(`Unknown argument: ${arg}`)
     }
@@ -886,7 +889,10 @@ Options:
   --workload=… --seed=… --mode=… --fx-posture=… --lean --scale-down=… --max-replay-events=…
   --replay-stall-timeout-ms=<n>     Fail closed if one replay event makes no progress (default: 300000)
   --cell=<canonical>                Canonical matrix cell (<history>/<chats>/<path>/<mix>/<saturation>) for the
-                                    crossThread host-span fold; omitted → host evidence recorded, never folded
+                                    crossThread host-span fold and the run-evidence descriptor; omitted → host
+                                    evidence recorded, never folded; run identity left undeclared
+  --role=<light-alone|light-beside> Pairing role this run measures; omitted → run identity left undeclared
+  --build-id=<id>                   Operator-named build identity for pairing; omitted → left undeclared
   --skip-build                      Skip build (NON-AUTHORITATIVE; refuses official-baseline path)
   --help
 `.trim()
@@ -926,6 +932,17 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     throw new Error(
       `--cell must be a canonical matrix cell name (<history>/<chats>/<path>/<mix>/<saturation>): ${crossThreadCell}`
     )
+  }
+
+  // Declared run identity for the run-evidence descriptor (Wall 2a). Like
+  // --cell, validated here so a typo fails before any I/O, never at fold time.
+  const pairingRole = args.role == null ? null : String(args.role)
+  if (pairingRole !== null && !PAIRING_ROLES.includes(pairingRole)) {
+    throw new Error(`--role must be one of ${PAIRING_ROLES.join('|')}: ${pairingRole}`)
+  }
+  const buildId = args.buildId == null ? null : String(args.buildId)
+  if (buildId !== null && buildId.trim().length === 0) {
+    throw new Error('--build-id must be a non-empty build identity when declared')
   }
 
   // Default refuse launch
@@ -1903,6 +1920,22 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     }
   })
   report.gates = gateProbe.gates
+
+  // Wall 2a — run-evidence descriptor. Additive: the existing report shape is
+  // untouched; this block is what the matrix validators read. Identity comes
+  // from declared flags plus observed fixture values; coverage is the T2
+  // attempt's own (no fixed sampling windows yet), so the descriptor carries
+  // its gaps explicitly via validateRunEvidence.
+  report.runEvidence = buildT2RunEvidence({
+    cell: crossThreadCell,
+    role: pairingRole,
+    workload,
+    seed,
+    fixtureFingerprint: fingerprint,
+    fixtureChatIds: fixture.chats.map((chat) => chat.appChatId),
+    buildId,
+    launched: willLaunch
+  }).run
 
   const reportPath = path.join(artifactDir, 'perf-t2-report.json')
   const planPath = path.join(artifactDir, 'perf-t2-launch-plan.json')

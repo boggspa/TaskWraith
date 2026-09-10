@@ -12,6 +12,14 @@
 
 const crypto = require('crypto')
 
+/**
+ * Output-contract version of this generator. The T2 run-evidence descriptor
+ * records it in `fixtureVersions`; pairing requires identical versions across
+ * the alone/beside runs. Bump when the same inputs would produce different
+ * fixture bytes.
+ */
+const FIXTURE_GENERATOR_VERSION = 1
+
 const PROVIDERS = Object.freeze([
   'codex',
   'claude',
@@ -693,6 +701,7 @@ function fixtureFingerprint(fixture) {
 }
 
 module.exports = {
+  FIXTURE_GENERATOR_VERSION,
   PROVIDERS,
   TOOL_NAMES,
   OBSERVED_30SEAT,
