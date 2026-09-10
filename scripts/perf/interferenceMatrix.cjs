@@ -9,8 +9,9 @@
  * fixed sampling window every cell must be measured under. It is pure data
  * plus validators — no launch, no replay, no fixtures. Drivers that can
  * actually REACH every cell are landing piecemeal (concurrent per-chat
- * replay lanes: scripts/perf/concurrentReplayLanes.cjs, M1 A1.2); provider
- * saturation and control-action drivers are still later milestone work.
+ * replay lanes: scripts/perf/concurrentReplayLanes.cjs, M1 A1.2; control
+ * actions: scripts/perf/controlActionReplay.cjs, M1 Wall 1). Deterministic
+ * providers and saturation drivers are still later milestone work.
  * A cell existing here is a scenario definition. Every enumerated cell
  * explicitly lists today's missing drivers.
  *
@@ -284,14 +285,13 @@ function assertPairedRunCompatibility(alone, beside) {
 const MISSING_DRIVER_CAPABILITIES = Object.freeze([
   'deterministic_replay_provider',
   'ensemble_pool_saturation_driver',
-  'host_native_saturation_driver',
-  'control_action_replay_events'
+  'host_native_saturation_driver'
 ])
 
 function cellReachability(cell) {
   const check = validateMatrixCell(cell)
   if (!check.ok) throw new Error(check.errors.join('; '))
-  const missingCapability = ['deterministic_replay_provider', 'control_action_replay_events']
+  const missingCapability = ['deterministic_replay_provider']
   if (cell.saturation === 'ensemble_pool_30_join') {
     missingCapability.push('ensemble_pool_saturation_driver')
   }

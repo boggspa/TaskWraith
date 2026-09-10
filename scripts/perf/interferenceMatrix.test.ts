@@ -112,7 +112,9 @@ describe('interference matrix reachability', () => {
       expect(cell.name.split('/')).toHaveLength(5)
       expect(cell.reachable).toBe(false)
       expect(cell.missingCapability).toContain('deterministic_replay_provider')
-      expect(cell.missingCapability).toContain('control_action_replay_events')
+      // The control-action capability LANDED with scripts/perf/controlActionReplay.cjs
+      // (M1 Wall 1): the matrix no longer claims it missing.
+      expect(cell.missingCapability.includes('control_action_replay_events')).toBe(false)
       // The per-chat lanes capability LANDED with scripts/perf/concurrentReplayLanes.cjs
       // (M1 A1.2): the matrix no longer claims it missing.
       expect(cell.missingCapability.includes('concurrent_per_chat_replay_lanes')).toBe(false)
