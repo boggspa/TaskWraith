@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import type { ReactNode, RefObject } from 'react'
 import type { ComposerStyle } from '../../../main/store/types'
 import { TranscriptPanel, transcriptRunningChatIdsSignature } from './TranscriptPanel'
+import { TranscriptStallNotice } from './TranscriptStallNotice'
 import { Composer, type ComposerProps } from './Composer'
 import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildChatViewProps'
 import { useCurrentChatTranscriptWindow } from '../lib/currentChatTranscriptWindow'
@@ -697,6 +698,7 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
       )}
       {!paneIsWelcomeChat && (
         <div className="multiview-pane-content">
+          <TranscriptStallNotice chatId={props.chat?.appChatId} />
           <TranscriptPanel
             {...buildChatViewProps({
               ...props,

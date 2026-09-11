@@ -28,8 +28,17 @@
  *  4. BOUNDED. An unbounded queue in front of fsync is exactly how the 44 GB
  *     artifact happened. At `maxQueueDepth` the queue degrades to synchronous
  *     draining rather than buffering — slower, never lossy.
- *  5. OFF BY DEFAULT. `TASKWRAITH_UTILITY_WRITE=1` opts in. The seam ships dark
- *     and is enabled after profiling.
+ *  5. ON BY DEFAULT since 2026-09-11. `TASKWRAITH_UTILITY_WRITE=0` opts OUT,
+ *     back to the synchronous main-thread writer, with no other behaviour
+ *     change. The seam shipped dark pending profiling; the profiling arrived
+ *     as an incident. On a live profile that day a 1.77 MB chat record took
+ *     6,254 persistence revisions across 1,493 transcript rows — ~4.19
+ *     synchronous write+fsync+rename+dirsync cycles per row the user sees —
+ *     on the same main thread that was running a six-seat ensemble round and
+ *     serving the renderer's transcript page pulls. The transcript went 32s,
+ *     then 44s, without a single update. Invariants 1-4 above are what make
+ *     this safe to default: identical bytes, absolute ordering, ordered
+ *     synchronous fallback, and a hard bound.
  *
  * DELIBERATE DEVIATION FROM THE LANE BRIEF (flagged for @SolBoss/@K3Review):
  * the brief said "bound it and coalesce per chatId". This implements the bound
@@ -230,12 +239,16 @@ export function createUtilityProcessChannelFactory(
 // ---------------------------------------------------------------------------
 
 /**
- * Off unless `TASKWRAITH_UTILITY_WRITE=1`. With the flag off `saveChat` keeps
- * its existing synchronous writer untouched, so the default build is
- * byte-for-byte and behaviour-for-behaviour what shipped in b76154222.
+ * On unless `TASKWRAITH_UTILITY_WRITE=0`. Setting it to `0` restores the
+ * synchronous main-thread writer byte-for-byte and behaviour-for-behaviour, so
+ * the escape hatch is one environment variable and a restart.
+ *
+ * Only an explicit `0` disables. An unset, empty, or unrecognised value enables:
+ * the failure mode of a typo should be the safer-ordered utility path with its
+ * synchronous fallback, not a silent return to blocking main on every fsync.
  */
 export function isUtilityWriteEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return String(env.TASKWRAITH_UTILITY_WRITE ?? '').trim() === '1'
+  return String(env.TASKWRAITH_UTILITY_WRITE ?? '').trim() !== '0'
 }
 
 // ---------------------------------------------------------------------------

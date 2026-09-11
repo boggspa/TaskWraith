@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatListItem, ChatMessage, ChatRecord, ChatRun } from '../../../main/store/types'
 import type { TranscriptPage, TranscriptPageRequest } from '../../../shared/transcriptPage'
 import { ChatTranscriptStore } from './chatTranscriptStore'
@@ -9,6 +9,8 @@ import {
   requestOlderTranscriptPage,
   requestRevealTranscriptMessage,
   resetChatTranscriptPagerForTests,
+  overdueTranscriptPagerRequests,
+  TRANSCRIPT_PAGER_REQUEST_DEADLINE_MS,
   type TranscriptPageFetcher
 } from './chatTranscriptPager'
 
@@ -240,5 +242,81 @@ describe('hydratePagedChatShell', () => {
     const full = summaryRow('c1') as ChatRecord
     delete (full as { summaryOnly?: boolean }).summaryOnly
     expect(await hydratePagedChatShell('c1', full, noShell)).toBeNull()
+  })
+})
+
+describe('chatTranscriptPager request deadline', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    resetChatTranscriptPagerForTests()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function pagedStoreWithOlder(): ChatTranscriptStore {
+    const store = new ChatTranscriptStore()
+    store.ingestPage(
+      page('chat-1', ['m-5', 'm-6'], {
+        windowStart: 5,
+        windowEnd: 7,
+        hasOlder: true,
+        hasNewer: false,
+        totalMessageCount: 20
+      })
+    )
+    return store
+  }
+
+  it('releases the dedup key when a request overruns, so the affordance recovers', async () => {
+    const store = pagedStoreWithOlder()
+    let calls = 0
+    const stuck: TranscriptPageFetcher = () => {
+      calls += 1
+      return new Promise<TranscriptPage | null>(() => {})
+    }
+
+    requestOlderTranscriptPage('chat-1', store, stuck)
+    expect(calls).toBe(1)
+    // Dropped outright while the first is in flight — the pre-existing
+    // behaviour, and harmless only because the deadline below exists.
+    requestOlderTranscriptPage('chat-1', store, stuck)
+    expect(calls).toBe(1)
+    expect(overdueTranscriptPagerRequests()).toBe(0)
+
+    await vi.advanceTimersByTimeAsync(TRANSCRIPT_PAGER_REQUEST_DEADLINE_MS)
+    expect(overdueTranscriptPagerRequests()).toBe(1)
+
+    requestOlderTranscriptPage('chat-1', store, stuck)
+    expect(calls).toBe(2)
+  })
+
+  it('does not release a key whose request completed normally', async () => {
+    const store = pagedStoreWithOlder()
+    const fetcher: TranscriptPageFetcher = async () =>
+      page('chat-1', ['m-3', 'm-4'], {
+        windowStart: 3,
+        windowEnd: 5,
+        hasOlder: true,
+        hasNewer: true,
+        totalMessageCount: 20
+      })
+
+    requestOlderTranscriptPage('chat-1', store, fetcher)
+    await vi.advanceTimersByTimeAsync(0)
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(TRANSCRIPT_PAGER_REQUEST_DEADLINE_MS * 2)
+    expect(overdueTranscriptPagerRequests()).toBe(0)
+  })
+
+  it('keeps deadlines separate per key', async () => {
+    const store = pagedStoreWithOlder()
+    const stuck: TranscriptPageFetcher = () => new Promise<TranscriptPage | null>(() => {})
+    requestOlderTranscriptPage('chat-1', store, stuck)
+    requestLatestTranscriptPage('chat-1', store, stuck)
+    await vi.advanceTimersByTimeAsync(TRANSCRIPT_PAGER_REQUEST_DEADLINE_MS)
+    // Both keys released independently, neither cancelled the other.
+    expect(overdueTranscriptPagerRequests()).toBe(2)
   })
 })

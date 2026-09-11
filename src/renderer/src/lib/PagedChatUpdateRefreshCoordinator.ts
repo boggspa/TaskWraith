@@ -9,6 +9,18 @@ export const MAX_LIVE_TAIL_PAGE_MESSAGES = 500
 export const MAX_LIVE_TAIL_PAGE_BYTES = 8 * 1024 * 1024
 export const DEFAULT_PAGED_CHAT_UPDATE_DEBOUNCE_MS = 50
 
+/**
+ * How long one tail pull may hold this chat's single flight slot.
+ *
+ * Not a cancellation — an `ipcRenderer.invoke` in flight cannot be recalled,
+ * and a late page is still a correct page. It releases the SLOT. Before this,
+ * `await this.fetchPage(...)` had no deadline at all, so a pull that never
+ * settled (a wedged main thread, a lost channel) swallowed every subsequent
+ * invalidation for that chat silently and permanently: the transcript simply
+ * stopped, with nothing anywhere reporting why.
+ */
+export const DEFAULT_PAGED_CHAT_UPDATE_FETCH_DEADLINE_MS = 10_000
+
 export type PagedChatUpdateTailFetcher = (
   request: TranscriptPageRequest
 ) => Promise<TranscriptPage | null>
@@ -24,6 +36,8 @@ export interface PagedChatUpdateRefreshCoordinatorOptions {
   /** Must synchronously publish the accepted generation into renderer state. */
   commit: (value: PagedChatUpdateRefreshCommit) => void
   debounceMs?: number
+  /** Releases the per-chat flight slot when a pull overruns. 0 disables. */
+  fetchDeadlineMs?: number
   maxMessages?: number
   maxBytes?: number
   maxTrackedChats?: number
@@ -35,6 +49,10 @@ export interface PagedChatUpdateRefreshStats {
   trackedChats: number
   inFlight: number
   scheduled: number
+  /** Pulls that overran the deadline and released their slot. */
+  overdueFetches: number
+  /** Chats whose newest invalidation is still unanswered by a commit. */
+  behind: number
 }
 
 interface RefreshState {
@@ -43,8 +61,13 @@ interface RefreshState {
   generation: number
   inFlight: boolean
   timer?: ReturnType<typeof setTimeout>
+  deadlineTimer?: ReturnType<typeof setTimeout>
+  /** Generation that currently owns the slot and its deadline. */
+  deadlineOwner: number | null
   cancelled: boolean
   lastTouched: number
+  /** Newest generation a commit has published. Lags `generation` while behind. */
+  committedGeneration: number
 }
 
 function boundedPositiveInteger(value: number | undefined, fallback: number, cap: number): number {
@@ -73,6 +96,7 @@ export class PagedChatUpdateRefreshCoordinator {
   private readonly fetchPage: PagedChatUpdateTailFetcher
   private readonly commit: (value: PagedChatUpdateRefreshCommit) => void
   private readonly debounceMs: number
+  private readonly fetchDeadlineMs: number
   private readonly maxMessages: number
   private readonly maxBytes: number
   private readonly maxTrackedChats: number
@@ -82,12 +106,17 @@ export class PagedChatUpdateRefreshCoordinator {
   ) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (timer: ReturnType<typeof setTimeout>) => void
   private disposed = false
+  private overdueFetches = 0
   private touchSequence = 0
 
   constructor(options: PagedChatUpdateRefreshCoordinatorOptions) {
     this.fetchPage = options.fetchPage
     this.commit = options.commit
     this.debounceMs = boundedDebounce(options.debounceMs)
+    this.fetchDeadlineMs =
+      typeof options.fetchDeadlineMs === 'number' && Number.isFinite(options.fetchDeadlineMs)
+        ? Math.max(0, Math.floor(options.fetchDeadlineMs))
+        : DEFAULT_PAGED_CHAT_UPDATE_FETCH_DEADLINE_MS
     this.maxMessages = boundedPositiveInteger(
       options.maxMessages,
       MAX_LIVE_TAIL_PAGE_MESSAGES,
@@ -122,7 +151,9 @@ export class PagedChatUpdateRefreshCoordinator {
         generation: 0,
         inFlight: false,
         cancelled: false,
-        lastTouched: 0
+        lastTouched: 0,
+        committedGeneration: 0,
+        deadlineOwner: null
       }
       this.states.set(invalidation.chatId, state)
     }
@@ -156,7 +187,17 @@ export class PagedChatUpdateRefreshCoordinator {
       if (state.inFlight) inFlight += 1
       if (state.timer) scheduled += 1
     }
-    return { trackedChats: this.states.size, inFlight, scheduled }
+    let behind = 0
+    for (const state of this.states.values()) {
+      if (state.committedGeneration < state.generation) behind += 1
+    }
+    return {
+      trackedChats: this.states.size,
+      inFlight,
+      scheduled,
+      overdueFetches: this.overdueFetches,
+      behind
+    }
   }
 
   private makeRoomFor(chatId: string): boolean {
@@ -181,6 +222,11 @@ export class PagedChatUpdateRefreshCoordinator {
       this.clearTimer(state.timer)
       state.timer = undefined
     }
+    if (state.deadlineTimer) {
+      this.clearTimer(state.deadlineTimer)
+      state.deadlineTimer = undefined
+    }
+    state.deadlineOwner = null
   }
 
   private isLive(state: RefreshState): boolean {
@@ -201,6 +247,24 @@ export class PagedChatUpdateRefreshCoordinator {
     const generation = state.generation
     const invalidation = state.latest
     state.inFlight = true
+    state.deadlineOwner = generation
+    // Release the slot if this pull overruns. The fetch keeps running and its
+    // page is still accepted if it lands — a late page is correct, it is the
+    // WEDGED SLOT that costs the user their transcript.
+    if (this.fetchDeadlineMs > 0) {
+      state.deadlineTimer = this.setTimer(() => {
+        state.deadlineTimer = undefined
+        if (!this.isLive(state) || !state.inFlight) return
+        if (state.deadlineOwner !== generation) return
+        state.deadlineOwner = null
+        state.inFlight = false
+        this.overdueFetches += 1
+        // Re-arm only when something newer is actually waiting. Retrying into a
+        // main thread that just missed a 10s deadline would pile fetches onto
+        // the very stall we are recovering from.
+        if (state.generation > generation) this.arm(state)
+      }, this.fetchDeadlineMs)
+    }
 
     void this.runFetch(state, invalidation, generation, isImmediateRetry)
   }
@@ -229,12 +293,29 @@ export class PagedChatUpdateRefreshCoordinator {
     ) {
       try {
         this.commit({ invalidation, page, generation })
+        // Only a real commit closes the gap. Recorded here rather than on
+        // fetch completion so `behind` stays true when a page arrives for a
+        // surface that has gone away and nothing was published.
+        if (generation > state.committedGeneration) state.committedGeneration = generation
       } catch {
         // A renderer state transition may have made the surface disappear.
       }
     }
 
     if (!this.isLive(state)) return
+    // OWNERSHIP FIRST. A deadline may already have released this slot to a newer
+    // fetch, and that fetch owns both the slot AND its own deadline timer.
+    // Clearing the timer before checking would strip the newer fetch of its
+    // deadline and then release its slot, starting a third pull alongside it —
+    // one overrun compounding into concurrent invokes against the very main
+    // thread that just missed a deadline.
+    if (state.deadlineOwner !== generation) return
+    if (state.deadlineTimer) {
+      this.clearTimer(state.deadlineTimer)
+      state.deadlineTimer = undefined
+    }
+    state.deadlineOwner = null
+    if (!state.inFlight) return
     state.inFlight = false
     if (state.generation === generation) return
 

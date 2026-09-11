@@ -271,3 +271,94 @@ describe('ChatUpdateDeliveryCoordinator protocol counters', () => {
     expect(totals?.messages).toBeGreaterThan(0)
   })
 })
+
+/**
+ * KNOWN DEFECT, pinned deliberately: an oversized chat can never patch.
+ *
+ * `boundChatUpdateSnapshot` delivers a marked shell for a chat over
+ * `DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES` rows — a tail page plus `summaryOnly`,
+ * `transcriptPaged`, `messageCount`, `runCount` and `runWallMs`. Every one of
+ * those is a NON-message field, so every one of them is inside
+ * `computeChatSubRevisions`, which hashes the record without its messages.
+ *
+ * The coordinator hashes the DELIVERED shell — correct, that is what the
+ * renderer ACKs — but retains the CANONICAL record as `baselineChat`. On the
+ * next send `retainedBaselineMatchesAcknowledged` recomputes the canonical
+ * record's hash and compares it against the shell's. They cannot be equal, so
+ * the baseline is dropped and a full snapshot is sent, forever. Every delivery
+ * to a large thread is a whole-record send, which is precisely the cost v2
+ * patching exists to avoid, and it is silent: the counters report healthy
+ * snapshots rather than a stuck lane.
+ *
+ * These tests assert the behaviour AS IT IS so the defect is named, located and
+ * discoverable instead of folklore. Fixing it is not a one-line change —
+ * retaining the shell as the patch base also requires the producer's delta and
+ * main's ACK hash to be computed over the shell projection rather than the
+ * canonical record, or the very next patch nacks on a record-hash mismatch and
+ * the renderer is left believing it holds a complete transcript when it holds
+ * one page. When that lands, these expectations flip to `patch` / `0`.
+ */
+describe('ChatUpdateDeliveryCoordinator bounded-snapshot baselines', () => {
+  function oversizedChat(updatedAt: number, tailContent: string): ChatRecord {
+    const contents = Array.from({ length: 1_501 }, (_, index) => `row-${index}`)
+    contents[contents.length - 1] = tailContent
+    return chat(updatedAt, contents)
+  }
+
+  it('delivers an oversized chat as a bounded shell, not the canonical record', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    coordinator.enqueue(sink, oversizedChat(1, 'first'))
+    const delivery = sink.deliveries[0]
+    expect(delivery.kind).toBe('snapshot')
+    if (delivery.kind !== 'snapshot') throw new Error('expected a snapshot')
+    expect((delivery.chat as { transcriptPaged?: boolean }).transcriptPaged).toBe(true)
+    expect(delivery.chat.messages.length).toBeLessThan(1_501)
+  })
+
+  it('drops the baseline on every later delivery, so a large thread never patches', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+
+    const records = projectSequence(
+      oversizedChat(1, 'one'),
+      oversizedChat(2, 'two'),
+      oversizedChat(3, 'three'),
+      oversizedChat(4, 'four')
+    )
+    for (const record of records) {
+      coordinator.enqueue(sink, record)
+      const latest = sink.deliveries[sink.deliveries.length - 1]
+      coordinator.acknowledge(sink.id, { deliveryId: latest.deliveryId, applied: true })
+    }
+
+    const counters = coordinator.protocolCounters()
+    // Four whole-record snapshots where three compact patches belonged.
+    expect(counters.snapshots).toBe(4)
+    expect(counters.patches).toBe(0)
+    expect(counters.baselineDrops).toBe(3)
+    expect(sink.deliveries.every((delivery) => delivery.kind === 'snapshot')).toBe(true)
+    // Guard the guard: `every` over an empty list is vacuous.
+    expect(sink.deliveries).toHaveLength(4)
+  })
+
+  it('patches normally for a chat small enough to deliver whole', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const [first, second] = projectSequence(chat(1, ['one']), chat(2, ['two']))
+    coordinator.enqueue(sink, first)
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    coordinator.enqueue(sink, second)
+    expect(sink.deliveries[1].kind).toBe('patch')
+    expect(coordinator.protocolCounters()).toMatchObject({ baselineDrops: 0 })
+  })
+})

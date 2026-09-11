@@ -202,7 +202,13 @@ describe('PagedChatUpdateRefreshCoordinator', () => {
     await vi.advanceTimersByTimeAsync(10)
     expect(fetchPage).toHaveBeenCalledTimes(1)
     expect(coordinator.invalidate(invalidation('chat-c', 1))).toBeNull()
-    expect(coordinator.stats()).toEqual({ trackedChats: 0, inFlight: 0, scheduled: 0 })
+    expect(coordinator.stats()).toEqual({
+      trackedChats: 0,
+      inFlight: 0,
+      scheduled: 0,
+      overdueFetches: 0,
+      behind: 0
+    })
   })
 
   it('rejects malformed or mismatched payloads and never commits a cross-chat page', async () => {
@@ -232,8 +238,138 @@ describe('PagedChatUpdateRefreshCoordinator', () => {
     coordinator.invalidate(invalidation('chat-a', 1))
     await vi.advanceTimersByTimeAsync(0)
     expect(coordinator.invalidate(invalidation('chat-b', 1))).toBeNull()
-    expect(coordinator.stats()).toEqual({ trackedChats: 1, inFlight: 1, scheduled: 0 })
+    expect(coordinator.stats()).toEqual({
+      trackedChats: 1,
+      inFlight: 1,
+      scheduled: 0,
+      overdueFetches: 0,
+      // The newest invalidation has not been answered by a commit yet.
+      behind: 1
+    })
     flight.resolve(page('chat-a', 1))
     await flushMicrotasks()
+  })
+
+  it('releases the flight slot when a pull overruns its deadline', async () => {
+    // The 2026-09-11 shape: main is wedged, the tail pull never settles, and
+    // every later invalidation is silently swallowed by the single-flight gate.
+    const stuck = deferred<TranscriptPage | null>()
+    const fetchPage = vi.fn(() => stuck.promise)
+    const commit = vi.fn<(value: PagedChatUpdateRefreshCommit) => void>()
+    const coordinator = new PagedChatUpdateRefreshCoordinator({
+      debounceMs: 10,
+      fetchDeadlineMs: 1_000,
+      fetchPage,
+      commit
+    })
+
+    coordinator.invalidate(invalidation('chat-a', 1))
+    await vi.advanceTimersByTimeAsync(10)
+    expect(coordinator.stats()).toMatchObject({ inFlight: 1, overdueFetches: 0 })
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(coordinator.stats()).toMatchObject({ inFlight: 0, overdueFetches: 1, behind: 1 })
+
+    // A newer invalidation can now be served instead of being dropped forever.
+    coordinator.invalidate(invalidation('chat-a', 2))
+    await vi.advanceTimersByTimeAsync(10)
+    expect(fetchPage).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not retry into a stall when nothing newer is waiting', async () => {
+    const stuck = deferred<TranscriptPage | null>()
+    const fetchPage = vi.fn(() => stuck.promise)
+    const coordinator = new PagedChatUpdateRefreshCoordinator({
+      debounceMs: 10,
+      fetchDeadlineMs: 1_000,
+      fetchPage,
+      commit: () => {}
+    })
+
+    coordinator.invalidate(invalidation('chat-a', 1))
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(5_000)
+    // One overdue release, no fetch pile-up onto the thread that just missed.
+    expect(fetchPage).toHaveBeenCalledTimes(1)
+    expect(coordinator.stats().overdueFetches).toBe(1)
+  })
+
+  it('still accepts a late page after the deadline released its slot', async () => {
+    const stuck = deferred<TranscriptPage | null>()
+    const commit = vi.fn<(value: PagedChatUpdateRefreshCommit) => void>()
+    const coordinator = new PagedChatUpdateRefreshCoordinator({
+      debounceMs: 10,
+      fetchDeadlineMs: 1_000,
+      fetchPage: () => stuck.promise,
+      commit
+    })
+
+    coordinator.invalidate(invalidation('chat-a', 1))
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(1_000)
+    stuck.resolve(page('chat-a', 1))
+    await flushMicrotasks()
+    // A late page is still a correct page; the deadline releases the slot, not
+    // the work.
+    expect(commit).toHaveBeenCalledOnce()
+    expect(coordinator.stats().behind).toBe(0)
+  })
+
+  it('clears the deadline on a normal completion, so a later fetch is not released early', async () => {
+    const first = deferred<TranscriptPage | null>()
+    const second = deferred<TranscriptPage | null>()
+    const fetchPage = vi
+      .fn<(request: TranscriptPageRequest) => Promise<TranscriptPage | null>>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+    const coordinator = new PagedChatUpdateRefreshCoordinator({
+      debounceMs: 10,
+      fetchDeadlineMs: 1_000,
+      fetchPage,
+      commit: () => {}
+    })
+
+    coordinator.invalidate(invalidation('chat-a', 1))
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(900)
+    first.resolve(page('chat-a', 1))
+    await flushMicrotasks()
+
+    coordinator.invalidate(invalidation('chat-a', 2))
+    await vi.advanceTimersByTimeAsync(10)
+    // The first fetch's deadline must not fire against the second fetch.
+    await vi.advanceTimersByTimeAsync(200)
+    expect(coordinator.stats().overdueFetches).toBe(0)
+    expect(coordinator.stats().inFlight).toBe(1)
+  })
+
+  it('reports behind until a commit actually publishes', async () => {
+    const flight = deferred<TranscriptPage | null>()
+    const coordinator = new PagedChatUpdateRefreshCoordinator({
+      debounceMs: 0,
+      fetchPage: () => flight.promise,
+      commit: () => {}
+    })
+    coordinator.invalidate(invalidation('chat-a', 1))
+    expect(coordinator.stats().behind).toBe(1)
+    await vi.advanceTimersByTimeAsync(0)
+    flight.resolve(page('chat-a', 1))
+    await flushMicrotasks()
+    expect(coordinator.stats().behind).toBe(0)
+  })
+
+  it('deadline can be disabled with 0, restoring the old unbounded wait', async () => {
+    const stuck = deferred<TranscriptPage | null>()
+    const fetchPage = vi.fn(() => stuck.promise)
+    const coordinator = new PagedChatUpdateRefreshCoordinator({
+      debounceMs: 0,
+      fetchDeadlineMs: 0,
+      fetchPage,
+      commit: () => {}
+    })
+    coordinator.invalidate(invalidation('chat-a', 1))
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(600_000)
+    expect(coordinator.stats()).toMatchObject({ inFlight: 1, overdueFetches: 0 })
   })
 })

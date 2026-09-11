@@ -32,9 +32,42 @@ function defaultFetcher(): TranscriptPageFetcher | null {
   return typeof api?.getChatTranscriptPage === 'function' ? api.getChatTranscriptPage : null
 }
 
+/**
+ * How long one pager request may hold its dedup key.
+ *
+ * `schedule` drops a request outright while one is in flight for the same key.
+ * With no deadline, a pull that never settles — a wedged main thread, a lost
+ * channel — made that key permanently deaf: every later show-older,
+ * show-newer, reveal or return-to-latest for that chat was discarded in
+ * silence, and the affordance simply stopped working with no error anywhere.
+ * This releases the KEY, never the fetch: a late page is still installed.
+ */
+export const TRANSCRIPT_PAGER_REQUEST_DEADLINE_MS = 10_000
+
 const inFlight = new Map<string, Promise<void>>()
+const inFlightDeadlines = new Map<string, ReturnType<typeof setTimeout>>()
+let overdueRequests = 0
+
+function releaseKey(key: string): void {
+  inFlight.delete(key)
+  const timer = inFlightDeadlines.get(key)
+  if (timer !== undefined) {
+    clearTimeout(timer)
+    inFlightDeadlines.delete(key)
+  }
+}
+
+/** Pager requests that overran their deadline and released their dedup key. */
+export function overdueTranscriptPagerRequests(): number {
+  return overdueRequests
+}
+
+interface PagerFlightHandle {
+  promise: Promise<void> | null
+}
 
 async function fetchAndInstall(
+  ownFlight: PagerFlightHandle,
   key: string,
   store: ChatTranscriptStore,
   fetchPage: TranscriptPageFetcher,
@@ -63,7 +96,11 @@ async function fetchAndInstall(
   } catch {
     // Paging is best-effort chrome; the current window stays on screen.
   } finally {
-    if (inFlight.get(key) !== undefined) inFlight.delete(key)
+    // Identity, not presence. Once the deadline can release a key mid-flight, a
+    // newer request may already own it — and releasing THAT entry would leave
+    // the new request both un-deduped and un-deadlined, i.e. able to wedge
+    // forever with nothing left to free it.
+    if (inFlight.get(key) === ownFlight.promise) releaseKey(key)
   }
 }
 
@@ -77,8 +114,22 @@ function schedule(
   if (inFlight.has(dedupKey)) return
   const fetcher = fetchPage ?? defaultFetcher()
   if (!fetcher) return
-  const flight = fetchAndInstall(dedupKey, store, fetcher, request, operation)
+  const ownFlight: PagerFlightHandle = { promise: null }
+  const flight = fetchAndInstall(ownFlight, dedupKey, store, fetcher, request, operation)
+  ownFlight.promise = flight
   inFlight.set(dedupKey, flight)
+  if (TRANSCRIPT_PAGER_REQUEST_DEADLINE_MS > 0) {
+    const timer = setTimeout(() => {
+      inFlightDeadlines.delete(dedupKey)
+      if (inFlight.get(dedupKey) !== flight) return
+      ownFlight.promise = null
+      inFlight.delete(dedupKey)
+      overdueRequests += 1
+    }, TRANSCRIPT_PAGER_REQUEST_DEADLINE_MS)
+    // Never hold the process open for a paging affordance.
+    ;(timer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.()
+    inFlightDeadlines.set(dedupKey, timer)
+  }
 }
 
 /** Fetch the page ending just before the current window's oldest message. */
@@ -165,4 +216,7 @@ export async function hydratePagedChatShell(
 /** Test helper — drop in-flight dedup state between specs. */
 export function resetChatTranscriptPagerForTests(): void {
   inFlight.clear()
+  for (const timer of inFlightDeadlines.values()) clearTimeout(timer)
+  inFlightDeadlines.clear()
+  overdueRequests = 0
 }

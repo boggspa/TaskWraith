@@ -151,6 +151,12 @@ import {
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
 import {
+  TRANSCRIPT_TAIL_CHANNEL,
+  TRANSCRIPT_TAIL_RECEIPT_CHANNEL,
+  buildTranscriptTailReceipt,
+  type TranscriptTailFrame
+} from '../shared/transcriptTailStream'
+import {
   CHAT_UPDATE_INTEREST_CHANNEL,
   CHAT_UPDATE_INVALIDATION_CHANNEL,
   type ChatUpdateInterestSnapshot,
@@ -3176,6 +3182,20 @@ const api = {
     ipcRenderer.on('context-compaction-progress', wrapped)
     return () => ipcRenderer.removeListener('context-compaction-progress', wrapped)
   },
+  /**
+   * Rows main just appended. Separate from `onChatUpdated` on purpose: this one
+   * is unacked, so a slow renderer can never make main withhold the next frame.
+   */
+  onTranscriptTailAppended: (callback: (frame: TranscriptTailFrame) => void) => {
+    const wrapped = (_event: unknown, frame: TranscriptTailFrame): void => callback(frame)
+    ipcRenderer.on(TRANSCRIPT_TAIL_CHANNEL, wrapped)
+    return () => ipcRenderer.removeListener(TRANSCRIPT_TAIL_CHANNEL, wrapped)
+  },
+  /** Telemetry receipt for the append-to-visible histogram. Never gates a send. */
+  reportTranscriptTailCommitted: (chatId: string, sequence: number) => {
+    const receipt = buildTranscriptTailReceipt(chatId, sequence)
+    if (receipt) ipcRenderer.send(TRANSCRIPT_TAIL_RECEIPT_CHANNEL, receipt)
+  },
   onParticipantWorkingTelemetry: (callback: (event: ParticipantWorkingTelemetryEvent) => void) => {
     const wrapped = (_event: unknown, event: ParticipantWorkingTelemetryEvent): void =>
       callback(event)
@@ -3411,6 +3431,7 @@ const api = {
     ipcRenderer.removeAllListeners('usage-changed')
     ipcRenderer.removeAllListeners('chat-updated')
     ipcRenderer.removeAllListeners(CHAT_UPDATE_INVALIDATION_CHANNEL)
+    ipcRenderer.removeAllListeners(TRANSCRIPT_TAIL_CHANNEL)
     ipcRenderer.removeAllListeners('participant-working-telemetry')
     ipcRenderer.removeAllListeners('human-collaboration-updated')
     ipcRenderer.removeAllListeners('human-collaboration-runtime-projection-update')

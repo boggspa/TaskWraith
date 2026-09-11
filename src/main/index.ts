@@ -2583,6 +2583,14 @@ import { assignAgentIdentityFromSeed } from './AgentIdentitySeed'
 import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
 import { ChatUpdateDeliveryCoordinator } from './ChatUpdateDeliveryCoordinator'
 import { ChatUpdateInterestRouter, type ChatListItemResolver } from './ChatUpdateInterestRouter'
+import { TranscriptTailBroadcaster } from './TranscriptTailBroadcaster'
+import { TranscriptVisibilityLatency } from './TranscriptVisibilityLatency'
+import { TranscriptMediaScanMemo } from './TranscriptMediaScanMemo'
+import {
+  TRANSCRIPT_TAIL_CHANNEL,
+  TRANSCRIPT_TAIL_RECEIPT_CHANNEL,
+  normalizeTranscriptTailReceipt
+} from '../shared/transcriptTailStream'
 import { registerChatUpdateInterestHandlers } from './ipc/chatUpdateInterestHandlers'
 import { RendererResponsivenessTracker } from './RendererResponsivenessTracker'
 import { RendererCrashRecovery } from './RendererCrashRecovery'
@@ -2764,6 +2772,19 @@ const chatUpdateInterestRouter = new ChatUpdateInterestRouter({
   delivery: chatUpdateDeliveryCoordinator,
   store: AppStore
 })
+/**
+ * The low-latency transcript lane. Derives "these rows were just appended" from
+ * consecutive canonical records, so one wiring point covers every producer in
+ * main rather than each append site having to opt in.
+ */
+const transcriptTailBroadcaster = new TranscriptTailBroadcaster()
+/** Append-to-visible histogram. Receipts are telemetry and never gate a send. */
+const transcriptVisibilityLatency = new TranscriptVisibilityLatency()
+/**
+ * Collapses the per-save whole-transcript media scan to the rows that are
+ * actually new. See TranscriptMediaScanMemo for why identity is a safe key.
+ */
+const transcriptMediaScanMemo = new TranscriptMediaScanMemo()
 const rendererResponsivenessTracker = new RendererResponsivenessTracker({
   createIncidentId: () => randomUUID()
 })
@@ -11561,10 +11582,30 @@ function getTranscriptMediaAssetStore(): TranscriptMediaAssetStore {
 
 function saveAndBroadcastChat(chat: ChatRecord, options: ChatSaveOptions = {}): ChatRecord {
   const normalized = normalizeTranscriptMarkdownMediaForChat(chat)
+  // EMIT BEFORE PERSIST. Everything below this line — the full-record write,
+  // the sub-revision hashing, the ACK-gated envelope, the popout refreshes —
+  // used to sit between a row being appended and that row being visible. On the
+  // 2026-09-11 thread that was a 1.77 MB synchronous write ~4.19 times per
+  // visible row, on the same main thread an ensemble round was running on. The
+  // rows are already final here; persistence is what makes them durable, not
+  // what makes them true, so visibility no longer waits for it.
+  broadcastTranscriptTail(normalized)
   const previous = AppStore.getChat(normalized.appChatId)
   const saveOptions =
     options.authoredTranscript && normalized.messages !== chat.messages ? {} : options
-  const saved = AppStore.saveChat(normalized, saveOptions)
+  let saved: ChatRecord
+  try {
+    saved = AppStore.saveChat(normalized, saveOptions)
+  } catch (error) {
+    // These rows are already on screen, and a throw here means no
+    // `chat-updated` and no invalidation will follow — so the reconcile lane
+    // that normally corrects this one never runs, and the rows would sit there
+    // until reload. Drop the watermark so the next save cannot read as an
+    // append from a base the store rejected, and tell the renderer to pull.
+    transcriptTailBroadcaster.forget(normalized.appChatId)
+    broadcastTranscriptTail(normalized)
+    throw error
+  }
   broadcastChatUpdated(saved)
   blackboardExpiryServiceRef?.observeChat(saved)
   maybeScheduleCodexNativeGoalSync(previous, saved, 'chat-save')
@@ -11624,6 +11665,15 @@ function normalizeTranscriptMarkdownMediaForChat(chat: ChatRecord): ChatRecord {
     getTranscriptMediaAssetStore()
   )
   if (!ownershipSanitized.workspacePath) return ownershipSanitized
+  // Every row already proven inert on a previous save: skip the canonical
+  // re-read, the grant resolution, the replacement array and the
+  // `includes('![')` scan entirely. Measured on 10k rows, that is 0.47 ms
+  // reclaimed on a save that touches no row. A save that DOES touch a row still
+  // walks, and the pre-pass costs it ~0.15 ms — so this is worth roughly
+  // 0.17 ms on an append and the full 0.47 ms on the many chrome-only saves.
+  if (transcriptMediaScanMemo.firstUnknownIndex(ownershipSanitized.messages) === -1) {
+    return ownershipSanitized
+  }
   // A renderer-authored save is not an authority source. Resolve grants from
   // main's canonical chat and enforce their chat + primary-workspace binding
   // before any transcript-media path is inspected.
@@ -11631,7 +11681,11 @@ function normalizeTranscriptMarkdownMediaForChat(chat: ChatRecord): ChatRecord {
   const allGrants = executableExternalPathGrantsForChat(canonicalChat)
   let changed = false
   const messages = ownershipSanitized.messages.map((message) => {
-    if (message.role !== 'assistant' && message.role !== 'system') return message
+    if (transcriptMediaScanMemo.isInert(message)) return message
+    if (message.role !== 'assistant' && message.role !== 'system') {
+      transcriptMediaScanMemo.markInert(message)
+      return message
+    }
     const existingRefs = Array.isArray(message.metadata?.mediaRefs)
       ? (message.metadata.mediaRefs as TranscriptMediaRef[])
       : []
@@ -11639,7 +11693,12 @@ function normalizeTranscriptMarkdownMediaForChat(chat: ChatRecord): ChatRecord {
     const hasManagedRefs = existingRefs.some(
       (ref) => ref.source === 'workspace_path' && ref.id.startsWith(managedPrefix)
     )
-    if (!message.content.includes('![') && !hasManagedRefs) return message
+    // Deliberately NOT memoised past this point: a row that carries image
+    // syntax or managed refs can legitimately re-resolve when grants change.
+    if (!message.content.includes('![') && !hasManagedRefs) {
+      transcriptMediaScanMemo.markInert(message)
+      return message
+    }
 
     const provider = providerForTranscriptMessage(ownershipSanitized, message)
     const externalPathGrants = provider
@@ -11998,9 +12057,20 @@ function clearChatUpdateTarget(targetId: number): void {
 function clearDeletedChatUpdateState(chatId: string): void {
   if (!chatId) return
   chatUpdateInterestRouter.clearChat(chatId)
+  // Otherwise a deleted chat keeps a watermark slot and an outstanding frame
+  // forever — bounded, but it evicts a live chat to hold a dead one.
+  transcriptTailBroadcaster.forget(chatId)
+  transcriptVisibilityLatency.forget(chatId)
 }
 
 function broadcastChatUpdatedExcept(chat: ChatRecord, excludedSenderId?: number): void {
+  // Catch-all for the ~35 producers that persist and then broadcast directly
+  // rather than going through `saveAndBroadcastChat` — renderer-authored
+  // transcript mutations, the sub-thread bridge, approval and grant handlers.
+  // `saveAndBroadcastChat` already emitted before its write, and the watermark
+  // returns null for an unchanged tail, so the hot path is not double-sent:
+  // this only fires for a producer the earlier hook never saw.
+  broadcastTranscriptTail(chat)
   const resolveCompactProjection = chatUpdateInterestRouter.createBroadcastProjectionResolver(chat)
   for (const window of desktopWindows.all()) {
     if (window.webContents.id !== excludedSenderId) {
@@ -12051,6 +12121,26 @@ function broadcastContextCompactionProgress(event: ContextCompactionProgressEven
  * renderer consumes this tiny in-memory event in the working-indicator leaf,
  * avoiding a chat merge and full transcript invalidation for every snapshot.
  */
+/**
+ * Push newly appended transcript rows on the low-latency lane.
+ *
+ * Unacked and fire-and-forget by design. Nothing here waits, retries, or holds
+ * state per renderer: a frame either lands in this tick or it does not, and the
+ * canonical `chat-updated` / invalidation lanes reconcile either way. That is
+ * the entire reason the lane can promise a bound the acked envelope cannot.
+ */
+function broadcastTranscriptTail(chat: ChatRecord): void {
+  const frame = transcriptTailBroadcaster.observe(chat)
+  if (!frame) return
+  transcriptVisibilityLatency.recordSent(frame.chatId, frame.sequence, frame.appendedAtMs)
+  desktopWindows.broadcast(TRANSCRIPT_TAIL_CHANNEL, frame)
+  if (workspacePopoutWindows.size === 0) return
+  const popout = workspacePopoutWindows.get(`chat:${frame.chatId}`)
+  if (popout && !popout.isDestroyed()) {
+    safeSendToWebContents(popout, TRANSCRIPT_TAIL_CHANNEL, frame)
+  }
+}
+
 function broadcastParticipantWorkingTelemetry(event: ParticipantWorkingTelemetryEvent): void {
   desktopWindows.broadcast('participant-working-telemetry', event)
   if (!event.chatId || workspacePopoutWindows.size === 0) return
@@ -46777,8 +46867,11 @@ if (isGeminiMcpBridgeProcess) {
     // Item 6 (perf epic): with TASKWRAITH_UTILITY_WRITE=1, saveChat's durable
     // write+fsync+rename tail runs in a long-lived utility process instead of
     // blocking the main thread. This registration is the composition-root half
-    // the dark landing (b745115a1) deliberately left out; the flag still gates
-    // activation, so the default build keeps the synchronous writer untouched.
+    // Default ON since 2026-09-11 (TASKWRAITH_UTILITY_WRITE=0 opts out): the
+    // synchronous writer performed write+fsync+rename+dirsync on the same main
+    // thread that serves transcript page pulls, ~4.19 times per visible row on
+    // a 1.77 MB record. See the SAFETY NOTES in PersistenceWriteWorker.ts for
+    // the ordering and fallback invariants that make the default safe.
     if (isUtilityWriteEnabled()) {
       const persistenceWriteQueue = new PersistenceWriteQueue({
         channelFactory: createUtilityProcessChannelFactory(
@@ -46801,6 +46894,13 @@ if (isGeminiMcpBridgeProcess) {
         incrementalChatPersistence: () => AppStore.getIncrementalChatPersistenceStats(),
         persistenceCoalescing: () => AppStore.getPersistenceCoalescingStats(),
         chatUpdateProtocol: () => chatUpdateDeliveryCoordinator.protocolCounters(),
+        // Append-to-visible, beside the event-loop lag it is so often blamed
+        // on. `oldestPendingMs` is the live reading: the percentiles go quiet
+        // during the exact stall they should be describing. A pure read, like
+        // every other section — resetting here drained the window for whoever
+        // polled next, and an emptied window reads as "no latency".
+        transcriptVisibility: () => transcriptVisibilityLatency.snapshot(),
+        transcriptTail: () => transcriptTailBroadcaster.counterSnapshot(),
         persistenceWriteQueue: () => persistenceWriteQueueRef?.stats ?? null,
         workSpans: mainWorkSpanRecorder.section
       }
@@ -46885,6 +46985,14 @@ if (isGeminiMcpBridgeProcess) {
       router: chatUpdateInterestRouter,
       isMainRendererSender,
       workspacePopoutOwnerForSender
+    })
+    // Telemetry ONLY. Deliberately not symmetric with the ACK below: nothing on
+    // the tail lane's send path reads this, so a renderer that never reports
+    // costs itself histogram coverage and never a withheld frame.
+    ipcMain.on(TRANSCRIPT_TAIL_RECEIPT_CHANNEL, (_event, value: unknown) => {
+      const receipt = normalizeTranscriptTailReceipt(value)
+      if (!receipt) return
+      transcriptVisibilityLatency.recordCommitted(receipt.chatId, receipt.sequence)
     })
     ipcMain.on(CHAT_UPDATE_ACK_CHANNEL, (event, value: unknown) => {
       const ack = normalizeChatUpdateAck(value)

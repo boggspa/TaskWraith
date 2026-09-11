@@ -436,10 +436,15 @@ describe('PersistenceWriteQueue byte observations (M1, no byte enforcement)', ()
 
 describe('PersistenceWriteQueue', () => {
   it('is off unless TASKWRAITH_UTILITY_WRITE=1', () => {
-    expect(isUtilityWriteEnabled({})).toBe(false)
-    expect(isUtilityWriteEnabled({ TASKWRAITH_UTILITY_WRITE: '0' })).toBe(false)
-    expect(isUtilityWriteEnabled({ TASKWRAITH_UTILITY_WRITE: 'true' })).toBe(false)
+    // Default ON since 2026-09-11: only an explicit '0' returns to the
+    // synchronous main-thread writer. A typo must not silently put fsync back
+    // on the thread that serves the transcript.
+    expect(isUtilityWriteEnabled({})).toBe(true)
     expect(isUtilityWriteEnabled({ TASKWRAITH_UTILITY_WRITE: '1' })).toBe(true)
+    expect(isUtilityWriteEnabled({ TASKWRAITH_UTILITY_WRITE: 'true' })).toBe(true)
+    expect(isUtilityWriteEnabled({ TASKWRAITH_UTILITY_WRITE: '' })).toBe(true)
+    expect(isUtilityWriteEnabled({ TASKWRAITH_UTILITY_WRITE: '0' })).toBe(false)
+    expect(isUtilityWriteEnabled({ TASKWRAITH_UTILITY_WRITE: ' 0 ' })).toBe(false)
   })
 
   /**
