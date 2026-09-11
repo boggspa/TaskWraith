@@ -675,6 +675,7 @@ import {
   isEnsembleActiveRoundDispatchLive,
   shouldQueueRunBeforeDispatch
 } from './lib/chatBusyState'
+import { ChatDispatchLatch } from './lib/chatDispatchLatch'
 import { applyRecoveryRecordsToEnsembleRounds } from './lib/recoverEnsembleRoundTerminals'
 import {
   buildPlanImportDisplayPrompt,
@@ -16120,6 +16121,11 @@ function App(): React.JSX.Element {
           ]
         }))
       }
+    } finally {
+      // Keyed by run, so a settle that arrives after a later submit already
+      // claimed this chat cannot free that newer claim. Idempotent and a no-op
+      // for every dispatch lane that never claimed (queue drain, retry, review).
+      chatDispatchLatchRef.current.release(currentRunIdForCleanup)
     }
   }
 
@@ -16412,6 +16418,11 @@ function App(): React.JSX.Element {
   appendBusyRunToExecutionStackRef.current = appendBusyRunToExecutionStack
 
   const welcomeBackgroundSubmitInFlightRef = useRef<Set<string>>(new Set())
+  // One composer submit per chat may be mid-dispatch. The busy check two
+  // branches down only sees a run `executeRun` has already registered, so
+  // without this every submit inside the dispatch window reads the chat as
+  // idle and starts its own run (2026-09-11: nine, from one held Enter).
+  const chatDispatchLatchRef = useRef(new ChatDispatchLatch())
   const dispatchWelcomeBackgroundRequest = async (
     request: QueuedRunRequest,
     target: WelcomeBackgroundThreadTarget,
@@ -16721,6 +16732,14 @@ function App(): React.JSX.Element {
       if (!request.existingPrompt) {
         setChatPromptDraft(targetChatId || currentChatIdRef.current || currentChat?.appChatId, '')
       }
+      return
+    }
+
+    // Not the queue: that branch above answers "sent while a run is RUNNING".
+    // This one answers "sent again while the previous submit is still being
+    // dispatched", which is a double-fire, and the honest answer is to drop it.
+    if (!chatDispatchLatchRef.current.claim(targetChatId, request.appRunId)) {
+      settleProjectReferenceContextForRequest(request, 'rejected')
       return
     }
 
