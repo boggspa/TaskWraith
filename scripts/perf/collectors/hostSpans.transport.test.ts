@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { createRequire } from 'module'
 import { afterAll, describe, expect, it } from 'vitest'
 import { createHostPerfInstrumentation } from '../../../src/host-runtime/HostPerfSnapshot'
+import { createWorkSpanRecorder } from '../../../src/host-shared/perf/WorkSpanRecorder'
 import {
   createHostPerfSnapshotFileWriter,
   type HostPerfSnapshotFileIdentity
@@ -30,6 +31,7 @@ import {
  */
 const require = createRequire(import.meta.url)
 const {
+  DEFAULT_MAIN_SNAPSHOT_EVALUATE_TIMEOUT_MS,
   DEFAULT_HOST_SNAPSHOT_MAX_AGE_MS,
   DEFAULT_HOST_SNAPSHOT_MAX_BYTES,
   readHostPerfSnapshotFile,
@@ -38,6 +40,7 @@ const {
   validateCrossThreadBlock
 } = require('./hostSpans.cjs')
 const { decodeProbedWelcome } = require('../hostWelcomeProbe.cjs')
+const { attachRendererCdpSession } = require('../cdpWebSocketSession.cjs')
 
 const CELL = 'large/2/warm/codex_profiles_solo_ensemble_mesh/none'
 const WRITE_AT = new Date('2026-09-08T16:00:00.000Z')
@@ -860,6 +863,125 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
     // Unconfigured sampleHostSpans is byte-identical to the pre-transport shape.
     const unconfigured = await sampleHostSpans(null, { env: {} })
     expect(unconfigured.hostPerf).toEqual({ unsupported: 'host_perf_transport_unspecified' })
+  })
+
+  it('accepts the session shape attachRendererCdpSession actually returns', async () => {
+    // THE TEST WHOSE ABSENCE SHIPPED THE BUG. Every other exercise of this
+    // collector hands it a hand-written `{ post }` fake, so the guard above was
+    // pinned against an object no production code path ever produces: the real
+    // wrapper exposed `send`, the collector demanded `post`, and the two were
+    // never introduced. Attempt 6 therefore recorded
+    // `main_perf_section_unavailable: renderer_runtime_session_required` with a
+    // fully healthy renderer attached, and `metrics.crossThread` could not fold
+    // on ANY run. The fix is a verb; the guard against its regression has to be
+    // the REAL wrapper driving the REAL collector, which is this test.
+    const mainSection = (() => {
+      let t = 1000
+      const recorder = createWorkSpanRecorder({
+        process: 'main',
+        maxRetained: 64,
+        now: () => (t += 10)
+      })
+      recorder.record({
+        chatId: 'chat-light',
+        runId: 'run-chat-light',
+        kind: 'admission_wait',
+        resource: 'ensemble_pool',
+        startedAt: 0,
+        durationMs: 10
+      })
+      return recorder.section()
+    })()
+
+    class EvaluatingWs {
+      handlers: Record<string, (arg?: unknown) => void> = {}
+      constructor() {
+        queueMicrotask(() => this.handlers.open && this.handlers.open())
+      }
+      on(event: string, handler: (arg?: unknown) => void) {
+        this.handlers[event] = handler
+      }
+      send(data: string) {
+        const msg = JSON.parse(data)
+        queueMicrotask(() =>
+          this.handlers.message(
+            JSON.stringify({
+              id: msg.id,
+              result:
+                msg.method === 'Runtime.evaluate'
+                  ? { result: { value: { sections: { workSpans: mainSection } } } }
+                  : {}
+            })
+          )
+        )
+      }
+      close() {
+        /* the fake socket owns no resources */
+      }
+    }
+
+    const renderer = await attachRendererCdpSession({
+      port: 9,
+      WebSocket: EvaluatingWs,
+      adapters: {
+        httpGetJson: async (url: string) =>
+          String(url).includes('/json/version')
+            ? { Browser: 'Fake/1' }
+            : [
+                {
+                  type: 'page',
+                  id: 'p1',
+                  webSocketDebuggerUrl: 'ws://127.0.0.1:9/devtools/page/p1'
+                }
+              ]
+      }
+    })
+
+    const { path } = writeRealSnapshot()
+    const sampled = await sampleHostSpans(renderer, {
+      hostPerfSnapshotPath: path,
+      now: () => FRESH_AT
+    })
+    renderer.close()
+
+    // Not refused, and not refused for some *other* reason either: a real
+    // section came back through the real transport.
+    expect(sampled.workSpans.unsupported).toBeUndefined()
+    expect(sampled.workSpans.process).toBe('main')
+    expect(sampled.hostPerf.workSpans.process).toBe('host')
+  })
+
+  it('bounds the renderer round trip it now actually makes', async () => {
+    // This evaluate uses awaitPromise:true, so the CDP reply waits on the
+    // renderer's own promise, and the transport only rejects an outstanding
+    // request when the socket closes — an unresolved snapshot would hang the
+    // sample forever. The call was unreachable while the wrapper lacked post();
+    // making it reachable without bounding it would have moved the capture
+    // phase's hang rather than removed it.
+    const bounds: unknown[] = []
+    await sampleHostSpans(
+      {
+        post: async (_m: string, _p: unknown, sendOptions: unknown) => {
+          bounds.push(sendOptions)
+          return { result: { value: null } }
+        }
+      },
+      { env: {}, evaluateTimeoutMs: 4321 }
+    )
+    expect(bounds).toEqual([{ timeoutMs: 4321 }])
+
+    const defaulted: unknown[] = []
+    await sampleHostSpans(
+      {
+        post: async (_m: string, _p: unknown, sendOptions: unknown) => {
+          defaulted.push(sendOptions)
+          return { result: { value: null } }
+        }
+      },
+      { env: {} }
+    )
+    expect(defaulted).toEqual([{ timeoutMs: DEFAULT_MAIN_SNAPSHOT_EVALUATE_TIMEOUT_MS }])
+    expect(Number.isFinite(DEFAULT_MAIN_SNAPSHOT_EVALUATE_TIMEOUT_MS)).toBe(true)
   })
 })
 

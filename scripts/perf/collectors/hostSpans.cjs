@@ -667,6 +667,9 @@ function cellNameSafe(cell) {
 const HOST_PERF_UNSPECIFIED = 'host_perf_transport_unspecified'
 
 /** Reader freshness bound: outside ±this window the file is not evidence. */
+/** Inner bound for the renderer round trip; see sampleHostSpans. */
+const DEFAULT_MAIN_SNAPSHOT_EVALUATE_TIMEOUT_MS = 30_000
+
 const DEFAULT_HOST_SNAPSHOT_MAX_AGE_MS = 15_000
 /** Reader input bound, independent of the writer's configured output bound. */
 const DEFAULT_HOST_SNAPSHOT_MAX_BYTES = 1024 * 1024
@@ -950,10 +953,24 @@ async function sampleHostSpans(session, options = {}) {
     if (!globalThis.api || typeof globalThis.api.getMainPerfSnapshot !== 'function') return null
     return await globalThis.api.getMainPerfSnapshot({ resetLagWindow: false })
   })()`
+  // Bounded, and NOT optional. awaitPromise:true means the CDP reply waits on
+  // the renderer's promise, and the websocket transport only rejects an
+  // outstanding request when the socket closes — so a renderer that never
+  // resolves would hang this sample forever. This call sat unreachable behind a
+  // verb mismatch until the renderer wrapper gained post(); bounding it is part
+  // of the same change, because bounding one await elsewhere is exactly how the
+  // capture phase kept relocating its hang instead of losing it.
+  const evaluateTimeoutMs = isFiniteNumber(options.evaluateTimeoutMs)
+    ? options.evaluateTimeoutMs
+    : DEFAULT_MAIN_SNAPSHOT_EVALUATE_TIMEOUT_MS
   let result
   try {
     result = await Promise.resolve(
-      session.post('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
+      session.post(
+        'Runtime.evaluate',
+        { expression, returnByValue: true, awaitPromise: true },
+        { timeoutMs: evaluateTimeoutMs }
+      )
     )
   } catch (error) {
     return unsupported('main_perf_snapshot_evaluation_failed: ' + String(error))
@@ -967,6 +984,7 @@ async function sampleHostSpans(session, options = {}) {
 }
 
 module.exports = {
+  DEFAULT_MAIN_SNAPSHOT_EVALUATE_TIMEOUT_MS,
   DEFAULT_HOST_SNAPSHOT_MAX_AGE_MS,
   DEFAULT_HOST_SNAPSHOT_MAX_BYTES,
   WORK_SPAN_PROCESSES,

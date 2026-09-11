@@ -283,11 +283,19 @@ describe('main work spans and unsupported Host perf polling', () => {
       }
     }))
     const sampled = await sampleHostSpans({ post })
-    expect(post).toHaveBeenCalledWith('Runtime.evaluate', {
-      expression: expect.any(String),
-      returnByValue: true,
-      awaitPromise: true
-    })
+    // Third argument is the transport bound, and it is asserted rather than
+    // waved through: awaitPromise:true parks this call on the renderer's own
+    // promise, and the websocket transport settles a pending request only on
+    // reply or socket close.
+    expect(post).toHaveBeenCalledWith(
+      'Runtime.evaluate',
+      {
+        expression: expect.any(String),
+        returnByValue: true,
+        awaitPromise: true
+      },
+      { timeoutMs: expect.any(Number) }
+    )
     expect(getMainPerfSnapshot).toHaveBeenCalledExactlyOnceWith({ resetLagWindow: false })
     expect(sampled).toEqual({
       workSpans,

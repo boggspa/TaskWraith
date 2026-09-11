@@ -3405,6 +3405,59 @@ describe('T9a main persistence stats collector', () => {
     expect(noSession.ok).toBe(false)
   })
 
+  it('names WHICH side is wedged, and never reaches the handle when main is', async () => {
+    // Attempt 6 spent 298,503 ms of a 300,000 ms capture budget in this sample
+    // and reported one undifferentiated timeout, which cannot distinguish a
+    // main thread that answers nothing from a perf handle that is itself
+    // expensive. The two have different fixes, so the sample has to say which.
+    const attempted: string[] = []
+    const wedgedMain = await sampleMainPersistenceStats(
+      {
+        post: async (_m: string, params: { expression: string }) => {
+          attempted.push(params.expression)
+          throw new Error('CDP Runtime.evaluate timed out after 5000ms')
+        }
+      },
+      { livenessTimeoutMs: 5000 }
+    )
+    expect(wedgedMain.ok).toBe(false)
+    expect(wedgedMain.reason).toMatch(/liveness probe/i)
+    expect(wedgedMain.reason).toMatch(/not the perf handle/i)
+    // The trivial probe is the ONLY thing attempted: a wedged main must not also
+    // spend the handle's bound before reporting.
+    expect(attempted).toEqual(['1'])
+
+    // Inverse: main answers trivia, the handle does not. Same failure class to a
+    // reader of `persistenceStatsFailure`, opposite fix.
+    const wedgedHandle = await sampleMainPersistenceStats({
+      post: async (_m: string, params: { expression: string }) => {
+        if (params.expression === '1') return { result: { value: 1 } }
+        throw new Error('CDP Runtime.evaluate timed out after 30000ms')
+      }
+    })
+    expect(wedgedHandle.ok).toBe(false)
+    expect(wedgedHandle.reason).toContain(PERF_STATS_GLOBAL)
+    expect(wedgedHandle.reason).toMatch(/this is the handle, not the transport/i)
+  })
+
+  it('asks the transport to bound every call it makes', async () => {
+    // The websocket transport resolves a pending request only on reply or on
+    // socket close, so an unanswered evaluate settles NEVER. The outer capture
+    // budget is the backstop; this is the bound that makes a wedge cost seconds
+    // and carry a name.
+    const bounds: unknown[] = []
+    await sampleMainPersistenceStats(
+      {
+        post: async (_m: string, _params: unknown, sendOptions: unknown) => {
+          bounds.push(sendOptions)
+          return { result: { value: validPayload() } }
+        }
+      },
+      { livenessTimeoutMs: 111, evaluateTimeoutMs: 222 }
+    )
+    expect(bounds).toEqual([{ timeoutMs: 111 }, { timeoutMs: 222 }])
+  })
+
   it('rejects a partial payload instead of reporting it as measured', () => {
     const missingReason = validPayload()
     delete (missingReason.coalescing.coalescer.reasonMix as Record<string, unknown>)['approval']

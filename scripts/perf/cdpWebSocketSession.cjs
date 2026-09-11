@@ -273,6 +273,15 @@ async function attachRendererCdpSession(options) {
     browserVersion: version && version['Browser'] ? version['Browser'] : null,
     session,
     send: session.send,
+    // Same send->post adaptation the main inspector wrapper below performs, and
+    // for the same reason: the collectors in collectors/ are written against
+    // Session.post. Without it `sampleHostSpans` refused EVERY production
+    // renderer with `renderer_runtime_session_required` — a guard on a verb this
+    // object had never exposed — so `metrics.crossThread` could not be folded on
+    // any run, while every test passed against a fake that did expose `post`.
+    post(method, params, sendOptions) {
+      return session.send(method, params, sendOptions)
+    },
     onEvent: session.onEvent,
     close: session.close
   }
@@ -300,8 +309,11 @@ async function attachMainInspectorSession(options) {
     kind: 'main_inspector',
     url,
     session,
-    post(method, params) {
-      return session.send(method, params)
+    // sendOptions is forwarded: openCdpWebSocketSession supports a per-send
+    // timeout and this adapter used to drop it, so no collector could bound an
+    // individual inspector call even though the transport could.
+    post(method, params, sendOptions) {
+      return session.send(method, params, sendOptions)
     },
     on(event, handler) {
       return session.onEvent((msg) => {
