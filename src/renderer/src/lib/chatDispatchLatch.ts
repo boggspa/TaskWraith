@@ -15,14 +15,17 @@
  * `missing meta credentials`. The eight repeats also carried the OS-autocorrected
  * spelling of the prompt, so text equality would not have recognised them.
  *
- * This is deliberately NOT the run queue. Queueing is the answer to "sent while
- * a run is RUNNING" — an ordered second turn the user meant. A submit that
- * arrives while the previous one is still being dispatched is a double-fire,
- * and the honest response is to drop it.
+ * This latch closes that window by making it VISIBLE, not by refusing anything.
+ * A chat holding a claim reads as busy, so `shouldQueueRunBeforeDispatch` sends
+ * the next submit to the queue — where a genuinely different second message
+ * belongs — instead of letting it race into the same thread. Refusing was the
+ * first shape and it was wrong: it silently ate a real second message typed
+ * inside the dispatch window. Duplicates are not this module's job; they are
+ * refused earlier and by identity, in `ComposerSubmitLedger`.
  *
  * Fails OPEN: a submit that cannot be identified (no chat id, no run id) is
- * never blocked. A latch that refuses a real turn is worse than the duplicate
- * it was added to stop.
+ * never held. A latch that marks a thread busy on nothing is worse than the
+ * race it was added to close.
  */
 export class ChatDispatchLatch {
   private readonly runIdByChatId = new Map<string, string>()

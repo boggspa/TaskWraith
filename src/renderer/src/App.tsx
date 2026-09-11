@@ -679,6 +679,7 @@ import {
   shouldQueueRunBeforeDispatch
 } from './lib/chatBusyState'
 import { ChatDispatchLatch } from './lib/chatDispatchLatch'
+import { ComposerSubmitLedger } from './lib/composerSubmitLedger'
 import { applyRecoveryRecordsToEnsembleRounds } from './lib/recoverEnsembleRoundTerminals'
 import {
   buildPlanImportDisplayPrompt,
@@ -16473,6 +16474,10 @@ function App(): React.JSX.Element {
   // without this every submit inside the dispatch window reads the chat as
   // idle and starts its own run (2026-09-11: nine, from one held Enter).
   const chatDispatchLatchRef = useRef(new ChatDispatchLatch())
+  // One send per draft revision. Identity for "the same message" is the
+  // number of committed edits the draft has had, so a repeat with nothing
+  // typed in between is refused however long the app took to respond.
+  const composerSubmitLedgerRef = useRef(new ComposerSubmitLedger())
   const dispatchWelcomeBackgroundRequest = async (
     request: QueuedRunRequest,
     target: WelcomeBackgroundThreadTarget,
@@ -16679,6 +16684,32 @@ function App(): React.JSX.Element {
       settleProjectReferenceContextForRequest(request, 'rejected')
       return
     }
+    // Idempotence, ahead of the dispatch/queue/steer branch so all three
+    // inherit it — the queue is where the duplicates were most visible, as a
+    // stack of identical queued and steered copies of one message.
+    //
+    // A composer submit is identified by the draft revision it read. A repeat
+    // with nothing typed in between is the same message and is dropped,
+    // silently: someone pressing Enter again wants it sent, not a second thing
+    // on screen telling them it already was. Anything typed in between raises
+    // the revision and sends normally, including the same words retyped after
+    // the box cleared, which is two edits.
+    //
+    // Scoped to submits that READ the draft. `existingPrompt` (edit-and-resend,
+    // retry, plan import) and background-target sends carry their own text, so
+    // their revision never moves and deduping them would refuse the second one
+    // forever.
+    if (
+      !existingPrompt &&
+      !backgroundTarget &&
+      !composerSubmitLedgerRef.current.accept(
+        currentComposerChatId,
+        composerDraftState.getDraftRevision(currentComposerChatId)
+      )
+    ) {
+      settleProjectReferenceContextForRequest(request, 'rejected')
+      return
+    }
     // Workflow compose: the first "send" CREATES the workflow (captures the
     // prompt + run settings into a WorkflowDefinition) instead of dispatching a
     // one-off run. The chat becomes the workflow's thread.
@@ -16763,10 +16794,17 @@ function App(): React.JSX.Element {
     }
     const targetChat = request.chatRecord || currentChat
     const targetChatId = targetChat?.appChatId || currentChat?.appChatId
+    // A dispatch that has been accepted but has not yet registered its run
+    // counts as busy. `isChatBusy` can only see a run `executeRun` already put
+    // in `activeRunsRef`, which is many awaits and a `runAgent` IPC round trip
+    // later — so without this a second, genuinely different message sent inside
+    // that window races the first into the same thread instead of queueing
+    // behind it. Duplicates never reach here; the ledger above took them.
+    const dispatchInFlight = chatDispatchLatchRef.current.holderRunId(targetChatId) !== undefined
     if (
       shouldQueueRunBeforeDispatch({
         chatKind: targetChat?.chatKind,
-        busy: isChatBusy(targetChatId)
+        busy: isChatBusy(targetChatId) || dispatchInFlight
       })
     ) {
       if (
@@ -16785,14 +16823,10 @@ function App(): React.JSX.Element {
       return
     }
 
-    // Not the queue: that branch above answers "sent while a run is RUNNING".
-    // This one answers "sent again while the previous submit is still being
-    // dispatched", which is a double-fire, and the honest answer is to drop it.
-    if (!chatDispatchLatchRef.current.claim(targetChatId, request.appRunId)) {
-      settleProjectReferenceContextForRequest(request, 'rejected')
-      return
-    }
-
+    // Hold the chat for the length of this dispatch, so the busy check above
+    // sees it. Never a refusal: a submit that gets this far is a message the
+    // user meant, and the queue is where a second one belongs.
+    chatDispatchLatchRef.current.claim(targetChatId, request.appRunId)
     void executeRun(request)
   }
   const handleRunRef = useRef(handleRun)

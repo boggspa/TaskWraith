@@ -11,13 +11,38 @@ function sourceBetween(source: string, start: string, end: string): string {
   return source.slice(startIndex, endIndex)
 }
 
+function handleRunSource(): string {
+  return sourceBetween(appSource, '  const handleRun = (', '  const handleRunRef =')
+}
+
 describe('composer dispatch latch wiring', () => {
-  // The guard has to sit on the DISPATCH branch, not merely exist: the queue
-  // branch above it already handles a busy chat, and the hole is the window
-  // where the chat is not busy yet because `executeRun` has not registered the
-  // run. A claim placed after the dispatch would latch nothing.
-  it('claims the chat before handleRun dispatches a composer submit', () => {
-    const handleRun = sourceBetween(appSource, '  const handleRun = (', '  const handleRunRef =')
+  // The hole is the window where the chat is not busy YET, because `executeRun`
+  // has not registered the run. Feeding the claim into the same busy argument
+  // `isChatBusy` feeds is what closes it.
+  it('counts a dispatch in flight as busy for the queue decision', () => {
+    const handleRun = handleRunSource()
+
+    const holderIndex = handleRun.indexOf('chatDispatchLatchRef.current.holderRunId(targetChatId)')
+    const queueDecisionIndex = handleRun.indexOf('shouldQueueRunBeforeDispatch({')
+
+    expect(holderIndex).toBeGreaterThanOrEqual(0)
+    expect(queueDecisionIndex).toBeGreaterThan(holderIndex)
+    expect(handleRun).toContain('busy: isChatBusy(targetChatId) || dispatchInFlight')
+  })
+
+  // Refusing was the first shape and it ate a real second message typed inside
+  // the dispatch window. The claim must now be unconditional.
+  it('never turns a claim into a dropped submit', () => {
+    const handleRun = handleRunSource()
+
+    expect(handleRun).toContain(
+      'chatDispatchLatchRef.current.claim(targetChatId, request.appRunId)'
+    )
+    expect(handleRun).not.toContain('if (!chatDispatchLatchRef.current.claim(')
+  })
+
+  it('claims the chat before it dispatches', () => {
+    const handleRun = handleRunSource()
 
     const claimIndex = handleRun.indexOf('chatDispatchLatchRef.current.claim(')
     const dispatchIndex = handleRun.indexOf('void executeRun(request)')
@@ -27,9 +52,9 @@ describe('composer dispatch latch wiring', () => {
   })
 
   // Queueing is a different condition (a run is already RUNNING) and stays the
-  // user's ordered second turn. The latch must not have replaced it.
+  // user's ordered second turn.
   it('leaves the busy-chat queue branch in place', () => {
-    const handleRun = sourceBetween(appSource, '  const handleRun = (', '  const handleRunRef =')
+    const handleRun = handleRunSource()
 
     expect(handleRun).toContain('shouldQueueRunBeforeDispatch(')
     expect(handleRun).toContain('queueRunRequest(request)')
