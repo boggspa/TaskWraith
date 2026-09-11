@@ -516,6 +516,85 @@ describe('mergeChatUpdatedForRender', () => {
     expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'closeout'])
   })
 
+  // 2026-09-11 - nine Muse runs failed inside one second and the renderer
+  // appended a providerRunFailure row for each. They rendered, then vanished
+  // on the next main delivery, then came back, then vanished again: the rows
+  // are renderer-authored and the 200ms debounced saveChat races every
+  // `chat-updated` frame. The close-out written in the SAME millisecond stayed
+  // on screen throughout, because it was on this preserve list and the failure
+  // rows were not. A dropped failure row leaves the close-out saying "The run
+  // failed" with nothing above it saying why.
+  it('preserves a renderer-authored provider failure row the delivery has not got yet', () => {
+    const failure: ChatMessage = {
+      id: 'failure-1',
+      role: 'error',
+      content: 'Muse failed - exit 1',
+      timestamp: '2',
+      metadata: { kind: 'providerRunFailure', provider: 'muse', exitCode: 1 }
+    }
+    const incoming = chat([message('a', 'answer')])
+
+    const merged = mergeChatUpdatedForRender(incoming, {
+      liveChat: chat([...incoming.messages, failure]),
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'failure-1'])
+  })
+
+  // Same position rule the close-out and prompt preservations follow: the
+  // failure row belongs where the run put it, not after the next turn.
+  it('restores a preserved provider failure row to its live position, not the tail', () => {
+    const failure: ChatMessage = {
+      id: 'failure-1',
+      role: 'error',
+      content: 'Muse failed - exit 1',
+      timestamp: '2',
+      metadata: { kind: 'providerRunFailure', provider: 'muse', exitCode: 1 }
+    }
+    const closeout: ChatMessage = {
+      id: 'closeout',
+      role: 'system',
+      content: '',
+      timestamp: '2',
+      metadata: { kind: 'taskWraithCloseout' }
+    }
+    const nextPrompt: ChatMessage = { id: 'u2', role: 'user', content: 'next turn', timestamp: '3' }
+
+    const merged = mergeChatUpdatedForRender(chat([message('a', 'answer'), nextPrompt]), {
+      liveChat: chat([message('a', 'answer'), failure, closeout, nextPrompt]),
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'failure-1', 'closeout', 'u2'])
+  })
+
+  // The preserve must key on the failure METADATA, not on `role === 'error'`:
+  // every other error row (a Discord context read, a provider stream error) is
+  // main-authored or transient and has never been on this list.
+  it('does not resurrect an error row that carries no provider-failure metadata', () => {
+    const plainError: ChatMessage = {
+      id: 'err-plain',
+      role: 'error',
+      content: 'Failed to read Discord context',
+      timestamp: '2'
+    }
+    const incoming = chat([message('a', 'answer')])
+
+    const merged = mergeChatUpdatedForRender(incoming, {
+      liveChat: chat([...incoming.messages, plainError]),
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a'])
+  })
+
   // 1.0.5-UI2 — renderer-authored goal/roster edits must survive a stale
   // main refresh (the "Set Goal sets then unsets" / "Add Participant adds
   // then removes" reports).

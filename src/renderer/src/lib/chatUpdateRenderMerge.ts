@@ -13,6 +13,10 @@ import { preserveOptimisticEnsembleQueue } from './queuedMessageRows'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../../../shared/taskWraithCloseout'
 import type { ChatUpdateRenderReceipt } from './chatUpdateRenderReceipt'
 
+/** `metadata.kind` App.tsx stamps on the ProviderRunFailureCard's row. Main
+ * reuses the same kind for its own failure notices (`RunFailureNotice.ts`). */
+const PROVIDER_RUN_FAILURE_KIND = 'providerRunFailure'
+
 export interface PendingChatUpdateRender {
   chat: ChatRecord
   messagesChanged: boolean
@@ -253,21 +257,29 @@ function filterPagedShellPreservations(
   })
 }
 
-function preserveLiveTaskWraithCloseouts(
+/**
+ * Carry the live rows `match` selects, which this delivery does not carry, back
+ * onto it at their live positions.
+ *
+ * The always-on preservation class: rows the renderer authors before its
+ * debounced `saveChat` reaches main, which must therefore survive every
+ * intervening refresh rather than only the short active/recent-run merge
+ * window. A paged shell is narrowed first, because "missing from the shell" is
+ * true of all paged-out history.
+ */
+function preserveLiveRowsMatching(
   chat: ChatRecord,
-  liveChat: ChatRecord | null | undefined
+  liveChat: ChatRecord | null | undefined,
+  match: (message: ChatMessage) => boolean
 ): ChatRecord {
   if (!liveChat || liveChat.messages.length === 0) return chat
   const incomingIds = new Set(chat.messages.map((message) => message.id))
-  const missingCloseouts = liveChat.messages.filter(
-    (message) =>
-      message.role === 'system' &&
-      message.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND &&
-      !incomingIds.has(message.id)
+  const missing = liveChat.messages.filter(
+    (message) => match(message) && !incomingIds.has(message.id)
   )
   const preservable = isTranscriptPagedShell(chat)
-    ? filterPagedShellPreservations(chat, liveChat, missingCloseouts)
-    : missingCloseouts
+    ? filterPagedShellPreservations(chat, liveChat, missing)
+    : missing
   if (preservable.length === 0) return chat
   return {
     ...chat,
@@ -279,27 +291,42 @@ function preserveLiveTaskWraithCloseouts(
   }
 }
 
+function preserveLiveTaskWraithCloseouts(
+  chat: ChatRecord,
+  liveChat: ChatRecord | null | undefined
+): ChatRecord {
+  return preserveLiveRowsMatching(
+    chat,
+    liveChat,
+    (message) => message.role === 'system' && message.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND
+  )
+}
+
 function preserveLiveUserMessages(
   chat: ChatRecord,
   liveChat: ChatRecord | null | undefined
 ): ChatRecord {
-  if (!liveChat || liveChat.messages.length === 0) return chat
-  const incomingIds = new Set(chat.messages.map((message) => message.id))
-  const missingUserMessages = liveChat.messages.filter(
-    (message) => message.role === 'user' && !incomingIds.has(message.id)
+  return preserveLiveRowsMatching(chat, liveChat, (message) => message.role === 'user')
+}
+
+/**
+ * Same always-on class as the close-out above, and for the same reason: App.tsx
+ * appends the provider-failure card at the exit boundary and it only reaches
+ * main through the 200ms debounced whole-record save. Without this the card
+ * blinked in and out for as long as deliveries kept arriving — measured
+ * 2026-09-11 on nine Muse runs that failed inside one second, where the
+ * close-out stamped in the SAME millisecond never flickered because it was
+ * already preserved here and the nine failure rows were not.
+ */
+function preserveLiveProviderRunFailures(
+  chat: ChatRecord,
+  liveChat: ChatRecord | null | undefined
+): ChatRecord {
+  return preserveLiveRowsMatching(
+    chat,
+    liveChat,
+    (message) => message.metadata?.kind === PROVIDER_RUN_FAILURE_KIND
   )
-  const preservable = isTranscriptPagedShell(chat)
-    ? filterPagedShellPreservations(chat, liveChat, missingUserMessages)
-    : missingUserMessages
-  if (preservable.length === 0) return chat
-  return {
-    ...chat,
-    messages: restorePreservedLiveRows(
-      chat.messages,
-      liveChat.messages,
-      new Set(preservable.map((message) => message.id))
-    )
-  }
 }
 
 /** Normalize a chat/goal/ensemble freshness stamp. `ChatRecord.updatedAt` is
@@ -668,6 +695,10 @@ export function mergeChatUpdatedForRender(
   // it. Preserve that locally-authored row across every intervening main refresh,
   // not only during the short active/recent-run merge window.
   merged = preserveLiveUserMessages(merged, liveChat)
+
+  // The provider-failure card shares the close-out's authoring lane and its
+  // exposure to a stale delivery, so it shares the preservation.
+  merged = preserveLiveProviderRunFailures(merged, liveChat)
 
   merged = preserveOptimisticEnsembleQueue(merged, liveChat)
 
