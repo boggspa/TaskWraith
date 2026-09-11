@@ -1110,6 +1110,80 @@ describe('mergeChatUpdatedForRender', () => {
     })
     expect(merged).toBe(delivered)
   })
+
+  // The reported "I pick a model or drag the reasoning ladder and it resets
+  // itself". The delivery is newer BY STAMP — main re-stamps `updatedAt` on
+  // every unrelated save, and a run produces one every few hundred ms — while
+  // still carrying the selection from before the pick, because the debounced
+  // patch has not landed yet. Only the claim can tell those apart.
+  it('keeps a claimed selection against a delivery that out-stamps the pick', () => {
+    const delivered = { ...chat([message('a', 'stream frame')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:03.000Z')
+    delivered.providerMetadata = {
+      selectedModelType: 'muse-spark-1.3',
+      museReasoningEffort: 'high'
+    }
+    const live = { ...chat([message('a', 'stream frame')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:02.000Z')
+    live.providerMetadata = {
+      selectedModelType: 'muse-spark-1.3',
+      museReasoningEffort: 'max'
+    }
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: true,
+      hadRecentRun: true,
+      localComposerSelectionPending: true
+    })
+    expect(merged.providerMetadata?.museReasoningEffort).toBe('max')
+  })
+
+  it('keeps a claimed clear of a pending provider change from resurrecting', () => {
+    const delivered = { ...chat([message('a', 'stream frame')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:03.000Z')
+    delivered.providerMetadata = {
+      selectedModelType: 'kimi-k2.7',
+      pendingProviderChange: { provider: 'ollama', providerMetadata: {} }
+    }
+    const live = { ...chat([message('a', 'stream frame')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:02.000Z')
+    live.providerMetadata = { selectedModelType: 'kimi-k2.7' }
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false,
+      localComposerSelectionPending: true
+    })
+    expect(merged.providerMetadata?.pendingProviderChange).toBeUndefined()
+  })
+
+  // The claim is the whole licence to ignore the stamp. With no write
+  // outstanding the delivery is main's own newer answer and still wins, so a
+  // turn-end apply or a remote companion is never refused.
+  it('lets a newer delivered selection win once no local write is outstanding', () => {
+    const delivered = { ...chat([message('a', 'turn end')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:03.000Z')
+    delivered.providerMetadata = {
+      selectedModelType: 'muse-spark-1.3',
+      museReasoningEffort: 'high'
+    }
+    const live = { ...chat([message('a', 'turn end')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:02.000Z')
+    live.providerMetadata = {
+      selectedModelType: 'muse-spark-1.3',
+      museReasoningEffort: 'max'
+    }
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false,
+      localComposerSelectionPending: false
+    })
+    expect(merged.providerMetadata?.museReasoningEffort).toBe('high')
+  })
 })
 
 describe('coalescePendingChatUpdateRender', () => {

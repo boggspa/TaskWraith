@@ -1096,6 +1096,7 @@ import {
   shouldDeferProviderScopedComposerSelection
 } from '../../shared/chatComposerSelectionPatch'
 import { ChatComposerSelectionPatchQueue } from './lib/ChatComposerSelectionPatchQueue'
+import { ComposerSelectionWriteClaims } from './lib/composerSelectionWriteClaims'
 import {
   readPendingWorkspaceRebind,
   type PendingWorkspaceRebind
@@ -5378,7 +5379,9 @@ function App(): React.JSX.Element {
           hasActiveRun: pendingMainUpdate.hasActiveRun,
           hadRecentRun: pendingMainUpdate.hadRecentRun,
           pendingMarkerIds,
-          localGoalIntent: pendingGoalIntentRef.current.get(chatId) ?? null
+          localGoalIntent: pendingGoalIntentRef.current.get(chatId) ?? null,
+          localComposerSelectionPending:
+            composerSelectionClaimsRef.current?.held(chatId) === true
         })
         updated = pendingChatDraftsRef.current.apply(pendingMainUpdate.chat, updated, beforeMerge)
         byId.set(chatId, updated)
@@ -6464,14 +6467,36 @@ function App(): React.JSX.Element {
   const applyChatComposerSelectionRef = useRef(applyChatComposerSelection)
   applyChatComposerSelectionRef.current = applyChatComposerSelection
 
+  // Claims over a picker commit main has not confirmed yet, so a delivery built
+  // before it cannot revert the chip. Raised on the optimistic commit, released
+  // by the durable answer. See lib/composerSelectionWriteClaims.ts.
+  const composerSelectionClaimsRef = useRef<ComposerSelectionWriteClaims | null>(null)
+  if (!composerSelectionClaimsRef.current) {
+    composerSelectionClaimsRef.current = new ComposerSelectionWriteClaims()
+  }
   const composerSelectionPatchQueueRef = useRef<ChatComposerSelectionPatchQueue | null>(null)
   if (!composerSelectionPatchQueueRef.current) {
     composerSelectionPatchQueueRef.current = new ChatComposerSelectionPatchQueue({
       persist: async (request) => {
-        await rendererTranscriptPersistenceRef.current?.whenIdle(request.chatId)
-        const result = await window.api.patchChatComposerSelection(request)
-        if (!result.ok) throw new Error(`Composer selection patch failed: ${result.reason}`)
-        return result
+        // Read the claim AFTER the queue has coalesced and is actually
+        // flushing: everything picked up to this moment is in this request, and
+        // anything picked later raises its own claim that this answer must not
+        // release.
+        const claims = composerSelectionClaimsRef.current
+        const token = claims?.current(request.chatId) ?? null
+        try {
+          await rendererTranscriptPersistenceRef.current?.whenIdle(request.chatId)
+          const result = await window.api.patchChatComposerSelection(request)
+          if (!result.ok) throw new Error(`Composer selection patch failed: ${result.reason}`)
+          // Main has the selection and broadcast it. Drain the deliveries that
+          // were built before it through the still-claimed merge, then release —
+          // the same ordering the goal claim uses, so an in-flight stale frame
+          // cannot land in the gap between the answer and the release.
+          flushCoalescedChatsNow()
+          return result
+        } finally {
+          claims?.settle(request.chatId, token)
+        }
       },
       onError: (chatId, error) => {
         // Compatibility fallback only: a bridge/version mismatch must not lose
@@ -6486,9 +6511,13 @@ function App(): React.JSX.Element {
   }
   useEffect(() => {
     const queue = composerSelectionPatchQueueRef.current
+    const claims = composerSelectionClaimsRef.current
     return () => {
       if (!queue) return
-      void queue.flushAll().finally(() => queue.dispose())
+      void queue.flushAll().finally(() => {
+        queue.dispose()
+        claims?.clear()
+      })
     }
   }, [])
 
@@ -6668,6 +6697,10 @@ function App(): React.JSX.Element {
       { persistence: 'none' }
     )
     if (updated === source) return
+    // Claim the selection BEFORE the write is queued: the optimistic record is
+    // already live, so from this instant until main answers, any delivery that
+    // disagrees was built without knowing about this pick.
+    composerSelectionClaimsRef.current?.raise(chatId)
     composerSelectionPatchQueueRef.current?.enqueue(request)
   }
 

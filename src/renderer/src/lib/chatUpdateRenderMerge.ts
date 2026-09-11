@@ -64,6 +64,11 @@ export interface ChatUpdateRenderMergeOptions {
   pendingMarkerIds?: ReadonlySet<string>
   /** Un-persisted renderer goal edit for this chat, when one is in flight. */
   localGoalIntent?: LocalGoalIntent | null
+  /**
+   * Whether the renderer holds a composer-selection commit this chat's durable
+   * write has not confirmed yet. See `composerSelectionWriteClaims.ts`.
+   */
+  localComposerSelectionPending?: boolean
 }
 
 /**
@@ -625,14 +630,30 @@ function composerSelectionSignature(chat: ChatRecord): string {
  * change must not resurrect). Non-selection metadata in the delivery stays
  * authoritative, and a genuinely newer main-side selection (remote companion,
  * turn-end apply persisted first) still wins on its stamp.
+ *
+ * The stamp alone was not enough, because it measures the wrong thing: main
+ * re-stamps `updatedAt` on every unrelated save, so any of them landing inside
+ * the debounce+IPC window out-stamps the pick while still carrying the previous
+ * selection. `localSelectionPending` is the renderer saying that window is
+ * still open for this chat, which turns the comparison off until the durable
+ * write answers — the same "silence is ignorance, not intent" test main applies
+ * to a revision-stale goal.
  */
 function preserveNewerLocalComposerSelection(
   merged: ChatRecord,
-  liveChat: ChatRecord | null | undefined
+  liveChat: ChatRecord | null | undefined,
+  localSelectionPending = false
 ): ChatRecord {
   if (!liveChat) return merged
   if (composerSelectionSignature(liveChat) === composerSelectionSignature(merged)) return merged
-  if (stampToMs(liveChat.updatedAt) <= stampToMs(merged.updatedAt)) return merged
+  // The stamp is a wall clock main bumps on every unrelated write, so it can
+  // only answer "which record was written last", never "has main been told
+  // about this pick yet". While the renderer holds an unconfirmed selection
+  // commit the answer is no, and a delivery's disagreement is ignorance rather
+  // than intent — so the claim wins outright. See composerSelectionWriteClaims.
+  if (!localSelectionPending && stampToMs(liveChat.updatedAt) <= stampToMs(merged.updatedAt)) {
+    return merged
+  }
   const next = { ...merged }
   if (liveChat.provider) next.provider = liveChat.provider
   else delete next.provider
@@ -712,7 +733,11 @@ export function mergeChatUpdatedForRender(
   merged = preserveNewerLocalChatKind(merged, liveChat)
   merged = preserveNewerLocalActiveGoal(merged, liveChat, options.localGoalIntent)
   merged = preserveNewerLocalEnsembleRoster(merged, liveChat)
-  merged = preserveNewerLocalComposerSelection(merged, liveChat)
+  merged = preserveNewerLocalComposerSelection(
+    merged,
+    liveChat,
+    options.localComposerSelectionPending === true
+  )
   const pendingMarkerIds = options.pendingMarkerIds
   if (pendingMarkerIds && pendingMarkerIds.size > 0) {
     const anchoredMessages = anchorPendingAgentQuestionMarkers(
