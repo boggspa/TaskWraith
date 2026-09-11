@@ -112,7 +112,7 @@ Do not rebuild, rename, staple or otherwise mutate an artifact after preparing
 the manifest. Any byte change requires regenerating the payload and repeating
 the rehearsal.
 
-For the 1.9.8 throwaway rehearsal, publish the same hash-pinned artifact names
+For the 1.9.9 throwaway rehearsal, publish the same hash-pinned artifact names
 under a temporary tag in the same GitHub repository, then prepare/verify with
 that exact base URL:
 
@@ -146,7 +146,7 @@ against the external payload before making the release the public debut route.
 This deliberately does not activate the policy-disabled hosted signing jobs or
 upload signing credentials to GitHub Actions.
 
-## Required 1.9.8 rehearsal matrix
+## Required 1.9.9 rehearsal matrix
 
 Every row uses disposable copies of production-shaped profiles and the exact
 signed/notarized candidate bytes. Record the candidate commit, artifact hashes,

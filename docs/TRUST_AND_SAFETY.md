@@ -317,17 +317,6 @@ qualification-candidate run rejects missing/skipped required checks but may
 record an unknown binary as
 `unattested_pass`; that is evidence to review, not a trusted or releasable
 fingerprint. Strict release mode additionally rejects unknown fingerprints.
-Signed release jobs accept only an exact-commit successful release canary that
-completed within the preceding 24 hours; stale, future-dated, or malformed
-attestations fail closed. Run that canary immediately before creating the tag.
-Signed publication also stays blocked until the repository declares its `v*`
-tag ruleset and immutable-release controls commissioned. Both platform
-publishers re-resolve the remote tag to the checked-out commit immediately
-before release creation and upload; external no-bypass tag/release controls
-remain necessary to close administrator race windows.
-Publisher reruns do not trust a previously completed dependency job: immediately
-before release mutation, each platform rechecks both commissioning variables and
-repeats the exact-commit, 24-hour provider-attestation query.
 The coverage command produces a measured, non-gating baseline; there is no
 percentage threshold or PR coverage ratchet.
 
@@ -345,9 +334,7 @@ live suite is containment evidence, not a fail-closed desktop kill switch.
 The active required *release* fingerprint tuple may still be Kimi-weighted while
 the exact Kimi reviewed roster remains empty — desktop Kimi admission is
 always-enabled (structural checks; unreviewed runs are labelled
-`unattested-development`), but signed `v*` publication jobs that require a
-successful protected provider release attestation stay red until a reviewed
-Kimi tuple is commissioned. Probe-
+`unattested-development`). Probe-
 only inventory may still invoke `--version` and `--help` in an unauthenticated
 root. Prefer project workspaces outside `$HOME` for untrusted Cursor work; the
 sandbox is an honest partial backstop (see TW-SEC-2026-003). The workflow is

@@ -1,5 +1,8 @@
 # TUI Windowless Host Closeout
 
+> [!WARNING]
+> Do not use this superseded Electron-headless launch method for smoke tests. Direct your testing to the modern `taskwraith-host serve` architecture.
+
 > **SUPERSEDED (2026-08-25).** This file is historical. It describes the
 > predecessor path in which the TUI launched the TaskWraith **app
 > executable** with `--taskwraith-headless-host` so Electron main ran

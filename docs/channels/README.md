@@ -21,4 +21,4 @@ byte-stable. Resolve the live copy at
 | P3 security design | [`channels-p3-security-design.md`](channels-p3-security-design.md) |
 | P4 proof | [`channels-p4-proof.md`](channels-p4-proof.md) |
 | P5 proof | [`channels-p5-proof.md`](channels-p5-proof.md) |
-| P6 plan | [`channels-p6-plan.md`](channels-p6-plan.md) |
+| P6 proof | [`channels-p6-proof.md`](channels-p6-proof.md) |

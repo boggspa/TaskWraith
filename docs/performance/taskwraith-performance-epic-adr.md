@@ -12,6 +12,12 @@
 
 ---
 
+> [!WARNING]
+> **Epic ADR Process Violations (Contextual Note):** Despite enforcing `authoritativeBaseline: true` and mandating isolated worktrees, multiple tranches (T3c, T4, T5, and M1/M2/M3 integration slices) were landed directly on the shared master branch without authoritative baselines. Additionally, T5 was labeled "content-addressed" but landed as byte-range pointers without deduplication.
+
+> [!NOTE]
+> **Correct Contention Heuristics:** Historically, hardware contention was tied to `load average > core count`. This heuristic is invalid on macOS due to I/O blocking in load averages. `src/main/perf/HostLoadSample.ts` correctly disambiguates hardware contention by reading cumulative CPU tick delta rates from `os.cpus()`. Across all performance docs, contention is defined as `cpuBusyPercent >= 85%` with `loadIsNotCpuBound`, ensuring main-thread stalls are not falsely blamed on host CPU exhaustion.
+
 ## 1. Context and problem statement
 
 TaskWraith must remain genuinely responsive under sustained **30–50-seat** ensemble pressure, multiple concurrent real runs, **6k–20k** transcript rows, **5k–15k** tool events, and **200–700** historical runs. Observed production pressure (mission brief + scout recon on current HEAD):

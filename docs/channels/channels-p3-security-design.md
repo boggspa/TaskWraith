@@ -201,7 +201,7 @@ The only permitted order is:
    drafts, notifications, and provider text cannot trigger dispatch.
 3. Main proves the author is an active human member and deduplicates the trigger
    by `(grantId, triggerMessageId)`.
-4. The source-only adversarial-review gate is checked. It currently stops here.
+4. The source-only adversarial-review gate is checked. It was explicitly enabled in production (via slice `191e5e37d` shipped in TaskWraith 1.9.5).
 5. Main verifies the owner delegation, dispatch-grant signature, revocations,
    time window, remaining crash-safe dispatch budget, allowed mentioner,
    stable-seat/key generation, workspace identity hash, and effective posture

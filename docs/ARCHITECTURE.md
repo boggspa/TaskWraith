@@ -9,6 +9,7 @@ Responsible for system-level operations:
 - Displaying native directory pickers.
 - Spawning supported provider CLI subprocesses.
 - **Trust Management**: Provider-specific trust/status services inspect official local configuration where supported.
+- **Codex Integration**: Codex client acquisition logic is completely isolated in `src/main/codex/CodexClientAcquisition.ts`. Instantiation occurs via `createCodexClientAcquisition`, removing any references to it being part of the `src/main/index.ts` monolith.
 - **Integrated Terminal**: Uses `node-pty` to provide interactive setup and trust flows where a provider requires them.
 - Executing `git diff` on the selected workspace.
 - Enforcing safety rules (denylists, workspace confinement).
@@ -23,6 +24,7 @@ Responsible for system-level operations:
 Responsible for the UI:
 
 - React components (standard CSS, with specialized components like `ActivityStack` and `DiffViewer`).
+- **App.tsx Mega-Coordinator**: `App.tsx` is a growing mega-coordinator managing chat selection, unstarted drafts, run history, transcript conflict resolution, and various modal overlays. Per the **Composition-Root Growth Policy** (from `AGENTS.md`), no new logic should be added directly to `App.tsx` if it can be extracted. Features like pending drafts, conflict UI, and chat update merging live in extracted modules (e.g., `RendererChatPendingDrafts.ts`).
 - **Terminal UI**: Uses `xterm.js` for the embedded Trust Assistant terminal.
 - Communicates exclusively via `window.api` IPC APIs defined in preload.
 - Stream parsing adapters normalize provider events into shared activity, diff, usage, and approval records.
@@ -30,8 +32,7 @@ Responsible for the UI:
 ## TaskWraith Host (app-only)
 
 Host v2 is TaskWraith's authenticated, bounded control and projection boundary.
-It runs inside the Electron main process; it is not an installed daemon or a
-cloud service. TaskWraith starts it with the app, exposes visible Stop Host /
+The codebase now defaults to a standalone pure-Node host process (`taskwraith-host serve --mode production`) that manages tool execution and orchestration, while the Desktop Electron client manages WebContents, macOS Accessibility APIs, and windows. It is not a cloud service. TaskWraith starts it with the app, exposes visible Stop Host /
 Start Host controls in the Approvals popover, and tears it down when the app
 quits. A failed start does not trigger a hidden restart loop.
 
@@ -52,12 +53,38 @@ Clients share the transport-independent protocol in `src/shared/hostProtocol.ts`
   dedicated Channel runtime.
 
 Host snapshots are intentionally bounded metadata, not a replacement for every
-local store. AppStore and scoped resource services remain canonical for full
+local store. The internal AppStore authority and scoped resource services remain canonical for full
 transcripts, media, arbitrary file content, native window state, and other
 heavyweight resources. Host-aware mutations go through typed commands,
 authority evaluation, idempotency, and reconnect-safe receipts. Ordered deltas
 share one generation/cursor journal and require a full resnapshot when
 continuity cannot be proven.
+
+## Thread-Catalogue Architecture
+
+The Thread Catalogue is decomposed and distributed across:
+- `src/host-shared/thread-catalogue/` (core protocol, disk layout, recovery controller, adoption, etc.)
+- `src/main/store/` (wrappers, SQLite schema, disk reader, mutation encoders)
+- `src/main/startup/` (recovery orchestrators: desktop, operational, queue, bootstrap)
+- `src/main/workers/` (SQLite worker and Decoder worker)
+- `src/main/ipc/` (read handlers)
+- `src/preload/ThreadCatalogueReads.ts` (decentralized UI reconstruction)
+- `src/host-node/` (headless host recovery and mirrors)
+
+## Canvas Subsystem
+
+Canvas components are located directly under `src/renderer/src/components/` with a flat naming convention (e.g., `CanvasDockPanel.tsx`, `CanvasBrowserChrome.tsx`, `CanvasPane.tsx`). The default presentation for Canvas opens directly into the **right dock** (`presentation: 'dock'`). Popping out to a floating window is a secondary user action (via `PopOutGlyph`), with the unified substrate (`CanvasDockPanel`) natively reparenting these surfaces between the dock and the utility popout app (`?popout=canvas`) without reloading. Canvases open in a "New tab" blank-first state via `CanvasPaneLauncher`. All URL navigation is handled directly in the `CanvasBrowserChrome`'s address rail. 
+
+Canvas uses a hybrid native architecture:
+- Web and Emulator canvases are native Electron `WebContentsView` instances managed in the main process, painting *above* the DOM.
+- Bounds synchronization is managed via `CanvasPane.tsx` (using `ResizeObserver` and scroll listeners).
+- An occlusion guard (via `document.elementFromPoint`) correctly hides the native view if covered by modals or DOM overlays.
+- *Exception:* Only the `TelemetryCanvasPanel` (SVG) and `MeshCanvasPanel` (Three.js) use pure in-DOM elements.
+- Pop-out restrictions: Web, Sketch, and Emulator can move bidirectionally. Mesh and Simulator have dedicated popout routes. Chart (`kind: 'chart'`) is native to the dock only and cannot pop out to a floating window.
+
+## Performance Instrumentation
+
+Core measuring primitives (`EventLoopLagMeter`, `WorkSpanRecorder`) have been relocated to `src/host-shared/perf/`. The `src/main/perf/` directory now primarily contains backward-compatible re-export shims and main-process specific samplers.
 
 ## Data Flow (Provider Runtime)
 
@@ -332,4 +359,5 @@ User-facing behavior and guarantee language: `SESSION_AND_WORKSPACE.md`.
 - Paired-device records, remote bridge settings, APNs token routing data, and
   first-launch/readiness projections are local to the Mac unless explicitly
   transported over the paired E2EE bridge.
+- The Legacy People store, runtime, and IPC are deliberately retained as a degraded-mode safety/recovery path. If a user's safeStorage fails to decrypt the pinned Channels identity, the system falls back to the People substrate to preserve access to existing shares and prevent permanent silent loss of history.
 - Secrets and release credentials must use the OS keychain or external CI secret store, not source files.

@@ -162,7 +162,7 @@ profiles, or used to make automated decisions about a person.
   metadata from GitHub. Downloading an update requests the selected release
   assets from GitHub.
 - **iOS companion.** Paired task projections and actions travel over an
-  end-to-end-encrypted connection. Relay and push infrastructure can see
+  end-to-end-encrypted connection. The iOS app acts as an authenticated projection client running the Swift `HostProtocol` port, interacting with the standalone Node Host. Relay and push infrastructure can see
   routing and status metadata, such as pair, device, thread/run, reason,
   timestamps, and aggregate added/deleted line counts, but not plaintext
   prompts, commands, file contents, diff contents, or model output.
@@ -199,13 +199,15 @@ profiles, or used to make automated decisions about a person.
   starts off and is a separate user choice (read-only or actuation), bounded to
   the approved site origins. This is not a v1.9.6 released guarantee and must
   be re-reviewed before the surface is included in a tagged release.
+- **Automatic Metadata Fetches.** At boot time, TaskWraith automatically requests exchange rates from `open.er-api.com` via `FxRateService.ts`. During operation, it also automatically downloads favicons for transcript URLs via `FaviconService.ts`. Users cannot currently disable these requests.
+- **Flight Recorder.** Wave 5 `.twmission` export files use canonical JSON telemetry and metadata hashes for integrity. They do not export transcripts, prompts, or code diffs, adhering to a local-first, zero-leak boundary.
 
 ## Storage and retention
 
 - Local chats, run history, approvals, settings, pairing state, and usage
   records remain on your device until you delete them or apply TaskWraith's
   local retention controls.
-- Live Activity tokens are held only in the running Mac process. A
+- Live Activity tokens are managed by the standalone Node Host architecture (`HostNodeProductionServer`), communicating over local domain sockets and IPC boundaries. A
   per-activity token is discarded when its activity ends or an update fails;
   push-to-start tokens are discarded when the paired device is forgotten or
   TaskWraith exits. Apple applies its own handling to APNs and ActivityKit

@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-A search box that filters whatever the sidebar is currently showing. **Chat** searches General chats, **Code** searches workspaces and their threads (including matching workflows and boards), and **Work** searches Projects and their members. Each surface keeps its own search text as you switch.
+A search box that filters whatever the sidebar is currently showing. **Chat** searches General chats, **Code** searches workspaces and their threads (including matching workflows and boards), **Work** searches Projects and their members, and **Terminal** searches terminal instances. Each surface keeps its own search text as you switch.
 
 ## Where to find it
 Just below the **Chat / Code / Work** buttons. Click it, or press the shortcut shown in the field — **⌘⇧F** by default on macOS, **Ctrl+Shift+F** elsewhere.

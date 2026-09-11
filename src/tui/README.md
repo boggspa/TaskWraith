@@ -63,11 +63,11 @@ environment or start it interactively.
 
 ## Packages
 
-Packages ship `tw`/`taskwraith` in `Resources/bin` and
+Desktop packages ship `tw`/`taskwraith` in `Resources/bin` and
 `taskwraith-host` in `Resources/host-bin` (`.cmd`/`.ps1` on Windows). These
 launchers use bundled `Resources/tui-runtime` Node, never Electron or
 `ELECTRON_RUN_AS_NODE`; production payload is `Resources/host` with the exact
-pure Muse closure.
+pure Muse closure. **Warning:** Do not confuse these desktop-bundled launchers with the standalone npm package launchers; they are distinct runtime environments.
 
 ```sh
 taskwraith-host --profile /absolute/profile
@@ -132,7 +132,7 @@ remain inside `tw --ascii --width 80`.
 
 `--ascii`, `TASKWRAITH_TUI_ASCII=1`, `NO_COLOR=1`, `--no-color`,
 `--no-animation`, and `--theme` change presentation only. Threads use compact
-HUD plus composer. There is no ensemble baton, seat lens, or mission-cast
+HUD plus composer. There is no ensemble baton or mission-cast
 chrome.
 Opening a Host-projected ensemble thread is view-compatible, not
 controllable: HUD uses that thread's primary provider. Provider identity
@@ -160,20 +160,27 @@ control below); it is no longer rejected.
 
 | Command                                         | Action                                                                                                                                     |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/model [id]`, `/m`                             | No argument opens the existing tune/model picker. With an id, stage that model for the next send; unknown id lists offered ids.            |
-| `/think [level]`, `/reasoning`                  | Set reasoning against the **thread's offered ladder** (never a hardcoded list). No argument shows current + ladder.                        |
-| `/new [provider]`                               | Fresh solo thread. No id opens the provider picker (↑/↓, Enter). Unique id skips the picker. Esc cancels and restores the previous thread. |
-| `/provider [id]`                                | Same guided flow as `/new`.                                                                                                                |
-| `/status`                                       | Host kind + connection, socket/profile path, thread provider/model/reasoning, advertised capabilities.                                     |
-| `/clear`                                        | Local scrollback/viewport reset only — never history mutation.                                                                             |
-| `/context`, `/threads`, `/missions`, `/history` | Existing overlay toggles.                                                                                                                  |
-| `/tune`                                         | Model/reasoning lens (same as Ctrl+G). Not a seat roster.                                                                                  |
-| `/git [status\|diff\|log] [path]`               | Read-only workspace git lens. `s`/`d`/`l` switch scope, `r` refreshes, Esc closes. On demand only — no watcher.                            |
-| `/seats`                                        | Seat lens for an ensemble thread. ↑/↓ select, Enter/Space toggle a seat, `r` refreshes, Esc closes. Round execution stays desktop-only.    |
-| `/help`                                         | Command cheat sheet.                                                                                                                       |
-| `/cancel`                                       | Cancel the active run.                                                                                                                     |
-| `/dismiss`                                      | Dismiss a pending question when the Host advertises `questions`.                                                                           |
-| `/quit`, `/q`                                   | Exit the TUI; the Host remains running.                                                                                                    |
+| `/model [id]`, `/m`                             | Choose a model or stage one for the next send.                                                                                             |
+| `/think [level]`, `/reasoning`                  | Choose or stage a reasoning effort for the next send.                                                                                      |
+| `/tune`                                         | Open the combined model and reasoning lens.                                                                                                |
+| `/new [provider]`, `/provider`                  | Start a fresh solo thread, optionally with a provider.                                                                                     |
+| `/login [provider]`                             | Open provider sign-in and setup status.                                                                                                    |
+| `/status`                                       | Show Host, connection and open-thread detail.                                                                                              |
+| `/context`                                      | Open the context lens for the current thread.                                                                                              |
+| `/goal`                                         | Show the current thread objective.                                                                                                         |
+| `/git [status\|diff\|log] [path]`               | Open the read-only workspace Git lens.                                                                                                     |
+| `/seats`                                        | Open the Ensemble seat lens.                                                                                                               |
+| `/threads`                                      | Open the thread picker.                                                                                                                    |
+| `/workspace [path]`, `/ws`                      | Choose where new threads land or register a workspace path.                                                                                |
+| `/missions`                                     | Open active mission control.                                                                                                               |
+| `/history`                                      | Show completed mission history.                                                                                                            |
+| `/theme [name]`                                 | Preview or apply a TUI colour theme.                                                                                                       |
+| `/clear`                                        | Reset this TUI session's local transcript scrollback.                                                                                      |
+| `/help`                                         | Show command and keyboard help.                                                                                                            |
+| `/archive`                                      | Archive the open thread.                                                                                                                   |
+| `/cancel`                                       | Stop the active run.                                                                                                                       |
+| `/dismiss`                                      | Dismiss the pending Host question.                                                                                                         |
+| `/quit`, `/q`                                   | Leave the TUI while the Host keeps running.                                                                                                |
 
 Every setup, cancellation, and configuration action remains a bounded Host
 command with capability, actor, offer, and receipt validation.
@@ -186,7 +193,7 @@ advertise them (see Current boundary).
 `/theme` opens a picker; moving the cursor repaints the whole frame in the
 hovered theme, `Enter` keeps it, `Esc` puts back what you had. `/theme <name>`
 sets one directly. A confirmed choice is saved to
-`$XDG_CONFIG_HOME/taskwraith/tui.json` (or `~/.config/...`) and applies to every
+`$XDG_CONFIG_HOME/taskwraith/tui.json` (or `~/.config/...`), which stores per-profile startup memory (`workspaceId`, `providerId`, `modelId`, `reasoningId`) in addition to the theme, and applies to every
 later run.
 
 | Theme            |                                                      |

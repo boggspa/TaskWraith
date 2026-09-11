@@ -2,7 +2,7 @@
 
 Short guides to TaskWraith's features: what each one does, where to find it, and how to use it.
 
-The sidebar has four surfaces. **Chat** holds General chats, **Code** holds your workspaces and their chats, and **Work** holds the Projects organizer. Start with [Getting Started](getting-started/) if this is your first run.
+The sidebar has four surfaces. **Chat** holds General chats, **Code** holds your workspaces and their chats, **Work** holds the Projects organizer, and **Terminal** holds terminal instances. Start with [Getting Started](getting-started/) if this is your first run.
 
 Some pages are still waiting on a fresh screenshot; a `screenshot-pending` comment marks each one. The [shot list](images/SHOTLIST.md) and [remaining-captures ledger](images/REMAINING.md) hold the live counts.
 

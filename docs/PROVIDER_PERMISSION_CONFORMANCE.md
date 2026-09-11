@@ -146,3 +146,9 @@ extra, or skipped assertions are rejected.
 `artifacts/coverage`. This is a measured, non-gating baseline: it has no minimum
 threshold and is not a per-PR ratchet. Provider permission conformance remains a
 separate release decision and outranks aggregate coverage percentage.
+
+## September 2026 Findings
+
+- Kimi native deny assertions failing in live runs, leaving native containment unverified.
+- False human attribution in Mistral and AntiGravity ACP adapters.
+- Cursor namespace mismatches between advertised `taskwraith-broker` and observed `taskwraith` 6-tool server.

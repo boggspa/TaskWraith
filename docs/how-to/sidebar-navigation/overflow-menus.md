@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-The per-item menu in the sidebar. On a workspace it offers **New chat**, **Pin** / **Unpin**, **Show Workspace in Finder**, **Copy Working Directory**, and **Remove workspace**. On a chat it offers **Rename**, **Duplicate**, **Pin** / **Unpin**, **Archive**, **Delegate to a sub-thread**, **Open in Multiview pane**, and **Delete** — plus **Open beside parent** and **Open drawer beside parent** on a sub-thread.
+The per-item menu in the sidebar. On a workspace it offers **New chat**, **Pin** / **Unpin**, **Show Workspace in Finder**, **Copy Working Directory**, and **Remove workspace**. On a chat it offers **Rename**, **Pin** / **Unpin**, **Archive**, **Delegate to a sub-thread**, **Open in Multiview pane**, **Add to Workspace Board**, **Open in popout window**, **Open Compact Companion**, **Show Workspace in Finder**, **Copy Working Directory**, **Copy Chat Transcript Directory**, **Hide from main lists / Show in main lists**, **Remove from Git section**, and **Delete** — plus **Open beside parent** and **Open drawer beside parent** on a sub-thread. On a Workspace Board it offers **Pin**, **Rename**, **Duplicate**, **Archive/Restore**, and **Delete**.
 
 ## Where to find it
 On any workspace or chat row in the sidebar.

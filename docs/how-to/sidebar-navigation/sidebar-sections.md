@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-Three buttons at the top of the sidebar decide what it lists. **Chat** shows General chats, **Code** shows your workspaces and their threads, and **Work** opens the **Projects** organizer. Under them sit the sections for that surface — Active Runs, Pinned, Recents, Ensembles, Channels, Workflows, Workspace Boards, Workspaces, and Local Servers.
+Four buttons at the top of the sidebar decide what it lists. **Chat** shows General chats, **Code** shows your workspaces and their threads, **Work** opens the **Projects** organizer, and **Terminal** shows terminal instances. Under them sit the sections for that surface — Active Runs, Pinned, Recents, Ensembles, Channels, Workflows, Workspace Boards, Workspaces, Local Servers, Git, and Chats. (Git is scoped to Code; Chats is scoped to Code for workspace chats and Chat for general chats.)
 
 ## Where to find it
 At the top of the left sidebar, in the main TaskWraith window.

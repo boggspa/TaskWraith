@@ -11,7 +11,7 @@ At the top of the right dock, visible whenever the dock is open.
 ![Right dock rim tabs in the chat corner](../images/transcript-and-search__right-dock-rim.png)
 
 ## How to use it
-1. Click a rim icon to switch the dock to that panel: **Home**, **Chat**, **Media**, **Notes**, **Files**, **Inspect**, or **Term** (if a workspace terminal exists).
+1. Click a rim icon to switch the dock to that panel: **Home**, **Chat**, **Media**, **Notes**, **Files**, **Inspect**, **Term** (if a workspace terminal exists), **Office** (Word, Sheets, Decks, Calendar, and Mail), **Refs**, **Logins**, **Canvas**, or **Drive**.
 2. Only one panel shows at a time; switching opens a different panel and closes the previous one.
 3. Disabled icons show why they are unavailable: **Chat** needs a side chat open, **Files** needs a workspace, **Notes** needs a chat.
 4. A badge on **Media** or **Notes** shows the current count.

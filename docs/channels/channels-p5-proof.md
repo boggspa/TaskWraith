@@ -502,6 +502,8 @@ cannot distinguish concurrent sessions.
 - This record must be updated, not replaced, if the retained People substrate is
   ever revisited or either verification residual is closed.
 
+**Addendum (2026-08-20):** The previously unproven residuals (real-profile crash recovery and the interrupted-start matrix) were successfully proven in P6 on 2026-08-20. Furthermore, the "Transitional dual-state dedupe" residual was successfully discharged as proven unreachable in production during P6. See [`channels-p6-proof.md`](channels-p6-proof.md) for the definitive proof records closing these gaps.
+
 **A rule this record learned the hard way, and the reason it is written here
 rather than in a commit message: the record must be updated by the slice that
 changes its truth, not by a later pass. A slice is not complete until the

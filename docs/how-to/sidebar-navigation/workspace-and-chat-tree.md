@@ -19,3 +19,4 @@ In the sidebar, under **Code → Workspaces**.
 ## Tips & related
 - [Sub-thread delegation](../chats-and-threads/sub-thread-delegation.md) — how those indented rows get created.
 - [Overflow menus](overflow-menus.md) — actions on a workspace or chat.
+- [Side chat](../chats-and-threads/side-chat.md) — side chats.

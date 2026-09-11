@@ -1,10 +1,11 @@
 # Sidebar & Thread Navigation
 
-The sidebar has four surfaces (including Terminal). Pick one at the top to change what it lists:
+The sidebar has four surfaces. Pick one at the top to change what it lists:
 
 - **Chat** — General chats, not tied to a workspace.
 - **Code** — workspaces, their chats, workflows, and boards.
 - **Work** — the **Projects** organizer, which groups chats from anywhere.
+- **Terminal** — terminal instances.
 
 - [Sidebar Sections](sidebar-sections.md)
 - [Workspace and Chat Tree](workspace-and-chat-tree.md)

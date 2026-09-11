@@ -1,4 +1,4 @@
-# Channels P6 plan — verification gates for 1.9.7
+# Channels P6 proof — definitive proof record for the 1.9.7 verification gates
 
 **Read this first: P6 is not "finishing P5."** Channels P5 met its objective and
 its goal is complete. The items below are **verification gates that P5 never
