@@ -175,6 +175,7 @@ function validateHostPayload(hostRoot, label) {
       'MuseProbe.js',
       'MuseReasoningProjection.js',
       'MuseRun.js',
+      'MuseSeatLeaseRegistry.js',
       'MuseSessionLog.js',
       'MuseSkillPin.js',
       'MuseToolProjection.js',
