@@ -35,7 +35,9 @@ interface EnsembleBriefEditorProps {
   onContextMenu?: (event: MouseEvent<HTMLTextAreaElement>) => void
 }
 
-function suggestedPresetName(participants: EnsembleParticipant[]): string {
+// Exported for tests: the named-participant fallback is only reachable once
+// every generated name collides, which a rendered component cannot reach.
+export function suggestedPresetName(participants: EnsembleParticipant[]): string {
   const existing = new Set(
     [...BUILT_IN_ENSEMBLE_BRIEF_PRESETS, ...listUserEnsembleBriefPresets()].map((preset) =>
       preset.name.toLowerCase()
@@ -47,8 +49,12 @@ function suggestedPresetName(participants: EnsembleParticipant[]): string {
     const candidate = `${base} ${n}`
     if (!existing.has(candidate.toLowerCase())) return candidate
   }
-  const firstNamedParticipant = participants.find((participant) => participant.role.trim())
-  return firstNamedParticipant ? `${firstNamedParticipant.role.trim()} brief` : base
+  // `role`, like `instructions`, is typed required but reaches the renderer
+  // absent — main guards every read of it with `|| ''` (EnsembleErrors,
+  // EnsemblePrompt, EnsembleOrchestrator). Skip a participant that has no
+  // role rather than throwing over one.
+  const firstNamedParticipant = participants.find((participant) => (participant.role || '').trim())
+  return firstNamedParticipant ? `${(firstNamedParticipant.role || '').trim()} brief` : base
 }
 
 function promptForPresetName(defaultName: string): string | null {
