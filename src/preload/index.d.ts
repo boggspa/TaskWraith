@@ -2834,6 +2834,9 @@ declare global {
         displayName: string
       }>
       saveChat: (chat: ChatRecord) => Promise<ChatRecord>
+      /** `saveChat`, plus whether canonical took the write. A refusal resolves
+       *  with the canonical record exactly as an acceptance does. */
+      saveChatWithOutcome: (chat: ChatRecord) => Promise<{ chat: ChatRecord; accepted: boolean }>
       patchChatComposerSelection: (
         request: ChatComposerSelectionPatchRequest
       ) => Promise<ChatComposerSelectionPatchResult>

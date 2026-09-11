@@ -1195,6 +1195,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
           const updated = typeof next === 'function' ? next(sideChat) : next
           if (updated) persistSideChat(updated)
         },
+        // The side surface owns its own persistence lane (`persistSideChat`
+        // routes a sideChat through `handleSideChatChange`), so it cannot use
+        // the focused commit, which writes the focused chat stores directly.
+        // Behaviour here is unchanged from the inline handler this replaced;
+        // the roster write claim is not raised on this lane yet.
+        commitEnsembleRosterChange: (next: any) => persistSideChat(next),
         setSelectedModelType: noSideComposerAction,
         setLastNonCustomModelType: noSideComposerAction,
         setCustomModel: (value: string) =>

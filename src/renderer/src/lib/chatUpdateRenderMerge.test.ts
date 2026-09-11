@@ -804,6 +804,217 @@ describe('mergeChatUpdatedForRender', () => {
     ])
   })
 
+  // 2026-09-11, fourth report in the 1.0.5-UI2 class: "I click remove, the seat
+  // disappears and immediately reappears", and the same denial on ADD. The chip
+  // strip's optimistic commit stamps only `ensemble.updatedAt`; main re-stamps
+  // the top-level `chat.updatedAt` on EVERY unrelated save, so one landing
+  // inside the `saveChat` window out-stamps the edit while still carrying the
+  // pre-edit roster. The claim says main has not been told yet, so the stamp
+  // does not get to decide.
+  it('keeps a just-removed seat out while the roster write is unconfirmed', () => {
+    const delivered = { ...chat([message('a', 'unrelated save')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:09.000Z')
+    delivered.ensemble = makeEnsemble(
+      [
+        { id: 'seat-1', role: 'Boss' },
+        { id: 'seat-2', role: 'Flash' },
+        { id: 'seat-3', role: 'Reviewer' }
+      ],
+      '2026-09-01T00:00:01.000Z'
+    )
+    const live = { ...chat([message('a', 'unrelated save')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
+    live.ensemble = makeEnsemble(
+      [
+        { id: 'seat-1', role: 'Boss' },
+        { id: 'seat-3', role: 'Reviewer' }
+      ],
+      '2026-09-01T00:00:02.000Z'
+    )
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false,
+      localEnsembleRosterPending: true
+    })
+    expect(merged.ensemble?.participants.map((participant) => participant.id)).toEqual([
+      'seat-1',
+      'seat-3'
+    ])
+  })
+
+  it('keeps a just-added seat while the roster write is unconfirmed', () => {
+    const delivered = { ...chat([message('a', 'unrelated save')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:09.000Z')
+    delivered.ensemble = makeEnsemble([{ id: 'seat-1', role: 'Boss' }], '2026-09-01T00:00:01.000Z')
+    const live = { ...chat([message('a', 'unrelated save')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
+    live.ensemble = makeEnsemble(
+      [
+        { id: 'seat-1', role: 'Boss' },
+        { id: 'seat-2', role: 'Flash' }
+      ],
+      '2026-09-01T00:00:02.000Z'
+    )
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false,
+      localEnsembleRosterPending: true
+    })
+    expect(merged.ensemble?.participants.map((participant) => participant.id)).toEqual([
+      'seat-1',
+      'seat-2'
+    ])
+  })
+
+  it('keeps a just-renamed seat role while the roster write is unconfirmed', () => {
+    const delivered = { ...chat([message('a', 'unrelated save')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:09.000Z')
+    delivered.ensemble = makeEnsemble(
+      [{ id: 'seat-1', role: 'Worker' }],
+      '2026-09-01T00:00:01.000Z'
+    )
+    const live = { ...chat([message('a', 'unrelated save')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
+    live.ensemble = makeEnsemble(
+      [{ id: 'seat-1', role: 'Reviewer', model: 'gpt-5.4-codex' }],
+      '2026-09-01T00:00:02.000Z'
+    )
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false,
+      localEnsembleRosterPending: true
+    })
+    expect(merged.ensemble?.participants[0].role).toBe('Reviewer')
+    expect(merged.ensemble?.participants[0].model).toBe('gpt-5.4-codex')
+  })
+
+  // Second defect in the same report: the rescue rebuilt the block as
+  // `{ ...deliveredEnsemble, participants: liveParticipants }`, so defending a
+  // seat edit silently reverted the round budget sitting beside it.
+  it('keeps the live panel configuration when it restores the live roster', () => {
+    const delivered = { ...chat([message('a', 'unrelated save')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:09.000Z')
+    delivered.ensemble = {
+      ...makeEnsemble(
+        [
+          { id: 'seat-1', role: 'Boss' },
+          { id: 'seat-2', role: 'Flash' }
+        ],
+        '2026-09-01T00:00:01.000Z'
+      )!,
+      maxContinuationHops: 6,
+      roundMode: 'roundtable',
+      ensembleContextChars: 5_000
+    }
+    const live = { ...chat([message('a', 'unrelated save')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
+    live.ensemble = {
+      ...makeEnsemble([{ id: 'seat-1', role: 'Boss' }], '2026-09-01T00:00:02.000Z')!,
+      maxContinuationHops: 40,
+      roundMode: 'rebuttal',
+      ensembleContextChars: 120_000
+    }
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false,
+      localEnsembleRosterPending: true
+    })
+    expect(merged.ensemble?.maxContinuationHops).toBe(40)
+    expect(merged.ensemble?.roundMode).toBe('rebuttal')
+    expect(merged.ensemble?.ensembleContextChars).toBe(120_000)
+  })
+
+  // The panel config is defended on its own, without a membership change: a
+  // hop-limit edit persists through its own IPC and leaves the seats alone.
+  it('keeps a just-set hop limit against a staler delivery with the same seats', () => {
+    const delivered = { ...chat([message('a', 'unrelated save')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:09.000Z')
+    delivered.ensemble = {
+      ...makeEnsemble([{ id: 'seat-1', role: 'Boss' }], '2026-09-01T00:00:01.000Z')!,
+      maxContinuationHops: 6
+    }
+    const live = { ...chat([message('a', 'unrelated save')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
+    live.ensemble = {
+      ...makeEnsemble([{ id: 'seat-1', role: 'Boss' }], '2026-09-01T00:00:02.000Z')!,
+      maxContinuationHops: 200
+    }
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false,
+      localEnsembleRosterPending: true
+    })
+    expect(merged.ensemble?.maxContinuationHops).toBe(200)
+    expect(merged.ensemble?.participants.map((participant) => participant.id)).toEqual(['seat-1'])
+  })
+
+  // The claim is not a veto on main. With none held the wall clock still
+  // decides, so a genuinely newer main-authored roster change applies.
+  it('still lets a newer delivered roster win when no claim is held', () => {
+    const delivered = { ...chat([message('a', 'remote edit')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:09.000Z')
+    delivered.ensemble = makeEnsemble(
+      [
+        { id: 'seat-1', role: 'Boss' },
+        { id: 'seat-9', role: 'Remote seat' }
+      ],
+      '2026-09-01T00:00:09.000Z'
+    )
+    const live = { ...chat([message('a', 'remote edit')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
+    live.ensemble = makeEnsemble([{ id: 'seat-1', role: 'Boss' }], '2026-09-01T00:00:01.000Z')
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false,
+      localEnsembleRosterPending: false
+    })
+    expect(merged.ensemble?.participants.map((participant) => participant.id)).toEqual([
+      'seat-1',
+      'seat-9'
+    ])
+  })
+
+  // Main-authored seat bookkeeping must survive the rescue, or a restored
+  // roster breaks a resumed provider session.
+  it('keeps delivered main-authored round state while restoring the live roster', () => {
+    const delivered = { ...chat([message('a', 'unrelated save')]) }
+    delivered.updatedAt = Date.parse('2026-09-01T00:00:09.000Z')
+    delivered.ensemble = {
+      ...makeEnsemble(
+        [
+          { id: 'seat-1', role: 'Boss' },
+          { id: 'seat-2', role: 'Flash' }
+        ],
+        '2026-09-01T00:00:01.000Z'
+      )!,
+      activeRound: { roundId: 'round-7', status: 'running' }
+    } as ChatRecord['ensemble']
+    const live = { ...chat([message('a', 'unrelated save')]) }
+    live.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
+    live.ensemble = makeEnsemble([{ id: 'seat-1', role: 'Boss' }], '2026-09-01T00:00:02.000Z')
+    const merged = mergeChatUpdatedForRender(delivered, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false,
+      localEnsembleRosterPending: true
+    })
+    expect(merged.ensemble?.activeRound?.roundId).toBe('round-7')
+    expect(merged.ensemble?.participants.map((participant) => participant.id)).toEqual(['seat-1'])
+  })
+
   it('leaves the record untouched when live and delivered rosters agree', () => {
     const delivered = { ...chat([message('a', 'frame')]) }
     delivered.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')

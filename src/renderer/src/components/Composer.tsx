@@ -8,6 +8,7 @@ import { createWindowDragSession } from '../lib/windowDragSession'
 import { MAX_ACTIVE_GOAL_OBJECTIVE_CHARS } from '../../../main/GoalState'
 import type {
   AgenticWorkspaceGrant,
+  ChatRecord,
   ChatWorkflowMode,
   EnsembleFanoutIsolationPolicy,
   EnsembleFanoutPolicy,
@@ -471,6 +472,9 @@ export interface ComposerProps {
   openPlanImportReview: any
   openSideChatFromSlashCommand: (sideCommand: SideSlashCommand) => boolean | void
   overestimatePercent: any
+  /** Whole-record Ensemble commit from the chip strip, claimed against a
+   *  stale delivery for the life of its save. See lib/ensembleRosterCommit.ts. */
+  commitEnsembleRosterChange: (chat: ChatRecord) => void
   patchEnsembleParticipantById: any
   pendingAgentApproval: any
   pendingApprovalQueueByChatId: any
@@ -865,6 +869,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     openPlanImportReview,
     openSideChatFromSlashCommand,
     overestimatePercent,
+    commitEnsembleRosterChange,
     patchEnsembleParticipantById,
     pendingAgentApproval,
     pendingApprovalQueueByChatId,
@@ -2851,16 +2856,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     animateEntrance={isWorkflowComposeChat}
                     selectedParticipantId={effectiveSelectedParticipantId}
                     onSelectParticipant={handleSelectParticipant}
-                    onChatChange={(updatedChat) => {
-                      chatByIdRef.current.set(updatedChat.appChatId, updatedChat)
-                      setCurrentChat((prev) =>
-                        prev?.appChatId === updatedChat.appChatId ? updatedChat : prev
-                      )
-                      setChats((prev) =>
-                        prev.map((c) => (c.appChatId === updatedChat.appChatId ? updatedChat : c))
-                      )
-                      void window.api.saveChat(updatedChat)
-                    }}
+                    onChatChange={commitEnsembleRosterChange}
                     onPatchParticipant={(participantId, patch) => {
                       patchEnsembleParticipantById(participantId, patch)
                     }}

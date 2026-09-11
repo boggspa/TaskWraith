@@ -5,6 +5,12 @@ import type {
   EnsembleParticipant
 } from '../../../main/store/types'
 import { CHAT_COMPOSER_SELECTION_METADATA_KEYS } from '../../../shared/chatComposerSelectionPatch'
+import {
+  ensemblePanelConfigurationSignature,
+  ensembleSeatConfigurationSignature,
+  overlayEnsemblePanelConfiguration,
+  overlayEnsembleSeatConfiguration
+} from '../../../shared/ensembleAuthoredSlice'
 import { PENDING_PROVIDER_CHANGE_KEY } from '../../../shared/providerChangeQueue'
 import { isTranscriptPagedShell } from '../../../shared/transcriptPage'
 import { anchorPendingAgentQuestionMarkers } from './agentQuestionMarkerAnchor'
@@ -69,6 +75,12 @@ export interface ChatUpdateRenderMergeOptions {
    * write has not confirmed yet. See `composerSelectionWriteClaims.ts`.
    */
   localComposerSelectionPending?: boolean
+  /**
+   * Whether the renderer holds an Ensemble roster / panel-configuration commit
+   * this chat's durable write has not confirmed yet. See
+   * `ensembleRosterWriteClaims.ts`.
+   */
+  localEnsembleRosterPending?: boolean
 }
 
 /**
@@ -427,54 +439,6 @@ function sameRosterSequence(
 }
 
 /**
- * The user-editable seat configuration — everything the composer pickers and
- * the roster panel write on a participant. Deliberately excludes main-authored
- * runtime bookkeeping (linkedProviderSessionId, seatGeneration, prompt
- * versions, compaction summaries, token totals, ACP posture): those fields are
- * newest in the DELIVERED record and must never be rolled back to the live
- * copy when only the configuration is being restored.
- */
-const ENSEMBLE_SEAT_CONFIGURATION_KEYS = [
-  'provider',
-  'enabled',
-  'role',
-  'instructions',
-  'order',
-  'model',
-  'runtimeProfileId',
-  'geminiAuthProfileId',
-  'ollamaRunProfile',
-  'permissionPresetId',
-  'permissionOverrides',
-  'stageRole',
-  'reasoningEffort',
-  'fastModeEnabled',
-  'thinkingEnabled',
-  'serviceTier',
-  'pooledAgentId',
-  'pooledAgentIdentity'
-] as const satisfies readonly (keyof EnsembleParticipant)[]
-
-function seatConfigurationSignature(participant: EnsembleParticipant): string {
-  return JSON.stringify(ENSEMBLE_SEAT_CONFIGURATION_KEYS.map((key) => participant[key] ?? null))
-}
-
-/** Delivered seat + the live seat's user-editable configuration. An absent
- * live field is restored as absent so a deliberate local clear sticks. */
-function overlaySeatConfiguration(
-  delivered: EnsembleParticipant,
-  live: EnsembleParticipant
-): EnsembleParticipant {
-  const next = { ...delivered } as unknown as Record<string, unknown>
-  for (const key of ENSEMBLE_SEAT_CONFIGURATION_KEYS) {
-    const value = live[key]
-    if (value === undefined) delete next[key]
-    else next[key] = value
-  }
-  return next as unknown as EnsembleParticipant
-}
-
-/**
  * 1.0.5-UI2 — The Add Participant popover commits the new seat optimistically
  * (`buildPersistedChat` stamps `ensemble.updatedAt`) and persists
  * asynchronously. A main refresh captured before that save reaches the store
@@ -494,37 +458,60 @@ function overlaySeatConfiguration(
  * roster is fresher, restore only that configuration per seat — delivered
  * main-authored bookkeeping (session linkage, prompt versions, compaction,
  * token totals) stays, so this cannot break a resumed provider session.
+ *
+ * Fourth report in the class, 2026-09-11: "I click remove, the seat disappears
+ * and immediately reappears", plus the same denial on ADD. The stamp was never
+ * enough here either, for exactly the reason the composer-selection helper
+ * below already records — `resolveRosterStamp` mixes in `chat.updatedAt`, which
+ * main re-stamps on EVERY unrelated write, so any of them landing inside the
+ * `saveChat` window out-stamps the roster edit while still carrying the
+ * pre-edit roster. The optimistic commit stamps only `ensemble.updatedAt`
+ * (`buildPersistedChat` does not bump the top-level clock), so the delivery
+ * wins on a clock the edit never advanced. `localRosterPending` is the renderer
+ * saying that window is still open: while it is, a delivery's disagreement is
+ * ignorance rather than intent and the live roster wins outright.
  */
 function preserveNewerLocalEnsembleRoster(
   merged: ChatRecord,
-  liveChat: ChatRecord | null | undefined
+  liveChat: ChatRecord | null | undefined,
+  localRosterPending = false
 ): ChatRecord {
   const liveEnsemble = liveChat?.ensemble
   const deliveredEnsemble = merged.ensemble
   if (!liveChat || !liveEnsemble || !deliveredEnsemble) return merged
   const liveParticipants = liveEnsemble.participants
   const deliveredParticipants = deliveredEnsemble.participants
-  if (liveParticipants === deliveredParticipants) return merged
   if (!Array.isArray(liveParticipants) || !Array.isArray(deliveredParticipants)) return merged
   const sameMembership = sameRosterSequence(liveParticipants, deliveredParticipants)
+  const samePanelConfiguration =
+    ensemblePanelConfigurationSignature(liveEnsemble) === ensemblePanelConfigurationSignature(deliveredEnsemble)
   if (
-    sameMembership &&
-    liveParticipants.every(
-      (participant, index) =>
-        seatConfigurationSignature(participant) ===
-        seatConfigurationSignature(deliveredParticipants[index])
-    )
+    samePanelConfiguration &&
+    (liveParticipants === deliveredParticipants ||
+      (sameMembership &&
+        liveParticipants.every(
+          (participant, index) =>
+            ensembleSeatConfigurationSignature(participant) ===
+            ensembleSeatConfigurationSignature(deliveredParticipants[index])
+        )))
   ) {
     return merged
   }
-  if (resolveRosterStamp(liveChat) <= resolveRosterStamp(merged)) return merged
+  // The claim wins outright: it answers "has main been told yet", which is the
+  // question the stamp cannot. Only with no claim held does the wall clock get
+  // to decide, and then a genuinely newer main-authored roster change (a remote
+  // edit, orchestrator reconciliation) still applies on its stamp.
+  if (!localRosterPending && resolveRosterStamp(liveChat) <= resolveRosterStamp(merged)) {
+    return merged
+  }
+  const panelConfiguration = overlayEnsemblePanelConfiguration(deliveredEnsemble, liveEnsemble)
   if (sameMembership) {
     return {
       ...merged,
       ensemble: {
-        ...deliveredEnsemble,
+        ...panelConfiguration,
         participants: deliveredParticipants.map((participant, index) =>
-          overlaySeatConfiguration(participant, liveParticipants[index])
+          overlayEnsembleSeatConfiguration(participant, liveParticipants[index])
         )
       }
     }
@@ -532,7 +519,7 @@ function preserveNewerLocalEnsembleRoster(
   return {
     ...merged,
     ensemble: {
-      ...deliveredEnsemble,
+      ...panelConfiguration,
       participants: liveParticipants,
       maxParticipants: Math.max(
         Number(deliveredEnsemble.maxParticipants) || 0,
@@ -732,7 +719,11 @@ export function mergeChatUpdatedForRender(
   // See 1.0.5-UI2 on each helper.
   merged = preserveNewerLocalChatKind(merged, liveChat)
   merged = preserveNewerLocalActiveGoal(merged, liveChat, options.localGoalIntent)
-  merged = preserveNewerLocalEnsembleRoster(merged, liveChat)
+  merged = preserveNewerLocalEnsembleRoster(
+    merged,
+    liveChat,
+    options.localEnsembleRosterPending === true
+  )
   merged = preserveNewerLocalComposerSelection(
     merged,
     liveChat,

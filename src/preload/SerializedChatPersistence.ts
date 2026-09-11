@@ -1,10 +1,18 @@
 import type { ChatRecord } from '../main/store/types'
 
 type CanonicalChatResult = ChatRecord | null
+type QueuedChatOperationResult = CanonicalChatResult | CanonicalChatSaveOutcome
 
 export interface CanonicalChatSaveResult {
   chat: ChatRecord
   previous: ChatRecord | null
+  accepted: boolean
+}
+
+/** What a caller learns from one whole-record save: the canonical record, and
+ *  whether canonical actually took the write. */
+export interface CanonicalChatSaveOutcome {
+  chat: ChatRecord
   accepted: boolean
 }
 
@@ -243,7 +251,7 @@ function rebaseQueuedSnapshot(
  * otherwise main's CAS rejects the original stale clone without losing data.
  */
 export class SerializedChatPersistence {
-  private readonly tails = new Map<string, Promise<CanonicalChatResult>>()
+  private readonly tails = new Map<string, Promise<QueuedChatOperationResult>>()
   private readonly acceptedLineageByChatId = new Map<string, AcceptedChatLineage>()
   private readonly pendingRevisionCountsByChatId = new Map<string, Map<number, number>>()
 
@@ -286,6 +294,21 @@ export class SerializedChatPersistence {
   }
 
   save(chat: ChatRecord): Promise<ChatRecord> {
+    return this.saveWithOutcome(chat).then((outcome) => outcome.chat)
+  }
+
+  /**
+   * `save`, plus whether canonical actually took the write.
+   *
+   * The flag is already on the IPC result and was previously used only for the
+   * console diagnostic. A caller that authored a user-visible slice needs it to
+   * ACT: a refusal resolves with the canonical record exactly as an acceptance
+   * does, so without this the only way to tell them apart is to guess from the
+   * content — and a guess cannot distinguish "main dropped my edit" from "main
+   * accepted it and normalized it", which is the difference between a
+   * worthwhile retry and an infinite fight with the normalizer.
+   */
+  saveWithOutcome(chat: ChatRecord): Promise<CanonicalChatSaveOutcome> {
     const chatId = chat.appChatId
     // Capture the whole-record snapshot at invocation time. A queued IPC call
     // must not observe later in-place mutations made by its renderer caller.
@@ -327,7 +350,7 @@ export class SerializedChatPersistence {
           // lineage. Do not use stale renderer history to advance later saves.
           this.acceptedLineageByChatId.delete(chatId)
         }
-        return result.chat
+        return { chat: result.chat, accepted: result.accepted !== false }
       } catch (error) {
         // IPC failure is ambiguous: main may have committed before the reply
         // was lost. Discard the lineage rather than lending that revision.
@@ -336,7 +359,7 @@ export class SerializedChatPersistence {
       } finally {
         this.releasePendingRevision(chatId, snapshotRevision)
       }
-    }) as Promise<ChatRecord>
+    })
   }
 
   /** Serialize another canonical chat mutation (for example `/clear`). */
@@ -388,15 +411,18 @@ export class SerializedChatPersistence {
     }
   }
 
-  private enqueue(
+  // Generic in the operation's result so the queue can carry either a bare
+  // canonical record or a save outcome; the tail only needs ORDER, never the
+  // shape of what it is ordering.
+  private enqueue<T extends QueuedChatOperationResult>(
     chatId: string,
-    operation: () => Promise<CanonicalChatResult>
-  ): Promise<CanonicalChatResult> {
+    operation: () => Promise<T>
+  ): Promise<T> {
     const previous = this.tails.get(chatId)
     const queued = (previous ? previous.catch(() => null) : Promise.resolve(null)).then(
       operation
     )
-    const tracked: Promise<CanonicalChatResult> = queued.finally(() => {
+    const tracked: Promise<T> = queued.finally(() => {
       if (this.tails.get(chatId) === tracked) this.tails.delete(chatId)
     })
     this.tails.set(chatId, tracked)

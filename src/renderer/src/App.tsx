@@ -1105,6 +1105,11 @@ import {
 } from '../../shared/chatComposerSelectionPatch'
 import { ChatComposerSelectionPatchQueue } from './lib/ChatComposerSelectionPatchQueue'
 import { ComposerSelectionWriteClaims } from './lib/composerSelectionWriteClaims'
+import { EnsembleRosterWriteClaims } from './lib/ensembleRosterWriteClaims'
+import {
+  commitEnsembleRosterChange as commitEnsembleRosterChangeRecord,
+  saveChatPreservingEnsembleIntent
+} from './lib/ensembleRosterCommit'
 import {
   readPendingWorkspaceRebind,
   type PendingWorkspaceRebind
@@ -5389,7 +5394,8 @@ function App(): React.JSX.Element {
           pendingMarkerIds,
           localGoalIntent: pendingGoalIntentRef.current.get(chatId) ?? null,
           localComposerSelectionPending:
-            composerSelectionClaimsRef.current?.held(chatId) === true
+            composerSelectionClaimsRef.current?.held(chatId) === true,
+          localEnsembleRosterPending: ensembleRosterClaimsRef.current?.held(chatId) === true
         })
         updated = pendingChatDraftsRef.current.apply(pendingMainUpdate.chat, updated, beforeMerge)
         byId.set(chatId, updated)
@@ -5667,6 +5673,18 @@ function App(): React.JSX.Element {
       if (activeRunChatIdRef.current === chatId) {
         activeRunChatSnapshotRef.current = updated
       }
+      // Claim an Ensemble panel edit BEFORE the flush below can merge a
+      // delivery against it. The optimistic record is already live, so from
+      // this instant until the durable write answers, any delivery that
+      // disagrees about the roster or the panel config was built without
+      // knowing about this edit. Raised here rather than at each call site so
+      // every surface reaching the panel through this funnel — chip strip,
+      // roster popover, preset apply, orchestration row, seat patch — is
+      // covered by construction. See lib/ensembleRosterWriteClaims.ts.
+      const ensembleEditToken =
+        updated.ensemble !== base.ensemble || updated.chatKind !== base.chatKind
+          ? (ensembleRosterClaimsRef.current?.raise(chatId) ?? null)
+          : null
       // #1 — render coalescing. The ref write above is the synchronous source
       // of truth. For coalesced (streamed-delta) updates, defer the React
       // commit to one rAF flush per frame; every other caller commits
@@ -5681,7 +5699,10 @@ function App(): React.JSX.Element {
       }
       // Small composer picker edits persist through their own main-authoritative
       // patch IPC. Returning here keeps the optimistic React/cache update above
-      // while avoiding a structured clone of the entire chat transcript.
+      // while avoiding a structured clone of the entire chat transcript. A
+      // panel claim raised above stays held: that IPC settles it where it is
+      // wired (requestLiveEnsembleRoundConfigUpdate), and the claim's bounded
+      // lease is the backstop everywhere else.
       if (options?.persistence === 'none') return updated
       pendingChatDraftsRef.current.trackTarget(updated)
       const persistTranscriptTail =
@@ -5703,9 +5724,29 @@ function App(): React.JSX.Element {
           .then(() => {
             const latest = chatByIdRef.current.get(chatId) || updated
             if (pendingChatDraftsRef.current.conflicts(chatId).length) return
-            return window.api.saveChat(latest)
+            // An Ensemble panel edit answers a refusal instead of swallowing
+            // it: main drops a whole clone whose revision skewed, which its own
+            // writes cause constantly. See lib/ensembleRosterCommit.ts.
+            if (ensembleEditToken === null) return window.api.saveChat(latest)
+            return saveChatPreservingEnsembleIntent(latest, {
+              saveChat: (record) => window.api.saveChatWithOutcome(record),
+              onRebased: (record) => {
+                chatByIdRef.current.set(chatId, record)
+                pendingChatFlushRef.current.add(chatId)
+                flushCoalescedChatsNow()
+              }
+            })
           })
           .catch(() => {})
+          .finally(() => {
+            // Main has the panel edit. Drain the deliveries built before it
+            // through the still-claimed merge, THEN release — the same
+            // ordering the composer-selection queue uses, so an in-flight
+            // stale frame cannot land in the gap between answer and release.
+            if (ensembleEditToken === null) return
+            flushCoalescedChatsNow()
+            ensembleRosterClaimsRef.current?.settle(chatId, ensembleEditToken)
+          })
       }, 200)
       saveChatTimersRef.current.set(chatId, timer)
       return updated
@@ -6501,6 +6542,15 @@ function App(): React.JSX.Element {
   const composerSelectionClaimsRef = useRef<ComposerSelectionWriteClaims | null>(null)
   if (!composerSelectionClaimsRef.current) {
     composerSelectionClaimsRef.current = new ComposerSelectionWriteClaims()
+  }
+  // Claims over an Ensemble roster / panel-configuration commit main has not
+  // confirmed yet, so a delivery built before it cannot revert the seat the
+  // user just added or removed, or the round budget beside it. Its own
+  // register, not the selection one: the two writes answer independently.
+  // See lib/ensembleRosterWriteClaims.ts.
+  const ensembleRosterClaimsRef = useRef<EnsembleRosterWriteClaims | null>(null)
+  if (!ensembleRosterClaimsRef.current) {
+    ensembleRosterClaimsRef.current = new EnsembleRosterWriteClaims()
   }
   const composerSelectionPatchQueueRef = useRef<ChatComposerSelectionPatchQueue | null>(null)
   if (!composerSelectionPatchQueueRef.current) {
@@ -22233,11 +22283,18 @@ function App(): React.JSX.Element {
       if (!change) return
       // The live-round-config IPC persists authoritatively main-side (with the
       // durable transcript event), so this optimistic patch must not ALSO
-      // schedule the debounced whole-record save: the cap's only merge
-      // preservation is stamp-gated, so a post-patch main save still wipes it
-      // from the ref — flapping the UI back to the old value and sending a
-      // goal-less save that main then refuses as a stale clone. Same shape
-      // as the composer picker edits.
+      // schedule the debounced whole-record save: the two would race to persist
+      // the same value, and the loser is a redundant multi-MB write of a record
+      // the authoritative path has already settled.
+      //
+      // 2026-09-11 — this comment used to justify the same decision by the two
+      // ways the whole-record save FAILED: the cap's merge preservation was
+      // stamp-gated, so a later main save wiped the optimistic value from the
+      // ref, and the delayed clone was then refused as stale. Both are fixed
+      // (the cap is in ENSEMBLE_PANEL_CONFIGURATION_KEYS and defended by the
+      // roster write claim; a refused save is rebased and re-issued — see
+      // lib/ensembleRosterCommit.ts). Routing through the authoritative IPC
+      // remains right on its own merits; it is no longer a workaround.
       updateChatById(
         chatId,
         (source) => {
@@ -22283,6 +22340,22 @@ function App(): React.JSX.Element {
       patchEnsembleParticipantForChat(currentChat.appChatId, selectedParticipant.id, patch)
     },
     [isCurrentEnsembleChat, patchEnsembleParticipantForChat, selectedParticipant, currentChat]
+  )
+  // Chip-strip whole-record commit. Thin wiring only — the claim ordering that
+  // keeps a stale delivery from reverting the user's add/removal lives in
+  // lib/ensembleRosterCommit.ts.
+  const commitEnsembleRosterChange = useCallback(
+    (updatedChat: ChatRecord) => {
+      commitEnsembleRosterChangeRecord(updatedChat, {
+        chatById: chatByIdRef.current,
+        setCurrentChat,
+        setChats,
+        claims: ensembleRosterClaimsRef.current,
+        saveChat: (chat) => window.api.saveChatWithOutcome(chat),
+        flushDeliveries: flushCoalescedChatsNow
+      })
+    },
+    [flushCoalescedChatsNow]
   )
   const patchEnsembleParticipantById = useCallback(
     (participantId: string, patch: Partial<EnsembleParticipant>) => {
@@ -30473,6 +30546,7 @@ function App(): React.JSX.Element {
       multiview,
       onOllamaModelSelected: checkOllamaModelAvailability,
       overestimatePercent,
+      commitEnsembleRosterChange,
       patchEnsembleParticipantById,
       pendingApprovalQueueByChatId,
       persistentSessionNeedsRestart,
@@ -30590,6 +30664,7 @@ function App(): React.JSX.Element {
       isSteerBusyForCurrentChat,
       multiview,
       overestimatePercent,
+      commitEnsembleRosterChange,
       patchEnsembleParticipantById,
       pendingApprovalQueueByChatId,
       persistentSessionNeedsRestart,

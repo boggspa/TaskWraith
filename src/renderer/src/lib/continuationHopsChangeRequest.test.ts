@@ -80,9 +80,12 @@ describe('roster-surface wiring', () => {
   })
 
   it('persists the cap through the authoritative config IPC, not a debounced whole-record save', () => {
-    // The cap's only merge preservation is stamp-gated, so a post-patch main
-    // save wipes the optimistic value from the ref; a delayed whole-record
-    // save would then flap the UI and be refused as a stale clone.
+    // The authoritative IPC owns this write (it carries the durable transcript
+    // event), so a debounced whole-record save alongside it would race to
+    // persist the same value and cost a redundant multi-MB write. The two
+    // failure modes this used to guard against — stamp-gated merge
+    // preservation, and the delayed clone being refused as stale — are fixed
+    // elsewhere now; the routing stands on its own.
     const start = appSource.indexOf('const updateEnsembleMaxContinuationHopsForChat = ')
     const end = appSource.indexOf('const updateSelectedParticipant = useCallback(', start)
     expect(start).toBeGreaterThanOrEqual(0)

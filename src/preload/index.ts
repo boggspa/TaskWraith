@@ -2661,6 +2661,7 @@ const api = {
   humanCollaborationCollaboratorReconnect: () =>
     ipcRenderer.invoke('human-collaboration-collaborator:reconnect'),
   saveChat: (chat: ChatRecord) => serializedChatPersistence.save(chat),
+  saveChatWithOutcome: (chat: ChatRecord) => serializedChatPersistence.saveWithOutcome(chat),
   patchChatComposerSelection: (
     request: ChatComposerSelectionPatchRequest
   ): Promise<ChatComposerSelectionPatchResult> =>
