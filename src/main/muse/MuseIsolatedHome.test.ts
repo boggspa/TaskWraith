@@ -479,6 +479,85 @@ describe('Muse durable per-chat seat home', () => {
     second.cleanup()
   })
 
+  // 2026-09-11, thread 5b648b4a: nine Muse runs were dispatched into one chat
+  // inside 611ms and every one of them attached THIS seat. The attach scrub is
+  // what makes a reused seat safe — it removes the previous turn's credentials
+  // before the provider sees them — so under contention each attach deleted the
+  // auth.json the already-launched seats were still starting with. Eight runs
+  // reported `missing meta credentials: run muse login or set META_API_KEY` and
+  // the ninth tripped the continuity assertion on a `model-catalog` directory a
+  // live seat had just written. The seat can hold exactly one turn, so a second
+  // concurrent attach must be refused rather than served destructively.
+  it('refuses a second concurrent attach instead of scrubbing the live turn', () => {
+    const target = seat('concurrent')
+    const first = attach(target, { runId: 'concurrent-run-1' })
+    projectMuseAuthJson(
+      first,
+      JSON.stringify({
+        schema_version: 1,
+        providers: {
+          meta: { mechanism: 'oauth', access_token: 'live-turn-token', expires_at: 1_900_000_000 }
+        }
+      })
+    )
+
+    expect(() => attach(target, { runId: 'concurrent-run-2' })).toThrow(/already in use/i)
+
+    // The live turn keeps the credentials it launched with.
+    expect(readFileSync(join(first.museConfigDir, 'auth.json'), 'utf8')).toContain(
+      'live-turn-token'
+    )
+    expect(existsSync(first.settingsPath)).toBe(true)
+
+    // ...and the seat is free again the moment that turn releases it.
+    expect(first.cleanup()).toEqual({ ok: true, alreadyAbsent: false })
+    const next = attach(target, { runId: 'concurrent-run-3' })
+    expect(existsSync(join(next.museConfigDir, 'auth.json'))).toBe(false)
+    next.cleanup()
+  })
+
+  // A refused attach must not leave the seat marked busy: the next turn would
+  // then be refused too, and the chat would be dead until the app restarted.
+  it('leaves the seat claimable after an attach that threw', () => {
+    const target = seat('release-on-throw')
+    const first = attach(target, { runId: 'throwing-run-1' })
+    expect(() => attach(target, { runId: 'throwing-run-2' })).toThrow(/already in use/i)
+    first.cleanup()
+
+    const recovered = attach(target, { runId: 'throwing-run-3' })
+    expect(recovered.path).toBe(realpathSync(target.path))
+    recovered.cleanup()
+  })
+
+  // One failed attach must not refuse every later turn in the thread. The claim
+  // is taken before the seat directory is established, so the establish itself
+  // is the first thing that can throw while holding it.
+  it('frees a seat whose attach threw before any lease was issued', () => {
+    const target = seat('establish-fail')
+    mkdirSync(target.boundaryRoot, { recursive: true, mode: 0o700 })
+    writeFileSync(target.path, 'a file where the seat directory belongs')
+
+    expect(() => attach(target, { runId: 'establish-fail-1' })).toThrow()
+
+    rmSync(target.path, { force: true })
+    const recovered = attach(target, { runId: 'establish-fail-2' })
+    expect(recovered.path).toBe(realpathSync(target.path))
+    recovered.cleanup()
+  })
+
+  // Two different chats are two different seats; one busy thread must never
+  // block another.
+  it('scopes the refusal to the seat, not to Muse', () => {
+    const one = seat('scope-a')
+    const two = seat('scope-b')
+    const first = attach(one, { runId: 'scope-run-1' })
+    const second = attach(two, { runId: 'scope-run-2' })
+
+    expect(second.path).toBe(realpathSync(two.path))
+    first.cleanup()
+    second.cleanup()
+  })
+
   it('never serves a later turn the MCP broker token minted for an earlier one', () => {
     const target = seat('broker')
     const first = attach(target, {

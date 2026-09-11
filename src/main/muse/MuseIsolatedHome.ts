@@ -18,6 +18,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { museAuthJsonUsesKeychainStorage, parseMuseAuthJsonCredential } from './MuseProbe'
 import { type MuseSkillPinSettings, buildMuseSkillPinSettings } from './MuseSkillPin'
 import { mergeMuseMcpSettings, serializeMuseSettings, type MuseMcpSettings } from './MuseMcpConfig'
+import { museSeatLeases } from './MuseSeatLeaseRegistry'
 
 export interface MuseIsolatedHomeAuthority {
   readonly schemaVersion: 1
@@ -183,13 +184,24 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
   const runId = requireRunId(input.runId)
   let createdPath: string
   if (durableSeat) {
-    createdPath = establishMuseDurableSeat(durableSeat.boundaryRoot, durableSeat.path)
+    // Claim BEFORE the seat is touched. `establishMuseDurableSeat` is followed
+    // immediately by the attach scrub, which reduces the seat to session
+    // continuity — so an overlapping turn's attach would delete the credentials
+    // a live turn is still launching with. See MuseSeatLeaseRegistry.
+    museSeatLeases.acquire(durableSeat.path, runId)
+    try {
+      createdPath = establishMuseDurableSeat(durableSeat.boundaryRoot, durableSeat.path)
+    } catch (error) {
+      museSeatLeases.release(durableSeat.path, runId)
+      throw error
+    }
   } else {
     const temporaryRoot = canonicalRealDirectory(input.temporaryRoot)
     const routeTag = createHash('sha256').update(runId, 'utf8').digest('hex').slice(0, 16)
     createdPath = mkdtempSync(join(temporaryRoot, `taskwraith-muse-home-${routeTag}-`))
   }
   let canonicalPath = createdPath
+  let leaseIssued = false
   try {
     canonicalPath = realpathSync(createdPath)
     if (process.platform !== 'win32') chmodSync(canonicalPath, 0o700)
@@ -306,6 +318,11 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
         return current
       },
       cleanup: () => {
+        // Release first and unconditionally: this run is done with the seat
+        // whether or not the reduction below succeeds, and holding the claim
+        // over a failed scrub would block the thread's next turn on a disk
+        // problem the next attach re-attempts anyway (it fails closed itself).
+        if (durableSeat) museSeatLeases.release(durableSeat.path, runId)
         if (cleaned) return { ok: true, alreadyAbsent: true }
         let current: MuseIsolatedHomeAuthority
         try {
@@ -377,6 +394,7 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
       lease,
       Object.freeze({ path: canonicalPath, authority, verify: lease.verify })
     )
+    leaseIssued = true
     return Object.freeze(lease)
   } catch (error) {
     try {
@@ -396,6 +414,12 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
       /* preserve the original verification error */
     }
     throw error
+  } finally {
+    // An attach that never handed out a lease leaves the seat free, so its
+    // claim has to go — otherwise one failed attach refuses every later turn
+    // in that thread until the app restarts. A `finally` rather than the catch
+    // above because it must also cover a non-throwing exit that never issued.
+    if (durableSeat && !leaseIssued) museSeatLeases.release(durableSeat.path, runId)
   }
 }
 
