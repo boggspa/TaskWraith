@@ -48,6 +48,20 @@ export const draftMembershipChanged = (
 export interface ComposerDraftState {
   /** Non-reactive read. Safe from callbacks and effects; never subscribes. */
   getDraft(chatId: string | null | undefined): string
+  /**
+   * How many committed edits this chat's draft has had. The idempotence key for
+   * a composer submit: a second submit carrying a revision that was already
+   * accepted is the SAME message, because nothing was typed in between — which
+   * is precisely what a mashed Enter or Send button produces.
+   *
+   * Counts edits rather than time or content, so the two cases that a content
+   * or timing key gets wrong both come out right: a stalled send whose box
+   * never cleared repeats at the same revision and is refused, while retyping
+   * the same words after the box cleared is two edits and sends again.
+   *
+   * Non-reactive, like `getDraft`. Nothing re-renders on a revision change.
+   */
+  getDraftRevision(chatId: string | null | undefined): number
   /** Non-reactive snapshot of the whole sparse map (for persistence/flush). */
   getDraftMap(): ComposerDraftMap
   /**
@@ -78,6 +92,7 @@ export const createComposerDraftState = (
 ): ComposerDraftState => {
   let map: ComposerDraftMap = { ...initialMap }
   let cachedIds: ReadonlySet<string> | null = null
+  const revisions = new Map<string, number>()
   const chatListeners = new Map<string, Set<Listener>>()
   const idListeners = new Set<Listener>()
   const anyListeners = new Set<Listener>()
@@ -118,10 +133,20 @@ export const createComposerDraftState = (
     notifyEach(anyListeners)
   }
 
+  /** Called for every change that actually landed, and only those. */
+  const bumpRevision = (chatId: string): void => {
+    revisions.set(chatId, (revisions.get(chatId) || 0) + 1)
+  }
+
   return {
     getDraft(chatId) {
       if (!chatId) return ''
       return map[chatId] || ''
+    },
+
+    getDraftRevision(chatId) {
+      if (!chatId) return 0
+      return revisions.get(chatId) || 0
     },
 
     getDraftMap() {
@@ -142,6 +167,7 @@ export const createComposerDraftState = (
       // (re-typing the same character over a selection) free.
       if (next === previous) return
       map = next
+      bumpRevision(chatId)
       if (draftMembershipChanged(previous, next, chatId)) {
         cachedIds = null
         notifyIds()
@@ -156,7 +182,9 @@ export const createComposerDraftState = (
       cachedIds = null
       const touched = new Set([...Object.keys(previous), ...Object.keys(map)])
       for (const chatId of touched) {
-        if (previous[chatId] !== map[chatId]) notifyChat(chatId)
+        if (previous[chatId] === map[chatId]) continue
+        bumpRevision(chatId)
+        notifyChat(chatId)
       }
       notifyIds()
       notifyAny()

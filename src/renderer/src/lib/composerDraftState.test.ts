@@ -24,6 +24,64 @@ describe('draftMembershipChanged', () => {
   })
 })
 
+describe('createComposerDraftState draft revision', () => {
+  // The idempotence key for a composer submit. It must count EDITS, not time
+  // and not content: "the same message" is one the user has not touched since
+  // they last sent it, which is exactly what mashing Enter produces.
+  it('starts at zero for every chat, known or not', () => {
+    const state = createComposerDraftState({ a: 'hello' })
+    expect(state.getDraftRevision('a')).toBe(0)
+    expect(state.getDraftRevision('missing')).toBe(0)
+    expect(state.getDraftRevision(null)).toBe(0)
+    expect(state.getDraftRevision(undefined)).toBe(0)
+  })
+
+  it('bumps once per committed text change', () => {
+    const state = createComposerDraftState()
+    state.setDraft('a', 'h')
+    state.setDraft('a', 'hi')
+    expect(state.getDraftRevision('a')).toBe(2)
+  })
+
+  // A keystroke the reducer bails on (re-typing the same character over a
+  // selection) is not an edit, so it must not mint a new submit identity.
+  it('does not bump when the text is unchanged', () => {
+    const state = createComposerDraftState({ a: 'hi' })
+    state.setDraft('a', 'hi')
+    expect(state.getDraftRevision('a')).toBe(0)
+  })
+
+  // The send path clears the box. That IS an edit: retyping the same words
+  // afterwards must read as a new message, not as a repeat of the sent one.
+  it('bumps on the clear and again on a retype of the same text', () => {
+    const state = createComposerDraftState({ a: 'send me' })
+    state.setDraft('a', '')
+    const afterClear = state.getDraftRevision('a')
+    state.setDraft('a', 'send me')
+    expect(afterClear).toBe(1)
+    expect(state.getDraftRevision('a')).toBe(2)
+  })
+
+  it('counts each chat separately', () => {
+    const state = createComposerDraftState()
+    state.setDraft('a', 'one')
+    state.setDraft('a', 'two')
+    state.setDraft('b', 'other')
+    expect(state.getDraftRevision('a')).toBe(2)
+    expect(state.getDraftRevision('b')).toBe(1)
+  })
+
+  // Hydration replaces text under the user. A submit identity accepted against
+  // the pre-hydration text must not still match afterwards.
+  it('bumps every chat whose text a wholesale replace actually changed', () => {
+    const state = createComposerDraftState({ a: 'old', b: 'same' })
+    state.replaceAll({ a: 'new', b: 'same', c: 'added' })
+    expect(state.getDraftRevision('a')).toBe(1)
+    expect(state.getDraftRevision('b')).toBe(0)
+    expect(state.getDraftRevision('c')).toBe(1)
+  })
+})
+
 describe('createComposerDraftState reads', () => {
   it('reads a draft, defaulting to empty for unknown or null chats', () => {
     const state = createComposerDraftState({ a: 'hello' })
