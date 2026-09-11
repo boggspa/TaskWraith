@@ -121,6 +121,53 @@ export function bridgeAssistantMessageMetadata(input: {
   }
 }
 
+/** The subset of a ChatRun this module needs; keeps the store types out of the seam. */
+export interface BridgeToolRowRun {
+  runId: string
+  actualModel?: string
+  requestedModel?: string
+  modelLabel?: string
+}
+
+/**
+ * Brand metadata for a bridge-lane tool row, or undefined when no model is
+ * known and the row should stay exactly as metadata-free as it was.
+ *
+ * A `role: 'tool'` row carries no model of its own, so its accent depended
+ * entirely on finding its run in the chat record — an array that is empty by
+ * construction on a paged/summary record and one render stale on a retained
+ * one. Stamping the row makes it self-branding, the way an assistant bubble
+ * already is.
+ *
+ * The `requestedModel` fallback is the load-bearing half. Pi deliberately
+ * leaves `actualModel` UNSET — its terminal event reports a human label, and
+ * treating that as a wire id was the first cause in this investigation
+ * (0f1347266) — and a label cannot resolve a Pi upstream, which is keyed on a
+ * `<upstream>/<model>` wire id. Without the run's requested model this stamp
+ * would miss the one seat that most needs it. The precedence deliberately
+ * mirrors the renderer's own read: actual, then requested.
+ *
+ * Deliberately NOT `assistantProvider` — that makes a row claim to be an
+ * assistant turn, and a tool row's provider already resolves from its run and
+ * its activities. Deliberately never `kind`: that is the transcript-card
+ * discriminator, and a burst row tagged with one stops being adoptable.
+ */
+export function bridgeToolRowMetadata(input: {
+  actualModel?: string
+  modelLabel?: string
+  run?: BridgeToolRowRun | null
+}): ChatMessage['metadata'] | undefined {
+  const wireId = String(
+    input.actualModel || input.run?.actualModel || input.run?.requestedModel || ''
+  ).trim()
+  const label = String(input.modelLabel || input.run?.modelLabel || '').trim()
+  if (!wireId && !label) return undefined
+  return {
+    ...(wireId ? { providerModel: wireId } : {}),
+    ...(label ? { providerModelLabel: label } : {})
+  }
+}
+
 export function buildBridgeToolActivity(input: {
   payload: Record<string, unknown>
   provider: ProviderId

@@ -409,6 +409,7 @@ import {
   bridgeAssistantMessageMetadata,
   bridgeToolCategory,
   bridgeToolDisplayName,
+  bridgeToolRowMetadata,
   bridgeModelMetadataFromEvent,
   buildBridgeToolActivity
 } from './bridge/BridgeTranscriptActivity'
@@ -13611,6 +13612,13 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
   let insertAfter = transcriptMutation
     ? transcriptMutation.indexOf(state.promptMessageId)
     : messages.findIndex((message) => message.id === state.promptMessageId)
+  // A tool row carries no model of its own, so without this its accent can only
+  // come from a runs lookup. Resolved once per flush, not per part.
+  const toolRowMetadata = bridgeToolRowMetadata({
+    actualModel: state.actualModel,
+    modelLabel: state.modelLabel,
+    run: (current.runs || []).find((run) => run.runId === state.runId)
+  })
   for (const part of state.parts) {
     if (
       part.kind === 'text' &&
@@ -13650,6 +13658,7 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
             content: '',
             timestamp,
             runId: state.runId,
+            ...(toolRowMetadata ? { metadata: toolRowMetadata } : {}),
             toolActivities: part.activities.map((activity) => ({ ...activity }))
           }
     const existingIndex = transcriptMutation

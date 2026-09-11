@@ -1,10 +1,89 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   applyBridgeToolResultIdentity,
   bridgeAssistantMessageMetadata,
   bridgeModelMetadataFromEvent,
+  bridgeToolRowMetadata,
   buildBridgeToolActivity
 } from './BridgeTranscriptActivity'
+
+describe('bridgeToolRowMetadata', () => {
+  // A bridge-lane tool row carried no metadata at all, so its accent depended
+  // entirely on finding its run in the chat record — and that array is empty on
+  // a paged/summary record and one render stale on a retained one. Stamping the
+  // row makes it self-branding, exactly like the solo lane's reducer does.
+  it('prefers the provider-reported wire id', () => {
+    expect(
+      bridgeToolRowMetadata({
+        actualModel: 'qwen3.5:9b',
+        modelLabel: 'Qwen 3.5 (9B Param)',
+        run: { runId: 'run-1', requestedModel: 'qwen3.5:9b-stale' }
+      })
+    ).toEqual({
+      providerModel: 'qwen3.5:9b',
+      providerModelLabel: 'Qwen 3.5 (9B Param)'
+    })
+  })
+
+  it('falls back to the run requested model, which is the only Pi wire id there is', () => {
+    // Pi deliberately leaves `actualModel` UNSET (0f1347266: its terminal event
+    // reports the human label, and treating that as a wire id was cause 1 of
+    // this very investigation). The label alone cannot brand a Pi upstream —
+    // `resolvePiUpstreamBrand` splits a `<upstream>/<model>` wire id — so
+    // without the run's requestedModel this stamp would be useless for the one
+    // seat that most needs it.
+    expect(
+      bridgeToolRowMetadata({
+        modelLabel: 'Qwen 3.8 27B (Cerebras)',
+        run: { runId: 'run-1', requestedModel: 'cerebras/qwen-3.8-27b' }
+      })
+    ).toEqual({
+      providerModel: 'cerebras/qwen-3.8-27b',
+      providerModelLabel: 'Qwen 3.8 27B (Cerebras)'
+    })
+  })
+
+  it('takes the run actual model ahead of its requested model', () => {
+    expect(
+      bridgeToolRowMetadata({
+        run: { runId: 'run-1', actualModel: 'gpt-5.6-sol', requestedModel: 'gpt-5.3-codex-spark' }
+      })
+    ).toEqual({ providerModel: 'gpt-5.6-sol' })
+  })
+
+  it('returns undefined when no model is known anywhere', () => {
+    // A row that gained an empty metadata object would read as "has metadata"
+    // to anything inspecting it, and the pre-stamp shape was no metadata key.
+    expect(bridgeToolRowMetadata({})).toBeUndefined()
+    expect(bridgeToolRowMetadata({ run: { runId: 'run-1' } })).toBeUndefined()
+  })
+
+  it('never claims to be an assistant turn and never tags a card kind', () => {
+    // `assistantProvider` makes a row claim an assistant turn; `kind` is the
+    // transcript-card discriminator. Neither belongs on a burst row.
+    const metadata = bridgeToolRowMetadata({
+      actualModel: 'kimi-k3',
+      modelLabel: 'Kimi K3',
+      run: { runId: 'run-1' }
+    })
+    expect(metadata).toBeDefined()
+    expect(Object.keys(metadata as object).sort()).toEqual(['providerModel', 'providerModelLabel'])
+  })
+})
+
+describe('flushBridgeRunTranscript tool-row wiring', () => {
+  // The call site lives in the index.ts monolith where no unit test reaches it.
+  // Source-string guard, the same idiom GoalFirstTurnIntegration uses.
+  const indexSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
+
+  it('stamps the tool part with the resolved row metadata', () => {
+    expect(indexSource).toContain('bridgeToolRowMetadata(')
+    // The tool branch of the part message must actually spread it, not merely
+    // compute it — this is the line that reaches the transcript.
+    expect(indexSource).toContain('...(toolRowMetadata ? { metadata: toolRowMetadata } : {})')
+  })
+})
 
 describe('BridgeTranscriptActivity', () => {
   it('freezes the bridge assistant provider and model identity', () => {
