@@ -358,7 +358,12 @@ export class ThreadCatalogueRecovery {
       await this.deps.onRecovered?.(prepared)
       return projection
     } finally {
+      // Idempotent: the failure path below settles locally straight away and
+      // the parked retry still holds a reference for `dispose()`.
+      let finished = false
       const finish = (): void => {
+        if (finished) return
+        finished = true
         if (prepared)
           void this.deps.catalogue
             .maintain({ method: 'discard-prepared', preparedId: prepared.preparedId })
@@ -367,8 +372,6 @@ export class ThreadCatalogueRecovery {
         release()
       }
       if (hold) {
-        // Retain local admission until cancellation is acknowledged. The source
-        // parent then guarantees an older timed-out request cannot commit later.
         const token = hold.token
         await this.deps.catalogue
           .maintain({
@@ -377,6 +380,28 @@ export class ThreadCatalogueRecovery {
             recoveryToken: token
           })
           .catch((error) => {
+            // Settle the PROCESS-LOCAL gate now, and keep chasing the remote
+            // cancel in the background.
+            //
+            // This used to wait for the cancel to be acknowledged, so that an
+            // `adopt-prepared` which timed out locally but is still running on
+            // the Host could not interleave with a local writer. The cost of
+            // that belt was unbounded: `ThreadCatalogueWriteGate.admit` waits on
+            // a held chat with no timeout and no rejection, and an unreachable
+            // Host — or one whose writer authority moved — rejects every retry,
+            // so "until it is acknowledged" becomes "until this process exits".
+            // Every composer-selection persist, `saveRendererChat` and
+            // `mutateTranscript` for that one thread hangs behind it, with
+            // nothing anywhere to say why. 66fcf2813 fixed exactly this for
+            // teardown and left the live path holding.
+            //
+            // Nothing is actually unguarded by releasing here: this recovery
+            // has finished every local step, so the gate is no longer excluding
+            // anything of its own, and a late Host-side commit is excluded by
+            // the braces rather than the belt — `adopt` re-asserts its hold and
+            // `adoptPreparedThreadRecord` CAS-checks the prepared mutation's
+            // epoch, which an intervening local write has already moved.
+            finish()
             this.cleanup.set(chatId, { token, finish })
             this.retryCleanup(chatId)
             throw error

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-recovery-dispose-test-${process.pid}`)
 
@@ -8,6 +8,7 @@ vi.mock('electron', () => ({
   }
 }))
 
+import { AppStore } from '../store'
 import { threadCatalogueWriteGate } from '../store/ThreadCatalogueWriteGate'
 import {
   ThreadCatalogueRecovery,
@@ -117,5 +118,118 @@ describe('ThreadCatalogueRecovery.dispose', () => {
     expect(threadCatalogueWriteGate.isHeld(disposedChat)).toBe(false)
     expect(threadCatalogueWriteGate.isHeld(otherChat)).toBe(true)
     otherRelease()
+  })
+})
+
+/**
+ * The live path of the same defect `dispose()` covers above.
+ *
+ * `runMutation` used to await the `end-recovery` acknowledgement while still
+ * holding the process-local write gate, so an unreachable Host — or one whose
+ * writer authority moved — held that chat's gate for the life of the process:
+ * every composer-selection persist, `saveRendererChat` and `mutateTranscript`
+ * for the thread waited on an `admit` that has no timeout and no rejection.
+ * Teardown was only the case somebody happened to hit first.
+ */
+describe('a cancel the Host never acknowledges', () => {
+  const chatId = 'chat-cancel-unacknowledged'
+
+  function recoveryRefusingCancel(options: { onCancel?: () => void } = {}): {
+    recovery: ThreadCatalogueRecovery
+    cancels: () => number
+  } {
+    let cancels = 0
+    const query = async (request: { method: string }): Promise<unknown> =>
+      request.method === 'open'
+        ? {
+            leaseId: 'lease-1',
+            entry: { projection: { sourceComplete: true }, sourceWitness: 'witness-1' }
+          }
+        : null
+    const maintain = async (request: { method: string }): Promise<unknown> => {
+      if (request.method === 'begin-recovery')
+        return { chatId, token: 'recovery-token', hostIncarnation: 'host-1' }
+      if (request.method === 'end-recovery') {
+        cancels += 1
+        options.onCancel?.()
+        throw new Error('Host history maintenance is unavailable')
+      }
+      // A null `prepare` ends the mutation before it can adopt anything, which
+      // keeps this test on the cancel path and off the commit path.
+      return null
+    }
+    const recovery = new ThreadCatalogueRecovery({
+      catalogue: {
+        maintain,
+        mirror: { port: { query } },
+        setMutationGuard: () => () => {}
+      },
+      isRunLive: () => false,
+      isChatLive: () => false,
+      isErasing: () => false
+    } as unknown as CatalogueRecoveryDependencies)
+    return { recovery, cancels: () => cancels }
+  }
+
+  function settleRuns(): Parameters<ThreadCatalogueRecovery['mutate']>[1] {
+    return {
+      kind: 'settle-runs',
+      nowIso: new Date().toISOString(),
+      minAgeMs: 0,
+      runs: []
+    } as unknown as Parameters<ThreadCatalogueRecovery['mutate']>[1]
+  }
+
+  beforeEach(() => {
+    vi.spyOn(AppStore, 'catalogueRecoveryAllowed').mockReturnValue(true)
+    vi.spyOn(AppStore, 'quiesceForCatalogueMutation').mockResolvedValue(undefined)
+    vi.spyOn(AppStore, 'hasPendingCatalogueWrites').mockReturnValue(false)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('releases the chat gate instead of holding it until the process exits', async () => {
+    const { recovery } = recoveryRefusingCancel()
+    await expect(recovery.mutate(chatId, settleRuns())).rejects.toThrow(
+      'Host history maintenance is unavailable'
+    )
+    expect(threadCatalogueWriteGate.isHeld(chatId)).toBe(false)
+    recovery.dispose()
+  })
+
+  it('lets a composer-selection persist queued behind it through', async () => {
+    // `admit` is the seam `persistChatComposerSelection` goes through, and it
+    // has no timeout: a waiter parked here is the picker silently refusing to
+    // save for the rest of the session.
+    const { recovery } = recoveryRefusingCancel()
+    let persisted = false
+    const mutation = recovery.mutate(chatId, settleRuns())
+    const persist = threadCatalogueWriteGate.admit(chatId, async () => {
+      persisted = true
+      return 'selection-saved'
+    })
+    await expect(mutation).rejects.toThrow()
+    await expect(persist).resolves.toBe('selection-saved')
+    expect(persisted).toBe(true)
+    recovery.dispose()
+  })
+
+  it('keeps chasing the cancel after it has settled locally', async () => {
+    // Releasing the local gate is not abandoning the Host's durable hold: the
+    // retry keeps running, it just no longer has the thread hostage.
+    vi.useFakeTimers()
+    try {
+      const { recovery, cancels } = recoveryRefusingCancel()
+      await expect(recovery.mutate(chatId, settleRuns())).rejects.toThrow()
+      expect(cancels()).toBe(1)
+      await vi.advanceTimersByTimeAsync(2100)
+      expect(cancels()).toBe(2)
+      expect(threadCatalogueWriteGate.isHeld(chatId)).toBe(false)
+      recovery.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
