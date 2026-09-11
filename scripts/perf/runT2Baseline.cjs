@@ -67,6 +67,7 @@ const {
 const { probeHostBootstrapIdentity } = require('./hostWelcomeProbe.cjs')
 const {
   parseCellName,
+  checkFixtureSatisfiesHistory,
   PAIRING_ROLES,
   MATRIX_SAMPLING,
   cellReachability,
@@ -1221,6 +1222,17 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     return { ok: true, helped: true }
   }
 
+  // Optional canonical matrix cell for the crossThread fold (T9b). Validated
+  // BEFORE the smoke-plan return below, not after: --smoke-plan used to exit 0
+  // on a cell parseCellName rejects, so the one mode whose entire purpose is to
+  // print what a run would do did not check the argument it was printing.
+  const crossThreadCell = args.cell == null ? null : String(args.cell)
+  if (crossThreadCell !== null && parseCellName(crossThreadCell) === null) {
+    throw new Error(
+      `--cell must be a canonical matrix cell name (<history>/<chats>/<path>/<mix>/<saturation>): ${crossThreadCell}`
+    )
+  }
+
   if (args.smokePlan) {
     const plan = buildT2SmokePlan({
       workload: args.workload || 'dual_run',
@@ -1234,15 +1246,6 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   const workload = args.workload
   if (!workload || !WORKLOADS.includes(workload)) {
     throw new Error(`--workload required (${WORKLOADS.join('|')})`)
-  }
-
-  // Optional canonical matrix cell for the crossThread fold (T9b). Validated
-  // here so a typo fails before any I/O, never at fold time.
-  const crossThreadCell = args.cell == null ? null : String(args.cell)
-  if (crossThreadCell !== null && parseCellName(crossThreadCell) === null) {
-    throw new Error(
-      `--cell must be a canonical matrix cell name (<history>/<chats>/<path>/<mix>/<saturation>): ${crossThreadCell}`
-    )
   }
 
   // Declared run identity for the run-evidence descriptor (Wall 2a). Like
@@ -1397,6 +1400,34 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     scaleDown
   })
   const fingerprint = fixtureFingerprint(fixture)
+
+  // Does the fixture support the history label its cell claims? Nothing
+  // compared them before: --cell was checked for SYNTAX and --workload for
+  // MEMBERSHIP, so `--workload=dual_run --cell=large/...` returned ok and wrote
+  // `history: "large"` into a report over an 18-message fixture. Both numbers
+  // were in hand the whole time and were never held up against each other.
+  //
+  // Checked HERE rather than at parse time because the answer depends on
+  // --scale-down and --lean, not on the workload name: light_beside_large meets
+  // the large pin at --scale-down=1 (27,042 messages, 45.17 MiB) and misses it
+  // by 40x at the default 40 (696, 1.18 MiB). A workload-name check would pass
+  // the mislabelled run and refuse nothing.
+  if (crossThreadCell !== null) {
+    const cellShape = parseCellName(crossThreadCell)
+    const fixtureShape = {
+      messages: fixture.chats.reduce((total, chat) => total + chat.messages.length, 0),
+      bytes: Buffer.byteLength(JSON.stringify(fixture.chats))
+    }
+    const satisfies = checkFixtureSatisfiesHistory(cellShape.history, fixtureShape)
+    if (!satisfies.ok) {
+      const shapeErr = new Error(
+        `Refusing --cell=${crossThreadCell}: ${satisfies.reason}. The report would carry history: "${cellShape.history}" over a fixture that is not that size, and read as authoritative. Use a workload and --scale-down that produce the pinned shape, or a cell whose history matches this fixture.`
+      )
+      shapeErr.code = 'T2_CELL_FIXTURE_SHAPE_MISMATCH'
+      throw shapeErr
+    }
+  }
+
   if (args.pairedRuns && fixture.chats.length < 2) {
     throw new Error(
       '--paired-runs requires a fixture with a heavy chat; a single-chat workload cannot pair'

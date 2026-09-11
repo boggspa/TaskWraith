@@ -52,6 +52,82 @@ const HISTORY_SIZE_PINS = Object.freeze({
   large: Object.freeze({ approxMessages: 27000, approxBytes: 45 * 1024 * 1024, approxRuns: 1000 })
 })
 
+/**
+ * How far below a pinned `approx` target a fixture may sit and still honestly
+ * carry that history label. The pins are TARGETS, not gates — the comment above
+ * says so and `small`'s only hard value is `maxBytes` — so this must be loose
+ * enough to honour that and still catch a mismatch of ORDER, which is the only
+ * kind that has ever occurred: `light_beside_large` generates 27,042 messages
+ * at `--scale-down=1` and 696 at the default 40, against a 27,000 pin. One of
+ * those is the large history; the other is the same workload scaled past the
+ * point where the label is true.
+ */
+const HISTORY_PIN_MIN_FRACTION = 0.5
+
+/**
+ * Does a generated fixture's shape support the history label its cell claims?
+ *
+ * Nothing compared these before: `--cell` was validated for SYNTAX and
+ * `--workload` for MEMBERSHIP, so `--workload=dual_run --cell=large/...`
+ * returned ok and wrote `history: "large"` into a report beside an 18-message
+ * fixture. The two numbers were both in hand and never held up against each
+ * other.
+ *
+ * The floor applies ONLY to a pin with no hard bound of its own. `small`
+ * declares `maxBytes` and is gated on exactly that; adding a message floor
+ * there would invent a gate the schema deliberately does not declare and refuse
+ * every run the programme has made (`dual_run --scale-down=40` is 18 messages
+ * against a 200 target, and is legitimately small). `large` declares no hard
+ * bound at all, which is why it was ungated — so it gets the floor, on both
+ * message count and bytes, since either alone admits the other's shape: a
+ * 642-message fixture reaches 7.76 MiB, 17% of large's byte pin but 2.4% of its
+ * messages.
+ *
+ * @param {string} history — the cell's history segment
+ * @param {{ messages: number, bytes: number }} shape — the GENERATED fixture
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+function checkFixtureSatisfiesHistory(history, shape) {
+  const pin = HISTORY_SIZE_PINS[history]
+  if (!pin) return { ok: false, reason: `unknown history size: ${history}` }
+  if (
+    !shape ||
+    !Number.isFinite(shape.messages) ||
+    !Number.isFinite(shape.bytes) ||
+    shape.messages < 0 ||
+    shape.bytes < 0
+  ) {
+    return { ok: false, reason: 'fixture shape requires finite non-negative messages and bytes' }
+  }
+  if (pin.maxBytes !== undefined && shape.bytes > pin.maxBytes) {
+    return {
+      ok: false,
+      reason: `fixture is ${(shape.bytes / 1048576).toFixed(2)} MiB, over the ${history} pin's hard maxBytes of ${(pin.maxBytes / 1048576).toFixed(2)} MiB`
+    }
+  }
+  // A pin that declares a hard bound is gated on that and nothing else.
+  if (pin.maxBytes !== undefined) return { ok: true }
+  if (pin.approxMessages !== undefined) {
+    const floor = pin.approxMessages * HISTORY_PIN_MIN_FRACTION
+    if (shape.messages < floor) {
+      return {
+        ok: false,
+        reason: `fixture has ${shape.messages} messages, under the ${history} pin's floor of ${Math.ceil(floor)} (${HISTORY_PIN_MIN_FRACTION}× its ${pin.approxMessages} target)`
+      }
+    }
+  }
+  if (pin.approxBytes !== undefined) {
+    const floor = pin.approxBytes * HISTORY_PIN_MIN_FRACTION
+    if (shape.bytes < floor) {
+      return {
+        ok: false,
+        reason: `fixture is ${(shape.bytes / 1048576).toFixed(2)} MiB, under the ${history} pin's floor of ${(floor / 1048576).toFixed(2)} MiB (${HISTORY_PIN_MIN_FRACTION}× its ${(pin.approxBytes / 1048576).toFixed(2)} MiB target)`
+      }
+    }
+  }
+  return { ok: true }
+}
+
 /** Simultaneous chats; 2 is the light + heavy pairing the gates read. */
 const CHAT_COUNTS = Object.freeze([1, 2, 4, 8])
 
@@ -788,6 +864,8 @@ module.exports = {
   MATRIX_SAMPLING,
   HISTORY_SIZES,
   HISTORY_SIZE_PINS,
+  HISTORY_PIN_MIN_FRACTION,
+  checkFixtureSatisfiesHistory,
   CHAT_COUNTS,
   PATH_STATES,
   PROVIDER_MIXES,

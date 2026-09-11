@@ -5142,6 +5142,71 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     expect(spawned).toBe(true)
   })
 
+  it('P2e: a cell whose history the fixture cannot support refuses, at every entry point', async () => {
+    const {
+      checkFixtureSatisfiesHistory,
+      HISTORY_SIZE_PINS,
+      HISTORY_PIN_MIN_FRACTION
+    } = require('./interferenceMatrix.cjs')
+    const { generatePerfFixture } = require('./fixtureGenerator.cjs')
+    const shapeOf = (workload: string, scaleDown: number) => {
+      const fixture = generatePerfFixture({ workload, seed: 42, scaleDown })
+      return {
+        messages: fixture.chats.reduce(
+          (total: number, chat: { messages: unknown[] }) => total + chat.messages.length,
+          0
+        ),
+        bytes: Buffer.byteLength(JSON.stringify(fixture.chats))
+      }
+    }
+
+    // `--scale-down` decides this, not the workload name. light_beside_large
+    // meets the large pin at 1 and misses it by 40x at the default 40, so a
+    // check keyed on the workload would pass the mislabelled run.
+    expect(checkFixtureSatisfiesHistory('large', shapeOf('light_beside_large', 1)).ok).toBe(true)
+    expect(checkFixtureSatisfiesHistory('large', shapeOf('light_beside_large', 40)).ok).toBe(false)
+    expect(checkFixtureSatisfiesHistory('large', shapeOf('dual_run', 40)).ok).toBe(false)
+
+    // The configuration every attempt so far has run stays legal. `small`
+    // declares a hard maxBytes and is gated on THAT; giving it a message floor
+    // too would invent a gate the schema deliberately withholds and refuse the
+    // whole programme's history.
+    expect(checkFixtureSatisfiesHistory('small', shapeOf('dual_run', 40)).ok).toBe(true)
+    expect(HISTORY_SIZE_PINS.small.maxBytes).toBe(1024 * 1024)
+    expect(HISTORY_SIZE_PINS.large.maxBytes).toBeUndefined()
+    // ...and the other direction of the same mismatch is caught: too BIG to be
+    // small is a hard-bound violation, never an approximation.
+    expect(checkFixtureSatisfiesHistory('small', shapeOf('dual_run', 1))).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('hard maxBytes')
+    })
+    expect(HISTORY_PIN_MIN_FRACTION).toBeGreaterThan(0)
+    expect(HISTORY_PIN_MIN_FRACTION).toBeLessThan(1)
+
+    // End to end on the real CLI path, which is where it returned ok before.
+    await expect(
+      runT2BaselineCli(
+        [
+          '--workload=dual_run',
+          '--cell=large/2/cold/claude_models_repeated_and_distinct/none',
+          '--dry-run',
+          '--lean',
+          '--scale-down=40'
+        ],
+        { repoRoot: path.resolve(__dirname, '..', '..') }
+      )
+    ).rejects.toThrow(/Refusing --cell=large/)
+
+    // --smoke-plan validates the cell it prints. It used to return before the
+    // check, so the one mode whose entire purpose is to show what a run would
+    // do exited 0 on a cell parseCellName rejects.
+    await expect(
+      runT2BaselineCli(['--workload=dual_run', '--smoke-plan', '--cell=enormous/2/cold/x/none'], {
+        repoRoot: path.resolve(__dirname, '..', '..')
+      })
+    ).rejects.toThrow(/--cell must be a canonical matrix cell name/)
+  })
+
   it('P2b: an abort that arrives before the spawn refuses the launch outright', async () => {
     // The owed behavioural half of b8cd33b13. `process.once('SIGINT')` plus an
     // `{ once: true }` abort listener meant a signal during fixture build or
