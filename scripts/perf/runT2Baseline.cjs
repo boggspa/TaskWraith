@@ -1094,6 +1094,7 @@ function parseArgs(argv) {
     else if (arg === '--skip-build') out.skipBuild = true
     else if (arg === '--windowed-replay') out.windowedReplay = true
     else if (arg === '--accept-in-process-host') out.acceptInProcessHost = true
+    else if (arg === '--accept-unfolded-cross-thread') out.acceptUnfoldedCrossThread = true
     else if (arg === '--paired-runs') out.pairedRuns = true
     else if (arg.startsWith('--workload=')) out.workload = arg.slice('--workload='.length)
     else if (arg.startsWith('--seed=')) out.seed = arg.slice('--seed='.length)
@@ -1188,13 +1189,16 @@ Options:
   --workload=… --seed=… --mode=… --fx-posture=… --lean --scale-down=… --max-replay-events=…
   --replay-stall-timeout-ms=<n>     Fail closed if one replay event makes no progress (default: 300000)
   --cell=<canonical>                Canonical matrix cell (<history>/<chats>/<path>/<mix>/<saturation>) for the
-                                    crossThread host-span fold and the run-evidence descriptor; omitted → host
-                                    evidence recorded, never folded; run identity left undeclared
+                                    crossThread host-span fold and the run-evidence descriptor; --launch
+                                    REFUSES without it (see --accept-unfolded-cross-thread)
   --role=<light-alone|light-beside> Pairing role this run measures; omitted → run identity left undeclared
   --build-id=<id>                   Operator-named build identity for pairing; omitted → left undeclared
   --accept-in-process-host        Measure the in-process Host deliberately when the external Host
                                   cannot resolve. Without it the launch refuses rather than
                                   silently measuring an architecture users do not run.
+  --accept-unfolded-cross-thread  Record host-span evidence deliberately WITHOUT folding it, when no
+                                  --cell is given. Without it the launch refuses rather than spending
+                                  a full run to produce metrics.crossThread: null.
   --windowed-replay               Replay as fenced 120 s × 3 concurrent lanes (default: sequential);
                                   runs ≥6 min, refuses --max-replay-events, feeds observed windows to runEvidence
   --paired-runs                   Run light-alone then light-beside and emit report.pairs (implies
@@ -1811,6 +1815,29 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         )
         laneErr.code = 'T2_EXTERNAL_HOST_UNRESOLVABLE'
         throw laneErr
+      }
+
+      // The fold needs a canonical cell as much as a paired run does, and
+      // nothing required one for a single-role launch: --cell was checked for
+      // CANONICALITY when present and never for PRESENCE. A run without it
+      // spends its full length, records host evidence, and reports
+      // `metrics.crossThread: null` with `cross_thread_cell_unspecified` —
+      // discoverable only after the run, and only by an operator who reads the
+      // marker. Attempt 6 carried a cell because the operator kept it "for
+      // provenance" after dropping --paired-runs; a preflight exists to remove
+      // exactly that dependency on remembering. Ordered after the lane refusal
+      // above: measuring the wrong architecture is the more fundamental
+      // failure, and a new check must not reorder an existing one.
+      report.crossThreadFold = {
+        cell: crossThreadCell,
+        acceptedUnfolded: Boolean(args.acceptUnfoldedCrossThread)
+      }
+      if (crossThreadCell === null && !args.acceptUnfoldedCrossThread) {
+        const cellErr = new Error(
+          'Refusing --launch: no --cell was given, so host-span evidence would be recorded and never folded — metrics.crossThread stays null and the run cannot answer the cross-thread question it spent its whole length measuring. Pass a canonical --cell (<history>/<chats>/<path>/<mix>/<saturation>), or --accept-unfolded-cross-thread to record host evidence deliberately without folding it.'
+        )
+        cellErr.code = 'T2_CROSS_THREAD_CELL_ABSENT'
+        throw cellErr
       }
 
       // Blocker G: re-prove containment immediately before Electron spawn.

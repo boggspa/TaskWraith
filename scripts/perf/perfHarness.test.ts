@@ -1998,6 +1998,7 @@ describe('T2 runner (no Electron launch)', () => {
           [
             '--workload=dual_run',
             '--launch',
+            '--accept-unfolded-cross-thread',
             '--i-accept-isolated-launch',
             '--materialize-instance-userdata',
             '--lean',
@@ -2191,6 +2192,7 @@ describe('T2 runner (no Electron launch)', () => {
           [
             '--workload=dual_run',
             '--launch',
+            '--accept-unfolded-cross-thread',
             '--i-accept-isolated-launch',
             '--materialize-instance-userdata',
             '--lean',
@@ -2450,6 +2452,7 @@ describe('T2 runner (no Electron launch)', () => {
           [
             '--workload=dual_run',
             '--launch',
+            '--accept-unfolded-cross-thread',
             '--i-accept-isolated-launch',
             '--materialize-instance-userdata',
             '--lean',
@@ -2482,6 +2485,7 @@ describe('T2 runner (no Electron launch)', () => {
           [
             '--workload=dual_run',
             '--launch',
+            '--accept-unfolded-cross-thread',
             '--i-accept-isolated-launch',
             '--materialize-instance-userdata',
             '--lean',
@@ -2645,6 +2649,7 @@ describe('T2 runner (no Electron launch)', () => {
           [
             '--workload=dual_run',
             '--launch',
+            '--accept-unfolded-cross-thread',
             '--i-accept-isolated-launch',
             '--materialize-instance-userdata',
             '--lean',
@@ -2956,6 +2961,7 @@ describe('T2 runner (no Electron launch)', () => {
           [
             '--workload=dual_run',
             '--launch',
+            '--accept-unfolded-cross-thread',
             '--i-accept-isolated-launch',
             '--materialize-instance-userdata',
             '--lean',
@@ -3164,6 +3170,7 @@ describe('T2 harness amendment — disk preflight, windowed rate, capture deadli
           [
             '--workload=dual_run',
             '--launch',
+            '--accept-unfolded-cross-thread',
             '--i-accept-isolated-launch',
             '--materialize-instance-userdata',
             '--lean',
@@ -4768,6 +4775,7 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
         [
           '--workload=dual_run',
           '--launch',
+          '--accept-unfolded-cross-thread',
           '--i-accept-isolated-launch',
           '--materialize-instance-userdata',
           '--lean',
@@ -4989,6 +4997,7 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
         [
           '--workload=dual_run',
           '--launch',
+          '--accept-unfolded-cross-thread',
           '--i-accept-isolated-launch',
           '--materialize-instance-userdata',
           '--lean',
@@ -5044,6 +5053,95 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     expect(spawned).toBe(true)
   })
 
+  it('P2d: a launch that cannot fold refuses at preflight, behind the lane refusal', async () => {
+    // `--cell` was checked for CANONICALITY when present and never for
+    // PRESENCE, so a single-role launch without one spent its whole length,
+    // recorded host evidence and reported `metrics.crossThread: null` — a
+    // fifteen-minute way to learn a launch-argument mistake. The run that first
+    // folded carried a cell only because the operator kept it "for provenance"
+    // after dropping --paired-runs.
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const homesRoot = path.join(repoRoot, 'perf-homes')
+    mkdirSync(homesRoot, { recursive: true })
+    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-w8-cell-'))
+    tempDirs.push(home)
+    let spawned = false
+    const launch = (extra: string[], hostNodePresent: boolean) =>
+      runT2BaselineCli(
+        [
+          '--workload=dual_run',
+          '--launch',
+          '--i-accept-isolated-launch',
+          '--materialize-instance-userdata',
+          '--lean',
+          '--scale-down=40',
+          '--instance-id=perfW8Cell01',
+          `--home=${home}`,
+          '--port=9457',
+          '--inspect-port=9857',
+          '--max-replay-events=1',
+          ...extra
+        ],
+        {
+          repoRoot,
+          forceIsolated: true,
+          allowDirtyLaunch: true,
+          allowNonIsolatedLaunch: true,
+          platform: 'darwin',
+          provenance: {
+            gitSha: 'a'.repeat(40),
+            dirty: false,
+            dirtyTreeFingerprint: 'b'.repeat(64),
+            dirtyPaths: [],
+            isolatedWorktree: true,
+            authoritativeBaseline: true
+          },
+          buildAdapters: { build: async () => ({ code: 0 }) },
+          hostBundleAdapters: { fs: freshHostBundleFs() },
+          externalHostAdapters: { exists: () => hostNodePresent, env: {} },
+          spawnAdapters: {
+            resolveElectronPath: () => '/virtual/Electron',
+            spawn: () => {
+              spawned = true
+              throw new Error('reached the spawn')
+            }
+          },
+          portAdapters: {
+            probePort: async (port: number) => ({ port, occupied: false }),
+            probeCdp: async () => ({ port: 9457, reachable: false }),
+            listInstancePids: () => []
+          },
+          terminateOptions: { waitMs: 20, sleep: async () => {} }
+        }
+      )
+
+    // No cell, host Node present: refused before anything is spawned.
+    await expect(launch([], true)).rejects.toThrow(/no --cell was given/)
+    expect(spawned).toBe(false)
+
+    // ORDERING. With BOTH faults the LANE refusal wins: measuring the wrong
+    // architecture is the more fundamental failure, and this check must not
+    // reorder the one that was already there.
+    await expect(launch([], false)).rejects.toThrow(
+      /external Host cannot resolve from this checkout/
+    )
+    expect(spawned).toBe(false)
+
+    // Deliberate is allowed; accidental is not — the same shape as
+    // --accept-in-process-host. Past the gate, it fails at the spawn instead.
+    await expect(launch(['--accept-unfolded-cross-thread'], true)).rejects.toThrow(
+      /reached the spawn/
+    )
+    expect(spawned).toBe(true)
+
+    // ...and so does a canonical cell, which is the path that actually folds.
+    spawned = false
+    await expect(
+      launch(['--cell=small/2/cold/codex_profiles_solo_ensemble_mesh/none'], true)
+    ).rejects.toThrow(/reached the spawn/)
+    expect(spawned).toBe(true)
+  })
+
   it('P2b: an abort that arrives before the spawn refuses the launch outright', async () => {
     // The owed behavioural half of b8cd33b13. `process.once('SIGINT')` plus an
     // `{ once: true }` abort listener meant a signal during fixture build or
@@ -5063,6 +5161,7 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
         [
           '--workload=dual_run',
           '--launch',
+          '--accept-unfolded-cross-thread',
           '--i-accept-isolated-launch',
           '--materialize-instance-userdata',
           '--lean',
