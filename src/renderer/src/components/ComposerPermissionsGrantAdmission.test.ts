@@ -59,10 +59,13 @@ describe('Composer permission-picker admission while running', () => {
       'patchEnsembleParticipantById(participantId, patch)'
     )
     expect(participantEditorRegion).toContain('onLiveRosterMutation={(mutation) =>')
-    expect(participantEditorRegion).toContain(
-      '.requestEnsembleUserRosterMutation({'
-    )
-    expect(participantEditorRegion).toContain('chatId: currentChat.appChatId')
+    // The IPC itself moved to lib/ensembleRosterCommit.ts on 2026-09-11 so the
+    // lane could hold a write claim for the life of the request — inlining it
+    // here is what left Captain and auto-approval changes revertible by a
+    // delivery main built before them. The boundary being pinned is unchanged:
+    // this editor still reaches the live roster mutation, for THIS chat.
+    expect(participantEditorRegion).toContain('commitEnsembleLiveRosterMutation(')
+    expect(participantEditorRegion).toContain('currentChat.appChatId')
   })
 
   it('keeps revocations available during a solo run', () => {

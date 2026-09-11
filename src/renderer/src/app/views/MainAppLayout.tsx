@@ -6,6 +6,7 @@ import {
   type CSSProperties,
   type ReactNode
 } from 'react'
+import type { EnsembleUserRosterMutation } from '../../../../main/EnsembleUserRosterMutation'
 import {
   EMPTY_CHAT_MESSAGES,
   EMPTY_TRANSCRIPT_FILE_SUMMARIES,
@@ -1201,6 +1202,27 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         // Behaviour here is unchanged from the inline handler this replaced;
         // the roster write claim is not raised on this lane yet.
         commitEnsembleRosterChange: (next: any) => persistSideChat(next),
+        // Same carve-out, same reason: this lane persists through
+        // `persistSideChat`, so it cannot use the focused commit and does not
+        // raise the roster write claim. Behaviour is the inline handler this
+        // replaced, moved here so the focused surface can be claimed without
+        // leaving the side surface calling an undefined prop.
+        commitEnsembleLiveRosterMutation: (chatId: string, mutation: EnsembleUserRosterMutation) => {
+          void window.api
+            .requestEnsembleUserRosterMutation({ chatId, ...mutation })
+            .then((result) => {
+              if (!result.ok) {
+                window.alert(result.message || 'Participant change failed.')
+                return
+              }
+              if (result.chat) persistSideChat(result.chat)
+            })
+            .catch((error: unknown) => {
+              window.alert(
+                error instanceof Error ? error.message : 'Participant change failed.'
+              )
+            })
+        },
         setSelectedModelType: noSideComposerAction,
         setLastNonCustomModelType: noSideComposerAction,
         setCustomModel: (value: string) =>

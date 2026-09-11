@@ -81,6 +81,11 @@ export interface ChatUpdateRenderMergeOptions {
    * `ensembleRosterWriteClaims.ts`.
    */
   localEnsembleRosterPending?: boolean
+  /**
+   * Whether the renderer has a `setChatKind` call in flight for this chat. See
+   * `ensembleChatKindWriteClaims.ts`.
+   */
+  localEnsembleChatKindPending?: boolean
 }
 
 /**
@@ -547,7 +552,8 @@ function preserveNewerLocalEnsembleRoster(
  */
 function preserveNewerLocalChatKind(
   merged: ChatRecord,
-  liveChat: ChatRecord | null | undefined
+  liveChat: ChatRecord | null | undefined,
+  localChatKindPending = false
 ): ChatRecord {
   if (!liveChat) return merged
   const liveIsEnsemble = liveChat.chatKind === 'ensemble'
@@ -560,7 +566,16 @@ function preserveNewerLocalChatKind(
   const sameStash =
     JSON.stringify(liveStash ?? null) === JSON.stringify(deliveredStash ?? null)
   if (liveIsEnsemble === deliveredIsEnsemble && sameStash) return merged
-  if (stampToMs(liveChat.updatedAt) <= stampToMs(merged.updatedAt)) return merged
+  // 2026-09-11 — the claim answers "has main been told yet", which the clock
+  // cannot: main re-stamps `chat.updatedAt` on every unrelated write, so one
+  // landing inside the switch's window out-stamps it while still carrying the
+  // previous mode. While a claim is held a delivery's disagreement is ignorance
+  // rather than intent. With no claim held the wall clock still decides, so a
+  // genuinely newer main-side switch (a remote companion's toggle, this
+  // toggle's own confirmed broadcast) continues to win on its stamp.
+  if (!localChatKindPending && stampToMs(liveChat.updatedAt) <= stampToMs(merged.updatedAt)) {
+    return merged
+  }
   const next: ChatRecord = { ...merged, chatKind: liveIsEnsemble ? 'ensemble' : 'single' }
   if (liveIsEnsemble) {
     next.ensemble = liveChat.ensemble
@@ -717,7 +732,11 @@ export function mergeChatUpdatedForRender(
   // composer's chat-level selection. Mode state goes FIRST: the roster helper
   // can only compare seats once both records agree the thread is an ensemble.
   // See 1.0.5-UI2 on each helper.
-  merged = preserveNewerLocalChatKind(merged, liveChat)
+  merged = preserveNewerLocalChatKind(
+    merged,
+    liveChat,
+    options.localEnsembleChatKindPending === true
+  )
   merged = preserveNewerLocalActiveGoal(merged, liveChat, options.localGoalIntent)
   merged = preserveNewerLocalEnsembleRoster(
     merged,

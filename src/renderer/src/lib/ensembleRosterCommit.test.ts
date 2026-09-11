@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatRecord, EnsembleParticipant } from '../../../main/store/types'
 import {
+  commitEnsembleLiveRosterMutation,
   ENSEMBLE_SAVE_REBASE_ATTEMPTS,
   saveChatPreservingEnsembleIntent
 } from './ensembleRosterCommit'
+import { EnsembleRosterWriteClaims } from './ensembleRosterWriteClaims'
 
 function seat(id: string, overrides: Partial<EnsembleParticipant> = {}): EnsembleParticipant {
   return {
@@ -226,5 +228,119 @@ describe('saveChatPreservingEnsembleIntent', () => {
 
     expect(onRebased).toHaveBeenCalledTimes(1)
     expect(onRebased.mock.calls[0][0].persistenceRevision).toBe(5)
+  })
+})
+
+// 2026-09-11 — "I keep allocating captain to a seat and it keeps reverting my
+// decision", and the same for turning Boss auto-approvals off. Those gestures
+// go through the live-round IPC while a round is dispatching, which was the one
+// roster lane still writing main's answer into the caches with no claim held.
+describe('commitEnsembleLiveRosterMutation', () => {
+  const deps = (
+    overrides: Partial<Parameters<typeof commitEnsembleLiveRosterMutation>[1]> = {}
+  ): Parameters<typeof commitEnsembleLiveRosterMutation>[1] => ({
+    chatById: new Map<string, ChatRecord>(),
+    setCurrentChat: vi.fn(),
+    setChats: vi.fn(),
+    claims: new EnsembleRosterWriteClaims(),
+    flushDeliveries: vi.fn(),
+    requestMutation: vi.fn(async () => ({ ok: true, chat: chat([seat('seat-1')]) })),
+    onError: vi.fn(),
+    ...overrides
+  })
+
+  it('holds a claim for the life of the request', async () => {
+    const claims = new EnsembleRosterWriteClaims()
+    let heldDuringRequest = false
+    const d = deps({
+      claims,
+      requestMutation: vi.fn(async () => {
+        heldDuringRequest = claims.held('chat-1')
+        return { ok: true, chat: chat([seat('seat-1')]) }
+      })
+    })
+
+    await commitEnsembleLiveRosterMutation('chat-1', d)
+
+    expect(heldDuringRequest).toBe(true)
+    expect(claims.held('chat-1')).toBe(false)
+  })
+
+  // Ordering is the load-bearing part: a delivery accepted while the claim was
+  // held must drain through the still-claimed merge, never in the gap after the
+  // release.
+  it('drains deliveries before releasing the claim', async () => {
+    const claims = new EnsembleRosterWriteClaims()
+    let heldAtFlush: boolean | null = null
+    await commitEnsembleLiveRosterMutation(
+      'chat-1',
+      deps({
+        claims,
+        flushDeliveries: vi.fn(() => {
+          heldAtFlush = claims.held('chat-1')
+        })
+      })
+    )
+
+    expect(heldAtFlush).toBe(true)
+  })
+
+  it('publishes the canonical answer to every renderer cache', async () => {
+    const answer = chat([seat('seat-1'), seat('seat-2')])
+    const chatById = new Map<string, ChatRecord>()
+    const setCurrentChat = vi.fn()
+    const setChats = vi.fn()
+
+    await commitEnsembleLiveRosterMutation(
+      'chat-1',
+      deps({
+        chatById,
+        setCurrentChat,
+        setChats,
+        requestMutation: vi.fn(async () => ({ ok: true, chat: answer }))
+      })
+    )
+
+    expect(chatById.get('chat-1')).toBe(answer)
+    expect(setCurrentChat).toHaveBeenCalled()
+    expect(setChats).toHaveBeenCalled()
+  })
+
+  it('reports a refusal and publishes nothing', async () => {
+    const chatById = new Map<string, ChatRecord>()
+    const onError = vi.fn()
+
+    await commitEnsembleLiveRosterMutation(
+      'chat-1',
+      deps({
+        chatById,
+        onError,
+        requestMutation: vi.fn(async () => ({ ok: false, message: 'Round is closing.' }))
+      })
+    )
+
+    expect(onError).toHaveBeenCalledWith('Round is closing.')
+    expect(chatById.size).toBe(0)
+  })
+
+  // A leaked claim refuses legitimate main-authored roster changes for the rest
+  // of its lease, so a thrown request must still release.
+  it('releases the claim when the request throws', async () => {
+    const claims = new EnsembleRosterWriteClaims()
+    const onError = vi.fn()
+
+    await commitEnsembleLiveRosterMutation(
+      'chat-1',
+      deps({
+        claims,
+        onError,
+        requestMutation: vi.fn(async () => {
+          throw new Error('IPC died')
+        })
+      })
+    )
+
+    expect(claims.held('chat-1')).toBe(false)
+    expect(onError).toHaveBeenCalledWith('IPC died')
   })
 })

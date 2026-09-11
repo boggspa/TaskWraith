@@ -1106,7 +1106,11 @@ import {
 import { ChatComposerSelectionPatchQueue } from './lib/ChatComposerSelectionPatchQueue'
 import { ComposerSelectionWriteClaims } from './lib/composerSelectionWriteClaims'
 import { EnsembleRosterWriteClaims } from './lib/ensembleRosterWriteClaims'
+import type { EnsembleUserRosterMutation } from '../../main/EnsembleUserRosterMutation'
+import { EnsembleChatKindWriteClaims } from './lib/ensembleChatKindWriteClaims'
+import { withEnsembleWriteClaim } from './lib/ensembleWriteClaimScope'
 import {
+  commitEnsembleLiveRosterMutation as commitEnsembleLiveRosterMutationRecord,
   commitEnsembleRosterChange as commitEnsembleRosterChangeRecord,
   saveChatPreservingEnsembleIntent
 } from './lib/ensembleRosterCommit'
@@ -5395,7 +5399,9 @@ function App(): React.JSX.Element {
           localGoalIntent: pendingGoalIntentRef.current.get(chatId) ?? null,
           localComposerSelectionPending:
             composerSelectionClaimsRef.current?.held(chatId) === true,
-          localEnsembleRosterPending: ensembleRosterClaimsRef.current?.held(chatId) === true
+          localEnsembleRosterPending: ensembleRosterClaimsRef.current?.held(chatId) === true,
+          localEnsembleChatKindPending:
+            ensembleChatKindClaimsRef.current?.held(chatId) === true
         })
         updated = pendingChatDraftsRef.current.apply(pendingMainUpdate.chat, updated, beforeMerge)
         byId.set(chatId, updated)
@@ -5699,10 +5705,12 @@ function App(): React.JSX.Element {
       }
       // Small composer picker edits persist through their own main-authoritative
       // patch IPC. Returning here keeps the optimistic React/cache update above
-      // while avoiding a structured clone of the entire chat transcript. A
-      // panel claim raised above stays held: that IPC settles it where it is
-      // wired (requestLiveEnsembleRoundConfigUpdate), and the claim's bounded
-      // lease is the backstop everywhere else.
+      // while avoiding a structured clone of the entire chat transcript. A panel
+      // claim raised above stays held across this return BY DESIGN: the edit is
+      // in flight until that IPC answers. `requestLiveEnsembleRoundConfigUpdate`
+      // raises its own superseding claim and settles it, so the hop-limit path
+      // releases properly; the bounded lease is the backstop for any other
+      // caller that returns here without an authoritative write of its own.
       if (options?.persistence === 'none') return updated
       pendingChatDraftsRef.current.trackTarget(updated)
       const persistTranscriptTail =
@@ -6548,6 +6556,13 @@ function App(): React.JSX.Element {
   // user just added or removed, or the round budget beside it. Its own
   // register, not the selection one: the two writes answer independently.
   // See lib/ensembleRosterWriteClaims.ts.
+  // Claims over a `setChatKind` still in flight. Its own register, not the
+  // roster one: a roster save answering must not release the mode's protection
+  // while the switch is still outstanding. See lib/ensembleChatKindWriteClaims.ts.
+  const ensembleChatKindClaimsRef = useRef<EnsembleChatKindWriteClaims | null>(null)
+  if (!ensembleChatKindClaimsRef.current) {
+    ensembleChatKindClaimsRef.current = new EnsembleChatKindWriteClaims()
+  }
   const ensembleRosterClaimsRef = useRef<EnsembleRosterWriteClaims | null>(null)
   if (!ensembleRosterClaimsRef.current) {
     ensembleRosterClaimsRef.current = new EnsembleRosterWriteClaims()
@@ -18302,13 +18317,24 @@ function App(): React.JSX.Element {
         await window.api.saveChat(chatWithSeatRemoved)
       }
       const updatedChat = applyHydratedChat(
-        await window.api.setChatKind({
-          chatId: targetChat.appChatId,
-          targetKind: 'single',
-          canonicalProvider: survivingParticipant.provider,
-          canonicalProviderMetadata:
-            buildProviderMetadataFromEnsembleParticipant(survivingParticipant)
-        })
+        // Claimed for the life of the call: main may have BUILT a delivery
+        // before this switch and flush it after, and that frame still carries
+        // the previous mode. See lib/ensembleChatKindWriteClaims.ts.
+        await withEnsembleWriteClaim(
+          targetChat.appChatId,
+          {
+            claims: ensembleChatKindClaimsRef.current,
+            flushDeliveries: flushCoalescedChatsNow
+          },
+          () =>
+            window.api.setChatKind({
+              chatId: targetChat.appChatId,
+              targetKind: 'single',
+              canonicalProvider: survivingParticipant.provider,
+              canonicalProviderMetadata:
+                buildProviderMetadataFromEnsembleParticipant(survivingParticipant)
+            })
+        )
       )
       if (currentChatIdRef.current === updatedChat.appChatId) {
         applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
@@ -18385,11 +18411,22 @@ function App(): React.JSX.Element {
         ? (await refreshSingleChat(targetChat.appChatId)) || targetChat
         : targetChat
       const updatedChat = applyHydratedChat(
-        await window.api.setChatKind({
-          chatId: baseChat.appChatId,
-          targetKind: 'ensemble',
-          seedParticipant: buildEnsembleSeedParticipantFromChat(baseChat)
-        })
+        // Claimed for the life of the call: main may have BUILT a delivery
+        // before this switch and flush it after, and that frame still carries
+        // the previous mode. See lib/ensembleChatKindWriteClaims.ts.
+        await withEnsembleWriteClaim(
+          baseChat.appChatId,
+          {
+            claims: ensembleChatKindClaimsRef.current,
+            flushDeliveries: flushCoalescedChatsNow
+          },
+          () =>
+            window.api.setChatKind({
+              chatId: baseChat.appChatId,
+              targetKind: 'ensemble',
+              seedParticipant: buildEnsembleSeedParticipantFromChat(baseChat)
+            })
+        )
       )
       if (currentChatIdRef.current === updatedChat.appChatId) {
         applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
@@ -18426,12 +18463,23 @@ function App(): React.JSX.Element {
     setChatKindMutationBusy(true)
     try {
       const updatedChat = applyHydratedChat(
-        await window.api.setChatKind({
-          chatId: modalChat.appChatId,
-          targetKind: 'single',
-          canonicalProvider: provider,
-          canonicalProviderMetadata: providerChoice?.metadata
-        })
+        // Claimed for the life of the call: main may have BUILT a delivery
+        // before this switch and flush it after, and that frame still carries
+        // the previous mode. See lib/ensembleChatKindWriteClaims.ts.
+        await withEnsembleWriteClaim(
+          modalChat.appChatId,
+          {
+            claims: ensembleChatKindClaimsRef.current,
+            flushDeliveries: flushCoalescedChatsNow
+          },
+          () =>
+            window.api.setChatKind({
+              chatId: modalChat.appChatId,
+              targetKind: 'single',
+              canonicalProvider: provider,
+              canonicalProviderMetadata: providerChoice?.metadata
+            })
+        )
       )
       if (currentChatIdRef.current === updatedChat.appChatId) {
         applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
@@ -22208,8 +22256,19 @@ function App(): React.JSX.Element {
       ) {
         return
       }
-      void window.api
-        .updateLiveEnsembleRoundConfig({ chatId, ...patch })
+      // The optimistic edit above rode `persistence: 'none'`, so this IPC is
+      // the only write there is — and it is what must release the panel claim.
+      // A later raise supersedes an earlier token, so claiming here also closes
+      // the one that path leaves outstanding, instead of leaving it to expire
+      // and refuse legitimate main-authored changes for the rest of its lease.
+      void withEnsembleWriteClaim(
+        chatId,
+        {
+          claims: ensembleRosterClaimsRef.current,
+          flushDeliveries: flushCoalescedChatsNow
+        },
+        () => window.api.updateLiveEnsembleRoundConfig({ chatId, ...patch })
+      )
         .then((result) => {
           if (result.ok) return
           window.alert(result.message || result.error || 'Live Ensemble control update failed.')
@@ -22353,6 +22412,24 @@ function App(): React.JSX.Element {
         claims: ensembleRosterClaimsRef.current,
         saveChat: (chat) => window.api.saveChatWithOutcome(chat),
         flushDeliveries: flushCoalescedChatsNow
+      })
+    },
+    [flushCoalescedChatsNow]
+  )
+  // Live-round roster lane. Thin wiring only — the claim ordering that keeps a
+  // delivery main built before the mutation from reverting it lives in
+  // lib/ensembleRosterCommit.ts.
+  const commitEnsembleLiveRosterMutation = useCallback(
+    (chatId: string, mutation: EnsembleUserRosterMutation) => {
+      void commitEnsembleLiveRosterMutationRecord(chatId, {
+        chatById: chatByIdRef.current,
+        setCurrentChat,
+        setChats,
+        claims: ensembleRosterClaimsRef.current,
+        flushDeliveries: flushCoalescedChatsNow,
+        requestMutation: (id) =>
+          window.api.requestEnsembleUserRosterMutation({ chatId: id, ...mutation }),
+        onError: (message) => window.alert(message)
       })
     },
     [flushCoalescedChatsNow]
@@ -30547,6 +30624,7 @@ function App(): React.JSX.Element {
       onOllamaModelSelected: checkOllamaModelAvailability,
       overestimatePercent,
       commitEnsembleRosterChange,
+      commitEnsembleLiveRosterMutation,
       patchEnsembleParticipantById,
       pendingApprovalQueueByChatId,
       persistentSessionNeedsRestart,
@@ -30665,6 +30743,7 @@ function App(): React.JSX.Element {
       multiview,
       overestimatePercent,
       commitEnsembleRosterChange,
+      commitEnsembleLiveRosterMutation,
       patchEnsembleParticipantById,
       pendingApprovalQueueByChatId,
       persistentSessionNeedsRestart,

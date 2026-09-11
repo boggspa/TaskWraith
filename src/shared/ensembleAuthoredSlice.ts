@@ -84,6 +84,30 @@ export function ensemblePanelConfigurationSignature(ensemble: EnsembleConfigShap
   return JSON.stringify(ENSEMBLE_PANEL_CONFIGURATION_KEYS.map((key) => ensemble[key] ?? null))
 }
 
+/**
+ * One signature over everything in an Ensemble a USER authors: the panel
+ * configuration, the roster's membership and order, and each seat's own
+ * configuration.
+ *
+ * Built from the same two key lists the overlay helpers use, so a field that is
+ * user-authored for the merge seam is user-authored here too and the two cannot
+ * drift. Excluding main's bookkeeping is the whole point rather than an
+ * optimization: this answers "has the USER changed the panel since a given
+ * moment", and an orchestrator write landing in between (seat generation,
+ * session linkage, prompt versions, token totals) must not be mistaken for the
+ * user's hand.
+ */
+export function ensembleAuthoredConfigurationSignature(
+  ensemble: EnsembleConfigShape | null | undefined
+): string {
+  if (!ensemble) return ''
+  const participants = Array.isArray(ensemble.participants) ? ensemble.participants : []
+  return JSON.stringify([
+    ensemblePanelConfigurationSignature(ensemble),
+    participants.map((seat) => [seat.id, ensembleSeatConfigurationSignature(seat)])
+  ])
+}
+
 /** Base panel config + the authored record's user-authored fields. An absent
  * authored field is restored as absent so a deliberate clear sticks. */
 export function overlayEnsemblePanelConfiguration(

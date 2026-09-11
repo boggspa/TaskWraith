@@ -145,6 +145,7 @@ import {
 } from '../lib/transcriptParticipantFilter'
 import {
   transcriptChatRenderSignature,
+  transcriptSeatRenderSignature,
   transcriptMessageRenderSignature,
   transcriptRowRenderSignatureEqual,
   type TranscriptRowRenderSignature
@@ -4363,6 +4364,17 @@ export const TranscriptPanel = memo(
       () => transcriptChatRenderSignature(currentChat),
       [currentChat]
     )
+    // One entry per seat, so a row keys on its own speaker instead of on the
+    // whole roster. Built here rather than per row: the row loop runs for every
+    // message, and resolving a seat by scan inside it would trade a repaint for
+    // a quadratic walk.
+    const seatRenderSignatureById = useMemo(() => {
+      const signatures = new Map<string, string>()
+      for (const seat of currentChat?.ensemble?.participants || []) {
+        signatures.set(seat.id, transcriptSeatRenderSignature(currentChat, seat.id))
+      }
+      return signatures
+    }, [currentChat])
     const auxiliaryChatsSignature = useMemo(() => transcriptAuxiliaryChatsSignature(chats), [chats])
     const runningChatIdsSignature = useMemo(
       () => transcriptRunningChatIdsSignature(runningChatIds),
@@ -5399,6 +5411,10 @@ export const TranscriptPanel = memo(
               messageSignature: transcriptMessageRenderSignature(msg),
               ...(boundaryRun ? { boundaryRun } : {}),
               chatSignature: currentChatRenderSignature,
+              seatSignature:
+                (typeof msg.metadata?.ensembleParticipantId === 'string'
+                  ? seatRenderSignatureById.get(msg.metadata.ensembleParticipantId)
+                  : undefined) ?? '',
               providerLabel: currentProviderLabel,
               provider: currentProvider,
               ...(currentWorkspacePath ? { workspacePath: currentWorkspacePath } : {}),

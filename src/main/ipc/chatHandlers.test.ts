@@ -638,7 +638,9 @@ describe('registerChatHandlers', () => {
     // optimistic record — instead of reporting a success the Host never stored.
     const deps = createDeps({
       awaitChatRecordPersisted: vi.fn(async () => undefined),
-      readDurableChatRecord: vi.fn(() => chat('chat-1', { chatKind: 'ensemble' }))
+      readDurableChatRecord: vi.fn(() => chat('chat-1', { chatKind: 'ensemble' })),
+      // Zero so this does not sleep through the post-barrier re-read window.
+      chatKindPersistVerifyWindowMs: 0
     })
     registerChatHandlers(deps)
 
@@ -683,6 +685,77 @@ describe('registerChatHandlers', () => {
     await expect(
       handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'single' })
     ).resolves.toEqual(chat('chat-1', { chatKind: 'single' }))
+  })
+
+  // 2026-09-11 — "Not allowing me to enable Ensemble". The barrier bound is not
+  // a failure signal, it only stops waiting, and the Host client's own ceiling
+  // is six times longer. Asserting the instant it expires read a record that was
+  // merely still in flight and reported a failure the renderer then buried in
+  // the thread log, so the toggle looked inert.
+  it('confirms a switch whose durable write lands just after the barrier', async () => {
+    let reads = 0
+    const deps = createDeps({
+      awaitChatRecordPersisted: vi.fn(async () => undefined),
+      readDurableChatRecord: vi.fn(() => {
+        reads += 1
+        // Stale for the first two reads, then the Host write lands.
+        return chat('chat-1', { chatKind: reads > 2 ? 'ensemble' : 'single' })
+      })
+    })
+    registerChatHandlers(deps)
+
+    await expect(
+      handlerFor('set-chat-kind')({} as any, {
+        chatId: 'chat-1',
+        targetKind: 'ensemble',
+        seedParticipant: { id: 'seat-1', provider: 'codex' } as EnsembleParticipant
+      })
+    ).resolves.toBeDefined()
+    expect(reads).toBeGreaterThan(1)
+    expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1')
+  })
+
+  // Turning local history off stops the write entirely but never purges
+  // chats/<id>.json, so verifying against that file failed EVERY mode toggle on
+  // any profile that once had history on.
+  it('skips durable verification entirely when local history is disabled', async () => {
+    const readDurableChatRecord = vi.fn(() => chat('chat-1', { chatKind: 'single' }))
+    const deps = createDeps({
+      awaitChatRecordPersisted: vi.fn(async () => undefined),
+      readDurableChatRecord,
+      chatKindPersistVerifyWindowMs: 0,
+      getSettings: vi.fn(() => ({ storeLocalChatHistory: false }) as AppSettings)
+    })
+    registerChatHandlers(deps)
+
+    await expect(
+      handlerFor('set-chat-kind')({} as any, {
+        chatId: 'chat-1',
+        targetKind: 'ensemble',
+        seedParticipant: { id: 'seat-1', provider: 'codex' } as EnsembleParticipant
+      })
+    ).resolves.toBeDefined()
+    expect(readDurableChatRecord).not.toHaveBeenCalled()
+    expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1')
+  })
+
+  it('does not surface an unreadable durable record as a mode-change failure', async () => {
+    const deps = createDeps({
+      awaitChatRecordPersisted: vi.fn(async () => undefined),
+      readDurableChatRecord: vi.fn(() => {
+        throw new SyntaxError('Unexpected end of JSON input')
+      }),
+      chatKindPersistVerifyWindowMs: 0
+    })
+    registerChatHandlers(deps)
+
+    await expect(
+      handlerFor('set-chat-kind')({} as any, {
+        chatId: 'chat-1',
+        targetKind: 'ensemble',
+        seedParticipant: { id: 'seat-1', provider: 'codex' } as EnsembleParticipant
+      })
+    ).resolves.toBeDefined()
   })
 
   it('does not wait forever on a set-chat-kind barrier that never settles', async () => {

@@ -8,6 +8,7 @@ import {
   hasPendingEnsembleRosterPresetApply,
   parsePendingEnsembleRosterPresetApply,
   parseSingleAgentRosterPresetExport,
+  PENDING_ENSEMBLE_ROSTER_PRESET_APPLY_KEY,
   queuePendingEnsembleRosterPresetApply
 } from './EnsembleRosterPresetApply'
 import {
@@ -386,6 +387,172 @@ describe('EnsembleRosterPresetApply', () => {
     const queued = queuePendingEnsembleRosterPresetApply(chat, result.plan)
 
     expect(applyPendingEnsembleRosterPresetOnRunTerminal(queued, 'participant-run')).toBe(queued)
+  })
+
+  // 2026-09-11 — "it settles for a minute and then reverts again". A queued
+  // preset lands at the next round boundary, and until this it replayed over
+  // whatever the user had done by hand in between.
+  describe('a queued preset the user has superseded by hand', () => {
+    const queuedAgainst = (chat: ChatRecord): ChatRecord => {
+      const result = buildEnsembleRosterPresetApply({
+        chat,
+        preset: preset(),
+        callerParticipantId: 'boss-id',
+        queuedAt: '2026-07-12T12:00:00.000Z',
+        makeParticipantId: idFactory('fresh-scout')
+      })
+      if (!result.ok) throw new Error('fixture plan did not build')
+      return queuePendingEnsembleRosterPresetApply(chat, result.plan)
+    }
+
+    const editSeat = (chat: ChatRecord, patch: Partial<EnsembleParticipant>): ChatRecord => ({
+      ...chat,
+      ensemble: {
+        ...chat.ensemble!,
+        participants: chat.ensemble!.participants.map((seat, index) =>
+          index === 0 ? { ...seat, ...patch } : seat
+        )
+      }
+    })
+
+    it('applies normally when the user changed nothing in the window', () => {
+      const applied = applyPendingEnsembleRosterPresetOnFinalize(queuedAgainst(ensembleChat()))
+
+      expect(applied.ensemble?.activeRosterPresetId).toBe('agent-preset')
+      expect(applied.ensemble?.participants.map((seat) => seat.id)).toEqual([
+        'boss-id',
+        'captain-id',
+        'fresh-scout'
+      ])
+      expect(hasPendingEnsembleRosterPresetApply(applied)).toBe(false)
+    })
+
+    it('keeps a seat reasoning effort the user picked after queueing', () => {
+      const edited = editSeat(queuedAgainst(ensembleChat()), { reasoningEffort: 'max' })
+
+      const applied = applyPendingEnsembleRosterPresetOnFinalize(edited)
+
+      expect(applied.ensemble?.activeRosterPresetId).toBeUndefined()
+      expect(applied.ensemble?.participants[0]?.reasoningEffort).toBe('max')
+      expect(applied.ensemble?.participants.map((seat) => seat.id)).toEqual([
+        'boss-id',
+        'captain-id',
+        'worker-id'
+      ])
+      // The plan is consumed, not left to fire again at the next boundary.
+      expect(hasPendingEnsembleRosterPresetApply(applied)).toBe(false)
+    })
+
+    it.each([
+      ['a seat model', { model: 'gpt-5-codex' }],
+      ['a role rename', { role: 'Renamed by hand' }],
+      ['a stage role', { stageRole: 'background' as const }]
+    ])('keeps %s the user changed after queueing', (_label, patch) => {
+      const edited = editSeat(queuedAgainst(ensembleChat()), patch)
+
+      const applied = applyPendingEnsembleRosterPresetOnFinalize(edited)
+
+      expect(applied.ensemble?.participants[0]).toMatchObject(patch)
+      expect(hasPendingEnsembleRosterPresetApply(applied)).toBe(false)
+    })
+
+    it('keeps a Captain the user assigned after queueing', () => {
+      const queued = queuedAgainst(ensembleChat())
+      const edited: ChatRecord = {
+        ...queued,
+        ensemble: { ...queued.ensemble!, captainParticipantIds: ['worker-id'] }
+      }
+
+      const applied = applyPendingEnsembleRosterPresetOnFinalize(edited)
+
+      expect(applied.ensemble?.captainParticipantIds).toEqual(['worker-id'])
+    })
+
+    it('keeps Boss auto-approvals the user turned off after queueing', () => {
+      const queued = queuedAgainst(ensembleChat())
+      const edited: ChatRecord = {
+        ...queued,
+        ensemble: { ...queued.ensemble!, bossmanAutoApprovals: undefined }
+      }
+
+      const applied = applyPendingEnsembleRosterPresetOnFinalize(edited)
+
+      expect(applied.ensemble?.bossmanAutoApprovals).toBeUndefined()
+      expect(applied.ensemble?.participants.map((seat) => seat.id)).toEqual([
+        'boss-id',
+        'captain-id',
+        'worker-id'
+      ])
+    })
+
+    it('keeps a round budget the user changed after queueing', () => {
+      const queued = queuedAgainst(ensembleChat())
+      const edited: ChatRecord = {
+        ...queued,
+        ensemble: { ...queued.ensemble!, maxContinuationHops: 124 }
+      }
+
+      const applied = applyPendingEnsembleRosterPresetOnFinalize(edited)
+
+      expect(applied.ensemble?.maxContinuationHops).toBe(124)
+    })
+
+    // The discriminator is user-authored keys ONLY. Main writes seat session
+    // linkage and generation constantly during a round; if those counted, a
+    // preset queued mid-round would essentially never apply.
+    it('still applies when only main-authored seat bookkeeping moved', () => {
+      const edited = editSeat(queuedAgainst(ensembleChat()), {
+        linkedProviderSessionId: 'provider-session-42'
+      })
+
+      const applied = applyPendingEnsembleRosterPresetOnFinalize(edited)
+
+      expect(applied.ensemble?.activeRosterPresetId).toBe('agent-preset')
+    })
+
+    // A plan written before the signature existed carries none, and must keep
+    // its old unconditional behaviour rather than being dropped wholesale.
+    it('applies a signature-less legacy plan unconditionally', () => {
+      const queued = queuedAgainst(ensembleChat())
+      const plan = queued.providerMetadata?.[PENDING_ENSEMBLE_ROSTER_PRESET_APPLY_KEY] as Record<
+        string,
+        unknown
+      >
+      const { queuedConfigurationSignature: _dropped, ...legacyPlan } = plan
+      const legacy = editSeat(
+        {
+          ...queued,
+          providerMetadata: {
+            ...queued.providerMetadata,
+            [PENDING_ENSEMBLE_ROSTER_PRESET_APPLY_KEY]: legacyPlan
+          }
+        },
+        { reasoningEffort: 'max' }
+      )
+
+      const applied = applyPendingEnsembleRosterPresetOnFinalize(legacy)
+
+      expect(applied.ensemble?.activeRosterPresetId).toBe('agent-preset')
+    })
+
+    // A solo thread has no roster to protect, so the conversion still runs.
+    it('converts a solo chat even though it carried no queue-time roster', () => {
+      const result = buildEnsembleRosterPresetApply({
+        chat: soloChat(),
+        preset: preset(),
+        queuedAt: '2026-07-12T12:00:00.000Z',
+        makeParticipantId: idFactory('fresh-scout')
+      })
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+
+      const applied = applyPendingEnsembleRosterPresetOnFinalize(
+        queuePendingEnsembleRosterPresetApply(soloChat(), result.plan)
+      )
+
+      expect(applied.chatKind).toBe('ensemble')
+      expect(hasPendingEnsembleRosterPresetApply(applied)).toBe(false)
+    })
   })
 
   it('rejects a solo preset whose marked Boss is a different provider', () => {

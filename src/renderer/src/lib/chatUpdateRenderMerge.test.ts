@@ -958,6 +958,73 @@ describe('mergeChatUpdatedForRender', () => {
     expect(merged.ensemble?.participants.map((participant) => participant.id)).toEqual(['seat-1'])
   })
 
+  // 2026-09-11 — "Not allowing me to enable Ensemble". `setChatKind` is
+  // main-authoritative, but main can have BUILT a delivery before the switch and
+  // flushed it after; that frame carries the previous mode on a newer clock, so
+  // the stamp comparison stood down and the toggle snapped back to Off.
+  describe('an Ensemble mode switch still in flight', () => {
+    const soloDelivery = (): ChatRecord => {
+      const delivered = { ...chat([message('a', 'unrelated save')]) }
+      delivered.updatedAt = Date.parse('2026-09-01T00:00:09.000Z')
+      delivered.chatKind = 'single'
+      delete delivered.ensemble
+      return delivered
+    }
+    const ensembleLive = (): ChatRecord => {
+      const live = { ...chat([message('a', 'unrelated save')]) }
+      live.updatedAt = Date.parse('2026-09-01T00:00:01.000Z')
+      live.chatKind = 'ensemble'
+      live.ensemble = makeEnsemble([{ id: 'seat-1', role: 'Boss' }], '2026-09-01T00:00:01.000Z')
+      return live
+    }
+
+    it('keeps the switched-on mode against an older-built, newer-stamped delivery', () => {
+      const merged = mergeChatUpdatedForRender(soloDelivery(), {
+        liveChat: ensembleLive(),
+        messagesChanged: false,
+        hasActiveRun: false,
+        hadRecentRun: false,
+        localEnsembleChatKindPending: true
+      })
+
+      expect(merged.chatKind).toBe('ensemble')
+      expect(merged.ensemble?.participants.map((seat) => seat.id)).toEqual(['seat-1'])
+    })
+
+    // Without the claim this is the reported revert, and it is the reason the
+    // roster claim alone could not rescue it: the mode helper runs first, so a
+    // delivered record with no `ensemble` block survives into the merge and the
+    // roster helper then returns on its own `!deliveredEnsemble` guard.
+    it('loses the mode to the same delivery when no claim is held', () => {
+      const merged = mergeChatUpdatedForRender(soloDelivery(), {
+        liveChat: ensembleLive(),
+        messagesChanged: false,
+        hasActiveRun: false,
+        hadRecentRun: false,
+        localEnsembleChatKindPending: false,
+        localEnsembleRosterPending: true
+      })
+
+      expect(merged.chatKind).toBe('single')
+    })
+
+    // The claim is not a veto on main either: a confirmed switch-off broadcast
+    // must still land while nothing is in flight.
+    it('lets a newer main-authored switch-off win when no claim is held', () => {
+      const live = ensembleLive()
+      const delivered = soloDelivery()
+      const merged = mergeChatUpdatedForRender(delivered, {
+        liveChat: live,
+        messagesChanged: false,
+        hasActiveRun: false,
+        hadRecentRun: false
+      })
+
+      expect(merged.chatKind).toBe('single')
+      expect(merged.ensemble).toBeUndefined()
+    })
+  })
+
   // The claim is not a veto on main. With none held the wall clock still
   // decides, so a genuinely newer main-authored roster change applies.
   it('still lets a newer delivered roster win when no claim is held', () => {

@@ -14,6 +14,20 @@ export interface PendingEnsembleRosterPresetApply {
   presetId: string
   presetName: string
   queuedAt: string
+  /**
+   * The user-authored configuration signature of the ensemble this plan was
+   * queued AGAINST — see `ensembleAuthoredConfigurationSignature`.
+   *
+   * A queued plan is a roster REPLACEMENT that lands at the next round
+   * boundary, which can be minutes later. If the user reshapes the panel by
+   * hand in that window, replaying the preset would silently undo them, and the
+   * seats they edited are not even the seats the preset installs. Comparing
+   * this against the signature at finalize time is how that is detected;
+   * `queuedAt` cannot do it, because main re-stamps the ensemble clock for its
+   * own writes. Optional so a plan queued before this existed keeps its old
+   * unconditional behaviour rather than being dropped.
+   */
+  queuedConfigurationSignature?: string
   sourceRunId?: string
   authority: 'user' | 'solo_inherited_boss' | 'ensemble_boss' | 'ensemble_captain'
   participants: EnsembleParticipant[]

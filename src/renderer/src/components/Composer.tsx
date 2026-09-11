@@ -5,6 +5,7 @@ import { resolveOllamaComposerReasoningEffort } from '../../../shared/ollamaReas
 import { trustedSessionRuntimeProfileForRequest } from '../../../shared/trustedSessionRuntimeProfile'
 import { planTrustedSessionElevation } from '../lib/trustedSessionElevation'
 import { createWindowDragSession } from '../lib/windowDragSession'
+import type { EnsembleUserRosterMutation } from '../../../main/EnsembleUserRosterMutation'
 import { MAX_ACTIVE_GOAL_OBJECTIVE_CHARS } from '../../../main/GoalState'
 import type {
   AgenticWorkspaceGrant,
@@ -475,6 +476,9 @@ export interface ComposerProps {
   /** Whole-record Ensemble commit from the chip strip, claimed against a
    *  stale delivery for the life of its save. See lib/ensembleRosterCommit.ts. */
   commitEnsembleRosterChange: (chat: ChatRecord) => void
+  /** Live-round roster/authority mutation, claimed for the life of its IPC.
+   *  See lib/ensembleRosterCommit.ts. */
+  commitEnsembleLiveRosterMutation: (chatId: string, mutation: EnsembleUserRosterMutation) => void
   patchEnsembleParticipantById: any
   pendingAgentApproval: any
   pendingApprovalQueueByChatId: any
@@ -870,6 +874,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     openSideChatFromSlashCommand,
     overestimatePercent,
     commitEnsembleRosterChange,
+    commitEnsembleLiveRosterMutation,
     patchEnsembleParticipantById,
     pendingAgentApproval,
     pendingApprovalQueueByChatId,
@@ -2862,35 +2867,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     }}
                     onLiveRosterMutation={(mutation) => {
                       if (!currentChat) return
-                      void window.api
-                        .requestEnsembleUserRosterMutation({
-                          chatId: currentChat.appChatId,
-                          ...mutation
-                        })
-                        .then((result) => {
-                          if (!result.ok) {
-                            window.alert(result.message || 'Participant change failed.')
-                            return
-                          }
-                          const updatedChat = result.chat
-                          if (!updatedChat) return
-                          chatByIdRef.current.set(updatedChat.appChatId, updatedChat)
-                          setCurrentChat((prev) =>
-                            prev?.appChatId === updatedChat.appChatId ? updatedChat : prev
-                          )
-                          setChats((prev) =>
-                            prev.map((chat) =>
-                              chat.appChatId === updatedChat.appChatId ? updatedChat : chat
-                            )
-                          )
-                        })
-                        .catch((error) => {
-                          window.alert(
-                            error instanceof Error
-                              ? error.message
-                              : 'Participant change failed.'
-                          )
-                        })
+                      commitEnsembleLiveRosterMutation(currentChat.appChatId, mutation)
                     }}
                     onCollapseToSolo={handleCollapseEnsembleToSolo}
                     onSkipActive={() => {
@@ -5469,33 +5446,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   }}
                   onLiveRosterMutation={(mutation) => {
                     if (!currentChat) return
-                    void window.api
-                      .requestEnsembleUserRosterMutation({
-                        chatId: currentChat.appChatId,
-                        ...mutation
-                      })
-                      .then((result) => {
-                        if (!result.ok) {
-                          window.alert(result.message || 'Participant change failed.')
-                          return
-                        }
-                        const updatedChat = result.chat
-                        if (!updatedChat) return
-                        chatByIdRef.current.set(updatedChat.appChatId, updatedChat)
-                        setCurrentChat((prev) =>
-                          prev?.appChatId === updatedChat.appChatId ? updatedChat : prev
-                        )
-                        setChats((prev) =>
-                          prev.map((chat) =>
-                            chat.appChatId === updatedChat.appChatId ? updatedChat : chat
-                          )
-                        )
-                      })
-                      .catch((error) => {
-                        window.alert(
-                          error instanceof Error ? error.message : 'Participant change failed.'
-                        )
-                      })
+                    commitEnsembleLiveRosterMutation(currentChat.appChatId, mutation)
                   }}
                   configuredProviderSnapshot={configuredProviderSnapshot}
                   grokAvailable={grokProviderAvailable}

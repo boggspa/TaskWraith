@@ -3,6 +3,7 @@ import type { ChatMessage, ChatRecord } from '../../../main/store/types'
 import {
   transcriptChatRenderSignature,
   transcriptMessageRenderSignature,
+  transcriptSeatRenderSignature,
   transcriptRowRenderSignatureEqual,
   type TranscriptRowRenderSignature
 } from './transcriptRowRenderCache'
@@ -31,6 +32,7 @@ const signature = (
   message,
   messageSignature: transcriptMessageRenderSignature(message),
   chatSignature: transcriptChatRenderSignature(chat()),
+  seatSignature: '',
   providerLabel: 'Codex',
   provider: 'codex',
   workspacePath: '/repo',
@@ -64,6 +66,74 @@ const signature = (
 })
 
 describe('transcriptRowRenderCache', () => {
+  // 2026-09-11 — "changing the model selection repaints the entire transcript",
+  // and the same for a role rename and a stage-role change. The roster used to
+  // be folded into the chat-wide signature that every row carries, so one seat's
+  // edit missed the row element cache for every row in the thread.
+  describe('a seat edit is scoped to that seat\'s rows', () => {
+    const rosterChat = (seats: Record<string, unknown>[]): ChatRecord =>
+      chat({
+        chatKind: 'ensemble',
+        ensemble: { enabled: true, maxParticipants: 6, participants: seats }
+      } as unknown as Partial<ChatRecord>)
+
+    const before = rosterChat([
+      { id: 'seat-a', role: 'Worker', provider: 'codex', model: 'gpt-5' },
+      { id: 'seat-b', role: 'Reviewer', provider: 'claude', model: 'opus' }
+    ])
+    const afterModel = rosterChat([
+      { id: 'seat-a', role: 'Worker', provider: 'codex', model: 'gpt-5-codex' },
+      { id: 'seat-b', role: 'Reviewer', provider: 'claude', model: 'opus' }
+    ])
+
+    it('leaves the chat-wide signature untouched by a seat model change', () => {
+      expect(transcriptChatRenderSignature(afterModel)).toBe(
+        transcriptChatRenderSignature(before)
+      )
+    })
+
+    it('keeps a row spoken by an untouched seat cache-compatible', () => {
+      const rowB = (source: ChatRecord): TranscriptRowRenderSignature =>
+        signature({
+          chatSignature: transcriptChatRenderSignature(source),
+          seatSignature: transcriptSeatRenderSignature(source, 'seat-b')
+        })
+
+      expect(transcriptRowRenderSignatureEqual(rowB(before), rowB(afterModel))).toBe(true)
+    })
+
+    it('invalidates a row spoken by the edited seat', () => {
+      const rowA = (source: ChatRecord): TranscriptRowRenderSignature =>
+        signature({
+          chatSignature: transcriptChatRenderSignature(source),
+          seatSignature: transcriptSeatRenderSignature(source, 'seat-a')
+        })
+
+      expect(transcriptRowRenderSignatureEqual(rowA(before), rowA(afterModel))).toBe(false)
+    })
+
+    it.each([
+      ['a role rename', { role: 'Renamed' }],
+      // Effort/thinking are in the seat signature although no other render key
+      // carries them: `activitySpeakerMessage` falls back to the live seat for a
+      // row with no run snapshot, so leaving them out served a stale row.
+      ['a reasoning effort change', { reasoningEffort: 'max' }],
+      ['a thinking toggle', { thinkingEnabled: true }]
+    ])('invalidates the edited seat\'s row for %s', (_label, patch) => {
+      const edited = rosterChat([
+        { id: 'seat-a', role: 'Worker', provider: 'codex', model: 'gpt-5', ...patch },
+        { id: 'seat-b', role: 'Reviewer', provider: 'claude', model: 'opus' }
+      ])
+
+      expect(transcriptSeatRenderSignature(edited, 'seat-a')).not.toBe(
+        transcriptSeatRenderSignature(before, 'seat-a')
+      )
+      expect(transcriptSeatRenderSignature(edited, 'seat-b')).toBe(
+        transcriptSeatRenderSignature(before, 'seat-b')
+      )
+    })
+  })
+
   it('invalidates headers and stack edges when neighboring transcript events change', () => {
     expect(
       transcriptRowRenderSignatureEqual(signature(), signature({ speakerContinuation: true }))

@@ -7,6 +7,17 @@ export interface TranscriptRowRenderSignature {
   messageSignature: string
   boundaryRun?: ChatRun
   chatSignature: string
+  /**
+   * The signature of the SEAT that spoke this row, when it has one.
+   *
+   * Split out of `chatSignature` on 2026-09-11. The chat signature used to
+   * carry the whole roster, so retitling one seat or changing one seat's model
+   * changed the string stamped on EVERY row, missed every entry in the row
+   * element cache, and repainted the entire transcript — reported as "changing
+   * the model selection repaints the entire transcript". A row only depends on
+   * its own speaker, so that is what it keys on.
+   */
+  seatSignature: string
   providerLabel: string
   provider: ProviderId
   workspacePath?: string
@@ -300,15 +311,10 @@ function toolActivitySignature(
 
 export function transcriptChatRenderSignature(chat: ChatRecord | null | undefined): string {
   if (!chat) return ''
-  const participants =
-    chat.ensemble?.participants?.map((participant) => ({
-      id: participant.id,
-      role: participant.role,
-      provider: participant.provider,
-      model: participant.model,
-      pooledAgentId: participant.pooledAgentId,
-      pooledAgentIdentity: participant.pooledAgentIdentity || null
-    })) || []
+  // The roster deliberately does NOT belong here: this string is stamped on
+  // every row, so folding a per-seat field into it makes one seat's edit
+  // invalidate the whole transcript. Per-seat state lives in
+  // `transcriptSeatRenderSignature` and is keyed per row.
   return stableJson({
     appChatId: chat.appChatId,
     chatKind: chat.chatKind,
@@ -317,8 +323,36 @@ export function transcriptChatRenderSignature(chat: ChatRecord | null | undefine
     workspacePath: chat.workspacePath,
     agentIdentities: chat.providerMetadata?.agentIdentities || null,
     pooledAgentId: chat.providerMetadata?.pooledAgentId || null,
-    pooledAgentIdentity: chat.providerMetadata?.pooledAgentIdentity || null,
-    participants
+    pooledAgentIdentity: chat.providerMetadata?.pooledAgentIdentity || null
+  })
+}
+
+/**
+ * Everything a row renders about the seat that spoke it.
+ *
+ * Carries the effort/thinking/tier fields as well as the identity ones because
+ * `activitySpeakerMessage` falls back to the live participant for a row with no
+ * run seat snapshot: leaving them out served a stale cached row after an
+ * effort-only change.
+ */
+export function transcriptSeatRenderSignature(
+  chat: ChatRecord | null | undefined,
+  participantId: string | null | undefined
+): string {
+  if (!chat || !participantId) return ''
+  const seat = chat.ensemble?.participants?.find((participant) => participant.id === participantId)
+  if (!seat) return ''
+  return stableJson({
+    id: seat.id,
+    role: seat.role,
+    provider: seat.provider,
+    model: seat.model,
+    pooledAgentId: seat.pooledAgentId,
+    pooledAgentIdentity: seat.pooledAgentIdentity || null,
+    reasoningEffort: seat.reasoningEffort ?? null,
+    thinkingEnabled: seat.thinkingEnabled ?? null,
+    serviceTier: seat.serviceTier ?? null,
+    fastModeEnabled: seat.fastModeEnabled ?? null
   })
 }
 
@@ -344,6 +378,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.messageSignature !== next.messageSignature) return false
   if (prev.boundaryRun !== next.boundaryRun) return false
   if (prev.chatSignature !== next.chatSignature) return false
+  if (prev.seatSignature !== next.seatSignature) return false
   if (prev.providerLabel !== next.providerLabel) return false
   if (prev.provider !== next.provider) return false
   if (prev.workspacePath !== next.workspacePath) return false

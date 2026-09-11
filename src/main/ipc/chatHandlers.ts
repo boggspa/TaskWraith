@@ -96,6 +96,12 @@ export interface ChatHandlerDeps {
    * harnesses can omit it (verification then skips).
    */
   readDurableChatRecord?: (chatId: string) => ChatRecord | null
+  /**
+   * Overrides `CHAT_KIND_PERSIST_VERIFY_WINDOW_MS`. Exists so a test can drive
+   * the re-read window to zero instead of sleeping through it; production
+   * leaves it unset.
+   */
+  chatKindPersistVerifyWindowMs?: number
   /** Main-owned graph cleanup must settle live graph work before chat deletion. */
   deleteExecutionGraphHistoryForChat: (chatId: string) => Promise<void>
   /** Revoke/claim provider approval authority synchronously before graph awaits. */
@@ -405,6 +411,21 @@ async function settleEnsembleCreatePersistBarrier(
 export const CHAT_KIND_PERSIST_BARRIER_TIMEOUT_MS = 5_000
 
 /**
+ * How long the durable record is re-read for AFTER the barrier stops being
+ * waited on, before the switch is called a failure.
+ *
+ * The barrier bound above is not a failure signal — it only stops waiting, and
+ * the Host client's own command ceiling is 30s (`HostThreadRecordPersistCommand`),
+ * six times longer. Asserting once the instant the bound expires therefore reads
+ * a record that is merely still in flight and reports a failure the user then
+ * meets as "the Ensemble toggle does nothing". Re-reading for a further bounded
+ * window costs nothing when the write already landed (the first read wins) and
+ * removes the dominant false negative when it has not.
+ */
+export const CHAT_KIND_PERSIST_VERIFY_WINDOW_MS = 5_000
+const CHAT_KIND_PERSIST_VERIFY_POLL_MS = 100
+
+/**
  * Bounded wait + durable verification for `set-chat-kind`.
  *
  * Mode switches ride the same Host-routed CAS lane as every other save, but
@@ -418,7 +439,13 @@ export const CHAT_KIND_PERSIST_BARRIER_TIMEOUT_MS = 5_000
  * record the Host never accepted.
  */
 async function assertChatKindPersisted(
-  deps: Pick<ChatHandlerDeps, 'awaitChatRecordPersisted' | 'readDurableChatRecord'>,
+  deps: Pick<
+    ChatHandlerDeps,
+    | 'awaitChatRecordPersisted'
+    | 'readDurableChatRecord'
+    | 'getSettings'
+    | 'chatKindPersistVerifyWindowMs'
+  >,
   chatId: string,
   targetKind: ChatKind
 ): Promise<void> {
@@ -446,12 +473,40 @@ async function assertChatKindPersisted(
       if (timer) clearTimeout(timer)
     }
   }
-  const durable = deps.readDurableChatRecord?.(chatId)
-  // No durable record at all: local history is disabled or the chat was never
-  // persisted — there is nothing to verify against, so the in-memory mutation
-  // stands on its own.
-  if (!durable) return
-  const durableKind = durable.chatKind === 'ensemble' ? 'ensemble' : 'single'
+  // Local history off means `saveChatThroughHost` returned without writing at
+  // all, while `readDurableChatRecord` still reads `chats/<id>.json` — and
+  // turning history off does not purge those files. Verifying here compares the
+  // switch against a record nothing is maintaining, so every mode toggle on a
+  // profile that ever had history enabled fails deterministically. There is no
+  // durable write to verify, so do not invent one.
+  if (deps.getSettings?.().storeLocalChatHistory === false) return
+  const readDurableKind = (): ChatKind | null => {
+    try {
+      const durable = deps.readDurableChatRecord?.(chatId)
+      // No durable record at all: the chat was never persisted, so there is
+      // nothing to verify against and the in-memory mutation stands on its own.
+      if (!durable) return targetKind
+      return durable.chatKind === 'ensemble' ? 'ensemble' : 'single'
+    } catch (error) {
+      // A torn or unreadable record is not evidence the switch failed, and
+      // letting a raw SyntaxError out of here surfaces as the mode-change error.
+      console.error(`[set-chat-kind] Durable record for chat ${chatId} is unreadable.`, error)
+      return null
+    }
+  }
+  let durableKind = readDurableKind()
+  if (durableKind !== targetKind) {
+    const deadline =
+      Date.now() + (deps.chatKindPersistVerifyWindowMs ?? CHAT_KIND_PERSIST_VERIFY_WINDOW_MS)
+    while (durableKind !== null && durableKind !== targetKind && Date.now() < deadline) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, CHAT_KIND_PERSIST_VERIFY_POLL_MS)
+        timer.unref?.()
+      })
+      durableKind = readDurableKind()
+    }
+  }
+  if (durableKind === null) return
   if (durableKind !== targetKind) {
     throw new Error(
       `The chat mode change could not be persisted — the durable record is still ` +

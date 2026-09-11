@@ -43,6 +43,7 @@ import {
   rebaseEnsembleAuthoredSlice
 } from '../../../shared/ensembleAuthoredSlice'
 import type { EnsembleRosterWriteClaims } from './ensembleRosterWriteClaims'
+import { withEnsembleWriteClaim } from './ensembleWriteClaimScope'
 
 /**
  * How many times a refused save is rebased and re-issued.
@@ -157,4 +158,66 @@ export function commitEnsembleRosterChange(
       deps.flushDeliveries()
       deps.claims?.settle(chatId, token)
     })
+}
+
+export interface EnsembleLiveRosterMutationResult {
+  ok: boolean
+  chat?: ChatRecord | null
+  message?: string
+}
+
+export interface EnsembleLiveRosterMutationDeps {
+  /** The renderer's synchronous record cache. */
+  chatById: Map<string, ChatRecord>
+  setCurrentChat: (updater: (previous: ChatRecord | null) => ChatRecord | null) => void
+  setChats: (updater: (previous: ChatRecord[]) => ChatRecord[]) => void
+  claims: EnsembleRosterWriteClaims | null | undefined
+  flushDeliveries: () => void
+  requestMutation: (chatId: string) => Promise<EnsembleLiveRosterMutationResult>
+  onError: (message: string) => void
+}
+
+/**
+ * The live-round roster lane: add, remove, reorder, Boss/Captain authority and
+ * Boss auto-approvals, while a round is dispatching.
+ *
+ * `commitEnsembleRosterChange` above covers the IDLE branch of the same
+ * gestures. This one goes through `requestEnsembleUserRosterMutation` because a
+ * running round's roster is main's to change, and it looked safe for exactly
+ * that reason: the renderer applies main's own answer rather than an optimistic
+ * guess. It is not safe. Main can have BUILT a `chat-updated` delivery before
+ * the mutation and flushed it after, so the answer is applied and then a frame
+ * prepared in ignorance of it lands on top.
+ *
+ * Reported 2026-09-11 as "I keep allocating captain to a seat and it keeps
+ * reverting my decision", and the same for turning Boss auto-approvals off.
+ * Those are `set_authority` and `set_auto_approvals` — this exact lane, and the
+ * only roster gestures that had no claim after the idle branch got one.
+ */
+export async function commitEnsembleLiveRosterMutation(
+  chatId: string,
+  deps: EnsembleLiveRosterMutationDeps
+): Promise<void> {
+  try {
+    const result = await withEnsembleWriteClaim(
+      chatId,
+      { claims: deps.claims, flushDeliveries: deps.flushDeliveries },
+      () => deps.requestMutation(chatId)
+    )
+    if (!result.ok) {
+      deps.onError(result.message || 'Participant change failed.')
+      return
+    }
+    const updatedChat = result.chat
+    if (!updatedChat) return
+    deps.chatById.set(updatedChat.appChatId, updatedChat)
+    deps.setCurrentChat((previous) =>
+      previous?.appChatId === updatedChat.appChatId ? updatedChat : previous
+    )
+    deps.setChats((previous) =>
+      previous.map((entry) => (entry.appChatId === updatedChat.appChatId ? updatedChat : entry))
+    )
+  } catch (error) {
+    deps.onError(error instanceof Error ? error.message : 'Participant change failed.')
+  }
 }
