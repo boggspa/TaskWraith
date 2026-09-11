@@ -97,7 +97,14 @@ export function EnsembleBriefEditor({
 
   const selectedPreset = selectedPresetId ? getEnsembleBriefPreset(selectedPresetId) : null
   const selectedUserPreset = selectedPreset?.source === 'user' ? selectedPreset : null
-  const hasMentionOverlay = hasResolvedMention(value, participants)
+  // `EnsembleParticipant.instructions` is typed required but reaches the
+  // renderer absent — which is why main defends every read of it with
+  // `|| ''` (EnsemblePrompt, EnsembleRosterMutation, EnsembleOrchestrator).
+  // Trusting the type here took the whole transcript surface down on
+  // `value.trim()`. Normalise once so every consumer below is safe, and so
+  // the textarea stays controlled instead of silently going uncontrolled.
+  const briefValue = value ?? ''
+  const hasMentionOverlay = hasResolvedMention(briefValue, participants)
 
   const handleApplyPreset = (presetId: string): void => {
     setSelectedPresetId(presetId)
@@ -107,11 +114,11 @@ export function EnsembleBriefEditor({
   }
 
   const handleSavePreset = (): void => {
-    if (disabled || !value.trim()) return
+    if (disabled || !briefValue.trim()) return
     const name = promptForPresetName(suggestedPresetName(participants))
     if (!name) return
     try {
-      const preset = saveUserEnsembleBriefPreset(name, value)
+      const preset = saveUserEnsembleBriefPreset(name, briefValue)
       setUserPresets(listUserEnsembleBriefPresets())
       setSelectedPresetId(preset.id)
     } catch {
@@ -175,7 +182,7 @@ export function EnsembleBriefEditor({
             <button
               type="button"
               className="ensemble-brief-preset-action"
-              disabled={disabled || !value.trim()}
+              disabled={disabled || !briefValue.trim()}
               onClick={handleSavePreset}
               title="Save this brief as a reusable preset"
             >
@@ -204,7 +211,7 @@ export function EnsembleBriefEditor({
             hasMentionOverlay ? ' has-mention-overlay' : ''
           }`}
           rows={rows}
-          value={value}
+          value={briefValue}
           disabled={disabled}
           spellCheck={spellCheck}
           aria-label={textareaAriaLabel}
@@ -218,7 +225,7 @@ export function EnsembleBriefEditor({
         />
         {hasMentionOverlay && (
           <ComposerHighlightOverlay
-            value={value}
+            value={briefValue}
             participants={participants}
             textareaRef={resolvedTextareaRef}
             syncEpoch={syncEpoch}
