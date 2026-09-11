@@ -160,6 +160,10 @@ const CHROME_FIELDS = fields({
     tokensUsed: 'scalar',
     elapsedMs: 'scalar'
   }),
+  // This block must carry every key in ENSEMBLE_PANEL_CONFIGURATION_KEYS and
+  // ENSEMBLE_SEAT_CONFIGURATION_KEYS (shared/ensembleAuthoredSlice): paged
+  // opens render the lean row built from this projection, so a missing shape
+  // presents as a lost edit. ThreadCatalogueEnsembleContract.test.ts pins it.
   ensemble: fields({
     ...scalars(
       [
@@ -169,14 +173,21 @@ const CHROME_FIELDS = fields({
         'orchestrationMode',
         'bossmanParticipantId',
         'secondInCommandParticipantId',
+        'synthesizerParticipantId',
         'fanoutPolicy',
         'activeRosterPresetId'
       ],
       500
     ),
+    // Short user-authored enums: 'off' | 'worktree' | 'any' and the four round modes.
+    ...scalars(['fanoutIsolation', 'roundMode'], 32),
     enabled: 'scalar',
     maxParticipants: 'scalar',
     concurrentModeEnabled: 'scalar',
+    maxContinuationHops: 'scalar',
+    ensembleContextChars: 'scalar',
+    selfReflective: 'scalar',
+    bossmanAutoApprovals: fields({ enabled: 'scalar', mode: 32, confirmedAt: 64 }),
     captainParticipantIds: { maximum: 50, items: 256 },
     contextTokens: 'scalar',
     participants: {
@@ -191,10 +202,64 @@ const CHROME_FIELDS = fields({
             'reasoningEffort',
             'permissionPresetId',
             'runtimeProfileId',
+            'geminiAuthProfileId',
+            'ollamaRunProfile',
+            'serviceTier',
+            'pooledAgentId',
             'stageRole'
           ],
           256
         ),
+        // Seat briefs are user-authored free text; 129-char briefs are measured
+        // in the wild, so this carries an order of magnitude more.
+        instructions: 4096,
+        permissionOverrides: fields({
+          approvalMode: 128,
+          networkAccess: 32,
+          agenticServices: fields({
+            shellCommands: 32,
+            fileChanges: 32,
+            externalPublish: 32,
+            mcpTools: 32,
+            subThreadDelegation: 32,
+            canvasInteraction: 32
+          }),
+          externalPathGrants: {
+            maximum: 16,
+            items: fields({
+              ...scalars(
+                [
+                  'id',
+                  'provider',
+                  'workspaceId',
+                  'chatId',
+                  'appRunId',
+                  'kind',
+                  'access',
+                  'duration',
+                  'issuedBy',
+                  'createdAt'
+                ],
+                512
+              ),
+              bindingVersion: 'scalar',
+              path: 4096,
+              securityScopedBookmark: 4096,
+              signature: 4096,
+              order: 'scalar'
+            })
+          }
+        }),
+        pooledAgentIdentity: fields({
+          schemaVersion: 'scalar',
+          agentId: 512,
+          nickname: 256,
+          iconKind: 32,
+          hue: 'scalar',
+          saturation: 'scalar',
+          brightness: 'scalar',
+          accent: 128
+        }),
         enabled: 'scalar',
         order: 'scalar',
         fastMode: 'scalar',
