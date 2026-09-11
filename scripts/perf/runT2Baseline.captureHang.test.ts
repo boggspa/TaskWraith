@@ -37,6 +37,18 @@ describe('T2 capture hang guards (source pins)', () => {
   })
 })
 
+describe('abort lane (source pins — the launch harness lives in perfHarness.test.ts)', () => {
+  it('makes the abort sticky so a pre-spawn signal still refuses the launch', () => {
+    expect(src).toContain('let launchAborted = false')
+    expect(src).toContain('launchAborted = true')
+    expect(src).toContain("throw new Error('Refusing --launch: aborted before spawn")
+    // The guard has to precede the spawn, not merely exist.
+    expect(src.indexOf('Refusing --launch: aborted before spawn')).toBeLessThan(
+      src.indexOf('childSession = spawnExactElectronChild(')
+    )
+  })
+})
+
 describe('stray reap audit record', () => {
   it('keeps the force and stray-kill facts that a clean-looking shutdown hides', () => {
     expect(

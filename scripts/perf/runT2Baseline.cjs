@@ -1418,7 +1418,12 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
 
   /** @type {object|null} */
   let childSession = null
+  // Sticky: an abort that arrives before the spawn has no child to kill, and
+  // the listener is `{ once: true }`, so without this the signal is consumed
+  // and forgotten and the launch proceeds as if it never happened.
+  let launchAborted = false
   const abortOwnedLaunch = () => {
+    launchAborted = true
     const session = childSession
     if (!session) return
     Promise.resolve(
@@ -1430,9 +1435,14 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       .then((termination) => {
         const record = childTerminationRecord(termination)
         if (!record) return
-        // The cleanup block never runs on an abort, so the journal is the only
-        // artifact left that can carry the reap. Best effort: a failed journal
-        // write must not mask the abort it is describing.
+        // The cleanup block usually DOES run on an abort and writes its own
+        // childTermination — but from a SECOND terminateExactChild, whose live
+        // port and command-needle probes find the strays this call already
+        // killed, so it records none (measured: first call reports both strays,
+        // second reports []). This is therefore the only record of what an abort
+        // actually killed, and the only record at all when the run is wedged
+        // badly enough that cleanup never completes. Best effort either way: a
+        // failed journal write must not mask the abort it is describing.
         try {
           updateProgress({ abortTermination: record }, { log: false })
         } catch {
@@ -1601,6 +1611,14 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       }
 
       setCapturePhase('launch', {}, { log: true })
+      // A SIGTERM during fixture build or preflight fired the abort listener
+      // while childSession was still null; `{ once: true }` then consumed it and
+      // the launch went ahead. Worse than a no-op: `process.once('SIGINT')` means
+      // the operator's SECOND Ctrl-C gets the default handler and hard-kills the
+      // runner, stranding the very Electron instance the reap exists to collect.
+      if (launchAborted) {
+        throw new Error('Refusing --launch: aborted before spawn (SIGINT/SIGTERM)')
+      }
       childSession = spawnExactElectronChild({
         spawnPlan,
         adapters: options.spawnAdapters || {}
