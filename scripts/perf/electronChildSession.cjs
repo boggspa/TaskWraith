@@ -414,7 +414,7 @@ function spawnExactElectronChild(options) {
   }
 
   const wrapped = wrapChild(child)
-  return {
+  const session = {
     ...wrapped,
     pgid: useProcessGroup ? child.pid : undefined,
     electronBinary,
@@ -425,6 +425,16 @@ function spawnExactElectronChild(options) {
     instanceId: spawnPlan.instanceId,
     spawnCommand: electronBinary
   }
+  // Live exit tracking, on the object the caller actually holds — the spread
+  // above copies wrapChild's values, so setting the flag there would never
+  // reach this object. `exitCode` below is a snapshot taken at spawn time and
+  // is always null; this is the one that moves.
+  if (typeof child.on === 'function') {
+    child.on('exit', () => {
+      session.exited = true
+    })
+  }
+  return session
 }
 
 /**
@@ -443,7 +453,9 @@ function wrapChild(child) {
       if (typeof child.on === 'function') child.on(event, handler)
     },
     exitCode: child.exitCode != null ? child.exitCode : null,
-    killed: Boolean(child.killed)
+    killed: Boolean(child.killed),
+    // Set by spawnExactElectronChild once the child has actually exited.
+    exited: false
   }
 }
 
@@ -477,9 +489,17 @@ async function terminateExactChild(session, options = {}) {
         setTimeout(r, ms)
       }))
 
-  let exited = false
+  // A child that has ALREADY exited never re-emits 'exit', so waiting on it
+  // burns the full waitMs and then SIGKILLs a corpse — measured at 8,501 ms,
+  // and the corpse-kill is reported as usedForce: true, which is a false claim
+  // in the artifact. This is the ordinary shape of the cleanup block's
+  // terminate after an abort handler already ran one. Sessions that do not
+  // track `exited` (test doubles, older callers) keep the previous behaviour.
+  let exited = session.exited === true
   const exitPromise = new Promise((resolve) => {
-    if (typeof session.on === 'function') {
+    if (exited) {
+      resolve({ code: null, signal: null })
+    } else if (typeof session.on === 'function') {
       session.on('exit', (code, sig) => {
         exited = true
         resolve({ code, signal: sig })
