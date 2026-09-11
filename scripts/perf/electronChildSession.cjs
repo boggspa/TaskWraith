@@ -190,18 +190,17 @@ function buildElectronSpawnPlan(options) {
   ]
 
   const binaryForShell = electronBinary || '<resolve-require-electron-at-spawn>'
-  // Provenance fidelity: injected extraEnv assignments appear in the recorded
-  // shell command exactly as the spawned child receives them. Built from the
-  // injected key list only (the base plan already carries its own
-  // TASKWRAITH_PERF_WORKLOAD/FX_POSTURE), so with extraEnv unset the recorded
-  // command is byte-identical to the pre-extraEnv shape.
-  const extraEnvAssignments = extraEnvKeys.map((key) => `${key}=${shellQuote(env[key])}`)
+  // Provenance fidelity: the recorded command is derived from the SAME `env`
+  // the plan records, so the two cannot drift. A hand-listed subset presented
+  // itself as the command that ran while carrying five of nine variables —
+  // PERF_PRELOAD_PROBE among the missing — which means anyone reproducing the
+  // run by pasting it got a different environment than the one measured.
+  // Sorted for a stable diff; extraEnv keys appear here exactly as the spawned
+  // child receives them because they are in `env` like everything else.
   const shellCommand = [
-    `TASKWRAITH_INSTANCE_ID=${shellQuote(env.TASKWRAITH_INSTANCE_ID)}`,
-    'IOS_REMOTE_TRUE=0',
-    ...(env.HOME ? [`HOME=${shellQuote(env.HOME)}`] : []),
-    ...(env.CFFIXED_USER_HOME ? [`CFFIXED_USER_HOME=${shellQuote(env.CFFIXED_USER_HOME)}`] : []),
-    ...extraEnvAssignments,
+    ...Object.keys(env)
+      .sort()
+      .map((key) => `${key}=${shellQuote(env[key])}`),
     `${shellQuote(binaryForShell)}${usesMockKeychain ? ' --use-mock-keychain' : ''} ${shellQuote(entry)} --remote-debugging-port=${base.remoteDebuggingPort} --inspect=${mainInspectorPort}`
   ].join(' ')
 

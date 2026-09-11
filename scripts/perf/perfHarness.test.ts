@@ -3919,12 +3919,18 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
 
     const plain = buildElectronSpawnPlan(base)
     // The base plan already carries TASKWRAITH_PERF_WORKLOAD/FX_POSTURE from
-    // buildIsolatedLaunchPlan; "inert when unset" means NO snapshot-path key
-    // and NO injected shell assignments beyond the pre-extraEnv shape.
+    // buildIsolatedLaunchPlan; "inert when unset" means NO snapshot-path key.
     expect(plain.env.TASKWRAITH_PERF_WORKLOAD).toBe('dual_run')
     expect(plain.env.TASKWRAITH_PERF_HOST_SNAPSHOT_PATH).toBeUndefined()
     expect(plain.shellCommand).not.toContain('TASKWRAITH_PERF_HOST_SNAPSHOT_PATH')
-    expect(plain.shellCommand).not.toContain('TASKWRAITH_PERF_WORKLOAD=')
+    // WORKLOAD is not an injection — the child receives it either way, so the
+    // recorded command has to show it. This assertion used to require its
+    // ABSENCE, which pinned the omission: the command carried five of nine
+    // variables while presenting itself as the command that ran.
+    expect(plain.shellCommand).toContain('TASKWRAITH_PERF_WORKLOAD=')
+    for (const key of Object.keys(plain.env)) {
+      expect(plain.shellCommand).toContain(`${key}=`)
+    }
 
     const snapshotPath = '/virtual/artifacts/host-perf-snapshot.json'
     const armed = buildElectronSpawnPlan({
