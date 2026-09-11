@@ -455,24 +455,39 @@ function activitySpeakerMessage(
   }
 }
 
+/**
+ * `runs` is the panel's store-backed `resolvedRuns`, and passing it is what
+ * keeps this header branded after a run settles. `chat.runs` is one React
+ * render behind BY DESIGN: `shouldRetainReactChatOnFlush` lists `runs` in
+ * `TRANSCRIPT_STREAM_FIELDS`, so a flush carrying only transcript arrays keeps
+ * the previous chat object and leaves the fresh arrays to ChatTranscriptStore.
+ * A `role: 'tool'` row carries no model of its own, so the run array is its
+ * ONLY brand source — and Pi/Ollama are the only seats whose hue needs a model
+ * id, which is why only they revert to the plain seat colour. Defaulted to
+ * `chat?.runs` so a caller with no store scope (unit tests, a chat the store
+ * has never ingested) behaves exactly as before.
+ */
 export function activityStackSpeakerPresentation({
   message,
   chat,
   run,
+  runs,
   fallbackProvider,
   fallbackProviderLabel
 }: {
   message: ChatMessage
   chat: ChatRecord | null
   run?: ChatRun | null
+  runs?: readonly ChatRun[] | null
   fallbackProvider: ProviderId
   fallbackProviderLabel: string
 }) {
   const firstActivityWithMetadata = message.toolActivities?.find((activity) => activity.metadata)
   const activityProvider = providerIdFromUnknown(firstActivityWithMetadata?.metadata?.provider)
+  const brandingRuns = runs && runs.length > 0 ? runs : chat?.runs
   const messageRun =
     run ||
-    (message.runId ? chat?.runs?.find((candidate) => candidate.runId === message.runId) || null : null)
+    (message.runId ? brandingRuns?.find((candidate) => candidate.runId === message.runId) || null : null)
   const labelProvider = providerIdFromUnknown(messageRun?.provider) || activityProvider || fallbackProvider
   return formatAssistantMessageLabel(
     activitySpeakerMessage(message, chat, messageRun),
@@ -489,7 +504,7 @@ export function activityStackSpeakerPresentation({
         messageRun?.requestedModel ||
         (chat?.chatKind === 'ensemble'
           ? null
-          : mostRecentSoloRunModel(chat?.runs, labelProvider)),
+          : mostRecentSoloRunModel(brandingRuns, labelProvider)),
       soloModelLabel: messageRun?.modelLabel,
       seatModelId: chat?.requestedModel
     }
@@ -500,12 +515,14 @@ function ActivityStackSpeakerHeader({
   message,
   chat,
   run,
+  runs,
   fallbackProvider,
   fallbackProviderLabel
 }: {
   message: ChatMessage
   chat: ChatRecord | null
   run?: ChatRun | null
+  runs?: readonly ChatRun[] | null
   fallbackProvider: ProviderId
   fallbackProviderLabel: string
 }): ReactElement {
@@ -519,6 +536,7 @@ function ActivityStackSpeakerHeader({
     message,
     chat,
     run,
+    runs,
     fallbackProvider,
     fallbackProviderLabel
   })
@@ -3078,7 +3096,11 @@ export const TranscriptPanel = memo(
       runCompleteNotice
     ])
     const runBoundaryByMessageId = useMemo(() => {
-      const runs = currentChat?.runs || []
+      // Store-backed, not `currentChat.runs` — see the note on
+      // `activityStackSpeakerPresentation`. A boundary resolved from the
+      // retained array loses the run that owns the newest rows, which is what
+      // drops the Pi/Ollama upstream hue as soon as a turn settles.
+      const runs = resolvedRuns
       const runById = new Map<string, ChatRun>()
       const promptRunByMessageId = new Map<string, ChatRun>()
       for (const run of runs) {
@@ -3099,7 +3121,7 @@ export const TranscriptPanel = memo(
         previousRunId = run.runId
       }
       return boundaries
-    }, [currentChat?.runs, visibleMessages])
+    }, [resolvedRuns, visibleMessages])
     // Per-message expansion state for long user-message bubbles. Keyed by
     // message.id so toggling one brief does not collapse others. Default for
     // every long message is collapsed — see UserMessageCollapse for thresholds.
@@ -5184,6 +5206,7 @@ export const TranscriptPanel = memo(
                 ? activityStackSpeakerPresentation({
                     message: superGroup.headerMessage,
                     chat: currentChat,
+                    runs: resolvedRuns,
                     fallbackProvider: currentProvider,
                     fallbackProviderLabel: currentProviderLabel
                   }).providerClass || undefined
@@ -5303,8 +5326,8 @@ export const TranscriptPanel = memo(
               ? `reveal:${revealRunId || msg.runId || msg.id}:${isLiveRevealRow ? 'live' : 'drain'}`
               : 'plain'
             const assistantRun =
-              msg.runId && currentChat?.runs
-                ? currentChat.runs.find((run) => run.runId === msg.runId) ||
+              msg.runId && resolvedRuns.length > 0
+                ? resolvedRuns.find((run) => run.runId === msg.runId) ||
                   (currentRun?.runId === msg.runId ? currentRun : null)
                 : currentRun?.runId === msg.runId
                   ? currentRun
@@ -5315,13 +5338,15 @@ export const TranscriptPanel = memo(
             // whose run record never carried a model) would otherwise resolve
             // `resolveProviderHueClass(provider, '')` and drop the Pi/Ollama
             // upstream override. Fall back to the chat's most recent
-            // model-bearing run so later turns keep the picked brand.
+            // model-bearing run so later turns keep the picked brand — read
+            // from the store, because `currentChat.runs` is deliberately one
+            // render behind (see `activityStackSpeakerPresentation`).
             const assistantRunModel =
               assistantRun?.actualModel ||
               assistantRun?.requestedModel ||
               (currentChat?.chatKind === 'ensemble'
                 ? null
-                : mostRecentSoloRunModel(currentChat?.runs, assistantRunProvider))
+                : mostRecentSoloRunModel(resolvedRuns, assistantRunProvider))
             const assistantRevealProvider =
               providerIdFromUnknown(msg.metadata?.ensembleProvider) ||
               providerIdFromUnknown(msg.metadata?.guestProvider) ||
@@ -5517,6 +5542,7 @@ export const TranscriptPanel = memo(
                             <ActivityStackSpeakerHeader
                               message={superGroup.headerMessage}
                               chat={currentChat}
+                              runs={resolvedRuns}
                               fallbackProvider={currentProvider}
                               fallbackProviderLabel={currentProviderLabel}
                             />
