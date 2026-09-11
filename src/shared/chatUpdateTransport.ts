@@ -403,7 +403,15 @@ function stableStringify(value: unknown): string {
     return `[${value.map((entry) => stableStringify(entry)).join(',')}]`
   }
   const record = value as Record<string, unknown>
-  const keys = Object.keys(record).sort()
+  // JSON semantics: an own key whose value is `undefined` is indistinguishable
+  // from an absent one. `Object.keys` alone kept it, so `{ ...chat, field:
+  // undefined }` hashed differently from a record that simply never had the
+  // key — and the two sides of a delivery legitimately disagree about which
+  // they hold. That disagreement surfaced as `recordHashMismatch` on an ACK
+  // main had every reason to accept.
+  const keys = Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort()
   return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`
 }
 
@@ -773,7 +781,12 @@ export function buildChatRecordDelta(
       recordCleared.push(key)
       continue
     }
-    if (!plainDataEqual(previousRecord[key], nextRecord[key])) {
+    // `had !== has` is the appearing-key direction, and it must be asked
+    // BEFORE the values are compared: a key that appears valued `undefined`
+    // compares equal to the absent one it replaced (`plainDataEqual` opens on
+    // `a === b`), so the delta carried nothing while the record had genuinely
+    // changed shape. The disappearing direction is already handled above.
+    if (had !== has || !plainDataEqual(previousRecord[key], nextRecord[key])) {
       recordMask.push(key)
       ;(recordDelta as Record<string, unknown>)[key] = nextRecord[key]
     }

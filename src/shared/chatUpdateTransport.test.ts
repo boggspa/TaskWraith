@@ -1059,3 +1059,60 @@ describe('projectChatUpdateWindow', () => {
     expect(projection.chat.messages.length).toBeLessThan(grown.length)
   })
 })
+
+describe('a top-level key that appears with an undefined value', () => {
+  // `{ ...chat, field: condition ? value : undefined }` is the ordinary spread
+  // idiom across the chat writers, and it makes `field` an OWN key whose value
+  // is undefined. `buildChatRecordDelta` checked hasOwnProperty only for the
+  // DELETION direction, then compared values — and `plainDataEqual(undefined,
+  // undefined)` is true, so the appearing key was conveyed as nothing at all
+  // while `stableStringify` still hashed it in. The renderer applied cleanly,
+  // every guard matched, and only `recordHash` diverged: a NACK, a dropped
+  // baseline, and a full canonical snapshot over the user's own edit.
+
+  it('is carried by the record delta', () => {
+    const previous = { appChatId: 'chat-1', title: 'New Chat' } as unknown as ChatRecord
+    const next = {
+      appChatId: 'chat-1',
+      title: 'New Chat',
+      activeGoal: undefined
+    } as unknown as ChatRecord
+
+    const delta = buildChatRecordDelta(previous, next)
+
+    expect([...delta.recordMask, ...delta.recordCleared]).toContain('activeGoal')
+  })
+
+  it('hashes the same as the key being absent', () => {
+    const absent = chat(1, [])
+    const present = chat(1, [], { activeGoal: undefined } as Partial<ChatRecord>)
+
+    expect(Object.prototype.hasOwnProperty.call(present, 'activeGoal')).toBe(true)
+    expect(computeChatSubRevisions(present).recordHash).toBe(
+      computeChatSubRevisions(absent).recordHash
+    )
+  })
+
+  it('survives a patch round-trip with the hash main sent', () => {
+    const first = chat(1, [message('m-1', 'one')])
+    const next = chat(2, [message('m-1', 'one')], {
+      activeGoal: undefined
+    } as Partial<ChatRecord>)
+
+    // v2 is what ships: a field-mask patch, not v1's whole-record copy.
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'undefined-key',
+      revision: 2,
+      chat: next,
+      baseline: { revision: 1, chat: first },
+      producerDelta: producerDelta(first, next),
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(delivery.kind).toBe('patch')
+    const applied = applyChatUpdateDelivery(delivery, { revision: 1, chat: first })
+    if (!applied.ok) throw new Error('apply failed')
+
+    // What main compares the ACK against is its hash of the record it SENT.
+    expect(applied.baseline.recordHash).toBe(computeChatSubRevisions(next).recordHash)
+  })
+})
