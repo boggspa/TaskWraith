@@ -3,7 +3,10 @@ import type { ThreadCatalogueReadQuery } from '../../shared/threadCatalogueProto
 import type { ThreadCatalogueOpenResult } from '../../shared/threadCatalogueTypes'
 
 export interface ThreadCatalogueReadPort {
-  query<T = unknown>(query: ThreadCatalogueReadQuery): Promise<T>
+  query<T = unknown>(
+    query: ThreadCatalogueReadQuery,
+    options?: { priority?: 'foreground' | 'background' }
+  ): Promise<T>
 }
 export interface ThreadCatalogueListPage {
   entries: Array<{ projection: ThreadCatalogueProjection; sourceWitness?: string }>

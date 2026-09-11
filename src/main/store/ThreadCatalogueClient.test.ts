@@ -8,7 +8,7 @@ import {
 } from '../../host-shared/thread-catalogue/ThreadCatalogueClient'
 
 class Port extends EventEmitter implements ThreadCatalogueProcessPort {
-  readonly posts: Array<{ id: number; query: { method: string } }> = []
+  readonly posts: Array<{ id: number; query: { method: string }; priority?: string }> = []
   terminateCalls = 0
 
   constructor(readonly terminateResult: 'resolve' | 'reject' = 'resolve') {
@@ -16,7 +16,7 @@ class Port extends EventEmitter implements ThreadCatalogueProcessPort {
   }
 
   postMessage(value: unknown): void {
-    const message = value as { id: number; query: { method: string } }
+    const message = value as { id: number; query: { method: string }; priority?: string }
     this.posts.push(message)
     if (message.query.method === 'initialize' || message.query.method === 'close') {
       queueMicrotask(() => this.emit('message', { id: message.id, ok: true, value: true }))
@@ -93,5 +93,46 @@ describe('ThreadCatalogueClient supervision regressions', () => {
 
     expect(port.posts.filter(({ query }) => query.method === 'close')).toHaveLength(1)
     expect(port.terminateCalls).toBe(1)
+  })
+
+  // The lane rides the ENVELOPE, never the query: `decodeThreadCatalogueReadQuery`
+  // is a strict allowlist that rebuilds each query field-by-field, so a key
+  // tucked inside `query` is silently eaten on the Host path.
+  it('carries a background request\u2019s lane beside the query, not inside it', async () => {
+    const port = new Port()
+    const client = new ThreadCatalogueClient(
+      port,
+      options(() => new Port())
+    )
+    await client.ready
+
+    void client.query({ method: 'summary', chatId: 'chat-1' } as never, { priority: 'background' })
+    await Promise.resolve()
+
+    const posted = port.posts.find(({ query }) => query.method === 'summary')
+    expect(posted?.priority).toBe('background')
+    expect(posted?.query).not.toHaveProperty('priority')
+  })
+
+  // A foreground envelope must stay byte-identical to what every caller that
+  // predates this field has always sent, so an older reader on the same wire
+  // sees exactly the message it already understands.
+  it('adds nothing to a foreground envelope', async () => {
+    const port = new Port()
+    const client = new ThreadCatalogueClient(
+      port,
+      options(() => new Port())
+    )
+    await client.ready
+
+    void client.query({ method: 'summary', chatId: 'chat-1' } as never)
+    void client.query({ method: 'summary', chatId: 'chat-2' } as never, {
+      priority: 'foreground'
+    })
+    await Promise.resolve()
+
+    for (const posted of port.posts.filter(({ query }) => query.method === 'summary')) {
+      expect(Object.keys(posted).sort()).toEqual(['id', 'query'])
+    }
   })
 })

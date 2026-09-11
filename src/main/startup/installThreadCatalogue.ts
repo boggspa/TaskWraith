@@ -10,6 +10,7 @@ import {
 } from '../store/ThreadCatalogueMirror'
 import type { HostProjectionBroker } from '../host/HostProjectionBroker'
 import { ThreadCatalogueRecoveryController } from '../store/ThreadCatalogueRecoveryController'
+import { withThreadCatalogueReadContext } from '../store/ThreadCatalogueReadContextPort'
 import type { HostProfileAuthorityPort } from '../../host-runtime/HostProfileDomainStore'
 import type {
   ThreadCatalogueReadQuery,
@@ -42,6 +43,12 @@ export function installStartupThreadCatalogue(options: {
         currentEnsembleRuntimeInstanceId(),
         AppStore.getSettings().activeProvider
       )
+  // NOTE: the external-Host transport carries no lane. `queryThreadCatalogue`
+  // takes the decoded query alone, and the wire has no envelope to put a
+  // priority on, so an external-Host install still runs its recovery drain in
+  // the fast lane. The Host has its own drain and its own worker, so this is a
+  // gap rather than a regression — closing it needs the broker to carry the
+  // field, which is a protocol change and not this one.
   const transport: ThreadCatalogueReadPort = local ?? {
     query: async <T>(query: ThreadCatalogueReadQuery): Promise<T> => {
       if (!options.broker.queryThreadCatalogue)
@@ -49,20 +56,13 @@ export function installStartupThreadCatalogue(options: {
       return options.broker.queryThreadCatalogue<T>(query)
     }
   }
-  const port: ThreadCatalogueReadPort = {
-    query: <T>(query: ThreadCatalogueReadQuery): Promise<T> =>
-      transport.query<T>(
-        query.method === 'open'
-          ? {
-              ...query,
-              readContext: {
-                runtimeInstanceId: currentEnsembleRuntimeInstanceId(),
-                defaultProvider: AppStore.getSettings().activeProvider
-              }
-            }
-          : query
-      )
-  }
+  // Forwards the request lane as well as the read context. It used to take one
+  // parameter, which silently ate the recovery drain's `background` and left
+  // the whole priority lane inert in production; see the extracted wrapper.
+  const port: ThreadCatalogueReadPort = withThreadCatalogueReadContext(transport, () => ({
+    runtimeInstanceId: currentEnsembleRuntimeInstanceId(),
+    defaultProvider: AppStore.getSettings().activeProvider
+  }))
   const mirror = new ThreadCatalogueMirror(port)
   const guards = new Map<string, () => boolean>()
   let recovery: ThreadCatalogueRecoveryController | null = null

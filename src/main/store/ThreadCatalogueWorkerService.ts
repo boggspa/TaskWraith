@@ -15,6 +15,7 @@ import {
   type ThreadIndexedObjectKind
 } from './ThreadCatalogueDatabase'
 import { ThreadCatalogueDecoderClient } from './ThreadCatalogueDecoderClient'
+import { selectNextCatalogueJob } from './ThreadCatalogueJobSelection'
 import {
   captureThreadCatalogueWitness,
   flushThreadCatalogueSources,
@@ -88,6 +89,8 @@ export class ThreadCatalogueWorkerService {
   private running: Promise<void> | null = null
   private closed = false
   private pausedForErasure = false
+  /** Fast-lane picks since the last queue-head pick; see the job selector. */
+  private consecutiveFastPicks = 0
   private inventoryWitness = ''
   private readonly watchers = new Map<string, fs.FSWatcher>()
   private inventoryTimer: ReturnType<typeof setTimeout> | null = null
@@ -387,8 +390,9 @@ export class ThreadCatalogueWorkerService {
 
   private pump(): void {
     if (this.running || this.closed || this.pausedForErasure || !this.queue.length) return
-    const foreground = this.queue.findIndex((job) => job.mode !== 'metadata' || job.priority)
-    const job = this.queue.splice(foreground < 0 ? 0 : foreground, 1)[0]
+    const selection = selectNextCatalogueJob(this.queue, this.consecutiveFastPicks)
+    this.consecutiveFastPicks = selection.consecutiveFastPicks
+    const job = this.queue.splice(selection.index, 1)[0]
     const finish = (): void => {
       this.jobs.delete(job.chatId)
       this.running = null
@@ -697,7 +701,14 @@ export class ThreadCatalogueWorkerService {
     return entry
   }
 
-  async query(query: ThreadCatalogueQuery): Promise<unknown> {
+  /**
+   * `priority` is the envelope's lane, not the query's. Absent means
+   * foreground, which is what every caller but the recovery drain sends.
+   */
+  async query(
+    query: ThreadCatalogueQuery,
+    priority: 'foreground' | 'background' = 'foreground'
+  ): Promise<unknown> {
     if (this.closed) throw new Error('History worker is shutting down')
     switch (query.method) {
       case 'introspection':
@@ -775,10 +786,16 @@ export class ThreadCatalogueWorkerService {
         this.notifyChanged(query.chatId)
         return true
       case 'open': {
+        // `pump` already runs two lanes — a 'metadata' job without `priority`
+        // is the slow one — and this `true` was handing every caller the fast
+        // lane regardless. That is the whole defect: the post-paint recovery
+        // drain opens every thread in the corpus at mode 'metadata', so it sat
+        // FIFO with a user's chat open and a send waited behind repair. Let the
+        // envelope decide instead; absent still means fast.
         const entry = await this.ensureIndexed(
           query.chatId,
           query.mode,
-          true,
+          priority !== 'background',
           query.projectionOptions,
           query.readContext
         )

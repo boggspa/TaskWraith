@@ -15,6 +15,21 @@ export type {
  */
 export const THREAD_CATALOGUE_REQUEST_TIMEOUT_MS = 150_000
 
+/**
+ * Which lane a request takes inside the worker.
+ *
+ * `background` is an opt-in for whole-corpus repair, whose only caller today is
+ * the post-paint history recovery drain. It rides the ENVELOPE rather than the
+ * query, because `decodeThreadCatalogueReadQuery` is a strict allowlist that
+ * rebuilds each query field-by-field and would silently eat an unknown key on
+ * the Host path. Absent means foreground, so nothing that predates this changes.
+ */
+export type ThreadCatalogueRequestPriority = 'foreground' | 'background'
+
+export interface ThreadCatalogueQueryOptions {
+  priority?: ThreadCatalogueRequestPriority
+}
+
 export interface ThreadCatalogueProcessPort {
   postMessage(value: unknown): void
   on(event: 'message', listener: (value: unknown) => void): unknown
@@ -100,12 +115,19 @@ export class ThreadCatalogueClient {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
   }
-  async query<T = unknown>(query: ThreadCatalogueQuery): Promise<T> {
+  async query<T = unknown>(
+    query: ThreadCatalogueQuery,
+    options: ThreadCatalogueQueryOptions = {}
+  ): Promise<T> {
     await this.ready
-    return this.call(query) as Promise<T>
+    return this.call(query, THREAD_CATALOGUE_REQUEST_TIMEOUT_MS, options.priority) as Promise<T>
   }
 
-  private call(query: unknown, timeoutMs = THREAD_CATALOGUE_REQUEST_TIMEOUT_MS): Promise<unknown> {
+  private call(
+    query: unknown,
+    timeoutMs = THREAD_CATALOGUE_REQUEST_TIMEOUT_MS,
+    priority?: ThreadCatalogueRequestPriority
+  ): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error('History worker is unavailable'))
     const id = ++this.nextId
     return new Promise((resolve, reject) => {
@@ -116,7 +138,11 @@ export class ThreadCatalogueClient {
       timer.unref?.()
       this.pending.set(id, { resolve, reject, timer })
       try {
-        this.port.postMessage({ id, query })
+        // Only a BACKGROUND request carries the field. Foreground envelopes stay
+        // byte-identical to what every existing caller has always sent, and a
+        // reader that predates this — an older external Host on the same wire —
+        // sees exactly the message it already understands.
+        this.port.postMessage(priority === 'background' ? { id, query, priority } : { id, query })
       } catch (error) {
         clearTimeout(timer)
         this.pending.delete(id)

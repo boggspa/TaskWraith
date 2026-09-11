@@ -27,6 +27,8 @@ const owners = new Map<string, string>()
 async function receive(value: unknown): Promise<void> {
   const request = value as {
     id: number
+    /** Absent means foreground — see ThreadCatalogueClient. */
+    priority?: 'foreground' | 'background'
     query:
       | ThreadCatalogueQuery
       | {
@@ -110,7 +112,7 @@ async function receive(value: unknown): Promise<void> {
         owners.set(query.owner.writer, query.owner.writerId)
         for (const id of service.catalogue.repairChatIds()) service.notifyChanged(id)
         result = true
-      } else result = await service.query(query)
+      } else result = await service.query(query, request.priority)
     }
     send({ id: request.id, ok: true, value: result })
   } catch (error) {
