@@ -113,6 +113,27 @@ false`, and a narrow preload bridge.
   a workspace under `$HOME` can leave `$HOME` writable, and network egress is
   not proven blocked. Prefer project workspaces outside `$HOME` when untrusted
   repos matter.
+- The production Host runs as a standalone pure-Node process (`taskwraith-host
+  serve --mode production`), not inside Electron main; Desktop attaches to it by
+  default (`TASKWRAITH_DESKTOP_EXTERNAL_HOST !== '0'`). Its control surface is a
+  Unix domain socket under a `0700` directory, the socket itself at `0600`, with
+  a token-authenticated bootstrap. It is not a network listener and must never be
+  exposed as one.
+- Each Host incarnation mints a 64-lowercase-hex `bootEpoch` carried on the
+  bootstrap welcome frame. Clients should fence stale-incarnation traffic on it;
+  a client that ignores the epoch can act on a previous Host's state.
+- Running on the Host does not make it authoritative for everything. Desktop-
+  internal commands such as thread-record persistence still require an exact
+  desktop actor and are denied otherwise
+  (`host-arc-r5-c5-thread-record-desktop-only`), and Ensemble round execution
+  remains desktop-side: the Host advertises seat control, not round dispatch.
+- Approvals and questions are dual-read. The Host projects a shadow of AppStore
+  state while AppStore remains the body/title authority, so a Host-empty shadow
+  means "unknown", never "no pending approvals".
+- `.twmission` exports are bounded projections carrying redaction metadata and an
+  integrity digest, but they remain mission recordings. Treat an exported bundle
+  as sensitive and check its redaction notes before it leaves the machine that
+  produced it.
 - External links and file paths should route through the safe shell-open policy;
   do not call `shell.openExternal` directly for untrusted renderer input.
 

@@ -1,6 +1,6 @@
 # Canvas & Previews
 
-This area covers the Canvas preview system — floating windows, embedded panes, and companion canvas cards for live app previews.
+This area covers the Canvas preview system. Canvases open in the **right dock** by default; popping one out to its own window, or embedding it in a multiview pane, are secondary placements. Chart canvases are dock-only and cannot be popped out.
 
 ## Guides
 

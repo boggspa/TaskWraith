@@ -31,6 +31,13 @@ security boundary for authenticated pages.
 
 ## 2. Authority and leases
 
+Leases are held and checked in the Desktop Electron client, which owns
+`WebContents` and the macOS Accessibility APIs. Since Desktop defaults onto the
+standalone Node Host (`DesktopExternalHostPolicy.ts`,
+`TASKWRAITH_DESKTOP_EXTERNAL_HOST !== '0'`), provider orchestration runs in Node
+while actuation stays client-side; a lease proves nothing to the Host and the
+Host grants nothing to a lease.
+
 A web or Simulator mutation needs a live `AppDriveLease` for the exact:
 
 - surface and surface kind;

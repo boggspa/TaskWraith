@@ -55,7 +55,7 @@ The reset closes browser tabs across all tasks before clearing cookies, sign-ins
 
 ## Tips and related guides
 
-- [Canvas composer button](./canvas-composer-button.md) — open a URL directly in a separate floating Canvas window.
+- [Canvas composer button](./canvas-composer-button.md) — open a blank browser canvas in the right dock, then type the address in its own bar.
 - [Canvas multiview pane](./canvas-multiview-pane.md) — embed a live web preview in a split workspace pane.
 - [Mesh Canvas](./mesh-canvas.md) — inspect and author chat-owned 3D scenes.
 - [iOS canvas preview](./ios-canvas-preview.md) — preview Canvas content on the companion.

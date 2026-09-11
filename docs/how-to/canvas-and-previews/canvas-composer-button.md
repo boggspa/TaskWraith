@@ -19,6 +19,6 @@ An icon-only button in the composer's telemetry row, next to the Multiview layou
 
 ## Tips & related
 - If a page cannot be reached, the browser shows the error in its own chrome so you can fix the address and retry.
-- [Canvas multiview pane](./canvas-multiview-pane.md) — embed a Canvas inside a split pane instead of a floating window.
+- [Canvas multiview pane](./canvas-multiview-pane.md) — embed a Canvas inside a split pane instead of the right dock.
 - [Plus tools menu](../composer/plus-tools-menu.md) — other composer-row tools and pickers.
 - [iOS canvas preview](./ios-canvas-preview.md) — the companion view for Canvas content on iOS.

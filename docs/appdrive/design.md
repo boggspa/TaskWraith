@@ -354,6 +354,11 @@ Note `CanvasActResult.action` duplicates the `CanvasActionInput['kind']` union r
 - **KEEP `el.focus()` on the click path** — reversed from the original plan. A synthetic click has no default action, so `focus()` is what makes focus-driven widgets (menus, comboboxes) work at all; removing it would break them to solve a problem the presence guard already covers. The harm was the agent stealing the caret *while the user was typing*, and an agent that cannot act while the user is active cannot do that.
 - **`scrollIntoView`** becomes conditional: skip when the element is already in view, to stop the agent yanking the viewport under a reading user.
 - **Sketch (D4):** `sketchUpdate` gains `expectedUpdatedAt` and is refused outright while a stroke is in flight (page-side `draft !== null`).
+- **Not joined to Host serialization.** The per-canvas mutex is process-local to
+  the Electron client. Lease acquisition does not consult the standalone Node
+  Host's execution-claim store, and the M2 queued-start lifecycle
+  (`src/host-node/HostNodeQueuedStartLifecycle.ts`) is not wired into production
+  at all yet, so nothing here fences against a Host-side claim.
 
 ### 5.4 Audit before execute (D2)
 

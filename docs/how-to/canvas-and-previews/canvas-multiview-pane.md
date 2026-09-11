@@ -22,7 +22,7 @@ from the Inspector Canvas dock instead.
 
 ## Tips & related
 - **Multiview layout picker** — the composer telemetry-row control where you switch between single and split multiview layouts.
-- [Canvas composer button](canvas-composer-button.md) — opens a canvas in its own floating window instead of a multiview pane.
+- [Canvas composer button](canvas-composer-button.md) — opens a canvas in the right dock instead of a multiview pane; you can pop it out to its own window later.
 - [Emulator Canvas](emulator-canvas.md) — the fixed homebrew demo, its agent workflow, and exact-surface control boundary.
 - [Multiview media pane](../media-audio-and-video/multiview-media-pane.md) — the equivalent multiview cell for detached audio/video players.
 - [iOS canvas preview](ios-canvas-preview.md) — the canvas preview surface on iOS.

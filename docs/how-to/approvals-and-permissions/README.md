@@ -13,3 +13,10 @@ Guides for TaskWraith's approval system and permission controls.
 ## Cross-links
 
 - [Approvals Popover](../footer-control-row/approvals-popover.md) — for the sidebar footer queue view.
+
+## Newer permission surfaces (no how-to yet)
+
+These ship but have no how-to page; the design records are the reference:
+
+- **Channels mention grants and delegations** — [channels P3 security design](../../channels/channels-p3-security-design.md); see also [mention yield routing](../ensemble-mode/mention-yield-routing.md).
+- **AppDrive V1 leases and AX confirmations** — [AppDrive V1 contract](../../appdrive/v1-contract.md).
