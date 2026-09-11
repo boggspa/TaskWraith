@@ -44,6 +44,7 @@ const PURE_MUSE_CLOSURE = new Set([
   'MuseProbe.ts',
   'MuseReasoningProjection.ts',
   'MuseRun.ts',
+  'MuseSeatLeaseRegistry.ts',
   'MuseSessionLog.ts',
   'MuseSkillPin.ts',
   'MuseToolProjection.ts',
