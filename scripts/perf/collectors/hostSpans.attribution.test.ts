@@ -178,6 +178,38 @@ describe('hostSpans collector — cross-thread attribution (A1 / R2-M1-1)', () =
     expect(badPercentile.ok).toBe(false)
     expect(badPercentile.reason).toContain('p99Ms must be finite')
 
+    // `percentileSampleCount` follows the rule this file already sets for
+    // p99Ms: a recorder that predates it must keep validating, so absence is
+    // accepted and only a PRESENT non-finite value is an error. A silently
+    // unvalidated field is how attribution escapes the schema.
+    const chatRow = { count: 1, totalMs: 1, p50Ms: 1, p95Ms: 1, p99Ms: 1, maxMs: 1 }
+    const withoutBasis = normalizeWorkSpanSection(
+      { ...section, byChat: { 'chat-light': { host_queue_wait: chatRow } } },
+      'main'
+    )
+    expect(withoutBasis.ok).toBe(true)
+
+    const withBasis = normalizeWorkSpanSection(
+      {
+        ...section,
+        byChat: { 'chat-light': { host_queue_wait: { ...chatRow, percentileSampleCount: 0 } } }
+      },
+      'main'
+    )
+    expect(withBasis.ok).toBe(true)
+
+    const badBasis = normalizeWorkSpanSection(
+      {
+        ...section,
+        byChat: {
+          'chat-light': { host_queue_wait: { ...chatRow, percentileSampleCount: 'some' } }
+        }
+      },
+      'main'
+    )
+    expect(badBasis.ok).toBe(false)
+    expect(badBasis.reason).toContain('percentileSampleCount must be finite when present')
+
     const badExact = normalizeWorkSpanSection(
       { ...section, exact: { offeredCount: 1, offeredFallbackCount: 0 } },
       'main'

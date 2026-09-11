@@ -187,7 +187,8 @@ describe('createWorkSpanRecorder', () => {
       p99Ms: 100,
       maxMs: 100,
       bytes: 1_000,
-      fallbackCount: 1
+      fallbackCount: 1,
+      percentileSampleCount: 10
     })
     expect(byKind.host_queue_wait).toEqual({
       count: 1,
@@ -197,7 +198,8 @@ describe('createWorkSpanRecorder', () => {
       p99Ms: 7,
       maxMs: 7,
       bytes: 0,
-      fallbackCount: 0
+      fallbackCount: 0,
+      percentileSampleCount: 1
     })
     expect(byKind.admission_wait).toBeUndefined()
     expect(byResource.host_chain?.count).toBe(1)
@@ -573,6 +575,9 @@ describe('createWorkSpanRecorder', () => {
 
     // 40 was evicted: totals stay exact while percentiles cover the retained
     // [10, 20] window — so p95 (20) and maxMs (40) legitimately disagree.
+    // `percentileSampleCount` is the field that lets a READER see that, rather
+    // than having to know this comment exists: count 3 beside a basis of 2 says
+    // the percentiles describe two of the three spans and nothing else does.
     expect(recorder.snapshot().byKind.checkpoint_prepare).toEqual({
       count: 3,
       totalMs: 70,
@@ -581,8 +586,42 @@ describe('createWorkSpanRecorder', () => {
       p99Ms: 20,
       maxMs: 40,
       bytes: 0,
-      fallbackCount: 0
+      fallbackCount: 0,
+      percentileSampleCount: 2
     })
+  })
+
+  it('separates a zero percentile that is a measurement from one that is an empty sample', () => {
+    // nearestRank returns 0 for an EMPTY array, so `p50Ms: 0` has two meanings
+    // the artifact could not distinguish: a genuinely sub-millisecond span, or
+    // no retained sample at all. Real runs are full of this shape —
+    // `host_queue_wait  count 603  p50 0  p95 0  max 18` — where the exact max
+    // proves spans existed and the zeros proved nothing. The basis count is
+    // what separates them, and it is why this field is worth having whatever is
+    // decided about retention size or the estimator.
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 1,
+      now: tickingClock()
+    })
+    recorder.record({ ...attrs({ kind: 'host_queue_wait' }), startedAt: 0, durationMs: 18 })
+    recorder.record({ ...attrs({ kind: 'checkpoint_prepare' }), startedAt: 0, durationMs: 5 })
+
+    const evicted = recorder.snapshot().byKind.host_queue_wait
+    // Exact over accepted spans, and unaffected by eviction: these ARE data.
+    expect(evicted?.count).toBe(1)
+    expect(evicted?.maxMs).toBe(18)
+    expect(evicted?.totalMs).toBe(18)
+    // Percentiles over an empty ring slice: zeros that are not measurements.
+    expect(evicted?.p50Ms).toBe(0)
+    expect(evicted?.p95Ms).toBe(0)
+    expect(evicted?.percentileSampleCount).toBe(0)
+
+    // And the survivor reports a real basis, so the two are told apart by the
+    // artifact alone rather than by knowing which span was evicted.
+    const retained = recorder.snapshot().byKind.checkpoint_prepare
+    expect(retained?.p50Ms).toBe(5)
+    expect(retained?.percentileSampleCount).toBe(1)
   })
 
   it('counts every offered fallback exactly, including sampled-out record() spans', () => {
@@ -669,6 +708,10 @@ describe('createWorkSpanRecorder', () => {
       maxMs: 10
     })
     expect(b.byChat['chat-light'].host_queue_wait).toMatchObject({ maxMs: 1_000, p99Ms: 1_000 })
+    // Per-chat percentiles carry their basis too: byChat is the shape the
+    // cross-thread fold publishes per chat, and it was the shape read as
+    // evidence that queue waits were fast.
+    expect(a.byChat['chat-light'].host_queue_wait?.percentileSampleCount).toBe(1)
     expect(a.attributionOverflow).toBe(0)
   })
 

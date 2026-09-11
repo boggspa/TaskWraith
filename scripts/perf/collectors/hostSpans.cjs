@@ -96,7 +96,7 @@ const SPAN_AGGREGATE_FIELDS = Object.freeze([
  * report captured by an older recorder must keep validating, and a silently
  * unvalidated field is exactly how attribution escapes the schema.
  */
-const SPAN_AGGREGATE_OPTIONAL_FIELDS = Object.freeze(['p99Ms'])
+const SPAN_AGGREGATE_OPTIONAL_FIELDS = Object.freeze(['p99Ms', 'percentileSampleCount'])
 
 /** Per-chat attributed aggregate fields (WorkSpanChatAggregate). */
 const SPAN_CHAT_AGGREGATE_FIELDS = Object.freeze([
@@ -107,6 +107,9 @@ const SPAN_CHAT_AGGREGATE_FIELDS = Object.freeze([
   'p99Ms',
   'maxMs'
 ])
+
+/** Per-chat fields a newer recorder adds; validated when present (see above). */
+const SPAN_CHAT_AGGREGATE_OPTIONAL_FIELDS = Object.freeze(['percentileSampleCount'])
 
 /** Exact never-sampled offered counters (WorkSpanOfferedCounters). */
 const SPAN_OFFERED_FIELDS = Object.freeze(['offeredCount', 'offeredFallbackCount', 'offeredBytes'])
@@ -234,6 +237,11 @@ function validateByChat(byChat, errors) {
       for (const field of SPAN_CHAT_AGGREGATE_FIELDS) {
         if (!isFiniteNumber(aggregate[field])) {
           errors.push(`byChat.${chatId}.${kind}.${field} must be finite`)
+        }
+      }
+      for (const field of SPAN_CHAT_AGGREGATE_OPTIONAL_FIELDS) {
+        if (aggregate[field] !== undefined && !isFiniteNumber(aggregate[field])) {
+          errors.push(`byChat.${chatId}.${kind}.${field} must be finite when present`)
         }
       }
     }
@@ -993,6 +1001,7 @@ module.exports = {
   SPAN_AGGREGATE_FIELDS,
   SPAN_AGGREGATE_OPTIONAL_FIELDS,
   SPAN_CHAT_AGGREGATE_FIELDS,
+  SPAN_CHAT_AGGREGATE_OPTIONAL_FIELDS,
   SPAN_OFFERED_FIELDS,
   SPAN_COUNTER_FIELDS,
   SPAN_COUNTER_OPTIONAL_FIELDS,

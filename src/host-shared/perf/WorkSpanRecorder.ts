@@ -165,6 +165,18 @@ export interface WorkSpanKeyAggregate {
   maxMs: number
   bytes: number
   fallbackCount: number
+  /**
+   * How many samples the percentiles above were computed over. `count`,
+   * `totalMs` and `maxMs` are exact over every ACCEPTED span; the percentiles
+   * are nearest-rank over the RETAINED ring only, and at real span volume the
+   * ring holds a recency-biased minority of them. Without this field the two
+   * bases are indistinguishable in the artifact — a row reading
+   * `count: 603, p95Ms: 6` invites the reading that the second describes the
+   * first. It also separates the two meanings of a zero percentile: nearestRank
+   * returns 0 for an EMPTY sample, which is otherwise identical to a genuine
+   * sub-millisecond p50.
+   */
+  percentileSampleCount: number
 }
 
 /**
@@ -194,6 +206,8 @@ export interface WorkSpanChatAggregate {
   p95Ms: number
   p99Ms: number
   maxMs: number
+  /** Samples the percentiles were computed over; see WorkSpanKeyAggregate. */
+  percentileSampleCount: number
 }
 
 export interface WorkSpanAggregates {
@@ -386,7 +400,8 @@ function buildKeyAggregates<K extends string>(
       p99Ms: nearestRank(durations, 99),
       maxMs: entry.maxMs,
       bytes: entry.bytes,
-      fallbackCount: entry.fallbackCount
+      fallbackCount: entry.fallbackCount,
+      percentileSampleCount: durations.length
     }
   }
   return out
@@ -669,7 +684,8 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
           p50Ms: nearestRank(retained, 50),
           p95Ms: nearestRank(retained, 95),
           p99Ms: nearestRank(retained, 99),
-          maxMs: totals.maxMs
+          maxMs: totals.maxMs,
+          percentileSampleCount: retained.length
         }
       }
       out[chatId] = perKind
