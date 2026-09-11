@@ -15211,11 +15211,18 @@ function App(): React.JSX.Element {
                   setIsThinking(true)
                 }
                 let nextMessages = updated.messages
+                // Same wire id the assistant bubbles are stamped with, so an
+                // activity row brands itself instead of depending on a run
+                // lookup. Hoisted: it is per-record, not per-projection.
+                const { providerModel, providerModelLabel } =
+                  providerModelMetadataForAssistantDelta(updated)
                 for (const projection of toolProjections) {
                   const reduction = reduceSoloToolEventMessages(nextMessages, projection.event, {
                     createMessageId,
                     provider: effectiveRunProvider,
-                    runId: currentRunId
+                    runId: currentRunId,
+                    model: providerModel,
+                    modelLabel: providerModelLabel
                   })
                   nextMessages = reduction.messages
                   if (
@@ -15877,10 +15884,13 @@ function App(): React.JSX.Element {
               if (isProviderExecutionToolEvent(event)) {
                 runContext.toolCallsCount += 1
               }
+              const toolRowModel = providerModelMetadataForAssistantDelta(updated)
               const reduction = reduceSoloToolEventMessages(updated.messages, event, {
                 createMessageId,
                 provider: effectiveRunProvider,
-                runId: currentRunId
+                runId: currentRunId,
+                model: toolRowModel.providerModel,
+                modelLabel: toolRowModel.providerModelLabel
               })
               updated.messages = reduction.messages
 

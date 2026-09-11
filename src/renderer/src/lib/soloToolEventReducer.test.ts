@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
 import { reduceSoloToolEventMessages } from './soloToolEventReducer'
@@ -100,6 +101,80 @@ describe('reduceSoloToolEventMessages', () => {
     )
 
     expect(result.messages[0].runId).toBe('run-123')
+  })
+
+  it('stamps the run model on a newly projected tool row so it can brand itself', () => {
+    // An activity row carries no model of its own, so its accent depended
+    // entirely on finding its run in the chat record. Stamping the wire id the
+    // same way an assistant bubble already gets it makes the row
+    // self-branding — see components/TranscriptPanelBrandingRuns.test.tsx.
+    const result = reduceSoloToolEventMessages(
+      [],
+      {
+        type: 'tool_event',
+        isUse: true,
+        data: { type: 'tool_use', tool_id: 'call-branded', tool_name: 'read_file', parameters: {} }
+      },
+      {
+        createMessageId: () => 'tool-message-branded',
+        nowIso: () => NOW,
+        provider: 'pi',
+        runId: 'run-pi-cerebras',
+        model: 'cerebras/qwen-3.8-27b',
+        modelLabel: 'Qwen 3.8 27B (Cerebras)'
+      }
+    )
+
+    expect(result.messages[0].metadata).toMatchObject({
+      providerModel: 'cerebras/qwen-3.8-27b',
+      providerModelLabel: 'Qwen 3.8 27B (Cerebras)'
+    })
+    // `kind` is the card discriminator the adoption guard reads. A branded
+    // burst row must stay a plain, adoptable row.
+    expect(result.messages[0].metadata?.kind).toBeUndefined()
+  })
+
+  it('keeps a branded burst row adoptable by consecutive tool events', () => {
+    const options = {
+      createMessageId: () => 'tool-message-branded',
+      nowIso: () => NOW,
+      provider: 'pi' as const,
+      model: 'cerebras/qwen-3.8-27b'
+    }
+    const first = reduceSoloToolEventMessages(
+      [],
+      {
+        type: 'tool_event',
+        isUse: true,
+        data: { type: 'tool_use', tool_id: 'call-1', tool_name: 'read_file', parameters: {} }
+      },
+      options
+    )
+    const second = reduceSoloToolEventMessages(
+      first.messages,
+      {
+        type: 'tool_event',
+        isUse: true,
+        data: { type: 'tool_use', tool_id: 'call-2', tool_name: 'grep', parameters: {} }
+      },
+      options
+    )
+
+    expect(second.messages).toHaveLength(1)
+    expect(second.messages[0].toolActivities?.map((a) => a.id)).toEqual(['call-1', 'call-2'])
+    expect(second.messages[0].metadata?.providerModel).toBe('cerebras/qwen-3.8-27b')
+  })
+
+  it('adds no metadata at all when the caller supplies no model', () => {
+    // Every pre-existing caller passes neither, and a row that gained an empty
+    // metadata object would read as "has metadata" to anything checking it.
+    const result = reduce([], {
+      type: 'tool_event',
+      isUse: true,
+      data: { type: 'tool_use', tool_id: 'call-plain', tool_name: 'read_file', parameters: {} }
+    })
+
+    expect(result.messages[0].metadata).toBeUndefined()
   })
 
   it('pairs a solo tool_result with the existing tool activity', () => {
@@ -467,5 +542,24 @@ describe('kind-tagged tool cards never absorb the live burst', () => {
 
     expect(result.messages).toHaveLength(1)
     expect(result.messages[0].toolActivities?.map((a) => a.id)).toEqual(['call-1', 'seg-2'])
+  })
+})
+
+describe('App.tsx solo tool-row model wiring', () => {
+  // The stamp is only as good as its call sites, and those live inside
+  // `executeRun`'s closure in the App monolith where no unit test can reach
+  // them. Source-string guard, the same idiom ComposerAutoDraftWiring uses:
+  // a new or edited call site that forgets the model reds here rather than
+  // silently dropping the brand off every activity row it projects.
+  const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+
+  it('passes the run model at every solo tool-event call site', () => {
+    const callSites = appSource.split('reduceSoloToolEventMessages(').slice(1)
+    expect(callSites.length).toBeGreaterThan(0)
+    for (const site of callSites) {
+      const args = site.slice(0, site.indexOf('})'))
+      expect(args).toContain('model:')
+      expect(args).toContain('modelLabel:')
+    }
   })
 })

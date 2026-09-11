@@ -250,4 +250,23 @@ describe('transcript branding reads the store-backed runs', () => {
     expect(html).toContain('message-meta provider-pi')
     expect(html).not.toContain('message-meta provider-cerebras')
   })
+
+  it('brands a stamped activity row with no run reachable from anywhere', () => {
+    // Defence in depth: `soloToolEventReducer` stamps the run's wire id onto
+    // the row it creates, so a row that carries it never needs a run lookup at
+    // all. This is the same starting state as the floor test above — empty
+    // record, empty store — and the ONLY difference is the row's own metadata.
+    const stampedRow: ChatMessage = {
+      ...TOOL_ROW,
+      metadata: {
+        providerModel: 'cerebras/qwen-3.8-27b',
+        providerModelLabel: 'Qwen 3.8 27B (Cerebras)'
+      }
+    }
+    const messages = [stampedRow, ASSISTANT_ROW]
+    const html = renderPanel(chatRecord([], messages), messages)
+
+    expect(html).toContain('aria-label="Activity from Cerebras"')
+    expect(html).toContain('--accent:var(--provider-cerebras-color, var(--accent))')
+  })
 })
