@@ -330,10 +330,13 @@ describe('concurrentReplayLanes (M1 A1.2 — first B2 driver)', () => {
 })
 
 describe('large_history fixture profile (M1 A1.2 Appendix A pin)', () => {
-  it('resolves the measured-worst-case shape additively', () => {
+  it('resolves the measured-worst-case shape (budgets are targets, not summands)', () => {
     const shape = resolveWorkloadShape({ workload: 'large_history' })
     expect(shape.chatCount).toBe(1)
     expect(shape.messageTarget).toBe(27000)
+    // The 45/20 MB budgets still sum to 65 MiB as generator inputs — but tool
+    // bytes are a SUBSET of chat bytes (reconciled pin), so this sum is not a
+    // disk footprint. Measured seed 42: 44.14 MiB chat incl. 35.06 MiB tools.
     expect(shape.chatSerializedTargetBytes + shape.toolSerializedTargetBytes).toBe(
       Math.round(65 * 1024 * 1024)
     )
@@ -346,6 +349,88 @@ describe('large_history fixture profile (M1 A1.2 Appendix A pin)', () => {
     const second = generatePerfFixture({ workload: 'large_history', seed: 4242, scaleDown: 200 })
     expect(fixtureFingerprint(first)).toBe(fixtureFingerprint(second))
     const other = generatePerfFixture({ workload: 'large_history', seed: 9999, scaleDown: 200 })
+    expect(fixtureFingerprint(other)).not.toBe(fixtureFingerprint(first))
+  })
+})
+
+describe('light_beside_large fixture profile (M1 G-X pairing shape)', () => {
+  it('resolves the asymmetric two-chat shape exactly', () => {
+    const shape = resolveWorkloadShape({ workload: 'light_beside_large' })
+    expect(shape.chatCount).toBe(2)
+    expect(shape.dualConcurrentRuns).toBe(true)
+    expect(shape.messageTarget).toBe(27040)
+    expect(shape.toolActivityTarget).toBe(20280)
+    expect(shape.chatShapes).toHaveLength(2)
+    const [light, heavy] = shape.chatShapes
+    // Light chat first: 4 seats × 10 turns, one tool per assistant.
+    expect(light.seatCount).toBe(4)
+    expect(light.turnsPerSeat).toBe(10)
+    expect(light.toolsPerAssistant).toBe(1)
+    expect(light.expectedTools).toBe(40)
+    expect(light.toolSerializedTargetBytes).toBe(Math.round(0.5 * 1024 * 1024))
+    // Heavy chat carries the reconciled large pin: 30 seats × 900 turns.
+    expect(heavy.seatCount).toBe(30)
+    expect(heavy.turnsPerSeat).toBe(900)
+    expect(heavy.toolsPerAssistant).toBe(1)
+    expect(heavy.expectedTools).toBe(27000)
+    expect(heavy.toolSerializedTargetBytes).toBe(Math.round(20 * 1024 * 1024))
+    // Deleting the chatShapes branch (or the whole case) turns this red.
+    expect(shape.chatShapes === undefined).toBe(false)
+  })
+
+  it('scaleDown divides per-chat turn targets instead of generating full-scale', () => {
+    const fixture = generatePerfFixture({
+      workload: 'light_beside_large',
+      seed: 42,
+      lean: true,
+      scaleDown: 100
+    })
+    expect(fixture.chats).toHaveLength(2)
+    // 1 opening user + ceil(turns/100) × seats assistants per chat.
+    expect(fixture.chats[0].messages).toHaveLength(1 + 1 * 4)
+    expect(fixture.chats[1].messages).toHaveLength(1 + 9 * 30)
+    expect(fixture.chats[0]._perfMeta.toolActivityCount).toBe(4)
+    expect(fixture.chats[1]._perfMeta.toolActivityCount).toBe(270)
+    expect(fixture.totals.messageCount).toBe(5 + 271)
+    // The unscaled shape keeps the full-size entries for pairing records.
+    expect(fixture.unscaledShape.chatShapes.map((s) => s.turnsPerSeat)).toEqual([10, 900])
+    expect(fixture.unscaledShape.chatShapes.map((s) => s.expectedTools)).toEqual([40, 27000])
+  })
+
+  it('non-lean metadata stays finite and tool bytes stay inside chat bytes', () => {
+    const fixture = generatePerfFixture({
+      workload: 'light_beside_large',
+      seed: 42,
+      scaleDown: 100
+    })
+    for (const chat of fixture.chats) {
+      expect(Number.isFinite(chat._perfMeta.paramBytes)).toBe(true)
+      expect(Number.isFinite(chat._perfMeta.rawBytes)).toBe(true)
+      // Reconciled pin: tool bytes are a subset of chat bytes, never additive.
+      expect(chat._perfMeta.toolSerializedBytes).toBeGreaterThan(0)
+      expect(chat._perfMeta.toolSerializedBytes).toBeLessThanOrEqual(
+        chat._perfMeta.chatSerializedBytes
+      )
+    }
+  })
+
+  it('generates deterministically (same seed → identical fingerprint) at reduced scale', () => {
+    const first = generatePerfFixture({
+      workload: 'light_beside_large',
+      seed: 4242,
+      scaleDown: 200
+    })
+    const second = generatePerfFixture({
+      workload: 'light_beside_large',
+      seed: 4242,
+      scaleDown: 200
+    })
+    expect(fixtureFingerprint(first)).toBe(fixtureFingerprint(second))
+    const other = generatePerfFixture({
+      workload: 'light_beside_large',
+      seed: 9999,
+      scaleDown: 200
+    })
     expect(fixtureFingerprint(other)).not.toBe(fixtureFingerprint(first))
   })
 })

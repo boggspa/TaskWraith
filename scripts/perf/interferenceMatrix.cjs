@@ -38,13 +38,18 @@ const MATRIX_SAMPLING = Object.freeze({
 })
 
 /**
- * History-size pins (Appendix A). The large pin matches the measured worst
- * case; `approx` values are targets for the fixture generator, not gates.
+ * History-size pins (Appendix A, reconciled — see the programme doc
+ * provenance note). `approx` values are targets for the fixture generator,
+ * not gates. `approxBytes` is the serialized large chat; tool bytes are a
+ * subset of it (measured seed 42: 44.14 MiB chat incl. 35.06 MiB tools), so
+ * the former 65 MiB "chat + tool" sum was planning arithmetic, never a disk
+ * footprint. `approxRuns` is retained as-stated and unverified (no
+ * generator axis mints runs).
  */
 const HISTORY_SIZES = Object.freeze(['small', 'large'])
 const HISTORY_SIZE_PINS = Object.freeze({
   small: Object.freeze({ approxMessages: 200, maxBytes: 1024 * 1024 }),
-  large: Object.freeze({ approxMessages: 27000, approxBytes: 65 * 1024 * 1024, approxRuns: 1000 })
+  large: Object.freeze({ approxMessages: 27000, approxBytes: 45 * 1024 * 1024, approxRuns: 1000 })
 })
 
 /** Simultaneous chats; 2 is the light + heavy pairing the gates read. */

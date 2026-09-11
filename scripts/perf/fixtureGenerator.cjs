@@ -17,8 +17,10 @@ const crypto = require('crypto')
  * records it in `fixtureVersions`; pairing requires identical versions across
  * the alone/beside runs. Bump when the same inputs would produce different
  * fixture bytes.
+ * v2: `scaleDown` divides per-chat-shape turn targets (previously silently
+ * inert for `chatShapes` workloads, which generated full-scale regardless).
  */
-const FIXTURE_GENERATOR_VERSION = 1
+const FIXTURE_GENERATOR_VERSION = 2
 
 const PROVIDERS = Object.freeze([
   'codex',
@@ -209,12 +211,17 @@ function resolveWorkloadShape(options) {
         messageTargetHint: 50 * (1 + 4 * 8)
       }
     case 'large_history': {
-      // M1 A1.2 (Appendix A "large" pin): one chat at the measured worst
-      // case — ≈27k messages, ≈65 MB serialized total, ≈1,000 runs. The byte
-      // pin decomposes into chat + tool budgets (~45 + ~20 MB = 65 MB); run
-      // count is not a generator axis (runs derive from the replay schedule),
-      // so it is asserted as a shape pin in tests, not invented here. Tool
-      // volume scales at the observed 50seat ratio (~0.75 activities/msg).
+      // M1 A1.2 (Appendix A "large" pin, reconciled — see the programme doc
+      // provenance note): one chat at the measured worst case — ≈27k
+      // messages, ≈44 MiB serialized, ≈1,000 runs (retained as-stated,
+      // unverified). The 45/20 MB figures below are generator byte budgets,
+      // not summands: tool bytes are a SUBSET of chat bytes (measured seed
+      // 42: 44.14 MiB chat incl. 35.06 MiB tools), so "45+20=65 MB" was
+      // planning arithmetic, never a disk footprint. Run count is not a
+      // generator axis (runs derive from the replay schedule), so it is
+      // asserted as a shape pin in tests, not invented here. The 0.75 ratio
+      // feeds the `toolActivityTarget` metadata field only; the loop emits
+      // one tool per assistant turn (27,000 tools), as it always has.
       const messageTarget = 27000
       return {
         workload,
@@ -232,6 +239,10 @@ function resolveWorkloadShape(options) {
       }
     }
     case 'light_beside_large': {
+      // M1 G-X pairing shape: chat 1 light (4 seats), chat 2 carrying the
+      // reconciled large_history pin (≈27k messages, ≈44 MiB serialized —
+      // tool bytes a subset of chat bytes, not additive). Per-chat budgets
+      // in `chatShapes` drive the loop; the top-level figures are aggregates.
       const largeMessageTarget = 27000
       const largeSeatCount = 30
       const largeTurnsPerSeat = Math.ceil((largeMessageTarget - 1) / 30)
@@ -479,10 +490,34 @@ function generatePerfFixture(options) {
   const scaleDown = options.scaleDown && options.scaleDown > 1 ? options.scaleDown : 1
   const scaledShape = { ...shape }
   if (scaleDown > 1) {
-    scaledShape.turnsPerSeat = Math.max(1, Math.ceil(shape.turnsPerSeat / scaleDown))
-    scaledShape.soakTurns = shape.soakTurns
-      ? Math.max(1, Math.ceil(shape.soakTurns / scaleDown))
-      : 0
+    if (shape.chatShapes) {
+      // Asymmetric workloads generate from `chatShapes`, not the top-level
+      // turn fields (which are absent here) — scale each shape, deep-copied
+      // so `unscaledShape` keeps the full-size entries. Byte budgets scale
+      // with turns so per-tool blob sizes stay ≈ full-scale.
+      scaledShape.chatShapes = shape.chatShapes.map((chatShape) => {
+        const turnsPerSeat = Math.max(1, Math.ceil(chatShape.turnsPerSeat / scaleDown))
+        const soakTurns = chatShape.soakTurns
+          ? Math.max(1, Math.ceil(chatShape.soakTurns / scaleDown))
+          : 0
+        const assistants = soakTurns > 0 ? soakTurns : turnsPerSeat * chatShape.seatCount
+        return {
+          ...chatShape,
+          turnsPerSeat,
+          soakTurns,
+          expectedTools: assistants * chatShape.toolsPerAssistant,
+          toolSerializedTargetBytes: Math.max(
+            32 * 1024,
+            Math.floor(chatShape.toolSerializedTargetBytes / scaleDown)
+          )
+        }
+      })
+    } else {
+      scaledShape.turnsPerSeat = Math.max(1, Math.ceil(shape.turnsPerSeat / scaleDown))
+      scaledShape.soakTurns = shape.soakTurns
+        ? Math.max(1, Math.ceil(shape.soakTurns / scaleDown))
+        : 0
+    }
     scaledShape.messageTarget = Math.max(
       2,
       Math.ceil((shape.messageTarget || shape.messageTargetHint) / scaleDown)
@@ -506,11 +541,18 @@ function generatePerfFixture(options) {
     options.baseTimestamp == null ? Date.UTC(2026, 7, 3, 12, 0, 0) : options.baseTimestamp
   const includeHotRaw = options.includeHotRaw !== false
 
-  const expectedAssistants =
-    scaledShape.soakTurns > 0
+  // Assistant count per shape; asymmetric workloads aggregate across shapes
+  // (their top-level turn fields are absent, which previously produced NaN
+  // here and in `_perfMeta.paramBytes/rawBytes`).
+  const shapeAssistants = (s) => (s.soakTurns > 0 ? s.soakTurns : s.turnsPerSeat * s.seatCount)
+  const expectedAssistants = scaledShape.chatShapes
+    ? scaledShape.chatShapes.reduce((n, s) => n + shapeAssistants(s), 0)
+    : scaledShape.soakTurns > 0
       ? scaledShape.soakTurns
       : scaledShape.turnsPerSeat * scaledShape.seatCount
-  const expectedTools = expectedAssistants * scaledShape.toolsPerAssistant
+  const expectedTools = scaledShape.chatShapes
+    ? scaledShape.chatShapes.reduce((n, s) => n + shapeAssistants(s) * s.toolsPerAssistant, 0)
+    : expectedAssistants * scaledShape.toolsPerAssistant
   const derived = deriveToolByteBudgets(
     Math.max(1, expectedTools),
     scaledShape.toolSerializedTargetBytes
@@ -540,9 +582,18 @@ function generatePerfFixture(options) {
   const chats = []
   for (let c = 0; c < scaledShape.chatCount; c++) {
     const chatShape = scaledShape.chatShapes ? scaledShape.chatShapes[c] : scaledShape
-    const cExpectedTools = chatShape.expectedTools || (chatShape.turnsPerSeat * chatShape.seatCount * chatShape.toolsPerAssistant)
-    const cDerived = deriveToolByteBudgets(Math.max(1, cExpectedTools), chatShape.toolSerializedTargetBytes || scaledShape.toolSerializedTargetBytes)
-    const cParamBytes = lean ? 24 : options.paramBytes == null ? cDerived.paramBytes : options.paramBytes
+    const cExpectedTools =
+      chatShape.expectedTools ||
+      chatShape.turnsPerSeat * chatShape.seatCount * chatShape.toolsPerAssistant
+    const cDerived = deriveToolByteBudgets(
+      Math.max(1, cExpectedTools),
+      chatShape.toolSerializedTargetBytes || scaledShape.toolSerializedTargetBytes
+    )
+    const cParamBytes = lean
+      ? 24
+      : options.paramBytes == null
+        ? cDerived.paramBytes
+        : options.paramBytes
     const cRawBytes = lean ? 32 : options.rawBytes == null ? cDerived.rawBytes : options.rawBytes
 
     const appChatId = `perf-${scaledShape.workload}-chat-${pad(c + 1, 2)}`
@@ -564,13 +615,23 @@ function generatePerfFixture(options) {
 
     const runA = {
       id: `${appChatId}-run-a`,
-      status: chatShape.dualConcurrentRuns !== undefined ? (chatShape.dualConcurrentRuns ? 'running' : 'done') : (scaledShape.dualConcurrentRuns ? 'running' : 'done'),
+      status:
+        chatShape.dualConcurrentRuns !== undefined
+          ? chatShape.dualConcurrentRuns
+            ? 'running'
+            : 'done'
+          : scaledShape.dualConcurrentRuns
+            ? 'running'
+            : 'done',
       provider: participants[0].provider,
       startedAt: new Date(t).toISOString()
     }
     runs.push(runA)
     let runB = null
-    const useDual = chatShape.dualConcurrentRuns !== undefined ? chatShape.dualConcurrentRuns : scaledShape.dualConcurrentRuns
+    const useDual =
+      chatShape.dualConcurrentRuns !== undefined
+        ? chatShape.dualConcurrentRuns
+        : scaledShape.dualConcurrentRuns
     if (useDual) {
       runB = {
         id: `${appChatId}-run-b`,
