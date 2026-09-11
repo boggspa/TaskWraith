@@ -1214,4 +1214,58 @@ describe('AppStore stamping the retained baseline in place', () => {
     coordinator.enqueue(sink, second)
     expect(sink.deliveries[1].kind).toBe('patch')
   })
+
+  it('chains the producer delta when the stamp reaches the pending revision', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+
+    const [first, second] = projectSequence(chat(1, ['one']), chat(2, ['one', 'two']))
+    coordinator.enqueue(sink, first)
+    const snapshot = sink.deliveries[0]
+    expect(snapshot.kind).toBe('snapshot')
+    // IPC gives the renderer a detached structured clone. Keeping the same
+    // object here would stamp the renderer's baseline along with main's and
+    // mask the divergence this test pins.
+    const applied = applyChatUpdateDelivery(structuredClone(snapshot), undefined)
+    if (!applied.ok) throw new Error('apply failed')
+    coordinator.acknowledge(sink.id, {
+      deliveryId: snapshot.deliveryId,
+      applied: true,
+      revision: snapshot.revision,
+      recordHash: applied.baseline.recordHash
+    })
+
+    // The same in-place stamp, but the unbroadcast save reached exactly the
+    // revision the next broadcast carries. A diff built from the drifted
+    // object then reads the stamped scalars as equal and omits
+    // persistenceRevision — while the transcript root is still taken at the
+    // pending revision, so the renderer NACKs and the baseline drops.
+    ;(first as { persistenceRevision: number }).persistenceRevision = 2
+    ;(first as { updatedAt: number }).updatedAt = 2
+
+    coordinator.enqueue(sink, second)
+    expect(sink.deliveries).toHaveLength(2)
+    expect(sink.deliveries[1].kind).toBe('patch')
+    expect(coordinator.protocolCounters()).toMatchObject({
+      producerDeltaMissing: 0,
+      spliceRecoveries: 0
+    })
+    const patched = applyChatUpdateDelivery(structuredClone(sink.deliveries[1]), applied.baseline)
+    if (!patched.ok) throw new Error(patched.reason)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: sink.deliveries[1].deliveryId,
+        applied: true,
+        revision: sink.deliveries[1].revision,
+        recordHash: patched.baseline.recordHash,
+        ...(patched.baseline.transcriptHash
+          ? { transcriptHash: patched.baseline.transcriptHash }
+          : {})
+      })
+    ).toBe(true)
+    expect(coordinator.protocolCounters()).toMatchObject({ baselineDrops: 0, ackRejections: 0 })
+  })
 })

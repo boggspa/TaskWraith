@@ -315,6 +315,37 @@ function toPatchBaseline(
 }
 
 /**
+ * Restore the ACKed scalars onto the retained baseline before building from it.
+ *
+ * AppStore stamps the server-owned persistence revision (and updatedAt, and the
+ * title pair) back onto its caller, and that caller may be the exact object
+ * retained here as the renderer's baseline. Forgiving the stamp for the hash
+ * comparison is not enough: the patch build reads the same object, so a stamp
+ * that reached the pending revision breaks the producer chain (its base no
+ * longer matches) and then reads as "unchanged" in the recovery diff, which
+ * omits persistenceRevision while the transcript root is still taken at the
+ * pending revision. The renderer NACKs, the baseline drops, and the next
+ * delivery is a full snapshot. Only the two compensated scalars are restored,
+ * and only after the match below has ruled out any other drift.
+ */
+function normalizedRetainedBaselineChat(
+  baselineChat: ChatRecord,
+  baselineRevision: number | undefined,
+  baselineUpdatedAt: ChatRecord['updatedAt'] | undefined
+): ChatRecord {
+  const stampedRevision =
+    baselineRevision !== undefined && baselineChat.persistenceRevision !== baselineRevision
+  const stampedUpdatedAt =
+    baselineUpdatedAt !== undefined && baselineChat.updatedAt !== baselineUpdatedAt
+  if (!stampedRevision && !stampedUpdatedAt) return baselineChat
+  return {
+    ...baselineChat,
+    ...(stampedRevision ? { persistenceRevision: baselineRevision } : {}),
+    ...(stampedUpdatedAt ? { updatedAt: baselineUpdatedAt } : {})
+  }
+}
+
+/**
  * AppStore stamps the server-owned persistence revision back onto its caller,
  * and that caller may be the exact object retained here as the renderer's
  * baseline. Normalize that one known scalar mutation before comparing hashes.
@@ -327,18 +358,11 @@ function retainedBaselineMatchesAcknowledged(
   baselineRevision: number | undefined,
   baselineUpdatedAt: ChatRecord['updatedAt'] | undefined
 ): boolean {
-  const stampedRevision =
-    baselineRevision !== undefined && baselineChat.persistenceRevision !== baselineRevision
-  const stampedUpdatedAt =
-    baselineUpdatedAt !== undefined && baselineChat.updatedAt !== baselineUpdatedAt
-  const comparable =
-    stampedRevision || stampedUpdatedAt
-      ? {
-          ...baselineChat,
-          ...(stampedRevision ? { persistenceRevision: baselineRevision } : {}),
-          ...(stampedUpdatedAt ? { updatedAt: baselineUpdatedAt } : {})
-        }
-      : baselineChat
+  const comparable = normalizedRetainedBaselineChat(
+    baselineChat,
+    baselineRevision,
+    baselineUpdatedAt
+  )
   return computeChatSubRevisions(comparable).recordHash === acknowledged.recordHash
 }
 
@@ -974,7 +998,17 @@ export class ChatUpdateDeliveryCoordinator {
           state.baselineUpdatedAt
         )
       ) {
-        baseline = toPatchBaseline(state.acknowledged, state.baselineChat)
+        // The match forgives the stamp-back scalars; the build must read them
+        // forgiven too, or the producer chain breaks on a revision the renderer
+        // never held and the recovery diff omits it.
+        baseline = toPatchBaseline(
+          state.acknowledged,
+          normalizedRetainedBaselineChat(
+            state.baselineChat,
+            state.baselineRevision,
+            state.baselineUpdatedAt
+          )
+        )
       } else {
         // A mutable store/cache caller changed the retained object after its
         // ACK. The renderer never saw that state, so proactively snapshot the
