@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ThreadCatalogueSourcePublisher } from '../../host-shared/thread-catalogue/ThreadCatalogueSourcePublisher'
 import { THREAD_CATALOGUE_REQUEST_TIMEOUT_MS } from './ThreadCatalogueClient'
 import {
+  recoveryHoldHasOwner,
   THREAD_CATALOGUE_RECOVERY_HOLD_TTL_MS,
   ThreadCatalogueRecoveryController
 } from './ThreadCatalogueRecoveryController'
@@ -137,5 +138,87 @@ describe('a recovery hold whose begin-recovery reply never came back', () => {
     expect(THREAD_CATALOGUE_RECOVERY_HOLD_TTL_MS).toBeGreaterThan(
       2 * THREAD_CATALOGUE_REQUEST_TIMEOUT_MS
     )
+  })
+
+  // The expiry is the backstop for a caller that never comes back. A caller
+  // that DOES come back -- the desktop's own retry, seconds later -- must not
+  // have to wait it out: ten minutes of `admit` queueing is ten minutes of
+  // picker selections, transcript writes and record persists going nowhere on
+  // that thread.
+  it('is reclaimed by the same writer retrying, without waiting it out', () => {
+    const lost = controller.begin('chat-1', 'desktop-1')
+
+    const replacement = controller.begin('chat-1', 'desktop-1')
+
+    expect(replacement.token).not.toBe(lost.token)
+    expect(publisher.catalogue.recoveryHold('chat-1')).toMatchObject({
+      token: replacement.token
+    })
+  })
+
+  it('leaves the reclaimed token powerless', async () => {
+    const lost = controller.begin('chat-1', 'desktop-1')
+    const replacement = controller.begin('chat-1', 'desktop-1')
+
+    // A late request bearing the reclaimed token can neither commit nor cancel,
+    // so the strand cannot come back to life behind its replacement.
+    expect(controller.end('chat-1', lost.token)).toBe(false)
+    await expect(controller.adopt('chat-1', lost.token, 'prepared-1')).rejects.toThrow()
+    expect(publisher.catalogue.recoveryHold('chat-1')).toMatchObject({
+      token: replacement.token
+    })
+  })
+
+  it('frees the thread on the replacement’s ordinary end, not on a timer', async () => {
+    controller.begin('chat-1', 'desktop-1')
+    const command = queueCommand('chat-1')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(command.ran()).toBe(false)
+
+    const replacement = controller.begin('chat-1', 'desktop-1')
+    expect(controller.end('chat-1', replacement.token)).toBe(true)
+
+    await expect(command.result).resolves.toBe('committed')
+    expect(publisher.catalogue.recoveryHold('chat-1')).toBeNull()
+  })
+})
+
+/**
+ * Reclaiming is scoped to the exact writer now asking to begin. A Desktop
+ * request must never take over a Host-owned recovery (or the reverse): those
+ * two are kept apart by `assertNoLiveDesktop`, and a reclaim that ignored
+ * ownership would walk straight through it.
+ */
+describe('recoveryHoldHasOwner', () => {
+  it('matches the same Desktop writer', () => {
+    expect(
+      recoveryHoldHasOwner({ desktopWriterId: 'desktop-1' }, { desktopWriterId: 'desktop-1' })
+    ).toBe(true)
+  })
+
+  it('refuses a different Desktop writer', () => {
+    expect(
+      recoveryHoldHasOwner({ desktopWriterId: 'desktop-1' }, { desktopWriterId: 'desktop-2' })
+    ).toBe(false)
+  })
+
+  it('refuses a Host-owned hold for a Desktop request', () => {
+    expect(recoveryHoldHasOwner({ hostWriterId: 'host-1' }, { desktopWriterId: 'desktop-1' })).toBe(
+      false
+    )
+  })
+
+  it('refuses a Desktop-owned hold for a Host request', () => {
+    expect(recoveryHoldHasOwner({ desktopWriterId: 'desktop-1' }, { hostWriterId: 'host-1' })).toBe(
+      false
+    )
+  })
+
+  it('matches the same Host writer', () => {
+    expect(recoveryHoldHasOwner({ hostWriterId: 'host-1' }, { hostWriterId: 'host-1' })).toBe(true)
+  })
+
+  it('refuses a request that names no writer at all', () => {
+    expect(recoveryHoldHasOwner({ desktopWriterId: 'desktop-1' }, {})).toBe(false)
   })
 })

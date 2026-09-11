@@ -32,6 +32,24 @@ import { ThreadCatalogueWriteGate } from './ThreadCatalogueWriteGate'
  */
 export const THREAD_CATALOGUE_RECOVERY_HOLD_TTL_MS = 4 * THREAD_CATALOGUE_REQUEST_TIMEOUT_MS
 
+/**
+ * Whether a held recovery belongs to exactly the writer now asking to begin.
+ *
+ * Matched on the axis the request names and nowhere else: a Desktop request
+ * never reclaims a Host-owned hold and vice versa, and an absent id on either
+ * side matches nothing, so an unidentified caller can never adopt a strand.
+ */
+export function recoveryHoldHasOwner(
+  hold: Pick<ThreadCatalogueRecoveryHold, 'desktopWriterId' | 'hostWriterId'>,
+  identity: Pick<ThreadCatalogueRecoveryHold, 'desktopWriterId' | 'hostWriterId'>
+): boolean {
+  if (identity.desktopWriterId)
+    return hold.desktopWriterId === identity.desktopWriterId && !hold.hostWriterId
+  if (identity.hostWriterId)
+    return hold.hostWriterId === identity.hostWriterId && !hold.desktopWriterId
+  return false
+}
+
 /** Runs on the source-authoritative parent, never inside its decoder. */
 export class ThreadCatalogueRecoveryController {
   private desktop: { writerId: string; pid?: number } | null = null
@@ -143,6 +161,25 @@ export class ThreadCatalogueRecoveryController {
     chatId: string,
     identity: Pick<ThreadCatalogueRecoveryHold, 'desktopWriterId' | 'hostWriterId'>
   ): ThreadCatalogueRecoveryHold {
+    // A caller asking to BEGIN is not using an earlier hold of its own: a writer
+    // runs one recovery per chat at a time and only reaches here once the
+    // previous one has ended. So a pending hold with the same owner is the
+    // strand this controller's expiry exists for -- the begin-recovery REPLY was
+    // lost, leaving the caller holding no token it could ever cancel with -- and
+    // the caller's own retry, seconds later, is the earliest and cheapest moment
+    // to reclaim it.
+    //
+    // Reclaiming here is what keeps the expiry a backstop instead of the only
+    // escape. Until it, a lost reply wedged the thread for a full
+    // THREAD_CATALOGUE_RECOVERY_HOLD_TTL_MS: `admit()` queues every command for
+    // that thread behind the admission with no timeout, so a picker selection,
+    // a transcript write and a record persist all waited ten minutes on a hold
+    // whose owner was sitting there asking for a new one. Cancelling excludes
+    // every later commit for the old token (`adopt` re-asserts it), so the
+    // strand cannot come back to life behind the replacement.
+    const stranded = this.pending.get(chatId)
+    if (stranded && recoveryHoldHasOwner(stranded.hold, identity))
+      this.end(chatId, stranded.hold.token)
     if (
       !this.options.publisher.canRecover(chatId) ||
       this.pending.has(chatId) ||
