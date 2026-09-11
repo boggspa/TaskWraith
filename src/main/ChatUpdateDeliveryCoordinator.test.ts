@@ -1177,3 +1177,41 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
     expect(sink.deliveries[0].page?.hasOlder).toBe(true)
   })
 })
+
+describe('AppStore stamping the retained baseline in place', () => {
+  // `AppStore.saveChat` writes BOTH scalars back onto its caller
+  // (store/index.ts: `chat.persistenceRevision = saved.persistenceRevision`,
+  // `chat.updatedAt = saved.updatedAt`), and that caller can be the exact
+  // object retained here as the renderer's baseline.
+  // `retainedBaselineMatchesAcknowledged` normalized only the revision, so the
+  // stamped `updatedAt` read as drift, the baseline was refused, and every
+  // later delivery degraded to a full snapshot — which overwrites whatever the
+  // user had optimistically changed, exactly as a NACK would have.
+  it('still patches after the caller-side updatedAt stamp', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+
+    const [first, second] = projectSequence(chat(1, ['one']), chat(2, ['two']))
+    coordinator.enqueue(sink, first)
+    const snapshot = sink.deliveries[0]
+    expect(snapshot.kind).toBe('snapshot')
+    const applied = applyChatUpdateDelivery(snapshot, undefined)
+    if (!applied.ok) throw new Error('apply failed')
+    coordinator.acknowledge(sink.id, {
+      deliveryId: snapshot.deliveryId,
+      applied: true,
+      revision: snapshot.revision,
+      recordHash: applied.baseline.recordHash
+    })
+
+    // The stamp. Both scalars, on the object main retained.
+    ;(first as { persistenceRevision: number }).persistenceRevision = 1
+    ;(first as { updatedAt: number }).updatedAt = 99
+
+    coordinator.enqueue(sink, second)
+    expect(sink.deliveries[1].kind).toBe('patch')
+  })
+})

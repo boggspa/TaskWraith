@@ -44,6 +44,8 @@ interface InFlightChatUpdate extends PendingChatUpdate {
   deliveryId: string
   deliveryEpoch: number
   recordHash: string
+  /** `updatedAt` of the exact record `recordHash` was taken over. */
+  hashedUpdatedAt: ChatRecord['updatedAt']
   compactBaseline: CompactChatUpdateBaseline
   /**
    * The record the RENDERER will hold once this lands — the bounded shell for
@@ -115,6 +117,15 @@ interface TargetChatState {
    * is in flight; cleared with `acknowledged`, whose generation it describes.
    */
   baselineRevision?: number
+  /**
+   * `updatedAt` of the ACKNOWLEDGED generation, captured as a scalar for the
+   * same reason as `baselineRevision` above: `AppStore.saveChat` writes BOTH
+   * scalars back into its caller's record in place, and that caller can be the
+   * object retained here. Compensating for only the revision left the stamped
+   * `updatedAt` reading as drift, so the retained baseline was refused and
+   * every later delivery degraded to a full snapshot.
+   */
+  baselineUpdatedAt?: ChatRecord['updatedAt']
   inFlight?: InFlightChatUpdate
   pending?: PendingChatUpdate
   timer?: ReturnType<typeof setTimeout>
@@ -313,11 +324,20 @@ function toPatchBaseline(
 function retainedBaselineMatchesAcknowledged(
   acknowledged: CompactChatUpdateBaseline,
   baselineChat: ChatRecord,
-  baselineRevision: number | undefined
+  baselineRevision: number | undefined,
+  baselineUpdatedAt: ChatRecord['updatedAt'] | undefined
 ): boolean {
-  const comparable =
+  const stampedRevision =
     baselineRevision !== undefined && baselineChat.persistenceRevision !== baselineRevision
-      ? { ...baselineChat, persistenceRevision: baselineRevision }
+  const stampedUpdatedAt =
+    baselineUpdatedAt !== undefined && baselineChat.updatedAt !== baselineUpdatedAt
+  const comparable =
+    stampedRevision || stampedUpdatedAt
+      ? {
+          ...baselineChat,
+          ...(stampedRevision ? { persistenceRevision: baselineRevision } : {}),
+          ...(stampedUpdatedAt ? { updatedAt: baselineUpdatedAt } : {})
+        }
       : baselineChat
   return computeChatSubRevisions(comparable).recordHash === acknowledged.recordHash
 }
@@ -535,7 +555,8 @@ export class ChatUpdateDeliveryCoordinator {
       !retainedBaselineMatchesAcknowledged(
         state.acknowledged,
         state.baselineChat,
-        state.baselineRevision
+        state.baselineRevision,
+        state.baselineUpdatedAt
       )
     ) {
       return false
@@ -549,6 +570,7 @@ export class ChatUpdateDeliveryCoordinator {
       Number.isSafeInteger(persistenceRevision) && (persistenceRevision ?? -1) >= 0
         ? persistenceRevision
         : undefined
+    state.baselineUpdatedAt = chat.updatedAt
     state.acknowledged = {
       ...state.acknowledged,
       recordHash: contentSub.recordHash,
@@ -625,6 +647,7 @@ export class ChatUpdateDeliveryCoordinator {
         Number.isSafeInteger(ackedRevision) && (ackedRevision ?? -1) >= 0
           ? ackedRevision
           : undefined
+      state.baselineUpdatedAt = inFlight.hashedUpdatedAt
       if (ack.rendererEpoch) state.rendererEpoch = ack.rendererEpoch
       state.lastAccepted = {
         deliveryId: inFlight.deliveryId,
@@ -655,6 +678,7 @@ export class ChatUpdateDeliveryCoordinator {
       state.acknowledged = undefined
       state.baselineChat = undefined
       state.baselineRevision = undefined
+      state.baselineUpdatedAt = undefined
       state.lastAccepted = undefined
       // A changed renderer document must begin from a snapshot, but retain
       // its epoch so that snapshot's ACK becomes the new trusted baseline.
@@ -946,7 +970,8 @@ export class ChatUpdateDeliveryCoordinator {
         retainedBaselineMatchesAcknowledged(
           state.acknowledged,
           state.baselineChat,
-          state.baselineRevision
+          state.baselineRevision,
+          state.baselineUpdatedAt
         )
       ) {
         baseline = toPatchBaseline(state.acknowledged, state.baselineChat)
@@ -958,6 +983,7 @@ export class ChatUpdateDeliveryCoordinator {
         state.acknowledged = undefined
         state.baselineChat = undefined
         state.baselineRevision = undefined
+        state.baselineUpdatedAt = undefined
         state.lastAccepted = undefined
       }
     }
@@ -1077,6 +1103,7 @@ export class ChatUpdateDeliveryCoordinator {
       deliveryId,
       deliveryEpoch: state.deliveryEpoch,
       recordHash,
+      hashedUpdatedAt: hashSource.updatedAt,
       compactBaseline,
       deliveredChat,
       windowAnchorMessageId: projection.anchorMessageId
@@ -1104,6 +1131,7 @@ export class ChatUpdateDeliveryCoordinator {
           state.acknowledged = undefined
           state.baselineChat = undefined
           state.baselineRevision = undefined
+          state.baselineUpdatedAt = undefined
           state.lastAccepted = undefined
           state.consecutiveRejects += 1
           if (epochDelivery.kind === 'snapshot') {
@@ -1172,6 +1200,7 @@ export class ChatUpdateDeliveryCoordinator {
     state.baselineChat = undefined
     state.acknowledged = undefined
     state.baselineRevision = undefined
+    state.baselineUpdatedAt = undefined
     state.lastAccepted = undefined
     state.rendererEpoch = undefined
   }
