@@ -464,13 +464,17 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     state.completedEvents += 1
     if (entry.outcome === 'failed' || entry.value?.runPresent === false) {
       state.failures += 1
-    } else if (
-      entry.value?.ok !== true ||
-      entry.value.delegated === true ||
-      state.ctx.unsupported.length > entry.unsupportedBefore
-    ) {
+    } else if (entry.value?.ok !== true || entry.value.delegated === true) {
       state.unsupportedEvents += 1
     } else {
+      // `ok: true` with a grown annotation array is a SUCCESS that recorded a
+      // limitation, not an unsupported event. durability_soft_flush performs
+      // its prefix save and returns ok:true while noting that fixture replay
+      // cannot drive EnsembleOrchestrator. Counting that as unsupported binned
+      // the latency of a save that completed and was timed — 22 real samples
+      // per window — and ended the 120 s x 3 contract after window one, which
+      // is why no dual_run replay has ever recorded more than one window.
+      if (state.ctx.unsupported.length > entry.unsupportedBefore) state.annotatedEvents += 1
       state.applied += 1
       if (entry.apiCalls > 0) {
         state.latencies.push(entry.finishedAtMs - entry.startedAtMs)
@@ -529,6 +533,7 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     completedEvents: state.completedEvents,
     failedEvents: state.failures,
     unsupportedEvents: state.unsupportedEvents,
+    annotatedEvents: state.annotatedEvents,
     pendingEvents: [...pending].filter((entry) => entry.state === state).length,
     lateEvents: state.lateEvents,
     measuredSamples: state.latencies.length,
@@ -536,14 +541,19 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
   }))
   const elapsedMs = startedAtMs === null || endedAtMs === null ? null : endedAtMs - startedAtMs
   const failed = clockFailed || lanes.some((lane) => lane.failedEvents > 0)
-  const unsupported = lanes.some((lane) => lane.unsupportedEvents > 0)
+  // Deliberately broad: `window.unsupported` feeds validateRunEvidence,
+  // buildT2RunEvidence and the run status, so an annotated run keeps flagging
+  // itself unsupported and keeps failing eligibility exactly as before. Only
+  // the OUTCOME narrows, and only the outcome decides whether sampling stops.
+  const unsupported = lanes.some((lane) => lane.unsupportedEvents > 0 || lane.annotatedEvents > 0)
+  const blockingUnsupported = lanes.some((lane) => lane.unsupportedEvents > 0)
   const incomplete = lanes.some((lane) => lane.pendingEvents > 0)
   const censored =
     fenceReason === 'event_timeout' ||
     lanes.some((lane) => lane.completedEvents !== lane.plannedEvents || lane.lateEvents > 0)
   const outcome = failed
     ? 'failed'
-    : unsupported
+    : blockingUnsupported
       ? 'unsupported'
       : incomplete
         ? 'incomplete'
@@ -666,6 +676,7 @@ async function runConcurrentReplayLanes(options) {
         failures: 0,
         completedEvents: 0,
         unsupportedEvents: 0,
+        annotatedEvents: 0,
         lateEvents: 0,
         overlappedLightSamples: 0
       }))

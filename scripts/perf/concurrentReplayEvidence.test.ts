@@ -223,6 +223,57 @@ describe('qualified replay evidence', () => {
     assertIneligible(noSamples.run, beside.run)
   })
 
+  it('keeps a coverage annotation out of the event outcome, and out of the sample bin', async () => {
+    // RULING 2. `durability_soft_flush` performs its prefix save, times it, and
+    // returns ok:true while noting that fixture replay cannot drive
+    // EnsembleOrchestrator. That note is a COVERAGE annotation, not an event
+    // outcome, and conflating the two cost two separate things: the latency of
+    // a save that genuinely completed was binned, and the window was marked
+    // `unsupported`, which ended the 120s x 3 sampling contract after window
+    // one. No dual_run replay had ever produced more than a single window.
+    const annotated = lane()
+    annotated.chats[0].messages = [{ id: 'm1', role: 'user', content: 'x' }]
+    annotated.schedule.push({
+      kind: 'durability_soft_flush',
+      appChatId: 'light',
+      messageIndex: 1,
+      seq: 1
+    })
+    const result = await measured({ lanes: [annotated] })
+    const windows = result.run.evidence.windows
+
+    // The save is a success that carries a note, counted as both.
+    expect(windows[0].lanes[0].annotatedEvents).toBe(1)
+    expect(windows[0].lanes[0].unsupportedEvents).toBe(0)
+    // ...and its latency survives, which is the 22 samples per window that the
+    // conflation was throwing away.
+    expect(result.signals['light.applyLatencyMs'].count).toBeGreaterThan(0)
+
+    // The sampling contract runs to completion instead of stopping at one.
+    expect(windows).toHaveLength(3)
+    expect(windows.every((w) => w.outcome !== 'unsupported')).toBe(true)
+
+    // ELIGIBILITY IS UNCHANGED. The annotation still flags the run, still fails
+    // validation, still refuses to pair. Ruling 2 narrowed the outcome only.
+    expect(result.run.unsupported).toBe(true)
+    expect(result.evidenceEligible).toBe(false)
+    expect(validateRunEvidence(result.run).length).toBeGreaterThan(0)
+    expect(result.unsupported.length).toBeGreaterThan(0)
+  })
+
+  it('still ends sampling on a genuinely unsupported event', async () => {
+    // The counterpart to the test above, and the reason `blockingUnsupported`
+    // is a separate predicate rather than a relaxation of the old one: an
+    // event that did NOT happen must still stop the contract.
+    const broken = lane()
+    broken.schedule[0].kind = 'unknown-event'
+    const result = await measured({ lanes: [broken] })
+    expect(result.run.evidence.windows[0].lanes[0].unsupportedEvents).toBe(1)
+    expect(result.run.evidence.windows[0].lanes[0].annotatedEvents).toBe(0)
+    expect(result.run.evidence.windows[0].outcome).toBe('unsupported')
+    expect(result.run.evidence.windows).toHaveLength(1)
+  })
+
   it('requires observed light/heavy overlap in every beside repetition', async () => {
     const { alone } = await validPair()
     const sequential = await measured({ lanes: [lane(), lane('heavy')], maxInFlight: 1 })
