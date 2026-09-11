@@ -733,6 +733,40 @@ function createT2ProgressJournal(options) {
 }
 
 /**
+ * One half of a paired run, in the shape the report carries it.
+ *
+ * `pairRuns` refuses the pair receipt for ANY ineligible run, and that receipt
+ * was the only artifact carrying the light-alone half: `report.runEvidence` is
+ * built from the beside run, and `report.pairedRuns` carried roles and booleans
+ * only. So a censored run kept beside's coverage and signals and lost alone's
+ * entirely — and with it the light-alone vs light-beside delta, which is the
+ * whole point of pairing. Both halves are recorded here whatever pairRuns
+ * decides; `report.pairs` still means qualified, and nothing reads this as
+ * evidence.
+ *
+ * @param {object|null} result — a runConcurrentReplayLanes result
+ * @returns {object|null}
+ */
+function pairedRunRecord(result) {
+  if (!result || typeof result !== 'object' || !result.run) return null
+  const run = result.run
+  const evidence = run.evidence && typeof run.evidence === 'object' ? run.evidence : null
+  return {
+    pairingRole: run.role == null ? null : run.role,
+    windowMs: run.windowMs == null ? null : run.windowMs,
+    repetitions: run.repetitions == null ? null : run.repetitions,
+    status: evidence && evidence.status != null ? evidence.status : null,
+    failed: run.failed === true,
+    censored: run.censored === true,
+    incomplete: run.incomplete === true,
+    unsupported: run.unsupported === true,
+    evidenceEligible: result.evidenceEligible === true,
+    signals: run.signals && typeof run.signals === 'object' ? run.signals : null,
+    windows: evidence && Array.isArray(evidence.windows) ? evidence.windows : []
+  }
+}
+
+/**
  * The force/reap facts `terminateExactChild` returns, in the shape the report
  * and the progress journal carry them.
  *
@@ -2175,7 +2209,11 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       lightAloneRole: pairedReplayResult.alone.pairingRole,
       lightBesideRole: pairedReplayResult.beside.pairingRole,
       aloneEvidenceEligible: pairedReplayResult.alone.evidenceEligible,
-      besideEvidenceEligible: pairedReplayResult.beside.evidenceEligible
+      besideEvidenceEligible: pairedReplayResult.beside.evidenceEligible,
+      // Recorded whatever pairRuns decided: `pairs` is empty for any ineligible
+      // run, and it was the only artifact that carried the alone half.
+      lightAlone: pairedRunRecord(pairedReplayResult.alone),
+      lightBeside: pairedRunRecord(pairedReplayResult.beside)
     }
     report.pairs = pairs
     const cell = parseCellName(crossThreadCell)
@@ -2349,6 +2387,7 @@ module.exports = {
   collectT2HostSpanEvidence,
   createWindowedRateTracker,
   childTerminationRecord,
+  pairedRunRecord,
   parseArgs,
   runT2BaselineCli
 }

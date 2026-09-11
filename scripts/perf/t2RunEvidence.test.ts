@@ -13,7 +13,7 @@ const {
   RUN_EVIDENCE_VERSION
 } = require('./interferenceMatrix.cjs')
 const { FIXTURE_GENERATOR_VERSION, generatePerfFixture } = require('./fixtureGenerator.cjs')
-const { runT2BaselineCli } = require('./runT2Baseline.cjs')
+const { runT2BaselineCli, pairedRunRecord } = require('./runT2Baseline.cjs')
 
 const CELL = 'small/2/warm/codex_bridge_disabled/none'
 
@@ -431,6 +431,53 @@ describe('T2 paired-run wiring (Wall 2 G-X pairing)', () => {
     expect(validateRunEvidence(result.report.runEvidence)).toContain(
       'incomplete, overlapping or invalid observed window'
     )
+  })
+
+  it('keeps both halves of a refused pairing so the alone/beside delta stays derivable', async () => {
+    const result = await runT2BaselineCli(pairedArgs(), pairedOptions())
+    expect(result.ok).toBe(true)
+    // pairRuns refuses any ineligible run, so the pair receipt — the only other
+    // artifact that carried the light-alone run — is absent by design.
+    expect(result.report.pairs).toEqual([])
+    const { lightAlone, lightBeside } = result.report.pairedRuns
+    expect(lightAlone.pairingRole).toBe('light-alone')
+    expect(lightBeside.pairingRole).toBe('light-beside')
+    for (const half of [lightAlone, lightBeside]) {
+      expect(half.evidenceEligible).toBe(false)
+      expect(half.windows).toHaveLength(3)
+      const names = Object.keys(half.signals || {})
+      expect(names.length).toBeGreaterThan(0)
+      for (const name of names) {
+        expect(half.signals[name].count).toBeGreaterThan(0)
+        for (const percentile of ['p50', 'p95', 'p99']) {
+          expect(typeof half.signals[name][percentile]).toBe('number')
+        }
+      }
+      for (const window of half.windows) {
+        expect(window.lanes.length).toBeGreaterThan(0)
+        for (const lane of window.lanes) {
+          expect(typeof lane.chatId).toBe('string')
+          expect(lane.measuredSamples).toBeGreaterThan(0)
+        }
+      }
+    }
+    // The delta the pairing exists to produce, derived from the artifacts alone.
+    const signal = Object.keys(lightAlone.signals)[0]
+    expect(Number.isFinite(lightBeside.signals[signal].p50 - lightAlone.signals[signal].p50)).toBe(
+      true
+    )
+  })
+
+  it('records no half at all rather than an empty one', () => {
+    expect(pairedRunRecord(null)).toBeNull()
+    expect(pairedRunRecord({})).toBeNull()
+    expect(pairedRunRecord({ run: { role: 'light-alone' } })).toMatchObject({
+      pairingRole: 'light-alone',
+      censored: false,
+      evidenceEligible: false,
+      signals: null,
+      windows: []
+    })
   })
 
   it('implies windowed replay so sequential gap-declaring stays the default', async () => {
