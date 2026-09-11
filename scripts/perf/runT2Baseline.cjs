@@ -2142,6 +2142,25 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       report.hostSpans = hostSpanEvidence.record
 
       report.replayWindowedRate = windowedRate ? windowedRate.snapshot() : null
+
+      // Re-stamp before reporting. The first write happens 30-odd lines above,
+      // BEFORE the persistence and host-span samples — the two most expensive
+      // awaits in the phase. Attempt 5 recorded captureElapsedMs: 1554 for a
+      // capture that spent 298,446 ms inside one of them and still said
+      // captureDeadlineExceeded: false, so the artifact understated its own
+      // cost by two orders of magnitude and denied the overrun that produced
+      // it. hasCaptureDeadlineExpired() re-reads the clock, so a budget
+      // exhausted by a bounded await now flips the flag it was measured
+      // against. profilesCaptured is deliberately left as it was: the profiles
+      // genuinely were captured before the overrun, and a late sample does not
+      // retract them.
+      const captureOverran = hasCaptureDeadlineExpired()
+      report.captureDeadline.captureEndedAt = new Date(replayNowMs()).toISOString()
+      report.captureDeadline.captureElapsedMs = replayNowMs() - captureStartedAtMs
+      report.captureDeadline.captureDeadlineExceeded = captureOverran
+      report.captureDeadline.note = captureOverran
+        ? `Capture phase exceeded ${maxCapturePhaseMs}ms deadline — partial digests recorded; skipped: ${captureSkippedSteps.join(', ') || 'none'}`
+        : null
       setCapturePhase(
         'capture_complete',
         { captureDeadlineExceeded, captureElapsedMs: report.captureDeadline.captureElapsedMs },

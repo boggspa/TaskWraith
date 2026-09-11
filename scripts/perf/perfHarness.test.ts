@@ -3496,6 +3496,16 @@ describe('T9a runner wiring (the producer must actually be invoked)', () => {
     // sits outside it. Attempt 4 died on this one, unbounded, at 18m44s.
     expect(src).toContain('withinCaptureBudget')
     expect(src).toContain("'capture:persistence_stats'")
+    // ...and the cost of that await must reach the artifact. The record is
+    // first written before the sample runs, so it is re-stamped after it:
+    // attempt 5 reported captureElapsedMs 1554 for a 298,446 ms capture.
+    const firstWrite = src.search(/^\s*report\.captureDeadline = \{/m)
+    const sampleAt2 = src.search(/^\s*const statsResult = await withinCaptureBudget\(/m)
+    const reStamp = src.search(/^\s*report\.captureDeadline\.captureElapsedMs = /m)
+    expect(firstWrite).toBeGreaterThan(-1)
+    expect(sampleAt2).toBeGreaterThan(firstWrite)
+    expect(reStamp).toBeGreaterThan(sampleAt2)
+    expect(src).toContain('const captureOverran = hasCaptureDeadlineExpired()')
   })
 
   it('derives claimMetricsCollected instead of hardcoding false', () => {
