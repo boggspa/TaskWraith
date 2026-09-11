@@ -433,6 +433,21 @@ describe('T2 paired-run wiring (Wall 2 G-X pairing)', () => {
     )
   })
 
+  it('records why each window ended, so a short replay does not have to be inferred', async () => {
+    const result = await runT2BaselineCli(pairedArgs(), pairedOptions())
+    expect(result.ok).toBe(true)
+    const outcomes = result.report.windowedReplay.windowOutcomes
+    // Attempt 4 reported replayWindows: 1 against repetitions: 3 and left the
+    // cause to be inferred from an event count.
+    expect(outcomes).toHaveLength(result.report.windowedReplay.windows)
+    expect(outcomes.length).toBeGreaterThan(0)
+    for (const entry of outcomes) {
+      expect(typeof entry.outcome).toBe('string')
+      expect(entry.outcome.length).toBeGreaterThan(0)
+      expect(typeof entry.reason).toBe('string')
+    }
+  })
+
   it('keeps both halves of a refused pairing so the alone/beside delta stays derivable', async () => {
     const result = await runT2BaselineCli(pairedArgs(), pairedOptions())
     expect(result.ok).toBe(true)

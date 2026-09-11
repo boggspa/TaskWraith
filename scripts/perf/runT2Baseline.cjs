@@ -980,6 +980,13 @@ function summarizeWindowedReplay(result) {
     windows: windows.length,
     completedEvents,
     failedEvents,
+    // Why the replay stopped where it did. Attempt 4 reported replayWindows: 1
+    // against repetitions: 3 and left the cause to be inferred from an event
+    // count; the outcome and fence reason of each window say it outright.
+    outcomes: windows.map((window) => ({
+      outcome: window?.outcome ?? null,
+      reason: window?.reason ?? null
+    })),
     unsupported: Array.isArray(result?.unsupported) ? result.unsupported : []
   }
 }
@@ -1823,7 +1830,13 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             pairedRuns: Boolean(args.pairedRuns),
             replayWindows: windowedTotals.windows,
             replayRepetitions: MATRIX_SAMPLING.repetitions,
-            ...(aloneTotals == null ? {} : { aloneReplayWindows: aloneTotals.windows })
+            replayWindowOutcomes: windowedTotals.outcomes,
+            ...(aloneTotals == null
+              ? {}
+              : {
+                  aloneReplayWindows: aloneTotals.windows,
+                  aloneReplayWindowOutcomes: aloneTotals.outcomes
+                })
           },
           { log: true }
         )
@@ -2233,6 +2246,9 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       windowed: true,
       pairingRole: windowedReplayResult.pairingRole,
       windows: windowedTotals.windows,
+      // The durable copy of why the replay stopped where it did; the progress
+      // journal carries the same thing for a run that never reaches a report.
+      windowOutcomes: windowedTotals.outcomes,
       completedEvents: windowedTotals.completedEvents,
       failedEvents: windowedTotals.failedEvents,
       stallTimeoutMs: replayStallTimeoutMs,

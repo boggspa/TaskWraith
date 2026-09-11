@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { runConcurrentReplayLanes } = require('./concurrentReplayLanes.cjs')
+const { runConcurrentReplayLanes, drainBudgetMs } = require('./concurrentReplayLanes.cjs')
 const {
   assertPairedRunCompatibility,
   pairRuns,
@@ -408,6 +408,47 @@ describe('deadlines retain unresolved effect ownership', () => {
     expect(result.run.evidence.windows[0].outcome).toBe('censored')
     expect(result.run.incomplete).toBe(false)
     expect(result.run.censored).toBe(true)
+  })
+
+  it('drains for what is left of the event budget, not a fixed cleanup bound', async () => {
+    // Attempt 4: the real fixture's 27k-message save outlived the 1 s cleanup
+    // bound, so every window ended incomplete and the run stopped after one
+    // repetition — replayWindows 1 against repetitions 3. An effect still
+    // inside its own per-event budget is slow, not stuck.
+    vi.useFakeTimers()
+    const adapter = api()
+    const late = deferred<{ persistenceRevision: number }>()
+    adapter.saveChat.mockImplementationOnce(() => late.promise)
+    const pending = start({
+      api: adapter,
+      windowMs: 10,
+      cleanupTimeoutMs: 1,
+      eventTimeoutMs: 5000
+    })
+    await vi.advanceTimersByTimeAsync(10)
+    // Far past the cleanup bound the old drain used, and far inside the event
+    // budget the save was actually promised.
+    await vi.advanceTimersByTimeAsync(900)
+    late.resolve({ persistenceRevision: 1 })
+    await vi.runAllTimersAsync()
+    const result = await pending
+    expect(result.run.evidence.windows).toHaveLength(3)
+    expect(result.run.evidence.windows[0].lanes[0].pendingEvents).toBe(0)
+    expect(result.run.incomplete).toBe(false)
+  })
+
+  it('derives the drain budget from what the event has left, never below cleanup', () => {
+    const pending = new Set([{ startedAtMs: 40 }, { startedAtMs: 10 }])
+    // The drain has to cover the SLOWEST effect that is still legitimate, so it
+    // takes the largest remainder: the entry started at 40 has spent 60 of its
+    // 5000 and has 4940 left, against 4910 for the one started at 10.
+    expect(drainBudgetMs(pending, 5000, 100, 1)).toBe(4940)
+    // Never shorter than the cleanup bound...
+    expect(drainBudgetMs(pending, 5, 100, 250)).toBe(250)
+    // ...and with no per-event budget there is nothing to derive from.
+    expect(drainBudgetMs(pending, undefined, 100, 250)).toBe(250)
+    // An unusable clock must not produce NaN.
+    expect(drainBudgetMs(new Set([{ startedAtMs: null }]), 5000, null, 1)).toBe(5000)
   })
 
   it('keeps raw effects owned after a per-event timeout and observes late rejection safely', async () => {

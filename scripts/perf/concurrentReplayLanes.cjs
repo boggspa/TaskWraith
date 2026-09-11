@@ -220,6 +220,35 @@ function boundedCleanup(hook, pending, reason, timers, timeoutMs) {
 }
 
 /**
+ * How long the post-fence drain may wait.
+ *
+ * A fixed bound is the wrong shape. Measured on the real T2 fixture, a
+ * 27k-message saveChat outlives a 1 s cleanup bound, so every window ended
+ * `incomplete` and the run stopped after one repetition — attempt 4 reported
+ * replayWindows 1 and aloneReplayWindows 1 against repetitions 3, reproducing
+ * the very shape the drain was added to remove. The synthetic probe passed
+ * because its saves settle in microseconds.
+ *
+ * An effect still inside its OWN per-event budget is slow, not stuck, so the
+ * drain inherits whatever is left of that budget. Past it the event would have
+ * tripped `event_timeout` anyway, and leaving the window incomplete is then the
+ * honest outcome rather than an impatient one. With no per-event budget
+ * configured there is nothing to derive from and the cleanup bound stands.
+ */
+function drainBudgetMs(pending, eventTimeoutMs, deadlineAtMs, cleanupTimeoutMs) {
+  if (eventTimeoutMs === undefined) return cleanupTimeoutMs
+  let longest = 0
+  for (const entry of pending) {
+    const spent =
+      Number.isFinite(deadlineAtMs) && Number.isFinite(entry.startedAtMs)
+        ? Math.max(0, deadlineAtMs - entry.startedAtMs)
+        : 0
+    longest = Math.max(longest, eventTimeoutMs - spent)
+  }
+  return Math.max(cleanupTimeoutMs, longest)
+}
+
+/**
  * Wait, bounded, for effects still in flight when the fence fired.
  *
  * The next repetition replays the SAME chats from index 0, so an outstanding
@@ -483,7 +512,11 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
   }
   // The window ended at the fence; the drain below must not backdate into it.
   const endedAtMs = readTime()
-  await boundedSettle(pending, timers, cleanupTimeoutMs)
+  await boundedSettle(
+    pending,
+    timers,
+    drainBudgetMs(pending, options.eventTimeoutMs, deadlineAtMs, cleanupTimeoutMs)
+  )
   // Keep all completions observed at the fence, including results that settled
   // together before Promise.race resumed. Late or unresolved effects are censored.
   for (const entry of [...pending]) if (entry.settled) consume(entry)
@@ -827,6 +860,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  drainBudgetMs,
   LANE_ROLES,
   percentileSummary,
   runConcurrentReplayLanes,
