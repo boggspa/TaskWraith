@@ -91,7 +91,7 @@ import {
 import { taskWraithMcpAdvertisedToolNamesForProfile } from '../mcp/McpToolProfiles'
 import { grokAcpEnabled, grokReadOnlyMcpAdvertiseEnabled } from '../grokGate'
 import { shouldAdvertiseTaskWraithMcpToGrok } from '../grok/GrokMcpAdvertise'
-import { normalizeKimiReasoningEffort } from '../providers/StaticProviderModels'
+import { KIMI_K28_MODEL_ID, normalizeKimiReasoningEffort } from '../providers/StaticProviderModels'
 import { isKimiAcpProductionPosture } from '../../shared/kimiAcpPosture'
 import {
   isExplicitUltraTaskSelection,
@@ -1705,8 +1705,11 @@ export function getDefaultModelForProvider(provider: ProviderId): string {
       return 'gpt-5.5'
     case 'claude':
       return 'claude-sonnet-5'
+    // Read the constant, not a literal: this arm and the picker default are
+    // pinned against each other by providerFallthroughGuards, and a literal
+    // here silently kept the retired combined id when the row split.
     case 'kimi':
-      return 'kimi-k2.7-code'
+      return KIMI_K28_MODEL_ID
     case 'grok':
       return GROK_46_MODEL_ID
     case 'cursor':

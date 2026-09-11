@@ -16,6 +16,9 @@ import {
   resolveDevinVariantId
 } from './devinModelCatalog'
 
+/** Families the Devin CLI lists with no `cost_summary` at all. */
+const DEVIN_UNPRICED_FAMILY_IDS = new Set(['swe-2'])
+
 describe('devinModelCatalog', () => {
   it('leads with the Cognition default and never offers a cli-default sentinel', () => {
     expect(DEVIN_DEFAULT_MODEL_ID).toBe('swe-1-6-slow')
@@ -38,7 +41,19 @@ describe('devinModelCatalog', () => {
       expect(family.label.trim().length, family.id).toBeGreaterThan(0)
       expect(family.variants.length, family.id).toBeGreaterThan(0)
       expect(family.defaultEffort, family.id).toBe(family.variants[0]?.effort ?? null)
-      expect(family.pricing.output, family.id).toBeGreaterThan(0)
+      // Devin publishes a `cost_summary` for every variant except SWE-2's, so
+      // an absent price is a recorded fact about one family rather than a
+      // transcription gap. Pinning the set both ways means a newly unpriced
+      // family reds here instead of silently dropping its price clause, and a
+      // price Devin later publishes for SWE-2 reds until it is transcribed.
+      if (DEVIN_UNPRICED_FAMILY_IDS.has(family.id)) {
+        expect(family.pricing, family.id).toBeUndefined()
+        for (const variant of family.variants) {
+          expect(variant.pricing, variant.uid).toBeUndefined()
+        }
+      } else {
+        expect(family.pricing?.output, family.id).toBeGreaterThan(0)
+      }
       expect(DEVIN_MODEL_LABELS[family.id]).toBe(family.label)
       for (const variant of family.variants) {
         expect(variant.uid, family.id).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)

@@ -106,22 +106,36 @@ describe('buildParticipantProviderModelPatch', () => {
     ).toMatchObject({ model: 'composer-2.5-fast', fastModeEnabled: true })
   })
 
-  it('preserves a selected Kimi HighSpeed tier across its K2.7 model row', () => {
+  it('reaches Kimi Highspeed by its row and clears the retired Fast tier', () => {
+    // Highspeed became its own picker row on 2026-09-11. A seat saved before
+    // that still carries fastModeEnabled/serviceTier; both must clear, or the
+    // stale tier would re-route a run off whichever row the picker is showing.
     const source = participant({
       provider: 'kimi',
-      model: 'kimi-k2.7-code',
+      model: 'kimi-k2.8-preview',
       fastModeEnabled: true,
       serviceTier: 'fast',
       thinkingEnabled: true
     })
 
-    const patch = buildParticipantProviderModelPatch(source, 'kimi', 'kimi-k2.7-code')
-
-    expect(patch).toMatchObject({
-      model: 'kimi-k2.7-code',
-      fastModeEnabled: true,
-      serviceTier: 'fast',
+    expect(
+      buildParticipantProviderModelPatch(source, 'kimi', 'kimi-k2.7-code-highspeed')
+    ).toMatchObject({
+      model: 'kimi-k2.7-code-highspeed',
+      reasoningEffort: 'on',
+      fastModeEnabled: false,
+      serviceTier: 'standard',
       thinkingEnabled: true
+    })
+
+    // Staying put clears the stale flag too, and keeps K2.8's own ladder.
+    expect(
+      buildParticipantProviderModelPatch(source, 'kimi', 'kimi-k2.8-preview')
+    ).toMatchObject({
+      model: 'kimi-k2.8-preview',
+      reasoningEffort: 'max',
+      fastModeEnabled: false,
+      serviceTier: 'standard'
     })
   })
 
@@ -148,16 +162,18 @@ describe('buildParticipantProviderModelPatch', () => {
     })
   })
 
-  it('clears K2.7 UltraTask when the fixed Thinking stop is selected', () => {
+  it('clears Highspeed UltraTask when the fixed Thinking stop is selected', () => {
+    // Highspeed is the one Kimi route whose thinking is a flag rather than an
+    // effort, so its `on` stop carries no reasoningEffort at all.
     expect(
       buildParticipantReasoningSelectionPatch(
         participant({
           provider: 'kimi',
-          model: 'kimi-k2.7-code',
+          model: 'kimi-k2.7-code-highspeed',
           reasoningEffort: 'ultraTask',
           thinkingEnabled: true
         }),
-        'kimi-k2.7-code',
+        'kimi-k2.7-code-highspeed',
         'on'
       )
     ).toEqual({ reasoningEffort: undefined, thinkingEnabled: true })
@@ -272,7 +288,7 @@ describe('ParticipantPickerCluster', () => {
         participant={
           participant({
             provider: 'kimi',
-            model: 'kimi-k2.7-code',
+            model: 'kimi-k2.8-preview',
             thinkingEnabled: true
           })
         }
@@ -285,7 +301,7 @@ describe('ParticipantPickerCluster', () => {
     )
 
     expect(html).toContain('Kimi')
-    expect(html).toContain('K2.7 Coding')
+    expect(html).toContain('K2.8 Preview')
     expect(html).toContain('data-composer-control="permission"')
   })
 
@@ -369,13 +385,14 @@ describe('ParticipantPickerCluster', () => {
     expect(html).toContain('composer-combined-picker-trigger-suffix">Medium</span>')
   })
 
-  it('marks a HighSpeed Kimi participant as Fast while retaining the K2.7 model row', () => {
+  it('renders the Kimi Highspeed row without a Fast pill', () => {
     const html = renderToStaticMarkup(
       <ParticipantPickerCluster
         participant={
           participant({
             provider: 'kimi',
-            model: 'kimi-k2.7-code',
+            model: 'kimi-k2.7-code-highspeed',
+            // A seat saved before the split still carries the retired flag.
             fastModeEnabled: true,
             serviceTier: 'fast',
             thinkingEnabled: true
@@ -388,8 +405,28 @@ describe('ParticipantPickerCluster', () => {
       />
     )
 
-    expect(html).toContain('data-fast-mode-active="true"')
-    expect(html).toContain('K2.7 Coding')
+    // No Kimi row is Fast-capable since Highspeed became a row of its own, so
+    // the pill must stay dark even for a seat still holding the stale flag —
+    // otherwise it advertises a tier that no longer changes the dispatch.
+    expect(html).toContain('K2.7 Code Highspeed')
+    expect(html).not.toContain('data-fast-mode-active="true"')
+    // Guard against a vacuous pass: a Fast-capable provider still lights it.
+    const cursorHtml = renderToStaticMarkup(
+      <ParticipantPickerCluster
+        participant={
+          participant({
+            provider: 'cursor',
+            model: 'composer-2.5-fast',
+            fastModeEnabled: true
+          })
+        }
+        composerStyle="default"
+        grokAvailable
+        cursorAvailable
+        onPatch={() => undefined}
+      />
+    )
+    expect(cursorHtml).toContain('data-fast-mode-active="true"')
   })
 
   it('passes K3 Max to the reasoning ladder instead of its legacy thinking flag', () => {

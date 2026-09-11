@@ -2,10 +2,11 @@
  * Devin model catalogue — the model families the Devin CLI itself enumerates,
  * each with the CLI's own label, list price, and reasoning variants.
  *
- * Provenance: `devin models list --format json` from Devin CLI 3000.6.7
- * (260a97c8), retrieved 2026-09-01 on a signed-in self-serve seat. Every
- * variant `uid` below is a `model_uid` from that output — the exact value
- * `devin acp --model <uid>` receives — and every label is the CLI's own.
+ * Provenance: `devin models list --format json` from Devin CLI 3000.6.14
+ * (18033302), retrieved 2026-09-11 on a signed-in self-serve seat; first
+ * generated from 3000.6.7 (260a97c8) on 2026-09-01. Every variant `uid` below
+ * is a `model_uid` from that output — the exact value `devin acp --model <uid>`
+ * receives — and every label is the CLI's own.
  *
  * TaskWraith offers ONE row per family (the family id) and drives the
  * reasoning level through its ordinary effort control; resolveDevinVariantId
@@ -76,6 +77,21 @@ export interface DevinModelPricing {
   readonly output: number
 }
 
+/**
+ * Absent when the CLI lists the variant with NO `cost_summary` at all.
+ *
+ * This is not a gap in the transcription: as of 3000.6.14, SWE-2 is the only
+ * family in the whole 47-family / 208-variant list that Devin publishes without
+ * a price, and every other curated variant carries one. Recording a plausible
+ * figure — the SWE base rate, say — would put a number TaskWraith invented in
+ * front of the user, so the field stays absent and the picker description omits
+ * the price clause instead.
+ *
+ * Nothing bills from this: `BAKED_IN_RATES.devin` is deliberately empty because
+ * Devin meters ACUs on a subscription rather than per token. These figures are
+ * the CLI's own list prices, carried for display and comparison only.
+ */
+
 export interface DevinModelVariant {
   /** Exact `model_uid` — the value passed to `devin acp --model`. */
   readonly uid: string
@@ -83,7 +99,8 @@ export interface DevinModelVariant {
   readonly label: string
   /** The reasoning level this variant pins; null for single-variant families. */
   readonly effort: DevinReasoningEffort | null
-  readonly pricing: DevinModelPricing
+  /** Omitted when the CLI publishes no `cost_summary` for this variant. */
+  readonly pricing?: DevinModelPricing
   readonly isNew?: true
   readonly isBeta?: true
 }
@@ -102,8 +119,8 @@ export interface DevinModelFamily {
   readonly variants: readonly DevinModelVariant[]
   /** Reasoning level of the family default variant; null when there is no axis. */
   readonly defaultEffort: DevinReasoningEffort | null
-  /** List price of the family default variant. */
-  readonly pricing: DevinModelPricing
+  /** List price of the family default variant; omitted when Devin publishes none. */
+  readonly pricing?: DevinModelPricing
   readonly isNew?: true
   readonly isBeta?: true
 }
@@ -137,6 +154,43 @@ export const DEVIN_MODEL_CATALOG: readonly DevinModelFamily[] = [
     pricing: { input: 0.5, cachedInput: 0.2, output: 2.5 }
   },
   {
+    // SWE-2 (CLI 3000.6.14) — Cognition's newest, and the family that now owns
+    // the bare `swe` alias upstream; it moved off SWE-1.7 Lightning, which the
+    // CLI now lists with no aliases at all.
+    //
+    // Devin lists it WITHOUT a `cost_summary` — the only family in the whole
+    // list without one — so `pricing` is deliberately absent rather than
+    // guessed. It is also a paid model: a free plan may still select only
+    // SWE-1.6 Slow, so DEVIN_FREE_PLAN_MODEL_IDS needs no change and a free
+    // seat never sees this row (shared/devinPlanAccess.ts).
+    id: 'swe-2',
+    label: 'SWE-2',
+    familySlug: 'swe-2',
+    aliases: ['swe'],
+    vendor: 'Cognition',
+    variants: [
+      {
+        uid: 'swe-2-high',
+        label: 'SWE-2 High',
+        effort: 'high'
+      },
+      {
+        uid: 'swe-2-medium',
+        label: 'SWE-2 Medium',
+        effort: 'medium'
+      },
+      {
+        uid: 'swe-2-max',
+        label: 'SWE-2 Max',
+        effort: 'max'
+      }
+    ],
+    // High leads the CLI's own variant order, so it is the level a bare
+    // `--model swe-2` resolves to — NOT Max, which is where the other
+    // Cognition ladders default.
+    defaultEffort: 'high'
+  },
+  {
     id: 'swe-1-7',
     label: 'SWE-1.7',
     familySlug: 'swe-1.7',
@@ -163,7 +217,8 @@ export const DEVIN_MODEL_CATALOG: readonly DevinModelFamily[] = [
     id: 'swe-1-7-lightning',
     label: 'SWE-1.7 Lightning',
     familySlug: 'swe-1.7-lightning',
-    aliases: ['swe'],
+    // `swe` moved to SWE-2 in CLI 3000.6.14; this family now lists none.
+    aliases: [],
     vendor: 'Cognition',
     variants: [
       {
@@ -1009,10 +1064,15 @@ function formatUsd(value: number): string {
 
 /** Picker/catalogue description: vendor and the CLI's list price for this seat. */
 export function devinModelDescription(family: DevinModelFamily): string {
-  const parts = [
-    family.vendor === 'Cognition' ? 'Cognition' : `${family.vendor} via Devin`,
-    `${formatUsd(family.pricing.input)} in / ${formatUsd(family.pricing.output)} out per 1M tokens`
-  ]
+  const parts = [family.vendor === 'Cognition' ? 'Cognition' : `${family.vendor} via Devin`]
+  // A family Devin publishes no price for says so, rather than silently losing
+  // the clause every other row carries — and rather than quoting a rate
+  // TaskWraith invented to fill the gap.
+  parts.push(
+    family.pricing
+      ? `${formatUsd(family.pricing.input)} in / ${formatUsd(family.pricing.output)} out per 1M tokens`
+      : 'list price not published'
+  )
   if (family.isNew) parts.push('new')
   if (family.isBeta) parts.push('beta')
   return parts.join(' · ')

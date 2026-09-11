@@ -3155,6 +3155,22 @@
 .welcome-usage-model-dot.provider-xiaomi,
 .welcome-usage-model-meter-fill.provider-xiaomi,
 .welcome-usage-bar-segment.provider-xiaomi { color: var(--provider-xiaomi-color); }
+/* Pi sub-provider brands. This block is a hand-maintained allowlist that
+ * WelcomeUsageDashboard.test derives from PI_UPSTREAM_BRANDS, so a sub-provider
+ * added without its triplet here reds that test and, until then, paints its
+ * dot the default blue and its meter near-white. */
+.welcome-usage-model-dot.provider-tencent,
+.welcome-usage-model-meter-fill.provider-tencent,
+.welcome-usage-bar-segment.provider-tencent { color: var(--provider-tencent-color); }
+.welcome-usage-model-dot.provider-inception,
+.welcome-usage-model-meter-fill.provider-inception,
+.welcome-usage-bar-segment.provider-inception { color: var(--provider-inception-color); }
+.welcome-usage-model-dot.provider-nexagi,
+.welcome-usage-model-meter-fill.provider-nexagi,
+.welcome-usage-bar-segment.provider-nexagi { color: var(--provider-nexagi-color); }
+.welcome-usage-model-dot.provider-sakana,
+.welcome-usage-model-meter-fill.provider-sakana,
+.welcome-usage-bar-segment.provider-sakana { color: var(--provider-sakana-color); }
 
 [data-reduce-transparency="true"] .welcome-usage-dashboard {
   background: color-mix(in srgb, var(--panel-bg-solid) 86%, var(--accent) 6%);

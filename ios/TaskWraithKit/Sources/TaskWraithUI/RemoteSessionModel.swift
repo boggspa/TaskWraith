@@ -2799,7 +2799,7 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-09-11","kind":"addition","title":"New Additions","body":"Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-09-11-2","kind":"addition","title":"New Additions","body":"Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"kimi","label":"Kimi","models":[
               {"name":"K2.8 Preview","blurb":"Moonshot's newest coding model, on the same model id - 1M context, Low, High, or Max thinking."},
               {"name":"K2.7 Code Highspeed","blurb":"The low-latency K2.7 route, now its own row instead of a Fast toggle - 256K, always-on thinking."}
@@ -2811,6 +2811,7 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Fable 5.1","blurb":"Anthropic's newest Fable — 1M context, adaptive thinking, the full effort ladder. Fable 5 moves to Legacy."}
             ]},
             {"provider":"devin","label":"Devin","models":[
+              {"name":"SWE-2","blurb":"Cognition's newest coding model - Medium, High, or Max effort. Paid plans; Devin marks it Pro."},
               {"name":"SWE-1.6 Slow","blurb":"The seat default — Cognition's own coding model, $0.50/$2.50 per Mtok."},
               {"name":"SWE-1.6 · SWE-1.6 Fast","blurb":"The rest of the SWE-1.6 generation at the same $0.50/$2.50 per Mtok."},
               {"name":"SWE-1.7 · SWE-1.7 Lightning","blurb":"Cognition's newest coding models — Medium or Max on the effort slider, $0.50/$2.50 and $2.50/$12.50 per Mtok."}

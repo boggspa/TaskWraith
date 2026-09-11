@@ -836,9 +836,23 @@ describe('EnsembleParticipantsAboveRow', () => {
         model: 'composer-2.5',
         fastModeEnabled: false
       })
+      // The seat default is the standard route under its current name; it
+      // carries K3's Low/High/Max axis and defaults to Max, not the fixed `on`
+      // the retired combined row had.
       expect(createEnsembleParticipantAddConfiguration('kimi')).toMatchObject({
         provider: 'kimi',
-        model: 'kimi-k2.7-code',
+        model: 'kimi-k2.8-preview',
+        fastModeEnabled: false,
+        thinkingEnabled: true,
+        reasoningEffort: 'max',
+        serviceTier: 'standard'
+      })
+      // Highspeed is the one Kimi row left on a fixed thinking stop.
+      expect(
+        createEnsembleParticipantAddConfiguration('kimi', 'kimi-k2.7-code-highspeed')
+      ).toMatchObject({
+        provider: 'kimi',
+        model: 'kimi-k2.7-code-highspeed',
         fastModeEnabled: false,
         thinkingEnabled: true,
         reasoningEffort: 'on',

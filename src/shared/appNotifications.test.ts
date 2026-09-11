@@ -197,12 +197,19 @@ describe('notification registry', () => {
     expect(claude?.models[0]?.blurb).toMatch(/1M context.*adaptive thinking.*Legacy/i)
     const devin = groups.find((g) => g.provider === 'devin')
     expect(devin?.models.map((m) => m.name)).toEqual([
+      'SWE-2',
       'SWE-1.6 Slow',
       'SWE-1.6 · SWE-1.6 Fast',
       'SWE-1.7 · SWE-1.7 Lightning'
     ])
-    expect(devin?.models[0]?.blurb).toMatch(/seat default/i)
-    expect(devin?.models[2]?.blurb).toMatch(/effort slider/i)
+    // SWE-2 leads: it is Cognition's newest and the reason for this refresh.
+    // Its blurb says the plan requirement because Devin badges it Pro and the
+    // free-plan gate hides it, so a free seat would otherwise see it announced
+    // and never find the row.
+    expect(devin?.models[0]?.blurb).toMatch(/Medium, High, or Max/i)
+    expect(devin?.models[0]?.blurb).toMatch(/Pro/)
+    expect(devin?.models[1]?.blurb).toMatch(/seat default/i)
+    expect(devin?.models[3]?.blurb).toMatch(/effort slider/i)
     for (const model of devin?.models ?? []) {
       expect(model.name).not.toMatch(/cli default/i)
     }

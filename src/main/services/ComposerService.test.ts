@@ -913,7 +913,9 @@ describe('ComposerService', () => {
 
   it('defaults Kimi thinking to true from provider metadata defaults', async () => {
     const payload = await compose({ provider: 'kimi' }, { selectedModelType: undefined })
-    expect(payload.model).toBe('kimi-k2.7-code')
+    // A model-less run seeds main's own default, which must be the same row the
+    // picker marks isDefault — providerFallthroughGuards pins the pair.
+    expect(payload.model).toBe('kimi-k2.8-preview')
     expect(payload.kimiThinking).toBe(true)
     expect(payload.serviceTier).toBe('standard')
   })

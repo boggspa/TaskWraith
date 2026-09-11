@@ -428,7 +428,7 @@ describe('buildRemoteFirstLaunchState', () => {
       newAdditions?.groups?.find((group) => group.provider === 'claude')?.models[0]?.name
     ).toBe('Fable 5.1')
     expect(newAdditions?.groups?.find((group) => group.provider === 'devin')?.models[0]?.name).toBe(
-      'SWE-1.6 Slow'
+      'SWE-2'
     )
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'antigravity')?.models[0]?.name

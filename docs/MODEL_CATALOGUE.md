@@ -243,10 +243,11 @@ llama-server.
 | Model | Vendor | Reasoning (default in bold) | List price (in / out per 1M tokens) | Notes |
 | --- | --- | --- | --- | --- |
 | **SWE-1.6 Slow** `swe-1-6-slow` **(Default)** | Cognition | — | $0.5 / $2.5 | Seat default. Free-plan Devin accounts are restricted to this model. |
+| **SWE-2** `swe-2` | Cognition | Medium · **High** · Max | not published | Cognition's newest, added in CLI 3000.6.14. The ONLY family Devin lists with no `cost_summary`, so TaskWraith records no price rather than guessing one; the picker says "list price not published". Devin's own picker badges it **Pro**, and the free-plan gate already hides it. Defaults to **High**, not Max like the other Cognition ladders. `swe` alias resolves here. |
 | **SWE-1.6** `swe-1-6` | Cognition | — | $0.5 / $2.5 | — |
 | **SWE-1.6 Fast** `swe-1-6-fast` | Cognition | — | $0.5 / $2.5 | — |
 | **SWE-1.7** `swe-1-7` | Cognition | Medium · **Max** | $0.5 / $2.5 | The family the CLI resolves a bare `swe-1.7` to |
-| **SWE-1.7 Lightning** `swe-1-7-lightning` | Cognition | Medium · **Max** | $2.5 / $12.5 | `swe` alias resolves here |
+| **SWE-1.7 Lightning** `swe-1-7-lightning` | Cognition | Medium · **Max** | $2.5 / $12.5 | Held the `swe` alias until 3000.6.14 moved it to SWE-2; the CLI now lists this family with no aliases |
 | **Adaptive** `adaptive` | Cognition | — | $0.5 / $2 | Cognition's model router; enterprise admins must enable it |
 | **Claude Fable 5.1** `claude-fable-5-1` | Anthropic | Low · **Medium** · High · Extra High · Max | $10 / $50 | new |
 | **Claude Opus 5** `claude-opus-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $5 / $25 | `opus` alias resolves here |
