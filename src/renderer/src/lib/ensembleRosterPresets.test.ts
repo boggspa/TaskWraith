@@ -43,7 +43,9 @@ import {
   listEnsembleRosterPresets,
   materializeParticipantsFromPreset,
   materializeParticipantsFromPresetWithBossman,
+  overwriteEnsembleRosterPresetFromConfig,
   previewEnsembleRosterPresetsFromJson,
+  saveEnsembleRosterPreset,
   saveEnsembleRosterPresetFromParticipants,
   seedDefaultEnsembleRosterPresets,
   serializeEnsembleRosterPresetsForExport,
@@ -623,5 +625,92 @@ describe('bridge preset save carries stageRole (spike 4 iOS parity)', () => {
 
     expect(preset.participants.filter((participant) => participant.isBossman)).toHaveLength(1)
     expect(preset.participants.filter((participant) => participant.isSecondInCommand)).toHaveLength(3)
+  })
+})
+
+describe('ensembleRosterPresets — Save must not fail silently', () => {
+  it('saves a roster whose chat never stored a participant cap', () => {
+    const ensemble = sampleEnsemble()
+    delete (ensemble as { maxParticipants?: number }).maxParticipants
+    const built = buildEnsembleRosterPresetFromConfig('Capless', ensemble, 500)
+
+    expect(Number.isInteger(built.maxParticipants)).toBe(true)
+    expect(() => upsertEnsembleRosterPreset(built)).not.toThrow()
+    expect(listEnsembleRosterPresets().map((preset) => preset.name)).toContain('Capless')
+  })
+
+  it('saves a roster whose stored cap is fractional', () => {
+    const built = buildEnsembleRosterPresetFromConfig(
+      'Fractional',
+      { ...sampleEnsemble(), maxParticipants: 6.5 },
+      501
+    )
+
+    expect(Number.isInteger(built.maxParticipants)).toBe(true)
+    expect(() => upsertEnsembleRosterPreset(built)).not.toThrow()
+  })
+
+  it('never narrows the stored cap below the roster it is snapshotting', () => {
+    const built = buildEnsembleRosterPresetFromConfig(
+      'Tight',
+      { ...sampleEnsemble(), maxParticipants: 1 },
+      502
+    )
+
+    expect(built.maxParticipants).toBeGreaterThanOrEqual(built.participants.length)
+    expect(() => upsertEnsembleRosterPreset(built)).not.toThrow()
+  })
+})
+
+describe('overwriteEnsembleRosterPresetFromConfig', () => {
+  it('overwrites in place, keeping the target identity', () => {
+    const saved = saveEnsembleRosterPreset('Maxus', sampleEnsemble())
+
+    const outcome = overwriteEnsembleRosterPresetFromConfig(
+      saved,
+      { ...sampleEnsemble(), maxContinuationHops: 64 },
+      900
+    )
+
+    expect(outcome.ok).toBe(true)
+    const stored = listEnsembleRosterPresets()
+    expect(stored).toHaveLength(1)
+    expect(stored[0].id).toBe(saved.id)
+    expect(stored[0].name).toBe('Maxus')
+    expect(stored[0].createdAt).toBe(saved.createdAt)
+    expect(stored[0].maxContinuationHops).toBe(64)
+  })
+
+  it('reports a storage refusal instead of throwing it at the click handler', () => {
+    const saved = saveEnsembleRosterPreset('Maxus', sampleEnsemble())
+    const restore = fake.localStorage.setItem
+    fake.localStorage.setItem = (): void => {
+      const error = new Error('The quota has been exceeded.') as Error & { name: string }
+      error.name = 'QuotaExceededError'
+      throw error
+    }
+
+    let outcome: ReturnType<typeof overwriteEnsembleRosterPresetFromConfig>
+    try {
+      outcome = overwriteEnsembleRosterPresetFromConfig(saved, sampleEnsemble(), 901)
+    } finally {
+      fake.localStorage.setItem = restore
+    }
+
+    expect(outcome.ok).toBe(false)
+    expect(outcome.ok === false && outcome.message).toMatch(/storage space/i)
+  })
+
+  it('reports an invalid roster instead of throwing it at the click handler', () => {
+    const saved = saveEnsembleRosterPreset('Maxus', sampleEnsemble())
+
+    const outcome = overwriteEnsembleRosterPresetFromConfig(
+      saved,
+      { ...sampleEnsemble(), participants: [] },
+      902
+    )
+
+    expect(outcome.ok).toBe(false)
+    expect(outcome.ok === false && outcome.message.length).toBeGreaterThan(0)
   })
 })

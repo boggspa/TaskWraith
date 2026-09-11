@@ -5,10 +5,10 @@ import {
   buildEnsembleRosterPresetFromConfig,
   deleteEnsembleRosterPreset,
   listEnsembleRosterPresets,
+  overwriteEnsembleRosterPresetFromConfig,
   renameEnsembleRosterPreset,
   saveEnsembleRosterPreset,
   subscribeEnsembleRosterPresets,
-  upsertEnsembleRosterPreset,
   type EnsembleRosterParticipantSnapshot,
   type EnsembleRosterPreset
 } from '../lib/ensembleRosterPresets'
@@ -188,6 +188,9 @@ export function EnsembleRosterPresetPicker({
 }: EnsembleRosterPresetPickerProps): React.JSX.Element | null {
   const [presets, setPresets] = useState<EnsembleRosterPreset[]>(() => listEnsembleRosterPresets())
   const [popoverOpen, setPopoverOpen] = useState(false)
+  // A Save refusal keeps the popover open and says why. Before this the throw
+  // escaped the click handler: nothing persisted and nothing was shown.
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [popoverPosition, setPopoverPosition] = useState<{ left: number; top: number } | null>(null)
   const [presetNameDialog, setPresetNameDialog] = useState<PresetNameDialogState | null>(null)
   const [pendingPresetName, setPendingPresetName] = useState<string | null>(null)
@@ -213,6 +216,10 @@ export function EnsembleRosterPresetPicker({
   useEffect(() => {
     if (!disabled) setPendingPresetName(null)
   }, [disabled])
+
+  useEffect(() => {
+    if (popoverOpen) setSaveError(null)
+  }, [popoverOpen])
 
   const rosterSelection = rosterPresetSelectionForEnsemble(ensemble, presets)
   const activePreset = rosterSelection.preset
@@ -331,14 +338,16 @@ export function EnsembleRosterPresetPicker({
       handleSaveAsCurrent()
       return
     }
-    const next = {
-      ...buildEnsembleRosterPresetFromConfig(target.name, ensemble, Date.now()),
-      id: target.id,
-      createdAt: target.createdAt,
-      name: target.name
+    const outcome = overwriteEnsembleRosterPresetFromConfig(target, ensemble)
+    if (!outcome.ok) {
+      // Stay open. A closed popover would read as a successful save, which is
+      // exactly how this failure went unnoticed.
+      setSaveError(outcome.message)
+      refreshPresets()
+      return
     }
-    upsertEnsembleRosterPreset(next)
-    onActivePresetChange?.(next.id)
+    setSaveError(null)
+    onActivePresetChange?.(outcome.preset.id)
     refreshPresets()
     setPopoverOpen(false)
   }
@@ -480,6 +489,11 @@ export function EnsembleRosterPresetPicker({
                   <span className="composer-combined-picker-row-label">Save As</span>
                 </button>
               </div>
+              {saveError ? (
+                <div className="ensemble-roster-preset-popover-error" role="alert">
+                  {saveError}
+                </div>
+              ) : null}
               <div className="ensemble-roster-preset-popover-header">Saved rosters</div>
               {presets.length === 0 ? (
                 <div className="ensemble-roster-preset-popover-empty">

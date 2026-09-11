@@ -549,11 +549,24 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-muted);
+  /* Resting contrast is an affordance, not decoration. At --text-muted these
+     read as greyed-out — Rename and Delete cannot be disabled at all, and Save
+     is live in any ensemble chat, so a muted rest state told the user the row
+     was dead. --disabled below stays the only "you cannot click this" tone. */
+  color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
   font-size: var(--font-size-xs);
   padding: 6px 8px;
+}
+.ensemble-roster-preset-popover-error {
+  margin: 2px 0 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, #f08080 12%, transparent);
+  color: #f08080;
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
 }
 .ensemble-roster-preset-popover-row-action:hover {
   color: var(--text-primary);
