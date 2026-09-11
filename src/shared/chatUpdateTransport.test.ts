@@ -15,6 +15,7 @@ import {
   hasUniqueChatMessageIds,
   isChatUpdateDelivery,
   normalizeChatUpdateAck,
+  projectChatUpdateWindow,
   utf8ByteLength,
   type ChatUpdateProducerDelta
 } from './chatUpdateTransport'
@@ -917,5 +918,144 @@ describe('chat update transport', () => {
     expect(applied.ok).toBe(true)
     if (!applied.ok) throw new Error(applied.reason)
     expect(applied.baseline.chat.messages).toHaveLength(delivery.chat.messages.length)
+  })
+})
+
+describe('projectChatUpdateWindow', () => {
+  const rows = (count: number, offset = 0): ChatMessage[] =>
+    Array.from({ length: count }, (_, index) => message(`m-${offset + index}`, `row ${offset + index}`))
+
+  /** The markers a shell carries; none are declared on `ChatRecord`. */
+  const markers = (record: ChatRecord): Record<string, unknown> => {
+    const shell = record as ChatRecord & {
+      summaryOnly?: boolean
+      transcriptPaged?: boolean
+      messageCount?: number
+      runCount?: number
+      runWallMs?: number
+    }
+    return {
+      summaryOnly: shell.summaryOnly,
+      transcriptPaged: shell.transcriptPaged,
+      messageCount: shell.messageCount,
+      runCount: shell.runCount,
+      runWallMs: shell.runWallMs
+    }
+  }
+
+  it('leaves a small chat completely alone', () => {
+    const small = chat(1, rows(10))
+    const projection = projectChatUpdateWindow(small)
+    expect(projection.windowed).toBe(false)
+    expect(projection.chat).toBe(small)
+    expect(projection.page).toBeUndefined()
+    expect(projection.anchorMessageId).toBeNull()
+    expect(projection.reanchored).toBe(false)
+  })
+
+  it('windows a large chat onto its tail and reports the anchor', () => {
+    const messages = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const projection = projectChatUpdateWindow(chat(1, messages))
+    expect(projection.windowed).toBe(true)
+    expect(projection.page?.hasOlder).toBe(true)
+    expect(projection.page?.windowEnd).toBe(messages.length)
+    expect(projection.chat.messages.length).toBeLessThan(messages.length)
+    expect(projection.anchorMessageId).toBe(projection.chat.messages[0]?.id)
+    // A FIRST projection gave nothing up, so it is not a re-anchor: counting it
+    // as one would make the "patching is broken" signal fire on every new chat.
+    expect(projection.reanchored).toBe(false)
+  })
+
+  it('holds the anchor still while the tail grows, so appends stay a pure suffix', () => {
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const first = projectChatUpdateWindow(chat(1, base))
+    const anchor = first.anchorMessageId
+    expect(anchor).toBeTruthy()
+
+    const grown = [...base, ...rows(40, base.length)]
+    const second = projectChatUpdateWindow(chat(2, grown), anchor)
+    expect(second.reanchored).toBe(false)
+    expect(second.anchorMessageId).toBe(anchor)
+    expect(second.chat.messages[0]?.id).toBe(anchor)
+    expect(second.chat.messages).toHaveLength(first.chat.messages.length + 40)
+    // Every row the target already held is still there, at the same index.
+    expect(second.chat.messages.slice(0, first.chat.messages.length)).toEqual(first.chat.messages)
+    expect(second.page?.windowStart).toBe(first.page?.windowStart)
+    expect(second.page?.windowEnd).toBe(grown.length)
+    // An anchored window always runs to the newest row.
+    expect(second.page?.hasNewer).toBe(false)
+  })
+
+  it('the window is always an exact tail slice of the canonical transcript', () => {
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const anchor = projectChatUpdateWindow(chat(1, base)).anchorMessageId
+    const grown = [...base, ...rows(120, base.length)]
+    const projection = projectChatUpdateWindow(chat(2, grown), anchor)
+    const window = projection.chat.messages
+    expect(window).toEqual(grown.slice(grown.length - window.length))
+  })
+
+  it('re-anchors when the held anchor is no longer in the transcript', () => {
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const projection = projectChatUpdateWindow(chat(2, base), 'm-compacted-away')
+    expect(projection.reanchored).toBe(true)
+    expect(projection.windowed).toBe(true)
+    expect(projection.anchorMessageId).toBe(projection.chat.messages[0]?.id)
+    expect(projection.anchorMessageId).not.toBe('m-compacted-away')
+  })
+
+  it('re-anchors once the window has grown past its ceiling', () => {
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const anchor = projectChatUpdateWindow(chat(1, base)).anchorMessageId
+    const held = projectChatUpdateWindow(chat(2, base), anchor)
+    expect(held.reanchored).toBe(false)
+
+    const grown = [...base, ...rows(4_000, base.length)]
+    const projection = projectChatUpdateWindow(chat(3, grown), anchor)
+    expect(projection.reanchored).toBe(true)
+    expect(projection.anchorMessageId).not.toBe(anchor)
+    expect(projection.chat.messages.length).toBeLessThanOrEqual(
+      DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES
+    )
+  })
+
+  it('honours a caller-supplied growth ceiling', () => {
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const anchor = projectChatUpdateWindow(chat(1, base)).anchorMessageId
+    const grown = [...base, ...rows(10, base.length)]
+    expect(projectChatUpdateWindow(chat(2, grown), anchor, { maxGrowthRows: 4 }).reanchored).toBe(
+      true
+    )
+    expect(
+      projectChatUpdateWindow(chat(2, grown), anchor, { maxGrowthRows: 100_000 }).reanchored
+    ).toBe(false)
+  })
+
+  it('carries IDENTICAL shell markers whether anchored or re-anchored', () => {
+    // The two paths build the record separately. If their marker sets ever
+    // drift, a re-anchor changes non-message fields and so changes the record
+    // hash for a reason the renderer cannot see — the exact baseline-drop class
+    // this windowing exists to end.
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const canonical = chat(2, base, { runs: [] })
+    const anchor = projectChatUpdateWindow(chat(1, base)).anchorMessageId
+    const anchored = projectChatUpdateWindow(canonical, anchor)
+    const reanchored = projectChatUpdateWindow(canonical, 'gone')
+    expect(anchored.reanchored).toBe(false)
+    expect(reanchored.reanchored).toBe(true)
+    expect(Object.keys(markers(anchored.chat)).sort()).toEqual(
+      Object.keys(markers(reanchored.chat)).sort()
+    )
+    expect(markers(anchored.chat)).toEqual(markers(reanchored.chat))
+  })
+
+  it('reports the canonical totals, never the window totals', () => {
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const anchor = projectChatUpdateWindow(chat(1, base)).anchorMessageId
+    const grown = [...base, ...rows(7, base.length)]
+    const projection = projectChatUpdateWindow(chat(2, grown), anchor)
+    expect(markers(projection.chat).messageCount).toBe(grown.length)
+    expect(projection.page?.totalMessageCount).toBe(grown.length)
+    expect(projection.chat.messages.length).toBeLessThan(grown.length)
   })
 })

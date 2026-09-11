@@ -5,7 +5,7 @@ import {
   ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS,
   registerChatHandlers
 } from './chatHandlers'
-import type { AppSettings, ChatListItem, ChatRecord } from '../store/types'
+import type { AppSettings, ChatListItem, ChatRecord, EnsembleParticipant } from '../store/types'
 import type {
   RebindChatWorkspaceInput,
   RebindChatWorkspaceOptions,

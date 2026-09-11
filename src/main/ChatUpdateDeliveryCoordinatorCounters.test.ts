@@ -21,9 +21,12 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ChatRecord } from './store/types'
 import {
+  MAX_WINDOWED_TRANSCRIPT_GROWTH_ROWS,
+  applyChatUpdateDelivery,
   attachChatUpdateProducerEnvelope,
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
+import { DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES } from '../shared/transcriptPage'
 import { deriveChatRecordMutationWithProjection } from './store/ChatRecordMutation'
 import { ChatUpdateProjectionTracker } from './store/ChatUpdateProjectionTracker'
 import {
@@ -273,31 +276,178 @@ describe('ChatUpdateDeliveryCoordinator protocol counters', () => {
 })
 
 /**
- * KNOWN DEFECT, pinned deliberately: an oversized chat can never patch.
+ * An oversized chat delivers a bounded SHELL, and the lane must stay in that
+ * mode rather than re-sending the shell on every delivery.
  *
- * `boundChatUpdateSnapshot` delivers a marked shell for a chat over
- * `DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES` rows — a tail page plus `summaryOnly`,
- * `transcriptPaged`, `messageCount`, `runCount` and `runWallMs`. Every one of
- * those is a NON-message field, so every one of them is inside
- * `computeChatSubRevisions`, which hashes the record without its messages.
+ * `boundChatUpdateSnapshot` replaces the transcript with one tail page and
+ * stamps `summaryOnly`, `transcriptPaged`, `messageCount`, `runCount` and
+ * `runWallMs`. Every one of those is a NON-message field, so every one of them
+ * is inside `computeChatSubRevisions`, which hashes the record without its
+ * messages.
  *
- * The coordinator hashes the DELIVERED shell — correct, that is what the
- * renderer ACKs — but retains the CANONICAL record as `baselineChat`. On the
- * next send `retainedBaselineMatchesAcknowledged` recomputes the canonical
- * record's hash and compares it against the shell's. They cannot be equal, so
- * the baseline is dropped and a full snapshot is sent, forever. Every delivery
- * to a large thread is a whole-record send, which is precisely the cost v2
- * patching exists to avoid, and it is silent: the counters report healthy
- * snapshots rather than a stuck lane.
+ * The coordinator hashed the DELIVERED shell — correct, that is what the
+ * renderer ACKs — but retained the CANONICAL record as `baselineChat`. On the
+ * next send `retainedBaselineMatchesAcknowledged` recomputed the canonical
+ * record's hash and compared it against the shell's. They cannot be equal, so
+ * the baseline was dropped and a whole-record snapshot sent, forever: measured
+ * live on 2026-09-11, 465 snapshots against 55 patches.
  *
- * These tests assert the behaviour AS IT IS so the defect is named, located and
- * discoverable instead of folklore. Fixing it is not a one-line change —
- * retaining the shell as the patch base also requires the producer's delta and
- * main's ACK hash to be computed over the shell projection rather than the
- * canonical record, or the very next patch nacks on a record-hash mismatch and
- * the renderer is left believing it holds a complete transcript when it holds
- * one page. When that lands, these expectations flip to `patch` / `0`.
+ * The fix is to keep the lane in shell mode: project the record the renderer
+ * actually holds, diff shell against shell, hash the shell, and retain the
+ * shell. Diffing a shell against the canonical record would have "worked" for
+ * the hash and been worse — it ships the whole runs array and clears the paged
+ * markers on a renderer that is holding one page.
  */
+
+describe('ChatUpdateDeliveryCoordinator window anchors', () => {
+  function growingChat(updatedAt: number, rowCount: number): ChatRecord {
+    return chat(
+      updatedAt,
+      Array.from({ length: rowCount }, (_, index) => `row-${index}`)
+    )
+  }
+
+  it('never patches from a windowed delivery the renderer refused', () => {
+    // The anchor names the window the RENDERER holds, which is why it is
+    // adopted next to the baseline record inside `adoptDeliveredRecord` and
+    // nowhere else. That pairing is structural rather than observable here: a
+    // send already drops the patch baseline, so a refused delivery can never
+    // become the base of a patch whatever the anchor says. What IS observable,
+    // and what this pins, is the consequence — a refusal costs another
+    // snapshot, and patching resumes only once one actually lands.
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    coordinator.enqueue(sink, growingChat(1, 1_600))
+    expect(sink.deliveries).toHaveLength(1)
+    expect(sink.deliveries[0].kind).toBe('snapshot')
+
+    // The renderer says it did NOT apply it, so the window it described was
+    // never held and the retry must be another snapshot.
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: false })
+    coordinator.enqueue(sink, growingChat(2, 1_610))
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+    expect(coordinator.protocolCounters()).toMatchObject({ patches: 0, windowReanchors: 0 })
+
+    // Now it lands, and the very next delivery patches the window it named.
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[1].deliveryId, applied: true })
+    coordinator.enqueue(sink, growingChat(3, 1_620))
+    expect(sink.deliveries[2].kind).toBe('patch')
+    expect(coordinator.protocolCounters()).toMatchObject({ patches: 1, windowReanchors: 0 })
+  })
+
+  it('keeps patching across a long append run without re-anchoring', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    coordinator.enqueue(sink, growingChat(1, 1_600))
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    for (let step = 0; step < 40; step += 1) {
+      coordinator.enqueue(sink, growingChat(2 + step, 1_610 + step * 10))
+      coordinator.acknowledge(sink.id, {
+        deliveryId: sink.deliveries.at(-1)!.deliveryId,
+        applied: true
+      })
+    }
+    expect(coordinator.protocolCounters()).toMatchObject({
+      snapshots: 1,
+      patches: 40,
+      baselineDrops: 0,
+      windowReanchors: 0
+    })
+  })
+
+  it('re-anchors exactly once when the window outgrows its ceiling', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    coordinator.enqueue(sink, growingChat(1, 1_600))
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    // One append inside the ceiling, then one that blows through it.
+    coordinator.enqueue(sink, growingChat(2, 1_700))
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[1].deliveryId, applied: true })
+    coordinator.enqueue(sink, growingChat(3, 1_600 + MAX_WINDOWED_TRANSCRIPT_GROWTH_ROWS + 50))
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[2].deliveryId, applied: true })
+    // And the delivery AFTER the re-anchor patches again from the new window,
+    // rather than snapshotting forever once it has slipped once.
+    coordinator.enqueue(sink, growingChat(4, 1_600 + MAX_WINDOWED_TRANSCRIPT_GROWTH_ROWS + 60))
+
+    expect(sink.deliveries.map((delivery) => delivery.kind)).toEqual([
+      'snapshot',
+      'patch',
+      'snapshot',
+      'patch'
+    ])
+    expect(coordinator.protocolCounters()).toMatchObject({
+      snapshots: 2,
+      patches: 2,
+      windowReanchors: 1
+    })
+  })
+
+  it('snapshots on a moved window start even when the diff would be SMALL', () => {
+    // The transport already falls back to a snapshot when a splice replaces too
+    // much, which covers the ordinary re-anchor. It does NOT cover this one: the
+    // anchor row is replaced in place, so the window occupies the same indices
+    // and the diff is a single row. Left to the size guard alone that ships as a
+    // cheap patch whose first row silently redefines the window boundary the
+    // renderer is paging against. The anchor moved, so the snapshot is owed.
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    coordinator.enqueue(sink, growingChat(1, 1_600))
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    const anchored = sink.deliveries[0]
+    if (anchored.kind !== 'snapshot') throw new Error('expected a snapshot')
+    const anchorId = anchored.chat.messages[0]?.id
+    const anchorIndex = 1_600 - anchored.chat.messages.length
+
+    const rekeyed = growingChat(2, 1_600)
+    rekeyed.messages[anchorIndex] = {
+      ...rekeyed.messages[anchorIndex],
+      id: `${anchorId}-rekeyed`
+    }
+    coordinator.enqueue(sink, rekeyed)
+
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+    expect(coordinator.protocolCounters()).toMatchObject({
+      snapshots: 2,
+      patches: 0,
+      windowReanchors: 1
+    })
+  })
+
+  it('re-anchors when a chat crosses the paging threshold under an ACKed full record', () => {
+    // The target holds a WHOLE record. The first windowed delivery cannot be a
+    // patch onto it — the window drops every older row — so it must cost one
+    // snapshot and be counted as the re-anchor it is.
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    coordinator.enqueue(sink, growingChat(1, 900))
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    expect(sink.deliveries[0].kind).toBe('snapshot')
+
+    coordinator.enqueue(sink, growingChat(2, 1_000))
+    expect(sink.deliveries[1].kind).toBe('patch')
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[1].deliveryId, applied: true })
+
+    coordinator.enqueue(sink, growingChat(3, 1_600))
+    expect(sink.deliveries[2].kind).toBe('snapshot')
+    expect(coordinator.protocolCounters()).toMatchObject({ windowReanchors: 1 })
+  })
+})
+
 describe('ChatUpdateDeliveryCoordinator bounded-snapshot baselines', () => {
   function oversizedChat(updatedAt: number, tailContent: string): ChatRecord {
     const contents = Array.from({ length: 1_501 }, (_, index) => `row-${index}`)
@@ -316,16 +466,37 @@ describe('ChatUpdateDeliveryCoordinator bounded-snapshot baselines', () => {
     expect(delivery.kind).toBe('snapshot')
     if (delivery.kind !== 'snapshot') throw new Error('expected a snapshot')
     expect((delivery.chat as { transcriptPaged?: boolean }).transcriptPaged).toBe(true)
-    expect(delivery.chat.messages.length).toBeLessThan(1_501)
+    // The page, not the transcript: the bound is DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES.
+    expect(delivery.chat.messages).toHaveLength(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES)
+    expect(delivery.chat.messages[0].id).toBe('message-1')
+    expect(delivery.chat.messages.at(-1)?.id).toBe('message-1500')
   })
 
-  it('drops the baseline on every later delivery, so a large thread never patches', () => {
+  it('PATCHES after the bounded snapshot is acknowledged', () => {
     const sink = target()
     const coordinator = new ChatUpdateDeliveryCoordinator({
       minDeliveryIntervalMs: 0,
       emitProtocolVersion: 2
     })
+    const [first, second] = projectSequence(oversizedChat(1, 'one'), oversizedChat(2, 'two'))
+    coordinator.enqueue(sink, first)
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    coordinator.enqueue(sink, second)
 
+    expect(sink.deliveries[1].kind).toBe('patch')
+    expect(coordinator.protocolCounters()).toMatchObject({
+      snapshots: 1,
+      patches: 1,
+      baselineDrops: 0
+    })
+  })
+
+  it('keeps patching across many deliveries instead of degrading every time', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
     const records = projectSequence(
       oversizedChat(1, 'one'),
       oversizedChat(2, 'two'),
@@ -339,13 +510,89 @@ describe('ChatUpdateDeliveryCoordinator bounded-snapshot baselines', () => {
     }
 
     const counters = coordinator.protocolCounters()
-    // Four whole-record snapshots where three compact patches belonged.
-    expect(counters.snapshots).toBe(4)
-    expect(counters.patches).toBe(0)
-    expect(counters.baselineDrops).toBe(3)
-    expect(sink.deliveries.every((delivery) => delivery.kind === 'snapshot')).toBe(true)
-    // Guard the guard: `every` over an empty list is vacuous.
+    expect(counters.snapshots).toBe(1)
+    expect(counters.patches).toBe(3)
+    expect(counters.baselineDrops).toBe(0)
     expect(sink.deliveries).toHaveLength(4)
+    expect(sink.deliveries.slice(1).map((delivery) => delivery.kind)).toEqual([
+      'patch',
+      'patch',
+      'patch'
+    ])
+  })
+
+  it('keeps the renderer marked as paged — a patch must not claim a full transcript', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const [first, second] = projectSequence(oversizedChat(1, 'one'), oversizedChat(2, 'two'))
+    coordinator.enqueue(sink, first)
+    const snapshotDelivery = sink.deliveries[0]
+    if (snapshotDelivery.kind !== 'snapshot') throw new Error('expected a snapshot')
+    coordinator.acknowledge(sink.id, { deliveryId: snapshotDelivery.deliveryId, applied: true })
+    coordinator.enqueue(sink, second)
+
+    const patch = sink.deliveries[1]
+    if (patch.kind !== 'patch' || patch.protocolVersion !== 2) {
+      throw new Error('expected a v2 patch')
+    }
+    // Clearing these would tell a renderer holding ONE PAGE that it holds the
+    // whole transcript — the failure mode of diffing a shell against canonical.
+    expect(patch.recordCleared ?? []).not.toContain('transcriptPaged')
+    expect(patch.recordCleared ?? []).not.toContain('summaryOnly')
+    expect(patch.recordCleared ?? []).not.toContain('messageCount')
+    // And it must not re-ship the whole runs array as "changed chrome".
+    expect(Object.keys(patch.recordDelta ?? {})).not.toContain('runs')
+  })
+
+  it('round-trips through the renderer apply, so the ACK hash matches', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const [first, second] = projectSequence(oversizedChat(1, 'one'), oversizedChat(2, 'two'))
+
+    coordinator.enqueue(sink, first)
+    const snapshotDelivery = sink.deliveries[0]
+    const appliedSnapshot = applyChatUpdateDelivery(snapshotDelivery)
+    expect(appliedSnapshot.ok).toBe(true)
+    if (!appliedSnapshot.ok) throw new Error('snapshot did not apply')
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: snapshotDelivery.deliveryId,
+        applied: true,
+        revision: snapshotDelivery.revision,
+        recordHash: appliedSnapshot.baseline.recordHash,
+        transcriptHash: appliedSnapshot.baseline.transcriptHash
+      })
+    ).toBe(true)
+
+    coordinator.enqueue(sink, second)
+    const patch = sink.deliveries[1]
+    expect(patch.kind).toBe('patch')
+    const appliedPatch = applyChatUpdateDelivery(patch, appliedSnapshot.baseline)
+    expect(appliedPatch.ok).toBe(true)
+    if (!appliedPatch.ok) throw new Error('patch did not apply')
+    // The renderer still holds a page, still marked paged.
+    expect((appliedPatch.baseline.chat as { transcriptPaged?: boolean }).transcriptPaged).toBe(true)
+    expect(appliedPatch.baseline.chat.messages).toHaveLength(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES)
+    expect(appliedPatch.baseline.chat.messages.at(-1)?.content).toBe('two')
+
+    // The ACK the renderer would send is accepted, which is the whole contract:
+    // main and the renderer agree on the record the renderer is holding.
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: patch.deliveryId,
+        applied: true,
+        revision: patch.revision,
+        recordHash: appliedPatch.baseline.recordHash,
+        transcriptHash: appliedPatch.baseline.transcriptHash
+      })
+    ).toBe(true)
+    expect(coordinator.protocolCounters().ackRejections).toBe(0)
   })
 
   it('patches normally for a chat small enough to deliver whole', () => {

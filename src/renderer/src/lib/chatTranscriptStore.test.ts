@@ -846,3 +846,84 @@ describe('ChatTranscriptStore - Accumulated Infinite Scroll', () => {
     expect(store.get('full')?.messages.map((entry) => entry.id)).toEqual(['a', 'b'])
   })
 })
+
+describe('ChatTranscriptStore under anchored windowed deliveries', () => {
+  /**
+   * The last hop of the bounded-snapshot lane: main sends one windowed snapshot
+   * and then windowed PATCHES, which carry no `TranscriptPage` of their own.
+   * The store has to place the grown window itself, from `messageCount` and the
+   * window length alone. It can only do that because the window is anchored to
+   * the transcript TAIL — a sliding or floating window would land at the wrong
+   * offset here and the transcript would silently render the wrong rows.
+   */
+  function windowedShell(
+    chatId: string,
+    windowMessages: ChatMessage[],
+    totalMessageCount: number
+  ): ChatRecord {
+    return {
+      appChatId: chatId,
+      title: 'T',
+      createdAt: 1,
+      updatedAt: 2,
+      archived: false,
+      messages: windowMessages,
+      runs: [],
+      summaryOnly: true,
+      transcriptPaged: true,
+      messageCount: totalMessageCount,
+      runCount: 0
+    } as ChatRecord
+  }
+
+  const rows = (count: number, offset = 0): ChatMessage[] =>
+    Array.from({ length: count }, (_, index) =>
+      message(`m-${offset + index}`, `row ${offset + index}`)
+    )
+
+  it('places an anchored window that GREW by patch at the right offset', () => {
+    const store = new ChatTranscriptStore()
+    const canonical = rows(4_000)
+
+    // Snapshot: the tail 1,500 rows of 4,000.
+    const firstWindow = canonical.slice(2_500)
+    const first = store.ingest(windowedShell('chat-w', firstWindow, canonical.length))
+    expect(first?.windowStart).toBe(2_500)
+    expect(first?.windowEnd).toBe(4_000)
+    expect(first?.hasOlder).toBe(true)
+    expect(first?.hasNewer).toBe(false)
+
+    // Patch: 60 rows appended, so the ANCHORED window is 1,560 rows of 4,060
+    // and still starts at 2,500.
+    const grown = [...canonical, ...rows(60, canonical.length)]
+    const second = store.ingest(windowedShell('chat-w', grown.slice(2_500), grown.length))
+    expect(second?.windowStart).toBe(2_500)
+    expect(second?.windowEnd).toBe(4_060)
+    expect(second?.totalMessageCount).toBe(4_060)
+    expect(second?.hasNewer).toBe(false)
+    expect(second?.messages.at(-1)?.id).toBe('m-4059')
+    // Not one row lost off the front, and not one duplicated.
+    expect(second?.messages.map((row) => row.id)).toEqual(
+      grown.slice(grown.length - (second?.messages.length ?? 0)).map((row) => row.id)
+    )
+  })
+
+  it('follows a re-anchored window back to a fresh tail without gapping', () => {
+    const store = new ChatTranscriptStore()
+    const canonical = rows(4_000)
+    store.ingest(windowedShell('chat-w', canonical.slice(2_500), canonical.length))
+
+    // The window outgrew its ceiling, so main re-anchored on a fresh tail page.
+    const grown = [...canonical, ...rows(3_000, canonical.length)]
+    const reanchored = store.ingest(windowedShell('chat-w', grown.slice(5_500), grown.length))
+    expect(reanchored?.windowEnd).toBe(7_000)
+    expect(reanchored?.messages.at(-1)?.id).toBe('m-6999')
+    expect(reanchored?.hasNewer).toBe(false)
+    // Whatever the store chose to retain, it is one contiguous run of the
+    // canonical transcript ending at the newest row — never a stitched mix of
+    // the old window and the new one.
+    const ids = reanchored?.messages.map((row) => row.id) ?? []
+    const start = reanchored?.windowStart ?? 0
+    expect(ids).toEqual(grown.slice(start, reanchored?.windowEnd).map((row) => row.id))
+  })
+})

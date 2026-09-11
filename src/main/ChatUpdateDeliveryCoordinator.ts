@@ -7,8 +7,10 @@ import {
   chatUpdateProducerEnvelopeFor,
   type ChatUpdateDeliveryDiagnostics,
   composeChatUpdateProducerDeltas,
+  projectChatUpdateWindow,
   computeChatSubRevisions,
   estimateChatRecordBytes,
+  isWindowedChatUpdateRecord,
   type ChatUpdateAck,
   type ChatUpdateBaseline,
   type ChatUpdateDelivery,
@@ -43,6 +45,24 @@ interface InFlightChatUpdate extends PendingChatUpdate {
   deliveryEpoch: number
   recordHash: string
   compactBaseline: CompactChatUpdateBaseline
+  /**
+   * The record the RENDERER will hold once this lands — the bounded shell for
+   * an oversized chat, the canonical record otherwise.
+   *
+   * Distinct from `chat`, which stays canonical for the retry path. Retaining
+   * the canonical record as the patch base while hashing the delivered shell is
+   * the exact defect this field closes: the two can never hash equal, so every
+   * later delivery to a large thread dropped its baseline and re-sent the whole
+   * record.
+   */
+  deliveredChat: ChatRecord
+  /**
+   * First row of the transcript window in `deliveredChat`, or null when the
+   * record was not windowed. Promoted to the target's anchor on ACK, never
+   * before: an anchor adopted at send time would describe a window the renderer
+   * may never receive, and every later patch would diff from a fiction.
+   */
+  windowAnchorMessageId: string | null
 }
 
 type ChatUpdateDeliveryPriority = 'normal' | 'urgent'
@@ -75,6 +95,13 @@ interface TargetChatState {
    * full ChatRecord beside pending.
    */
   baselineChat?: ChatRecord
+  /**
+   * Anchor of the window this target has ACKNOWLEDGED. Held alongside
+   * `acknowledged` rather than on `baselineChat`, which is dropped for memory
+   * as soon as the next payload is in flight — the anchor is a short string and
+   * losing it would silently re-anchor (and so re-snapshot) every delivery.
+   */
+  windowAnchorMessageId?: string | null
   /**
    * Persistence revision of the ACKNOWLEDGED generation, captured as a scalar.
    *
@@ -149,6 +176,21 @@ export interface ChatUpdateProtocolCounters {
   producerDeltaMissing: number
   /** Deliveries the transport recovered by diffing the baseline. */
   spliceRecoveries: number
+  /**
+   * Deliveries built against a bounded transcript window rather than the whole
+   * transcript. Expected and healthy on a large thread; the number to read
+   * beside it is `snapshots`, which should now stay near one per chat instead
+   * of one per delivery.
+   */
+  windowedDeliveries: number
+  /**
+   * Windowed deliveries that could NOT extend the target's acknowledged window
+   * and therefore cost a fresh snapshot — the anchor row had been compacted
+   * away, or the window had grown past `MAX_WINDOWED_TRANSCRIPT_GROWTH_ROWS`.
+   * A handful per long thread is the design working; one per delivery means the
+   * anchor is not surviving the round trip and patching is off.
+   */
+  windowReanchors: number
   /**
    * Broadcasts discarded by the enqueue staleness guard (incoming
    * persistenceRevision older than the newest known). Each drop is a stream
@@ -305,6 +347,21 @@ function priorityForChatUpdate(chat: ChatRecord): ChatUpdateDeliveryPriority {
  * renderer therefore creates a fixed-size backlog instead of an unbounded queue
  * of multi-megabyte clones.
  */
+/**
+ * Adopt the record an ACK just confirmed, together with the window anchor that
+ * DESCRIBES it.
+ *
+ * They are one fact — "this is what the renderer holds" — and are assigned in
+ * one place so they cannot drift apart. In particular the anchor is never taken
+ * at send time: a delivery the renderer did not confirm was never held, and an
+ * anchor read off it would name a window that exists only on main, so every
+ * later patch would splice onto rows the renderer never received.
+ */
+function adoptDeliveredRecord(state: TargetChatState, inFlight: InFlightChatUpdate): void {
+  state.baselineChat = inFlight.deliveredChat
+  state.windowAnchorMessageId = inFlight.windowAnchorMessageId
+}
+
 export class ChatUpdateDeliveryCoordinator {
   private readonly statesByTarget = new Map<number, Map<string, TargetChatState>>()
   private readonly deliveryIndex = new Map<string, { targetId: number; chatId: string }>()
@@ -328,6 +385,8 @@ export class ChatUpdateDeliveryCoordinator {
     baselineDrops: 0,
     producerDeltaMissing: 0,
     spliceRecoveries: 0,
+    windowedDeliveries: 0,
+    windowReanchors: 0,
     staleEnqueueDrops: 0,
     ackRejections: 0,
     ackRejectReasons: {}
@@ -465,6 +524,13 @@ export class ChatUpdateDeliveryCoordinator {
       state.pending ||
       !state.acknowledged ||
       !state.baselineChat ||
+      // This target holds a bounded WINDOW, and `chat` here is the canonical
+      // record. Adopting it would swap the retained base from a page to a whole
+      // transcript behind the renderer's back, and the next patch would be
+      // diffed against a record it never received. Before bounded shells could
+      // hash-match at all this was unreachable; it is reachable now, so it is
+      // refused explicitly and the caller sends the ordinary recovery delivery.
+      isWindowedChatUpdateRecord(state.baselineChat) ||
       state.baselineRevision !== basePersistenceRevision ||
       !retainedBaselineMatchesAcknowledged(
         state.acknowledged,
@@ -551,7 +617,7 @@ export class ChatUpdateDeliveryCoordinator {
       // delivery was built. Recomputing them here made every successful ACK
       // scan the full transcript again on the main event loop.
       state.acknowledged = inFlight.compactBaseline
-      state.baselineChat = inFlight.chat
+      adoptDeliveredRecord(state, inFlight)
       // Scalar copy, taken now. See TargetChatState.baselineRevision.
       const ackedRevision =
         inFlight.producer?.state.persistenceRevision ?? inFlight.chat.persistenceRevision
@@ -895,17 +961,59 @@ export class ChatUpdateDeliveryCoordinator {
         state.lastAccepted = undefined
       }
     }
+    // Project ONCE, here, into the record this target will actually hold. An
+    // oversized chat is delivered as a marked shell — one tail page plus
+    // `summaryOnly` / `transcriptPaged` / `messageCount` / `runCount` /
+    // `runWallMs`, all of which are non-message fields and therefore inside the
+    // record hash. Deciding that inside `buildChatUpdateDelivery` and then
+    // retaining the canonical record out here is what made the acknowledged
+    // hash and the retained base permanently disagree.
+    //
+    // `projectChatUpdateWindow` returns the same object when no bound applies,
+    // so an ordinary chat keeps its producer envelope (a WeakMap lookup on this
+    // exact reference) and every existing path is byte-identical.
+    //
+    // The window is ANCHORED to the one this target acknowledged for as long as
+    // that is possible, so appended rows are a pure suffix and the patch is
+    // exactly those rows. A sliding window would instead move its own start on
+    // every append, leaving no common prefix to splice against — measured as
+    // zero patches across 2,000/5,500/9,000-message chats.
+    const projection = projectChatUpdateWindow(next.chat, state.windowAnchorMessageId)
+    const deliveredChat = projection.chat
+    const transcriptWindowed = projection.windowed
+    if (
+      baseline &&
+      transcriptWindowed &&
+      projection.anchorMessageId !== (state.windowAnchorMessageId ?? null)
+    ) {
+      // The window start moved — the anchor was compacted away, the window
+      // outgrew its ceiling, or this target held a WHOLE record and the chat
+      // has only now crossed the paging threshold. In every case the rows the
+      // renderer holds are not a prefix of the rows being sent, and diffing
+      // across that is exactly the counterfeit base this lane exists to avoid.
+      baseline = undefined
+      this.counters.windowReanchors += 1
+    }
     const diagnostics: ChatUpdateDeliveryDiagnostics = {
       producerDeltaMissing: false,
-      spliceRecovery: false
+      spliceRecovery: false,
+      transcriptWindowed: false
     }
     const delivery: ChatUpdateDelivery = buildChatUpdateDelivery({
       deliveryId,
       revision: next.revision,
-      chat: next.chat,
+      chat: deliveredChat,
       baseline,
-      producerState: next.producer?.state,
-      producerDelta: next.producer?.delta ?? undefined,
+      // Suppressed when windowed: the producer state's `recordHash` describes
+      // the CANONICAL record and its transcript ops describe the canonical
+      // array. Both are wrong for a page, and the shell's own sub-revisions are
+      // computed from the delivered record instead.
+      ...(transcriptWindowed
+        ? { transcriptWindowed: true, ...(projection.page ? { transcriptPage: projection.page } : {}) }
+        : {
+            producerState: next.producer?.state,
+            producerDelta: next.producer?.delta ?? undefined
+          }),
       protocolVersion: this.emitProtocolVersion,
       diagnostics
     })
@@ -928,7 +1036,9 @@ export class ChatUpdateDeliveryCoordinator {
     const revisionInputBytes: ChatUpdateRevisionInputBytes | undefined = this.serializedBytes
       ? { ensemble: 0, runs: 0, nonMessageRecord: 0 }
       : undefined
-    const hashSource = epochDelivery.kind === 'snapshot' ? epochDelivery.chat : next.chat
+    // The renderer's applied hash is taken over the record it reconstructs, so
+    // main must hash the record it actually sent — never the canonical one.
+    const hashSource = epochDelivery.kind === 'snapshot' ? epochDelivery.chat : deliveredChat
     const contentSub = computeChatSubRevisions(hashSource, revisionInputBytes)
     if (this.serializedBytes && revisionInputBytes) {
       const envelope = utf8ByteLength(JSON.stringify(epochDelivery) ?? '')
@@ -961,12 +1071,15 @@ export class ChatUpdateDeliveryCoordinator {
     else this.counters.patches += 1
     if (diagnostics.producerDeltaMissing) this.counters.producerDeltaMissing += 1
     if (diagnostics.spliceRecovery) this.counters.spliceRecoveries += 1
+    if (diagnostics.transcriptWindowed) this.counters.windowedDeliveries += 1
     state.inFlight = {
       ...next,
       deliveryId,
       deliveryEpoch: state.deliveryEpoch,
       recordHash,
-      compactBaseline
+      compactBaseline,
+      deliveredChat,
+      windowAnchorMessageId: projection.anchorMessageId
     }
     // Drop the patch-base chat once the next full payload is in flight so we
     // never retain acknowledged+baselineChat+inFlight+pending as three+ fulls.

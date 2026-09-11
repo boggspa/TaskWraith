@@ -98,12 +98,13 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(sink.deliveries[1].record.updatedAt).toBe(3)
   })
 
-  it('does not patch against a full baseline after delivering a bounded snapshot', () => {
+  it('patches the WINDOW, not the canonical array, after a bounded snapshot', () => {
     // An oversized snapshot goes on the wire as one tail page, and its ACK
     // fingerprints hash that WINDOW so the ACK matches. The retained patch
-    // baseline must therefore be the window too: keeping the canonical record
-    // makes the next delivery a splice patch carrying indices into the full
-    // array, which the renderer applies to a 1.5k-row window.
+    // baseline must therefore be the window too, and the next delivery must
+    // splice against IT: indices into the canonical array applied to a 1.5k-row
+    // window corrupt the transcript, and re-snapshotting instead re-ships the
+    // whole page on every append.
     const big = Array.from(
       { length: DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 200 },
       (_, index) => `row ${index}`
@@ -118,17 +119,49 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(first.kind).toBe('snapshot')
     if (first.kind !== 'snapshot') throw new Error('expected snapshot')
     expect(first.page?.hasOlder).toBe(true)
+    expect(first.page?.windowEnd).toBe(big.length)
 
     const applied = applyChatUpdateDelivery(first)
     expect(applied.ok).toBe(true)
     if (!applied.ok) throw new Error(applied.reason)
-    expect(applied.baseline.chat.messages.length).toBeLessThan(big.length)
+    const windowLength = applied.baseline.chat.messages.length
+    expect(windowLength).toBeLessThan(big.length)
 
     coordinator.enqueue(sink, chat(2, [...big, 'appended']))
     coordinator.acknowledge(sink.id, { deliveryId: first.deliveryId, applied: true })
 
     expect(sink.deliveries).toHaveLength(2)
-    expect(sink.deliveries[1].kind).toBe('snapshot')
+    const second = sink.deliveries[1]
+    expect(second.kind).toBe('patch')
+    if (second.kind !== 'patch') throw new Error('expected patch')
+    if (second.protocolVersion !== 2) throw new Error('expected a v2 patch')
+    // The whole point: one row on the wire, addressed within the window.
+    expect(second.messages?.start).toBe(windowLength)
+    expect(second.messages?.deleteCount).toBe(0)
+    expect(second.messages?.items).toHaveLength(1)
+
+    const patched = applyChatUpdateDelivery(second, applied.baseline)
+    expect(patched.ok).toBe(true)
+    if (!patched.ok) throw new Error(patched.reason)
+    // The window GREW by the appended row rather than sliding, so the renderer
+    // keeps every row it already had and the splice stays a pure suffix.
+    expect(patched.baseline.chat.messages).toHaveLength(windowLength + 1)
+    expect(patched.baseline.chat.messages[0]?.id).toBe(applied.baseline.chat.messages[0]?.id)
+    expect(patched.baseline.chat.messages.at(-1)?.content).toBe('appended')
+    // The ACK the renderer will now send must fingerprint the record main
+    // retained, or the next delivery drops the baseline and snapshots again.
+    expect(coordinator.acknowledge(sink.id, {
+      deliveryId: second.deliveryId,
+      applied: true,
+      recordHash: patched.baseline.recordHash
+    })).toBe(true)
+    expect(coordinator.protocolCounters()).toMatchObject({
+      snapshots: 1,
+      patches: 1,
+      baselineDrops: 0,
+      windowedDeliveries: 2,
+      windowReanchors: 0
+    })
   })
 
   it('produces a patch that reconstructs the exact latest pending chat', () => {

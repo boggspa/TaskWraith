@@ -1,7 +1,11 @@
-import type { ChatMessage, ChatRecord } from '../main/store/types'
+import type { ChatMessage, ChatRecord, ChatRun } from '../main/store/types'
 import {
   DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES,
+  DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES,
   buildTranscriptPage,
+  estimateJsonishBytes,
+  isTranscriptPagedShell,
+  selectTranscriptPageRuns,
   shouldPageTranscriptOnOpen,
   type TranscriptPage
 } from './transcriptPage'
@@ -877,6 +881,30 @@ export interface ChatUpdateDeliveryDiagnostics {
   producerDeltaMissing: boolean
   /** The change was recovered by diffing the baseline rather than sending the record. */
   spliceRecovery: boolean
+  /**
+   * The delivery was built against a bounded transcript WINDOW rather than the
+   * canonical transcript.
+   *
+   * Kept separate from `producerDeltaMissing` deliberately. A windowed delivery
+   * must ignore producer transcript ops — they describe the canonical array and
+   * would be nonsense applied to a page — so it takes the same baseline-diff
+   * path. Counting that as a missing producer delta would make a healthy large
+   * thread look like the broken-producer signature that path exists to report.
+   */
+  transcriptWindowed: boolean
+}
+
+/**
+ * Whether this record is a bounded transcript WINDOW rather than a whole
+ * transcript — the marked shell `boundChatUpdateSnapshot` produces.
+ *
+ * Load-bearing for the delivery lane: once a target has acknowledged a shell,
+ * every later delivery to it must be built against a shell, or the patch either
+ * clears the paged markers on a renderer holding one page, or re-ships the
+ * whole runs array as changed chrome.
+ */
+export function isWindowedChatUpdateRecord(chat: ChatRecord | null | undefined): boolean {
+  return isTranscriptPagedShell(chat)
 }
 
 function transcriptContentExceedsPageBytes(messages: readonly ChatMessage[]): boolean {
@@ -892,6 +920,33 @@ function transcriptContentExceedsPageBytes(messages: readonly ChatMessage[]): bo
  * Baseline-drop snapshots must not put the canonical transcript on the wire.
  * Oversized chats become a marked shell whose `messages` are one tail page.
  */
+/**
+ * The marked shell shape, shared by the first bounded snapshot and every
+ * windowed patch that follows it. Kept in one place so the two can never drift
+ * — a shell whose marker set differs between snapshot and patch would hash
+ * differently and drop the baseline, which is the whole class of bug this
+ * windowing exists to end.
+ */
+function windowedChatRecord(
+  chat: ChatRecord,
+  windowMessages: ChatMessage[],
+  windowRuns: ChatRun[],
+  totalMessageCount: number
+): ChatRecord {
+  return {
+    ...chat,
+    messages: windowMessages,
+    runs: windowRuns,
+    summaryOnly: true,
+    transcriptPaged: true,
+    messageCount: totalMessageCount,
+    runCount: Array.isArray(chat.runs) ? chat.runs.length : 0,
+    // The run window is a bounded tail, so a reader measuring wall time from it
+    // would understate the thread. Carry the union of the CANONICAL array.
+    runWallMs: projectThreadRunWallMs(chat.runs)
+  } as ChatRecord
+}
+
 export function boundChatUpdateSnapshot(chat: ChatRecord): {
   chat: ChatRecord
   page?: TranscriptPage
@@ -912,18 +967,131 @@ export function boundChatUpdateSnapshot(chat: ChatRecord): {
   if (!page || (!page.hasOlder && !page.hasNewer)) return { chat }
   return {
     page,
-    chat: {
-      ...chat,
-      messages: page.messages,
-      runs: page.runs,
-      summaryOnly: true,
-      transcriptPaged: true,
-      messageCount: page.totalMessageCount,
-      runCount: Array.isArray(chat.runs) ? chat.runs.length : 0,
-      // `page.runs` is a bounded tail, so a reader measuring wall time from it
-      // would understate the thread. Carry the union of the CANONICAL array.
-      runWallMs: projectThreadRunWallMs(chat.runs)
-    } as ChatRecord
+    chat: windowedChatRecord(chat, page.messages, page.runs, page.totalMessageCount)
+  }
+}
+
+/**
+ * How far a windowed transcript may GROW before it is re-anchored.
+ *
+ * A window that slides — always the newest N rows — is the wrong shape for a
+ * patch. Appending k rows drops k from the front and adds k at the back, and a
+ * single splice cannot express that cheaply: the common region is no longer a
+ * prefix, so the splice replaces nearly the whole window and the transport
+ * correctly falls back to a snapshot. Measured on the three-chat scale gate,
+ * that produced zero patches for 2,000/5,500/9,000-message chats.
+ *
+ * An ANCHORED window fixes it: hold the start still and let the tail grow, so
+ * an append is a pure suffix and the splice is exactly the new rows. Growth is
+ * bounded by re-anchoring with a fresh snapshot, which is what keeps a long
+ * session from shipping an ever-larger window.
+ */
+export const MAX_WINDOWED_TRANSCRIPT_GROWTH_ROWS = DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES * 2
+
+export interface ChatUpdateWindowProjection {
+  /** The record a target should be sent — the shell when windowed, else `chat`. */
+  chat: ChatRecord
+  /** True when the transcript was replaced by a bounded window. */
+  windowed: boolean
+  /**
+   * The window, for a target that needs to place it in the canonical
+   * transcript. Present whenever `windowed`, because a shell WITHOUT a page
+   * tells the renderer it is holding a partial transcript and not which part.
+   */
+  page?: TranscriptPage
+  /** Id of the window's FIRST row, to be carried into the next projection. */
+  anchorMessageId: string | null
+  /** True when the window start moved, which requires a fresh snapshot. */
+  reanchored: boolean
+}
+
+/** Index of `messageId`, searched from the tail. -1 when absent. */
+function lastIndexOfMessageId(messages: readonly ChatMessage[], messageId: string): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.id === messageId) return index
+  }
+  return -1
+}
+
+/**
+ * Project the record a target should hold, keeping an already-established
+ * window anchored wherever that is still possible.
+ *
+ * `previousAnchorMessageId` is the first row of the window the target last
+ * acknowledged. While that row is still present and the window has not grown
+ * past its ceiling, the projection keeps the same start — so the delivered
+ * transcript is a strict extension of the one the target holds and the patch is
+ * just the appended rows. Anything else (no anchor, the anchor compacted away,
+ * the window grown too far) re-anchors on a fresh bounded page, and the caller
+ * owes a snapshot.
+ */
+export function projectChatUpdateWindow(
+  chat: ChatRecord,
+  previousAnchorMessageId?: string | null,
+  options?: { maxGrowthRows?: number }
+): ChatUpdateWindowProjection {
+  const messages = Array.isArray(chat.messages) ? chat.messages : []
+  const anchorIndex = previousAnchorMessageId
+    ? lastIndexOfMessageId(messages, previousAnchorMessageId)
+    : -1
+  const maxGrowthRows = Math.max(
+    1,
+    Math.floor(options?.maxGrowthRows ?? MAX_WINDOWED_TRANSCRIPT_GROWTH_ROWS)
+  )
+  // Try the held anchor BEFORE building a bounded page. Re-paging first and
+  // then discarding it would put a full tail-page walk on every delivery of
+  // every large thread purely to compute a value the anchored path never reads.
+  if (anchorIndex > 0 && messages.length - anchorIndex <= maxGrowthRows) {
+    const page = buildAnchoredTranscriptPage(chat, messages, anchorIndex)
+    return {
+      chat: windowedChatRecord(chat, page.messages, page.runs, page.totalMessageCount),
+      windowed: true,
+      page,
+      anchorMessageId: previousAnchorMessageId ?? null,
+      reanchored: false
+    }
+  }
+
+  const bounded = boundChatUpdateSnapshot(chat)
+  if (!bounded.page) {
+    return { chat: bounded.chat, windowed: false, anchorMessageId: null, reanchored: false }
+  }
+  return {
+    chat: bounded.chat,
+    windowed: true,
+    page: bounded.page,
+    anchorMessageId: bounded.page.messages[0]?.id ?? null,
+    // "You asked me to keep an anchor and I could not." A first delivery asked
+    // for nothing, so it is not a re-anchor: it gave up no patchable state, and
+    // counting it would make the signal fire once per new chat.
+    reanchored: Boolean(previousAnchorMessageId)
+  }
+}
+
+/** The window [anchorIndex, end) as a page, matching `buildTranscriptPage`'s shape. */
+function buildAnchoredTranscriptPage(
+  chat: ChatRecord,
+  messages: readonly ChatMessage[],
+  anchorIndex: number
+): TranscriptPage {
+  const windowMessages = messages.slice(anchorIndex)
+  let estimatedBytes = 0
+  for (const message of windowMessages) estimatedBytes += estimateJsonishBytes(message)
+  return {
+    chatId: chat.appChatId,
+    messages: windowMessages,
+    runs: selectTranscriptPageRuns(Array.isArray(chat.runs) ? chat.runs : [], windowMessages),
+    totalMessageCount: messages.length,
+    windowStart: anchorIndex,
+    windowEnd: messages.length,
+    estimatedBytes,
+    hasOlder: anchorIndex > 0,
+    // The window is anchored to the tail by construction, so there is never
+    // anything newer than its last row.
+    hasNewer: false,
+    oldestMessageId: windowMessages[0]?.id ?? null,
+    newestMessageId: windowMessages[windowMessages.length - 1]?.id ?? null,
+    updatedAt: chat.updatedAt ?? 0
   }
 }
 
@@ -943,6 +1111,26 @@ export function buildChatUpdateDelivery(input: {
    * coordinator flag) to emit compact field-mask patches.
    */
   protocolVersion?: ChatUpdateProtocolVersion
+  /**
+   * `chat` is a bounded transcript window, not the canonical transcript.
+   *
+   * Set by the coordinator once a target holds a shell. It forces the
+   * baseline-diff path: producer transcript ops describe the CANONICAL array,
+   * and splicing them into a page would corrupt the window rather than update
+   * it.
+   */
+  transcriptWindowed?: boolean
+  /**
+   * The window `chat` already carries, when the caller windowed it.
+   *
+   * Required alongside `transcriptWindowed` for any snapshot this call may
+   * produce: a shell without a page tells the renderer it holds a partial
+   * transcript but not WHICH part, so it can neither position the window nor
+   * page outward from it. Supplying it also stops this function re-bounding a
+   * record the caller already bounded, which would deliver different bytes than
+   * the ones the caller hashed for the ACK.
+   */
+  transcriptPage?: TranscriptPage
   /** Optional out-param; mutated in place so the caller can count degradations. */
   diagnostics?: ChatUpdateDeliveryDiagnostics
 }): ChatUpdateDelivery {
@@ -951,6 +1139,7 @@ export function buildChatUpdateDelivery(input: {
   if (diagnostics) {
     diagnostics.producerDeltaMissing = false
     diagnostics.spliceRecovery = false
+    diagnostics.transcriptWindowed = input.transcriptWindowed === true
   }
   const protocolVersion = resolveEmitProtocolVersion(input.protocolVersion)
   const producerDelta = input.producerDelta
@@ -968,8 +1157,14 @@ export function buildChatUpdateDelivery(input: {
       }
     : computeChatSubRevisions(chat)
 
+  const transcriptWindowed = input.transcriptWindowed === true
   const snapshot = (): ChatUpdateSnapshotDelivery => {
-    const bounded = boundChatUpdateSnapshot(chat)
+    // An already-windowed record is delivered EXACTLY as projected. Re-bounding
+    // it here would page the window a second time and put a record on the wire
+    // that the caller never hashed.
+    const bounded = transcriptWindowed
+      ? { chat, page: input.transcriptPage }
+      : boundChatUpdateSnapshot(chat)
     const snapshotSub = computeChatSubRevisions(bounded.chat)
     return {
       protocolVersion,
@@ -1054,6 +1249,7 @@ export function buildChatUpdateDelivery(input: {
   // side of the boundary that can afford it. A snapshot is still owed when
   // there is no baseline to diff, or when the diff is no smaller than one.
   if (
+    transcriptWindowed ||
     !producerDelta ||
     producerDelta.chatId !== chat.appChatId ||
     producerDelta.basePersistenceRevision !== persistenceRevision(baseline.chat) ||
@@ -1061,10 +1257,15 @@ export function buildChatUpdateDelivery(input: {
     producerDelta.transcriptOps === null ||
     producerDelta.changedMessageCount > replacementLimit
   ) {
-    if (diagnostics) diagnostics.producerDeltaMissing = true
+    // A windowed delivery reaches this path by design, not by degradation.
+    if (diagnostics && !transcriptWindowed) diagnostics.producerDeltaMissing = true
     const recovered = buildChatUpdateMessageSplice(baseline.chat.messages, chat.messages)
     if (recovered.deleteCount + recovered.items.length > replacementLimit) return snapshot()
-    if (diagnostics) diagnostics.spliceRecovery = true
+    // Same reasoning: a windowed delivery diffs the window because that is the
+    // design, so it must not inflate the counter that means "the producer's
+    // delta was unusable". Conflating the two would make the one number that
+    // reports producer health rise with ordinary traffic on every long thread.
+    if (diagnostics && !transcriptWindowed) diagnostics.spliceRecovery = true
     const record = buildChatRecordDelta(
       chatRecordWithoutMessages(baseline.chat),
       chatRecordWithoutMessages(chat)

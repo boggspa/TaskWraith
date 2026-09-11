@@ -33,6 +33,34 @@ const CHAT_SPECS = [
 
 const PROVIDERS = ['codex', 'claude', 'kimi', 'grok', 'cursor'] as const
 
+/** Markers a windowed delivery adds; none are declared on `ChatRecord` itself. */
+interface ShellMarkers {
+  messageCount?: number
+  runCount?: number
+  runWallMs?: number
+  summaryOnly?: boolean
+  transcriptPaged?: boolean
+}
+
+/**
+ * Everything except the transcript and the markers that describe it. A windowed
+ * delivery is ALLOWED to differ from canonical on exactly these; anything else
+ * differing is a lost field.
+ */
+function nonTranscriptFields(chat: ChatRecord): Record<string, unknown> {
+  const {
+    messages: _messages,
+    runs: _runs,
+    messageCount: _messageCount,
+    runCount: _runCount,
+    runWallMs: _runWallMs,
+    summaryOnly: _summaryOnly,
+    transcriptPaged: _transcriptPaged,
+    ...rest
+  } = chat as ChatRecord & ShellMarkers
+  return rest as Record<string, unknown>
+}
+
 interface ChatProducer {
   readonly spec: (typeof CHAT_SPECS)[number]
   readonly tracker: ChatUpdateProjectionTracker
@@ -493,7 +521,12 @@ describe('ChatUpdateDeliveryCoordinator three-chat scale gate', () => {
         spliceRecoveries: 0,
         staleEnqueueDrops: 0,
         ackRejections: 0,
-        ackRejectReasons: {}
+        ackRejectReasons: {},
+        // Every delivery is windowed at these sizes, and the window ANCHOR must
+        // survive each round trip: one re-anchor per chat here would mean three
+        // extra full snapshots, which is the defect this gate now fences.
+        windowedDeliveries: CHAT_SPECS.length * 3,
+        windowReanchors: 0
       })
       expect(wire.recoverySnapshots).toBe(0)
       expect(wire.recoverySnapshotBytes).toBe(0)
@@ -527,8 +560,31 @@ describe('ChatUpdateDeliveryCoordinator three-chat scale gate', () => {
         ...Array.from(pendingRenders.values(), (pending) => pending.chat)
       ])
       expect(distinctRendererRecords.size).toBe(CHAT_SPECS.length)
+      // Every spec here is well past the paging threshold, so what the renderer
+      // reconstructs is the WINDOWED shell, not the canonical record. The claim
+      // that still has to hold is that the window is an exact, gapless tail of
+      // the canonical transcript and that every non-transcript field survives
+      // the patch chain untouched — a window that drifted by a row, or a
+      // recordDelta that quietly dropped a seat, would pass a bare length check
+      // and fail this one.
       for (const producer of producers) {
-        expect(rendererBaselines.get(producer.spec.chatId)?.chat).toEqual(producer.current)
+        const rendered = rendererBaselines.get(producer.spec.chatId)?.chat as
+          | (ChatRecord & ShellMarkers)
+          | undefined
+        expect(rendered, `missing renderer baseline for ${producer.spec.chatId}`).toBeDefined()
+        if (!rendered) continue
+        expect(rendered.transcriptPaged).toBe(true)
+        expect(rendered.summaryOnly).toBe(true)
+        expect(rendered.messageCount).toBe(producer.current.messages.length)
+        expect(rendered.runCount).toBe(producer.current.runs.length)
+        expect(rendered.messages.length).toBeGreaterThan(0)
+        expect(rendered.messages.length).toBeLessThan(producer.current.messages.length)
+        expect(rendered.messages).toEqual(
+          producer.current.messages.slice(
+            producer.current.messages.length - rendered.messages.length
+          )
+        )
+        expect(nonTranscriptFields(rendered)).toEqual(nonTranscriptFields(producer.current))
       }
 
       const beforeRenderReceipt = sampleRetention()

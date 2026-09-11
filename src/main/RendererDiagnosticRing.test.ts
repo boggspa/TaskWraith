@@ -139,6 +139,8 @@ describe('RendererDiagnosticRing', () => {
         baselineDrops: 1,
         producerDeltaMissing: 4,
         spliceRecoveries: 4,
+        windowedDeliveries: 5,
+        windowReanchors: 1,
         staleEnqueueDrops: 2,
         ackRejections: 1,
         ackRejectReasons: { revisionMismatch: 1 }
