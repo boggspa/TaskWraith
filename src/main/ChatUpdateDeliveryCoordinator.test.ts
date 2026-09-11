@@ -7,7 +7,7 @@ import {
   applyChatUpdateDelivery,
   attachChatUpdateProducerEnvelope,
   chatUpdateProducerEnvelopeFor,
-  computeChatSubRevisions,
+  type ChatUpdateBaseline,
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
 import { deriveChatRecordMutationWithProjection } from './store/ChatRecordMutation'
@@ -71,6 +71,45 @@ function target(id = 7): ChatUpdateDeliveryTarget & { deliveries: ChatUpdateDeli
   }
 }
 
+/** Document epoch every realistic test ack carries. One constant because each
+ *  test drives one renderer document; multi-document epoch tests ack by hand. */
+const TEST_RENDERER_EPOCH = 'test-renderer-document'
+
+/**
+ * ACK the way the renderer does: apply a structured clone through the real
+ * applier, then acknowledge with the applied revision and content hashes — the
+ * exact comparison main runs at acknowledge time (mirrors the renderer's
+ * buildChatUpdateAck: phase, chat id, delivery-epoch echo, document epoch,
+ * delivery revision, applied record hash and transcript hash).
+ *
+ * Applying main's live delivery object instead would let later main-side
+ * mutations rewrite the test's renderer baseline behind its back and mask the
+ * divergence a real NACK would report. Throws when the renderer could not
+ * apply; reject-path tests (applied:false, wrong revision/hash/epoch,
+ * rendered-phase receipts) keep calling acknowledge() directly.
+ */
+function ackAsRenderer(
+  coordinator: ChatUpdateDeliveryCoordinator,
+  sink: { id: number },
+  delivery: ChatUpdateDelivery,
+  baseline?: ChatUpdateBaseline
+): { baseline: ChatUpdateBaseline; acknowledged: boolean } {
+  const applied = applyChatUpdateDelivery(structuredClone(delivery), baseline)
+  if (!applied.ok) throw new Error(applied.reason)
+  const acknowledged = coordinator.acknowledge(sink.id, {
+    deliveryId: delivery.deliveryId,
+    applied: true,
+    phase: 'accepted',
+    chatId: delivery.chatId,
+    ...(delivery.deliveryEpoch !== undefined ? { deliveryEpoch: delivery.deliveryEpoch } : {}),
+    rendererEpoch: TEST_RENDERER_EPOCH,
+    revision: delivery.revision,
+    recordHash: applied.baseline.recordHash,
+    ...(applied.baseline.transcriptHash ? { transcriptHash: applied.baseline.transcriptHash } : {})
+  })
+  return { baseline: applied.baseline, acknowledged }
+}
+
 describe('ChatUpdateDeliveryCoordinator', () => {
   it('keeps one delivery in flight and replaces any number of pending snapshots with the latest', () => {
     const sink = target()
@@ -86,10 +125,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(sink.deliveries[0].kind).toBe('snapshot')
     expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 1, pending: 1 })
 
-    coordinator.acknowledge(sink.id, {
-      deliveryId: sink.deliveries[0].deliveryId,
-      applied: true
-    })
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
     expect(sink.deliveries).toHaveLength(2)
     expect(sink.deliveries[1].kind).toBe('patch')
     if (sink.deliveries[1].kind !== 'patch') throw new Error('Expected patch')
@@ -121,14 +157,10 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(first.page?.hasOlder).toBe(true)
     expect(first.page?.windowEnd).toBe(big.length)
 
-    const applied = applyChatUpdateDelivery(first)
-    expect(applied.ok).toBe(true)
-    if (!applied.ok) throw new Error(applied.reason)
-    const windowLength = applied.baseline.chat.messages.length
-    expect(windowLength).toBeLessThan(big.length)
-
     coordinator.enqueue(sink, chat(2, [...big, 'appended']))
-    coordinator.acknowledge(sink.id, { deliveryId: first.deliveryId, applied: true })
+    const { baseline: seedBaseline } = ackAsRenderer(coordinator, sink, first)
+    const windowLength = seedBaseline.chat.messages.length
+    expect(windowLength).toBeLessThan(big.length)
 
     expect(sink.deliveries).toHaveLength(2)
     const second = sink.deliveries[1]
@@ -140,21 +172,27 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(second.messages?.deleteCount).toBe(0)
     expect(second.messages?.items).toHaveLength(1)
 
-    const patched = applyChatUpdateDelivery(second, applied.baseline)
+    const patched = applyChatUpdateDelivery(structuredClone(second), seedBaseline)
     expect(patched.ok).toBe(true)
     if (!patched.ok) throw new Error(patched.reason)
     // The window GREW by the appended row rather than sliding, so the renderer
     // keeps every row it already had and the splice stays a pure suffix.
     expect(patched.baseline.chat.messages).toHaveLength(windowLength + 1)
-    expect(patched.baseline.chat.messages[0]?.id).toBe(applied.baseline.chat.messages[0]?.id)
+    expect(patched.baseline.chat.messages[0]?.id).toBe(seedBaseline.chat.messages[0]?.id)
     expect(patched.baseline.chat.messages.at(-1)?.content).toBe('appended')
     // The ACK the renderer will now send must fingerprint the record main
     // retained, or the next delivery drops the baseline and snapshots again.
-    expect(coordinator.acknowledge(sink.id, {
-      deliveryId: second.deliveryId,
-      applied: true,
-      recordHash: patched.baseline.recordHash
-    })).toBe(true)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: second.deliveryId,
+        applied: true,
+        revision: second.revision,
+        recordHash: patched.baseline.recordHash,
+        ...(patched.baseline.transcriptHash
+          ? { transcriptHash: patched.baseline.transcriptHash }
+          : {})
+      })
+    ).toBe(true)
     expect(coordinator.protocolCounters()).toMatchObject({
       snapshots: 1,
       patches: 1,
@@ -174,14 +212,11 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     const latest = chat(3, ['three', 'stable', 'tail'])
     coordinator.enqueue(sink, first)
     const firstDelivery = sink.deliveries[0]
-    const firstApplied = applyChatUpdateDelivery(firstDelivery)
-    expect(firstApplied.ok).toBe(true)
-    if (!firstApplied.ok) throw new Error(firstApplied.reason)
     coordinator.enqueue(sink, latest)
-    coordinator.acknowledge(sink.id, { deliveryId: firstDelivery.deliveryId, applied: true })
+    const { baseline: seedBaseline } = ackAsRenderer(coordinator, sink, firstDelivery)
 
     const patch = sink.deliveries[1]
-    const patched = applyChatUpdateDelivery(patch, firstApplied.baseline)
+    const patched = applyChatUpdateDelivery(structuredClone(patch), seedBaseline)
     expect(patched).toMatchObject({
       ok: true,
       baseline: { revision: patch.revision, chat: latest }
@@ -201,12 +236,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
 
     coordinator.enqueue(sink, projectedFirst)
     const initial = sink.deliveries[0]
-    expect(
-      coordinator.acknowledge(sink.id, {
-        deliveryId: initial.deliveryId,
-        applied: true
-      })
-    ).toBe(true)
+    expect(ackAsRenderer(coordinator, sink, initial).acknowledged).toBe(true)
 
     coordinator.enqueue(sink, projectedDuplicate)
     const recovery = sink.deliveries[1]
@@ -216,12 +246,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
       baseline: { chat: duplicate }
     })
 
-    expect(
-      coordinator.acknowledge(sink.id, {
-        deliveryId: recovery.deliveryId,
-        applied: true
-      })
-    ).toBe(true)
+    expect(ackAsRenderer(coordinator, sink, recovery).acknowledged).toBe(true)
     expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 0 })
   })
 
@@ -237,12 +262,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     coordinator.enqueue(sink, invalid)
     const invalidSnapshot = sink.deliveries[0]
     expect(invalidSnapshot.kind).toBe('snapshot')
-    expect(
-      coordinator.acknowledge(sink.id, {
-        deliveryId: invalidSnapshot.deliveryId,
-        applied: true
-      })
-    ).toBe(true)
+    expect(ackAsRenderer(coordinator, sink, invalidSnapshot).acknowledged).toBe(true)
 
     // This update has no producer envelope, so the ACKed snapshot metadata is
     // the only signal that the retained baseline is still malformed.
@@ -263,20 +283,14 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     )
     coordinator.enqueue(sink, seed)
     const seedDelivery = sink.deliveries[0]
-    const seedApplied = applyChatUpdateDelivery(seedDelivery)
-    expect(seedApplied.ok).toBe(true)
-    if (!seedApplied.ok) throw new Error(seedApplied.reason)
-    coordinator.acknowledge(sink.id, {
-      deliveryId: seedDelivery.deliveryId,
-      applied: true
-    })
+    const { baseline: seedBaseline } = ackAsRenderer(coordinator, sink, seedDelivery)
 
     expect(coordinator.adoptRendererMutation(sink.id, rendererMutation, 1)).toBe(true)
     expect(sink.deliveries).toHaveLength(1)
 
     const rendererProducer = chatUpdateProducerEnvelopeFor(rendererMutation)
     const rendererBaseline = appliedChatUpdateBaseline(
-      seedApplied.baseline.revision,
+      seedBaseline.revision,
       rendererMutation,
       rendererProducer?.state.transcriptHash
     )
@@ -310,10 +324,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     })
     const [optimistic] = projectSequence(chat(10, ['optimistic']))
     coordinator.enqueue(sink, optimistic)
-    coordinator.acknowledge(sink.id, {
-      deliveryId: sink.deliveries[0].deliveryId,
-      applied: true
-    })
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
 
     const [rebased] = projectSequence(chat(3, ['rebased']))
     coordinator.enqueue(sink, rebased)
@@ -373,10 +384,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
       chat(3, ['one', 'patch', 'latest'])
     )
     coordinator.enqueue(sink, seed)
-    coordinator.acknowledge(sink.id, {
-      deliveryId: sink.deliveries[0].deliveryId,
-      applied: true
-    })
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
     coordinator.enqueue(sink, patch)
     expect(sink.deliveries[1].kind).toBe('patch')
     coordinator.enqueue(sink, latest)
@@ -401,10 +409,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     })
     coordinator.enqueue(sink, chat(1, ['one']))
     coordinator.enqueue(sink, chat(2, ['two']))
-    coordinator.acknowledge(sink.id, {
-      deliveryId: sink.deliveries[0].deliveryId,
-      applied: true
-    })
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
     expect(sink.deliveries).toHaveLength(1)
 
     now += 100
@@ -430,10 +435,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     }
     projectSequence(first, latest)
     coordinator.enqueue(sink, first)
-    coordinator.acknowledge(sink.id, {
-      deliveryId: sink.deliveries[0].deliveryId,
-      applied: true
-    })
+    const { baseline: seedBaseline } = ackAsRenderer(coordinator, sink, sink.deliveries[0])
     coordinator.enqueue(sink, latest)
 
     const patch = sink.deliveries[1]
@@ -446,10 +448,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(patch.recordDelta.title).toBe('Updated')
     expect(patch.recordMask).toEqual(expect.arrayContaining(['title', 'updatedAt']))
 
-    const firstApplied = applyChatUpdateDelivery(sink.deliveries[0])
-    expect(firstApplied.ok).toBe(true)
-    if (!firstApplied.ok) throw new Error(firstApplied.reason)
-    const patched = applyChatUpdateDelivery(patch, firstApplied.baseline)
+    const patched = applyChatUpdateDelivery(structuredClone(patch), seedBaseline)
     expect(patched).toMatchObject({
       ok: true,
       baseline: { revision: patch.revision, chat: latest }
@@ -470,12 +469,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(beforeAck.inFlight).toBe(1)
 
     const delivery = sink.deliveries[0]
-    expect(
-      coordinator.acknowledge(sink.id, {
-        deliveryId: delivery.deliveryId,
-        applied: true
-      })
-    ).toBe(true)
+    expect(ackAsRenderer(coordinator, sink, delivery).acknowledged).toBe(true)
 
     const idle = coordinator.statsForTarget(sink.id)
     expect(idle.inFlight).toBe(0)
@@ -531,15 +525,8 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     const first = chat(1, ['one'])
     const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
     coordinator.enqueue(sink, first)
-    const deliveryId = sink.deliveries[0].deliveryId
 
-    expect(
-      coordinator.acknowledge(sink.id, {
-        deliveryId,
-        applied: true,
-        recordHash: computeChatSubRevisions(first).recordHash
-      })
-    ).toBe(true)
+    expect(ackAsRenderer(coordinator, sink, sink.deliveries[0]).acknowledged).toBe(true)
     expect(sink.deliveries).toHaveLength(1)
     expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 0 })
   })
@@ -555,10 +542,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 1, inFlightAgeMs: 0 })
     now = 5_400
     expect(coordinator.statsForTarget(sink.id).inFlightAgeMs).toBe(400)
-    coordinator.acknowledge(sink.id, {
-      deliveryId: sink.deliveries[0].deliveryId,
-      applied: true
-    })
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
     expect(coordinator.statsForTarget(sink.id).inFlightAgeMs).toBe(0)
   })
 
@@ -662,12 +646,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
         applied: true
       })
     ).toBe(false)
-    expect(
-      coordinator.acknowledge(sink.id, {
-        deliveryId: siblingDelivery.deliveryId,
-        applied: true
-      })
-    ).toBe(true)
+    expect(ackAsRenderer(coordinator, sink, siblingDelivery).acknowledged).toBe(true)
   })
 
   it('releases a deleted chat from every renderer target', () => {
@@ -756,7 +735,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     })
     coordinator.enqueue(sink, chat(1, ['streaming']))
     const first = sink.deliveries[0]
-    coordinator.acknowledge(sink.id, { deliveryId: first.deliveryId, applied: true })
+    ackAsRenderer(coordinator, sink, first)
 
     // This normal update arms the 1 s cadence timer.
     coordinator.enqueue(sink, chat(2, ['streaming', 'ordinary progress']))
@@ -935,30 +914,19 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
     )
 
     coordinator.enqueue(sink, seed)
-    let applied = applyChatUpdateDelivery(sink.deliveries[0])
-    expect(applied.ok).toBe(true)
-    if (!applied.ok) throw new Error(applied.reason)
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    let baseline = ackAsRenderer(coordinator, sink, sink.deliveries[0]).baseline
 
     coordinator.enqueue(sink, freshReturnB)
     coordinator.enqueue(sink, staleReturnA)
     expect(sink.deliveries).toHaveLength(2)
-    const fresh = applyChatUpdateDelivery(sink.deliveries[1], applied.baseline)
-    expect(fresh.ok).toBe(true)
-    if (!fresh.ok) throw new Error(fresh.reason)
-    applied = fresh
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[1].deliveryId, applied: true })
+    baseline = ackAsRenderer(coordinator, sink, sink.deliveries[1], baseline).baseline
 
     for (const delivery of sink.deliveries.slice(2)) {
-      const next = applyChatUpdateDelivery(delivery, applied.baseline)
-      expect(next.ok).toBe(true)
-      if (!next.ok) throw new Error(next.reason)
-      applied = next
-      coordinator.acknowledge(sink.id, { deliveryId: delivery.deliveryId, applied: true })
+      baseline = ackAsRenderer(coordinator, sink, delivery, baseline).baseline
     }
 
     // The transcript the user reads must still hold child B's return card.
-    expect(applied.baseline.chat.messages.map((entry) => entry.content)).toContain('return B')
+    expect(baseline.chat.messages.map((entry) => entry.content)).toContain('return B')
   })
 
   it('heals an out-of-order pair sitting in the compose window instead of losing the fresher record', () => {
@@ -979,14 +947,11 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
     coordinator.enqueue(sink, freshReturnB)
     coordinator.enqueue(sink, staleReturnA)
 
-    const applied = applyChatUpdateDelivery(sink.deliveries[0])
-    expect(applied.ok).toBe(true)
-    if (!applied.ok) throw new Error(applied.reason)
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    const { baseline: seedBaseline } = ackAsRenderer(coordinator, sink, sink.deliveries[0])
 
     expect(sink.deliveries).toHaveLength(2)
     const second = sink.deliveries[1]
-    const next = applyChatUpdateDelivery(second, applied.baseline)
+    const next = applyChatUpdateDelivery(structuredClone(second), seedBaseline)
     expect(next.ok).toBe(true)
     if (!next.ok) throw new Error(next.reason)
     // Both return cards survive: the late stale delta is spliced in FRONT of
@@ -1025,7 +990,7 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
     for (const returned of [...returns].reverse()) coordinator.enqueue(sink, returned)
     expect(sink.deliveries).toHaveLength(1)
 
-    const seedApplied = applyChatUpdateDelivery(sink.deliveries[0])
+    const seedApplied = applyChatUpdateDelivery(structuredClone(sink.deliveries[0]))
     if (!seedApplied.ok) throw new Error(seedApplied.reason)
     coordinator.acknowledge(sink.id, {
       deliveryId: sink.deliveries[0].deliveryId,
@@ -1038,7 +1003,10 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
     })
 
     expect(sink.deliveries).toHaveLength(2)
-    const allReturns = applyChatUpdateDelivery(sink.deliveries[1], seedApplied.baseline)
+    const allReturns = applyChatUpdateDelivery(
+      structuredClone(sink.deliveries[1]),
+      seedApplied.baseline
+    )
     if (!allReturns.ok) throw new Error(allReturns.reason)
     expect(allReturns.baseline.chat.messages.map((entry) => entry.content)).toEqual([
       'prompt',
@@ -1073,12 +1041,7 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
     const [first, second] = projectSequence(chat(1, ['one']), chat(2, ['one', 'the answer is 42']))
 
     coordinator.enqueue(sink, first)
-    const firstApplied = applyChatUpdateDelivery(sink.deliveries[0])
-    if (!firstApplied.ok) throw new Error(firstApplied.reason)
-    coordinator.acknowledge(sink.id, {
-      deliveryId: sink.deliveries[0].deliveryId,
-      applied: true
-    })
+    const { baseline: seedBaseline } = ackAsRenderer(coordinator, sink, sink.deliveries[0])
 
     // AppStore.saveChat writes the NEW revision into its CALLER's record
     // (store/index.ts:7376), and on a getChat()-then-save path that caller's
@@ -1092,7 +1055,7 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
     // What a human reads: the reply has to reach the renderer.
     expect(sink.deliveries).toHaveLength(2)
     expect(sink.deliveries[1].kind).toBe('patch')
-    const applied = applyChatUpdateDelivery(sink.deliveries[1], firstApplied.baseline)
+    const applied = applyChatUpdateDelivery(structuredClone(sink.deliveries[1]), seedBaseline)
     if (!applied.ok) throw new Error(applied.reason)
     expect(applied.baseline.chat.messages.map((entry) => entry.content)).toContain(
       'the answer is 42'
@@ -1111,15 +1074,7 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
     } as ChatRecord
 
     coordinator.enqueue(sink, first)
-    // IPC gives the renderer a detached structured clone. Keeping the same
-    // object here would mask main-side baseline mutations in this unit test.
-    const firstApplied = applyChatUpdateDelivery(structuredClone(sink.deliveries[0]))
-    if (!firstApplied.ok) throw new Error(firstApplied.reason)
-    coordinator.acknowledge(sink.id, {
-      deliveryId: sink.deliveries[0].deliveryId,
-      applied: true,
-      recordHash: firstApplied.baseline.recordHash
-    })
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
 
     // A later save/cache path mutates the coordinator's retained object. The
     // revision stamp is expected and normalized; this metadata field is not.
@@ -1198,14 +1153,7 @@ describe('AppStore stamping the retained baseline in place', () => {
     coordinator.enqueue(sink, first)
     const snapshot = sink.deliveries[0]
     expect(snapshot.kind).toBe('snapshot')
-    const applied = applyChatUpdateDelivery(snapshot, undefined)
-    if (!applied.ok) throw new Error('apply failed')
-    coordinator.acknowledge(sink.id, {
-      deliveryId: snapshot.deliveryId,
-      applied: true,
-      revision: snapshot.revision,
-      recordHash: applied.baseline.recordHash
-    })
+    ackAsRenderer(coordinator, sink, snapshot)
 
     // The stamp. Both scalars, on the object main retained.
     ;(first as { persistenceRevision: number }).persistenceRevision = 1
@@ -1229,14 +1177,7 @@ describe('AppStore stamping the retained baseline in place', () => {
     // IPC gives the renderer a detached structured clone. Keeping the same
     // object here would stamp the renderer's baseline along with main's and
     // mask the divergence this test pins.
-    const applied = applyChatUpdateDelivery(structuredClone(snapshot), undefined)
-    if (!applied.ok) throw new Error('apply failed')
-    coordinator.acknowledge(sink.id, {
-      deliveryId: snapshot.deliveryId,
-      applied: true,
-      revision: snapshot.revision,
-      recordHash: applied.baseline.recordHash
-    })
+    const { baseline: seedBaseline } = ackAsRenderer(coordinator, sink, snapshot)
 
     // The same in-place stamp, but the unbroadcast save reached exactly the
     // revision the next broadcast carries. A diff built from the drifted
@@ -1253,7 +1194,7 @@ describe('AppStore stamping the retained baseline in place', () => {
       producerDeltaMissing: 0,
       spliceRecoveries: 0
     })
-    const patched = applyChatUpdateDelivery(structuredClone(sink.deliveries[1]), applied.baseline)
+    const patched = applyChatUpdateDelivery(structuredClone(sink.deliveries[1]), seedBaseline)
     if (!patched.ok) throw new Error(patched.reason)
     expect(
       coordinator.acknowledge(sink.id, {
