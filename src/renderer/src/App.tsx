@@ -1110,6 +1110,13 @@ import type { EnsembleUserRosterMutation } from '../../main/EnsembleUserRosterMu
 import { EnsembleChatKindWriteClaims } from './lib/ensembleChatKindWriteClaims'
 import { withEnsembleWriteClaim } from './lib/ensembleWriteClaimScope'
 import {
+  ChatKindSwitchGate,
+  type ChatKindSwitchAdmission,
+  type ChatKindSwitchRequest
+} from './lib/chatKindSwitchGate'
+import { ChatModeChangeNotices, describeChatModeChangeFailure } from './lib/chatModeChangeNotices'
+import { ChatModeChangeNotice } from './components/ChatModeChangeNotice'
+import {
   commitEnsembleLiveRosterMutation as commitEnsembleLiveRosterMutationRecord,
   commitEnsembleRosterChange as commitEnsembleRosterChangeRecord,
   saveChatPreservingEnsembleIntent
@@ -2934,9 +2941,22 @@ function App(): React.JSX.Element {
     // object), behind a Tier-4-style confirm. Default 'safe' = no elevation.
     unattendedLevel: UnattendedElevationLevel
   } | null>(null)
-  // Guards the in-place chatKind mutation behind the ensemble toggle so a fast
-  // double-click can't race a second mutation onto the same chat.
-  const chatKindTogglingRef = useRef(false)
+  // Admission for the in-place chatKind mutation behind the ensemble toggle. It
+  // still stops a fast double-click racing a second mutation onto the same
+  // chat, but its lease EXPIRES: the bare boolean it replaces was cleared in a
+  // `finally` that a `setChatKind` which never answered could not reach, and
+  // every later click was then refused for the life of the window. It also
+  // carries the words for the refusals that used to be bare returns.
+  // See lib/chatKindSwitchGate.ts.
+  const chatKindSwitchGateRef = useRef<ChatKindSwitchGate | null>(null)
+  if (!chatKindSwitchGateRef.current) chatKindSwitchGateRef.current = new ChatKindSwitchGate()
+  // Where a refused or failed mode switch becomes visible. The raw log still
+  // gets everything it always did; it is just no longer the only place a user
+  // could have found out. See lib/chatModeChangeNotices.ts.
+  const chatModeChangeNoticesRef = useRef<ChatModeChangeNotices | null>(null)
+  if (!chatModeChangeNoticesRef.current) {
+    chatModeChangeNoticesRef.current = new ChatModeChangeNotices()
+  }
   const [pendingEnsembleToSoloChatId, setPendingEnsembleToSoloChatId] = useState<string | null>(
     null
   )
@@ -18279,6 +18299,26 @@ function App(): React.JSX.Element {
     })
   }
 
+  // Wiring for the two modules above: the decision is the gate's, the words are
+  // its own, and this puts them where the user is as well as in the raw log.
+  // A refusal with no message (the thread is already in the mode that was
+  // asked for) is a non-event and stays silent.
+  const reportChatModeChangeFailure = (
+    chatId: string | null | undefined,
+    message: string | null | undefined
+  ): void => {
+    if (!chatId || !message) return
+    chatModeChangeNoticesRef.current?.raise(chatId, message)
+    appendThreadRawLog(chatId, { type: 'info', content: message })
+  }
+  const admitChatKindSwitch = (request: ChatKindSwitchRequest): ChatKindSwitchAdmission | null => {
+    const admission = chatKindSwitchGateRef.current?.admit(request)
+    if (!admission) return null
+    if (admission.admitted) chatModeChangeNoticesRef.current?.clear(request.chatId)
+    else reportChatModeChangeFailure(request.chatId, admission.refusal.message)
+    return admission
+  }
+
   /**
    * Switch Ensemble off and continue the thread solo on `survivingParticipant`.
    * No provider modal: the seat passed in IS the answer, and its model /
@@ -18300,17 +18340,15 @@ function App(): React.JSX.Element {
     targetIsRunning: boolean,
     chatWithSeatRemoved?: ChatRecord | null
   ): Promise<void> => {
-    if (!targetChat.appChatId || targetChat.parentChatId) return
-    if (targetChat.chatKind !== 'ensemble') return
-    if (chatKindTogglingRef.current) return
-    if (targetIsRunning) {
-      appendThreadRawLog(targetChat.appChatId, {
-        type: 'info',
-        content: 'Finish the current turn first to change chat mode.'
-      })
-      return
-    }
-    chatKindTogglingRef.current = true
+    const admission = admitChatKindSwitch({
+      chatId: targetChat.appChatId,
+      parentChatId: targetChat.parentChatId,
+      currentKind: targetChat.chatKind,
+      enabled: false,
+      ensembleModeEnabled: settings?.ensembleModeEnabled !== false,
+      chatIsRunning: targetIsRunning
+    })
+    if (!admission?.admitted) return
     setChatKindMutationBusy(true)
     try {
       if (chatWithSeatRemoved) {
@@ -18346,12 +18384,16 @@ function App(): React.JSX.Element {
       setPendingEnsembleToSoloChatId(null)
       void refreshChatList()
     } catch (error) {
+      chatModeChangeNoticesRef.current?.raise(
+        targetChat.appChatId,
+        describeChatModeChangeFailure(error)
+      )
       appendThreadRawLog(targetChat.appChatId, {
         type: 'stderr',
         content: redactLog(error instanceof Error ? error.message : String(error))
       })
     } finally {
-      chatKindTogglingRef.current = false
+      chatKindSwitchGateRef.current?.settle(admission.token)
       setChatKindMutationBusy(false)
     }
   }
@@ -18377,18 +18419,21 @@ function App(): React.JSX.Element {
     enabled: boolean,
     targetIsRunning: boolean
   ): Promise<void> => {
-    if (!targetChat.appChatId || targetChat.parentChatId) return
-    if (settings?.ensembleModeEnabled === false && enabled) return
-    if ((targetChat.chatKind === 'ensemble') === enabled) return
-    if (chatKindTogglingRef.current) return
-    if (targetIsRunning) {
-      appendThreadRawLog(targetChat.appChatId, {
-        type: 'info',
-        content: 'Finish the current turn first to change chat mode.'
-      })
-      return
-    }
+    const admission = admitChatKindSwitch({
+      chatId: targetChat.appChatId,
+      parentChatId: targetChat.parentChatId,
+      currentKind: targetChat.chatKind,
+      enabled,
+      ensembleModeEnabled: settings?.ensembleModeEnabled !== false,
+      chatIsRunning: targetIsRunning
+    })
+    if (!admission?.admitted) return
     if (!enabled) {
+      // Both continuations below raise their own admission — the collapse
+      // handler immediately, the modal whenever the user answers it — so this
+      // lease is released here rather than held across a dialog that may never
+      // be answered.
+      chatKindSwitchGateRef.current?.settle(admission.token)
       const modalChat = isChatSummaryRecord(targetChat)
         ? (await refreshSingleChat(targetChat.appChatId)) || targetChat
         : targetChat
@@ -18404,7 +18449,6 @@ function App(): React.JSX.Element {
       setPendingEnsembleToSoloChatId(modalChat.appChatId)
       return
     }
-    chatKindTogglingRef.current = true
     setChatKindMutationBusy(true)
     try {
       const baseChat = isChatSummaryRecord(targetChat)
@@ -18440,12 +18484,16 @@ function App(): React.JSX.Element {
       )
       void refreshChatList()
     } catch (error) {
+      chatModeChangeNoticesRef.current?.raise(
+        targetChat.appChatId,
+        describeChatModeChangeFailure(error)
+      )
       appendThreadRawLog(targetChat.appChatId, {
         type: 'stderr',
         content: redactLog(error instanceof Error ? error.message : String(error))
       })
     } finally {
-      chatKindTogglingRef.current = false
+      chatKindSwitchGateRef.current?.settle(admission.token)
       setChatKindMutationBusy(false)
     }
   }
@@ -18459,7 +18507,17 @@ function App(): React.JSX.Element {
     if (!modalChat) return
     const providerChoice =
       ensembleToSoloCanonicalProviders.find((candidate) => candidate.provider === provider) || null
-    chatKindTogglingRef.current = true
+    const admission = admitChatKindSwitch({
+      chatId: modalChat.appChatId,
+      parentChatId: modalChat.parentChatId,
+      currentKind: modalChat.chatKind,
+      enabled: false,
+      ensembleModeEnabled: settings?.ensembleModeEnabled !== false,
+      // The modal only ever renders for the focused chat (see
+      // `ensembleToSoloModalChat`), so this is that chat's own liveness.
+      chatIsRunning: isCurrentChatRunning
+    })
+    if (!admission?.admitted) return
     setChatKindMutationBusy(true)
     try {
       const updatedChat = applyHydratedChat(
@@ -18491,12 +18549,16 @@ function App(): React.JSX.Element {
       void refreshChatList()
       setPendingEnsembleToSoloChatId(null)
     } catch (error) {
+      chatModeChangeNoticesRef.current?.raise(
+        modalChat.appChatId,
+        describeChatModeChangeFailure(error)
+      )
       appendThreadRawLog(modalChat.appChatId, {
         type: 'stderr',
         content: redactLog(error instanceof Error ? error.message : String(error))
       })
     } finally {
-      chatKindTogglingRef.current = false
+      chatKindSwitchGateRef.current?.settle(admission.token)
       setChatKindMutationBusy(false)
     }
   }
@@ -32869,6 +32931,10 @@ function App(): React.JSX.Element {
           if (pendingChatDraftsRef.current.has(canonical.appChatId) && !pendingChatDraftsRef.current.conflicts(canonical.appChatId).length)
             updateChatById(canonical.appChatId, (chat) => ({ ...chat }))
         }}
+      />
+      <ChatModeChangeNotice
+        chatIds={[currentChat?.appChatId, ...multiview.paneChatIds]}
+        notices={chatModeChangeNoticesRef.current}
       />
     </UsageSummaryStoreContext.Provider>
   )
