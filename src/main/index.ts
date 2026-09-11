@@ -13418,6 +13418,7 @@ function projectAndPersistExecutionGraphRunTranscript(
     status,
     timestamp,
     ...(state.actualModel ? { actualModel: state.actualModel } : {}),
+    ...(state.modelLabel ? { modelLabel: state.modelLabel } : {}),
     ...(state.providerSessionId !== undefined
       ? { providerSessionId: state.providerSessionId }
       : {}),

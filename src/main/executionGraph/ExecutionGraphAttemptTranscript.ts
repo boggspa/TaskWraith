@@ -50,6 +50,7 @@ export interface ProjectExecutionGraphAttemptTranscriptInput {
   readonly status: 'running' | 'completed' | 'failed' | 'cancelled'
   readonly timestamp: string
   readonly actualModel?: string
+  readonly modelLabel?: string
   readonly providerSessionId?: string | null
   readonly stats?: Record<string, unknown>
   readonly errorMessage?: string
@@ -65,6 +66,44 @@ function bindingMetadata(binding: ExecutionGraphAttemptResultBinding): Record<st
     workspaceId: binding.workspaceId,
     rootChatId: binding.rootChatId,
     provider: binding.provider
+  }
+}
+
+/**
+ * Brand fields for the rows this attempt writes, spread beside `kind` and the
+ * binding.
+ *
+ * Every row here -- assistant, tool and error alike -- carried only the binding,
+ * so its accent came solely from finding the run in the chat record. That array
+ * is empty by construction on a paged record and one render stale on a retained
+ * one, which is how a settled attempt lost the Pi/Ollama upstream hue until a
+ * reload. The renderer's own reducer and the bridge lane already stamp these
+ * two fields; this is the third and last producer.
+ *
+ * `requestedModel` is the load-bearing fallback, not a nicety: Pi leaves
+ * `actualModel` unset because its terminal event reports a human LABEL, and a
+ * label cannot resolve a Pi upstream, which is keyed on a `<upstream>/<model>`
+ * wire id. The seeded requested model is the only wire id this lane has for
+ * that seat. Precedence mirrors the renderer's own read: actual, then requested.
+ *
+ * Returns an EMPTY record rather than undefined because every caller spreads it
+ * into a metadata object that already exists -- an absent model must leave the
+ * row's key set untouched, and an empty spread is exactly that. Deliberately
+ * never `assistantProvider` (it would make a tool row claim to be an assistant
+ * turn) and never `kind`: `executionGraphAttemptEvidenceContent` requires the
+ * exact kind to admit a row as evidence, so touching it would make a sealed
+ * attempt unverifiable.
+ */
+function attemptRowBrandMetadata(input: {
+  actualModel?: string
+  requestedModel?: string
+  modelLabel?: string
+}): Record<string, unknown> {
+  const wireId = String(input.actualModel || input.requestedModel || '').trim()
+  const label = String(input.modelLabel || '').trim()
+  return {
+    ...(wireId ? { providerModel: wireId } : {}),
+    ...(label ? { providerModelLabel: label } : {})
   }
 }
 
@@ -164,6 +203,11 @@ export function projectExecutionGraphAttemptTranscript(
   ) {
     throw new Error('Execution graph transcript projection lost its exact run binding.')
   }
+  const rowBrand = attemptRowBrandMetadata({
+    actualModel: input.actualModel || existingRun.actualModel,
+    requestedModel: existingRun.requestedModel,
+    modelLabel: input.modelLabel || existingRun.modelLabel
+  })
 
   let messages = [...input.chat.messages]
   let insertAfter = messages.findIndex((message) => message.id === input.promptMessageId)
@@ -190,6 +234,7 @@ export function projectExecutionGraphAttemptTranscript(
             metadata: {
               kind: 'executionGraphAttemptOutput',
               ...bindingMetadata(input.binding),
+              ...rowBrand,
               ...(part.mediaRefs?.length ? { mediaRefs: [...part.mediaRefs] } : {})
             }
           }
@@ -202,7 +247,8 @@ export function projectExecutionGraphAttemptTranscript(
             toolActivities: part.activities.map((activity) => ({ ...activity })),
             metadata: {
               kind: 'executionGraphAttemptOutput',
-              ...bindingMetadata(input.binding)
+              ...bindingMetadata(input.binding),
+              ...rowBrand
             }
           }
     const existingIndex = messages.findIndex((candidate) => candidate.id === part.id)
@@ -230,7 +276,8 @@ export function projectExecutionGraphAttemptTranscript(
       runId,
       metadata: {
         kind: 'executionGraphAttemptOutput',
-        ...bindingMetadata(input.binding)
+        ...bindingMetadata(input.binding),
+        ...rowBrand
       }
     }
     const existingIndex = messages.findIndex((message) => message.id === id)
@@ -243,6 +290,7 @@ export function projectExecutionGraphAttemptTranscript(
   runs[runIndex] = {
     ...existingRun,
     actualModel: input.actualModel || existingRun.actualModel,
+    modelLabel: input.modelLabel || existingRun.modelLabel,
     providerThreadId: input.providerSessionId || existingRun.providerThreadId,
     stats: input.stats || existingRun.stats,
     status: input.status,
