@@ -19,6 +19,23 @@ describe('collectRendererHeapSnapshot timeouts', () => {
     ).rejects.toMatchObject({ code: 'CAPTURE_TIMEOUT' })
   })
 
+  it('rejects when HeapProfiler.enable never settles, before any chunk exists', async () => {
+    let took = false
+    const session = {
+      send: async (method: string) => {
+        if (method === 'HeapProfiler.enable') return new Promise(() => undefined)
+        if (method === 'HeapProfiler.takeHeapSnapshot') took = true
+        return {}
+      },
+      onEvent: () => () => undefined
+    }
+    await expect(
+      collectRendererHeapSnapshot(session, { timeoutMs: 20, disableTimeoutMs: 20 })
+    ).rejects.toMatchObject({ code: 'CAPTURE_TIMEOUT' })
+    // It hangs before there is anything to salvage, so nothing downstream ran.
+    expect(took).toBe(false)
+  })
+
   it('returns after chunks if HeapProfiler.disable hangs (attempt-3 shape)', async () => {
     /** @type {Set<(msg: object) => void>} */
     const handlers = new Set()

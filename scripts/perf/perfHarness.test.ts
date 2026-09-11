@@ -3476,8 +3476,10 @@ describe('T9a runner wiring (the producer must actually be invoked)', () => {
     // Anchored to statement form, not a bare substring: a plain indexOf also
     // matches the call sitting in a trailing `// comment`, which let a
     // disabled producer keep the suite green when this guard was first written.
+    // The statement spans two lines since the call became bounded; `^\s*const`
+    // still refuses a commented-out producer.
     const sampleAt = src.search(
-      /^\s*const statsResult = await sampleMainPersistenceStats\(mainInspector\)\s*$/m
+      /^\s*const statsResult = await withinCaptureBudget\(\s*\n\s*sampleMainPersistenceStats\(mainInspector\),\s*$/m
     )
     const applyAt = src.search(/^\s*applyPersistenceStatsToMetrics\(report\.metrics, /m)
     const closeAt = src.search(/^\s*mainInspector\.close\(\)\s*$/m)
@@ -3489,6 +3491,11 @@ describe('T9a runner wiring (the producer must actually be invoked)', () => {
 
     // A failed sample must be recorded, never silently dropped.
     expect(src).toContain('persistenceStatsFailure')
+    // The capture budget is a checkpoint, not a deadline: an await that neither
+    // asks hasCaptureDeadlineExpired() nor threads remainingCaptureBudgetMs()
+    // sits outside it. Attempt 4 died on this one, unbounded, at 18m44s.
+    expect(src).toContain('withinCaptureBudget')
+    expect(src).toContain("'capture:persistence_stats'")
   })
 
   it('derives claimMetricsCollected instead of hardcoding false', () => {
@@ -4720,6 +4727,72 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
         }
       )
     ).rejects.toThrow(/is older than .*Fresh\.ts.*npm run host:build/)
+    expect(spawned).toBe(false)
+  })
+
+  it('P2b: an abort that arrives before the spawn refuses the launch outright', async () => {
+    // The owed behavioural half of b8cd33b13. `process.once('SIGINT')` plus an
+    // `{ once: true }` abort listener meant a signal during fixture build or
+    // preflight fired the handler while there was no child to kill, consumed
+    // the listener, and let the launch proceed — so the operator's second
+    // Ctrl-C reached the default handler and stranded the Electron instance.
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const homesRoot = path.join(repoRoot, 'perf-homes')
+    mkdirSync(homesRoot, { recursive: true })
+    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-w8-abort-'))
+    tempDirs.push(home)
+    let spawned = false
+    const aborted = new AbortController()
+    aborted.abort()
+    await expect(
+      runT2BaselineCli(
+        [
+          '--workload=dual_run',
+          '--launch',
+          '--i-accept-isolated-launch',
+          '--materialize-instance-userdata',
+          '--lean',
+          '--scale-down=40',
+          '--instance-id=perfW8Abrt01',
+          `--home=${home}`,
+          '--port=9453',
+          '--inspect-port=9853',
+          '--max-replay-events=1'
+        ],
+        {
+          repoRoot,
+          forceIsolated: true,
+          allowDirtyLaunch: true,
+          allowNonIsolatedLaunch: true,
+          platform: 'darwin',
+          signal: aborted.signal,
+          provenance: {
+            gitSha: 'a'.repeat(40),
+            dirty: false,
+            dirtyTreeFingerprint: 'b'.repeat(64),
+            dirtyPaths: [],
+            isolatedWorktree: true,
+            authoritativeBaseline: true
+          },
+          buildAdapters: { build: async () => ({ code: 0 }) },
+          // Fresh, so the bundle preflight cannot be what refuses the launch.
+          hostBundleAdapters: { fs: freshHostBundleFs() },
+          spawnAdapters: {
+            resolveElectronPath: () => '/virtual/Electron',
+            spawn: () => {
+              spawned = true
+              throw new Error('an aborted launch must never reach the spawn')
+            }
+          },
+          portAdapters: {
+            probePort: async (port: number) => ({ port, occupied: false }),
+            probeCdp: async () => ({ port: 9453, reachable: false }),
+            listInstancePids: () => []
+          },
+          terminateOptions: { waitMs: 20, sleep: async () => {} }
+        }
+      )
+    ).rejects.toThrow(/Refusing --launch: aborted before spawn/)
     expect(spawned).toBe(false)
   })
 

@@ -160,8 +160,15 @@ async function collectRendererHeapSnapshot(session, options = {}) {
   const fsApi = options.fs || null
   const nowMs = options.nowMs || (() => Date.now())
   const pid = options.pid == null ? process.pid : options.pid
+  const takeTimeoutMs =
+    options.timeoutMs == null ? DEFAULT_HEAP_SNAPSHOT_TIMEOUT_MS : options.timeoutMs
 
-  await session.send('HeapProfiler.enable')
+  // The capture's first CDP round trip, and the last unbounded one left in this
+  // collector. Attempt 3 hung on an unbounded HeapProfiler.disable; b9a545107
+  // bounded that one and the hang moved along. An unbounded enable is simply
+  // the next place for it to land, and it lands before a single chunk exists to
+  // salvage.
+  await awaitWithTimeout(session.send('HeapProfiler.enable'), takeTimeoutMs, 'HeapProfiler.enable')
 
   const hash = crypto.createHash('sha256')
   let bytes = 0
@@ -241,8 +248,6 @@ async function collectRendererHeapSnapshot(session, options = {}) {
     if (chunk) writeChunk(chunk)
   })
 
-  const takeTimeoutMs =
-    options.timeoutMs == null ? DEFAULT_HEAP_SNAPSHOT_TIMEOUT_MS : options.timeoutMs
   const disableTimeoutMs =
     options.disableTimeoutMs == null ? DEFAULT_HEAP_DISABLE_TIMEOUT_MS : options.disableTimeoutMs
 

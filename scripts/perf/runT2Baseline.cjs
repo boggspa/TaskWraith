@@ -1961,6 +1961,17 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         return Math.max(0, maxCapturePhaseMs - (replayNowMs() - captureStartedAtMs))
       }
 
+      // maxCapturePhaseMs is a CHECKPOINT, not a deadline. Nothing polls it: it
+      // takes effect only where a step asks hasCaptureDeadlineExpired() before
+      // starting, or threads remainingCaptureBudgetMs() into a bounded await.
+      // An await that does neither sits outside the budget entirely, which is
+      // how a five-minute budget failed to bound an eighteen-minute phase
+      // (attempt 4, stuck in heap_snapshot with the runner at 0% CPU and the
+      // app's node utility spinning at 100%). Every capture await goes through
+      // here so the budget cannot be silently opted out of.
+      const withinCaptureBudget = (promise, label) =>
+        awaitWithTimeout(promise, remainingCaptureBudgetMs(), label)
+
       setCapturePhase('profiles_stop', {}, { log: true })
       /** @type {{ path?: string } | null} */
       let rendererStopped = null
@@ -2074,7 +2085,19 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           reason: 'capture deadline exceeded before persistence sampling'
         }
       } else {
-        const statsResult = await sampleMainPersistenceStats(mainInspector)
+        // Runtime.evaluate against the main inspector, unbounded until now and
+        // the exact await attempt 4 died on: the phase label never advanced
+        // past heap_snapshot because this sits between the two setCapturePhase
+        // calls. A timeout is recorded as an honest sampling failure, never
+        // thrown — this block has always refused to turn a missed sample into
+        // evidence, and a missed sample is not a failed run.
+        const statsResult = await withinCaptureBudget(
+          sampleMainPersistenceStats(mainInspector),
+          'capture:persistence_stats'
+        ).catch((error) => ({
+          ok: false,
+          reason: String(error && error.message ? error.message : error)
+        }))
         if (statsResult.ok) {
           applyPersistenceStatsToMetrics(report.metrics, statsResult.stats)
           persistenceStatsOk = true
