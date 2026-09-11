@@ -2,7 +2,10 @@ import type { ChatRecord } from './store/types'
 import {
   buildTranscriptTailAppend,
   buildTranscriptTailResync,
-  type TranscriptTailFrame
+  buildTranscriptTailUpdate,
+  MAX_TRANSCRIPT_TAIL_UPDATE_ROWS,
+  type TranscriptTailFrame,
+  type TranscriptTailUpdateRow
 } from '../shared/transcriptTailStream'
 
 /**
@@ -62,10 +65,26 @@ export interface TranscriptTailBroadcasterCounters {
    * appended to, and the low-latency lane is not carrying the round.
    */
   resyncs: number
+  /**
+   * Frames carrying rows that changed IN PLACE — streaming text growing inside
+   * a row already on screen. The lane's second half; before it, every one of
+   * these reached the user only at the pull lane's cadence.
+   */
+  updates: number
+  /** Rows carried across all update frames. */
+  updatedRows: number
   /** Chats seeded without emitting (first sighting after open or eviction). */
   seeds: number
   /** Saves that changed nothing on the transcript and emitted nothing. */
   noops: number
+  /**
+   * Same-length changes this lane declined to carry — too many rows, too many
+   * bytes, or no retained array to diff against. These are not failures: they
+   * are the rows left exactly where they were before this lane existed, on the
+   * canonical/pull path. A rising ratio against `updates` says the acceleration
+   * is not reaching the rows that need it.
+   */
+  updatesDeclined: number
 }
 
 /**
@@ -93,9 +112,12 @@ export class TranscriptTailBroadcaster {
   private readonly counters: TranscriptTailBroadcasterCounters = {
     appends: 0,
     appendedRows: 0,
+    updates: 0,
+    updatedRows: 0,
     resyncs: 0,
     seeds: 0,
-    noops: 0
+    noops: 0,
+    updatesDeclined: 0
   }
 
   constructor(options: TranscriptTailBroadcasterOptions = {}) {
@@ -153,30 +175,19 @@ export class TranscriptTailBroadcaster {
 
     const lastMessageId = messages.length > 0 ? (messages[messages.length - 1]?.id ?? null) : null
 
-    // SCOPE: this lane carries row ARRIVAL. A same-length change is an in-place
-    // edit — streaming text growing inside the tail row, a tool activity
-    // completing — and the pull lane has always owned those, at its own
-    // cadence. Emitting a resync for each one would fire a `get-chat-transcript-page`
-    // every 250 ms flush straight into the main thread this lane exists to stop
-    // depending on: a storm, in the name of freshness. The watermark is still
-    // advanced so the NEXT append is measured against what actually landed.
+    // A same-length change is an in-place EDIT — streaming text growing inside a
+    // row already on screen, a tool activity settling. The lane carries these
+    // now, as `tail-update` frames.
+    //
+    // It could not carry them as resyncs, and that is why it used to carry
+    // nothing: a resync tells the renderer to PULL, an edit happens on every
+    // 250 ms flush, and the result would have been a `get-chat-transcript-page`
+    // per flush straight into the main thread this lane exists to stop
+    // depending on — a storm, in the name of freshness. An update frame carries
+    // the changed rows themselves and asks for nothing back, so the cadence is
+    // the producer's and the pull lane is never touched.
     if (messages.length === previous.messageCount) {
-      if (lastMessageId === previous.lastMessageId) {
-        this.setWatermark(chatId, previous.sequence, messages, appendedAtMs)
-        this.counters.noops += 1
-        return null
-      }
-      // Same length, different tail row: a replacement, not an edit. The pull
-      // lane must reconcile that.
-      const replaced = ++this.sequence
-      this.counters.resyncs += 1
-      this.setWatermark(chatId, replaced, messages, appendedAtMs)
-      return buildTranscriptTailResync({
-        chatId,
-        sequence: replaced,
-        messageCount: messages.length,
-        appendedAtMs
-      })
+      return this.observeSameLength(chatId, messages, previous, lastMessageId, appendedAtMs)
     }
 
     const sequence = ++this.sequence
@@ -197,6 +208,119 @@ export class TranscriptTailBroadcaster {
       }
     }
 
+    this.counters.resyncs += 1
+    this.setWatermark(chatId, sequence, messages, appendedAtMs)
+    return buildTranscriptTailResync({
+      chatId,
+      sequence,
+      messageCount: messages.length,
+      appendedAtMs
+    })
+  }
+
+  /**
+   * Decide what an unchanged-length save means, and emit accordingly.
+   *
+   * Three outcomes, in order of how common they are:
+   *
+   *   nothing changed              -> noop, no frame (most saves)
+   *   rows changed, ids all held   -> `tail-update` carrying those rows
+   *   a row's IDENTITY changed     -> resync; the pull lane owns reconciliation
+   *
+   * The comparison is reference equality, which is exact here for the same
+   * reason the append path's prefix walk is: every producer rebuilds a changed
+   * row as a new object and spreads unchanged rows through by reference. It
+   * costs one pointer compare per row — microseconds over 20,000 — where a
+   * content comparison would be a deep walk of the whole transcript, and only
+   * the rows that actually changed are ever serialised or measured.
+   *
+   * Without the retained array there is nothing to diff, so this falls back to
+   * exactly what shipped before: an unchanged tail id is a noop, a changed one
+   * is a resync.
+   */
+  private observeSameLength(
+    chatId: string,
+    messages: ChatRecord['messages'],
+    previous: TranscriptTailWatermark,
+    lastMessageId: string | null,
+    appendedAtMs: number
+  ): TranscriptTailFrame | null {
+    const retained = previous.messages?.deref() as ChatRecord['messages'] | undefined
+    if (!retained || retained.length !== messages.length) {
+      if (lastMessageId === previous.lastMessageId) {
+        this.setWatermark(chatId, previous.sequence, messages, appendedAtMs)
+        this.counters.noops += 1
+        return null
+      }
+      return this.emitResync(chatId, messages, appendedAtMs)
+    }
+
+    const changed: TranscriptTailUpdateRow[] = []
+    let identityMoved = false
+    for (let index = 0; index < messages.length; index += 1) {
+      const message = messages[index]
+      if (message === retained[index]) continue
+      // A row in a different POSITION, or a different row entirely: this is a
+      // replacement or a reorder, not an edit. Carrying it as an update would
+      // write a row over a neighbour it does not belong to.
+      if (!message || message.id !== retained[index]?.id) {
+        identityMoved = true
+        break
+      }
+      changed.push({ index, message })
+      // Stop the walk once the change is already too broad for this lane. A
+      // reconciliation touching hundreds of rows is the pull lane's job, and
+      // collecting all of them first only to discard them is wasted work on
+      // main during exactly the flush that is already busy.
+      if (changed.length > MAX_TRANSCRIPT_TAIL_UPDATE_ROWS) break
+    }
+
+    if (identityMoved) return this.emitResync(chatId, messages, appendedAtMs)
+
+    if (changed.length === 0) {
+      this.setWatermark(chatId, previous.sequence, messages, appendedAtMs)
+      this.counters.noops += 1
+      return null
+    }
+
+    // Provisional: the counter only advances if a frame is actually emitted. A
+    // sequence spent on a frame nobody receives is a number the renderer can
+    // never settle, and the stall watchdog measures from the OLDEST unsettled
+    // announcement — so a silently burnt sequence would read as a permanent
+    // lag on a transcript that is perfectly up to date.
+    const sequence = this.sequence + 1
+    const frame = buildTranscriptTailUpdate({
+      chatId,
+      sequence,
+      messageCount: messages.length,
+      rows: changed,
+      appendedAtMs
+    })
+    if (!frame) {
+      // Too many rows or too many bytes. Emit NOTHING — not a resync. These
+      // rows are left exactly where they lived before this lane carried edits
+      // at all, and a resync here would be the flush-cadence pull storm the
+      // update frame exists to avoid. The watermark still advances, so the next
+      // save is diffed against what actually landed rather than against a
+      // record the renderer was never told about.
+      this.counters.updatesDeclined += 1
+      this.setWatermark(chatId, previous.sequence, messages, appendedAtMs)
+      return null
+    }
+
+    this.sequence = sequence
+    this.counters.updates += 1
+    this.counters.updatedRows += changed.length
+    this.setWatermark(chatId, sequence, messages, appendedAtMs)
+    return frame
+  }
+
+  private emitResync(
+    chatId: string,
+    messages: ChatRecord['messages'],
+    appendedAtMs: number
+  ): TranscriptTailFrame | null {
+    const sequence = ++this.sequence
     this.counters.resyncs += 1
     this.setWatermark(chatId, sequence, messages, appendedAtMs)
     return buildTranscriptTailResync({

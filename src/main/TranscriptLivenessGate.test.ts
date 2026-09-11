@@ -175,6 +175,124 @@ describe('transcript liveness gate — N seats x M rows end to end', () => {
   })
 })
 
+describe('transcript liveness gate — streaming text, not just row arrival', () => {
+  const SEATS = 12
+  const TURNS_PER_SEAT = 6
+  const FLUSHES_PER_TURN = 8
+  const STARTING_ROWS = 1_493
+
+  it('keeps every seat current through a streaming round with no pull-lane fallback', () => {
+    // The shape a live ensemble round actually has: a row arrives, then its
+    // text grows on every 250 ms flush, then the next row arrives. Before the
+    // update frame, only the ARRIVALS rode this lane — every flush in between
+    // reached the user at the pull lane's cadence, which is the cadence the
+    // 2026-09-11 freeze was measured on.
+    let clock = 0
+    const broadcaster = new TranscriptTailBroadcaster({ maxTrackedChats: SEATS * 2 })
+    const store = new ChatTranscriptStore()
+    const watchdog = new TranscriptStallWatchdog({ maxTrackedChats: SEATS * 2 })
+    const latency = new TranscriptVisibilityLatency({ now: () => clock })
+
+    // A NEW array each save, unchanged rows spread through by reference and the
+    // changed row replaced by a new object — exactly what
+    // `EnsembleOrchestrator.flushRun` builds. A fixture that mutated the array
+    // in place would hand the broadcaster back the very array it retained, so
+    // its identity diff would see nothing and this gate would pass on a lane
+    // that never fired.
+    const canonical = new Map<string, ChatMessage[]>()
+    for (let seat = 0; seat < SEATS; seat += 1) {
+      const chatId = `chat-${seat}`
+      const messages = transcript(STARTING_ROWS, `seat${seat}`)
+      canonical.set(chatId, messages)
+      broadcaster.observe(chat(chatId, messages))
+      openPagedTail(store, chatId, messages)
+    }
+
+    /** Push one canonical state through the lane and prove the renderer took it. */
+    const pump = (chatId: string, expected: 'tail-append' | 'tail-update'): void => {
+      clock += 1
+      const frame = broadcaster.observe(chat(chatId, canonical.get(chatId)!))
+      expect(frame?.kind).toBe(expected)
+      if (!frame) throw new Error('expected a frame')
+      latency.recordSent(chatId, frame.sequence, clock)
+      watchdog.announce(chatId, frame.sequence, clock)
+      const outcome = applyTranscriptTailFrame(frame, store)
+      expect(outcome.status).toBe('applied')
+      watchdog.settle(chatId, frame.sequence, clock)
+      latency.recordCommitted(chatId, frame.sequence)
+    }
+
+    for (let turn = 0; turn < TURNS_PER_SEAT; turn += 1) {
+      for (let seat = 0; seat < SEATS; seat += 1) {
+        const chatId = `chat-${seat}`
+        // The row arrives.
+        canonical.set(chatId, [
+          ...canonical.get(chatId)!,
+          message(`seat${seat}-turn-${turn}`, 'chunk 0 ')
+        ])
+        pump(chatId, 'tail-append')
+
+        // Then its text grows, flush by flush, the way a provider streams.
+        for (let flush = 1; flush <= FLUSHES_PER_TURN; flush += 1) {
+          const held = canonical.get(chatId)!
+          const streaming = held[held.length - 1]
+          canonical.set(chatId, [
+            ...held.slice(0, held.length - 1),
+            { ...streaming, content: `${streaming.content}chunk ${flush} ` } as ChatMessage
+          ])
+          pump(chatId, 'tail-update')
+        }
+      }
+    }
+
+    const counters = broadcaster.counterSnapshot()
+    expect(counters.appends).toBe(SEATS * TURNS_PER_SEAT)
+    expect(counters.updates).toBe(SEATS * TURNS_PER_SEAT * FLUSHES_PER_TURN)
+    expect(counters.updatedRows).toBe(SEATS * TURNS_PER_SEAT * FLUSHES_PER_TURN)
+    // Not one fallback to the pull lane, and not one declined edit: every
+    // streamed chunk reached the screen on the push lane.
+    expect(counters.resyncs).toBe(0)
+    expect(counters.updatesDeclined).toBe(0)
+
+    expect(watchdog.worstLagMs(clock)).toBe(0)
+    const snapshot = latency.snapshot()
+    expect(snapshot.pending).toBe(0)
+    expect(snapshot.p99Ms).toBe(0)
+
+    // And the window the user is looking at is byte-for-byte the canonical one.
+    for (let seat = 0; seat < SEATS; seat += 1) {
+      const chatId = `chat-${seat}`
+      const messages = canonical.get(chatId)!
+      const payload = store.get(chatId)
+      expect(payload?.windowEnd).toBe(messages.length)
+      expect(payload?.messages.at(-1)?.content).toBe(messages.at(-1)?.content)
+      expect(payload?.messages.at(-1)?.content).toContain(`chunk ${FLUSHES_PER_TURN} `)
+    }
+  })
+
+  it('carries a streamed chunk at 100 and at 20k rows for the same bytes', () => {
+    // The same size-independence the append path has. A row growing inside a
+    // 20,000-row transcript must cost what it costs inside a 100-row one —
+    // otherwise the lane reintroduces the very scaling it was built to remove.
+    const carried = [100, 2_000, 20_000].map((size) => {
+      const broadcaster = new TranscriptTailBroadcaster()
+      // The streamed row carries a FIXED id, so the only thing varying across
+      // sizes is the transcript around it — which is the whole claim.
+      const before = [...transcript(size), message('streaming', 'chunk 0 ')]
+      broadcaster.observe(chat('chat-1', before))
+      const next = [...before.slice(0, before.length - 1), message('streaming', 'chunk 0 chunk 1 ')]
+      const frame = broadcaster.observe(chat('chat-1', next))
+      if (frame?.kind !== 'tail-update') throw new Error('expected an update frame')
+      return {
+        rows: frame.rows.length,
+        bytes: estimateJsonishBytes(frame.rows.map((row) => row.message))
+      }
+    })
+    expect(carried.map((entry) => entry.rows)).toEqual([1, 1, 1])
+    expect(new Set(carried.map((entry) => entry.bytes)).size).toBe(1)
+  })
+})
+
 describe('transcript liveness gate — the bound is measured, not assumed', () => {
   it('reports the real lag when main stalls between emit and commit', () => {
     const latency = new TranscriptVisibilityLatency({ now: () => clock })

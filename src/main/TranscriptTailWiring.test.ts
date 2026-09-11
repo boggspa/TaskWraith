@@ -145,6 +145,17 @@ describe('transcript tail lane wiring', () => {
     expect(body).toContain('TRANSCRIPT_TAIL_CHANNEL')
   })
 
+  it('has a renderer consumer for the UPDATE kind too, not only for appends', () => {
+    // The kinds are handled in different places — appends go through the page
+    // accumulator, updates through an in-place row write — so a lane that grew
+    // a second kind on the producer and not the consumer would emit frames the
+    // renderer silently drops, and the streaming half would go quiet with no
+    // error anywhere.
+    const applier = source('src/renderer/src/lib/transcriptTailApplier.ts')
+    expect(applier).toContain("kind === 'tail-update'")
+    expect(applier).toContain('store.updateChatTranscriptRows(')
+  })
+
   it('ROUTES the frame by chat interest instead of broadcasting to every window', () => {
     // Unrouted, a busy chat cost one structured clone per app window on every
     // append, and every window but one discarded the frame on arrival. The

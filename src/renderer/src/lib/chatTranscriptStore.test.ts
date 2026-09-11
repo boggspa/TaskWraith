@@ -984,3 +984,133 @@ describe('ChatTranscriptStore window bounding cost', () => {
     expect(afterSecond?.windowEstimatedBytes).toBe(settledBytes + arrivingBytes)
   })
 })
+
+describe('ChatTranscriptStore.updateChatTranscriptRows', () => {
+  function pagedWindow(store: ChatTranscriptStore, rows: ChatMessage[], total: number): void {
+    store.ingestPage({
+      chatId: 'chat-u',
+      messages: rows,
+      runs: [],
+      totalMessageCount: total,
+      windowStart: total - rows.length,
+      windowEnd: total,
+      estimatedBytes: 1,
+      hasOlder: total > rows.length,
+      hasNewer: false,
+      oldestMessageId: rows[0]?.id ?? null,
+      newestMessageId: rows.at(-1)?.id ?? null,
+      updatedAt: 1
+    })
+  }
+
+  const rows = (count: number, offset = 0): ChatMessage[] =>
+    Array.from({ length: count }, (_, index) =>
+      message(`m-${offset + index}`, `row ${offset + index}`)
+    )
+
+  it('replaces a row in place without moving the window', () => {
+    const store = new ChatTranscriptStore()
+    const window = rows(10, 90)
+    pagedWindow(store, window, 100)
+    const edited = { ...window[3], content: 'streamed' }
+    const applied = store.updateChatTranscriptRows('chat-u', [{ index: 93, message: edited }], 100)
+    expect(applied?.messages[3]).toBe(edited)
+    expect(applied?.messages).toHaveLength(10)
+    expect(applied?.windowStart).toBe(90)
+    expect(applied?.windowEnd).toBe(100)
+    expect(applied?.totalMessageCount).toBe(100)
+    // Every other row is the SAME object — an edit must not churn the render
+    // model for rows that did not change.
+    expect(applied?.messages[2]).toBe(window[2])
+    expect(applied?.messages[4]).toBe(window[4])
+  })
+
+  it('adjusts window bytes by the DELTA, measuring only the incoming row', () => {
+    const store = new ChatTranscriptStore()
+    const window = rows(10, 90)
+    pagedWindow(store, window, 100)
+    const settled = store.updateChatTranscriptRows(
+      'chat-u',
+      [{ index: 90, message: { ...window[0], content: 'a' } }],
+      100
+    )
+    const before = settled?.windowEstimatedBytes ?? 0
+    const grown = { ...window[1], content: 'x'.repeat(1_000) }
+    const applied = store.updateChatTranscriptRows('chat-u', [{ index: 91, message: grown }], 100)
+    const delta = estimateChatMessageBytes(grown) - estimateChatMessageBytes(window[1])
+    expect(applied?.windowEstimatedBytes).toBe(before + delta)
+  })
+
+  it('skips rows the reader has scrolled away from, and reports no change', () => {
+    const store = new ChatTranscriptStore()
+    const window = rows(10, 90)
+    pagedWindow(store, window, 100)
+    const before = store.get('chat-u')
+    const applied = store.updateChatTranscriptRows(
+      'chat-u',
+      [{ index: 12, message: message('m-12', 'edited elsewhere') }],
+      100
+    )
+    // Same object back: no re-render for an edit to a row nobody is looking at.
+    expect(applied).toBe(before)
+  })
+
+  it('REFUSES the whole frame when a row lands on a different id', () => {
+    // The window is not where the caller thinks it is. Applying the rows that
+    // happen to match would leave the transcript rendering a row it cannot
+    // know is wrong, so nothing is written.
+    const store = new ChatTranscriptStore()
+    const window = rows(10, 90)
+    pagedWindow(store, window, 100)
+    const before = store.get('chat-u')
+    const applied = store.updateChatTranscriptRows(
+      'chat-u',
+      [
+        { index: 90, message: { ...window[0], content: 'fine' } },
+        { index: 91, message: message('someone-else', 'wrong row') }
+      ],
+      100
+    )
+    expect(applied).toBeNull()
+    expect(store.get('chat-u')).toBe(before)
+    expect(store.get('chat-u')?.messages[0]).toBe(window[0])
+  })
+
+  it('refuses when the canonical length is not the one this window belongs to', () => {
+    const store = new ChatTranscriptStore()
+    const window = rows(10, 90)
+    pagedWindow(store, window, 100)
+    const edited = { ...window[0], content: 'streamed' }
+    expect(
+      store.updateChatTranscriptRows('chat-u', [{ index: 90, message: edited }], 101)
+    ).toBeNull()
+  })
+
+  it('refuses a chat that is not paged, and an empty row list', () => {
+    const store = new ChatTranscriptStore()
+    store.ingest(chat('chat-full'))
+    expect(
+      store.updateChatTranscriptRows('chat-full', [{ index: 0, message: message('m1', 'x') }])
+    ).toBeNull()
+    expect(store.updateChatTranscriptRows('chat-u', [])).toBeNull()
+    expect(
+      store.updateChatTranscriptRows('missing', [{ index: 0, message: message('m1', 'x') }])
+    ).toBeNull()
+  })
+
+  it('bumps the generation only when the window actually changed', () => {
+    const store = new ChatTranscriptStore()
+    const window = rows(10, 90)
+    pagedWindow(store, window, 100)
+    const settled = store.generation('chat-u')
+    // An identical row is not a change.
+    store.updateChatTranscriptRows('chat-u', [{ index: 90, message: window[0] }], 100)
+    expect(store.generation('chat-u')).toBe(settled)
+    store.updateChatTranscriptRows(
+      'chat-u',
+      [{ index: 90, message: { ...window[0], content: 'new' } }],
+      100
+    )
+    expect(store.generation('chat-u')).toBeGreaterThan(settled)
+  })
+})

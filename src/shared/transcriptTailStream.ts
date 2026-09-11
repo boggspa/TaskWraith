@@ -55,6 +55,27 @@ export const MAX_TRANSCRIPT_TAIL_ROWS = 32
  */
 export const MAX_TRANSCRIPT_TAIL_BYTES = 256 * 1024
 
+/**
+ * Per-frame row cap for an UPDATE frame. Lower than the append cap because an
+ * update recurs: a streaming row re-ships on every flush, where an appended row
+ * ships once. A change touching more rows than this is a reconciliation, not an
+ * edit, and the pull lane is the right owner.
+ */
+export const MAX_TRANSCRIPT_TAIL_UPDATE_ROWS = 8
+
+/**
+ * Per-frame byte cap for an UPDATE frame, a quarter of the append cap and for
+ * the same reason.
+ *
+ * An update carries the row's FULL current content, so a 200 KB assistant
+ * message being streamed would re-ship 200 KB every 250 ms — 800 KB/s of
+ * structured clone per window, to show text that the canonical lane is already
+ * carrying. Above this ceiling the producer emits NOTHING and the pull lane
+ * keeps that row exactly as it does today: no regression, just no acceleration
+ * for the rows where acceleration would cost more than it is worth.
+ */
+export const MAX_TRANSCRIPT_TAIL_UPDATE_BYTES = 64 * 1024
+
 const MAX_TRANSCRIPT_TAIL_CHAT_ID_LENGTH = 512
 
 /**
@@ -71,6 +92,45 @@ export interface TranscriptTailAppend {
   sequence: number
   baseMessageCount: number
   messages: ChatMessage[]
+  appendedAtMs: number
+}
+
+/** One canonical row whose CONTENT changed while its position and id did not. */
+export interface TranscriptTailUpdateRow {
+  /** Index into the canonical transcript, so a windowed consumer can place it. */
+  index: number
+  message: ChatMessage
+}
+
+/**
+ * Rows that changed IN PLACE — streaming text growing inside a row already on
+ * screen, a tool activity settling — pushed as they changed.
+ *
+ * This is the other half of what the lane carries, and it is deliberately a
+ * distinct kind from both of its neighbours.
+ *
+ * It is not an append: no row arrives, the transcript length is unchanged, and
+ * a consumer applies it by replacing rows it already holds rather than
+ * extending its window. Treating it as an append would corrupt the window.
+ *
+ * It is not a resync either, and that distinction is the entire point. A resync
+ * tells the renderer to go and PULL, and an in-place edit happens on every
+ * 250 ms streaming flush — so emitting resyncs for these would fire a
+ * `get-chat-transcript-page` per flush straight into the main thread this lane
+ * exists to stop depending on. A storm, in the name of freshness. An update
+ * frame carries the changed rows themselves and asks for nothing back.
+ *
+ * `messageCount` is the canonical length, which a consumer checks the same way
+ * it checks `baseMessageCount` on an append: a frame describing a transcript of
+ * a different length than the one it is holding is not safely applicable.
+ */
+export interface TranscriptTailUpdate {
+  protocolVersion: typeof TRANSCRIPT_TAIL_PROTOCOL_VERSION
+  kind: 'tail-update'
+  chatId: string
+  sequence: number
+  messageCount: number
+  rows: TranscriptTailUpdateRow[]
   appendedAtMs: number
 }
 
@@ -93,7 +153,7 @@ export interface TranscriptTailResync {
   appendedAtMs: number
 }
 
-export type TranscriptTailFrame = TranscriptTailAppend | TranscriptTailResync
+export type TranscriptTailFrame = TranscriptTailAppend | TranscriptTailUpdate | TranscriptTailResync
 
 function hasAsciiControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
@@ -223,6 +283,90 @@ export function buildTranscriptTailAppend(
   }
 }
 
+export interface BuildTranscriptTailUpdateInput {
+  chatId: string
+  sequence: number
+  messageCount: number
+  rows: readonly TranscriptTailUpdateRow[]
+  appendedAtMs: number
+  maxRows?: number
+  maxBytes?: number
+}
+
+/**
+ * Are these update rows placeable, exactly once each, inside a transcript of
+ * `messageCount` rows?
+ *
+ * Indices must be STRICTLY INCREASING, not merely distinct. A consumer applies
+ * them in one forward pass, and ordering is what lets it do that without
+ * building an index; more importantly, a frame carrying the same index twice
+ * would have the second write silently win over the first, so the ordering
+ * requirement makes that shape unrepresentable rather than merely unlikely.
+ */
+export function transcriptTailUpdateRowsArePlaceable(
+  rows: readonly TranscriptTailUpdateRow[],
+  messageCount: number
+): boolean {
+  let previousIndex = -1
+  for (const row of rows) {
+    const index = nonNegativeSafeInteger(row?.index)
+    if (index === null || index <= previousIndex || index >= messageCount) return false
+    previousIndex = index
+  }
+  return transcriptTailRowsAreAddressable(rows.map((row) => row?.message))
+}
+
+/**
+ * Returns null when the change is not eligible for the low-latency lane.
+ *
+ * Unlike the append builder, null here is the producer's signal to emit
+ * NOTHING — not a resync. An in-place edit that is too big or too broad for
+ * this lane is left exactly where it lives today, on the canonical/pull lanes,
+ * and a resync instead would turn every oversized streaming row into a pull
+ * storm at flush cadence.
+ */
+export function buildTranscriptTailUpdate(
+  input: BuildTranscriptTailUpdateInput
+): TranscriptTailUpdate | null {
+  const chatId = normalizeTranscriptTailChatId(input.chatId)
+  const sequence = positiveSafeInteger(input.sequence)
+  const messageCount = nonNegativeSafeInteger(input.messageCount)
+  const appendedAtMs = nonNegativeSafeInteger(input.appendedAtMs)
+  if (chatId === null || sequence === null || messageCount === null || appendedAtMs === null) {
+    return null
+  }
+  if (!Array.isArray(input.rows) || input.rows.length === 0) return null
+
+  const maxRows = Math.min(
+    MAX_TRANSCRIPT_TAIL_UPDATE_ROWS,
+    Math.max(1, input.maxRows ?? Number.MAX_SAFE_INTEGER)
+  )
+  const maxBytes = Math.min(
+    MAX_TRANSCRIPT_TAIL_UPDATE_BYTES,
+    Math.max(1, input.maxBytes ?? Number.MAX_SAFE_INTEGER)
+  )
+  if (input.rows.length > maxRows) return null
+  if (!transcriptTailUpdateRowsArePlaceable(input.rows, messageCount)) return null
+  if (
+    transcriptTailBytesExceed(
+      input.rows.map((row) => row.message),
+      maxBytes
+    )
+  ) {
+    return null
+  }
+
+  return {
+    protocolVersion: TRANSCRIPT_TAIL_PROTOCOL_VERSION,
+    kind: 'tail-update',
+    chatId,
+    sequence,
+    messageCount,
+    rows: input.rows.map((row) => ({ index: row.index, message: row.message })),
+    appendedAtMs
+  }
+}
+
 export function buildTranscriptTailResync(input: {
   chatId: string
   sequence: number
@@ -267,6 +411,28 @@ export function normalizeTranscriptTailFrame(value: unknown): TranscriptTailFram
       return null
     }
     return candidate as TranscriptTailResync
+  }
+
+  if (candidate.kind === 'tail-update') {
+    const update = candidate as TranscriptTailUpdate
+    const messageCount = nonNegativeSafeInteger(update.messageCount)
+    if (
+      messageCount === null ||
+      !Array.isArray(update.rows) ||
+      update.rows.length === 0 ||
+      update.rows.length > MAX_TRANSCRIPT_TAIL_UPDATE_ROWS ||
+      !transcriptTailUpdateRowsArePlaceable(update.rows, messageCount) ||
+      // Same reasoning as the append branch: the producer caps bytes, and
+      // without the identical cap here the boundary would be trusting the
+      // sender, which is the one thing this function exists not to do.
+      transcriptTailBytesExceed(
+        update.rows.map((row) => row.message),
+        MAX_TRANSCRIPT_TAIL_UPDATE_BYTES
+      )
+    ) {
+      return null
+    }
+    return update
   }
 
   if (candidate.kind !== 'tail-append') return null

@@ -254,6 +254,70 @@ export class ChatTranscriptStore {
   }
 
   /**
+   * Replace rows the window already holds, in place, without moving its bounds.
+   *
+   * The consumer half of the tail lane's `tail-update` frame: streaming text
+   * growing inside a row on screen, a tool activity settling. Deliberately NOT
+   * expressed as a page — a page operation would move or re-bound the window,
+   * and nothing about an edit should scroll the reader.
+   *
+   * `rows` carry CANONICAL indices; rows outside the loaded window are skipped
+   * rather than refused, because a window is by definition a part of the
+   * transcript and an edit to a row the reader is not looking at is simply not
+   * their concern yet.
+   *
+   * Returns null — refusing the whole call, applying nothing — when a row's id
+   * does not match the row at that index, or when the canonical length it was
+   * built against is not the one this window belongs to. Both mean the window
+   * is not where the caller thinks it is, and a partial write onto a
+   * disagreeing window is how a transcript silently renders the wrong row.
+   */
+  updateChatTranscriptRows(
+    chatId: string,
+    rows: readonly { index: number; message: ChatMessage }[],
+    totalMessageCount?: number
+  ): ChatTranscriptPayload | null {
+    const entry = this.byId.get(chatId)
+    if (!entry?.paged || rows.length === 0) return null
+    const payload = entry.payload
+    if (typeof totalMessageCount === 'number' && totalMessageCount !== payload.totalMessageCount) {
+      return null
+    }
+
+    let next: ChatMessage[] | null = null
+    // Adjusted by the DELTA of each replaced row rather than re-summing the
+    // window. With per-message sizes memoised on identity, the outgoing row's
+    // size is already known and only the incoming row is walked — so an edit
+    // costs O(changed rows), which is the whole promise of this lane.
+    let estimatedBytes = payload.windowEstimatedBytes
+    for (const row of rows) {
+      const offset = row.index - payload.windowStart
+      if (offset < 0 || offset >= payload.messages.length) continue
+      const existing = payload.messages[offset]
+      // The window disagrees about what lives at this index. Refuse everything:
+      // a half-applied update is worse than none.
+      if (existing?.id !== row.message?.id) return null
+      if (existing === row.message) continue
+      if (!next) next = payload.messages.slice()
+      next[offset] = row.message
+      estimatedBytes += estimateChatMessageBytes(row.message) - estimateChatMessageBytes(existing)
+    }
+    // Nothing visible changed. Return the SAME payload object so no subscriber
+    // re-renders and `useSyncExternalStore` sees a stable snapshot.
+    if (!next) return payload
+
+    return this.installPagedWindow(chatId, {
+      ...payload,
+      messages: next,
+      // The window is not re-bounded here. An edit adds no rows, and evicting
+      // one because a row grew would make the transcript jump under a reader
+      // who did nothing but watch text arrive. The next real page operation
+      // applies the budget.
+      windowEstimatedBytes: Math.max(0, estimatedBytes)
+    })
+  }
+
+  /**
    * Join an adjacent page onto one edge of the loaded window.
    *
    * A page that does not actually touch the window replaces it instead: a

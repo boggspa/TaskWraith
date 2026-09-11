@@ -24,6 +24,16 @@ export type TranscriptTailApplyStatus =
   | 'not-paged'
   | 'not-at-tail'
   | 'discontiguous'
+  /**
+   * An update frame whose rows are all OUTSIDE the loaded window — the reader
+   * has scrolled away from the rows that changed.
+   *
+   * Counted as settled. The user is seeing everything this frame describes that
+   * is theirs to see, so there is nothing outstanding; announcing it and never
+   * settling would report a permanent lag on a transcript that is entirely up
+   * to date, which is the phantom the sequence numbering exists to prevent.
+   */
+  | 'not-visible'
 
 export interface TranscriptTailApplyResult {
   status: TranscriptTailApplyStatus
@@ -32,9 +42,10 @@ export interface TranscriptTailApplyResult {
   /** Rows that reached the window. Zero for every non-applied status. */
   rows: number
   /**
-   * Whether the visible window now reflects this frame. True for `applied` and
-   * for `duplicate` — a row already on screen is, by definition, visible — and
-   * that is what the caller settles the watchdog and the latency receipt on.
+   * Whether the visible window now reflects this frame. True for `applied`, for
+   * `duplicate` — a row already on screen is, by definition, visible — and for
+   * `not-visible`, where nothing this frame describes is in the window at all.
+   * That is what the caller settles the watchdog and the latency receipt on.
    */
   settled: boolean
 }
@@ -49,7 +60,7 @@ function result(
     chatId: frame.chatId,
     sequence: frame.sequence,
     rows,
-    settled: status === 'applied' || status === 'duplicate'
+    settled: status === 'applied' || status === 'duplicate' || status === 'not-visible'
   }
 }
 
@@ -89,6 +100,7 @@ export function applyTranscriptTailFrame(
 ): TranscriptTailApplyResult {
   if (frame.kind === 'tail-resync') return result('resync-required', frame)
   if (!store.isPaged(frame.chatId)) return result('not-paged', frame)
+  if (frame.kind === 'tail-update') return applyUpdate(frame, store)
 
   // `isPaged` already proved the entry exists, so this is a type narrowing
   // rather than a reachable branch.
@@ -129,6 +141,48 @@ export function applyTranscriptTailFrame(
   }
 
   return applyAppend(frame, store, current.windowEnd)
+}
+
+/**
+ * Land rows that changed in place.
+ *
+ * Unlike an append this has no contiguity question to answer — no row arrives
+ * and the window does not move — so the checks are about IDENTITY instead: the
+ * canonical length must be the one this window belongs to, and each row must
+ * land on the row that already carries its id. The store enforces both and
+ * refuses the whole frame if either fails, because a half-applied update leaves
+ * the transcript rendering a row it cannot know is wrong.
+ *
+ * A refusal is not an error; the canonical lane reconciles the window exactly
+ * as it did before this lane carried edits at all.
+ */
+function applyUpdate(
+  frame: Extract<TranscriptTailFrame, { kind: 'tail-update' }>,
+  store: ChatTranscriptStore
+): TranscriptTailApplyResult {
+  const before = store.get(frame.chatId)
+  if (!before) return result('not-paged', frame)
+
+  const applied = store.updateChatTranscriptRows(frame.chatId, frame.rows, frame.messageCount)
+  if (!applied) return result('discontiguous', frame)
+
+  // The store returns the SAME payload when nothing in the window changed,
+  // which is how "the reader has scrolled away from these rows" is told apart
+  // from "these rows were written".
+  if (applied === before) {
+    const visible = frame.rows.some(
+      (row) => row.index >= before.windowStart && row.index < before.windowEnd
+    )
+    // Rows inside the window that produced no change were already exactly these
+    // rows: a benign overlap with the reconcile lane, same as an append's.
+    return visible ? result('duplicate', frame, 0) : result('not-visible', frame)
+  }
+
+  let rows = 0
+  for (const row of frame.rows) {
+    if (row.index >= before.windowStart && row.index < before.windowEnd) rows += 1
+  }
+  return result('applied', frame, rows)
 }
 
 function applyAppend(

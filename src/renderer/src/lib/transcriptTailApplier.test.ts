@@ -4,7 +4,8 @@ import type { TranscriptPage } from '../../../shared/transcriptPage'
 import { ChatTranscriptStore } from './chatTranscriptStore'
 import {
   buildTranscriptTailAppend,
-  buildTranscriptTailResync
+  buildTranscriptTailResync,
+  buildTranscriptTailUpdate
 } from '../../../shared/transcriptTailStream'
 import { applyTranscriptTailFrame } from './transcriptTailApplier'
 
@@ -167,5 +168,122 @@ describe('applyTranscriptTailFrame', () => {
     const payload = store.get('chat-1')
     expect(payload?.messages.map((row) => row.id)).toEqual(['first'])
     expect(payload?.hasOlder).toBe(false)
+  })
+})
+
+describe('applyTranscriptTailFrame — tail-update', () => {
+  function update(
+    messageCount: number,
+    updateRows: { index: number; message: ChatMessage }[],
+    sequence = 1
+  ) {
+    const frame = buildTranscriptTailUpdate({
+      chatId: 'chat-1',
+      sequence,
+      messageCount,
+      rows: updateRows,
+      appendedAtMs: 1_000
+    })
+    if (!frame) throw new Error('fixture built an invalid update frame')
+    return frame
+  }
+
+  it('writes a changed row into the visible window and settles', () => {
+    const store = new ChatTranscriptStore()
+    const window = rows(10, 90)
+    store.ingestPage(page(window, 90, 100))
+    const edited = { ...window[4], content: 'streamed further' } as ChatMessage
+    const outcome = applyTranscriptTailFrame(update(100, [{ index: 94, message: edited }]), store)
+    expect(outcome).toMatchObject({ status: 'applied', rows: 1, settled: true })
+    expect(store.get('chat-1')?.messages[4]).toBe(edited)
+    // The window did not move. An edit must never scroll the reader.
+    expect(store.get('chat-1')?.windowStart).toBe(90)
+    expect(store.get('chat-1')?.windowEnd).toBe(100)
+  })
+
+  it('settles a frame whose rows are all outside the window', () => {
+    // The reader scrolled back. Nothing this frame describes is theirs to see,
+    // so there is nothing outstanding — announcing it and never settling would
+    // report a permanent lag on a transcript that is completely up to date.
+    const store = new ChatTranscriptStore()
+    store.ingestPage(page(rows(10, 90), 90, 100))
+    const outcome = applyTranscriptTailFrame(
+      update(100, [{ index: 3, message: message('m-3', 'edited far above') }]),
+      store
+    )
+    expect(outcome).toMatchObject({ status: 'not-visible', rows: 0, settled: true })
+  })
+
+  it('treats a row already identical as a duplicate, not a change', () => {
+    const store = new ChatTranscriptStore()
+    const window = rows(10, 90)
+    store.ingestPage(page(window, 90, 100))
+    const outcome = applyTranscriptTailFrame(
+      update(100, [{ index: 94, message: window[4] }]),
+      store
+    )
+    expect(outcome).toMatchObject({ status: 'duplicate', rows: 0, settled: true })
+  })
+
+  it('refuses — and writes nothing — when the row lands on a different id', () => {
+    const store = new ChatTranscriptStore()
+    const window = rows(10, 90)
+    store.ingestPage(page(window, 90, 100))
+    const before = store.get('chat-1')
+    const outcome = applyTranscriptTailFrame(
+      update(100, [{ index: 94, message: message('someone-else', 'wrong row') }]),
+      store
+    )
+    expect(outcome).toMatchObject({ status: 'discontiguous', settled: false })
+    expect(store.get('chat-1')).toBe(before)
+  })
+
+  it('refuses when the renderer is behind on length — the pull lane owns that', () => {
+    const store = new ChatTranscriptStore()
+    const window = rows(10, 90)
+    store.ingestPage(page(window, 90, 100))
+    const outcome = applyTranscriptTailFrame(
+      update(140, [{ index: 94, message: { ...window[4], content: 'x' } as ChatMessage }]),
+      store
+    )
+    expect(outcome).toMatchObject({ status: 'discontiguous', settled: false })
+  })
+
+  it('declines an update for a chat that is not paged', () => {
+    const store = new ChatTranscriptStore()
+    store.ingest({
+      appChatId: 'chat-1',
+      title: 'T',
+      createdAt: 1,
+      updatedAt: 2,
+      archived: false,
+      messages: rows(3),
+      runs: []
+    } as unknown as ChatRecord)
+    const outcome = applyTranscriptTailFrame(
+      update(3, [{ index: 1, message: message('m-1', 'edited') }]),
+      store
+    )
+    expect(outcome).toMatchObject({ status: 'not-paged', settled: false })
+  })
+
+  it('applies an update to a window that was itself grown by an append', () => {
+    // The two halves of the lane composing: a row arrives on the push lane, and
+    // then its text keeps growing on the same lane. Before this, the second
+    // half only ever reached the user at the pull lane's cadence.
+    const store = new ChatTranscriptStore()
+    const window = rows(10, 90)
+    store.ingestPage(page(window, 90, 100))
+    const arriving = message('m-100', 'partial')
+    expect(applyTranscriptTailFrame(append(100, [arriving], 1), store).status).toBe('applied')
+
+    const grown = { ...arriving, content: 'partial and then some' } as ChatMessage
+    const outcome = applyTranscriptTailFrame(
+      update(101, [{ index: 100, message: grown }], 2),
+      store
+    )
+    expect(outcome).toMatchObject({ status: 'applied', rows: 1, settled: true })
+    expect(store.get('chat-1')?.messages.at(-1)).toBe(grown)
+    expect(store.get('chat-1')?.windowEnd).toBe(101)
   })
 })

@@ -3,16 +3,20 @@ import type { ChatMessage } from '../main/store/types'
 import {
   MAX_TRANSCRIPT_TAIL_BYTES,
   MAX_TRANSCRIPT_TAIL_ROWS,
+  MAX_TRANSCRIPT_TAIL_UPDATE_BYTES,
+  MAX_TRANSCRIPT_TAIL_UPDATE_ROWS,
   TRANSCRIPT_TAIL_CHANNEL,
   TRANSCRIPT_TAIL_PROTOCOL_VERSION,
   buildTranscriptTailAppend,
   buildTranscriptTailReceipt,
   buildTranscriptTailResync,
+  buildTranscriptTailUpdate,
   normalizeTranscriptTailReceipt,
   transcriptTailBytesExceed,
   normalizeTranscriptTailChatId,
   normalizeTranscriptTailFrame,
-  transcriptTailRowsAreAddressable
+  transcriptTailRowsAreAddressable,
+  type TranscriptTailUpdateRow
 } from './transcriptTailStream'
 
 function message(id: string, content = `content-${id}`): ChatMessage {
@@ -300,5 +304,133 @@ describe('transcriptTailBytesExceed', () => {
       appendedAtMs: 1
     }
     expect(normalizeTranscriptTailFrame(forged)).toBeNull()
+  })
+})
+
+describe('transcript tail UPDATE frames', () => {
+  const row = (index: number, content = `content-${index}`): TranscriptTailUpdateRow => ({
+    index,
+    message: message(`m-${index}`, content)
+  })
+
+  it('builds a frame carrying only the changed rows', () => {
+    const frame = buildTranscriptTailUpdate({
+      chatId: 'chat-1',
+      sequence: 4,
+      messageCount: 100,
+      rows: [row(7), row(42)],
+      appendedAtMs: 1_000
+    })
+    expect(frame).toMatchObject({
+      protocolVersion: TRANSCRIPT_TAIL_PROTOCOL_VERSION,
+      kind: 'tail-update',
+      chatId: 'chat-1',
+      sequence: 4,
+      messageCount: 100,
+      appendedAtMs: 1_000
+    })
+    expect(frame?.rows.map((entry) => entry.index)).toEqual([7, 42])
+  })
+
+  it('copies the row list so a later producer mutation cannot reach the wire', () => {
+    const rows = [row(1)]
+    const frame = buildTranscriptTailUpdate({
+      chatId: 'chat-1',
+      sequence: 1,
+      messageCount: 10,
+      rows,
+      appendedAtMs: 1
+    })
+    rows.push(row(2))
+    expect(frame?.rows).toHaveLength(1)
+  })
+
+  it('refuses indices that are not strictly increasing', () => {
+    // Not merely distinct: a consumer applies these in one forward pass, and a
+    // repeated index would have the second write silently win over the first.
+    const base = { chatId: 'chat-1', sequence: 1, messageCount: 10, appendedAtMs: 1 }
+    expect(buildTranscriptTailUpdate({ ...base, rows: [row(5), row(3)] })).toBeNull()
+    expect(buildTranscriptTailUpdate({ ...base, rows: [row(3), row(3)] })).toBeNull()
+    expect(buildTranscriptTailUpdate({ ...base, rows: [row(3), row(4)] })).not.toBeNull()
+  })
+
+  it('refuses an index outside the transcript it claims to describe', () => {
+    const base = { chatId: 'chat-1', sequence: 1, messageCount: 10, appendedAtMs: 1 }
+    expect(buildTranscriptTailUpdate({ ...base, rows: [row(10)] })).toBeNull()
+    expect(buildTranscriptTailUpdate({ ...base, rows: [row(9)] })).not.toBeNull()
+    expect(
+      buildTranscriptTailUpdate({ ...base, rows: [{ index: -1, message: message('m', 'x') }] })
+    ).toBeNull()
+    expect(
+      buildTranscriptTailUpdate({ ...base, rows: [{ index: 1.5, message: message('m', 'x') }] })
+    ).toBeNull()
+  })
+
+  it('refuses rows that are not addressable, so one cannot land twice', () => {
+    const base = { chatId: 'chat-1', sequence: 1, messageCount: 10, appendedAtMs: 1 }
+    expect(
+      buildTranscriptTailUpdate({
+        ...base,
+        rows: [
+          { index: 1, message: message('dup', 'a') },
+          { index: 2, message: message('dup', 'b') }
+        ]
+      })
+    ).toBeNull()
+    expect(
+      buildTranscriptTailUpdate({ ...base, rows: [{ index: 1, message: message('', 'a') }] })
+    ).toBeNull()
+  })
+
+  it('caps rows well below the append cap, because an update RECURS', () => {
+    const base = { chatId: 'chat-1', sequence: 1, messageCount: 1_000, appendedAtMs: 1 }
+    const many = Array.from({ length: MAX_TRANSCRIPT_TAIL_UPDATE_ROWS + 1 }, (_, index) =>
+      row(index)
+    )
+    expect(buildTranscriptTailUpdate({ ...base, rows: many })).toBeNull()
+    expect(buildTranscriptTailUpdate({ ...base, rows: many.slice(0, -1) })).not.toBeNull()
+    expect(MAX_TRANSCRIPT_TAIL_UPDATE_ROWS).toBeLessThan(MAX_TRANSCRIPT_TAIL_ROWS)
+  })
+
+  it('caps bytes well below the append cap, for the same reason', () => {
+    const base = { chatId: 'chat-1', sequence: 1, messageCount: 10, appendedAtMs: 1 }
+    const fat = [row(1, 'x'.repeat(MAX_TRANSCRIPT_TAIL_UPDATE_BYTES))]
+    expect(buildTranscriptTailUpdate({ ...base, rows: fat })).toBeNull()
+    expect(MAX_TRANSCRIPT_TAIL_UPDATE_BYTES).toBeLessThan(MAX_TRANSCRIPT_TAIL_BYTES)
+  })
+
+  it('round-trips a valid frame through the renderer boundary', () => {
+    const frame = buildTranscriptTailUpdate({
+      chatId: 'chat-1',
+      sequence: 2,
+      messageCount: 50,
+      rows: [row(4)],
+      appendedAtMs: 9
+    })
+    expect(normalizeTranscriptTailFrame(JSON.parse(JSON.stringify(frame)))).toEqual(frame)
+  })
+
+  it('rejects at the BOUNDARY what the producer would never build', () => {
+    // Main authors these, but the renderer writes them straight into the
+    // visible window, so the boundary re-checks every cap rather than trusting
+    // the sender.
+    const valid = buildTranscriptTailUpdate({
+      chatId: 'chat-1',
+      sequence: 2,
+      messageCount: 50,
+      rows: [row(4)],
+      appendedAtMs: 9
+    })
+    expect(normalizeTranscriptTailFrame({ ...valid, rows: [] })).toBeNull()
+    expect(normalizeTranscriptTailFrame({ ...valid, rows: [row(60)] })).toBeNull()
+    expect(normalizeTranscriptTailFrame({ ...valid, rows: [row(5), row(2)] })).toBeNull()
+    expect(normalizeTranscriptTailFrame({ ...valid, messageCount: -1 })).toBeNull()
+    expect(normalizeTranscriptTailFrame({ ...valid, rows: undefined })).toBeNull()
+    expect(
+      normalizeTranscriptTailFrame({
+        ...valid,
+        rows: [row(4, 'x'.repeat(MAX_TRANSCRIPT_TAIL_UPDATE_BYTES))]
+      })
+    ).toBeNull()
   })
 })
