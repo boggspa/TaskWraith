@@ -801,7 +801,12 @@ function childTerminationRecord(termination) {
   return {
     usedForce: termination.usedForce === true,
     killedProcessGroup: termination.killedProcessGroup === true,
-    strayKills: Array.isArray(termination.strayKills) ? termination.strayKills : []
+    strayKills: Array.isArray(termination.strayKills) ? termination.strayKills : [],
+    // null, never true, when the terminate did not say: the absence of a claim
+    // is not a claim of support, and an empty strayKills means nothing without
+    // it — on win32 the probes cannot run at all.
+    strayReapSupported:
+      typeof termination.strayReapSupported === 'boolean' ? termination.strayReapSupported : null
   }
 }
 

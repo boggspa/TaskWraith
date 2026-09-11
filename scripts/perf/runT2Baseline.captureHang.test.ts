@@ -59,12 +59,14 @@ describe('stray reap audit record', () => {
         terminated: true,
         usedForce: true,
         killedProcessGroup: true,
-        strayKills: [{ pid: 42, reason: 'listening on owned inspector port' }]
+        strayKills: [{ pid: 42, reason: 'listening on owned inspector port' }],
+        strayReapSupported: true
       })
     ).toEqual({
       usedForce: true,
       killedProcessGroup: true,
-      strayKills: [{ pid: 42, reason: 'listening on owned inspector port' }]
+      strayKills: [{ pid: 42, reason: 'listening on owned inspector port' }],
+      strayReapSupported: true
     })
   })
 
@@ -75,7 +77,20 @@ describe('stray reap audit record', () => {
     expect(childTerminationRecord({ usedForce: 'yes', strayKills: 'two' })).toEqual({
       usedForce: false,
       killedProcessGroup: false,
-      strayKills: []
+      strayKills: [],
+      strayReapSupported: null
+    })
+  })
+
+  it('never upgrades a missing reap claim into a supported one', () => {
+    // Absent is not "supported": on win32 the probes cannot run, so an empty
+    // strayKills with no flag says nothing about whether anything was searched.
+    expect(childTerminationRecord({ strayKills: [] }).strayReapSupported).toBeNull()
+    expect(childTerminationRecord({ strayKills: [], strayReapSupported: false })).toMatchObject({
+      strayReapSupported: false
+    })
+    expect(childTerminationRecord({ strayKills: [], strayReapSupported: true })).toMatchObject({
+      strayReapSupported: true
     })
   })
 

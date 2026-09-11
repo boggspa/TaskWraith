@@ -533,14 +533,16 @@ async function terminateExactChild(session, options = {}) {
     await sleep(500)
   }
 
-  const strayKills = await reapOwnedStrays(session, {
+  const reap = await reapOwnedStrays(session, {
     forceSignal,
     killPid: options.killPid,
     listListeningPidsForPort: options.listListeningPidsForPort,
     listPidsMatchingCommandNeedle: options.listPidsMatchingCommandNeedle,
     userDataPath: options.userDataPath,
-    portAdapters: options.portAdapters
+    portAdapters: options.portAdapters,
+    ...(options.platform === undefined ? {} : { platform: options.platform })
   })
+  const strayKills = reap.killed
 
   return {
     pid: session.pid,
@@ -549,7 +551,8 @@ async function terminateExactChild(session, options = {}) {
     neverAutoDeletedArtifacts: true,
     usedForce: Boolean(raced && raced.timeout) || strayKills.length > 0,
     killedProcessGroup: Boolean(session.pgid),
-    strayKills
+    strayKills,
+    strayReapSupported: reap.supported === true
   }
 }
 
@@ -561,9 +564,16 @@ async function terminateExactChild(session, options = {}) {
  *
  * @param {object} session
  * @param {object} options
- * @returns {Promise<Array<{ pid: number, reason: string }>>}
+ * @returns {Promise<{ supported: boolean, killed: Array<{ pid: number, reason: string }> }>}
  */
 async function reapOwnedStrays(session, options = {}) {
+  const platform = typeof options.platform === 'string' ? options.platform : process.platform
+  // Both probes are POSIX tools (lsof for the ports, ps for the command line).
+  // On win32 they return nothing, so an empty `killed` would read as "searched
+  // the owned ports and every command line, found no strays" for a search that
+  // never ran. Refuse instead: an artifact must not report a check it could not
+  // perform. Building netstat/wmic equivalents is deliberately out of scope.
+  if (platform === 'win32') return { supported: false, killed: [] }
   const forceSignal = options.forceSignal || 'SIGKILL'
   const killPid =
     typeof options.killPid === 'function'
@@ -628,7 +638,7 @@ async function reapOwnedStrays(session, options = {}) {
     }
   }
 
-  return killed
+  return { supported: true, killed }
 }
 
 /**

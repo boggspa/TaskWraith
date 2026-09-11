@@ -117,3 +117,65 @@ describe('terminateExactChild on a child that has already exited', () => {
     expect(session.exited).toBe(true)
   })
 })
+
+describe('stray reap where the probes cannot run', () => {
+  function session() {
+    const fake = new EventEmitter()
+    Object.assign(fake, {
+      pid: 77,
+      remoteDebuggingPort: 9656,
+      mainInspectorPort: 10056,
+      exited: true,
+      kill: () => true
+    })
+    return fake
+  }
+  const userDataPath = '/private/tmp/tw-evidence-v1/8ec2ed74d/perf-homes/ev1'
+
+  it('reports the reap unsupported on win32 rather than an empty all-clear', async () => {
+    let probes = 0
+    const result = await terminateExactChild(session(), {
+      platform: 'win32',
+      userDataPath,
+      listListeningPidsForPort: async () => {
+        probes += 1
+        return [32051]
+      },
+      listPidsMatchingCommandNeedle: async () => {
+        probes += 1
+        return [12560]
+      },
+      killPid: () => {
+        throw new Error('nothing may be killed on a platform that cannot probe')
+      }
+    })
+    expect(result.strayReapSupported).toBe(false)
+    expect(result.strayKills).toEqual([])
+    // The whole point: an empty strayKills is only meaningful if a search ran.
+    expect(probes).toBe(0)
+  })
+
+  it('reports the reap supported where the probes do run', async () => {
+    let probes = 0
+    const killed: number[] = []
+    const result = await terminateExactChild(session(), {
+      platform: 'darwin',
+      userDataPath,
+      listListeningPidsForPort: async (port: number) => {
+        probes += 1
+        return port === 9656 ? [32051] : []
+      },
+      listPidsMatchingCommandNeedle: async () => {
+        probes += 1
+        return [12560]
+      },
+      killPid: (pid: number) => {
+        killed.push(pid)
+      }
+    })
+    expect(result.strayReapSupported).toBe(true)
+    expect(result.strayKills).toHaveLength(2)
+    expect(killed).toEqual([32051, 12560])
+    expect(probes).toBe(3)
+  })
+})
