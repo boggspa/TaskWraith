@@ -732,6 +732,91 @@ function createT2ProgressJournal(options) {
   }
 }
 
+/** The line bootstrap prints when it abandons the default external Host. */
+const HOST_LANE_FALLBACK_MARKER = '[main-bootstrap] external Host unavailable'
+
+/**
+ * Can the app launch the DEFAULT external Host from this checkout?
+ *
+ * `TASKWRAITH_DESKTOP_EXTERNAL_HOST` defaults ON, so the external Host is what
+ * users run and what the cross-thread taxonomy models. But bootstrap falls back
+ * to the in-process Host — logging, and continuing — whenever
+ * `resolveHostExternalLaunch` returns null, and it returns null when EITHER the
+ * Host CLI or the development Node is missing.
+ *
+ * The CLI half is already covered: `checkHostBundleFreshness` stats
+ * out/host/host-runtime/cli.js and refuses a stale or missing bundle. The
+ * development Node was covered by nothing, and it is the half that bit:
+ * `build/tui-runtime/**` is gitignored and `npm run host:build` does not
+ * produce it, so a fresh `git worktree add` carries the README and nothing
+ * else. Five attempts measured an architecture nobody ships because a 113 MB
+ * ignored binary did not come along.
+ *
+ * Mirrors developmentNodeExecutable (src/main/bootstrap.ts) — env first, then
+ * the vendored runtime — and must move if that does.
+ */
+function checkExternalHostNodeExecutable(repoRoot, options = {}) {
+  const env = options.env || process.env
+  const platform = options.platform || process.platform
+  const arch = options.arch || process.arch
+  const exists = typeof options.exists === 'function' ? options.exists : (at) => fs.existsSync(at)
+  let source = 'vendored'
+  let nodeExecutable = null
+  for (const [name, value] of [
+    ['npm_node_execpath', env.npm_node_execpath],
+    ['NODE', env.NODE]
+  ]) {
+    if (typeof value === 'string' && value.trim() === value && path.isAbsolute(value)) {
+      nodeExecutable = path.resolve(value)
+      source = name
+      break
+    }
+  }
+  if (nodeExecutable === null) {
+    nodeExecutable = path.resolve(
+      repoRoot,
+      'build',
+      'tui-runtime',
+      `${platform}-${arch}`,
+      platform === 'win32' ? 'node.exe' : 'node'
+    )
+  }
+  const present = exists(nodeExecutable)
+  return {
+    ok: present,
+    nodeExecutable,
+    source,
+    reason: present ? null : 'development_node_missing'
+  }
+}
+
+/**
+ * The lane the app actually took, from positive evidence only.
+ *
+ * The bootstrap marker is the app saying it fell back, which is proof. A
+ * discovery pid that differs from the launched child is proof of a separate
+ * Host process. Neither present means `unknown` — pid EQUALITY is corroboration
+ * for in-process, never proof, and this run has been burned once already by
+ * treating an inference as a finding.
+ */
+function resolveObservedHostLane(input) {
+  if (typeof input.fallbackLine === 'string' && input.fallbackLine) {
+    return {
+      observed: 'in_process',
+      evidence: 'child_stderr_bootstrap_marker',
+      reason: input.fallbackLine
+    }
+  }
+  if (
+    Number.isInteger(input.discoveryPid) &&
+    Number.isInteger(input.childPid) &&
+    input.discoveryPid !== input.childPid
+  ) {
+    return { observed: 'external', evidence: 'discovery_pid_differs_from_child', reason: null }
+  }
+  return { observed: 'unknown', evidence: null, reason: null }
+}
+
 /** Bytes of child output kept per stream before the capture truncates. */
 const DEFAULT_CHILD_STDIO_MAX_BYTES = 8 * 1024 * 1024
 
@@ -995,6 +1080,7 @@ function parseArgs(argv) {
     else if (arg === '--lean') out.lean = true
     else if (arg === '--skip-build') out.skipBuild = true
     else if (arg === '--windowed-replay') out.windowedReplay = true
+    else if (arg === '--accept-in-process-host') out.acceptInProcessHost = true
     else if (arg === '--paired-runs') out.pairedRuns = true
     else if (arg.startsWith('--workload=')) out.workload = arg.slice('--workload='.length)
     else if (arg.startsWith('--seed=')) out.seed = arg.slice('--seed='.length)
@@ -1093,6 +1179,9 @@ Options:
                                     evidence recorded, never folded; run identity left undeclared
   --role=<light-alone|light-beside> Pairing role this run measures; omitted → run identity left undeclared
   --build-id=<id>                   Operator-named build identity for pairing; omitted → left undeclared
+  --accept-in-process-host        Measure the in-process Host deliberately when the external Host
+                                  cannot resolve. Without it the launch refuses rather than
+                                  silently measuring an architecture users do not run.
   --windowed-replay               Replay as fenced 120 s × 3 concurrent lanes (default: sequential);
                                   runs ≥6 min, refuses --max-replay-events, feeds observed windows to runEvidence
   --paired-runs                   Run light-alone then light-beside and emit report.pairs (implies
@@ -1689,6 +1778,28 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         throw bundleErr
       }
 
+      // The other half of the same launch. The bundle check above proves the
+      // Host CLI; this proves the Node that would run it.
+      const hostNodeCheck = checkExternalHostNodeExecutable(
+        repoRoot,
+        options.externalHostAdapters || {}
+      )
+      report.hostLane = {
+        expected: 'external',
+        acceptedInProcess: Boolean(args.acceptInProcessHost),
+        nodeExecutable: hostNodeCheck,
+        observed: 'unknown',
+        evidence: null,
+        reason: null
+      }
+      if (!hostNodeCheck.ok && !args.acceptInProcessHost) {
+        const laneErr = new Error(
+          `Refusing --launch: the external Host cannot resolve from this checkout (${hostNodeCheck.reason}: ${hostNodeCheck.nodeExecutable}), so the app would log a fallback and measure the IN-PROCESS Host — an architecture users do not run. Provide the development Node (\`npm run tui:build\` in this checkout, or an absolute NODE/npm_node_execpath), or pass --accept-in-process-host to measure the fallback deliberately.`
+        )
+        laneErr.code = 'T2_EXTERNAL_HOST_UNRESOLVABLE'
+        throw laneErr
+      }
+
       // Blocker G: re-prove containment immediately before Electron spawn.
       setCapturePhase('isolation_pre_spawn', {}, { log: true })
       if (homeResolved.authoritativeHome) {
@@ -2232,6 +2343,29 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       })
       report.hostSpans = hostSpanEvidence.record
 
+      // Which architecture did this run actually measure? Recorded always, so
+      // no future artifact has to be cross-examined for it the way attempt 5
+      // was.
+      let fallbackLine = null
+      try {
+        const captured = fs.readFileSync(childStderrPath, 'utf8')
+        fallbackLine =
+          captured
+            .split('\n')
+            .find((line) => line.includes(HOST_LANE_FALLBACK_MARKER))
+            ?.trim() ?? null
+      } catch {
+        // No captured stderr is itself not evidence of either lane.
+      }
+      Object.assign(
+        report.hostLane,
+        resolveObservedHostLane({
+          fallbackLine,
+          discoveryPid: hostSpanEvidence.record ? hostSpanEvidence.record.discoveryPid : null,
+          childPid: childSession ? childSession.pid : null
+        })
+      )
+
       report.replayWindowedRate = windowedRate ? windowedRate.snapshot() : null
 
       // Re-stamp before reporting. The first write happens 30-odd lines above,
@@ -2617,6 +2751,8 @@ module.exports = {
   collectT2HostSpanEvidence,
   createWindowedRateTracker,
   captureChildStdio,
+  checkExternalHostNodeExecutable,
+  resolveObservedHostLane,
   DEFAULT_CHILD_STDIO_MAX_BYTES,
   abortExitCode,
   childTerminationRecord,

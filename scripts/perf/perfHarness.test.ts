@@ -2026,6 +2026,8 @@ describe('T2 runner (no Electron launch)', () => {
             },
             // Wave-8: decouple the host bundle preflight from real out/host mtimes.
             hostBundleAdapters: { fs: freshHostBundleFs() },
+            // Not a host-lane test: the dev Node precondition is assumed present.
+            externalHostAdapters: { exists: () => true },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: () => {
@@ -2217,6 +2219,8 @@ describe('T2 runner (no Electron launch)', () => {
             },
             // Wave-8: decouple the host bundle preflight from real out/host mtimes.
             hostBundleAdapters: { fs: freshHostBundleFs() },
+            // Not a host-lane test: the dev Node precondition is assumed present.
+            externalHostAdapters: { exists: () => true },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: () => {
@@ -2670,6 +2674,8 @@ describe('T2 runner (no Electron launch)', () => {
             },
             // Wave-8: decouple the host bundle preflight from real out/host mtimes.
             hostBundleAdapters: { fs: freshHostBundleFs() },
+            // Not a host-lane test: the dev Node precondition is assumed present.
+            externalHostAdapters: { exists: () => true },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: (cmd, _args, opts) => {
@@ -2979,6 +2985,8 @@ describe('T2 runner (no Electron launch)', () => {
             },
             // Wave-8: decouple the host bundle preflight from real out/host mtimes.
             hostBundleAdapters: { fs: freshHostBundleFs() },
+            // Not a host-lane test: the dev Node precondition is assumed present.
+            externalHostAdapters: { exists: () => true },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: (cmd, _args, opts) => {
@@ -3186,6 +3194,8 @@ describe('T2 harness amendment — disk preflight, windowed rate, capture deadli
             },
             // Wave-8: decouple the host bundle preflight from real out/host mtimes.
             hostBundleAdapters: { fs: freshHostBundleFs() },
+            // Not a host-lane test: the dev Node precondition is assumed present.
+            externalHostAdapters: { exists: () => true },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: () => {
@@ -3778,6 +3788,8 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     runT2BaselineCli,
     parseArgs,
     captureChildStdio,
+    checkExternalHostNodeExecutable,
+    resolveObservedHostLane,
     HOST_BUNDLE_REBUILD_COMMAND,
     HOST_BUNDLE_DECLARED_ENTRY_SEGMENTS
   } = require('./runT2Baseline.cjs')
@@ -4742,6 +4754,70 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     expect(spawned).toBe(false)
   })
 
+  it('resolves the dev Node from env first, then the vendored runtime', () => {
+    const seen: string[] = []
+    const exists = (at: string) => {
+      seen.push(at)
+      return true
+    }
+    expect(
+      checkExternalHostNodeExecutable('/repo', { env: { NODE: '/usr/bin/node' }, exists })
+    ).toMatchObject({ ok: true, source: 'NODE', nodeExecutable: '/usr/bin/node' })
+    expect(
+      checkExternalHostNodeExecutable('/repo', {
+        env: { npm_node_execpath: '/n/bin/node', NODE: '/usr/bin/node' },
+        exists
+      })
+    ).toMatchObject({ source: 'npm_node_execpath', nodeExecutable: '/n/bin/node' })
+    // A relative value is not a resolution; fall through to the vendored copy.
+    expect(
+      checkExternalHostNodeExecutable('/repo', {
+        env: { NODE: 'node' },
+        platform: 'darwin',
+        arch: 'arm64',
+        exists
+      })
+    ).toMatchObject({
+      source: 'vendored',
+      nodeExecutable: '/repo/build/tui-runtime/darwin-arm64/node'
+    })
+  })
+
+  it('refuses the launch when the dev Node is absent, unless told to accept it', () => {
+    // The attempt-1-to-5 condition: build/tui-runtime/** is gitignored, so a
+    // worktree has the README and nothing else.
+    const missing = checkExternalHostNodeExecutable('/repo', {
+      env: {},
+      platform: 'darwin',
+      arch: 'arm64',
+      exists: () => false
+    })
+    expect(missing.ok).toBe(false)
+    expect(missing.reason).toBe('development_node_missing')
+  })
+
+  it('reads the observed host lane from positive evidence only', () => {
+    // The app saying it fell back is proof.
+    expect(
+      resolveObservedHostLane({
+        fallbackLine: '[main-bootstrap] external Host unavailable; using in-process Host: x',
+        discoveryPid: 1,
+        childPid: 1
+      })
+    ).toMatchObject({ observed: 'in_process', evidence: 'child_stderr_bootstrap_marker' })
+    // A separate Host process is proof of the external lane.
+    expect(
+      resolveObservedHostLane({ fallbackLine: null, discoveryPid: 99, childPid: 1 })
+    ).toMatchObject({ observed: 'external', evidence: 'discovery_pid_differs_from_child' })
+    // Pid EQUALITY is corroboration, never proof — attempt 5's inference.
+    expect(
+      resolveObservedHostLane({ fallbackLine: null, discoveryPid: 1, childPid: 1 })
+    ).toMatchObject({ observed: 'unknown', evidence: null })
+    expect(
+      resolveObservedHostLane({ fallbackLine: null, discoveryPid: null, childPid: null })
+    ).toMatchObject({ observed: 'unknown' })
+  })
+
   it('drains both child pipes and records what it kept', () => {
     // Five attempts measured the wrong architecture because the app printed
     // `[main-bootstrap] external Host unavailable; using in-process Host` into
@@ -4793,6 +4869,73 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     expect(captureChildStdio({}, { write: () => {} }).streams).toEqual([])
   })
 
+  it('P2c: a missing dev Node refuses the launch BEFORE spawning the wrong architecture', async () => {
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const homesRoot = path.join(repoRoot, 'perf-homes')
+    mkdirSync(homesRoot, { recursive: true })
+    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-w8-lane-'))
+    tempDirs.push(home)
+    let spawned = false
+    const launch = (extra: string[], accept: boolean) =>
+      runT2BaselineCli(
+        [
+          '--workload=dual_run',
+          '--launch',
+          '--i-accept-isolated-launch',
+          '--materialize-instance-userdata',
+          '--lean',
+          '--scale-down=40',
+          '--instance-id=perfW8Lane01',
+          `--home=${home}`,
+          '--port=9455',
+          '--inspect-port=9855',
+          '--max-replay-events=1',
+          ...extra
+        ],
+        {
+          repoRoot,
+          forceIsolated: true,
+          allowDirtyLaunch: true,
+          allowNonIsolatedLaunch: true,
+          platform: 'darwin',
+          provenance: {
+            gitSha: 'a'.repeat(40),
+            dirty: false,
+            dirtyTreeFingerprint: 'b'.repeat(64),
+            dirtyPaths: [],
+            isolatedWorktree: true,
+            authoritativeBaseline: true
+          },
+          buildAdapters: { build: async () => ({ code: 0 }) },
+          hostBundleAdapters: { fs: freshHostBundleFs() },
+          // The worktree condition: build/tui-runtime/** is gitignored.
+          externalHostAdapters: { exists: () => false, env: {} },
+          spawnAdapters: {
+            resolveElectronPath: () => '/virtual/Electron',
+            spawn: () => {
+              spawned = true
+              throw new Error('reached the spawn')
+            }
+          },
+          portAdapters: {
+            probePort: async (port: number) => ({ port, occupied: false }),
+            probeCdp: async () => ({ port: 9455, reachable: false }),
+            listInstancePids: () => []
+          },
+          terminateOptions: { waitMs: 20, sleep: async () => {} },
+          ...(accept ? {} : {})
+        }
+      )
+    await expect(launch([], false)).rejects.toThrow(
+      /external Host cannot resolve from this checkout/
+    )
+    expect(spawned).toBe(false)
+    // Deliberate is allowed; accidental is not. With the opt-in it gets past
+    // the gate and fails at the spawn instead.
+    await expect(launch(['--accept-in-process-host'], true)).rejects.toThrow(/reached the spawn/)
+    expect(spawned).toBe(true)
+  })
+
   it('P2b: an abort that arrives before the spawn refuses the launch outright', async () => {
     // The owed behavioural half of b8cd33b13. `process.once('SIGINT')` plus an
     // `{ once: true }` abort listener meant a signal during fixture build or
@@ -4840,6 +4983,8 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
           buildAdapters: { build: async () => ({ code: 0 }) },
           // Fresh, so the bundle preflight cannot be what refuses the launch.
           hostBundleAdapters: { fs: freshHostBundleFs() },
+          // Not a host-lane test: the dev Node precondition is assumed present.
+          externalHostAdapters: { exists: () => true },
           spawnAdapters: {
             resolveElectronPath: () => '/virtual/Electron',
             spawn: () => {
