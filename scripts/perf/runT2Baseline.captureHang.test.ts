@@ -3,7 +3,7 @@ import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { childTerminationRecord } = require('./runT2Baseline.cjs')
+const { childTerminationRecord, abortExitCode } = require('./runT2Baseline.cjs')
 const src = readFileSync(new URL('./runT2Baseline.cjs', import.meta.url), 'utf8')
 
 describe('T2 capture hang guards (source pins)', () => {
@@ -15,8 +15,10 @@ describe('T2 capture hang guards (source pins)', () => {
   })
 
   it('runs SIGTERM/SIGINT through the same terminateExactChild path', () => {
-    expect(src).toContain("process.once('SIGINT', stopLaunch)")
-    expect(src).toContain("process.once('SIGTERM', stopLaunch)")
+    // The handler now carries which signal arrived, so it can exit with that
+    // signal's code; both still route through the one stopLaunch path.
+    expect(src).toContain("process.once('SIGINT', () => stopLaunch('SIGINT'))")
+    expect(src).toContain("process.once('SIGTERM', () => stopLaunch('SIGTERM'))")
     expect(src).toContain('signal: launchAbort.signal')
     expect(src).toContain('options.signal.addEventListener')
     expect(src).toContain('userDataPath: userDataResolved.userDataPath')
@@ -81,5 +83,35 @@ describe('stray reap audit record', () => {
     expect(src).toContain('report.childTermination = childTermination')
     expect(src).toContain('{ childTermination }')
     expect(src).toContain('abortTermination: record')
+  })
+})
+
+describe('aborted runs leave honestly', () => {
+  it("never yields 0, and carries the signal's own conventional code", () => {
+    expect(abortExitCode('SIGTERM')).toBe(143)
+    expect(abortExitCode('SIGINT')).toBe(130)
+    // Anything else is still an abort, so it is still not a success.
+    expect(abortExitCode(null)).toBe(143)
+    expect(abortExitCode('SIGHUP')).toBe(143)
+    for (const name of ['SIGTERM', 'SIGINT', 'SIGHUP', null]) {
+      expect(abortExitCode(name)).not.toBe(0)
+    }
+  })
+
+  it('wires that code through the handler and both promise lanes', () => {
+    expect(src).toContain('process.exitCode = abortExitCode(signalName)')
+    expect(src).toContain('process.exit(abortExitCode(signalName))')
+    // The success lane must refuse to print ok:true after an abort...
+    expect(src).toContain('process.exit(abortExitCode(abortedBy))')
+    // ...and the failure lane must not downgrade the signal to a plain 1.
+    expect(src).toContain('process.exit(abortedBy ? abortExitCode(abortedBy) : 1)')
+  })
+
+  it('terminalises the progress record the moment the abort arrives', () => {
+    expect(src).toContain("updateProgress({ status: 'aborted' }, { log: false })")
+    // Attempt 4 left `running` in the journal for 18 minutes after its SIGTERM.
+    expect(src.indexOf("status: 'aborted'")).toBeLessThan(
+      src.indexOf('const session = childSession')
+    )
   })
 })

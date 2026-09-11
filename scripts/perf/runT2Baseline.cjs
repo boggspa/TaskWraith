@@ -733,6 +733,23 @@ function createT2ProgressJournal(options) {
 }
 
 /**
+ * The exit code an externally terminated run must leave with.
+ *
+ * Installing a signal listener suppresses Node's default disposition, so the
+ * runner left through the ordinary drain with code 0 and read as success to any
+ * operator or CI checking `$?`. Attempt 4 reported T2_EXIT 0 after an 18-minute
+ * stall that wrote no report; attempt 3, before the listener existed, exited 143
+ * and was honest about it. The signal's own conventional code is the honest one,
+ * and the one thing it is never is 0.
+ *
+ * @param {string|null} signalName
+ * @returns {number}
+ */
+function abortExitCode(signalName) {
+  return signalName === 'SIGINT' ? 130 : 143
+}
+
+/**
  * One half of a paired run, in the shape the report carries it.
  *
  * `pairRuns` refuses the pair receipt for ANY ineligible run, and that receipt
@@ -1424,6 +1441,15 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   let launchAborted = false
   const abortOwnedLaunch = () => {
     launchAborted = true
+    // Terminalise straight away. An aborted run that never unwinds leaves the
+    // journal saying `running` forever — attempt 4 sat there for 18 minutes
+    // after its SIGTERM, which reads as a run still in flight. The phase it died
+    // in is already in the record and the merge preserves it.
+    try {
+      updateProgress({ status: 'aborted' }, { log: false })
+    } catch {
+      /* nothing to escalate to during an abort */
+    }
     const session = childSession
     if (!session) return
     Promise.resolve(
@@ -2340,17 +2366,39 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
 
 if (require.main === module) {
   const launchAbort = new AbortController()
-  const stopLaunch = () => {
+  // Long enough for the abort to terminate the child, reap and journal; short
+  // enough that a phase which has already proved it can hang does not hold the
+  // runner open indefinitely after the operator asked it to stop.
+  const ABORT_GRACE_MS = 20_000
+  /** @type {string|null} */
+  let abortedBy = null
+  const stopLaunch = (signalName) => {
+    abortedBy = signalName
+    process.exitCode = abortExitCode(signalName)
     try {
       launchAbort.abort()
     } catch {
       // already aborted
     }
+    // unref'd: if the run unwinds first the process leaves at once, still
+    // carrying the signal's code rather than draining to 0.
+    const leave = setTimeout(() => process.exit(abortExitCode(signalName)), ABORT_GRACE_MS)
+    if (typeof leave.unref === 'function') leave.unref()
   }
-  process.once('SIGINT', stopLaunch)
-  process.once('SIGTERM', stopLaunch)
+  process.once('SIGINT', () => stopLaunch('SIGINT'))
+  process.once('SIGTERM', () => stopLaunch('SIGTERM'))
   runT2BaselineCli(process.argv.slice(2), { signal: launchAbort.signal })
     .then((result) => {
+      if (abortedBy) {
+        console.error(
+          JSON.stringify(
+            { ok: false, aborted: abortedBy, progressPath: result && result.progressPath },
+            null,
+            2
+          )
+        )
+        process.exit(abortExitCode(abortedBy))
+      }
       if (result.helped) process.exit(0)
       if (result.smokePlan) {
         console.log(
@@ -2382,7 +2430,7 @@ if (require.main === module) {
     })
     .catch((error) => {
       console.error(String(error && error.message ? error.message : error))
-      process.exit(1)
+      process.exit(abortedBy ? abortExitCode(abortedBy) : 1)
     })
     .finally(() => {
       process.removeListener('SIGINT', stopLaunch)
@@ -2404,6 +2452,7 @@ module.exports = {
   checkHostBundleFreshness,
   collectT2HostSpanEvidence,
   createWindowedRateTracker,
+  abortExitCode,
   childTerminationRecord,
   pairedRunRecord,
   parseArgs,
