@@ -12133,7 +12133,15 @@ function broadcastTranscriptTail(chat: ChatRecord): void {
   const frame = transcriptTailBroadcaster.observe(chat)
   if (!frame) return
   transcriptVisibilityLatency.recordSent(frame.chatId, frame.sequence, frame.appendedAtMs)
-  desktopWindows.broadcast(TRANSCRIPT_TAIL_CHANNEL, frame)
+  // Routed, not broadcast. The renderer applies a tail frame only for a chat it
+  // holds in `paged` mode and discards the rest AFTER paying the structured
+  // clone, so an unrouted push cost N serialisations for N windows on every
+  // append. `wantsTranscriptTail` fails OPEN for a target that has told main
+  // nothing — see its contract; a wasted clone is cheap and a silent window is
+  // the defect this lane exists to prevent.
+  desktopWindows.broadcastWhere(TRANSCRIPT_TAIL_CHANNEL, frame, (senderId) =>
+    chatUpdateInterestRouter.wantsTranscriptTail(senderId, frame.chatId)
+  )
   if (workspacePopoutWindows.size === 0) return
   const popout = workspacePopoutWindows.get(`chat:${frame.chatId}`)
   if (popout && !popout.isDestroyed()) {

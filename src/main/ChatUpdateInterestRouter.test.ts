@@ -308,3 +308,71 @@ describe('ChatUpdateInterestRouter', () => {
     )
   })
 })
+
+describe('ChatUpdateInterestRouter transcript-tail routing', () => {
+  it('sends to a target that has told main NOTHING — routing must fail open', () => {
+    // No handshake means main cannot know what this window wants. A wasted
+    // structured clone costs microseconds; a window wrongly skipped goes
+    // silent, which is the defect the tail lane exists to end.
+    const { router } = routerHarness()
+    expect(router.hasHandshake(7)).toBe(false)
+    expect(router.wantsTranscriptTail(7, 'chat-a')).toBe(true)
+  })
+
+  it('sends only for chats a handshaken target holds PAGED', () => {
+    const { router } = routerHarness()
+    router.replaceTargetSnapshot(
+      7,
+      snapshot([
+        { chatId: 'chat-a', mode: 'paged' },
+        { chatId: 'chat-b', mode: 'full' }
+      ])
+    )
+    expect(router.wantsTranscriptTail(7, 'chat-a')).toBe(true)
+    // A full-record chat is settled by the canonical lane; the renderer
+    // discards a tail frame for it, so sending one is pure waste.
+    expect(router.wantsTranscriptTail(7, 'chat-b')).toBe(false)
+    // Enumerated its interests and this chat is not among them.
+    expect(router.wantsTranscriptTail(7, 'chat-c')).toBe(false)
+  })
+
+  it('keeps windows independent — one window paging a chat does not route it to all', () => {
+    // The N-windows case this routing exists for: two windows, one chat each.
+    const { router } = routerHarness()
+    router.replaceTargetSnapshot(7, snapshot([{ chatId: 'chat-a', mode: 'paged' }]))
+    router.replaceTargetSnapshot(8, snapshot([{ chatId: 'chat-b', mode: 'paged' }]))
+    expect(router.wantsTranscriptTail(7, 'chat-a')).toBe(true)
+    expect(router.wantsTranscriptTail(8, 'chat-a')).toBe(false)
+    expect(router.wantsTranscriptTail(7, 'chat-b')).toBe(false)
+    expect(router.wantsTranscriptTail(8, 'chat-b')).toBe(true)
+  })
+
+  it('stops sending to a target that has been cleared', () => {
+    const { router } = routerHarness()
+    router.replaceTargetSnapshot(7, snapshot([{ chatId: 'chat-a', mode: 'paged' }]))
+    expect(router.wantsTranscriptTail(7, 'chat-a')).toBe(true)
+    router.clearTarget(7)
+    // Cleared means no handshake again, so it fails OPEN rather than dark: a
+    // window that reloads must not have to wait for a snapshot to see rows.
+    expect(router.wantsTranscriptTail(7, 'chat-a')).toBe(true)
+  })
+
+  it('refuses an invalid target id rather than fanning out to it', () => {
+    const { router } = routerHarness()
+    expect(router.wantsTranscriptTail(0, 'chat-a')).toBe(false)
+    expect(router.wantsTranscriptTail(-1, 'chat-a')).toBe(false)
+    expect(router.wantsTranscriptTail(Number.NaN, 'chat-a')).toBe(false)
+  })
+
+  it('degrades to the old unconditional broadcast when paging is disabled', () => {
+    // With live paging off the router refuses to register interests at all, so
+    // no target ever has a handshake and every send fails open. That is the
+    // right degradation: routing is an optimisation, and with the state it
+    // needs unavailable it must cost what shipped before, never go dark.
+    const { router } = routerHarness({ enabled: false })
+    router.replaceTargetSnapshot(7, snapshot([{ chatId: 'chat-a', mode: 'paged' }]))
+    expect(router.hasHandshake(7)).toBe(false)
+    expect(router.wantsTranscriptTail(7, 'chat-a')).toBe(true)
+    expect(router.wantsTranscriptTail(7, 'chat-unknown')).toBe(true)
+  })
+})

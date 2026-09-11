@@ -167,6 +167,32 @@ export class ChatUpdateInterestRouter {
   }
 
   /**
+   * Should the transcript TAIL lane send this chat's frames to this target?
+   *
+   * The tail lane is an unacked push and used to go to every window, so a busy
+   * chat paid N structured clones for N windows and N-1 of them discarded the
+   * frame on arrival — the renderer applies a tail frame only for a chat it
+   * holds in `paged` mode.
+   *
+   * This mirrors that accept condition, with one deliberate widening: a target
+   * that has never completed the interest handshake has told main nothing, so
+   * main cannot know, and it is sent to. FAILING OPEN IS THE WHOLE POINT. A
+   * wasted clone costs microseconds; a window wrongly skipped goes silent, and
+   * a silent transcript is the exact defect this lane was built to end.
+   *
+   * One bounded gap remains by construction: the renderer sets its own desired
+   * mode when it PUBLISHES a snapshot, so for the round trip before main
+   * processes it, a chat freshly promoted to `paged` reads as not-wanted here.
+   * That window is self-healing — it is precisely when the chat is being
+   * (re)hydrated with a full page over the canonical lane anyway.
+   */
+  wantsTranscriptTail(targetId: number, chatIdValue: unknown): boolean {
+    if (!validTargetId(targetId)) return false
+    if (!this.interests.hasHandshake(targetId)) return true
+    return this.modeFor(targetId, chatIdValue) === 'paged'
+  }
+
+  /**
    * Clear one renderer document completely. Projection rows are shared across
    * documents, so target cleanup never evicts them.
    */

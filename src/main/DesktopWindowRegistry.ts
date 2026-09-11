@@ -82,6 +82,20 @@ export class DesktopWindowRegistry {
     for (const window of this.all()) this.sendTo(window, channel, payload)
   }
 
+  /**
+   * Broadcast only to windows the caller wants, by webContents id.
+   *
+   * Separate from `broadcast` so the destroy-safety and throw-isolation in
+   * `sendTo` stay in one place: a filtered send that reimplemented the loop
+   * would be the copy that forgets a closing renderer can throw.
+   */
+  broadcastWhere(channel: string, payload: unknown, wants: (senderId: number) => boolean): void {
+    for (const window of this.all()) {
+      if (!wants(window.webContents.id)) continue
+      this.sendTo(window, channel, payload)
+    }
+  }
+
   private sendTo(window: BrowserWindow, channel: string, payload: unknown): void {
     if (window.isDestroyed() || window.webContents.isDestroyed()) return
     try {

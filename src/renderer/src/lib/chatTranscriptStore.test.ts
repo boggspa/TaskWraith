@@ -9,6 +9,7 @@ import {
   selectTranscriptPageEndingAt
 } from './chatTranscriptStore'
 import { isChatSummaryRecord } from './chatRecordMerge'
+import { estimateChatMessageBytes } from './chatByteLru'
 
 function message(id: string, content: string): ChatMessage {
   return {
@@ -925,5 +926,61 @@ describe('ChatTranscriptStore under anchored windowed deliveries', () => {
     const ids = reanchored?.messages.map((row) => row.id) ?? []
     const start = reanchored?.windowStart ?? 0
     expect(ids).toEqual(grown.slice(start, reanchored?.windowEnd).map((row) => row.id))
+  })
+})
+
+describe('ChatTranscriptStore window bounding cost', () => {
+  function page(
+    windowStart: number,
+    messages: ChatMessage[],
+    totalMessageCount: number
+  ): TranscriptPage {
+    return {
+      chatId: 'chat-cost',
+      messages,
+      runs: [],
+      totalMessageCount,
+      windowStart,
+      windowEnd: windowStart + messages.length,
+      estimatedBytes: 1,
+      hasOlder: windowStart > 0,
+      hasNewer: windowStart + messages.length < totalMessageCount,
+      oldestMessageId: messages[0]?.id ?? null,
+      newestMessageId: messages.at(-1)?.id ?? null,
+      updatedAt: 1
+    }
+  }
+
+  it('re-walks only the ARRIVING rows when a pushed frame extends the window', () => {
+    // The push lane promises O(new rows). Bounding the merged window used to
+    // deep-walk every row in it on every frame — ~7 ms at 6,000 rows, on the
+    // renderer's main thread, which is the same shape of cost the lane exists
+    // to remove.
+    //
+    // Observed the only way it can be observed deterministically: settle a
+    // window, then grow one ALREADY-MEASURED row in place by 100 KB. The
+    // renderer never mutates a row this way, so the stale cached size coming
+    // back is proof the row was not walked a second time. A re-walk would show
+    // up as a ~100 KB jump in the window's reported bytes.
+    const store = new ChatTranscriptStore()
+    const settled = Array.from({ length: 200 }, (_, index) => message(`m-${index}`, `row ${index}`))
+    store.ingestPage(page(200, settled, 400))
+
+    const firstArrival = [message('m-200', 'row 200'), message('m-201', 'row 201')]
+    const afterFirst = store.appendChatTranscriptPage('chat-cost', page(400, firstArrival, 402))
+    const settledBytes = afterFirst?.windowEstimatedBytes ?? 0
+    expect(afterFirst?.messages).toHaveLength(202)
+    expect(settledBytes).toBeGreaterThan(0)
+    ;(settled[0] as { content: string }).content = 'x'.repeat(100_000)
+
+    const secondArrival = [message('m-202', 'row 202'), message('m-203', 'row 203')]
+    const afterSecond = store.appendChatTranscriptPage('chat-cost', page(402, secondArrival, 404))
+    expect(afterSecond?.messages).toHaveLength(204)
+    const arrivingBytes = secondArrival.reduce(
+      (total, row) => total + estimateChatMessageBytes(row),
+      0
+    )
+    // Exactly the two arriving rows were measured this frame.
+    expect(afterSecond?.windowEstimatedBytes).toBe(settledBytes + arrivingBytes)
   })
 })

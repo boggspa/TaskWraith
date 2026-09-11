@@ -145,6 +145,28 @@ describe('transcript tail lane wiring', () => {
     expect(body).toContain('TRANSCRIPT_TAIL_CHANNEL')
   })
 
+  it('ROUTES the frame by chat interest instead of broadcasting to every window', () => {
+    // Unrouted, a busy chat cost one structured clone per app window on every
+    // append, and every window but one discarded the frame on arrival. The
+    // regression this pins is the easy revert: swapping the routed send back
+    // for the blanket one reads like a simplification.
+    const body = functionBody(mainSource, 'function broadcastTranscriptTail(')
+    expect(body).not.toBe('')
+    expect(body).toContain('desktopWindows.broadcastWhere(')
+    expect(body).toContain('chatUpdateInterestRouter.wantsTranscriptTail(')
+    // The blanket broadcast must be gone, not merely joined.
+    expect(body).not.toContain('desktopWindows.broadcast(')
+  })
+
+  it('keeps the chat-owned popout hop, which routing must not swallow', () => {
+    // A chat popout is not in `desktopWindows` and registers no chat-update
+    // interest, so it is addressed directly. Folding it into the routed
+    // broadcast would drop every popout off the lane silently.
+    const body = functionBody(mainSource, 'function broadcastTranscriptTail(')
+    expect(body).toContain('workspacePopoutWindows.get(')
+    expect(body).toContain('safeSendToWebContents(popout, TRANSCRIPT_TAIL_CHANNEL')
+  })
+
   it('keeps the receipt off the send path — it must never gate a frame', () => {
     const body = functionBody(mainSource, 'function broadcastTranscriptTail(')
     // Guard the guard: without this, a renamed function makes `slice` return ''

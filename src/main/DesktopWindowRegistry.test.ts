@@ -111,3 +111,57 @@ describe('DesktopWindowRegistry', () => {
     expect(registry.selected()).toBe(second)
   })
 })
+
+describe('DesktopWindowRegistry.broadcastWhere', () => {
+  it('sends only to the windows the predicate wants, keyed by webContents id', () => {
+    const registry = new DesktopWindowRegistry()
+    const a = new FakeWindow(1)
+    const b = new FakeWindow(2)
+    registry.add(a.electron())
+    registry.add(b.electron())
+
+    const wanted: number[] = []
+    registry.broadcastWhere('tail', { row: 1 }, (senderId) => {
+      wanted.push(senderId)
+      return senderId === a.webContents.id
+    })
+
+    // The predicate is asked about the WEBCONTENTS id, which is what every
+    // chat-update interest is registered against — the window id would look
+    // plausible and match nothing.
+    expect(wanted).toEqual([a.webContents.id, b.webContents.id])
+    expect(a.webContents.send).toHaveBeenCalledWith('tail', { row: 1 })
+    expect(b.webContents.send).not.toHaveBeenCalled()
+  })
+
+  it('never asks about, or sends to, a destroyed window', () => {
+    const registry = new DesktopWindowRegistry()
+    const a = new FakeWindow(1)
+    const b = new FakeWindow(2)
+    registry.add(a.electron())
+    registry.add(b.electron())
+    b.close()
+
+    const asked: number[] = []
+    registry.broadcastWhere('tail', { row: 1 }, (senderId) => {
+      asked.push(senderId)
+      return true
+    })
+    expect(asked).toEqual([a.webContents.id])
+    expect(b.webContents.send).not.toHaveBeenCalled()
+  })
+
+  it('keeps delivering after one window throws, like broadcast does', () => {
+    const registry = new DesktopWindowRegistry()
+    const a = new FakeWindow(1)
+    const b = new FakeWindow(2)
+    a.webContents.send = vi.fn(() => {
+      throw new Error('renderer is closing')
+    })
+    registry.add(a.electron())
+    registry.add(b.electron())
+
+    expect(() => registry.broadcastWhere('tail', { row: 1 }, () => true)).not.toThrow()
+    expect(b.webContents.send).toHaveBeenCalledWith('tail', { row: 1 })
+  })
+})

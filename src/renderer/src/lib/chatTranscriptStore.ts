@@ -3,7 +3,6 @@ import {
   DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES,
   DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES,
   DEFAULT_TRANSCRIPT_PAGE_MAX_RUNS,
-  estimateJsonishBytes,
   isTranscriptPagedShell,
   selectTranscriptPageEndingAt,
   selectTranscriptPageRuns,
@@ -12,7 +11,11 @@ import {
   type TranscriptPageRange
 } from '../../../shared/transcriptPage'
 import { isChatSummaryRecord } from './chatRecordMerge'
-import { demoteChatToSummary } from './chatByteLru'
+import {
+  demoteChatToSummary,
+  estimateChatMessageBytes,
+  estimateChatMessagesBytes
+} from './chatByteLru'
 
 // Stage 2 dedup: the bounded-page selectors, their range type, and the page
 // limits live once in `src/shared/transcriptPage.ts` so the renderer's
@@ -330,7 +333,12 @@ export class ChatTranscriptStore {
    *
    * Every message is measured exactly once and the running total is adjusted by
    * the evicted message's own size. Re-estimating the remaining slice on each
-   * eviction would be quadratic, and this walk can span a 6,000-row window.
+   * eviction would be quadratic, and this window can span 6,000 rows.
+   *
+   * Measurement itself is memoised on message identity (`estimateChatMessageBytes`),
+   * so spanning 6,000 rows costs 6,000 lookups rather than 6,000 recursive
+   * walks — the difference between ~7 ms and negligible, on the renderer's main
+   * thread, for every frame the push lane delivers.
    */
   private boundAccumulatedWindow(
     merged: ChatMessage[],
@@ -338,19 +346,24 @@ export class ChatTranscriptStore {
   ): { start: number; end: number; estimatedBytes: number } {
     const maxMessages = this.maxMessagesPerPage * ACCUMULATED_WINDOW_PAGE_BUDGET
     const maxBytes = this.maxBytesPerPage * ACCUMULATED_WINDOW_PAGE_BUDGET
-    const sizes = merged.map((message) => Math.max(0, estimateJsonishBytes(message)))
+    // Sizes come from the identity memo, so the rows already in the window were
+    // measured on an earlier frame and only the ARRIVING rows are walked. The
+    // per-row lookups stay, because the eviction loop below needs random access
+    // by index; what is gone is the recursive walk behind each one.
     let start = direction === 'older' ? 0 : Math.max(0, merged.length - maxMessages)
     let end = direction === 'older' ? Math.min(merged.length, maxMessages) : merged.length
     let estimatedBytes = 0
-    for (let index = start; index < end; index += 1) estimatedBytes += sizes[index]
+    for (let index = start; index < end; index += 1) {
+      estimatedBytes += estimateChatMessageBytes(merged[index])
+    }
     // Always leave one message standing: an empty window would report both
     // edges as loadable and spin.
     while (estimatedBytes > maxBytes && end - start > 1) {
       if (direction === 'older') {
         end -= 1
-        estimatedBytes -= sizes[end]
+        estimatedBytes -= estimateChatMessageBytes(merged[end])
       } else {
-        estimatedBytes -= sizes[start]
+        estimatedBytes -= estimateChatMessageBytes(merged[start])
         start += 1
       }
     }
@@ -443,7 +456,7 @@ export class ChatTranscriptStore {
         totalMessageCount: total,
         windowStart,
         windowEnd: windowStart + windowMessages.length,
-        estimatedBytes: estimateJsonishBytes(windowMessages),
+        estimatedBytes: estimateChatMessagesBytes(windowMessages),
         hasOlder: windowStart > 0,
         hasNewer: windowStart + windowMessages.length < total,
         oldestMessageId: windowMessages[0]?.id ?? null,
