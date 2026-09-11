@@ -12,6 +12,7 @@ import {
 import type { ThreadCatalogueProjection } from '../host-shared/thread-catalogue/ThreadCatalogue'
 import { copyThreadCatalogueProjection } from '../host-shared/thread-catalogue/ThreadCatalogueProjection'
 import { isActiveChatRunStatus } from '../shared/chatRunStatus'
+import { projectThreadRunWallMs } from '../shared/threadRunWallTime'
 import { isEnsembleRoundPresentationLive } from '../shared/ensembleRoundLifecycle'
 import type {
   ThreadCatalogueReadQuery,
@@ -152,6 +153,7 @@ export function projectHostCatalogueThread(thread: HostProfileThread): ThreadCat
       archived: thread.archived === true,
       messageCount: thread.messages.length,
       runCount: runs.length,
+      runWallMs: projectThreadRunWallMs(runs),
       chrome: localChrome(thread),
       presentation: {
         status: taskStatus(presentationRun, ensemble),

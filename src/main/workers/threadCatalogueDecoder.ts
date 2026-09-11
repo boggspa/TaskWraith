@@ -5,6 +5,7 @@ import {
 } from '../control/TaskWraithControlProjector'
 import { harvestIntrospectionEvidence } from '../introspection/IntrospectionEvidenceHarvester'
 import { messageActivityDayKey } from '../../shared/messageActivityAggregate'
+import { projectThreadRunWallMs } from '../../shared/threadRunWallTime'
 import { projectCatalogueRemote } from '../store/ThreadCatalogueRemote'
 import { parentPort } from 'node:worker_threads'
 import { createHash } from 'node:crypto'
@@ -310,7 +311,8 @@ async function decode(request: ThreadDecodeRequest): Promise<void> {
       summaryOnly: true,
       transcriptPaged: true,
       messageCount: messages.length,
-      runCount: runs.length
+      runCount: runs.length,
+      runWallMs: projectThreadRunWallMs(runs)
     })
     coverage.shell = 1
   } else if (request.mode === 'record') {

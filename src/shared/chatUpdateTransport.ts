@@ -5,6 +5,7 @@ import {
   shouldPageTranscriptOnOpen,
   type TranscriptPage
 } from './transcriptPage'
+import { projectThreadRunWallMs } from './threadRunWallTime'
 
 export const CHAT_UPDATE_CHANNEL = 'chat-updated'
 export const CHAT_UPDATE_ACK_CHANNEL = 'chat-updated:ack'
@@ -918,7 +919,10 @@ export function boundChatUpdateSnapshot(chat: ChatRecord): {
       summaryOnly: true,
       transcriptPaged: true,
       messageCount: page.totalMessageCount,
-      runCount: Array.isArray(chat.runs) ? chat.runs.length : 0
+      runCount: Array.isArray(chat.runs) ? chat.runs.length : 0,
+      // `page.runs` is a bounded tail, so a reader measuring wall time from it
+      // would understate the thread. Carry the union of the CANONICAL array.
+      runWallMs: projectThreadRunWallMs(chat.runs)
     } as ChatRecord
   }
 }

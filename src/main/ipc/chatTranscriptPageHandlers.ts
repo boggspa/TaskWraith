@@ -8,6 +8,7 @@ import {
   type TranscriptPageRequest
 } from '../../shared/transcriptPage'
 import type { ChatRecord } from '../store/types'
+import { projectThreadRunWallMs } from '../../shared/threadRunWallTime'
 import type { SenderChatReadScope } from './chatHandlers'
 
 /**
@@ -92,6 +93,7 @@ function buildChatShell(chat: ChatRecord): ChatShell {
     summaryOnly: true,
     messageCount: messages.length,
     runCount: runs.length,
+    runWallMs: projectThreadRunWallMs(runs),
     ...(lastRun ? { lastRun } : {}),
     transcriptPaged: true
   }

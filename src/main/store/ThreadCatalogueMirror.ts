@@ -36,6 +36,10 @@ export function catalogueChatListItem(
     catalogueViewKey: sourceWitness,
     messageCount: s.messageCount,
     runCount: s.runCount,
+    // Thread wall time travels as a scalar because this row's `runs` is `[]`
+    // above: without it the composer's TOTAL THREAD timecode has nothing to
+    // measure and paints 00:00:00:00 over the thread's whole history.
+    ...(s.runWallMs === undefined ? {} : { runWallMs: s.runWallMs }),
     lastRun: s.lastRun as ChatListItem['lastRun'],
     ensembleWakeupCount: projection.recovery.ensembleWakeups,
     soloWakeupCount: projection.recovery.soloWakeups

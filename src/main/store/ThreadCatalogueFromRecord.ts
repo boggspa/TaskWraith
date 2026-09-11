@@ -2,6 +2,7 @@ import { deriveRemoteTaskStatusForChat } from '../RemoteTaskProjection'
 import { isThreadTitleRepairTarget, deriveThreadTitleFromTranscript } from './ThreadTitleRepair'
 import { chatRunIsReconcilable } from '../ChatRunReconciler'
 import { nextBlackboardExpiryAt } from '../blackboard/Blackboard'
+import { projectThreadRunWallMs } from '../../shared/threadRunWallTime'
 import { projectThreadCatalogueChrome, copyThreadCatalogueLastRun } from './ThreadCatalogueChrome'
 import type { ThreadCatalogueProjection } from './ThreadCatalogue'
 import type { ChatRecord } from './types'
@@ -63,6 +64,7 @@ export function projectThreadCatalogueRecord(chat: ChatRecord): ThreadCatalogueP
       archived: chat.archived === true,
       messageCount: messages.length,
       runCount: runs.length,
+      runWallMs: projectThreadRunWallMs(runs),
       presentation,
       chrome,
       ...(last

@@ -6,6 +6,7 @@ import {
   type ChatUpdateInterestSnapshot
 } from '../shared/chatUpdateInterest'
 import type { ChatListItem, ChatRecord, ChatRun, EnsembleConfig } from './store/types'
+import { projectThreadRunWallMs } from '../shared/threadRunWallTime'
 import {
   ChatUpdateInterestRegistry,
   type ChatUpdateInterestRegistryOptions
@@ -243,6 +244,7 @@ export class ChatUpdateInterestRouter {
       transcriptPaged: _transcriptPaged,
       messageCount: _messageCount,
       runCount: _runCount,
+      runWallMs: _runWallMs,
       lastRun: _lastRun,
       runsSummary: _runsSummary,
       searchText: _searchText,
@@ -263,6 +265,15 @@ export class ChatUpdateInterestRouter {
       summaryOnly: true,
       messageCount: sourceWasSummary ? (source.messageCount ?? 0) : messageList.length,
       runCount: sourceWasSummary ? (source.runCount ?? 0) : runList.length,
+      // Same rule as runCount: measured from the array being stripped, or
+      // carried forward when the source already had none to measure.
+      ...(sourceWasSummary
+        ? source.runWallMs === undefined
+          ? previous.runWallMs === undefined
+            ? {}
+            : { runWallMs: previous.runWallMs }
+          : { runWallMs: source.runWallMs }
+        : { runWallMs: projectThreadRunWallMs(runList) }),
       ...(lastRun ? { lastRun } : {})
     } as ChatListItem
 

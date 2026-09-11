@@ -179,7 +179,10 @@ import { canonicalKimiTaskWraithModelId } from '../../shared/kimiModels'
 import { setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
 import { selectCurrentChatRun } from './lib/activeRunSelection'
 import { ensembleRoundDispatchRefusal } from './lib/ensembleRoundDispatchReceipt'
-import { computeCumulativeRunBaseMs } from './lib/cumulativeRunTimecode'
+import {
+  cumulativeRunBaseSignature,
+  resolveCumulativeRunBaseMs
+} from './lib/cumulativeRunTimecode'
 import type {
   AppSettings,
   WorkspaceRecord,
@@ -23112,8 +23115,8 @@ function App(): React.JSX.Element {
     ? sideChat?.ensemble?.activeRound?.startedAt || sideRun?.startedAt || null
     : null
   const sideCumulativeRunBaseMs = useMemo(
-    () => computeCumulativeRunBaseMs(sideChat?.runs, sideComposerRunTimecodeStartedAt),
-    [sideChat?.runs, sideComposerRunTimecodeStartedAt]
+    () => resolveCumulativeRunBaseMs(sideChat, sideComposerRunTimecodeStartedAt),
+    [sideChat?.runs, cumulativeRunBaseSignature(sideChat), sideComposerRunTimecodeStartedAt]
   )
   const sideChatTokenTally = useMemo(
     () => buildChatTokenTally(sideChat?.runs || [], { providerRates }),
@@ -23205,8 +23208,8 @@ function App(): React.JSX.Element {
   // The active run/round stays out of the base and is added live by the
   // timecode component, preserving a ticking display without redrawing App.
   const cumulativeRunBaseMs = useMemo(
-    () => computeCumulativeRunBaseMs(currentChat?.runs, composerRunTimecodeStartedAt),
-    [currentChat?.runs, composerRunTimecodeStartedAt]
+    () => resolveCumulativeRunBaseMs(currentChat, composerRunTimecodeStartedAt),
+    [currentChat?.runs, cumulativeRunBaseSignature(currentChat), composerRunTimecodeStartedAt]
   )
   const cumulativeChatTokens =
     chatTokenTally.totalTokens + (isCurrentChatRunning ? liveRunOutputTokens : 0)
@@ -30761,8 +30764,8 @@ function App(): React.JSX.Element {
       const viewerRunStartedAt = viewerIsRunning
         ? viewerChat.ensemble?.activeRound?.startedAt || viewerRun?.startedAt || null
         : null
-      const viewerCumulativeRunBaseMs = computeCumulativeRunBaseMs(
-        viewerChat.runs,
+      const viewerCumulativeRunBaseMs = resolveCumulativeRunBaseMs(
+        viewerChat,
         viewerRunStartedAt
       )
       const viewerShouldShowWelcomeUsageDashboard =

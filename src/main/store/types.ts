@@ -4660,6 +4660,19 @@ export interface ChatListItem extends ChatRecord {
   catalogueEditBase?: import('../../shared/threadCatalogueMerge').CatalogueEditBase
   messageCount: number
   runCount: number
+  /**
+   * Union of this thread's COMPLETED run intervals, in milliseconds — thread
+   * wall time with concurrent Ensemble seats counted once.
+   *
+   * Stamped by every projection that strips `runs`, from the array it is
+   * stripping, exactly the way `runCount` is. Without it the composer's TOTAL
+   * THREAD timecode has nothing to measure on a summary row and paints
+   * 00:00:00:00 over a thread with hours of history
+   * (`resolveCumulativeRunBaseMs`). Optional because rows projected before the
+   * field existed carry no value — consumers treat `undefined` as unknown and
+   * fall back, never as "this thread never ran".
+   */
+  runWallMs?: number
   lastRun?: ChatRun
   /** Present on all freshly-built items (getChatList rebuilds index entries
    * that lack it, so its presence doubles as the index freshness marker).

@@ -3,6 +3,7 @@ import {
   pendingPeopleDonorMutation
 } from '../../host-shared/thread-catalogue/PeopleDonorMutationGate'
 import { preserveSettledRunSeals } from '../../shared/threadCatalogueTerminalRuns'
+import { projectThreadRunWallMs } from '../../shared/threadRunWallTime'
 import { ThreadCatalogueMirror, catalogueChatListItem } from './ThreadCatalogueMirror'
 import { projectThreadCatalogueRecord } from './ThreadCatalogueFromRecord'
 import { ThreadCatalogueSourcePublisher } from './ThreadCatalogueSourcePublisher'
@@ -5572,6 +5573,7 @@ export class AppStore {
       summaryOnly: true,
       messageCount: messages.length,
       runCount: runs.length,
+      runWallMs: projectThreadRunWallMs(runs),
       ensembleWakeupCount: countPersistedEnsembleWakeups(ensemble),
       soloWakeupCount: countPendingSoloWakeups(normalizedChat.soloWakeups),
       runsSummary: runs.filter((run) => run?.runId).map((run) => this.summarizeRunForChatList(run)),

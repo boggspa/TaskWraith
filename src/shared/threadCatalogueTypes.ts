@@ -49,6 +49,9 @@ export interface ThreadCatalogueSummary {
   archived: boolean
   messageCount: number
   runCount: number
+  /** Union of completed run intervals, ms. Absent on rows projected before the
+   *  field existed; a consumer treats absence as unknown, never as zero. */
+  runWallMs?: number
   chrome?: ThreadCatalogueChrome
   lastRun?: ThreadCatalogueRun
   presentation?: ThreadCataloguePresentation

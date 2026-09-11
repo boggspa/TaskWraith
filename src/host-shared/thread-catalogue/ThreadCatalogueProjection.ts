@@ -64,6 +64,7 @@ export function copyThreadCatalogueProjection(
     typeof summary.archived !== 'boolean' ||
     !count(summary.messageCount) ||
     !count(summary.runCount) ||
+    (summary.runWallMs !== undefined && !count(summary.runWallMs)) ||
     !count(input.revision) ||
     !count(recovery.unsettledRuns) ||
     !count(recovery.ensembleWakeups) ||
@@ -131,6 +132,7 @@ export function copyThreadCatalogueProjection(
       archived: summary.archived,
       messageCount: summary.messageCount,
       runCount: summary.runCount,
+      ...(summary.runWallMs === undefined ? {} : { runWallMs: summary.runWallMs }),
       ...(presentation ? { presentation } : {}),
       ...(summary.control ? { control: copyThreadCatalogueControlFacts(summary.control) } : {}),
       ...(summary.chrome === undefined

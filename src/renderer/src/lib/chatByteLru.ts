@@ -1,6 +1,7 @@
 import type { ChatListItem, ChatMessage, ChatRecord, ChatRun } from '../../../main/store/types'
 import { estimateJsonishBytes } from '../../../shared/transcriptPage'
 import { isChatSummaryRecord } from './chatRecordMerge'
+import { projectThreadRunWallMs } from '../../../shared/threadRunWallTime'
 
 // Stage 2 dedup: the jsonish byte walker lives once in `src/shared` so the
 // renderer LRU, the renderer presentation windows, and main-produced
@@ -62,6 +63,7 @@ export function demoteChatToSummary(chat: ChatRecord): ChatListItem {
     summaryOnly: true,
     messageCount,
     runCount,
+    runWallMs: projectThreadRunWallMs(chat.runs),
     ...(lastRun ? { lastRun } : {})
   }
 }

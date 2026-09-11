@@ -2,6 +2,7 @@ import type { ChatListItem, ChatRecord, ChatRun, EnsembleConfig } from '../../..
 import { isTranscriptPagedShell } from '../../../shared/transcriptPage'
 import { deepEqual } from '../lib/messagesRenderEqual'
 import { isChatSummaryRecord } from '../lib/chatRecordMerge'
+import { projectThreadRunWallMs, readThreadRunWallMs } from '../../../shared/threadRunWallTime'
 
 /*
  * Pure projection over immutable renderer records. Retained lean chrome may be
@@ -19,6 +20,7 @@ const PROJECTED_AWAY_CHAT_FIELDS = new Set([
   'transcriptPaged',
   'messageCount',
   'runCount',
+  'runWallMs',
   'lastRun',
   'runsSummary',
   'searchText',
@@ -170,6 +172,13 @@ function buildProjection(canonical: ChatRecord, previous?: ChatListItem): ChatLi
     ? finiteCount(incomingSummary.messageCount, 0)
     : messages.length
   projected.runCount = incomingSummary ? finiteCount(incomingSummary.runCount, 0) : runs.length
+  // Thread wall time follows runCount exactly: measured from the canonical
+  // array here, carried forward when the incoming row already had none. A row
+  // that never learned it stays absent rather than reading as a zeroed thread.
+  const carriedWallMs = incomingSummary
+    ? (readThreadRunWallMs(incomingSummary.runWallMs) ?? readThreadRunWallMs(previous?.runWallMs))
+    : projectThreadRunWallMs(runs)
+  if (carriedWallMs !== null && carriedWallMs !== undefined) projected.runWallMs = carriedWallMs
 
   // Paged shells and renderer demotions are surface/residency projections, not
   // list-index rows. They carry no search/source/runsSummary fields, so retain
