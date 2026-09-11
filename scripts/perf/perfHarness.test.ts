@@ -3777,11 +3777,13 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     collectT2HostSpanEvidence,
     runT2BaselineCli,
     parseArgs,
+    captureChildStdio,
     HOST_BUNDLE_REBUILD_COMMAND,
     HOST_BUNDLE_DECLARED_ENTRY_SEGMENTS
   } = require('./runT2Baseline.cjs')
   const { buildElectronSpawnPlan } = require('./electronChildSession.cjs')
   const { validateCrossThreadBlock } = require('./collectors/hostSpans.cjs')
+  const { EventEmitter } = require('events')
 
   const EPOCH = 'cd'.repeat(32)
   const OTHER_EPOCH = 'ef'.repeat(32)
@@ -4738,6 +4740,57 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
       )
     ).rejects.toThrow(/is older than .*Fresh\.ts.*npm run host:build/)
     expect(spawned).toBe(false)
+  })
+
+  it('drains both child pipes and records what it kept', () => {
+    // Five attempts measured the wrong architecture because the app printed
+    // `[main-bootstrap] external Host unavailable; using in-process Host` into
+    // a pipe nobody read.
+    const session = { stdout: new EventEmitter(), stderr: new EventEmitter() }
+    const written: Array<[string, string]> = []
+    const record = captureChildStdio(session, {
+      write: (name: string, chunk: Buffer) => written.push([name, chunk.toString()])
+    })
+    expect(record.streams).toEqual(['stdout', 'stderr'])
+    const line = '[main-bootstrap] external Host unavailable; using in-process Host: x'
+    session.stdout.emit('data', Buffer.from('booting '))
+    session.stderr.emit('data', Buffer.from(line))
+    expect(written).toEqual([
+      ['stdout', 'booting '],
+      ['stderr', line]
+    ])
+    expect(record.bytes).toBe(Buffer.byteLength('booting ') + Buffer.byteLength(line))
+    expect(record.truncated).toBe(false)
+    expect(record.droppedBytes).toBe(0)
+  })
+
+  it('keeps draining past its cap instead of leaving data in the pipe', () => {
+    const session = { stdout: new EventEmitter(), stderr: new EventEmitter() }
+    const written: string[] = []
+    const record = captureChildStdio(session, {
+      maxBytes: 4,
+      write: (_name: string, chunk: Buffer) => written.push(chunk.toString())
+    })
+    session.stdout.emit('data', Buffer.from('abcdefgh'))
+    session.stdout.emit('data', Buffer.from('ijkl'))
+    expect(written).toEqual(['abcd'])
+    expect(record.bytes).toBe(4)
+    expect(record.droppedBytes).toBe(8)
+    expect(record.truncated).toBe(true)
+    // Still attached: a full pipe blocks the child, which is the defect itself.
+    expect(session.stdout.listenerCount('data')).toBe(1)
+  })
+
+  it('never lets a failing sink or a pipeless session take down the run', () => {
+    const session = { stdout: new EventEmitter(), stderr: new EventEmitter() }
+    const record = captureChildStdio(session, {
+      write: () => {
+        throw new Error('disk full')
+      }
+    })
+    expect(() => session.stderr.emit('data', Buffer.from('x'))).not.toThrow()
+    expect(record.bytes).toBe(1)
+    expect(captureChildStdio({}, { write: () => {} }).streams).toEqual([])
   })
 
   it('P2b: an abort that arrives before the spawn refuses the launch outright', async () => {

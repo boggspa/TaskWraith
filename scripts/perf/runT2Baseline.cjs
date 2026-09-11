@@ -732,6 +732,65 @@ function createT2ProgressJournal(options) {
   }
 }
 
+/** Bytes of child output kept per stream before the capture truncates. */
+const DEFAULT_CHILD_STDIO_MAX_BYTES = 8 * 1024 * 1024
+
+/**
+ * Drain and record the child's stdout and stderr.
+ *
+ * The spawn opens both pipes (`stdio: ['ignore', 'pipe', 'pipe']`) and until now
+ * nothing read either one. Two consequences, the second worse than the first:
+ *
+ * - Everything the app said about itself was discarded. `bootstrap.ts` prints
+ *   `[main-bootstrap] external Host unavailable; using in-process Host: …` when
+ *   it falls back, and five attempts measured the wrong architecture without
+ *   that line ever reaching an artifact — it took a code trace to recover a
+ *   sentence the child had already printed.
+ * - An unread pipe fills, and a child blocked writing to a full stdout stops
+ *   making progress while its workers keep spinning. That is a candidate, not a
+ *   finding, for attempt 4's stall; draining is both the fix and the experiment.
+ *
+ * Bounded by bytes and ALWAYS drained: past the cap the overflow is counted and
+ * dropped rather than left in the pipe, because leaving it there is the defect.
+ *
+ * @param {object} session — the spawned child
+ * @param {{ write: Function, maxBytes?: number }} options
+ * @returns {{ bytes: number, droppedBytes: number, truncated: boolean, streams: string[] }}
+ */
+function captureChildStdio(session, options) {
+  const maxBytes =
+    options && options.maxBytes != null ? options.maxBytes : DEFAULT_CHILD_STDIO_MAX_BYTES
+  const write = options && typeof options.write === 'function' ? options.write : () => {}
+  const record = { bytes: 0, droppedBytes: 0, truncated: false, streams: [] }
+  const attach = (stream, name) => {
+    if (!stream || typeof stream.on !== 'function') return
+    record.streams.push(name)
+    stream.on('data', (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8')
+      const room = Math.max(0, maxBytes - record.bytes)
+      const kept = room === 0 ? null : buffer.subarray(0, room)
+      const keptLength = kept === null ? 0 : kept.length
+      if (buffer.length > keptLength) {
+        record.droppedBytes += buffer.length - keptLength
+        record.truncated = true
+      }
+      if (keptLength === 0) return
+      record.bytes += keptLength
+      try {
+        write(name, kept)
+      } catch {
+        // A diagnostic sink must never fail the run it is describing.
+      }
+    })
+    stream.on('error', () => {
+      // A pipe closing under teardown is not a run failure.
+    })
+  }
+  attach(session.stdout, 'stdout')
+  attach(session.stderr, 'stderr')
+  return record
+}
+
 /**
  * The exit code an externally terminated run must leave with.
  *
@@ -1534,6 +1593,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   let buildResult = null
   /** @type {Error|null} */
   let launchError = null
+  /** @type {{ stdout: object, stderr: object }|null} — child log sinks, closed in teardown */
+  let childStdioSinks = null
   /** @type {Array<{ phase: string, error: string }>} */
   const cleanupFailures = []
 
@@ -1667,6 +1728,36 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         mainInspectorPort: spawnPlan.mainInspectorPort
       })
       updateProgress({ childPid: childSession.pid }, { log: false })
+
+      // Drain both pipes from the moment the child exists. Anything the app
+      // says about itself now survives into an artifact instead of into a
+      // closed pipe.
+      const childStdoutPath = path.join(artifactDir, 'perf-t2-child-stdout.log')
+      const childStderrPath = path.join(artifactDir, 'perf-t2-child-stderr.log')
+      childStdioSinks = {
+        stdout: fs.createWriteStream(childStdoutPath),
+        stderr: fs.createWriteStream(childStderrPath)
+      }
+      const childStdio = captureChildStdio(childSession, {
+        write: (name, chunk) => childStdioSinks[name].write(chunk)
+      })
+      report.childStdio = {
+        stdoutPath: childStdoutPath,
+        stderrPath: childStderrPath,
+        maxBytesPerStream: DEFAULT_CHILD_STDIO_MAX_BYTES,
+        // Read at report time; the record is mutated as the child writes.
+        get bytes() {
+          return childStdio.bytes
+        },
+        get droppedBytes() {
+          return childStdio.droppedBytes
+        },
+        get truncated() {
+          return childStdio.truncated
+        },
+        streams: childStdio.streams
+      }
+
       setCapturePhase('port_ownership', {}, { log: true })
       await assertExactChildOwnsDebugPorts(childSession, options.portOwnershipAdapters || {})
 
@@ -2195,6 +2286,16 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           })
         }
       }
+      if (childStdioSinks) {
+        for (const sink of Object.values(childStdioSinks)) {
+          try {
+            sink.end()
+          } catch {
+            // Closing a diagnostic sink must not mask the primary error.
+          }
+        }
+        childStdioSinks = null
+      }
       if (childSession) {
         try {
           childTermination = childTerminationRecord(
@@ -2515,6 +2616,8 @@ module.exports = {
   checkHostBundleFreshness,
   collectT2HostSpanEvidence,
   createWindowedRateTracker,
+  captureChildStdio,
+  DEFAULT_CHILD_STDIO_MAX_BYTES,
   abortExitCode,
   childTerminationRecord,
   pairedRunRecord,
