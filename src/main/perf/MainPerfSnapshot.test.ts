@@ -549,6 +549,22 @@ const PRODUCTION_MUTANTS: readonly ProductionMutant[] = [
 ]
 
 describe('main perf production binding (M1)', () => {
+  it('retains a whole observed main window', () => {
+    // The citation ban is symmetric: the first folded run recorded 7,058 main
+    // spans and dropped 2,962 — exactly 7,058 minus the then-bound of 4,096 —
+    // so main's percentiles carried the same unstated-basis defect as the
+    // Host's rather than a smaller version of it. Source-pinned because the
+    // bound is a literal at the production construction site, not a constant
+    // this module can import.
+    const OBSERVED_MAIN_SPANS_PER_WINDOW = 7058
+    const production = readFileSync(join(__dirname, '..', 'index.ts'), 'utf8')
+    const bound = production.match(
+      /createWorkSpanRecorder\(\{[^}]*process: 'main',[^}]*maxRetained: (\d+)/s
+    )
+    expect(bound).not.toBeNull()
+    expect(Number(bound?.[1])).toBeGreaterThan(OBSERVED_MAIN_SPANS_PER_WINDOW)
+  })
+
   it('binds one recorder across the admission scheduler and the perf snapshot', () => {
     assertProductionIdentityBindings(evaluateProductionBinding())
   })

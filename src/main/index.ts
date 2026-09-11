@@ -4520,7 +4520,11 @@ function emitAutoFailoverNotice(notice: AutoFailoverNotice): void {
 }
 const mainWorkSpanRecorder = createWorkSpanRecorder({
   process: 'main',
-  maxRetained: 4096
+  // Matched to HOST_WORK_SPAN_MAX_RETAINED. The first folded run recorded 7,058
+  // main spans in one window and dropped 2,962 — exactly 7,058 minus this
+  // bound's previous value of 4,096 — so main's percentiles carried the same
+  // unstated-basis defect as the Host's, not a smaller version of it.
+  maxRetained: 8192
 })
 bindMainWorkSpanSink(mainWorkSpanRecorder)
 const ensembleHostAdmissionRuntime = new EnsembleHostAdmissionRuntime({

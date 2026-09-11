@@ -50,8 +50,32 @@ export interface HostPerfInstrumentationOptions {
   now?: () => Date
 }
 
-/** Ring bound for the default Host recorder; snapshots stay bounded. */
-export const HOST_WORK_SPAN_MAX_RETAINED = 512
+/**
+ * Ring bound for the default Host recorder; snapshots stay bounded.
+ *
+ * 512 was chosen before anyone had seen real span volume. The first run to
+ * produce production Host spans recorded 4,512 in a single window and dropped
+ * 4,000 of them — retained 512, exactly the bound — so every percentile in that
+ * snapshot was nearest-rank over the most recent 11% of the window. Raised to
+ * cover an observed window with headroom.
+ *
+ * The cost is proportional to spans RECORDED, not to this number: the ring is
+ * `[]` and grows by push, so an install that records nothing allocates nothing.
+ * Measured for both recorders together: 0.012 MiB idle at this bound, 1.534 MiB
+ * at the observed host volume, 2.703 MiB full.
+ *
+ * NOTE, because it rides on the same constant: the default sampler keeps every
+ * span until a window has been offered `max(256, maxRetained * 8)` and then
+ * keeps 1-in-N, so raising this also raises the keep-everything threshold from
+ * 4,096 to 65,536. That is the fidelity-improving direction, but it is a second
+ * behavioural change and should not be discovered later.
+ *
+ * This bounds the SAMPLE; it does not fix the ESTIMATOR. Percentiles are still
+ * nearest-rank over a retained tail, and `percentileSampleCount` is what says so
+ * per aggregate. A bucketed histogram over every accepted span is the real fix
+ * and is queued as its own reviewed change.
+ */
+export const HOST_WORK_SPAN_MAX_RETAINED = 8192
 
 export function createHostPerfInstrumentation(
   options: HostPerfInstrumentationOptions = {}
