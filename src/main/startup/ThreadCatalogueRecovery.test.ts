@@ -232,4 +232,40 @@ describe('a cancel the Host never acknowledges', () => {
       vi.useRealTimers()
     }
   })
+
+  // The drain opens every thread in the corpus at first paint. Its read has to
+  // ride the slow lane or a user's chat open queues behind repair -- measured
+  // 2026-09-11, nine sends pressed 14:01:04-10 all dispatched at 14:01:13, the
+  // second the drain's last thread landed.
+  //
+  // `release` must NOT be delayed: a held lease occupies one of the 512 (16 per
+  // chat) slots a foreground open needs, so slowing the release would starve
+  // the very requests this lane protects.
+  it('reads in the background lane and releases its lease in the foreground one', async () => {
+    const seen: { method: string; priority?: string }[] = []
+    const query = async (request: { method: string }, options?: { priority?: string }) => {
+      seen.push({
+        method: request.method,
+        ...(options?.priority ? { priority: options.priority } : {})
+      })
+      if (request.method === 'open')
+        return {
+          leaseId: 'lease-1',
+          entry: { projection: { revision: 1, sourceComplete: true }, sourceWitness: 'witness' }
+        }
+      if (request.method === 'objects') return []
+      return true
+    }
+    const recovery = new ThreadCatalogueRecovery({
+      catalogue: { mirror: { port: { query } }, setMutationGuard: () => () => {} },
+      isRunLive: () => false,
+      isChatLive: () => false,
+      isErasing: () => false
+    } as unknown as CatalogueRecoveryDependencies)
+
+    await (recovery as unknown as { recover(chatId: string): Promise<void> }).recover('chat-1')
+
+    expect(seen.find((entry) => entry.method === 'open')?.priority).toBe('background')
+    expect(seen.find((entry) => entry.method === 'release')?.priority).toBeUndefined()
+  })
 })

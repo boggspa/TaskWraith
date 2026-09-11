@@ -219,11 +219,24 @@ export class ThreadCatalogueRecovery {
   }
 
   private async recover(chatId: string): Promise<void> {
-    const opened = await this.deps.catalogue.mirror.port.query<ThreadCatalogueOpenResult | null>({
-      method: 'open',
-      chatId,
-      mode: 'metadata'
-    })
+    // The one call in this class that enters the worker's decode queue, and the
+    // reason a first send could wait on repair: this drain opens EVERY thread
+    // in the corpus at first paint, and `query` used to escalate every open into
+    // the fast lane. Background puts it behind anything a user is waiting for.
+    //
+    // Deliberately only the read. `release` must never be delayed — a held lease
+    // occupies one of the 512/16-per-chat slots a foreground open needs — and
+    // the `maintain` mutation path below holds this chat's write gate while it
+    // runs, so delaying THAT would park `saveRendererChat` and `mutateTranscript`
+    // on the thread instead, which is the freeze this lane exists to prevent.
+    const opened = await this.deps.catalogue.mirror.port.query<ThreadCatalogueOpenResult | null>(
+      {
+        method: 'open',
+        chatId,
+        mode: 'metadata'
+      },
+      { priority: 'background' }
+    )
     if (!opened) return
     let records: Record<string, unknown>[]
     try {
