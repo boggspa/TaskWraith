@@ -169,6 +169,7 @@ import {
   acceptedProviderReasoningEfforts,
   acceptsStoredProviderReasoning
 } from './lib/composerProviderReasoningSelection'
+import { providerModelCatalogueAccepts } from './lib/providerModelCatalogueValidity'
 import { nextComposerSurfaceRequest, composerSurfaceOpenSignal } from './lib/composerSurfaceRequest'
 import type { ComposerSurfaceId, ComposerSurfaceRequest } from './lib/composerSurfaceRequest'
 import { fastModeToggleAvailable, nextFastModeToggle } from './lib/fastModeToggle'
@@ -6105,20 +6106,26 @@ function App(): React.JSX.Element {
     if (provider === 'cursor')
       return modelId.startsWith('composer-') || isCursorGrokModelId(modelId)
     if (provider === 'ollama') return isOllamaModelId(modelId)
+    // Membership, but only where the catalogue is evidence. Pi's is fetched over
+    // IPC and filtered to keyed upstreams, so `[]` means "not hydrated / no keys
+    // yet" far more often than "this id is wrong" — and a no here is answered by
+    // substituting `getDefaultModelForProvider`, which on Pi is the one
+    // `isDefault` row, DeepSeek. That is how a thread storing
+    // `cerebras/qwen-3.8-27b` ends up showing AND DISPATCHING DeepSeek.
     if (provider === 'pi') {
-      return getProviderModelOptions('pi').some((model) => model.id === modelId)
+      return providerModelCatalogueAccepts(getProviderModelOptions('pi'), modelId)
     }
     if (provider === 'mistral') {
-      return getProviderModelOptions('mistral').some((model) => model.id === modelId)
+      return providerModelCatalogueAccepts(getProviderModelOptions('mistral'), modelId)
     }
     if (provider === 'muse') {
-      return getProviderModelOptions('muse').some((model) => model.id === modelId)
+      return providerModelCatalogueAccepts(getProviderModelOptions('muse'), modelId)
     }
     if (provider === 'devin') {
-      return getProviderModelOptions('devin').some((model) => model.id === modelId)
+      return providerModelCatalogueAccepts(getProviderModelOptions('devin'), modelId)
     }
     if (provider === 'antigravity') {
-      return configuredAntigravityModels.some((model) => model.id === modelId)
+      return providerModelCatalogueAccepts(configuredAntigravityModels, modelId)
     }
     return isGeminiModelId(modelId)
   }
