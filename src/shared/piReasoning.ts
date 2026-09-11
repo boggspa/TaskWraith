@@ -191,7 +191,13 @@ const PI_MODEL_REASONING: Readonly<Record<string, PiReasoningSupport>> = {
   'openrouter/nex-agi/nex-n2.5-pro:free': ladder(
     ['minimal', 'low', 'medium', 'high', 'max'],
     'medium'
-  )
+  ),
+  // Both Sakana Fugu routes advertise `reasoning_effort` with no enumerated
+  // supported_efforts (OpenRouter Models API, verified 2026-09-11), so they
+  // take the same unenumerated ladder as Mercury and the Nex-N2.5 pair rather
+  // than Laguna's bare on/off stop.
+  'openrouter/sakana/fugu-max': ladder(['minimal', 'low', 'medium', 'high', 'max'], 'medium'),
+  'openrouter/sakana/fugu-ultra-v2': ladder(['minimal', 'low', 'medium', 'high', 'max'], 'medium')
 }
 
 const FULL: PiReasoningSupport = Object.freeze({

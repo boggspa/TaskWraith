@@ -11,7 +11,10 @@ import {
   GROK_46_REASONING_EFFORTS
 } from '../../../shared/grok45Models'
 import {
-  KIMI_K27_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K28_MODEL_ID,
+  KIMI_K28_MODEL_LABEL,
   KIMI_K3_256K_MODEL_ID,
   KIMI_K3_256K_MODEL_LABEL,
   KIMI_K3_MODEL_ID,
@@ -286,18 +289,30 @@ const CLAUDE_DEFAULT_MODEL_ROWS = [
 const CLAUDE_DEFAULT_MODELS = withCuratedUltraTaskSupport(CLAUDE_DEFAULT_MODEL_ROWS)
 const KIMI_DEFAULT_MODEL_ROWS = [
   {
-    id: KIMI_K27_MODEL_ID,
-    label: 'K2.7 Coding',
-    description: 'Standard and Highspeed tiers with always-on thinking',
+    // Managed `kimi-code/kimi-for-coding` alias: K2.8 Preview since 2026-09-11,
+    // on the same wire id K2.7 Coding used. 1M context, Low/High/Max thinking.
+    id: KIMI_K28_MODEL_ID,
+    label: KIMI_K28_MODEL_LABEL,
+    description: "Moonshot's newest coding model - 1M context - Low, High, or Max thinking",
     isDefault: true,
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
+    defaultReasoningEffort: 'max'
+  },
+  {
+    // Managed `kimi-code/kimi-for-coding-highspeed` alias. Its own row rather
+    // than K2.8's Fast tier: Highspeed stayed on K2.7, so it keeps a 256K
+    // window and always-on thinking with no effort axis.
+    id: KIMI_K27_HIGHSPEED_MODEL_ID,
+    label: KIMI_K27_HIGHSPEED_MODEL_LABEL,
+    description: 'Low-latency K2.7 route - 256K context - always-on thinking, no effort axis',
     supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
-    defaultReasoningEffort: 'on',
-    additionalSpeedTiers: ['fast']
+    defaultReasoningEffort: 'on'
   },
   {
     // Managed `kimi-code/k3` alias: 256K on Moderato and up to 1M on
-    // Allegretto+, with Low/High/Max effort choices. No Highspeed tier — Fast
-    // stays a K2.7 Coding capability — and K2.7 Coding remains the default.
+    // Allegretto+, with Low/High/Max effort choices.
     id: KIMI_K3_MODEL_ID,
     label: KIMI_K3_MODEL_LABEL,
     description:

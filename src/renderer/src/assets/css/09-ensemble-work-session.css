@@ -1649,6 +1649,9 @@
 .ensemble-above-chip.provider-nexagi .ensemble-above-chip-role {
   color: var(--provider-nexagi-color);
 }
+.ensemble-above-chip.provider-sakana .ensemble-above-chip-role {
+  color: var(--provider-sakana-color);
+}
 .ensemble-above-chip.provider-qwen .ensemble-above-chip-role {
   color: var(--provider-qwen-color);
 }
@@ -1921,6 +1924,9 @@
 }
 .ensemble-above-chip-tooltip.provider-nexagi .ensemble-above-chip-tooltip-title {
   color: var(--provider-nexagi-color);
+}
+.ensemble-above-chip-tooltip.provider-sakana .ensemble-above-chip-tooltip-title {
+  color: var(--provider-sakana-color);
 }
 .ensemble-above-chip-tooltip.provider-qwen .ensemble-above-chip-tooltip-title {
   color: var(--provider-qwen-color);

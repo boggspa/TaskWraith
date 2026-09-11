@@ -574,6 +574,34 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     maxOutputTokens: 235_929,
     thinking: true,
     images: true
+  },
+  {
+    // Sakana Fugu Max — the cost-performance route of Sakana AI's Fugu family,
+    // released 2026-09-11. Fugu is a learned multi-agent orchestrator: a model
+    // trained to route tasks across a fixed pool of open-weights and
+    // specialist models (NVIDIA's Nemotron family among them) and to call
+    // instances of itself recursively. Text + image + file input.
+    wireId: 'openrouter/sakana/fugu-max',
+    upstream: 'openrouter',
+    modelId: 'sakana/fugu-max',
+    label: 'Fugu Max',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
+    thinking: true,
+    images: true
+  },
+  {
+    // Sakana Fugu Ultra v2 — the higher-performance route of the same family,
+    // tuned for complex multi-step reasoning, autonomous research and
+    // full-stack work rather than cost. Same window and output ceiling.
+    wireId: 'openrouter/sakana/fugu-ultra-v2',
+    upstream: 'openrouter',
+    modelId: 'sakana/fugu-ultra-v2',
+    label: 'Fugu Ultra v2',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
+    thinking: true,
+    images: true
   }
 ]
 

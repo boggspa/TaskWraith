@@ -408,7 +408,8 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
-      // Codex leads the lineup from the GPT-6 Astra launch (2026-09-03).
+      // Kimi leads the lineup from the K2.8 Preview rollout (2026-09-11).
+      'kimi',
       'codex',
       'claude',
       'devin',
@@ -420,6 +421,9 @@ describe('buildRemoteFirstLaunchState', () => {
       'ollama',
       'pi'
     ])
+    expect(
+      newAdditions?.groups?.find((group) => group.provider === 'kimi')?.models.map((m) => m.name)
+    ).toEqual(['K2.8 Preview', 'K2.7 Code Highspeed'])
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'claude')?.models[0]?.name
     ).toBe('Fable 5.1')
@@ -442,6 +446,7 @@ describe('buildRemoteFirstLaunchState', () => {
     ])
     const ollamaGroup = newAdditions?.groups?.find((group) => group.provider === 'ollama')
     expect(ollamaGroup?.models.map((model) => model.name)).toEqual([
+      'DeepSeek V4.1 Flash (Cloud)',
       'GLM 5.2 (Cloud)',
       'MiniMax M3 (Cloud)',
       'Ornith 1.5 (9B & 35B)',
@@ -454,6 +459,7 @@ describe('buildRemoteFirstLaunchState', () => {
       'Rnj-1'
     ])
     expect(ollamaGroup?.models.map((model) => model.accentProvider)).toEqual([
+      'deepseek',
       'zai',
       'minimax',
       'deep-reinforce',
@@ -473,6 +479,8 @@ describe('buildRemoteFirstLaunchState', () => {
     const piGroup = newAdditions?.groups?.find((group) => group.provider === 'pi')
     expect(piGroup?.label).toBe('Pi')
     expect(piGroup?.models.map((model) => model.name)).toEqual([
+      'Fugu Max (OpenRouter)',
+      'Fugu Ultra v2 (OpenRouter)',
       'Mercury 2.5 (OpenRouter)',
       'Nex-N2.5-Pro (OpenRouter Free)',
       'Nex-N2.5-Mini (OpenRouter Free)',
@@ -490,6 +498,8 @@ describe('buildRemoteFirstLaunchState', () => {
       'Nemotron 3 Ultra'
     ])
     expect(piGroup?.models.map((model) => model.accentProvider)).toEqual([
+      'sakana',
+      'sakana',
       'inception',
       'nexagi',
       'nexagi',

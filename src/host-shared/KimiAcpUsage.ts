@@ -14,9 +14,9 @@
 
 import { estimateTokensFromChars } from '../shared/tokenEstimate'
 import {
-  KIMI_K3_256K_MODEL_ID,
-  KIMI_K3_MODEL_ID,
-  canonicalKimiK3ModelId
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K28_MODEL_ID,
+  canonicalKimiTaskWraithModelId
 } from '../shared/kimiModels'
 
 export const KIMI_ACP_TOKEN_ESTIMATE_SOURCE = 'kimi-acp-visible-text-estimate'
@@ -60,17 +60,15 @@ export function kimiAcpVisiblePayloadChars(value: unknown): number {
 
 /**
  * Resolve the published API row used for a projected cost without changing the
- * model shown in TaskWraith's picker or transcript. Highspeed is a K2.7 service
- * tier in the UI, but Moonshot publishes a distinct (2x) pricing row for it.
+ * model shown in TaskWraith's picker or transcript. Moonshot publishes a
+ * distinct (2x) pricing row for Highspeed, which is its own model rather than a
+ * service tier since 2026-09-11; the `serviceTier` fallback stays for records
+ * written before that split.
  */
 export function kimiCostRateModel(model: string, serviceTier?: string | null): string {
-  const normalized = String(model || '')
-    .trim()
-    .toLowerCase()
-  const canonicalK3 = canonicalKimiK3ModelId(normalized)
-  if (canonicalK3 === KIMI_K3_MODEL_ID) return KIMI_K3_MODEL_ID
-  if (canonicalK3 === KIMI_K3_256K_MODEL_ID) return KIMI_K3_256K_MODEL_ID
-  return serviceTier === 'fast' ? 'kimi-k2.7-code-highspeed' : 'kimi-k2.7-code'
+  const canonical = canonicalKimiTaskWraithModelId(model)
+  if (canonical) return canonical
+  return serviceTier === 'fast' ? KIMI_K27_HIGHSPEED_MODEL_ID : KIMI_K28_MODEL_ID
 }
 
 export function estimateKimiAcpTokenUsage(

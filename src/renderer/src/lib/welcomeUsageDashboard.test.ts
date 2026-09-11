@@ -447,7 +447,7 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
     expect(data.totalTokens).toBeGreaterThan(5_000)
   })
 
-  it('keeps K2.7 Coding, both K3 routes, and legacy K2.6 variants with distinct labels', () => {
+  it('keeps K2.8 Preview, both K3 routes, and legacy K2.6 variants with distinct labels', () => {
     const records: UsageRecord[] = [
       baseRecord({
         id: 'k3',
@@ -492,6 +492,13 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
         totalTokens: 1_000
       }),
       baseRecord({
+        id: 'f',
+        timestamp: NOW - 125_000,
+        provider: 'kimi',
+        model: 'kimi-k2.7-code-highspeed',
+        totalTokens: 1_000
+      }),
+      baseRecord({
         id: 'd',
         timestamp: NOW - 150_000,
         provider: 'kimi',
@@ -507,11 +514,15 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
       })
     ]
     const data = buildWelcomeUsageDashboardData(records, [], 'all', NOW)
+    // `kimi-k2.7-code` canonicalises onto K2.8 Preview — the same upstream
+    // route under its current name — so its usage joins that row rather than
+    // splitting one route across two entries.
     expect(data.modelBreakdown.map((m) => m.label)).toEqual([
       'K3 (1M)',
       'K3 (256K)',
-      'K2.7 Coding',
+      'K2.8 Preview',
       'Kimi K2.6',
+      'K2.7 Code Highspeed',
       'Kimi K2.6 Thinking'
     ])
   })

@@ -12,6 +12,8 @@ import {
 import { ollamaCloudModelDisplayName } from '../../../shared/ollamaModelAvailability'
 import { resolvePiModelLabel } from '../../../shared/piBrandTable'
 import {
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K28_MODEL_LABEL,
   KIMI_K3_256K_MODEL_LABEL,
   KIMI_K3_MODEL_LABEL,
   canonicalKimiTaskWraithModelId
@@ -110,9 +112,11 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   // mappings; includes the variants visible in the user's
   // Settings → Model usage list). The legacy K2.6 aliases remain
   // readable for historical usage rows; new dispatch defaults to
-  // K2.7 Coding, with K3 selectable alongside it. ─────────────
+  // K2.8 Preview, with K3 and Highspeed selectable alongside it. ─────────────
   'kimi-k3': KIMI_K3_MODEL_LABEL,
   'kimi-k3-256k': KIMI_K3_256K_MODEL_LABEL,
+  'kimi-k2.8-preview': KIMI_K28_MODEL_LABEL,
+  'kimi-k2.7-code-highspeed': KIMI_K27_HIGHSPEED_MODEL_LABEL,
   'kimi-k2.7-code': 'K2.7 Coding',
   'kimi-k2.7-code-thinking': 'K2.7 Coding Thinking',
   'kimi-k2.7-thinking': 'K2.7 Coding Thinking',
@@ -274,7 +278,7 @@ export function canonicalModelIdForProvider(
     if (provider === 'codex') return 'gpt-5.5'
     if (provider === 'claude') return 'claude-sonnet-5'
     if (provider === 'gemini') return 'flash-lite'
-    if (provider === 'kimi') return 'kimi-k2.7-code'
+    if (provider === 'kimi') return 'kimi-k2.8-preview'
     if (provider === 'grok') return GROK_46_MODEL_ID
     if (provider === 'cursor') return 'composer-2.5-fast'
     if (provider === 'ollama') return 'qwen3:4b-instruct'

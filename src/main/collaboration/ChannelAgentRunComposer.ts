@@ -1,6 +1,6 @@
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import { isCursorGrokModelId, isGrokReasoningModelId } from '../../shared/grok45Models'
-import { isKimiK3Model, normalizeKimiReasoningEffort } from '../providers/StaticProviderModels'
+import { normalizeKimiReasoningEffort } from '../providers/StaticProviderModels'
 import type {
   ChannelAgentComposerAuthority,
   ComposerInput,
@@ -223,9 +223,8 @@ function assertComposedPayload(
     seat.provider === 'codex'
       ? (seat.serviceTier ?? null)
       : seat.provider === 'kimi'
-        ? !isKimiK3Model(composed.model) && (seat.fastModeEnabled ?? false)
-          ? 'fast'
-          : 'standard'
+        ? // No Kimi route has a Fast tier since Highspeed became its own row.
+          'standard'
         : seat.provider === 'cursor' && isCursorGrokModelId(composed.model)
           ? seat.fastModeEnabled
             ? 'fast'

@@ -181,11 +181,25 @@ struct ModelContextLengthsTests {
 
     // MARK: - Kimi group
 
-    @Test("kimi kimi-k2.7-code: exact 262_144 / displayed 256k")
-    func kimiK27Code() {
+    @Test("kimi kimi-k2.8-preview: 1M, the window it took from K2.7")
+    func kimiK28Preview() {
+        // K2.8 Preview replaced K2.7 on the standard `kimi-for-coding` route on
+        // 2026-09-11 and raised it from 256K to 1M on every membership tier.
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "kimi" }?
-            .models.first { $0.modelId == "kimi-k2.7-code" }
+            .models.first { $0.modelId == "kimi-k2.8-preview" }
+        #expect(row?.label == "K2.8 Preview")
+        #expect(row?.contextWindow == 1_048_576)
+    }
+
+    @Test("kimi kimi-k2.7-code-highspeed: exact 262_144 / displayed 256k")
+    func kimiK27CodeHighspeed() {
+        // Highspeed stayed on K2.7 and kept its 256K window when the standard
+        // route moved, which is why it is a row rather than a speed tier.
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "kimi" }?
+            .models.first { $0.modelId == "kimi-k2.7-code-highspeed" }
+        #expect(row?.label == "K2.7 Code Highspeed")
         #expect(row?.contextWindow == 262_144)
         #expect(row?.formatted == "256k")
     }
@@ -213,11 +227,14 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "256k")
     }
 
-    @Test("kimi group mirrors the current picker rows (K2.7 then both K3 routes)")
+    @Test("kimi group mirrors the current picker rows (K2.8, Highspeed, both K3 routes)")
     func kimiGroupMirrorsPickerRows() {
         let groups = ModelContextLengths.buildGroups()
         let kimiModels = groups.first { $0.provider == "kimi" }?.models ?? []
-        #expect(kimiModels.map(\.modelId) == ["kimi-k2.7-code", "kimi-k3", "kimi-k3-256k"])
+        #expect(
+            kimiModels.map(\.modelId) == [
+                "kimi-k2.8-preview", "kimi-k2.7-code-highspeed", "kimi-k3", "kimi-k3-256k",
+            ])
     }
 
     // MARK: - Grok group

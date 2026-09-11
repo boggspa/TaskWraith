@@ -91,7 +91,7 @@ import {
 import { taskWraithMcpAdvertisedToolNamesForProfile } from '../mcp/McpToolProfiles'
 import { grokAcpEnabled, grokReadOnlyMcpAdvertiseEnabled } from '../grokGate'
 import { shouldAdvertiseTaskWraithMcpToGrok } from '../grok/GrokMcpAdvertise'
-import { isKimiK3Model, normalizeKimiReasoningEffort } from '../providers/StaticProviderModels'
+import { normalizeKimiReasoningEffort } from '../providers/StaticProviderModels'
 import { isKimiAcpProductionPosture } from '../../shared/kimiAcpPosture'
 import {
   isExplicitUltraTaskSelection,
@@ -1080,10 +1080,9 @@ export class ComposerService {
         provider === 'codex'
           ? optionalStringOrNull(effectiveInput.codexServiceTier) || null
           : provider === 'kimi'
-            ? !isKimiK3Model(requestedModel) &&
-              (effectiveInput.kimiFastMode ?? metadataBoolean(chat, 'kimiFastMode') ?? false)
-              ? 'fast'
-              : 'standard'
+            ? // Kimi's Fast tier retired when K2.7 Code Highspeed became its own
+              // picker row; a seat still carrying kimiFastMode must not re-route.
+              'standard'
             : provider === 'cursor' && isCursorGrokModelId(requestedModel)
               ? (effectiveInput.cursorFastMode ?? metadataBoolean(chat, 'cursorFastMode') ?? false)
                 ? 'fast'

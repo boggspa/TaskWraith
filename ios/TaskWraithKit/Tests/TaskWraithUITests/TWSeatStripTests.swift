@@ -167,11 +167,14 @@ struct TWSeatStripTests {
                 == "Seat: #1 Lead, Claude, Opus 5, Max reasoning, Accept Edits, 1 grant")
         let before = twSeatStripSide(
             seat(
-                provider: "kimi", model: "kimi-k2.7-code", role: "Lead", seatNumber: 1,
+                provider: "kimi", model: "kimi-k2.7-code-highspeed", role: "Lead",
+                seatNumber: 1,
                 thinkingEnabled: true, permissionPresetId: "read_only"))
         let changed = twSeatStripAccessibilityLabel(before: before, after: after)
         #expect(changed.hasPrefix("Seat: #1 Lead, Claude"))
-        #expect(changed.contains("Previously #1 Lead, Kimi, K2.7 Coding, Thinking reasoning, Ask"))
+        #expect(
+            changed.contains(
+                "Previously #1 Lead, Kimi, K2.7 Code Highspeed, Thinking reasoning, Ask"))
     }
 
     @Test func enabledChangeNotesDistinguishBothStatesFromAnOrdinaryEdit() {

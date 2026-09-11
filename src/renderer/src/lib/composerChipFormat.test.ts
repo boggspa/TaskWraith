@@ -160,7 +160,7 @@ describe('shortModelName', () => {
   it("resolves the cli-default sentinel to each provider's real default", () => {
     expect(shortModelName('codex', '', 'cli-default')).toBe('5.5')
     expect(shortModelName('claude', '', 'cli-default')).toBe('Sonnet 4.6')
-    expect(shortModelName('kimi', '', 'cli-default')).toBe('K2.7 Coding')
+    expect(shortModelName('kimi', '', 'cli-default')).toBe('K2.8 Preview')
     expect(shortModelName('grok', '', 'cli-default')).toBe('Grok 4.6 Fast')
     expect(shortModelName('gemini', '', 'cli-default')).toBe('Flash Lite')
     expect(shortModelName('cursor', '', 'cli-default')).toBe('Composer 2.5 Fast')
@@ -312,16 +312,27 @@ describe('reasoningDisplayLabel', () => {
     ).toBe('')
   })
 
-  it('Kimi maps fixed K2.7 thinking to Thinking and K3 effort to its tier', () => {
+  it('Kimi maps fixed Highspeed thinking to Thinking and a ladder to its tier', () => {
+    // Highspeed is the one managed route whose thinking is a flag rather than
+    // an effort; K2.8 and both K3 routes render the selected tier instead.
     expect(
       reasoningDisplayLabel({
         provider: 'kimi',
         composerStyle: 'kimi',
-        modelId: 'kimi-k2.7-code',
-        modelLabel: 'K2.7 Coding',
+        modelId: 'kimi-k2.7-code-highspeed',
+        modelLabel: 'K2.7 Code Highspeed',
         kimiThinkingEnabled: true
       })
     ).toBe('Thinking')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'kimi',
+        composerStyle: 'kimi',
+        modelId: 'kimi-k2.8-preview',
+        modelLabel: 'K2.8 Preview',
+        kimiReasoningEffort: 'high'
+      })
+    ).toBe('High')
     expect(
       reasoningDisplayLabel({
         provider: 'kimi',
@@ -689,16 +700,16 @@ describe('formatComposerModelChip', () => {
     ).toBe('Opus 4.8 1M · Ultracode')
   })
 
-  it('Kimi shell + kimi provider + on → "K2.7 Coding Thinking"', () => {
+  it('Kimi shell + kimi provider + on → "K2.7 Code Highspeed Thinking"', () => {
     expect(
       formatComposerModelChip({
         provider: 'kimi',
         composerStyle: 'kimi',
-        modelId: 'kimi-k2.7-code',
-        modelLabel: 'K2.7 Coding',
+        modelId: 'kimi-k2.7-code-highspeed',
+        modelLabel: 'K2.7 Code Highspeed',
         kimiThinkingEnabled: true
       })
-    ).toBe('K2.7 Coding Thinking')
+    ).toBe('K2.7 Code Highspeed Thinking')
   })
 
   it('Kimi shell distinguishes both K3 routes and shows their selected effort', () => {
@@ -789,11 +800,11 @@ describe('formatComposerModelChip', () => {
       formatComposerModelChip({
         provider: 'kimi',
         composerStyle: 'terminal',
-        modelId: 'kimi-k2.7-code',
-        modelLabel: 'K2.7 Coding',
+        modelId: 'kimi-k2.7-code-highspeed',
+        modelLabel: 'K2.7 Code Highspeed',
         kimiThinkingEnabled: true
       })
-    ).toBe('K2.7 Coding · Thinking')
+    ).toBe('K2.7 Code Highspeed · Thinking')
   })
 })
 

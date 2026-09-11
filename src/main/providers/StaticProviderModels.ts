@@ -40,33 +40,42 @@ import { PI_DEFAULT_MODEL_WIRE_ID, PI_STATIC_MODELS } from '../pi/PiModels'
 import { PI_UPSTREAM_LABELS } from '../pi/PiModelPolicy'
 import { canonicalPiWireModelId } from '../../shared/piBrandTable'
 import {
+  KIMI_256K_CONTEXT_WINDOW,
   KIMI_HIGHSPEED_API_MODEL,
   KIMI_HIGHSPEED_CLI_MODEL,
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
   KIMI_K27_MODEL_ID,
+  KIMI_K28_MODEL_ID,
+  KIMI_K28_MODEL_LABEL,
   KIMI_K3_256K_API_MODEL,
   KIMI_K3_256K_CLI_MODEL,
   KIMI_K3_256K_MODEL_ID,
   KIMI_K3_256K_MODEL_LABEL,
   KIMI_K3_API_MODEL,
   KIMI_K3_CLI_MODEL,
+  KIMI_K3_LONG_CONTEXT_WINDOW,
   KIMI_K3_MODEL_ID,
   KIMI_K3_MODEL_LABEL,
   KIMI_K3_REASONING_EFFORTS,
   KIMI_STANDARD_API_MODEL,
   KIMI_STANDARD_CLI_MODEL,
-  isKimiK3Model,
   kimiCliModelAlias,
   kimiExplicitCliModelAlias,
+  kimiModelSupportsReasoningEfforts,
   type KimiK3ReasoningEffort
 } from '../../shared/kimiModels'
 
 export {
   KIMI_HIGHSPEED_CLI_MODEL,
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K28_MODEL_ID,
   KIMI_K3_256K_CLI_MODEL,
   KIMI_K3_CLI_MODEL,
   KIMI_K3_REASONING_EFFORTS,
   KIMI_STANDARD_CLI_MODEL,
-  isKimiK3Model
+  isKimiK3Model,
+  kimiModelSupportsReasoningEfforts
 } from '../../shared/kimiModels'
 
 export {
@@ -685,19 +694,37 @@ const CLAUDE_STATIC_MODELS = [
 ]
 const KIMI_STATIC_MODELS = [
   {
-    id: KIMI_K27_MODEL_ID,
-    label: 'K2.7 Coding',
-    description: 'Standard and Highspeed tiers with always-on thinking',
+    // The standard `kimi-code/kimi-for-coding` route. Moonshot rolled K2.8
+    // Preview onto it on 2026-09-11 and deliberately kept the wire id, so this
+    // is the same route the retired "K2.7 Coding" row always dispatched with
+    // Fast off — and it took K3's Low/High/Max axis and 1M window with it.
+    id: KIMI_K28_MODEL_ID,
+    label: KIMI_K28_MODEL_LABEL,
+    description: "Moonshot's newest coding model - 1M context - Low, High, or Max thinking",
     isDefault: true,
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
+    defaultReasoningEffort: 'max',
+    contextWindow: KIMI_K3_LONG_CONTEXT_WINDOW,
+    ultraTaskSupported: true
+  },
+  {
+    // Highspeed stayed on K2.7 when the standard route moved to K2.8, so the
+    // two no longer share a capability set: 256K, always-on thinking, and no
+    // effort axis at all. That is why it is a row rather than K2.8's Fast tier.
+    id: KIMI_K27_HIGHSPEED_MODEL_ID,
+    label: KIMI_K27_HIGHSPEED_MODEL_LABEL,
+    description: 'Low-latency K2.7 route - 256K context - always-on thinking, no effort axis',
     supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
     defaultReasoningEffort: 'on',
-    additionalSpeedTiers: ['fast'],
+    contextWindow: KIMI_256K_CONTEXT_WINDOW,
     ultraTaskSupported: true
   },
   {
     // Managed `kimi-code/k3` alias (2026-07-16): 256K on Moderato and up to 1M
     // on Allegretto+, with model-advertised Low/High/Max effort choices. No
-    // Highspeed tier — Fast stays a K2.7 Coding capability.
+    // Highspeed route — that one stayed on K2.7 and is its own row above.
     id: KIMI_K3_MODEL_ID,
     label: KIMI_K3_MODEL_LABEL,
     description:
@@ -1237,7 +1264,7 @@ const CURSOR_STATIC_MODELS = [
   // rejects every grok-4.5 wire id outright (exit 1, "Cannot use this model").
   // Persisted seats migrate to 4.6 in normalizeCliProviderModel below.
 ]
-const KIMI_DEFAULT_MODEL = KIMI_K27_MODEL_ID
+const KIMI_DEFAULT_MODEL = KIMI_K28_MODEL_ID
 // Kimi CLI's --model option resolves configured model aliases, not raw API
 // model ids. OAuth-managed Kimi Code models use the stable `kimi-code/` key
 // namespace in ~/.kimi-code/config.toml; passing only `kimi-for-coding` leaves the
@@ -1256,8 +1283,13 @@ const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   ['best', KIMI_DEFAULT_MODEL],
   ['kimi-latest', KIMI_DEFAULT_MODEL],
   ['kimi-code', KIMI_DEFAULT_MODEL],
-  [KIMI_STANDARD_API_MODEL, KIMI_STANDARD_CLI_MODEL],
-  [KIMI_HIGHSPEED_API_MODEL, KIMI_HIGHSPEED_CLI_MODEL],
+  [KIMI_STANDARD_API_MODEL, KIMI_K28_MODEL_ID],
+  [KIMI_STANDARD_CLI_MODEL, KIMI_K28_MODEL_ID],
+  // Highspeed became its own picker row on 2026-09-11. Both upstream spellings
+  // resolve to it so a seat that reached it through the retired Fast tier lands
+  // on the row instead of silently falling back to the standard route.
+  [KIMI_HIGHSPEED_API_MODEL, KIMI_K27_HIGHSPEED_MODEL_ID],
+  [KIMI_HIGHSPEED_CLI_MODEL, KIMI_K27_HIGHSPEED_MODEL_ID],
   // K3's raw API id and managed CLI alias both resolve to the canonical
   // TaskWraith id; 'kimi-k3' itself passes through via KIMI_CLI_MODEL_IDS.
   [KIMI_K3_API_MODEL, 'kimi-k3'],
@@ -1265,7 +1297,8 @@ const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   [KIMI_K3_256K_API_MODEL, KIMI_K3_256K_MODEL_ID],
   [KIMI_K3_256K_CLI_MODEL, KIMI_K3_256K_MODEL_ID],
   ['kimi-k2.7', KIMI_DEFAULT_MODEL],
-  ['kimi-k2.7-code', KIMI_DEFAULT_MODEL],
+  // The retired combined row. Its standard tier is exactly today's K2.8 route.
+  [KIMI_K27_MODEL_ID, KIMI_DEFAULT_MODEL],
   ['kimi-k2.7-code-thinking', KIMI_DEFAULT_MODEL],
   ['kimi-k2.7-thinking', KIMI_DEFAULT_MODEL],
   ['kimi-k2.6', KIMI_DEFAULT_MODEL],
@@ -1284,12 +1317,15 @@ const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   ['kimi-k2-turbo', KIMI_DEFAULT_MODEL]
 ])
 
-/** K3 defaults to Max; K2.7 Coding has no configurable effort axis. */
+/**
+ * K2.8 Preview and both K3 routes share Kimi's Low/High/Max axis and default to
+ * Max; K2.7 Code Highspeed has no configurable effort axis at all.
+ */
 export function normalizeKimiReasoningEffort(
   model?: string | null,
   effort?: string | null
 ): KimiK3ReasoningEffort | null {
-  if (!isKimiK3Model(model)) return null
+  if (!kimiModelSupportsReasoningEfforts(model)) return null
   const normalized = String(effort || '')
     .trim()
     .toLowerCase()

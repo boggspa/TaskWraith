@@ -85,9 +85,10 @@ not the monoline glyph set.
 
 | Model                                          | Reasoning        | Fast               | Notes                                            |
 | ---------------------------------------------- | ---------------- | ------------------ | ------------------------------------------------ |
-| **K2.7 Coding** `kimi-k2.7-code` **(Default)** | On (fixed)       | Toggle — Highspeed | Thinking is always on.                           |
+| **K2.8 Preview** `kimi-k2.8-preview` **(Default)** | Low · High · **Max** | — | Rolled out 2026-09-11 onto the UNCHANGED `kimi-for-coding` wire id, so it is the route the retired combined "K2.7 Coding" row already dispatched with Fast off. It took K3's effort axis and a 1M window on every membership tier. `kimi-k2.7-code` resolves forward to this row. |
+| **K2.7 Code Highspeed** `kimi-k2.7-code-highspeed` | On (fixed) | — | Its own picker row since 2026-09-11, not K2.8's Fast tier: Highspeed stayed on K2.7 when the standard route moved, so it keeps a 256K window, always-on thinking and no effort axis. No Kimi row carries a Fast toggle any more. |
 | **K3 (up to 1M)** `kimi-k3`                    | Low · High · Max | —                  | 256K on Moderato; up to 1M on Allegretto+ tiers. |
-| **K3 256K** `kimi-k3-256k`                     | Low · High · Max | —                  | Quota-efficient K3 route — fixed 256K context. Never inherits K2.7's Highspeed tier. |
+| **K3 256K** `kimi-k3-256k`                     | Low · High · Max | —                  | Quota-efficient K3 route — fixed 256K context. |
 
 <table>
   <tr>
@@ -356,11 +357,14 @@ lane, and their metadata is written into the run's isolated Pi home at launch.
 | **Mercury 2.5** `openrouter/inception/mercury-2.5`         | Off → Max    | —    | Inception's GA diffusion LLM — 260K context, 65,536 output, text only. Minimal, Low, Medium, High and Max (no Extra High), defaulting to Medium. Listed $0.20/$0.75 per Mtok with $0.02 cache read; OpenRouter is discounting the launch 80%. |
 | **Nex-N2.5-Mini (OpenRouter Free)** `openrouter/nex-agi/nex-n2.5-mini:free` | Off → Max | — | Nex AGI's free agentic coder — 262K context, 235,929 output, text only, same Medium-default ladder. |
 | **Nex-N2.5-Pro (OpenRouter Free)** `openrouter/nex-agi/nex-n2.5-pro:free` | Off → Max | — | The larger free Nex-N2.5 — same window and output, plus image input for its visual feedback loop. |
+| **Fugu Max** `openrouter/sakana/fugu-max`                  | Off → Max    | —    | Sakana AI's cost-performance Fugu, released 2026-09-11. Fugu is not a single model: it is a learned multi-agent orchestrator that routes tasks across a fixed pool of open-weights and specialist models and calls instances of itself recursively. 1M context, 128K output, text + image + file input. $2.00/$6.00 per Mtok with $0.25 cache read. |
+| **Fugu Ultra v2** `openrouter/sakana/fugu-ultra-v2`        | Off → Max    | —    | The higher-performance Fugu, tuned for complex multi-step reasoning, autonomous research and full-stack work. Same 1M window and 128K output. $5.00/$30.00 per Mtok with $0.50 cache read — **but OpenRouter publishes a prompt-length break: past 272,000 prompt tokens it bills $10.00/$45.00 with $1.00 cache read.** TaskWraith's flat rate table records the base tier only, so a long-prompt turn is under-estimated by up to 2x on input. |
 
 Pi sends `--thinking` only when a reasoning choice is set, and every picker is
 filtered through the selected route's own ladder. Boolean routes expose only
-Off and High; always-on routes hide Off; Inkling, Mercury and the Nex-N2.5 pair
-keep Off and Minimal distinct and omit unsupported Extra High. UltraTask/top-tier requests clamp to the
+Off and High; always-on routes hide Off; Inkling, Mercury, the Nex-N2.5 pair and
+the Sakana Fugu pair keep Off and Minimal distinct and omit unsupported Extra
+High. UltraTask/top-tier requests clamp to the
 selected model's real ceiling instead of forwarding a level that route ignores.
 Leaving the control unset preserves the upstream default.
 
@@ -397,6 +401,14 @@ required plan. Nothing appears unless the daemon both supports and enables
 cloud, so a local-only install is unchanged. In the composer picker a cloud
 group is marked with a cloud icon in place of the usual provider swatch, and
 model preflight states cloud rather than local expectations for those rows.
+Cloud tags expose no prompt template, so `/api/show` can prove only THAT a model
+thinks — never the shape of the control. Each cloud family's ladder is therefore
+documentation-sourced in `shared/ollamaReasoning.ts`. The newest is
+`deepseek-v4.1-flash:cloud` (2026-09-10): a 763B FP8 MoE with a 1M window,
+vision and tools, and DeepSeek's documented Low/High/Max effort with a real
+no-thinking mode. DeepSeek also gives V4.1 Flash a continuous 1-100 reasoning
+budget, which Ollama's `think` field cannot express — its validator takes only
+high/medium/low/max/true/false — so the named stops are the whole surface here.
 
 There is no generic TaskWraith reasoning or Fast switch for either lane—native
 tool, vision, and thinking capabilities remain model-specific.

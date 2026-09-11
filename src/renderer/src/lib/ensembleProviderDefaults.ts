@@ -57,13 +57,16 @@ import {
   isGrokReasoningModelId
 } from '../../../shared/grok45Models'
 import {
-  KIMI_K27_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K28_MODEL_ID,
+  KIMI_K28_MODEL_LABEL,
   KIMI_K3_256K_MODEL_ID,
   KIMI_K3_256K_MODEL_LABEL,
   KIMI_K3_MODEL_ID,
   KIMI_K3_MODEL_LABEL,
   KIMI_K3_REASONING_EFFORTS,
-  isKimiK3Model as isSharedKimiK3Model
+  kimiModelSupportsReasoningEfforts
 } from '../../../shared/kimiModels'
 import { activePiModelRows } from '../../../shared/piModelLifecycle'
 import {
@@ -151,7 +154,7 @@ const KIMI_ALWAYS_ON_REASONING: CombinedModelPickerReasoningOption[] = [
   {
     value: 'on',
     label: 'On',
-    disabledReason: 'Thinking is always on for K2.7 Coding.'
+    disabledReason: 'Thinking is always on for K2.7 Code Highspeed.'
   }
 ]
 const KIMI_K3_REASONING: CombinedModelPickerReasoningOption[] = [
@@ -344,11 +347,18 @@ const GEMINI_MODELS = withCuratedUltraTaskSupport(GEMINI_MODEL_ROWS)
 
 const KIMI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   {
-    id: KIMI_K27_MODEL_ID,
-    label: 'K2.7 Coding',
+    id: KIMI_K28_MODEL_ID,
+    label: KIMI_K28_MODEL_LABEL,
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
+    defaultReasoningEffort: 'max'
+  },
+  {
+    id: KIMI_K27_HIGHSPEED_MODEL_ID,
+    label: KIMI_K27_HIGHSPEED_MODEL_LABEL,
     supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
-    defaultReasoningEffort: 'on',
-    additionalSpeedTiers: ['fast']
+    defaultReasoningEffort: 'on'
   },
   {
     id: KIMI_K3_MODEL_ID,
@@ -368,8 +378,11 @@ const KIMI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   }
 ]
 const KIMI_MODELS = withCuratedUltraTaskSupport(KIMI_MODEL_ROWS)
-// Fast (Standard/Highspeed) stays exclusive to K2.7 Coding — neither K3 route has it.
-const KIMI_FAST_CAPABLE = new Set<string>([KIMI_K27_MODEL_ID])
+// Kimi has no Fast tier any more: Highspeed became its own picker row on
+// 2026-09-11 when the standard route moved to K2.8 and the two stopped sharing
+// a capability set. Keep the empty set so the seat picker hides the toggle
+// rather than offering one that resolves to whatever row is already selected.
+const KIMI_FAST_CAPABLE = new Set<string>()
 
 // Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Its Composer id stays distinct
 // from the Cursor catalog below.
@@ -511,7 +524,9 @@ const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'openrouter/inception/mercury-2.5-preview', label: 'Mercury 2.5 Preview' },
   { id: 'openrouter/inception/mercury-2.5', label: 'Mercury 2.5' },
   { id: 'openrouter/nex-agi/nex-n2.5-mini:free', label: 'Nex-N2.5-Mini' },
-  { id: 'openrouter/nex-agi/nex-n2.5-pro:free', label: 'Nex-N2.5-Pro' }
+  { id: 'openrouter/nex-agi/nex-n2.5-pro:free', label: 'Nex-N2.5-Pro' },
+  { id: 'openrouter/sakana/fugu-max', label: 'Fugu Max' },
+  { id: 'openrouter/sakana/fugu-ultra-v2', label: 'Fugu Ultra v2' }
 ]
 const PI_MODELS = withCuratedUltraTaskSupport(PI_MODEL_ROWS)
 
@@ -674,7 +689,9 @@ export function getEnsembleReasoningOptions(
         ? CLAUDE_OPUS_REASONING
         : CLAUDE_SONNET_REASONING
     case 'kimi':
-      return isSharedKimiK3Model(modelId) ? KIMI_K3_REASONING : KIMI_ALWAYS_ON_REASONING
+      return kimiModelSupportsReasoningEfforts(modelId)
+        ? KIMI_K3_REASONING
+        : KIMI_ALWAYS_ON_REASONING
     case 'grok':
       if (!isGrokReasoningModelId(modelId)) return []
       return isDirectGrok46ModelId(modelId) ? GROK_46_REASONING : GROK_45_REASONING
@@ -974,27 +991,33 @@ function normalizeReasoningEffortToken(value?: string | null): string {
   return normalized
 }
 
-/** K3 has a selectable Low/High/Max effort; K2.7 Coding's thinking is fixed On. */
-export function isKimiK3Model(model?: string | null): boolean {
-  return isSharedKimiK3Model(model)
+/**
+ * K2.8 Preview and both K3 routes have a selectable Low/High/Max effort; K2.7
+ * Code Highspeed's thinking is fixed On. Keyed on the ladder, not on "is K3":
+ * K2.8 took the axis with it when it replaced K2.7 on the standard route.
+ */
+export function kimiModelHasSelectableReasoning(model?: string | null): boolean {
+  return kimiModelSupportsReasoningEfforts(model)
 }
 
 /**
- * The picker uses K2.7's fixed thinking state as an `on` stop, but K3 must
- * retain its independent effort. Collapsing K3 to `on` makes the shared ladder
- * land on Low even when the persisted selection is High or Max.
+ * The picker uses Highspeed's fixed thinking state as an `on` stop, but a
+ * laddered route must retain its independent effort. Collapsing it to `on`
+ * makes the shared ladder land on Low even when the persisted selection is
+ * High or Max.
  */
 export function resolveKimiReasoningPickerSelection(
   model: string | null | undefined,
   reasoningEffort?: string | null
 ): string {
   if (normalizeReasoningEffortToken(reasoningEffort) === 'ultratask') return 'ultraTask'
-  if (!isKimiK3Model(model)) return 'on'
+  if (!kimiModelHasSelectableReasoning(model)) return 'on'
   return normalizeReasoningEffortToken(reasoningEffort) || 'max'
 }
 
-/** Persist K3 effort and the synthetic UltraTask selection without treating
- * ordinary K2.7 choices as anything other than its fixed thinking flag. */
+/** Persist a laddered route's effort and the synthetic UltraTask selection
+ * without treating ordinary Highspeed choices as anything other than its fixed
+ * thinking flag. */
 export function buildKimiReasoningPickerPatch(
   model: string | null | undefined,
   reasoningEffort: string
@@ -1002,7 +1025,7 @@ export function buildKimiReasoningPickerPatch(
   if (normalizeReasoningEffortToken(reasoningEffort) === 'ultratask') {
     return { reasoningEffort: 'ultraTask', thinkingEnabled: true }
   }
-  if (isKimiK3Model(model)) return { reasoningEffort, thinkingEnabled: true }
+  if (kimiModelHasSelectableReasoning(model)) return { reasoningEffort, thinkingEnabled: true }
   return { reasoningEffort: undefined, thinkingEnabled: true }
 }
 
@@ -1481,7 +1504,9 @@ export function resolveEnsembleParticipantSettings(
             ? modelDefaultReasoning
             : (enabledReasoningOptions[0]?.value ?? '')
   const fastModeEnabled =
-    participant.provider === 'kimi' && isKimiK3Model(model)
+    // No Kimi route has a Fast tier since Highspeed became its own row; a seat
+    // still carrying the retired flag must not re-route the row it shows.
+    participant.provider === 'kimi'
       ? false
       : Boolean(participant.fastModeEnabled ?? defaults.fastModeEnabled)
   const thinkingEnabled =
@@ -1538,7 +1563,7 @@ export function getEnsembleModelDefaults(
         reasoningOptions: KIMI_ALWAYS_ON_REASONING,
         defaultReasoning: 'on',
         fastModeCapableModelIds: KIMI_FAST_CAPABLE,
-        defaultModelId: 'kimi-k2.7-code'
+        defaultModelId: KIMI_K28_MODEL_ID
       }
     case 'grok':
       return {

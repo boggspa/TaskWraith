@@ -57,7 +57,9 @@ describe('piModelPolicyVerdict', () => {
       'tencent/hy4-preview',
       'inception/mercury-2.5',
       'nex-agi/nex-n2.5-mini:free',
-      'nex-agi/nex-n2.5-pro:free'
+      'nex-agi/nex-n2.5-pro:free',
+      'sakana/fugu-max',
+      'sakana/fugu-ultra-v2'
     ])
   })
 
@@ -176,7 +178,9 @@ describe('catalog/policy lockstep', () => {
       'openrouter/tencent/hy4-preview',
       'openrouter/inception/mercury-2.5',
       'openrouter/nex-agi/nex-n2.5-mini:free',
-      'openrouter/nex-agi/nex-n2.5-pro:free'
+      'openrouter/nex-agi/nex-n2.5-pro:free',
+      'openrouter/sakana/fugu-max',
+      'openrouter/sakana/fugu-ultra-v2'
     ])
   })
 

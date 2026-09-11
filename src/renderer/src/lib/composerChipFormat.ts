@@ -21,11 +21,15 @@ import {
   isGrokReasoningModelId
 } from '../../../shared/grok45Models'
 import {
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K28_MODEL_ID,
+  KIMI_K28_MODEL_LABEL,
   KIMI_K3_256K_MODEL_ID,
   KIMI_K3_256K_MODEL_LABEL,
   KIMI_K3_MODEL_ID,
   KIMI_K3_MODEL_LABEL,
-  isKimiK3Model
+  kimiModelSupportsReasoningEfforts
 } from '../../../shared/kimiModels'
 import { humaniseModelId } from './modelDisplayName'
 import {
@@ -79,6 +83,8 @@ export interface ComposerChipContext {
  *
  * Codex (`gpt-5.5`, `gpt-5.4-mini`)        → `5.5`, `5.4-Mini`
  * Claude (`claude-opus-4-7-1m`)            → `Opus 4.7 1M`
+ * Kimi (`kimi-k2.8-preview`)              → `K2.8 Preview`
+ * Kimi (`kimi-k2.7-code-highspeed`)       → `K2.7 Code Highspeed`
  * Kimi (`kimi-k2.7-code`, `kimi-k2.7-code-thinking`) → `K2.7 Coding`
  * Kimi (`kimi-k3`, `kimi-k3-256k`)        → `K3 (1M)`, `K3 (256K)`
  * Gemini (`gemini-2.5-pro`)                → `2.5 Pro`
@@ -97,7 +103,7 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
   if (id === 'cli-default') {
     if (provider === 'codex') return '5.5'
     if (provider === 'claude') return 'Sonnet 4.6'
-    if (provider === 'kimi') return 'K2.7 Coding'
+    if (provider === 'kimi') return KIMI_K28_MODEL_LABEL
     if (provider === 'grok') return 'Grok 4.6 Fast'
     if (provider === 'cursor') return 'Composer 2.5 Fast'
     if (provider === 'ollama') return 'Qwen 3 (4B Param)'
@@ -140,6 +146,10 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
   }
 
   if (provider === 'kimi') {
+    if (id === KIMI_K28_MODEL_ID) return KIMI_K28_MODEL_LABEL
+    // Checked BEFORE the `kimi-k2.7-code` prefix below, which would otherwise
+    // swallow the Highspeed row and label it as the retired combined one.
+    if (id === KIMI_K27_HIGHSPEED_MODEL_ID) return KIMI_K27_HIGHSPEED_MODEL_LABEL
     // kimi-k2.7-code, kimi-k2.7-code-thinking → K2.7 Coding. The explicit branch
     // exists because the generic version matcher below would drop " Coding".
     if (id.startsWith('kimi-k2.7-code')) return 'K2.7 Coding'
@@ -393,7 +403,7 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
     ) {
       return 'UltraTask'
     }
-    if (isKimiK3Model(ctx.modelId)) {
+    if (kimiModelSupportsReasoningEfforts(ctx.modelId)) {
       return kimiReasoningDisplayLabel(ctx.kimiReasoningEffort)
     }
     return ctx.kimiThinkingEnabled ? 'Thinking' : ''

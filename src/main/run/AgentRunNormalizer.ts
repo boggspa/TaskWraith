@@ -21,7 +21,6 @@ import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import { normalizeActiveGoalObjective, normalizeActiveGoalSpecification } from '../GoalState'
 import {
   claudeModelSupportsFastMode,
-  isKimiK3Model,
   normalizeKimiReasoningEffort
 } from '../providers/StaticProviderModels'
 import type { ExternalPathGrantRunBindingContext } from '../ExternalPathGrantBinding'
@@ -259,10 +258,9 @@ export function normalizeAgentRunPayload(
             optionalStringOrNull(payload.reasoningEffort)
           )
         : optionalStringOrNull(payload.reasoningEffort),
-    serviceTier:
-      provider === 'kimi' && isKimiK3Model(optionalString(payload.model))
-        ? 'standard'
-        : optionalStringOrNull(payload.serviceTier),
+    // Kimi's Fast tier retired when Highspeed became its own picker row, so
+    // every Kimi route dispatches Standard and its own alias carries the rest.
+    serviceTier: provider === 'kimi' ? 'standard' : optionalStringOrNull(payload.serviceTier),
     claudeReasoningEffort: optionalStringOrNull(payload.claudeReasoningEffort),
     claudeFastMode:
       provider === 'claude' &&
@@ -270,8 +268,8 @@ export function normalizeAgentRunPayload(
       typeof payload.claudeFastMode === 'boolean'
         ? payload.claudeFastMode
         : undefined,
-    // Current K2.7 Coding and K3 models both advertise always_thinking. Ignore
-    // stale persisted/off inputs at the universal dispatch boundary.
+    // Every managed Kimi route advertises always_thinking. Ignore stale
+    // persisted/off inputs at the universal dispatch boundary.
     kimiThinking: provider === 'kimi' ? true : undefined,
     approvalMode: clampedPosture.approvalMode,
     workflowMode: clampedPosture.downgraded ? 'normal' : requestedWorkflowMode,

@@ -315,6 +315,14 @@
    * from its closest neighbour (cohere), and deliberately not another violet,
    * because Mercury 2.5 lands in the same picker section wearing inception. */
   --provider-nexagi-color: #747A42;
+  /* Sakana AI's mark is a vivid red fish (favicon #E10600). Raising that hue
+   * straight into this palette's band gives #EC0600, which lands dE 2.2 from
+   * openbmb (#E22B17) — indistinguishable in a transcript, which is the one
+   * job these accents have. So the hue is pulled ~10 degrees off the brand's
+   * fire-red toward crimson: it still reads as Sakana red, and it sits dE 6.3
+   * from BOTH openbmb and openrouter, its two nearest neighbours. Wider than
+   * most of the palette already manages (kimi/meta are dE 1.5 apart). */
+  --provider-sakana-color: #EA0C2D;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill

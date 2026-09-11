@@ -41,6 +41,7 @@ export function ollamaCloudModelId(modelId?: string | null): string {
  * though that one resolves to the Alibaba brand, so it never stuttered.
  */
 const OLLAMA_CLOUD_MODEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  'deepseek-v4.1-flash': 'V4.1 Flash',
   'deepseek-v4-flash': 'V4 Flash',
   'deepseek-v4-flash:0731': 'V4 Flash (0731)',
   'deepseek-v4-flash:preview': 'V4 Flash (Preview)',

@@ -222,6 +222,9 @@ public enum TWTheme {
         // rather than a brand claim: the most distinct near-neutral left in
         // this palette's AA band. Mirrors theme.css.
         case "nexagi": return 0x747A42
+        // Sakana's brand red (#E10600) pulled ~10 degrees toward crimson so it
+        // is not dE 2.2 from openbmb. Mirrors theme.css.
+        case "sakana": return 0xEA0C2D
         default: return chroma1Hex
         }
     }
@@ -261,7 +264,7 @@ public enum TWTheme {
         "google", "pi", "muse", "ensemble", "grok", "alibaba", "qwen", "deep-reinforce", "ornith",
         "ibm", "liquid", "meta", "cohere", "essential", "nvidia", "openbmb", "poolside",
         "deepseek", "zai", "minimax", "mistral", "cerebras", "groq", "openrouter", "xiaomi",
-        "thinkingmachines", "devin", "tencent", "inception", "nexagi"
+        "thinkingmachines", "devin", "tencent", "inception", "nexagi", "sakana"
     ]
 
     /// The whole table as `provider id -> 0xRRGGBB`, for shipping to the Mac.

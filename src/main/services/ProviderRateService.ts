@@ -571,6 +571,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
     pricingUrl: 'https://platform.kimi.ai/docs/pricing/chat',
     models: [
       {
+        modelId: 'kimi-k2.8-preview',
+        inputUsdPerMillion: 0.95,
+        outputUsdPerMillion: 4.0,
+        cachedInputUsdPerMillion: 0.19,
+        sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k27-code',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Current Kimi Code CLI default, on the unchanged `kimi-for-coding` wire id K2.8 Preview took over on 2026-09-11. Moonshot has published no separate K2.8 chat rate, so the K2.7 Coding figures carry forward. PROJECTED API-equivalent for OAuth/subscription runs; automatic context cache hit pricing recorded as cached input.'
+      },
+      {
         modelId: 'kimi-k2.7-code',
         inputUsdPerMillion: 0.95,
         outputUsdPerMillion: 4.0,
@@ -578,7 +588,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k27-code',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Current Kimi Code CLI default. PROJECTED API-equivalent for OAuth/subscription runs; automatic context cache hit pricing recorded as cached input.'
+          'Retired combined "K2.7 Coding" row. Kept so usage already recorded under that id still prices instead of falling through to the table head.'
       },
       {
         modelId: 'kimi-k2.7-code-highspeed',
@@ -588,7 +598,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k27-code',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Published Highspeed tier for the same K2.7 Coding model (Fast mode in TaskWraith). PROJECTED API-equivalent for OAuth/subscription runs.'
+          'Published Highspeed tier, still on K2.7 after the standard route moved to K2.8. Its own picker row since 2026-09-11. PROJECTED API-equivalent for OAuth/subscription runs.'
       },
       {
         modelId: 'kimi-k3',
@@ -1582,6 +1592,26 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'OpenRouter :free variant (verified 2026-09-09); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/sakana/fugu-max',
+        inputUsdPerMillion: 2,
+        outputUsdPerMillion: 6,
+        cachedInputUsdPerMillion: 0.25,
+        sourceUrl: 'https://openrouter.ai/sakana/fugu-max',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Paid OpenRouter route, Sakana-hosted with no routing fan-out (verified 2026-09-11); mirrors the cost block in PiOpenRouterModelRegistration. Web search is billed separately at $10 per 1K calls and is not part of a token estimate.'
+      },
+      {
+        modelId: 'openrouter/sakana/fugu-ultra-v2',
+        inputUsdPerMillion: 5,
+        outputUsdPerMillion: 30,
+        cachedInputUsdPerMillion: 0.5,
+        sourceUrl: 'https://openrouter.ai/sakana/fugu-ultra-v2',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Paid OpenRouter route (verified 2026-09-11). BASE tier: OpenRouter publishes a pricing override that raises this to $10 / $45 with $1.00 cache read once the PROMPT exceeds 272,000 tokens. This flat table cannot express a prompt-length break, so a long-prompt turn is UNDER-estimated by up to 2x on input and 1.5x on output; the break is recorded in docs/MODEL_CATALOGUE.md.'
       }
     ]
   },

@@ -2,8 +2,12 @@ import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 
 import {
+  KIMI_256K_CONTEXT_WINDOW,
   KIMI_HIGHSPEED_CLI_MODEL,
-  KIMI_K27_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K28_MODEL_ID,
+  KIMI_K28_MODEL_LABEL,
   KIMI_K3_256K_CLI_MODEL,
   KIMI_K3_256K_MODEL_ID,
   KIMI_K3_256K_MODEL_LABEL,
@@ -177,16 +181,26 @@ export function projectKimiManagedModelRows(
   const fallback = new Map(fallbackRows.map((row) => [row.id, row]))
   const projected = new Map<string, KimiManagedModelRow>()
   const standard = aliases.get(KIMI_STANDARD_CLI_MODEL)
-  const standardFallback = fallback.get(KIMI_K27_MODEL_ID)
+  const standardFallback = fallback.get(KIMI_K28_MODEL_ID)
   if (standard && standardFallback) {
-    const highspeedAvailable = aliases.has(KIMI_HIGHSPEED_CLI_MODEL)
-    projected.set(KIMI_K27_MODEL_ID, {
+    // The standard route carries its own effort ladder now (K2.8 Preview took
+    // K3's Low/High/Max axis), so read it from the config like the K3 rows
+    // rather than pinning the retired always-on stop.
+    projected.set(KIMI_K28_MODEL_ID, {
       ...standardFallback,
-      description: highspeedAvailable
-        ? 'Standard and Highspeed tiers with always-on thinking'
-        : 'Standard tier with always-on thinking',
-      additionalSpeedTiers: highspeedAvailable ? ['fast'] : [],
+      label: standard.displayName || KIMI_K28_MODEL_LABEL,
+      ...reasoningMetadata(standard, standardFallback),
       ...(standard.maxContextSize ? { contextWindow: standard.maxContextSize } : {})
+    })
+  }
+
+  const highspeed = aliases.get(KIMI_HIGHSPEED_CLI_MODEL)
+  const highspeedFallback = fallback.get(KIMI_K27_HIGHSPEED_MODEL_ID)
+  if (highspeed && highspeedFallback) {
+    projected.set(KIMI_K27_HIGHSPEED_MODEL_ID, {
+      ...highspeedFallback,
+      label: highspeed.displayName || KIMI_K27_HIGHSPEED_MODEL_LABEL,
+      contextWindow: highspeed.maxContextSize || KIMI_256K_CONTEXT_WINDOW
     })
   }
 

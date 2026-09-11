@@ -133,19 +133,22 @@ describe('getDefaultEnsembleParticipantConfig', () => {
 })
 
 describe('Kimi reasoning picker selection', () => {
-  it('keeps K3 effort separate from K2.7 Coding\'s fixed thinking state', () => {
+  it("keeps a laddered route's effort separate from Highspeed's fixed thinking", () => {
     expect(resolveKimiReasoningPickerSelection('kimi-k3', 'max')).toBe('max')
     expect(resolveKimiReasoningPickerSelection('kimi-k3', 'high')).toBe('high')
     expect(resolveKimiReasoningPickerSelection('kimi-k3', undefined)).toBe('max')
     expect(resolveKimiReasoningPickerSelection('kimi-k3-256k', 'low')).toBe('low')
     expect(resolveKimiReasoningPickerSelection('k3-256k', undefined)).toBe('max')
-    expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code', 'max')).toBe('on')
-    expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code', 'ultraTask')).toBe(
+    // K2.8 Preview took K3's axis onto the standard route, so it keeps its
+    // own effort; only Highspeed collapses to the fixed `on` stop.
+    expect(resolveKimiReasoningPickerSelection('kimi-k2.8-preview', 'max')).toBe('max')
+    expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code-highspeed', 'max')).toBe('on')
+    expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code-highspeed', 'ultraTask')).toBe(
       'ultraTask'
     )
   })
 
-  it('persists K3 ladder choices as reasoning effort rather than the legacy thinking flag', () => {
+  it('persists ladder choices as reasoning effort rather than the legacy thinking flag', () => {
     expect(buildKimiReasoningPickerPatch('kimi-k3', 'high')).toEqual({
       reasoningEffort: 'high',
       thinkingEnabled: true
@@ -154,11 +157,15 @@ describe('Kimi reasoning picker selection', () => {
       reasoningEffort: 'low',
       thinkingEnabled: true
     })
-    expect(buildKimiReasoningPickerPatch('kimi-k2.7-code', 'on')).toEqual({
+    expect(buildKimiReasoningPickerPatch('kimi-k2.8-preview', 'high')).toEqual({
+      reasoningEffort: 'high',
+      thinkingEnabled: true
+    })
+    expect(buildKimiReasoningPickerPatch('kimi-k2.7-code-highspeed', 'on')).toEqual({
       reasoningEffort: undefined,
       thinkingEnabled: true
     })
-    expect(buildKimiReasoningPickerPatch('kimi-k2.7-code', 'ultraTask')).toEqual({
+    expect(buildKimiReasoningPickerPatch('kimi-k2.7-code-highspeed', 'ultraTask')).toEqual({
       reasoningEffort: 'ultraTask',
       thinkingEnabled: true
     })
@@ -231,8 +238,8 @@ describe('normalizeProviderModelSelection', () => {
   })
 
   it('seeds Kimi thinking with the Standard speed tier', () => {
-    expect(normalizeProviderModelSelection('kimi', 'kimi-k2.7-code')).toEqual({
-      model: 'kimi-k2.7-code',
+    expect(normalizeProviderModelSelection('kimi', 'kimi-k2.7-code-highspeed')).toEqual({
+      model: 'kimi-k2.7-code-highspeed',
       reasoningEffort: 'on',
       fastModeEnabled: false,
       thinkingEnabled: true,
@@ -538,7 +545,7 @@ describe('resolveReasoningEffortForSeatChange', () => {
     expect(
       resolveReasoningEffortForSeatChange({
         provider: 'kimi',
-        model: 'kimi-k2.7-code',
+        model: 'kimi-k2.7-code-highspeed',
         previousEffort: 'ultraTask'
       })
     ).toBe('ultraTask')
@@ -902,29 +909,36 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     }
   })
 
-  it('exposes K2.7 Coding as Fast-capable with fixed thinking on', () => {
+  it('exposes Highspeed as its own row with fixed thinking and no Fast toggle', () => {
     const kimi = getEnsembleModelDefaults('kimi')
-    expect(kimi.defaultModelId).toBe('kimi-k2.7-code')
+    expect(kimi.defaultModelId).toBe('kimi-k2.8-preview')
     expect(kimi.defaultReasoning).toBe('on')
-    expect(getEnsembleReasoningOptions('kimi', 'kimi-k2.7-code')).toEqual([
+    expect(getEnsembleReasoningOptions('kimi', 'kimi-k2.7-code-highspeed')).toEqual([
       expect.objectContaining({ value: 'on', label: 'On' })
     ])
-    expect(kimi.fastModeCapableModelIds.has('kimi-k2.7-code')).toBe(true)
+    // Highspeed is a row now, so NO Kimi row is Fast-capable — a toggle here
+    // would silently re-route whichever row the seat picker is showing.
+    expect(kimi.modelOptions.length).toBeGreaterThan(0)
+    for (const option of kimi.modelOptions) {
+      expect(kimi.fastModeCapableModelIds.has(option.id)).toBe(false)
+    }
   })
 
-  it('lists both K3 routes after K2.7 Coding with Low, High, and Max but no Fast', () => {
+  it('lists Highspeed and both K3 routes after K2.8 Preview, each on its own ladder', () => {
     const kimi = getEnsembleModelDefaults('kimi')
     expect(kimi.modelOptions.map((option) => option.id)).toEqual([
-      'kimi-k2.7-code',
+      'kimi-k2.8-preview',
+      'kimi-k2.7-code-highspeed',
       'kimi-k3',
       'kimi-k3-256k'
     ])
     expect(kimi.modelOptions.map((option) => option.label)).toEqual([
-      'K2.7 Coding',
+      'K2.8 Preview',
+      'K2.7 Code Highspeed',
       'K3 (1M)',
       'K3 (256K)'
     ])
-    for (const modelId of ['kimi-k3', 'kimi-k3-256k']) {
+    for (const modelId of ['kimi-k2.8-preview', 'kimi-k3', 'kimi-k3-256k']) {
       expect(getEnsembleReasoningOptions('kimi', modelId).map((option) => option.value)).toEqual([
         'low',
         'high',
@@ -932,9 +946,9 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       ])
       expect(kimi.fastModeCapableModelIds.has(modelId)).toBe(false)
     }
-    // K3 has no Highspeed tier — Fast stays a K2.7 Coding exclusive — and the
-    // provider default remains K2.7 Coding.
-    expect(kimi.defaultModelId).toBe('kimi-k2.7-code')
+    // No Kimi row has a Highspeed speed tier any more, and the provider
+    // default is the standard route under its current name.
+    expect(kimi.defaultModelId).toBe('kimi-k2.8-preview')
     expect(
       resolveEnsembleParticipantSettings(
         participant({

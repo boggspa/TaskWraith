@@ -86,6 +86,9 @@ describe('ollama model availability helpers', () => {
     expect(ollamaCloudModelDisplayName('minimax-m3:cloud')).toBe('M3')
     expect(ollamaCloudModelDisplayName('deepseek-v4-pro:cloud')).toBe('V4 Pro')
     expect(ollamaCloudModelDisplayName('deepseek-v4-flash:cloud')).toBe('V4 Flash')
+    // Without its own entry this falls back to the raw tag, so the picker shows
+    // `deepseek-v4.1-flash` beside a row reading "V4 Flash".
+    expect(ollamaCloudModelDisplayName('deepseek-v4.1-flash:cloud')).toBe('V4.1 Flash')
     expect(ollamaCloudModelDisplayName('gemma4:cloud')).toBe('Gemma 4')
     expect(ollamaCloudModelDisplayName('GLM-5.2')).toBe('GLM 5.2')
     expect(ollamaCloudModelDisplayName('future-model:cloud')).toBeUndefined()

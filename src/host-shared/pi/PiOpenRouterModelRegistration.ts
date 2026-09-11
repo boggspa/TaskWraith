@@ -230,6 +230,50 @@ export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegist
     contextWindow: 262_144,
     maxTokens: 235_929,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  },
+  {
+    // Sakana Fugu Max — released 2026-09-11. `reasoning_effort` is in
+    // supported_parameters with supported_efforts unenumerated, the same shape
+    // as Mercury and the Nex-N2.5 pair, so the gateway takes the whole ladder.
+    // Sources: OpenRouter Models API + model page, verified 2026-09-11.
+    modelId: 'sakana/fugu-max',
+    label: 'Fugu Max',
+    reasoning: true,
+    thinkingLevelMap: {
+      off: 'none',
+      minimal: 'minimal',
+      low: 'low',
+      medium: 'medium',
+      high: 'high',
+      max: 'max'
+    },
+    input: ['text', 'image'],
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
+    cost: { input: 2, output: 6, cacheRead: 0.25, cacheWrite: 0 }
+  },
+  {
+    // Sakana Fugu Ultra v2 — released 2026-09-11, same surface as Fugu Max.
+    // Its pricing carries an OpenRouter `overrides` tier that doubles input
+    // and raises output to $45 once the PROMPT passes 272,000 tokens; this
+    // flat cost block cannot express a prompt-length break, so the base tier
+    // is recorded and the long-prompt tier is documented in MODEL_CATALOGUE.md.
+    // Sources: OpenRouter Models API + model page, verified 2026-09-11.
+    modelId: 'sakana/fugu-ultra-v2',
+    label: 'Fugu Ultra v2',
+    reasoning: true,
+    thinkingLevelMap: {
+      off: 'none',
+      minimal: 'minimal',
+      low: 'low',
+      medium: 'medium',
+      high: 'high',
+      max: 'max'
+    },
+    input: ['text', 'image'],
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
+    cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 }
   }
 ]
 

@@ -441,11 +441,12 @@ const formatPeakHour = (hour: number): string => {
  *
  *   - `default` / `unknown` model names are removed across all providers
  *     (model usage needs to be explicit, not a wildcard bucket).
- *   - Kimi: only the canonical `kimi-k2.7-code` (default), its thinking
- *     variants, both `kimi-k3` routes, and legacy K2.6 rows survive; deprecated names
- *     (`kimi-latest`, `kimi-k2`, `kimi-k2.5`, `kimi-k2-thinking` aliases,
- *     etc.) collapse to nothing. Kimi Code now treats K2.7 Coding as the
- *     implicit default model.
+ *   - Kimi: only the canonical `kimi-k2.8-preview` (default), the
+ *     `kimi-k2.7-code-highspeed` row, the retired `kimi-k2.7-code` id and its
+ *     thinking variants, both `kimi-k3` routes, and legacy K2.6 rows survive;
+ *     deprecated names (`kimi-latest`, `kimi-k2`, `kimi-k2.5`,
+ *     `kimi-k2-thinking` aliases, etc.) collapse to nothing. Kimi Code now
+ *     treats K2.8 Preview as the implicit default model.
  *
  * Returns `false` when the (provider, model) pair shouldn't surface in
  * the dashboard's per-model breakdown.
@@ -457,6 +458,8 @@ const shouldSurfaceModelInBreakdown = (provider: ProviderId, model: string): boo
     const KIMI_KEEP = new Set([
       'kimi-k3',
       'kimi-k3-256k',
+      'kimi-k2.8-preview',
+      'kimi-k2.7-code-highspeed',
       'kimi-k2.7-code',
       'kimi-k2.7-code-thinking',
       'kimi-k2.7-thinking',

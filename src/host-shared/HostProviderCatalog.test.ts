@@ -273,20 +273,27 @@ describe('HostProviderCatalog', () => {
     }
   })
 
-  it('offers both K3 routes as regular-speed models with the full K3 effort ladder', () => {
+  it('offers every laddered route the full effort ladder, Highspeed alone fixed', () => {
     const entry = hostProviderCatalogEntry('kimi')
     expect(entry).not.toBeNull()
     expect(entry!.models.map((model) => model.modelId)).toEqual([
-      'kimi-k2.7-code',
+      'kimi-k2.8-preview',
+      'kimi-k2.7-code-highspeed',
       'kimi-k3',
       'kimi-k3-256k'
     ])
     expect(entry!.models.map((model) => model.label)).toEqual([
-      'K2.7 Coding',
+      'K2.8 Preview',
+      'K2.7 Code Highspeed',
       'K3 (1M)',
       'K3 (256K)'
     ])
-    for (const modelId of ['kimi-k3', 'kimi-k3-256k']) {
+    // Highspeed stayed on K2.7 and is the one managed route with no axis.
+    expect(
+      entry!.models.find((model) => model.modelId === 'kimi-k2.7-code-highspeed')?.reasoning
+    ).toEqual([{ reasoningId: 'on', label: 'On', available: true }])
+    // K2.8 took K3's axis when it replaced K2.7 on the standard route.
+    for (const modelId of ['kimi-k2.8-preview', 'kimi-k3', 'kimi-k3-256k']) {
       expect(entry!.models.find((model) => model.modelId === modelId)?.reasoning).toEqual([
         { reasoningId: 'low', label: 'Low', available: true },
         { reasoningId: 'high', label: 'High', available: true },
@@ -300,10 +307,23 @@ describe('HostProviderCatalog', () => {
     const gated = hostProviderKimiOffers(true, null)
     expect(gated).toEqual(fallback)
     expect(hostKimiManagedFallbackRows().map((row) => row.id)).toEqual([
-      'kimi-k2.7-code',
+      'kimi-k2.8-preview',
+      'kimi-k2.7-code-highspeed',
       'kimi-k3',
       'kimi-k3-256k'
     ])
+    // Upstream defaults, not a shared guess: K2.8 defaults to Max, both K3
+    // routes to High, and Highspeed has only its fixed On.
+    expect(
+      Object.fromEntries(
+        hostKimiManagedFallbackRows().map((row) => [row.id, row.defaultReasoningEffort])
+      )
+    ).toEqual({
+      'kimi-k2.8-preview': 'max',
+      'kimi-k2.7-code-highspeed': 'on',
+      'kimi-k3': 'high',
+      'kimi-k3-256k': 'high'
+    })
   })
 
   it('gates Host Kimi offers to verified managed rows without remapping aliases', () => {
@@ -319,8 +339,8 @@ describe('HostProviderCatalog', () => {
         ]
       },
       {
-        id: 'kimi-k2.7-code',
-        label: 'K2.7 Coding',
+        id: 'kimi-k2.8-preview',
+        label: 'K2.8 Preview',
         disabled: true
       }
     ])
@@ -333,7 +353,7 @@ describe('HostProviderCatalog', () => {
         { reasoningId: 'max', label: 'Max', available: true }
       ]
     })
-    expect(gated?.models.some((model) => model.modelId === 'kimi-k2.7-code')).toBe(false)
+    expect(gated?.models.some((model) => model.modelId === 'kimi-k2.8-preview')).toBe(false)
     expect(gated?.offerRevision).not.toBe(hostProviderOffers('kimi', true)?.offerRevision)
   })
 

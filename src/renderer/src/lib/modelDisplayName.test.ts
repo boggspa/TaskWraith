@@ -89,7 +89,13 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('kimi', 'kimi-k3-256k')).toBe('K3 (256K)')
       expect(humaniseModelId('kimi', 'k3-256k')).toBe('K3 (256K)')
       expect(humaniseModelId('kimi', 'kimi-code/k3-256k')).toBe('K3 (256K)')
-      expect(humaniseModelId('kimi', 'kimi-k2.7-code')).toBe('K2.7 Coding')
+      expect(humaniseModelId('kimi', 'kimi-k2.8-preview')).toBe('K2.8 Preview')
+      expect(humaniseModelId('kimi', 'kimi-k2.7-code-highspeed')).toBe('K2.7 Code Highspeed')
+      // The retired combined id canonicalises onto the route it always
+      // dispatched, exactly as the K3 aliases do, so old rows aggregate with
+      // the row that replaced them instead of splitting the same upstream
+      // route across two entries.
+      expect(humaniseModelId('kimi', 'kimi-k2.7-code')).toBe('K2.8 Preview')
       expect(humaniseModelId('kimi', 'kimi-k2.7-code-thinking')).toBe('K2.7 Coding Thinking')
       expect(humaniseModelId('kimi', 'kimi-k2.6')).toBe('Kimi K2.6')
       expect(humaniseModelId('kimi', 'kimi-k2.6-thinking')).toBe('Kimi K2.6 Thinking')
@@ -373,7 +379,7 @@ describe('humaniseModelId', () => {
       expect(canonicalModelIdForProvider('codex', 'cli-default')).toBe('gpt-5.5')
       expect(canonicalModelIdForProvider('claude', 'default')).toBe('claude-sonnet-5')
       expect(canonicalModelIdForProvider('gemini', 'cli-default')).toBe('flash-lite')
-      expect(canonicalModelIdForProvider('kimi', 'cli-default')).toBe('kimi-k2.7-code')
+      expect(canonicalModelIdForProvider('kimi', 'cli-default')).toBe('kimi-k2.8-preview')
       expect(canonicalModelIdForProvider('grok', 'cli-default')).toBe('grok-4.6')
       expect(canonicalModelIdForProvider('cursor', 'cli-default')).toBe('composer-2.5-fast')
       expect(canonicalModelIdForProvider('ollama', 'cli-default')).toBe('qwen3:4b-instruct')

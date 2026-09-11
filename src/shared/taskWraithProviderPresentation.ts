@@ -2,7 +2,12 @@ import { matchOllamaBrand } from './ollamaBrandTable'
 import { ollamaCloudModelDisplayName } from './ollamaModelAvailability'
 import { cursorGrokBaseModelId, isGrokReasoningModelId } from './grok45Models'
 import { DEVIN_MODEL_LABELS } from './devinModelCatalog'
-import { KIMI_K3_256K_MODEL_LABEL, KIMI_K3_MODEL_LABEL } from './kimiModels'
+import {
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K28_MODEL_LABEL,
+  KIMI_K3_256K_MODEL_LABEL,
+  KIMI_K3_MODEL_LABEL
+} from './kimiModels'
 import { resolvePiModelLabel, resolvePiUpstreamBrand } from './piBrandTable'
 import type { TaskWraithControlProviderPresentation } from './taskWraithControlProtocol'
 
@@ -135,6 +140,8 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'preview:openai:gpt-5.6:luna': 'GPT-5.6-Luna',
   'kimi-k3': KIMI_K3_MODEL_LABEL,
   'kimi-k3-256k': KIMI_K3_256K_MODEL_LABEL,
+  'kimi-k2.8-preview': KIMI_K28_MODEL_LABEL,
+  'kimi-k2.7-code-highspeed': KIMI_K27_HIGHSPEED_MODEL_LABEL,
   'kimi-k2.7-code': 'K2.7 Coding',
   'kimi-k2.7-code-thinking': 'K2.7 Coding Thinking',
   'grok-4.6': 'Grok 4.6',

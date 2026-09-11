@@ -44,7 +44,13 @@ describe('resolvePiReasoningSupport', () => {
     [
       'openrouter/thinkingmachines/inkling-small:free',
       ['off', 'minimal', 'low', 'medium', 'high', 'max']
-    ]
+    ],
+    // Sakana's Fugu pair advertises `reasoning_effort` with supported_efforts
+    // unenumerated, which is the tunable-ladder shape — but NOT the 7-stop
+    // unlisted fallback: dropping either row here silently adds `xhigh`, a
+    // stop OpenRouter does not spell for these routes.
+    ['openrouter/sakana/fugu-max', ['off', 'minimal', 'low', 'medium', 'high', 'max']],
+    ['openrouter/sakana/fugu-ultra-v2', ['off', 'minimal', 'low', 'medium', 'high', 'max']]
   ]
 
   it.each(CASES)('gives %s exactly %j', (wireId, efforts) => {

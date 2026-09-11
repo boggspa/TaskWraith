@@ -110,6 +110,8 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'openrouter/poolside/laguna-s-2.1': 256_000,
   'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free': 1_000_000,
   'openrouter/cohere/north-mini-code:free': 256_000,
+  'openrouter/sakana/fugu-max': 1_000_000,
+  'openrouter/sakana/fugu-ultra-v2': 1_000_000,
   'openrouter/minimax/minimax-m3:free': 1_048_576,
   'openrouter/thinkingmachines/inkling:free': 1_048_576,
   'openrouter/thinkingmachines/inkling-small:free': 1_048_576,
@@ -153,6 +155,11 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // Kimi
   'kimi-k3': 1_048_576,
   'kimi-k3-256k': 262_144,
+  // K2.8 Preview took the standard `kimi-for-coding` route to 1M on every
+  // membership tier (Kimi Code config.toml, verified 2026-09-11); Highspeed
+  // stayed on K2.7 at 256K.
+  'kimi-k2.8-preview': 1_048_576,
+  'kimi-k2.7-code-highspeed': 262_144,
   'kimi-k2.7-code': 262_144,
   'kimi-k2.6': 262_144,
   // Grok

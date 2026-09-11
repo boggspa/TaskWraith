@@ -351,22 +351,41 @@ describe('Grok provider model defaults', () => {
 })
 
 describe('provider model picker sentinels', () => {
-  it('keeps K2.7 Coding as the Fast-capable default row with both K3 routes after it', () => {
+  it('keeps K2.8 Preview as the default row with Highspeed and both K3 routes after it', () => {
     expect(KIMI_DEFAULT_MODELS.map((model) => model.id)).toEqual([
-      'kimi-k2.7-code',
+      'kimi-k2.8-preview',
+      'kimi-k2.7-code-highspeed',
       'kimi-k3',
       'kimi-k3-256k'
     ])
+    // The standard `kimi-for-coding` route is K2.8 Preview since 2026-09-11 and
+    // carries the same Low/High/Max axis as K3, defaulting to Max.
     expect(KIMI_DEFAULT_MODELS[0]).toMatchObject({
-      id: 'kimi-k2.7-code',
-      label: 'K2.7 Coding',
+      id: 'kimi-k2.8-preview',
+      label: 'K2.8 Preview',
       isDefault: true,
-      supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
-      defaultReasoningEffort: 'on',
-      additionalSpeedTiers: ['fast']
+      supportedReasoningEfforts: [
+        { reasoningEffort: 'low' },
+        { reasoningEffort: 'high' },
+        { reasoningEffort: 'max' }
+      ],
+      defaultReasoningEffort: 'max'
     })
-    // Neither K3 route is the default or Highspeed-capable; both expose the
-    // same always-on effort choices.
+    // Highspeed is its own row now, not K2.8's Fast tier: it stayed on K2.7 and
+    // has always-on thinking with no effort axis.
+    expect(KIMI_DEFAULT_MODELS[1]).toMatchObject({
+      id: 'kimi-k2.7-code-highspeed',
+      label: 'K2.7 Code Highspeed',
+      supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
+      defaultReasoningEffort: 'on'
+    })
+    // No Kimi row carries a Fast/Highspeed speed tier any more — Highspeed is a
+    // row, so a toggle here would silently re-route the row the picker shows.
+    expect(KIMI_DEFAULT_MODELS.length).toBeGreaterThan(0)
+    for (const model of KIMI_DEFAULT_MODELS as unknown as readonly Record<string, unknown>[]) {
+      expect(model.additionalSpeedTiers).toBeUndefined()
+    }
+    // Neither K3 route is the default; both expose the same effort choices.
     for (const modelId of ['kimi-k3', 'kimi-k3-256k']) {
       const k3 = KIMI_DEFAULT_MODELS.find((model) => model.id === modelId)
       expect(k3?.defaultReasoningEffort).toBe('max')
@@ -376,7 +395,6 @@ describe('provider model picker sentinels', () => {
         'max'
       ])
       expect(k3?.isDefault).toBeUndefined()
-      expect(k3?.additionalSpeedTiers).toBeUndefined()
     }
     expect(KIMI_DEFAULT_MODELS.find((model) => model.id === 'kimi-k3')?.label).toBe('K3 (1M)')
     expect(KIMI_DEFAULT_MODELS.find((model) => model.id === 'kimi-k3-256k')?.label).toBe(

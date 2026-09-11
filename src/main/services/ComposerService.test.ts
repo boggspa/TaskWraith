@@ -989,18 +989,29 @@ describe('ComposerService', () => {
     expect(payload.kimiThinking).toBe(true)
   })
 
-  it('maps the Kimi Fast selection to the HighSpeed service tier', async () => {
+  it('ignores a retired Kimi Fast flag now that Highspeed is its own row', async () => {
+    // The Fast toggle retired on 2026-09-11 when K2.7 Code Highspeed became a
+    // picker row. A seat or chat still carrying `kimiFastMode` must NOT move
+    // the run off the row the composer is showing — which is what a surviving
+    // `fast` tier did, because the alias resolver honours it ahead of the id.
     const selected = await compose(
       { provider: 'kimi' },
-      { selectedModelType: 'kimi-k2.7-code', kimiFastMode: true }
+      { selectedModelType: 'kimi-k2.8-preview', kimiFastMode: true }
     )
     const persisted = await compose(
       { provider: 'kimi', providerMetadata: { kimiFastMode: true } },
-      { selectedModelType: 'kimi-k2.7-code' }
+      { selectedModelType: 'kimi-k2.8-preview' }
+    )
+    const highspeed = await compose(
+      { provider: 'kimi' },
+      { selectedModelType: 'kimi-k2.7-code-highspeed' }
     )
 
-    expect(selected.serviceTier).toBe('fast')
-    expect(persisted.serviceTier).toBe('fast')
+    expect(selected.serviceTier).toBe('standard')
+    expect(persisted.serviceTier).toBe('standard')
+    // Highspeed is reached by its model id now, not by a tier.
+    expect(highspeed.serviceTier).toBe('standard')
+    expect(highspeed.model).toBe('kimi-k2.7-code-highspeed')
     expect(selected.kimiThinking).toBe(true)
   })
 

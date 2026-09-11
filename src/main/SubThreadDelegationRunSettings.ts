@@ -5,7 +5,7 @@ import {
 } from '../shared/devinModelCatalog'
 import {
   getStaticProviderModels,
-  isKimiK3Model,
+  kimiModelSupportsReasoningEfforts,
   normalizeCliProviderModel,
   normalizeKimiReasoningEffort
 } from './providers/StaticProviderModels'
@@ -247,7 +247,9 @@ function normalizeReasoningEffort(
   }
 
   if (provider === 'kimi') {
-    if (!isKimiK3Model(modelId)) {
+    // Keyed on the ladder, not on "is K3": K2.8 Preview took the Low/High/Max
+    // axis with it when it replaced K2.7 on the standard route.
+    if (!kimiModelSupportsReasoningEfforts(modelId)) {
       return KIMI_FIXED_THINKING_EFFORTS.has(raw)
         ? { ok: true, value: 'on' }
         : invalidReasoningEffort(provider, raw, [...KIMI_FIXED_THINKING_EFFORTS])

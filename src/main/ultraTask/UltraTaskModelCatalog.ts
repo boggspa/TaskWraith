@@ -1,6 +1,6 @@
 import type { ProviderId } from '../store/types'
 import { resolveSubThreadDelegationRunSettings } from '../SubThreadDelegationRunSettings'
-import { isKimiK3Model } from '../providers/StaticProviderModels'
+import { kimiModelSupportsReasoningEfforts } from '../providers/StaticProviderModels'
 import {
   isConcreteUltraTaskModelId,
   type UltraTaskAvailability,
@@ -125,7 +125,7 @@ function reasoningMode(
 ): UltraTaskReasoningCapability['mode'] {
   if (!ceiling) return 'none'
   if (provider === 'antigravity') return 'fixed'
-  if (provider === 'kimi' && !isKimiK3Model(modelId)) return 'fixed'
+  if (provider === 'kimi' && !kimiModelSupportsReasoningEfforts(modelId)) return 'fixed'
   return 'configurable'
 }
 

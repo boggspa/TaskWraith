@@ -254,17 +254,38 @@ describe('buildUltraTaskModelCapabilityCatalog', () => {
     const [kimiFixed] = buildUltraTaskModelCapabilityCatalog({
       provider: 'kimi',
       source: 'live',
-      runtimeEvidence: { 'kimi-k2.7-code': { state: 'available' } },
+      // K2.7 Code Highspeed is the one managed Kimi route left with a fixed
+      // thinking state; K2.8 Preview and both K3 routes are configurable.
+      runtimeEvidence: { 'kimi-k2.7-code-highspeed': { state: 'available' } },
       models: [
         {
-          id: 'kimi-k2.7-code',
-          label: 'K2.7 Coding',
+          id: 'kimi-k2.7-code-highspeed',
+          label: 'K2.7 Code Highspeed',
           ultraTaskSupported: true,
           supportedReasoningEfforts: [{ reasoningEffort: 'on' }]
         }
       ]
     })
     expect(kimiFixed?.reasoning).toEqual({ mode: 'fixed', ceiling: 'on', supported: ['on'] })
+
+    const [kimiConfigurable] = buildUltraTaskModelCapabilityCatalog({
+      provider: 'kimi',
+      source: 'live',
+      runtimeEvidence: { 'kimi-k2.8-preview': { state: 'available' } },
+      models: [
+        {
+          id: 'kimi-k2.8-preview',
+          label: 'K2.8 Preview',
+          ultraTaskSupported: true,
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'low' },
+            { reasoningEffort: 'high' },
+            { reasoningEffort: 'max' }
+          ]
+        }
+      ]
+    })
+    expect(kimiConfigurable?.reasoning.mode).toBe('configurable')
 
     const [piConfigurable] = buildUltraTaskModelCapabilityCatalog({
       provider: 'pi',

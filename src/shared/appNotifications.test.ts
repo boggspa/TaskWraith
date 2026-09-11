@@ -149,7 +149,8 @@ describe('notification registry', () => {
     )
     const groups = newAdditions?.groups ?? []
     expect(groups.map((g) => g.provider)).toEqual([
-      // Codex leads: GPT-6 Astra is the headline launch of this lineup.
+      // Kimi leads: K2.8 Preview is the headline launch of this lineup.
+      'kimi',
       'codex',
       'claude',
       'devin',
@@ -162,6 +163,7 @@ describe('notification registry', () => {
       'pi'
     ])
     expect(groups.map((g) => g.label)).toEqual([
+      'Kimi',
       'Codex',
       'Claude',
       'Devin',
@@ -174,9 +176,21 @@ describe('notification registry', () => {
       'Pi'
     ])
     // Dropped from the card once they stopped being the newest story.
-    expect(groups.map((g) => g.provider)).not.toContain('kimi')
+    expect(groups.map((g) => g.provider)).not.toContain('gemini')
 
-    // Claude is BACK at the top for Fable 5.1 (2026-09-01); Devin is a whole
+    // K2.8 Preview took over the standard `kimi-for-coding` route on
+    // 2026-09-11 and Highspeed became its own row rather than a Fast toggle,
+    // so the card announces BOTH rows — a K2.8-only card would read as if the
+    // Highspeed capability had gone away with the toggle.
+    const kimi = groups.find((g) => g.provider === 'kimi')
+    expect(kimi?.models.map((m) => m.name)).toEqual(['K2.8 Preview', 'K2.7 Code Highspeed'])
+    expect(kimi?.models[0]?.blurb).toMatch(/1M context.*Low, High, or Max/i)
+    expect(kimi?.models[1]?.blurb).toMatch(/own row.*256K.*always-on/i)
+    for (const model of kimi?.models ?? []) {
+      expect(model.accentProvider).toBeUndefined()
+    }
+
+    // Claude is BACK near the top for Fable 5.1 (2026-09-01); Devin is a whole
     // new seat led by Cognition's own SWE models — never a 'CLI default'.
     const claude = groups.find((g) => g.provider === 'claude')
     expect(claude?.models.map((m) => m.name)).toEqual(['Fable 5.1'])
@@ -242,6 +256,7 @@ describe('notification registry', () => {
     // Signed-in Cloud rows lead, then the newest curated local tags. Each
     // spoofs its upstream brand hue whichever source serves it.
     expect(ollama?.models.map((m) => m.name)).toEqual([
+      'DeepSeek V4.1 Flash (Cloud)',
       'GLM 5.2 (Cloud)',
       'MiniMax M3 (Cloud)',
       'Ornith 1.5 (9B & 35B)',
@@ -254,6 +269,7 @@ describe('notification registry', () => {
       'Rnj-1'
     ])
     expect(ollama?.models.map((m) => m.accentProvider)).toEqual([
+      'deepseek',
       'zai',
       'minimax',
       'deep-reinforce',
@@ -267,7 +283,9 @@ describe('notification registry', () => {
     ])
     const pi = groups.find((g) => g.provider === 'pi')
     expect(pi?.models.map((m) => m.name)).toEqual([
-      // The 2026-09-08 OpenRouter trio leads: it is the newest story on the card.
+      // Sakana's Fugu pair leads: it is the newest story on the card.
+      'Fugu Max (OpenRouter)',
+      'Fugu Ultra v2 (OpenRouter)',
       'Mercury 2.5 (OpenRouter)',
       'Nex-N2.5-Pro (OpenRouter Free)',
       'Nex-N2.5-Mini (OpenRouter Free)',
@@ -287,6 +305,10 @@ describe('notification registry', () => {
     // Every Pi row wears the hue of the BYOK upstream that serves it — a
     // missing accent would silently fall back to the Pi seat slate.
     expect(pi?.models.map((m) => m.accentProvider)).toEqual([
+      // Sakana is its own brand override — without it both Fugu rows fall back
+      // to the generic OpenRouter red, which is a DIFFERENT vendor's accent.
+      'sakana',
+      'sakana',
       // Mercury reuses the Inception override; both Nex rows wear the new
       // nexagi hue rather than falling back to the generic OpenRouter red.
       'inception',
@@ -319,6 +341,12 @@ describe('notification registry', () => {
     )
     expect(pi?.models.find((m) => m.name === 'Nex-N2.5-Mini (OpenRouter Free)')?.blurb).toMatch(
       /262K.*text only/i
+    )
+    expect(pi?.models.find((m) => m.name === 'Fugu Max (OpenRouter)')?.blurb).toMatch(
+      /1M context.*Off-to-Max.*\$2\/\$6/
+    )
+    expect(pi?.models.find((m) => m.name === 'Fugu Ultra v2 (OpenRouter)')?.blurb).toMatch(
+      /1M.*\$5\/\$30/
     )
     // New Cerebras routes do not resurrect the retired GLM-4.7 announcement.
     expect(pi?.models.map((m) => m.name)).not.toContain('GLM-4.7 (Cerebras)')

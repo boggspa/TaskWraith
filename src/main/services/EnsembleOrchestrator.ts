@@ -419,7 +419,7 @@ import {
   type ContextUsageSnapshot
 } from '../../shared/contextUsage'
 import { isCursorGrokModelId, isGrokReasoningModelId } from '../../shared/grok45Models'
-import { isKimiK3Model } from '../providers/StaticProviderModels'
+import { kimiModelSupportsReasoningEfforts } from '../providers/StaticProviderModels'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
 import { summarizeProviderUsage, type ProviderUsageSummary } from '../ProviderUsageStatus'
 import { EnsembleCursorCompletionWatchdog } from './EnsembleCursorCompletionWatchdog'
@@ -15601,9 +15601,8 @@ export class EnsembleOrchestrator {
         participant.provider === 'codex'
           ? (participant.serviceTier ?? (participant.fastModeEnabled ? 'fast' : ''))
           : participant.provider === 'kimi'
-            ? participant.fastModeEnabled && !isKimiK3Model(participant.model)
-              ? 'fast'
-              : 'standard'
+            ? // Kimi has no Fast tier since Highspeed became its own row.
+              'standard'
             : participant.provider === 'cursor' && isCursorGrokModelId(participant.model)
               ? participant.fastModeEnabled
                 ? 'fast'
@@ -18467,9 +18466,8 @@ export class EnsembleOrchestrator {
         participant.provider === 'codex'
           ? (participant.serviceTier ?? (participant.fastModeEnabled ? 'fast' : ''))
           : participant.provider === 'kimi'
-            ? participant.fastModeEnabled && !isKimiK3Model(participant.model)
-              ? 'fast'
-              : 'standard'
+            ? // Kimi has no Fast tier since Highspeed became its own row.
+              'standard'
             : participant.provider === 'cursor' && isCursorGrokModelId(participant.model)
               ? participant.fastModeEnabled
                 ? 'fast'
@@ -22112,7 +22110,7 @@ function ensembleReasoningMetadata(participant: EnsembleParticipant): Record<str
       ? { ensembleReasoningEffort: participant.reasoningEffort }
       : {}
   }
-  if (participant.provider === 'kimi' && isKimiK3Model(participant.model)) {
+  if (participant.provider === 'kimi' && kimiModelSupportsReasoningEfforts(participant.model)) {
     return participant.reasoningEffort
       ? { ensembleReasoningEffort: participant.reasoningEffort }
       : {}

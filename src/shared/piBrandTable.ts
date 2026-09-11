@@ -53,7 +53,8 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
   'openrouter/inception': { label: 'Inception', hueClass: 'inception' },
   // OpenRouter spells the namespace `nex-agi`; the hue class drops the hyphen
   // so it stays a valid `--provider-<class>-color` token and CSS class name.
-  'openrouter/nex-agi': { label: 'Nex AGI', hueClass: 'nexagi' }
+  'openrouter/nex-agi': { label: 'Nex AGI', hueClass: 'nexagi' },
+  'openrouter/sakana': { label: 'Sakana', hueClass: 'sakana' }
 }
 
 /**
@@ -120,7 +121,9 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
   'openrouter/inception/mercury-2.5-preview': 'Mercury 2.5 Preview',
   'openrouter/inception/mercury-2.5': 'Mercury 2.5',
   'openrouter/nex-agi/nex-n2.5-mini:free': 'Nex-N2.5-Mini',
-  'openrouter/nex-agi/nex-n2.5-pro:free': 'Nex-N2.5-Pro'
+  'openrouter/nex-agi/nex-n2.5-pro:free': 'Nex-N2.5-Pro',
+  'openrouter/sakana/fugu-max': 'Fugu Max',
+  'openrouter/sakana/fugu-ultra-v2': 'Fugu Ultra v2'
 }
 
 /**

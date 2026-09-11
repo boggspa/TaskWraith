@@ -78,7 +78,11 @@ const STATIC_PROVIDER_COLORS = {
   inception: '#7C5BE9',
   // Nex AGI's mark is monochrome, so this hue is a TaskWraith design token,
   // not a brand value — the most distinct near-neutral in the AA band.
-  nexagi: '#747A42'
+  nexagi: '#747A42',
+  // Sakana's brand red (#E10600) pulled ~10 degrees toward crimson: the
+  // straight hue-preserving lift lands dE 2.2 from openbmb, which is not a
+  // distinguishable accent. This sits dE 6.3 from openbmb and openrouter both.
+  sakana: '#EA0C2D'
 } as const
 
 const PROVIDER_ALIASES = {
@@ -113,7 +117,8 @@ const IOS_PROVIDER_CASES = [
   ['case "devin"', '#4878AE'],
   ['case "tencent"', '#4E73CA'],
   ['case "inception"', '#7C5BE9'],
-  ['case "nexagi"', '#747A42']
+  ['case "nexagi"', '#747A42'],
+  ['case "sakana"', '#EA0C2D']
 ] as const
 
 const PROVIDER_RGB_TRIPLETS = {

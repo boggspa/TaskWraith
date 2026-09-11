@@ -851,11 +851,14 @@ describe('mergeCodexLiveModelRows', () => {
 })
 
 describe('normalizeCliProviderModel (kimi)', () => {
-  it('uses K2.7 Coding as the CLI default and maps legacy aliases to it', () => {
-    expect(normalizeCliProviderModel('kimi', '')).toBe('kimi-k2.7-code')
-    expect(normalizeCliProviderModel('kimi', 'cli-default')).toBe('kimi-k2.7-code')
-    expect(normalizeCliProviderModel('kimi', 'kimi-k2.6')).toBe('kimi-k2.7-code')
-    expect(normalizeCliProviderModel('kimi', 'kimi-k2-thinking')).toBe('kimi-k2.7-code')
+  it('uses K2.8 Preview as the CLI default and maps legacy aliases to it', () => {
+    expect(normalizeCliProviderModel('kimi', '')).toBe('kimi-k2.8-preview')
+    expect(normalizeCliProviderModel('kimi', 'cli-default')).toBe('kimi-k2.8-preview')
+    expect(normalizeCliProviderModel('kimi', 'kimi-k2.6')).toBe('kimi-k2.8-preview')
+    expect(normalizeCliProviderModel('kimi', 'kimi-k2-thinking')).toBe('kimi-k2.8-preview')
+    // The retired combined row. Its standard tier IS today's K2.8 route, so a
+    // seat pinned to it keeps dispatching exactly what it always dispatched.
+    expect(normalizeCliProviderModel('kimi', 'kimi-k2.7-code')).toBe('kimi-k2.8-preview')
   })
 
   it('resolves K3 ids to the canonical row instead of the default', () => {
@@ -867,35 +870,39 @@ describe('normalizeCliProviderModel (kimi)', () => {
     expect(normalizeCliProviderModel('kimi', KIMI_K3_256K_CLI_MODEL)).toBe('kimi-k3-256k')
   })
 
-  it('preserves the managed Kimi CLI Standard and HighSpeed aliases', () => {
-    expect(normalizeCliProviderModel('kimi', KIMI_STANDARD_CLI_MODEL)).toBe(
-      KIMI_STANDARD_CLI_MODEL
-    )
+  it('resolves both managed upstream spellings onto their own picker rows', () => {
+    // Highspeed has been a row rather than a speed tier since 2026-09-11, so an
+    // upstream spelling must land on that row; leaving it to pass through gave
+    // a selected model id with no row behind it.
+    expect(normalizeCliProviderModel('kimi', KIMI_STANDARD_CLI_MODEL)).toBe('kimi-k2.8-preview')
     expect(normalizeCliProviderModel('kimi', KIMI_HIGHSPEED_CLI_MODEL)).toBe(
-      KIMI_HIGHSPEED_CLI_MODEL
+      'kimi-k2.7-code-highspeed'
     )
   })
 
-  it('maps raw Kimi Code API ids onto the managed CLI aliases', () => {
-    expect(normalizeCliProviderModel('kimi', 'kimi-for-coding')).toBe(
-      KIMI_STANDARD_CLI_MODEL
-    )
+  it('maps raw Kimi Code API ids onto their picker rows', () => {
+    expect(normalizeCliProviderModel('kimi', 'kimi-for-coding')).toBe('kimi-k2.8-preview')
     expect(normalizeCliProviderModel('kimi', 'kimi-for-coding-highspeed')).toBe(
-      KIMI_HIGHSPEED_CLI_MODEL
+      'kimi-k2.7-code-highspeed'
     )
   })
 
-  it('routes K2.7 Coding Fast mode to the exact managed Kimi CLI alias', () => {
-    const standardArgs: string[] = []
+  it('dispatches each managed route by its own row, ignoring a stale speed tier', () => {
+    const k28Args: string[] = []
+    const k28StaleFastArgs: string[] = []
     const highSpeedArgs: string[] = []
 
-    appendKimiModelArgs(standardArgs, 'kimi-k2.7-code', 'standard')
-    appendKimiModelArgs(highSpeedArgs, 'kimi-k2.7-code', 'fast')
+    appendKimiModelArgs(k28Args, 'kimi-k2.8-preview', 'standard')
+    // The Fast toggle retired with the split. A seat still carrying the flag
+    // must not be re-routed off the row its picker is showing.
+    appendKimiModelArgs(k28StaleFastArgs, 'kimi-k2.8-preview', 'fast')
+    appendKimiModelArgs(highSpeedArgs, 'kimi-k2.7-code-highspeed', 'standard')
 
-    expect(standardArgs).toEqual(['--model', 'kimi-code/kimi-for-coding'])
+    expect(k28Args).toEqual(['--model', 'kimi-code/kimi-for-coding'])
+    expect(k28StaleFastArgs).toEqual(['--model', 'kimi-code/kimi-for-coding'])
     expect(highSpeedArgs).toEqual(['--model', 'kimi-code/kimi-for-coding-highspeed'])
-    expect(kimiAcpModelConfigValue('kimi-k2.7-code')).toBe('kimi-code/kimi-for-coding')
-    expect(kimiAcpModelConfigValue('kimi-k2.7-code', 'fast')).toBe(
+    expect(kimiAcpModelConfigValue('kimi-k2.8-preview')).toBe('kimi-code/kimi-for-coding')
+    expect(kimiAcpModelConfigValue('kimi-k2.7-code-highspeed')).toBe(
       'kimi-code/kimi-for-coding-highspeed'
     )
   })
@@ -925,17 +932,32 @@ describe('normalizeCliProviderModel (kimi)', () => {
 })
 
 describe('getStaticProviderModels (kimi)', () => {
-  it('advertises K2.7 Coding as Fast-capable without adding a duplicate model row', () => {
+  it('leads with K2.8 Preview and gives Highspeed its own row, not a Fast tier', () => {
     const models = getStaticProviderModels('kimi') as StaticModelShape[]
 
-    expect(models).toHaveLength(3)
+    expect(models).toHaveLength(4)
     expect(models[0]).toMatchObject({
-      id: 'kimi-k2.7-code',
-      label: 'K2.7 Coding',
-      supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
-      defaultReasoningEffort: 'on',
-      additionalSpeedTiers: ['fast']
+      id: 'kimi-k2.8-preview',
+      label: 'K2.8 Preview',
+      supportedReasoningEfforts: [
+        { reasoningEffort: 'low' },
+        { reasoningEffort: 'high' },
+        { reasoningEffort: 'max' }
+      ],
+      defaultReasoningEffort: 'max'
     })
+    expect(models[1]).toMatchObject({
+      id: 'kimi-k2.7-code-highspeed',
+      label: 'K2.7 Code Highspeed',
+      supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
+      defaultReasoningEffort: 'on'
+    })
+    // No Kimi row carries a speed tier any more: a Fast toggle beside an
+    // explicit Highspeed row would silently re-route the selected model.
+    expect(models).not.toHaveLength(0)
+    for (const model of models) {
+      expect(model.additionalSpeedTiers).toBeUndefined()
+    }
   })
 
   it('lists both K3 routes with Low, High, and Max thinking but no speed tiers', () => {
@@ -970,15 +992,20 @@ describe('getStaticProviderModels (kimi)', () => {
     expect(models[0]?.isDefault).toBe(true)
   })
 
-  it('normalizes K3 effort and keeps K2.7 Coding on its fixed thinking setting', () => {
+  it('normalizes effort on every laddered route and only fixes Highspeed', () => {
     expect(normalizeKimiReasoningEffort('kimi-k3', 'low')).toBe('low')
     expect(normalizeKimiReasoningEffort('kimi-k3', 'off')).toBe('max')
     expect(normalizeKimiReasoningEffort('kimi-k3-256k', 'high')).toBe('high')
     expect(normalizeKimiReasoningEffort('k3-256k', 'off')).toBe('max')
-    expect(normalizeKimiReasoningEffort('kimi-k2.7-code', 'high')).toBeNull()
+    // K2.8 took K3's axis with it. Keyed on "is K3" this returned null and the
+    // dispatch fell back to a fixed `thinking: on` under a live effort slider.
+    expect(normalizeKimiReasoningEffort('kimi-k2.8-preview', 'low')).toBe('low')
+    expect(normalizeKimiReasoningEffort('kimi-k2.7-code', 'high')).toBe('high')
+    expect(normalizeKimiReasoningEffort('kimi-k2.7-code-highspeed', 'high')).toBeNull()
     expect(kimiAcpThinkingConfigValue('kimi-k3', 'high')).toBe('high')
     expect(kimiAcpThinkingConfigValue('kimi-k3-256k', 'low')).toBe('low')
-    expect(kimiAcpThinkingConfigValue('kimi-k2.7-code', 'off')).toBe('on')
+    expect(kimiAcpThinkingConfigValue('kimi-k2.8-preview', 'low')).toBe('low')
+    expect(kimiAcpThinkingConfigValue('kimi-k2.7-code-highspeed', 'off')).toBe('on')
   })
 })
 

@@ -106,6 +106,47 @@ describe('writePiOpenRouterModelRegistration', () => {
     })
   })
 
+  it('registers the Sakana Fugu pair with verified metadata', () => {
+    const tunableLadder = {
+      off: 'none',
+      minimal: 'minimal',
+      low: 'low',
+      medium: 'medium',
+      high: 'high',
+      max: 'max'
+    }
+    const sakana = Object.fromEntries(
+      PI_OPENROUTER_CUSTOM_MODELS.filter((model) => model.modelId.startsWith('sakana/')).map(
+        (model) => [model.modelId, model]
+      )
+    )
+    expect(sakana).toEqual({
+      'sakana/fugu-max': {
+        modelId: 'sakana/fugu-max',
+        label: 'Fugu Max',
+        reasoning: true,
+        thinkingLevelMap: tunableLadder,
+        input: ['text', 'image'],
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+        cost: { input: 2, output: 6, cacheRead: 0.25, cacheWrite: 0 }
+      },
+      'sakana/fugu-ultra-v2': {
+        modelId: 'sakana/fugu-ultra-v2',
+        label: 'Fugu Ultra v2',
+        reasoning: true,
+        thinkingLevelMap: tunableLadder,
+        input: ['text', 'image'],
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+        // BASE tier only. OpenRouter's `overrides` block raises this to
+        // $10 / $45 / $1.00 once the PROMPT passes 272,000 tokens, which this
+        // flat cost shape cannot express.
+        cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 }
+      }
+    })
+  })
+
   it('registers the three 2026-09-08 routes with verified metadata', () => {
     const tunableLadder = {
       off: 'none',

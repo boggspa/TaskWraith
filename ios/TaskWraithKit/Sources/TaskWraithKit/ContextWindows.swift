@@ -59,6 +59,8 @@ public enum ContextWindows {
         "opus": 200_000,
         "haiku": 200_000,
         // Pi seat wire ids (`<upstream>/<model>`); mirrors contextWindows.ts.
+        "openrouter/sakana/fugu-max": 1_000_000,
+        "openrouter/sakana/fugu-ultra-v2": 1_000_000,
         "deepseek/deepseek-v4-pro": 1_000_000,
         "deepseek/deepseek-v4-flash": 1_000_000,
         "zai/glm-5.2": 1_000_000,
@@ -144,6 +146,10 @@ public enum ContextWindows {
         // Kimi
         "kimi-k3": 1_048_576,
         "kimi-k3-256k": 262_144,
+        // K2.8 Preview took the standard route to 1M; Highspeed stayed on
+        // K2.7 at 256K. Mirrors shared/contextWindows.ts.
+        "kimi-k2.8-preview": 1_048_576,
+        "kimi-k2.7-code-highspeed": 262_144,
         "kimi-k2.7-code": 262_144,
         "kimi-k2.6": 262_144,
         // Grok

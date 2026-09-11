@@ -37,6 +37,7 @@ public enum OllamaDisplayBrands {
     /// differently named family. Brand-wide fallbacks cannot distinguish these
     /// newer families when callers only have the raw Ollama tag.
     private static let exactModelLabels = [
+        "deepseek-v4.1-flash": "V4.1 Flash",
         "deepseek-v4-flash": "V4 Flash",
         "deepseek-v4-flash:0731": "V4 Flash (0731)",
         "deepseek-v4-flash:preview": "V4 Flash (Preview)",

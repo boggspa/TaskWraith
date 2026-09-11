@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-09'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-11'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -138,9 +138,29 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: "Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair on OpenRouter via Pi, GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
+    body: "Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
+      {
+        // K2.8 Preview rolled out 2026-09-11 on the UNCHANGED `kimi-for-coding`
+        // wire id, so it is the same route the retired "K2.7 Coding" row
+        // dispatched — relabelled, with K3's effort axis and a 1M window. The
+        // Highspeed tier stayed on K2.7 and is now its own picker row.
+        provider: 'kimi',
+        label: 'Kimi',
+        models: [
+          {
+            name: 'K2.8 Preview',
+            blurb:
+              "Moonshot's newest coding model, on the same model id - 1M context, Low, High, or Max thinking."
+          },
+          {
+            name: 'K2.7 Code Highspeed',
+            blurb:
+              'The low-latency K2.7 route, now its own row instead of a Fast toggle - 256K, always-on thinking.'
+          }
+        ]
+      },
       {
         // GPT-6 Astra launched 2026-09-03. Listed regardless of entitlement:
         // access rolls out by organisation (OpenAI's Daybreak cyber programme
@@ -309,6 +329,12 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         label: 'Ollama',
         models: [
           {
+            name: 'DeepSeek V4.1 Flash (Cloud)',
+            blurb:
+              "DeepSeek's 763B MoE on Ollama Cloud — 1M context, vision and tools, Low/High/Max thinking.",
+            accentProvider: 'deepseek'
+          },
+          {
             name: 'GLM 5.2 (Cloud)',
             blurb:
               "Z.ai's 1M-context flagship on Ollama Cloud — signed in, no local VRAM required.",
@@ -371,6 +397,18 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         provider: 'pi',
         label: 'Pi',
         models: [
+          {
+            name: 'Fugu Max (OpenRouter)',
+            blurb:
+              "Sakana's multi-agent orchestrator — 1M context, Off-to-Max effort, $2/$6 per Mtok.",
+            accentProvider: 'sakana'
+          },
+          {
+            name: 'Fugu Ultra v2 (OpenRouter)',
+            blurb:
+              'The higher-performance Fugu for deep research and full-stack work — 1M, $5/$30 per Mtok.',
+            accentProvider: 'sakana'
+          },
           {
             name: 'Mercury 2.5 (OpenRouter)',
             blurb:

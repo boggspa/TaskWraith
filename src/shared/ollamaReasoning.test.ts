@@ -138,6 +138,10 @@ describe('per-model ladders match the vendors', () => {
     ['glm-5.1:cloud', ['off', 'on'], true],
     ['deepseek-v4-pro:cloud', ['off', 'low', 'high', 'max'], true],
     ['deepseek-v4-flash:cloud', ['off', 'low', 'high', 'max'], true],
+    // V4.1 Flash is a separate family prefix, not a `deepseek-v4-flash` tag:
+    // without its own row it falls through to `unknown`, which the picker
+    // renders as an affirmative "reasoning is not configurable".
+    ['deepseek-v4.1-flash:cloud', ['off', 'low', 'high', 'max'], true],
     ['kimi-k3:cloud', ['on'], false],
     ['kimi-k2.7-code:cloud', ['on'], false],
     ['kimi-k2.6:cloud', ['off', 'on'], true],
@@ -151,6 +155,17 @@ describe('per-model ladders match the vendors', () => {
     const support = resolveOllamaReasoningSupport({ modelId })
     expect(support.efforts).toEqual(efforts)
     expect(support.canDisable).toBe(canDisable)
+  })
+
+  it('keeps V4.1 Flash off the unknown surface the picker denies on', () => {
+    // The Cloud tag exposes no template, so `/api/show` can only confirm THAT
+    // it thinks. An `unknown` here is not neutral — it is a denial.
+    const support = resolveOllamaReasoningSupport({
+      modelId: 'deepseek-v4.1-flash:cloud',
+      capabilities: ['completion', 'thinking', 'tools', 'vision']
+    })
+    expect(support.kind).toBe('levels')
+    expect(support.defaultEffort).toBe('high')
   })
 
   it('keeps a live daemon capability from widening a curated ladder', () => {

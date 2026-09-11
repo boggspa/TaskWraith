@@ -35,7 +35,10 @@ import {
 } from '../shared/devinPlanAccess'
 import { PI_DEFAULT_MODEL_WIRE_ID, PI_STATIC_MODELS } from './pi/PiModels'
 import {
-  KIMI_K27_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K28_MODEL_ID,
+  KIMI_K28_MODEL_LABEL,
   KIMI_K3_256K_MODEL_ID,
   KIMI_K3_256K_MODEL_LABEL,
   KIMI_K3_MODEL_ID,
@@ -318,12 +321,10 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       displayProvider: 'Kimi',
       shortCode: 'KIMI',
       models: [
-        model(
-          KIMI_K27_MODEL_ID,
-          'K2.7 Coding',
-          [{ reasoningId: 'on', label: 'On', available: true }],
-          true
-        ),
+        model(KIMI_K28_MODEL_ID, KIMI_K28_MODEL_LABEL, KIMI_REASONING, true),
+        model(KIMI_K27_HIGHSPEED_MODEL_ID, KIMI_K27_HIGHSPEED_MODEL_LABEL, [
+          { reasoningId: 'on', label: 'On', available: true }
+        ]),
         model(KIMI_K3_MODEL_ID, KIMI_K3_MODEL_LABEL, KIMI_REASONING),
         model(KIMI_K3_256K_MODEL_ID, KIMI_K3_256K_MODEL_LABEL, KIMI_REASONING)
       ],
@@ -661,7 +662,14 @@ export function hostKimiManagedFallbackRows(): KimiManagedModelRow[] {
     supportedReasoningEfforts: model.reasoning.map((option) => ({
       reasoningEffort: option.reasoningId
     })),
-    defaultReasoningEffort: model.modelId === KIMI_K27_MODEL_ID ? 'on' : 'high'
+    // Highspeed is the one managed route with no effort axis; K2.8 defaults to
+    // Max upstream and both K3 routes to High.
+    defaultReasoningEffort:
+      model.modelId === KIMI_K27_HIGHSPEED_MODEL_ID
+        ? 'on'
+        : model.modelId === KIMI_K28_MODEL_ID
+          ? 'max'
+          : 'high'
   }))
 }
 

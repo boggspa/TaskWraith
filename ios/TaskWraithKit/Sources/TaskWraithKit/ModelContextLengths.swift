@@ -83,7 +83,11 @@ public enum ModelContextLengths {
             ]
         case "kimi":
             return [
-                (id: "kimi-k2.7-code", label: "K2.7 Coding"),
+                // K2.8 Preview (2026-09-11) replaced K2.7 on the standard
+                // `kimi-for-coding` route and took it to 1M; Highspeed stayed
+                // on K2.7 at 256K and became its own row.
+                (id: "kimi-k2.8-preview",          label: "K2.8 Preview"),
+                (id: "kimi-k2.7-code-highspeed",   label: "K2.7 Code Highspeed"),
                 // K3 (2026-07-16) — Moonshot's flagship, split into two
                 // concrete routes since d19931eb8: the 1M route (Allegretto+)
                 // and the fixed quota-efficient 256K one. Each carries its own
@@ -116,6 +120,8 @@ public enum ModelContextLengths {
                 (id: "openrouter/inception/mercury-2.5", label: "Mercury 2.5"),
                 (id: "openrouter/nex-agi/nex-n2.5-mini:free", label: "Nex-N2.5-Mini"),
                 (id: "openrouter/nex-agi/nex-n2.5-pro:free", label: "Nex-N2.5-Pro"),
+                (id: "openrouter/sakana/fugu-max", label: "Fugu Max"),
+                (id: "openrouter/sakana/fugu-ultra-v2", label: "Fugu Ultra v2"),
             ]
         case "grok":
             return [

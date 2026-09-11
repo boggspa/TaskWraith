@@ -129,7 +129,12 @@ export const PI_OPENROUTER_ALLOWED_MODEL_IDS = [
   // both stay admitted so a seat pinned to the preview id keeps working.
   'inception/mercury-2.5',
   'nex-agi/nex-n2.5-mini:free',
-  'nex-agi/nex-n2.5-pro:free'
+  'nex-agi/nex-n2.5-pro:free',
+  // Released 2026-09-11. Sakana's Fugu family is a learned multi-agent
+  // orchestrator rather than a single model; both routes are first-party
+  // Sakana-hosted, so OpenRouter forwards to one provider with no routing.
+  'sakana/fugu-max',
+  'sakana/fugu-ultra-v2'
 ] as const
 
 /**
@@ -178,7 +183,7 @@ export function piModelPolicyVerdict(
   ) {
     return {
       allowed: false,
-      reason: `Pi's OpenRouter lane is limited to specific models (GLM 5.2, Laguna S 2.1, Nemotron 3 Ultra, North Mini Code, MiniMax M3, Inkling, Inkling Small, Mercury 2.5, Hy4 Preview, and the Nex-N2.5 pair).`
+      reason: `Pi's OpenRouter lane is limited to specific models (GLM 5.2, Laguna S 2.1, Nemotron 3 Ultra, North Mini Code, MiniMax M3, Inkling, Inkling Small, Mercury 2.5, Hy4 Preview, the Nex-N2.5 pair, and the Sakana Fugu pair).`
     }
   }
   for (const pattern of PI_DENIED_MODEL_PATTERNS) {

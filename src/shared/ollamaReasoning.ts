@@ -201,6 +201,20 @@ const FAMILY_LADDERS: readonly (readonly [string, OllamaReasoningSupport])[] = [
 
   // DeepSeek V4: low/high/max with medium and xhigh documented aliases for
   // high, default high, and a real no-thinking mode.
+  //
+  // V4.1 Flash keeps that named ladder (DeepSeek's own thinking-mode guide
+  // still documents `reasoning_effort` as low/high/max, default high, with
+  // `minimal`→low, `medium`→high, `ultra`→max and an explicit disable). It
+  // ALSO takes a continuous 1-100 budget, which Ollama's `think` field cannot
+  // express — its validator accepts only high/medium/low/max/true/false — so
+  // the named stops are the whole surface on this path. `/api/show` on the
+  // Cloud tag returns no template, so the shape is documentation-sourced here
+  // exactly as it is for V4; the daemon confirms only capabilities
+  // (completion/thinking/tools/vision) and the 1,048,576 window.
+  //
+  // Listed before the V4 rows only for reading order: `deepseek-v4.1-flash` is
+  // not a prefix of either V4 family, so the first-match rule cannot collide.
+  ['deepseek-v4.1-flash', levels(['low', 'high', 'max'], 'high', true)],
   ['deepseek-v4-pro', levels(['low', 'high', 'max'], 'high', true)],
   ['deepseek-v4-flash', levels(['low', 'high', 'max'], 'high', true)],
 

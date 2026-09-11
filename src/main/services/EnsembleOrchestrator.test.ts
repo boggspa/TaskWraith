@@ -18532,7 +18532,7 @@ Next action:
     expect(harness.dispatched[1].provider).toBe('codex')
   })
 
-  it('threads Kimi thinking and HighSpeed tier through dispatch', async () => {
+  it('threads Kimi thinking through dispatch and drops the retired HighSpeed tier', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [
       {
@@ -18545,6 +18545,8 @@ Next action:
         model: 'kimi-k2.6',
         permissionPresetId: 'read_only',
         thinkingEnabled: true,
+        // A seat saved before 2026-09-11, when K2.7 Code Highspeed became its
+        // own picker row and Kimi's Fast tier retired.
         fastModeEnabled: true,
         serviceTier: 'fast'
       }
@@ -18558,7 +18560,8 @@ Next action:
     const kimiPayload = harness.dispatched[0]
     expect(kimiPayload.provider).toBe('kimi')
     expect(kimiPayload.kimiThinking).toBe(true)
-    expect(kimiPayload.serviceTier).toBe('fast')
+    // The stale flag must not re-route the seat off its selected model.
+    expect(kimiPayload.serviceTier).toBe('standard')
     // Kimi runs should not leak other providers' controls.
     expect(kimiPayload.reasoningEffort).toBeUndefined()
     expect(kimiPayload.claudeFastMode).toBeUndefined()
