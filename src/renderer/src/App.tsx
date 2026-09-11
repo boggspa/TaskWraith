@@ -165,7 +165,10 @@ import {
 } from '../../shared/runStreamMetrics'
 import { MULTIVIEW_LAYOUT_IDS } from '../../shared/multiviewLayouts'
 import type { MultiviewLayout } from '../../shared/multiviewLayouts'
-import { acceptedProviderReasoningEfforts } from './lib/composerProviderReasoningSelection'
+import {
+  acceptedProviderReasoningEfforts,
+  acceptsStoredProviderReasoning
+} from './lib/composerProviderReasoningSelection'
 import { nextComposerSurfaceRequest, composerSurfaceOpenSignal } from './lib/composerSurfaceRequest'
 import type { ComposerSurfaceId, ComposerSurfaceRequest } from './lib/composerSurfaceRequest'
 import { fastModeToggleAvailable, nextFastModeToggle } from './lib/fastModeToggle'
@@ -6290,6 +6293,13 @@ function App(): React.JSX.Element {
       supportedReasoningEfforts: providerModelOption?.supportedReasoningEfforts,
       ultraTaskSupported: providerModelOption?.ultraTaskSupported
     })
+    // The set above describes the ACTIVE provider's ladder for the model this
+    // chat has selected, and nothing else. Only that provider's stored effort
+    // can be judged by it; the other seven have no model here to be judged
+    // against, and testing them against this one replaced a value the user
+    // picked with a default belonging to a different provider.
+    const acceptsStoredReasoning = (candidate: ProviderId, value: string): boolean =>
+      acceptsStoredProviderReasoning(candidate, provider, providerReasoningEfforts, value)
     const ollamaHealedReasoning = resolveOllamaComposerReasoningEffort(
       selected,
       metadata.ollamaReasoningEffort
@@ -6336,7 +6346,14 @@ function App(): React.JSX.Element {
         typeof metadata.codexServiceTier === 'string' ? metadata.codexServiceTier : '',
       claudeReasoningEffort:
         typeof metadata.claudeReasoningEffort === 'string' &&
-        enabledClaudeReasoningEfforts.has(metadata.claudeReasoningEffort)
+        // Claude keeps its own accepted set, resolved from the Claude model
+        // option rather than the shared ladder; scope it the same way.
+        acceptsStoredProviderReasoning(
+          'claude',
+          provider,
+          enabledClaudeReasoningEfforts,
+          metadata.claudeReasoningEffort
+        )
           ? metadata.claudeReasoningEffort
           : resolveClaudeDefaultReasoningEffort(claudeModelOption),
       claudeFastMode:
@@ -6346,40 +6363,40 @@ function App(): React.JSX.Element {
         Boolean(providerModelOption?.additionalSpeedTiers?.includes('fast')),
       kimiReasoningEffort:
         typeof metadata.kimiReasoningEffort === 'string' &&
-        providerReasoningEfforts.has(metadata.kimiReasoningEffort)
+        acceptsStoredReasoning('kimi', metadata.kimiReasoningEffort)
           ? metadata.kimiReasoningEffort
           : providerModelOption?.defaultReasoningEffort || 'on',
       kimiThinkingEnabled: true,
       grokReasoningEffort:
         typeof metadata.grokReasoningEffort === 'string' &&
-        providerReasoningEfforts.has(metadata.grokReasoningEffort)
+        acceptsStoredReasoning('grok', metadata.grokReasoningEffort)
           ? metadata.grokReasoningEffort
           : providerDefaultReasoning,
       museReasoningEffort:
         typeof metadata.museReasoningEffort === 'string' &&
-        providerReasoningEfforts.has(metadata.museReasoningEffort)
+        acceptsStoredReasoning('muse', metadata.museReasoningEffort)
           ? metadata.museReasoningEffort
           : MUSE_DEFAULT_REASONING_EFFORT,
       mistralReasoningEffort:
         typeof metadata.mistralReasoningEffort === 'string' &&
-        providerReasoningEfforts.has(metadata.mistralReasoningEffort)
+        acceptsStoredReasoning('mistral', metadata.mistralReasoningEffort)
           ? metadata.mistralReasoningEffort
           : 'medium',
       devinReasoningEffort:
         typeof metadata.devinReasoningEffort === 'string' &&
-        providerReasoningEfforts.has(metadata.devinReasoningEffort)
+        acceptsStoredReasoning('devin', metadata.devinReasoningEffort)
           ? metadata.devinReasoningEffort
           : providerModelOption?.defaultReasoningEffort ||
             devinDefaultReasoningEffort(selected) ||
             '',
       piReasoningEffort:
         typeof metadata.piReasoningEffort === 'string' &&
-        providerReasoningEfforts.has(metadata.piReasoningEffort)
+        acceptsStoredReasoning('pi', metadata.piReasoningEffort)
           ? metadata.piReasoningEffort
           : defaultPiReasoningEffort(selected),
       ollamaReasoningEffort:
         typeof metadata.ollamaReasoningEffort === 'string' &&
-        providerReasoningEfforts.has(metadata.ollamaReasoningEffort)
+        acceptsStoredReasoning('ollama', metadata.ollamaReasoningEffort)
           ? metadata.ollamaReasoningEffort
           : persistedOllamaRunProfile === 'local_scout' && providerReasoningEfforts.has('medium')
             ? 'medium'
@@ -6388,7 +6405,7 @@ function App(): React.JSX.Element {
               : providerReasoningOptions.at(-1)?.value || '',
       cursorReasoningEffort:
         typeof metadata.cursorReasoningEffort === 'string' &&
-        providerReasoningEfforts.has(metadata.cursorReasoningEffort)
+        acceptsStoredReasoning('cursor', metadata.cursorReasoningEffort)
           ? metadata.cursorReasoningEffort
           : providerDefaultReasoning,
       cursorFastMode:

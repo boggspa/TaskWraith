@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { resolvePiReasoningSupport } from '../../../shared/piReasoning'
 import {
   acceptedProviderReasoningEfforts,
+  acceptsStoredProviderReasoning,
   resolveComposerModelReasoningDefault
 } from './composerProviderReasoningSelection'
 
@@ -122,5 +124,54 @@ describe('acceptedProviderReasoningEfforts', () => {
       ultraTaskSupported: true
     })
     expect([...accepted].sort()).toEqual(['medium', 'ultraTask'])
+  })
+})
+
+describe('acceptsStoredProviderReasoning', () => {
+  const claudeLadder = new Set(['low', 'medium', 'high'])
+
+  it('accepts the active provider’s stored rung when its ladder offers it', () => {
+    expect(acceptsStoredProviderReasoning('claude', 'claude', claudeLadder, 'high')).toBe(true)
+  })
+
+  it('still clamps the active provider’s stored rung when its ladder dropped it', () => {
+    // The offer/accept clamp is correct HERE and must stay: this provider does
+    // have a model selected, and the rung is genuinely no longer on its rail.
+    expect(acceptsStoredProviderReasoning('claude', 'claude', claudeLadder, 'ultra')).toBe(false)
+  })
+
+  it('keeps another provider’s stored rung the active ladder has never heard of', () => {
+    // Muse's Max judged against Claude's rail. A chat stores an effort per
+    // provider but selects a model for one, so there is nothing here that can
+    // say this value is wrong -- and answering anyway lost the user's pick.
+    expect(acceptsStoredProviderReasoning('muse', 'claude', claudeLadder, 'max')).toBe(true)
+  })
+
+  it('keeps another provider’s rung even when it collides with a rejected one', () => {
+    expect(acceptsStoredProviderReasoning('ollama', 'claude', claudeLadder, 'ultra')).toBe(true)
+  })
+})
+
+/**
+ * The renderer has no DOM test environment, so `getChatComposerSelection` is
+ * fenced by its source shape. Every per-provider acceptance check in it must go
+ * through the scoped predicate; a bare `providerReasoningEfforts.has(metadata.…)`
+ * is the cross-provider clamp coming back, and nothing else would catch it --
+ * it compiles, types and renders perfectly.
+ */
+describe('the composer read-back’s acceptance checks', () => {
+  const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+
+  it('scopes every stored per-provider effort to the active provider', () => {
+    expect(app).not.toMatch(/providerReasoningEfforts\.has\(metadata\./)
+    expect(app).not.toMatch(/enabledClaudeReasoningEfforts\.has\(metadata\./)
+  })
+
+  it('still checks one per provider, so a dropped call site is visible', () => {
+    // Eight providers reach the shared predicate; Claude carries its own
+    // accepted set and is scoped by a direct call, which is why it is counted
+    // separately. Codex deliberately has no acceptance check at all.
+    expect(app.match(/acceptsStoredReasoning\('/g) ?? []).toHaveLength(8)
+    expect(app.match(/acceptsStoredProviderReasoning\(\n\s+'claude'/g) ?? []).toHaveLength(1)
   })
 })
