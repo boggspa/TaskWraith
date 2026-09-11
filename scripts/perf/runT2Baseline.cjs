@@ -817,6 +817,9 @@ function resolveObservedHostLane(input) {
   return { observed: 'unknown', evidence: null, reason: null }
 }
 
+/** Bytes of stderr held in memory for lane detection, independent of file flush. */
+const CHILD_STDERR_HEAD_BYTES = 256 * 1024
+
 /** Bytes of child output kept per stream before the capture truncates. */
 const DEFAULT_CHILD_STDIO_MAX_BYTES = 8 * 1024 * 1024
 
@@ -840,13 +843,18 @@ const DEFAULT_CHILD_STDIO_MAX_BYTES = 8 * 1024 * 1024
  *
  * @param {object} session — the spawned child
  * @param {{ write: Function, maxBytes?: number }} options
- * @returns {{ bytes: number, droppedBytes: number, truncated: boolean, streams: string[] }}
+ * @returns {{ bytes: number, droppedBytes: number, truncated: boolean, streams: string[],
+ *            stderrHead: string }}
  */
 function captureChildStdio(session, options) {
   const maxBytes =
     options && options.maxBytes != null ? options.maxBytes : DEFAULT_CHILD_STDIO_MAX_BYTES
   const write = options && typeof options.write === 'function' ? options.write : () => {}
-  const record = { bytes: 0, droppedBytes: 0, truncated: false, streams: [] }
+  // A bounded, in-memory head of stderr. The lane marker is read from HERE and
+  // not from the log file: the file sinks are still open when the report is
+  // assembled, and a write stream that has not drained would make an unflushed
+  // marker read as `unknown` — an absence of evidence presenting as evidence.
+  const record = { bytes: 0, droppedBytes: 0, truncated: false, streams: [], stderrHead: '' }
   const attach = (stream, name) => {
     if (!stream || typeof stream.on !== 'function') return
     record.streams.push(name)
@@ -861,6 +869,11 @@ function captureChildStdio(session, options) {
       }
       if (keptLength === 0) return
       record.bytes += keptLength
+      if (name === 'stderr' && record.stderrHead.length < CHILD_STDERR_HEAD_BYTES) {
+        record.stderrHead += kept
+          .subarray(0, CHILD_STDERR_HEAD_BYTES - record.stderrHead.length)
+          .toString('utf8')
+      }
       try {
         write(name, kept)
       } catch {
@@ -2148,6 +2161,11 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       /** @type {string[]} */
       const captureSkippedSteps = []
 
+      // NOT a pure predicate: asking LATCHES `captureDeadlineExceeded` once the
+      // budget is gone, and that latch is what keeps the journal entry, the
+      // report record and the skip list telling the same story. Making this a
+      // pure read would let the three disagree about whether the same phase
+      // overran.
       function hasCaptureDeadlineExpired() {
         if (captureDeadlineExceeded) return true
         const elapsed = replayNowMs() - captureStartedAtMs
@@ -2346,17 +2364,11 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       // Which architecture did this run actually measure? Recorded always, so
       // no future artifact has to be cross-examined for it the way attempt 5
       // was.
-      let fallbackLine = null
-      try {
-        const captured = fs.readFileSync(childStderrPath, 'utf8')
-        fallbackLine =
-          captured
-            .split('\n')
-            .find((line) => line.includes(HOST_LANE_FALLBACK_MARKER))
-            ?.trim() ?? null
-      } catch {
-        // No captured stderr is itself not evidence of either lane.
-      }
+      const fallbackLine =
+        childStdio.stderrHead
+          .split('\n')
+          .find((line) => line.includes(HOST_LANE_FALLBACK_MARKER))
+          ?.trim() ?? null
       Object.assign(
         report.hostLane,
         resolveObservedHostLane({

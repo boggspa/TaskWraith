@@ -4899,6 +4899,55 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     expect(record.droppedBytes).toBe(0)
   })
 
+  it('holds the lane marker in memory, so detection never depends on a flushed file', () => {
+    // The lane record used to be read with readFileSync over child.stderr.log
+    // while the write stream was still open. Node buffers, so an undrained
+    // marker would have read as `observed: 'unknown'` — an absence of evidence
+    // presenting as evidence, on the single field the run is launched to
+    // establish. The head is fed from the same chunk the sink gets, before the
+    // sink runs, so a sink that is slow, buffered or outright broken cannot
+    // change what the lane record says.
+    const session = { stdout: new EventEmitter(), stderr: new EventEmitter() }
+    const record = captureChildStdio(session, {
+      write: () => {
+        throw new Error('sink not flushed')
+      }
+    })
+    const line = '[main-bootstrap] external Host unavailable; using in-process Host: x'
+    session.stdout.emit('data', Buffer.from('stdout noise\n'))
+    session.stderr.emit('data', Buffer.from(`preamble\n${line}\ntail\n`))
+
+    expect(record.stderrHead).toContain(line)
+    // stdout is not lane evidence and must not dilute the bounded head.
+    expect(record.stderrHead).not.toContain('stdout noise')
+    expect(
+      resolveObservedHostLane({
+        fallbackLine:
+          record.stderrHead.split('\n').find((l: string) => l.includes('[main-bootstrap]')) ?? null,
+        discoveryPid: 1,
+        childPid: 1
+      })
+    ).toMatchObject({ observed: 'in_process', evidence: 'child_stderr_bootstrap_marker' })
+  })
+
+  it('bounds the in-memory stderr head', () => {
+    const session = { stdout: new EventEmitter(), stderr: new EventEmitter() }
+    const record = captureChildStdio(session, { write: () => {} })
+    session.stderr.emit('data', Buffer.alloc(300 * 1024, 0x61))
+    expect(record.stderrHead.length).toBe(256 * 1024)
+  })
+
+  it('resolves the host lane from the in-memory head, never from the open log file', () => {
+    // Source pin. A readFileSync on childStderrPath at this point reads a file
+    // whose write stream is still open; the whole point of the head is that the
+    // lane record cannot be decided by flush timing.
+    const src = readFileSync(path.join(__dirname, 'runT2Baseline.cjs'), 'utf8')
+    const detectAt = src.search(/^\s*const fallbackLine =\s*$/m)
+    expect(detectAt).toBeGreaterThan(-1)
+    expect(src.slice(detectAt, detectAt + 400)).toContain('childStdio.stderrHead')
+    expect(src).not.toContain('fs.readFileSync(childStderrPath')
+  })
+
   it('keeps draining past its cap instead of leaving data in the pipe', () => {
     const session = { stdout: new EventEmitter(), stderr: new EventEmitter() }
     const written: string[] = []
