@@ -21,6 +21,19 @@ export const DEFAULT_PAGED_CHAT_UPDATE_DEBOUNCE_MS = 50
  */
 export const DEFAULT_PAGED_CHAT_UPDATE_FETCH_DEADLINE_MS = 10_000
 
+/**
+ * How long to wait before retrying a pull that failed with nothing newer
+ * waiting. Bounded and delayed: retrying immediately would pile fetches onto
+ * the very stall we are recovering from, and an unbounded retry would loop
+ * forever against a permanently down Host. This exists because the refresh
+ * can no longer rely on duplicate invalidations to re-arm it — the catalogue
+ * mirror now drops same-content re-broadcasts — so a failed pull with no
+ * newer generation must own its own recovery or the panel stays stale until
+ * an unrelated save.
+ */
+export const DEFAULT_PAGED_CHAT_UPDATE_RETRY_DELAY_MS = 5_000
+export const MAX_PAGED_CHAT_UPDATE_RETRY_ATTEMPTS = 2
+
 export type PagedChatUpdateTailFetcher = (
   request: TranscriptPageRequest
 ) => Promise<TranscriptPage | null>
@@ -68,6 +81,8 @@ interface RefreshState {
   lastTouched: number
   /** Newest generation a commit has published. Lags `generation` while behind. */
   committedGeneration: number
+  /** Bounded retries scheduled since the newest invalidation arrived. */
+  retryCount: number
 }
 
 function boundedPositiveInteger(value: number | undefined, fallback: number, cap: number): number {
@@ -97,6 +112,8 @@ export class PagedChatUpdateRefreshCoordinator {
   private readonly commit: (value: PagedChatUpdateRefreshCommit) => void
   private readonly debounceMs: number
   private readonly fetchDeadlineMs: number
+  private readonly retryDelayMs: number
+  private readonly maxRetryAttempts: number
   private readonly maxMessages: number
   private readonly maxBytes: number
   private readonly maxTrackedChats: number
@@ -117,6 +134,8 @@ export class PagedChatUpdateRefreshCoordinator {
       typeof options.fetchDeadlineMs === 'number' && Number.isFinite(options.fetchDeadlineMs)
         ? Math.max(0, Math.floor(options.fetchDeadlineMs))
         : DEFAULT_PAGED_CHAT_UPDATE_FETCH_DEADLINE_MS
+    this.retryDelayMs = DEFAULT_PAGED_CHAT_UPDATE_RETRY_DELAY_MS
+    this.maxRetryAttempts = MAX_PAGED_CHAT_UPDATE_RETRY_ATTEMPTS
     this.maxMessages = boundedPositiveInteger(
       options.maxMessages,
       MAX_LIVE_TAIL_PAGE_MESSAGES,
@@ -153,13 +172,15 @@ export class PagedChatUpdateRefreshCoordinator {
         cancelled: false,
         lastTouched: 0,
         committedGeneration: 0,
-        deadlineOwner: null
+        deadlineOwner: null,
+        retryCount: 0
       }
       this.states.set(invalidation.chatId, state)
     }
 
     state.latest = invalidation
     state.generation += 1
+    state.retryCount = 0
     state.lastTouched = ++this.touchSequence
     if (!state.inFlight) this.arm(state)
     return state.generation
@@ -234,12 +255,28 @@ export class PagedChatUpdateRefreshCoordinator {
   }
 
   private arm(state: RefreshState): void {
+    this.armWithDelay(state, this.debounceMs)
+  }
+
+  /**
+   * Bounded, delayed retry for a pull that failed while nothing newer was
+   * waiting. Counted per generation: two misses mean the surface waits for
+   * the next invalidation rather than polling a down Host forever.
+   */
+  private armRetry(state: RefreshState): void {
+    if (!this.isLive(state) || state.inFlight) return
+    if (state.retryCount >= this.maxRetryAttempts) return
+    state.retryCount += 1
+    this.armWithDelay(state, this.retryDelayMs)
+  }
+
+  private armWithDelay(state: RefreshState, delayMs: number): void {
     if (!this.isLive(state) || state.inFlight) return
     if (state.timer) this.clearTimer(state.timer)
     state.timer = this.setTimer(() => {
       state.timer = undefined
       this.startFetch(state, false)
-    }, this.debounceMs)
+    }, delayMs)
   }
 
   private startFetch(state: RefreshState, isImmediateRetry: boolean): void {
@@ -259,10 +296,12 @@ export class PagedChatUpdateRefreshCoordinator {
         state.deadlineOwner = null
         state.inFlight = false
         this.overdueFetches += 1
-        // Re-arm only when something newer is actually waiting. Retrying into a
-        // main thread that just missed a 10s deadline would pile fetches onto
-        // the very stall we are recovering from.
+        // Re-arm when something newer is actually waiting. Otherwise schedule
+        // our own bounded retry: with same-content mirror re-broadcasts gone,
+        // nothing else is coming to re-arm this chat, and "wait forever"
+        // converts one wedge into a permanently stale panel.
         if (state.generation > generation) this.arm(state)
+        else this.armRetry(state)
       }, this.fetchDeadlineMs)
     }
 
@@ -317,7 +356,14 @@ export class PagedChatUpdateRefreshCoordinator {
     state.deadlineOwner = null
     if (!state.inFlight) return
     state.inFlight = false
-    if (state.generation === generation) return
+    if (state.generation === generation) {
+      // The pull settled (or failed) with nothing newer waiting. A failed pull
+      // gets the bounded retry — without it this chat would sit stale until an
+      // unrelated invalidation arrives, which the mirror's equality gate no
+      // longer manufactures.
+      if (page?.chatId !== invalidation.chatId) this.armRetry(state)
+      return
+    }
 
     if (!isImmediateRetry) {
       this.startFetch(state, true)

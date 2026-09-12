@@ -650,3 +650,43 @@ describe('Stage 2 — incremental persistence on the Host write path', () => {
     ])
   })
 })
+
+describe('Stage 2b — large terminal checkpoints defer off the save path', () => {
+  it('does not enqueue a large terminal save synchronously; a barrier flushes it', async () => {
+    const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
+    const chatId = 'chat-large-terminal'
+    const previous = durableChat(chatId, 3)
+    // Push the on-disk record past the deferral floor: serializing this inside
+    // saveChat is exactly the wedge this policy removes.
+    previous.messages.push(message('m-big', 'user', 'x'.repeat(5 * 1024 * 1024)))
+    seedDurableChat(profilePath, previous)
+
+    const saved = AppStore.saveChat({ ...previous, title: 'Edited above the row' })
+    expect(saved.persistenceRevision).toBe(4)
+    // The journal append already made the mutation durable. The whole-record
+    // Host checkpoint must NOT have been enqueued from inside saveChat —
+    // before deferral, this enqueue synchronously serialized the whole
+    // record on main (measured ~2 s at 27.5 MB) and wedged the Host for ~6.4 s
+    // right after.
+    expect(enqueued).toHaveLength(0)
+
+    // A durability barrier still forces the checkpoint synchronously before
+    // it drains: freshness guarantees move, they do not disappear.
+    await AppStore.awaitChatRecordPersisted(chatId)
+    expect(enqueued).toHaveLength(1)
+    expect(enqueued[0].chatId).toBe(chatId)
+    expect(enqueued[0].expectedRevision).toBe(3)
+    expect((enqueued[0].record as unknown as ChatRecord).persistenceRevision).toBe(4)
+  })
+
+  it('still materializes a small terminal save synchronously', async () => {
+    const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
+    const chatId = 'chat-small-terminal'
+    const previous = durableChat(chatId, 3)
+    seedDurableChat(profilePath, previous)
+
+    AppStore.saveChat({ ...previous, title: 'Small edit' })
+    expect(enqueued).toHaveLength(1)
+    expect(enqueued[0].chatId).toBe(chatId)
+  })
+})

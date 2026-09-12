@@ -106,6 +106,7 @@ import {
 import { observePersistBarrierSpan } from '../perf/persistBarrierSpan'
 import { mainWorkSpanSink } from '../perf/mainWorkSpanSink'
 import { HostChatCompatibilityPersistence } from './HostChatCompatibilityPersistence'
+import { DeferredHostMaterialization } from './hostChatCompatibilityDeferral'
 import {
   createDesktopHostWorkspaceRecordClient,
   type HostWorkspaceRecordPort
@@ -617,6 +618,22 @@ const hostChatCompatibility = (): HostChatCompatibilityPersistence => {
     hostChatCompatibilityPersistPort = port
   }
   return hostChatCompatibilityPersistence
+}
+
+/**
+ * Large-chat compatibility checkpoints deferred off the save path (see
+ * hostChatCompatibilityDeferral.ts). Materialization still happens at the
+ * next barrier, shutdown drain, or the short trailing timer — never silently.
+ */
+let deferredHostMaterialization: DeferredHostMaterialization | null = null
+const deferredHostMaterialize = (): DeferredHostMaterialization => {
+  if (!deferredHostMaterialization) {
+    deferredHostMaterialization = new DeferredHostMaterialization({
+      materialize: (chatId) => materializeHostChatCompatibility(chatId),
+      isDeleted: (chatId) => deletedChatIds.has(chatId)
+    })
+  }
+  return deferredHostMaterialization
 }
 
 /** Publish one latest compatibility checkpoint and mark only that brief Host flight as shadowed. */
@@ -8102,7 +8119,27 @@ export class AppStore {
       incrementalResult === null ||
       preparation.externalizationFailed ||
       flushReason !== 'normal'
-    if (materializeNow) materializeHostChatCompatibility(normalizedChat.appChatId)
+    if (materializeNow) {
+      // A terminal save of a LARGE record used to serialize the whole record
+      // synchronously here (~seconds on main for a tens-of-MB thread) and
+      // wedge the Host right after — all while the journal already made the
+      // mutation durable. Defer that checkpoint behind a short trailing
+      // timer; barriers and the shutdown drain still materialize
+      // synchronously, and small records keep their immediate checkpoint.
+      const deferrableTerminal =
+        previousChatForFeedback !== null &&
+        incrementalResult !== null &&
+        !preparation.externalizationFailed &&
+        flushReason === 'terminal'
+      const deferred = deferrableTerminal
+        ? deferredHostMaterialize().schedule(normalizedChat.appChatId, {
+            existingBytes: fs.statSync(chatPath, { throwIfNoEntry: false })?.size ?? 0,
+            flushReason,
+            durabilityFallback: incrementalResult === null || preparation.externalizationFailed
+          })
+        : false
+      if (!deferred) materializeHostChatCompatibility(normalizedChat.appChatId)
+    }
     const chatUpdateProjection: ChatUpdateProjectionObservation =
       previousChatForFeedback && incrementalResult?.derived
         ? chatUpdateProjectionTracker.observe(

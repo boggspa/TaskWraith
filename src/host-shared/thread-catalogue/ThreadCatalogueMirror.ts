@@ -35,6 +35,63 @@ interface Listing {
   suspended: boolean
 }
 
+/**
+ * Conservative structural equality over the plain-data projection shape:
+ * primitives, arrays, and plain objects only (projections are built either
+ * from object literals or through JSON round-trips, so they carry nothing
+ * else). An explicit-undefined key compares unequal to an absent one — a
+ * false positive (one extra notification), never a false negative, and only
+ * in the notify direction: a real semantic change always alters a defined
+ * value or a key set.
+ */
+export function catalogueProjectionDataEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (typeof a !== typeof b) return false
+  if (a === null || b === null) return false
+  if (typeof a !== 'object') return false
+  const aArray = Array.isArray(a)
+  const bArray = Array.isArray(b)
+  if (aArray || bArray) {
+    if (!aArray || !bArray) return false
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i += 1) {
+      if (!catalogueProjectionDataEqual(a[i], b[i])) return false
+    }
+    return true
+  }
+  const ao = a as Record<string, unknown>
+  const bo = b as Record<string, unknown>
+  const aKeys = Object.keys(ao)
+  const bKeys = Object.keys(bo)
+  if (aKeys.length !== bKeys.length) return false
+  for (const key of aKeys) {
+    if (!Object.prototype.hasOwnProperty.call(bo, key)) return false
+    if (!catalogueProjectionDataEqual(ao[key], bo[key])) return false
+  }
+  return true
+}
+
+/**
+ * True when re-applying `next` would present exactly what `previous` already
+ * presents: same revision/row content and same source witness. Used to keep
+ * the per-row apply idempotent — the poll re-applies indexed rows every pass,
+ * and without this each pass fanned listeners out again.
+ */
+export function catalogueProjectionReapplyEqual(
+  previous: ThreadCatalogueProjection,
+  previousWitness: string | undefined,
+  next: ThreadCatalogueProjection,
+  nextWitness: string | undefined
+): boolean {
+  return (
+    (previousWitness ?? undefined) === (nextWitness ?? undefined) &&
+    previous.sourceComplete === next.sourceComplete &&
+    previous.revision === next.revision &&
+    catalogueProjectionDataEqual(previous.summary, next.summary) &&
+    catalogueProjectionDataEqual(previous.recovery, next.recovery)
+  )
+}
+
 /** Main/Host display mirror. Refreshes are bounded worker requests, with no disk/body fallback. */
 export class ThreadCatalogueMirror {
   private readonly witnesses = new Map<string, string>()
@@ -95,10 +152,23 @@ export class ThreadCatalogueMirror {
   }
 
   private apply(projection: ThreadCatalogueProjection, witness?: string): void {
-    if (witness) this.witnesses.set(projection.summary.chatId, witness)
-    else this.witnesses.delete(projection.summary.chatId)
-    this.rows.set(projection.summary.chatId, projection)
-    for (const listener of this.listeners) listener(projection, projection.summary.chatId)
+    const chatId = projection.summary.chatId
+    const previous = this.rows.get(chatId)
+    if (
+      previous &&
+      catalogueProjectionReapplyEqual(previous, this.witnesses.get(chatId), projection, witness)
+    ) {
+      // The poll re-applies indexed rows every pass; a same-content apply is
+      // not news and must not fan listeners out again. One save produced 5-8
+      // saveless invalidations purely through these duplicates, and the
+      // renderer's refresh coordinator owns bounded retries now, so a
+      // genuinely lost pull no longer depends on the storm to re-arm.
+      return
+    }
+    if (witness) this.witnesses.set(chatId, witness)
+    else this.witnesses.delete(chatId)
+    this.rows.set(chatId, projection)
+    for (const listener of this.listeners) listener(projection, chatId)
   }
 
   private canApplyIndexed(chatId: string, startedAt: number): boolean {

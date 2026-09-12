@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -285,5 +285,113 @@ describe('HostProfileRecordCommandExecutor', () => {
       )
     ).toEqual({ status: 'failed', errorCode: 'thread_record_transfer_missing' })
     expect(persistThreadRecord).not.toHaveBeenCalled()
+  })
+
+  it('hands the verified artifact to the store and cleans it up after a non-adopting persist', () => {
+    const profilePath = profile()
+    const record = {
+      appChatId: 'thread-1',
+      scope: 'workspace',
+      workspaceId: 'workspace-1',
+      workspacePath: profilePath,
+      title: 'Echo base',
+      archived: false,
+      messages: [],
+      updatedAt: 100,
+      persistenceRevision: 0
+    }
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath,
+      transferId: 'transfer-handoff-1',
+      record
+    })
+    const persistThreadRecord = vi.fn(() => ({}) as never)
+    const executor = new HostProfileRecordCommandExecutor({
+      profilePath,
+      store: {
+        upsertWorkspaceRecord: vi.fn(),
+        removeWorkspaceRecord: vi.fn(),
+        clearWorkspaceRecords: vi.fn(),
+        deleteThreadRecord: vi.fn(),
+        persistThreadRecord
+      }
+    })
+
+    expect(
+      executor.execute(
+        command(
+          'thread.record.persist',
+          { threadId: 'thread-1' },
+          { ...descriptor, expectedRevision: 0 }
+        )
+      )
+    ).toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+
+    // The store receives the verified artifact reference so a stamped-ahead
+    // record can be adopted by rename instead of re-serialized. Removing the
+    // handoff breaks this assertion while the legacy consume path still
+    // passes every other test in the file.
+    expect(persistThreadRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: 'thread-1',
+        expectedRevision: 0,
+        verifiedTransfer: expect.objectContaining({
+          byteLength: descriptor.byteLength,
+          path: expect.any(String),
+          identity: expect.objectContaining({ dev: expect.any(String), ino: expect.any(String) })
+        })
+      })
+    )
+    // A store that did not adopt must not leave the owner-only artifact
+    // behind; cleanup is the executor's, best-effort, and idempotent.
+    expect(existsSync(join(profilePath, 'host-thread-record-transfer', 'transfer-handoff-1.record.json'))).toBe(
+      false
+    )
+  })
+
+  it('adopts a stamped-ahead transfer end to end: artifact gone, chat file is the artifact bytes', () => {
+    const profilePath = profile()
+    const authority = { assertProfileAuthority: vi.fn() }
+    const store = new HostProfileDomainStore({ profilePath, authority, now: () => 200 })
+    const executor = new HostProfileRecordCommandExecutor({ profilePath, store })
+    const created = store.createThread({ scope: 'global', title: 'Before' })
+    const record = {
+      ...created,
+      title: 'Stamped ahead',
+      messages: [
+        {
+          id: 'm1',
+          role: 'user' as const,
+          content: 'body',
+          timestamp: '2026-09-12T00:00:00.000Z'
+        }
+      ],
+      updatedAt: 100,
+      persistenceRevision: 1
+    }
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath,
+      transferId: 'transfer-adopt-e2e',
+      record
+    })
+
+    expect(
+      executor.execute(
+        command(
+          'thread.record.persist',
+          { threadId: created.appChatId },
+          { ...descriptor, expectedRevision: 0 }
+        )
+      )
+    ).toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+
+    expect(readdirSync(join(profilePath, 'host-thread-record-transfer'))).toEqual([])
+    expect(readFileSync(join(profilePath, 'chats', `${created.appChatId}.json`), 'utf8')).toBe(
+      `${JSON.stringify(record)}\n`
+    )
+    expect(store.getThread(created.appChatId)).toMatchObject({
+      title: 'Stamped ahead',
+      persistenceRevision: 1
+    })
   })
 })

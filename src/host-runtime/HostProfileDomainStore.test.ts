@@ -21,7 +21,13 @@ import {
   MAX_CHAT_BYTES,
   HostProfileDomainStore
 } from './HostProfileDomainStore'
-import { HOST_THREAD_RECORD_TRANSFER_MAX_BYTES } from './HostThreadRecordTransfer'
+import {
+  HOST_THREAD_RECORD_TRANSFER_MAX_BYTES,
+  decodeHostThreadRecordTransferBody,
+  hostThreadRecordTransferDirectory,
+  publishHostThreadRecordTransfer,
+  verifyHostThreadRecordTransfer
+} from './HostThreadRecordTransfer'
 import { HOST_THREAD_RECORD_TRANSFER_MAX_BYTES as PROTOCOL_TRANSFER_MAX_BYTES } from '../shared/hostProtocol'
 import { HostPermissionConsentAuthority } from './HostPermissionConsent'
 import { isPlaceholderThreadTitle } from '../shared/threadTitles'
@@ -1510,5 +1516,203 @@ describe('HostProfileDomainStore', () => {
     const [record] = store.listThreads()
 
     expect(record!.messages.map((message) => message.content)).toEqual(['body'])
+  })
+})
+
+describe('HostProfileDomainStore verified-transfer adoption', () => {
+  function publishTransfer(profile: string, transferId: string, record: unknown) {
+    const descriptor = publishHostThreadRecordTransfer({ profilePath: profile, transferId, record })
+    const verified = verifyHostThreadRecordTransfer({ profilePath: profile, descriptor })
+    return { descriptor, verified, record: decodeHostThreadRecordTransferBody(verified.body) }
+  }
+
+  it('adopts the verified artifact bytes for a stamped-ahead persist instead of re-serializing', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Big thread' })
+    const next = {
+      ...thread,
+      title: 'Edited above the row',
+      persistenceRevision: 1,
+      messages: [
+        {
+          id: 'm1',
+          role: 'user',
+          content: 'x'.repeat(2 * 1024 * 1024),
+          timestamp: '2026-09-12T00:00:00.000Z'
+        }
+      ]
+    }
+    const transfer = publishTransfer(profile, 'transfer-adopt-1', next)
+    const diskReadsBefore = store.threadRecordDiskReads
+
+    const persisted = store.persistThreadRecord({
+      threadId: thread.appChatId,
+      record: transfer.record,
+      expectedRevision: 0,
+      verifiedTransfer: {
+        path: transfer.verified.path,
+        identity: transfer.verified.identity,
+        byteLength: transfer.descriptor.byteLength
+      }
+    })
+
+    expect(persisted).toMatchObject({
+      title: 'Edited above the row',
+      persistenceRevision: 1,
+      updatedAt: next.updatedAt
+    })
+    // The artifact became the chat file: the transfer dir is empty and the
+    // adopted bytes are exactly what the publisher serialized (the store
+    // never re-serialized the record).
+    expect(readdirSync(hostThreadRecordTransferDirectory(profile))).toEqual([])
+    const adopted = readFileSync(
+      join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`),
+      'utf8'
+    )
+    expect(adopted).toBe(`${JSON.stringify(next)}\n`)
+    // The CAS probe never read the old record back: createThread cached the
+    // revision this store itself published.
+    expect(store.threadRecordDiskReads).toBe(diskReadsBefore)
+    // A restart sees exactly the adopted record.
+    expect(store.getThread(thread.appChatId)).toMatchObject({
+      title: 'Edited above the row',
+      persistenceRevision: 1
+    })
+  })
+
+  it('serves a second stamped-ahead persist entirely from the revision cache — zero record reads', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Big thread' })
+    const first = {
+      ...thread,
+      title: 'First edit',
+      persistenceRevision: 1,
+      messages: [
+        {
+          id: 'm1',
+          role: 'user',
+          content: 'x'.repeat(1024),
+          timestamp: '2026-09-12T00:00:00.000Z'
+        }
+      ]
+    }
+    const firstTransfer = publishTransfer(profile, 'transfer-adopt-1', first)
+    store.persistThreadRecord({
+      threadId: thread.appChatId,
+      record: firstTransfer.record,
+      expectedRevision: 0,
+      verifiedTransfer: {
+        path: firstTransfer.verified.path,
+        identity: firstTransfer.verified.identity,
+        byteLength: firstTransfer.descriptor.byteLength
+      }
+    })
+    const diskReadsAfterFirst = store.threadRecordDiskReads
+
+    const second = { ...first, title: 'Second edit', persistenceRevision: 2 }
+    const secondTransfer = publishTransfer(profile, 'transfer-adopt-2', second)
+    store.persistThreadRecord({
+      threadId: thread.appChatId,
+      record: secondTransfer.record,
+      expectedRevision: 1,
+      verifiedTransfer: {
+        path: secondTransfer.verified.path,
+        identity: secondTransfer.verified.identity,
+        byteLength: secondTransfer.descriptor.byteLength
+      }
+    })
+
+    // Reverting the probe to a full getThread read shows up here as a disk
+    // read per persist — this assertion is the regression pin.
+    expect(store.threadRecordDiskReads).toBe(diskReadsAfterFirst)
+    expect(store.getThread(thread.appChatId)?.title).toBe('Second edit')
+  })
+
+  it('keeps the legacy +1 write for an echo-base record and leaves the artifact for its caller', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Before' })
+    const echo = { ...thread, title: 'Echo base', persistenceRevision: 0 }
+    const transfer = publishTransfer(profile, 'transfer-echo-1', echo)
+
+    const persisted = store.persistThreadRecord({
+      threadId: thread.appChatId,
+      record: transfer.record,
+      expectedRevision: 0,
+      verifiedTransfer: {
+        path: transfer.verified.path,
+        identity: transfer.verified.identity,
+        byteLength: transfer.descriptor.byteLength
+      }
+    })
+
+    expect(persisted.persistenceRevision).toBe(1)
+    // Not adoptable (the computed revision is not stamped into the record):
+    // the store rewrote normally and left the artifact for the executor's
+    // best-effort cleanup, exactly like a consumed-but-unused transfer.
+    expect(readdirSync(hostThreadRecordTransferDirectory(profile))).toEqual([
+      'transfer-echo-1.record.json'
+    ])
+    expect(store.getThread(thread.appChatId)).toMatchObject({
+      title: 'Echo base',
+      persistenceRevision: 1
+    })
+  })
+
+  it('detects a CAS conflict through the warm revision cache', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Before' })
+    const jumped = { ...thread, title: 'Jumped', persistenceRevision: 5 }
+    const jumpTransfer = publishTransfer(profile, 'transfer-jump-1', jumped)
+    store.persistThreadRecord({
+      threadId: thread.appChatId,
+      record: jumpTransfer.record,
+      expectedRevision: 0,
+      verifiedTransfer: {
+        path: jumpTransfer.verified.path,
+        identity: jumpTransfer.verified.identity,
+        byteLength: jumpTransfer.descriptor.byteLength
+      }
+    })
+
+    const stale = { ...jumped, title: 'Stale', persistenceRevision: 6 }
+    expect(() =>
+      store.persistThreadRecord({
+        threadId: thread.appChatId,
+        record: stale,
+        expectedRevision: 2
+      })
+    ).toThrow('Thread persistence revision mismatch')
+    expect(store.getThread(thread.appChatId)).toMatchObject({
+      title: 'Jumped',
+      persistenceRevision: 5
+    })
+  })
+
+  it('falls back to a real read when the file changed underneath a warm cache', () => {
+    const { profile, store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Before' })
+    // An external writer (e.g. a legacy-gate desktop) replaces the record:
+    // the identity changes, the cache must not answer for it.
+    const chatPath = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`)
+    const external = { ...thread, title: 'External', persistenceRevision: 7 }
+    writeFileSync(chatPath, `${JSON.stringify(external)}\n`, { mode: 0o600 })
+    const diskReadsBefore = store.threadRecordDiskReads
+
+    const next = { ...external, title: 'After external', persistenceRevision: 8 }
+    const transfer = publishTransfer(profile, 'transfer-external-1', next)
+    const persisted = store.persistThreadRecord({
+      threadId: thread.appChatId,
+      record: transfer.record,
+      expectedRevision: 7,
+      verifiedTransfer: {
+        path: transfer.verified.path,
+        identity: transfer.verified.identity,
+        byteLength: transfer.descriptor.byteLength
+      }
+    })
+
+    expect(persisted.persistenceRevision).toBe(8)
+    // The probe noticed the identity change and re-read once, then adopted.
+    expect(store.threadRecordDiskReads).toBe(diskReadsBefore + 1)
   })
 })

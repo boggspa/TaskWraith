@@ -276,7 +276,7 @@ describe('PagedChatUpdateRefreshCoordinator', () => {
     expect(fetchPage).toHaveBeenCalledTimes(2)
   })
 
-  it('does not retry into a stall when nothing newer is waiting', async () => {
+  it('recovers a stalled pull with bounded delayed retries when nothing newer is waiting', async () => {
     const stuck = deferred<TranscriptPage | null>()
     const fetchPage = vi.fn(() => stuck.promise)
     const coordinator = new PagedChatUpdateRefreshCoordinator({
@@ -289,9 +289,60 @@ describe('PagedChatUpdateRefreshCoordinator', () => {
     coordinator.invalidate(invalidation('chat-a', 1))
     await vi.advanceTimersByTimeAsync(10)
     await vi.advanceTimersByTimeAsync(5_000)
-    // One overdue release, no fetch pile-up onto the thread that just missed.
+    // No immediate pile-up onto the thread that just missed its deadline: the
+    // retry is delayed, so within the first retry window only the original
+    // fetch has run.
     expect(fetchPage).toHaveBeenCalledTimes(1)
     expect(coordinator.stats().overdueFetches).toBe(1)
+
+    // Retry 1 fires one retry-delay after the release, then stalls the same way.
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(fetchPage).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(coordinator.stats().overdueFetches).toBe(2)
+
+    // Retry 2 is the last: the cap converts a permanently wedged pull into
+    // "waits for the next invalidation" instead of polling forever.
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(fetchPage).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(1_000)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetchPage).toHaveBeenCalledTimes(3)
+    expect(coordinator.stats().overdueFetches).toBe(3)
+  })
+
+  it('commits after a failed pull via the bounded retry, with nothing newer waiting', async () => {
+    const commit = vi.fn<(value: PagedChatUpdateRefreshCommit) => void>()
+    const fetchPage = vi
+      .fn<(request: TranscriptPageRequest) => Promise<TranscriptPage | null>>()
+      .mockRejectedValueOnce(new Error('Timed out connecting to the TaskWraith Host'))
+      .mockResolvedValueOnce(page('chat-a', 1))
+    const coordinator = new PagedChatUpdateRefreshCoordinator({
+      debounceMs: 10,
+      fetchDeadlineMs: 1_000,
+      fetchPage,
+      commit
+    })
+
+    coordinator.invalidate(invalidation('chat-a', 1))
+    await vi.advanceTimersByTimeAsync(10)
+    await flushMicrotasks()
+    // The connect failure settles fast: slot released, nothing committed, and
+    // no newer invalidation exists to re-arm the chat — the coordinator's own
+    // retry is the only recovery signal. This is the regression guard for the
+    // mirror equality gate: without this retry the panel would stay stale
+    // until an unrelated save.
+    expect(commit).not.toHaveBeenCalled()
+    expect(fetchPage).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    await flushMicrotasks()
+    expect(fetchPage).toHaveBeenCalledTimes(2)
+    expect(commit).toHaveBeenCalledOnce()
+    expect(commit.mock.calls[0][0]).toMatchObject({
+      generation: 1,
+      invalidation: { chatId: 'chat-a', revision: 1 }
+    })
   })
 
   it('still accepts a late page after the deadline released its slot', async () => {

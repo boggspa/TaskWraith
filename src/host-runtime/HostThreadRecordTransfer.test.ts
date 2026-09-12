@@ -22,11 +22,14 @@ import {
   HOST_THREAD_RECORD_TRANSFER_MAX_BYTES,
   HostThreadRecordTransferIntegrityError,
   HostThreadRecordTransferMissingError,
+  adoptHostThreadRecordTransferArtifact,
   consumeHostThreadRecordTransfer,
+  decodeHostThreadRecordTransferBody,
   hostThreadRecordTransferDirectory,
   hostThreadRecordTransferPath,
   publishHostThreadRecordTransfer,
   removeHostThreadRecordTransfer,
+  verifyHostThreadRecordTransfer,
   type HostThreadRecordTransferDescriptor,
   type HostThreadRecordTransferFs
 } from './HostThreadRecordTransfer'
@@ -316,7 +319,7 @@ describe('consumeHostThreadRecordTransfer', () => {
     const record = { id: 'thread-1', value: 'aaaa' }
     const descriptor = publishFixture(profile, record)
     const path = hostThreadRecordTransferPath(profile, 'transfer-1')
-    const swapped = JSON.stringify({ id: 'thread-1', value: 'bbbb' })
+    const swapped = `${JSON.stringify({ id: 'thread-1', value: 'bbbb' })}\n`
     expect(Buffer.byteLength(swapped)).toBe(descriptor.byteLength)
     writeFileSync(path, swapped, { mode: 0o600 })
 
@@ -485,5 +488,78 @@ describe('removeHostThreadRecordTransfer', () => {
     expect(() =>
       removeHostThreadRecordTransfer({ profilePath: profile, transferId: '../escape' })
     ).toThrow(HostThreadRecordTransferIntegrityError)
+  })
+})
+
+describe('verify + decode + adopt', () => {
+  it('verifies without decoding or removing, then adopts the exact inode by rename', () => {
+    const profile = createProfile()
+    const record = { id: 'thread-1', body: 'x'.repeat(4096) }
+    const descriptor = publishFixture(profile, record)
+
+    const verified = verifyHostThreadRecordTransfer({ profilePath: profile, descriptor })
+    expect(verified.descriptor).toEqual(descriptor)
+    expect(verified.body.byteLength).toBe(descriptor.byteLength)
+    // Not consumed: the artifact is still on disk under the verified inode.
+    expect(readdirSync(hostThreadRecordTransferDirectory(profile))).toEqual([
+      'transfer-1.record.json'
+    ])
+    expect(decodeHostThreadRecordTransferBody(verified.body)).toEqual(record)
+
+    const target = join(profile, 'chats-home', 'thread-1.json')
+    nodeFs.mkdirSync(join(profile, 'chats-home'), { recursive: true, mode: 0o700 })
+    expect(
+      adoptHostThreadRecordTransferArtifact({
+        path: verified.path,
+        identity: verified.identity,
+        targetPath: target
+      })
+    ).toBe(true)
+
+    expect(readdirSync(hostThreadRecordTransferDirectory(profile))).toEqual([])
+    expect(nodeFs.readFileSync(target, 'utf8')).toBe(`${JSON.stringify(record)}\n`)
+  })
+
+  it('refuses to adopt an artifact replaced between verify and adopt, leaving the replacement alone', () => {
+    const profile = createProfile()
+    const descriptor = publishFixture(profile, { id: 'thread-1', value: 'aaaa' })
+    const verified = verifyHostThreadRecordTransfer({ profilePath: profile, descriptor })
+
+    // A different inode lands at the same path after verification: write
+    // elsewhere and rename over, since overwriting in place keeps the inode
+    // and would not be a replacement at all.
+    const replacement = join(profile, 'replacement.json')
+    writeFileSync(
+      replacement,
+      `${JSON.stringify({ id: 'thread-1', value: 'bbbb' })}\n`,
+      { mode: 0o600 }
+    )
+    renameSync(replacement, verified.path)
+
+    const target = join(profile, 'chats-home', 'thread-1.json')
+    nodeFs.mkdirSync(join(profile, 'chats-home'), { recursive: true, mode: 0o700 })
+    expect(
+      adoptHostThreadRecordTransferArtifact({
+        path: verified.path,
+        identity: verified.identity,
+        targetPath: target
+      })
+    ).toBe(false)
+    expect(nodeFs.existsSync(target)).toBe(false)
+    // The stranger's file is left exactly where they put it.
+    expect(JSON.parse(nodeFs.readFileSync(verified.path, 'utf8'))).toEqual({
+      id: 'thread-1',
+      value: 'bbbb'
+    })
+  })
+
+  it('maps a missing artifact at verify time exactly like consume does', () => {
+    const profile = createProfile()
+    expect(() =>
+      verifyHostThreadRecordTransfer({
+        profilePath: profile,
+        descriptor: { transferId: 'missing', sha256: 'a'.repeat(64), byteLength: 2 }
+      })
+    ).toThrow(HostThreadRecordTransferMissingError)
   })
 })

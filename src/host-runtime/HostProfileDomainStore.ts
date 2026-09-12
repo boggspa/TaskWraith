@@ -36,6 +36,10 @@ import type { BigIntStats } from 'node:fs'
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path'
 
 import { decodeHostHistoryToolEntry } from '../shared/hostHistoryProtocol'
+import {
+  adoptHostThreadRecordTransferArtifact,
+  type HostThreadRecordTransferIdentity
+} from './HostThreadRecordTransfer'
 import type {
   HostHistorySinceRequest,
   HostHistorySinceResult,
@@ -798,6 +802,19 @@ export class HostProfileDomainStore {
   private readonly threadCacheMaxBytes: number
   private threadCacheBytes = 0
   private threadRecordReadCount = 0
+  /** Whole records actually read+parsed from disk (getThread). The persist
+   *  CAS probe's whole point is keeping this at zero on the hot path. */
+  private threadRecordDiskReadCount = 0
+  /**
+   * Last-published persistence revision per thread, keyed by the same
+   * dev:ino:mtimeNs:size:mode identity the summary cache uses. A hit answers
+   * the `thread.record.persist` CAS probe WITHOUT re-reading and re-parsing a
+   * tens-of-megabytes record: this store wrote those bytes, and any external
+   * rewrite changes the identity and falls back to a real read, exactly like a
+   * summary-cache miss. The desktop's fast path (incoming revision already
+   * stamped) makes the probe the ONLY full-record read on persist.
+   */
+  private readonly threadRevisions = new Map<string, { identity: string; revision: number }>()
   private readonly runSummarySource?: () => HostCatalogueRunWindow
   private readonly threadSummarySource?: () => readonly HostProfileThreadSummary[]
   private readonly beginThreadPublication?: HostProfileDomainStoreOptions['beginThreadPublication']
@@ -1009,11 +1026,17 @@ export class HostProfileDomainStore {
   getThread(threadId: string): HostProfileThread | null {
     this.assertAuthority()
     this.requireId(threadId)
+    this.threadRecordDiskReadCount += 1
     const raw = readOptionalJson(this.chatPath(threadId), MAX_CHAT_BYTES)
     if (raw === null) return null
     const thread = decodeThread(raw)
     if (thread.appChatId !== threadId) throw new Error('Chat identity mismatch')
     return thread
+  }
+
+  /** Whole records read+parsed from disk; the persist probe keeps this flat. */
+  get threadRecordDiskReads(): number {
+    return this.threadRecordDiskReadCount
   }
 
   /** Threads the directory sweep skipped because the record exceeds the read
@@ -1063,6 +1086,45 @@ export class HostProfileDomainStore {
    */
   private recordIdentity(stat: BigIntStats): string {
     return `${stat.dev}:${stat.ino}:${stat.mtimeNs}:${stat.size}:${stat.mode}`
+  }
+
+  private dropThreadRevision(threadId: string): void {
+    this.threadRevisions.delete(threadId)
+  }
+
+  /** Re-stat and cache the revision a just-published thread now carries on disk. */
+  private cacheThreadRevision(threadId: string, revision: number): void {
+    const stat = this.statRecord(this.chatPath(threadId))
+    if (!stat) {
+      this.threadRevisions.delete(threadId)
+      return
+    }
+    this.threadRevisions.set(threadId, { identity: this.recordIdentity(stat), revision })
+  }
+
+  /**
+   * The current on-disk persistence revision for CAS, without parsing the
+   * record when this store published it (identity-validated, same fail-closed
+   * posture as the summary cache). Returns null when the record is absent.
+   * Throws exactly as getThread does when the file is unsafe or not the
+   * claimed thread.
+   */
+  private threadRevisionFor(threadId: string): number | null {
+    const stat = this.statRecord(this.chatPath(threadId))
+    if (!stat) {
+      this.dropThreadRevision(threadId)
+      return null
+    }
+    const cached = this.threadRevisions.get(threadId)
+    if (cached && cached.identity === this.recordIdentity(stat)) return cached.revision
+    const thread = this.getThread(threadId)
+    if (!thread) {
+      this.dropThreadRevision(threadId)
+      return null
+    }
+    const revision = thread.persistenceRevision ?? 0
+    this.cacheThreadRevision(threadId, revision)
+    return revision
   }
 
   private dropThreadSummary(threadId: string): void {
@@ -1629,6 +1691,7 @@ export class HostProfileDomainStore {
         throw new Error('Profile file changed before deletion')
       }
       unlinkSync(path)
+      this.dropThreadRevision(input.threadId)
       fsyncDirectory(this.chatsPath)
       return true
     } finally {
@@ -1640,6 +1703,19 @@ export class HostProfileDomainStore {
     threadId: string
     record: unknown
     expectedRevision: number
+    /**
+     * The already-verified transfer artifact the record arrived in. When the
+     * record is revision-stamped ahead of the CAS base (the desktop fast
+     * path), the artifact bytes ARE the publishable document, so the store
+     * adopts them by inode-bound rename instead of re-serializing megabytes on
+     * its event loop. Callers that never materialize a verified artifact
+     * (tests, legacy fakes) simply omit this.
+     */
+    verifiedTransfer?: {
+      path: string
+      identity: HostThreadRecordTransferIdentity
+      byteLength: number
+    }
   }): HostProfileThread {
     this.assertAuthority()
     this.requireId(input.threadId)
@@ -1650,12 +1726,17 @@ export class HostProfileDomainStore {
     if (decoded.appChatId !== input.threadId) {
       throw new Error('Thread identity mismatch')
     }
-    const current = this.getThread(input.threadId)
-    if (current === null) {
+    // The CAS probe must read the CURRENT record's revision, but a full
+    // read+parse of a large record here is pure waste: this store is the only
+    // writer, and an identity-validated revision cache answers the probe. A
+    // miss or external rewrite falls back to the guarded read inside
+    // threadRevisionFor, fail-closed exactly as before.
+    const currentRevision = this.threadRevisionFor(input.threadId)
+    if (currentRevision === null) {
       if (input.expectedRevision !== 0) {
         throw new Error('Thread is not found')
       }
-    } else if ((current.persistenceRevision ?? 0) !== input.expectedRevision) {
+    } else if (currentRevision !== input.expectedRevision) {
       throw new Error('Thread persistence revision mismatch')
     }
     const incomingRevision =
@@ -1664,7 +1745,7 @@ export class HostProfileDomainStore {
         ? (decoded.persistenceRevision as number)
         : null
     let persistenceRevision: number
-    if (current === null) {
+    if (currentRevision === null) {
       persistenceRevision = 0
     } else if (incomingRevision !== null && incomingRevision < input.expectedRevision) {
       throw new Error('Invalid record persistence revision: cannot move backwards')
@@ -1672,8 +1753,17 @@ export class HostProfileDomainStore {
       persistenceRevision = incomingRevision
     } else {
       // Legacy complete snapshots either omit this field or echo their CAS base.
-      persistenceRevision = this.nextRevision(current)
+      if (
+        !Number.isSafeInteger(currentRevision) ||
+        currentRevision < 0 ||
+        currentRevision >= Number.MAX_SAFE_INTEGER
+      ) {
+        throw new Error('Profile persistence revision is invalid')
+      }
+      persistenceRevision = currentRevision + 1
     }
+    const adopted = this.tryAdoptVerifiedTransfer(input, decoded, persistenceRevision)
+    if (adopted) return adopted
     const next: HostProfileThread = {
       ...decoded,
       persistenceRevision,
@@ -1681,6 +1771,64 @@ export class HostProfileDomainStore {
     }
     this.writeThread(next)
     return next
+  }
+
+  /**
+   * The hot path for desktop persists: the artifact is integrity-verified
+   * (digest, size, owner-only mode, exact inode), the incoming record already
+   * carries the exact revision the CAS math produced, and the publisher
+   * serializes with the same trailing newline as atomicJson — so publishing
+   * the artifact bytes by rename produces the document atomicJson would have,
+   * without a tens-of-megabytes JSON.stringify on this loop. `updatedAt` stays
+   * the publisher's stamp: for the fast path it was written milliseconds ago
+   * on the same machine's clock.
+   */
+  private tryAdoptVerifiedTransfer(
+    input: {
+      threadId: string
+      expectedRevision: number
+      verifiedTransfer?: { path: string; identity: HostThreadRecordTransferIdentity; byteLength: number }
+    },
+    decoded: HostProfileThread,
+    persistenceRevision: number
+  ): HostProfileThread | null {
+    const transfer = input.verifiedTransfer
+    if (!transfer) return null
+    if (transfer.byteLength > MAX_CHAT_BYTES) return null
+    if (peopleDonorMutationOwned(this.profilePath)) return null
+    const incomingRevision = decoded.persistenceRevision
+    if (
+      typeof incomingRevision !== 'number' ||
+      !Number.isSafeInteger(incomingRevision) ||
+      incomingRevision < 0 ||
+      incomingRevision !== persistenceRevision ||
+      incomingRevision <= input.expectedRevision
+    ) {
+      return null
+    }
+    const published: HostProfileThread = { ...decoded, persistenceRevision }
+    const publication = this.beginThreadPublication?.(published)
+    try {
+      if (
+        !adoptHostThreadRecordTransferArtifact({
+          path: transfer.path,
+          identity: transfer.identity,
+          targetPath: this.chatPath(input.threadId)
+        })
+      ) {
+        throw new Error('Thread record transfer changed before adoption')
+      }
+      this.cacheThreadRevision(input.threadId, persistenceRevision)
+      // Admit the summary from the decoded record so the next sweep does not
+      // re-parse the adopted file just to rebuild what we already hold.
+      const stat = this.statRecord(this.chatPath(input.threadId))
+      if (stat) this.admitThreadSummary(input.threadId, stat, summarizeThread(published))
+    } catch (error) {
+      publication?.abort()
+      throw error
+    }
+    publication?.commit()
+    return published
   }
 
   appendTranscript(input: {
@@ -2121,6 +2269,7 @@ export class HostProfileDomainStore {
       throw error
     }
     publication?.commit()
+    this.cacheThreadRevision(thread.appChatId, thread.persistenceRevision ?? 0)
   }
 
   private chatPath(threadId: string): string {

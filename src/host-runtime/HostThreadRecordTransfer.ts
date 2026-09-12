@@ -27,6 +27,14 @@
  * separately could drift from the bytes it wrote; doing both here makes that
  * class of bug unrepresentable.
  *
+ * The serialized text carries the same trailing newline as the profile store's
+ * atomic JSON writer, so a verified artifact can later be ADOPTED into the
+ * chats directory by rename: the adopted file is byte-for-byte what the store
+ * would have written. `verifyHostThreadRecordTransfer` +
+ * `decodeHostThreadRecordTransferBody` + `adoptHostThreadRecordTransferArtifact`
+ * split consume into those three steps so the consumer can write the verified
+ * bytes instead of re-serializing a tens-of-megabytes record on its event loop.
+ *
  * This module is deliberately transport-neutral and carries no command wiring:
  * it is the primitive both the desktop publisher and the Host consumer share.
  */
@@ -153,6 +161,20 @@ export interface HostThreadRecordTransferConsumeResult {
   readonly removed: boolean
 }
 
+/**
+ * Everything `consumeHostThreadRecordTransfer` proves before decoding, with the
+ * verified body still on hand: the artifact a descriptor names, opened read-only,
+ * fstat-validated (regular, owner-only, exact byte length), digest-matched, and
+ * bound to the inode it was read from. The caller decides whether to decode the
+ * body or adopt the artifact file into the chats directory by rename.
+ */
+export interface HostThreadRecordTransferVerified {
+  readonly body: Buffer
+  readonly path: string
+  readonly descriptor: HostThreadRecordTransferDescriptor
+  readonly identity: HostThreadRecordTransferIdentity
+}
+
 export interface HostThreadRecordTransferRemoveOptions {
   readonly profilePath: string
   readonly transferId: string
@@ -259,14 +281,14 @@ export function publishHostThreadRecordTransfer(
 }
 
 /**
- * Validates and consumes the artifact named by the descriptor, then removes the
- * exact inode it read. Every check binds the live descriptor rather than the
- * path, so a replacement between open and unlink cannot be mistaken for the
- * artifact that was verified.
+ * Validates the artifact named by the descriptor and returns it with its
+ * verified body, WITHOUT decoding or removing it. Every check binds the live
+ * descriptor rather than the path, so a replacement between open and a later
+ * adopt/remove cannot be mistaken for the artifact that was verified.
  */
-export function consumeHostThreadRecordTransfer(
+export function verifyHostThreadRecordTransfer(
   options: HostThreadRecordTransferConsumeOptions
-): HostThreadRecordTransferConsumeResult {
+): HostThreadRecordTransferVerified {
   const fs = options.fs ?? (nodeFs as unknown as HostThreadRecordTransferFs)
   const platform = options.platform ?? process.platform
   const expected = assertDescriptor(options.descriptor)
@@ -297,6 +319,7 @@ export function consumeHostThreadRecordTransfer(
     assertRegularFile(stat, 'Host thread-record transfer artifact')
     assertOwnerOnlyMode(stat, platform, 'Host thread-record transfer artifact')
     identity = { dev: stat.dev, ino: stat.ino }
+    const identityText = describeIdentity(identity)
 
     const size = typeof stat.size === 'bigint' ? Number(stat.size) : stat.size
     if (!Number.isSafeInteger(size) || size > HOST_THREAD_RECORD_TRANSFER_MAX_BYTES) {
@@ -316,25 +339,21 @@ export function consumeHostThreadRecordTransfer(
         'Host thread-record transfer artifact digest does not match its descriptor.'
       )
     }
-
-    const record = decodeRecord(body)
     fs.closeSync(descriptor)
     descriptor = null
+    identity = null
 
-    return {
-      record,
-      descriptor: expected,
-      identity: describeIdentity(identity),
-      removed: removeExactInode(fs, platform, path, identity)
-    }
+    return { body, path, descriptor: expected, identity: identityText }
   } catch (error) {
     if (descriptor !== null) {
       fs.closeSync(descriptor)
       descriptor = null
     }
     // A verified-but-rejected artifact is removed so a poisoned transfer cannot
-    // accumulate. Only the exact inode inspected above is ever unlinked.
-    if (identity && error instanceof HostThreadRecordTransferIntegrityError) {
+    // accumulate. Only the exact inode inspected above is ever unlinked, and
+    // only once it was established: an artifact that never opened is a missing
+    // or substituted path, not ours to reap.
+    if (identity !== null && error instanceof HostThreadRecordTransferIntegrityError) {
       try {
         removeExactInode(fs, platform, path, identity)
       } catch {
@@ -344,6 +363,97 @@ export function consumeHostThreadRecordTransfer(
     throw error
   } finally {
     if (descriptor !== null) fs.closeSync(descriptor)
+  }
+}
+
+/** Decodes a verified artifact body. Kept separate from verify so a consumer that adopts the artifact by rename still pays exactly one decode. */
+export function decodeHostThreadRecordTransferBody(body: Buffer): Record<string, unknown> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(body.toString('utf8')) as unknown
+  } catch (error) {
+    throw new HostThreadRecordTransferIntegrityError(
+      'Host thread-record transfer artifact is not valid JSON.',
+      { cause: error }
+    )
+  }
+  if (!isPlainObject(parsed)) {
+    throw new HostThreadRecordTransferIntegrityError(
+      'Host thread-record transfer artifact did not decode to a plain object.'
+    )
+  }
+  return parsed
+}
+
+/**
+ * Moves a verified artifact into the profile by rename, but ONLY while the
+ * path still resolves to the exact inode that was verified. A replacement in
+ * between is left alone and reported as not adopted. The bytes were fsynced at
+ * publish; both directory entries are fsynced here so the rename itself is
+ * durable. Returns false instead of throwing when the artifact was replaced.
+ */
+export function adoptHostThreadRecordTransferArtifact(options: {
+  readonly path: string
+  readonly identity: HostThreadRecordTransferIdentity
+  readonly targetPath: string
+  readonly fs?: HostThreadRecordTransferFs
+  readonly platform?: NodeJS.Platform
+}): boolean {
+  const fs = options.fs ?? (nodeFs as unknown as HostThreadRecordTransferFs)
+  const platform = options.platform ?? process.platform
+  let current: HostThreadRecordTransferFileStat
+  try {
+    current = fs.lstatSync(options.path, { bigint: true })
+  } catch (error) {
+    if (isErrno(error, 'ENOENT')) return false
+    throw new HostThreadRecordTransferIntegrityError(
+      'Host thread-record transfer artifact could not be re-inspected before adoption.',
+      { cause: error }
+    )
+  }
+  if (!sameInode(current, { dev: BigInt(options.identity.dev), ino: BigInt(options.identity.ino) }))
+    return false
+  assertRegularFile(current, 'Host thread-record transfer artifact')
+  assertOwnerOnlyMode(current, platform, 'Host thread-record transfer artifact')
+  fs.renameSync(options.path, options.targetPath)
+  fsyncDirectory(fs, platform, parse(options.targetPath).dir)
+  fsyncDirectory(fs, platform, parse(options.path).dir)
+  return true
+}
+
+/**
+ * Validates and consumes the artifact named by the descriptor, then removes the
+ * exact inode it read. Every check binds the live descriptor rather than the
+ * path, so a replacement between open and unlink cannot be mistaken for the
+ * artifact that was verified.
+ */
+export function consumeHostThreadRecordTransfer(
+  options: HostThreadRecordTransferConsumeOptions
+): HostThreadRecordTransferConsumeResult {
+  const fs = options.fs ?? (nodeFs as unknown as HostThreadRecordTransferFs)
+  const platform = options.platform ?? process.platform
+  const verified = verifyHostThreadRecordTransfer({ ...options, fs, platform })
+  const identity = { dev: BigInt(verified.identity.dev), ino: BigInt(verified.identity.ino) }
+
+  try {
+    const record = decodeHostThreadRecordTransferBody(verified.body)
+    return {
+      record,
+      descriptor: verified.descriptor,
+      identity: verified.identity,
+      removed: removeExactInode(fs, platform, verified.path, identity)
+    }
+  } catch (error) {
+    // A verified-but-rejected artifact is removed so a poisoned transfer cannot
+    // accumulate. Only the exact inode inspected above is ever unlinked.
+    if (error instanceof HostThreadRecordTransferIntegrityError) {
+      try {
+        removeExactInode(fs, platform, verified.path, identity)
+      } catch {
+        // Cleanup is best-effort; the integrity failure is the reportable fault.
+      }
+    }
+    throw error
   }
 }
 
@@ -460,25 +570,10 @@ function serializeRecord(record: unknown): Buffer {
       'Host thread-record transfer record did not serialize to JSON text.'
     )
   }
-  return Buffer.from(serialized, 'utf8')
-}
-
-function decodeRecord(body: Buffer): Record<string, unknown> {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(body.toString('utf8')) as unknown
-  } catch (error) {
-    throw new HostThreadRecordTransferIntegrityError(
-      'Host thread-record transfer artifact is not valid JSON.',
-      { cause: error }
-    )
-  }
-  if (!isPlainObject(parsed)) {
-    throw new HostThreadRecordTransferIntegrityError(
-      'Host thread-record transfer artifact did not decode to a plain object.'
-    )
-  }
-  return parsed
+  // The profile store's atomic writer appends a trailing newline; matching it
+  // here lets a verified artifact be adopted into the chats directory by
+  // rename, byte-for-byte what the store would have written.
+  return Buffer.from(`${serialized}\n`, 'utf8')
 }
 
 function prepareTransferDirectory(
