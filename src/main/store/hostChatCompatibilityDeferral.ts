@@ -32,8 +32,11 @@
 
 /** Records at or above this size defer their compatibility checkpoint. */
 export const DEFERRED_HOST_MATERIALIZE_MIN_BYTES = 4 * 1024 * 1024
-/** Trailing coalescing window for deferred checkpoints. */
-export const DEFERRED_HOST_MATERIALIZE_DELAY_MS = 2_000
+/** Trailing coalescing window for deferred checkpoints. Kept above the
+ *  renderer's post-save pull window: the panel refresh and any pull issued ~1 s
+ *  after a save must be able to finish before the checkpoint's Host-side parse
+ *  begins, or they queue behind a multi-second event-loop block. */
+export const DEFERRED_HOST_MATERIALIZE_DELAY_MS = 5_000
 
 export interface DeferredHostMaterializationOptions {
   /** Flush one staged checkpoint now. Return value is advisory only. */
