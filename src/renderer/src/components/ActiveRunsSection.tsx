@@ -10,6 +10,9 @@ import { isEnsembleRoundPresentationLive } from '../../../shared/ensembleRoundLi
 import { getProviderLabel } from '../lib/providerLabels'
 import { isRunQueueJobVisibleForChat } from '../lib/runningChatVisibility'
 import { useSharedNowTick } from '../hooks/useSharedNowTick'
+import { useHostProjection } from '../hooks/useHostProjection'
+import { useHostProjectionStore } from './HostProjectionProvider'
+import type { HostProjectionState } from '../lib/host/HostProjectionStore'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { SidebarOverflowMenu } from './SidebarOverflowMenu'
 import {
@@ -38,6 +41,12 @@ interface ActiveRunEntry {
   job: RunQueueJob
   chat: ChatRecord
   isTransitionFallback: boolean
+  /** Backed by the live Host projection, not a renderer queue job: the round
+   * or run is Host-owned, so no queue poll or activeRunsRef entry sees it. */
+  isHostProjection?: boolean
+  /** Set when the entry is backed by a live Host ensemble round — the stop
+   * affordance targets that round through the durable cancel path. */
+  hostRoundId?: string
 }
 
 export type ActiveRunsSurface = 'chat' | 'code' | 'work'
@@ -99,11 +108,36 @@ export function ActiveRunsSection({
   // advance, so the section neither joins the shared 1s tick (a Sync-lane
   // rerender every second) nor refetches the run queue on it. The chats /
   // runningKey / focus refreshes below still run, so a newly queued job
-  // re-arms the tick on its next poll.
+  // re-arms the tick on its next poll. Host-projection entries are exempt on
+  // purpose: they rerender from the projection store's own subscription, so
+  // a Host-owned round never needs this tick to stay current.
   const nowTick = useSharedNowTick(jobs.length > 0 || runningChatIds.length > 0)
   const hasObservedTick = useRef(false)
   const workChatIdSet = useMemo(() => new Set(workChatIds), [workChatIds])
   const runningKey = runningChatIds.join('|')
+  const hostProjectionStore = useHostProjectionStore()
+  // refreshOnMount=false: the provider's continuity loop already polls Host —
+  // a sidebar mount must not trigger an extra snapshot fetch of its own.
+  const hostProjection = useHostProjection(hostProjectionStore, false)
+  const [stopPendingChatIds, setStopPendingChatIds] = useState<ReadonlySet<string>>(new Set())
+
+  const handleStopHostRound = useCallback(async (chat: ChatRecord) => {
+    if (typeof window.api?.cancelEnsembleRound !== 'function') return
+    setStopPendingChatIds((current) => new Set(current).add(chat.appChatId))
+    try {
+      await window.api.cancelEnsembleRound(chat.appChatId)
+    } catch {
+      // The durable cancel lives in main; a rejected invoke leaves the round
+      // live and the next Host projection poll keeps listing it. Never paint
+      // the round as stopped on a failed call.
+    } finally {
+      setStopPendingChatIds((current) => {
+        const next = new Set(current)
+        next.delete(chat.appChatId)
+        return next
+      })
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     if (typeof window.api.getRunQueueJobs !== 'function') return
@@ -152,9 +186,10 @@ export function ActiveRunsSection({
         jobs,
         chats,
         surface,
-        workChatIds: workChatIdSet
+        workChatIds: workChatIdSet,
+        hostProjection
       }),
-    [chats, jobs, nowTick, surface, workChatIdSet]
+    [chats, jobs, nowTick, surface, workChatIdSet, hostProjection]
   )
 
   // 1.0.6 — persistent section: always render (so it permanently occupies the
@@ -191,7 +226,7 @@ export function ActiveRunsSection({
               <span>No active runs</span>
             </div>
           )}
-          {visibleJobs.map(({ job, chat, isTransitionFallback }) => {
+          {visibleJobs.map(({ job, chat, isTransitionFallback, isHostProjection, hostRoundId }) => {
             const isCurrent = currentChat?.appChatId === chat.appChatId
             const isRunning = isTransitionFallback || job.status !== 'queued'
             const provider = getActiveRunThreadProvider(chat)
@@ -224,13 +259,25 @@ export function ActiveRunsSection({
                     <span className="sidebar-run-status tone-muted">Queued</span>
                   )}
                 </button>
+                {isHostProjection && hostRoundId && (
+                  <button
+                    type="button"
+                    className="sidebar-active-run-board-action sidebar-active-run-stop-action"
+                    onClick={() => void handleStopHostRound(chat)}
+                    disabled={stopPendingChatIds.has(chat.appChatId)}
+                    title="Stop round"
+                    aria-label={`Stop the live round on ${title}`}
+                  >
+                    ■
+                  </button>
+                )}
                 {onOpenChatPopout && (
                   <SidebarOverflowMenu
                     triggerLabel="Thread actions"
                     items={createSidebarChatPopoutActions(chat, onOpenChatPopout)}
                   />
                 )}
-                {!isTransitionFallback && onAddRunQueueJobToWorkspaceBoard && job.workspaceId && (
+                {!isTransitionFallback && !isHostProjection && onAddRunQueueJobToWorkspaceBoard && job.workspaceId && (
                   <button
                     type="button"
                     className="sidebar-active-run-board-action"
@@ -255,6 +302,7 @@ export function deriveVisibleActiveRunEntries(input: {
   chats: readonly ChatRecord[]
   surface?: ActiveRunsSurface
   workChatIds?: ReadonlySet<string>
+  hostProjection?: HostActiveRunsProjection | null
 }): ActiveRunEntry[] {
   const workChatIds = input.workChatIds || new Set<string>()
   const chatsById = new Map(input.chats.map((chat) => [chat.appChatId, chat]))
@@ -270,6 +318,15 @@ export function deriveVisibleActiveRunEntries(input: {
       continue
     }
     addVisibleActiveRunEntry(visible, { job, chat, isTransitionFallback: false })
+  }
+
+  for (const entry of deriveHostProjectionActiveRunEntries({
+    hostProjection: input.hostProjection,
+    chats: input.chats,
+    surface: input.surface,
+    workChatIds
+  })) {
+    addVisibleActiveRunEntry(visible, entry)
   }
 
   for (const directChat of input.chats) {
@@ -380,6 +437,123 @@ function transitionFallbackEntry(
     startedAt: round.startedAt
   }
   return { job, isTransitionFallback: true }
+}
+
+/** The slice of renderer Host projection state this surface reads. */
+export type HostActiveRunsProjection = Pick<HostProjectionState, 'status' | 'projection'>
+
+/**
+ * Host-owned activity → Active Runs entries at the user's thread granularity.
+ *
+ * A Host-dispatched ensemble round (or solo Host run) never creates a renderer
+ * queue job and never lands in activeRunsRef, so without this the section
+ * paints "No active runs" while a Host-owned round is live. Rounds win over
+ * individual runs on the same thread, and one thread yields at most one entry
+ * — six participant runs of one round are one row, not six.
+ *
+ * Honesty rule: only a successfully-synced projection (`live`, or `loading`
+ * with a retained projection) yields entries. An `unavailable` store keeps its
+ * last projection as a cache, and a stale cache must not paint a killswitch
+ * for a round Host may already have finished.
+ */
+export function deriveHostProjectionActiveRunEntries(input: {
+  hostProjection: HostActiveRunsProjection | null | undefined
+  chats: readonly ChatRecord[]
+  surface?: ActiveRunsSurface
+  workChatIds?: ReadonlySet<string>
+}): ActiveRunEntry[] {
+  const state = input.hostProjection
+  if (!state || (state.status !== 'live' && state.status !== 'loading')) return []
+  const projection = state.projection
+  if (!projection) return []
+
+  const workChatIds = input.workChatIds || new Set<string>()
+  const chatsById = new Map(input.chats.map((chat) => [chat.appChatId, chat]))
+  const entries: ActiveRunEntry[] = []
+  const coveredChatIds = new Set<string>()
+
+  const addHostEntry = (entry: {
+    threadId: string
+    id: string
+    runId: string
+    startedAt?: number
+    hostRoundId?: string
+  }): void => {
+    const directChat = chatsById.get(entry.threadId)
+    if (!directChat) return
+    const chat = resolveActiveRunParentThread(directChat, chatsById)
+    if (!chat || coveredChatIds.has(chat.appChatId)) return
+    const job = hostProjectionRunQueueJob({
+      id: entry.id,
+      runId: entry.runId,
+      chat: directChat,
+      startedAt: entry.startedAt
+    })
+    if (input.surface && !isActiveRunVisibleOnSurface(job, chat, input.surface, workChatIds)) {
+      return
+    }
+    entries.push({
+      job,
+      chat,
+      isTransitionFallback: false,
+      isHostProjection: true,
+      ...(entry.hostRoundId ? { hostRoundId: entry.hostRoundId } : {})
+    })
+    coveredChatIds.add(chat.appChatId)
+  }
+
+  for (const round of projection.rounds) {
+    if (round.status !== 'running') continue
+    addHostEntry({
+      threadId: round.threadId,
+      id: `host-round:${round.roundId}`,
+      runId: round.providerRunIds[0] || round.roundId,
+      startedAt: round.startedAt,
+      hostRoundId: round.roundId
+    })
+  }
+
+  for (const run of projection.runs) {
+    if (run.providerOutcome !== 'running') continue
+    addHostEntry({
+      threadId: run.threadId,
+      id: `host-run:${run.runId}`,
+      runId: run.runId,
+      startedAt: run.startedAt
+    })
+  }
+
+  return entries
+}
+
+/** Synthetic presentation-only job for a Host-projection entry. Never
+ * persisted and never leased — the Host journal stays the run's authority. */
+function hostProjectionRunQueueJob(input: {
+  id: string
+  runId: string
+  chat: ChatRecord
+  startedAt?: number
+}): RunQueueJob {
+  const startedAt =
+    typeof input.startedAt === 'number' && Number.isFinite(input.startedAt) && input.startedAt > 0
+      ? new Date(input.startedAt).toISOString()
+      : undefined
+  return {
+    id: input.id,
+    runId: input.runId,
+    provider: input.chat.provider || 'gemini',
+    scope: input.chat.scope,
+    workspaceId: input.chat.workspaceId,
+    workspacePath: input.chat.workspacePath,
+    chatId: input.chat.appChatId,
+    source: 'system',
+    status: 'active',
+    priority: 0,
+    attempt: 1,
+    createdAt: startedAt || '',
+    updatedAt: startedAt || '',
+    ...(startedAt ? { startedAt } : {})
+  }
 }
 
 function isJobBackedByLiveChat(job: RunQueueJob, chat: ChatRecord | undefined): boolean {

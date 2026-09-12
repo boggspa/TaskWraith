@@ -726,6 +726,20 @@
   outline: none;
 }
 
+.sidebar-active-run-stop-action {
+  background: color-mix(in srgb, var(--danger, #f87171) 14%, transparent);
+}
+
+.sidebar-active-run-stop-action:hover,
+.sidebar-active-run-stop-action:focus-visible {
+  background: color-mix(in srgb, var(--danger, #f87171) 24%, transparent);
+}
+
+.sidebar-active-run-stop-action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .sidebar-active-run-provider {
   flex: 0 0 auto;
   max-width: 92px;
