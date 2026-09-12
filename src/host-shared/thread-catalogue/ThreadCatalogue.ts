@@ -253,15 +253,15 @@ export class ThreadCatalogue {
         fd = openTemporary()
       } catch (error) {
         if (
-          (error as NodeJS.ErrnoException).code !== 'ENOENT' ||
+          !['ENOENT', 'EINVAL'].includes((error as NodeJS.ErrnoException).code ?? '') ||
           !retryMissingDirectory ||
           this.filePresence(directory) !== 'missing' ||
           !retryMissingDirectory()
         )
           throw error
-        // Resolution acknowledgement may have retired an empty legacy
-        // namespace after ensureDurableDirectory returned. Recreate it once,
-        // then revalidate before the second and final open attempt.
+        // APFS can report ENOENT or EINVAL when resolution acknowledgement
+        // retires this empty namespace after ensureDurableDirectory returned.
+        // Recreate it once, then revalidate before the final open attempt.
         this.durableDirectories.delete(directory)
         this.ensureDurableDirectory(directory)
         if (!retryMissingDirectory()) throw error

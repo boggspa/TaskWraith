@@ -332,7 +332,7 @@ describe('durable thread catalogue publication', () => {
     expect(fs.existsSync(pendingDirectory)).toBe(false)
   })
 
-  it('preserves a temporary-open EINVAL without retrying publication', () => {
+  it('retries a temporary-open EINVAL when its exact parent disappeared', () => {
     const source = catalogue()
     const resolver = catalogue()
     expect(finish(source, source.beginPublication('chat'))).toBe(true)
@@ -343,11 +343,40 @@ describe('durable thread catalogue publication', () => {
 
     const pendingDirectory = join(source.directory, 'pending', 'desktop', 'chat')
     let attempts = 0
+    openTemporary = (file) => {
+      if (dirname(file) !== pendingDirectory) return fs.openSync(file, 'wx', 0o600)
+      attempts += 1
+      if (attempts === 1) {
+        fs.rmSync(pendingDirectory, { recursive: true, force: true })
+        throw Object.assign(new Error('invalid open argument'), {
+          code: 'EINVAL',
+          errno: -22,
+          syscall: 'open',
+          path: file
+        })
+      }
+      return fs.openSync(file, 'wx', 0o600)
+    }
+    const ticket = source.beginPublication('chat')
+    openTemporary = undefined
+
+    expect(attempts).toBe(2)
+    expect(finish(source, ticket)).toBe(true)
+    expect(resolver.publishResolution(resolution(resolver))).toBe(true)
+    const repaired = resolver.read('chat')
+    if (repaired.status !== 'ready') throw new Error('not ready')
+    expect(resolver.acknowledgeResolution('chat', repaired.publicationId)).toBe(true)
+    expect(resolver.repairChatIds()).toEqual([])
+  })
+
+  it('preserves a temporary-open EINVAL while its exact parent remains present', () => {
+    const source = catalogue()
+    const pendingDirectory = join(source.directory, 'pending', 'desktop', 'chat')
+    let attempts = 0
     let injected: NodeJS.ErrnoException | undefined
     openTemporary = (file) => {
       if (dirname(file) !== pendingDirectory) return fs.openSync(file, 'wx', 0o600)
       attempts += 1
-      fs.rmSync(pendingDirectory, { recursive: true, force: true })
       injected = Object.assign(new Error('invalid open argument'), {
         code: 'EINVAL',
         errno: -22,
@@ -372,7 +401,39 @@ describe('durable thread catalogue publication', () => {
     })
     expect(dirname(observed?.path ?? '')).toBe(pendingDirectory)
     expect(attempts).toBe(1)
+    expect(fs.existsSync(pendingDirectory)).toBe(true)
+  })
+
+  it('surfaces the second EINVAL after one missing-parent retry', () => {
+    const source = catalogue()
+    const pendingDirectory = join(source.directory, 'pending', 'desktop', 'chat')
+    let attempts = 0
+    let injected: NodeJS.ErrnoException | undefined
+    openTemporary = (file) => {
+      if (dirname(file) !== pendingDirectory) return fs.openSync(file, 'wx', 0o600)
+      attempts += 1
+      fs.rmSync(pendingDirectory, { recursive: true, force: true })
+      injected = Object.assign(new Error(`invalid open argument ${attempts}`), {
+        code: 'EINVAL',
+        errno: -22,
+        syscall: 'open',
+        path: file
+      })
+      throw injected
+    }
+    let observed: NodeJS.ErrnoException | undefined
+    try {
+      source.beginPublication('chat')
+    } catch (error) {
+      observed = error as NodeJS.ErrnoException
+    }
+    openTemporary = undefined
+
+    expect(attempts).toBe(2)
+    expect(observed).toBe(injected)
+    expect(observed?.message).toBe('invalid open argument 2')
     expect(fs.existsSync(pendingDirectory)).toBe(false)
+    expect(source.hasOutstandingPublication('chat')).toBe(false)
   })
 
   afterEach(() => fs.rmSync(profile, { recursive: true, force: true }))
