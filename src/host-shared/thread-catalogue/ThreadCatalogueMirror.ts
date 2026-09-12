@@ -73,18 +73,19 @@ export function catalogueProjectionDataEqual(a: unknown, b: unknown): boolean {
 
 /**
  * True when re-applying `next` would present exactly what `previous` already
- * presents: same revision/row content and same source witness. Used to keep
- * the per-row apply idempotent — the poll re-applies indexed rows every pass,
- * and without this each pass fanned listeners out again.
+ * presents: same revision/row content. Used to keep the per-row apply
+ * idempotent — the poll re-applies indexed rows every pass, and without this
+ * each pass fanned listeners out again. The source witness is deliberately
+ * NOT compared: listeners receive `(row, chatId)` and no witness, so a
+ * witness-only change (e.g. the deferred Host checkpoint rewriting the file
+ * minutes after the edit) produces a byte-identical notification — pure
+ * noise the renderer's refresh coordinator would treat as new work.
  */
 export function catalogueProjectionReapplyEqual(
   previous: ThreadCatalogueProjection,
-  previousWitness: string | undefined,
-  next: ThreadCatalogueProjection,
-  nextWitness: string | undefined
+  next: ThreadCatalogueProjection
 ): boolean {
   return (
-    (previousWitness ?? undefined) === (nextWitness ?? undefined) &&
     previous.sourceComplete === next.sourceComplete &&
     previous.revision === next.revision &&
     catalogueProjectionDataEqual(previous.summary, next.summary) &&
@@ -154,15 +155,15 @@ export class ThreadCatalogueMirror {
   private apply(projection: ThreadCatalogueProjection, witness?: string): void {
     const chatId = projection.summary.chatId
     const previous = this.rows.get(chatId)
-    if (
-      previous &&
-      catalogueProjectionReapplyEqual(previous, this.witnesses.get(chatId), projection, witness)
-    ) {
+    if (previous && catalogueProjectionReapplyEqual(previous, projection)) {
       // The poll re-applies indexed rows every pass; a same-content apply is
       // not news and must not fan listeners out again. One save produced 5-8
       // saveless invalidations purely through these duplicates, and the
       // renderer's refresh coordinator owns bounded retries now, so a
-      // genuinely lost pull no longer depends on the storm to re-arm.
+      // genuinely lost pull no longer depends on the storm to re-arm. The
+      // witness still updates below — only the fan-out is gated.
+      if (witness) this.witnesses.set(chatId, witness)
+      else this.witnesses.delete(chatId)
       return
     }
     if (witness) this.witnesses.set(chatId, witness)

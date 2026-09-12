@@ -394,6 +394,39 @@ describe('PagedChatUpdateRefreshCoordinator', () => {
     expect(coordinator.stats().inFlight).toBe(1)
   })
 
+  it('gives up on a pull whose promise never settles and recovers via the bounded retry', async () => {
+    // Transport pathology: the Host accepts the connection then wedges, the
+    // request frame never answers, and the invoke sits on the transport's own
+    // 30 s timer. Without a settle bound the panel waits out all 30 s and
+    // every retry queues behind the same stuck invoke.
+    let calls = 0
+    const commit = vi.fn<(value: PagedChatUpdateRefreshCommit) => void>()
+    const coordinator = new PagedChatUpdateRefreshCoordinator({
+      debounceMs: 10,
+      fetchDeadlineMs: 60_000,
+      fetchSettleTimeoutMs: 1_000,
+      fetchPage: () => {
+        calls += 1
+        return calls === 1 ? new Promise<TranscriptPage | null>(() => {}) : Promise.resolve(page('chat-a', 1))
+      },
+      commit
+    })
+
+    coordinator.invalidate(invalidation('chat-a', 1))
+    await vi.advanceTimersByTimeAsync(10)
+    await flushMicrotasks()
+    expect(calls).toBe(1)
+    expect(commit).not.toHaveBeenCalled()
+
+    // The stuck pull rejects at the settle bound; the retry pull lands and
+    // commits — recovery stays on the coordinator's cadence, not the
+    // transport's 30 s timer.
+    await vi.advanceTimersByTimeAsync(6_500)
+    await flushMicrotasks()
+    expect(calls).toBe(2)
+    expect(commit).toHaveBeenCalledOnce()
+  })
+
   it('reports behind until a commit actually publishes', async () => {
     const flight = deferred<TranscriptPage | null>()
     const coordinator = new PagedChatUpdateRefreshCoordinator({
@@ -409,12 +442,13 @@ describe('PagedChatUpdateRefreshCoordinator', () => {
     expect(coordinator.stats().behind).toBe(0)
   })
 
-  it('deadline can be disabled with 0, restoring the old unbounded wait', async () => {
+  it('deadline and settle timeout can be disabled with 0, restoring the old unbounded wait', async () => {
     const stuck = deferred<TranscriptPage | null>()
     const fetchPage = vi.fn(() => stuck.promise)
     const coordinator = new PagedChatUpdateRefreshCoordinator({
       debounceMs: 0,
       fetchDeadlineMs: 0,
+      fetchSettleTimeoutMs: 0,
       fetchPage,
       commit: () => {}
     })

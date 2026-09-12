@@ -275,17 +275,32 @@ describe('ThreadCatalogueMirror re-apply equality gate', () => {
     expect(notifications).toEqual(['chat-one:same'])
   })
 
-  it('still notifies when content changes, when only the witness changes, and on removal', () => {
+  it('still notifies when content changes and on removal, but not for a witness-only re-apply', () => {
     const mirror = new ThreadCatalogueMirror(neverPort())
     const notifications: Array<string | null> = []
     mirror.subscribe((row, chatId) => notifications.push(row ? `${chatId}:${row.summary.title}` : `${chatId}:removed`))
 
     mirror.observe(projection('one', 1), 'witness-a')
     mirror.observe(projection('two', 2), 'witness-a')
+    // A witness-only change (e.g. the deferred Host checkpoint rewriting the
+    // file after the edit) carries no new information to listeners — the
+    // payload is (row, chatId) with no witness — so it must not fan out.
     mirror.observe(projection('two', 2), 'witness-b')
     mirror.forget('chat-one')
 
-    expect(notifications).toEqual(['chat-one:one', 'chat-one:two', 'chat-one:two', 'chat-one:removed'])
+    expect(notifications).toEqual(['chat-one:one', 'chat-one:two', 'chat-one:removed'])
+    // The witness bookkeeping still advanced for consumers that read it.
+    expect(mirror.sourceWitnessFor('chat-one')).toBeUndefined() // removed
+  })
+
+  it('advances the stored witness on a witness-only re-apply without notifying', () => {
+    const mirror = new ThreadCatalogueMirror(neverPort())
+    const notifications: string[] = []
+    mirror.subscribe((_row, chatId) => notifications.push(chatId))
+    mirror.observe(projection('same', 1), 'witness-a')
+    mirror.observe(projection('same', 1), 'witness-b')
+    expect(notifications).toEqual(['chat-one'])
+    expect(mirror.sourceWitnessFor('chat-one')).toBe('witness-b')
   })
 })
 describe('ThreadCatalogueMirror local streaming isolation', () => {

@@ -22,6 +22,18 @@ export const DEFAULT_PAGED_CHAT_UPDATE_DEBOUNCE_MS = 50
 export const DEFAULT_PAGED_CHAT_UPDATE_FETCH_DEADLINE_MS = 10_000
 
 /**
+ * Hard upper bound on how long one pull's PROMISE may stay unsettled. The
+ * fetch deadline above releases the flight slot, but a pull whose transport
+ * request is lost (the Host accepted the connection then wedged — the socket
+ * request frame never answers) would otherwise await its transport-internal
+ * 30 s timeout, and every bounded retry behind it queues on the same stuck
+ * invoke: the panel stays stale for half a minute. Racing the pull with this
+ * bound lets the retry cadence own recovery; a late response is dropped by
+ * the generation guards, never committed twice.
+ */
+export const DEFAULT_PAGED_CHAT_UPDATE_FETCH_SETTLE_TIMEOUT_MS = 12_000
+
+/**
  * How long to wait before retrying a pull that failed with nothing newer
  * waiting. Bounded and delayed: retrying immediately would pile fetches onto
  * the very stall we are recovering from, and an unbounded retry would loop
@@ -51,6 +63,8 @@ export interface PagedChatUpdateRefreshCoordinatorOptions {
   debounceMs?: number
   /** Releases the per-chat flight slot when a pull overruns. 0 disables. */
   fetchDeadlineMs?: number
+  /** Hard bound on one pull promise staying unsettled. 0 disables. */
+  fetchSettleTimeoutMs?: number
   maxMessages?: number
   maxBytes?: number
   maxTrackedChats?: number
@@ -112,6 +126,7 @@ export class PagedChatUpdateRefreshCoordinator {
   private readonly commit: (value: PagedChatUpdateRefreshCommit) => void
   private readonly debounceMs: number
   private readonly fetchDeadlineMs: number
+  private readonly fetchSettleTimeoutMs: number
   private readonly retryDelayMs: number
   private readonly maxRetryAttempts: number
   private readonly maxMessages: number
@@ -134,6 +149,11 @@ export class PagedChatUpdateRefreshCoordinator {
       typeof options.fetchDeadlineMs === 'number' && Number.isFinite(options.fetchDeadlineMs)
         ? Math.max(0, Math.floor(options.fetchDeadlineMs))
         : DEFAULT_PAGED_CHAT_UPDATE_FETCH_DEADLINE_MS
+    this.fetchSettleTimeoutMs =
+      typeof options.fetchSettleTimeoutMs === 'number' &&
+      Number.isFinite(options.fetchSettleTimeoutMs)
+        ? Math.max(0, Math.floor(options.fetchSettleTimeoutMs))
+        : DEFAULT_PAGED_CHAT_UPDATE_FETCH_SETTLE_TIMEOUT_MS
     this.retryDelayMs = DEFAULT_PAGED_CHAT_UPDATE_RETRY_DELAY_MS
     this.maxRetryAttempts = MAX_PAGED_CHAT_UPDATE_RETRY_ATTEMPTS
     this.maxMessages = boundedPositiveInteger(
@@ -308,6 +328,31 @@ export class PagedChatUpdateRefreshCoordinator {
     void this.runFetch(state, invalidation, generation, isImmediateRetry)
   }
 
+  /**
+   * Bound how long one pull may stay unsettled. A pull whose transport frame
+   * is lost would otherwise sit on the transport's own 30 s timer and starve
+   * every bounded retry queued behind it. Rejecting early drops the late
+   * response: the runFetch generation guards never see it.
+   */
+  private withFetchSettleTimeout<T>(fetch: Promise<T>): Promise<T> {
+    if (this.fetchSettleTimeoutMs <= 0) return fetch
+    return new Promise<T>((resolve, reject) => {
+      const timer = this.setTimer(() => {
+        reject(new Error('Paged chat refresh fetch did not settle.'))
+      }, this.fetchSettleTimeoutMs)
+      fetch.then(
+        (value) => {
+          this.clearTimer(timer)
+          resolve(value)
+        },
+        (error) => {
+          this.clearTimer(timer)
+          reject(error)
+        }
+      )
+    })
+  }
+
   private async runFetch(
     state: RefreshState,
     invalidation: ChatUpdateInvalidation,
@@ -316,11 +361,13 @@ export class PagedChatUpdateRefreshCoordinator {
   ): Promise<void> {
     let page: TranscriptPage | null = null
     try {
-      page = await this.fetchPage({
-        chatId: invalidation.chatId,
-        maxMessages: this.maxMessages,
-        maxBytes: this.maxBytes
-      })
+      page = await this.withFetchSettleTimeout(
+        this.fetchPage({
+          chatId: invalidation.chatId,
+          maxMessages: this.maxMessages,
+          maxBytes: this.maxBytes
+        })
+      )
     } catch {
       // The next invalidation is the retry signal; keep the current window.
     }
