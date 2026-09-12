@@ -345,6 +345,64 @@ export function copyThreadCatalogueChrome(value: unknown): ThreadCatalogueChrome
   return (copy(value, CHROME_FIELDS, { bytes: 40 * 1024 }) ?? {}) as ThreadCatalogueChrome
 }
 
+export interface CatalogueSearchScanMessage {
+  role?: unknown
+  content?: unknown
+  timestamp?: unknown
+}
+
+export interface CatalogueSearchScan {
+  /** Last non-empty message content (any role), tail-ward, 1024 chars. */
+  preview: string
+  /** Up to 8 recent non-empty contents (any role), 180 chars each, tail-ward. */
+  recent: string[]
+  lastUserMessageAt?: number
+}
+
+/**
+ * ONE tail-scan rule shared by the desktop and Host catalogue projections.
+ * The mirror's equality gate compares rows across the two projections, so any
+ * drift here fans a saveless invalidation out to every renderer: keep the
+ * rule (role filter for the preview, empty-content handling, break condition)
+ * in exactly one place.
+ */
+export function computeThreadCatalogueSearchScan(
+  messages: readonly CatalogueSearchScanMessage[]
+): CatalogueSearchScan {
+  let lastUserMessageAt: number | undefined
+  let preview = ''
+  const recent: string[] = []
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!
+    const content =
+      typeof message.content === 'string' && message.content.length > 0 ? message.content : null
+    if (!preview && content) preview = content.slice(0, 1024)
+    if (recent.length < 8 && content) recent.push(content.slice(0, 180))
+    if (message.role === 'user' && lastUserMessageAt === undefined) {
+      const at = Date.parse(String(message.timestamp ?? ''))
+      if (Number.isFinite(at)) lastUserMessageAt = at
+    }
+    if (preview && recent.length >= 8 && lastUserMessageAt !== undefined) break
+  }
+  return {
+    preview,
+    recent,
+    ...(lastUserMessageAt !== undefined ? { lastUserMessageAt } : {})
+  }
+}
+
+export function buildThreadCatalogueSearchText(parts: {
+  title: unknown
+  provider: unknown
+  chatId: unknown
+  recent: readonly string[]
+}): string {
+  return [parts.title, parts.provider, parts.chatId, ...parts.recent]
+    .filter(Boolean)
+    .join(' ')
+    .slice(0, 4096)
+}
+
 export function copyThreadCatalogueLastRun(value: unknown): ThreadCatalogueRun {
   return copy(value, THREAD_CATALOGUE_RUN_FIELDS, { bytes: 8 * 1024 }) as ThreadCatalogueRun
 }

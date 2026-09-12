@@ -1517,6 +1517,51 @@ describe('HostProfileDomainStore', () => {
 
     expect(record!.messages.map((message) => message.content)).toEqual(['body'])
   })
+
+  it('warms a cold corpus within a per-pass parse budget instead of one whole-corpus read', () => {
+    const profile = mkdtempSync(join(tmpdir(), 'host-profile-domain-sweep-budget-'))
+    profiles.push(profile)
+    const chats = join(profile, HOST_PROFILE_CHATS_DIRECTORY)
+    mkdirSync(chats, { recursive: true, mode: 0o700 })
+    const SIZE = 4096
+    for (const id of ['t1', 't2', 't3', 't4', 't5', 't6']) {
+      // Equal byte sizes (same-length ids and contents) so the budget admits
+      // a deterministic count per pass regardless of directory order.
+      const body = JSON.stringify({
+        appChatId: id,
+        scope: 'global',
+        title: id,
+        archived: false,
+        messages: [
+          {
+            id: 'm1',
+            role: 'user',
+            content: 'x'.repeat(SIZE),
+            timestamp: '2026-09-12T00:00:00.000Z'
+          }
+        ],
+        updatedAt: 1
+      })
+      writeFileSync(join(chats, `${id}.json`), body, { mode: 0o600 })
+    }
+    const authority = { assertProfileAuthority: vi.fn() }
+    const store = new HostProfileDomainStore({
+      profilePath: profile,
+      authority,
+      threadSweepParseBudgetBytes: Math.floor(SIZE * 2.5)
+    })
+
+    // Pass 1 admits two of six; the loop stays responsive and the rest retry.
+    expect(store.listThreadSummaries()).toHaveLength(2)
+    expect(store.threadRecordReads).toBe(2)
+    expect(store.listThreadSummaries()).toHaveLength(4)
+    expect(store.threadRecordReads).toBe(4)
+    expect(store.listThreadSummaries()).toHaveLength(6)
+    expect(store.threadRecordReads).toBe(6)
+    // Warm passes are pure identity hits — zero additional parses.
+    store.listThreadSummaries()
+    expect(store.threadRecordReads).toBe(6)
+  })
 })
 
 describe('HostProfileDomainStore verified-transfer adoption', () => {

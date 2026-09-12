@@ -6,6 +6,8 @@ import type {
 import type { ThreadCatalogueMirror } from '../host-shared/thread-catalogue/ThreadCatalogueMirror'
 import type { ThreadCatalogueClient } from '../host-shared/thread-catalogue/ThreadCatalogueClient'
 import {
+  buildThreadCatalogueSearchText,
+  computeThreadCatalogueSearchScan,
   copyThreadCatalogueChrome,
   copyThreadCatalogueLastRun
 } from '../host-shared/thread-catalogue/ThreadCatalogueChrome'
@@ -71,30 +73,17 @@ function taskStatus(
 
 function localChrome(thread: HostProfileThread): ReturnType<typeof copyThreadCatalogueChrome> {
   const chrome = copyThreadCatalogueChrome(thread)
-  const recent: string[] = []
-  let preview = ''
-  let lastUserMessageAt: number | undefined
-  for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
-    const message = thread.messages[index]!
-    if (
-      !preview &&
-      (message.role === 'user' || message.role === 'assistant' || message.role === 'system') &&
-      message.content
-    )
-      preview = message.content.slice(0, 1024)
-    if (recent.length < 8 && message.content) recent.push(message.content.slice(0, 180))
-    if (message.role === 'user' && lastUserMessageAt === undefined) {
-      const at = Date.parse(message.timestamp)
-      if (Number.isFinite(at)) lastUserMessageAt = at
-    }
-    if (preview && recent.length >= 8 && lastUserMessageAt !== undefined) break
-  }
-  chrome.searchPreview = preview
-  chrome.searchText = [thread.title, thread.provider, thread.appChatId, ...recent]
-    .filter(Boolean)
-    .join(' ')
-    .slice(0, 4096)
-  if (lastUserMessageAt !== undefined) chrome.lastUserMessageAt = lastUserMessageAt
+  // The shared scan — identical output to the desktop projection, or the
+  // mirror's equality gate fans a saveless invalidation out per poll pass.
+  const scan = computeThreadCatalogueSearchScan(thread.messages)
+  chrome.searchPreview = scan.preview
+  chrome.searchText = buildThreadCatalogueSearchText({
+    title: thread.title,
+    provider: thread.provider,
+    chatId: thread.appChatId,
+    recent: scan.recent
+  })
+  if (scan.lastUserMessageAt !== undefined) chrome.lastUserMessageAt = scan.lastUserMessageAt
   return chrome
 }
 

@@ -101,6 +101,12 @@ const MAX_THREAD_PREVIEW = 2_000
  * of that, one number covers everyone.
  */
 const DEFAULT_THREAD_CACHE_MAX_BYTES = 256 * 1024 * 1024
+/**
+ * Default per-pass parse budget for `listThreadSummaries()`. Sized so one
+ * pass costs at most ~a second of event-loop parse time even on record-heavy
+ * corpora; the remaining misses retry on the next 1 Hz pass.
+ */
+const DEFAULT_THREAD_SWEEP_PARSE_BUDGET_BYTES = 24 * 1024 * 1024
 
 export interface HostProfileAuthorityPort {
   assertProfileAuthority(): void
@@ -239,6 +245,16 @@ export interface HostProfileDomainStoreOptions {
    *  transcript is 95% of a record and none of it is held. 0 disables the cache
    *  and restores the uncached full re-read. */
   readonly threadCacheMaxBytes?: number
+  /**
+   * Bytes of records `listThreadSummaries()` may newly parse in ONE sweep
+   * pass. The first pass over a cold profile used to parse the whole corpus
+   * on the Host's single event loop (~7 minutes of wedged handshakes and
+   * failed reads on a multi-GB profile); with the budget, each pass admits
+   * this many bytes of cache misses and the rest simply retry next pass, so
+   * the loop stays responsive while the cache warms incrementally.
+   * Identity-verified cache hits never consume budget. 0 disables the budget.
+   */
+  readonly threadSweepParseBudgetBytes?: number
   /** Production list discovery is asynchronous metadata; never fall back to record decoding. */
   readonly runSummarySource?: () => HostCatalogueRunWindow
   readonly threadSummarySource?: () => readonly HostProfileThreadSummary[]
@@ -800,6 +816,7 @@ export class HostProfileDomainStore {
   private readonly reportedStrayEntries = new Set<string>()
   private readonly threadCache = new Map<string, CachedThreadSummary>()
   private readonly threadCacheMaxBytes: number
+  private readonly threadSweepParseBudgetBytes: number
   private threadCacheBytes = 0
   private threadRecordReadCount = 0
   /** Whole records actually read+parsed from disk (getThread). The persist
@@ -838,6 +855,11 @@ export class HostProfileDomainStore {
       Number.isFinite(options.threadCacheMaxBytes) && Number(options.threadCacheMaxBytes) >= 0
         ? Math.floor(Number(options.threadCacheMaxBytes))
         : DEFAULT_THREAD_CACHE_MAX_BYTES
+    this.threadSweepParseBudgetBytes =
+      Number.isFinite(options.threadSweepParseBudgetBytes) &&
+      Number(options.threadSweepParseBudgetBytes) >= 0
+        ? Math.floor(Number(options.threadSweepParseBudgetBytes))
+        : DEFAULT_THREAD_SWEEP_PARSE_BUDGET_BYTES
     this.ensureDirectory(this.chatsPath)
   }
 
@@ -1296,7 +1318,21 @@ export class HostProfileDomainStore {
       return this.threadSummarySource()
     }
     const summaries: HostProfileThreadSummary[] = []
+    // Per-pass parse budget: cache misses admitted this pass may parse at
+    // most this many record bytes. A skipped id is NOT evicted (it stayed
+    // `visited`) and simply retries on the next sweep, so a cold corpus warms
+    // incrementally without ever blocking the loop on a whole-corpus parse.
+    let parseBudget = this.threadSweepParseBudgetBytes
     const visited = this.sweepChatRecords((id, path, stat) => {
+      if (parseBudget > 0) {
+        const cached = this.threadCache.get(id)
+        const identityHit = cached !== undefined && cached.identity === this.recordIdentity(stat)
+        if (!identityHit) {
+          const size = Number(stat.size)
+          if (!Number.isSafeInteger(size) || size > parseBudget) return
+          parseBudget -= size
+        }
+      }
       const summary = this.threadSummaryFor(id, path, stat)
       if (summary) summaries.push(summary)
     })

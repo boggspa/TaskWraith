@@ -150,6 +150,35 @@ describe('ChatUpdateInterestRouter', () => {
     expect(absentPayload.summary).toBe(pagedPayload.summary)
   })
 
+  it('sends exactly one compact invalidation per revision across duplicate broadcast pipes', () => {
+    const { router } = routerHarness()
+    router.replaceTargetSnapshot(7, snapshot([{ chatId: 'chat-a', mode: 'paged' }]))
+    const send = vi.fn()
+    const current = chat('chat-a')
+
+    // One save fans out through the catalogue mirror, broadcastChatUpdated,
+    // and broadcastThreadUpdate — three enqueues of the SAME record revision
+    // must ride the wire as one invalidation.
+    expect(router.enqueue(target(7, send), current)).toBe('compact')
+    expect(router.enqueue(target(7, send), current)).toBe('compact')
+    expect(router.enqueue(target(7, send), current)).toBe('compact')
+    expect(send).toHaveBeenCalledTimes(1)
+
+    // A later save bumps the revision and sends again.
+    const newer = chat('chat-a', { persistenceRevision: 4, updatedAt: 3 })
+    expect(router.enqueue(target(7, send), newer)).toBe('compact')
+    expect(send).toHaveBeenCalledTimes(2)
+
+    // A reseed (fresh handshake) may repeat the same revision deliberately.
+    expect(router.reseed(target(7, send), newer)).toBe('compact')
+    expect(send).toHaveBeenCalledTimes(3)
+
+    // Clearing the chat releases the revision for a genuine re-send.
+    router.clearChat('chat-a')
+    expect(router.enqueue(target(7, send), newer)).toBe('compact')
+    expect(send).toHaveBeenCalledTimes(4)
+  })
+
   it('uses only top-level chrome, counts, the last run, and participants after the cold seed', () => {
     const { router, store } = routerHarness()
     const initial = chat('chat-a', {

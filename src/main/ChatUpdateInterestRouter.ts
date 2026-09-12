@@ -135,6 +135,17 @@ export class ChatUpdateInterestRouter {
   private readonly interests: ChatUpdateInterestRegistry
   private readonly maxCompactProjections: number
   private readonly compactProjectionByChatId = new Map<string, ChatListItem>()
+  /**
+   * Last invalidation revision actually sent per (target, chat). One save can
+   * fan out through several broadcast pipes (catalogue mirror, direct
+   * broadcastChatUpdated, broadcastThreadUpdate); they all describe the SAME
+   * record revision, and the renderer can do nothing with a duplicate it did
+   * not already do with the first — so the wire carries exactly one send per
+   * revision. A later save bumps the revision and sends normally; a reseed
+   * bypasses the suppression (a fresh handshake needs the row even at the same
+   * revision). Entries clear with their target/chat and the map is bounded.
+   */
+  private readonly lastCompactRevisionByTargetChat = new Map<string, number>()
 
   constructor(options: ChatUpdateInterestRouterOptions) {
     this.delivery = options.delivery
@@ -200,6 +211,9 @@ export class ChatUpdateInterestRouter {
     if (!validTargetId(targetId)) return false
     const clearedInterest = this.interests.clearTarget(targetId)
     this.delivery.clearTarget(targetId)
+    for (const key of [...this.lastCompactRevisionByTargetChat.keys()]) {
+      if (key.startsWith(`${targetId}:`)) this.lastCompactRevisionByTargetChat.delete(key)
+    }
     return clearedInterest
   }
 
@@ -221,6 +235,9 @@ export class ChatUpdateInterestRouter {
     const chatId = normalizeChatUpdateInterestChatId(chatIdValue)
     if (!chatId) {
       return { projection: false, interestTargets: 0, deliveryTargets: 0 }
+    }
+    for (const key of [...this.lastCompactRevisionByTargetChat.keys()]) {
+      if (key.endsWith(`:${chatId}`)) this.lastCompactRevisionByTargetChat.delete(key)
     }
     return {
       projection: this.compactProjectionByChatId.delete(chatId),
@@ -372,6 +389,19 @@ export class ChatUpdateInterestRouter {
     if (summary.appChatId !== chat.appChatId) return 'ignored'
     const invalidation = buildChatUpdateInvalidation(summary)
     if (!invalidation) return 'ignored'
+    // Same-revision duplicates from the broadcast pipes above are already on
+    // the wire; only a reseed (fresh handshake) may repeat a revision.
+    if (!reseed) {
+      const dedupeKey = `${target.id}:${chat.appChatId}`
+      if (this.lastCompactRevisionByTargetChat.get(dedupeKey) === invalidation.revision) {
+        return 'compact'
+      }
+      this.lastCompactRevisionByTargetChat.set(dedupeKey, invalidation.revision)
+      if (this.lastCompactRevisionByTargetChat.size > MAX_COMPACT_CHAT_UPDATE_PROJECTIONS * 16) {
+        const oldest = this.lastCompactRevisionByTargetChat.keys().next().value
+        if (oldest !== undefined) this.lastCompactRevisionByTargetChat.delete(oldest)
+      }
+    }
     try {
       target.send(CHAT_UPDATE_INVALIDATION_CHANNEL, invalidation)
       return 'compact'
