@@ -7,7 +7,6 @@ import {
   applyChatUpdateDelivery,
   attachChatUpdateProducerEnvelope,
   chatUpdateProducerEnvelopeFor,
-  type ChatUpdateBaseline,
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
 import { deriveChatRecordMutationWithProjection } from './store/ChatRecordMutation'
@@ -23,6 +22,7 @@ import {
   resolveSnapshotRetryDelayMs
 } from './ChatUpdateSnapshotAckPolicy'
 import { DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES } from '../shared/transcriptPage'
+import { ackAsRenderer } from './chatUpdateRendererAck.testutil'
 
 function message(id: string, content: string): ChatMessage {
   return { id, role: 'assistant', content, timestamp: '2026-07-18T00:00:00.000Z' }
@@ -69,45 +69,6 @@ function target(id = 7): ChatUpdateDeliveryTarget & { deliveries: ChatUpdateDeli
     isDestroyed: () => false,
     send: (_channel, payload) => deliveries.push(payload as ChatUpdateDelivery)
   }
-}
-
-/** Document epoch every realistic test ack carries. One constant because each
- *  test drives one renderer document; multi-document epoch tests ack by hand. */
-const TEST_RENDERER_EPOCH = 'test-renderer-document'
-
-/**
- * ACK the way the renderer does: apply a structured clone through the real
- * applier, then acknowledge with the applied revision and content hashes — the
- * exact comparison main runs at acknowledge time (mirrors the renderer's
- * buildChatUpdateAck: phase, chat id, delivery-epoch echo, document epoch,
- * delivery revision, applied record hash and transcript hash).
- *
- * Applying main's live delivery object instead would let later main-side
- * mutations rewrite the test's renderer baseline behind its back and mask the
- * divergence a real NACK would report. Throws when the renderer could not
- * apply; reject-path tests (applied:false, wrong revision/hash/epoch,
- * rendered-phase receipts) keep calling acknowledge() directly.
- */
-function ackAsRenderer(
-  coordinator: ChatUpdateDeliveryCoordinator,
-  sink: { id: number },
-  delivery: ChatUpdateDelivery,
-  baseline?: ChatUpdateBaseline
-): { baseline: ChatUpdateBaseline; acknowledged: boolean } {
-  const applied = applyChatUpdateDelivery(structuredClone(delivery), baseline)
-  if (!applied.ok) throw new Error(applied.reason)
-  const acknowledged = coordinator.acknowledge(sink.id, {
-    deliveryId: delivery.deliveryId,
-    applied: true,
-    phase: 'accepted',
-    chatId: delivery.chatId,
-    ...(delivery.deliveryEpoch !== undefined ? { deliveryEpoch: delivery.deliveryEpoch } : {}),
-    rendererEpoch: TEST_RENDERER_EPOCH,
-    revision: delivery.revision,
-    recordHash: applied.baseline.recordHash,
-    ...(applied.baseline.transcriptHash ? { transcriptHash: applied.baseline.transcriptHash } : {})
-  })
-  return { baseline: applied.baseline, acknowledged }
 }
 
 describe('ChatUpdateDeliveryCoordinator', () => {

@@ -17,6 +17,7 @@ import { deriveChatRecordMutationWithProjection } from './store/ChatRecordMutati
 import { ChatTranscriptMutationAuthor } from './store/ChatTranscriptMutationAuthoring'
 import { ChatUpdateProjectionTracker } from './store/ChatUpdateProjectionTracker'
 import type { ChatMessage, ChatRecord, EnsembleParticipant } from './store/types'
+import { buildRendererAck } from './chatUpdateRendererAck.testutil'
 
 const RENDERER_EPOCH = 'renderer-scale-gate'
 const BASE_TIME = '2026-09-04T12:00:00.000Z'
@@ -97,24 +98,6 @@ interface PendingRender {
 
 function serializedBytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), 'utf8')
-}
-
-function buildRendererAck(
-  delivery: ChatUpdateDelivery,
-  baseline: ChatUpdateBaseline,
-  phase: 'accepted' | 'rendered'
-): ChatUpdateAck {
-  return {
-    deliveryId: delivery.deliveryId,
-    applied: true,
-    phase,
-    chatId: delivery.chatId,
-    revision: baseline.revision,
-    rendererEpoch: RENDERER_EPOCH,
-    ...(delivery.deliveryEpoch !== undefined ? { deliveryEpoch: delivery.deliveryEpoch } : {}),
-    ...(baseline.recordHash ? { recordHash: baseline.recordHash } : {}),
-    ...(baseline.transcriptHash ? { transcriptHash: baseline.transcriptHash } : {})
-  }
 }
 
 function historicalMessage(chatId: string, index: number): ChatMessage {
@@ -430,12 +413,12 @@ describe('ChatUpdateDeliveryCoordinator three-chat scale gate', () => {
               previousPendingRender?.messagesChanged === true ||
               previous?.chat.messages !== applied.baseline.chat.messages,
             hasActiveRun: applied.baseline.chat.ensemble?.activeRound?.status === 'running',
-            renderReceipt: buildRendererAck(delivery, applied.baseline, 'rendered')
+            renderReceipt: buildRendererAck(delivery, applied.baseline, 'rendered', RENDERER_EPOCH)
           })
           expect(
             coordinator.acknowledge(
               target.id,
-              buildRendererAck(delivery, applied.baseline, 'accepted')
+              buildRendererAck(delivery, applied.baseline, 'accepted', RENDERER_EPOCH)
             )
           ).toBe(true)
           sampleRetention()
