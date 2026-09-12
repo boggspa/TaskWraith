@@ -22,8 +22,8 @@ import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ChatRecord } from './store/types'
 import {
   MAX_WINDOWED_TRANSCRIPT_GROWTH_ROWS,
-  applyChatUpdateDelivery,
   attachChatUpdateProducerEnvelope,
+  type ChatUpdateBaseline,
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
 import { DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES } from '../shared/transcriptPage'
@@ -33,6 +33,7 @@ import {
   ChatUpdateDeliveryCoordinator,
   type ChatUpdateDeliveryTarget
 } from './ChatUpdateDeliveryCoordinator'
+import { ackAsRenderer } from './chatUpdateRendererAck.testutil'
 
 function message(id: string, content: string): ChatMessage {
   return { id, role: 'assistant', content, timestamp: '2026-07-18T00:00:00.000Z' }
@@ -96,7 +97,7 @@ describe('ChatUpdateDeliveryCoordinator protocol counters', () => {
     expect(coordinator.protocolCounters()).toMatchObject({ snapshots: 1, patches: 0 })
 
     // Acknowledging holds the baseline, so the queued update can go as a patch.
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
     expect(sink.deliveries[1].kind).toBe('patch')
     expect(coordinator.protocolCounters()).toMatchObject({ snapshots: 1, patches: 1 })
   })
@@ -114,7 +115,7 @@ describe('ChatUpdateDeliveryCoordinator protocol counters', () => {
       chat(3, ['three'])
     )
     coordinator.enqueue(sink, first)
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
     coordinator.enqueue(sink, second)
     expect(sink.deliveries[1].kind).toBe('patch')
     expect(coordinator.protocolCounters()).toMatchObject({ baselineDrops: 0 })
@@ -146,7 +147,7 @@ describe('ChatUpdateDeliveryCoordinator protocol counters', () => {
 
     const [first] = projectSequence(chat(1, ['one']))
     coordinator.enqueue(sink, first)
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
     expect(coordinator.protocolCounters()).toMatchObject({ producerDeltaMissing: 0 })
 
     // Exactly the shipped failure: a save path broadcasts with no producer
@@ -332,7 +333,7 @@ describe('ChatUpdateDeliveryCoordinator window anchors', () => {
     expect(coordinator.protocolCounters()).toMatchObject({ patches: 0, windowReanchors: 0 })
 
     // Now it lands, and the very next delivery patches the window it named.
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[1].deliveryId, applied: true })
+    ackAsRenderer(coordinator, sink, sink.deliveries[1])
     coordinator.enqueue(sink, growingChat(3, 1_620))
     expect(sink.deliveries[2].kind).toBe('patch')
     expect(coordinator.protocolCounters()).toMatchObject({ patches: 1, windowReanchors: 0 })
@@ -345,13 +346,10 @@ describe('ChatUpdateDeliveryCoordinator window anchors', () => {
       emitProtocolVersion: 2
     })
     coordinator.enqueue(sink, growingChat(1, 1_600))
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    let baseline = ackAsRenderer(coordinator, sink, sink.deliveries[0]).baseline
     for (let step = 0; step < 40; step += 1) {
       coordinator.enqueue(sink, growingChat(2 + step, 1_610 + step * 10))
-      coordinator.acknowledge(sink.id, {
-        deliveryId: sink.deliveries.at(-1)!.deliveryId,
-        applied: true
-      })
+      baseline = ackAsRenderer(coordinator, sink, sink.deliveries.at(-1)!, baseline).baseline
     }
     expect(coordinator.protocolCounters()).toMatchObject({
       snapshots: 1,
@@ -368,12 +366,12 @@ describe('ChatUpdateDeliveryCoordinator window anchors', () => {
       emitProtocolVersion: 2
     })
     coordinator.enqueue(sink, growingChat(1, 1_600))
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    let baseline = ackAsRenderer(coordinator, sink, sink.deliveries[0]).baseline
     // One append inside the ceiling, then one that blows through it.
     coordinator.enqueue(sink, growingChat(2, 1_700))
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[1].deliveryId, applied: true })
+    baseline = ackAsRenderer(coordinator, sink, sink.deliveries[1], baseline).baseline
     coordinator.enqueue(sink, growingChat(3, 1_600 + MAX_WINDOWED_TRANSCRIPT_GROWTH_ROWS + 50))
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[2].deliveryId, applied: true })
+    ackAsRenderer(coordinator, sink, sink.deliveries[2], baseline)
     // And the delivery AFTER the re-anchor patches again from the new window,
     // rather than snapshotting forever once it has slipped once.
     coordinator.enqueue(sink, growingChat(4, 1_600 + MAX_WINDOWED_TRANSCRIPT_GROWTH_ROWS + 60))
@@ -404,7 +402,7 @@ describe('ChatUpdateDeliveryCoordinator window anchors', () => {
       emitProtocolVersion: 2
     })
     coordinator.enqueue(sink, growingChat(1, 1_600))
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
     const anchored = sink.deliveries[0]
     if (anchored.kind !== 'snapshot') throw new Error('expected a snapshot')
     const anchorId = anchored.chat.messages[0]?.id
@@ -435,12 +433,12 @@ describe('ChatUpdateDeliveryCoordinator window anchors', () => {
       emitProtocolVersion: 2
     })
     coordinator.enqueue(sink, growingChat(1, 900))
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    const baseline = ackAsRenderer(coordinator, sink, sink.deliveries[0]).baseline
     expect(sink.deliveries[0].kind).toBe('snapshot')
 
     coordinator.enqueue(sink, growingChat(2, 1_000))
     expect(sink.deliveries[1].kind).toBe('patch')
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[1].deliveryId, applied: true })
+    ackAsRenderer(coordinator, sink, sink.deliveries[1], baseline)
 
     coordinator.enqueue(sink, growingChat(3, 1_600))
     expect(sink.deliveries[2].kind).toBe('snapshot')
@@ -480,7 +478,7 @@ describe('ChatUpdateDeliveryCoordinator bounded-snapshot baselines', () => {
     })
     const [first, second] = projectSequence(oversizedChat(1, 'one'), oversizedChat(2, 'two'))
     coordinator.enqueue(sink, first)
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
     coordinator.enqueue(sink, second)
 
     expect(sink.deliveries[1].kind).toBe('patch')
@@ -503,10 +501,11 @@ describe('ChatUpdateDeliveryCoordinator bounded-snapshot baselines', () => {
       oversizedChat(3, 'three'),
       oversizedChat(4, 'four')
     )
+    let baseline: ChatUpdateBaseline | undefined
     for (const record of records) {
       coordinator.enqueue(sink, record)
       const latest = sink.deliveries[sink.deliveries.length - 1]
-      coordinator.acknowledge(sink.id, { deliveryId: latest.deliveryId, applied: true })
+      baseline = ackAsRenderer(coordinator, sink, latest, baseline).baseline
     }
 
     const counters = coordinator.protocolCounters()
@@ -531,7 +530,7 @@ describe('ChatUpdateDeliveryCoordinator bounded-snapshot baselines', () => {
     coordinator.enqueue(sink, first)
     const snapshotDelivery = sink.deliveries[0]
     if (snapshotDelivery.kind !== 'snapshot') throw new Error('expected a snapshot')
-    coordinator.acknowledge(sink.id, { deliveryId: snapshotDelivery.deliveryId, applied: true })
+    ackAsRenderer(coordinator, sink, snapshotDelivery)
     coordinator.enqueue(sink, second)
 
     const patch = sink.deliveries[1]
@@ -557,41 +556,30 @@ describe('ChatUpdateDeliveryCoordinator bounded-snapshot baselines', () => {
 
     coordinator.enqueue(sink, first)
     const snapshotDelivery = sink.deliveries[0]
-    const appliedSnapshot = applyChatUpdateDelivery(snapshotDelivery)
-    expect(appliedSnapshot.ok).toBe(true)
-    if (!appliedSnapshot.ok) throw new Error('snapshot did not apply')
-    expect(
-      coordinator.acknowledge(sink.id, {
-        deliveryId: snapshotDelivery.deliveryId,
-        applied: true,
-        revision: snapshotDelivery.revision,
-        recordHash: appliedSnapshot.baseline.recordHash,
-        transcriptHash: appliedSnapshot.baseline.transcriptHash
-      })
-    ).toBe(true)
+    const { baseline: seedBaseline, acknowledged: seedAcknowledged } = ackAsRenderer(
+      coordinator,
+      sink,
+      snapshotDelivery
+    )
+    expect(seedAcknowledged).toBe(true)
 
     coordinator.enqueue(sink, second)
     const patch = sink.deliveries[1]
     expect(patch.kind).toBe('patch')
-    const appliedPatch = applyChatUpdateDelivery(patch, appliedSnapshot.baseline)
-    expect(appliedPatch.ok).toBe(true)
-    if (!appliedPatch.ok) throw new Error('patch did not apply')
+    const { baseline: patchedBaseline, acknowledged } = ackAsRenderer(
+      coordinator,
+      sink,
+      patch,
+      seedBaseline
+    )
     // The renderer still holds a page, still marked paged.
-    expect((appliedPatch.baseline.chat as { transcriptPaged?: boolean }).transcriptPaged).toBe(true)
-    expect(appliedPatch.baseline.chat.messages).toHaveLength(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES)
-    expect(appliedPatch.baseline.chat.messages.at(-1)?.content).toBe('two')
+    expect((patchedBaseline.chat as { transcriptPaged?: boolean }).transcriptPaged).toBe(true)
+    expect(patchedBaseline.chat.messages).toHaveLength(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES)
+    expect(patchedBaseline.chat.messages.at(-1)?.content).toBe('two')
 
     // The ACK the renderer would send is accepted, which is the whole contract:
     // main and the renderer agree on the record the renderer is holding.
-    expect(
-      coordinator.acknowledge(sink.id, {
-        deliveryId: patch.deliveryId,
-        applied: true,
-        revision: patch.revision,
-        recordHash: appliedPatch.baseline.recordHash,
-        transcriptHash: appliedPatch.baseline.transcriptHash
-      })
-    ).toBe(true)
+    expect(acknowledged).toBe(true)
     expect(coordinator.protocolCounters().ackRejections).toBe(0)
   })
 
@@ -603,7 +591,7 @@ describe('ChatUpdateDeliveryCoordinator bounded-snapshot baselines', () => {
     })
     const [first, second] = projectSequence(chat(1, ['one']), chat(2, ['two']))
     coordinator.enqueue(sink, first)
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
     coordinator.enqueue(sink, second)
     expect(sink.deliveries[1].kind).toBe('patch')
     expect(coordinator.protocolCounters()).toMatchObject({ baselineDrops: 0 })
