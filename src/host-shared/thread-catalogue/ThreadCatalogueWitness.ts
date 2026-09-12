@@ -2,6 +2,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { createHash } from 'node:crypto'
 import { isSafeChatId } from '../../shared/ChatPath'
+import { ThreadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
 export interface ThreadCatalogueReaderOptions {
   profilePath: string
   runtimeInstanceId: string
@@ -149,6 +150,6 @@ export async function flushThreadCatalogueSources(
   }
   assertAuthority()
   if (captureThreadCatalogueWitness(options, chatId).witness !== before.witness)
-    throw new Error('History changed during durability repair')
+    throw new ThreadCatalogueRequestError('source_changed')
   return before.witness
 }

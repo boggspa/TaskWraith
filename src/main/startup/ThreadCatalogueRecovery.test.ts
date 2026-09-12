@@ -14,6 +14,8 @@ import {
   ThreadCatalogueRecovery,
   type CatalogueRecoveryDependencies
 } from './ThreadCatalogueRecovery'
+import type { ThreadCatalogueProjection } from '../store/ThreadCatalogue'
+import { ThreadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
 
 /**
  * `dispose()` must not strand a write-gate hold.
@@ -257,7 +259,13 @@ describe('a cancel the Host never acknowledges', () => {
       return true
     }
     const recovery = new ThreadCatalogueRecovery({
-      catalogue: { mirror: { port: { query } }, setMutationGuard: () => () => {} },
+      catalogue: {
+        mirror: {
+          port: { query },
+          get: () => recoveryProjection('chat-1', 1, { joinPolicies: 1 })
+        },
+        setMutationGuard: () => () => {}
+      },
       isRunLive: () => false,
       isChatLive: () => false,
       isErasing: () => false
@@ -267,5 +275,186 @@ describe('a cancel the Host never acknowledges', () => {
 
     expect(seen.find((entry) => entry.method === 'open')?.priority).toBe('background')
     expect(seen.find((entry) => entry.method === 'release')?.priority).toBeUndefined()
+  })
+})
+
+function recoveryProjection(
+  chatId: string,
+  revision: number,
+  recovery: Partial<ThreadCatalogueProjection['recovery']>
+): ThreadCatalogueProjection {
+  return {
+    revision,
+    summary: { chatId },
+    recovery: {
+      unsettledRuns: 0,
+      ensembleWakeups: 0,
+      soloWakeups: 0,
+      workerEvents: 0,
+      joinPolicies: 0,
+      nextBlackboardExpiryAt: null,
+      ...recovery
+    }
+  } as unknown as ThreadCatalogueProjection
+}
+
+describe('hot-source recovery scheduling', () => {
+  it('cools down one active join-policy source, lets a quiet thread finish, and wakes on terminal evidence', async () => {
+    const rows = new Map([
+      ['hot', recoveryProjection('hot', 1, { unsettledRuns: 1, joinPolicies: 1 })],
+      ['quiet', recoveryProjection('quiet', 1, { joinPolicies: 1 })]
+    ])
+    const listeners = new Set<(row: ThreadCatalogueProjection | null, id: string) => void>()
+    const openCalls: Array<{ chatId: string; priority?: string }> = []
+    const leases = new Map<string, string>()
+    let hotLive = true
+    let hotStable = false
+    let quietDone!: () => void
+    let hotDone!: () => void
+    const quietRecovered = new Promise<void>((resolve) => {
+      quietDone = resolve
+    })
+    const hotRecovered = new Promise<void>((resolve) => {
+      hotDone = resolve
+    })
+    const port = {
+      query: async <T>(
+        query: { method: string; chatId?: string; leaseId?: string },
+        options?: {
+          priority?: string
+        }
+      ): Promise<T> => {
+        if (query.method === 'open') {
+          const chatId = String(query.chatId)
+          openCalls.push({ chatId, priority: options?.priority })
+          if (chatId === 'hot' && !hotStable)
+            throw new ThreadCatalogueRequestError('source_changed')
+          const leaseId = `lease-${chatId}`
+          leases.set(leaseId, chatId)
+          return {
+            leaseId,
+            entry: {
+              projection: rows.get(chatId),
+              sourceWitness: `witness-${chatId}`,
+              snapshot: false
+            }
+          } as T
+        }
+        if (query.method === 'objects') return [] as T
+        if (query.method === 'release') {
+          leases.delete(String(query.leaseId))
+          return true as T
+        }
+        throw new Error(`unexpected query ${query.method}`)
+      }
+    }
+    const mirror = {
+      complete: true,
+      port,
+      get: (id: string) => rows.get(id),
+      projections: () => [...rows.values()],
+      subscribe: (listener: (row: ThreadCatalogueProjection | null, id: string) => void) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      }
+    }
+    const errors: unknown[] = []
+    const recovery = new ThreadCatalogueRecovery({
+      catalogue: { mirror, setMutationGuard: () => () => {} },
+      isRunLive: () => false,
+      isChatLive: (chatId) => chatId === 'hot' && hotLive,
+      getRunSession: () => undefined,
+      isErasing: () => false,
+      onError: (error) => errors.push(error),
+      onOperationalRecords: (projection) => {
+        if (projection.summary.chatId === 'quiet') quietDone()
+        if (projection.summary.chatId === 'hot') hotDone()
+      }
+    } as unknown as CatalogueRecoveryDependencies)
+    try {
+      recovery.start()
+      await quietRecovered
+
+      expect(openCalls.map(({ chatId }) => chatId)).toEqual(['hot', 'quiet'])
+      expect(openCalls.every(({ priority }) => priority === 'background')).toBe(true)
+      expect(errors).toHaveLength(1)
+      expect(leases.size).toBe(0)
+
+      for (let revision = 2; revision <= 12; revision += 1) {
+        rows.set('hot', recoveryProjection('hot', revision, { unsettledRuns: 1, joinPolicies: 1 }))
+        for (const listener of listeners) listener(rows.get('hot')!, 'hot')
+      }
+      await Promise.resolve()
+      expect(openCalls.filter(({ chatId }) => chatId === 'hot')).toHaveLength(1)
+
+      hotStable = true
+      hotLive = false
+      rows.set('hot', recoveryProjection('hot', 13, { joinPolicies: 1 }))
+      for (const listener of listeners) listener(rows.get('hot')!, 'hot')
+      await hotRecovered
+
+      expect(openCalls.filter(({ chatId }) => chatId === 'hot')).toHaveLength(2)
+      expect(recovery.joinsReady).toBe(true)
+      expect(leases.size).toBe(0)
+    } finally {
+      recovery.dispose()
+    }
+  })
+
+  it('defers only live run settlement and resumes it when the same chat becomes terminal', async () => {
+    let row = recoveryProjection('live-run', 1, { unsettledRuns: 1 })
+    let live = true
+    let listener: ((row: ThreadCatalogueProjection | null, id: string) => void) | undefined
+    let opens = 0
+    let recovered!: () => void
+    const done = new Promise<void>((resolve) => {
+      recovered = resolve
+    })
+    const mirror = {
+      complete: true,
+      get: () => row,
+      projections: () => [row],
+      subscribe: (next: typeof listener) => {
+        listener = next
+        return () => {
+          listener = undefined
+        }
+      },
+      port: {
+        query: async <T>(query: { method: string }): Promise<T> => {
+          if (query.method === 'open') {
+            opens += 1
+            return {
+              leaseId: 'lease-live-run',
+              entry: { projection: row, sourceWitness: 'witness', snapshot: false }
+            } as T
+          }
+          if (query.method === 'objects') return [] as T
+          if (query.method === 'release') return true as T
+          throw new Error(`unexpected query ${query.method}`)
+        }
+      }
+    }
+    const recovery = new ThreadCatalogueRecovery({
+      catalogue: { mirror, setMutationGuard: () => () => {} },
+      isRunLive: () => false,
+      isChatLive: () => live,
+      getRunSession: () => undefined,
+      isErasing: () => false,
+      onOperationalRecords: () => recovered()
+    } as unknown as CatalogueRecoveryDependencies)
+    try {
+      recovery.start()
+      await Promise.resolve()
+      expect(opens).toBe(0)
+
+      live = false
+      row = recoveryProjection('live-run', 2, { unsettledRuns: 1 })
+      listener?.(row, 'live-run')
+      await done
+      expect(opens).toBe(1)
+    } finally {
+      recovery.dispose()
+    }
   })
 })

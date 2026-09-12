@@ -4,6 +4,7 @@ import type {
   ThreadDecodeRequest,
   ThreadPrepareRequest
 } from './ThreadCatalogueWorkerProtocol'
+import { ThreadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
 
 type SequencedDecodeMessage = Extract<ThreadDecodeMessage, { sequence: number }>
 export type ThreadDecodeCompletion = Extract<
@@ -108,7 +109,11 @@ export class ThreadCatalogueDecoderClient {
     } else if (message.type === 'error') {
       clearTimeout(active.timeout)
       this.active = null
-      active.reject(new Error(message.message))
+      active.reject(
+        message.reason === 'changed'
+          ? new ThreadCatalogueRequestError('source_changed')
+          : new Error(message.message)
+      )
     } else throw new Error('Invalid history decoder response')
   }
 

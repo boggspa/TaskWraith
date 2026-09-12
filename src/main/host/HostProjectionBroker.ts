@@ -1,7 +1,12 @@
 import type {
+  ThreadCatalogueRequestOptions,
   ThreadCatalogueReadQuery,
   ThreadCatalogueMaintenanceQuery
 } from '../../shared/threadCatalogueProtocol'
+import {
+  threadCatalogueRequestError,
+  ThreadCatalogueRequestError
+} from '../../shared/threadCatalogueRequestError'
 import type {
   HostActorIdentity,
   HostAuthenticatedClientIdentity,
@@ -45,13 +50,19 @@ export interface HostProjectionClientPort {
   submitCommand(command: HostCommand): Promise<HostCommandReceipt>
   lookupReceipt(params: { commandId: string }): Promise<HostCommandReceipt>
   close(): void
-  queryThreadCatalogue?<T = unknown>(request: ThreadCatalogueReadQuery): Promise<T>
+  queryThreadCatalogue?<T = unknown>(
+    request: ThreadCatalogueReadQuery,
+    options?: ThreadCatalogueRequestOptions
+  ): Promise<T>
   maintainThreadCatalogue?<T = unknown>(request: ThreadCatalogueMaintenanceQuery): Promise<T>
 }
 
 export interface HostProjectionBroker {
   maintainThreadCatalogue?<T = unknown>(request: ThreadCatalogueMaintenanceQuery): Promise<T>
-  queryThreadCatalogue?<T = unknown>(request: ThreadCatalogueReadQuery): Promise<T>
+  queryThreadCatalogue?<T = unknown>(
+    request: ThreadCatalogueReadQuery,
+    options?: ThreadCatalogueRequestOptions
+  ): Promise<T>
   snapshot(): Promise<HostProjectionSnapshotResult>
   deltasSince(position: HostCursorPosition): Promise<HostProjectionDeltasResult>
   submitCommand(command: HostCommand): Promise<HostProjectionCommandResult>
@@ -202,7 +213,7 @@ export function createHostProjectionBroker(
 
   const withClient = async <T>(
     run: (active: HostProjectionClientPort) => Promise<T>
-  ): Promise<{ ok: true; value: T } | { ok: false; error: string }> => {
+  ): Promise<{ ok: true; value: T } | { ok: false; error: string; errorCause: unknown }> => {
     let lease: { readonly client: HostProjectionClientPort; readonly epoch: number } | undefined
     try {
       const active = await ensureClient()
@@ -216,9 +227,11 @@ export function createHostProjectionBroker(
       // this exact lease. The epoch/client guard prevents a late rejection
       // from an older client from closing a replacement that already connected.
       const reusableRequestFailure =
-        lease?.client.connected === true && error instanceof HostProjectionTransportError
+        lease?.client.connected === true &&
+        (error instanceof HostProjectionTransportError ||
+          error instanceof ThreadCatalogueRequestError)
       if (lease && !reusableRequestFailure) discardClient(lease)
-      return { ok: false, error: errorText(error) }
+      return { ok: false, error: errorText(error), errorCause: error }
     }
   }
 
@@ -228,15 +241,26 @@ export function createHostProjectionBroker(
         if (!active.maintainThreadCatalogue) throw new Error('History maintenance is unavailable')
         return active.maintainThreadCatalogue<T>(request)
       })
-      if (!outcome.ok) throw new Error(outcome.error)
+      if (!outcome.ok) {
+        const requestError = threadCatalogueRequestError(outcome.errorCause)
+        if (requestError) throw requestError
+        throw new Error(outcome.error)
+      }
       return outcome.value
     },
-    async queryThreadCatalogue<T>(request: ThreadCatalogueReadQuery): Promise<T> {
+    async queryThreadCatalogue<T>(
+      request: ThreadCatalogueReadQuery,
+      options: ThreadCatalogueRequestOptions = {}
+    ): Promise<T> {
       const outcome = await withClient(async (active) => {
         if (!active.queryThreadCatalogue) throw new Error('History catalogue is unavailable')
-        return active.queryThreadCatalogue<T>(request)
+        return active.queryThreadCatalogue<T>(request, options)
       })
-      if (!outcome.ok) throw new Error(outcome.error)
+      if (!outcome.ok) {
+        const requestError = threadCatalogueRequestError(outcome.errorCause)
+        if (requestError) throw requestError
+        throw new Error(outcome.error)
+      }
       return outcome.value
     },
     async snapshot() {

@@ -6,6 +6,7 @@ import { ChatComposerSelectionOverlayStore } from './ChatComposerSelectionOverla
 import { readCanonicalCatalogueChat } from './ThreadCatalogueCanonicalRead'
 import { normalizeCatalogueChatRecord } from './ThreadCatalogueNormalize'
 import type { ChatRecord, ProviderId } from './types'
+import { ThreadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
 
 export {
   captureThreadCatalogueWitness,
@@ -110,7 +111,7 @@ export class ThreadCatalogueDiskReader {
     const canonical = overlay.apply(chat)
     const persisted = overlay.apply(originals.get(chat) ?? chat)
     const after = captureThreadCatalogueWitness(this.options, chatId)
-    if (before.witness !== after.witness) throw new Error('Historical chat changed during decoding')
+    if (before.witness !== after.witness) throw new ThreadCatalogueRequestError('source_changed')
     return { chat: canonical, persisted, source: after, sourceComplete: !incomplete }
   }
 }

@@ -1,6 +1,17 @@
 import type { ThreadCatalogueReaderOptions } from './ThreadCatalogueWitness'
 import type { ThreadCatalogueProjection } from './ThreadCatalogue'
 import type { ThreadCatalogueQuery, ThreadCatalogueOwner } from '../../shared/threadCatalogueTypes'
+import type {
+  ThreadCatalogueRequestOptions,
+  ThreadCatalogueRequestPriority
+} from '../../shared/threadCatalogueProtocol'
+import {
+  isThreadCatalogueRequestErrorCode,
+  ThreadCatalogueRequestError
+} from '../../shared/threadCatalogueRequestError'
+
+export type ThreadCatalogueQueryOptions = ThreadCatalogueRequestOptions
+export type { ThreadCatalogueRequestPriority }
 export type {
   ThreadCatalogueQuery,
   ThreadCatalogueOwner,
@@ -24,12 +35,6 @@ export const THREAD_CATALOGUE_REQUEST_TIMEOUT_MS = 150_000
  * rebuilds each query field-by-field and would silently eat an unknown key on
  * the Host path. Absent means foreground, so nothing that predates this changes.
  */
-export type ThreadCatalogueRequestPriority = 'foreground' | 'background'
-
-export interface ThreadCatalogueQueryOptions {
-  priority?: ThreadCatalogueRequestPriority
-}
-
 export interface ThreadCatalogueProcessPort {
   postMessage(value: unknown): void
   on(event: 'message', listener: (value: unknown) => void): unknown
@@ -117,7 +122,7 @@ export class ThreadCatalogueClient {
   }
   async query<T = unknown>(
     query: ThreadCatalogueQuery,
-    options: ThreadCatalogueQueryOptions = {}
+    options: ThreadCatalogueRequestOptions = {}
   ): Promise<T> {
     await this.ready
     return this.call(query, THREAD_CATALOGUE_REQUEST_TIMEOUT_MS, options.priority) as Promise<T>
@@ -158,6 +163,7 @@ export class ThreadCatalogueClient {
       ok?: boolean
       value?: unknown
       error?: string
+      errorCode?: unknown
       event?: ThreadCatalogueEvent
     }
     if (message.event) {
@@ -169,7 +175,12 @@ export class ThreadCatalogueClient {
     this.pending.delete(message.id!)
     clearTimeout(pending.timer)
     if (message.ok) pending.resolve(message.value)
-    else pending.reject(new Error(message.error || 'History query failed'))
+    else
+      pending.reject(
+        isThreadCatalogueRequestErrorCode(message.errorCode)
+          ? new ThreadCatalogueRequestError(message.errorCode)
+          : new Error(message.error || 'History query failed')
+      )
   }
 
   private fail(error: Error): void {

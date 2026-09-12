@@ -1,4 +1,14 @@
 import type { ThreadCatalogueQuery } from './threadCatalogueTypes'
+import {
+  isThreadCatalogueRequestErrorCode,
+  type ThreadCatalogueRequestErrorCode
+} from './threadCatalogueRequestError'
+
+export type ThreadCatalogueRequestPriority = 'foreground' | 'background'
+
+export interface ThreadCatalogueRequestOptions {
+  priority?: ThreadCatalogueRequestPriority
+}
 
 export type ThreadCatalogueReadQuery = Exclude<
   ThreadCatalogueQuery,
@@ -404,9 +414,27 @@ export function decodeThreadCatalogueReadQuery(value: unknown): ThreadCatalogueR
 
 export interface ThreadCatalogueWireReply {
   data: unknown
+  /** Closed request-local cause. `data: null` remains for old-client compatibility. */
+  error?: { code: ThreadCatalogueRequestErrorCode }
 }
 export function decodeThreadCatalogueWireReply(value: unknown): ThreadCatalogueWireReply | null {
   if (!value || typeof value !== 'object' || !Object.hasOwn(value, 'data')) return null
+  const error = (value as { error?: unknown }).error
+  if (error !== undefined) {
+    if (
+      (value as ThreadCatalogueWireReply).data !== null ||
+      !error ||
+      typeof error !== 'object' ||
+      Array.isArray(error) ||
+      Object.keys(error).length !== 1 ||
+      !isThreadCatalogueRequestErrorCode((error as { code?: unknown }).code)
+    )
+      return null
+    return {
+      data: (value as ThreadCatalogueWireReply).data,
+      error: { code: (error as { code: ThreadCatalogueRequestErrorCode }).code }
+    }
+  }
   // The enclosing transport bounds bytes before JSON decode. This wrapper is
   // intentionally version-tolerant; each page consumer checks its query shape.
   return { data: (value as ThreadCatalogueWireReply).data }

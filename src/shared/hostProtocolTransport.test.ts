@@ -1022,4 +1022,50 @@ describe('hostProtocolTransport Wave 3.2', () => {
       expect(withoutLineComments).not.toMatch(/\bnet\b|\bfs\b|\bchild_process\b/)
     })
   })
+
+  describe('thread catalogue request-local extensions', () => {
+    it('preserves an additive background lane while leaving legacy foreground frames unchanged', () => {
+      const base = {
+        type: 'request' as const,
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id: 'catalogue-priority',
+        kind: 'thread.catalogue' as const,
+        params: { method: 'summary' as const, chatId: 'chat-1' }
+      }
+      expect(decodeHostLocalTransportClientFrame({ ...base, priority: 'background' })).toEqual({
+        ok: true,
+        value: { ...base, priority: 'background' }
+      })
+      expect(decodeHostLocalTransportClientFrame(base)).toEqual({ ok: true, value: base })
+      expect(decodeHostLocalTransportClientFrame({ ...base, priority: 'foreground' })).toEqual({
+        ok: false,
+        error: { code: 'invalid_payload' }
+      })
+    })
+
+    it('accepts only body-free catalogue errors with a null legacy data fallback', () => {
+      const response = (reply: unknown) =>
+        decodeHostLocalTransportHostFrame({
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'catalogue-error',
+          ok: true,
+          result: { kind: 'thread.catalogue', reply }
+        })
+      expect(response({ data: null, error: { code: 'source_changed' } })).toMatchObject({
+        ok: true,
+        value: {
+          result: { reply: { data: null, error: { code: 'source_changed' } } }
+        }
+      })
+      expect(response({ data: { legacy: true } })).toMatchObject({ ok: true })
+      for (const reply of [
+        { data: 'sentinel', error: { code: 'source_changed' } },
+        { data: null, error: { code: 'unknown' } },
+        { data: null, error: { code: 'source_changed', detail: 'leak' } }
+      ]) {
+        expect(response(reply)).toEqual({ ok: false, error: { code: 'invalid_payload' } })
+      }
+    })
+  })
 })

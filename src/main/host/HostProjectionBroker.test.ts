@@ -9,6 +9,7 @@ import {
 } from '../../shared/hostProtocol'
 import { createHostProjectionBroker, type HostProjectionClientPort } from './HostProjectionBroker'
 import { HostProjectionTransportError } from './HostProjectionClient'
+import { ThreadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void
@@ -279,4 +280,48 @@ describe('HostProjectionBroker', () => {
       expect(createClient).toHaveBeenCalledTimes(1)
     }
   )
+
+  it('keeps a connected client after catalogue contention and forwards the background lane', async () => {
+    const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 0 })
+    let connected = true
+    const queryThreadCatalogue = vi.fn(async () => {
+      throw new ThreadCatalogueRequestError('source_changed')
+    })
+    const client = {
+      get connected() {
+        return connected
+      },
+      connect: vi.fn(async () => {
+        connected = true
+      }),
+      getSnapshot: vi.fn(async () => ({ snapshot })),
+      getDeltasSince: vi.fn(),
+      submitCommand: vi.fn(),
+      lookupReceipt: vi.fn(),
+      queryThreadCatalogue,
+      close: vi.fn(() => {
+        connected = false
+      })
+    } satisfies HostProjectionClientPort & { readonly connected: boolean }
+    const createClient = vi.fn(() => client)
+    const broker = createHostProjectionBroker({
+      userDataPath: '/tmp/taskwraith-host-broker-test',
+      appVersion: 'test',
+      createClient
+    })
+
+    await expect(
+      broker.queryThreadCatalogue?.(
+        { method: 'open', chatId: 'moving-chat', mode: 'metadata' },
+        { priority: 'background' }
+      )
+    ).rejects.toMatchObject({ code: 'source_changed' })
+    expect(queryThreadCatalogue).toHaveBeenCalledWith(
+      { method: 'open', chatId: 'moving-chat', mode: 'metadata' },
+      { priority: 'background' }
+    )
+    expect(client.close).not.toHaveBeenCalled()
+    await expect(broker.snapshot()).resolves.toEqual({ ok: true, snapshot })
+    expect(createClient).toHaveBeenCalledTimes(1)
+  })
 })

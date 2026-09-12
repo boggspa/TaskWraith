@@ -1021,7 +1021,12 @@ export class HostLocalServer {
       case 'provider.auth.status':
         return this.handleProviderAuthStatus(context, frame.id, frame.params.providerId)
       case 'thread.catalogue':
-        return this.handleThreadCatalogue(context, frame.id, frame.params)
+        return this.handleThreadCatalogue(
+          context,
+          frame.id,
+          frame.params,
+          frame.priority === 'background' ? { priority: 'background' } : undefined
+        )
       case 'thread.catalogue.maintenance':
         return this.handleThreadCatalogueMaintenance(context, frame.id, frame.params)
       case 'thread.history':
@@ -1237,11 +1242,12 @@ export class HostLocalServer {
   private async handleThreadCatalogue(
     context: HostAuthorityCallContext,
     id: string,
-    request: ThreadCatalogueReadQuery
+    request: ThreadCatalogueReadQuery,
+    options?: { priority: 'background' }
   ): Promise<HostLocalTransportHostFrame> {
     const provider = this.options.authority.threadCatalogue
     if (!provider) return errorFrame(id, { code: 'host_unavailable' })
-    const result = await provider.call(this.options.authority, context, request)
+    const result = await provider.call(this.options.authority, context, request, options)
     if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
     return this.success(id, { kind: 'thread.catalogue', reply: result.value })
   }

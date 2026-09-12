@@ -2,9 +2,11 @@ import {
   decodeThreadCatalogueReadQuery,
   decodeThreadCatalogueMaintenanceQuery,
   type ThreadCatalogueMaintenanceQuery,
+  type ThreadCatalogueRequestOptions,
   type ThreadCatalogueReadQuery,
   type ThreadCatalogueWireReply
 } from '../shared/threadCatalogueProtocol'
+import { threadCatalogueRequestError } from '../shared/threadCatalogueRequestError'
 /**
  * In-process migration HostAuthority (Host Arc Wave 2B Subwave 4C).
  *
@@ -231,7 +233,8 @@ export type AppStoreHostAuthorityThreadHistoryProvider = (
   request: HostThreadHistoryRequest
 ) => HostThreadHistoryPage | Promise<HostThreadHistoryPage>
 export type AppStoreHostAuthorityThreadCatalogueProvider = (
-  request: ThreadCatalogueReadQuery
+  request: ThreadCatalogueReadQuery,
+  options?: ThreadCatalogueRequestOptions
 ) => Promise<ThreadCatalogueWireReply>
 export type AppStoreHostAuthorityThreadCatalogueMaintenanceProvider = (
   request: ThreadCatalogueMaintenanceQuery
@@ -765,15 +768,19 @@ export class AppStoreHostAuthority implements HostAuthority {
 
   async threadCatalogue(
     context: HostAuthorityCallContext,
-    request: ThreadCatalogueReadQuery
+    request: ThreadCatalogueReadQuery,
+    options: ThreadCatalogueRequestOptions = {}
   ): Promise<HostAuthorityResult<ThreadCatalogueWireReply>> {
     const gate = this.gate(context)
     if (!gate.ok) return gate
     const decoded = decodeThreadCatalogueReadQuery(request)
     if (!decoded || !this.threadCatalogueProvider) return { ok: false, error: 'host_unavailable' }
     try {
-      return { ok: true, value: await this.threadCatalogueProvider(decoded) }
-    } catch {
+      return { ok: true, value: await this.threadCatalogueProvider(decoded, options) }
+    } catch (error) {
+      const requestError = threadCatalogueRequestError(error)
+      if (requestError)
+        return { ok: true, value: { data: null, error: { code: requestError.code } } }
       return { ok: false, error: 'host_unavailable' }
     }
   }

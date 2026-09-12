@@ -1,7 +1,9 @@
 import type {
+  ThreadCatalogueRequestOptions,
   ThreadCatalogueReadQuery,
   ThreadCatalogueMaintenanceQuery
 } from '../shared/threadCatalogueProtocol'
+import { ThreadCatalogueRequestError } from '../shared/threadCatalogueRequestError'
 /**
  * Host Arc Wave 4.1 — reusable authenticated v2 projection client.
  *
@@ -552,9 +554,13 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
     return result.page
   }
 
-  async queryThreadCatalogue<T = unknown>(request: ThreadCatalogueReadQuery): Promise<T> {
-    const result = await this.request('thread.catalogue', request)
+  async queryThreadCatalogue<T = unknown>(
+    request: ThreadCatalogueReadQuery,
+    options: ThreadCatalogueRequestOptions = {}
+  ): Promise<T> {
+    const result = await this.request('thread.catalogue', request, options)
     if (result.kind !== 'thread.catalogue') throw new Error('Unexpected history catalogue response')
+    if (result.reply.error) throw new ThreadCatalogueRequestError(result.reply.error.code)
     if (request.method === 'chunk' && result.reply.data !== null) {
       const chunk = result.reply.data as { encoding?: unknown; bytes?: unknown }
       if (
@@ -573,6 +579,7 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
     const result = await this.request('thread.catalogue.maintenance', request)
     if (result.kind !== 'thread.catalogue.maintenance')
       throw new Error('Unexpected history maintenance response')
+    if (result.reply.error) throw new ThreadCatalogueRequestError(result.reply.error.code)
     return result.reply.data as T
   }
 
@@ -698,7 +705,8 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
 
   private async request(
     kind: HostLocalTransportRequest['kind'],
-    params: HostLocalTransportRequest['params']
+    params: HostLocalTransportRequest['params'],
+    options: ThreadCatalogueRequestOptions = {}
   ): Promise<HostLocalTransportSuccessResult> {
     const socket = this.socket
     if (!socket || socket.destroyed || !this.welcome) {
@@ -710,7 +718,10 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
       transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
       id,
       kind,
-      params
+      params,
+      ...(kind === 'thread.catalogue' && options.priority === 'background'
+        ? { priority: 'background' as const }
+        : {})
     } as HostLocalTransportRequest
     const encoded = encodeHostLocalTransportClientFrame(frame)
     if (!encoded.ok) {

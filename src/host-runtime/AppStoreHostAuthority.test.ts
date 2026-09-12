@@ -7,6 +7,7 @@ import {
   decodeHostCommandReceipt,
   HOST_PROTOCOL_MAX_COLLECTION,
   HOST_PROTOCOL_VERSION,
+  TASKWRAITH_DESKTOP_HOST_ACTOR,
   type HostActorIdentity,
   type HostAuthenticatedClientIdentity,
   type HostCommand,
@@ -14,6 +15,7 @@ import {
 } from '../shared/hostProtocol'
 import type { HostProviderStatusProjection } from '../shared/hostSetupProtocol'
 import type { HostWorkspaceGitReadParams } from '../shared/hostProtocolTransport'
+import { ThreadCatalogueRequestError } from '../shared/threadCatalogueRequestError'
 import {
   AppStoreHostAuthority,
   createHostStandaloneAuthorityActivationPermit,
@@ -1670,5 +1672,65 @@ describe('AppStoreHostAuthority', () => {
         }
       })
     ).toThrow(/complete injected ports/)
+  })
+
+  it('preserves a request-local catalogue cause and lane while Host health remains ready', async () => {
+    const threadCatalogueProvider = vi.fn(async () => {
+      throw new ThreadCatalogueRequestError('source_changed')
+    })
+    const authority = open({ ports: { threadCatalogueProvider } })
+
+    await expect(
+      authority.threadCatalogue(
+        contextFor(ACTOR_A, CLIENT_A),
+        { method: 'open', chatId: 'moving-chat', mode: 'metadata' },
+        { priority: 'background' }
+      )
+    ).resolves.toEqual({
+      ok: true,
+      value: { data: null, error: { code: 'source_changed' } }
+    })
+    expect(threadCatalogueProvider).toHaveBeenCalledWith(
+      { method: 'open', chatId: 'moving-chat', mode: 'metadata' },
+      { priority: 'background' }
+    )
+    await expect(authority.health(contextFor(ACTOR_A, CLIENT_A))).resolves.toMatchObject({
+      ok: true
+    })
+  })
+
+  it('keeps unknown reads and all maintenance failures on the legacy Host failure path', async () => {
+    const unknown = open({
+      ports: {
+        threadCatalogueProvider: async () => {
+          throw new Error('catalogue database corrupt')
+        }
+      }
+    })
+    await expect(
+      unknown.threadCatalogue(contextFor(ACTOR_A, CLIENT_A), {
+        method: 'summary',
+        chatId: 'chat-1'
+      })
+    ).resolves.toEqual({ ok: false, error: 'host_unavailable' })
+
+    const maintenance = open({
+      ports: {
+        threadCatalogueMaintenanceProvider: async () => {
+          throw new ThreadCatalogueRequestError('source_changed')
+        }
+      }
+    })
+    const desktopClient = {
+      clientId: TASKWRAITH_DESKTOP_HOST_ACTOR.clientId,
+      clientClass: TASKWRAITH_DESKTOP_HOST_ACTOR.clientClass,
+      clientVersion: 'test'
+    } as const
+    await expect(
+      maintenance.threadCatalogueMaintenance(
+        { actor: TASKWRAITH_DESKTOP_HOST_ACTOR, client: desktopClient },
+        { method: 'repair-source', chatId: 'chat-1' }
+      )
+    ).resolves.toEqual({ ok: false, error: 'host_unavailable' })
   })
 })

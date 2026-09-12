@@ -20,9 +20,11 @@ import {
 } from '../shared/threadRunWallTime'
 import { isEnsembleRoundPresentationLive } from '../shared/ensembleRoundLifecycle'
 import type {
+  ThreadCatalogueRequestOptions,
   ThreadCatalogueReadQuery,
   ThreadCatalogueWireReply
 } from '../shared/threadCatalogueProtocol'
+import { threadCatalogueRequestError } from '../shared/threadCatalogueRequestError'
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -203,13 +205,20 @@ export function hostCatalogueSummaries(mirror: ThreadCatalogueMirror): HostProfi
 
 export async function queryHostCatalogue(
   client: ThreadCatalogueClient,
-  request: ThreadCatalogueReadQuery
+  request: ThreadCatalogueReadQuery,
+  options: ThreadCatalogueRequestOptions = {}
 ): Promise<ThreadCatalogueWireReply> {
-  const data = await client.query(request)
-  return {
-    data:
-      data instanceof Uint8Array
-        ? { encoding: 'base64', bytes: Buffer.from(data).toString('base64') }
-        : data
+  try {
+    const data = await client.query(request, options)
+    return {
+      data:
+        data instanceof Uint8Array
+          ? { encoding: 'base64', bytes: Buffer.from(data).toString('base64') }
+          : data
+    }
+  } catch (error) {
+    const requestError = threadCatalogueRequestError(error)
+    if (!requestError) throw error
+    return { data: null, error: { code: requestError.code } }
   }
 }

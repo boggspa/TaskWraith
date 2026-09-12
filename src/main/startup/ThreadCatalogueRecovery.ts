@@ -13,8 +13,33 @@ import type {
 } from '../store/ThreadCatalogueMutation'
 import type { TerminalChatRunSessionLike } from '../ChatRunReconciler'
 import type { installStartupThreadCatalogue } from './installThreadCatalogue'
+import { threadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
 
 type Catalogue = ReturnType<typeof installStartupThreadCatalogue>
+
+function hasRecoveryWork(row: ThreadCatalogueProjection): boolean {
+  const recovery = row.recovery
+  return Boolean(
+    recovery.unsettledRuns ||
+    recovery.ensembleWakeups ||
+    recovery.soloWakeups ||
+    recovery.workerEvents ||
+    recovery.joinPolicies ||
+    recovery.nextBlackboardExpiryAt !== null
+  )
+}
+
+function hasOnlyLiveRunSettlement(row: ThreadCatalogueProjection): boolean {
+  const recovery = row.recovery
+  return Boolean(
+    recovery.unsettledRuns &&
+    !recovery.ensembleWakeups &&
+    !recovery.soloWakeups &&
+    !recovery.workerEvents &&
+    !recovery.joinPolicies &&
+    recovery.nextBlackboardExpiryAt === null
+  )
+}
 
 export async function readCatalogueObjects(
   catalogue: Catalogue,
@@ -90,7 +115,10 @@ export class ThreadCatalogueRecovery {
   >()
   private readonly queued = new Set<string>()
   private readonly active = new Set<string>()
-  private readonly retries = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly retries = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; whileChatLive: boolean }
+  >()
   private readonly cleanup = new Map<
     string,
     { token: string; finish(): void; timer?: ReturnType<typeof setTimeout> }
@@ -160,18 +188,23 @@ export class ThreadCatalogueRecovery {
     }
     if (this.operational.get(chatId)?.revision !== row.revision || row.recovery.joinPolicies === 0)
       this.operational.delete(chatId)
-    const r = row.recovery
-    if (
-      !(
-        r.unsettledRuns ||
-        r.ensembleWakeups ||
-        r.soloWakeups ||
-        r.workerEvents ||
-        r.joinPolicies ||
-        r.nextBlackboardExpiryAt !== null
-      )
-    )
-      return
+    if (!hasRecoveryWork(row)) return
+    const chatLive = this.deps.isChatLive(chatId)
+    // A running chat's own run is current authority, so repeatedly decoding it
+    // cannot settle anything. Keep reading live chats that carry joins, wakeups,
+    // worker events, or expiry duties: those feed independent parents/timers.
+    if (chatLive && hasOnlyLiveRunSettlement(row)) return
+    const retry = this.retries.get(chatId)
+    if (retry) {
+      // A terminal transition is useful new evidence and should not wait out a
+      // cooldown taken while the source was actively streaming.
+      if (retry.whileChatLive && !chatLive) {
+        clearTimeout(retry.timer)
+        this.retries.delete(chatId)
+      } else {
+        return
+      }
+    }
     this.queued.add(chatId)
     void this.pump()
   }
@@ -188,13 +221,18 @@ export class ThreadCatalogueRecovery {
           await this.recover(id)
         } catch (error) {
           this.deps.onError?.(error, id)
-          if (!this.retries.has(id)) {
+          // Mirror updates can arrive while this request is failing. Drop that
+          // immediate duplicate so expected source churn observes one per-chat
+          // cooldown and the pump advances to unrelated queued chats.
+          this.queued.delete(id)
+          const requestError = threadCatalogueRequestError(error)
+          if (requestError?.retryable !== false && !this.retries.has(id)) {
             const timer = setTimeout(() => {
               this.retries.delete(id)
               this.enqueue(id)
             }, 2000)
             timer.unref?.()
-            this.retries.set(id, timer)
+            this.retries.set(id, { timer, whileChatLive: this.deps.isChatLive(id) })
           }
         } finally {
           this.active.delete(id)
@@ -219,6 +257,8 @@ export class ThreadCatalogueRecovery {
   }
 
   private async recover(chatId: string): Promise<void> {
+    const row = this.deps.catalogue.mirror.get(chatId)
+    if (!row || (this.deps.isChatLive(chatId) && hasOnlyLiveRunSettlement(row))) return
     // The one call in this class that enters the worker's decode queue, and the
     // reason a first send could wait on repair: this drain opens EVERY thread
     // in the corpus at first paint, and `query` used to escalate every open into
@@ -448,7 +488,7 @@ export class ThreadCatalogueRecovery {
     this.stopped = true
     this.unsubscribe?.()
     this.queued.clear()
-    for (const timer of this.retries.values()) clearTimeout(timer)
+    for (const retry of this.retries.values()) clearTimeout(retry.timer)
     this.retries.clear()
     // A deferred cleanup still owns this chat's write-gate hold: its `finish`
     // is the only thing that calls the `release()` taken in

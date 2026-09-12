@@ -10,7 +10,12 @@ import {
 } from '../host-runtime/HostProfileDomainStore'
 import { projectHostProfileDomainSnapshot } from '../host-runtime/HostProfileDomainProjection'
 import type { ThreadCatalogueMirror } from '../host-shared/thread-catalogue/ThreadCatalogueMirror'
-import { hostCatalogueSummaries, projectHostCatalogueThread } from './ThreadCatalogueHostMirror'
+import {
+  hostCatalogueSummaries,
+  projectHostCatalogueThread,
+  queryHostCatalogue
+} from './ThreadCatalogueHostMirror'
+import { ThreadCatalogueRequestError } from '../shared/threadCatalogueRequestError'
 import { projectThreadCatalogueRecord } from '../main/store/ThreadCatalogueFromRecord'
 import type { ChatRecord } from '../main/store/types'
 
@@ -21,6 +26,31 @@ afterEach(() => {
 })
 
 describe('Host thread catalogue write projection', () => {
+  it('returns a body-free catalogue-local failure and forwards the background lane', async () => {
+    const query = async (_request: unknown, options?: { priority?: string }) => {
+      expect(options).toEqual({ priority: 'background' })
+      throw new ThreadCatalogueRequestError('source_changed')
+    }
+
+    await expect(
+      queryHostCatalogue(
+        { query } as never,
+        { method: 'open', chatId: 'moving-chat', mode: 'metadata' },
+        { priority: 'background' }
+      )
+    ).resolves.toEqual({ data: null, error: { code: 'source_changed' } })
+  })
+
+  it('does not recast an unknown worker failure as request-local contention', async () => {
+    const failure = new Error('sqlite catalogue corrupt')
+    await expect(
+      queryHostCatalogue({ query: async () => Promise.reject(failure) } as never, {
+        method: 'summary',
+        chatId: 'chat'
+      })
+    ).rejects.toBe(failure)
+  })
+
   it('projects bounded metadata from an already-loaded Host record', () => {
     const longParticipantId = 'p'.repeat(490)
     const thread: HostProfileThread = {

@@ -135,4 +135,32 @@ describe('ThreadCatalogueClient supervision regressions', () => {
       expect(Object.keys(posted).sort()).toEqual(['id', 'query'])
     }
   })
+
+  it('reconstructs a closed worker error code without trusting its prose or closing the worker', async () => {
+    const port = new Port()
+    const client = new ThreadCatalogueClient(
+      port,
+      options(() => new Port())
+    )
+    await client.ready
+
+    const query = client.query({ method: 'summary', chatId: 'chat-1' } as never)
+    await Promise.resolve()
+    const posted = port.posts.find(({ query: value }) => value.method === 'summary')!
+    port.emit('message', {
+      id: posted.id,
+      ok: false,
+      errorCode: 'source_changed',
+      error: 'untrusted worker prose'
+    })
+
+    await expect(query).rejects.toMatchObject({
+      name: 'ThreadCatalogueRequestError',
+      code: 'source_changed',
+      message: 'History changed during indexing.'
+    })
+    expect(client.available).toBe(true)
+    expect(port.terminateCalls).toBe(0)
+    await client.dispose()
+  })
 })

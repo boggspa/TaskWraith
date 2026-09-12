@@ -1,4 +1,5 @@
 import type { ThreadCatalogueReadContext } from '../../shared/threadCatalogueTypes'
+import { ThreadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
@@ -291,7 +292,10 @@ export class ThreadCatalogueWorkerService {
 
   private importFailed(chatId: string, error: unknown): void {
     const message = error instanceof Error ? error.message : ''
-    if (/outstanding work|changed during|changed before|being erased/.test(message)) {
+    if (
+      (error instanceof ThreadCatalogueRequestError && error.retryable) ||
+      /outstanding work|changed during|changed before|being erased/.test(message)
+    ) {
       this.notifyChanged(chatId)
     } else {
       this.failed.add(chatId)
@@ -461,12 +465,13 @@ export class ThreadCatalogueWorkerService {
       job.chatId,
       this.options.assertSourceAuthority
     )
+    if (JSON.stringify(epoch) !== JSON.stringify(this.catalogue.epoch(job.chatId)))
+      throw new ThreadCatalogueRequestError('lease_erased')
     if (
       durableWitness !== job.sourceWitness ||
-      JSON.stringify(epoch) !== JSON.stringify(this.catalogue.epoch(job.chatId)) ||
       JSON.stringify(heads) !== JSON.stringify(this.catalogue.sourceHeads(job.chatId))
     )
-      throw new Error('History changed during mutation durability barrier')
+      throw new ThreadCatalogueRequestError('source_changed')
     const result = await this.decoder.run(
       {
         type: 'prepare',
@@ -485,12 +490,13 @@ export class ThreadCatalogueWorkerService {
     if (result.type !== 'prepared') throw new Error('History mutation preparation did not complete')
     if (result.prepared) {
       this.prepared.set(result.prepared.preparedId, result.prepared)
-      if (
-        this.closed ||
-        JSON.stringify(epoch) !== JSON.stringify(this.catalogue.epoch(job.chatId))
-      ) {
+      if (this.closed) {
         this.discardPrepared(result.prepared.preparedId)
-        throw new Error('History was erased during mutation preparation')
+        throw new Error('History index is shutting down')
+      }
+      if (JSON.stringify(epoch) !== JSON.stringify(this.catalogue.epoch(job.chatId))) {
+        this.discardPrepared(result.prepared.preparedId)
+        throw new ThreadCatalogueRequestError('lease_erased')
       }
     }
     return result.prepared
@@ -527,18 +533,19 @@ export class ThreadCatalogueWorkerService {
           job.chatId,
           assertAuthority
         )
+        if (this.closed) throw new Error('History index is shutting down')
+        if (JSON.stringify(epoch) !== JSON.stringify(this.catalogue.epoch(job.chatId)))
+          throw new ThreadCatalogueRequestError('lease_erased')
         if (
-          this.closed ||
-          JSON.stringify(epoch) !== JSON.stringify(this.catalogue.epoch(job.chatId)) ||
           JSON.stringify(heads) !== JSON.stringify(this.catalogue.sourceHeads(job.chatId)) ||
           witness !== captureThreadCatalogueWitness(this.options.reader, job.chatId).witness
         )
-          throw new Error('History changed during durability repair')
+          throw new ThreadCatalogueRequestError('source_changed')
         assertAuthority()
         this.database.recordSourceDurabilityProofs(job.chatId, epoch, debts)
       }
       if (job.mode === 'metadata' && this.catalogue.publicationPending(job.chatId))
-        throw new Error('History writer has outstanding work')
+        throw new ThreadCatalogueRequestError('source_unsettled')
       const result = await this.decoder.run(
         {
           type: 'decode',
@@ -571,13 +578,14 @@ export class ThreadCatalogueWorkerService {
         }
       )
       if (result.type === 'missing') {
+        if (this.closed) throw new Error('History index is shutting down')
+        if (JSON.stringify(epoch) !== JSON.stringify(this.catalogue.epoch(job.chatId)))
+          throw new ThreadCatalogueRequestError('lease_erased')
         if (
-          this.closed ||
-          JSON.stringify(epoch) !== JSON.stringify(this.catalogue.epoch(job.chatId)) ||
           JSON.stringify(heads) !== JSON.stringify(this.catalogue.sourceHeads(job.chatId)) ||
           captureThreadCatalogueWitness(this.options.reader, job.chatId).legacyExists
         )
-          throw new Error('History changed during indexing')
+          throw new ThreadCatalogueRequestError('source_changed')
         this.database.removeChat(job.chatId)
         this.options.onRemoved?.(job.chatId)
         this.changed(job.chatId, true)
@@ -587,12 +595,12 @@ export class ThreadCatalogueWorkerService {
       if (!generation || !projection) throw new Error('History decoder omitted its projection')
       const committed = generation as ThreadIndexedGeneration
       const metadata = projection as ThreadCatalogueProjection
+      if (this.closed) throw new Error('History index is shutting down')
       if (
-        this.closed ||
         JSON.stringify(epoch) !== JSON.stringify(this.catalogue.epoch(job.chatId)) ||
         this.catalogue.read(job.chatId).status === 'erasing'
       )
-        throw new Error('History changed during indexing')
+        throw new ThreadCatalogueRequestError('lease_erased')
       for (const [kind, count] of Object.entries(result.coverage)) {
         this.database.sealKind(
           committed,
@@ -637,13 +645,13 @@ export class ThreadCatalogueWorkerService {
         this.prune(job.chatId)
         return entry
       }
-      if (job.mode === 'metadata') throw new Error('History changed during indexing')
+      if (this.closed) throw new Error('History index is shutting down')
       if (
-        this.closed ||
         JSON.stringify(epoch) !== JSON.stringify(this.catalogue.epoch(job.chatId)) ||
         this.catalogue.read(job.chatId).status === 'erasing'
       )
-        throw new Error('History was erased during indexing')
+        throw new ThreadCatalogueRequestError('lease_erased')
+      if (job.mode === 'metadata') throw new ThreadCatalogueRequestError('source_changed')
       // A requested transcript is a consistent read snapshot. It does not
       // publish recovery state when a source writer advanced during import.
       return { ...committed, projection: metadata, snapshot: true }
@@ -684,19 +692,17 @@ export class ThreadCatalogueWorkerService {
 
   private readLease(id: string, operational = false): IndexedThread {
     const lease = this.leases.get(id)
-    if (!lease || lease.expires < Date.now()) throw new Error('History page lease expired')
+    if (!lease || lease.expires < Date.now()) throw new ThreadCatalogueRequestError('lease_expired')
     const entry = lease.entry
     if (
       JSON.stringify(entry.epoch) !== JSON.stringify(this.catalogue.epoch(entry.chatId)) ||
       this.catalogue.read(entry.chatId).status === 'erasing'
     )
-      throw new Error('History page was erased')
-    if (
-      operational &&
-      (entry.projection.sourceComplete === false ||
-        this.database.current(entry.chatId)?.generation !== entry.generation)
-    )
-      throw new Error('History recovery state changed')
+      throw new ThreadCatalogueRequestError('lease_erased')
+    if (operational && entry.projection.sourceComplete === false)
+      throw new Error('History recovery requires a complete source')
+    if (operational && this.database.current(entry.chatId)?.generation !== entry.generation)
+      throw new ThreadCatalogueRequestError('lease_superseded')
     lease.expires = Date.now() + 120_000
     return entry
   }

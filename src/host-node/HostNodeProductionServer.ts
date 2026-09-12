@@ -476,8 +476,8 @@ export class HostNodeProductionServer {
         threadHistoryProvider: (request) => this.domain!.threadHistory(request),
         ...(this.threadCatalogue
           ? {
-              threadCatalogueProvider: (request) =>
-                queryHostCatalogue(this.threadCatalogue!, request)
+              threadCatalogueProvider: (request, options) =>
+                queryHostCatalogue(this.threadCatalogue!, request, options)
             }
           : {}),
         ...(this.threadCatalogue

@@ -252,6 +252,8 @@ export type HostLocalTransportRequest =
       id: string
       kind: 'thread.catalogue'
       params: ThreadCatalogueReadQuery
+      /** Omitted foreground stays byte-compatible with older Host decoders. */
+      priority?: 'background'
     }
   | {
       type: 'request'
@@ -1061,7 +1063,8 @@ export function decodeHostLocalTransportClientFrame(
       }
       case 'thread.catalogue': {
         const params = decodeThreadCatalogueReadQuery(value.params)
-        if (!params) return fail('invalid_payload')
+        if (!params || (value.priority !== undefined && value.priority !== 'background'))
+          return fail('invalid_payload')
         return {
           ok: true,
           value: {
@@ -1069,7 +1072,8 @@ export function decodeHostLocalTransportClientFrame(
             transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
             id: id.value,
             kind: 'thread.catalogue',
-            params
+            params,
+            ...(value.priority === 'background' ? { priority: 'background' as const } : {})
           }
         }
       }

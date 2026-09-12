@@ -31,6 +31,7 @@ import {
   type ThreadDecodeAcknowledgement,
   type ThreadDecodeMessage
 } from '../store/ThreadCatalogueWorkerProtocol'
+import { classifyThreadDecodeError } from '../store/ThreadCatalogueWorkerProtocol'
 
 let activeRequest = 0
 let acknowledge: ((message: ThreadDecodeAcknowledgement) => void) | null = null
@@ -369,18 +370,11 @@ parentPort?.on(
     }
     void execute()
       .catch((error: unknown) => {
-        const text = error instanceof Error ? error.message : ''
+        const classified = classifyThreadDecodeError(error)
         parentPort!.postMessage({
           type: 'error',
           requestId: message.requestId,
-          reason: text.includes('changed')
-            ? 'changed'
-            : text.includes('cancelled')
-              ? 'cancelled'
-              : 'unreadable',
-          message: text.includes('changed')
-            ? 'History changed during indexing'
-            : 'History indexing did not complete'
+          ...classified
         } satisfies ThreadDecodeMessage)
       })
       .finally(() => {

@@ -1,4 +1,5 @@
 import type {
+  ThreadCatalogueRequestOptions,
   ThreadCatalogueReadQuery,
   ThreadCatalogueMaintenanceQuery,
   ThreadCatalogueWireReply
@@ -151,7 +152,8 @@ export interface HostAuthority {
 
   threadCatalogue?(
     context: HostAuthorityCallContext,
-    request: ThreadCatalogueReadQuery
+    request: ThreadCatalogueReadQuery,
+    options?: ThreadCatalogueRequestOptions
   ): Promise<HostAuthorityResult<ThreadCatalogueWireReply>>
   threadCatalogueMaintenance?(
     context: HostAuthorityCallContext,

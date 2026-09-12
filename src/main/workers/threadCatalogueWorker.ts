@@ -8,6 +8,7 @@ import {
 import { ThreadCatalogueWorkerService } from '../store/ThreadCatalogueWorkerService'
 import type { ThreadCatalogueOwner, ThreadCatalogueQuery } from '../store/ThreadCatalogueClient'
 import type { ThreadCatalogueReaderOptions } from '../store/ThreadCatalogueDiskReader'
+import { threadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
 
 const utilityPort = (
   process as NodeJS.Process & {
@@ -116,10 +117,14 @@ async function receive(value: unknown): Promise<void> {
     }
     send({ id: request.id, ok: true, value: result })
   } catch (error) {
+    const requestError = threadCatalogueRequestError(error)
     send({
       id: request.id,
       ok: false,
-      error: error instanceof Error ? error.message.slice(0, 200) : 'History request failed'
+      ...(requestError ? { errorCode: requestError.code } : {}),
+      error:
+        requestError?.message ??
+        (error instanceof Error ? error.message.slice(0, 200) : 'History request failed')
     })
   }
 }

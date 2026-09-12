@@ -1167,6 +1167,37 @@ describe('HostLocalServer', () => {
       })
     })
 
+    it('forwards a catalogue background lane beside unchanged read params', async () => {
+      const threadCatalogue = vi.fn().mockResolvedValue({
+        ok: true,
+        value: { data: { title: 'quiet' } }
+      })
+      ;(
+        authority as unknown as HostAuthority & { threadCatalogue: typeof threadCatalogue }
+      ).threadCatalogue = threadCatalogue
+      const client = await authAndConnect(['bootstrap', 'history', 'health'])
+      client.writeLine(
+        JSON.stringify({
+          ...makeRequest('thread.catalogue' as never, 'r-catalogue-background', {
+            method: 'summary',
+            chatId: 'chat-1'
+          }),
+          priority: 'background'
+        })
+      )
+
+      expect(await client.readFrame()).toMatchObject({
+        ok: true,
+        result: { kind: 'thread.catalogue', reply: { data: { title: 'quiet' } } }
+      })
+      expect(threadCatalogue).toHaveBeenCalledWith(
+        expect.anything(),
+        { method: 'summary', chatId: 'chat-1' },
+        { priority: 'background' }
+      )
+      client.close()
+    })
+
     it('requires both commands and setup capability before forwarding setup submits', async () => {
       const setupCommand = {
         type: 'host.command',

@@ -18,7 +18,7 @@ import { HostProjectionClient } from './HostProjectionClient'
  */
 interface FakeHost {
   readonly discoveryPath: string
-  readonly requests: Array<{ kind: string; params: unknown }>
+  readonly requests: Array<{ kind: string; params: unknown; priority?: string }>
   close(): Promise<void>
 }
 
@@ -50,7 +50,7 @@ function startFakeHost(options: {
   }
   const tokenPath = join(dir, 'token')
   const discoveryPath = join(dir, 'discovery.json')
-  const requests: Array<{ kind: string; params: unknown }> = []
+  const requests: Array<{ kind: string; params: unknown; priority?: string }> = []
 
   writeFileSync(tokenPath, 'test-token', { mode: 0o600 })
   writeFileSync(
@@ -94,6 +94,7 @@ function startFakeHost(options: {
           id?: string
           kind?: string
           params?: unknown
+          priority?: string
           // Capabilities ride the NESTED hello envelope, not the transport frame.
           hello?: { capabilities?: readonly HostCapability[] }
         }
@@ -124,7 +125,11 @@ function startFakeHost(options: {
           continue
         }
         if (frame.type === 'request' && frame.kind) {
-          requests.push({ kind: frame.kind, params: frame.params })
+          requests.push({
+            kind: frame.kind,
+            params: frame.params,
+            ...(frame.priority ? { priority: frame.priority } : {})
+          })
           const result = options.respond?.(frame.kind, frame.params)
           socket.write(
             `${JSON.stringify({
@@ -449,5 +454,62 @@ describe('request shaping', () => {
     await expect(
       client.getWorkspaceGitRead({ workspaceId: 'ws-1', scope: 'status' })
     ).rejects.toThrow(/unexpected workspace git result kind/)
+  })
+})
+
+describe('thread catalogue request-local behavior', () => {
+  it('puts background priority beside unchanged catalogue params', async () => {
+    const host = await startFakeHost({
+      hostOffer: FULL_OFFER,
+      respond: () => ({ kind: 'thread.catalogue', reply: { data: { ok: true } } })
+    })
+    const client = createClient(host.discoveryPath)
+    await client.connect()
+
+    await expect(
+      client.queryThreadCatalogue(
+        { method: 'summary', chatId: 'chat-1' },
+        { priority: 'background' }
+      )
+    ).resolves.toEqual({ ok: true })
+    expect(host.requests).toEqual([
+      {
+        kind: 'thread.catalogue',
+        params: { method: 'summary', chatId: 'chat-1' },
+        priority: 'background'
+      }
+    ])
+  })
+
+  it('surfaces a body-free source change and keeps the same socket usable', async () => {
+    let reads = 0
+    const host = await startFakeHost({
+      hostOffer: FULL_OFFER,
+      respond: (kind) => {
+        if (kind !== 'thread.catalogue') throw new Error(`unexpected request ${kind}`)
+        reads += 1
+        return {
+          kind: 'thread.catalogue',
+          reply:
+            reads === 1
+              ? { data: null, error: { code: 'source_changed' } }
+              : { data: { title: 'quiet generation' } }
+        }
+      }
+    })
+    const client = createClient(host.discoveryPath)
+    await client.connect()
+
+    await expect(
+      client.queryThreadCatalogue({ method: 'summary', chatId: 'moving-chat' })
+    ).rejects.toMatchObject({
+      name: 'ThreadCatalogueRequestError',
+      code: 'source_changed'
+    })
+    expect(client.connected).toBe(true)
+    await expect(
+      client.queryThreadCatalogue({ method: 'summary', chatId: 'quiet-chat' })
+    ).resolves.toEqual({ title: 'quiet generation' })
+    expect(host.requests).toHaveLength(2)
   })
 })

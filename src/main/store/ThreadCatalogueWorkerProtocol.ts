@@ -7,6 +7,7 @@ import type {
 import type { ThreadIndexObjectFrame, ThreadIndexedObjectKind } from './ThreadCatalogueDatabase'
 import type { PreparedThreadMutation, ThreadCatalogueMutation } from './ThreadCatalogueMutation'
 import type { ThreadCatalogueEpoch, ThreadCatalogueSourceHeads } from './ThreadCatalogue'
+import { threadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
 
 export type ThreadDecodeMode = 'metadata' | 'pages' | 'record' | 'runs' | 'remote' | 'control'
 
@@ -84,3 +85,17 @@ export interface ThreadDecodeAcknowledgement {
 
 export const THREAD_DECODE_MAX_BATCH_BYTES = 256 * 1024
 export const THREAD_DECODE_MAX_BATCH_FRAMES = 256
+
+export function classifyThreadDecodeError(
+  error: unknown
+): Pick<Extract<ThreadDecodeMessage, { type: 'error' }>, 'reason' | 'message'> {
+  const requestError = threadCatalogueRequestError(error)
+  if (requestError?.code === 'source_changed') {
+    return { reason: 'changed', message: 'History changed during indexing' }
+  }
+  const text = error instanceof Error ? error.message : ''
+  return {
+    reason: text.includes('cancelled') ? 'cancelled' : 'unreadable',
+    message: 'History indexing did not complete'
+  }
+}
