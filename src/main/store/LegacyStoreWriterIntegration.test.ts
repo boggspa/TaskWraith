@@ -10,8 +10,15 @@ vi.mock('electron', () => ({ app: { getPath: () => userDataPath } }))
 
 import { AppStore } from '../store'
 import { HOST_THREAD_RECORD_TRANSFER_DIRECTORY } from '../../host-runtime/HostThreadRecordTransfer'
+import {
+  INCREMENTAL_CHAT_CHECKPOINT_FORMAT,
+  INCREMENTAL_CHAT_CHECKPOINT_VERSION,
+  type IncrementalChatCheckpoint
+} from './IncrementalChatJournal'
 import { LegacyStoreWriterGateClosedError, legacyStoreWriterGate } from './LegacyStoreWriterGate'
 import type { ChatRecord } from './types'
+
+const MAIN_OWNED_INCREMENTAL_CHAT_JOURNAL_DIRECTORY = 'chat-journal-v2'
 
 afterAll(() => fs.rmSync(userDataPath, { recursive: true, force: true }))
 
@@ -40,22 +47,26 @@ function snapshotTree(root: string): unknown[] {
 /**
  * Since f81c4df9a a Host-owned gate routes saveChat through the Host, which
  * synchronously stages the record as an owner-only artifact under
- * host-thread-record-transfer/. That is Host traffic, not a legacy write, so it
- * is excluded here — along with the root row, whose size and mtime move
- * whenever any child appears. Every legacy-owned path keeps its full
- * byte-for-byte comparison, contents included.
+ * host-thread-record-transfer/. The Host-routed save also writes its durable
+ * mutation to main's chat-journal-v2 sideband. Neither is a legacy write, so
+ * both are excluded here — along with the root row, whose size and mtime move
+ * whenever any child appears. Every legacy-owned path keeps its full byte-for-
+ * byte comparison, contents included.
  */
 function legacyBytes(rows: unknown[]): unknown[] {
   const transferPrefix = `${HOST_THREAD_RECORD_TRANSFER_DIRECTORY}${path.sep}`
+  const incrementalJournalPrefix = `${MAIN_OWNED_INCREMENTAL_CHAT_JOURNAL_DIRECTORY}${path.sep}`
   return rows.filter((row) => {
     const relative = (row as { relative: string }).relative
     return (
       relative !== '.' &&
       relative !== HOST_THREAD_RECORD_TRANSFER_DIRECTORY &&
+      relative !== MAIN_OWNED_INCREMENTAL_CHAT_JOURNAL_DIRECTORY &&
       // path.relative emits native separators: on win32 a '/'-joined prefix
       // never matches and the staged Host transfer artifact leaks into the
       // comparison.
-      !relative.startsWith(transferPrefix)
+      !relative.startsWith(transferPrefix) &&
+      !relative.startsWith(incrementalJournalPrefix)
     )
   })
 }
@@ -106,6 +117,24 @@ it('fences Host-owned workspace/chat writes while leaving settings available', a
   // record reached the Host rather than being silently dropped.
   expect(() => AppStore.saveChat(chat)).not.toThrow()
   expect(fs.existsSync(path.join(userDataPath, HOST_THREAD_RECORD_TRANSFER_DIRECTORY))).toBe(true)
+  const lateCheckpoint = JSON.parse(
+    fs.readFileSync(
+      path.join(
+        userDataPath,
+        MAIN_OWNED_INCREMENTAL_CHAT_JOURNAL_DIRECTORY,
+        'late-chat.checkpoint.json'
+      ),
+      'utf8'
+    )
+  ) as IncrementalChatCheckpoint
+  expect(lateCheckpoint).toMatchObject({
+    format: INCREMENTAL_CHAT_CHECKPOINT_FORMAT,
+    version: INCREMENTAL_CHAT_CHECKPOINT_VERSION,
+    chatId: 'late-chat',
+    revision: 0,
+    reason: 'initial',
+    record: { appChatId: 'late-chat', persistenceRevision: 0 }
+  })
   expect(() => AppStore.deleteChat(existingChat.appChatId)).toThrow(
     LegacyStoreWriterGateClosedError
   )

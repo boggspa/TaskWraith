@@ -69,11 +69,12 @@ describe('ApprovalLedgerEventStore', () => {
 
   it('replays events and rejects a second decision for the same approval', () => {
     const root = makeRoot()
-    const first = new ApprovalLedgerEventStore({ userDataPath: root })
+    const now = () => new Date('2026-09-04T13:00:00.000Z')
+    const first = new ApprovalLedgerEventStore({ userDataPath: root, now })
     first.put(pending('approval-1'))
     first.resolve('approval-1', 'decline', 'system', { autoDeniedByTimeout: true })
 
-    const reopened = new ApprovalLedgerEventStore({ userDataPath: root })
+    const reopened = new ApprovalLedgerEventStore({ userDataPath: root, now })
     expect(reopened.getRecords()[0]).toMatchObject({
       approvalId: 'approval-1',
       status: 'denied',
