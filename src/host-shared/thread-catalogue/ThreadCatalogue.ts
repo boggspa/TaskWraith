@@ -88,6 +88,7 @@ export interface ThreadCatalogueOptions {
     debtId: string
   ) => boolean
   /** Fault-injection seams for publication and first-use directory crash tests. */
+  openTemporaryFile?: (filePath: string) => number
   beforeAtomicRename?: (filePath: string) => void
   afterAtomicRename?: (filePath: string) => void
   beforeDirectorySync?: (directory: string) => void
@@ -235,7 +236,7 @@ export class ThreadCatalogue {
     }
   }
 
-  private writeJson(filePath: string, value: unknown): void {
+  private writeJson(filePath: string, value: unknown, retryMissingDirectory?: () => boolean): void {
     this.assertWritable()
     const text = JSON.stringify(value)
     if (Buffer.byteLength(text) > THREAD_CATALOGUE_MAX_HEAD_BYTES) {
@@ -244,9 +245,28 @@ export class ThreadCatalogue {
     const directory = path.dirname(filePath)
     this.ensureDurableDirectory(directory)
     const temporary = `${filePath}.tmp-${randomUUID()}`
+    const openTemporary = (): number =>
+      this.options.openTemporaryFile?.(temporary) ?? fs.openSync(temporary, 'wx', 0o600)
     let fd: number | undefined
     try {
-      fd = fs.openSync(temporary, 'wx', 0o600)
+      try {
+        fd = openTemporary()
+      } catch (error) {
+        if (
+          (error as NodeJS.ErrnoException).code !== 'ENOENT' ||
+          !retryMissingDirectory ||
+          this.filePresence(directory) !== 'missing' ||
+          !retryMissingDirectory()
+        )
+          throw error
+        // Resolution acknowledgement may have retired an empty legacy
+        // namespace after ensureDurableDirectory returned. Recreate it once,
+        // then revalidate before the second and final open attempt.
+        this.durableDirectories.delete(directory)
+        this.ensureDurableDirectory(directory)
+        if (!retryMissingDirectory()) throw error
+        fd = openTemporary()
+      }
       fs.writeFileSync(fd, text)
       fs.fsyncSync(fd)
       fs.closeSync(fd)
@@ -447,6 +467,48 @@ export class ThreadCatalogue {
     this.assertRecoveryHoldAllows(chatId, recoveryToken)
   }
 
+  private assertPublicationMayContinue(
+    ticket: ThreadCatalogueTicket,
+    recoveryToken?: string
+  ): void {
+    this.assertSourceMutationAllowed(ticket.chatId, recoveryToken)
+    if (!epochMatches(ticket.epoch, this.epoch(ticket.chatId)))
+      throw new Error('Thread catalogue publication epoch changed')
+    const current = this.outstanding.get(ticket.chatId)
+    if (
+      !current ||
+      current.ticket.operationId !== ticket.operationId ||
+      current.ticket.sequence !== ticket.sequence
+    )
+      throw new Error('Thread catalogue publication is no longer current')
+  }
+
+  private publicationMayContinue(ticket: ThreadCatalogueTicket, recoveryToken?: string): boolean {
+    try {
+      this.assertPublicationMayContinue(ticket, recoveryToken)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private publicationCanFinalize(ticket: ThreadCatalogueTicket): boolean {
+    try {
+      this.assertWritable()
+      const current = this.outstanding.get(ticket.chatId)
+      return Boolean(
+        current &&
+        current.ticket.operationId === ticket.operationId &&
+        current.ticket.sequence === ticket.sequence &&
+        this.lifecycle(ticket.writer, ticket.writerId) === 'active' &&
+        !this.isErasing(ticket.chatId) &&
+        epochMatches(ticket.epoch, this.epoch(ticket.chatId))
+      )
+    } catch {
+      return false
+    }
+  }
+
   beginPublication(chatId: string, recoveryToken?: string): ThreadCatalogueTicket {
     this.assertWritable()
     this.assertChatId(chatId)
@@ -472,10 +534,11 @@ export class ThreadCatalogue {
       current.ticket = next
       current.unsettled.add(next.sequence)
       try {
-        this.assertSourceMutationAllowed(chatId, recoveryToken)
+        this.assertPublicationMayContinue(next, recoveryToken)
       } catch (error) {
         current.unsettled.delete(next.sequence)
-        this.settleBurst(chatId, current)
+        if (this.publicationCanFinalize(next)) this.settleBurst(chatId, current)
+        else if (this.outstanding.get(chatId) === current) this.outstanding.delete(chatId)
         throw error
       }
       return this.copyTicket(next)
@@ -517,24 +580,34 @@ export class ThreadCatalogue {
     try {
       this.writeJson(
         path.join(this.repairDirectory(ticket.writer, chatId), `${ticket.operationId}.json`),
-        this.copyTicket(ticket)
+        this.copyTicket(ticket),
+        () => this.publicationMayContinue(ticket, recoveryToken)
       )
+      this.assertPublicationMayContinue(ticket, recoveryToken)
       this.writeJson(this.slot(ticket.writer, chatId), {
         version: THREAD_CATALOGUE_VERSION,
         ticket,
         phase: 'pending',
         ...(burst.durabilityDebtId ? { durabilityDebtId: burst.durabilityDebtId } : {})
       } satisfies PublicationHead)
-      this.assertSourceMutationAllowed(chatId, recoveryToken)
+      this.assertPublicationMayContinue(ticket, recoveryToken)
     } catch (error) {
-      // No ticket escaped, so no source operation was admitted. Retain the
-      // retryable finalization if even publishing the aborted issuance fails.
+      // No ticket escaped to the caller, so no source operation was admitted.
+      // Finalize any durable ticket/head even if recovery took a hold in the
+      // meantime; only erasure, epoch replacement, or owner retirement owns
+      // that metadata cleanup instead.
       burst.unsettled.clear()
       burst.finalizationPending = true
-      try {
-        this.settleBurst(chatId, burst)
-      } catch {
-        /* retryPublication retains the debt */
+      if (this.publicationCanFinalize(ticket)) {
+        try {
+          this.settleBurst(chatId, burst)
+        } catch {
+          /* retryPublication retains the debt */
+        }
+      } else if (this.outstanding.get(chatId) === burst) {
+        // Erasure or owner replacement now owns the scope. Do not recreate a
+        // stale source head while unwinding the failed issuance.
+        this.outstanding.delete(chatId)
       }
       throw error
     }

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   ThreadCatalogue,
@@ -45,6 +45,7 @@ describe('durable thread catalogue publication', () => {
   let beforeRename: ((file: string) => void) | undefined
   let afterRename: ((file: string) => void) | undefined
   let beforeSync: ((directory: string) => void) | undefined
+  let openTemporary: ((file: string) => number) | undefined
 
   function catalogue(
     writer: ThreadCatalogueWriter = 'desktop',
@@ -58,8 +59,10 @@ describe('durable thread catalogue publication', () => {
       writerLifecycle: (_lane, id) => (retired.has(id) ? 'retired' : 'active'),
       canPublishResolution: () => writer === 'desktop',
       canErase: () => writable && writer === 'desktop',
+      canManageRecoveryHolds: () => writer === 'desktop',
       isSourceDurabilityProven: (_chatId, _epoch, id) => provenDurability.has(id),
       isIndexedGenerationCommitted: () => true,
+      openTemporaryFile: (file) => openTemporary?.(file) ?? fs.openSync(file, 'wx', 0o600),
       beforeAtomicRename: (file) => beforeRename?.(file),
       afterAtomicRename: (file) => afterRename?.(file),
       beforeDirectorySync: (directory) => beforeSync?.(directory),
@@ -100,6 +103,7 @@ describe('durable thread catalogue publication', () => {
     beforeRename = undefined
     afterRename = undefined
     beforeSync = undefined
+    openTemporary = undefined
   })
 
   it('settles an aborted begin without stranding an active writer forever', () => {
@@ -131,6 +135,244 @@ describe('durable thread catalogue publication', () => {
     expect(resolver.acknowledgeResolution('chat', old.publicationId)).toBe(false)
     expect(resolver.repairChatIds()).toEqual(['chat'])
     expect(finish(source, newer)).toBe(true)
+  })
+
+  it('does not let repeated acknowledgements retire a newly recreated pending namespace', () => {
+    const source = catalogue()
+    const resolver = catalogue()
+    const first = source.beginPublication('chat')
+    expect(finish(source, first)).toBe(true)
+    expect(resolver.publishResolution(resolution(resolver))).toBe(true)
+    const initial = resolver.read('chat')
+    if (initial.status !== 'ready') throw new Error('not ready')
+    expect(resolver.acknowledgeResolution('chat', initial.publicationId)).toBe(true)
+
+    const pendingDirectory = join(source.directory, 'pending', 'desktop', 'chat')
+    const pendingWriterDirectory = join(source.directory, 'pending', 'desktop')
+    // Normalize both implementations to a first-use directory. The injected
+    // acknowledgement then lands after mkdir and before the ticket temp open.
+    fs.rmSync(pendingDirectory, { recursive: true, force: true })
+    let acknowledgementInterleaved = false
+    beforeSync = (directory) => {
+      if (directory !== pendingWriterDirectory || acknowledgementInterleaved) return
+      acknowledgementInterleaved = true
+      expect(resolver.acknowledgeResolution('chat', initial.publicationId)).toBe(true)
+    }
+
+    let next = source.beginPublication('chat')
+    beforeSync = undefined
+    expect(acknowledgementInterleaved).toBe(true)
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      expect(finish(source, next)).toBe(true)
+      expect(resolver.publishResolution(resolution(resolver))).toBe(true)
+      const ready = resolver.read('chat')
+      if (ready.status !== 'ready') throw new Error('not ready')
+      expect(resolver.acknowledgeResolution('chat', ready.publicationId)).toBe(true)
+      expect(resolver.repairChatIds()).toEqual([])
+      if (cycle < 2) next = source.beginPublication('chat')
+    }
+    expect(fs.existsSync(pendingDirectory)).toBe(false)
+  })
+
+  it('bounds repeated pending namespace retirement to one retry', () => {
+    const source = catalogue()
+    const resolver = catalogue()
+    expect(finish(source, source.beginPublication('chat'))).toBe(true)
+    expect(resolver.publishResolution(resolution(resolver))).toBe(true)
+    const ready = resolver.read('chat')
+    if (ready.status !== 'ready') throw new Error('not ready')
+    expect(resolver.acknowledgeResolution('chat', ready.publicationId)).toBe(true)
+
+    const pendingWriterDirectory = join(source.directory, 'pending', 'desktop')
+    let retirements = 0
+    let acknowledging = false
+    beforeSync = (directory) => {
+      if (directory !== pendingWriterDirectory || acknowledging) return
+      retirements += 1
+      acknowledging = true
+      try {
+        expect(resolver.acknowledgeResolution('chat', ready.publicationId)).toBe(true)
+      } finally {
+        acknowledging = false
+      }
+    }
+    expect(() => source.beginPublication('chat')).toThrow(/ENOENT/)
+    beforeSync = undefined
+
+    expect(retirements).toBe(2)
+    expect(source.hasOutstandingPublication('chat')).toBe(false)
+    expect(resolver.repairChatIds()).toEqual([])
+  })
+
+  it('does not recreate publication state after the erased epoch has advanced', () => {
+    const source = catalogue()
+    const resolver = catalogue()
+    const eraser = catalogue()
+    expect(finish(source, source.beginPublication('chat'))).toBe(true)
+    expect(resolver.publishResolution(resolution(resolver))).toBe(true)
+    const ready = resolver.read('chat')
+    if (ready.status !== 'ready') throw new Error('not ready')
+    expect(resolver.acknowledgeResolution('chat', ready.publicationId)).toBe(true)
+
+    const pendingDirectory = join(source.directory, 'pending', 'desktop', 'chat')
+    const pendingWriterDirectory = join(source.directory, 'pending', 'desktop')
+    const sourceHead = join(source.directory, 'desktop', 'chat.json')
+    const resolvedHead = join(source.directory, 'resolved', 'chat.json')
+    let erased = false
+    beforeSync = (directory) => {
+      if (directory !== pendingWriterDirectory || erased) return
+      erased = true
+      expect(resolver.acknowledgeResolution('chat', ready.publicationId)).toBe(true)
+      const generation = eraser.beginErasure('chat')
+      fs.rmSync(pendingDirectory, { recursive: true, force: true })
+      fs.rmSync(sourceHead, { force: true })
+      fs.rmSync(resolvedHead, { force: true })
+      expect(eraser.finishErasure(generation, 'chat')).toBe(true)
+    }
+    expect(() => source.beginPublication('chat')).toThrow(/ENOENT/)
+    beforeSync = undefined
+
+    expect(erased).toBe(true)
+    expect(source.hasOutstandingPublication('chat')).toBe(false)
+    expect(fs.existsSync(pendingDirectory)).toBe(false)
+    expect(fs.existsSync(sourceHead)).toBe(false)
+    expect(fs.existsSync(resolvedHead)).toBe(false)
+  })
+
+  it('does not recreate the pending namespace after recovery takes a hold', () => {
+    const source = catalogue()
+    const resolver = catalogue()
+    expect(finish(source, source.beginPublication('chat'))).toBe(true)
+    expect(resolver.publishResolution(resolution(resolver))).toBe(true)
+    const ready = resolver.read('chat')
+    if (ready.status !== 'ready') throw new Error('not ready')
+    expect(resolver.acknowledgeResolution('chat', ready.publicationId)).toBe(true)
+
+    const pendingDirectory = join(source.directory, 'pending', 'desktop', 'chat')
+    const pendingWriterDirectory = join(source.directory, 'pending', 'desktop')
+    let held = false
+    beforeSync = (directory) => {
+      if (directory !== pendingWriterDirectory || held) return
+      held = true
+      expect(resolver.acknowledgeResolution('chat', ready.publicationId)).toBe(true)
+      resolver.holdRecovery({
+        chatId: 'chat',
+        token: 'recovery-token',
+        desktopWriterId: 'desktop-1',
+        hostIncarnation: 'host-incarnation'
+      })
+    }
+    expect(() => source.beginPublication('chat')).toThrow(/ENOENT/)
+    beforeSync = undefined
+
+    expect(held).toBe(true)
+    expect(source.hasOutstandingPublication('chat')).toBe(false)
+    expect(fs.existsSync(pendingDirectory)).toBe(false)
+    expect(resolver.repairChatIds()).toEqual([])
+    expect(resolver.releaseRecoveryHold('chat', 'recovery-token')).toBe(true)
+    expect(resolver.publishResolution(resolution(resolver))).toBe(true)
+    const repaired = resolver.read('chat')
+    if (repaired.status !== 'ready') throw new Error('not ready')
+    expect(resolver.acknowledgeResolution('chat', repaired.publicationId)).toBe(true)
+    expect(resolver.repairChatIds()).toEqual([])
+  })
+
+  it('finalizes an issued ticket when recovery takes a hold after the pending head', () => {
+    const source = catalogue()
+    const resolver = catalogue()
+    const sourceHead = join(source.directory, 'desktop', 'chat.json')
+    let held = false
+    afterRename = (file) => {
+      if (file !== sourceHead || held) return
+      held = true
+      resolver.holdRecovery({
+        chatId: 'chat',
+        token: 'recovery-token',
+        desktopWriterId: 'desktop-1',
+        hostIncarnation: 'host-incarnation'
+      })
+    }
+    expect(() => source.beginPublication('chat')).toThrow('recovery is in progress')
+    afterRename = undefined
+
+    expect(held).toBe(true)
+    expect(source.hasOutstandingPublication('chat')).toBe(false)
+    expect(resolver.repairChatIds()).toEqual(['chat'])
+    expect(resolver.releaseRecoveryHold('chat', 'recovery-token')).toBe(true)
+    expect(resolver.publishResolution(resolution(resolver))).toBe(true)
+    const repaired = resolver.read('chat')
+    if (repaired.status !== 'ready') throw new Error('not ready')
+    expect(resolver.acknowledgeResolution('chat', repaired.publicationId)).toBe(true)
+    expect(resolver.repairChatIds()).toEqual([])
+  })
+
+  it('does not recreate the pending namespace after its writer retires', () => {
+    const source = catalogue()
+    const resolver = catalogue()
+    expect(finish(source, source.beginPublication('chat'))).toBe(true)
+    expect(resolver.publishResolution(resolution(resolver))).toBe(true)
+    const ready = resolver.read('chat')
+    if (ready.status !== 'ready') throw new Error('not ready')
+    expect(resolver.acknowledgeResolution('chat', ready.publicationId)).toBe(true)
+
+    const pendingDirectory = join(source.directory, 'pending', 'desktop', 'chat')
+    const pendingWriterDirectory = join(source.directory, 'pending', 'desktop')
+    let writerRetired = false
+    beforeSync = (directory) => {
+      if (directory !== pendingWriterDirectory || writerRetired) return
+      expect(resolver.acknowledgeResolution('chat', ready.publicationId)).toBe(true)
+      retired.add('desktop-1')
+      writerRetired = true
+    }
+    expect(() => source.beginPublication('chat')).toThrow(/ENOENT/)
+    beforeSync = undefined
+
+    expect(writerRetired).toBe(true)
+    expect(source.hasOutstandingPublication('chat')).toBe(false)
+    expect(fs.existsSync(pendingDirectory)).toBe(false)
+  })
+
+  it('preserves a temporary-open EINVAL without retrying publication', () => {
+    const source = catalogue()
+    const resolver = catalogue()
+    expect(finish(source, source.beginPublication('chat'))).toBe(true)
+    expect(resolver.publishResolution(resolution(resolver))).toBe(true)
+    const ready = resolver.read('chat')
+    if (ready.status !== 'ready') throw new Error('not ready')
+    expect(resolver.acknowledgeResolution('chat', ready.publicationId)).toBe(true)
+
+    const pendingDirectory = join(source.directory, 'pending', 'desktop', 'chat')
+    let attempts = 0
+    let injected: NodeJS.ErrnoException | undefined
+    openTemporary = (file) => {
+      if (dirname(file) !== pendingDirectory) return fs.openSync(file, 'wx', 0o600)
+      attempts += 1
+      fs.rmSync(pendingDirectory, { recursive: true, force: true })
+      injected = Object.assign(new Error('invalid open argument'), {
+        code: 'EINVAL',
+        errno: -22,
+        syscall: 'open',
+        path: file
+      })
+      throw injected
+    }
+    let observed: NodeJS.ErrnoException | undefined
+    try {
+      source.beginPublication('chat')
+    } catch (error) {
+      observed = error as NodeJS.ErrnoException
+    }
+    openTemporary = undefined
+    expect(observed).toBe(injected)
+    expect(observed).toMatchObject({
+      message: 'invalid open argument',
+      code: 'EINVAL',
+      errno: -22,
+      syscall: 'open'
+    })
+    expect(dirname(observed?.path ?? '')).toBe(pendingDirectory)
+    expect(attempts).toBe(1)
+    expect(fs.existsSync(pendingDirectory)).toBe(false)
   })
 
   afterEach(() => fs.rmSync(profile, { recursive: true, force: true }))
