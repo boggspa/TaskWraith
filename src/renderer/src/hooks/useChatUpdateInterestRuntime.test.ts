@@ -13,6 +13,14 @@ import type {
 import { createChatHydrationRuntime } from '../lib/chatHydrationRuntime'
 import { isChatSummaryRecord } from '../lib/chatRecordMerge'
 import {
+  buildTranscriptTailUpdate,
+  type TranscriptTailFrame
+} from '../../../shared/transcriptTailStream'
+import {
+  getTranscriptStallSnapshot,
+  resetTranscriptStallStoreForTests
+} from '../lib/transcriptStallStore'
+import {
   buildChatUpdateInterestSurfaceSnapshot,
   ChatUpdateInterestRuntime,
   type ChatUpdateInterestBridge,
@@ -652,5 +660,145 @@ describe('coalesced paged presentation publication', () => {
     expect(harness.setChatsCallCount()).toBe(1)
     expect(harness.chats()).toHaveLength(2)
     expect(harness.chats().every((chat) => isChatSummaryRecord(chat))).toBe(true)
+  })
+})
+
+describe('ChatUpdateInterestRuntime — tail-lane recency guard', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    resetTranscriptStallStoreForTests()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function tailUpdate(
+    chatId: string,
+    sequence: number,
+    index: number,
+    row: ChatMessage,
+    messageCount: number
+  ) {
+    const frame = buildTranscriptTailUpdate({
+      chatId,
+      sequence,
+      messageCount,
+      rows: [{ index, message: row }],
+      appendedAtMs: 1
+    })
+    if (!frame) throw new Error('fixture built an invalid update frame')
+    return frame
+  }
+
+  /** A runtime over one paged chat, wired to the pushed tail lane. */
+  function tailRuntime(chatId: string, revision = 2_000) {
+    const initialPage = page(chatId, revision)
+    const shell = initialPage.shell!
+    const harness = stateHarness([shell], shell)
+    harness.hydrationRuntime.transcriptStore.ingestPage(initialPage)
+    let tailHandler: ((frame: TranscriptTailFrame) => void) | null = null
+    const receipts: number[] = []
+    const bridge: ChatUpdateInterestBridge = {
+      onChatUpdateInvalidated: () => () => undefined,
+      setChatUpdateInterests: () => undefined,
+      getChatTranscriptPage: async () => null,
+      onTranscriptTailAppended: (handler) => {
+        tailHandler = handler
+        return () => undefined
+      },
+      reportTranscriptTailCommitted: (_chatId, sequence) => {
+        receipts.push(sequence)
+      }
+    }
+    const runtime = new ChatUpdateInterestRuntime(bridge, harness.getState)
+    runtime.setPendingSnapshot(createChatUpdateInterestSnapshot([{ chatId, mode: 'paged' }]))
+    runtime.start()
+    const deliver = (frame: TranscriptTailFrame): void => {
+      if (!tailHandler) throw new Error('tail lane not subscribed')
+      tailHandler(frame)
+    }
+    return { harness, runtime, receipts, deliver }
+  }
+
+  it('refuses a regressed update instead of truncating the visible row — and says so', () => {
+    const chatId = 'large'
+    const { harness, runtime, receipts, deliver } = tailRuntime(chatId)
+    const store = harness.hydrationRuntime.transcriptStore
+    const row = store.get(chatId)!.messages[0]
+
+    const streamed = { ...row, content: 'bounded tail and then the stream kept going' }
+    deliver(tailUpdate(chatId, 1, 1_999, streamed, 2_000))
+    expect(store.get(chatId)?.messages[0]).toBe(streamed)
+    expect(receipts).toEqual([1])
+
+    // The canonical record regresses and the producer re-ships the row as it
+    // was mid-stream. The visible row must NOT follow it down.
+    const regressed = { ...row, content: 'bounded' }
+    deliver(tailUpdate(chatId, 2, 1_999, regressed, 2_000))
+    expect(store.get(chatId)?.messages[0]).toBe(streamed)
+    expect(receipts).toEqual([1])
+
+    // The refusal is visible, not silent: announced is ahead of settled…
+    expect(runtime.stallStatus(chatId, Date.now())).toMatchObject({
+      announcedSequence: 2,
+      settledSequence: 1
+    })
+    // …and once the gap has stood long enough, the published surface says so.
+    vi.advanceTimersByTime(2_000)
+    expect(getTranscriptStallSnapshot(chatId).level).toBe('catching-up')
+
+    // The record recovers; streaming resumes on the same lane.
+    const recovered = { ...row, content: 'bounded tail and then the stream kept going, done' }
+    deliver(tailUpdate(chatId, 3, 1_999, recovered, 2_000))
+    expect(store.get(chatId)?.messages[0]).toBe(recovered)
+    expect(receipts).toEqual([1, 3])
+    expect(runtime.stallStatus(chatId, Date.now()).level).toBe('current')
+  })
+
+  it('refuses a frame older than the newest already shown, and reports no phantom gap', () => {
+    const chatId = 'large'
+    const { harness, runtime, receipts, deliver } = tailRuntime(chatId)
+    const store = harness.hydrationRuntime.transcriptStore
+    const row = store.get(chatId)!.messages[0]
+
+    const streamed = { ...row, content: 'bounded tail, much longer now' }
+    deliver(tailUpdate(chatId, 5, 1_999, streamed, 2_000))
+    expect(store.get(chatId)?.messages[0]).toBe(streamed)
+
+    // Even a plausible growth is refused when it predates what is on screen.
+    const late = { ...row, content: 'bounded tail, much longer now, and more' }
+    deliver(tailUpdate(chatId, 2, 1_999, late, 2_000))
+    expect(store.get(chatId)?.messages[0]).toBe(streamed)
+    expect(receipts).toEqual([5])
+    // Announcing an older sequence than the settled one opens no gap.
+    expect(runtime.stallStatus(chatId, Date.now())).toMatchObject({
+      announcedSequence: 5,
+      settledSequence: 5,
+      level: 'current'
+    })
+  })
+
+  it('forgets the lane watermark when the chat leaves paged mode, so a restart cannot wedge', () => {
+    const chatId = 'large'
+    const { harness, runtime, receipts, deliver } = tailRuntime(chatId)
+    const store = harness.hydrationRuntime.transcriptStore
+    const row = store.get(chatId)!.messages[0]
+
+    const streamed = { ...row, content: 'bounded tail, streamed much further' }
+    deliver(tailUpdate(chatId, 50, 1_999, streamed, 2_000))
+    expect(receipts).toEqual([50])
+
+    // The chat leaves paged mode (switched away)…
+    runtime.setPendingSnapshot(createChatUpdateInterestSnapshot([]))
+    runtime.publishPending()
+    // …and returns. A producer that restarted and re-sequenced from 1 must
+    // not be refused behind the old 50.
+    runtime.setPendingSnapshot(createChatUpdateInterestSnapshot([{ chatId, mode: 'paged' }]))
+    runtime.publishPending()
+    const resumed = { ...row, content: 'bounded tail, streamed much further still' }
+    deliver(tailUpdate(chatId, 1, 1_999, resumed, 2_000))
+    expect(store.get(chatId)?.messages[0]).toBe(resumed)
+    expect(receipts).toEqual([50, 1])
   })
 })

@@ -241,6 +241,10 @@ export class ChatUpdateInterestRuntime {
         // every second — a permanent wakeup for a chat nobody is watching.
         this.stallWatchdog.forget(chatId)
         clearTranscriptStallState(chatId)
+        // The tail lane's ordering watermark belongs to the paged window this
+        // chat just stopped being. A stale one would refuse every frame after
+        // a producer restart, which re-sequences from 1.
+        this.getState().hydrationRuntime.transcriptStore.forgetTailSequence(chatId)
       }
     }
     this.publishedModes = nextModes
@@ -456,6 +460,14 @@ export class ChatUpdateInterestRuntime {
    * Announce first, always. A frame this renderer declines to apply is still
    * proof that main moved ahead, and that is exactly the state the user needs
    * told about. Settling is the narrower claim: the rows are on screen.
+   *
+   * `sequence` is also the lane's write gate, not only watchdog input: the
+   * applier refuses a frame strictly older than the newest this chat's window
+   * has seen, and an update that would strictly shorten a non-empty streamed
+   * row by a pure prefix (a regressed canonical record, not an edit). Both
+   * refusals return unsettled, so they land on the publish path below — a
+   * producer that starts shipping old rows is reported, never silently
+   * followed.
    */
   private handleTranscriptTailFrame(value: unknown): void {
     const frame = normalizeTranscriptTailFrame(value)

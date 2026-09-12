@@ -38,6 +38,7 @@ import { mergeMultiAgentTelemetryIntoMessages } from './lib/multiAgentTelemetryM
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
 import { mergeTranscriptMediaRefs } from './lib/transcriptMediaRefs'
 import {
+  chatRecordHasLiveRun,
   coalescePendingChatUpdateRender,
   mergeChatUpdatedForRender,
   type LocalGoalIntent,
@@ -1121,6 +1122,7 @@ import {
   commitEnsembleRosterChange as commitEnsembleRosterChangeRecord,
   saveChatPreservingEnsembleIntent
 } from './lib/ensembleRosterCommit'
+import { planConflictGatedChatSave } from './lib/conflictGatedChatSave'
 import {
   readPendingWorkspaceRebind,
   type PendingWorkspaceRebind
@@ -5751,11 +5753,19 @@ function App(): React.JSX.Element {
           .current!.whenIdle(chatId)
           .then(() => {
             const latest = chatByIdRef.current.get(chatId) || updated
-            if (pendingChatDraftsRef.current.conflicts(chatId).length) return
+            const savePlan = planConflictGatedChatSave({
+              draftConflicts: pendingChatDraftsRef.current.conflicts(chatId),
+              ensembleSliceEdit: ensembleEditToken !== null
+            })
+            if (savePlan === 'skip') return
             // An Ensemble panel edit answers a refusal instead of swallowing
             // it: main drops a whole clone whose revision skewed, which its own
-            // writes cause constantly. See lib/ensembleRosterCommit.ts.
-            if (ensembleEditToken === null) return window.api.saveChat(latest)
+            // writes cause constantly. See lib/ensembleRosterCommit.ts. A
+            // transcript-draft conflict does NOT close this lane: the slice
+            // save is refused on its stale revision and rebased onto canonical
+            // (lib/conflictGatedChatSave.ts), so an ensemble-slice edit made
+            // mid-stream is still sent instead of silently reverted.
+            if (savePlan === 'whole-record') return window.api.saveChat(latest)
             return saveChatPreservingEnsembleIntent(latest, {
               saveChat: (record) => window.api.saveChatWithOutcome(record),
               onRebased: (record) => {
@@ -12804,7 +12814,13 @@ function App(): React.JSX.Element {
             for (const ctx of activeRunsRef.current.values()) {
               if (ctx.chatId === chat.appChatId) return true
             }
-            return false
+            // Ensemble rounds (and Host-owned runs generally, since the
+            // independent-threads cutover) never register an ActiveRunContext
+            // here — activeRunsRef is written solely for renderer-spawned
+            // runs. The accepted record itself is their only liveness
+            // evidence; trust it (with a short post-end grace) instead of
+            // leaving the live-merge gate closed for the whole round.
+            return chatRecordHasLiveRun(chat)
           })()
           let hadRecentRun = false
           const completedAt = recentlyCompletedChatIdsRef.current.get(chat.appChatId)

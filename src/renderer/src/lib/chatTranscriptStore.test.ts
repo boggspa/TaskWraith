@@ -1114,3 +1114,159 @@ describe('ChatTranscriptStore.updateChatTranscriptRows', () => {
     expect(store.generation('chat-u')).toBeGreaterThan(settled)
   })
 })
+
+describe('ChatTranscriptStore.updateChatTranscriptRows — prefix regression guard', () => {
+  function pagedTail(store: ChatTranscriptStore, windowRows: ChatMessage[], total: number): void {
+    store.ingestPage({
+      chatId: 'chat-u',
+      messages: windowRows,
+      runs: [],
+      totalMessageCount: total,
+      windowStart: total - windowRows.length,
+      windowEnd: total,
+      estimatedBytes: 1,
+      hasOlder: total > windowRows.length,
+      hasNewer: false,
+      oldestMessageId: windowRows[0]?.id ?? null,
+      newestMessageId: windowRows.at(-1)?.id ?? null,
+      updatedAt: 1
+    })
+  }
+
+  const tailRows = (): ChatMessage[] =>
+    Array.from({ length: 10 }, (_, index) => message(`m-${90 + index}`, `row ${90 + index}`))
+
+  it('REFUSES a row that truncates streamed text to a prefix of itself', () => {
+    const store = new ChatTranscriptStore()
+    const window = tailRows()
+    pagedTail(store, window, 100)
+    const streamed = { ...window[2], content: 'row 92 and a great deal more after it' }
+    expect(
+      store.updateChatTranscriptRows('chat-u', [{ index: 92, message: streamed }], 100)
+    ).not.toBeNull()
+
+    // A stale whole-record save re-ships the row as it was mid-stream.
+    const before = store.get('chat-u')
+    const regressed = { ...window[2], content: 'row 92' }
+    expect(
+      store.updateChatTranscriptRows('chat-u', [{ index: 92, message: regressed }], 100)
+    ).toBeNull()
+    expect(store.get('chat-u')).toBe(before)
+    expect(store.get('chat-u')?.messages[2]).toBe(streamed)
+  })
+
+  it('refuses the WHOLE frame when any row in it is a prefix regression', () => {
+    const store = new ChatTranscriptStore()
+    const window = tailRows()
+    pagedTail(store, window, 100)
+    const streamed = { ...window[5], content: 'row 95 and then it kept streaming' }
+    store.updateChatTranscriptRows('chat-u', [{ index: 95, message: streamed }], 100)
+
+    const before = store.get('chat-u')
+    const legitimate = { ...window[1], content: 'row 91 grows legitimately' }
+    const regressed = { ...window[5], content: 'row 95' }
+    expect(
+      store.updateChatTranscriptRows(
+        'chat-u',
+        [
+          { index: 91, message: legitimate },
+          { index: 95, message: regressed }
+        ],
+        100
+      )
+    ).toBeNull()
+    // Not even the legitimate row landed — a half-applied update is worse than none.
+    expect(store.get('chat-u')).toBe(before)
+  })
+
+  it('refuses clearing a non-empty row to empty text in place', () => {
+    const store = new ChatTranscriptStore()
+    const window = tailRows()
+    pagedTail(store, window, 100)
+    expect(
+      store.updateChatTranscriptRows(
+        'chat-u',
+        [{ index: 94, message: { ...window[4], content: '' } }],
+        100
+      )
+    ).toBeNull()
+  })
+
+  it('does not guard an empty existing row — text arriving there is growth, always', () => {
+    const store = new ChatTranscriptStore()
+    const window = tailRows()
+    window[3] = { ...window[3], content: '' }
+    pagedTail(store, window, 100)
+    const filled = { ...window[3], content: 'text arrived' }
+    const applied = store.updateChatTranscriptRows('chat-u', [{ index: 93, message: filled }], 100)
+    expect(applied?.messages[3]).toBe(filled)
+  })
+
+  it('permits shorter divergent content, growth, and untouched text with other fields changed', () => {
+    const store = new ChatTranscriptStore()
+    const window = tailRows()
+    pagedTail(store, window, 100)
+    // Genuine replacement: shorter but NOT a prefix of what is on screen.
+    const rewritten = { ...window[0], content: 'x' }
+    expect(
+      store.updateChatTranscriptRows('chat-u', [{ index: 90, message: rewritten }], 100)
+        ?.messages[0]
+    ).toBe(rewritten)
+    // Growth: the streaming shape this lane exists for.
+    const grown = { ...window[1], content: 'row 91 and then some' }
+    expect(
+      store.updateChatTranscriptRows('chat-u', [{ index: 91, message: grown }], 100)?.messages[1]
+    ).toBe(grown)
+    // Text untouched, another field changed (a tool status flip).
+    const flipped = { ...window[2], metadata: { kind: 'subThreadReturn' } }
+    expect(
+      store.updateChatTranscriptRows('chat-u', [{ index: 92, message: flipped }], 100)?.messages[2]
+    ).toBe(flipped)
+  })
+})
+
+describe('ChatTranscriptStore — tail-lane sequence watermark', () => {
+  it('refuses strictly-older sequences, records on sight, and is per chat', () => {
+    const store = new ChatTranscriptStore()
+    expect(store.noteTailSequence('chat-s', 5)).toBe('fresh')
+    expect(store.noteTailSequence('chat-s', 6)).toBe('fresh')
+    expect(store.noteTailSequence('chat-s', 4)).toBe('stale')
+    // Equal is not strictly older: a redelivery is not a regression.
+    expect(store.noteTailSequence('chat-s', 6)).toBe('fresh')
+    expect(store.noteTailSequence('chat-s', 7)).toBe('fresh')
+    // Another chat has its own watermark.
+    expect(store.noteTailSequence('chat-other', 1)).toBe('fresh')
+  })
+
+  it('retires the watermark on forget, window replace, drop, and clear', () => {
+    const store = new ChatTranscriptStore()
+    store.noteTailSequence('chat-s', 50)
+    store.forgetTailSequence('chat-s')
+    expect(store.noteTailSequence('chat-s', 1)).toBe('fresh')
+
+    store.noteTailSequence('chat-s', 50)
+    store.ingestPage({
+      chatId: 'chat-s',
+      messages: [message('m-1', 'one')],
+      runs: [],
+      totalMessageCount: 1,
+      windowStart: 0,
+      windowEnd: 1,
+      estimatedBytes: 1,
+      hasOlder: false,
+      hasNewer: false,
+      oldestMessageId: 'm-1',
+      newestMessageId: 'm-1',
+      updatedAt: 1
+    })
+    expect(store.noteTailSequence('chat-s', 1)).toBe('fresh')
+
+    store.noteTailSequence('chat-s', 50)
+    store.drop('chat-s')
+    expect(store.noteTailSequence('chat-s', 1)).toBe('fresh')
+
+    store.noteTailSequence('chat-s', 50)
+    store.clear()
+    expect(store.noteTailSequence('chat-s', 1)).toBe('fresh')
+  })
+})

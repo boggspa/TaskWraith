@@ -221,13 +221,32 @@ function mergeLiveMessages(
       message.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND &&
       !incomingIds.has(message.id)
   )
+  // Fan-out lane TOOL rows (`ensembleParticipantTools`, folded into the lane
+  // card by shared/fanoutLaneGrouping.ts) share the lane content rows'
+  // exposure: a delivery built from a baseline that never saw them deletes
+  // them from view and the next delivery restores them — the visible lane-card
+  // flash. Their ids are stable (`timelineMessageId(runId, i, 'tool')`), so the
+  // same id-keyed preserve + re-anchor the content rows get applies verbatim.
+  // This cannot resurrect an intentionally wiped lane: a run's timeline only
+  // ever grows between flushes (EnsembleTimelineOrdering appends; flushRun's
+  // reconcile delete fires only for the transient synthetic media-carrier,
+  // which is an assistant row), and the wholesale wipe paths bypass this
+  // merge — explicit clears are suppressed before queueing, and a
+  // renderer-initiated rewind truncates the live record itself first.
+  const orphanedFanoutLaneToolRows = liveMessages.filter(
+    (message) =>
+      message.role === 'tool' &&
+      message.metadata?.kind === 'ensembleParticipantTools' &&
+      !incomingIds.has(message.id)
+  )
   const orphanIds = new Set(
     [
       ...orphanedLiveAssistants,
       ...orphanedLiveUserMessages,
       ...orphanedAgentQuestionMarkers,
       ...orphanedContextCompactionCards,
-      ...orphanedTaskWraithCloseouts
+      ...orphanedTaskWraithCloseouts,
+      ...orphanedFanoutLaneToolRows
     ].map((message) => message.id)
   )
   if (orphanIds.size > 0) changed = true
@@ -670,6 +689,78 @@ function preserveNewerLocalComposerSelection(
   }
   next.providerMetadata = nextMetadata
   return next
+}
+
+/**
+ * How long after a record-reported end the merge gate still treats the chat as
+ * live. The 2026-09-12 incident's round ended `cancelled` with
+ * `synthesisStatus: 'pending'` while lane rows were still settling: deliveries
+ * kept arriving for a short tail after the terminal stamp, and each one needed
+ * the gate open so the settling rows merged instead of wholesale-replacing the
+ * visible transcript. Matches the renderer-spawned completion window
+ * (`RECENTLY_COMPLETED_WINDOW_MS` in App.tsx) so record-derived and
+ * context-derived liveness decay together.
+ */
+export const CHAT_RECORD_LIVE_GRACE_MS = 2000
+
+const TERMINAL_RECORD_RUN_STATUSES: ReadonlySet<string> = new Set([
+  'success',
+  'success_with_warnings',
+  'failed',
+  'cancelled'
+])
+
+function stampWithinGrace(value: unknown, nowMs: number, graceMs: number): boolean {
+  const endedMs = stampToMs(value)
+  // A future stamp (clock skew) reads as negative age, which is inside the
+  // window — fail open there rather than closing the gate on a live round.
+  return endedMs > 0 && nowMs - endedMs < graceMs
+}
+
+/**
+ * Whether the chat RECORD itself reports live runs, regardless of which side
+ * spawned them. Since the Host-independent-threads cutover, ensemble rounds
+ * (and Host-owned runs generally) execute in the Host and never register an
+ * `ActiveRunContext` in the renderer — `activeRunsRef` is written solely for
+ * renderer-spawned runs — so the context-derived `hasActiveRun` is false for
+ * the entire round and the merge gate above stays closed while deliveries
+ * stream in. This is the record's own evidence:
+ *
+ *  - `ensemble.activeRound` with no `endedAt` and status `running` — the
+ *    round's own claim. Synthesis runs inside the round (`synthesisStatus`
+ *    goes `pending` at round start and again at the bounded final turn while
+ *    status stays `running`), so the whole synthesis tail is covered.
+ *  - `chat.runs` entries with no `endedAt` whose status is not terminal
+ *    (`running`, `queued`, `starting`, …), covering Host-owned solo runs.
+ *  - A short grace after either reports its end (see above).
+ *
+ * A stale persisted `running` claim (a run that died with the last session)
+ * can hold the gate open past its truth; the cost of that fail-open is the
+ * live-merge preferences applying to a quiescent chat, where live and
+ * delivered rows already agree. Terminal-stamping recovery
+ * (`recoverChatRunTerminals` / `recoverEnsembleRoundTerminals`) closes those
+ * records on load.
+ */
+export function chatRecordHasLiveRun(
+  chat: ChatRecord | null | undefined,
+  nowMs: number = Date.now(),
+  graceMs: number = CHAT_RECORD_LIVE_GRACE_MS
+): boolean {
+  if (!chat) return false
+  const activeRound = chat.ensemble?.activeRound
+  if (activeRound) {
+    if (stampWithinGrace(activeRound.endedAt, nowMs, graceMs)) return true
+    if (!activeRound.endedAt && activeRound.status === 'running') return true
+  }
+  for (const run of chat.runs || []) {
+    if (!run) continue
+    if (stampWithinGrace(run.endedAt, nowMs, graceMs)) return true
+    if (!run.endedAt) {
+      const status = typeof run.status === 'string' ? run.status : ''
+      if (!TERMINAL_RECORD_RUN_STATUSES.has(status)) return true
+    }
+  }
+  return false
 }
 
 /**

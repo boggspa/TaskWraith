@@ -6,7 +6,12 @@ import type {
   ChatRun,
   EnsembleParticipant
 } from '../../../main/store/types'
-import { coalescePendingChatUpdateRender, mergeChatUpdatedForRender } from './chatUpdateRenderMerge'
+import {
+  CHAT_RECORD_LIVE_GRACE_MS,
+  chatRecordHasLiveRun,
+  coalescePendingChatUpdateRender,
+  mergeChatUpdatedForRender
+} from './chatUpdateRenderMerge'
 import { groupEnsembleMessagesByRound } from './ensembleRoundGrouping'
 
 function message(id: string, content: string): ChatMessage {
@@ -1533,5 +1538,269 @@ describe('coalescePendingChatUpdateRender', () => {
     })
 
     expect(pending.renderReceipt?.deliveryId).toBe('delivery-2')
+  })
+})
+
+describe('chatRecordHasLiveRun', () => {
+  const NOW = Date.parse('2026-09-12T04:00:00.000Z')
+  const iso = (ms: number): string => new Date(ms).toISOString()
+
+  function ensembleChatWithRound(round: Record<string, unknown>): ChatRecord {
+    return {
+      ...chat([]),
+      chatKind: 'ensemble',
+      ensemble: { participants: [], activeRound: round }
+    } as unknown as ChatRecord
+  }
+
+  it('treats a running round with no endedAt as live, with no renderer run context', () => {
+    // The Host-independent-threads shape: the round executes in the Host, so
+    // activeRunsRef never carries it — the record is the only liveness evidence.
+    const record = ensembleChatWithRound({
+      roundId: 'round-1',
+      status: 'running',
+      prompt: 'hi',
+      startedAt: iso(NOW - 60_000),
+      synthesisStatus: 'pending',
+      participants: []
+    })
+
+    expect(chatRecordHasLiveRun(record, NOW)).toBe(true)
+  })
+
+  it('keeps a just-ended round live through the settling grace', () => {
+    // The incident shape: the round was stamped 'cancelled' with synthesis
+    // still 'pending' while its lane rows were still settling.
+    const record = ensembleChatWithRound({
+      roundId: 'round-1',
+      status: 'cancelled',
+      prompt: 'hi',
+      startedAt: iso(NOW - 60_000),
+      endedAt: iso(NOW - 1_000),
+      synthesisStatus: 'pending',
+      participants: []
+    })
+
+    expect(chatRecordHasLiveRun(record, NOW)).toBe(true)
+  })
+
+  it('treats a round ended past the grace as settled', () => {
+    const record = ensembleChatWithRound({
+      roundId: 'round-1',
+      status: 'cancelled',
+      prompt: 'hi',
+      startedAt: iso(NOW - 600_000),
+      endedAt: iso(NOW - CHAT_RECORD_LIVE_GRACE_MS - 1),
+      participants: []
+    })
+
+    expect(chatRecordHasLiveRun(record, NOW)).toBe(false)
+  })
+
+  it('treats a terminal-stamped round that never got an endedAt as settled', () => {
+    const record = ensembleChatWithRound({
+      roundId: 'round-1',
+      status: 'completed',
+      prompt: 'hi',
+      startedAt: iso(NOW - 600_000),
+      participants: []
+    })
+
+    expect(chatRecordHasLiveRun(record, NOW)).toBe(false)
+  })
+
+  it('treats a running-status run with no endedAt as live', () => {
+    const record = {
+      ...chat([]),
+      runs: [{ runId: 'run-host', startedAt: iso(NOW - 5_000), status: 'running' }]
+    }
+
+    expect(chatRecordHasLiveRun(record, NOW)).toBe(true)
+  })
+
+  it('keeps a run that just ended live through the grace', () => {
+    const record = {
+      ...chat([]),
+      runs: [
+        {
+          runId: 'run-host',
+          startedAt: iso(NOW - 5_000),
+          status: 'success',
+          endedAt: iso(NOW - 500)
+        }
+      ]
+    }
+
+    expect(chatRecordHasLiveRun(record, NOW)).toBe(true)
+  })
+
+  it('treats a run ended past the grace as settled', () => {
+    const record = {
+      ...chat([]),
+      runs: [
+        {
+          runId: 'run-host',
+          startedAt: iso(NOW - 500_000),
+          status: 'success',
+          endedAt: iso(NOW - CHAT_RECORD_LIVE_GRACE_MS - 1)
+        }
+      ]
+    }
+
+    expect(chatRecordHasLiveRun(record, NOW)).toBe(false)
+  })
+
+  it('treats a run with no status and no endedAt as live (no end evidence)', () => {
+    const record = { ...chat([]), runs: [run('run-host')] }
+
+    expect(chatRecordHasLiveRun(record, NOW)).toBe(true)
+  })
+
+  it('treats a terminal-status run with no endedAt as settled', () => {
+    const record = {
+      ...chat([]),
+      runs: [{ runId: 'run-host', startedAt: iso(NOW - 5_000), status: 'failed' }]
+    }
+
+    expect(chatRecordHasLiveRun(record, NOW)).toBe(false)
+  })
+
+  it('treats a quiet record, and no record, as settled', () => {
+    expect(chatRecordHasLiveRun(chat([message('a', 'done')]), NOW)).toBe(false)
+    expect(chatRecordHasLiveRun(null, NOW)).toBe(false)
+    expect(chatRecordHasLiveRun(undefined, NOW)).toBe(false)
+  })
+})
+
+describe('mergeChatUpdatedForRender fan-out lane tool rows', () => {
+  const LANE_BASE_METADATA = {
+    ensembleRoundId: 'round-1',
+    ensembleParticipantId: 'participant-1',
+    ensembleLaneId: 'lane-1'
+  }
+
+  function laneContentRow(id: string, content: string, timestamp: string): ChatMessage {
+    return {
+      id,
+      role: 'assistant',
+      content,
+      timestamp,
+      runId: 'run-1',
+      metadata: { ...LANE_BASE_METADATA, kind: 'ensembleParticipant' }
+    } as ChatMessage
+  }
+
+  function laneToolRow(id: string, timestamp: string): ChatMessage {
+    return {
+      id,
+      role: 'tool',
+      content: '',
+      timestamp,
+      runId: 'run-1',
+      toolActivities: [{ id: `${id}-act`, tool: 'read_file', status: 'completed' }],
+      metadata: { ...LANE_BASE_METADATA, kind: 'ensembleParticipantTools' }
+    } as unknown as ChatMessage
+  }
+
+  it('preserves an orphaned lane tool row onto a delivery from a different baseline', () => {
+    // Mid-round the Host streams deliveries built from baselines that have not
+    // seen this lane's rows yet. Before, the tool row vanished from view and
+    // the next delivery restored it — the visible lane-card flash.
+    const liveMessages = [laneContentRow('lane-c1', 'working…', '2'), laneToolRow('lane-t1', '3')]
+
+    const merged = mergeChatUpdatedForRender(chat([message('a', 'older round row')]), {
+      liveChat: chat(liveMessages),
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'lane-c1', 'lane-t1'])
+  })
+
+  it('re-anchors the preserved tool row after its lane content, not the tail', () => {
+    const liveMessages = [
+      message('a', 'older round row'),
+      laneContentRow('lane-c1', 'working…', '2'),
+      laneToolRow('lane-t1', '3')
+    ]
+    const newerDelivered: ChatMessage = {
+      id: 'b',
+      role: 'assistant',
+      content: 'newer delivered row',
+      timestamp: '4'
+    }
+
+    const merged = mergeChatUpdatedForRender(chat([message('a', 'older round row'), newerDelivered]), {
+      liveChat: chat(liveMessages),
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'lane-c1', 'lane-t1', 'b'])
+  })
+
+  it('does not duplicate a lane tool row the delivery already carries', () => {
+    const liveMessages = [laneContentRow('lane-c1', 'working…', '2'), laneToolRow('lane-t1', '3')]
+    const delivery = chat([laneContentRow('lane-c1', 'delivered content', '2'), laneToolRow('lane-t1', '3')])
+
+    const merged = mergeChatUpdatedForRender(delivery, {
+      liveChat: chat(liveMessages),
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['lane-c1', 'lane-t1'])
+  })
+
+  it('does not preserve lane tool rows outside the live gate', () => {
+    // Outside an active/recent run the delivery is authoritative: rows the
+    // canonical record no longer carries stay gone (the wipe-respecting
+    // boundary — preservation only ever runs inside the gate).
+    const liveMessages = [laneContentRow('lane-c1', 'working…', '2'), laneToolRow('lane-t1', '3')]
+
+    const merged = mergeChatUpdatedForRender(chat([message('a', 'canonical')]), {
+      liveChat: chat(liveMessages),
+      messagesChanged: true,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a'])
+  })
+
+  it('preserves the lane rows when record-derived liveness opens the gate', () => {
+    // The (a)+(b) wiring contract: no renderer-registered run exists for a
+    // Host-owned round, so the delivery's own running round is what App.tsx
+    // feeds into hasActiveRun.
+    const NOW = Date.parse('2026-09-12T04:00:00.000Z')
+    const delivery = {
+      ...chat([message('a', 'older round row')]),
+      chatKind: 'ensemble',
+      ensemble: {
+        participants: [],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          prompt: 'hi',
+          startedAt: new Date(NOW - 60_000).toISOString(),
+          participants: []
+        }
+      }
+    } as unknown as ChatRecord
+    const liveMessages = [laneContentRow('lane-c1', 'working…', '2'), laneToolRow('lane-t1', '3')]
+    const hasActiveRun = chatRecordHasLiveRun(delivery, NOW)
+
+    const merged = mergeChatUpdatedForRender(delivery, {
+      liveChat: chat(liveMessages),
+      messagesChanged: true,
+      hasActiveRun,
+      hadRecentRun: false
+    })
+
+    expect(hasActiveRun).toBe(true)
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'lane-c1', 'lane-t1'])
   })
 })

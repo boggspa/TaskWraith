@@ -157,6 +157,29 @@ function mergeRunsById(existingRuns: ChatRun[], pageRuns: ChatRun[]): ChatRun[] 
   return Array.from(byId.values())
 }
 
+/**
+ * Would replacing `existing` with `incoming` land a strict PREFIX of the
+ * non-empty text already on screen? That shape is a regressed canonical
+ * record (a stale whole-record save re-shipped as an update), not an edit:
+ * streamed text only grows. Shorter content that is NOT a pure prefix is a
+ * genuine replacement and is allowed, as is any change that leaves the text
+ * alone (a tool status flip, a non-text field).
+ */
+export function isTranscriptRowPrefixRegression(
+  existing: ChatMessage | undefined,
+  incoming: ChatMessage | undefined
+): boolean {
+  const before = existing?.content
+  const after = incoming?.content
+  return (
+    typeof before === 'string' &&
+    typeof after === 'string' &&
+    before.length > 0 &&
+    after.length < before.length &&
+    before.startsWith(after)
+  )
+}
+
 function payloadsReferentiallyEqual(
   previous: ChatTranscriptPayload | undefined,
   next: ChatTranscriptPayload
@@ -178,6 +201,12 @@ function payloadsReferentiallyEqual(
 export class ChatTranscriptStore {
   private readonly byId = new Map<string, ChatTranscriptEntry>()
   private readonly generationById = new Map<string, number>()
+  /**
+   * Newest tail-lane frame sequence each chat's window has SEEN. The lane's
+   * recency guard; see `noteTailSequence`. Kept beside the window rather than
+   * inside the entry so its reset points are the window's replace points.
+   */
+  private readonly tailSequenceById = new Map<string, number>()
   private readonly listenersById = new Map<string, Set<ChatTranscriptStoreListener>>()
   private readonly allListeners = new Set<ChatTranscriptStoreListener>()
   private readonly maxMessagesPerPage: number
@@ -216,6 +245,11 @@ export class ChatTranscriptStore {
    * class doc for why accumulation is never inferred here.
    */
   ingestPage(page: TranscriptPage): ChatTranscriptPayload {
+    // A wholesale window replacement retires the tail lane's ordering
+    // watermark with the window it was measured against — otherwise a
+    // producer that re-sequences from 1 (a restart) would have every frame
+    // refused as stale against a number nothing can lower.
+    this.tailSequenceById.delete(page.chatId)
     return this.installPagedWindow(page.chatId, {
       messages: page.messages,
       runs: page.runs,
@@ -254,6 +288,37 @@ export class ChatTranscriptStore {
   }
 
   /**
+   * Recency guard for the pushed tail lane. Records the frame's sequence as
+   * the newest this chat's window has seen and reports whether the frame was
+   * fresh. A STRICTLY older sequence predates state the window already
+   * reflects — frames arrive ordered by the producer — so the caller refuses
+   * it rather than writing old rows over new.
+   *
+   * Recording happens on sight, not on a successful apply: a frame refused on
+   * other grounds (discontiguous, prefix regression) still proves the lane
+   * has moved past everything older than it.
+   *
+   * The watermark belongs to the window it was measured against, so it is
+   * retired by every wholesale replacement — `ingestPage` (open, jump,
+   * return-to-latest, a pull-lane reconcile), `drop`, `clear`, a resync
+   * frame, and the runtime when the chat leaves paged mode. Without those
+   * resets a restarted producer, which re-sequences from 1, would have every
+   * frame refused as stale forever: the lane wedged behind a number nothing
+   * can lower.
+   */
+  noteTailSequence(chatId: string, sequence: number): 'fresh' | 'stale' {
+    const newest = this.tailSequenceById.get(chatId) ?? 0
+    if (sequence < newest) return 'stale'
+    if (sequence > newest) this.tailSequenceById.set(chatId, sequence)
+    return 'fresh'
+  }
+
+  /** Retire a chat's tail-lane watermark — see `noteTailSequence`. */
+  forgetTailSequence(chatId: string): void {
+    this.tailSequenceById.delete(chatId)
+  }
+
+  /**
    * Replace rows the window already holds, in place, without moving its bounds.
    *
    * The consumer half of the tail lane's `tail-update` frame: streaming text
@@ -267,10 +332,13 @@ export class ChatTranscriptStore {
    * their concern yet.
    *
    * Returns null — refusing the whole call, applying nothing — when a row's id
-   * does not match the row at that index, or when the canonical length it was
-   * built against is not the one this window belongs to. Both mean the window
-   * is not where the caller thinks it is, and a partial write onto a
-   * disagreeing window is how a transcript silently renders the wrong row.
+   * does not match the row at that index, when the canonical length it was
+   * built against is not the one this window belongs to, or when a row would
+   * strictly shorten the non-empty text already on screen by a pure prefix
+   * (a regressed canonical record, not an edit — streamed text only grows).
+   * The first two mean the window is not where the caller thinks it is, and a
+   * partial write onto a disagreeing window is how a transcript silently
+   * renders the wrong row.
    */
   updateChatTranscriptRows(
     chatId: string,
@@ -297,6 +365,11 @@ export class ChatTranscriptStore {
       // The window disagrees about what lives at this index. Refuse everything:
       // a half-applied update is worse than none.
       if (existing?.id !== row.message?.id) return null
+      // Streamed text only grows. An update carrying a strict PREFIX of the
+      // non-empty text already on screen was built from a regressed canonical
+      // record, not an edit, and applying it would visibly truncate the row.
+      // Refuse the whole frame exactly as an id mismatch is refused.
+      if (isTranscriptRowPrefixRegression(existing, row.message)) return null
       if (existing === row.message) continue
       if (!next) next = payload.messages.slice()
       next[offset] = row.message
@@ -676,6 +749,7 @@ export class ChatTranscriptStore {
   }
 
   drop(chatId: string): boolean {
+    this.tailSequenceById.delete(chatId)
     if (!this.byId.delete(chatId)) return false
     this.bumpGeneration(chatId)
     this.notify(chatId)
@@ -688,6 +762,7 @@ export class ChatTranscriptStore {
   }
 
   clear(): void {
+    this.tailSequenceById.clear()
     if (this.byId.size === 0 && this.generationById.size === 0) return
     const chatIds = Array.from(this.byId.keys())
     this.byId.clear()

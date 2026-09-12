@@ -287,3 +287,179 @@ describe('applyTranscriptTailFrame — tail-update', () => {
     expect(store.get('chat-1')?.windowEnd).toBe(101)
   })
 })
+
+describe('applyTranscriptTailFrame — recency guard', () => {
+  function update(
+    messageCount: number,
+    updateRows: { index: number; message: ChatMessage }[],
+    sequence: number
+  ) {
+    const frame = buildTranscriptTailUpdate({
+      chatId: 'chat-1',
+      sequence,
+      messageCount,
+      rows: updateRows,
+      appendedAtMs: 1_000
+    })
+    if (!frame) throw new Error('fixture built an invalid update frame')
+    return frame
+  }
+
+  /** A ten-row window at the live tail of a 100-row transcript. */
+  function tailWindowStore(): { store: ChatTranscriptStore; window: ChatMessage[] } {
+    const store = new ChatTranscriptStore()
+    const window = rows(10, 90)
+    store.ingestPage(page(window, 90, 100))
+    return { store, window }
+  }
+
+  it('REFUSES a frame whose sequence is strictly older than one already shown', () => {
+    const { store, window } = tailWindowStore()
+    const grown = { ...window[4], content: 'content-m-94 and then streamed further' } as ChatMessage
+    expect(
+      applyTranscriptTailFrame(update(100, [{ index: 94, message: grown }], 2), store).status
+    ).toBe('applied')
+
+    // Even though THIS frame's content would be a legitimate growth, it was
+    // sequenced before the one the window already shows.
+    const late = { ...window[4], content: 'content-m-94 and then streamed further and more' }
+    const outcome = applyTranscriptTailFrame(update(100, [{ index: 94, message: late }], 1), store)
+    expect(outcome).toMatchObject({ status: 'stale-sequence', sequence: 1, settled: false })
+    expect(store.get('chat-1')?.messages[4]).toBe(grown)
+  })
+
+  it('refuses a stale APPEND even when it would abut the window', () => {
+    const store = pagedStoreAtTail()
+    expect(applyTranscriptTailFrame(append(1_493, rows(2, 1_493), 5), store).status).toBe('applied')
+    const outcome = applyTranscriptTailFrame(append(1_495, [message('late')], 3), store)
+    expect(outcome).toMatchObject({ status: 'stale-sequence', settled: false })
+    expect(store.get('chat-1')?.messages.at(-1)?.id).toBe('m-1494')
+  })
+
+  it('admits a redelivered frame at the SAME sequence — only strictly-older is refused', () => {
+    const { store, window } = tailWindowStore()
+    const grown = { ...window[4], content: 'content-m-94 plus more' } as ChatMessage
+    expect(
+      applyTranscriptTailFrame(update(100, [{ index: 94, message: grown }], 3), store).status
+    ).toBe('applied')
+    const again = applyTranscriptTailFrame(
+      update(100, [{ index: 94, message: { ...grown } }], 3),
+      store
+    )
+    expect(again.status).not.toBe('stale-sequence')
+  })
+
+  it('REFUSES an update that truncates a streamed row to a prefix of itself', () => {
+    // The defect: a stale whole-record save re-ships the row as it was
+    // mid-stream, and the renderer applied update(long) then update(short),
+    // visibly truncating the lane card mid-content.
+    const { store, window } = tailWindowStore()
+    const streamed = {
+      ...window[4],
+      content: 'directives. And then a great deal more text'
+    } as ChatMessage
+    expect(
+      applyTranscriptTailFrame(update(100, [{ index: 94, message: streamed }], 1), store).status
+    ).toBe('applied')
+
+    const regressed = { ...window[4], content: 'directives.' } as ChatMessage
+    const outcome = applyTranscriptTailFrame(
+      update(100, [{ index: 94, message: regressed }], 2),
+      store
+    )
+    expect(outcome).toMatchObject({ status: 'stale-content', sequence: 2, settled: false })
+    expect(store.get('chat-1')?.messages[4]).toBe(streamed)
+  })
+
+  it('keeps the lane live after a refusal: the next FRESH frame applies', () => {
+    const { store, window } = tailWindowStore()
+    const streamed = {
+      ...window[4],
+      content: 'directives. And then a great deal more text'
+    } as ChatMessage
+    applyTranscriptTailFrame(update(100, [{ index: 94, message: streamed }], 1), store)
+    expect(
+      applyTranscriptTailFrame(
+        update(100, [{ index: 94, message: { ...window[4], content: 'directives.' } }], 2),
+        store
+      ).status
+    ).toBe('stale-content')
+
+    // The record recovers and streaming resumes on the same lane.
+    const recovered = {
+      ...window[4],
+      content: 'directives. And then a great deal more text, finished'
+    } as ChatMessage
+    const outcome = applyTranscriptTailFrame(
+      update(100, [{ index: 94, message: recovered }], 3),
+      store
+    )
+    expect(outcome).toMatchObject({ status: 'applied', rows: 1, settled: true })
+    expect(store.get('chat-1')?.messages[4]).toBe(recovered)
+  })
+
+  it('permits shorter content that is NOT a pure prefix — a genuine replacement', () => {
+    const { store, window } = tailWindowStore()
+    const long = { ...window[4], content: 'a long answer that spans quite a few words' }
+    applyTranscriptTailFrame(update(100, [{ index: 94, message: long }], 1), store)
+
+    const rewritten = { ...window[4], content: 'shorter, different' } as ChatMessage
+    const outcome = applyTranscriptTailFrame(
+      update(100, [{ index: 94, message: rewritten }], 2),
+      store
+    )
+    expect(outcome).toMatchObject({ status: 'applied', settled: true })
+    expect(store.get('chat-1')?.messages[4]).toBe(rewritten)
+  })
+
+  it('permits a same-content edit — a tool status flip is not a text regression', () => {
+    const { store, window } = tailWindowStore()
+    const flipped = {
+      ...window[4],
+      toolActivities: [{ status: 'completed' }]
+    } as unknown as ChatMessage
+    const outcome = applyTranscriptTailFrame(
+      update(100, [{ index: 94, message: flipped }], 1),
+      store
+    )
+    expect(outcome).toMatchObject({ status: 'applied', settled: true })
+    expect(store.get('chat-1')?.messages[4]).toBe(flipped)
+  })
+
+  it('resets the watermark on window replace, so a producer restart cannot wedge the lane', () => {
+    const { store, window } = tailWindowStore()
+    const grown = { ...window[4], content: 'content-m-94 and then some' } as ChatMessage
+    expect(
+      applyTranscriptTailFrame(update(100, [{ index: 94, message: grown }], 50), store).status
+    ).toBe('applied')
+
+    // The pull lane replaces the window (a reconcile, a jump, a re-open).
+    store.ingestPage(page(rows(10, 90), 90, 100))
+    // A restarted producer re-sequences from 1. Without the reset every one
+    // of its frames would read as stale against 50.
+    const current = store.get('chat-1')!.messages[4]
+    const fresh = { ...current, content: `${current.content} anew` } as ChatMessage
+    const outcome = applyTranscriptTailFrame(update(100, [{ index: 94, message: fresh }], 1), store)
+    expect(outcome).toMatchObject({ status: 'applied', settled: true })
+    expect(store.get('chat-1')?.messages[4]).toBe(fresh)
+  })
+
+  it('resets the watermark on a resync frame', () => {
+    const store = pagedStoreAtTail()
+    expect(applyTranscriptTailFrame(append(1_493, rows(2, 1_493), 40), store).status).toBe(
+      'applied'
+    )
+    const resync = buildTranscriptTailResync({
+      chatId: 'chat-1',
+      sequence: 41,
+      messageCount: 1_495,
+      appendedAtMs: 1
+    })
+    if (!resync) throw new Error('expected a buildable resync frame')
+    expect(applyTranscriptTailFrame(resync, store).status).toBe('resync-required')
+
+    // Frames that follow the resync are not judged against the pre-gap epoch.
+    const outcome = applyTranscriptTailFrame(append(1_495, [message('after-restart')], 1), store)
+    expect(outcome).toMatchObject({ status: 'applied', settled: true })
+  })
+})

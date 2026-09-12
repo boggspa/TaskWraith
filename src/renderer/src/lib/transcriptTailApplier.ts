@@ -1,4 +1,4 @@
-import type { ChatTranscriptStore } from './chatTranscriptStore'
+import { isTranscriptRowPrefixRegression, type ChatTranscriptStore } from './chatTranscriptStore'
 import { estimateJsonishBytes, type TranscriptPage } from '../../../shared/transcriptPage'
 import type { TranscriptTailFrame } from '../../../shared/transcriptTailStream'
 
@@ -34,6 +34,23 @@ export type TranscriptTailApplyStatus =
    * to date, which is the phantom the sequence numbering exists to prevent.
    */
   | 'not-visible'
+  /**
+   * The frame is OLDER than the newest sequence this lane has already shown
+   * for the chat. Frames arrive ordered by the producer, so a strictly older
+   * one predates state the window already reflects, and writing it would put
+   * old rows over new. Refused unsettled; the watchdog already announced and
+   * settled the newer frame, so the refusal reports no phantom gap.
+   */
+  | 'stale-sequence'
+  /**
+   * An update whose rows would strictly shorten a non-empty streamed text row
+   * by a pure prefix — the signature of a regressed canonical record (a stale
+   * whole-record save re-shipped as an update), not an edit. Streamed text
+   * only grows, so the frame is refused whole and the canonical lane
+   * reconciles. Unsettled on purpose: the newest announcement stays visibly
+   * outstanding until the pull lane lands it.
+   */
+  | 'stale-content'
 
 export interface TranscriptTailApplyResult {
   status: TranscriptTailApplyStatus
@@ -98,8 +115,23 @@ export function applyTranscriptTailFrame(
   frame: TranscriptTailFrame,
   store: ChatTranscriptStore
 ): TranscriptTailApplyResult {
-  if (frame.kind === 'tail-resync') return result('resync-required', frame)
+  if (frame.kind === 'tail-resync') {
+    // A resync ends this lane's ordering epoch: the producer declined to
+    // carry the change, so the frames that follow are measured against a
+    // window the pull lane is about to replace. Retire the watermark now —
+    // keeping it would refuse fresh frames behind a number from before the
+    // gap, and a restarted producer (re-sequenced from 1) would wedge.
+    store.forgetTailSequence(frame.chatId)
+    return result('resync-required', frame)
+  }
   if (!store.isPaged(frame.chatId)) return result('not-paged', frame)
+  // Recency: a frame strictly older than the newest this lane has already
+  // shown for the chat writes rows from before the state on screen. Recording
+  // on sight rather than on a successful apply is deliberate — even a frame
+  // refused below proves the lane has moved past everything older than it.
+  if (store.noteTailSequence(frame.chatId, frame.sequence) === 'stale') {
+    return result('stale-sequence', frame)
+  }
   if (frame.kind === 'tail-update') return applyUpdate(frame, store)
 
   // `isPaged` already proved the entry exists, so this is a type narrowing
@@ -147,11 +179,13 @@ export function applyTranscriptTailFrame(
  * Land rows that changed in place.
  *
  * Unlike an append this has no contiguity question to answer — no row arrives
- * and the window does not move — so the checks are about IDENTITY instead: the
- * canonical length must be the one this window belongs to, and each row must
- * land on the row that already carries its id. The store enforces both and
- * refuses the whole frame if either fails, because a half-applied update leaves
- * the transcript rendering a row it cannot know is wrong.
+ * and the window does not move — so the checks are about IDENTITY and RECENCY
+ * instead: the canonical length must be the one this window belongs to, each
+ * row must land on the row that already carries its id, and no row may
+ * strictly shorten the non-empty streamed text already on screen by a pure
+ * prefix. The store enforces all three and refuses the whole frame if any
+ * fails, because a half-applied update leaves the transcript rendering a row
+ * it cannot know is wrong.
  *
  * A refusal is not an error; the canonical lane reconciles the window exactly
  * as it did before this lane carried edits at all.
@@ -162,6 +196,18 @@ function applyUpdate(
 ): TranscriptTailApplyResult {
   const before = store.get(frame.chatId)
   if (!before) return result('not-paged', frame)
+
+  // The prefix guard, pre-checked here so the refusal is reported as what it
+  // is rather than as a contiguity failure. The store enforces the same rule
+  // again for any caller that did not pre-check; from this path its identical
+  // refusal is unreachable.
+  for (const row of frame.rows) {
+    const offset = row.index - before.windowStart
+    if (offset < 0 || offset >= before.messages.length) continue
+    if (isTranscriptRowPrefixRegression(before.messages[offset], row.message)) {
+      return result('stale-content', frame)
+    }
+  }
 
   const applied = store.updateChatTranscriptRows(frame.chatId, frame.rows, frame.messageCount)
   if (!applied) return result('discontiguous', frame)
