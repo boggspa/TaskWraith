@@ -62,7 +62,7 @@ describe('application menu', () => {
   it('keeps Settings and Updates reachable on Windows and Linux', () => {
     for (const platform of ['win32', 'linux'] as const) {
       const menu = buildApplicationMenuTemplate(
-        { newWindow() {}, command() {}, checkForUpdates() {} },
+        { newWindow: vi.fn(), command: vi.fn(), checkForUpdates: vi.fn() },
         platform
       )
       expect(menu.some((item) => item.label === 'TaskWraith')).toBe(false)
@@ -75,7 +75,7 @@ describe('application menu', () => {
 
   it('preserves customized and disabled shortcuts without stealing a configured chord', () => {
     const menu = buildApplicationMenuTemplate(
-      { newWindow() {}, command() {}, checkForUpdates() {} },
+      { newWindow: vi.fn(), command: vi.fn(), checkForUpdates: vi.fn() },
       'darwin',
       { 'new-chat': { key: 'O', modifiers: ['primary'] }, settings: null }
     )

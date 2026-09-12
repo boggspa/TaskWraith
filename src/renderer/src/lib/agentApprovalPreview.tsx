@@ -485,12 +485,16 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
   )
 }
 
-export const AgentApprovalPreview = memo(function AgentApprovalPreview({
-  preview
-}: {
+interface AgentApprovalPreviewProps {
   preview: unknown
-}) {
+}
+
+const AgentApprovalPreviewComponent = function AgentApprovalPreview({
+  preview
+}: AgentApprovalPreviewProps): React.JSX.Element | null {
   return renderAgentApprovalPreview(preview)
-})
+}
+
+export const AgentApprovalPreview = memo(AgentApprovalPreviewComponent)
 
 export { formatApprovalChangePreview, renderAgentApprovalPreview }

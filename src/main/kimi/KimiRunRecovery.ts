@@ -26,7 +26,7 @@ export interface KimiRunRecoveryOptions {
 
 export function createKimiRunRecovery(options: KimiRunRecoveryOptions) {
   const { context, gateway } = options
-  let receipt = createKimiRunCapabilityReceipt(context, gateway.readiness.snapshot())
+  const receipt = createKimiRunCapabilityReceipt(context, gateway.readiness.snapshot())
   let consecutiveNativeRefusals = 0
   let correctionSent = false
   let lastCorrectionGeneration = -1

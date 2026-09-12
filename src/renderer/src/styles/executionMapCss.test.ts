@@ -82,10 +82,10 @@ describe('Execution Map CSS contract', () => {
 
     expect(source).toContain('.execution-map-resume-run,\n.execution-map-cancel-run {')
     expect(source).toMatch(
-      /\.execution-map-resume-run \{\n  border: 1px solid color-mix\(in srgb, var\(--accent\)/
+      /\.execution-map-resume-run \{\n {2}border: 1px solid color-mix\(in srgb, var\(--accent\)/
     )
     expect(source).toMatch(
-      /\.execution-map-cancel-run \{\n  border: 1px solid color-mix\(in srgb, var\(--danger\)/
+      /\.execution-map-cancel-run \{\n {2}border: 1px solid color-mix\(in srgb, var\(--danger\)/
     )
     expect(source).toContain('.execution-map-resume-run:focus-visible')
     expect(source).toContain('.execution-map-cancel-run:focus-visible')

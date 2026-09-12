@@ -60,10 +60,10 @@ export function museMspSubjectToService(
     case 'network':
     case 'fetch':
     case 'web':
-    // A generic native Muse tool. `mcpTools` is the bucket every other
-    // provider's tool calls land in; leaving it to the shellCommands default
-    // would let a shell grant cover it.
     case 'tool':
+      // A generic native Muse tool. `mcpTools` is the bucket every other
+      // provider's tool calls land in; leaving it to the shellCommands default
+      // would let a shell grant cover it.
       return 'mcpTools'
     case 'shell':
     case 'command':
