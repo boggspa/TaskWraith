@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { ProviderId, RuntimeProfile } from '../../../../main/store/types'
 import {
@@ -95,10 +96,9 @@ describe('formFromRuntimeProfile', () => {
   })
 
   it('keeps explicit binary path and approval mode', () => {
-    const form = formFromRuntimeProfile(
-      makeProfile({ binaryPath: '/usr/local/bin/codex', approvalMode: 'plan' })
-    )
-    expect(form.binaryPath).toBe('/usr/local/bin/codex')
+    const binaryPath = resolve('custom', 'bin', 'codex')
+    const form = formFromRuntimeProfile(makeProfile({ binaryPath, approvalMode: 'plan' }))
+    expect(form.binaryPath).toBe(binaryPath)
     expect(form.approvalMode).toBe('plan')
   })
 

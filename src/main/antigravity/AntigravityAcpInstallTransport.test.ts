@@ -485,7 +485,8 @@ describe('createAntigravityAcpDownloadArchive', () => {
 describe('createAntigravityAcpSpawnProcess', () => {
   it('passes an argv array with shell false and stdio pipes for ACP JSON-RPC', () => {
     const spawn = vi.fn(() => ({ pid: 4242 }))
-    const factory = createAntigravityAcpSpawnProcess('/opt/agy_acp_server.par', ['--uid=501'], {
+    const binaryPath = join(TEMP_DIR, 'agy_acp_server.par')
+    const factory = createAntigravityAcpSpawnProcess(binaryPath, ['--uid=501'], {
       spawn: spawn as unknown as typeof import('node:child_process').spawn
     })
     const child = factory()
@@ -496,7 +497,7 @@ describe('createAntigravityAcpSpawnProcess', () => {
       string[],
       { stdio: unknown; shell: unknown; windowsHide: unknown }
     ]
-    expect(binary).toBe('/opt/agy_acp_server.par')
+    expect(binary).toBe(binaryPath)
     expect(Array.isArray(argv)).toBe(true)
     expect(argv).toEqual(['--uid=501'])
     expect(argv).toHaveLength(1)

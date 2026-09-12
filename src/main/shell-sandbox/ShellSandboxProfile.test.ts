@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readFileSync as readFileSyncNode } from 'node:fs'
@@ -8,6 +8,7 @@ import { MainSourceProbe } from '../mainSourceProbe.testutil'
 import {
   buildWorkspaceSandboxProfile,
   resolveShellSandboxPlan,
+  SANDBOX_EXEC_PATH,
   sbplQuote,
   SHELL_SANDBOX_DENIED_READ_RELPATHS
 } from './ShellSandboxProfile'
@@ -180,6 +181,7 @@ describe('resolveShellSandboxPlan — the contained plan', () => {
     const result = plan()
     if (!result.sandboxed) throw new Error('expected a contained plan')
     const wrapped = result.wrap(['/bin/zsh', '-lc', 'npm test'])
+    // @portability-ok: plan() injects the darwin branch and only returns argv data here.
     expect(wrapped[0]).toBe('/usr/bin/sandbox-exec')
     expect(wrapped[1]).toBe('-p')
     expect(wrapped[2]).toBe(result.profile)
@@ -300,7 +302,7 @@ describeLive('sandbox-exec, for real', () => {
   const run = (script: string): { status: number | null; stderr: string } => {
     if (!contained.sandboxed) throw new Error('expected a contained plan')
     try {
-      execFileSync('/usr/bin/sandbox-exec', ['-p', contained.profile, '/bin/zsh', '-c', script], {
+      execFileSync(SANDBOX_EXEC_PATH, ['-p', contained.profile, '/bin/zsh', '-c', script], {
         stdio: 'pipe'
       })
       return { status: 0, stderr: '' }
@@ -351,7 +353,7 @@ describeLive('sandbox-exec, for real', () => {
 
   it('blocks a read of a denied secret path', () => {
     const secret = join(outside, 'home', '.ssh', 'id_rsa')
-    execFileSync('/bin/mkdir', ['-p', join(outside, 'home', '.ssh')])
+    mkdirSync(join(outside, 'home', '.ssh'), { recursive: true })
     writeFileSync(secret, 'PRIVATE KEY')
     expect(run(`cat ${JSON.stringify(secret)}`).status).not.toBe(0)
   })

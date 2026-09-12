@@ -175,6 +175,8 @@ describe('shared workspace contribution workflow', () => {
     vi.stubEnv('TW_TEST_HOOK_SENTINEL', sentinel)
     const hooks = path.join(root, '.git', 'hooks')
     git(root, 'config', 'core.hooksPath', hooks)
+    // @portability-ok: Git for Windows resolves a hook shebang's interpreter
+    // basename through PATH; the normal-commit sentinel below proves it ran.
     fs.writeFileSync(
       path.join(hooks, 'reference-transaction'),
       '#!/bin/sh\nprintf ran > "$TW_TEST_HOOK_SENTINEL"\n',
