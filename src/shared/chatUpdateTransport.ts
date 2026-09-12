@@ -946,17 +946,20 @@ function windowedChatRecord(
   windowRuns: ChatRun[],
   totalMessageCount: number
 ): ChatRecord {
+  const ensemble = chat.ensemble
+    ? (({ roundWallMsById: _roundWallMsById, ...rest }) => rest)(chat.ensemble)
+    : undefined
   return {
     ...chat,
+    ...(ensemble ? { ensemble } : {}),
     messages: windowMessages,
     runs: windowRuns,
     summaryOnly: true,
     transcriptPaged: true,
     messageCount: totalMessageCount,
     runCount: Array.isArray(chat.runs) ? chat.runs.length : 0,
-    // The run window is a bounded tail, so a reader measuring wall time from it
-    // would understate the thread. Carry the union of the CANONICAL array.
-    runWallMs: projectThreadRunWallMs(chat.runs)
+    // Measure the complete record before dropping the run/round history.
+    runWallMs: projectThreadRunWallMs(chat.runs, chat.ensemble)
   } as ChatRecord
 }
 

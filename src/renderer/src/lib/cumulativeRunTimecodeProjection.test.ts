@@ -23,6 +23,7 @@ import { copyThreadCatalogueProjection } from '../../../host-shared/thread-catal
 const FIRST_RUN_MS = 2_950
 const SECOND_RUN_MS = 7_325
 const TOTAL_MS = FIRST_RUN_MS + SECOND_RUN_MS
+const WHOLE_ROUND_TOTAL_MS = 50_000
 
 function run(overrides: Partial<ChatRun>): ChatRun {
   return { runId: 'r', startedAt: '2026-09-11T13:40:27.195Z', ...overrides } as ChatRun
@@ -58,10 +59,111 @@ function hydratedChat(): ChatRecord {
   } as unknown as ChatRecord
 }
 
+function wholeRoundChat(live = false): ChatRecord {
+  const runs: ChatRun[] = [
+    run({
+      runId: 'round-1-seat-a',
+      ensembleRoundId: 'round-1',
+      startedAt: '2026-09-11T00:00:00.000Z',
+      endedAt: '2026-09-11T00:00:10.000Z'
+    }),
+    run({
+      runId: 'round-1-seat-b',
+      ensembleRoundId: 'round-1',
+      startedAt: '2026-09-11T00:00:15.000Z',
+      endedAt: '2026-09-11T00:00:25.000Z'
+    }),
+    ...(live
+      ? [
+          run({
+            runId: 'round-live-seat-a',
+            ensembleRoundId: 'round-live',
+            startedAt: '2026-09-11T00:01:00.000Z',
+            endedAt: '2026-09-11T00:01:10.000Z'
+          }),
+          run({
+            runId: 'round-live-seat-b',
+            ensembleRoundId: 'round-live',
+            startedAt: '2026-09-11T00:01:15.000Z'
+          })
+        ]
+      : [
+          run({
+            runId: 'round-2-seat-a',
+            ensembleRoundId: 'round-2',
+            startedAt: '2026-09-11T00:01:02.000Z',
+            endedAt: '2026-09-11T00:01:10.000Z'
+          })
+        ])
+  ]
+  const roundId = live ? 'round-live' : 'round-2'
+  return {
+    appChatId: live ? 'ensemble-live' : 'ensemble-terminal',
+    title: 'Timer projection fixture',
+    scope: 'workspace',
+    chatKind: 'ensemble',
+    createdAt: Date.parse('2026-09-11T00:00:00.000Z'),
+    updatedAt: Date.parse('2026-09-11T00:01:20.000Z'),
+    archived: false,
+    messages: [],
+    runs,
+    ensemble: {
+      enabled: true,
+      maxParticipants: 2,
+      participants: [],
+      roundWallMsById: { 'round-1': 30_000 },
+      activeRound: {
+        roundId,
+        status: live ? 'running' : 'completed',
+        prompt: 'Exercise projection timing.',
+        startedAt: '2026-09-11T00:01:00.000Z',
+        ...(!live ? { endedAt: '2026-09-11T00:01:20.000Z' } : {}),
+        participants: []
+      }
+    }
+  }
+}
+
 describe('the arithmetic these projections must preserve', () => {
   it('is the union of the two sealed runs', () => {
     expect(computeCumulativeRunBaseMs(SEALED_RUNS)).toBe(TOTAL_MS)
     expect(resolveCumulativeRunBaseMs(hydratedChat())).toBe(TOTAL_MS)
+  })
+
+  it('uses exact whole-round durations instead of summing seat activity', () => {
+    expect(resolveCumulativeRunBaseMs(wholeRoundChat())).toBe(WHOLE_ROUND_TOTAL_MS)
+  })
+})
+
+describe('whole-round time through runs-stripped projections', () => {
+  it('survives the thread catalogue and its bounded copier', () => {
+    const chat = wholeRoundChat()
+    const projection = projectThreadCatalogueRecord(chat)
+    const row = catalogueChatListItem(projection)
+    const copied = copyThreadCatalogueProjection(projection, chat.appChatId)
+
+    expect(row.runWallMs).toBe(WHOLE_ROUND_TOTAL_MS)
+    expect(resolveCumulativeRunBaseMs(row)).toBe(WHOLE_ROUND_TOTAL_MS)
+    expect(copied?.summary.runWallMs).toBe(WHOLE_ROUND_TOTAL_MS)
+  })
+
+  it('survives renderer demotion without retaining the round ledger', () => {
+    const demoted = demoteChatToSummary(wholeRoundChat())
+    expect(demoted.runWallMs).toBe(WHOLE_ROUND_TOTAL_MS)
+    expect(demoted.ensemble).not.toHaveProperty('roundWallMsById')
+    expect(resolveCumulativeRunBaseMs(demoted)).toBe(WHOLE_ROUND_TOTAL_MS)
+
+    const projected = projectRendererChatListItem(wholeRoundChat())
+    expect(projected.runWallMs).toBe(WHOLE_ROUND_TOTAL_MS)
+    expect(projected.ensemble).not.toHaveProperty('roundWallMsById')
+  })
+
+  it('carries only completed rounds while the current round remains live', () => {
+    const chat = wholeRoundChat(true)
+    const demoted = demoteChatToSummary(chat)
+
+    expect(demoted.runWallMs).toBe(30_000)
+    expect(resolveCumulativeRunBaseMs(demoted, '2026-09-11T00:01:00.000Z')).toBe(30_000)
   })
 })
 

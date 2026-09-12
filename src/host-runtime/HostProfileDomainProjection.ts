@@ -15,6 +15,9 @@ import {
   type HostHealthProjection,
   type HostParticipantProjection,
   type HostProviderModelProjection,
+  type HostRoundOutcome,
+  type HostRoundProjection,
+  type HostRoutingProjection,
   type HostRunProjection,
   type HostThreadGoalProjection,
   type HostUsageObservation,
@@ -24,6 +27,7 @@ import {
   hostComputeGoalRuntimeTiming,
   type HostGoalRuntimeLedgerFacts
 } from '../host-shared/ActiveGoalContract'
+import { isEnsembleRoundPresentationLive } from '../shared/ensembleRoundLifecycle'
 
 /**
  * Project the goal the App already wrote onto this record.
@@ -126,6 +130,26 @@ function boundedSelectionId(value: unknown): string | undefined {
     : undefined
 }
 
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function records(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) => (record(entry) ? [record(entry)!] : []))
+    : []
+}
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : undefined
+}
+
+function stringTimestamp(value: unknown): number | undefined {
+  return timestamp(typeof value === 'string' ? value : undefined)
+}
+
 function providerOutcome(
   status: string | undefined
 ): 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown' {
@@ -183,6 +207,7 @@ function latestProfileRunUsage(
  * in the profile record and its history surfaces.
  */
 export const HOST_PROFILE_RUN_PROJECTION_LIMIT = Math.min(1_800, HOST_PROTOCOL_MAX_COLLECTION - 1)
+export const HOST_PROFILE_ROUND_PROJECTION_LIMIT = Math.min(1_800, HOST_PROTOCOL_MAX_COLLECTION - 1)
 
 interface ProfileRunProjectionCandidate {
   readonly key: string
@@ -276,15 +301,215 @@ function projectProfileRuns(
   }
 }
 
-const PARTICIPANT_VALIDATION_SNAPSHOT = createEmptyHostSnapshot({
+const PROFILE_ROW_VALIDATION_SNAPSHOT = createEmptyHostSnapshot({
   generation: 0,
   cursor: 0
 })
 
+interface ProfileRoundProjectionCandidate {
+  readonly row: HostRoundProjection
+  readonly participantStatusById: ReadonlyMap<string, string>
+  readonly activeParticipantId?: string
+  readonly recency: number
+}
+
+function profileRoundStatus(
+  thread: ProfileThread,
+  activeRound: Record<string, unknown>
+): HostRoundOutcome {
+  const raw = String(activeRound.status ?? '').toLowerCase()
+  if (raw === 'completed' || raw === 'success' || raw === 'succeeded') return 'completed'
+  if (raw === 'cancelled' || raw === 'canceled') return 'cancelled'
+  if (raw === 'failed' || raw === 'error') return 'failed'
+  if (raw !== 'running' && raw !== 'active') return 'unknown'
+
+  // Catalogue summaries carry a presentation status computed from the FULL
+  // record before chrome is bounded. That is the Host's liveness witness for
+  // this donor: a persisted `status: running` row alone can be restart residue.
+  const cataloguePresentation = record(thread.cataloguePresentation)
+  const live =
+    thread.catalogueProjection === true
+      ? cataloguePresentation?.status === 'running'
+      : isEnsembleRoundPresentationLive(
+          activeRound as unknown as Parameters<typeof isEnsembleRoundPresentationLive>[0]
+        )
+  // Loss of a liveness witness is not terminal evidence. Recovery may later
+  // publish a concrete interrupted/failed/cancelled outcome; until then the
+  // Host must keep this explicitly unresolved instead of manufacturing a
+  // successful completion from absence.
+  return live ? 'running' : 'unknown'
+}
+
+function roundRouting(
+  ensemble: Record<string, unknown>,
+  activeRound: Record<string, unknown>,
+  status: HostRoundOutcome
+): HostRoutingProjection | undefined {
+  const rawMode = boundedSelectionId(activeRound.orchestrationMode ?? ensemble.orchestrationMode)
+  const mode = rawMode === 'turn_bound' ? 'continuous' : rawMode
+  const fanout = boundedSelectionId(activeRound.fanoutPolicy ?? ensemble.fanoutPolicy)
+  if (!mode || !fanout) return undefined
+  const activeParticipantId =
+    status === 'running' ? boundedSelectionId(activeRound.activeParticipantId) : undefined
+  const continuationHops = nonNegativeInteger(activeRound.continuationHops ?? activeRound.hops)
+  const maxContinuationHops = nonNegativeInteger(
+    activeRound.maxContinuationHops ?? ensemble.maxContinuationHops
+  )
+  const bossParticipantId = boundedSelectionId(
+    activeRound.bossmanParticipantId ?? ensemble.bossmanParticipantId
+  )
+  const activeRoundCaptainIds = Array.isArray(activeRound.captainParticipantIds)
+    ? activeRound.captainParticipantIds
+    : []
+  const ensembleCaptainIds = Array.isArray(ensemble.captainParticipantIds)
+    ? ensemble.captainParticipantIds
+    : []
+  const captainParticipantId = boundedSelectionId(
+    activeRoundCaptainIds[0] ??
+      ensembleCaptainIds[0] ??
+      activeRound.secondInCommandParticipantId ??
+      ensemble.secondInCommandParticipantId
+  )
+  return {
+    mode,
+    fanout,
+    ...(activeParticipantId ? { activeParticipantId } : {}),
+    ...(continuationHops !== undefined ? { continuationHops } : {}),
+    ...(maxContinuationHops !== undefined ? { maxContinuationHops } : {}),
+    ...(bossParticipantId ? { bossParticipantId } : {}),
+    ...(captainParticipantId ? { captainParticipantId } : {})
+  }
+}
+
+function projectThreadRound(
+  thread: ProfileThread,
+  runs: readonly ProfileRun[]
+): ProfileRoundProjectionCandidate | null {
+  if (thread.chatKind !== 'ensemble') return null
+  const ensemble = record(thread.ensemble)
+  const activeRound = record(ensemble?.activeRound)
+  if (!ensemble || !activeRound) return null
+  const roundId = boundedSelectionId(activeRound.roundId ?? activeRound.id)
+  if (!roundId) return null
+  const status = profileRoundStatus(thread, activeRound)
+  const roundParticipants = records(activeRound.participants)
+  const configuredParticipants = records(ensemble.participants)
+  const participantIds: string[] = []
+  const participantStatusById = new Map<string, string>()
+  const providerRunIds = new Set<string>()
+  const seenParticipants = new Set<string>()
+  for (const participant of roundParticipants) {
+    const participantId = boundedSelectionId(participant.participantId ?? participant.id)
+    if (!participantId || seenParticipants.has(participantId)) continue
+    seenParticipants.add(participantId)
+    participantIds.push(participantId)
+    const participantStatus =
+      typeof participant.status === 'string'
+        ? participant.status.trim().slice(0, HOST_PROTOCOL_MAX_SHORT) || undefined
+        : undefined
+    if (participantStatus) participantStatusById.set(participantId, participantStatus)
+    const runId = boundedSelectionId(participant.runId)
+    if (runId) providerRunIds.add(runId)
+  }
+  if (participantIds.length === 0) {
+    for (const participant of configuredParticipants) {
+      const participantId = boundedSelectionId(participant.id)
+      if (!participantId || seenParticipants.has(participantId)) continue
+      seenParticipants.add(participantId)
+      participantIds.push(participantId)
+    }
+  }
+  for (const run of runs) {
+    const raw = run as unknown as Record<string, unknown>
+    if (boundedSelectionId(raw.ensembleRoundId) !== roundId) continue
+    const runId = boundedSelectionId(run.runId)
+    if (runId) providerRunIds.add(runId)
+  }
+  const startedAt = stringTimestamp(activeRound.startedAt)
+  const endedAt = stringTimestamp(activeRound.endedAt ?? activeRound.completedAt)
+  const routing = roundRouting(ensemble, activeRound, status)
+  const candidate: HostRoundProjection = {
+    roundId,
+    threadId: thread.appChatId,
+    status,
+    participantIds,
+    providerRunIds: [...providerRunIds].sort(),
+    ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(endedAt !== undefined ? { endedAt } : {}),
+    ...(routing ? { routing } : {})
+  }
+  const decoded = decodeHostSnapshot({
+    ...PROFILE_ROW_VALIDATION_SNAPSHOT,
+    rounds: [candidate]
+  })
+  const row = decoded.ok ? decoded.value.rounds[0] : undefined
+  if (!row) return null
+  const activeParticipantId =
+    row.status === 'running' ? boundedSelectionId(activeRound.activeParticipantId) : undefined
+  return {
+    row,
+    participantStatusById,
+    ...(activeParticipantId ? { activeParticipantId } : {}),
+    recency: endedAt ?? startedAt ?? thread.updatedAt
+  }
+}
+
+function projectProfileRounds(
+  threads: readonly ProfileThread[],
+  runsByThread: ReadonlyMap<string, readonly ProfileRun[]>
+): {
+  rounds: HostRoundProjection[]
+  byThreadId: ReadonlyMap<string, ProfileRoundProjectionCandidate>
+  includedThreadIds: ReadonlySet<string>
+  warning?: HostWarningProjection
+} {
+  const candidates = threads.flatMap((thread) => {
+    const candidate = projectThreadRound(
+      thread,
+      runsByThread.get(thread.appChatId) ?? thread.runs ?? []
+    )
+    return candidate ? [candidate] : []
+  })
+  const byThreadId = new Map(candidates.map((candidate) => [candidate.row.threadId, candidate]))
+  if (candidates.length <= HOST_PROFILE_ROUND_PROJECTION_LIMIT) {
+    return {
+      rounds: candidates.map((candidate) => candidate.row),
+      byThreadId,
+      includedThreadIds: new Set(candidates.map((candidate) => candidate.row.threadId))
+    }
+  }
+  const selected = [...candidates]
+    .sort((left, right) => {
+      const leftLive = left.row.status === 'running'
+      const rightLive = right.row.status === 'running'
+      if (leftLive !== rightLive) return leftLive ? -1 : 1
+      if (left.recency !== right.recency) return right.recency - left.recency
+      return left.row.roundId.localeCompare(right.row.roundId)
+    })
+    .slice(0, HOST_PROFILE_ROUND_PROJECTION_LIMIT)
+  const warningAt = candidates.reduce((latest, candidate) => Math.max(latest, candidate.recency), 0)
+  return {
+    rounds: selected.map((candidate) => candidate.row),
+    byThreadId,
+    includedThreadIds: new Set(selected.map((candidate) => candidate.row.threadId)),
+    warning: {
+      warningId: `${HOST_WARNING_PROJECTION_WINDOWED}:rounds`,
+      severity: 'warning',
+      code: HOST_WARNING_PROJECTION_WINDOWED,
+      message:
+        `family rounds intentionally windowed from ${candidates.length} to ` +
+        `${HOST_PROFILE_ROUND_PROJECTION_LIMIT}; live rows precede recent terminal rows`,
+      at: warningAt
+    }
+  }
+}
+
 function decodeParticipantCandidate(
   thread: ProfileThread,
   value: unknown,
-  activeParticipantId: unknown
+  activeParticipantId: unknown,
+  roundStatus?: string,
+  hasRound = false
 ): HostParticipantProjection | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const participant = value as Record<string, unknown>
@@ -316,13 +541,15 @@ function decodeParticipantCandidate(
         : {}),
     order: participant.order,
     enabled: participant.enabled,
-    ...(Object.prototype.hasOwnProperty.call(participant, 'status')
-      ? { status: participant.status }
-      : {}),
-    active: participant.active === true || participant.id === activeParticipantId
+    ...(roundStatus
+      ? { status: roundStatus }
+      : Object.prototype.hasOwnProperty.call(participant, 'status')
+        ? { status: participant.status }
+        : {}),
+    active: hasRound ? participant.id === activeParticipantId : participant.active === true
   }
   const decoded = decodeHostSnapshot({
-    ...PARTICIPANT_VALIDATION_SNAPSHOT,
+    ...PROFILE_ROW_VALIDATION_SNAPSHOT,
     participants: [candidate]
   })
   return decoded.ok ? (decoded.value.participants[0] ?? null) : null
@@ -334,7 +561,10 @@ interface ProjectedThreadParticipants {
   readonly warningAt: number
 }
 
-function projectThreadParticipants(thread: ProfileThread): ProjectedThreadParticipants {
+function projectThreadParticipants(
+  thread: ProfileThread,
+  round?: ProfileRoundProjectionCandidate
+): ProjectedThreadParticipants {
   if (thread.chatKind !== 'ensemble') {
     return { participants: [], omitted: 0, warningAt: 0 }
   }
@@ -346,19 +576,21 @@ function projectThreadParticipants(thread: ProfileThread): ProjectedThreadPartic
   if (!Array.isArray(record.participants)) {
     return { participants: [], omitted: 0, warningAt: 0 }
   }
-  const activeRound =
-    record.activeRound &&
-    typeof record.activeRound === 'object' &&
-    !Array.isArray(record.activeRound)
-      ? (record.activeRound as Record<string, unknown>)
-      : null
-  const activeParticipantId = activeRound?.activeParticipantId
+  const activeParticipantId = round?.activeParticipantId
   const seen = new Set<string>()
   const participants: HostParticipantProjection[] = []
   let omitted = 0
 
   for (const value of record.participants) {
-    const participant = decodeParticipantCandidate(thread, value, activeParticipantId)
+    const participantRecord = value as Record<string, unknown>
+    const participantId = boundedSelectionId(participantRecord?.id)
+    const participant = decodeParticipantCandidate(
+      thread,
+      value,
+      activeParticipantId,
+      participantId ? round?.participantStatusById.get(participantId) : undefined,
+      round !== undefined
+    )
     if (!participant || seen.has(participant.id)) {
       omitted += 1
       continue
@@ -385,7 +617,23 @@ export function projectHostProfileDomainSnapshot(
     updatedAt: workspace.updatedAt
   }))
   const threads = store.listThreadSummaries()
-  const participantProjections = threads.map(projectThreadParticipants)
+  const runWindow = store.listRunSummaries()
+  const threadById = new Map(threads.map((thread) => [thread.appChatId, thread]))
+  const sourceRunEntries = runWindow
+    ? runWindow.entries
+    : threads.flatMap((thread) =>
+        (thread.runs ?? []).map((run) => ({ chatId: thread.appChatId, run }))
+      )
+  const runsByThread = new Map<string, ProfileRun[]>()
+  for (const { chatId, run } of sourceRunEntries) {
+    const rows = runsByThread.get(chatId) ?? []
+    rows.push(run)
+    runsByThread.set(chatId, rows)
+  }
+  const roundProjection = projectProfileRounds(threads, runsByThread)
+  const participantProjections = threads.map((thread) =>
+    projectThreadParticipants(thread, roundProjection.byThreadId.get(thread.appChatId))
+  )
   const participants = participantProjections.flatMap((projection) => projection.participants)
   const omittedParticipants = participantProjections.reduce(
     (count, projection) => count + projection.omitted,
@@ -409,11 +657,10 @@ export function projectHostProfileDomainSnapshot(
             at: participantWarningAt
           }
         ]
-  const runWindow = store.listRunSummaries()
-  const threadById = new Map(threads.map((thread) => [thread.appChatId, thread]))
+  if (roundProjection.warning) warnings.push(roundProjection.warning)
   const runProjection = runWindow
     ? projectProfileRuns(
-        runWindow.entries.flatMap(({ chatId, run }) => {
+        sourceRunEntries.flatMap(({ chatId, run }) => {
           const thread = threadById.get(chatId)
           return thread
             ? [
@@ -453,6 +700,11 @@ export function projectHostProfileDomainSnapshot(
           ? 'plan'
           : storedPermission
       const usage = latestProfileRunUsage(thread.runs)
+      const activeRoundId =
+        roundProjection.includedThreadIds.has(thread.appChatId) &&
+        roundProjection.byThreadId.get(thread.appChatId)?.row.status === 'running'
+          ? roundProjection.byThreadId.get(thread.appChatId)?.row.roundId
+          : undefined
       return {
         id: thread.appChatId,
         workspaceId: thread.scope === 'workspace' ? (thread.workspaceId ?? null) : null,
@@ -468,12 +720,13 @@ export function projectHostProfileDomainSnapshot(
         ...(reasoningEffort ? { reasoningEffort } : {}),
         ...(permissionPresetId ? { permissionPresetId } : {}),
         ...(usage ? { usage } : {}),
-        ...(goal ? { goal } : {})
+        ...(goal ? { goal } : {}),
+        ...(activeRoundId ? { activeRoundId } : {})
       }
     }),
     runs: runProjection.runs,
     missions: [],
-    rounds: [],
+    rounds: roundProjection.rounds,
     participants,
     providers: [...providers],
     questions: [],

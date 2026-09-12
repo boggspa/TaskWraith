@@ -37,6 +37,40 @@ function advance(source: ChatRecord, mutate: (next: ChatRecord) => void): ChatRe
 }
 
 describe('ChatUpdateProjectionTracker', () => {
+  it('projects the compact ensemble operations used by authored streaming saves', () => {
+    const before = chat([message('a', 'A')], 1, {
+      ensemble: {
+        enabled: true,
+        maxParticipants: 1,
+        maxContinuationHops: 6,
+        participants: [
+          {
+            id: 'seat-1',
+            provider: 'kimi',
+            enabled: true,
+            role: 'Worker',
+            order: 1,
+            instructions: ''
+          }
+        ]
+      }
+    })
+    const after = advance(before, (next) => {
+      next.ensemble!.maxContinuationHops = 12
+      next.ensemble!.participants[0].linkedProviderSessionId = 'next-session'
+    })
+    const tracker = new ChatUpdateProjectionTracker()
+    const seeded = tracker.seed(before)
+    const derived = deriveChatRecordMutationWithProjection(before, after, {
+      authoredTranscript: { operations: [], transcriptOps: [], changedMessageCount: 0 }
+    })
+    const observed = tracker.observe(before, after, derived)
+    expect(observed.delta?.recordMask).toContain('ensemble')
+    expect(observed.delta?.recordDelta.ensemble).toEqual(after.ensemble)
+    expect(observed.state.ensembleRevision).not.toBe(seeded.ensembleRevision)
+    expect(observed.state.runsRevision).toBe(seeded.runsRevision)
+  })
+
   it('advances bytes and rolling metadata from changed operations only', () => {
     const before = chat(
       Array.from({ length: 5_000 }, (_, index) =>

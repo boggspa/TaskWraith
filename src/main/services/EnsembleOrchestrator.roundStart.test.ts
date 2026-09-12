@@ -64,6 +64,7 @@ function harness(
 ): {
   orchestrator: EnsembleOrchestrator
   dispatched: AgentRunPayload[]
+  getChat: (chatId: string) => ChatRecord | null
   invokeAdapter: (index: number) => void
   settle: (runId: string) => void
 } {
@@ -100,6 +101,7 @@ function harness(
   return {
     orchestrator,
     dispatched,
+    getChat: (chatId) => chats.get(chatId) || null,
     invokeAdapter: (index) => {
       const payload = dispatched[index]
       observers[index]?.onAdapterInvoked?.({
@@ -117,6 +119,33 @@ function harness(
 }
 
 describe('EnsembleOrchestrator round_start spans', () => {
+  it('captures a pre-ledger terminal round before the next round replaces it', async () => {
+    const initial = chat('ensemble-chat', [participant('codex', 'codex', 1)])
+    initial.ensemble!.activeRound = {
+      roundId: 'round-before-ledger',
+      status: 'completed',
+      prompt: 'Previous fixture round.',
+      startedAt: '2026-09-10T18:57:26.000Z',
+      endedAt: '2026-09-10T19:00:00.000Z',
+      participants: []
+    }
+    const testHarness = harness([initial])
+
+    testHarness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Start the next fixture round.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(testHarness.dispatched).toHaveLength(1))
+
+    const saved = testHarness.getChat('ensemble-chat')
+    expect(saved?.ensemble?.activeRound?.roundId).not.toBe('round-before-ledger')
+    expect(saved?.ensemble?.roundWallMsById).toEqual({ 'round-before-ledger': 154_000 })
+
+    testHarness.settle(testHarness.dispatched[0]!.appRunId || '')
+    await testHarness.orchestrator.cancelRound('ensemble-chat', 'cleanup')
+  })
+
   it('emits one round_start at first adapter invocation, not at dispatch enqueue', async () => {
     const recorder = createWorkSpanRecorder({ process: 'main', maxRetained: 16 })
     const testHarness = harness([chat('ensemble-chat', [participant('codex', 'codex', 1)])], {

@@ -119,6 +119,7 @@ function projectLeanEnsemble(
   if (!ensemble) return undefined
   const {
     roundSummaries: _roundSummaries,
+    roundWallMsById: _roundWallMsById,
     blackboard: _blackboard,
     blackboardTombstones: _blackboardTombstones,
     wakeups: _wakeups,
@@ -177,7 +178,7 @@ function buildProjection(canonical: ChatRecord, previous?: ChatListItem): ChatLi
   // that never learned it stays absent rather than reading as a zeroed thread.
   const carriedWallMs = incomingSummary
     ? (readThreadRunWallMs(incomingSummary.runWallMs) ?? readThreadRunWallMs(previous?.runWallMs))
-    : projectThreadRunWallMs(runs)
+    : projectThreadRunWallMs(runs, canonical.ensemble)
   if (carriedWallMs !== null && carriedWallMs !== undefined) projected.runWallMs = carriedWallMs
 
   // Paged shells and renderer demotions are surface/residency projections, not

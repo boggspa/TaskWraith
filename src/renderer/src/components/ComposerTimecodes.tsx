@@ -285,7 +285,6 @@ export function ComposerTimecode({
  * components.
  */
 export function ComposerThreadTimecodeBar({
-  running,
   startedAt,
   cumulativeBaseMs,
   center
@@ -302,6 +301,11 @@ export function ComposerThreadTimecodeBar({
   const turnValueRef = useRef<HTMLSpanElement | null>(null)
   const totalRef = useRef<HTMLSpanElement | null>(null)
   const totalValueRef = useRef<HTMLSpanElement | null>(null)
+  // `startedAt` is the clock's lifecycle signal. In an Ensemble round the
+  // generic chat-running flag can briefly fall false between seat invocations,
+  // while the round anchor deliberately remains stable. Conversely, terminal
+  // resolution clears the anchor even if a stale run flag survives one frame.
+  const clockRunning = Number.isFinite(Date.parse(startedAt || ''))
 
   // FIRST PAINT ONLY. This deliberately does NOT join the shared tick: the bar
   // sits inside the composer, and a Sync-lane re-render here every second is
@@ -309,16 +313,21 @@ export function ComposerThreadTimecodeBar({
   // through useMemo (the repo-wide idiom) and re-samples only when the turn
   // itself changes, so a new run still repaints declaratively. Every later
   // second is written straight to the DOM by useSharedNowEffect below.
-  const initialNow = useMemo(() => Date.now(), [running, startedAt, cumulativeBaseMs])
+  const initialNow = useMemo(() => Date.now(), [clockRunning, startedAt, cumulativeBaseMs])
   const { turnLabel, totalLabel } = getComposerTimecodePresentation({
-    running,
+    running: clockRunning,
     startedAt,
     cumulativeBaseMs,
     nowMs: initialNow
   })
 
-  useSharedNowEffect(running, (nowMs) => {
-    const live = getComposerTimecodePresentation({ running, startedAt, cumulativeBaseMs, nowMs })
+  useSharedNowEffect(clockRunning, (nowMs) => {
+    const live = getComposerTimecodePresentation({
+      running: clockRunning,
+      startedAt,
+      cumulativeBaseMs,
+      nowMs
+    })
     paintLiveText(turnValueRef.current, live.turnLabel)
     paintLiveAttribute(turnRef.current, 'aria-label', `Current turn elapsed time ${live.turnLabel}`)
     paintLiveText(totalValueRef.current, live.totalLabel)
@@ -326,7 +335,7 @@ export function ComposerThreadTimecodeBar({
   })
 
   return (
-    <div className="composer-thread-timecodes" data-running={running ? 'true' : 'false'}>
+    <div className="composer-thread-timecodes" data-running={clockRunning ? 'true' : 'false'}>
       <span
         ref={turnRef}
         className="composer-thread-timecode composer-thread-timecode--turn"

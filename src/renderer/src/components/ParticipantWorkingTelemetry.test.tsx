@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { MemoizedParticipantWorkingTelemetry } from './ParticipantWorkingTelemetry'
 import {
   compactWorkingTokenOdometer,
@@ -104,6 +104,49 @@ describe('ParticipantWorkingTelemetry', () => {
     expect(html).toContain('digit-odometer')
     expect(html).toContain('digit-odometer__decimal')
     expect(html).toContain('285.1k tokens')
+  })
+
+  it('keeps simultaneous fan-out seats on their own invocation timers and token totals', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-12T10:10:00.000Z'))
+    try {
+      const html = renderToStaticMarkup(
+        <div>
+          <MemoizedParticipantWorkingTelemetry
+            runId="seat-a-run"
+            startedAt="2026-09-12T10:00:00.000Z"
+            provider="codex"
+            tokenEpochKey="seat-a:run"
+            tokenEpochObservedAt={null}
+            contextBaselineTokens={1_000}
+            contextBaselineAvailable={true}
+            contextState="available"
+            fallbackTargetTokens={1_000}
+            estimatedCurrentTurnTokens={0}
+            estimatedToolResultTokens={0}
+          />
+          <MemoizedParticipantWorkingTelemetry
+            runId="seat-b-run"
+            startedAt="2026-09-12T10:07:00.000Z"
+            provider="claude"
+            tokenEpochKey="seat-b:run"
+            tokenEpochObservedAt={null}
+            contextBaselineTokens={2_000}
+            contextBaselineAvailable={true}
+            contextState="available"
+            fallbackTargetTokens={2_000}
+            estimatedCurrentTurnTokens={0}
+            estimatedToolResultTokens={0}
+          />
+        </div>
+      )
+
+      expect(html).toContain('10m 0s elapsed · 1,000 current-context tokens')
+      expect(html).toContain('3m 0s elapsed · 2,000 current-context tokens')
+      expect(html).toContain('1.0k tokens')
+      expect(html).toContain('2.0k tokens')
+    } finally {
+      now.mockRestore()
+    }
   })
 
   it('renders unavailable instead of inventing a zero before telemetry arrives', () => {

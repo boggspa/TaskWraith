@@ -137,6 +137,7 @@ import {
   appendContinuationHopsChangeTranscriptEvent,
   buildContinuationHopsAdvanceTranscriptEvent
 } from './EnsembleContinuationHopsTranscript'
+import { recordEnsembleRoundWallMs } from './EnsembleRoundWallTime'
 import { buildExecutionPlanChangeTranscriptEvent } from './EnsembleExecutionPlanTranscript'
 import { appendAutoApprovalsChangeTranscriptEvent } from './EnsembleAutoApprovalsTranscript'
 import { buildEnsembleFanoutDispatchPayload } from './EnsembleFanoutDispatchTranscript'
@@ -14382,6 +14383,11 @@ export class EnsembleOrchestrator {
           }
         : {})
     }
+    // A legacy terminal activeRound may predate the timing ledger. Capture its
+    // exact persisted boundaries before this new round replaces the only copy.
+    const roundWallMsById = chat.ensemble.activeRound
+      ? recordEnsembleRoundWallMs(chat.ensemble.roundWallMsById, chat.ensemble.activeRound)
+      : chat.ensemble.roundWallMsById
     const userMessage: ChatMessage = {
       id: `ensemble-user-${roundId}`,
       role: 'user',
@@ -14427,6 +14433,7 @@ export class EnsembleOrchestrator {
         : [...chat.messages, userMessage, ...toolMessages],
       ensemble: {
         ...chat.ensemble,
+        ...(roundWallMsById ? { roundWallMsById } : {}),
         activeRound: round,
         updatedAt: startedAt
       },
@@ -20747,6 +20754,7 @@ export class EnsembleOrchestrator {
           }
         : {})
     }
+    const roundWallMsById = recordEnsembleRoundWallMs(chat.ensemble.roundWallMsById, nextRound)
     // M4 — derive blackboard entries from the synthesizer summary and upsert
     // them onto the shared scratchpad. Session-scoped + stable-keyed, so each
     // round's summary replaces the prior round's derived entries (the
@@ -20809,6 +20817,7 @@ export class EnsembleOrchestrator {
         ensemble: {
           ...chat.ensemble,
           activeRound: nextRound,
+          ...(roundWallMsById ? { roundWallMsById } : {}),
           lastRoundSummary: summaryRecord ? summaryRecord.summary : undefined,
           roundSummaries: summaryRecord
             ? {

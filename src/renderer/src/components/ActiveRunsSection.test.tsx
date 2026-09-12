@@ -434,10 +434,17 @@ describe('ActiveRunsSection idle cost', () => {
     expect(source).toContain('useSharedNowTick(jobs.length > 0 || runningChatIds.length > 0)')
   })
 
-  it('keeps an empty job list referentially stable across empty polls', () => {
+  it('keeps empty polls stable and retains prior rows when the queue becomes unavailable', () => {
     expect(source).toContain(
       'setJobs((current) => (current.length === 0 && next.length === 0 ? current : next))'
     )
-    expect(source).toContain('setJobs((current) => (current.length === 0 ? current : []))')
+    expect(source).toContain("setQueueProjectionStatus('unavailable')")
+    expect(source).not.toContain('setJobs((current) => (current.length === 0 ? current : []))')
+  })
+
+  it('shows exact stop requests as pending or failed instead of claiming success', () => {
+    expect(source).toContain("outcome.receipt.status === 'succeeded'")
+    expect(source).toContain("? 'Stop pending'")
+    expect(source).toContain("? 'Stop failed — retry'")
   })
 })

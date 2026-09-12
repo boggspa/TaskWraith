@@ -303,16 +303,20 @@ async function decode(request: ThreadDecodeRequest): Promise<void> {
       await object('run', index, recordId(runs[index]?.runId, index), runs[index])
     }
     coverage.run = runs.length
-    const { messages: _messages, runs: _runs, ...chrome } = decoded.chat
+    const { messages: _messages, runs: _runs, ensemble: sourceEnsemble, ...chrome } = decoded.chat
+    const ensemble = sourceEnsemble
+      ? (({ roundWallMsById: _roundWallMsById, ...rest }) => rest)(sourceEnsemble)
+      : undefined
     await object('shell', 0, request.chatId, {
       ...chrome,
+      ...(ensemble ? { ensemble } : {}),
       messages: [],
       runs: [],
       summaryOnly: true,
       transcriptPaged: true,
       messageCount: messages.length,
       runCount: runs.length,
-      runWallMs: projectThreadRunWallMs(runs)
+      runWallMs: projectThreadRunWallMs(runs, decoded.chat.ensemble)
     })
     coverage.shell = 1
   } else if (request.mode === 'record') {

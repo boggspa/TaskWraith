@@ -84,6 +84,22 @@ export type ChatRecordMutationOperation =
       clear: string[]
     }
 
+/** Exhaustive journal vocabulary; adding an operation must update its admission too. */
+export const CHAT_RECORD_MUTATION_OPERATION_TYPES = {
+  record_patch: true,
+  messages_splice: true,
+  message_content_append: true,
+  message_put: true,
+  message_patch: true,
+  tool_activities_presence: true,
+  tool_activities_splice: true,
+  tool_activity_put: true,
+  runs_splice: true,
+  run_put: true,
+  ensemble_patch: true,
+  ensemble_participant_patch: true
+} satisfies Record<ChatRecordMutationOperation['type'], true>
+
 export interface ChatRecordMutationBatch {
   format: typeof CHAT_RECORD_MUTATION_FORMAT
   version: typeof CHAT_RECORD_MUTATION_VERSION
@@ -902,6 +918,10 @@ export function applyChatRecordMutation(
         }
         applyPatch(seats[index] as unknown as Record<string, unknown>, operation)
         break
+      }
+      default: {
+        const unsupported: never = operation
+        throw new Error(`Unsupported chat mutation operation: ${String(unsupported)}`)
       }
     }
   }

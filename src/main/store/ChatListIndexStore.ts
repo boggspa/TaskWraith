@@ -106,8 +106,8 @@ function isLeanEnsembleProjection(ensemble: unknown): boolean {
 
 /**
  * The store-local mirror of `AppStore.toChatListEnsembleProjection`: drop the
- * four sub-blobs that make an entry fat and blank the seat briefs, keeping
- * activeRound / roles / providers so sidebar rows still render.
+ * history-only sub-blobs that make an entry fat and blank the seat briefs,
+ * keeping activeRound / roles / providers so sidebar rows still render.
  *
  * It cannot be imported from `store/index.ts` — that module owns this one, so
  * the dependency would be circular. The duplication is deliberate and narrow;
@@ -116,6 +116,7 @@ function isLeanEnsembleProjection(ensemble: unknown): boolean {
 function toLeanEnsembleProjection(ensemble: Record<string, unknown>): Record<string, unknown> {
   const {
     roundSummaries: _roundSummaries,
+    roundWallMsById: _roundWallMsById,
     blackboard: _blackboard,
     blackboardTombstones: _blackboardTombstones,
     wakeups: _wakeups,

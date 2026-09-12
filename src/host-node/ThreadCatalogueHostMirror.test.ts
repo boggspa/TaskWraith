@@ -1,9 +1,24 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 
-import type { HostProfileThread } from '../host-runtime/HostProfileDomainStore'
-import { projectHostCatalogueThread } from './ThreadCatalogueHostMirror'
+import {
+  HostProfileDomainStore,
+  type HostProfileRun,
+  type HostProfileThread
+} from '../host-runtime/HostProfileDomainStore'
+import { projectHostProfileDomainSnapshot } from '../host-runtime/HostProfileDomainProjection'
+import type { ThreadCatalogueMirror } from '../host-shared/thread-catalogue/ThreadCatalogueMirror'
+import { hostCatalogueSummaries, projectHostCatalogueThread } from './ThreadCatalogueHostMirror'
 import { projectThreadCatalogueRecord } from '../main/store/ThreadCatalogueFromRecord'
 import type { ChatRecord } from '../main/store/types'
+
+const temporaryPaths: string[] = []
+
+afterEach(() => {
+  while (temporaryPaths.length > 0) rmSync(temporaryPaths.pop()!, { recursive: true, force: true })
+})
 
 describe('Host thread catalogue write projection', () => {
   it('projects bounded metadata from an already-loaded Host record', () => {
@@ -112,7 +127,12 @@ describe('Host thread catalogue write projection', () => {
       { id: 'm1', role: 'user', content: 'first', timestamp: '2026-09-01T00:00:00.000Z' },
       { id: 'm2', role: 'assistant', content: 'reply', timestamp: '2026-09-01T00:01:00.000Z' },
       { id: 'm3', role: 'user', content: '', timestamp: '2026-09-01T00:02:00.000Z' },
-      { id: 'm4', role: 'tool', content: 'tool result body', timestamp: '2026-09-01T00:03:00.000Z' },
+      {
+        id: 'm4',
+        role: 'tool',
+        content: 'tool result body',
+        timestamp: '2026-09-01T00:03:00.000Z'
+      },
       { id: 'm5', role: 'error', content: 'boom', timestamp: '2026-09-01T00:04:00.000Z' }
     ]
     const runs = [
@@ -127,7 +147,14 @@ describe('Host thread catalogue write projection', () => {
     const ensemble = {
       maxContinuationHops: 7,
       participants: [
-        { id: 'seat-1', provider: 'codex', role: 'Worker', order: 1, enabled: true, instructions: 'Work' }
+        {
+          id: 'seat-1',
+          provider: 'codex',
+          role: 'Worker',
+          order: 1,
+          enabled: true,
+          instructions: 'Work'
+        }
       ]
     }
     const chat = {
@@ -152,10 +179,7 @@ describe('Host thread catalogue write projection', () => {
     const host = projectHostCatalogueThread(thread)
 
     expect(host.revision).toBe(desktop.revision)
-    const {
-      status: _desktopStatus,
-      ...desktopPresentation
-    } = desktop.summary.presentation ?? {}
+    const { status: _desktopStatus, ...desktopPresentation } = desktop.summary.presentation ?? {}
     const { status: _hostStatus, ...hostPresentation } = host.summary.presentation ?? {}
     expect(hostPresentation).toEqual(desktopPresentation)
     // The status functions intentionally differ in depth (the desktop one
@@ -168,5 +192,207 @@ describe('Host thread catalogue write projection', () => {
     // The tool/error tail is the regression pin: both scans must pick it up.
     expect(host.summary.chrome?.searchPreview).toBe('boom')
     expect(desktop.summary.chrome?.searchPreview).toBe('boom')
+  })
+
+  it('carries live and terminal Ensemble activity through catalogue summaries into Host families', () => {
+    const liveRoundId = 'ensemble-live-round'
+    const liveRunId = 'run-live-captain'
+    const terminalRoundId = 'ensemble-terminal-round'
+    const terminalRunIds = ['run-terminal-builder', 'run-terminal-reviewer']
+    const live = {
+      appChatId: 'host-live-ensemble',
+      scope: 'workspace',
+      workspaceId: 'workspace-one',
+      workspacePath: '/private/workspace',
+      title: 'Live ensemble',
+      provider: 'codex',
+      chatKind: 'ensemble',
+      archived: false,
+      createdAt: 10,
+      updatedAt: 30,
+      persistenceRevision: 7,
+      messages: [],
+      runs: [
+        {
+          runId: liveRunId,
+          provider: 'codex',
+          status: 'running',
+          startedAt: '2026-09-12T11:33:59.427Z',
+          ensembleRoundId: liveRoundId,
+          ensembleParticipantId: 'seat-captain'
+        }
+      ],
+      ensemble: {
+        enabled: true,
+        orchestrationMode: 'continuous',
+        fanoutPolicy: 'off',
+        participants: [
+          {
+            id: 'seat-captain',
+            provider: 'codex',
+            role: 'Captain',
+            order: 1,
+            enabled: true,
+            instructions: ''
+          },
+          {
+            id: 'seat-reviewer',
+            provider: 'claude',
+            role: 'Reviewer',
+            order: 2,
+            enabled: true,
+            instructions: ''
+          }
+        ],
+        activeRound: {
+          roundId: liveRoundId,
+          status: 'running',
+          prompt: 'Review the release.',
+          startedAt: '2026-09-12T11:33:58.945Z',
+          activeParticipantId: 'seat-captain',
+          continuationHops: 1,
+          maxContinuationHops: 4,
+          participants: [
+            {
+              participantId: 'seat-captain',
+              provider: 'codex',
+              role: 'Captain',
+              order: 1,
+              status: 'running',
+              runId: liveRunId,
+              startedAt: '2026-09-12T11:33:59.427Z'
+            },
+            {
+              participantId: 'seat-reviewer',
+              provider: 'claude',
+              role: 'Reviewer',
+              order: 2,
+              status: 'idle'
+            }
+          ]
+        }
+      }
+    } as unknown as HostProfileThread
+    const terminal = {
+      ...live,
+      appChatId: 'host-terminal-ensemble',
+      title: 'Terminal ensemble',
+      updatedAt: 40,
+      persistenceRevision: 8,
+      runs: terminalRunIds.map((runId, index) => ({
+        runId,
+        provider: index === 0 ? 'codex' : 'claude',
+        status: index === 0 ? 'cancelled' : 'success',
+        startedAt: `2026-09-12T11:3${4 + index}:00.000Z`,
+        endedAt: `2026-09-12T11:3${5 + index}:00.000Z`,
+        ensembleRoundId: terminalRoundId,
+        ensembleParticipantId: index === 0 ? 'seat-captain' : 'seat-reviewer'
+      })),
+      ensemble: {
+        ...(live.ensemble as Record<string, unknown>),
+        activeRound: {
+          roundId: terminalRoundId,
+          status: 'cancelled',
+          prompt: 'Review the release.',
+          startedAt: '2026-09-12T11:33:58.945Z',
+          endedAt: '2026-09-12T11:36:32.791Z',
+          continuationHops: 2,
+          maxContinuationHops: 4,
+          participants: [
+            {
+              participantId: 'seat-captain',
+              provider: 'codex',
+              role: 'Captain',
+              order: 1,
+              status: 'cancelled',
+              runId: terminalRunIds[0],
+              startedAt: '2026-09-12T11:34:00.000Z',
+              endedAt: '2026-09-12T11:35:00.000Z'
+            },
+            {
+              participantId: 'seat-reviewer',
+              provider: 'claude',
+              role: 'Reviewer',
+              order: 2,
+              status: 'answered',
+              runId: terminalRunIds[1],
+              startedAt: '2026-09-12T11:35:00.000Z',
+              endedAt: '2026-09-12T11:36:00.000Z'
+            }
+          ]
+        }
+      }
+    } as unknown as HostProfileThread
+    const projections = [projectHostCatalogueThread(live), projectHostCatalogueThread(terminal)]
+    const mirror = {
+      projections: () => projections
+    } as unknown as ThreadCatalogueMirror
+    const summaries = hostCatalogueSummaries(mirror)
+    const profilePath = mkdtempSync(join(tmpdir(), 'host-catalogue-round-projection-'))
+    temporaryPaths.push(profilePath)
+    const runEntries = [live, terminal].flatMap((thread) =>
+      (thread.runs ?? []).map((run) => ({
+        chatId: thread.appChatId,
+        run: run as HostProfileRun
+      }))
+    )
+    const store = new HostProfileDomainStore({
+      profilePath,
+      authority: { assertProfileAuthority: () => {} },
+      threadSummarySource: () => summaries,
+      runSummarySource: () => ({ entries: runEntries, total: runEntries.length, complete: true })
+    })
+
+    const donor = projectHostProfileDomainSnapshot({
+      store,
+      health: { hostStatus: 'ok', connectionPhase: 'live', supervised: true, freshness: 'live' },
+      providers: []
+    })
+
+    expect(donor.rounds).toEqual([
+      expect.objectContaining({
+        roundId: liveRoundId,
+        threadId: live.appChatId,
+        status: 'running',
+        participantIds: ['seat-captain', 'seat-reviewer'],
+        providerRunIds: [liveRunId]
+      }),
+      expect.objectContaining({
+        roundId: terminalRoundId,
+        threadId: terminal.appChatId,
+        status: 'cancelled',
+        endedAt: Date.parse('2026-09-12T11:36:32.791Z'),
+        participantIds: ['seat-captain', 'seat-reviewer'],
+        providerRunIds: terminalRunIds
+      })
+    ])
+    expect(donor.threads.find((thread) => thread.id === live.appChatId)).toEqual(
+      expect.objectContaining({ activeRoundId: liveRoundId })
+    )
+    expect(
+      donor.threads.find((thread) => thread.id === terminal.appChatId)?.activeRoundId
+    ).toBeUndefined()
+    expect(donor.participants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'seat-captain',
+          threadId: live.appChatId,
+          status: 'running',
+          active: true
+        }),
+        expect.objectContaining({
+          id: 'seat-captain',
+          threadId: terminal.appChatId,
+          status: 'cancelled',
+          active: false
+        }),
+        expect.objectContaining({
+          id: 'seat-reviewer',
+          threadId: terminal.appChatId,
+          status: 'answered',
+          active: false
+        })
+      ])
+    )
   })
 })

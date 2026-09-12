@@ -1,6 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { ChatRecord, ChatListItem } from '../../../main/store/types'
-import { reconcileChatRefMap, RECENTLY_COMPLETED_WINDOW_MS } from './reconcileChatRefMap'
+import {
+  reconcileChatRefMap,
+  RECENTLY_COMPLETED_WINDOW_MS,
+  markRendererChatReference,
+  inheritRendererChatReference,
+  shouldKeepCanonicalChatReference,
+  createRendererChatReferenceMap
+} from './reconcileChatRefMap'
 
 // Minimal ChatRecord factory — the reconcile only reads appChatId and the
 // (opaque) record identity, so we cast a thin object.
@@ -66,6 +73,119 @@ describe('reconcileChatRefMap — general rebuild', () => {
 })
 
 describe('reconcileChatRefMap — preserve predicates', () => {
+  it('keeps an accepted Host round ahead of a stale React commit without a renderer run context', () => {
+    const stale = { ...chat('host-round', 'old'), persistenceRevision: 4 }
+    const accepted = {
+      ...chat('host-round', 'new streaming text'),
+      persistenceRevision: 5,
+      ensemble: {
+        enabled: true,
+        maxParticipants: 1,
+        participants: [],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          prompt: 'Inspect the fixture',
+          startedAt: '2026-09-12T00:00:00.000Z',
+          participants: [
+            {
+              participantId: 'seat-1',
+              provider: 'kimi',
+              role: 'Worker',
+              order: 1,
+              status: 'running'
+            }
+          ]
+        }
+      }
+    } as ChatRecord
+    markRendererChatReference(stale)
+    markRendererChatReference(accepted)
+    const next = reconcileChatRefMap({
+      ...NO_ACTIVE,
+      chats: [stale],
+      currentChat: stale,
+      prev: new Map([[accepted.appChatId, accepted]])
+    })
+    expect(next.get(accepted.appChatId)).toBe(accepted)
+  })
+
+  it('keeps an accepted terminal round ahead of a late running React commit', () => {
+    const stale = { ...chat('host-round', 'in progress'), persistenceRevision: 4 }
+    const terminal = { ...chat('host-round', 'complete'), persistenceRevision: 5 }
+    markRendererChatReference(stale)
+    markRendererChatReference(terminal)
+    const next = reconcileChatRefMap({
+      ...NO_ACTIVE,
+      chats: [stale],
+      currentChat: stale,
+      prev: new Map([[terminal.appChatId, terminal]])
+    })
+    expect(next.get(terminal.appChatId)).toBe(terminal)
+  })
+
+  it('accepts a newer React record instead of retaining an older Host reference', () => {
+    const stale = { ...chat('host-round', 'old'), persistenceRevision: 4 }
+    const current = { ...chat('host-round', 'new'), persistenceRevision: 5 }
+    markRendererChatReference(stale)
+    markRendererChatReference(current)
+    const next = reconcileChatRefMap({
+      ...NO_ACTIVE,
+      chats: [current],
+      currentChat: current,
+      prev: new Map([[stale.appChatId, stale]])
+    })
+    expect(next.get(current.appChatId)).toBe(current)
+  })
+
+  it('keeps a canonical reseed below the old optimistic persistence revision', () => {
+    const oldReact = { ...chat('host-round', 'old optimistic state'), persistenceRevision: 5 }
+    const reseeded = { ...chat('host-round', 'Host canonical recovery'), persistenceRevision: 1 }
+    markRendererChatReference(oldReact)
+    markRendererChatReference(reseeded)
+    expect(shouldKeepCanonicalChatReference(reseeded, oldReact)).toBe(true)
+    const next = reconcileChatRefMap({
+      ...NO_ACTIVE,
+      chats: [oldReact],
+      currentChat: oldReact,
+      prev: new Map([[reseeded.appChatId, reseeded]])
+    })
+    expect(next.get(reseeded.appChatId)).toBe(reseeded)
+  })
+
+  it('keeps ordering on React message-sharing copies without putting it on the wire', () => {
+    const first = markRendererChatReference(chat('host-round', 'first'))
+    const next = markRendererChatReference(chat('host-round', 'next'))
+    const copy = inheritRendererChatReference(next, { ...next, messages: [...next.messages] })
+    expect(shouldKeepCanonicalChatReference(copy, first)).toBe(true)
+    expect(shouldKeepCanonicalChatReference(copy, next)).toBe(false)
+    expect(Object.keys(copy)).toEqual(Object.keys(next))
+    expect(JSON.stringify(copy)).toBe(JSON.stringify(next))
+  })
+
+  it('orders an imperative edit before a stale React effect, including after map reconciliation', () => {
+    const references = createRendererChatReferenceMap()
+    const before = chat('host-round', 'before')
+    references.set(before.appChatId, before)
+    const reconciled = reconcileChatRefMap({
+      ...NO_ACTIVE,
+      chats: [before],
+      currentChat: before,
+      prev: references
+    })
+    const edited = { ...before, title: 'User edit' }
+    reconciled.set(edited.appChatId, edited)
+    expect(shouldKeepCanonicalChatReference(edited, before)).toBe(true)
+    expect(
+      reconcileChatRefMap({
+        ...NO_ACTIVE,
+        chats: [before],
+        currentChat: before,
+        prev: reconciled
+      }).get(edited.appChatId)
+    ).toBe(edited)
+  })
+
   it('preserves via activeRunChatId alone (the run-start "Phase K" gap)', () => {
     // Live ref is ahead of the stale React snapshot; the activeRuns registry
     // is still EMPTY (entry written later) — only activeRunChatId guards it.

@@ -32,6 +32,134 @@ describe('projectThreadRunWallMs', () => {
     expect(projectThreadRunWallMs(runs)).toBe(15_000)
   })
 
+  it('counts complete round envelopes while excluding the idle gap between rounds', () => {
+    const runs = [
+      {
+        ensembleRoundId: 'round-1',
+        startedAt: '2026-09-11T00:00:00.000Z',
+        endedAt: '2026-09-11T00:00:10.000Z'
+      },
+      {
+        ensembleRoundId: 'round-1',
+        startedAt: '2026-09-11T00:00:15.000Z',
+        endedAt: '2026-09-11T00:00:25.000Z'
+      },
+      {
+        ensembleRoundId: 'round-2',
+        startedAt: '2026-09-11T00:01:02.000Z',
+        endedAt: '2026-09-11T00:01:10.000Z'
+      }
+    ]
+    const ensemble = {
+      roundWallMsById: { 'round-1': 30_000 },
+      activeRound: {
+        roundId: 'round-2',
+        status: 'completed',
+        startedAt: '2026-09-11T00:01:00.000Z',
+        endedAt: '2026-09-11T00:01:20.000Z'
+      }
+    }
+
+    // Round 1 contributes its whole 30-second envelope, including the 5s
+    // handoff. The latest terminal round contributes its exact 20s. The 30s
+    // idle interval between rounds contributes nothing.
+    expect(projectThreadRunWallMs(runs, ensemble)).toBe(50_000)
+  })
+
+  it('excludes every completed seat run from the current live round', () => {
+    const runs = [
+      {
+        ensembleRoundId: 'round-1',
+        startedAt: '2026-09-11T00:00:00.000Z',
+        endedAt: '2026-09-11T00:00:10.000Z'
+      },
+      {
+        ensembleRoundId: 'round-live',
+        startedAt: '2026-09-11T00:01:00.000Z',
+        endedAt: '2026-09-11T00:01:10.000Z'
+      },
+      {
+        ensembleRoundId: 'round-live',
+        startedAt: '2026-09-11T00:01:15.000Z'
+      }
+    ]
+    const ensemble = {
+      roundWallMsById: { 'round-1': 30_000 },
+      activeRound: {
+        roundId: 'round-live',
+        status: 'running',
+        startedAt: '2026-09-11T00:01:00.000Z'
+      }
+    }
+
+    // The live UI adds now - round.startedAt once. Keeping round-live's first
+    // finished seat in this scalar would double its first ten seconds.
+    expect(projectThreadRunWallMs(runs, ensemble)).toBe(30_000)
+  })
+
+  it('does not double-count a terminal active round already present in the ledger', () => {
+    const runs = [
+      {
+        ensembleRoundId: 'round-1',
+        startedAt: '2026-09-11T00:00:02.000Z',
+        endedAt: '2026-09-11T00:00:20.000Z'
+      }
+    ]
+    const ensemble = {
+      roundWallMsById: { 'round-1': 30_000 },
+      activeRound: {
+        roundId: 'round-1',
+        status: 'completed',
+        startedAt: '2026-09-11T00:00:00.000Z',
+        endedAt: '2026-09-11T00:00:30.000Z'
+      }
+    }
+
+    expect(projectThreadRunWallMs(runs, ensemble)).toBe(30_000)
+  })
+
+  it('ignores malformed ledger values and falls back to their completed runs', () => {
+    const runs = [
+      {
+        ensembleRoundId: 'negative',
+        startedAt: '2026-09-11T00:00:00.000Z',
+        endedAt: '2026-09-11T00:00:10.000Z'
+      },
+      {
+        ensembleRoundId: 'nan',
+        startedAt: '2026-09-11T00:00:20.000Z',
+        endedAt: '2026-09-11T00:00:25.000Z'
+      }
+    ]
+    const ensemble = {
+      roundWallMsById: { negative: -1, nan: Number.NaN }
+    }
+
+    expect(projectThreadRunWallMs(runs, ensemble)).toBe(15_000)
+  })
+
+  it('treats malformed round ids and array-shaped ledgers as legacy input', () => {
+    const runs = [
+      {
+        ensembleRoundId: 42 as unknown as string,
+        startedAt: '2026-09-11T00:00:00.000Z',
+        endedAt: '2026-09-11T00:00:10.000Z'
+      }
+    ]
+    const malformed = {
+      roundWallMsById: [30_000],
+      activeRound: {
+        roundId: 42 as unknown as string,
+        status: 'completed',
+        startedAt: '2026-09-11T00:00:00.000Z',
+        endedAt: '2026-09-11T00:00:30.000Z'
+      }
+    }
+
+    expect(() => projectThreadRunWallMs(runs, malformed)).not.toThrow()
+    expect(projectThreadRunWallMs(runs, malformed)).toBe(10_000)
+  })
+
   it('omits the in-flight run, which a live surface adds itself', () => {
     const runs = [
       { startedAt: '2026-09-11T00:00:00.000Z', endedAt: '2026-09-11T00:00:10.000Z' },

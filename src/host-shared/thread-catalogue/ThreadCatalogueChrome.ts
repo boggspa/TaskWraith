@@ -190,6 +190,46 @@ const CHROME_FIELDS = fields({
     bossmanAutoApprovals: fields({ enabled: 'scalar', mode: 32, confirmedAt: 64 }),
     captainParticipantIds: { maximum: 50, items: 256 },
     contextTokens: 'scalar',
+    // Activity precedes the authored roster in the bounded copy order. A
+    // maximal set of seat briefs may exhaust the chrome budget, but it must
+    // never erase the current round identity/status that every Host client
+    // uses to distinguish live, terminal, and unavailable work.
+    activeRound: fields({
+      id: exactText(512),
+      roundId: exactText(512),
+      activeParticipantId: exactText(512),
+      ownerRuntimeInstanceId: exactText(512),
+      bossmanParticipantId: exactText(512),
+      secondInCommandParticipantId: exactText(512),
+      synthesizerParticipantId: exactText(512),
+      ...scalars(
+        [
+          'status',
+          'startedAt',
+          'completedAt',
+          'endedAt',
+          'authority',
+          'orchestrationMode',
+          'fanoutPolicy'
+        ],
+        512
+      ),
+      queuedPromptCount: 'scalar',
+      hops: 'scalar',
+      continuationHops: 'scalar',
+      maxContinuationHops: 'scalar',
+      continuationPass: 'scalar',
+      concurrentMode: 'scalar',
+      captainParticipantIds: { maximum: 50, items: exactText(512) },
+      participants: {
+        maximum: 50,
+        items: fields({
+          participantId: exactText(512),
+          runId: exactText(512),
+          status: 64
+        })
+      }
+    }),
     participants: {
       maximum: 50,
       items: fields({
@@ -266,25 +306,7 @@ const CHROME_FIELDS = fields({
         fastModeEnabled: 'scalar',
         thinkingEnabled: 'scalar'
       })
-    },
-    activeRound: fields({
-      ...scalars(
-        [
-          'id',
-          'roundId',
-          'status',
-          'startedAt',
-          'completedAt',
-          'endedAt',
-          'activeParticipantId',
-          'ownerRuntimeInstanceId',
-          'authority'
-        ],
-        512
-      ),
-      queuedPromptCount: 'scalar',
-      hops: 'scalar'
-    })
+    }
   }),
   derivedThreadTitle: 512,
   searchText: 4096,

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { computeCumulativeRunBaseMs } from './cumulativeRunTimecode'
-import type { ChatRun } from '../../../main/store/types'
+import {
+  computeCumulativeRunBaseMs,
+  resolveComposerRunTimecodeStartedAt
+} from './cumulativeRunTimecode'
+import type { ChatRecord, ChatRun, EnsembleRoundState } from '../../../main/store/types'
 
 /*
  * 1.0.4-AR10 — cumulative session timecode coverage.
@@ -26,6 +29,122 @@ function run(overrides: Partial<ChatRun>): ChatRun {
   } as ChatRun
 }
 
+function ensembleChat(round: EnsembleRoundState): ChatRecord {
+  return {
+    appChatId: 'ensemble-chat',
+    chatKind: 'ensemble',
+    scope: 'workspace',
+    title: 'Timer fixture',
+    createdAt: 1,
+    updatedAt: 1,
+    archived: false,
+    messages: [],
+    runs: [],
+    ensemble: {
+      enabled: true,
+      maxParticipants: 2,
+      participants: [],
+      activeRound: round
+    }
+  }
+}
+
+function ensembleRound(overrides: Partial<EnsembleRoundState> = {}): EnsembleRoundState {
+  return {
+    roundId: 'round-live',
+    status: 'running',
+    prompt: 'Exercise the timer fixture.',
+    startedAt: '2026-09-12T10:00:00.000Z',
+    participants: [
+      {
+        participantId: 'seat-a',
+        provider: 'codex',
+        role: 'Worker',
+        order: 1,
+        status: 'running',
+        startedAt: '2026-09-12T10:00:01.000Z'
+      }
+    ],
+    ...overrides
+  }
+}
+
+describe('resolveComposerRunTimecodeStartedAt', () => {
+  it('keeps the whole-round anchor across a participant handoff', () => {
+    const firstSeat = ensembleChat(ensembleRound())
+    const betweenSeats = ensembleChat(
+      ensembleRound({
+        activeParticipantId: undefined,
+        participants: [
+          {
+            participantId: 'seat-a',
+            provider: 'codex',
+            role: 'Worker',
+            order: 1,
+            status: 'answered',
+            startedAt: '2026-09-12T10:00:01.000Z',
+            endedAt: '2026-09-12T10:00:30.000Z'
+          }
+        ]
+      })
+    )
+
+    expect(
+      resolveComposerRunTimecodeStartedAt({
+        chat: firstSeat,
+        isRunning: true,
+        currentRunStartedAt: '2026-09-12T10:00:01.000Z'
+      })
+    ).toBe('2026-09-12T10:00:00.000Z')
+    expect(
+      resolveComposerRunTimecodeStartedAt({
+        chat: betweenSeats,
+        // There is no participant invocation in this instant. The round is
+        // still running, so its clock must not reset or adopt a seat start.
+        isRunning: false,
+        currentRunStartedAt: '2026-09-12T10:00:30.000Z'
+      })
+    ).toBe('2026-09-12T10:00:00.000Z')
+  })
+
+  it.each(['completed', 'cancelled', 'failed'] as const)(
+    'resets the round clock for a %s round even when run evidence is stale',
+    (status) => {
+      const chat = ensembleChat(
+        ensembleRound({
+          status,
+          endedAt: '2026-09-12T10:01:00.000Z'
+        })
+      )
+      expect(
+        resolveComposerRunTimecodeStartedAt({
+          chat,
+          isRunning: true,
+          currentRunStartedAt: '2026-09-12T10:00:30.000Z'
+        })
+      ).toBeNull()
+    }
+  )
+
+  it('retains current-run timing for a solo chat', () => {
+    const chat = { chatKind: 'single' as const }
+    expect(
+      resolveComposerRunTimecodeStartedAt({
+        chat,
+        isRunning: true,
+        currentRunStartedAt: '2026-09-12T10:00:30.000Z'
+      })
+    ).toBe('2026-09-12T10:00:30.000Z')
+    expect(
+      resolveComposerRunTimecodeStartedAt({
+        chat,
+        isRunning: false,
+        currentRunStartedAt: '2026-09-12T10:00:30.000Z'
+      })
+    ).toBeNull()
+  })
+})
+
 describe('computeCumulativeRunBaseMs', () => {
   it('returns 0 for undefined or empty input', () => {
     expect(computeCumulativeRunBaseMs(undefined)).toBe(0)
@@ -47,6 +166,27 @@ describe('computeCumulativeRunBaseMs', () => {
     ]
     // 10s + 90s = 100,000ms
     expect(computeCumulativeRunBaseMs(runs)).toBe(100_000)
+  })
+
+  it('accumulates multiple completed rounds without counting the idle gap between them', () => {
+    const runs: ChatRun[] = [
+      run({
+        runId: 'round-1-seat',
+        ensembleRoundId: 'round-1',
+        startedAt: '2026-09-12T10:00:00.000Z',
+        endedAt: '2026-09-12T10:00:10.000Z'
+      }),
+      run({
+        runId: 'round-2-seat',
+        ensembleRoundId: 'round-2',
+        startedAt: '2026-09-12T10:01:00.000Z',
+        endedAt: '2026-09-12T10:01:20.000Z'
+      })
+    ]
+
+    // Ten seconds in round 1 plus twenty in round 2. The fifty-second idle
+    // interval between rounds belongs to neither round.
+    expect(computeCumulativeRunBaseMs(runs)).toBe(30_000)
   })
 
   it('merges overlapping completed participant runs', () => {

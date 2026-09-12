@@ -40,6 +40,62 @@ function isChatSummaryRecord(chat: ChatRecord | null | undefined): chat is ChatL
   return Boolean((chat as ChatListItem | null | undefined)?.summaryOnly === true)
 }
 
+const referenceOrder = new WeakMap<ChatRecord, number>()
+let nextReferenceOrder = 0
+
+/** Local application order, never a persisted revision or authority claim. */
+export function markRendererChatReference<T extends ChatRecord>(record: T): T {
+  if (!referenceOrder.has(record)) referenceOrder.set(record, ++nextReferenceOrder)
+  return record
+}
+
+/** A React presentation copy belongs to the same application as its source. */
+export function inheritRendererChatReference<T extends ChatRecord>(source: ChatRecord, copy: T): T {
+  const order = referenceOrder.get(source)
+  if (order !== undefined) referenceOrder.set(copy, order)
+  return copy
+}
+
+class RendererChatReferenceMap extends Map<string, ChatRecord> {
+  override set(chatId: string, record: ChatRecord): this {
+    return super.set(chatId, markRendererChatReference(record))
+  }
+
+  /** Rebuilding from React is not a new canonical/local application. */
+  setFromPresentation(chatId: string, record: ChatRecord): this {
+    return super.set(chatId, record)
+  }
+}
+
+/** Covers imperative roster/goal/other writers that share the live ref map. */
+export function createRendererChatReferenceMap(): Map<string, ChatRecord> {
+  return new RendererChatReferenceMap()
+}
+
+/**
+ * React effects can run after the ref has applied a newer Host delivery or
+ * local edit. Compare application order, not persistenceRevision: a Host CAS
+ * recovery can legitimately reseed below an optimistic persisted revision.
+ * The WeakMap also keeps these presentation receipts out of saved chat data.
+ */
+export function shouldKeepCanonicalChatReference(
+  reference: ChatRecord | null | undefined,
+  presented: ChatRecord | null | undefined
+): boolean {
+  if (
+    !reference ||
+    !presented ||
+    reference.appChatId !== presented.appChatId ||
+    isChatSummaryRecord(reference)
+  )
+    return false
+  if (isChatSummaryRecord(presented)) return true
+  const acceptedOrder = referenceOrder.get(reference)
+  if (acceptedOrder === undefined) return false
+  const presentedOrder = referenceOrder.get(presented)
+  return presentedOrder === undefined || acceptedOrder > presentedOrder
+}
+
 export interface ReconcileChatRefMapInput {
   /** Current React `chats` state (the snapshot the effect closed over). */
   chats: ChatRecord[]
@@ -91,22 +147,22 @@ export function reconcileChatRefMap(input: ReconcileChatRefMapInput): Map<string
   // General case: rebuild from React state. A live non-summary entry wins
   // over an incoming summary stub so a summary broadcast never wipes loaded
   // content.
-  const next = new Map<string, ChatRecord>()
+  const next = new RendererChatReferenceMap()
   chats.forEach((chat) => {
     const existing = prev.get(chat.appChatId)
-    next.set(
+    next.setFromPresentation(
       chat.appChatId,
       existing && !isChatSummaryRecord(existing) && isChatSummaryRecord(chat) ? existing : chat
     )
   })
   if (currentChat?.appChatId) {
-    next.set(currentChat.appChatId, currentChat)
+    next.setFromPresentation(currentChat.appChatId, currentChat)
   }
 
   // Preserve loop has the LAST word: any chat being streamed into keeps its
   // (more up-to-date) live ref entry, even over the currentChat override.
   for (const [chatId, liveEntry] of prev.entries()) {
-    let preserve = false
+    let preserve = shouldKeepCanonicalChatReference(liveEntry, next.get(chatId))
     if (activeRunChatId === chatId) {
       preserve = true
     }
@@ -120,7 +176,7 @@ export function reconcileChatRefMap(input: ReconcileChatRefMapInput): Map<string
       }
     }
     if (preserve) {
-      next.set(chatId, liveEntry)
+      next.setFromPresentation(chatId, liveEntry)
     }
   }
 
@@ -146,7 +202,7 @@ export function reconcileChatRefMap(input: ReconcileChatRefMapInput): Map<string
           maxBytes: maxHydratedMessageBytes
         })
     for (const chat of retained.chats) {
-      next.set(chat.appChatId, chat)
+      next.setFromPresentation(chat.appChatId, chat)
     }
   }
 

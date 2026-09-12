@@ -30,7 +30,13 @@ import {
 } from './lib/providerMetadataWarmup'
 import { PI_PROVIDER_MODEL_CATALOG_MUTATION_EVENT } from './lib/providerModelCatalogEvents'
 import { projectRunItemAssistantDelta, projectRunItemToolEvents } from './lib/runItemProjection'
-import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
+import {
+  reconcileChatRefMap,
+  shouldKeepCanonicalChatReference,
+  createRendererChatReferenceMap,
+  markRendererChatReference,
+  inheritRendererChatReference
+} from './lib/reconcileChatRefMap'
 import { deepEqual, messagesRenderEqual } from './lib/messagesRenderEqual'
 import { mergeWorkflowTelemetryIntoMessages } from './lib/workflowTelemetryMessages'
 import { mergeReviewTelemetryIntoMessages } from './lib/reviewTelemetryMessages'
@@ -182,6 +188,7 @@ import { selectCurrentChatRun } from './lib/activeRunSelection'
 import { ensembleRoundDispatchRefusal } from './lib/ensembleRoundDispatchReceipt'
 import {
   cumulativeRunBaseSignature,
+  resolveComposerRunTimecodeStartedAt,
   resolveCumulativeRunBaseMs
 } from './lib/cumulativeRunTimecode'
 import type {
@@ -3470,7 +3477,7 @@ function App(): React.JSX.Element {
   const currentWorkspacePathRef = useRef<string | null>(null)
   const workspaceTrustGenerationRef = useRef(0)
   const currentChatIdRef = useRef<string | null>(null)
-  const chatByIdRef = useRef<Map<string, ChatRecord>>(new Map())
+  const chatByIdRef = useRef<Map<string, ChatRecord>>(createRendererChatReferenceMap())
   // This baseline is deliberately separate from chatByIdRef: the latter may
   // contain optimistic or in-flight renderer-only content and is therefore
   // not a safe base for reconstructing main-owned transport patches.
@@ -5429,6 +5436,7 @@ function App(): React.JSX.Element {
         byId.set(chatId, updated)
       }
       if (updated) {
+        markRendererChatReference(updated)
         transcriptStore.ingest(updated)
         if (pendingMainUpdate?.renderReceipt) {
           // Keep only the newest accepted delivery per chat. This receipt is
@@ -5468,12 +5476,12 @@ function App(): React.JSX.Element {
       if (!updated || updated === prev) return prev
       if (shouldRetainReactChatOnFlush(prev, updated)) return prev
       if (messagesRenderEqual(prev.messages, updated.messages)) {
-        return { ...updated, messages: prev.messages }
+        return inheritRendererChatReference(updated, { ...updated, messages: prev.messages })
       }
       const sharedMessages = shareUnchangedMessageObjects(prev.messages, updated.messages)
       return sharedMessages === updated.messages
         ? updated
-        : { ...updated, messages: sharedMessages }
+        : inheritRendererChatReference(updated, { ...updated, messages: sharedMessages })
     })
     const focusedChat = currentChatIdRef.current ? byId.get(currentChatIdRef.current) : undefined
     if (
@@ -5554,6 +5562,7 @@ function App(): React.JSX.Element {
 
   if (!rendererTranscriptPersistenceRef.current) {
     const publishPersistedRecord = (chatId: string, record: ChatRecord): void => {
+      markRendererChatReference(record)
       chatByIdRef.current.set(chatId, record)
       if (activeRunChatIdRef.current === chatId) {
         activeRunChatSnapshotRef.current = record
@@ -5697,6 +5706,7 @@ function App(): React.JSX.Element {
       // Every updater returns a new object when it intends a change
       // (audited 2026-08-19: none mutate the base in place).
       if (updated === base) return updated
+      markRendererChatReference(updated)
       chatByIdRef.current.set(chatId, updated)
       if (activeRunChatIdRef.current === chatId) {
         activeRunChatSnapshotRef.current = updated
@@ -5887,6 +5897,7 @@ function App(): React.JSX.Element {
       // "nothing to do" — skip both setState calls (including the list
       // insertion, whose no-op paths are all genuine nothing-to-do branches).
       if (updated === base) return updated
+      markRendererChatReference(updated)
       chatByIdRef.current.set(chatId, updated)
       if (activeRunChatIdRef.current === chatId) {
         activeRunChatSnapshotRef.current = updated
@@ -11302,7 +11313,8 @@ function App(): React.JSX.Element {
       // freshly-opened chat's record is present in the ref after a switch).
       const streaming =
         activeRunChatIdRef.current === id ||
-        Array.from(activeRunsRef.current.values()).some((ctx) => ctx.chatId === id)
+        Array.from(activeRunsRef.current.values()).some((ctx) => ctx.chatId === id) ||
+        shouldKeepCanonicalChatReference(chatByIdRef.current.get(id), currentChat)
       if (!streaming) {
         chatByIdRef.current.set(id, currentChat)
       }
@@ -23349,9 +23361,11 @@ function App(): React.JSX.Element {
       return false
     }
   }
-  const sideComposerRunTimecodeStartedAt = isSideChatRunning
-    ? sideChat?.ensemble?.activeRound?.startedAt || sideRun?.startedAt || null
-    : null
+  const sideComposerRunTimecodeStartedAt = resolveComposerRunTimecodeStartedAt({
+    chat: sideChat,
+    isRunning: isSideChatRunning,
+    currentRunStartedAt: sideRun?.startedAt
+  })
   const sideCumulativeRunBaseMs = useMemo(
     () => resolveCumulativeRunBaseMs(sideChat, sideComposerRunTimecodeStartedAt),
     [sideChat?.runs, cumulativeRunBaseSignature(sideChat), sideComposerRunTimecodeStartedAt]
@@ -23395,9 +23409,11 @@ function App(): React.JSX.Element {
   const sideContextModelId =
     sideRun?.actualModel || sideRun?.requestedModel || sideComposerSelectedModel
   const sideDualComposerTelemetry = Boolean(sideChat && sideChat.chatKind === 'ensemble')
-  const composerRunTimecodeStartedAt = isCurrentChatRunning
-    ? currentEnsembleRound?.startedAt || currentRun?.startedAt || null
-    : null
+  const composerRunTimecodeStartedAt = resolveComposerRunTimecodeStartedAt({
+    chat: currentChat,
+    isRunning: isCurrentChatRunning,
+    currentRunStartedAt: currentRun?.startedAt
+  })
   const chatTokenTally = useMemo(
     () => buildChatTokenTally(currentChat?.runs || [], { providerRates }),
     [currentChat?.runs, providerRates]
@@ -31003,9 +31019,11 @@ function App(): React.JSX.Element {
       const viewerComposerLocked = Boolean(viewerIsRunning && viewerChat.chatKind !== 'ensemble')
       const viewerResumeAppWatchSnapshot =
         resumeAppWatchSnapshot?.chatId === viewerChatId ? resumeAppWatchSnapshot : null
-      const viewerRunStartedAt = viewerIsRunning
-        ? viewerChat.ensemble?.activeRound?.startedAt || viewerRun?.startedAt || null
-        : null
+      const viewerRunStartedAt = resolveComposerRunTimecodeStartedAt({
+        chat: viewerChat,
+        isRunning: viewerIsRunning,
+        currentRunStartedAt: viewerRun?.startedAt
+      })
       const viewerCumulativeRunBaseMs = resolveCumulativeRunBaseMs(
         viewerChat,
         viewerRunStartedAt

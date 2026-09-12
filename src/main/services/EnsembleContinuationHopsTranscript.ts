@@ -80,6 +80,15 @@ export function appendContinuationHopsChangeTranscriptEvent(
 ): ChatRecord {
   if (input.before === input.after) return chat
 
+  // Composer controls are available on a pristine Ensemble draft. Changing a
+  // setting there must persist the config without manufacturing the chat's
+  // first transcript row: summary projections count every message, including
+  // system rows, so one pre-prompt bookkeeping event makes the draft look
+  // started after the next projection. A live round carries roundId, while a
+  // genuinely historical idle chat has conversation/run evidence to retain
+  // the existing audit row.
+  if (!input.roundId && chat.messages.length === 0 && chat.runs.length === 0) return chat
+
   const reason = input.reason?.trim()
   const payload: ContinuationHopsLimitChangePayload = {
     event: 'limit',

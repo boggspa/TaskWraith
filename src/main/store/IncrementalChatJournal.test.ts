@@ -381,6 +381,43 @@ describe('IncrementalChatJournal', () => {
     expect(journal.replay('chat-1').record).toEqual(before)
   })
 
+  it('durably replays the compact ensemble operations emitted by an authored save', () => {
+    const before: ChatRecord = {
+      ...chat(),
+      ensemble: {
+        enabled: true,
+        maxParticipants: 1,
+        maxContinuationHops: 6,
+        participants: [
+          {
+            id: 'seat-1',
+            provider: 'kimi',
+            enabled: true,
+            role: 'Worker',
+            order: 1,
+            instructions: ''
+          }
+        ]
+      }
+    }
+    const after = advance(before, before.messages[0].content)
+    after.ensemble!.maxContinuationHops = 12
+    after.ensemble!.participants[0].linkedProviderSessionId = 'persisted-seat-session'
+    const batch = deriveChatRecordMutation(before, after, {
+      authoredTranscript: { operations: [], transcriptOps: [], changedMessageCount: 0 }
+    })
+    expect(batch.operations.map((operation) => operation.type)).toEqual(
+      expect.arrayContaining(['ensemble_patch', 'ensemble_participant_patch'])
+    )
+    journal.initialize('chat-1', before)
+    journal.append(batch)
+
+    const reopened = createIncrementalChatJournal(baseDir, { now: () => nowMs })
+    expect(reopened.replay('chat-1').record).toEqual(after)
+    expect(reopened.checkpoint('chat-1', 'terminal')).toBe(true)
+    expect(createIncrementalChatJournal(baseDir).replay('chat-1').record).toEqual(after)
+  })
+
   it('checkpoints after a bounded idle interval', () => {
     journal = createIncrementalChatJournal(baseDir, {
       now: () => nowMs,

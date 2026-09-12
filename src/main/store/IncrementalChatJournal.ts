@@ -3,6 +3,7 @@ import * as path from 'path'
 import {
   applyChatRecordMutation,
   CHAT_RECORD_MUTATION_FORMAT,
+  CHAT_RECORD_MUTATION_OPERATION_TYPES,
   CHAT_RECORD_MUTATION_VERSION,
   type ChatRecordMutationBatch,
   type ChatRecordMutationOperation
@@ -166,18 +167,7 @@ const DEFAULT_MAX_JOURNAL_READ_BYTES = 256 * 1024 * 1024
  *  spare while never touching the megabytes of transcript that follow. */
 const CHECKPOINT_HEADER_PROBE_BYTES = 4096
 const CHAT_ID_PATTERN = /^[A-Za-z0-9_-]{1,256}$/
-const MUTATION_OPERATION_TYPES = new Set<ChatRecordMutationOperation['type']>([
-  'record_patch',
-  'messages_splice',
-  'message_content_append',
-  'message_put',
-  'message_patch',
-  'tool_activities_presence',
-  'tool_activities_splice',
-  'tool_activity_put',
-  'runs_splice',
-  'run_put'
-])
+const MUTATION_OPERATION_TYPES = new Set(Object.keys(CHAT_RECORD_MUTATION_OPERATION_TYPES))
 const CHECKPOINT_REASONS = new Set<IncrementalChatCheckpointReason>([
   'initial',
   'terminal',

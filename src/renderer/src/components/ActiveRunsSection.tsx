@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type JSX
+} from 'react'
 import { MascotGhost, SidebarRunningGhost } from './AppChromeSymbols'
 import type {
   ChatRecord,
@@ -11,7 +19,7 @@ import { getProviderLabel } from '../lib/providerLabels'
 import { isRunQueueJobVisibleForChat } from '../lib/runningChatVisibility'
 import { useSharedNowTick } from '../hooks/useSharedNowTick'
 import { useHostProjection } from '../hooks/useHostProjection'
-import { useHostProjectionStore } from './HostProjectionProvider'
+import { useHostCommandController, useHostProjectionStore } from './HostProjectionProvider'
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { SidebarOverflowMenu } from './SidebarOverflowMenu'
@@ -47,6 +55,16 @@ interface ActiveRunEntry {
   /** Set when the entry is backed by a live Host ensemble round — the stop
    * affordance targets that round through the durable cancel path. */
   hostRoundId?: string
+  /** Connection truth for a row whose activity came from the Host cache. */
+  hostProjectionAvailability?: 'live' | 'loading' | 'unavailable'
+  /** Exact work identity used by the canonical control authority. A round can
+   * be cancelled by Desktop only while the local record names the same round;
+   * Host-native runs use expectedWorkId to fail closed across a run rollover. */
+  hostStopTarget?: {
+    threadId: string
+    roundId?: string
+    expectedWorkId?: string
+  }
 }
 
 export type ActiveRunsSurface = 'chat' | 'code' | 'work'
@@ -102,6 +120,7 @@ export function ActiveRunsSection({
   onToggleCollapsed
 }: ActiveRunsSectionProps): JSX.Element {
   const [jobs, setJobs] = useState<RunQueueJob[]>([])
+  const [queueProjectionStatus, setQueueProjectionStatus] = useState<'live' | 'unavailable'>('live')
   const [localCollapsed, setLocalCollapsed] = useState(false)
   const collapsed = controlledCollapsed ?? localCollapsed
   // Idle gate: with nothing queued or running there are no elapsed labels to
@@ -116,28 +135,62 @@ export function ActiveRunsSection({
   const workChatIdSet = useMemo(() => new Set(workChatIds), [workChatIds])
   const runningKey = runningChatIds.join('|')
   const hostProjectionStore = useHostProjectionStore()
+  const hostCommands = useHostCommandController()
   // refreshOnMount=false: the provider's continuity loop already polls Host —
   // a sidebar mount must not trigger an extra snapshot fetch of its own.
   const hostProjection = useHostProjection(hostProjectionStore, false)
-  const [stopPendingChatIds, setStopPendingChatIds] = useState<ReadonlySet<string>>(new Set())
+  const [stopStatusByTarget, setStopStatusByTarget] = useState<
+    ReadonlyMap<string, 'pending' | 'failed'>
+  >(new Map())
 
-  const handleStopHostRound = useCallback(async (chat: ChatRecord) => {
-    if (typeof window.api?.cancelEnsembleRound !== 'function') return
-    setStopPendingChatIds((current) => new Set(current).add(chat.appChatId))
-    try {
-      await window.api.cancelEnsembleRound(chat.appChatId)
-    } catch {
-      // The durable cancel lives in main; a rejected invoke leaves the round
-      // live and the next Host projection poll keeps listing it. Never paint
-      // the round as stopped on a failed call.
-    } finally {
-      setStopPendingChatIds((current) => {
-        const next = new Set(current)
-        next.delete(chat.appChatId)
-        return next
-      })
-    }
-  }, [])
+  const handleStopHostActivity = useCallback(
+    async (target: NonNullable<ActiveRunEntry['hostStopTarget']>) => {
+      const pendingKey = `${target.threadId}:${target.roundId ?? target.expectedWorkId ?? ''}`
+      setStopStatusByTarget((current) => new Map(current).set(pendingKey, 'pending'))
+      let finalStatus: 'clear' | 'pending' | 'failed' = 'failed'
+      try {
+        let cancelledByDesktop = false
+        if (target.roundId && typeof window.api?.cancelEnsembleRound === 'function') {
+          const directChat = chats.find((candidate) => candidate.appChatId === target.threadId)
+          const localRound = directChat?.ensemble?.activeRound
+          // `cancelEnsembleRound` is chat-scoped, so the exact local round-id
+          // check is the authority fence that prevents a stale Host row from
+          // cancelling a newer round on the same thread.
+          if (
+            localRound?.roundId === target.roundId &&
+            isEnsembleRoundPresentationLive(localRound)
+          ) {
+            cancelledByDesktop = await window.api.cancelEnsembleRound(target.threadId)
+          }
+        }
+        if (cancelledByDesktop) finalStatus = 'clear'
+        if (!cancelledByDesktop && target.expectedWorkId && hostCommands) {
+          const outcome = await hostCommands.submit({
+            name: 'run.cancel',
+            target: { threadId: target.threadId },
+            arguments: { expectedWorkId: target.expectedWorkId }
+          })
+          finalStatus =
+            outcome.kind === 'terminal' && outcome.receipt.status === 'succeeded'
+              ? 'clear'
+              : outcome.kind === 'pending-timeout'
+                ? 'pending'
+                : 'failed'
+        }
+      } catch {
+        // A rejected command leaves the activity unresolved. The next Host
+        // projection decides what to display; this view never paints success.
+      } finally {
+        setStopStatusByTarget((current) => {
+          const next = new Map(current)
+          if (finalStatus === 'clear') next.delete(pendingKey)
+          else next.set(pendingKey, finalStatus)
+          return next
+        })
+      }
+    },
+    [chats, hostCommands]
+  )
 
   const refresh = useCallback(async () => {
     if (typeof window.api.getRunQueueJobs !== 'function') return
@@ -146,11 +199,15 @@ export function ActiveRunsSection({
         statuses: ACTIVE_STATUSES as unknown as RunQueueJobStatus[]
       })
       const next = Array.isArray(result) ? result : []
+      setQueueProjectionStatus('live')
       // Keep the empty identity stable: an empty poll must not schedule a
       // render when the section already shows nothing.
       setJobs((current) => (current.length === 0 && next.length === 0 ? current : next))
     } catch {
-      setJobs((current) => (current.length === 0 ? current : []))
+      // A failed poll says the queue is unavailable, not empty. Retain the
+      // last coherent rows and mark them explicitly below so a transient IPC
+      // drop cannot flash a still-running provider to "No active runs".
+      setQueueProjectionStatus('unavailable')
     }
   }, [])
 
@@ -191,6 +248,7 @@ export function ActiveRunsSection({
       }),
     [chats, jobs, nowTick, surface, workChatIdSet, hostProjection]
   )
+  const hostEmptyState = hostProjectionEmptyState(hostProjection, queueProjectionStatus)
 
   // 1.0.6 — persistent section: always render (so it permanently occupies the
   // top slot under Search / above Pinned), collapsible like the other
@@ -223,74 +281,136 @@ export function ActiveRunsSection({
           {visibleJobs.length === 0 && (
             <div className="sidebar-active-runs-empty">
               <MascotGhost size={13} />
-              <span>No active runs</span>
+              <span>{hostEmptyState}</span>
             </div>
           )}
-          {visibleJobs.map(({ job, chat, isTransitionFallback, isHostProjection, hostRoundId }) => {
-            const isCurrent = currentChat?.appChatId === chat.appChatId
-            const isRunning = isTransitionFallback || job.status !== 'queued'
-            const provider = getActiveRunThreadProvider(chat)
-            const title = getActiveRunChatLabel(job, chat)
-            return (
-              <div key={job.id || job.runId} className="sidebar-active-run-entry">
-                <button
-                  type="button"
-                  className={`sidebar-active-run-row sidebar-active-run-thread provider-${provider} ${isCurrent ? 'active' : ''}`}
-                  style={getActiveRunThreadStyle(provider)}
-                  onClick={() => onSelectChat(chat)}
-                  title={`${title} — ${getWorkspaceShortName(job, chat)}`}
-                  aria-busy={isRunning || undefined}
-                  aria-label={`${title}, ${isRunning ? 'running' : 'queued'}`}
-                >
-                  <span className="sidebar-chat-copy">
-                    <span className="sidebar-chat-title-line">
-                      <ActiveRunThreadProviderLabel provider={provider} />
-                      <span className="sidebar-chat-title">{title}</span>
-                    </span>
-                    <span className="sidebar-chat-subline">
-                      <span className="sidebar-active-run-workspace">
-                        {getWorkspaceShortName(job, chat)}
+          {visibleJobs.map(
+            ({
+              job,
+              chat,
+              isTransitionFallback,
+              isHostProjection,
+              hostProjectionAvailability,
+              hostStopTarget
+            }) => {
+              const isCurrent = currentChat?.appChatId === chat.appChatId
+              const hostStatusIsCurrent =
+                !isHostProjection ||
+                hostProjectionAvailability === undefined ||
+                hostProjectionAvailability === 'live'
+              const queueStatusUnavailable =
+                !isHostProjection &&
+                !isTransitionFallback &&
+                queueProjectionStatus === 'unavailable' &&
+                hostProjectionAvailability !== 'live'
+              const isRunning =
+                !queueStatusUnavailable &&
+                hostStatusIsCurrent &&
+                (isTransitionFallback || job.status !== 'queued')
+              const isCheckingHost = isHostProjection && hostProjectionAvailability === 'loading'
+              const provider = getActiveRunThreadProvider(chat)
+              const title = getActiveRunChatLabel(job, chat)
+              const activityLabel = isCheckingHost
+                ? 'checking Host status'
+                : queueStatusUnavailable
+                  ? 'activity status unavailable'
+                  : isHostProjection && hostProjectionAvailability === 'unavailable'
+                    ? 'Host status unavailable'
+                    : isRunning
+                      ? 'running'
+                      : 'queued'
+              const pendingKey = hostStopTarget
+                ? `${hostStopTarget.threadId}:${hostStopTarget.roundId ?? hostStopTarget.expectedWorkId ?? ''}`
+                : ''
+              const stopStatus = pendingKey ? stopStatusByTarget.get(pendingKey) : undefined
+              return (
+                <div key={job.id || job.runId} className="sidebar-active-run-entry">
+                  <button
+                    type="button"
+                    className={`sidebar-active-run-row sidebar-active-run-thread provider-${provider} ${isCurrent ? 'active' : ''}`}
+                    style={getActiveRunThreadStyle(provider)}
+                    onClick={() => onSelectChat(chat)}
+                    title={`${title} — ${getWorkspaceShortName(job, chat)}`}
+                    aria-busy={isRunning || isCheckingHost || undefined}
+                    aria-label={`${title}, ${activityLabel}`}
+                  >
+                    <span className="sidebar-chat-copy">
+                      <span className="sidebar-chat-title-line">
+                        <ActiveRunThreadProviderLabel provider={provider} />
+                        <span className="sidebar-chat-title">{title}</span>
+                      </span>
+                      <span className="sidebar-chat-subline">
+                        <span className="sidebar-active-run-workspace">
+                          {getWorkspaceShortName(job, chat)}
+                        </span>
                       </span>
                     </span>
-                  </span>
-                  {isRunning ? (
-                    <SidebarRunningGhost />
-                  ) : (
-                    <span className="sidebar-run-status tone-muted">Queued</span>
+                    {queueStatusUnavailable ? (
+                      <span className="sidebar-run-status tone-warning">
+                        Activity status unavailable
+                      </span>
+                    ) : isHostProjection && hostProjectionAvailability === 'unavailable' ? (
+                      <span className="sidebar-run-status tone-warning">
+                        Host status unavailable
+                      </span>
+                    ) : isCheckingHost ? (
+                      <span className="sidebar-run-status tone-muted">Checking Host status</span>
+                    ) : isRunning ? (
+                      <SidebarRunningGhost />
+                    ) : (
+                      <span className="sidebar-run-status tone-muted">Queued</span>
+                    )}
+                  </button>
+                  {hostStopTarget && (
+                    <button
+                      type="button"
+                      className="sidebar-active-run-board-action sidebar-active-run-stop-action"
+                      onClick={() => void handleStopHostActivity(hostStopTarget)}
+                      disabled={stopStatus === 'pending'}
+                      title={
+                        stopStatus === 'pending'
+                          ? 'Stop pending'
+                          : stopStatus === 'failed'
+                            ? 'Stop failed — retry'
+                            : hostStopTarget.roundId
+                              ? 'Stop round'
+                              : 'Stop run'
+                      }
+                      aria-label={
+                        stopStatus === 'pending'
+                          ? `Stop pending on ${title}`
+                          : stopStatus === 'failed'
+                            ? `Retry stopping ${title}`
+                            : `Stop the live ${hostStopTarget.roundId ? 'round' : 'run'} on ${title}`
+                      }
+                    >
+                      {stopStatus === 'pending' ? '…' : stopStatus === 'failed' ? '!' : '■'}
+                    </button>
                   )}
-                </button>
-                {isHostProjection && hostRoundId && (
-                  <button
-                    type="button"
-                    className="sidebar-active-run-board-action sidebar-active-run-stop-action"
-                    onClick={() => void handleStopHostRound(chat)}
-                    disabled={stopPendingChatIds.has(chat.appChatId)}
-                    title="Stop round"
-                    aria-label={`Stop the live round on ${title}`}
-                  >
-                    ■
-                  </button>
-                )}
-                {onOpenChatPopout && (
-                  <SidebarOverflowMenu
-                    triggerLabel="Thread actions"
-                    items={createSidebarChatPopoutActions(chat, onOpenChatPopout)}
-                  />
-                )}
-                {!isTransitionFallback && !isHostProjection && onAddRunQueueJobToWorkspaceBoard && job.workspaceId && (
-                  <button
-                    type="button"
-                    className="sidebar-active-run-board-action"
-                    onClick={() => onAddRunQueueJobToWorkspaceBoard(job)}
-                    title="Add run to workspace board"
-                    aria-label={`Add ${job.promptPreview || job.runId} to workspace board`}
-                  >
-                    #
-                  </button>
-                )}
-              </div>
-            )
-          })}
+                  {onOpenChatPopout && (
+                    <SidebarOverflowMenu
+                      triggerLabel="Thread actions"
+                      items={createSidebarChatPopoutActions(chat, onOpenChatPopout)}
+                    />
+                  )}
+                  {!isTransitionFallback &&
+                    !isHostProjection &&
+                    onAddRunQueueJobToWorkspaceBoard &&
+                    job.workspaceId && (
+                      <button
+                        type="button"
+                        className="sidebar-active-run-board-action"
+                        onClick={() => onAddRunQueueJobToWorkspaceBoard(job)}
+                        title="Add run to workspace board"
+                        aria-label={`Add ${job.promptPreview || job.runId} to workspace board`}
+                      >
+                        #
+                      </button>
+                    )}
+                </div>
+              )
+            }
+          )}
         </div>
       )}
     </div>
@@ -355,6 +475,19 @@ function addVisibleActiveRunEntry(visible: ActiveRunEntry[], entry: ActiveRunEnt
   }
 
   const existing = visible[existingIndex]
+  if (entry.isHostProjection && !existing.isHostProjection) {
+    // Queue/activity polls and Host snapshots are independent witnesses. Keep
+    // the richer queue row, but join its exact Host control target so the Stop
+    // action does not flicker away merely because the queue won a dedupe race.
+    visible[existingIndex] = {
+      ...existing,
+      ...(entry.hostProjectionAvailability
+        ? { hostProjectionAvailability: entry.hostProjectionAvailability }
+        : {}),
+      ...(entry.hostStopTarget ? { hostStopTarget: entry.hostStopTarget } : {})
+    }
+    return
+  }
   if (
     !entry.isTransitionFallback &&
     activeRunStatusPriority(entry.job.status) > activeRunStatusPriority(existing.job.status)
@@ -440,7 +573,37 @@ function transitionFallbackEntry(
 }
 
 /** The slice of renderer Host projection state this surface reads. */
-export type HostActiveRunsProjection = Pick<HostProjectionState, 'status' | 'projection'>
+export type HostActiveRunsProjection = Pick<
+  HostProjectionState,
+  'status' | 'projection' | 'liveBaselineContinuity'
+>
+
+function hostProjectionActivityAvailability(
+  state: HostActiveRunsProjection
+): NonNullable<ActiveRunEntry['hostProjectionAvailability']> {
+  if (state.status === 'loading') return 'loading'
+  if (state.status === 'unavailable') return 'unavailable'
+  return state.projection?.freshness === 'live' || state.liveBaselineContinuity === true
+    ? 'live'
+    : 'unavailable'
+}
+
+function hostProjectionEmptyState(
+  state: HostActiveRunsProjection,
+  queueProjectionStatus: 'live' | 'unavailable'
+): string {
+  if (state.status === 'loading') return 'Checking Host activity'
+  if (state.status === 'unavailable') return 'Host activity unavailable'
+  if (queueProjectionStatus === 'unavailable') return 'Activity status unavailable'
+  if (
+    state.status === 'live' &&
+    state.projection?.freshness !== 'live' &&
+    state.liveBaselineContinuity !== true
+  ) {
+    return 'Host activity unavailable'
+  }
+  return 'No active runs'
+}
 
 /**
  * Host-owned activity → Active Runs entries at the user's thread granularity.
@@ -451,10 +614,9 @@ export type HostActiveRunsProjection = Pick<HostProjectionState, 'status' | 'pro
  * individual runs on the same thread, and one thread yields at most one entry
  * — six participant runs of one round are one row, not six.
  *
- * Honesty rule: only a successfully-synced projection (`live`, or `loading`
- * with a retained projection) yields entries. An `unavailable` store keeps its
- * last projection as a cache, and a stale cache must not paint a killswitch
- * for a round Host may already have finished.
+ * Honesty rule: a retained projection remains visible when connectivity drops,
+ * but its row is explicitly unavailable and carries no control target. That
+ * preserves the last observation without rewriting unknown as idle/completed.
  */
 export function deriveHostProjectionActiveRunEntries(input: {
   hostProjection: HostActiveRunsProjection | null | undefined
@@ -463,14 +625,20 @@ export function deriveHostProjectionActiveRunEntries(input: {
   workChatIds?: ReadonlySet<string>
 }): ActiveRunEntry[] {
   const state = input.hostProjection
-  if (!state || (state.status !== 'live' && state.status !== 'loading')) return []
+  if (!state || state.status === 'idle') return []
   const projection = state.projection
   if (!projection) return []
+  const hostProjectionAvailability = hostProjectionActivityAvailability(state)
 
   const workChatIds = input.workChatIds || new Set<string>()
   const chatsById = new Map(input.chats.map((chat) => [chat.appChatId, chat]))
   const entries: ActiveRunEntry[] = []
   const coveredChatIds = new Set<string>()
+  const runningRunsById = new Map(
+    projection.runs
+      .filter((run) => run.providerOutcome === 'running')
+      .map((run) => [run.runId, run])
+  )
 
   const addHostEntry = (entry: {
     threadId: string
@@ -478,6 +646,8 @@ export function deriveHostProjectionActiveRunEntries(input: {
     runId: string
     startedAt?: number
     hostRoundId?: string
+    hostStopTarget?: ActiveRunEntry['hostStopTarget']
+    availability?: ActiveRunEntry['hostProjectionAvailability']
   }): void => {
     const directChat = chatsById.get(entry.threadId)
     if (!directChat) return
@@ -497,29 +667,59 @@ export function deriveHostProjectionActiveRunEntries(input: {
       chat,
       isTransitionFallback: false,
       isHostProjection: true,
-      ...(entry.hostRoundId ? { hostRoundId: entry.hostRoundId } : {})
+      hostProjectionAvailability: entry.availability ?? hostProjectionAvailability,
+      ...(entry.hostRoundId ? { hostRoundId: entry.hostRoundId } : {}),
+      ...(entry.hostStopTarget ? { hostStopTarget: entry.hostStopTarget } : {})
     })
     coveredChatIds.add(chat.appChatId)
   }
 
   for (const round of projection.rounds) {
-    if (round.status !== 'running') continue
+    const unresolved =
+      round.status === 'unknown' && round.endedAt === undefined && round.startedAt !== undefined
+    if (round.status !== 'running' && !unresolved) continue
+    const directChat = chatsById.get(round.threadId)
+    const localRound = directChat?.ensemble?.activeRound
+    const desktopOwnsExactRound =
+      localRound?.roundId === round.roundId && isEnsembleRoundPresentationLive(localRound)
+    const linkedRunningRun =
+      round.providerRunIds.map((runId) => runningRunsById.get(runId)).find(Boolean) ??
+      projection.runs.find(
+        (run) => run.threadId === round.threadId && run.providerOutcome === 'running'
+      )
+    const hostStopTarget =
+      desktopOwnsExactRound || linkedRunningRun
+        ? {
+            threadId: round.threadId,
+            roundId: round.roundId,
+            ...(linkedRunningRun ? { expectedWorkId: linkedRunningRun.runId } : {})
+          }
+        : undefined
     addHostEntry({
       threadId: round.threadId,
       id: `host-round:${round.roundId}`,
       runId: round.providerRunIds[0] || round.roundId,
       startedAt: round.startedAt,
-      hostRoundId: round.roundId
+      hostRoundId: round.roundId,
+      ...(unresolved ? { availability: 'unavailable' as const } : {}),
+      ...(hostStopTarget ? { hostStopTarget } : {})
     })
   }
 
   for (const run of projection.runs) {
-    if (run.providerOutcome !== 'running') continue
+    const unresolved =
+      run.providerOutcome === 'unknown' && run.endedAt === undefined && run.startedAt !== undefined
+    if (run.providerOutcome !== 'running' && !unresolved) continue
     addHostEntry({
       threadId: run.threadId,
       id: `host-run:${run.runId}`,
       runId: run.runId,
-      startedAt: run.startedAt
+      startedAt: run.startedAt,
+      ...(unresolved ? { availability: 'unavailable' as const } : {}),
+      hostStopTarget: {
+        threadId: run.threadId,
+        expectedWorkId: run.runId
+      }
     })
   }
 

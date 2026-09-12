@@ -140,8 +140,12 @@ describe('deriveHostProjectionActiveRunEntries', () => {
 
     expect(entries).toHaveLength(1)
     expect(entries[0]?.chat.appChatId).toBe('solo-chat')
-    // No round backs this entry — there is no ensemble cancel to offer.
+    // No round backs this entry, so cancellation binds the exact Host work id.
     expect(entries[0]?.hostRoundId).toBeUndefined()
+    expect(entries[0]?.hostStopTarget).toEqual({
+      threadId: 'solo-chat',
+      expectedWorkId: 'run-1'
+    })
   })
 
   it('ignores terminal rounds and runs', () => {
@@ -162,7 +166,44 @@ describe('deriveHostProjectionActiveRunEntries', () => {
     expect(entries).toEqual([])
   })
 
-  it('never paints a retained cache as live: unavailable and idle yield nothing', () => {
+  it('keeps started nonterminal unknown work visible without claiming it is running', () => {
+    const ensemble = chat('claude', { appChatId: 'ensemble-chat', chatKind: 'ensemble' })
+    const entries = deriveHostProjectionActiveRunEntries({
+      hostProjection: liveState(
+        projection({
+          rounds: [runningRound({ status: 'unknown' })],
+          runs: [runningRun({ providerOutcome: 'unknown' })]
+        })
+      ),
+      chats: [ensemble]
+    })
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.hostProjectionAvailability).toBe('unavailable')
+    expect(entries[0]?.job.runId).toBe('run-1')
+  })
+
+  it('keeps an exact provider stop when a terminal round still has a running run', () => {
+    const ensemble = chat('claude', { appChatId: 'ensemble-chat', chatKind: 'ensemble' })
+    const entries = deriveHostProjectionActiveRunEntries({
+      hostProjection: liveState(
+        projection({
+          rounds: [runningRound({ status: 'completed', endedAt: Date.now() })],
+          runs: [runningRun()]
+        })
+      ),
+      chats: [ensemble]
+    })
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.hostRoundId).toBeUndefined()
+    expect(entries[0]?.hostStopTarget).toEqual({
+      threadId: 'ensemble-chat',
+      expectedWorkId: 'run-1'
+    })
+  })
+
+  it('retains unavailable activity without inventing a stop target when no control witness exists', () => {
     const ensemble = chat('claude', { appChatId: 'ensemble-chat', chatKind: 'ensemble' })
     const retained = projection({ rounds: [runningRound()] })
     const unavailable: HostProjectionState = {
@@ -171,9 +212,13 @@ describe('deriveHostProjectionActiveRunEntries', () => {
       projection: { ...retained, freshness: 'cached' }
     }
 
-    expect(
-      deriveHostProjectionActiveRunEntries({ hostProjection: unavailable, chats: [ensemble] })
-    ).toEqual([])
+    const entries = deriveHostProjectionActiveRunEntries({
+      hostProjection: unavailable,
+      chats: [ensemble]
+    })
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.hostProjectionAvailability).toBe('unavailable')
+    expect(entries[0]?.hostStopTarget).toBeUndefined()
     expect(
       deriveHostProjectionActiveRunEntries({
         hostProjection: { status: 'idle' },
@@ -185,7 +230,7 @@ describe('deriveHostProjectionActiveRunEntries', () => {
     ).toEqual([])
   })
 
-  it('treats a retained projection during loading as still-current', () => {
+  it('marks retained activity as pending while the Host refresh is loading', () => {
     const ensemble = chat('claude', {
       appChatId: 'ensemble-chat',
       chatKind: 'ensemble',
@@ -197,6 +242,31 @@ describe('deriveHostProjectionActiveRunEntries', () => {
     })
 
     expect(entries).toHaveLength(1)
+    expect(entries[0]?.hostProjectionAvailability).toBe('loading')
+    expect(entries[0]?.hostStopTarget).toBeUndefined()
+  })
+
+  it('keeps an exact Host work stop while a retained projection is loading or unavailable', () => {
+    const solo = chat('codex', { appChatId: 'solo-chat', title: 'Solo task' })
+    const retained = projection({
+      runs: [runningRun({ threadId: 'solo-chat', providerId: 'codex' })]
+    })
+
+    for (const status of ['loading', 'unavailable'] as const) {
+      const entries = deriveHostProjectionActiveRunEntries({
+        hostProjection: {
+          status,
+          projection: { ...retained, freshness: 'cached' },
+          liveBaselineContinuity: true
+        },
+        chats: [solo]
+      })
+      expect(entries[0]?.hostProjectionAvailability).toBe(status)
+      expect(entries[0]?.hostStopTarget).toEqual({
+        threadId: 'solo-chat',
+        expectedWorkId: 'run-1'
+      })
+    }
   })
 
   it('projects a fan-out side chat run onto the parent thread', () => {
@@ -279,7 +349,28 @@ describe('deriveVisibleActiveRunEntries · host projection merge', () => {
     const ensemble = chat('claude', {
       appChatId: 'ensemble-chat',
       chatKind: 'ensemble',
-      title: 'Release review'
+      title: 'Release review',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 1,
+        participants: [],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          prompt: 'Review the release.',
+          startedAt: '2026-09-12T03:20:23.000Z',
+          activeParticipantId: 'p1',
+          participants: [
+            {
+              participantId: 'p1',
+              provider: 'claude',
+              role: 'Worker',
+              order: 1,
+              status: 'running'
+            }
+          ]
+        }
+      }
     })
     const entries = deriveVisibleActiveRunEntries({
       jobs: [job({ chatId: 'ensemble-chat', status: 'active' })],
@@ -288,6 +379,11 @@ describe('deriveVisibleActiveRunEntries · host projection merge', () => {
     })
 
     expect(entries).toHaveLength(1)
+    expect(entries[0]?.isHostProjection).toBeUndefined()
+    expect(entries[0]?.hostStopTarget).toEqual({
+      threadId: 'ensemble-chat',
+      roundId: 'round-1'
+    })
   })
 })
 
@@ -332,7 +428,38 @@ describe('ActiveRunsSection · Host-owned round rendering', () => {
     const ensemble = chat('claude', {
       appChatId: 'ensemble-chat',
       chatKind: 'ensemble',
-      title: 'Release review'
+      title: 'Release review',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 1,
+        participants: [
+          {
+            id: 'p1',
+            provider: 'claude',
+            enabled: true,
+            role: 'Worker',
+            instructions: '',
+            order: 1
+          }
+        ],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          prompt: 'Review the release.',
+          startedAt: '2026-09-12T03:20:23.000Z',
+          activeParticipantId: 'p1',
+          participants: [
+            {
+              participantId: 'p1',
+              provider: 'claude',
+              role: 'Worker',
+              order: 1,
+              status: 'running',
+              runId: 'run-1'
+            }
+          ]
+        }
+      }
     })
     const store = new HostProjectionStore({
       fetchSnapshot: async () =>
@@ -358,7 +485,7 @@ describe('ActiveRunsSection · Host-owned round rendering', () => {
     expect(markup).not.toContain('No active runs')
   })
 
-  it('offers no killswitch for a round-less solo run entry', async () => {
+  it('offers an exact Host run stop for a round-less solo run entry', async () => {
     const solo = chat('codex', { appChatId: 'solo-chat', title: 'Solo task' })
     const store = new HostProjectionStore({
       fetchSnapshot: async () =>
@@ -378,7 +505,107 @@ describe('ActiveRunsSection · Host-owned round rendering', () => {
     const markup = await renderSection(store, [solo])
 
     expect(markup).toContain('Solo task')
+    expect(markup).toContain('sidebar-active-run-stop-action')
+    expect(markup).toContain('Stop run')
+    expect(markup).not.toContain('No active runs')
+  })
+
+  it('keeps a dropped Host connection explicit while preserving an exact local round stop', async () => {
+    const ensemble = chat('claude', {
+      appChatId: 'ensemble-chat',
+      chatKind: 'ensemble',
+      title: 'Release review',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 1,
+        participants: [],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          prompt: 'Review the release.',
+          startedAt: '2026-09-12T03:20:23.000Z',
+          activeParticipantId: 'p1',
+          participants: [
+            {
+              participantId: 'p1',
+              provider: 'claude',
+              role: 'Worker',
+              order: 1,
+              status: 'running'
+            }
+          ]
+        }
+      }
+    })
+    let fail = false
+    const store = new HostProjectionStore({
+      fetchSnapshot: async () => {
+        if (fail) throw new Error('host socket refused')
+        return hostSnapshot({
+          rounds: [runningRound() as unknown as HostSnapshot['rounds'][number]]
+        })
+      }
+    })
+    await store.refresh()
+    fail = true
+    await store.refresh()
+
+    const markup = renderToStaticMarkup(
+      <HostProjectionProvider store={store}>
+        <ActiveRunsSection chats={[ensemble]} currentChat={null} onSelectChat={() => undefined} />
+      </HostProjectionProvider>
+    )
+
+    expect(markup).toContain('Release review')
+    expect(markup).toContain('Host status unavailable')
+    expect(markup).toContain('sidebar-active-run-stop-action')
+    expect(markup).toContain('Stop round')
+    expect(markup).not.toContain('No active runs')
+  })
+
+  it('does not target a different local round from a stale Host round id', async () => {
+    const ensemble = chat('claude', {
+      appChatId: 'ensemble-chat',
+      chatKind: 'ensemble',
+      title: 'Release review',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 1,
+        participants: [],
+        activeRound: {
+          roundId: 'new-round',
+          status: 'running',
+          prompt: 'New work.',
+          startedAt: '2026-09-12T03:21:00.000Z',
+          participants: []
+        }
+      }
+    })
+    const store = new HostProjectionStore({
+      fetchSnapshot: async () =>
+        hostSnapshot({
+          rounds: [
+            runningRound({ roundId: 'old-round' }) as unknown as HostSnapshot['rounds'][number]
+          ]
+        })
+    })
+
+    const markup = await renderSection(store, [ensemble])
+
+    expect(markup).toContain('Release review')
     expect(markup).not.toContain('sidebar-active-run-stop-action')
+  })
+
+  it('renders explicit Host unavailability before any snapshot instead of an empty claim', async () => {
+    const store = new HostProjectionStore({
+      fetchSnapshot: async () => {
+        throw new Error('host socket refused')
+      }
+    })
+
+    const markup = await renderSection(store, [])
+
+    expect(markup).toContain('Host activity unavailable')
     expect(markup).not.toContain('No active runs')
   })
 

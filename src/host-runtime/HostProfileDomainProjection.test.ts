@@ -8,8 +8,9 @@ import {
   decodeHostSnapshot,
   HOST_PROTOCOL_MAX_COLLECTION
 } from '../shared/hostProtocol'
-import { HostProfileDomainStore } from './HostProfileDomainStore'
+import { HostProfileDomainStore, type HostProfileThreadSummary } from './HostProfileDomainStore'
 import {
+  HOST_PROFILE_ROUND_PROJECTION_LIMIT,
   HOST_PROFILE_RUN_PROJECTION_LIMIT,
   projectHostProfileDomainSnapshot
 } from './HostProfileDomainProjection'
@@ -232,6 +233,126 @@ it('windows oversized run history by active-first recency without emitting a fat
   }
 })
 
+it('bounds persisted rounds with live rows ahead of recent terminal history', () => {
+  const profile = mkdtempSync(join(tmpdir(), 'host-profile-round-window-'))
+  paths.push(profile)
+  const summaries = Array.from(
+    { length: HOST_PROFILE_ROUND_PROJECTION_LIMIT + 1 },
+    (_, index): HostProfileThreadSummary => ({
+      appChatId: `thread-round-${index}`,
+      scope: 'workspace',
+      workspaceId: 'workspace-rounds',
+      title: `Round ${index}`,
+      provider: 'codex',
+      chatKind: 'ensemble',
+      archived: false,
+      updatedAt: index,
+      messageCount: 0,
+      catalogueProjection: true,
+      cataloguePresentation: {
+        status: index === 0 ? 'running' : 'cancelled',
+        runningRunCount: index === 0 ? 1 : 0
+      },
+      ensemble: {
+        participants: [],
+        activeRound: {
+          roundId: `round-${index}`,
+          status: index === 0 ? 'running' : 'cancelled',
+          startedAt: new Date(index).toISOString(),
+          ...(index === 0
+            ? {
+                activeParticipantId: 'seat-live',
+                participants: [
+                  {
+                    participantId: 'seat-live',
+                    status: 'running'
+                  }
+                ]
+              }
+            : { endedAt: new Date(index + 1).toISOString(), participants: [] })
+        }
+      }
+    })
+  )
+  const store = new HostProfileDomainStore({
+    profilePath: profile,
+    authority: { assertProfileAuthority: () => {} },
+    threadSummarySource: () => summaries
+  })
+
+  const donor = projectHostProfileDomainSnapshot({
+    store,
+    health: { hostStatus: 'ok', connectionPhase: 'live', supervised: true, freshness: 'live' },
+    providers: []
+  })
+
+  expect(donor.rounds).toHaveLength(HOST_PROFILE_ROUND_PROJECTION_LIMIT)
+  expect(donor.rounds[0]).toEqual(
+    expect.objectContaining({ roundId: 'round-0', status: 'running' })
+  )
+  expect(donor.rounds.map((round) => round.roundId)).not.toContain('round-1')
+  expect(donor.warnings).toContainEqual(
+    expect.objectContaining({
+      warningId: 'projection_windowed:rounds',
+      code: 'projection_windowed'
+    })
+  )
+})
+
+it('keeps a persisted running round unresolved without a liveness witness', () => {
+  const profile = mkdtempSync(join(tmpdir(), 'host-profile-round-liveness-'))
+  paths.push(profile)
+  const summary = (
+    appChatId: string,
+    status: 'running' | 'completed'
+  ): HostProfileThreadSummary => ({
+    appChatId,
+    scope: 'workspace',
+    workspaceId: 'workspace-rounds',
+    title: appChatId,
+    provider: 'codex',
+    chatKind: 'ensemble',
+    archived: false,
+    updatedAt: 1,
+    messageCount: 0,
+    catalogueProjection: true,
+    cataloguePresentation: { status: 'idle', runningRunCount: 0 },
+    ensemble: {
+      participants: [],
+      activeRound: {
+        roundId: `round-${appChatId}`,
+        status,
+        startedAt: new Date(1).toISOString(),
+        ...(status === 'completed' ? { endedAt: new Date(2).toISOString() } : {})
+      }
+    }
+  })
+  const store = new HostProfileDomainStore({
+    profilePath: profile,
+    authority: { assertProfileAuthority: () => {} },
+    threadSummarySource: () => [
+      summary('unresolved', 'running'),
+      summary('explicit-terminal', 'completed')
+    ]
+  })
+
+  const donor = projectHostProfileDomainSnapshot({
+    store,
+    health: { hostStatus: 'ok', connectionPhase: 'live', supervised: true, freshness: 'live' },
+    providers: []
+  })
+
+  expect(donor.rounds).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ roundId: 'round-unresolved', status: 'unknown' }),
+      expect.objectContaining({ roundId: 'round-explicit-terminal', status: 'completed' })
+    ])
+  )
+  expect(
+    donor.rounds.find((round) => round.roundId === 'round-unresolved')?.endedAt
+  ).toBeUndefined()
+})
+
 it('projects an ensemble thread kind and its persisted seat roster without synthesizing solos', () => {
   const profile = mkdtempSync(join(tmpdir(), 'host-profile-ensemble-projection-'))
   const workspace = mkdtempSync(join(tmpdir(), 'host-profile-ensemble-workspace-'))
@@ -257,7 +378,28 @@ it('projects an ensemble thread kind and its persisted seat roster without synth
       ...current,
       chatKind: 'ensemble',
       ensemble: {
-        activeRound: { activeParticipantId: 'seat-captain', status: 'running' },
+        activeRound: {
+          roundId: 'round-live',
+          activeParticipantId: 'seat-captain',
+          status: 'running',
+          startedAt: '2026-09-12T10:00:00.000Z',
+          participants: [
+            {
+              participantId: 'seat-captain',
+              provider: 'claude',
+              role: 'Captain',
+              order: 0,
+              status: 'running'
+            },
+            {
+              participantId: 'seat-review',
+              provider: 'grok',
+              role: 'Reviewer',
+              order: 1,
+              status: 'idle'
+            }
+          ]
+        },
         participants: [
           {
             id: 'seat-captain',
@@ -341,6 +483,7 @@ it('projects an ensemble thread kind and its persisted seat roster without synth
       stage: 'reviewer',
       order: 1,
       enabled: false,
+      status: 'idle',
       active: false
     }
   ])

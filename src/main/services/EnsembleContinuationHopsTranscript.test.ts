@@ -73,6 +73,48 @@ describe('appendContinuationHopsChangeTranscriptEvent', () => {
     ).toBe(original)
   })
 
+  it('does not create the first transcript row for a pre-prompt config change', () => {
+    const original = chat()
+    expect(
+      appendContinuationHopsChangeTranscriptEvent(original, {
+        id: 'hops-before-first-prompt',
+        before: 6,
+        after: 12,
+        actor: 'user',
+        changedAt: '2026-08-12T00:09:39.000Z',
+        changedAtMs: 42
+      })
+    ).toBe(original)
+  })
+
+  it('retains the idle audit row after a transcript has started', () => {
+    const original = {
+      ...chat(),
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user' as const,
+          content: 'Review the fixture.',
+          timestamp: '2026-08-12T00:00:00.000Z'
+        }
+      ]
+    }
+    const updated = appendContinuationHopsChangeTranscriptEvent(original, {
+      id: 'hops-between-rounds',
+      before: 6,
+      after: 12,
+      actor: 'user',
+      changedAt: '2026-08-12T00:09:39.000Z',
+      changedAtMs: 42
+    })
+
+    expect(updated.messages).toHaveLength(2)
+    expect(updated.messages.at(-1)?.metadata).toMatchObject({
+      kind: 'ensembleContinuationHopsChange',
+      continuationHopsChange: { before: 6, after: 12, actor: 'user' }
+    })
+  })
+
   it('builds an advancing n/max promotion while preserving the plain status fallback', () => {
     expect(
       buildContinuationHopsAdvanceTranscriptEvent({

@@ -1,15 +1,49 @@
 import type { ChatListItem, ChatRecord, ChatRun } from '../../../main/store/types'
 import { computeThreadRunWallMs, readThreadRunWallMs } from '../../../shared/threadRunWallTime'
 
+type ComposerRunTimecodeChat = Pick<ChatRecord, 'chatKind' | 'ensemble'>
+
+function nonEmptyTimestamp(value: string | null | undefined): string | null {
+  const trimmed = value?.trim()
+  return trimmed && Number.isFinite(Date.parse(trimmed)) ? trimmed : null
+}
+
 /**
- * Returns thread wall time from completed runs without double-counting
- * concurrent Ensemble seats. When a current run/round start is supplied, the
- * caller adds its live delta separately, so completed spans are capped there
- * before the interval union is measured.
+ * Resolves the clock anchor for the composer's TURN readout.
  *
- * The union math itself now lives in `shared/threadRunWallTime` so the same
- * measurement can be taken main-side, before a projection strips `runs`. This
- * wrapper is unchanged behaviour and keeps its own goldens.
+ * An Ensemble TURN is the whole round, so it is anchored to the round start
+ * even during the main-owned gap between participant invocations. The generic
+ * renderer `isRunning` flag is seat/run evidence and can briefly fall false at
+ * exactly that handoff boundary; it must not restart or zero the round clock.
+ * A terminal round clears the anchor even if a stale run flag remains true.
+ * Solo chats retain the ordinary current-run behaviour.
+ */
+export function resolveComposerRunTimecodeStartedAt(input: {
+  chat: ComposerRunTimecodeChat | null | undefined
+  isRunning: boolean
+  currentRunStartedAt?: string | null
+}): string | null {
+  if (!input.chat) return null
+
+  if (input.chat.chatKind === 'ensemble') {
+    const round = input.chat.ensemble?.activeRound
+    if (!round || round.status !== 'running' || round.endedAt) return null
+    return nonEmptyTimestamp(round.startedAt)
+  }
+
+  return input.isRunning ? nonEmptyTimestamp(input.currentRunStartedAt) : null
+}
+
+/**
+ * Legacy/solo arithmetic seam over completed runs. When a current run start is
+ * supplied, the caller adds its live delta separately, so completed spans are
+ * capped there before the interval union is measured. Exact Ensemble-round
+ * totals require `resolveCumulativeRunBaseMs`, which also receives the compact
+ * round ledger from the chat record.
+ *
+ * The measurement itself lives in `shared/threadRunWallTime` so it can also be
+ * taken main-side before a projection strips its timing inputs. This wrapper
+ * retains the original run-only behavior and goldens.
  */
 export function computeCumulativeRunBaseMs(
   runs: readonly ChatRun[] | undefined,
@@ -46,8 +80,8 @@ type CumulativeRunBaseSource = ChatRecord & Partial<ChatListItem>
  *
  * The fix is to carry the AGGREGATE rather than re-derive it from an array the
  * projections are entitled to drop: `runWallMs` is to thread wall time what
- * `runCount` is to run count, and every producer that strips `runs` now stamps
- * it from the array it is stripping.
+ * `runCount` is to run count, and every producer stamps it from the canonical
+ * runs plus the compact round ledger before stripping both.
  */
 export function resolveCumulativeRunBaseMs(
   chat: CumulativeRunBaseSource | null | undefined,
@@ -56,25 +90,26 @@ export function resolveCumulativeRunBaseMs(
   if (!chat) return 0
   const runs = Array.isArray(chat.runs) ? chat.runs : []
   // A hydrated record owns the exact answer, including the live-boundary cap.
-  if (chat.summaryOnly !== true) return computeThreadRunWallMs(runs, activeStartedAt)
+  if (chat.summaryOnly !== true) return computeThreadRunWallMs(runs, activeStartedAt, chat.ensemble)
 
   // Below here the record is a projection. `runs` is empty, or (on a paged
   // shell) a bounded tail page that would silently UNDERSTATE the thread.
   //
-  // `runWallMs` is uncapped by construction — the projector cannot know which
-  // run a later reader treats as live — so on an Ensemble thread whose live
-  // round overlaps a seat that finished inside it, the carried scalar and the
-  // live delta can double-count that overlap. Bounded by the overlap of one
-  // round's seats, and strictly better than painting a zeroed thread.
+  // Current projectors receive Ensemble timing state and omit the live round,
+  // so their carried scalar can be combined with the live delta exactly. A row
+  // written before that round-aware projection existed is indistinguishable on
+  // the wire and may still contain completed seats from the live round; keep
+  // the legacy larger-scalar preference rather than silently discarding older
+  // thread history.
   const carried = readThreadRunWallMs((chat as Partial<ChatListItem>).runWallMs)
-  const windowed = computeThreadRunWallMs(runs, activeStartedAt)
+  const windowed = computeThreadRunWallMs(runs, activeStartedAt, chat.ensemble)
   if (carried !== null) return Math.max(carried, windowed)
   if (windowed > 0) return windowed
 
   // Rows projected before `runWallMs` existed still carry the tail run, so a
   // legacy row understates rather than reading as a thread that never ran.
   const lastRun = (chat as Partial<ChatListItem>).lastRun
-  return lastRun ? computeThreadRunWallMs([lastRun], activeStartedAt) : 0
+  return lastRun ? computeThreadRunWallMs([lastRun], activeStartedAt, chat.ensemble) : 0
 }
 
 /**

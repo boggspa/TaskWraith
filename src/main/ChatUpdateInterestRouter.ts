@@ -30,6 +30,8 @@ const PRESERVED_COMPACT_CHAT_LIST_FIELDS = [
 export interface ChatUpdateProjectionStore {
   toChatListItem(chat: ChatRecord): ChatListItem
   toChatListEnsembleProjection(ensemble: EnsembleConfig): EnsembleConfig
+  /** Resolve catalogue notifications to canonical content for full subscribers. */
+  getChat?(chatId: string): ChatRecord | null
 }
 
 export type ChatUpdateDeliveryPort = Pick<
@@ -316,7 +318,7 @@ export class ChatUpdateInterestRouter {
             ? {}
             : { runWallMs: previous.runWallMs }
           : { runWallMs: source.runWallMs }
-        : { runWallMs: projectThreadRunWallMs(runList) }),
+        : { runWallMs: projectThreadRunWallMs(runList, source.ensemble) }),
       ...(lastRun ? { lastRun } : {})
     } as ChatListItem
 
@@ -378,6 +380,23 @@ export class ChatUpdateInterestRouter {
     reseed: boolean
   ): ChatUpdateRoutingResult {
     if (this.modeFor(target.id, chat.appChatId) === 'full') {
+      // The catalogue callback publishes display rows with intentionally empty
+      // messages/runs and a bounded ensemble projection. They share the saved
+      // revision, but they are never a transcript baseline: sending one here
+      // clears the open view and makes the next producer-authored update refer
+      // to rows the renderer no longer has. Read only the subscribed chat;
+      // AppStore serves its current Host-backed record/cache at this boundary.
+      if ((chat as Partial<ChatListItem>).summaryOnly === true) {
+        const canonical = this.store.getChat?.(chat.appChatId)
+        if (
+          !canonical ||
+          canonical.appChatId !== chat.appChatId ||
+          (canonical as Partial<ChatListItem>).summaryOnly === true
+        ) {
+          return 'ignored'
+        }
+        chat = canonical
+      }
       if (reseed) this.delivery.reseed(target, chat)
       else this.delivery.enqueue(target, chat)
       return 'full'

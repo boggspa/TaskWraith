@@ -64,7 +64,7 @@ export function projectThreadCatalogueRecord(chat: ChatRecord): ThreadCatalogueP
       archived: chat.archived === true,
       messageCount: messages.length,
       runCount: runs.length,
-      runWallMs: projectThreadRunWallMs(runs),
+      runWallMs: projectThreadRunWallMs(runs, chat.ensemble),
       presentation,
       chrome,
       ...(last

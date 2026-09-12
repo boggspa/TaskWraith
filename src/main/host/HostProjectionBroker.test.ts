@@ -8,6 +8,7 @@ import {
   type HostCommand
 } from '../../shared/hostProtocol'
 import { createHostProjectionBroker, type HostProjectionClientPort } from './HostProjectionBroker'
+import { HostProjectionTransportError } from './HostProjectionClient'
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void
@@ -15,6 +16,20 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
     resolve = done
   })
   return { promise, resolve }
+}
+
+function deferredResult<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (error: Error) => void
+} {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
 }
 
 describe('HostProjectionBroker', () => {
@@ -161,4 +176,107 @@ describe('HostProjectionBroker', () => {
       expect.objectContaining({ actor: TASKWRAITH_DESKTOP_HOST_ACTOR })
     )
   })
+
+  it('does not let a late failure from an old client close its connected replacement', async () => {
+    const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 0 })
+    const firstFailure = deferredResult<{ snapshot: typeof snapshot }>()
+    const lateFailure = deferredResult<{ snapshot: typeof snapshot }>()
+    let oldConnected = true
+    const oldClient = {
+      get connected() {
+        return oldConnected
+      },
+      connect: vi.fn(async () => undefined),
+      getSnapshot: vi
+        .fn<() => Promise<{ snapshot: typeof snapshot }>>()
+        .mockImplementationOnce(() => firstFailure.promise)
+        .mockImplementationOnce(() => lateFailure.promise),
+      getDeltasSince: vi.fn(),
+      submitCommand: vi.fn(),
+      lookupReceipt: vi.fn(),
+      close: vi.fn(() => {
+        oldConnected = false
+      })
+    } satisfies HostProjectionClientPort & { readonly connected: boolean }
+    let replacementConnected = true
+    const replacement = {
+      get connected() {
+        return replacementConnected
+      },
+      connect: vi.fn(async () => {
+        replacementConnected = true
+      }),
+      getSnapshot: vi.fn(async () => ({ snapshot })),
+      getDeltasSince: vi.fn(),
+      submitCommand: vi.fn(),
+      lookupReceipt: vi.fn(),
+      close: vi.fn(() => {
+        replacementConnected = false
+      })
+    } satisfies HostProjectionClientPort & { readonly connected: boolean }
+    const createClient = vi
+      .fn<() => HostProjectionClientPort>()
+      .mockReturnValueOnce(oldClient)
+      .mockReturnValue(replacement)
+    const broker = createHostProjectionBroker({
+      userDataPath: '/tmp/taskwraith-host-broker-test',
+      appVersion: 'test',
+      createClient
+    })
+
+    const failedRequest = broker.snapshot()
+    const lateRequest = broker.snapshot()
+    await vi.waitFor(() => expect(oldClient.getSnapshot).toHaveBeenCalledTimes(2))
+    oldConnected = false
+    firstFailure.reject(new Error('old transport disconnected'))
+    await expect(failedRequest).resolves.toMatchObject({ ok: false })
+
+    await expect(broker.snapshot()).resolves.toEqual({ ok: true, snapshot })
+    expect(createClient).toHaveBeenCalledTimes(2)
+    lateFailure.reject(new Error('late old-client sibling failure'))
+    await expect(lateRequest).resolves.toMatchObject({ ok: false })
+
+    expect(replacement.close).not.toHaveBeenCalled()
+    await expect(broker.snapshot()).resolves.toEqual({ ok: true, snapshot })
+    expect(createClient).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['unauthorized', 'host_unavailable'] as const)(
+    'retains a connected client after the typed request-level Host error %s',
+    async (errorCode) => {
+      const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 0 })
+      let connected = true
+      const client = {
+        get connected() {
+          return connected
+        },
+        connect: vi.fn(async () => {
+          connected = true
+        }),
+        getSnapshot: vi.fn(async () => ({ snapshot })),
+        getDeltasSince: vi.fn(),
+        submitCommand: vi.fn(),
+        lookupReceipt: vi.fn(),
+        maintainThreadCatalogue: vi.fn(async () => {
+          throw new HostProjectionTransportError(errorCode)
+        }),
+        close: vi.fn(() => {
+          connected = false
+        })
+      } satisfies HostProjectionClientPort & { readonly connected: boolean }
+      const createClient = vi.fn(() => client)
+      const broker = createHostProjectionBroker({
+        userDataPath: '/tmp/taskwraith-host-broker-test',
+        appVersion: 'test',
+        createClient
+      })
+
+      await expect(
+        broker.maintainThreadCatalogue?.({ method: 'repair-source', chatId: 'chat-1' })
+      ).rejects.toThrow(errorCode)
+      expect(client.close).not.toHaveBeenCalled()
+      await expect(broker.snapshot()).resolves.toEqual({ ok: true, snapshot })
+      expect(createClient).toHaveBeenCalledTimes(1)
+    }
+  )
 })

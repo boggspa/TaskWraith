@@ -1991,6 +1991,12 @@ export interface EnsembleConfig {
   }
   sessionActivityLedger?: SessionActivityLedgerEntry[]
   activeRound?: EnsembleRoundState
+  /**
+   * Exact wall duration for terminal Ensemble rounds, keyed by stable round id.
+   * The composer sums these durations and falls back to completed seat-run
+   * intervals only for legacy rounds that predate the ledger.
+   */
+  roundWallMsById?: Record<string, number>
   updatedAt?: string
   /**
    * 1.0.4-AF — opt-in "self-reflective" mode. When true, the ensemble
@@ -4661,12 +4667,14 @@ export interface ChatListItem extends ChatRecord {
   messageCount: number
   runCount: number
   /**
-   * Union of this thread's COMPLETED run intervals, in milliseconds — thread
-   * wall time with concurrent Ensemble seats counted once.
+   * Completed thread wall time in milliseconds. Solo and legacy records use
+   * the union of completed run intervals. Current Ensemble records use exact
+   * whole-round durations, including preparation and handoffs, with concurrent
+   * seats counted once.
    *
-   * Stamped by every projection that strips `runs`, from the array it is
-   * stripping, exactly the way `runCount` is. Without it the composer's TOTAL
-   * THREAD timecode has nothing to measure on a summary row and paints
+   * Stamped by every projection before it strips `runs` and the compact round
+   * timing ledger, exactly the way `runCount` is. Without it the composer's
+   * TOTAL THREAD timecode has nothing to measure on a summary row and paints
    * 00:00:00:00 over a thread with hours of history
    * (`resolveCumulativeRunBaseMs`). Optional because rows projected before the
    * field existed carry no value — consumers treat `undefined` as unknown and

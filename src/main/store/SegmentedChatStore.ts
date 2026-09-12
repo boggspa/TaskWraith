@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import {
   applyChatRecordMutation,
   CHAT_RECORD_MUTATION_FORMAT,
+  CHAT_RECORD_MUTATION_OPERATION_TYPES,
   CHAT_RECORD_MUTATION_VERSION,
   deriveChatRecordMutationWithProjection,
   type AuthoredChatTranscriptMutation,
@@ -64,18 +65,7 @@ const DEFAULT_MAX_SEGMENT_ENTRIES = 4_096
 const DEFAULT_MAX_SEGMENT_READ_BYTES = 256 * 1024 * 1024
 const DEFAULT_IDLE_COMPACTION_MS = 15_000
 const CHAT_ID_PATTERN = /^[A-Za-z0-9_-]{1,256}$/
-const MUTATION_OPERATION_TYPES = new Set<ChatRecordMutationOperation['type']>([
-  'record_patch',
-  'messages_splice',
-  'message_content_append',
-  'message_put',
-  'message_patch',
-  'tool_activities_presence',
-  'tool_activities_splice',
-  'tool_activity_put',
-  'runs_splice',
-  'run_put'
-])
+const MUTATION_OPERATION_TYPES = new Set(Object.keys(CHAT_RECORD_MUTATION_OPERATION_TYPES))
 
 /** Off unless `TASKWRAITH_CHAT_STORE_V2=1` (ADR §11.4 — default off). */
 export function isSegmentedChatStoreEnabled(env: NodeJS.ProcessEnv = process.env): boolean {

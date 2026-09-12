@@ -97,15 +97,19 @@ export function demoteChatToSummary(chat: ChatRecord): ChatListItem {
   const messageCount = Array.isArray(chat.messages) ? chat.messages.length : 0
   const runCount = Array.isArray(chat.runs) ? chat.runs.length : 0
   const lastRun = runCount > 0 ? (chat.runs as ChatRun[])[runCount - 1] : undefined
-  const { messages: _messages, runs: _runs, ...chrome } = chat
+  const { messages: _messages, runs: _runs, ensemble: sourceEnsemble, ...chrome } = chat
+  const ensemble = sourceEnsemble
+    ? (({ roundWallMsById: _roundWallMsById, ...rest }) => rest)(sourceEnsemble)
+    : undefined
   return {
     ...chrome,
+    ...(ensemble ? { ensemble } : {}),
     messages: [],
     runs: [],
     summaryOnly: true,
     messageCount,
     runCount,
-    runWallMs: projectThreadRunWallMs(chat.runs),
+    runWallMs: projectThreadRunWallMs(chat.runs, chat.ensemble),
     ...(lastRun ? { lastRun } : {})
   }
 }

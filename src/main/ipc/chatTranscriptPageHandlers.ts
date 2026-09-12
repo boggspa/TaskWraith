@@ -84,16 +84,20 @@ function parseTranscriptPageRequest(input: unknown): TranscriptPageRequest | nul
 function buildChatShell(chat: ChatRecord): ChatShell {
   const messages = Array.isArray(chat.messages) ? chat.messages : []
   const runs = Array.isArray(chat.runs) ? chat.runs : []
-  const { messages: _messages, runs: _runs, ...chrome } = chat
+  const { messages: _messages, runs: _runs, ensemble: sourceEnsemble, ...chrome } = chat
+  const ensemble = sourceEnsemble
+    ? (({ roundWallMsById: _roundWallMsById, ...rest }) => rest)(sourceEnsemble)
+    : undefined
   const lastRun = runs.length > 0 ? runs[runs.length - 1] : undefined
   return {
     ...chrome,
+    ...(ensemble ? { ensemble } : {}),
     messages: [],
     runs: [],
     summaryOnly: true,
     messageCount: messages.length,
     runCount: runs.length,
-    runWallMs: projectThreadRunWallMs(runs),
+    runWallMs: projectThreadRunWallMs(runs, chat.ensemble),
     ...(lastRun ? { lastRun } : {}),
     transcriptPaged: true
   }

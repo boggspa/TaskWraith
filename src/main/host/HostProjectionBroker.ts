@@ -17,7 +17,7 @@ import {
   TASKWRAITH_DESKTOP_HOST_CAPABILITIES,
   TASKWRAITH_DESKTOP_HOST_CLIENT_ID
 } from '../../shared/hostProtocol'
-import { HostProjectionClient } from './HostProjectionClient'
+import { HostProjectionClient, HostProjectionTransportError } from './HostProjectionClient'
 
 export type HostProjectionSnapshotResult =
   | { readonly ok: true; readonly snapshot: HostSnapshot }
@@ -37,6 +37,8 @@ export type HostProjectionReceiptLookupResult =
 
 /** The narrow slice of HostProjectionClient used by the Desktop broker. */
 export interface HostProjectionClientPort {
+  /** Authenticated socket liveness after connect; absent legacy fakes fail closed. */
+  readonly connected?: boolean
   connect(): Promise<unknown>
   getSnapshot(): Promise<{ snapshot: HostSnapshot }>
   getDeltasSince(position: HostCursorPosition): Promise<{ result: HostDeltasSinceResult }>
@@ -146,7 +148,17 @@ export function createHostProjectionBroker(
     }
   }
 
-  const discardClient = (): void => {
+  const discardClient = (expected?: {
+    readonly client: HostProjectionClientPort
+    readonly epoch: number
+  }): void => {
+    if (
+      expected &&
+      (expected.epoch !== connectionEpoch ||
+        (client !== expected.client && connectingClient !== expected.client))
+    ) {
+      return
+    }
     const previous = client
     const pending = connectingClient
     connectionEpoch += 1
@@ -191,11 +203,21 @@ export function createHostProjectionBroker(
   const withClient = async <T>(
     run: (active: HostProjectionClientPort) => Promise<T>
   ): Promise<{ ok: true; value: T } | { ok: false; error: string }> => {
+    let lease: { readonly client: HostProjectionClientPort; readonly epoch: number } | undefined
     try {
       const active = await ensureClient()
+      lease = { client: active, epoch: connectionEpoch }
       return { ok: true, value: await run(active) }
     } catch (error) {
-      discardClient()
+      // A body-free Host error is scoped to one request. When the exact
+      // authenticated client remains connected, closing it would reject every
+      // unrelated sibling and turn one valid refusal into connection churn.
+      // Generic errors and typed errors observed after disconnect still evict
+      // this exact lease. The epoch/client guard prevents a late rejection
+      // from an older client from closing a replacement that already connected.
+      const reusableRequestFailure =
+        lease?.client.connected === true && error instanceof HostProjectionTransportError
+      if (lease && !reusableRequestFailure) discardClient(lease)
       return { ok: false, error: errorText(error) }
     }
   }

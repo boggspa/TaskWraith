@@ -8,7 +8,7 @@ import {
   type ChatUpdateProducerState,
   type ChatUpdateRecord
 } from '../../shared/chatUpdateTransport'
-import type { DerivedChatRecordMutation } from './ChatRecordMutation'
+import type { ChatRecordMutationOperation, DerivedChatRecordMutation } from './ChatRecordMutation'
 import type { ChatRecord } from './types'
 
 interface TrackedProjection {
@@ -59,6 +59,34 @@ function cloneState(state: ChatUpdateProducerState): ChatUpdateProducerState {
   return { ...state }
 }
 
+/** Every durable operation must declare its transport metadata family too. */
+function mutationProjectionFamily(
+  operation: ChatRecordMutationOperation
+): 'record' | 'runs' | 'ensemble' | 'messages' {
+  switch (operation.type) {
+    case 'record_patch':
+      return 'record'
+    case 'run_put':
+    case 'runs_splice':
+      return 'runs'
+    case 'ensemble_patch':
+    case 'ensemble_participant_patch':
+      return 'ensemble'
+    case 'messages_splice':
+    case 'message_content_append':
+    case 'message_put':
+    case 'message_patch':
+    case 'tool_activities_presence':
+    case 'tool_activities_splice':
+    case 'tool_activity_put':
+      return 'messages'
+    default: {
+      const unsupported: never = operation
+      throw new Error(`Unsupported projection operation: ${String(unsupported)}`)
+    }
+  }
+}
+
 function recordDeltaFromMutation(
   after: ChatRecord,
   derived: DerivedChatRecordMutation
@@ -87,10 +115,16 @@ function recordDeltaFromMutation(
       }
       continue
     }
-    if (operation.type === 'runs_splice' || operation.type === 'run_put') {
+    const family = mutationProjectionFamily(operation)
+    if (family === 'runs') {
       touch('runs')
       recordDelta.runs = after.runs
       recordCleared.delete('runs')
+    }
+    if (family === 'ensemble') {
+      touch('ensemble')
+      recordDelta.ensemble = after.ensemble
+      recordCleared.delete('ensemble')
     }
   }
 
@@ -201,19 +235,17 @@ export class ChatUpdateProjectionTracker {
       }
 
       const recordOperations = derived.batch.operations.filter(
-        (operation) =>
-          operation.type === 'record_patch' ||
-          operation.type === 'runs_splice' ||
-          operation.type === 'run_put'
+        (operation) => mutationProjectionFamily(operation) !== 'messages'
       )
       const runOperations = derived.batch.operations.filter(
-        (operation) => operation.type === 'runs_splice' || operation.type === 'run_put'
+        (operation) => mutationProjectionFamily(operation) === 'runs'
       )
       const ensembleOperations = derived.batch.operations.filter(
         (operation) =>
-          operation.type === 'record_patch' &&
-          (Object.prototype.hasOwnProperty.call(operation.set, 'ensemble') ||
-            operation.clear.includes('ensemble'))
+          mutationProjectionFamily(operation) === 'ensemble' ||
+          (operation.type === 'record_patch' &&
+            (Object.prototype.hasOwnProperty.call(operation.set, 'ensemble') ||
+              operation.clear.includes('ensemble')))
       )
       const state: ChatUpdateProducerState = {
         chatId: after.appChatId,
@@ -358,8 +390,19 @@ export class ChatUpdateProjectionTracker {
           }
           break
         }
-        default:
+        // These operations preserve the tracked identities/counts and the
+        // coarse per-run/ensemble estimate. Their hashes are handled above.
+        case 'run_put':
+        case 'ensemble_patch':
+        case 'ensemble_participant_patch':
+        case 'tool_activities_presence':
+        case 'tool_activities_splice':
+        case 'tool_activity_put':
           break
+        default: {
+          const unsupported: never = operation
+          throw new Error(`Unsupported tracked operation: ${String(unsupported)}`)
+        }
       }
     }
   }

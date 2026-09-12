@@ -116,6 +116,7 @@ function cloneStartingEnsemble(source: EnsembleConfig, now: number): EnsembleCon
     escalationSignals: _dropEscalationSignals,
     lastRoundSummary: _dropLastSummary,
     roundSummaries: _dropRoundSummaries,
+    roundWallMsById: _dropRoundWallMsById,
     sessionActivityLedger: _dropActivityLedger,
     updatedAt: _dropUpdatedAt,
     wakeups: _dropWakeups,

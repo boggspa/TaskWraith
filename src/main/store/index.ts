@@ -515,6 +515,7 @@ function cloneEnsembleForSideChat(parent: ChatRecord, provider: ProviderId) {
     workSession: undefined,
     lastRoundSummary: undefined,
     roundSummaries: undefined,
+    roundWallMsById: undefined,
     wakeups: undefined,
     blackboard: undefined,
     escalationSignals: undefined,
@@ -3330,6 +3331,7 @@ function chatContainsTruncatableHistory(chat: ChatRecord): boolean {
     ensemble?.bossmanControlState ||
     ensemble?.lastRoundSummary ||
     ensemble?.roundSummaries ||
+    ensemble?.roundWallMsById ||
     ensemble?.wakeups ||
     ensemble?.blackboard ||
     ensemble?.escalationSignals ||
@@ -5666,7 +5668,7 @@ export class AppStore {
       summaryOnly: true,
       messageCount: messages.length,
       runCount: runs.length,
-      runWallMs: projectThreadRunWallMs(runs),
+      runWallMs: projectThreadRunWallMs(runs, ensemble),
       ensembleWakeupCount: countPersistedEnsembleWakeups(ensemble),
       soloWakeupCount: countPendingSoloWakeups(normalizedChat.soloWakeups),
       runsSummary: runs.filter((run) => run?.runId).map((run) => this.summarizeRunForChatList(run)),
@@ -5707,15 +5709,16 @@ export class AppStore {
 
   /** The lean ensemble a chat-list row carries.
    *
-   *  Drops the four sub-blobs that make an entry fat and that no list surface
-   *  reads — seat instructions, round summaries, the blackboard and the
-   *  activity ledger — while keeping activeRound, seat roles/providers and
-   *  escalationSignals so sidebar rows still render. Measured on a 15-seat
+   *  Drops the history-only sub-blobs that make an entry fat and that no list
+   *  surface reads — seat instructions, round summaries/timings, the blackboard
+   *  and the activity ledger — while keeping activeRound, seat roles/providers
+   *  and escalationSignals so sidebar rows still render. Measured on a 15-seat
    *  round: 111 KB -> 3 KB, i.e. 97.3% of the saving of dropping it outright,
    *  without blanking the Ensembles list. */
   static toChatListEnsembleProjection(ensemble: EnsembleConfig): EnsembleConfig {
     const {
       roundSummaries: _roundSummaries,
+      roundWallMsById: _roundWallMsById,
       blackboard: _blackboard,
       blackboardTombstones: _blackboardTombstones,
       wakeups: _wakeups,
@@ -9449,6 +9452,7 @@ export class AppStore {
             bossmanControlState: _dropBossControl,
             lastRoundSummary: _dropLastSummary,
             roundSummaries: _dropRoundSummaries,
+            roundWallMsById: _dropRoundWallMsById,
             wakeups: _dropWakeups,
             blackboard: _dropBlackboard,
             escalationSignals: _dropEscalations,

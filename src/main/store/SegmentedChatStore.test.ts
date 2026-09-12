@@ -159,6 +159,60 @@ describe('SegmentedChatStore', () => {
     expect(stats.readMisses).toBe(0)
   })
 
+  it('appends, reopens, and checkpoints compact ensemble operations', () => {
+    const { store, baseDir } = makeStore()
+    const before: ChatRecord = {
+      ...durableChat('chat-ensemble-ops', 1, ['m1']),
+      chatKind: 'ensemble',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 1,
+        maxContinuationHops: 6,
+        participants: [
+          {
+            id: 'seat-1',
+            provider: 'kimi',
+            enabled: true,
+            role: 'Worker',
+            order: 1,
+            instructions: ''
+          }
+        ]
+      }
+    }
+    const after: ChatRecord = {
+      ...before,
+      persistenceRevision: 2,
+      ensemble: {
+        ...before.ensemble!,
+        maxContinuationHops: 12,
+        participants: before.ensemble!.participants.map((participant) => ({
+          ...participant,
+          linkedProviderSessionId: 'persisted-seat-session'
+        }))
+      }
+    }
+
+    expect(store.mirrorSave(null, before)).toEqual({ seeded: true, mutationBytes: 0 })
+    expect(
+      store.mirrorSave(before, after, {
+        operations: [],
+        transcriptOps: [],
+        changedMessageCount: 0
+      })
+    ).toMatchObject({ seeded: false })
+
+    const reopen = (): SegmentedChatStore =>
+      createSegmentedChatStore(baseDir, {
+        enabled: () => true,
+        canWrite: () => true,
+        canRepairOnRead: () => true
+      })
+    expect(reopen().readFull(before.appChatId)?.record).toEqual(after)
+    expect(reopen().checkpoint(before.appChatId)).toBe(true)
+    expect(reopen().readFull(before.appChatId)?.record).toEqual(after)
+  })
+
   it('rotates segments at the entry bound and keeps full-history assembly exact', () => {
     const { store, baseDir } = makeStore({ maxSegmentEntries: 3 })
     let prev = durableChat('chat-rotate', 1, ['m1'])
