@@ -633,6 +633,7 @@ const hostChatCompatibility = (): HostChatCompatibilityPersistence => {
 let deferredHostMaterialization: DeferredHostMaterialization | null = null
 const deferredHostMaterialize = (): DeferredHostMaterialization => {
   if (!deferredHostMaterialization) {
+    const envDelay = Number(process.env.TASKWRAITH_DEFERRED_MATERIALIZE_DELAY_MS)
     deferredHostMaterialization = new DeferredHostMaterialization({
       // One trailing flush carries BOTH deferred large-record writes: the
       // journal checkpoint (replay bound) and the Host compatibility
@@ -646,7 +647,8 @@ const deferredHostMaterialize = (): DeferredHostMaterialization => {
         }
         return materializeHostChatCompatibility(chatId)
       },
-      isDeleted: (chatId) => deletedChatIds.has(chatId)
+      isDeleted: (chatId) => deletedChatIds.has(chatId),
+      ...(Number.isFinite(envDelay) && envDelay >= 0 ? { delayMs: Math.floor(envDelay) } : {})
     })
   }
   return deferredHostMaterialization
