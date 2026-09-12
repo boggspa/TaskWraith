@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   lstatSync,
   mkdtempSync,
   mkdirSync,
@@ -61,6 +62,28 @@ afterEach(() => {
 })
 
 describe('HostProfileDomainStore', () => {
+  it('creates complete empty records and preserves their shape through kind changes', () => {
+    const { store, workspace, profile } = open()
+    const registered = store.registerWorkspace({ path: workspace, displayName: 'Workspace' })
+    const created = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    expect(created).toMatchObject({ createdAt: 100, messages: [], runs: [] })
+    const file = join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${created.appChatId}.json`)
+    const legacy = { ...JSON.parse(readFileSync(file, 'utf8')), provider: 'codex' }
+    delete legacy.runs
+    delete legacy.createdAt
+    writeFileSync(file, JSON.stringify(legacy))
+    expect(store.getThread(created.appChatId)).toMatchObject({ createdAt: 0, runs: [] })
+    const ensemble = store.setThreadKind({ threadId: created.appChatId, targetKind: 'ensemble' })
+    expect(ensemble).toMatchObject({ chatKind: 'ensemble', messages: [], runs: [], createdAt: 0 })
+    const solo = store.setThreadKind({
+      threadId: created.appChatId,
+      targetKind: 'single',
+      canonicalProviderId: 'codex'
+    })
+    expect(solo).toMatchObject({ chatKind: 'single', messages: [], runs: [], createdAt: 0 })
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ runs: [], createdAt: 0 })
+  })
+
   it('tightens a legacy process-umask chats directory to owner-only during Host takeover', () => {
     const profile = mkdtempSync(join(tmpdir(), 'host-profile-domain-legacy-mode-'))
     profiles.push(profile)
@@ -1570,6 +1593,44 @@ describe('HostProfileDomainStore verified-transfer adoption', () => {
     const verified = verifyHostThreadRecordTransfer({ profilePath: profile, descriptor })
     return { descriptor, verified, record: decodeHostThreadRecordTransferBody(verified.body) }
   }
+
+  it.each([{ missingFields: ['runs', 'createdAt'] }, { missingFields: ['scope', 'archived'] }])(
+    'materializes normalized legacy fields $missingFields instead of adopting incomplete artifact bytes',
+    ({ missingFields }) => {
+      const { profile, store } = open()
+      const thread = store.createThread({ scope: 'global', title: 'Legacy draft' })
+      const legacy = { ...thread, persistenceRevision: 1 } as Record<string, unknown>
+      for (const field of missingFields) delete legacy[field]
+      const transfer = publishTransfer(profile, 'legacy-shape-transfer', legacy)
+      const persisted = store.persistThreadRecord({
+        threadId: thread.appChatId,
+        record: transfer.record,
+        expectedRevision: 0,
+        verifiedTransfer: {
+          path: transfer.verified.path,
+          identity: transfer.verified.identity,
+          byteLength: transfer.descriptor.byteLength
+        }
+      })
+      const durable = JSON.parse(
+        readFileSync(
+          join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${thread.appChatId}.json`),
+          'utf8'
+        )
+      )
+      const expected = {
+        scope: 'global',
+        archived: false,
+        messages: [],
+        runs: [],
+        createdAt: missingFields.includes('createdAt') ? 0 : thread.createdAt
+      }
+      expect(persisted).toMatchObject(expected)
+      expect(durable).toMatchObject(expected)
+      // The normal write leaves the transfer for the caller's usual cleanup.
+      expect(existsSync(transfer.verified.path)).toBe(true)
+    }
+  )
 
   it('adopts the verified artifact bytes for a stamped-ahead persist instead of re-serializing', () => {
     const { profile, store } = open()

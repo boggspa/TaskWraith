@@ -22,6 +22,23 @@ export function normalizeCatalogueChatRecord(
   runtimeInstanceId?: string
 ): ChatRecord {
   chat = stripExternalProviderThreadImportContinuity(chat)
+  if (!Array.isArray(chat.messages)) {
+    throw new Error('Invalid chat messages: expected an array')
+  }
+  if (chat.runs !== undefined && !Array.isArray(chat.runs)) {
+    throw new Error('Invalid chat runs: expected an array')
+  }
+  // Host/TUI drafts historically omitted runs and creation time. The Desktop
+  // full-record contract requires arrays even before the first run. Keep an
+  // unknown historical creation time at zero rather than inventing one.
+  const requiredFields = {
+    messages: chat.messages,
+    runs: chat.runs ?? [],
+    createdAt:
+      typeof chat.createdAt === 'number' && Number.isFinite(chat.createdAt) && chat.createdAt >= 0
+        ? chat.createdAt
+        : 0
+  }
   const scope = chat.scope === 'global' ? 'global' : 'workspace'
   const chatKind = chat.chatKind === 'ensemble' ? 'ensemble' : 'single'
   const workflowMode = normalizeChatWorkflowMode(chat.workflowMode)
@@ -109,6 +126,7 @@ export function normalizeCatalogueChatRecord(
     const { workspaceId: _workspaceId, workspacePath: _workspacePath, ...rest } = chat
     return {
       ...rest,
+      ...requiredFields,
       scope,
       chatKind,
       parentChatRelation,
@@ -121,6 +139,7 @@ export function normalizeCatalogueChatRecord(
   }
   return {
     ...chat,
+    ...requiredFields,
     scope,
     chatKind,
     parentChatRelation,

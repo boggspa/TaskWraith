@@ -10,6 +10,94 @@ afterEach(() => {
   for (const profile of profiles.splice(0)) rmSync(profile, { recursive: true, force: true })
 })
 
+it('routes an old Host/TUI draft through Desktop mode changes as a complete record', async () => {
+  const profilePath = mkdtempSync(join(tmpdir(), 'taskwraith-host-draft-shape-'))
+  profiles.push(profilePath)
+  vi.resetModules()
+  const { configureHostStoreRuntime, resetHostStoreRuntimeForTests } =
+    await import('../host-runtime/HostStoreRuntime')
+  resetHostStoreRuntimeForTests()
+  configureHostStoreRuntime({
+    profilePath,
+    secureStorage: {
+      isEncryptionAvailable: () => true,
+      encryptString: (plain) => Buffer.from(plain),
+      decryptString: (encrypted) => encrypted.toString()
+    }
+  })
+  const { AppStore } = await import('./store')
+  const { legacyStoreWriterGate } = await import('./store/LegacyStoreWriterGate')
+  expect(legacyStoreWriterGate.beginDrain()).toBe(true)
+  expect(
+    legacyStoreWriterGate.markHostOwned({ hostId: 'host', generation: 1, cutoverId: 'cutover' })
+  ).toBe(true)
+  AppStore.setHostThreadRecordPersistPortForTests({
+    persist: vi.fn(),
+    enqueue: vi.fn(),
+    drain: vi.fn(async () => {}),
+    drainAll: vi.fn(async () => {}),
+    pending: () => 0
+  })
+  const { ChatUpdateDeliveryCoordinator } = await import('./ChatUpdateDeliveryCoordinator')
+  const { ChatUpdateInterestRouter } = await import('./ChatUpdateInterestRouter')
+  const { catalogueChatListItem } = await import('./store/ThreadCatalogueMirror')
+  const { projectHostCatalogueThread } = await import('../host-node/ThreadCatalogueHostMirror')
+  const legacy = {
+    appChatId: 'legacy-host-draft',
+    scope: 'workspace' as const,
+    workspaceId: 'workspace-1',
+    workspacePath: '/workspace',
+    provider: 'codex',
+    title: 'New Chat',
+    archived: false,
+    messages: [],
+    updatedAt: 100,
+    persistenceRevision: 1
+  }
+  mkdirSync(join(profilePath, 'chats'), { recursive: true })
+  writeFileSync(join(profilePath, 'chats', `${legacy.appChatId}.json`), JSON.stringify(legacy))
+  const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+  const router = new ChatUpdateInterestRouter({ delivery: coordinator, store: AppStore })
+  const deliveries: ChatUpdateDelivery[] = []
+  const sink = {
+    id: 1,
+    isDestroyed: () => false,
+    send: (_: string, value: unknown) =>
+      deliveries.push(structuredClone(value) as ChatUpdateDelivery)
+  }
+  router.replaceTargetSnapshot(sink.id, {
+    protocolVersion: 1,
+    entries: [{ chatId: legacy.appChatId, mode: 'full' }]
+  })
+  try {
+    const summary = catalogueChatListItem(projectHostCatalogueThread(legacy))
+    // The exact startup catalogue callback from the crash: a correct summary
+    // resolves an old Host-native file through the real Desktop store.
+    expect(() => router.enqueue(sink, summary)).not.toThrow()
+    const delivered = deliveries[0]
+    expect(delivered.kind).toBe('snapshot')
+    if (delivered.kind !== 'snapshot') throw new Error('Expected snapshot')
+    expect(delivered.chat).toMatchObject({ messages: [], runs: [], createdAt: 0 })
+    const enabled = AppStore.setChatKind(legacy.appChatId, 'ensemble', {
+      seedParticipant: {
+        id: 'seat-1',
+        provider: 'codex',
+        enabled: true,
+        role: 'Worker',
+        order: 1,
+        instructions: ''
+      }
+    })
+    expect(enabled).toMatchObject({ chatKind: 'ensemble', messages: [], runs: [] })
+    const disabled = AppStore.setChatKind(legacy.appChatId, 'single', {
+      canonicalProvider: 'codex'
+    })
+    expect(disabled).toMatchObject({ chatKind: 'single', messages: [], runs: [] })
+  } finally {
+    coordinator.clearTarget(sink.id)
+  }
+}, 30_000)
+
 it.each([false, true])(
   'keeps full delivery intact across a catalogue/paged shell (paged=%s)',
   async (paged) => {

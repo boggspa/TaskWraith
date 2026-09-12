@@ -146,6 +146,12 @@ export interface HostProfileThread {
   readonly [key: string]: unknown
 }
 
+/** Complete store output; legacy/import DTOs may still omit these fields. */
+export type CanonicalHostProfileThread = HostProfileThread & {
+  readonly runs: readonly HostProfileRun[]
+  readonly createdAt: number
+}
+
 export interface HostProfileMessage {
   readonly id: string
   /** Exact provider-run identity when the message was produced by a Host run. */
@@ -726,7 +732,7 @@ function decodeMessage(value: unknown): HostProfileMessage {
   return item as unknown as HostProfileMessage
 }
 
-function decodeThread(value: unknown): HostProfileThread {
+function decodeThread(value: unknown): CanonicalHostProfileThread {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Invalid profile chat')
   const item = value as Record<string, unknown>
@@ -791,14 +797,20 @@ function decodeThread(value: unknown): HostProfileThread {
   return {
     ...item,
     appChatId: item.appChatId,
+    title: item.title,
     scope,
     archived: item.archived === true,
     messages: item.messages as HostProfileMessage[],
+    runs: (item.runs ?? []) as HostProfileRun[],
+    createdAt:
+      typeof item.createdAt === 'number' && Number.isFinite(item.createdAt) && item.createdAt >= 0
+        ? item.createdAt
+        : 0,
     updatedAt: item.updatedAt as number,
     ...(Number.isSafeInteger(item.persistenceRevision) && (item.persistenceRevision as number) >= 0
       ? { persistenceRevision: item.persistenceRevision as number }
       : {})
-  } as unknown as HostProfileThread
+  }
 }
 
 export class HostProfileDomainStore {
@@ -1020,12 +1032,12 @@ export class HostProfileDomainStore {
     scope: 'global' | 'workspace'
     workspaceId?: string
     title?: string
-  }): HostProfileThread {
+  }): CanonicalHostProfileThread {
     this.assertAuthority()
     const scope = input?.scope
     if (scope !== 'global' && scope !== 'workspace') throw new Error('Invalid thread scope')
     const now = this.now()
-    const record: HostProfileThread = {
+    const record: CanonicalHostProfileThread = {
       appChatId: this.newId(),
       scope,
       ...(scope === 'workspace' ? this.workspaceThreadFields(input.workspaceId) : {}),
@@ -1038,6 +1050,8 @@ export class HostProfileDomainStore {
       threadTitle: { source: input.title === undefined ? 'placeholder' : 'user' },
       archived: false,
       messages: [],
+      runs: [],
+      createdAt: now,
       persistenceRevision: 0,
       updatedAt: now
     }
@@ -1045,7 +1059,7 @@ export class HostProfileDomainStore {
     return record
   }
 
-  getThread(threadId: string): HostProfileThread | null {
+  getThread(threadId: string): CanonicalHostProfileThread | null {
     this.assertAuthority()
     this.requireId(threadId)
     this.threadRecordDiskReadCount += 1
@@ -1441,7 +1455,7 @@ export class HostProfileDomainStore {
       }
       workflowMode = posture.workflowMode
     }
-    const next: HostProfileThread = {
+    const next: CanonicalHostProfileThread = {
       ...current,
       ...(input.title !== undefined ? { title: this.requireText(input.title, 200) } : {}),
       ...(input.title !== undefined ? { threadTitle: { source: 'user' as const } } : {}),
@@ -1519,7 +1533,7 @@ export class HostProfileDomainStore {
         taskWraithMcpProfileReceipt: _dropMcpProfileReceipt,
         ...withoutEnsemble
       } = current
-      const next: HostProfileThread = {
+      const next: CanonicalHostProfileThread = {
         ...withoutEnsemble,
         chatKind: 'single',
         provider: canonicalProviderId,
@@ -1649,7 +1663,7 @@ export class HostProfileDomainStore {
       }
     }
     const { stashedEnsemble: _consumeStash, ...remainingMetadata } = currentMetadata
-    const next: HostProfileThread = {
+    const next: CanonicalHostProfileThread = {
       ...current,
       chatKind: 'ensemble',
       ensemble,
@@ -1800,7 +1814,7 @@ export class HostProfileDomainStore {
     }
     const adopted = this.tryAdoptVerifiedTransfer(input, decoded, persistenceRevision)
     if (adopted) return adopted
-    const next: HostProfileThread = {
+    const next: CanonicalHostProfileThread = {
       ...decoded,
       persistenceRevision,
       updatedAt: this.now()
@@ -1823,15 +1837,25 @@ export class HostProfileDomainStore {
     input: {
       threadId: string
       expectedRevision: number
+      record: unknown
       verifiedTransfer?: { path: string; identity: HostThreadRecordTransferIdentity; byteLength: number }
     },
-    decoded: HostProfileThread,
+    decoded: CanonicalHostProfileThread,
     persistenceRevision: number
-  ): HostProfileThread | null {
+  ): CanonicalHostProfileThread | null {
     const transfer = input.verifiedTransfer
     if (!transfer) return null
     if (transfer.byteLength > MAX_CHAT_BYTES) return null
     if (peopleDonorMutationOwned(this.profilePath)) return null
+    // Adoption publishes the original bytes. A legacy input repaired by the
+    // decoder needs a normal write so the durable file gets those fields too.
+    const source = input.record as Partial<CanonicalHostProfileThread>
+    if (
+      source.runs === undefined ||
+      source.createdAt !== decoded.createdAt ||
+      source.scope !== decoded.scope ||
+      source.archived !== decoded.archived
+    ) return null
     const incomingRevision = decoded.persistenceRevision
     if (
       typeof incomingRevision !== 'number' ||
@@ -1842,7 +1866,7 @@ export class HostProfileDomainStore {
     ) {
       return null
     }
-    const published: HostProfileThread = { ...decoded, persistenceRevision }
+    const published: CanonicalHostProfileThread = { ...decoded, persistenceRevision }
     const publication = this.beginThreadPublication?.(published)
     try {
       if (
@@ -2286,13 +2310,13 @@ export class HostProfileDomainStore {
     return { workspaceId: workspace.id, workspacePath: workspace.realPath }
   }
 
-  private requireThread(threadId: string): HostProfileThread {
+  private requireThread(threadId: string): CanonicalHostProfileThread {
     const thread = this.getThread(threadId)
     if (!thread) throw new Error('Thread is not found')
     return thread
   }
 
-  private writeThread(thread: HostProfileThread): void {
+  private writeThread(thread: CanonicalHostProfileThread): void {
     this.assertAuthority()
     this.requireId(thread.appChatId)
     if (peopleDonorMutationOwned(this.profilePath))
