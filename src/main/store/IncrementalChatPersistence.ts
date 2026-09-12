@@ -28,6 +28,7 @@ export interface IncrementalChatPersistenceStats {
   parityMatches: number
   parityMismatches: number
   terminalCheckpoints: number
+  terminalCheckpointsDeferred: number
   idleCheckpoints: number
   shutdownCheckpoints: number
   failures: number
@@ -39,16 +40,36 @@ export interface IncrementalChatPersistResult {
   mutationBytes: number
   checkpointed: boolean
   parityVerified: boolean | null
+  /**
+   * Terminal-boundary full checkpoint (and its replay-parity check) deferred
+   * to the trailing idle flush. The mutation append is already durable; only
+   * replay-bounding moved. Present only when the caller asked to defer.
+   */
+  terminalCheckpointDeferred?: boolean
   /** Exact durable mutation plus renderer ops, derived once at the producer seam. */
   derived: DerivedChatRecordMutation | null
 }
+
+export interface IncrementalChatPersistOptions {
+  /** Skip the eager terminal checkpoint+parity for this persist (large records). */
+  deferTerminalCheckpoint?: boolean
+}
+
+/**
+ * Bound on appended batches between full checkpoints while terminal
+ * checkpoints are being deferred. Replay (boot recovery, parity) walks every
+ * batch since the last checkpoint, so an unbounded deferral would make both
+ * linearly slower; at this depth the journal checkpoints eagerly again.
+ */
+export const DEFERRED_TERMINAL_CHECKPOINT_APPEND_CAP = 16
 
 export interface IncrementalChatPersistence {
   persist(
     previous: ChatRecord | null,
     next: ChatRecord,
     boundary: IncrementalChatPersistenceBoundary,
-    authoredTranscript?: AuthoredChatTranscriptMutation
+    authoredTranscript?: AuthoredChatTranscriptMutation,
+    options?: IncrementalChatPersistOptions
   ): IncrementalChatPersistResult
   verify(chatId: string, expected: ChatRecord, repair?: boolean): boolean
   replay(chatId: string): IncrementalChatReplayResult
@@ -57,6 +78,10 @@ export interface IncrementalChatPersistence {
   replaceAuthoritative(chatId: string, record: ChatRecord): void
   checkpointIdle(nowMs?: number): number
   checkpointAll(): number
+  /** Flush one chat's deferred terminal checkpoint. False when nothing is due. */
+  checkpointChat(chatId: string): boolean
+  /** Appended batches since this chat's last checkpoint (deferral depth). */
+  appendsSinceCheckpoint(chatId: string): number
   purge(chatId: string): void
   clear(): void
   stats(): IncrementalChatPersistenceStats
@@ -166,15 +191,25 @@ export function createIncrementalChatPersistence(
   let parityMatches = 0
   let parityMismatches = 0
   let terminalCheckpoints = 0
+  let terminalCheckpointsDeferred = 0
   let idleCheckpoints = 0
   let shutdownCheckpoints = 0
   let failures = 0
+  /** Appended batches since each chat's last full checkpoint (replay depth). */
+  const appendsSinceCheckpointByChatId = new Map<string, number>()
+  const noteAppend = (chatId: string): void => {
+    appendsSinceCheckpointByChatId.set(chatId, (appendsSinceCheckpointByChatId.get(chatId) ?? 0) + 1)
+  }
+  const noteCheckpoint = (chatId: string): void => {
+    appendsSinceCheckpointByChatId.set(chatId, 0)
+  }
 
   const replaceAuthoritative = (chatId: string, record: ChatRecord): void => {
     if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     journal.replaceAuthoritativeCheckpoint(chatId, durableClone(record))
     baselineVerifiedChatIds.add(chatId)
     lastPersistedRevisionByChatId.set(chatId, recordRevision(record))
+    noteCheckpoint(chatId)
     baselineRepairs += 1
   }
 
@@ -235,7 +270,8 @@ export function createIncrementalChatPersistence(
     previous: ChatRecord | null,
     next: ChatRecord,
     boundary: IncrementalChatPersistenceBoundary,
-    authoredTranscript?: AuthoredChatTranscriptMutation
+    authoredTranscript?: AuthoredChatTranscriptMutation,
+    options: IncrementalChatPersistOptions = {}
   ): IncrementalChatPersistResult => {
     if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     try {
@@ -244,6 +280,7 @@ export function createIncrementalChatPersistence(
         journal.initialize(next.appChatId, durableClone(next))
         baselineVerifiedChatIds.add(next.appChatId)
         lastPersistedRevisionByChatId.set(next.appChatId, recordRevision(next))
+        noteCheckpoint(next.appChatId)
         seeds += 1
         const parityVerified = boundary === 'normal' ? null : verify(next.appChatId, next, true)
         return {
@@ -269,12 +306,29 @@ export function createIncrementalChatPersistence(
       mutationBatchesAppended += 1
       mutationBytesAppended += mutationBytes
       lastPersistedRevisionByChatId.set(next.appChatId, batch.revision)
+      noteAppend(next.appChatId)
 
       let checkpointed = false
       let parityVerified: boolean | null = null
       if (boundary === 'terminal') {
+        if (options.deferTerminalCheckpoint) {
+          // The append above is durable; the full checkpoint only bounds
+          // replay, and its parity verify costs a whole-record clone+compare
+          // on large chats. Both ride the trailing idle flush. Depth stays
+          // bounded by DEFERRED_TERMINAL_CHECKPOINT_APPEND_CAP at the caller.
+          terminalCheckpointsDeferred += 1
+          return {
+            seeded: false,
+            mutationBytes,
+            checkpointed: false,
+            parityVerified: null,
+            terminalCheckpointDeferred: true,
+            derived
+          }
+        }
         checkpointed = journal.checkpoint(next.appChatId, 'terminal')
         if (checkpointed) terminalCheckpoints += 1
+        noteCheckpoint(next.appChatId)
         parityVerified = verify(next.appChatId, next, true)
       } else if (boundary === 'approval') {
         // Approval state is already fsynced by append. A bounded parity check
@@ -321,11 +375,34 @@ export function createIncrementalChatPersistence(
     }
   }
 
+  const checkpointChat = (chatId: string): boolean => {
+    if (!canWrite()) return false
+    // Nothing appended since the last checkpoint: a rewrite would burn a full
+    // record write for zero replay-bounding benefit.
+    if ((appendsSinceCheckpointByChatId.get(chatId) ?? 0) === 0) return false
+    try {
+      const checkpointed = journal.checkpoint(chatId, 'idle')
+      if (checkpointed) {
+        noteCheckpoint(chatId)
+        idleCheckpoints += 1
+      }
+      return checkpointed
+    } catch (error) {
+      failures += 1
+      logger.error('[incremental-chat] deferred chat checkpoint failed', error)
+      return false
+    }
+  }
+
+  const appendsSinceCheckpoint = (chatId: string): number =>
+    appendsSinceCheckpointByChatId.get(chatId) ?? 0
+
   const purge = (chatId: string): void => {
     if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     journal.purge(chatId)
     baselineVerifiedChatIds.delete(chatId)
     lastPersistedRevisionByChatId.delete(chatId)
+    appendsSinceCheckpointByChatId.delete(chatId)
   }
 
   const clear = (): void => {
@@ -333,6 +410,7 @@ export function createIncrementalChatPersistence(
     journal.clear()
     baselineVerifiedChatIds.clear()
     lastPersistedRevisionByChatId.clear()
+    appendsSinceCheckpointByChatId.clear()
   }
 
   const stats = (): IncrementalChatPersistenceStats => ({
@@ -346,6 +424,7 @@ export function createIncrementalChatPersistence(
     parityMatches,
     parityMismatches,
     terminalCheckpoints,
+    terminalCheckpointsDeferred,
     idleCheckpoints,
     shutdownCheckpoints,
     failures,
@@ -365,6 +444,8 @@ export function createIncrementalChatPersistence(
     replaceAuthoritative,
     checkpointIdle,
     checkpointAll,
+    checkpointChat,
+    appendsSinceCheckpoint,
     purge,
     clear,
     stats

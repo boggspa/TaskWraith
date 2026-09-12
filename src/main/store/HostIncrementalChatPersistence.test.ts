@@ -651,6 +651,56 @@ describe('Stage 2 — incremental persistence on the Host write path', () => {
   })
 })
 
+describe('Stage 2c — large terminal journal checkpoints defer to the trailing flush', () => {
+  it('keeps the mutation append durable but skips the eager full checkpoint, then lands it on the trailing flush', async () => {
+    process.env.TASKWRAITH_DEFERRED_MATERIALIZE_DELAY_MS = '30'
+    try {
+      const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
+      const chatId = 'chat-large-journal-defer'
+      const previous = durableChat(chatId, 3)
+      previous.messages.push(message('m-big', 'user', 'x'.repeat(5 * 1024 * 1024)))
+      seedDurableChat(profilePath, previous)
+
+      AppStore.saveChat({ ...previous, title: 'Defer my checkpoint' })
+      const stats = AppStore.getIncrementalChatPersistenceStats()
+      // The full-record terminal checkpoint and its replay-parity verify did
+      // NOT run inside saveChat — measured as the bulk of the ~790 ms
+      // main-thread cost on a 27.5 MB thread.
+      expect(stats.terminalCheckpoints).toBe(0)
+      expect(stats.terminalCheckpointsDeferred).toBe(1)
+      // ...while the mutation itself is already durable in the journal.
+      expect(stats.mutationBatchesAppended).toBe(1)
+
+      // The trailing flush carries BOTH deferred writes.
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      const flushed = AppStore.getIncrementalChatPersistenceStats()
+      expect(flushed.idleCheckpoints).toBe(1)
+      expect(enqueued).toHaveLength(1)
+      expect(enqueued[0].chatId).toBe(chatId)
+    } finally {
+      delete process.env.TASKWRAITH_DEFERRED_MATERIALIZE_DELAY_MS
+    }
+  })
+
+  it('resumes eager terminal checkpoints once the deferred append depth cap is reached', async () => {
+    const { AppStore, profilePath } = await importStoreWithHostOwnedGate()
+    const { DEFERRED_TERMINAL_CHECKPOINT_APPEND_CAP } = await import('./IncrementalChatPersistence')
+    const chatId = 'chat-defer-depth-cap'
+    const previous = durableChat(chatId, 3)
+    previous.messages.push(message('m-big', 'user', 'x'.repeat(5 * 1024 * 1024)))
+    seedDurableChat(profilePath, previous)
+    const saves = DEFERRED_TERMINAL_CHECKPOINT_APPEND_CAP + 2
+    let current = previous
+    for (let index = 0; index < saves; index += 1) {
+      current = AppStore.saveChat({ ...current, title: `edit ${index}` })
+    }
+    const stats = AppStore.getIncrementalChatPersistenceStats()
+    expect(stats.terminalCheckpoints).toBeGreaterThan(0)
+    expect(stats.terminalCheckpointsDeferred).toBeLessThan(saves)
+    expect(stats.terminalCheckpoints + stats.terminalCheckpointsDeferred).toBe(saves)
+  })
+})
+
 describe('Stage 2b — large terminal checkpoints defer off the save path', () => {
   it('does not enqueue a large terminal save synchronously; a barrier flushes it', async () => {
     const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()

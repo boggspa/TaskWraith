@@ -71,6 +71,7 @@ import { createChatJournal, type ChatJournalStats } from './chatJournal'
 import { createIncrementalChatJournal } from './IncrementalChatJournal'
 import {
   createIncrementalChatPersistence,
+  DEFERRED_TERMINAL_CHECKPOINT_APPEND_CAP,
   type IncrementalChatPersistenceBoundary,
   type IncrementalChatPersistResult,
   type IncrementalChatPersistenceStats
@@ -106,7 +107,10 @@ import {
 import { observePersistBarrierSpan } from '../perf/persistBarrierSpan'
 import { mainWorkSpanSink } from '../perf/mainWorkSpanSink'
 import { HostChatCompatibilityPersistence } from './HostChatCompatibilityPersistence'
-import { DeferredHostMaterialization } from './hostChatCompatibilityDeferral'
+import {
+  DEFERRED_HOST_MATERIALIZE_MIN_BYTES,
+  DeferredHostMaterialization
+} from './hostChatCompatibilityDeferral'
 import {
   createDesktopHostWorkspaceRecordClient,
   type HostWorkspaceRecordPort
@@ -196,7 +200,8 @@ import {
   MemoryProposalPack,
   MemoryProposal,
   SubThreadJoinPolicy,
-  ContinuationTitleApplyRequest
+  ContinuationTitleApplyRequest,
+  ChatMessage
 } from './types'
 import { canonicalizeExternalPathGrantMetadata } from './ExternalPathGrants'
 import {
@@ -629,7 +634,18 @@ let deferredHostMaterialization: DeferredHostMaterialization | null = null
 const deferredHostMaterialize = (): DeferredHostMaterialization => {
   if (!deferredHostMaterialization) {
     deferredHostMaterialization = new DeferredHostMaterialization({
-      materialize: (chatId) => materializeHostChatCompatibility(chatId),
+      // One trailing flush carries BOTH deferred large-record writes: the
+      // journal checkpoint (replay bound) and the Host compatibility
+      // materialize (external-reader copy). checkpointChat no-ops when the
+      // journal had nothing deferred, so small-chat timer fires stay cheap.
+      materialize: (chatId) => {
+        try {
+          incrementalChatPersistence.checkpointChat(chatId)
+        } catch {
+          // The next save, barrier, or shutdown drain retries the checkpoint.
+        }
+        return materializeHostChatCompatibility(chatId)
+      },
       isDeleted: (chatId) => deletedChatIds.has(chatId)
     })
   }
@@ -1440,7 +1456,8 @@ function persistIncrementalChatForHostSave(
   previous: ChatRecord | null,
   next: ChatRecord,
   reason: FlushReason,
-  authoredTranscript?: AuthoredChatTranscriptMutation
+  authoredTranscript?: AuthoredChatTranscriptMutation,
+  deferTerminalCheckpoint?: boolean
 ): IncrementalChatPersistResult | null {
   // The admitted path owns its own incremental persist; never double-append.
   if (legacyStoreCanWrite()) return null
@@ -1450,7 +1467,8 @@ function persistIncrementalChatForHostSave(
       previous,
       next,
       incrementalPersistenceBoundary(reason),
-      authoredTranscript
+      authoredTranscript,
+      deferTerminalCheckpoint ? { deferTerminalCheckpoint: true } : undefined
     )
   } catch {
     // The caller must immediately materialize the staged Host compatibility
@@ -8089,6 +8107,20 @@ export class AppStore {
       return previousChatForFeedback || normalizedChat
     }
     const flushReason = deriveSaveFlushReason(normalizedChat)
+    // Large terminal saves also skip the journal's eager full checkpoint (and
+    // its whole-record replay-parity verify — measured as the bulk of the
+    // ~790 ms main-thread cost on a 27.5 MB thread). The mutation append stays
+    // synchronous and durable; the checkpoint rides the same trailing flush
+    // as the Host compatibility materialize. Depth stays capped so replay
+    // never walks more than DEFERRED_TERMINAL_CHECKPOINT_APPEND_CAP batches.
+    const existingRecordBytes = fs.statSync(chatPath, { throwIfNoEntry: false })?.size ?? 0
+    const deferTerminalCheckpoint =
+      flushReason === 'terminal' &&
+      previousChatForFeedback !== null &&
+      !preparation.externalizationFailed &&
+      existingRecordBytes >= DEFERRED_HOST_MATERIALIZE_MIN_BYTES &&
+      incrementalChatPersistence.appendsSinceCheckpoint(normalizedChat.appChatId) <
+        DEFERRED_TERMINAL_CHECKPOINT_APPEND_CAP
     // Persist BEFORE staging/materializing the complete Host record. On a D1
     // save this is the only filesystem work: a small mutation append, never a
     // synchronous full-record transfer artifact.
@@ -8096,7 +8128,8 @@ export class AppStore {
       previousChatForFeedback,
       normalizedChat,
       flushReason,
-      preparation.authoredTranscript
+      preparation.authoredTranscript,
+      deferTerminalCheckpoint
     )
     // In-memory projection: this process reads the new record immediately.
     this.rememberChatRecord(normalizedChat.appChatId, {
@@ -8133,7 +8166,7 @@ export class AppStore {
         flushReason === 'terminal'
       const deferred = deferrableTerminal
         ? deferredHostMaterialize().schedule(normalizedChat.appChatId, {
-            existingBytes: fs.statSync(chatPath, { throwIfNoEntry: false })?.size ?? 0,
+            existingBytes: existingRecordBytes,
             flushReason,
             durabilityFallback: incrementalResult === null || preparation.externalizationFailed
           })
