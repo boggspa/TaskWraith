@@ -28,20 +28,23 @@ export class ThreadCatalogueHostRecovery {
       origin: HostCatalogueRunOrigin
     }
   ) {
-    const enqueue = (chatId: string): void => {
-      if (
-        options.mirror.get(chatId)?.sourceComplete === false ||
-        !options.mirror.get(chatId)?.recovery.unsettledRuns ||
-        this.stopped
-      )
-        return
-      this.queued.add(chatId)
-      void this.pump()
-    }
     this.unsubscribe = options.mirror.subscribe((row, id) => {
-      if (row) enqueue(id)
+      if (row) this.enqueue(id)
     })
-    for (const row of options.mirror.projections()) enqueue(row.summary.chatId)
+    for (const row of options.mirror.projections()) this.enqueue(row.summary.chatId)
+  }
+
+  private enqueue(chatId: string): void {
+    const row = this.options.mirror.get(chatId)
+    if (
+      row?.sourceComplete === false ||
+      !row?.recovery.unsettledRuns ||
+      this.stopped ||
+      this.retries.has(chatId)
+    )
+      return
+    this.queued.add(chatId)
+    void this.pump()
   }
 
   private async pump(): Promise<void> {
@@ -52,7 +55,15 @@ export class ThreadCatalogueHostRecovery {
         const id = this.queued.values().next().value!
         this.queued.delete(id)
         if (this.cleanups.has(id)) continue
-        await this.recover(id).catch(() => this.retry(id))
+        try {
+          await this.recover(id)
+        } catch {
+          // Mirror updates can arrive while this request is failing. Remove
+          // that immediate duplicate so this chat observes its cooldown and
+          // unrelated queued chats continue first.
+          this.queued.delete(id)
+          this.retry(id)
+        }
       }
     } finally {
       this.running = false
@@ -61,11 +72,14 @@ export class ThreadCatalogueHostRecovery {
 
   private async recover(chatId: string): Promise<void> {
     const { client, controller, origin } = this.options
-    const opened = await client.query<ThreadCatalogueOpenResult | null>({
-      method: 'open',
-      chatId,
-      mode: 'metadata'
-    })
+    const opened = await client.query<ThreadCatalogueOpenResult | null>(
+      {
+        method: 'open',
+        chatId,
+        mode: 'metadata'
+      },
+      { priority: 'background' }
+    )
     if (!opened) return
     let hold: ThreadCatalogueRecoveryHold | null = null
     try {
@@ -136,10 +150,7 @@ export class ThreadCatalogueHostRecovery {
     if (this.stopped || this.retries.has(id)) return
     const timer = setTimeout(() => {
       this.retries.delete(id)
-      if (this.options.mirror.get(id)?.recovery.unsettledRuns) {
-        this.queued.add(id)
-        void this.pump()
-      }
+      this.enqueue(id)
     }, 2000)
     timer.unref?.()
     this.retries.set(id, timer)
@@ -164,6 +175,8 @@ export class ThreadCatalogueHostRecovery {
     this.queued.clear()
     this.unsubscribe()
     for (const timer of this.retries.values()) clearTimeout(timer)
+    this.retries.clear()
     for (const cleanup of this.cleanups.values()) if (cleanup.timer) clearTimeout(cleanup.timer)
+    this.cleanups.clear()
   }
 }
