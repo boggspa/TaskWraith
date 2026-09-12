@@ -5,6 +5,14 @@ import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const { load } = require('js-yaml') as { load: (source: string) => unknown }
+const { FileMatcher } = require('app-builder-lib/out/fileMatcher') as {
+  FileMatcher: new (
+    from: string,
+    to: string,
+    expand: (pattern: string) => string,
+    patterns: string[]
+  ) => { createFilter(): (file: string, stat: { isDirectory(): boolean }) => boolean }
+}
 
 const REQUIRED_NATIVE_PERMISSION_KEYS = [
   'NSScreenCaptureUsageDescription',
@@ -95,7 +103,7 @@ describe('app.asar denylist', () => {
     ['prototypes/**'],
     ['papercuts/**'],
     ['.githooks/**'],
-    ['test_output.log']
+    ['*.log*']
   ])('keeps %s out of the package', (pattern) => {
     expect(files).toContain(`!${pattern}`)
   })
@@ -121,5 +129,22 @@ describe('app.asar denylist', () => {
   // an app with no icon set.
   it('keeps the load-bearing resources tree bundled', () => {
     expect(files).not.toContain('!resources/**')
+  })
+
+  it('excludes local documentation copies while retaining the built application', () => {
+    const root = process.cwd()
+    const matcher = new FileMatcher(root, join(root, 'dist'), (pattern) => pattern, [
+      '**/*',
+      ...files
+    ])
+    const include = matcher.createFilter()
+    const regularFile = { isDirectory: () => false }
+    expect(include(join(root, 'how-to-copy/how-to/chats-and-threads/README.md'), regularFile)).toBe(
+      false
+    )
+    expect(include(join(root, 'out/main/index.js'), regularFile)).toBe(true)
+    expect(include(join(root, 'out/preload/index.js'), regularFile)).toBe(true)
+    expect(include(join(root, 'out/renderer/index.html'), regularFile)).toBe(true)
+    expect(include(join(root, 'resources/Tools.md'), regularFile)).toBe(true)
   })
 })

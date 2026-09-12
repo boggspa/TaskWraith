@@ -96,6 +96,7 @@ files:
   # gets bundled — keep it exhaustive for non-runtime trees.
   - '!.local-only/**'
   - '!docs/**'
+  - '!how-to-copy/**'
   - '!tests/**'
   - '!scripts/**'
   # The 1.9.9-only, hash-pinned identity payload is installed by afterPack.
