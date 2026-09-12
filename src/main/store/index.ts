@@ -541,6 +541,16 @@ const hostPersistRebaseByChatId = new Map<string, HostPersistRebaseState>()
 const HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT = 3
 let hostPersistConflictRecoveryListener: ((chat: ChatRecord) => void) | null = null
 
+/**
+ * Bounded catalogue-gate wait for `persistChatComposerSelection`. The renderer
+ * protects an optimistic picker commit with a 15 s claim
+ * (COMPOSER_SELECTION_CLAIM_TTL_MS in renderer/lib/composerSelectionWriteClaims)
+ * and a catalogue recovery hold can park the gate for minutes, so an unbounded
+ * wait settles nothing ever and the chip silently reverts. 10 s lands or
+ * visibly fails inside the claim with margin for the IPC and the overlay write.
+ */
+const COMPOSER_SELECTION_GATE_WAIT_BUDGET_MS = 10_000
+
 function noteHostPersistIntent(base: ChatRecord | null, desired: ChatRecord): void {
   const existing = hostPersistRebaseByChatId.get(desired.appChatId)
   if (existing) {
@@ -648,6 +658,10 @@ const deferredHostMaterialize = (): DeferredHostMaterialization => {
         return materializeHostChatCompatibility(chatId)
       },
       isDeleted: (chatId) => deletedChatIds.has(chatId),
+      // A catalogue recovery hold is the one transient false the timer must
+      // out-wait; every other false is a settled outcome (nothing staged, a
+      // submission already in flight, or a delete in progress).
+      retryWhen: (chatId) => threadCatalogueWriteGate.isHeld(chatId),
       ...(Number.isFinite(envDelay) && envDelay >= 0 ? { delayMs: Math.floor(envDelay) } : {})
     })
   }
@@ -1752,6 +1766,48 @@ const RETIRED_SETTINGS_KEYS = ['messageBridgeEnabled', 'messageBridgePollInterva
 function chatPersistenceRevision(chat: Pick<ChatRecord, 'persistenceRevision'> | null): number {
   const revision = chat?.persistenceRevision
   return Number.isSafeInteger(revision) && (revision ?? -1) >= 0 ? (revision as number) : 0
+}
+
+/**
+ * True when `candidate`'s transcript is missing at least one message id that
+ * `reference` carries. Content of shared ids is deliberately not compared: the
+ * shadow-reconcile caller only needs coverage, and a full content walk on every
+ * hot read is the cost this check exists to avoid.
+ */
+function chatRecordMissingTranscriptIds(candidate: ChatRecord, reference: ChatRecord): boolean {
+  const referenceMessages = reference.messages || []
+  if (referenceMessages.length === 0) return false
+  const candidateIds = new Set((candidate.messages || []).map((message) => message.id))
+  return referenceMessages.some((message) => !candidateIds.has(message.id))
+}
+
+/**
+ * Last-resort transcript union for Host CAS conflict recovery when the
+ * three-way rebase cannot be computed. The Desktop record stays authoritative
+ * for every row it knows; rows that are Host-native (absent from both the
+ * Desktop base and the Desktop desired record, e.g. a catalogue-refresh system
+ * row the Host appended) are appended in their durable source order. Rows the
+ * Desktop deliberately removed (present in base, absent from desired) stay
+ * removed — reviving them is the 'revive wiped lane cards' failure. This
+ * mirrors rebaseIdentityArray's identity/tombstone semantics, which is not
+ * exported from ChatRecordMutation.
+ */
+function unionHostLineageTranscriptRows(
+  base: ChatRecord,
+  desired: ChatRecord,
+  source: ChatRecord
+): ChatMessage[] {
+  const merged = [...(desired.messages || [])]
+  const known = new Set(merged.map((message) => message.id))
+  const tombstoned = new Set(
+    (base.messages || []).map((message) => message.id).filter((messageId) => !known.has(messageId))
+  )
+  for (const row of source.messages || []) {
+    if (known.has(row.id) || tombstoned.has(row.id)) continue
+    merged.push(row)
+    known.add(row.id)
+  }
+  return merged
 }
 
 const extensionSecretStore = new ExtensionSecretStore({
@@ -6029,21 +6085,30 @@ export class AppStore {
           if (onDiskRaw) {
             const onDisk = this.normalizeChatRecord(onDiskRaw)
             if (chatPersistenceRevision(onDisk) >= chatPersistenceRevision(cached.record)) {
-              const onDiskRevision = chatPersistenceRevision(onDisk)
-              hostChatCompatibilityPersistence?.acknowledgeRevision(chatId, onDiskRevision)
-              const intent = hostPersistRebaseByChatId.get(chatId)
-              if (intent && onDiskRevision >= chatPersistenceRevision(intent.desired)) {
-                hostPersistRebaseByChatId.delete(chatId)
-                hostPersistUnconfirmedChatIds.delete(chatId)
+              // Revision alone is not coverage: a Host-lineage record that
+              // landed through the stale-save truncation hole can outrank the
+              // shadow while missing transcript rows the shadow carries.
+              // Re-anchoring to it would bless the regression as canon. Keep
+              // serving the shadow until the durable record covers every
+              // message id the cache already projected; the next save's
+              // conflict recovery re-anchors the lineage instead.
+              if (!chatRecordMissingTranscriptIds(onDisk, cached.record)) {
+                const onDiskRevision = chatPersistenceRevision(onDisk)
+                hostChatCompatibilityPersistence?.acknowledgeRevision(chatId, onDiskRevision)
+                const intent = hostPersistRebaseByChatId.get(chatId)
+                if (intent && onDiskRevision >= chatPersistenceRevision(intent.desired)) {
+                  hostPersistRebaseByChatId.delete(chatId)
+                  hostPersistUnconfirmedChatIds.delete(chatId)
+                }
+                const record = chatComposerSelectionOverlayStore.apply(onDisk)
+                this.rememberChatRecord(chatId, {
+                  mtimeMs: stat.mtimeMs,
+                  size: stat.size,
+                  record
+                })
+                hostPersistShadowChatIds.delete(chatId)
+                return record
               }
-              const record = chatComposerSelectionOverlayStore.apply(onDisk)
-              this.rememberChatRecord(chatId, {
-                mtimeMs: stat.mtimeMs,
-                size: stat.size,
-                record
-              })
-              hostPersistShadowChatIds.delete(chatId)
-              return record
             }
           }
         } catch {
@@ -7211,49 +7276,53 @@ export class AppStore {
     const operation = previous
       .catch(() => null)
       .then(() =>
-        threadCatalogueWriteGate.admit(request.chatId, async () => {
-          if (deletedChatIds.has(request.chatId)) {
-            throw new Error(
-              'This chat was deleted before its composer selection could be recorded.'
-            )
-          }
-          const current = this.getChat(request.chatId)
-          if (!current) throw new Error('Chat not found.')
-          if (this.getSettings().storeLocalChatHistory === false) {
-            const chat = applyChatComposerSelectionPatch(current, request)
-            if (chat !== current) {
+        threadCatalogueWriteGate.admitBounded(
+          request.chatId,
+          COMPOSER_SELECTION_GATE_WAIT_BUDGET_MS,
+          async () => {
+            if (deletedChatIds.has(request.chatId)) {
+              throw new Error(
+                'This chat was deleted before its composer selection could be recorded.'
+              )
+            }
+            const current = this.getChat(request.chatId)
+            if (!current) throw new Error('Chat not found.')
+            if (this.getSettings().storeLocalChatHistory === false) {
+              const chat = applyChatComposerSelectionPatch(current, request)
+              if (chat !== current) {
+                const cached = this.chatRecordCache.get(request.chatId)
+                if (cached) cached.record = chat
+              }
+              return { chat, changed: chat !== current }
+            }
+            await this.assertHistoryMutationAllowedAsync({
+              operation: 'Composer selection persistence',
+              chatIds: [current.appChatId],
+              workspaceIds: [current.workspaceId]
+            })
+            const publication = this.threadCataloguePublisher?.begin(request.chatId)
+            let result: Awaited<ReturnType<ChatComposerSelectionOverlayStore['persist']>>
+            try {
+              result = await chatComposerSelectionOverlayStore.persist(current, request)
+              if (publication) this.threadCataloguePublisher?.finish(publication, result.chat)
+            } catch (error) {
+              if (publication) this.threadCataloguePublisher?.fail(publication)
+              throw error
+            }
+            if (result.changed) {
               const cached = this.chatRecordCache.get(request.chatId)
-              if (cached) cached.record = chat
+              if (cached) cached.record = result.chat
+              else {
+                this.rememberChatRecord(request.chatId, {
+                  mtimeMs: -1,
+                  size: -1,
+                  record: result.chat
+                })
+              }
             }
-            return { chat, changed: chat !== current }
+            return result
           }
-          await this.assertHistoryMutationAllowedAsync({
-            operation: 'Composer selection persistence',
-            chatIds: [current.appChatId],
-            workspaceIds: [current.workspaceId]
-          })
-          const publication = this.threadCataloguePublisher?.begin(request.chatId)
-          let result: Awaited<ReturnType<ChatComposerSelectionOverlayStore['persist']>>
-          try {
-            result = await chatComposerSelectionOverlayStore.persist(current, request)
-            if (publication) this.threadCataloguePublisher?.finish(publication, result.chat)
-          } catch (error) {
-            if (publication) this.threadCataloguePublisher?.fail(publication)
-            throw error
-          }
-          if (result.changed) {
-            const cached = this.chatRecordCache.get(request.chatId)
-            if (cached) cached.record = result.chat
-            else {
-              this.rememberChatRecord(request.chatId, {
-                mtimeMs: -1,
-                size: -1,
-                record: result.chat
-              })
-            }
-          }
-          return result
-        })
+        )
       )
     this.chatComposerSelectionWriteTails.set(request.chatId, operation)
     const clearTail = (): void => {
@@ -8027,9 +8096,9 @@ export class AppStore {
     }
     const chatPath = chatPathForId(chatsDir, chat.appChatId)
     const previousChatForFeedback = this.readChatForFeedbackBaseline(chat.appChatId, chatPath)
-    // Stage 1a: this path skips the admitted path's stale-revision merge, so it
-    // is the live truncation hole — a windowed TranscriptPage passed as a whole
-    // record would persist over the durable prefix. Fail loudly instead.
+    // Stage 1a: the stale-revision merge below only fills missing rows when the
+    // incoming revision is STALE; a current-revision page would otherwise
+    // overwrite the durable prefix. Fail loudly on that shape instead.
     assertAuthoritativeChatForSave(chat, previousChatForFeedback, options)
     assertPeopleDonorMutationAllowed(userDataPath, previousChatForFeedback, chat)
     // Same main-owned-field protection as the admitted path: renderer-owned
@@ -8043,6 +8112,22 @@ export class AppStore {
       continuityCheckpoints: _rendererContinuityCheckpoints,
       ...rendererOwnedChat
     } = chat
+    // The admitted path's stale-revision merge, ported 1:1. A writer holding an
+    // older whole record (renderer debounce fallback save, orchestrator flush
+    // tail composed from a pre-mutation getChat) must not drop the
+    // main-appended thread-message projections it never saw; the merge re-adds
+    // ONLY those projections, so intentionally removed rows (wiped lane cards)
+    // stay removed. Current-revision saves remain authoritative, including
+    // deletion.
+    const rendererMessages = chat.messages || []
+    const reconciledMessages =
+      previousChatForFeedback &&
+      chatPersistenceRevision(chat) < chatPersistenceRevision(previousChatForFeedback)
+        ? mergeMissingThreadMessageTranscriptProjections(
+            rendererMessages,
+            previousChatForFeedback.messages || []
+          )
+        : rendererMessages
     // A revision-stale record never saw the stored goal, so its silence about
     // one is ignorance rather than a Clear. See durableActiveGoalToRestore.
     const restoredActiveGoal = durableActiveGoalToRestore(chat, previousChatForFeedback)
@@ -8057,6 +8142,7 @@ export class AppStore {
       continuityCheckpoints: options.authoritativeContinuityCheckpoints
         ? chat.continuityCheckpoints
         : previousChatForFeedback?.continuityCheckpoints,
+      messages: reconciledMessages,
       ...(previousChatForFeedback?.threadWorktreeBinding
         ? { threadWorktreeBinding: { ...previousChatForFeedback.threadWorktreeBinding } }
         : {}),
@@ -8083,7 +8169,10 @@ export class AppStore {
       chat: chatWithMainOwnedFields,
       previous: previousChatForFeedback,
       authoredTranscript: options.authoredTranscript,
-      authoredTranscriptEligible: true,
+      // Same eligibility rule as the admitted path: once the stale-revision
+      // merge changed the message array, the supplied authored ops no longer
+      // describe it and the mutation must be recomputed from before/after.
+      authoredTranscriptEligible: reconciledMessages === rendererMessages,
       createDetailBatch: () => new ToolActivityDetailBatchWriter(runArtifactsDir),
       readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
       persistDetailCheckpoint: (checkpoint) => {
@@ -8625,7 +8714,15 @@ export class AppStore {
       // Last resort: force the Desktop record onto the Host's revision. A
       // three-way merge that cannot be computed is not a reason to refuse to
       // write — the alternative is a thread that is never persisted again.
-      rebased = { ...rebaseTarget, persistenceRevision: sourceRevision + 1 }
+      // The rebase throws exactly when the Host lineage carries rows the
+      // Desktop base never saw ('added independently', 'changed after Host
+      // removal'), so taking the Desktop record wholesale would delete those
+      // Host-native rows from the durable record. Union them back in instead.
+      rebased = {
+        ...rebaseTarget,
+        messages: unionHostLineageTranscriptRows(base, rebaseTarget, source),
+        persistenceRevision: sourceRevision + 1
+      }
     }
     return this.adoptHostPersistRecovery(chatId, source, rebased, sourceRevision)
   }
@@ -8679,6 +8776,17 @@ export class AppStore {
       // save's conflict recovery corrects against the real file.
     }
     cached.record = { ...cached.record, persistenceRevision: hostRevision }
+    // Renderer targets still hold the optimistic watermark this shadow just
+    // dropped below, so their delivery coordinator would discard every
+    // broadcast of the re-anchored record as stale (staleEnqueueDrops) — the
+    // freeze-then-jump transcript. Reseed exactly like adoptHostPersistRecovery
+    // does: the coordinator drops its optimistic history and sends this
+    // canonical record as an urgent snapshot.
+    try {
+      hostPersistConflictRecoveryListener?.(cached.record)
+    } catch {
+      // Persistence recovery is authoritative; renderer reseeding is additive.
+    }
   }
 
   /**

@@ -21,7 +21,10 @@
  *     synchronously before it drains (see `barrierChatRecordPersisted`);
  *   - shutdown drains every staged checkpoint before exit;
  *   - the timer is short, so external readers lag the journal by seconds,
- *     never sit stale until some unrelated save.
+ *     never sit stale until some unrelated save;
+ *   - a fired checkpoint that cannot materialize yet because the
+ *     thread-catalogue write gate is held is re-armed (bounded), never dropped
+ *     — the copy cannot lag the journal by a whole recovery hold.
  *
  * WHAT NEVER DEFERS: creation, a journal failure (the checkpoint is then the
  * only durability), a detail-externalization failure, `approval`/`shutdown`/
@@ -37,14 +40,30 @@ export const DEFERRED_HOST_MATERIALIZE_MIN_BYTES = 4 * 1024 * 1024
  *  after a save must be able to finish before the checkpoint's Host-side parse
  *  begins, or they queue behind a multi-second event-loop block. */
 export const DEFERRED_HOST_MATERIALIZE_DELAY_MS = 5_000
+/**
+ * Bound on re-arms when a fired checkpoint cannot materialize yet. Sized to
+ * outlast the longest catalogue recovery gate hold (~10 minutes) at the
+ * default trailing delay: the deferred checkpoint is re-armed, never dropped,
+ * so the on-disk compatibility copy cannot lag the journal by the whole hold.
+ */
+export const DEFERRED_HOST_MATERIALIZE_MAX_RETRIES = 120
 
 export interface DeferredHostMaterializationOptions {
   /** Flush one staged checkpoint now. Return value is advisory only. */
   readonly materialize: (chatId: string) => boolean
   /** The save-path tombstone: a deleted chat must never be re-materialized. */
   readonly isDeleted: (chatId: string) => boolean
+  /**
+   * When a fired checkpoint returns false, re-arm the trailing timer instead of
+   * dropping it — but only while this predicate says the blockage is transient
+   * (e.g. the thread-catalogue write gate is held). Without it a false return
+   * drops the checkpoint exactly as before.
+   */
+  readonly retryWhen?: (chatId: string) => boolean
   readonly minBytes?: number
   readonly delayMs?: number
+  /** Bound on re-arms per scheduled checkpoint; see DEFERRED_HOST_MATERIALIZE_MAX_RETRIES. */
+  readonly maxRetries?: number
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
 }
@@ -52,14 +71,19 @@ export interface DeferredHostMaterializationOptions {
 export class DeferredHostMaterialization {
   private readonly materialize: (chatId: string) => boolean
   private readonly isDeleted: (chatId: string) => boolean
+  private readonly retryWhen: ((chatId: string) => boolean) | null
   private readonly minBytes: number
   private readonly delayMs: number
+  private readonly maxRetries: number
   private readonly setTimer: (
     callback: () => void,
     delayMs: number
   ) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (timer: ReturnType<typeof setTimeout>) => void
-  private readonly pending = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly pending = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; attempts: number }
+  >()
 
   constructor(options: DeferredHostMaterializationOptions) {
     if (
@@ -73,6 +97,7 @@ export class DeferredHostMaterialization {
     }
     this.materialize = options.materialize
     this.isDeleted = options.isDeleted
+    this.retryWhen = typeof options.retryWhen === 'function' ? options.retryWhen : null
     this.minBytes =
       Number.isFinite(options.minBytes) && (options.minBytes ?? 0) >= 0
         ? Math.floor(options.minBytes!)
@@ -81,6 +106,10 @@ export class DeferredHostMaterialization {
       Number.isFinite(options.delayMs) && (options.delayMs ?? 0) >= 0
         ? Math.floor(options.delayMs!)
         : DEFERRED_HOST_MATERIALIZE_DELAY_MS
+    this.maxRetries =
+      Number.isSafeInteger(options.maxRetries) && (options.maxRetries ?? -1) >= 0
+        ? options.maxRetries!
+        : DEFERRED_HOST_MATERIALIZE_MAX_RETRIES
     this.setTimer = options.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs))
     this.clearTimer = options.clearTimer ?? ((timer) => clearTimeout(timer))
   }
@@ -109,35 +138,46 @@ export class DeferredHostMaterialization {
       return false
     }
     const previous = this.pending.get(chatId)
-    if (previous) this.clearTimer(previous)
-    const timer = this.setTimer(() => {
-      this.pending.delete(chatId)
-      // A delete during the window owns the lane: materializing would
-      // resurrect the record the user just erased. The compatibility layer's
-      // prepareDelete also discards the staged record; this is the backstop
-      // for the timer living outside that layer.
-      if (this.isDeleted(chatId)) return
-      try {
-        this.materialize(chatId)
-      } catch {
-        // The next save, barrier, or shutdown drain retries the checkpoint;
-        // the journal remains the durable record either way.
-      }
-    }, this.delayMs)
-    ;(timer as { unref?: () => void }).unref?.()
-    this.pending.set(chatId, timer)
+    if (previous) this.clearTimer(previous.timer)
+    const arm = (attempts: number): void => {
+      const timer = this.setTimer(() => {
+        this.pending.delete(chatId)
+        // A delete during the window owns the lane: materializing would
+        // resurrect the record the user just erased. The compatibility layer's
+        // prepareDelete also discards the staged record; this is the backstop
+        // for the timer living outside that layer.
+        if (this.isDeleted(chatId)) return
+        let materialized = false
+        try {
+          materialized = this.materialize(chatId)
+        } catch {
+          // The next save, barrier, or shutdown drain retries the checkpoint;
+          // the journal remains the durable record either way.
+          return
+        }
+        // A transient blockage (the write gate held by a catalogue recovery)
+        // used to DROP the checkpoint here, leaving the on-disk compatibility
+        // copy stale for the whole hold. Re-arm within a bound instead.
+        if (!materialized && this.retryWhen?.(chatId) && attempts < this.maxRetries) {
+          arm(attempts + 1)
+        }
+      }, this.delayMs)
+      ;(timer as { unref?: () => void }).unref?.()
+      this.pending.set(chatId, { timer, attempts })
+    }
+    arm(0)
     return true
   }
 
   cancel(chatId: string): void {
-    const timer = this.pending.get(chatId)
-    if (!timer) return
-    this.clearTimer(timer)
+    const entry = this.pending.get(chatId)
+    if (!entry) return
+    this.clearTimer(entry.timer)
     this.pending.delete(chatId)
   }
 
   dispose(): void {
-    for (const timer of this.pending.values()) this.clearTimer(timer)
+    for (const entry of this.pending.values()) this.clearTimer(entry.timer)
     this.pending.clear()
   }
 }
