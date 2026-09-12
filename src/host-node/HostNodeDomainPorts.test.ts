@@ -33,6 +33,7 @@ import type {
 import { hostProviderOffers } from '../host-shared/HostProviderCatalog'
 import { HostNodeDomainPorts } from './HostNodeDomainPorts'
 import { createHostNodeCodexProvider } from './HostNodeCodexProvider'
+import { createHostNodeKimiProvider } from './HostNodeKimiProvider'
 
 const paths: string[] = []
 const actor = { actorId: 'actor-1', clientId: 'tui-1', clientClass: 'tui' as const }
@@ -1228,6 +1229,58 @@ describe('HostNodeDomainPorts', () => {
     expect(bareOffers.locked).toBeTruthy()
 
     await expect(domain.threadOffers('id-absent')).rejects.toThrow(/Unknown standalone thread/)
+  })
+
+  it('projects a shipped Kimi selection identically in thread offers and the run port', async () => {
+    const { domainOptions, store, workspace } = open()
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        createHostNodeKimiProvider({
+          discoverManagedModels: async () => null
+        })
+      ]
+    })
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'kimi',
+      modelId: 'kimi-k2.7-code',
+      postureId: 'read_only'
+    })
+    const configured = store.getThread(thread.appChatId)!
+    store.persistThreadRecord({
+      threadId: thread.appChatId,
+      expectedRevision: configured.persistenceRevision ?? 0,
+      record: {
+        ...configured,
+        providerMetadata: {
+          ...(configured.providerMetadata ?? {}),
+          kimiReasoningEffort: 'on'
+        }
+      }
+    })
+
+    const offers = await domain.threadOffers(thread.appChatId)
+    expect(offers).toMatchObject({
+      currentModel: 'kimi-k2.8-preview',
+      currentReasoningEffort: 'max'
+    })
+    expect(offers.models.find((model) => model.id === 'kimi-k2.8-preview')).toMatchObject({
+      current: true,
+      reasoningEfforts: expect.arrayContaining([expect.objectContaining({ id: 'max' })])
+    })
+    expect(offers.models.some((model) => model.id === 'kimi-k2.7-code')).toBe(false)
+    expect(domain.runPort.getThread(thread.appChatId)).toMatchObject({
+      modelId: offers.currentModel,
+      reasoningId: offers.currentReasoningEffort
+    })
+    expect(store.getThread(thread.appChatId)?.providerMetadata).toMatchObject({
+      selectedModelType: 'kimi-k2.7-code',
+      kimiReasoningEffort: 'on'
+    })
+    await domain.shutdown()
   })
 
   it('prepends the App-authored work state when the thread carries a live goal', async () => {

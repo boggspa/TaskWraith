@@ -32,8 +32,8 @@ function thread(overrides: Partial<HostProviderRunThread> = {}): HostProviderRun
       canonical: true
     },
     providerId: 'kimi',
-    modelId: 'kimi-k2.7-code',
-    reasoningId: 'on',
+    modelId: 'kimi-k2.8-preview',
+    reasoningId: 'max',
     posture: {
       postureId: 'default',
       approvalMode: 'workspace_write',
@@ -124,11 +124,11 @@ function completePrompt(child: FakeChild): void {
 
 describe('HostNodeKimiProvider', () => {
   it.each([
-    ['kimi-k2.7-code', 'kimi-code/kimi-for-coding'],
-    ['kimi-k3', 'kimi-code/k3'],
-    ['kimi-k3-256k', 'kimi-code/k3-256k']
-  ])('maps the offered %s row to Kimi CLI alias %s', async (modelId, cliAlias) => {
-    const reasoningId = modelId === 'kimi-k2.7-code' ? 'on' : 'high'
+    ['kimi-k2.8-preview', 'max', 'kimi-code/kimi-for-coding'],
+    ['kimi-k2.7-code-highspeed', 'on', 'kimi-code/kimi-for-coding-highspeed'],
+    ['kimi-k3', 'high', 'kimi-code/k3'],
+    ['kimi-k3-256k', 'high', 'kimi-code/k3-256k']
+  ])('maps the offered %s/%s row to Kimi CLI alias %s', async (modelId, reasoningId, cliAlias) => {
     const { instance, child, spawn } = open({
       configuredThread: thread({ modelId, reasoningId })
     })
@@ -572,8 +572,11 @@ describe('HostNodeKimiProvider', () => {
     await expect(running).resolves.toMatchObject({ status: 'cancelled' })
   })
 
-  it('rejects a thread whose catalog model is not selectable', async () => {
-    const { instance } = open({ configuredThread: thread({ modelId: 'not-offered' }) })
+  it.each([
+    ['not-offered', 'max'],
+    ['kimi-k2.8-preview', 'ludicrous']
+  ])('rejects an unselectable Kimi configuration (%s/%s)', async (modelId, reasoningId) => {
+    const { instance } = open({ configuredThread: thread({ modelId, reasoningId }) })
     await expect(
       instance.run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hello', target: {} })
     ).rejects.toThrow(/configuration is not selectable/)
@@ -583,7 +586,8 @@ describe('HostNodeKimiProvider', () => {
     const { instance } = open({ discoverManagedModels: async () => null })
     const offers = await instance.getOffers?.()
     expect(offers?.models.map((model) => model.modelId)).toEqual([
-      'kimi-k2.7-code',
+      'kimi-k2.8-preview',
+      'kimi-k2.7-code-highspeed',
       'kimi-k3',
       'kimi-k3-256k'
     ])
@@ -593,10 +597,10 @@ describe('HostNodeKimiProvider', () => {
     const { instance } = open({
       configuredThread: thread({ modelId: 'kimi-k3', reasoningId: 'high' }),
       discoverManagedModels: async (fallback) =>
-        fallback.filter((row) => row.id === 'kimi-k2.7-code')
+        fallback.filter((row) => row.id === 'kimi-k2.8-preview')
     })
     const offers = await instance.getOffers?.()
-    expect(offers?.models.map((model) => model.modelId)).toEqual(['kimi-k2.7-code'])
+    expect(offers?.models.map((model) => model.modelId)).toEqual(['kimi-k2.8-preview'])
     await expect(
       instance.run({ runId: 'run-stale-k3', threadId: 'thread-1', prompt: 'hello', target: {} })
     ).rejects.toThrow(/configuration is not selectable/)

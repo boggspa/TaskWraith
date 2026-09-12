@@ -14,6 +14,12 @@ import {
   HostPermissionConsentAuthority
 } from '../host-runtime/HostPermissionConsent'
 import type { HostProviderRunEvent } from '../host-runtime/HostProviderRunPort'
+import {
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K27_MODEL_ID,
+  KIMI_K28_MODEL_ID,
+  KIMI_K3_MODEL_ID
+} from '../shared/kimiModels'
 import { HostNodeProfileRunPort } from './HostNodeProfileRunPort'
 import { resolveHostNodeCodexPosture } from './HostNodeCodexProvider'
 
@@ -398,6 +404,177 @@ describe('HostNodeProfileRunPort', () => {
       providerId: 'antigravity',
       modelId: 'gemini-3.7-flash',
       posture: { postureId: 'read_only' }
+    })
+  })
+
+  it('projects the shipped Kimi selection forward and keeps the newest equivalent native session', () => {
+    const { store, threadId } = openStore()
+    store.configureThread({
+      threadId,
+      providerId: 'kimi',
+      modelId: KIMI_K27_MODEL_ID,
+      reasoningId: 'on',
+      postureId: 'read_only'
+    })
+    const completeRun = (
+      runId: string,
+      requestedModel: string,
+      providerSessionId: string,
+      minute: number
+    ): void => {
+      const startedAt = `2026-08-24T05:0${minute}:00.000Z`
+      store.updateRun({
+        threadId,
+        runId,
+        status: 'running',
+        provider: 'kimi',
+        requestedModel,
+        startedAt
+      })
+      store.updateRun({
+        threadId,
+        runId,
+        status: 'completed',
+        endedAt: `2026-08-24T05:0${minute}:30.000Z`,
+        providerSessionId
+      })
+    }
+    completeRun('run-legacy', KIMI_K27_MODEL_ID, 'session-legacy', 0)
+
+    const port = new HostNodeProfileRunPort({
+      store,
+      events: { publish: (_target, _event) => undefined }
+    })
+    expect(port.getThread(threadId)).toMatchObject({
+      providerId: 'kimi',
+      modelId: KIMI_K28_MODEL_ID,
+      reasoningId: 'max',
+      providerSessionId: 'session-legacy',
+      posture: { postureId: 'read_only' }
+    })
+
+    completeRun('run-k3', KIMI_K3_MODEL_ID, 'session-k3', 1)
+    completeRun('run-highspeed', KIMI_K27_HIGHSPEED_MODEL_ID, 'session-highspeed', 2)
+    expect(port.getThread(threadId)).toMatchObject({ providerSessionId: 'session-legacy' })
+
+    completeRun('run-canonical', KIMI_K28_MODEL_ID, 'session-replacement', 3)
+    expect(port.getThread(threadId)).toMatchObject({ providerSessionId: 'session-replacement' })
+    expect(store.getThread(threadId)?.providerMetadata).toMatchObject({
+      selectedModelType: KIMI_K27_MODEL_ID,
+      reasoningEffort: 'on'
+    })
+  })
+
+  it.each([
+    ['on', 'max'],
+    ['off', 'max'],
+    ['low', 'low'],
+    ['high', 'high'],
+    ['max', 'max'],
+    ['ludicrous', 'ludicrous']
+  ])('projects the shipped Kimi reasoning %s to %s', (reasoningId, projectedReasoningId) => {
+    const { store, threadId } = openStore()
+    store.configureThread({
+      threadId,
+      providerId: 'kimi',
+      modelId: KIMI_K27_MODEL_ID,
+      reasoningId,
+      postureId: 'read_only'
+    })
+    const port = new HostNodeProfileRunPort({
+      store,
+      events: { publish: (_target, _event) => undefined }
+    })
+    expect(port.getThread(threadId)).toMatchObject({
+      modelId: KIMI_K28_MODEL_ID,
+      reasoningId: projectedReasoningId
+    })
+  })
+
+  it('does not reuse Full Access consent signed for the retired Kimi catalogue identity', () => {
+    const { store } = openStore()
+    const registered = store.listWorkspaces()[0]!
+    const created = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const consentAuthority = new HostPermissionConsentAuthority(
+      Buffer.alloc(32, 7),
+      () => '2026-09-12T12:00:00.000Z'
+    )
+    const selection = {
+      threadId: created.appChatId,
+      providerId: 'kimi',
+      modelId: KIMI_K27_MODEL_ID,
+      reasoningId: 'on',
+      postureId: 'full_access' as const,
+      offerRevision: 'kimi-k2.7-offer-revision'
+    }
+    const consent = consentAuthority.issue({
+      commandId: '22222222-2222-4222-8222-222222222222',
+      commandFingerprint: 'd'.repeat(64),
+      actor: { actorId: 'tui-user', clientId: 'tui-client', clientClass: 'tui' },
+      ...selection,
+      workspaceId: registered.id,
+      workspacePath: registered.realPath,
+      issuedAt: '2026-09-12T11:59:59.000Z'
+    })
+    store.configureThread({ ...selection, postureConsent: consent })
+    const verifiedConsent = consentAuthority.verify(consent, {
+      threadId: created.appChatId,
+      providerId: 'kimi',
+      workspaceId: registered.id,
+      workspacePath: registered.realPath,
+      modelId: KIMI_K27_MODEL_ID,
+      postureId: 'full_access',
+      offerRevision: 'kimi-k2.7-offer-revision'
+    })!
+    const fullAccessGrants = new HostFullAccessGrantRegistry()
+    fullAccessGrants.activateVerified(consent, verifiedConsent)
+
+    expect(
+      new HostNodeProfileRunPort({
+        store,
+        events: { publish: (_target, _event) => undefined },
+        permissionConsentAuthority: consentAuthority,
+        fullAccessGrants
+      }).getThread(created.appChatId)
+    ).toBeNull()
+
+    const currentSelection = {
+      ...selection,
+      modelId: KIMI_K28_MODEL_ID,
+      reasoningId: 'max',
+      offerRevision: 'kimi-k2.8-offer-revision'
+    }
+    const currentConsent = consentAuthority.issue({
+      commandId: '33333333-3333-4333-8333-333333333333',
+      commandFingerprint: 'e'.repeat(64),
+      actor: { actorId: 'tui-user', clientId: 'tui-client', clientClass: 'tui' },
+      ...currentSelection,
+      workspaceId: registered.id,
+      workspacePath: registered.realPath,
+      issuedAt: '2026-09-12T12:00:01.000Z'
+    })
+    store.configureThread({ ...currentSelection, postureConsent: currentConsent })
+    const currentVerifiedConsent = consentAuthority.verify(currentConsent, {
+      threadId: created.appChatId,
+      providerId: 'kimi',
+      workspaceId: registered.id,
+      workspacePath: registered.realPath,
+      modelId: KIMI_K28_MODEL_ID,
+      postureId: 'full_access',
+      offerRevision: 'kimi-k2.8-offer-revision'
+    })!
+    fullAccessGrants.activateVerified(currentConsent, currentVerifiedConsent)
+    expect(
+      new HostNodeProfileRunPort({
+        store,
+        events: { publish: (_target, _event) => undefined },
+        permissionConsentAuthority: consentAuthority,
+        fullAccessGrants
+      }).getThread(created.appChatId)
+    ).toMatchObject({
+      modelId: KIMI_K28_MODEL_ID,
+      reasoningId: 'max',
+      posture: { postureId: 'full_access', verifiedConsent: { authority: 'host-signed' } }
     })
   })
 

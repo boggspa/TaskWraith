@@ -42,6 +42,7 @@ import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlP
 import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
 import { projectHostProviderOfferCapabilities } from '../host-shared/HostProviderCatalog'
 import { buildAgentWorkState, type AgentWorkGoalFacts } from '../host-shared/AgentWorkContract'
+import { projectHostKimiSelection } from '../host-shared/kimi/HostKimiSelectionProjection'
 import type { HostGitFileStatus } from '../host-shared/git/HostGitStatusParse'
 import type { HostGitReadResult, HostGitReadService } from '../host-shared/git/HostGitReadService'
 import { validateHostCommandArguments } from '../host-runtime/HostCommandArguments'
@@ -643,10 +644,18 @@ export class HostNodeDomainPorts {
     if (!thread) throw new Error('Unknown standalone thread')
     const providerId = typeof thread.provider === 'string' ? thread.provider : undefined
     const metadata = (thread.providerMetadata ?? {}) as Record<string, unknown>
-    const currentModel =
+    const persistedModel =
       typeof metadata.selectedModelType === 'string' ? metadata.selectedModelType : undefined
-    const currentReasoning =
-      typeof metadata.reasoningEffort === 'string' ? metadata.reasoningEffort : undefined
+    const persistedReasoningValue =
+      metadata.reasoningEffort ??
+      (providerId ? metadata[`${providerId}ReasoningEffort`] : undefined) ??
+      (providerId === 'antigravity' ? metadata.geminiReasoningEffort : undefined)
+    const persistedReasoning =
+      typeof persistedReasoningValue === 'string' ? persistedReasoningValue : undefined
+    const { modelId: currentModel, reasoningId: currentReasoning } =
+      providerId === 'kimi'
+        ? projectHostKimiSelection(persistedModel, persistedReasoning)
+        : { modelId: persistedModel, reasoningId: persistedReasoning }
     const currentPosture =
       thread.workflowMode === 'plan' && metadata.permissionPresetId === 'read_only'
         ? 'plan'

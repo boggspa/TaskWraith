@@ -2,6 +2,10 @@ import type { HostCatalogueRunOrigin } from '../shared/threadCatalogueTypes'
 import { lstatSync, realpathSync, statSync } from 'node:fs'
 
 import { hostRunFailureNotice, hostRunFailureReason } from '../shared/hostProtocol'
+import {
+  hostKimiSessionModelMatches,
+  projectHostKimiSelection
+} from '../host-shared/kimi/HostKimiSelectionProjection'
 import type {
   HostProfileDomainStore,
   HostProfileThread
@@ -97,6 +101,15 @@ function providerMetadata(thread: HostProfileThread): Record<string, unknown> | 
   return thread.providerMetadata && typeof thread.providerMetadata === 'object'
     ? thread.providerMetadata
     : null
+}
+
+function providerSessionMatchesModel(
+  providerId: unknown,
+  requestedModel: unknown,
+  selectedModel: unknown
+): boolean {
+  if (requestedModel === selectedModel) return true
+  return providerId === 'kimi' && hostKimiSessionModelMatches(requestedModel, selectedModel)
 }
 
 function postureFromThread(
@@ -250,22 +263,31 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
           (candidate.realPath === thread.workspacePath || candidate.path === thread.workspacePath)
       )
     const metadata = providerMetadata(thread)
-    const modelId = metadata?.selectedModelType
+    const persistedModelId =
+      typeof metadata?.selectedModelType === 'string' ? metadata.selectedModelType : undefined
     // The Host writes the generic key; desktop-authored records carry only a
     // provider-family key (`mistralReasoningEffort`, `geminiReasoningEffort`
     // for AntiGravity, …). Generic wins when both exist because it is the one
     // the Host's own reconfigure path maintains.
-    const reasoningId =
+    const persistedReasoningValue =
       metadata?.reasoningEffort ??
       metadata?.[`${thread.provider}ReasoningEffort`] ??
       (thread.provider === 'antigravity' ? metadata?.geminiReasoningEffort : undefined)
+    const persistedReasoningId =
+      typeof persistedReasoningValue === 'string' ? persistedReasoningValue : undefined
+    const { modelId, reasoningId } =
+      thread.provider === 'kimi'
+        ? projectHostKimiSelection(persistedModelId, persistedReasoningId)
+        : { modelId: persistedModelId, reasoningId: persistedReasoningId }
     // A native session belongs to the model that created it. If the user
     // reconfigured the thread, starting a fresh session is safer than asking
     // the previous model's conversation to silently switch identities.
     const persistedSessionId = [...(thread.runs ?? [])]
       .reverse()
       .find(
-        (run) => run.requestedModel === modelId && isCanonicalId(run.providerSessionId)
+        (run) =>
+          providerSessionMatchesModel(thread.provider, run.requestedModel, modelId) &&
+          isCanonicalId(run.providerSessionId)
       )?.providerSessionId
     const legacySessionId = (thread as Record<string, unknown>).linkedProviderSessionId
     const canonicalWorkspacePath = workspace
