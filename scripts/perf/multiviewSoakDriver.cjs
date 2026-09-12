@@ -189,16 +189,16 @@ function buildSoakFixture(options) {
   const pagedChat = paged.chats[0]
   const smallChats = small.chats.slice(0, Math.max(1, paneCount - 1))
   const chats = [...smallChats, pagedChat]
-  // Adapt the historical T2 fixture to the current production record schema.
-  // The old generator uses run.id; Host persistence requires run.runId.
+  // Keep pre-v3 fixture compatibility while the generator now emits runId.
   for (const chat of chats) {
     chat.runs = chat.runs.map(({ id, ...run }) => ({
       ...run,
-      runId: id,
+      runId: run.runId || id,
       endedAt: new Date(chat.updatedAt).toISOString()
     }))
     if (chat.ensemble && chat.ensemble.activeRound) {
-      chat.ensemble.activeRound.roundId = chat.ensemble.activeRound.id
+      chat.ensemble.activeRound.roundId =
+        chat.ensemble.activeRound.roundId || chat.ensemble.activeRound.id
       chat.ensemble.activeRound.status = 'completed'
       chat.ensemble.activeRound.endedAt = new Date(chat.updatedAt).toISOString()
     }

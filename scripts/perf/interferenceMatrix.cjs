@@ -22,6 +22,11 @@
  * reports and the §1.1 deltas are computed between them.
  */
 
+const {
+  LARGE_HISTORY_RUN_CALIBRATION,
+  RUN_CONCURRENCY_CALIBRATION
+} = require('./fixtureGenerator.cjs')
+
 const MATRIX_SCHEMA_VERSION = 1
 
 /**
@@ -40,16 +45,23 @@ const MATRIX_SAMPLING = Object.freeze({
 /**
  * History-size pins (Appendix A, reconciled — see the programme doc
  * provenance note). `approx` values are targets for the fixture generator,
- * not gates. `approxBytes` is the serialized large chat; tool bytes are a
- * subset of it (measured seed 42: 44.14 MiB chat incl. 35.06 MiB tools), so
- * the former 65 MiB "chat + tool" sum was planning arithmetic, never a disk
- * footprint. `approxRuns` is retained as-stated and unverified (no
- * generator axis mints runs).
+ * not gates. `approxBytes` is the generator-v2 transcript/tool baseline before
+ * the v3 synthetic run core (measured seed 42: 44.14 MiB incl. 35.06 MiB
+ * tools). Tool bytes are a subset, so the former 65 MiB "chat + tool" sum was
+ * planning arithmetic, never a disk footprint. V3 artifacts report exact
+ * complete-record and run bytes separately. Accumulated runs and run-linked
+ * round ids are distinct user-calibrated axes; neither is a production max,
+ * and linked ids do not assert persisted historical round entities.
  */
 const HISTORY_SIZES = Object.freeze(['small', 'large'])
 const HISTORY_SIZE_PINS = Object.freeze({
   small: Object.freeze({ approxMessages: 200, maxBytes: 1024 * 1024 }),
-  large: Object.freeze({ approxMessages: 27000, approxBytes: 45 * 1024 * 1024, approxRuns: 1000 })
+  large: Object.freeze({
+    approxMessages: 27000,
+    approxBytes: 45 * 1024 * 1024,
+    approxAccumulatedRuns: LARGE_HISTORY_RUN_CALIBRATION.fullScale.accumulatedRuns,
+    approxRunLinkedRoundIds: LARGE_HISTORY_RUN_CALIBRATION.fullScale.linkedRoundIds
+  })
 })
 
 /**
@@ -864,6 +876,7 @@ module.exports = {
   MATRIX_SAMPLING,
   HISTORY_SIZES,
   HISTORY_SIZE_PINS,
+  RUN_CONCURRENCY_CALIBRATION,
   HISTORY_PIN_MIN_FRACTION,
   checkFixtureSatisfiesHistory,
   CHAT_COUNTS,

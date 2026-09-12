@@ -19,8 +19,39 @@ const crypto = require('crypto')
  * fixture bytes.
  * v2: `scaleDown` divides per-chat-shape turn targets (previously silently
  * inert for `chatShapes` workloads, which generated full-scale regardless).
+ * v3: runs use the current ChatRun identity/status core; large-history
+ * fixtures carry the user-calibrated accumulated-run axis; per-chat rosters
+ * are honest; structural fingerprints cover runs, rosters and active rounds.
  */
-const FIXTURE_GENERATOR_VERSION = 2
+const FIXTURE_GENERATOR_VERSION = 3
+
+const RUN_CALIBRATION_SOURCE = 'programme_a1_49_user_axis'
+
+/**
+ * A deterministic scenario target, not a measured record-size distribution
+ * and not a production maximum. Historical round ids are run linkage only;
+ * the fixture does not fabricate a thousand persisted EnsembleRoundState rows.
+ */
+const LARGE_HISTORY_RUN_CALIBRATION = Object.freeze({
+  source: RUN_CALIBRATION_SOURCE,
+  synthetic: true,
+  recordProfile: 'chat_run_core_with_ensemble_linkage_v1',
+  fullScale: Object.freeze({
+    accumulatedRuns: 10_000,
+    linkedRoundIds: 1_000,
+    activeRuns: 2
+  }),
+  optionalFieldSizeDistribution: 'unmeasured',
+  historicalRoundEntities: 'not_generated'
+})
+
+/** App-wide concurrency is a separate axis from one thread's run history. */
+const RUN_CONCURRENCY_CALIBRATION = Object.freeze({
+  source: RUN_CALIBRATION_SOURCE,
+  practicalConcurrentRuns: Object.freeze({ min: 100, max: 200 }),
+  saturationConcurrentRunsFloor: 500,
+  modeling: 'not_modeled_by_run_history_fixture'
+})
 
 const PROVIDERS = Object.freeze([
   'codex',
@@ -74,6 +105,32 @@ function pad(n, width) {
   return String(n).padStart(width, '0')
 }
 
+function runHistoryProfile(scaleDown = 1, participantCount = 1) {
+  const fullScale = LARGE_HISTORY_RUN_CALIBRATION.fullScale
+  const accumulatedRuns = Math.max(
+    fullScale.activeRuns,
+    participantCount,
+    Math.ceil(fullScale.accumulatedRuns / scaleDown)
+  )
+  return {
+    source: LARGE_HISTORY_RUN_CALIBRATION.source,
+    synthetic: true,
+    recordProfile: LARGE_HISTORY_RUN_CALIBRATION.recordProfile,
+    fullScale: { ...fullScale },
+    generated: {
+      accumulatedRuns,
+      linkedRoundIds: Math.min(
+        accumulatedRuns,
+        Math.max(1, Math.ceil(fullScale.linkedRoundIds / scaleDown))
+      ),
+      activeRuns: Math.min(fullScale.activeRuns, accumulatedRuns),
+      rosterParticipantFloor: participantCount
+    },
+    optionalFieldSizeDistribution: LARGE_HISTORY_RUN_CALIBRATION.optionalFieldSizeDistribution,
+    historicalRoundEntities: LARGE_HISTORY_RUN_CALIBRATION.historicalRoundEntities
+  }
+}
+
 /**
  * Precompute a repeating alphabet block so large blobs stay O(bytes) without per-char PRNG.
  * Determinism still depends only on seed via a short salt prefix.
@@ -88,6 +145,136 @@ function syntheticBlob(rand, bytes) {
   const need = bytes - salt.length
   const reps = Math.ceil(need / unit.length)
   return (salt + unit.repeat(reps)).slice(0, bytes)
+}
+
+/**
+ * Build the source-shaped core that the save/mutation path serializes and
+ * compares. Optional ChatRun payload distributions remain explicitly
+ * unmeasured in the enclosing run-history profile.
+ *
+ * Completed history is ordered before the current active rows so production
+ * last-run projections continue to select the final live run.
+ *
+ * @param {object} options
+ * @param {string} options.appChatId
+ * @param {object[]} options.participants
+ * @param {number} options.runCount
+ * @param {number} options.linkedRoundIdCount
+ * @param {number} options.activeRunCount
+ * @param {number} options.startedAtMs
+ * @param {number} options.endedAtMs
+ */
+function buildSyntheticRunHistory(options) {
+  const {
+    appChatId,
+    participants,
+    runCount,
+    linkedRoundIdCount,
+    activeRunCount,
+    startedAtMs,
+    endedAtMs
+  } = options || {}
+  if (typeof appChatId !== 'string' || !appChatId) {
+    throw new Error('synthetic run history requires appChatId')
+  }
+  if (!Array.isArray(participants) || participants.length === 0) {
+    throw new Error('synthetic run history requires participants')
+  }
+  if (
+    participants.some(
+      (participant) =>
+        !participant ||
+        typeof participant.id !== 'string' ||
+        !participant.id ||
+        typeof participant.provider !== 'string' ||
+        !participant.provider ||
+        typeof participant.model !== 'string' ||
+        !participant.model ||
+        typeof participant.role !== 'string' ||
+        !participant.role ||
+        !Number.isSafeInteger(participant.order)
+    )
+  ) {
+    throw new Error('synthetic run history participants need canonical fixture identity')
+  }
+  if (new Set(participants.map((participant) => participant.id)).size !== participants.length) {
+    throw new Error('synthetic run history participant ids must be unique')
+  }
+  for (const [label, value] of Object.entries({
+    runCount,
+    linkedRoundIdCount,
+    activeRunCount
+  })) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`synthetic run history ${label} must be a non-negative safe integer`)
+    }
+  }
+  if (
+    runCount < 1 ||
+    linkedRoundIdCount < 1 ||
+    linkedRoundIdCount > runCount ||
+    activeRunCount > runCount
+  ) {
+    throw new Error('synthetic run history counts are inconsistent')
+  }
+  if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs) || endedAtMs <= startedAtMs) {
+    throw new Error('synthetic run history requires an increasing finite time range')
+  }
+
+  const spanMs = endedAtMs - startedAtMs
+  const firstActiveIndex = runCount - activeRunCount
+  const width = Math.max(5, String(runCount).length)
+  return Array.from({ length: runCount }, (_, index) => {
+    const participant = participants[index % participants.length]
+    const roundIndex = Math.min(
+      linkedRoundIdCount - 1,
+      Math.floor((index * linkedRoundIdCount) / runCount)
+    )
+    const runStartedAtMs = startedAtMs + Math.floor((index * spanMs) / runCount)
+    const nextRunAtMs = startedAtMs + Math.floor(((index + 1) * spanMs) / runCount)
+    const active = index >= firstActiveIndex
+    return {
+      runId: `${appChatId}-run-${pad(index + 1, width)}`,
+      provider: participant.provider,
+      startedAt: new Date(runStartedAtMs).toISOString(),
+      ...(active
+        ? {}
+        : { endedAt: new Date(Math.max(runStartedAtMs + 1, nextRunAtMs)).toISOString() }),
+      requestedModel: participant.model,
+      actualModel: participant.model,
+      approvalMode: 'default',
+      workflowMode: 'normal',
+      status: active ? 'running' : 'completed',
+      ensembleRoundId: `${appChatId}-round-${pad(roundIndex + 1, 4)}`,
+      ensembleParticipantId: participant.id,
+      ensembleParticipantStatus: active ? 'running' : 'answered',
+      ensembleRole: participant.role,
+      ensembleOrder: participant.order,
+      ensembleSeatSnapshot: {
+        schemaVersion: 1,
+        provider: participant.provider,
+        model: participant.model,
+        configuredPermissionPresetId: 'default'
+      }
+    }
+  })
+}
+
+function observeRunHistory(runs) {
+  const linkedRoundIds = new Set()
+  let activeRunCount = 0
+  for (const run of runs) {
+    if (typeof run.ensembleRoundId === 'string' && run.ensembleRoundId) {
+      linkedRoundIds.add(run.ensembleRoundId)
+    }
+    if (run.status === 'running') activeRunCount += 1
+  }
+  return {
+    runCount: runs.length,
+    activeRunCount,
+    linkedRoundIdCount: linkedRoundIds.size,
+    serializedBytes: Buffer.byteLength(JSON.stringify(runs), 'utf8')
+  }
 }
 
 /**
@@ -108,7 +295,7 @@ function deriveToolByteBudgets(toolCount, toolSerializedTargetBytes) {
 
 /**
  * @param {object} options
- * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'|'light_beside_large'} options.workload
+ * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'|'large_history'|'light_beside_large'} options.workload
  */
 function resolveWorkloadShape(options) {
   const workload = options.workload
@@ -212,16 +399,20 @@ function resolveWorkloadShape(options) {
       }
     case 'large_history': {
       // M1 A1.2 (Appendix A "large" pin, reconciled — see the programme doc
-      // provenance note): one chat at the measured worst case — ≈27k
-      // messages, ≈44 MiB serialized, ≈1,000 runs (retained as-stated,
-      // unverified). The 45/20 MB figures below are generator byte budgets,
+      // provenance note): one chat at ≈27k messages. The measured ≈44 MiB is
+      // the generator-v2 transcript/tool baseline before the synthetic 10k
+      // ChatRun core is added; v3 reports the exact complete-record and run
+      // bytes it actually generated rather than relabelling that old figure.
+      // A1.49 replaced the old recovery-derived ≈1,000-run assertion with
+      // separate user-calibrated axes: 10,000 accumulated runs and 1,000
+      // run-linked round ids. The generated core is synthetic and its optional
+      // field-size distribution remains unmeasured. The 45/20 MB figures below
+      // are generator byte budgets,
       // not summands: tool bytes are a SUBSET of chat bytes (measured seed
       // 42: 44.14 MiB chat incl. 35.06 MiB tools), so "45+20=65 MB" was
-      // planning arithmetic, never a disk footprint. Run count is not a
-      // generator axis (runs derive from the replay schedule), so it is
-      // asserted as a shape pin in tests, not invented here. The 0.75 ratio
-      // feeds the `toolActivityTarget` metadata field only; the loop emits
-      // one tool per assistant turn (27,000 tools), as it always has.
+      // planning arithmetic, never a disk footprint. The 0.75 ratio feeds the
+      // `toolActivityTarget` metadata field only; the loop emits one tool per
+      // assistant turn (27,000 tools), as it always has.
       const messageTarget = 27000
       return {
         workload,
@@ -235,14 +426,17 @@ function resolveWorkloadShape(options) {
         chatSerializedTargetBytes: Math.round(45 * 1024 * 1024),
         toolSerializedTargetBytes: Math.round(20 * 1024 * 1024),
         soakTurns: 0,
-        messageTargetHint: messageTarget
+        messageTargetHint: messageTarget,
+        runHistory: runHistoryProfile(1, 30),
+        concurrencyCalibration: { ...RUN_CONCURRENCY_CALIBRATION }
       }
     }
     case 'light_beside_large': {
       // M1 G-X pairing shape: chat 1 light (4 seats), chat 2 carrying the
-      // reconciled large_history pin (≈27k messages, ≈44 MiB serialized —
-      // tool bytes a subset of chat bytes, not additive). Per-chat budgets
-      // in `chatShapes` drive the loop; the top-level figures are aggregates.
+      // reconciled large_history message/tool baseline (≈27k messages; v2
+      // ≈44 MiB before the v3 run core — tool bytes remain a subset, not an
+      // additive size). Per-chat budgets in `chatShapes` drive the loop; exact
+      // v3 complete-record/run bytes are observed after generation.
       const largeMessageTarget = 27000
       const largeSeatCount = 30
       const largeTurnsPerSeat = Math.ceil((largeMessageTarget - 1) / 30)
@@ -285,9 +479,11 @@ function resolveWorkloadShape(options) {
             expectedTools: largeTurnsPerSeat * largeSeatCount * 1,
             toolSerializedTargetBytes: largeToolBytes,
             dualConcurrentRuns: true,
-            soakTurns: 0
+            soakTurns: 0,
+            runHistory: runHistoryProfile(1, largeSeatCount)
           }
-        ]
+        ],
+        concurrencyCalibration: { ...RUN_CONCURRENCY_CALIBRATION }
       }
     }
     default: {
@@ -398,7 +594,7 @@ function buildReplaySchedule(fixture) {
       kind: 'seed_chat',
       appChatId: chat.appChatId,
       messageCount: chat.messages.length,
-      runIds: chat.runs.map((r) => r.id)
+      runIds: chat.runs.map((r) => r.runId)
     })
     let t = 0
     for (let i = 0; i < chat.messages.length; i++) {
@@ -457,7 +653,7 @@ function buildReplaySchedule(fixture) {
           t: t + 1,
           kind: 'run_still_running',
           appChatId: chat.appChatId,
-          runId: run.id
+          runId: run.runId
         })
       }
     }
@@ -475,7 +671,7 @@ function buildReplaySchedule(fixture) {
 
 /**
  * @param {object} options
- * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'|'light_beside_large'} options.workload
+ * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'|'large_history'|'light_beside_large'} options.workload
  * @param {number} [options.seed=42]
  * @param {number} [options.baseTimestamp]
  * @param {boolean} [options.includeHotRaw=true]
@@ -509,7 +705,10 @@ function generatePerfFixture(options) {
           toolSerializedTargetBytes: Math.max(
             32 * 1024,
             Math.floor(chatShape.toolSerializedTargetBytes / scaleDown)
-          )
+          ),
+          ...(chatShape.runHistory
+            ? { runHistory: runHistoryProfile(scaleDown, chatShape.seatCount) }
+            : {})
         }
       })
     } else {
@@ -517,6 +716,9 @@ function generatePerfFixture(options) {
       scaledShape.soakTurns = shape.soakTurns
         ? Math.max(1, Math.ceil(shape.soakTurns / scaleDown))
         : 0
+      if (shape.runHistory) {
+        scaledShape.runHistory = runHistoryProfile(scaleDown, shape.seatCount)
+      }
     }
     scaledShape.messageTarget = Math.max(
       2,
@@ -541,29 +743,10 @@ function generatePerfFixture(options) {
     options.baseTimestamp == null ? Date.UTC(2026, 7, 3, 12, 0, 0) : options.baseTimestamp
   const includeHotRaw = options.includeHotRaw !== false
 
-  // Assistant count per shape; asymmetric workloads aggregate across shapes
-  // (their top-level turn fields are absent, which previously produced NaN
-  // here and in `_perfMeta.paramBytes/rawBytes`).
+  // Assistant count per chat shape; asymmetric workloads have no top-level
+  // turn fields, so every payload budget is derived inside its owning chat.
   const shapeAssistants = (s) => (s.soakTurns > 0 ? s.soakTurns : s.turnsPerSeat * s.seatCount)
-  const expectedAssistants = scaledShape.chatShapes
-    ? scaledShape.chatShapes.reduce((n, s) => n + shapeAssistants(s), 0)
-    : scaledShape.soakTurns > 0
-      ? scaledShape.soakTurns
-      : scaledShape.turnsPerSeat * scaledShape.seatCount
-  const expectedTools = scaledShape.chatShapes
-    ? scaledShape.chatShapes.reduce((n, s) => n + shapeAssistants(s) * s.toolsPerAssistant, 0)
-    : expectedAssistants * scaledShape.toolsPerAssistant
-  const derived = deriveToolByteBudgets(
-    Math.max(1, expectedTools),
-    scaledShape.toolSerializedTargetBytes
-  )
   const lean = options.lean === true
-  const paramBytes = lean
-    ? 24
-    : options.paramBytes == null
-      ? derived.paramBytes
-      : options.paramBytes
-  const rawBytes = lean ? 32 : options.rawBytes == null ? derived.rawBytes : options.rawBytes
 
   const participants = []
   for (let i = 0; i < scaledShape.seatCount; i++) {
@@ -582,6 +765,8 @@ function generatePerfFixture(options) {
   const chats = []
   for (let c = 0; c < scaledShape.chatCount; c++) {
     const chatShape = scaledShape.chatShapes ? scaledShape.chatShapes[c] : scaledShape
+    const chatParticipants = participants.slice(0, chatShape.seatCount)
+    const cExpectedAssistants = shapeAssistants(chatShape)
     const cExpectedTools =
       chatShape.expectedTools ||
       chatShape.turnsPerSeat * chatShape.seatCount * chatShape.toolsPerAssistant
@@ -599,8 +784,6 @@ function generatePerfFixture(options) {
     const appChatId = `perf-${scaledShape.workload}-chat-${pad(c + 1, 2)}`
     /** @type {object[]} */
     const messages = []
-    /** @type {object[]} */
-    const runs = []
     let msgIndex = 0
     let toolIndex = 0
     let t = baseTs
@@ -613,34 +796,27 @@ function generatePerfFixture(options) {
     })
     t += 1000
 
-    const runA = {
-      id: `${appChatId}-run-a`,
-      status:
-        chatShape.dualConcurrentRuns !== undefined
-          ? chatShape.dualConcurrentRuns
-            ? 'running'
-            : 'done'
-          : scaledShape.dualConcurrentRuns
-            ? 'running'
-            : 'done',
-      provider: participants[0].provider,
-      startedAt: new Date(t).toISOString()
-    }
-    runs.push(runA)
-    let runB = null
     const useDual =
       chatShape.dualConcurrentRuns !== undefined
         ? chatShape.dualConcurrentRuns
         : scaledShape.dualConcurrentRuns
-    if (useDual) {
-      runB = {
-        id: `${appChatId}-run-b`,
-        status: 'running',
-        provider: participants[1] ? participants[1].provider : participants[0].provider,
-        startedAt: new Date(t + 50).toISOString()
-      }
-      runs.push(runB)
-    }
+    const generatedRunHistory = chatShape.runHistory?.generated
+    const runCount = generatedRunHistory?.accumulatedRuns ?? (useDual ? 2 : 1)
+    const activeRunCount = generatedRunHistory?.activeRuns ?? (useDual ? 2 : 0)
+    const linkedRoundIdCount = generatedRunHistory?.linkedRoundIds ?? 1
+    const recordEndAt = t + cExpectedAssistants * (chatShape.toolsPerAssistant * 15 + 40)
+    const runs = buildSyntheticRunHistory({
+      appChatId,
+      participants: chatParticipants,
+      runCount,
+      linkedRoundIdCount,
+      activeRunCount,
+      startedAtMs: t,
+      endedAtMs: recordEndAt
+    })
+    const runsByParticipant = new Map(chatParticipants.map((participant) => [participant.id, []]))
+    for (const run of runs) runsByParticipant.get(run.ensembleParticipantId)?.push(run)
+    const assistantCountByParticipant = new Map()
 
     /**
      * @param {object} seat
@@ -648,7 +824,19 @@ function generatePerfFixture(options) {
      * @param {object} [extraMeta]
      */
     function pushAssistant(seat, turnLabel, extraMeta) {
-      const runId = runB && seat.order % 2 === 1 ? runB.id : runA.id
+      let run
+      if (chatShape.runHistory) {
+        const seatRuns = runsByParticipant.get(seat.id) || []
+        const prior = assistantCountByParticipant.get(seat.id) || 0
+        assistantCountByParticipant.set(seat.id, prior + 1)
+        const candidateIndex = Math.min(
+          Math.max(0, seatRuns.length - 1),
+          Math.floor((prior * seatRuns.length) / Math.max(1, chatShape.turnsPerSeat))
+        )
+        run = seatRuns[candidateIndex] || runs[(prior + seat.order) % runs.length]
+      } else {
+        run = useDual && seat.order % 2 === 1 ? runs[1] : runs[0]
+      }
       const assistantId = `${appChatId}-m-${pad(++msgIndex, 5)}`
       const toolActivities = []
       for (let k = 0; k < chatShape.toolsPerAssistant; k++) {
@@ -673,7 +861,7 @@ function generatePerfFixture(options) {
         role: 'assistant',
         content: `Seat ${seat.role} turn ${turnLabel} synthetic reply.`,
         timestamp: new Date(t).toISOString(),
-        runId,
+        runId: run.runId,
         toolActivities,
         metadata: {
           ensembleProvider: seat.provider,
@@ -689,21 +877,32 @@ function generatePerfFixture(options) {
     if (chatShape.soakTurns > 0) {
       // Literal 455-turn (or scaled) mutation schedule: one assistant turn per soak index.
       for (let turn = 1; turn <= chatShape.soakTurns; turn++) {
-        const seat = participants[(turn - 1) % participants.length]
+        const seat = chatParticipants[(turn - 1) % chatParticipants.length]
         pushAssistant(seat, turn, { soakTurn: turn, kind: 'perfSoakTurn' })
       }
     } else {
       for (let turn = 0; turn < chatShape.turnsPerSeat; turn++) {
         for (let s = 0; s < chatShape.seatCount; s++) {
-          pushAssistant(participants[s], turn + 1)
+          pushAssistant(chatParticipants[s], turn + 1)
         }
       }
+    }
+
+    const activeRuns = runs.filter((run) => run.status === 'running')
+    const currentRoundId =
+      activeRuns.at(-1)?.ensembleRoundId || runs.at(-1)?.ensembleRoundId || `${appChatId}-round-1`
+    const roundRunning = activeRuns.length > 0
+    const currentRoundRuns = runs.filter((run) => run.ensembleRoundId === currentRoundId)
+    const roundStartedAt = currentRoundRuns[0]?.startedAt || runs[0].startedAt
+    const currentRoundRunByParticipantId = new Map()
+    for (const run of currentRoundRuns) {
+      currentRoundRunByParticipantId.set(run.ensembleParticipantId, run)
     }
 
     const chat = {
       appChatId,
       title: `Perf fixture ${scaledShape.workload} #${c + 1}`,
-      provider: participants[0].provider,
+      provider: chatParticipants[0].provider,
       // Global scope, deliberately: sanitizeChatForSave rejects any
       // non-global chat without a REGISTERED workspace id+path, and the
       // harness materializes no workspace registry. Without this, every T2
@@ -719,27 +918,57 @@ function generatePerfFixture(options) {
       ensemble: {
         enabled: true,
         orchestrationMode: 'continuous',
-        participants,
+        participants: chatParticipants,
         activeRound: {
-          id: `${appChatId}-round-1`,
-          status: 'running',
-          startedAt: new Date(baseTs + 500).toISOString(),
-          participants: participants.map((p) => ({
-            ...p,
-            status: 'working'
-          }))
+          roundId: currentRoundId,
+          status: roundRunning ? 'running' : 'completed',
+          prompt: messages[0].content,
+          startedAt: roundStartedAt,
+          ...(roundRunning
+            ? { activeParticipantId: activeRuns[0].ensembleParticipantId }
+            : { endedAt: new Date(t).toISOString() }),
+          orchestrationMode: 'continuous',
+          participants: chatParticipants.map((participant) => {
+            const currentRun = currentRoundRunByParticipantId.get(participant.id)
+            const participantStatus =
+              currentRun?.status === 'running' ? 'running' : currentRun ? 'answered' : 'idle'
+            return {
+              participantId: participant.id,
+              provider: participant.provider,
+              role: participant.role,
+              order: participant.order,
+              status: participantStatus,
+              model: participant.model,
+              permissionPresetId: 'default',
+              ...(currentRun
+                ? {
+                    runId: currentRun.runId,
+                    startedAt: currentRun.startedAt,
+                    ...(currentRun.endedAt ? { endedAt: currentRun.endedAt } : {})
+                  }
+                : {}),
+              initialSeatSnapshot: {
+                schemaVersion: 1,
+                provider: participant.provider,
+                model: participant.model,
+                configuredPermissionPresetId: 'default'
+              }
+            }
+          })
         }
       },
       _perfMeta: {
         workload: scaledShape.workload,
         seed,
-        seatCount: scaledShape.seatCount,
+        seatCount: chatShape.seatCount,
         messageCount: messages.length,
         toolActivityCount: toolIndex,
-        dualConcurrentRuns: Boolean(scaledShape.dualConcurrentRuns),
-        soakTurns: scaledShape.soakTurns || 0,
-        paramBytes,
-        rawBytes,
+        dualConcurrentRuns: useDual,
+        soakTurns: chatShape.soakTurns || 0,
+        paramBytes: cParamBytes,
+        rawBytes: cRawBytes,
+        runHistoryCalibration: chatShape.runHistory || null,
+        runHistoryObserved: observeRunHistory(runs),
         lean,
         scaleDown
       }
@@ -760,6 +989,35 @@ function generatePerfFixture(options) {
       messageCount: chats.reduce((n, chat) => n + chat.messages.length, 0),
       toolActivityCount: chats.reduce((n, chat) => n + chat._perfMeta.toolActivityCount, 0),
       seatCount: scaledShape.seatCount,
+      runCount: chats.reduce((n, chat) => n + chat.runs.length, 0),
+      activeRunCount: chats.reduce(
+        (n, chat) => n + chat._perfMeta.runHistoryObserved.activeRunCount,
+        0
+      ),
+      linkedRoundIdCount: chats.reduce(
+        (n, chat) => n + chat._perfMeta.runHistoryObserved.linkedRoundIdCount,
+        0
+      ),
+      maxRunsPerChat: Math.max(...chats.map((chat) => chat.runs.length)),
+      maxLinkedRoundIdsPerChat: Math.max(
+        ...chats.map((chat) => chat._perfMeta.runHistoryObserved.linkedRoundIdCount)
+      ),
+      runSerializedBytes: chats.reduce(
+        (n, chat) => n + chat._perfMeta.runHistoryObserved.serializedBytes,
+        0
+      ),
+      runHistoryByChat: chats.map((chat) => ({
+        appChatId: chat.appChatId,
+        ...chat._perfMeta.runHistoryObserved
+      })),
+      rosterByChat: chats.map((chat) => ({
+        appChatId: chat.appChatId,
+        participantCount: chat.ensemble.participants.length,
+        activeRoundParticipantCount: chat.ensemble.activeRound.participants.length,
+        activeRoundRunningParticipantCount: chat.ensemble.activeRound.participants.filter(
+          (participant) => participant.status === 'running'
+        ).length
+      })),
       chatSerializedBytes: 0,
       toolSerializedBytes: 0
     }
@@ -783,29 +1041,30 @@ function generatePerfFixture(options) {
 }
 
 /**
- * Stable fingerprint for before/after pairing (excludes wall-clock).
+ * Stable fingerprint for before/after pairing. Runtime generation time is
+ * excluded; deterministic fixture timestamps are part of the bytes being
+ * identified. Full message bodies remain generator-version/seed derived, while
+ * the independently variable run, roster and active-round structures each get
+ * an exact digest so a same-count mutation cannot alias another fixture.
  * @param {ReturnType<typeof generatePerfFixture>} fixture
  */
 function fixtureFingerprint(fixture) {
+  const digestJson = (value) =>
+    crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')
   const lean = {
+    generatorVersion: FIXTURE_GENERATOR_VERSION,
     schemaVersion: fixture.schemaVersion,
     workload: fixture.workload,
     seed: fixture.seed,
-    totals: {
-      chatCount: fixture.totals.chatCount,
-      messageCount: fixture.totals.messageCount,
-      toolActivityCount: fixture.totals.toolActivityCount,
-      seatCount: fixture.totals.seatCount
-    },
-    shape: {
-      turnsPerSeat: fixture.shape.turnsPerSeat,
-      toolsPerAssistant: fixture.shape.toolsPerAssistant,
-      soakTurns: fixture.shape.soakTurns || 0,
-      dualConcurrentRuns: fixture.shape.dualConcurrentRuns,
-      messageTarget: fixture.shape.messageTarget,
-      toolActivityTarget: fixture.shape.toolActivityTarget
-    },
+    totals: fixture.totals,
+    shape: fixture.shape,
     chatIds: fixture.chats.map((c) => c.appChatId),
+    structuralDigests: fixture.chats.map((chat) => ({
+      appChatId: chat.appChatId,
+      runs: digestJson(chat.runs),
+      roster: digestJson(chat.ensemble?.participants || []),
+      activeRound: digestJson(chat.ensemble?.activeRound || null)
+    })),
     firstMessageId:
       fixture.chats[0] && fixture.chats[0].messages[0] ? fixture.chats[0].messages[0].id : null,
     lastMessageId: fixture.chats[0]
@@ -818,12 +1077,15 @@ function fixtureFingerprint(fixture) {
 
 module.exports = {
   FIXTURE_GENERATOR_VERSION,
+  LARGE_HISTORY_RUN_CALIBRATION,
+  RUN_CONCURRENCY_CALIBRATION,
   PROVIDERS,
   TOOL_NAMES,
   OBSERVED_30SEAT,
   OBSERVED_50SEAT,
   createPrng,
   resolveWorkloadShape,
+  buildSyntheticRunHistory,
   deriveToolByteBudgets,
   generatePerfFixture,
   fixtureFingerprint,
