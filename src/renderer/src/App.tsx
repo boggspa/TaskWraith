@@ -819,6 +819,7 @@ import {
 import { isChatSummaryRecord, mergeChatRecord, mergeChatRecordValue } from './lib/chatRecordMerge'
 import { resolveDispatchChatBase } from './lib/dispatchChatBase'
 import { ChatUpdateHydrationQueue } from './lib/chatUpdateHydrationQueue'
+import { applyEnsembleParticipantSelection } from './lib/ensembleParticipantSelectionCommit'
 import { commitHydratedChat, resolveChatHydration } from './lib/chatHydrationMerge'
 import { hydratePagedChatShell } from './lib/chatTranscriptPager'
 import { createSurfaceChatHydrator, isSurfaceChatHydrated } from './lib/chatSurfacePagedHydration'
@@ -22655,14 +22656,7 @@ function App(): React.JSX.Element {
         })
       }
       setSelectedParticipantForChat(chatId, id)
-      updateChatById(chatId, (source) => ({
-        ...source,
-        providerMetadata: {
-          ...(source.providerMetadata || {}),
-          [SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY]: id
-        },
-        updatedAt: Date.now()
-      }))
+      updateChatById(chatId, (source) => applyEnsembleParticipantSelection(source, id))
     },
     [setSelectedParticipantForChat, updateChatById]
   )
