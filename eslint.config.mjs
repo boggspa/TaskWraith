@@ -25,6 +25,10 @@ export default defineConfig(
       // people stop reading.
       '.local-only/**',
       'website/**',
+      // Gitignored performance output can contain hundreds of repeated, multi-megabyte
+      // application bundles. It is local evidence, not source in a clean checkout.
+      'perf-homes/**',
+      'perf-artifacts/**',
       // Gitignored fan-out lane worktrees: flat config does NOT read .gitignore,
       // so without this eslint grades stale nested checkouts as if they were
       // source — a red that can only ever exist locally. vitest's exclude list
