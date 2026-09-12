@@ -354,8 +354,9 @@ function attributionCoverage(section, meta, requiredChatIds) {
 }
 
 const HOST_LAG_FIELDS = ['observedForMs', 'p50Ms', 'p95Ms', 'p99Ms', 'maxMs', 'meanMs']
+const HOST_LAG_WINDOW_BASIS = 'since_last_reset'
 
-function normalizeHostLag(lag) {
+function normalizeHostLag(lag, options = {}) {
   if (!isPlainObject(lag)) return { unsupported: 'host_perf_lag_invalid: object_required' }
   for (const key of HOST_LAG_FIELDS) {
     if (!isFiniteNumber(lag[key]) || lag[key] < 0)
@@ -371,7 +372,29 @@ function normalizeHostLag(lag) {
     return { unsupported: 'host_perf_lag_invalid: range' }
   }
   if (!lag.sampling || lag.observedForMs === 0) return { unsupported: 'host_perf_lag_unobserved' }
-  return Object.fromEntries([...HOST_LAG_FIELDS, 'sampling'].map((key) => [key, lag[key]]))
+  const hasWindowBasis = Object.hasOwn(lag, 'windowBasis')
+  const hasConfiguredInterval = Object.hasOwn(lag, 'configuredIntervalMs')
+  if (!hasWindowBasis && !hasConfiguredInterval) {
+    if (options.requireIntervalMetadata === true) {
+      return { unsupported: 'host_perf_lag_interval_unspecified' }
+    }
+    // Compatibility for already-folded diagnostic reports. A fresh file read
+    // requires the metadata below, so an old cumulative block cannot become
+    // evidence merely because the work-span cargo remains readable.
+    return Object.fromEntries([...HOST_LAG_FIELDS, 'sampling'].map((key) => [key, lag[key]]))
+  }
+  if (lag.windowBasis !== HOST_LAG_WINDOW_BASIS) {
+    return { unsupported: 'host_perf_lag_invalid: windowBasis' }
+  }
+  if (!Number.isSafeInteger(lag.configuredIntervalMs) || lag.configuredIntervalMs <= 0) {
+    return { unsupported: 'host_perf_lag_invalid: configuredIntervalMs' }
+  }
+  return Object.fromEntries(
+    [...HOST_LAG_FIELDS, 'sampling', 'windowBasis', 'configuredIntervalMs'].map((key) => [
+      key,
+      lag[key]
+    ])
+  )
 }
 
 function sameJson(left, right) {
@@ -878,7 +901,7 @@ function readHostPerfSnapshotFile(options = {}) {
   ) {
     return { unsupported: 'host_perf_snapshot_invalid: requiredChatIds' }
   }
-  const eventLoopLag = normalizeHostLag(snapshot.eventLoopLag)
+  const eventLoopLag = normalizeHostLag(snapshot.eventLoopLag, { requireIntervalMetadata: true })
   const meta = {
     schemaVersion: 1,
     identity: {

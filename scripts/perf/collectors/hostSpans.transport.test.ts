@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { createRequire } from 'module'
 import { afterAll, describe, expect, it } from 'vitest'
 import { createHostPerfInstrumentation } from '../../../src/host-runtime/HostPerfSnapshot'
+import { createEventLoopLagMeter } from '../../../src/host-shared/perf/EventLoopLagMeter'
 import { createWorkSpanRecorder } from '../../../src/host-shared/perf/WorkSpanRecorder'
 import {
   createHostPerfSnapshotFileWriter,
@@ -160,6 +161,104 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
     hostPerf.workSpans.hostSnapshot.identity.pid = 1
     expect(stored.identity.pid).toBe(777)
     expect(validateCrossThreadBlock((metrics as { crossThread: unknown }).crossThread)).toEqual([])
+  })
+
+  it('carries irregular real-meter windows through writer, reader and fold', () => {
+    const windows = [
+      { p50: 2, p95: 7, p99: 8, max: 9, mean: 4 },
+      { p50: 3, p95: 17, p99: 18, max: 19, mean: 6 }
+    ]
+    let lagNowMs = 100
+    let resetCount = 0
+    let enabled = false
+    const currentWindow = () => windows[Math.min(windows.length - 1, Math.max(0, resetCount - 1))]
+    const histogram = {
+      enable: () => {
+        enabled = true
+      },
+      disable: () => {
+        enabled = false
+      },
+      reset: () => {
+        resetCount += 1
+      },
+      percentile: (percentile: number) => {
+        const key = percentile === 50 ? 'p50' : percentile === 95 ? 'p95' : 'p99'
+        return currentWindow()[key] * 1_000_000
+      },
+      get max() {
+        return currentWindow().max * 1_000_000
+      },
+      get mean() {
+        return currentWindow().mean * 1_000_000
+      }
+    }
+    const meter = createEventLoopLagMeter({
+      now: () => lagNowMs,
+      createHistogram: () => histogram as never
+    })
+    const instrumentation = createHostPerfInstrumentation({ meter, now: () => WRITE_AT })
+    instrumentation.spans.record({
+      chatId: 'chat-heavy',
+      kind: 'host_queue_wait',
+      resource: 'host_chain',
+      startedAt: 5,
+      durationMs: 120
+    })
+    const path = join(scratchDir(), 'host-snapshot.json')
+    const writer = createHostPerfSnapshotFileWriter({
+      instrumentation,
+      path,
+      intervalMs: 1_000,
+      maxBytes: 256 * 1024,
+      identity: IDENTITY,
+      now: () => WRITE_AT
+    })
+
+    instrumentation.start()
+    expect(enabled).toBe(true)
+    expect(resetCount).toBe(1)
+
+    lagNowMs = 475
+    expect(writer.writeOnce()).toBe(true)
+    const first = readHostPerfSnapshotFile({
+      hostPerfSnapshotPath: path,
+      expectedIdentity: IDENTITY,
+      requiredChatIds: ['chat-heavy'],
+      now: () => FRESH_AT
+    })
+    expect(first.eventLoopLag).toMatchObject({
+      observedForMs: 375,
+      p95Ms: 7,
+      windowBasis: 'since_last_reset',
+      configuredIntervalMs: 1_000
+    })
+    expect(resetCount).toBe(2)
+
+    lagNowMs = 1_400
+    expect(writer.writeOnce()).toBe(true)
+    const second = readHostPerfSnapshotFile({
+      hostPerfSnapshotPath: path,
+      expectedIdentity: IDENTITY,
+      requiredChatIds: ['chat-heavy'],
+      now: () => FRESH_AT
+    })
+    expect(second.eventLoopLag).toMatchObject({
+      observedForMs: 925,
+      p95Ms: 17,
+      windowBasis: 'since_last_reset',
+      configuredIntervalMs: 1_000
+    })
+    expect(resetCount).toBe(3)
+
+    const metrics: any = {}
+    applyCrossThreadToMetrics(metrics, CELL, { host: second.workSpans })
+    expect(metrics.crossThread.cells[CELL].processes.host.hostSnapshot.eventLoopLag).toEqual(
+      second.eventLoopLag
+    )
+    expect(validateCrossThreadBlock(metrics.crossThread)).toEqual([])
+    instrumentation.stop()
+    expect(enabled).toBe(false)
   })
 
   it.each([
@@ -587,7 +686,9 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
       p99Ms: 3,
       maxMs: 4,
       meanMs: 2,
-      sampling: true
+      sampling: true,
+      windowBasis: 'since_last_reset',
+      configuredIntervalMs: 1000
     }
     for (const invalid of [
       undefined,
@@ -600,6 +701,19 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
       { ...lag, observedForMs: 0 },
       { ...lag, sampling: false },
       { ...lag, p99Ms: 5 },
+      { ...lag, windowBasis: 'since_last_successful_write' },
+      { ...lag, configuredIntervalMs: 0 },
+      { ...lag, configuredIntervalMs: 1.5 },
+      (() => {
+        const partial = { ...lag }
+        delete (partial as any).windowBasis
+        return partial
+      })(),
+      (() => {
+        const partial = { ...lag }
+        delete (partial as any).configuredIntervalMs
+        return partial
+      })(),
       ...['observedForMs', 'p50Ms', 'p95Ms', 'p99Ms', 'maxMs', 'meanMs'].flatMap((field) =>
         [undefined, null, 'bad', -1].map((value) => ({ ...lag, [field]: value }))
       )
@@ -626,8 +740,30 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
     expect(
       readHostPerfSnapshotFile({ hostPerfSnapshotPath: path, now: () => FRESH_AT }).eventLoopLag
     ).toEqual(lag)
+
+    // Legacy files retain valid work-span cargo, but their cumulative or
+    // otherwise unknown lag basis is no longer promoted as a measurement.
+    const legacyLag = { ...lag }
+    delete (legacyLag as any).windowBasis
+    delete (legacyLag as any).configuredIntervalMs
+    artifact.snapshot.eventLoopLag = legacyLag
+    fs.writeFileSync(path, JSON.stringify(artifact))
+    const legacy = readHostPerfSnapshotFile({ hostPerfSnapshotPath: path, now: () => FRESH_AT })
+    expect(legacy.unsupported).toBeUndefined()
+    expect(legacy.eventLoopLag).toEqual({ unsupported: 'host_perf_lag_interval_unspecified' })
+    expect(legacy.workSpans.byChat['chat-heavy'].host_queue_wait.totalMs).toBe(120)
+    const legacyMetrics: any = {}
+    applyCrossThreadToMetrics(legacyMetrics, CELL, { host: legacy.workSpans })
+    expect(validateCrossThreadBlock(legacyMetrics.crossThread)).toEqual([])
+    const alreadyFoldedLegacy = JSON.parse(JSON.stringify(legacy.workSpans))
+    alreadyFoldedLegacy.hostSnapshot.eventLoopLag = legacyLag
+    const alreadyFoldedMetrics: any = {}
+    applyCrossThreadToMetrics(alreadyFoldedMetrics, CELL, { host: alreadyFoldedLegacy })
+    expect(validateCrossThreadBlock(alreadyFoldedMetrics.crossThread)).toEqual([])
+
     // JSON numeric overflow remains a NUMBER (unlike stringify(Infinity), which
     // turns into null). This pins the finite check independently of typeof.
+    artifact.snapshot.eventLoopLag = lag
     fs.writeFileSync(path, JSON.stringify(artifact).replace('"maxMs":4', '"maxMs":1e309'))
     expect(
       readHostPerfSnapshotFile({ hostPerfSnapshotPath: path, now: () => FRESH_AT }).eventLoopLag

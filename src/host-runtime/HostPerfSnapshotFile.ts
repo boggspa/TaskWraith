@@ -3,14 +3,12 @@
  * Threads Programme M1, Amendment A1.2).
  *
  * The M1 harness needs Host-process evidence (loop lag + work-span
- * aggregates) but the Host has no polling transport: the collector ships
- * `hostPerf: { unsupported: 'host_perf_transport_unspecified' }` on every
- * path. This writer closes that gap without opening a socket or an IPC
- * surface: on an unref'd timer it captures `instrumentation.snapshot()`,
- * serializes `{ identity, sequence, capturedAt, snapshot }`, and atomically
- * replaces one well-known file (write tmp + rename). The collector reads,
- * validates identity/sequence/freshness, and only then replaces its
- * unsupported marker.
+ * aggregates). This opt-in writer supplies the production polling transport
+ * without opening a socket or an IPC surface: on an unref'd timer it captures
+ * `instrumentation.snapshot()`, serializes
+ * `{ identity, sequence, capturedAt, snapshot }`, and atomically replaces one
+ * well-known file (write tmp + rename). The collector reads, validates
+ * identity/sequence/freshness, and only then replaces its unconfigured marker.
  *
  * Contract, in order of importance:
  * - Outside Host commands, on an unref'd timer (or explicit writeOnce).
@@ -27,13 +25,21 @@
  *   payload is marked `truncated: true`. If it is still over budget the
  *   write fails closed (counted, file untouched) rather than ship an
  *   over-cap artifact.
- * - Passive. The snapshot is captured with `resetLagWindow: false`; this
- *   transport must not steal lag-window data from other pollers.
+ * - Windowed at the file-write cadence. Each capture asks the shared lag
+ *   meter to reset, and the transported lag block carries both its actual
+ *   `observedForMs` and the writer's `configuredIntervalMs`. The first
+ *   capture covers time since the meter started; a failed publication still
+ *   consumed that capture, so the next file never claims to cover time since
+ *   the last successful write. `windowBasis: 'since_last_reset'` names that
+ *   boundary exactly.
+ * - This is safe only while the file writer is the meter's sole poller. If a
+ *   second poller is introduced, give the writer its own meter rather than
+ *   letting either consumer reset the other's observation window.
  *
- * Wiring stays with the composition root (HostStandaloneComposition is
- * claimed by the startup-redesign session): construct beside
- * `createHostPerfInstrumentation`, `start()` after it starts, `stop()` on
- * shutdown. Until then this module is exercised only by its tests.
+ * HostStandaloneComposition owns the production writer beside
+ * `createHostPerfInstrumentation`: it starts the writer after instrumentation
+ * starts and stops it during shutdown. The transport stays opt-in through the
+ * standalone Host production-server configuration.
  */
 import { renameSync, writeFileSync } from 'node:fs'
 import type { HostPerfSnapshot } from './HostPerfSnapshot'
@@ -118,6 +124,8 @@ interface HostPerfSnapshotFilePayload {
   truncation?: { extraSections: boolean; byChat: boolean }
   snapshot: unknown
 }
+
+const HOST_PERF_LAG_WINDOW_BASIS = 'since_last_reset' as const
 
 const requireNonEmptyString = (value: unknown, label: string): string => {
   if (typeof value !== 'string' || value.length === 0) {
@@ -253,7 +261,19 @@ export function createHostPerfSnapshotFileWriter(
     // One outer boundary also contains clock/conversion failures and getters
     // supplied by an injected snapshot. Sequence advances only after rename.
     try {
-      const snapshot = instrumentation.snapshot({ resetLagWindow: false })
+      const snapshot = instrumentation.snapshot({ resetLagWindow: true })
+      // Keep HostPerfSnapshot/EventLoopLagSnapshot unchanged for every other
+      // caller. The file transport adds its own basis metadata so a collector
+      // can distinguish the actual observation duration from the configured
+      // timer cadence without pretending either is the 120 s harness window.
+      const transportedSnapshot = {
+        ...snapshot,
+        eventLoopLag: {
+          ...snapshot.eventLoopLag,
+          windowBasis: HOST_PERF_LAG_WINDOW_BASIS,
+          configuredIntervalMs: intervalMs
+        }
+      }
       const captured = now()
       const time = captured.getTime()
       const capturedAt = captured.toISOString()
@@ -264,7 +284,7 @@ export function createHostPerfSnapshotFileWriter(
         identity: frozenIdentity,
         sequence: sequence + 1,
         capturedAt,
-        snapshot
+        snapshot: transportedSnapshot
       }
       let json = serialize(payload)
       if (json === null) throw new Error('Host perf snapshot is not serializable.')

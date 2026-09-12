@@ -73,7 +73,10 @@ describe('createHostPerfSnapshotFileWriter', () => {
     expect(payload.capturedAt).toBe('2026-09-08T16:00:00.000Z')
     expect(payload.truncated).toBeUndefined()
     // The cargo is the real HostPerfSnapshot: lag block + workSpans section.
-    expect(payload.snapshot.eventLoopLag).toBeDefined()
+    expect(payload.snapshot.eventLoopLag).toMatchObject({
+      windowBasis: 'since_last_reset',
+      configuredIntervalMs: 1000
+    })
     expect(payload.snapshot.sections.workSpans.process).toBe('host')
 
     expect(created.writeOnce()).toBe(true)
@@ -81,18 +84,96 @@ describe('createHostPerfSnapshotFileWriter', () => {
     expect(created.stats()).toMatchObject({ writes: 2, sequence: 2, writeFailures: 0 })
   })
 
-  it('captures passively: resetLagWindow is always false', () => {
+  it('resets each lag capture and labels its actual and configured intervals', () => {
     const seen: unknown[] = []
-    const { created } = writer({
+    const observed = [375, 925]
+    const { created, fs } = writer({
       instrumentation: {
         snapshot: (options) => {
           seen.push(options)
-          return createHostPerfInstrumentation().snapshot()
+          const observedForMs = observed.shift()!
+          return {
+            capturedAt: FIXED_AT.toISOString(),
+            eventLoopLag: {
+              observedForMs,
+              p50Ms: 1,
+              p95Ms: 2,
+              p99Ms: 3,
+              maxMs: 4,
+              meanMs: 2,
+              sampling: true
+            },
+            sections: {}
+          }
         }
       }
     })
-    created.writeOnce()
-    expect(seen).toEqual([{ resetLagWindow: false }])
+    expect(created.writeOnce()).toBe(true)
+    expect(
+      JSON.parse(fs.files.get('/perf/host-snapshot.json')!).snapshot.eventLoopLag
+    ).toMatchObject({
+      observedForMs: 375,
+      windowBasis: 'since_last_reset',
+      configuredIntervalMs: 1000
+    })
+    expect(created.writeOnce()).toBe(true)
+    expect(
+      JSON.parse(fs.files.get('/perf/host-snapshot.json')!).snapshot.eventLoopLag
+    ).toMatchObject({
+      observedForMs: 925,
+      windowBasis: 'since_last_reset',
+      configuredIntervalMs: 1000
+    })
+    expect(seen).toEqual([{ resetLagWindow: true }, { resetLagWindow: true }])
+  })
+
+  it('publishes the meter interval after a failed write, not time since the last success', () => {
+    const seen: unknown[] = []
+    const observed = [5_000, 640]
+    const fs = fakeFs()
+    let failNextWrite = true
+    const writeFileSync = fs.writeFileSync
+    fs.writeFileSync = (path, data) => {
+      if (failNextWrite) {
+        failNextWrite = false
+        throw new Error('transient failure')
+      }
+      writeFileSync(path, data)
+    }
+    const { created } = writer({
+      fs,
+      intervalMs: 1_000,
+      instrumentation: {
+        snapshot: (options) => {
+          seen.push(options)
+          const observedForMs = observed.shift()!
+          return {
+            capturedAt: FIXED_AT.toISOString(),
+            eventLoopLag: {
+              observedForMs,
+              p50Ms: 1,
+              p95Ms: 2,
+              p99Ms: 3,
+              maxMs: 4,
+              meanMs: 2,
+              sampling: true
+            },
+            sections: {}
+          }
+        }
+      }
+    })
+
+    expect(created.writeOnce()).toBe(false)
+    expect(created.writeOnce()).toBe(true)
+    expect(seen).toEqual([{ resetLagWindow: true }, { resetLagWindow: true }])
+    const lag = JSON.parse(fs.files.get('/perf/host-snapshot.json')!).snapshot.eventLoopLag
+    expect(lag).toMatchObject({
+      observedForMs: 640,
+      windowBasis: 'since_last_reset',
+      configuredIntervalMs: 1_000
+    })
+    expect(created.stats()).toMatchObject({ writes: 1, writeFailures: 1 })
   })
 
   it('does no capture or filesystem work at construction', () => {
