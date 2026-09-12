@@ -46,6 +46,9 @@ interface InFlightChatUpdate extends PendingChatUpdate {
   recordHash: string
   /** `updatedAt` of the exact record `recordHash` was taken over. */
   hashedUpdatedAt: ChatRecord['updatedAt']
+  /** Title pair of that same record — `saveChat` stamps it back in place too. */
+  hashedTitle: ChatRecord['title']
+  hashedThreadTitle: ChatRecord['threadTitle']
   compactBaseline: CompactChatUpdateBaseline
   /**
    * The record the RENDERER will hold once this lands — the bounded shell for
@@ -126,6 +129,18 @@ interface TargetChatState {
    * every later delivery degraded to a full snapshot.
    */
   baselineUpdatedAt?: ChatRecord['updatedAt']
+  /**
+   * Title pair of the ACKNOWLEDGED generation, captured for the same reason as
+   * the scalars above: `AppStore.saveChat` also writes `title`/`threadTitle`
+   * back onto its caller in place (the atomic title-pair mirror), and that
+   * caller can be the object retained here. Title-policy changes are recurring
+   * (stale-clone restore, placeholder → prompt-fallback), so an uncompensated
+   * stamp reads as drift and degrades every later delivery to a full snapshot.
+   * Captured as a unit: `title` is required on every saved record, so its
+   * presence also vouches for a legitimately-absent `threadTitle`.
+   */
+  baselineTitle?: ChatRecord['title']
+  baselineThreadTitle?: ChatRecord['threadTitle']
   inFlight?: InFlightChatUpdate
   pending?: PendingChatUpdate
   timer?: ReturnType<typeof setTimeout>
@@ -315,53 +330,69 @@ function toPatchBaseline(
 }
 
 /**
- * Restore the ACKed scalars onto the retained baseline before building from it.
+ * Restore the ACKed stamp-back fields onto the retained baseline before
+ * building from it.
  *
- * AppStore stamps the server-owned persistence revision (and updatedAt, and the
- * title pair) back onto its caller, and that caller may be the exact object
- * retained here as the renderer's baseline. Forgiving the stamp for the hash
- * comparison is not enough: the patch build reads the same object, so a stamp
- * that reached the pending revision breaks the producer chain (its base no
- * longer matches) and then reads as "unchanged" in the recovery diff, which
+ * AppStore stamps the server-owned persistence revision, updatedAt, AND the
+ * atomic title pair back onto its caller, and that caller may be the exact
+ * object retained here as the renderer's baseline. Forgiving the stamp for the
+ * hash comparison is not enough: the patch build reads the same object, so a
+ * stamp that reached the pending revision breaks the producer chain (its base
+ * no longer matches) and then reads as "unchanged" in the recovery diff, which
  * omits persistenceRevision while the transcript root is still taken at the
  * pending revision. The renderer NACKs, the baseline drops, and the next
- * delivery is a full snapshot. Only the two compensated scalars are restored,
- * and only after the match below has ruled out any other drift.
+ * delivery is a full snapshot. Only the four stamped fields are restored, and
+ * only after the match below has ruled out any other drift.
  */
 function normalizedRetainedBaselineChat(
   baselineChat: ChatRecord,
   baselineRevision: number | undefined,
-  baselineUpdatedAt: ChatRecord['updatedAt'] | undefined
+  baselineUpdatedAt: ChatRecord['updatedAt'] | undefined,
+  baselineTitle: ChatRecord['title'] | undefined,
+  baselineThreadTitle: ChatRecord['threadTitle'] | undefined
 ): ChatRecord {
   const stampedRevision =
     baselineRevision !== undefined && baselineChat.persistenceRevision !== baselineRevision
   const stampedUpdatedAt =
     baselineUpdatedAt !== undefined && baselineChat.updatedAt !== baselineUpdatedAt
-  if (!stampedRevision && !stampedUpdatedAt) return baselineChat
+  // The pair is captured as a unit (see TargetChatState.baselineTitle), so a
+  // captured title also vouches for an ACKed-absent threadTitle: restoring
+  // `undefined` hashes exactly like the absent key (the record hash drops
+  // undefined-valued keys) and the delta builder clears the stamped value.
+  const stampedTitlePair =
+    baselineTitle !== undefined &&
+    (baselineChat.title !== baselineTitle || baselineChat.threadTitle !== baselineThreadTitle)
+  if (!stampedRevision && !stampedUpdatedAt && !stampedTitlePair) return baselineChat
   return {
     ...baselineChat,
     ...(stampedRevision ? { persistenceRevision: baselineRevision } : {}),
-    ...(stampedUpdatedAt ? { updatedAt: baselineUpdatedAt } : {})
+    ...(stampedUpdatedAt ? { updatedAt: baselineUpdatedAt } : {}),
+    ...(stampedTitlePair ? { title: baselineTitle, threadTitle: baselineThreadTitle } : {})
   }
 }
 
 /**
- * AppStore stamps the server-owned persistence revision back onto its caller,
- * and that caller may be the exact object retained here as the renderer's
- * baseline. Normalize that one known scalar mutation before comparing hashes.
- * Any other drift means main no longer holds the record the renderer ACKed, so
- * diffing from it would omit fields and provoke a recordHashMismatch NACK.
+ * AppStore stamps the server-owned persistence revision, updatedAt, and the
+ * atomic title pair back onto its caller, and that caller may be the exact
+ * object retained here as the renderer's baseline. Normalize those known
+ * stamp-back mutations before comparing hashes. Any other drift means main no
+ * longer holds the record the renderer ACKed, so diffing from it would omit
+ * fields and provoke a recordHashMismatch NACK.
  */
 function retainedBaselineMatchesAcknowledged(
   acknowledged: CompactChatUpdateBaseline,
   baselineChat: ChatRecord,
   baselineRevision: number | undefined,
-  baselineUpdatedAt: ChatRecord['updatedAt'] | undefined
+  baselineUpdatedAt: ChatRecord['updatedAt'] | undefined,
+  baselineTitle: ChatRecord['title'] | undefined,
+  baselineThreadTitle: ChatRecord['threadTitle'] | undefined
 ): boolean {
   const comparable = normalizedRetainedBaselineChat(
     baselineChat,
     baselineRevision,
-    baselineUpdatedAt
+    baselineUpdatedAt,
+    baselineTitle,
+    baselineThreadTitle
   )
   return computeChatSubRevisions(comparable).recordHash === acknowledged.recordHash
 }
@@ -580,7 +611,9 @@ export class ChatUpdateDeliveryCoordinator {
         state.acknowledged,
         state.baselineChat,
         state.baselineRevision,
-        state.baselineUpdatedAt
+        state.baselineUpdatedAt,
+        state.baselineTitle,
+        state.baselineThreadTitle
       )
     ) {
       return false
@@ -595,6 +628,8 @@ export class ChatUpdateDeliveryCoordinator {
         ? persistenceRevision
         : undefined
     state.baselineUpdatedAt = chat.updatedAt
+    state.baselineTitle = chat.title
+    state.baselineThreadTitle = chat.threadTitle
     state.acknowledged = {
       ...state.acknowledged,
       recordHash: contentSub.recordHash,
@@ -672,6 +707,8 @@ export class ChatUpdateDeliveryCoordinator {
           ? ackedRevision
           : undefined
       state.baselineUpdatedAt = inFlight.hashedUpdatedAt
+      state.baselineTitle = inFlight.hashedTitle
+      state.baselineThreadTitle = inFlight.hashedThreadTitle
       if (ack.rendererEpoch) state.rendererEpoch = ack.rendererEpoch
       state.lastAccepted = {
         deliveryId: inFlight.deliveryId,
@@ -703,6 +740,8 @@ export class ChatUpdateDeliveryCoordinator {
       state.baselineChat = undefined
       state.baselineRevision = undefined
       state.baselineUpdatedAt = undefined
+      state.baselineTitle = undefined
+      state.baselineThreadTitle = undefined
       state.lastAccepted = undefined
       // A changed renderer document must begin from a snapshot, but retain
       // its epoch so that snapshot's ACK becomes the new trusted baseline.
@@ -995,10 +1034,12 @@ export class ChatUpdateDeliveryCoordinator {
           state.acknowledged,
           state.baselineChat,
           state.baselineRevision,
-          state.baselineUpdatedAt
+          state.baselineUpdatedAt,
+          state.baselineTitle,
+          state.baselineThreadTitle
         )
       ) {
-        // The match forgives the stamp-back scalars; the build must read them
+        // The match forgives the stamp-back fields; the build must read them
         // forgiven too, or the producer chain breaks on a revision the renderer
         // never held and the recovery diff omits it.
         baseline = toPatchBaseline(
@@ -1006,7 +1047,9 @@ export class ChatUpdateDeliveryCoordinator {
           normalizedRetainedBaselineChat(
             state.baselineChat,
             state.baselineRevision,
-            state.baselineUpdatedAt
+            state.baselineUpdatedAt,
+            state.baselineTitle,
+            state.baselineThreadTitle
           )
         )
       } else {
@@ -1018,6 +1061,8 @@ export class ChatUpdateDeliveryCoordinator {
         state.baselineChat = undefined
         state.baselineRevision = undefined
         state.baselineUpdatedAt = undefined
+        state.baselineTitle = undefined
+        state.baselineThreadTitle = undefined
         state.lastAccepted = undefined
       }
     }
@@ -1138,6 +1183,8 @@ export class ChatUpdateDeliveryCoordinator {
       deliveryEpoch: state.deliveryEpoch,
       recordHash,
       hashedUpdatedAt: hashSource.updatedAt,
+      hashedTitle: hashSource.title,
+      hashedThreadTitle: hashSource.threadTitle,
       compactBaseline,
       deliveredChat,
       windowAnchorMessageId: projection.anchorMessageId
@@ -1166,6 +1213,8 @@ export class ChatUpdateDeliveryCoordinator {
           state.baselineChat = undefined
           state.baselineRevision = undefined
           state.baselineUpdatedAt = undefined
+          state.baselineTitle = undefined
+          state.baselineThreadTitle = undefined
           state.lastAccepted = undefined
           state.consecutiveRejects += 1
           if (epochDelivery.kind === 'snapshot') {
@@ -1235,6 +1284,8 @@ export class ChatUpdateDeliveryCoordinator {
     state.acknowledged = undefined
     state.baselineRevision = undefined
     state.baselineUpdatedAt = undefined
+    state.baselineTitle = undefined
+    state.baselineThreadTitle = undefined
     state.lastAccepted = undefined
     state.rendererEpoch = undefined
   }

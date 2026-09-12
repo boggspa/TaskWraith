@@ -33,6 +33,43 @@ export class ThreadCatalogueWriteGate {
     }
   }
 
+  /**
+   * Bounded-wait admission for writes that answer to a shorter caller-side
+   * lease (the composer-selection picker's 15 s claim behind
+   * `persistChatComposerSelection`). A catalogue recovery hold can park an
+   * `admit` waiter for minutes with no rejection, which reads to the caller as
+   * a silent revert. This variant waits for a held gate only up to `waitMs`
+   * and then rejects with ThreadCatalogueBusyError, so the write lands or
+   * visibly fails inside the caller's own window. Admission and work semantics
+   * are identical to `admit`; only the hold wait is bounded.
+   */
+  async admitBounded<T>(chatId: string, waitMs: number, work: () => Promise<T>): Promise<T> {
+    const deadline = Date.now() + Math.max(0, waitMs)
+    while (this.holds.has(chatId)) {
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) throw new ThreadCatalogueBusyError()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          this.holds.get(chatId)!.promise,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, remaining)
+          })
+        ])
+      } finally {
+        if (timer !== undefined) clearTimeout(timer)
+      }
+    }
+    this.admissions.set(chatId, (this.admissions.get(chatId) ?? 0) + 1)
+    try {
+      return await work()
+    } finally {
+      const count = (this.admissions.get(chatId) ?? 1) - 1
+      if (count) this.admissions.set(chatId, count)
+      else this.admissions.delete(chatId)
+    }
+  }
+
   hold(chatId: string): (() => void) | null {
     if (this.holds.has(chatId) || this.admissions.has(chatId)) return null
     let resolve!: () => void

@@ -9,6 +9,7 @@ import {
   type ChatComposerSelectionPatch,
   type ChatComposerSelectionPatchRequest
 } from '../../shared/chatComposerSelectionPatch'
+import { plainDataEqual } from '../../shared/chatUpdateTransport'
 import {
   queueProviderChange,
   readPendingProviderChange,
@@ -69,7 +70,8 @@ function parseStoredOverlay(value: unknown, chatId: string): StoredComposerSelec
     (Object.keys(providerMetadataPatch).length === 0 && !pendingProviderChange && !workflowMode) ||
     !Number.isSafeInteger(candidate.baseRevision) ||
     (candidate.baseRevision ?? -1) < 0 ||
-    candidate.revision !== (candidate.baseRevision ?? 0) + 1 ||
+    !Number.isSafeInteger(candidate.revision) ||
+    (candidate.revision ?? 0) <= (candidate.baseRevision ?? 0) ||
     typeof candidate.updatedAt !== 'number' ||
     !Number.isFinite(candidate.updatedAt)
   ) {
@@ -79,7 +81,7 @@ function parseStoredOverlay(value: unknown, chatId: string): StoredComposerSelec
     schemaVersion: OVERLAY_SCHEMA_VERSION,
     chatId,
     baseRevision: candidate.baseRevision!,
-    revision: candidate.revision,
+    revision: candidate.revision!,
     updatedAt: candidate.updatedAt,
     providerMetadataPatch,
     ...(workflowMode ? { workflowMode } : {}),
@@ -139,13 +141,66 @@ function materializeOverlay(
 }
 
 /**
+ * Whether the canonical record already carries everything the overlay would
+ * fold in. This — never the record's revision — is the consumption signal: the
+ * desktop canonical save that folds a selection lands carrying exactly this
+ * content, while Host-native writers advance the revision without it.
+ */
+function overlayAlreadyFoldedInto(
+  chat: ChatRecord,
+  overlay: StoredComposerSelectionOverlay
+): boolean {
+  const metadata = chat.providerMetadata ?? {}
+  const pending = overlay.pendingProviderChange
+  if (pending) {
+    const queued = readPendingProviderChange(chat)
+    if (!queued) {
+      // No queue entry: consumed only when a checkpoint already EXECUTED the
+      // queued switch — target provider plus the full provider-scoped
+      // metadata. Turn-end finalize (applyPendingProviderChangeOnFinalize)
+      // drops the queue entry when it applies the switch, and the immediate
+      // patch keys hold the pre-switch values that execution replaced, so
+      // consulting them here resurrected a settled switch — and reverted the
+      // provider metadata back — on every canonical read afterwards.
+      if (chat.provider !== pending.provider) return false
+      const appliedMetadata = pending.providerMetadata ?? {}
+      for (const key of Object.keys(appliedMetadata)) {
+        if (!plainDataEqual(metadata[key], appliedMetadata[key])) return false
+      }
+      return true
+    }
+    // Folded into a checkpoint but not yet executed: the queue entry must
+    // still match exactly.
+    if (queued.provider !== pending.provider) return false
+    if (!plainDataEqual(queued.providerMetadata ?? null, pending.providerMetadata ?? null)) {
+      return false
+    }
+  }
+  for (const key of Object.keys(overlay.providerMetadataPatch)) {
+    if (!plainDataEqual(metadata[key], overlay.providerMetadataPatch[key])) return false
+  }
+  if (overlay.workflowMode && chat.workflowMode !== overlay.workflowMode) return false
+  return true
+}
+
+/**
  * Durable, transcript-free composer-selection overlays.
  *
  * Interactive picker changes cannot route a multi-megabyte ChatRecord through
- * saveChat without blocking main. Each overlay is a tiny adjacent file whose
- * revision is exactly base+1. The next ordinary canonical chat checkpoint
- * advances beyond that revision and therefore supersedes the overlay without a
- * migration or read-time ambiguity.
+ * saveChat without blocking main. Each overlay is a tiny adjacent file stamped
+ * with the base revision it was written against (its own `revision` — the first
+ * point past that base — is bookkeeping only; writers store base+1, but parse
+ * accepts any later point so the stride is not load-bearing). Consumption is a
+ * CONTENT fact: `apply` folds the overlay in until a canonical checkpoint
+ * already carries the selection. The desktop canonical save is one such
+ * checkpoint, but since the Host-independent-threads cutover Host-native
+ * writers (HostProfileDomainStore.appendTranscript, toggleEnsembleSeat,
+ * archiveThread) advance the same file revision without ever reading the
+ * overlay — so a revision at or past base+1 is NOT proof of consumption, and
+ * an unconsumed overlay keeps applying until its content actually lands.
+ * Latest-intent-wins holds at the file level: a later explicit pick overwrites
+ * the overlay file itself, so folding an unconsumed overlay can never override
+ * a newer selection.
  *
  * REVISION TRANSPARENCY (2026-08-30 wedge): the overlay's base/revision pair is
  * supersede bookkeeping ONLY. It must never be stamped onto the record's
@@ -171,8 +226,16 @@ export class ChatComposerSelectionOverlayStore {
     const overlay = this.read(chat.appChatId)
     if (!overlay) return chat
     const revision = persistenceRevision(chat)
-    if (revision === overlay.revision) return chat
-    if (revision !== overlay.baseRevision) return chat
+    // A record BELOW the overlay's base is a stale or reverted read: the pick
+    // was made against a newer canonical state, so folding it in here would
+    // resurrect intent the record has since moved away from.
+    if (revision < overlay.baseRevision) return chat
+    // A record AT or PAST the base carries the overlay's intent only when its
+    // content says so. Landing at base+1 used to prove the desktop canonical
+    // save folded the overlay in; since the Host cutover, Host-native writers
+    // advance the revision without folding, so an unconsumed overlay must
+    // still apply however far the record has moved past its base.
+    if (overlayAlreadyFoldedInto(chat, overlay)) return chat
     let patched: ChatRecord = {
       ...chat,
       providerMetadata: {
@@ -184,12 +247,14 @@ export class ChatComposerSelectionOverlayStore {
       patched = queueProviderChange(patched, overlay.pendingProviderChange)
     }
     // Revision transparency: the record keeps its own `persistenceRevision`
-    // (== overlay.baseRevision here). Stamping overlay.revision would invent a
+    // (>= overlay.baseRevision here). Stamping overlay.revision would invent a
     // revision the Host never wrote and wedge every later CAS persist.
     return {
       ...patched,
       ...(overlay.workflowMode ? { workflowMode: overlay.workflowMode } : {}),
-      updatedAt: overlay.updatedAt
+      // Folding into a record that advanced past the base must not regress its
+      // timestamp to the overlay's older pick time.
+      updatedAt: Math.max(patched.updatedAt, overlay.updatedAt)
     }
   }
 
@@ -208,15 +273,15 @@ export class ChatComposerSelectionOverlayStore {
     // Warm the memo before the rollback bookkeeping below reads it, so a failed
     // write restores an on-disk overlay instead of dropping the memo entry.
     this.read(chat.appChatId)
-    // The record's CURRENT revision is always the base. `apply()` folds an
-    // overlay in only when the record sits exactly AT `baseRevision`, and bails
-    // earlier still when the record has already reached `overlay.revision`.
-    // Extending a second selection from the FIRST overlay's base therefore
-    // produced `revision === currentRevision`, which `apply()` reads as
-    // "already folded in" — so every selection made after an ordinary save had
-    // folded the previous one in was written to disk and could never be read
-    // back. It hid for so long because the loss only surfaces on restart or
-    // reload, not on the pick itself.
+    // The record's CURRENT revision is always the base. `apply()` now folds an
+    // overlay in whenever the record sits at or past `baseRevision` and does
+    // not yet carry the selection, so a second pick anchored at the current
+    // revision can never read as "already folded in". Anchoring at the FIRST
+    // overlay's base instead produced `revision === currentRevision`, which
+    // the old revision-based `apply()` read as consumed — every selection made
+    // after an ordinary save had folded the previous one in was written to
+    // disk and could never be read back. It hid for so long because the loss
+    // only surfaces on restart or reload, not on the pick itself.
     const baseRevision = currentRevision
     const revision = baseRevision + 1
     const updatedAt = next.updatedAt
