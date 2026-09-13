@@ -73,15 +73,9 @@ describe('ReleaseAuthorizationLeaseRegistry', () => {
   it('honours a command-class scope and refuses classes outside it', () => {
     const { registry } = registryAt(START)
     registry.grant({ minutes: 30, commandClasses: ['git push'] })
-    expect(
-      registry.approvalForClass('git push', { source: 'approvedMcpShell' })
-    ).not.toBeNull()
-    expect(
-      registry.approvalForClass('npm publish', { source: 'approvedMcpShell' })
-    ).toBeNull()
-    expect(
-      registry.approvalForClass('gh release', { source: 'approvedMcpShell' })
-    ).toBeNull()
+    expect(registry.approvalForClass('git push', { source: 'approvedMcpShell' })).not.toBeNull()
+    expect(registry.approvalForClass('npm publish', { source: 'approvedMcpShell' })).toBeNull()
+    expect(registry.approvalForClass('gh release', { source: 'approvedMcpShell' })).toBeNull()
   })
 
   it('honours a workspace scope', () => {
